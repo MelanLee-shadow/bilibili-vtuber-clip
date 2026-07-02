@@ -1,0 +1,80 @@
+{
+  "created_at": "2026-07-02T00:46:43.900618+00:00",
+  "dry_run": false,
+  "intent": "Local cleanup: remove tmp/ one-off acceptance/backtest drivers (2026-06-17/06-19/06-30 runs) with hardcoded remote-only paths. Superseded by scripts/run_full_session_selector_cpa_shadow.py and the shadow daemon. All files are preserved in the git initial snapshot commit.",
+  "item_count": 9,
+  "items": [
+    {
+      "bytes": 4452,
+      "path": "tmp/prepare_full_live_acceptance.py",
+      "sha256": "d6f7e5faea877695f166a520e8acfa40ec5254366547c98a25141abe3fa6c44b",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 2079,
+      "path": "tmp/run_full_live_e2e_shadow.py",
+      "sha256": "7b7170f80bebdda64016bd5eae526f723ea99a4b1a53f9992c4235fcf6f2bb22",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 2161,
+      "path": "tmp/run_full_live_positive_anchor.py",
+      "sha256": "dd234aeceb724269d4b8971c540c91caf16d4d2960d52df6d1bd41dd8278f99b",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 4659,
+      "path": "tmp/run_manual_exact_backtest_20260619.py",
+      "sha256": "059c7cb8053fa250eb9e48c3e0515d15c9b64ec117bdc7e63ba0d16a6e4d2eb8",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 5241,
+      "path": "tmp/run_manual_refined_bestcase_20260619.py",
+      "sha256": "92bc9982b0b80bc6a0ed969767f621e2a1216a406414c2638ec4faa4bee0fb54",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 5183,
+      "path": "tmp/run_seeded_manual_backtest_20260619.py",
+      "sha256": "32081f3e2055f96baa423c5906f32f50be90bc70094d32b566f7ede6fdd20b61",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 2501,
+      "path": "tmp/run_selector_20260619.py",
+      "sha256": "90477a6e6af562e2ee0f7b422283db4b81bfb03045c01c3ac6acb5e85ed43c16",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 2121,
+      "path": "tmp/run_selector_positive.py",
+      "sha256": "959f4b4468a7bb4bf9b4f1f66cb891b5b54607aab4e68b826140b232130ddecd",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    },
+    {
+      "bytes": 4859,
+      "path": "tmp/screen_full_live_candidates.py",
+      "sha256": "de3c57cb4971cfa41daaed09c526ab8d7dd61592879ae6a2623ce0e04ca5e806",
+      "status": "deleted",
+      "type": "file",
+      "recoverable_from": "git initial snapshot commit"
+    }
+  ]
+}
