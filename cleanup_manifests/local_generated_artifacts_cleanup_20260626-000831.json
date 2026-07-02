@@ -1,0 +1,96 @@
+{
+  "created_at": "2026-06-26T04:08:31.106495+00:00",
+  "dry_run": false,
+  "intent": "Local cleanup: remove generated reports, monitor history, shadow/replay outputs, and local pulled media/date artifacts. Remote free:/opt/bilive/app remains source of truth; no remote files touched.",
+  "item_count": 12,
+  "items": [
+    {
+      "bytes": 4864170,
+      "files": 1067,
+      "path": "reports/slice_monitor/history",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 91837,
+      "files": 29,
+      "path": "reports/auto_review_shadow",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 105025,
+      "files": 12,
+      "path": "reports/auto_review_replay",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 23082861,
+      "files": 7,
+      "path": "reports/live_room_shadow_tests",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 11049,
+      "files": 8,
+      "path": "reports/runs",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 14340,
+      "files": 1,
+      "path": "lidousha/.DS_Store",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 27229852,
+      "files": 42,
+      "path": "lidousha/2026-06-17",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 18914301,
+      "files": 31,
+      "path": "lidousha/2026-06-18",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 8595431,
+      "files": 27,
+      "path": "lidousha/2026-06-19",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 134777075,
+      "files": 25,
+      "path": "lidousha/2026-06-22",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 762955248,
+      "files": 70,
+      "path": "lidousha/2026-06-24",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 327933589,
+      "files": 151,
+      "path": "lidousha/2026-06-25",
+      "status": "deleted",
+      "type": "dir"
+    }
+  ],
+  "remote_touched": false,
+  "root": "/Users/ivan/Project/vtuber-slice",
+  "total_bytes": 1308574778,
+  "total_mib": 1247.95
+}

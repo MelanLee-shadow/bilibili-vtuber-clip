@@ -1,0 +1,616 @@
+{
+  "created_at": "2026-06-24T22:40:25-0400",
+  "root": "/Users/ivan/Project/vtuber-slice",
+  "intent": "Delete unused/temp vtuber slice artifacts; preserve approved/final video, subtitle, cover, approval, submit, verify, and evidence files.",
+  "dry_run": true,
+  "item_count": 121,
+  "total_bytes": 11527652820,
+  "total_mib": 10993.63,
+  "items": [
+    {
+      "type": "dir",
+      "path": "blrec_chain_tests",
+      "bytes": 21142481
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-20/free_original_recordings",
+      "bytes": 7798754226
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-22/6620s_watashi_idol_sengen",
+      "bytes": 194719717
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/official_source_review",
+      "bytes": 2361843916
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/recut_sources_1239_1379_679_860",
+      "bytes": 1045109542
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-17/final_release/cover_refs",
+      "bytes": 9795443
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-17/final_release/covers_ai_original",
+      "bytes": 17826444
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/188s_kmx_counter/_discarded_remote_api_subtitles",
+      "bytes": 1278161
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/188s_kmx_counter/asr_llm_multimodal",
+      "bytes": 15003
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/188s_kmx_counter/cover_refs",
+      "bytes": 287405
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/188s_kmx_counter/covers_ai_original",
+      "bytes": 2029231
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/asr_llm_multimodal",
+      "bytes": 82662
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/cover_refs",
+      "bytes": 807144
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/covers_ai_original",
+      "bytes": 2140728
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/pipeline_logs",
+      "bytes": 0
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/asr_llm_multimodal",
+      "bytes": 92733
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/cover_refs",
+      "bytes": 799146
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/covers_ai_original",
+      "bytes": 2056041
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/pipeline_logs",
+      "bytes": 0
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/cover_refs",
+      "bytes": 435341
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/covers_ai_original",
+      "bytes": 1551209
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/covers_frame_fallback",
+      "bytes": 485146
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/recovery_backups",
+      "bytes": 6291
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/315s_cry_expression/cover_refs",
+      "bytes": 405794
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/315s_cry_expression/covers_ai_original",
+      "bytes": 1809761
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/315s_cry_expression/covers_frame_fallback",
+      "bytes": 441871
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-19/315s_cry_expression/recovery_backups",
+      "bytes": 3830
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-22/6670s_watashi_idol_sengen/verify_frames",
+      "bytes": 1530302
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/audio_analysis_meng_yi_chang",
+      "bytes": 15322140
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/cover_fonts",
+      "bytes": 1514968
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/cover_refs",
+      "bytes": 0
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/covers_ai_original",
+      "bytes": 0
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/covers_ai_original_meng_yi_chang",
+      "bytes": 1854685
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/covers_ai_original_nianlun",
+      "bytes": 1970648
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/covers_ai_original_reincarnation_talk",
+      "bytes": 1993504
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/covers_ai_original_zuo_shou_you_shou",
+      "bytes": 1868513
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/covers_frame_fallback",
+      "bytes": 9270707
+    },
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/subtitle_shadow_preview",
+      "bytes": 13398880
+    },
+    {
+      "type": "file",
+      "path": ".DS_Store",
+      "bytes": 10244
+    },
+    {
+      "type": "file",
+      "path": "lidousha/.DS_Store",
+      "bytes": 14340
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-17/final_release/bili_replace/nosub_0s_manual_22966160_2026-06-17-22-28-57-.replace_source_dry_run.json",
+      "bytes": 723
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-17/final_release/bili_replace/nosub_0s_manual_22966160_2026-06-17-22-58-56-.replace_source_dry_run.json",
+      "bytes": 701
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-17/final_release/bili_replace/nosub_342s_manual_22966160_2026-06-17-21-24-07-.replace_source_dry_run.json",
+      "bytes": 735
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-17/final_release/bili_replace/nosub_535s_manual_22966160_2026-06-17-21-24-07-.replace_source_dry_run.json",
+      "bytes": 717
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-17/final_release/bili_replace/nosub_71s_manual_22966160_2026-06-17-21-01-14-.replace_source_dry_run.json",
+      "bytes": 719
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-17/final_release/bili_replace/replace_summary_dry_run.json",
+      "bytes": 722
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-18/.DS_Store",
+      "bytes": 12292
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-18/188s_kmx_counter/bili_upload/188s_manual_22966160_2026-06-18-17-00-00-kmx-counter.bili_web_submit_dry_run.json",
+      "bytes": 2374
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/bili_upload/2111s_manual_22966160_2026-06-18-17-00-00-changsha-lycoris.bili_web_submit_dry_run.json",
+      "bytes": 2440
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/bili_upload/996s_manual_22966160_2026-06-18-17-00-00-shadowlee-debut.bili_web_submit_dry_run.json",
+      "bytes": 2389
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/.DS_Store",
+      "bytes": 14340
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/.DS_Store",
+      "bytes": 6148
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/1798s_manual_22966160_2026-06-19-19-30-01-crow-hair.cover-frame.png",
+      "bytes": 446730
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/bili_cover_only/1798s_manual_22966160_2026-06-19-19-30-01-crow-hair.cover_only_dry_run.json",
+      "bytes": 2725
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/bili_replace/1798s_manual_22966160_2026-06-19-19-30-01-crow-hair.replace_source_dry_run.json",
+      "bytes": 2699
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/1798s_crow_hair/bili_upload/1798s_manual_22966160_2026-06-19-19-30-01-crow-hair.bili_web_submit_dry_run.json",
+      "bytes": 2296
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/315s_cry_expression/315s_manual_22966160_2026-06-19-19-30-01-cry-expression.cover-frame.png",
+      "bytes": 414511
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/315s_cry_expression/bili_cover_only/315s_manual_22966160_2026-06-19-19-30-01-cry-expression.cover_only_dry_run.json",
+      "bytes": 2669
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/315s_cry_expression/bili_replace/315s_manual_22966160_2026-06-19-19-30-01-cry-expression.replace_source_dry_run.json",
+      "bytes": 2695
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/315s_cry_expression/bili_upload/315s_manual_22966160_2026-06-19-19-30-01-cry-expression.bili_web_submit_dry_run.json",
+      "bytes": 2284
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-19/official_source_review/.DS_Store",
+      "bytes": 14340
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-20/.DS_Store",
+      "bytes": 6148
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-22/.DS_Store",
+      "bytes": 6148
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-22/6670s_watashi_idol_sengen/6670s_manual_22966160_2026-06-22-20-00-03-watashi-idol-sengen.alignment_spectrogram_first30.png",
+      "bytes": 546577
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-22/6670s_watashi_idol_sengen/bili_upload/6670s_manual_22966160_2026-06-22-20-00-03-watashi-idol-sengen.bili_web_submit_dry_run.json",
+      "bytes": 3071
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/.DS_Store",
+      "bytes": 10244
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/.DS_Store",
+      "bytes": 6148
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1004s_manual_22966160_20260624-20-10-29-mua-life-lesson.bili_web_submit_dry_run.json",
+      "bytes": 2874
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1004s_manual_22966160_20260624-20-10-29-mua-life-lesson.cover-frame.png",
+      "bytes": 852351
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1004s_manual_22966160_20260624-20-10-29-mua-life-lesson.pre-renumber-userfix.bak.srt",
+      "bytes": 6460
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.cover-frame.png",
+      "bytes": 783511
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.cover_generation_manifest.json",
+      "bytes": 4406
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.silencedetect.txt",
+      "bytes": 214
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.spectrogram.png",
+      "bytes": 2528982
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.uniform-timing.bak-20260624-175537.srt",
+      "bytes": 2129
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.uniform-timing.bak-20260624-184003.srt",
+      "bytes": 2132
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.uniform-timing.bak-20260624-185257.srt",
+      "bytes": 2132
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.waveform.png",
+      "bytes": 17109
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.cover-frame.png",
+      "bytes": 571118
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.cover_generation_manifest.json",
+      "bytes": 1693
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.silencedetect.txt",
+      "bytes": 109
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.spectrogram.png",
+      "bytes": 2481814
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.uniform-timing.bak-20260624-175537.srt",
+      "bytes": 3032
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.uniform-timing.bak-20260624-184003.srt",
+      "bytes": 2522
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.uniform-timing.bak-20260624-185257.srt",
+      "bytes": 2522
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/180s_song_22966160_20260624-22-10-15-nianlun.waveform.png",
+      "bytes": 18797
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/457s_manual_22966160_20260624-22-10-15-reincarnation-talk.bili_web_submit_dry_run.json",
+      "bytes": 2859
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/457s_manual_22966160_20260624-22-10-15-reincarnation-talk.cover-frame.png",
+      "bytes": 887135
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/457s_manual_22966160_20260624-22-10-15-reincarnation-talk.cover_generation_manifest.json",
+      "bytes": 1869
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/457s_manual_22966160_20260624-22-10-15-reincarnation-talk.pre-renumber.bak.srt",
+      "bytes": 6546
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/457s_manual_22966160_20260624-22-10-15-reincarnation-talk.title_cover_repair.20260624-213608.json",
+      "bytes": 1795
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.center-title.bak-20260624-192724.cover.png",
+      "bytes": 2069695
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.cover-frame.png",
+      "bytes": 513158
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.cover_generation_manifest.json",
+      "bytes": 5184
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.cover_job.json",
+      "bytes": 1097
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.mechanical-shift.bak-20260624-192609.srt",
+      "bytes": 2256
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.pre-first-line19.bak-20260624-191614.srt",
+      "bytes": 2256
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.pre-online-lrc.bak-20260624-195455.srt",
+      "bytes": 2256
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.silencedetect.txt",
+      "bytes": 65
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.source-srt-too-early.bak-20260624-194713.srt",
+      "bytes": 2256
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.spectrogram.png",
+      "bytes": 2454432
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.uniform-timing.bak-20260624-175537.srt",
+      "bytes": 2530
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.uniform-timing.bak-20260624-184003.srt",
+      "bytes": 2256
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.uniform-timing.bak-20260624-185257.srt",
+      "bytes": 2256
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.waveform.png",
+      "bytes": 17778
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/661s_song_22966160_20260624-22-10-15-meng-yi-chang.wrong-global-shift.bak-20260624-194239.srt",
+      "bytes": 2256
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_cover_only/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.cover_only_dry_run.json",
+      "bytes": 2930
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_cover_only/180s_song_22966160_20260624-22-10-15-nianlun.cover_only_dry_run.json",
+      "bytes": 2706
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_cover_only/457s_manual_22966160_20260624-22-10-15-reincarnation-talk.cover_only_dry_run.json",
+      "bytes": 2970
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_cover_only/661s_song_22966160_20260624-22-10-15-meng-yi-chang.cover_only_dry_run.json",
+      "bytes": 2748
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_title_only/1047s_song_22966160_20260624-22-10-15-zuo-shou-you-shou.title_only_dry_run.json",
+      "bytes": 2074
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_title_only/180s_song_22966160_20260624-22-10-15-nianlun.title_only_dry_run.json",
+      "bytes": 1956
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_title_only/457s_manual_22966160_20260624-22-10-15-reincarnation-talk.title_only_dry_run.json",
+      "bytes": 2116
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_title_only/661s_song_22966160_20260624-22-10-15-meng-yi-chang.title_only_dry_run.json",
+      "bytes": 1980
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/bili_upload/661s_song_22966160_20260624-22-10-15-meng-yi-chang.bili_web_submit_dry_run.json",
+      "bytes": 2540
+    },
+    {
+      "type": "file",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/cover_hook_title_repair_manifest.20260624-212216.json",
+      "bytes": 5235
+    },
+    {
+      "type": "file",
+      "path": "reports/gemini31_timing_eval_20260619/song_baobei.gemini31-pro-low.run.log",
+      "bytes": 9473
+    },
+    {
+      "type": "file",
+      "path": "reports/gemini31_timing_eval_20260619/song_baobei.gemini35-flash-low.same-prompt.run.log",
+      "bytes": 8660
+    },
+    {
+      "type": "file",
+      "path": "reports/slice_monitor/cron.log",
+      "bytes": 161808
+    },
+    {
+      "type": "file",
+      "path": "reports/slice_monitor/launchd.err.log",
+      "bytes": 0
+    },
+    {
+      "type": "file",
+      "path": "reports/slice_monitor/launchd.out.log",
+      "bytes": 0
+    }
+  ]
+}

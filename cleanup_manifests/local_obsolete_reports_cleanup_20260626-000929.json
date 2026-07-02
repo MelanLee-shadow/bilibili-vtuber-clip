@@ -1,0 +1,75 @@
+{
+  "created_at": "2026-06-26T04:09:29.978365+00:00",
+  "dry_run": false,
+  "intent": "Secondary local cleanup: remove agent caches/state and obsolete historical research report outputs after consolidating active route into README and docs/remote-first-autoslice-route.md.",
+  "item_count": 9,
+  "items": [
+    {
+      "bytes": 1123,
+      "files": 4,
+      "path": ".pytest_cache",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 76130,
+      "files": 4,
+      "path": ".hermes",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 230093,
+      "files": 43,
+      "path": "reports/videocaptioner_eval_20260619",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 51546,
+      "files": 4,
+      "path": "reports/consults",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 7233,
+      "files": 1,
+      "path": "reports/subtitle_project_research_20260619",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 35456,
+      "files": 7,
+      "path": "reports/gemini31_timing_eval_20260619",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 3824,
+      "files": 1,
+      "path": "reports/lidousha_gemini_asr_orchestra_eval_20260619.md",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 21469,
+      "files": 1,
+      "path": "reports/lidousha_gemini_asr_orchestra_eval_20260619.json",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 13883,
+      "files": 1,
+      "path": "reports/lidousha_asr_pro_consult_20260619.json",
+      "status": "deleted",
+      "type": "file"
+    }
+  ],
+  "remote_touched": false,
+  "root": "/Users/ivan/Project/vtuber-slice",
+  "total_bytes": 440757,
+  "total_mib": 0.42
+}

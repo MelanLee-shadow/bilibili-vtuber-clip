@@ -1,0 +1,340 @@
+{
+  "created_at": "2026-06-25T02:47:54+0000",
+  "host": "free",
+  "intent": "Static-path cleanup of unused/temp vtuber slice artifacts on free; preserve approved/final video, subtitle, cover, approval, submit, verify, and evidence files.",
+  "dry_run": true,
+  "size_scan_skipped": "No recursive stat on CloudDrive; explicit path manifest only.",
+  "item_count": 66,
+  "items": [
+    {
+      "type": "dir",
+      "path": "/opt/bilive/jingting_jobs/22966160",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/opt/bilive/songlist_jobs/22966160",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/opt/bilive/app/tmp/agy_jingting_smoke_20260622-144552",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/opt/bilive/app/tmp/blrec_chain_tests",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/opt/bilive/app/tmp/lidousha_audio_compare_20260620",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/opt/bilive/app/tmp/official_downloads",
+      "bytes": null
+    },
+    {
+      "type": "file",
+      "path": "/opt/bilive/app/tmp/run_blrec_chain_test.py",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/opt/bilive/app/tmp/yt-dlp",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/opt/bilive/app/tmp/yt-dlp-native-720-temp",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-20",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/evidence",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_source",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/subtitles",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/sources",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/subtitles",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-24/evidence",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-24/sources",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-24/subtitles",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/asr_orchestra_evidence",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/bili_replace",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/burned_final",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/cover_refs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/covers",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/covers_final",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/evidence",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/hybrid_evidence",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/pipeline_logs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/bad_dash_merge_20260619-064753",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/bad_flv_and_corrupt_source_20260618-230407",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/evidence",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/hybrid_with_danmaku",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/mp4_candidates",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/sources",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/subtitles",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/.jingting_jobs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/evidence",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/sources",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/subtitles",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-17/replacement_recuts/final_release/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/manual_recuts/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-22/official_source/manual_recuts/6620s_watashi_idol_sengen",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-22/official_source/manual_recuts/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-24/official_source/manual_recuts/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-24/official_source/manual_recuts/subtitle_shadow_preview",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/188s_kmx_counter/cover_refs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/188s_kmx_counter/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/2111s_changsha_lycoris/asr_llm_multimodal",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/2111s_changsha_lycoris/cover_refs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/2111s_changsha_lycoris/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/2111s_changsha_lycoris/pipeline_logs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/996s_shadowlee_debut/asr_llm_multimodal",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/996s_shadowlee_debut/cover_refs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/996s_shadowlee_debut/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-18/official_source/manual_recuts/996s_shadowlee_debut/pipeline_logs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/manual_recuts/1798s_crow_hair/cover_refs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/manual_recuts/1798s_crow_hair/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/manual_recuts/1798s_crow_hair/covers_frame_fallback",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/manual_recuts/315s_cry_expression/cover_refs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/manual_recuts/315s_cry_expression/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-19/official_source/manual_recuts/315s_cry_expression/covers_frame_fallback",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-22/official_source/manual_recuts/6670s_watashi_idol_sengen/cover_refs",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-22/official_source/manual_recuts/6670s_watashi_idol_sengen/covers_ai_original",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-22/official_source/manual_recuts/6670s_watashi_idol_sengen/covers_frame_fallback",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-22/official_source/manual_recuts/6670s_watashi_idol_sengen/verify_frames",
+      "bytes": null
+    },
+    {
+      "type": "dir",
+      "path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-06-24/official_source/manual_recuts/661s_meng-yi-chang/burned_final/check_frames",
+      "bytes": null
+    }
+  ]
+}

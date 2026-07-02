@@ -1,0 +1,208 @@
+{
+  "root": "/Users/ivan/Project/vtuber-slice",
+  "intent": "Delete local uploaded/used vtuber-slice video media only; keep metadata/subtitles/covers/scripts.",
+  "video_count": 33,
+  "total_bytes": 2317922487,
+  "total_mib": 2210.54,
+  "tracked_by_git": [],
+  "files": [
+    {
+      "path": "lidousha/2026-06-17/final_release/burned_videos/nosub_0s_manual_22966160_2026-06-17-22-28-57-.burned-final-sapphire72.mp4",
+      "bytes": 69197905,
+      "mib": 65.99,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/burned_videos/nosub_0s_manual_22966160_2026-06-17-22-58-56-.burned-final-sapphire72.mp4",
+      "bytes": 108623405,
+      "mib": 103.59,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/burned_videos/nosub_342s_manual_22966160_2026-06-17-21-24-07-.burned-final-sapphire72.mp4",
+      "bytes": 62050007,
+      "mib": 59.18,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/burned_videos/nosub_535s_manual_22966160_2026-06-17-21-24-07-.burned-final-sapphire72.mp4",
+      "bytes": 200686535,
+      "mib": 191.39,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/burned_videos/nosub_71s_manual_22966160_2026-06-17-21-01-14-.burned-final-sapphire72.mp4",
+      "bytes": 144117153,
+      "mib": 137.44,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/source_clips/nosub_0s_manual_22966160_2026-06-17-22-28-57-.mp4",
+      "bytes": 66963564,
+      "mib": 63.86,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/source_clips/nosub_0s_manual_22966160_2026-06-17-22-58-56-.mp4",
+      "bytes": 105964127,
+      "mib": 101.06,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/source_clips/nosub_342s_manual_22966160_2026-06-17-21-24-07-.mp4",
+      "bytes": 60474298,
+      "mib": 57.67,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/source_clips/nosub_535s_manual_22966160_2026-06-17-21-24-07-.mp4",
+      "bytes": 192324898,
+      "mib": 183.42,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-17/final_release/source_clips/nosub_71s_manual_22966160_2026-06-17-21-01-14-.mp4",
+      "bytes": 138370680,
+      "mib": 131.96,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/188s_kmx_counter/188s_manual_22966160_2026-06-18-17-00-00-kmx-counter.mp4",
+      "bytes": 23050067,
+      "mib": 21.98,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/188s_kmx_counter/asr_llm_multimodal/antigravity_job/input.mp4",
+      "bytes": 23050067,
+      "mib": 21.98,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/188s_kmx_counter/burned_final/188s_manual_22966160_2026-06-18-17-00-00-kmx-counter.burned-final-sapphire72.mp4",
+      "bytes": 25161490,
+      "mib": 24.0,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/2111s_manual_22966160_2026-06-18-17-00-00-changsha-lycoris.mp4",
+      "bytes": 48951846,
+      "mib": 46.68,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/asr_llm_multimodal/antigravity_chunk_jobs/chunk_000_00-00-00_00-03-00/input.mp4",
+      "bytes": 4632047,
+      "mib": 4.42,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/asr_llm_multimodal/antigravity_chunk_jobs/chunk_001_00-02-30_00-03-41/input.mp4",
+      "bytes": 1874916,
+      "mib": 1.79,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/asr_llm_multimodal/antigravity_job/input.mp4",
+      "bytes": 48951846,
+      "mib": 46.68,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/2111s_changsha_lycoris/burned_final/2111s_manual_22966160_2026-06-18-17-00-00-changsha-lycoris.burned-final-sapphire72.mp4",
+      "bytes": 51371707,
+      "mib": 48.99,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/996s_manual_22966160_2026-06-18-17-00-00-shadowlee-debut.mp4",
+      "bytes": 66988605,
+      "mib": 63.89,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/asr_llm_multimodal/antigravity_chunk_jobs/chunk_000_00-00-00_00-03-00/input.mp4",
+      "bytes": 4604101,
+      "mib": 4.39,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/asr_llm_multimodal/antigravity_chunk_jobs/chunk_001_00-02-30_00-05-10/input.mp4",
+      "bytes": 4151865,
+      "mib": 3.96,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/asr_llm_multimodal/antigravity_job/input.mp4",
+      "bytes": 66988605,
+      "mib": 63.89,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-18/996s_shadowlee_debut/burned_final/996s_manual_22966160_2026-06-18-17-00-00-shadowlee-debut.burned-final-sapphire72.mp4",
+      "bytes": 70989680,
+      "mib": 67.7,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/1798s_crow_hair/1798s_manual_22966160_2026-06-19-19-30-01-crow-hair.mp4",
+      "bytes": 14588267,
+      "mib": 13.91,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/1798s_crow_hair/burned_final/1798s_manual_22966160_2026-06-19-19-30-01-crow-hair.burned-final-sapphire72.mp4",
+      "bytes": 15446690,
+      "mib": 14.73,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/315s_cry_expression/315s_manual_22966160_2026-06-19-19-30-01-cry-expression.mp4",
+      "bytes": 11097661,
+      "mib": 10.58,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/315s_cry_expression/burned_final/315s_manual_22966160_2026-06-19-19-30-01-cry-expression.burned-final-sapphire72.mp4",
+      "bytes": 11609588,
+      "mib": 11.07,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/official_source_review/1844s_semantic_22966160_2026-06-19-19-30-01-.flv",
+      "bytes": 4358481,
+      "mib": 4.16,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/official_source_review/209s_danmaku_22966160_2026-06-19-19-30-01-.flv",
+      "bytes": 3473515,
+      "mib": 3.31,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/official_source_review/22966160_2026-06-19-19-30-01-.mp4",
+      "bytes": 653334935,
+      "mib": 623.07,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/official_source_review/2350s_semantic_22966160_2026-06-19-19-30-01-.flv",
+      "bytes": 5713231,
+      "mib": 5.45,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/official_source_review/300s_hybrid_22966160_2026-06-19-19-30-01-.flv",
+      "bytes": 4881055,
+      "mib": 4.65,
+      "tracked_by_git": false
+    },
+    {
+      "path": "lidousha/2026-06-19/official_source_review/3151s_hybrid_22966160_2026-06-19-19-30-01-.flv",
+      "bytes": 3879650,
+      "mib": 3.7,
+      "tracked_by_git": false
+    }
+  ]
+}

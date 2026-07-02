@@ -1,0 +1,33 @@
+# Runtime/report output
+reports/**
+!reports/slice_monitor
+!reports/slice_monitor/README.md
+cleanup_manifests/*.tmp
+
+# Local media/artifact pulls; remote free:/opt/bilive/app and container:/app are source of truth
+lidousha/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/**
+*.mp4
+*.flv
+*.m4s
+*.part
+*.ts
+*.mov
+
+# Agent/session-local state
+.hermes/**
+
+# Python/tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
+
+# Deployment/hotfix backups; keep only if explicitly referenced by a cleanup manifest
+*.bak-*
+*.backup

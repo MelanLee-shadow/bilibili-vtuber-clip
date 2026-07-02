@@ -1,0 +1,54 @@
+{
+  "created_at": "2026-06-30T19:52:58.534156+00:00",
+  "local_operations": [
+    {
+      "action": "delete",
+      "existed_before": true,
+      "exists_after": false,
+      "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-06-29/auto_finished_review_20260630_collab",
+      "scope": "local"
+    },
+    {
+      "action": "delete",
+      "existed_before": true,
+      "exists_after": false,
+      "path": "/Users/ivan/Project/vtuber-slice/tmp/build_20260629_finished_package.py",
+      "scope": "local"
+    },
+    {
+      "action": "delete",
+      "existed_before": true,
+      "exists_after": false,
+      "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-06-29/redone_gold_447_travel_meaning/covers/447s_travel_meaning.review-fallback.cover.png",
+      "scope": "local"
+    }
+  ],
+  "reason": "Remove stale 2026-06-29 wrong workflow artifacts after corrected CPA/song workflow was persisted.",
+  "remote_cleanup_log": "host_pkg_before=yes\nhost_script_before=no\nhost_pkg_after=no\nhost_script_after=no\ncontainer_pkg_before=no\ncontainer_script_before=no\ncontainer_pkg_after=no\ncontainer_script_after=no\n",
+  "remote_operations": [
+    {
+      "action": "delete",
+      "path": "/opt/bilive/app/reports/finished_review_packages/20260629-lidousha-collab-auto-finished-01",
+      "scope": "remote-host",
+      "verified_absent": true
+    },
+    {
+      "action": "delete",
+      "path": "/opt/bilive/app/tmp/build_20260629_finished_package.py",
+      "scope": "remote-host",
+      "verified_absent": true
+    },
+    {
+      "action": "delete",
+      "path": "/app/reports/finished_review_packages/20260629-lidousha-collab-auto-finished-01",
+      "scope": "remote-container",
+      "verified_absent": true
+    },
+    {
+      "action": "delete",
+      "path": "/app/tmp/build_20260629_finished_package.py",
+      "scope": "remote-container",
+      "verified_absent": true
+    }
+  ]
+}

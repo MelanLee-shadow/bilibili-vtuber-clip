@@ -1,0 +1,215 @@
+{
+  "created_at": "2026-06-26T04:10:58.578114+00:00",
+  "dry_run": false,
+  "intent": "Local cleanup: remove Python caches and obsolete/manual one-off scripts that bypass the remote-first unattended autoslice route. Active monitor/shadow/jingting scripts are preserved.",
+  "item_count": 28,
+  "items": [
+    {
+      "bytes": 53047,
+      "files": 2,
+      "path": "scripts/__pycache__",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 147,
+      "files": 1,
+      "path": "src/__pycache__",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 65549,
+      "files": 6,
+      "path": "src/autoslice/__pycache__",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 26738,
+      "files": 2,
+      "path": "tests/__pycache__",
+      "status": "deleted",
+      "type": "dir"
+    },
+    {
+      "bytes": 15993,
+      "files": 1,
+      "path": "scripts/replay_auto_review.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 13025,
+      "files": 1,
+      "path": "scripts/bili_title_only_edit.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 18581,
+      "files": 1,
+      "path": "scripts/realign_lidousha_20260624_song_subtitles.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 9469,
+      "files": 1,
+      "path": "scripts/lidousha_burn_single.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 24389,
+      "files": 1,
+      "path": "scripts/create_lidousha_20260624_manual_review.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 19359,
+      "files": 1,
+      "path": "scripts/bili_web_submit_single.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 8218,
+      "files": 1,
+      "path": "scripts/run_blrec_chain_test.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 7724,
+      "files": 1,
+      "path": "scripts/run_lidousha_20260620_blrec_hybrid_slices.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 8101,
+      "files": 1,
+      "path": "scripts/render_lidousha_20260620_blrec_llm_source.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 9169,
+      "files": 1,
+      "path": "scripts/bili_cover_only_edit.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 8509,
+      "files": 1,
+      "path": "scripts/bili_web_replace_single.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 1770,
+      "files": 1,
+      "path": "scripts/lidousha_20260619_ai_cover_jobs.json",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 1090,
+      "files": 1,
+      "path": "scripts/lidousha_20260624_nianlun_cover_jobs.json",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 1145,
+      "files": 1,
+      "path": "scripts/lidousha_20260624_song_cover_jobs.json",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 2350,
+      "files": 1,
+      "path": "scripts/lidousha_20260624_manual_talk_cover_jobs.json",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 13149,
+      "files": 1,
+      "path": "scripts/create_lidousha_20260619_manual_recuts.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 11015,
+      "files": 1,
+      "path": "scripts/download_official_replay_source.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 17891,
+      "files": 1,
+      "path": "scripts/evaluate_videocaptioner_cpa_quality.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 3643,
+      "files": 1,
+      "path": "scripts/patch_videocaptioner_lidousha_similarity.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 1431,
+      "files": 1,
+      "path": "scripts/videocaptioner_cpa_subtitle_wsl.sh",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 14350,
+      "files": 1,
+      "path": "scripts/evaluate_lidousha_asr_timing.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 23230,
+      "files": 1,
+      "path": "scripts/lidousha_replacement_pipeline.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 12659,
+      "files": 1,
+      "path": "scripts/bili_replace_source.py",
+      "status": "deleted",
+      "type": "file"
+    },
+    {
+      "bytes": 5383,
+      "files": 1,
+      "path": "scripts/scan.py.remote-bilive",
+      "status": "deleted",
+      "type": "file"
+    }
+  ],
+  "preserved_active_scripts": [
+    "scripts/lidousha_slice_monitor.py",
+    "scripts/lidousha_slice_monitor.sh",
+    "scripts/lidousha_auto_review_shadow_daemon.py",
+    "scripts/run_auto_review_shadow_pipeline.py",
+    "scripts/gemini_slice_jingting.py"
+  ],
+  "remote_touched": false,
+  "root": "/Users/ivan/Project/vtuber-slice",
+  "total_bytes": 397124,
+  "total_kib": 387.8
+}

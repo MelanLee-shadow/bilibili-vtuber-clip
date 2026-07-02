@@ -1,0 +1,134 @@
+---
+name: song-lyrics-timeline-aligner
+description: Rebuild accurate song lyric subtitles from an external timed lyric source such as official captions, LRC, music-platform lyrics, or a trusted online lyric timeline. Use for song clips, live singing clips, karaoke subtitles, 李豆沙 song cuts, Bilibili song uploads, or any request to fix lyrics timing by aligning the first sung lyric and checking the final lyric rather than guessing ASR timings.
+---
+
+# Song Lyrics Timeline Aligner
+
+## Core Rule
+
+For song clips, do not invent a lyric timeline from ASR, visual rhythm, or only the clip opening. The preferred source of truth is an external timed lyric timeline for the original song, then a clip-local alignment:
+
+```text
+trusted timed lyrics -> identify first sung lyric in clip -> global shift -> verify tail -> preview/burn with the project subtitle style
+```
+
+The normal correction is a constant time offset. Only use speed/stretch correction when the first and last sung lyric anchors prove a real tempo difference, and record the evidence.
+
+For the unattended auto-slice pipeline, a song candidate is only a recall anchor, never the final clip boundary. If a candidate materially overlaps foreground singing, the pipeline must go back to the full source and either produce machine-readable `song_boundary.status = FULL_SONG_READY` plus `lyrics_alignment.status = READY`, or fail closed. A mid-song 60-90s anchor must not be promoted, burned, or marked gold by merely fixing subtitles inside the truncated clip.
+
+## Workflow
+
+1. Locate the clip and current sidecar subtitle.
+   - Keep editable song subtitles as sidecar SRT unless Ivan has approved a burn.
+   - Preserve any old SRT as a timestamped backup before replacing it.
+
+2. Search for an external timed lyric source.
+   - Prefer official captions, official/verified LRC, music-platform synced lyrics, or a trusted lyric site with explicit timestamps.
+   - Use web search when local sources do not contain a credible timed lyric file.
+   - Save the source URL/path and the exact first and last lyric timestamps in evidence.
+   - If only plain lyrics exist, do not claim exact timing. Use them only as text and manually align from audio.
+
+3. Identify clip anchors from the actual media.
+   - Find the clip time of the first sung lyric by listening and, when useful, checking waveform/spectrogram.
+   - Find the clip time of the final sung lyric or final phrase ending.
+   - For stubborn live-song clips, generate waveform/spectrogram evidence and send the relevant audio window to the project-approved Gemini/audio route: agy on `free` with the `Gemini 3.5 Flash` model family (prefer `Gemini 3.5 Flash (High)` for alignment probes when available; the coded jingting default is `Gemini 3.5 Flash (Low)` via `AGY_MODEL` in `scripts/gemini_slice_jingting.py`). Do not substitute older Gemini 3.1/2.5 model names in this repo's workflow evidence.
+   - Treat model outputs as evidence, not truth: accept model timing only when it agrees with waveform/spectrogram and the full-clip context. If the model contradicts the full spectrogram (for example claiming post-song talk starts while music energy visibly continues), keep the supported timing and record the rejected model claim.
+   - Do not use pre-song talk, background music, applause, title cards, or the original recording's absolute timestamp as the first lyric anchor.
+   - Treat user-heard anchor corrections as stronger than model/ASR guesses.
+
+4. Apply alignment.
+   - Compute `offset = clip_first_lyric_time - external_first_lyric_time`.
+   - Default to `clip_time = external_time + offset` for every lyric.
+   - Check the predicted final lyric time against the clip-local final lyric.
+   - If the tail is close, keep the pure shift.
+   - If the tail is not close, re-check the lyric version first. Many failures are from a different cover/version, not speed drift.
+   - Only if first and final anchors both prove consistent speed difference, apply a linear stretch and record the ratio.
+
+5. Build readable cues.
+   - Keep lyric lines semantically intact; do not split into ASR-style fragments just to hit arbitrary line lengths.
+   - Merge very short adjacent LRC lines when they are one sung phrase and the display remains readable.
+   - Limit cue display over long instrumental gaps. A lyric cue must not hang through a 10s+ interlude just because the next LRC timestamp is far away.
+   - For repeated choruses, align each occurrence from the LRC timestamps, not by copying the first chorus timings by hand.
+
+6. Validate and preview.
+   - Validate SRT structure: monotonic cue times, no overlap, no zero/negative durations.
+   - Check final SRT/ASS for 李豆沙 lexicon leaks: known ASR aliases in `lidousha/term_lexicon.json` (e.g. `天不熊`, `kimo熊`, `给我小给我小`, `给我小`) must appear as canonical `kmx` in final text.
+   - Keep ASS visual lines within the audit limits: at most 2 visual lines per dialogue, at most 18 non-space characters per line.
+   - Spot-check at least first lyric, first chorus, second verse or repeated chorus, a long gap, and tail.
+   - If a preview uses SRT directly, remember ffmpeg/libass will apply default styling. For 李豆沙 publish/burn previews, render ASS with sapphire-outline style instead.
+
+7. Sync evidence.
+   - Record lyric source, offset, tail delta, whether stretch was used, SRT hash, and preview checkpoints.
+   - When Gemini/model listening or spectrogram review was used, preserve the prompt/job log, model timing JSON, spectrogram/waveform images, and a note explaining which model suggestions were accepted or rejected. The evidence should record `provider: agy` and `model: Gemini 3.5 Flash (...)`; stale evidence from Gemini 3.1/2.5 should be regenerated or clearly marked invalid.
+   - Sync the final SRT and evidence back to the matching remote CloudDrive folder.
+   - If ASS was generated for burn preview, sync that too.
+
+8. Auto-slice integration contract (implemented in `src/autoslice/full_session_candidate_selector.py` and `scripts/run_auto_review_shadow_pipeline.py`).
+   - Full-session selectors must emit song-like windows as song anchors (`content_type_hint=song`, `requires_full_source_song_boundary_redo=true`) instead of filtering them out as noise.
+   - A song/live-source job must carry `song_boundary` evidence with `status = FULL_SONG_READY`, full-source clip bounds (`clip_start_ms`, `clip_end_ms`), first/last lyric anchors, and the accepted evidence source such as external LRC + chunked `Gemini 3.5 Flash` + spectrogram/waveform.
+   - The same job must carry `lyrics_alignment.status = READY` with provider/model/source metadata. Without this proof, song candidates remain BLOCK/DROP; do not silently pass partial songs.
+   - When the original candidate anchor starts in the middle of a song, auto-review must emit an `AUTO_RECUT` plan to the full-song range instead of treating the anchor range as final.
+   - The generated package must include final SRT/ASS, alignment report, cover workflow metadata, and render/audit evidence before it can be considered complete. Package layout and `review_manifest.json.status` vocabulary follow `docs/workflows/lidousha-song-finished-package-workflow.md` §7 (`corrected_review_sample_passed_no_upload` / `invalid_review_draft*` / `blocked_*`).
+   - For 李豆沙 song covers, the upload title keeps `【李豆沙】豆沙歌，...`, but cover text omits that prefix and must be regenerated whenever the title/hook changes.
+
+9. Prepare the Bilibili song title.
+   - Keep the project song-prefix format `【李豆沙】豆沙歌，...`.
+   - Do not default to a bare title like `【李豆沙】豆沙歌，《歌名》` unless Ivan explicitly asks for a plain catalog title.
+   - Prefer a short hook phrase that incorporates the song title in `《...》` and reflects the lyric/live-room context, e.g. `【李豆沙】豆沙歌，原来都是《梦一场》吗？`, `【李豆沙】豆沙歌，《左手右手》牵着你轮回到第一次见她的时刻`, or `【李豆沙】豆沙歌，假装不知情的《年轮》`.
+   - Keep the title faithful and compact. Do not invent unrelated drama, and do not change the cover text unless the cover is being regenerated.
+   - If the Bilibili song title is changed, update the matching cover before reporting the edit complete. Cover text should omit `【李豆沙】豆沙歌，` and reuse the same hook phrase in a short readable form.
+
+## Failure Modes To Avoid
+
+- Do not infer first lyric time from the start of the clip. In the `梦一场` case, the correct first lyric was around 19s, not 4.5s.
+- Do not fix only the first line and leave the rest on an ASR/interpolated timeline.
+- Do not use local ASR as lyric timing truth for singing. Singing with BGM often breaks speech ASR coverage and drift.
+- Do not stretch the whole song because one middle cue feels late. Verify first and last lyric anchors first.
+- Do not let a line remain visible across a long instrumental gap.
+- Do not burn a final video from default SRT styling. SRT is timing/text; burn style must come from the approved ASS style.
+- Do not report "done" without checking a tail lyric. A subtitle can have a correct opening and still be wrong for the rest of the song.
+
+## Helper Script
+
+Use `.agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py` (skill-local; there is no copy under the repo-root `scripts/`) for first drafts from LRC:
+
+```bash
+python3 .agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py \
+  --lrc external.lrc \
+  --out clip.song.srt \
+  --clip-first 00:00:19.200 \
+  --report clip.song-alignment.json \
+  --play-res 1920x1080 \
+  --ass-out clip.final-sapphire72.ass
+```
+
+The default `--play-res` is `1280x720`, which emits the 48pt style — pass `--play-res 1920x1080` when you want the 72pt (`sapphire72`) variant.
+
+When the last lyric was checked in the clip, add it:
+
+```bash
+python3 .agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py \
+  --lrc external.lrc \
+  --out clip.song.srt \
+  --clip-first 00:00:19.200 \
+  --clip-last 00:03:15.700 \
+  --report clip.song-alignment.json
+```
+
+By default, the script reports tail drift but does not stretch. Use `--allow-stretch` only after verifying the source version is correct and the clip is actually faster/slower.
+
+## 李豆沙 Burn Style
+
+For 李豆沙 burn previews and final ASS, use the established sapphire-outline style instead of default black-outline SRT rendering (these values are exactly what `align_timed_lyrics.py --ass-out` emits in `write_ass`; `fontsdir=/app/assets` is an ffmpeg/libass burn-time option, not an ASS style field):
+
+```text
+Fontname=Microsoft YaHei
+PrimaryColour=&H00FFFFFF
+OutlineColour=&H00BA520F
+Outline=3
+Alignment=2
+fontsdir=/app/assets
+```
+
+For 720p 6/24-style outputs (`--play-res 1280x720`, the default), use `Fontsize=48`, `Shadow=2`, `BackColour=&H70000000`, margins `40,40,30`. For 1080p outputs (`--play-res 1920x1080`), the script emits the approved 72-size variant: `Fontsize=72`, margins `60,60,40`. Always inspect preview frames after generating ASS.

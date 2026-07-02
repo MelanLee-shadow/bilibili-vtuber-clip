@@ -1,0 +1,18 @@
+{
+  "created_at": "2026-06-24T22:43:07-0400",
+  "root": "/Users/ivan/Project/vtuber-slice",
+  "intent": "Delete leftover local burned-final check frame temp images.",
+  "dry_run": false,
+  "items": [
+    {
+      "type": "dir",
+      "path": "lidousha/2026-06-24/manual_recuts_review_20260624/burned_final/check_frames",
+      "bytes": 4384372
+    }
+  ],
+  "item_count": 1,
+  "total_bytes": 4384372,
+  "total_mib": 4.18,
+  "errors": [],
+  "error_count": 0
+}
