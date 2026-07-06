@@ -29,6 +29,10 @@
 3. 可选第二批：日语歌《男も女も恋してるべき》(20:30 段，走完整曲 LRC 全局位移 lane) + 备选 talk（米老鼠版权/被乌鸦俯冲/百合是工作/回不了家/木马/人设太帅，见 OPEN_ME）。
 4. 未提交改动：本轮 `reports/lidousha-autoslice-20260705/`(specs+verify脚本)、`lidousha/2026-07-05/`(成品+OPEN_ME+index.html) + 之前所有未提交改动（Ivan 未让 commit）。
 
+## 2026-07-06 runner v3（无人值守首跑复盘修复，Ivan 验收打回后重造）
+
+首跑五宗罪→根因→修复（commit c8fbd31，292 tests）：标题全是cid（CPA gpt-5.5/5.4 provider 整段断供，静默回退）→ **CPA 健康门**：断供即 paused_cpa_down 推迟批次、恢复自动从 pending 断点续产，标题失败的成品不交付（清理重试≤3次），llm_via_cpa.sh 加 5.5→5.4 failover；字幕豆腐框（free 零 CJK 字体，ASS 指名微软雅黑）→ free 已装 fonts-noto-cjk（烧录实测字形正常），runner 启动自检；摘要不知所云→重写（每条：标题/选片理由hook/信心分/收束句/边界/封面；歌：弹幕数/门判定/原因码；含落选清单+死段清单）；唱4+首只出1首→召回帽3→4+确定性演唱检测补充歌队列，最终按弹幕 top2；2.9KB 录制残桩每10分钟无限重试→桩过滤+BCUT失败2次入死段账本。交付文件名改用 hook 可读名。**7/6 产物已全域清空**（free 工作区/交付/缓存/state+本地拉回件），CPA 恢复后 cron 自动全新重跑（门控已实战验证："CPA chat lane down — batch deferred"）。
+
 ## 2026-07-06 第二轮收尾（Fable 接管续）
 
 - **已发布 +2**（均单次 biliup+入小李切片+公开验证+证据 commit）：A cos/sin **BV1QzTS65Enf**（自私修正版封面）；D 联动 **BV1uCTS6kEuf**（Ivan 定稿标题「过期（？）女大终于迎来再次联动」，礼墨/安晚awa 词表闭环重出）。
