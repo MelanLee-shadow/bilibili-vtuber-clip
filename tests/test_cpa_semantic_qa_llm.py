@@ -290,3 +290,12 @@ def test_direct_transport_requires_key_env(monkeypatch):
     )
     with pytest.raises(LlmCallError):
         call("hi")
+
+
+def test_judge_prompt_excludes_cover_songs_from_upload_risk(tmp_path: Path):
+    """频道政策：翻唱歌切是常规内容形态，判官绝不因翻唱版权给 UNSAFE_UPLOAD_RISK
+    （2026-07-06 冒烟实证：判官曾以"受版权保护的歌曲演唱"为由 BLOCK 掉合格歌切）。"""
+    prompt = build_judge_prompt(_request(tmp_path))
+    assert "翻唱歌曲不算上传风险" in prompt
+    assert "豆沙歌" in prompt
+    assert "版权纠纷素材" not in prompt  # 旧口径不得残留

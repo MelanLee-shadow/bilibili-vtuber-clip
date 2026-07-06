@@ -114,7 +114,8 @@ def build_judge_prompt(request) -> str:
    - 规范术语表只在内容确实涉及那些对象时才适用;如果内容完全没有涉及任何表内对象,terminology_ok 直接给 true,不要因为"没有出现术语"而扣分。
 3. title_hook_score (0-1): 这段内容做成切片对路人观众的吸引力(有趣程度)。0.85 以上=明显有梗/有反差/唱得动人; 0.5 以下=平淡日常。注意有趣不只是"讲了个段子":与弹幕打闹、对屏幕上的东西连续吐槽、绕口令翻车、破防都算。
 4. context_dependency_score (0-1): 依赖直播上下文的程度。越低越好, >0.45 说明单独看会困惑。
-5. unsafe_upload_risk_score (0-1): 上传风险(版权纠纷素材、辱骂、隐私泄露等)。日常唱歌聊天一般 <=0.2。
+5. unsafe_upload_risk_score (0-1): 上传风险,只针对这些真实风险:隐私泄露(真实姓名/住址/联系方式/账号金额)、辱骂引战对线、平台违规内容(违法/色情/暴力)、观看的第三方视频画面构成主体内容。
+   **频道政策(硬口径): 主播翻唱歌曲不算上传风险**——本频道"豆沙歌"系列长期公开发布翻唱切片(已有多条先例),平台对 VTuber 翻唱亦是常态;绝不因为"演唱了受版权保护的歌曲/翻唱未授权"给高分或 UNSAFE_UPLOAD_RISK。日常唱歌聊天一般 <=0.2。
 6. viewer_context_ok(观众视角上下文审查,重点): 假设你是一个没看过直播的观众,只看到这个切片。
    - metadata 里如有 danmaku_context,那是切片时间窗内观众发的真实弹幕(直播画面上滚动可见,观众看得到):判断"弹幕起头"是否已包含在切片内、弹幕互动是否有梗时,以它为准;主播突然接话但对应弹幕在窗内时,观众是能看懂的。
    - 切片里发生的事有没有让你摸不着头脑的部分(在回应什么?在看什么?在接谁的话?)。
@@ -123,7 +124,7 @@ def build_judge_prompt(request) -> str:
    - 上下文完整或可推测时 expand 两项都填 0。
 7. release_ready: 综合判断是否可以进入发布流程(以上都过关才 true)。viewer_context_ok=false 时 release_ready 必须是 false。
 
-硬规则: 如果 metadata 证明这是完整歌曲切片（例如 content_type_hint/song_candidate 为 song，且 song_complete=true、lyrics_alignment_ready=true，或 full_song_ready=true），不要因为"无聊"、"不像段子"、"没有聊天包袱"给 NOT_INTERESTING / CONTEXT_DEPENDENCY_HIGH / CPA_SEMANTIC_INCOMPLETE / VIEWER_CONTEXT_INCOMPLETE；完整歌本身就是完整内容，按形式证据评审。仍然必须因为不完整歌曲、歌词/字幕证据缺失、术语错误、上传风险等真实问题阻断。
+硬规则: 如果 metadata 证明这是完整歌曲切片（例如 content_type_hint/song_candidate 为 song，且 song_complete=true、lyrics_alignment_ready=true，或 full_song_ready=true），不要因为"无聊"、"不像段子"、"没有聊天包袱"给 NOT_INTERESTING / CONTEXT_DEPENDENCY_HIGH / CPA_SEMANTIC_INCOMPLETE / VIEWER_CONTEXT_INCOMPLETE；完整歌本身就是完整内容，按形式证据评审。仍然必须因为不完整歌曲、歌词/字幕证据缺失、术语错误、真实上传风险(见第5条口径;翻唱本身不构成风险)等问题阻断。
 
 reason_codes 只能从这些里选(没有问题就给空数组): {list(JUDGMENT_REASON_CODES)}
 required_fixes: 每个 reason_code 对应一条可执行的修复建议(中文)。
