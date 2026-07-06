@@ -1,0 +1,16 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-06T15:04:20Z (free host)",
+  "bvid": "BV1GmTd6PE9S",
+  "aid": 116873626722035,
+  "title": "【李豆沙】22966160是一个温和的侄女直播间，但是百合破坏不行！",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "tag": "虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP",
+  "collection": "小李切片(season 8383206/section 9320779, finalize脚本入集)",
+  "substrate": "BCUT聚合ASR+三段式bcut_agy_cpa校正; 三片段拼接(塞男角色→作者暴雷→百合是工作/百乃工→百破图→温和派宣言); 上伊那牡丹/百乃工/百破图词表闭环",
+  "tool": "biliup-rs, 单次运行 rc=0",
+  "authorized_by": "Ivan 2026-07-06 定稿标题\"22966160是一个温和的侄女直播间，但是百合破坏不行！\"+\"可以发\"",
+  "note": "10:56 长片; 封面=温和的/侄女直播间/百合破坏(红)/不行！四行大字186px"
+}
