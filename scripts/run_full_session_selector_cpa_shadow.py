@@ -1112,7 +1112,9 @@ def _build_aggregate_asr_transcriber(
         in_window = danmaku_in_window(danmaku_items, window_start_ms, window_start_ms + 600_000, max_items=60)
         danmaku_lines = format_danmaku_lines(in_window, base_ms=window_start_ms)
     cpa_llm_call = build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=180.0)
+        # 600s: an 11-min clip's reconcile prompt (~250 cues × two sources) can
+        # legitimately take gpt-5.5(medium) past 180s (2026-07-06 long-clip run).
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=600.0)
     )
     agy_refine_runner = (
         _build_ssh_agy_runner(host, danmaku_items=danmaku_items, context_start_ms=window_start_ms)

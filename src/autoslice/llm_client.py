@@ -150,13 +150,19 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
             part.replace("{prompt_file}", str(prompt_file)).replace("{completion_file}", str(completion_file))
             for part in shlex.split(config.command_template)
         ]
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=config.timeout_seconds,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=config.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # Timeouts must surface as LlmCallError like every other transport
+            # failure — callers are fail-open repair stages; a raw
+            # TimeoutExpired crashed an 11-min clip's produce run (2026-07-06).
+            raise LlmCallError(f"llm command timed out after {config.timeout_seconds:.0f}s") from exc
         if completed.returncode != 0:
             raise LlmCallError(
                 f"llm command failed rc={completed.returncode}: {completed.stderr.strip()[-400:]}"

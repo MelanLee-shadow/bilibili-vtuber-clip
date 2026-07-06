@@ -202,3 +202,17 @@ def test_viewer_context_expansion_noop_when_bounds_unchanged(tmp_path):
         tmp_path, {"viewer_context_ok": False, "expand_before_ms": 500, "expand_after_ms": 0}
     )
     assert _viewer_context_expanded_candidate(candidate, _DANMAKU_BANTER_CUES, response_json, source_duration_ms=19_000) is None
+
+
+def test_command_transport_wraps_timeout_as_llm_call_error(tmp_path):
+    """TimeoutExpired must become LlmCallError so fail-open stages survive
+    (an 11-min clip's reconcile crashed produce on raw TimeoutExpired, 2026-07-06)."""
+    import pytest
+
+    from src.autoslice.llm_client import LlmCallError, LlmConfig, build_llm_call
+
+    call = build_llm_call(
+        LlmConfig(transport="command", command_template="sleep 5", timeout_seconds=0.2)
+    )
+    with pytest.raises(LlmCallError, match="timed out"):
+        call("prompt")
