@@ -1,8 +1,10 @@
+import hashlib
 import json
 from pathlib import Path
 
 from src.autoslice.source_context_executor import (
     AgyExecutionResult,
+    AgyRunnerError,
     build_ffmpeg_context_clip_command,
     execute_source_context_job,
 )
@@ -40,6 +42,15 @@ def job_manifest(**overrides):
     return data
 
 
+def job_manifest_for_source(source: Path, **overrides):
+    data = job_manifest(**overrides)
+    data["input"] = {
+        **data["input"],
+        "source_sha256": "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest(),
+    }
+    return data
+
+
 def write_srt(path: Path) -> None:
     path.write_text(
         "1\n00:00:01,500 --> 00:00:02,500\n第一句\n\n"
@@ -72,7 +83,7 @@ def test_missing_draft_srt_does_not_create_fake_refined_srt_or_done(tmp_path):
     source.write_bytes(b"not a real mp4; dry-run test")
 
     result = execute_source_context_job(
-        job_manifest(),
+        job_manifest_for_source(source),
         source_video_path=source,
         output_dir=tmp_path / "out",
         run_ffmpeg=False,
@@ -107,7 +118,7 @@ def test_source_context_job_runs_agy_runner_when_refined_srt_not_provided(tmp_pa
         return AgyExecutionResult(provider="agy", model="Gemini", agy_rc=0, provider_fallback_used=False, provider_request_id="job-123")
 
     result = execute_source_context_job(
-        job_manifest(),
+        job_manifest_for_source(source),
         source_video_path=source,
         output_dir=tmp_path / "out",
         full_source_srt_path=srt,
@@ -125,6 +136,35 @@ def test_source_context_job_runs_agy_runner_when_refined_srt_not_provided(tmp_pa
     assert not Path(result.review_required_path).exists()
 
 
+def test_agy_runner_error_reason_code_is_distinguishable(tmp_path):
+    """rc=0-but-empty (AGY_EMPTY_OUTPUT) must not be conflated with a timeout:
+    the 7/2 whole-session BLOCK was misdiagnosed as a timeout exactly because
+    the evidence only said AGY_SOURCE_CONTEXT_RUNNER_FAILED."""
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    def empty_output_runner(media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:
+        raise AgyRunnerError("AGY_EMPTY_OUTPUT", "remote agy exited rc=0 but produced no valid output.srt")
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=empty_output_runner,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "RETRY_INFRA"
+    assert "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in result.reason_codes
+    assert "AGY_EMPTY_OUTPUT" in result.reason_codes
+    review_required = json.loads(Path(result.review_required_path).read_text(encoding="utf-8"))
+    assert "AGY_EMPTY_OUTPUT" in review_required["findings"]
+
+
 def test_agy_failure_or_fallback_unknown_is_not_release_ready(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source bytes")
@@ -132,7 +172,7 @@ def test_agy_failure_or_fallback_unknown_is_not_release_ready(tmp_path):
     write_srt(srt)
 
     result = execute_source_context_job(
-        job_manifest(),
+        job_manifest_for_source(source),
         source_video_path=source,
         output_dir=tmp_path / "out",
         full_source_srt_path=srt,
@@ -159,7 +199,7 @@ def test_success_path_records_hash_provenance_and_source_time_cues(tmp_path):
     refined.write_text("1\n00:00:00,500 --> 00:00:01,500\n第一句精修\n\n", encoding="utf-8")
 
     result = execute_source_context_job(
-        job_manifest(),
+        job_manifest_for_source(source),
         source_video_path=source,
         output_dir=tmp_path / "out",
         full_source_srt_path=srt,
@@ -184,3 +224,47 @@ def test_success_path_records_hash_provenance_and_source_time_cues(tmp_path):
     assert manifest["input_sha256"].startswith("sha256:")
     assert manifest["output_sha256"].startswith("sha256:")
     assert not Path(result.review_required_path).exists()
+
+
+def test_malformed_source_sha256_blocks_instead_of_skipping_integrity(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    result = execute_source_context_job(
+        job_manifest(),  # fixture declares malformed "sha256:source"
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        refined_srt_path=srt,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "RETRY_INFRA"
+    assert "SOURCE_SHA256_MALFORMED" in result.reason_codes
+    assert result.jingting_done is False
+    review_required = json.loads(Path(result.review_required_path).read_text(encoding="utf-8"))
+    assert review_required["release_ready"] is False
+    assert "SOURCE_SHA256_MALFORMED" in review_required["findings"]
+
+
+def test_mismatched_source_sha256_still_blocks(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+    manifest = job_manifest()
+    manifest["input"] = {**manifest["input"], "source_sha256": "sha256:" + "0" * 64}
+
+    result = execute_source_context_job(
+        manifest,
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        refined_srt_path=srt,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "RETRY"
+    assert "SOURCE_SHA256_MISMATCH" in result.reason_codes

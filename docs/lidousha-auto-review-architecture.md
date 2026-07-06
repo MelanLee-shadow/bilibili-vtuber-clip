@@ -333,7 +333,7 @@ RECUT_MAX_ATTEMPTS = 2
 }
 ```
 
-上传器必须验证 manifest 和当前待上传 artifacts 的 hash 一致。recut 后旧 title/cover/publish.json 必须失效重建。
+上传器必须验证 manifest 和当前待上传 artifacts 的 hash 一致。recut 后旧 title/cover/publish.json 必须失效重建。封面的 art-direction（角色/表情/背景/版式/hook 色）现在是 persona 驱动且 **fail-OPEN**（`_lidousha_cover_art_direction`：确定性 baseline 为主，CPA-judge 精修可选，异常即回落 baseline），但封面**图像**本身仍 **fail-CLOSED**（只认真 CPA `gpt-image-2` 无字背景 + 本地叠字，禁抽帧冒充）。
 
 本地 phase-1 gate 已补充 `is_publish_gate_satisfied()`：未来 uploader / publish preparation 入口不得只检查 `.jingting.done`；必须同时满足 `slice-auto-review.v1` manifest 存在、`decision.action == AUTO_UPLOAD`、`reason_codes` 为空，并且当前 video/subtitle/title/cover/publish 等 artifact hash 与 manifest 记录一致。缺 manifest、`AUTO_RECUT/DROP/BLOCK/RETRY`、旧 artifact hash 都应 fail closed，不进入上传准备。
 

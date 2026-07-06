@@ -54,7 +54,7 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
 6. Validate and preview.
    - Validate SRT structure: monotonic cue times, no overlap, no zero/negative durations.
    - Check final SRT/ASS for 李豆沙 lexicon leaks: known ASR aliases in `lidousha/term_lexicon.json` (e.g. `天不熊`, `kimo熊`, `给我小给我小`, `给我小`) must appear as canonical `kmx` in final text.
-   - Keep ASS visual lines within the audit limits: at most 2 visual lines per dialogue, at most 18 non-space characters per line.
+   - Keep ASS visual lines within the viewability limits (Ivan 2026-07-03, matching the LLM Multimodal ASR project's `polish_srt_for_viewing.py --max-chars 28`): at most 28 characters per visual line, at most 2 visual lines per dialogue, single line preferred. Over-long cue text must be split into sequential sub-cues (time allocated by text share), never stacked into 3-4 lines that cover the picture.
    - Spot-check at least first lyric, first chorus, second verse or repeated chorus, a long gap, and tail.
    - If a preview uses SRT directly, remember ffmpeg/libass will apply default styling. For 李豆沙 publish/burn previews, render ASS with sapphire-outline style instead.
 
@@ -70,6 +70,12 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
    - The same job must carry `lyrics_alignment.status = READY` with provider/model/source metadata. Without this proof, song candidates remain BLOCK/DROP; do not silently pass partial songs.
    - When the original candidate anchor starts in the middle of a song, auto-review must emit an `AUTO_RECUT` plan to the full-song range instead of treating the anchor range as final.
    - The generated package must include final SRT/ASS, alignment report, cover workflow metadata, and render/audit evidence before it can be considered complete. Package layout and `review_manifest.json.status` vocabulary follow `docs/workflows/lidousha-song-finished-package-workflow.md` §7 (`corrected_review_sample_passed_no_upload` / `invalid_review_draft*` / `blocked_*`).
+   - Burn previews from the auto pipeline must use the 李豆沙 sapphire ASS style (`*.final-sapphire72.ass`, `subtitle_style=lidousha-final-sapphire72`), not direct SRT/default `force_style` rendering. The sapphire72 header is the 1080p variant (PlayRes 1920x1080, margins 60,60,40, Shadow 2, BackColour `&H70000000`), and ASS event times are rounded to centiseconds, not floored.
+   - The auto pipeline's burned lyric timeline must come from the external LRC global-shift model (`clip_time = lrc_time + offset`, `subtitle_source=external_lrc_global_shift`), never from raw ASR cue timings — ASR onsets are systematically early/noisy and produced the "lyrics ~20ms early" bug class.
+   - A lyrics-alignment proof only counts when it survives `enforce_global_shift_alignment` in `src/autoslice/song_repair.py`: one median offset explains the matches, matched cue order is monotonic, performance span vs LRC span is plausible, and there is no long unmatched middle run. Greedy per-line fuzzy matching alone once promoted a 28s fragment to a fake "complete" song.
+   - Song recuts must always be accurately re-encoded (two-stage seek + re-encode); `-c copy` cuts leave audio/video stream starts quantized to packet/keyframe boundaries (measured 20-90ms skew) and silently desync burned lyrics.
+   - Publish staging for 李豆沙 must use the CPA `images.edit` AI-cover chain plus local title overlay. If the AI cover cannot be produced, fail closed with a blocked cover status; never replace it with a raw video-frame cover and call that publish-ready.
+   - CPA stages are real in workflow/e2e tests too (Ivan, 2026-07-03): semantic QA, song-hint, title, and cover all hit the real CPA endpoint (browser User-Agent required — Cloudflare 403s error 1010 otherwise). Fake responders belong only in pytest unit tests. The canonical validated end-to-end command is recorded in `docs/spark/2026-06-30-future-live-e2e-runbook.md` § "Canonical validated song e2e command" — run that shape instead of re-deriving flags, and never copy commands from acceptance reports marked SUPERSEDED.
    - For 李豆沙 song covers, the upload title keeps `【李豆沙】豆沙歌，...`, but cover text omits that prefix and must be regenerated whenever the title/hook changes.
 
 9. Prepare the Bilibili song title.

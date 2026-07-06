@@ -21,6 +21,20 @@ class AgyExecutionResult:
     provider_request_id: str | None = None
 
 
+class AgyRunnerError(RuntimeError):
+    """Agy runner failure with a machine-distinguishable reason code.
+
+    ``AGY_EMPTY_OUTPUT`` (rc=0 but no output written — the documented
+    antigravity print-mode failure) must not be conflated with ``AGY_TIMEOUT``
+    or ``AGY_FAILED_RC``: they need different fixes and the review evidence
+    has to say which one actually happened.
+    """
+
+    def __init__(self, reason_code: str, message: str):
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 @dataclass(frozen=True)
 class SourceContextExecutionResult:
     decision: str
@@ -95,12 +109,21 @@ def execute_source_context_job(
 
     source_sha256 = _sha256_file(source_video_path)
     expected_source_sha256 = _source_sha_from_manifest(job_manifest)
-    if expected_source_sha256 and _is_hex_sha256(expected_source_sha256) and expected_source_sha256 != source_sha256:
-        return _blocked(
-            decision="RETRY",
-            reason_codes=("SOURCE_SHA256_MISMATCH",),
-            review_required_path=review_required_path,
-        )
+    if expected_source_sha256 is not None:
+        if not _is_hex_sha256(expected_source_sha256):
+            # A declared-but-unusable hash must block, not silently skip the
+            # integrity check: it usually means the planner or manifest is broken.
+            return _blocked(
+                decision="RETRY_INFRA",
+                reason_codes=("SOURCE_SHA256_MALFORMED",),
+                review_required_path=review_required_path,
+            )
+        if expected_source_sha256 != source_sha256:
+            return _blocked(
+                decision="RETRY",
+                reason_codes=("SOURCE_SHA256_MISMATCH",),
+                review_required_path=review_required_path,
+            )
 
     if run_ffmpeg:
         cmd = build_ffmpeg_context_clip_command(
@@ -152,15 +175,19 @@ def execute_source_context_job(
             agy_result = agy_runner(context_media_path, context_draft_srt_path, context_refined_srt_path)
             refined_srt_path = context_refined_srt_path
         except Exception as exc:
+            findings: tuple[str, ...] = ("AGY_SOURCE_CONTEXT_RUNNER_FAILED",)
+            specific = getattr(exc, "reason_code", None)
+            if isinstance(specific, str) and specific:
+                findings = findings + (specific,)
             _write_review_required(
                 review_required_path,
                 release_ready=False,
-                findings=("AGY_SOURCE_CONTEXT_RUNNER_FAILED",),
+                findings=findings,
                 metadata={"error": f"{type(exc).__name__}: {exc}"},
             )
             return SourceContextExecutionResult(
                 decision="RETRY_INFRA",
-                reason_codes=("AGY_SOURCE_CONTEXT_RUNNER_FAILED",),
+                reason_codes=findings,
                 context_media_path=str(context_media_path),
                 context_draft_srt_path=str(context_draft_srt_path),
                 context_refined_srt_path=None,

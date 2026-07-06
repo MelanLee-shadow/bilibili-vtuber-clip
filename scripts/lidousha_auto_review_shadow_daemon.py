@@ -34,7 +34,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.run_auto_review_shadow_pipeline import _parse_srt, run_shadow_pipeline  # noqa: E402
-from src.autoslice.full_session_candidate_selector import select_full_session_candidates  # noqa: E402
+from src.autoslice.full_session_candidate_selector import (  # noqa: E402
+    select_fallback_session_candidates,
+    select_full_session_candidates,
+)
+from src.autoslice.term_lexicon import load_discovered_term_lexicon  # noqa: E402
 from src.autoslice.source_integrity import MediaSegmentObservation, build_source_range_ledger, plan_bilibili_replay_compensation  # noqa: E402
 
 DEFAULT_ROOM = "22966160"
@@ -68,6 +72,82 @@ class LiveSourceRoute:
     refined_srt: Path | None
     source_context_job: dict[str, Any]
     metadata_sources: tuple[str, ...]
+
+
+RECORDING_COMPLETION_STATE_FILENAME = "recording_completion_state.json"
+DEFAULT_RECORDING_QUIET_SECONDS = 300.0
+
+
+def evaluate_recording_completion(
+    previous: Mapping[str, Any] | None,
+    *,
+    size_bytes: int,
+    now_epoch: float,
+    min_quiet_seconds: float,
+) -> tuple[bool, dict[str, Any]]:
+    """A recording is complete once its file stops growing for a quiet window.
+
+    Size-based on purpose: the Videos mount is cloud-backed and mtime is not
+    updated live, so growth between two sweeps is the only trustworthy signal.
+    """
+
+    if not previous:
+        return False, {"size_bytes": size_bytes, "observed_epoch": now_epoch, "reason": "first_observation"}
+    prev_size = previous.get("size_bytes")
+    prev_epoch = float(previous.get("observed_epoch") or 0.0)
+    if prev_size != size_bytes:
+        return False, {
+            "size_bytes": size_bytes,
+            "observed_epoch": now_epoch,
+            "reason": "still_growing",
+            "previous_size_bytes": prev_size,
+        }
+    quiet_seconds = now_epoch - prev_epoch
+    if quiet_seconds < min_quiet_seconds:
+        return False, {
+            "size_bytes": size_bytes,
+            "observed_epoch": prev_epoch,
+            "reason": "quiet_window_short",
+            "quiet_seconds": round(quiet_seconds, 1),
+        }
+    return True, {
+        "size_bytes": size_bytes,
+        "observed_epoch": prev_epoch,
+        "reason": "stable",
+        "quiet_seconds": round(quiet_seconds, 1),
+    }
+
+
+def detect_recording_completion(
+    source_video: Path,
+    *,
+    state_path: Path,
+    min_quiet_seconds: float = DEFAULT_RECORDING_QUIET_SECONDS,
+    now_epoch: float | None = None,
+) -> dict[str, Any]:
+    now = time.time() if now_epoch is None else now_epoch
+    state = _read_json(state_path) if state_path.exists() else {}
+    observations = state.get("observations") if isinstance(state.get("observations"), Mapping) else {}
+    observations = dict(observations)
+    key = str(source_video)
+    size_bytes = source_video.stat().st_size if source_video.is_file() else -1
+    previous = observations.get(key) if isinstance(observations.get(key), Mapping) else None
+    complete, observation = evaluate_recording_completion(
+        previous, size_bytes=size_bytes, now_epoch=now, min_quiet_seconds=min_quiet_seconds
+    )
+    observations[key] = {
+        "size_bytes": observation["size_bytes"],
+        "observed_epoch": observation["observed_epoch"],
+    }
+    state["observations"] = observations
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "complete": complete,
+        "source_video": key,
+        "min_quiet_seconds": min_quiet_seconds,
+        **observation,
+    }
 
 
 def find_latest_date_dir(videos_root: Path, room_id: str) -> Path | None:
@@ -200,7 +280,24 @@ def run_once(
     live_source_metadata_gaps: list[dict[str, Any]] = []
     full_session_selector = {"status": "NOT_RUN"}
     if not slices:
+        source_pair = _find_full_session_source_pair(date_dir)
+        recording_completion: dict[str, Any] | None = None
+        if source_pair is not None:
+            recording_completion = detect_recording_completion(
+                source_pair[0],
+                state_path=report_root / RECORDING_COMPLETION_STATE_FILENAME,
+            )
+            if not recording_completion["complete"] and not force:
+                return {
+                    "status": "skipped",
+                    "reason": "recording_in_progress",
+                    "date_dir": str(date_dir),
+                    "recording_completion": recording_completion,
+                    "source_integrity": source_integrity,
+                }
         live_source_routes, full_session_selector = _full_session_live_source_routes(date_dir, room_id=room_id)
+        if recording_completion is not None:
+            full_session_selector = {**full_session_selector, "recording_completion": recording_completion}
         if not live_source_routes:
             return {
                 "status": "skipped",
@@ -350,19 +447,31 @@ def _full_session_live_source_routes(date_dir: Path, *, room_id: str, max_candid
 
     source_duration_ms = _source_duration_ms(source_video, cues)
     selected = select_full_session_candidates(cues, max_candidates=max_candidates)
+    selector_stage = "primary"
+    if not selected:
+        # Repair-first: zero candidates is a pipeline failure on arbitrary real
+        # streams; fall back to performance-run/talk recall before giving up.
+        selected = select_fallback_session_candidates(cues, max_candidates=min(max_candidates, 3))
+        selector_stage = "fallback_recall"
     if not selected:
         return [], {
             "status": "NO_CANDIDATES",
             "reason_codes": ["FULL_SESSION_SELECTOR_NO_TALK_CANDIDATES"],
+            "selector_stage": selector_stage,
             "source_video": str(source_video),
             "source_srt": str(source_srt),
             "source_duration_ms": source_duration_ms,
         }
 
+    glossary = load_discovered_term_lexicon(source_srt)
     routes: list[LiveSourceRoute] = []
     for candidate in selected:
         job = candidate.to_source_context_job(source_duration_ms=source_duration_ms)
         job["selection"] = candidate.to_manifest()
+        job["selector_stage"] = selector_stage
+        if glossary is not None:
+            job["glossary_path"] = str(glossary.path)
+            job["glossary_sha256"] = hashlib.sha256(glossary.path.read_bytes()).hexdigest()
         routes.append(
             LiveSourceRoute(
                 stem=candidate.anchor.candidate_id,
@@ -376,6 +485,7 @@ def _full_session_live_source_routes(date_dir: Path, *, room_id: str, max_candid
     return routes, {
         "status": "SELECTED",
         "reason_codes": [],
+        "selector_stage": selector_stage,
         "source_video": str(source_video),
         "source_srt": str(source_srt),
         "source_duration_ms": source_duration_ms,

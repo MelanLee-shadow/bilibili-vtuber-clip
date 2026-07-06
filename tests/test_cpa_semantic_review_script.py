@@ -59,7 +59,18 @@ def test_cpa_semantic_review_script_writes_request_and_accepts_json_response(tmp
     assert request_payload["schema_version"] == "cpa-semantic-review-request.v1"
     assert request_payload["candidate_id"] == "candidate-1"
     assert request_payload["request_sha256"].startswith("sha256:")
-    assert request_payload["terminology"]["applied_terms"] == ["kmx"]
+    # applied_terms is now the full glossary canon (dynamically parsed), not the
+    # historic single ["kmx"]; kmx must still be present.
+    applied_terms = request_payload["terminology"]["applied_terms"]
+    assert "kmx" in applied_terms
+    assert len(applied_terms) > 1
+    for canon in ("142", "小室", "Ado", "沙豆李", "奶油苏打"):
+        assert canon in applied_terms, canon
+    # the ASR mishearing blacklist rides along in metadata so the CPA judge's
+    # terminology_ok gate can check the normalized text no longer contains them.
+    blacklist = request_payload["metadata"]["terminology_blacklist"]
+    for variant in ("停放熊", "沙特琳", "一四二", "苏丹"):
+        assert variant in blacklist, variant
     assert response_payload["candidate_id"] == "candidate-1"
     assert response_payload["request_sha256"] == request_payload["request_sha256"]
     assert response_payload["terminology_ok"] is True

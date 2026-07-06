@@ -36,6 +36,42 @@ def complete_evidence(**overrides):
     return ReviewEvidence(**data)
 
 
+def test_review_required_marker_wires_release_ready_and_findings():
+    evidence = complete_evidence()
+
+    candidate = to_candidate_review(
+        evidence,
+        good_provenance(),
+        review_required={"release_ready": False, "findings": ["LEXICON_LEAK", "TIMING_DRIFT"]},
+    )
+    decision = review_candidate(candidate)
+
+    assert candidate.release_ready is False
+    assert candidate.review_required_findings == ("LEXICON_LEAK", "TIMING_DRIFT")
+    assert decision.action == DecisionAction.BLOCK
+    assert "JINGTING_REVIEW_REQUIRED" in decision.reason_codes
+
+
+def test_review_required_marker_present_but_malformed_fails_closed():
+    evidence = complete_evidence()
+
+    candidate = to_candidate_review(evidence, good_provenance(), review_required={})
+    decision = review_candidate(candidate)
+
+    assert candidate.release_ready is False
+    assert decision.action == DecisionAction.BLOCK
+    assert "JINGTING_REVIEW_REQUIRED" in decision.reason_codes
+
+
+def test_no_review_required_marker_keeps_release_ready_true():
+    evidence = complete_evidence()
+
+    candidate = to_candidate_review(evidence, good_provenance(), review_required=None)
+
+    assert candidate.release_ready is True
+    assert candidate.review_required_findings == ()
+
+
 def test_missing_required_evidence_fails_closed_without_jingting_review_label():
     evidence = complete_evidence(start_boundary_score=None, evidence_gaps=("START_BOUNDARY_MISSING",))
 

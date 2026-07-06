@@ -165,6 +165,202 @@ def _is_candidate_start(cue: SourceCue) -> bool:
     return bool(text) and not text.startswith(_CONNECTIVE_PREFIXES) and any(marker in text for marker in _SETUP_MARKERS)
 
 
+def select_fallback_session_candidates(
+    cues: Sequence[SourceCue],
+    *,
+    max_candidates: int = 3,
+    min_run_ms: int = 45_000,
+    max_gap_ms: int = 12_000,
+    min_avg_cue_ms: int = 2_000,
+    edge_trim_min_cue_ms: int = 3_000,
+    min_cues: int = 6,
+) -> list[FullSessionCandidate]:
+    """Recall fallback for arbitrary real streams (repair-first goal).
+
+    The primary selector keys on lidousha-specific setup markers and yields
+    zero candidates on streams that phrase things differently — zero output is
+    itself a failure of the unattended goal.  This fallback surfaces contiguous
+    performance runs (dense, long cues — typical of singing) as song candidates
+    so the song-repair layer can try to *prove* them instead of the pipeline
+    producing nothing.  It stays recall-stage only: every candidate still has
+    to earn its way through boundary proof, CPA QA, and the review gates.
+    """
+
+    ordered = sorted(cues, key=lambda cue: (cue.source_start_ms, cue.source_end_ms, cue.cue_id))
+    runs: list[list[SourceCue]] = []
+    current: list[SourceCue] = []
+    for cue in ordered:
+        if not current or cue.source_start_ms - current[-1].source_end_ms <= max_gap_ms:
+            current.append(cue)
+        else:
+            runs.append(current)
+            current = [cue]
+    if current:
+        runs.append(current)
+
+    scored: list[tuple[int, list[SourceCue]]] = []
+    for run in runs:
+        # Chatty quips chained onto the performance edges (song lead-in banter)
+        # are short; sung lines are long.  Trim edges to the performance core —
+        # the anchor is recall-only, completeness is still proven by song repair.
+        while run and (run[0].source_end_ms - run[0].source_start_ms) < edge_trim_min_cue_ms:
+            run = run[1:]
+        while run and (run[-1].source_end_ms - run[-1].source_start_ms) < edge_trim_min_cue_ms:
+            run = run[:-1]
+        if len(run) < min_cues:
+            continue
+        duration_ms = run[-1].source_end_ms - run[0].source_start_ms
+        if duration_ms < min_run_ms:
+            continue
+        avg_cue_ms = sum(cue.source_end_ms - cue.source_start_ms for cue in run) / len(run)
+        if avg_cue_ms < min_avg_cue_ms:
+            continue
+        if not _looks_like_performance(run):
+            continue
+        scored.append((duration_ms, run))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected: list[FullSessionCandidate] = []
+    song_spans: list[tuple[int, int]] = []
+    for duration_ms, run in scored[:max_candidates]:
+        start_ms = run[0].source_start_ms
+        end_ms = run[-1].source_end_ms
+        song_spans.append((start_ms, end_ms))
+        anchor = AnchorCandidate(
+            candidate_id=f"fallbacksong_{start_ms}_{end_ms}",
+            anchor_start_ms=start_ms,
+            anchor_end_ms=end_ms,
+        )
+        selected.append(
+            FullSessionCandidate(
+                anchor=anchor,
+                boundary=_song_anchor_boundary(anchor),
+                cues=tuple(run),
+                text_preview=_join_text(run)[:160],
+                content_type_hint="song",
+            )
+        )
+
+    if len(selected) < max_candidates:
+        selected.extend(
+            _fallback_talk_candidates(
+                ordered,
+                song_spans=song_spans,
+                max_candidates=max_candidates - len(selected),
+            )
+        )
+    return selected
+
+
+_CHAT_MARKERS = (
+    "吗",
+    "吧",
+    "呢",
+    "哈哈",
+    "什么",
+    "为什么",
+    "你们",
+    "我们",
+    "就是",
+    "不是",
+    "这个",
+    "那个",
+    "好了",
+    "谢谢",
+    "晚上好",
+    "宝宝",
+    "直播",
+)
+
+
+def _looks_like_performance(run: Sequence[SourceCue]) -> bool:
+    """Dense chat also chains into long runs; sung lines are the ones that are
+    long AND free of conversational particles.  Both signals must agree."""
+
+    if not run:
+        return False
+    durations = sorted(cue.source_end_ms - cue.source_start_ms for cue in run)
+    median_ms = durations[len(durations) // 2]
+    if median_ms < 3_000:
+        return False
+    chatty = sum(1 for cue in run if any(marker in cue.text for marker in _CHAT_MARKERS))
+    return chatty / len(run) < 0.35
+
+
+def _fallback_talk_candidates(
+    ordered: Sequence[SourceCue],
+    *,
+    song_spans: Sequence[tuple[int, int]],
+    max_candidates: int,
+    min_window_ms: int = 12_000,
+    max_window_ms: int = 90_000,
+    max_cues_per_window: int = 24,
+) -> list[FullSessionCandidate]:
+    """Talk recall without lidousha setup markers: any payoff-bearing window.
+
+    A song stream whose songs cannot be proven complete must still be able to
+    surface talk moments — zero session output is a pipeline failure, and the
+    boundary resolver plus review gates still decide whether these publish.
+    """
+
+    def inside_song(cue: SourceCue) -> bool:
+        return any(start <= cue.source_start_ms and cue.source_end_ms <= end for start, end in song_spans)
+
+    talk_cues = [cue for cue in ordered if not inside_song(cue)]
+    max_intra_gap_ms = 15_000
+    min_start_cue_ms = 1_200
+    selected: list[FullSessionCandidate] = []
+    start_index = 0
+    while start_index < len(talk_cues) and len(selected) < max_candidates:
+        start_cue = talk_cues[start_index]
+        # Orphan fragments (sub-second leftovers) and connective starts make
+        # bad clip openings; a talk window also must not span a dead-air gap.
+        if (
+            start_cue.text.strip().startswith(_CONNECTIVE_PREFIXES)
+            or start_cue.source_end_ms - start_cue.source_start_ms < min_start_cue_ms
+        ):
+            start_index += 1
+            continue
+        emitted = False
+        for end_index in range(start_index + 1, min(len(talk_cues), start_index + max_cues_per_window)):
+            window = talk_cues[start_index : end_index + 1]
+            if window[-1].source_start_ms - window[-2].source_end_ms > max_intra_gap_ms:
+                break
+            duration_ms = window[-1].source_end_ms - window[0].source_start_ms
+            if duration_ms > max_window_ms:
+                break
+            if duration_ms < min_window_ms:
+                continue
+            tail_text = _join_text(window[-2:])
+            if not any(marker in tail_text for marker in _PAYOFF_MARKERS + _CLOSURE_MARKERS):
+                continue
+            anchor = AnchorCandidate(
+                candidate_id=f"fallbacktalk_{window[0].source_start_ms}_{window[-1].source_end_ms}",
+                anchor_start_ms=window[0].source_start_ms,
+                anchor_end_ms=window[-1].source_end_ms,
+            )
+            boundary = resolve_talk_boundary(
+                anchor, [_to_talk_cue(cue, index, window) for index, cue in enumerate(window)]
+            )
+            if boundary.action not in {DecisionAction.AUTO_UPLOAD, DecisionAction.AUTO_RECUT}:
+                continue
+            selected.append(
+                FullSessionCandidate(
+                    anchor=anchor,
+                    boundary=boundary,
+                    cues=tuple(window),
+                    text_preview=_join_text(window)[:160],
+                    content_type_hint="talk",
+                )
+            )
+            start_index = end_index + 1
+            emitted = True
+            break
+        if not emitted:
+            start_index += 1
+    return selected
+
+
 def _song_anchor_boundary(anchor: AnchorCandidate) -> BoundaryResolution:
     return BoundaryResolution(
         candidate_id=anchor.candidate_id,

@@ -211,6 +211,7 @@ def test_run_once_uses_full_session_selector_when_no_prepared_slices_exist(tmp_p
 
     monkeypatch.setattr(daemon, "_probe_duration", fake_probe_duration)
     monkeypatch.setattr(daemon, "run_shadow_pipeline", fake_run_shadow_pipeline)
+    _seed_recording_complete(report_root, source_video)
 
     result = daemon.run_once(
         videos_root=videos_root,
@@ -222,6 +223,7 @@ def test_run_once_uses_full_session_selector_when_no_prepared_slices_exist(tmp_p
     )
 
     assert result["status"] == "ran"
+    assert result["full_session_selector"]["recording_completion"]["complete"] is True
     assert result["route_counts"] == {
         "review_package_candidates": 0,
         "live_source_candidates": 1,
@@ -403,3 +405,111 @@ def test_run_once_reports_exact_live_source_fields_when_jingting_done_is_missing
     assert gap["missing_fields"] == ["source_srt"]
     assert gap["found_fields"] == ["source_video", "anchor_start_ms", "anchor_end_ms"]
     assert "source_srt (or full_source_srt/full_session_srt/transcript_path equivalent)" in gap["required_upstream_fields"]
+
+
+def _seed_recording_complete(report_root: Path, source_video: Path) -> None:
+    """Simulate a prior daemon sweep that already saw the file at this size."""
+    import time as _time
+
+    state_path = report_root / daemon.RECORDING_COMPLETION_STATE_FILENAME
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "observations": {
+                    str(source_video): {
+                        "size_bytes": source_video.stat().st_size,
+                        "observed_epoch": _time.time() - 3_600,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_evaluate_recording_completion_lifecycle():
+    first_complete, first = daemon.evaluate_recording_completion(
+        None, size_bytes=100, now_epoch=1_000.0, min_quiet_seconds=300.0
+    )
+    assert first_complete is False and first["reason"] == "first_observation"
+
+    growing_complete, growing = daemon.evaluate_recording_completion(
+        first, size_bytes=200, now_epoch=1_100.0, min_quiet_seconds=300.0
+    )
+    assert growing_complete is False and growing["reason"] == "still_growing"
+
+    short_complete, short = daemon.evaluate_recording_completion(
+        growing, size_bytes=200, now_epoch=1_200.0, min_quiet_seconds=300.0
+    )
+    assert short_complete is False and short["reason"] == "quiet_window_short"
+    # the quiet window anchors at the first same-size observation
+    assert short["observed_epoch"] == 1_100.0
+
+    stable_complete, stable = daemon.evaluate_recording_completion(
+        short, size_bytes=200, now_epoch=1_500.0, min_quiet_seconds=300.0
+    )
+    assert stable_complete is True and stable["reason"] == "stable"
+    assert stable["quiet_seconds"] >= 300.0
+
+
+def test_run_once_skips_while_recording_is_still_growing(tmp_path, monkeypatch):
+    videos_root = tmp_path / "Videos"
+    report_root = tmp_path / "reports"
+    date_dir = videos_root / "22966160" / "2026-06-30"
+    _write(date_dir / "sources" / "s.mp4", b"still growing bytes\n")
+    _write(
+        date_dir / "sources" / "s.srt",
+        "1\n00:00:10,000 --> 00:00:12,000\n我跟你们说一个事\n\n2\n00:00:45,000 --> 00:00:48,000\n哈哈哈哈就很离谱\n",
+    )
+    monkeypatch.setattr(daemon, "_probe_duration", lambda path: 120.0)
+
+    result = daemon.run_once(
+        videos_root=videos_root,
+        report_root=report_root,
+        room_id="22966160",
+        date="2026-06-30",
+        require_jingting_complete=True,
+        force=False,
+    )
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "recording_in_progress"
+    assert result["recording_completion"]["reason"] == "first_observation"
+
+
+def test_full_session_routes_fall_back_to_recall_and_stamp_glossary(tmp_path, monkeypatch):
+    date_dir = tmp_path / "Videos" / "26730839" / "2026-07-02"
+    _write(date_dir / "sources" / "s.mp4", b"src\n")
+    # No lidousha setup markers; one dense singing run => primary selector empty.
+    blocks = []
+    cursor = 50_000
+    for index in range(18):
+        start = cursor
+        end = cursor + 5_200
+
+        def _ts(ms):
+            h, rem = divmod(ms, 3_600_000)
+            m, rem = divmod(rem, 60_000)
+            s, msec = divmod(rem, 1_000)
+            return f"{h:02d}:{m:02d}:{s:02d},{msec:03d}"
+
+        blocks.append(f"{index + 1}\n{_ts(start)} --> {_ts(end)}\n江湖难测侠骨柔情红颜梦第{index}句\n")
+        cursor += 6_200
+    source_srt = _write(date_dir / "sources" / "s.srt", "\n".join(blocks))
+    lexicon_path = _write(
+        tmp_path / "term_lexicon.json",
+        json.dumps({"schema_version": "lidousha-term-lexicon.v1", "overrides": [{"canonical": "kmx", "aliases": ["天不熊"]}]}),
+    )
+    monkeypatch.setenv("VTUBER_SLICE_TERM_LEXICON", str(lexicon_path))
+    monkeypatch.setattr(daemon, "_probe_duration", lambda path: 200.0)
+
+    routes, summary = daemon._full_session_live_source_routes(date_dir, room_id="26730839")
+
+    assert summary["status"] == "SELECTED"
+    assert summary["selector_stage"] == "fallback_recall"
+    assert routes
+    job = routes[0].source_context_job
+    assert job["selector_stage"] == "fallback_recall"
+    assert job["glossary_path"] == str(lexicon_path.resolve())
+    assert len(job["glossary_sha256"]) == 64

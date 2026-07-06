@@ -1,0 +1,21 @@
+{
+  "schema_version": "cleanup-manifest.v1",
+  "date": "2026-07-03",
+  "host": "free",
+  "target": "/opt/bilive/jingting_jobs/22966160/2026-06-29",
+  "size": "94G",
+  "job_dir_count": 7617,
+  "reason": "runaway jingting retry storm on 2026-06-29: the daemon re-created a fresh timestamped job dir (with a full media copy) roughly every minute for the same slices (e.g. 1163s_danmaku... x613, 1502s_danmaku... x611). Scratch dirs only; the durable jingting outputs (14 x .jingting.srt/.manifest/.done) are safely written back to the cloud slice dir /app/Videos/22966160/2026-06-29. Disk hit 100% and blocked all new agy jobs (mkdir: No space left on device).",
+  "verification_before_delete": {
+    "durable_jingting_srt_count_in_slice_dir": 14,
+    "disk_usage_before": "394G/394G (100%)"
+  },
+  "retry_storm_top_offenders": [
+    "1163s_danmaku_22966160_2026-06-29-22-35-01 x613",
+    "1502s_danmaku_22966160_2026-06-29-21-35-13 x611",
+    "1713s_danmaku_22966160_2026-06-29-22-05-02 x609",
+    "1629s_hybrid_22966160_2026-06-29-22-35-01 x607",
+    "138s_semantic_22966160_2026-06-29-22-35-01 x606"
+  ],
+  "follow_up": "the jingting daemon needs a retry cap / dedup guard so one stuck slice cannot mint thousands of job dirs with full media copies; also periodic scratch cleanup for jingting_jobs"
+}

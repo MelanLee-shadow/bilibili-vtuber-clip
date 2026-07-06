@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""Produce a finished Li Dousha talk-slice package from explicit window specs.
+
+This is the standard "圈中候选→出成品" driver (Ivan 2026-07-04). Its core
+contract is the TOPIC-CLOSURE boundary rule: a clip must end where the topic
+lands, on a COMPLETE sentence — never mid-sentence, never mid-story.
+
+Flow: remote accurate piece cuts (supports cross-segment stitching) → local
+concat → fresh whole-window transcription (glossary+danmaku+screen text) →
+sentence-snap the final end to a transcription cue boundary near the semantic
+target (fail closed if none) → VAD boundary audit (speech island crossing the
+cut is recorded; a cut not on a cue boundary is refused) → final accurate cut
+→ VAD-sanitized subtitles → burn → title/cover staging → flat delivery copy
+to lidousha/<date>/.
+
+Spec JSON:
+{
+  "candidate_id": "...",
+  "date": "2026-07-02",
+  "output_root": "reports/.../finals",
+  "delivery_name": "买弹幕梗当场拆台",
+  "given_title": null,                      # Ivan-given title is verbatim-final
+  "lead_pad_ms": 300,
+  "pieces": [                                # concatenated in order
+    {"remote_media": "<abs path on free>", "start_ms": ..., "end_ms": ...,
+     "danmaku_xml_local": "<local path>"}
+  ],
+  "semantic_end_ms": <absolute ms in the LAST piece's segment timeline>
+}
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.run_auto_review_shadow_pipeline import (
+    _accurate_reencode_recut_command,
+    _burn_preview_subtitles,
+    _sha256,
+    _stage_publish_draft,
+    _write_source_range_srt,
+)
+from scripts.run_full_session_selector_cpa_shadow import (
+    _build_aggregate_asr_transcriber,
+    _build_ssh_agy_transcribe_runner,
+)
+from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.llm_client import LlmConfig, build_llm_call
+from src.autoslice.review_evidence import SourceCue
+from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sanitize_cue_timing
+
+SNAP_BEFORE_MS = 6_000
+SNAP_AFTER_MS = 9_000
+START_SNAP_MS = 2_500
+TAIL_PAD_MS = 400
+LEAD_AIR_MS = 250
+REFINE_IF_OFF_BY_MS = 2_500
+REFINE_IF_CUE_LONGER_MS = 10_000
+
+
+def snap_end_to_sentence(cue_ends_ms: list[int], target_ms: int) -> int | None:
+    """Nearest transcription cue end to the semantic target — the cut must sit
+    on a complete-sentence boundary or nowhere."""
+
+    candidates = [end for end in cue_ends_ms if target_ms - SNAP_BEFORE_MS <= end <= target_ms + SNAP_AFTER_MS]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda end: abs(end - target_ms))
+
+
+def snap_start_to_sentence(cue_starts_ms: list[int], target_ms: int) -> int | None:
+    """Nearest sentence START to the intended opening — the clip must open on
+    a complete sentence, with a little lead air, or nowhere."""
+
+    candidates = [s for s in cue_starts_ms if abs(s - target_ms) <= START_SNAP_MS]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda s: abs(s - target_ms))
+
+
+def needs_tail_refinement(cues, *, snapped_end: int | None, target_ms: int) -> bool:
+    """A run-on cue straddling the target, or a snap far off target, means the
+    coarse cue grid cannot place the closure — do a fine micro-pass."""
+
+    if snapped_end is None or abs(snapped_end - target_ms) > REFINE_IF_OFF_BY_MS:
+        return True
+    straddling = next((c for c in cues if c.start_ms < target_ms < c.end_ms), None)
+    return bool(straddling and (straddling.end_ms - straddling.start_ms) > REFINE_IF_CUE_LONGER_MS)
+
+
+def boundary_audit(spans, *, start_ms: int, cut_ms: int, start_snapped: bool, end_snapped: bool) -> dict:
+    """Both cuts must sit on sentence boundaries; the audio at each cut is
+    recorded honestly (speech flowing through a sentence-boundary cut is
+    allowed, an unsnapped cut is not)."""
+
+    crossing = next((s for s in spans if s.start_ms < cut_ms < s.end_ms), None)
+    verdict = "ok_sentence_boundary_cut"
+    if not start_snapped:
+        verdict = "start_not_on_sentence_boundary"
+    elif not end_snapped:
+        verdict = "end_not_on_sentence_boundary"
+    return {
+        "start_on_sentence_boundary": start_snapped,
+        "end_on_sentence_boundary": end_snapped,
+        "end_cut_inside_speech_island": bool(crossing),
+        "end_island_continues_ms": (crossing.end_ms - cut_ms) if crossing else 0,
+        "verdict": verdict,
+    }
+
+
+def run(cmd: list[str], *, timeout: int = 3600) -> None:
+    completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+    if completed.returncode != 0:
+        raise RuntimeError(f"{cmd[0]} failed rc={completed.returncode}: {completed.stderr[-400:]}")
+
+
+def ffprobe_duration_ms(path: Path) -> int:
+    completed = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return int(float(completed.stdout.strip()) * 1000)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--spec", type=Path, required=True)
+    parser.add_argument("--ssh-host", default="free")
+    parser.add_argument(
+        "--substrate",
+        choices=("aggregate_asr", "agy_fresh"),
+        default="aggregate_asr",
+        help="subtitle substrate: aggregate_asr = free ASR (bcut/jianying, accurate ms timeline) + text-only correction (default); agy_fresh = legacy agy whole-window transcription.",
+    )
+    parser.add_argument(
+        "--correct",
+        choices=("bcut_agy_cpa", "cpa", "agy", "none"),
+        default="bcut_agy_cpa",
+        help="correction: bcut_agy_cpa = BCUT draft + AGY refine (hears audio) + CPA reconcile (default, best quality); cpa = CPA text-only (fast, blind to audio); agy = AGY refine only; none = raw BCUT.",
+    )
+    parser.add_argument(
+        "--screen-text",
+        action="store_true",
+        help="cpa correct only: also feed agy-extracted on-screen text (superchat cards/titles) to CPA. Off by default — the glossary is the reliable authority for known names; agy vision on stylized cards is unreliable and can override the glossary. Use only when a clip's meaning hinges on on-screen text NOT yet in the glossary.",
+    )
+    args = parser.parse_args(argv)
+    spec = json.loads(args.spec.read_text(encoding="utf-8"))
+
+    cid = spec["candidate_id"]
+    out_root = Path(spec["output_root"]) / cid
+    out_root.mkdir(parents=True, exist_ok=True)
+    host = args.ssh_host
+
+    # 1. Remote accurate piece cuts (production encode params), pull local.
+    piece_paths: list[Path] = []
+    for index, piece in enumerate(spec["pieces"]):
+        local = out_root / f"piece_{index}_{piece['start_ms']}_{piece['end_ms']}.mp4"
+        if not local.exists():
+            remote_tmp = f"/tmp/produce_{cid}_{index}.mp4"
+            cmd = _accurate_reencode_recut_command(
+                source_video=Path(piece["remote_media"]),
+                output_media=Path(remote_tmp),
+                start_ms=piece["start_ms"],
+                duration_ms=piece["end_ms"] - piece["start_ms"],
+            )
+            run(["ssh", host, " ".join(shlex.quote(str(part)) for part in cmd)], timeout=3600)
+            run(["scp", "-q", f"{host}:{remote_tmp}", str(local)], timeout=1800)
+            run(["ssh", host, f"rm -f {shlex.quote(remote_tmp)}"], timeout=60)
+        piece_paths.append(local)
+    durations = [ffprobe_duration_ms(p) for p in piece_paths]
+
+    padded = out_root / f"padded_{spec['pieces'][0]['start_ms']}.mp4"
+    if len(piece_paths) == 1:
+        if not padded.exists():
+            run(["cp", str(piece_paths[0]), str(padded)])
+    elif not padded.exists():
+        concat_list = out_root / "concat.txt"
+        concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in piece_paths), encoding="utf-8")
+        run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_list), "-c", "copy", str(padded)])
+    padded_dur = ffprobe_duration_ms(padded)
+
+    # 2. Danmaku merged onto the concat timeline.
+    merged: list[DanmakuItem] = []
+    offset = 0
+    for piece, dur in zip(spec["pieces"], durations):
+        xml = piece.get("danmaku_xml_local")
+        if xml and Path(xml).is_file():
+            for item in load_danmaku_xml(Path(xml)):
+                rel = item.offset_ms - piece["start_ms"]
+                if -1_000 <= rel <= dur + 1_000:
+                    merged.append(DanmakuItem(offset_ms=offset + max(0, rel), text=item.text))
+        offset += dur
+    merged.sort(key=lambda item: item.offset_ms)
+
+    # 3. Fresh transcription of the padded window.
+    if args.substrate == "aggregate_asr":
+        transcriber = _build_aggregate_asr_transcriber(
+            host, danmaku_items=merged or None, window_start_ms=0, source_video=padded, correct=args.correct, screen_text=args.screen_text
+        )
+    else:
+        transcriber = _build_ssh_agy_transcribe_runner(host, danmaku_items=merged or None, window_start_ms=0)
+    vad = build_ssh_silero_vad_provider(host)
+    spans = vad(padded, 0, padded_dur)
+    srt_text = transcriber(padded, [(s.start_ms, s.end_ms) for s in spans])
+    (out_root / "padded.fresh.srt").write_text(srt_text, encoding="utf-8")
+    cues = [c for c in parse_srt_cues(srt_text) if c.text.strip()]
+    if len(cues) < 3:
+        raise SystemExit("FRESH_TRANSCRIPTION_TOO_SPARSE")
+
+    # 4a. Sentence-snap the START (the clip must open on a sentence).
+    first_piece = spec["pieces"][0]
+    target_start_rel = spec.get("semantic_start_ms", first_piece["start_ms"]) - first_piece["start_ms"]
+    snapped_start = snap_start_to_sentence([c.start_ms for c in cues], target_start_rel)
+    final_start = max(0, (snapped_start if snapped_start is not None else target_start_rel) - LEAD_AIR_MS)
+
+    # 4b. Sentence-snap the END; a run-on cue near the closure triggers a
+    #     fine-grained micro re-transcription of the tail so the closure
+    #     sentence gets its own boundary.
+    last_piece = spec["pieces"][-1]
+    target_rel = sum(durations[:-1]) + (spec["semantic_end_ms"] - last_piece["start_ms"])
+    snapped = snap_end_to_sentence([c.end_ms for c in cues], target_rel)
+    refinement_used = False
+    if needs_tail_refinement(cues, snapped_end=snapped, target_ms=target_rel):
+        refinement_used = True
+        refine_start = max(0, target_rel - 20_000)
+        refine_end = min(padded_dur, target_rel + 15_000)
+        tail_clip = out_root / "tail_refine.mp4"
+        run(_accurate_reencode_recut_command(source_video=padded, output_media=tail_clip, start_ms=refine_start, duration_ms=refine_end - refine_start))
+        tail_srt = transcriber(tail_clip, None)
+        (out_root / "tail_refine.fresh.srt").write_text(tail_srt, encoding="utf-8")
+        fine = [c for c in parse_srt_cues(tail_srt) if c.text.strip()]
+        fine_lifted = [
+            type(c)(index=c.index, start_ms=c.start_ms + refine_start, end_ms=c.end_ms + refine_start, text=c.text)
+            for c in fine
+        ]
+        snapped = snap_end_to_sentence([c.end_ms for c in fine_lifted], target_rel)
+        if snapped is not None:
+            # Splice: fine cues replace coarse cues inside the refined window.
+            cues = [c for c in cues if c.end_ms <= refine_start or c.start_ms >= refine_end] + fine_lifted
+            cues.sort(key=lambda c: c.start_ms)
+    if snapped is None:
+        raise SystemExit(
+            f"NO_SENTENCE_BOUNDARY_NEAR_TARGET: target={target_rel}ms; nearest cue ends="
+            f"{sorted((c.end_ms for c in cues), key=lambda e: abs(e - target_rel))[:3]}"
+        )
+    final_end = min(padded_dur, snapped + TAIL_PAD_MS)
+    closure_cue = next(c for c in cues if c.end_ms == snapped)
+
+    audit = boundary_audit(
+        spans,
+        start_ms=final_start,
+        cut_ms=final_end,
+        start_snapped=snapped_start is not None,
+        end_snapped=True,
+    )
+    audit.update(
+        {
+            "semantic_start_target_rel_ms": target_start_rel,
+            "snapped_sentence_start_ms": snapped_start,
+            "final_start_ms": final_start,
+            "opening_sentence": next((c.text for c in cues if c.start_ms == snapped_start), None),
+            "semantic_target_rel_ms": target_rel,
+            "snapped_sentence_end_ms": snapped,
+            "final_end_ms": final_end,
+            "closure_sentence": closure_cue.text,
+            "tail_refinement_used": refinement_used,
+        }
+    )
+    (out_root / f"{cid}.boundary_audit.json").write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    if audit["verdict"] != "ok_sentence_boundary_cut":
+        raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
+
+    # 5. Final accurate cut + VAD-sanitized subtitles rebased to the cut.
+    recut_dir = out_root / "replacement_recuts"
+    recut_dir.mkdir(exist_ok=True)
+    media_path = recut_dir / f"{cid}.recut.mp4"
+    run(_accurate_reencode_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
+    source_cues = [
+        SourceCue(f"fresh_{i:04d}", max(c.start_ms, final_start), min(c.end_ms, final_end), c.text.strip(), "zh", "speech", 1.0)
+        for i, c in enumerate(cues, start=1)
+        if c.start_ms < final_end and c.end_ms > final_start
+    ]
+    sanitized, timing_qa = sanitize_cue_timing(source_cues, spans, window_start_ms=final_start, window_end_ms=final_end)
+    subtitle_path = media_path.with_suffix(".srt")
+    _write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
+    (recut_dir / f"{cid}.recut.timing_qa.json").write_text(
+        json.dumps(timing_qa, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    record: dict = {
+        "status": "MATERIALIZED",
+        "media_path": str(media_path),
+        "subtitle_path": str(subtitle_path),
+        "subtitle_source": "fresh_agy_transcription",
+        "start_ms": 0,
+        "end_ms": final_end - final_start,
+        "duration_ms": final_end - final_start,
+        "artifact_hashes": {
+            "video_sha256": "sha256:" + _sha256(media_path),
+            "subtitle_sha256": "sha256:" + _sha256(subtitle_path),
+        },
+        "subtitle_timing_qa": timing_qa,
+        "boundary_audit": audit,
+    }
+    record = _burn_preview_subtitles(record, run_ffmpeg=True)
+
+    # 6. Title (Ivan-given verbatim, else style-asset LLM) + cover + delivery.
+    given_title = spec.get("given_title")
+    # Title LLM only when no manual title (iron rule: manual titles pass through
+    # untouched). Cover art-direction LLM ALWAYS runs (Ivan 2026-07-04): even with
+    # a hand-given title the cover still benefits from persona-fit expression /
+    # layout / background; it is fail-open, so it never blocks.
+    title_llm = None
+    if not given_title:
+        title_llm = build_llm_call(
+            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=180.0)
+        )
+    art_direction_llm = build_llm_call(
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=180.0)
+    )
+    record = _stage_publish_draft(
+        record,
+        candidate_id=cid,
+        title=given_title or cid,
+        cues=sanitized,
+        run_ffmpeg=True,
+        title_llm_call=title_llm,
+        art_direction_llm_call=art_direction_llm,
+    )
+    staging = record.get("publish_staging") or {}
+    json.dump(record, open(recut_dir / f"{cid}.record.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2, sort_keys=True)
+
+    delivery = ROOT / "lidousha" / spec["date"]
+    delivery.mkdir(parents=True, exist_ok=True)
+    burned = next(recut_dir.glob(f"{cid}.recut.burned-final-*.mp4"), None)
+    name = spec.get("delivery_name") or cid
+    if burned:
+        run(["cp", str(burned), str(delivery / f"{name}.mp4")])
+    cover = staging.get("cover_path")
+    if cover and Path(cover).is_file():
+        run(["cp", str(cover), str(delivery / f"{name}.cover.png")])
+
+    print(json.dumps(
+        {
+            "candidate_id": cid,
+            "final_end_ms": final_end,
+            "closure_sentence": closure_cue.text,
+            "boundary_verdict": audit["verdict"],
+            "timing_qa": timing_qa.get("counts"),
+            "cover_status": staging.get("cover_status"),
+            "title": staging.get("title"),
+            "delivery": str(delivery / f"{name}.mp4"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    ))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

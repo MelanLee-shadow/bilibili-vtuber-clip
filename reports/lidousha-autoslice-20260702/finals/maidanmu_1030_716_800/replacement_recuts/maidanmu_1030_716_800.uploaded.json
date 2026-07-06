@@ -1,0 +1,15 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-04 (free host)",
+  "bvid": "BV1WZMA6zEzE",
+  "aid": 116862738243169,
+  "title": "【李豆沙】主播大大方方承认买弹幕，甚至要吃回扣",
+  "tid": 21,
+  "tag": "虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP",
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李切片(season 8383206/section 9320779, add code 0)",
+  "substrate": "BCUT聚合ASR+CPA词表校正",
+  "tool": "biliup-rs",
+  "authorized_by": "Ivan 2026-07-04 给定标题即授权"
+}

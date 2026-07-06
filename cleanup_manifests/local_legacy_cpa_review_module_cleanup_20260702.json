@@ -1,0 +1,17 @@
+{
+  "schema": "local-cleanup-manifest.v1",
+  "created_at": "2026-07-02T00:00:00Z",
+  "reason": "P1.6 of docs/plan-2026-07-01-critic-review-and-path-to-unattended.md: collapse the legacy CPA loader onto the hash-binding module. src/autoslice/cpa_semantic_review.py validated the same cpa-semantic-review-response.v1 schema as cpa_semantic_qa.py but never checked request_sha256 binding; the shadow pipeline's response-only fallback that used it now fails closed with CPA_SEMANTIC_QA_REQUEST_REQUIRED instead. Git history retains the content (repo initialized 2026-07-01).",
+  "deleted": [
+    {
+      "path": "src/autoslice/cpa_semantic_review.py",
+      "size_lines": 183,
+      "sha256": "3d8690609b771f17c6347bb8fa2067e2c286ccc7cd74d8e372099ce0d0098951"
+    },
+    {
+      "path": "tests/test_cpa_semantic_review.py",
+      "size_lines": 103,
+      "sha256": "2bed0fad5410aa5508e57f322170022ad3bf721fbc4e58c039681c62062556ce"
+    }
+  ]
+}

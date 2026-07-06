@@ -119,3 +119,56 @@ def test_filters_open_loops_and_overlapping_duplicates_while_classifying_song_wi
     assert [candidate.boundary.action for candidate in candidates] == [DecisionAction.AUTO_RECUT, DecisionAction.AUTO_UPLOAD]
     assert candidates[0].anchor.candidate_id == "fullsong_0_40000"
     assert candidates[1].anchor.candidate_id == "fullctx_90000_124000"
+
+
+def test_fallback_recall_surfaces_singing_run_when_primary_finds_nothing():
+    from src.autoslice.full_session_candidate_selector import (
+        select_fallback_session_candidates,
+        select_full_session_candidates,
+    )
+
+    # Shaped like the real 2026-07-02 live capture of room 26730839: chat with
+    # no lidousha setup markers, then a dense ~110s singing run.
+    cues = []
+    chat = [(0, 1200, "你却开篇"), (27020, 28300, "本体的神乃上大"), (32060, 33660, "什么时候玩摄氏天下"), (44560, 45760, "喜欢就好")]
+    for index, (start, end, text) in enumerate(chat):
+        cues.append(SourceCue(f"chat-{index}", start, end, text))
+    cursor = 50_760
+    for index in range(18):
+        cues.append(SourceCue(f"sing-{index}", cursor, cursor + 5_200, f"江湖难测侠骨柔情红颜梦第{index}句"))
+        cursor += 6_200
+    primary = select_full_session_candidates(cues)
+    fallback = select_fallback_session_candidates(cues)
+
+    assert primary == []
+    assert fallback, "fallback recall must surface the singing run"
+    candidate = fallback[0]
+    assert candidate.content_type_hint == "song"
+    assert candidate.anchor.anchor_start_ms == 50_760
+    assert candidate.anchor.anchor_end_ms == cursor - 6_200 + 5_200
+    assert "SONG_BOUNDARY_REDO_REQUIRED" in candidate.boundary.reason_codes
+
+
+def test_fallback_recall_also_surfaces_talk_windows_outside_song_runs():
+    from src.autoslice.full_session_candidate_selector import select_fallback_session_candidates
+
+    # Real-capture shape: chat with a punchline, then a singing run.
+    cues = [
+        SourceCue("chat-0", 0, 4_000, "什么时候玩摄氏天下"),
+        SourceCue("chat-1", 5_000, 9_500, "其实我是觉得他那个游戏"),
+        SourceCue("chat-2", 9_700, 14_500, "价格有点贵哈哈哈"),
+        SourceCue("chat-3", 15_000, 18_000, "喜欢就好"),
+    ]
+    cursor = 40_000
+    for index in range(18):
+        cues.append(SourceCue(f"sing-{index}", cursor, cursor + 5_200, f"江湖难测侠骨柔情红颜梦第{index}句"))
+        cursor += 6_200
+
+    fallback = select_fallback_session_candidates(cues, max_candidates=3)
+
+    hints = [candidate.content_type_hint for candidate in fallback]
+    assert "song" in hints
+    assert "talk" in hints
+    talk = next(candidate for candidate in fallback if candidate.content_type_hint == "talk")
+    assert talk.anchor.anchor_start_ms == 0
+    assert "哈哈" in talk.text_preview or "喜欢就好" in talk.text_preview

@@ -101,6 +101,28 @@ def test_missing_punchline_or_reaction_gets_low_payoff_score():
     assert decision_for(evidence).action in {DecisionAction.DROP, DecisionAction.AUTO_RECUT}
 
 
+def test_hooky_title_alone_cannot_satisfy_payoff():
+    evidence = analyze_content_evidence(
+        candidate_id="title-only-payoff",
+        cues=[cue("setup", 0, 3, "我跟你们说一个事"), cue("body", 4, 8, "这个东西就是这样")],
+        title="【李豆沙】结果最后直接笑疯了哈哈哈",
+    )
+
+    assert evidence.payoff_score < 0.90
+    assert "PAYOFF_MISSING" in evidence.evidence_gaps
+
+
+def test_payoff_in_cue_text_still_scores_high_regardless_of_title():
+    evidence = analyze_content_evidence(
+        candidate_id="body-payoff",
+        cues=[cue("setup", 0, 3, "我跟你们说一个事"), cue("payoff", 4, 8, "结果她直接笑了 哈哈哈")],
+        title="普通说明片段",
+    )
+
+    assert evidence.payoff_score >= 0.90
+    assert "PAYOFF_MISSING" not in evidence.evidence_gaps
+
+
 def test_japanese_or_known_song_lyrics_unresolved_keeps_alignment_not_ready():
     evidence = analyze_content_evidence(
         candidate_id="jp-song",

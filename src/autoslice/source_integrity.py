@@ -49,9 +49,10 @@ class SourceIntegrityIssue:
     message: str
     range: TimeRange | None = None
     segment_path: str | None = None
+    severity: str = "BLOCK"
 
     def to_manifest(self) -> dict[str, object]:
-        data: dict[str, object] = {"code": self.code, "message": self.message}
+        data: dict[str, object] = {"code": self.code, "message": self.message, "severity": self.severity}
         if self.range is not None:
             data["range"] = self.range.to_manifest()
         if self.segment_path is not None:
@@ -166,15 +167,32 @@ def build_source_range_ledger(
         if observed.duration_ms > 0:
             observed_ranges.append(observed)
 
+    merged_ranges = _merge_ranges(observed_ranges, max_gap_ms=max_gap_ms)
+    missing_ranges = _missing_ranges(expected_range, merged_ranges, max_gap_ms=max_gap_ms)
+    coverage_complete = not missing_ranges
+
+    for segment in ordered:
+        observed = TimeRange(max(expected_start_ms, segment.start_ms), min(expected_end_ms, segment.end_ms))
         if not segment.probed_ok:
+            # An unprobeable file (e.g. raw fmp4 .m4s sidecar) is harmless only when a
+            # probed sibling segment records the same interval; otherwise it may hold
+            # unique content and must block.
+            has_probed_coverage = _has_redundant_probed_coverage(segment, ordered, max_gap_ms=max_gap_ms)
+            degraded_severity = "WARN" if has_probed_coverage else "BLOCK"
             issues.append(
                 SourceIntegrityIssue(
                     code="MEDIA_PROBE_FAILED",
-                    message="Media segment could not be probed successfully.",
+                    message="Media segment could not be probed successfully."
+                    + (" Probed sibling coverage exists; treated as a redundant sidecar." if has_probed_coverage else ""),
                     range=observed if observed.duration_ms else segment.range,
                     segment_path=segment.path,
+                    severity=degraded_severity,
                 )
             )
+        else:
+            # A verified-but-tiny segment (recorder-restart stub) is only evidence of
+            # loss when the session coverage is actually incomplete.
+            degraded_severity = "WARN" if coverage_complete else "BLOCK"
         if segment.duration_ms < min_segment_duration_ms:
             issues.append(
                 SourceIntegrityIssue(
@@ -182,6 +200,7 @@ def build_source_range_ledger(
                     message="Media segment duration is too short to cover a live recording interval reliably.",
                     range=observed if observed.duration_ms else segment.range,
                     segment_path=segment.path,
+                    severity=degraded_severity,
                 )
             )
         if segment.size_bytes < min_segment_size_bytes:
@@ -191,11 +210,9 @@ def build_source_range_ledger(
                     message="Media segment is suspiciously small for a live recording interval.",
                     range=observed if observed.duration_ms else segment.range,
                     segment_path=segment.path,
+                    severity=degraded_severity,
                 )
             )
-
-    merged_ranges = _merge_ranges(observed_ranges, max_gap_ms=max_gap_ms)
-    missing_ranges = _missing_ranges(expected_range, merged_ranges, max_gap_ms=max_gap_ms)
     for missing in missing_ranges:
         issues.append(
             SourceIntegrityIssue(
@@ -224,7 +241,8 @@ def build_source_range_ledger(
                 )
             )
 
-    compensation_required = bool(missing_ranges or issues)
+    blocking_issues = [issue for issue in issues if issue.severity != "WARN"]
+    compensation_required = bool(missing_ranges or blocking_issues)
     can_use_local_source = not compensation_required
     replay_probe_required = compensation_required
     return SourceRangeLedger(
@@ -352,6 +370,28 @@ def plan_bilibili_replay_download_commands(
         status="READY",
         commands=tuple(commands),
     )
+
+
+def _has_redundant_probed_coverage(
+    segment: MediaSegmentObservation,
+    segments: Sequence[MediaSegmentObservation],
+    *,
+    max_gap_ms: int,
+) -> bool:
+    probed_ranges: list[TimeRange] = []
+    for other in segments:
+        if other is segment or not other.probed_ok or other.duration_ms <= 0:
+            continue
+        if segment.duration_ms <= 0:
+            if abs(other.start_ms - segment.start_ms) <= max_gap_ms:
+                return True
+            continue
+        probed_ranges.append(other.range)
+
+    if segment.duration_ms <= 0:
+        return False
+    merged = _merge_ranges(probed_ranges, max_gap_ms=max_gap_ms)
+    return not _missing_ranges(segment.range, merged, max_gap_ms=max_gap_ms)
 
 
 def _format_ms(value: int) -> str:

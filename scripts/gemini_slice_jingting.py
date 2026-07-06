@@ -50,10 +50,32 @@ AGY_TIMEOUT = os.environ.get("AGY_PRINT_TIMEOUT", "15m")
 JINGTING_JOB_ROOT = os.environ.get("JINGTING_JOB_ROOT", "/opt/bilive/jingting_jobs")
 
 _GLOSSARY_ENV = os.environ.get("LIDOUSHA_GLOSSARY")
+# Repo-vendored glossary is the source of truth (sync it to free with
+# scripts/sync_lidousha_assets.sh); host paths keep the production daemon
+# working.  Without the repo path the local pipeline silently ran jingting
+# with an EMPTY glossary (the 小寺/小室-class name errors).
+_REPO_GLOSSARY = str(Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "glossary.txt")
 GLOSSARY_PATHS = (
     [_GLOSSARY_ENV]
     if _GLOSSARY_ENV
-    else ["/opt/bilive/app/lidousha_glossary.txt", "/app/lidousha_glossary.txt"]
+    else [_REPO_GLOSSARY, "/opt/bilive/app/lidousha_glossary.txt", "/app/lidousha_glossary.txt"]
+)
+# Subtitle correction PRINCIPLES (the "how to correct" rules) live in a single
+# authoritative file; glossary.txt is now the TERM canon only.  glossary()
+# concatenates both so every correction prompt gets the full principle set from
+# one source — edit principles in one place, all prompts stay in sync.
+_PRINCIPLES_ENV = os.environ.get("LIDOUSHA_SUBTITLE_PRINCIPLES")
+_REPO_PRINCIPLES = str(
+    Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "subtitle_correction_principles.md"
+)
+PRINCIPLES_PATHS = (
+    [_PRINCIPLES_ENV]
+    if _PRINCIPLES_ENV
+    else [
+        _REPO_PRINCIPLES,
+        "/opt/bilive/app/lidousha_subtitle_principles.md",
+        "/app/lidousha_subtitle_principles.md",
+    ]
 )
 SLICE_RX_TEMPLATE = r"\d+s_.*_%s_.*\.(flv|mp4)$"
 SRT_TIME_RX = re.compile(
@@ -91,8 +113,8 @@ def gemini_key() -> str:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY_2") or ""
 
 
-def glossary() -> str:
-    for path in GLOSSARY_PATHS:
+def _read_first(paths) -> str:
+    for path in paths:
         if not path:
             continue
         try:
@@ -100,6 +122,26 @@ def glossary() -> str:
         except OSError:
             continue
     return ""
+
+
+def subtitle_principles() -> str:
+    """The authoritative subtitle-correction principle text (see
+    assets/lidousha/subtitle_correction_principles.md)."""
+    return _read_first(PRINCIPLES_PATHS)
+
+
+def glossary() -> str:
+    """Term canon + subtitle-correction principles, concatenated.
+
+    Callers get the full "what to write" (glossary.txt terms) AND "how to
+    correct" (subtitle_correction_principles.md) knowledge from a single call,
+    so no correction prompt has to re-hardcode the rules.
+    """
+    terms = _read_first(GLOSSARY_PATHS)
+    principles = subtitle_principles()
+    if terms and principles:
+        return f"{terms.rstrip()}\n\n{principles.strip()}\n"
+    return terms or principles
 
 
 def find_srt(slice_path: str | Path) -> str | None:
@@ -286,9 +328,20 @@ def remux_for_agy(slice_path: Path, job_dir: Path) -> Path:
     )
 
 
-def agy_prompt(srt_text: str) -> str:
+def agy_prompt(srt_text: str, *, danmaku_lines: list[str] | None = None) -> str:
     glossary_text = glossary().strip()
     glossary_block = f"\nGlossary and style rules:\n{glossary_text}\n" if glossary_text else ""
+    danmaku_block = ""
+    if danmaku_lines:
+        joined = "\n".join(danmaku_lines)
+        danmaku_block = f"""
+Viewer danmaku timeline (mm:ss relative to clip start, shown on screen as
+rolling text). TEMPORAL PAIRING RULE: a danmaku at time T is a strong wording
+candidate only for cues NEAR T (within ~10s) — she reads/reacts to danmaku the
+moment they appear; danmaku far from a cue's time (>20s) must not be borrowed
+for that cue. Same for any other on-screen text you can read in the frame:
+{joined}
+"""
     return f"""You are refining subtitles for a Li Dousha Chinese VTuber clip.
 
 Use only these local files in this job directory:
@@ -310,8 +363,17 @@ Task:
 1. Watch/listen to input.mp4.
 2. Use draft.srt as the timing authority.
 3. Correct only subtitle text: mishearings, names, memes, punctuation, and natural Chinese wording.
-4. Preserve Li Dousha tone, streamer-specific terms, and uncertainty when audio is unclear.
-5. Write a complete valid SRT to relative file output.srt.
+4. READ the on-screen text in the video — rolling viewer danmaku, image
+   captions, UI labels, titles the streamer is looking at. Most of her speech
+   reacts to on-screen content or reads danmaku aloud, so on-screen text is
+   first-class evidence for the correct words (names, memes, homophones).
+5. Preserve Li Dousha tone, streamer-specific terms, and uncertainty when audio is unclear.
+6. Make MINIMAL edits. If a cue's audio is unclear, masked by music, or you cannot
+   clearly hear every word, KEEP the draft text unchanged — never rewrite a whole
+   line into a different-sounding sentence from guesswork. A wrong draft kept is
+   recoverable; a confident hallucination is not. On-screen text may justify a
+   correction only when it matches what you hear.
+7. Write a complete valid SRT to relative file output.srt.{danmaku_block}
 
 Output requirement:
 - output.srt must contain SRT only.

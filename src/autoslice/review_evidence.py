@@ -8,23 +8,6 @@ from src.autoslice.auto_review import CandidateReview, JingtingProvenance
 
 REVIEW_EVIDENCE_SCHEMA_VERSION = "slice-review-evidence.v1"
 
-_REQUIRED_FIELD_REASON_CODES: tuple[tuple[str, str], ...] = (
-    ("release_ready", "RELEASE_READY_MISSING"),
-    ("review_required_findings", "REVIEW_REQUIRED_FINDINGS_MISSING"),
-    ("foreground_song_overlap_seconds", "FOREGROUND_SONG_OVERLAP_MISSING"),
-    ("song_complete", "SONG_COMPLETENESS_MISSING"),
-    ("lyrics_alignment_ready", "LYRICS_ALIGNMENT_MISSING"),
-    ("start_boundary_score", "START_BOUNDARY_MISSING"),
-    ("end_boundary_score", "END_BOUNDARY_MISSING"),
-    ("standalone_score", "STANDALONE_MISSING"),
-    ("open_loop_count", "OPEN_LOOP_EVIDENCE_MISSING"),
-    ("payoff_score", "PAYOFF_MISSING_EVIDENCE"),
-    ("editorial_score", "EDITORIAL_SCORE_MISSING"),
-    ("duplicate_similarity", "DUPLICATE_SIMILARITY_MISSING"),
-    ("subtitle_alignment_p95_ms", "SUBTITLE_ALIGNMENT_MISSING"),
-    ("actual_cut_error_ms", "ACTUAL_CUT_ERROR_MISSING"),
-)
-
 
 @dataclass(frozen=True)
 class SourceCue:
@@ -100,6 +83,7 @@ def to_candidate_review(
     jingting_done: bool = True,
     recut_attempt: int = 0,
     max_recut_attempts: int = 2,
+    review_required: Mapping[str, object] | None = None,
 ) -> CandidateReview:
     """Convert normalized evidence to the existing fail-closed review contract."""
 
@@ -115,11 +99,22 @@ def to_candidate_review(
     # human/Jingting review-required artifact.  Mirroring here causes unrelated
     # gaps such as duplicate or render-QA evidence to be mislabeled as
     # JINGTING_REVIEW_REQUIRED.
+    # ``review_required`` is that explicit artifact: a present marker means the
+    # jingting reviewer flagged the candidate, so release_ready defaults to
+    # False even when the marker is malformed.
+    release_ready = True
+    review_required_findings: tuple[str, ...] = ()
+    if review_required is not None:
+        marker_release_ready = review_required.get("release_ready")
+        release_ready = marker_release_ready if isinstance(marker_release_ready, bool) else False
+        raw_findings = review_required.get("findings")
+        if isinstance(raw_findings, Sequence) and not isinstance(raw_findings, (str, bytes)):
+            review_required_findings = tuple(str(finding) for finding in raw_findings)
     return CandidateReview(
         candidate_id=evidence.candidate_id,
         jingting_done=jingting_done,
-        release_ready=True,
-        review_required_findings=(),
+        release_ready=release_ready,
+        review_required_findings=review_required_findings,
         foreground_song_overlap_seconds=evidence.foreground_song_overlap_seconds,
         song_complete=evidence.song_complete,
         lyrics_alignment_ready=evidence.lyrics_alignment_ready,
@@ -136,18 +131,6 @@ def to_candidate_review(
         max_recut_attempts=max_recut_attempts,
         jingting_provenance=jingting_provenance,
     )
-
-
-def required_evidence_gaps(evidence: ReviewEvidence) -> tuple[str, ...]:
-    gaps: list[str] = []
-    for field_name, reason_code in _REQUIRED_FIELD_REASON_CODES:
-        if field_name == "release_ready":
-            continue
-        if field_name == "review_required_findings":
-            continue
-        if getattr(evidence, field_name) is None:
-            gaps.append(reason_code)
-    return tuple(dict.fromkeys(gaps))
 
 
 def _drop_none(data: Mapping[str, object]) -> dict[str, object]:

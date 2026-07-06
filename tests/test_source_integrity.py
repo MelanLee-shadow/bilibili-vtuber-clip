@@ -57,6 +57,97 @@ def test_contiguous_valid_segments_do_not_need_replay_probe():
     assert ledger.issues == ()
 
 
+def test_unprobeable_redundant_sidecar_warns_without_replay_probe():
+    ledger = build_source_range_ledger(
+        room_id="22966160",
+        session_date="2026-07-01",
+        segments=[
+            MediaSegmentObservation(
+                path="raw-sidecar.m4s",
+                start_ms=0,
+                end_ms=0,
+                duration_ms=0,
+                size_bytes=3_369,
+                probed_ok=False,
+            ),
+            MediaSegmentObservation(
+                path="decoded-recording.flv",
+                start_ms=0,
+                end_ms=120_000,
+                duration_ms=120_000,
+                size_bytes=5_000_000,
+                probed_ok=True,
+            ),
+        ],
+        expected_start_ms=0,
+        expected_end_ms=120_000,
+    )
+
+    assert ledger.compensation_required is False
+    assert ledger.replay_probe_required is False
+    assert ledger.can_use_local_source is True
+    assert ledger.missing_ranges == ()
+    probe_issue = next(issue for issue in ledger.issues if issue.code == "MEDIA_PROBE_FAILED")
+    assert probe_issue.severity == "WARN"
+    assert probe_issue.to_manifest()["severity"] == "WARN"
+
+
+def test_unprobeable_segment_not_covered_by_sibling_still_blocks():
+    ledger = build_source_range_ledger(
+        room_id="22966160",
+        session_date="2026-07-01",
+        segments=[
+            MediaSegmentObservation(
+                path="possibly-unique.m4s",
+                start_ms=0,
+                end_ms=120_000,
+                duration_ms=120_000,
+                size_bytes=5_000_000,
+                probed_ok=False,
+            ),
+            MediaSegmentObservation(
+                path="short-sibling.flv",
+                start_ms=0,
+                end_ms=60_000,
+                duration_ms=60_000,
+                size_bytes=5_000_000,
+                probed_ok=True,
+            ),
+        ],
+        expected_start_ms=0,
+        expected_end_ms=120_000,
+    )
+
+    assert ledger.compensation_required is True
+    assert ledger.replay_probe_required is True
+    assert ledger.can_use_local_source is False
+    probe_issue = next(issue for issue in ledger.issues if issue.code == "MEDIA_PROBE_FAILED")
+    assert probe_issue.severity == "BLOCK"
+
+
+def test_tiny_restart_stub_warns_when_verified_coverage_is_complete():
+    ledger = build_source_range_ledger(
+        room_id="22966160",
+        session_date="2026-07-01",
+        segments=[
+            MediaSegmentObservation(path="a.flv", start_ms=0, end_ms=60_000, duration_ms=60_000, size_bytes=5_000_000),
+            MediaSegmentObservation(path="restart-stub.flv", start_ms=60_000, end_ms=64_000, duration_ms=4_000, size_bytes=3_369),
+            MediaSegmentObservation(path="b.flv", start_ms=64_000, end_ms=120_000, duration_ms=56_000, size_bytes=5_000_000),
+        ],
+        expected_start_ms=0,
+        expected_end_ms=120_000,
+        max_gap_ms=2_000,
+    )
+
+    assert ledger.compensation_required is False
+    assert ledger.replay_probe_required is False
+    assert ledger.can_use_local_source is True
+    assert ledger.missing_ranges == ()
+    issue_by_code = {issue.code: issue for issue in ledger.issues}
+    assert issue_by_code["MEDIA_SEGMENT_TOO_SHORT"].severity == "WARN"
+    assert issue_by_code["MEDIA_SEGMENT_TOO_SMALL"].severity == "WARN"
+
+
 def test_gap_between_segments_records_missing_source_range():
     ledger = build_source_range_ledger(
         room_id="22966160",

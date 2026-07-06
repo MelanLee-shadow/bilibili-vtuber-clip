@@ -1,0 +1,16 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-04 (free host)",
+  "bvid": "BV1ceMF6bESE",
+  "aid": 116860674641373,
+  "cid": 39644498906,
+  "title": "【李豆沙】熊猫头提醒你用电安全",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李切片(season 8383206/section 9320779, add code 0)",
+  "substrate": "BCUT聚合ASR+CPA词表校正",
+  "tool": "biliup-rs",
+  "authorized_by": "Ivan 2026-07-04 给定标题\"熊猫头提醒你用电安全\"即授权",
+  "note": "追溯补记(2026-07-05 复审): 当时误跑两次 biliup 产生重复稿 BV1WEMA6TES6, Ivan 已在创作中心手删; 本条为保留稿, state=0 开放浏览。"
+}

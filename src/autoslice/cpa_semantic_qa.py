@@ -17,9 +17,23 @@ DEFAULT_CHECKS_REQUESTED: tuple[str, ...] = (
     "terminology_correctness",
     "title_hook_quality",
     "unsafe_upload_risk",
+    "viewer_context_completeness",
 )
 CONNECTIVE_PREFIXES: tuple[str, ...] = ("然后", "所以", "但是", "因为", "结果", "接着", "后来", "而且", "不过")
 ALLOWED_REQUEST_CHECKS = frozenset(DEFAULT_CHECKS_REQUESTED)
+COMPLETE_SONG_SEMANTIC_WAIVED_REASONS = frozenset(
+    (
+        "CPA_SEMANTIC_INCOMPLETE",
+        "CONTEXT_DEPENDENCY_HIGH",
+        "NOT_INTERESTING",
+        "CPA_RELEASE_NOT_READY",
+        "CPA_REQUIRED_FIXES_MISSING",
+        "CPA_REASON_CODES_MISSING",
+        "VIEWER_CONTEXT_INCOMPLETE",
+    )
+)
+# Backward-compatible alias for callers/tests that used the more verbose name.
+COMPLETE_SONG_SEMANTIC_WAIVED_REASON_CODES = COMPLETE_SONG_SEMANTIC_WAIVED_REASONS
 
 
 @dataclass(frozen=True)
@@ -223,9 +237,7 @@ def _request_payload_with_expected_hash(request: CpaSemanticQaRequest) -> dict[s
     # this helper field; load_request_artifact ignores it and recomputes from
     # the stable request fields.
     payload["request_sha256"] = request.canonical_sha256()
-    response_contract = dict(_mapping(payload.get("response_contract")))
-    response_contract["expected_request_sha256"] = request.canonical_sha256()
-    payload["response_contract"] = response_contract
+    payload["response_contract"] = {"expected_request_sha256": request.canonical_sha256()}
     return payload
 
 
@@ -373,6 +385,7 @@ def evaluate_cpa_semantic_response_artifact(request: CpaSemanticQaRequest, respo
             "unsafe_upload_risk_score": float(payload["unsafe_upload_risk_score"]),
             "summary": _mapping(payload.get("evidence")).get("summary"),
             "provider": _mapping(payload.get("provider")).get("name"),
+            "viewer_context": dict(_mapping(_mapping(payload.get("metadata")).get("viewer_context"))),
         },
     }
     metadata = {
@@ -397,11 +410,81 @@ def apply_cpa_semantic_qa_to_review_evidence(
     evidence: ReviewEvidence,
     evaluation: CpaSemanticQaEvaluation,
 ) -> ReviewEvidence:
+    evaluation = _apply_complete_song_semantic_policy(evidence, evaluation)
     checks = tuple(evidence.checks) + (dict(evaluation.check),)
     metadata = dict(evidence.metadata)
     metadata["cpa_semantic_qa"] = dict(evaluation.metadata)
     evidence_gaps = tuple(dict.fromkeys(tuple(evidence.evidence_gaps) + tuple(evaluation.reason_codes)))
     return replace(evidence, checks=checks, metadata=metadata, evidence_gaps=evidence_gaps)
+
+
+def _apply_complete_song_semantic_policy(
+    evidence: ReviewEvidence,
+    evaluation: CpaSemanticQaEvaluation,
+) -> CpaSemanticQaEvaluation:
+    """Verified complete songs are form-gated, not "boring chat" gated.
+
+    CPA still owns terminology and upload-risk checks, but once the machine
+    evidence proves a foreground song is complete and lyric-aligned, semantic
+    reasons that only say "not interesting", "context-dependent", or generic
+    "not release ready" must not block the slice.  This encodes Ivan's product
+    rule: a complete song slice is not classified as boring/no-hook content.
+    """
+
+    if not _complete_song_ready(evidence):
+        return evaluation
+    original_reasons = tuple(evaluation.reason_codes)
+    waived = tuple(reason for reason in original_reasons if reason in COMPLETE_SONG_SEMANTIC_WAIVED_REASONS)
+    if not waived:
+        return evaluation
+    remaining = tuple(reason for reason in original_reasons if reason not in COMPLETE_SONG_SEMANTIC_WAIVED_REASONS)
+
+    check = dict(evaluation.check)
+    check["pass"] = not remaining
+    check["severity"] = "PASS" if not remaining else "BLOCK"
+    check["reason_codes"] = list(remaining)
+    check_evidence = dict(_mapping(check.get("evidence")))
+    check_evidence["complete_song_policy"] = {
+        "applied": True,
+        "waived_reason_codes": list(waived),
+        "remaining_reason_codes": list(remaining),
+        "basis": _complete_song_policy_basis(evidence),
+        "rules": _complete_song_policy_rules(),
+    }
+    check["evidence"] = check_evidence
+
+    metadata = dict(evaluation.metadata)
+    metadata["raw_response_reason_codes"] = list(original_reasons)
+    metadata["response_reason_codes"] = list(remaining)
+    metadata["complete_song_policy"] = {
+        "applied": True,
+        "waived_reason_codes": list(waived),
+        "remaining_reason_codes": list(remaining),
+        "basis": _complete_song_policy_basis(evidence),
+        "rules": _complete_song_policy_rules(),
+    }
+    return replace(evaluation, passed=not remaining, reason_codes=remaining, check=check, metadata=metadata)
+
+
+def _complete_song_ready(evidence: ReviewEvidence) -> bool:
+    return (
+        evidence.foreground_song_overlap_seconds is not None
+        and evidence.foreground_song_overlap_seconds > 5.0
+        and evidence.song_complete is True
+        and evidence.lyrics_alignment_ready is True
+    )
+
+
+def _complete_song_policy_basis(evidence: ReviewEvidence) -> dict[str, object]:
+    return {
+        "foreground_song_overlap_seconds": evidence.foreground_song_overlap_seconds,
+        "song_complete": evidence.song_complete,
+        "lyrics_alignment_ready": evidence.lyrics_alignment_ready,
+    }
+
+
+def _complete_song_policy_rules() -> dict[str, object]:
+    return {"complete_song_semantic_waived_reasons": sorted(COMPLETE_SONG_SEMANTIC_WAIVED_REASONS)}
 
 
 def build_mock_cpa_response(request: CpaSemanticQaRequest) -> CpaSemanticQaResponse:
@@ -465,10 +548,6 @@ def build_mock_cpa_response(request: CpaSemanticQaRequest) -> CpaSemanticQaRespo
         semantic_findings=tuple(semantic_findings),
         metadata={"mode": "mock-local"},
     )
-
-
-def cpa_reason_codes_for_decision(evaluation: CpaSemanticQaEvaluation) -> tuple[str, ...]:
-    return evaluation.reason_codes
 
 
 def _derive_response_reason_codes(payload: Mapping[str, object]) -> tuple[str, ...]:

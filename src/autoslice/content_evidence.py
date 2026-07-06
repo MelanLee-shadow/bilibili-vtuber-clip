@@ -77,7 +77,9 @@ def analyze_content_evidence(
         end_score = 0.70
         evidence_gaps.append("OPEN_LOOP_OR_NO_CLOSURE")
 
-    payoff_score = 0.96 if _has_payoff_or_closure(title + " " + all_text) else 0.55
+    # Payoff must come from the transcript itself; a hooky title is an editorial
+    # promise, not evidence that the clip delivers one.
+    payoff_score = 0.96 if _has_payoff_or_closure(all_text) else 0.55
     if payoff_score < 0.90:
         evidence_gaps.append("PAYOFF_MISSING")
 

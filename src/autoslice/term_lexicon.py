@@ -25,11 +25,6 @@ class TermOverride:
     display: str | None = None
     aliases: tuple[str, ...] = ()
 
-    def target_for(self, variant: str) -> str:
-        # `display` is still final user-facing text.  Developer aliases such as
-        # kimo熊 must not leak into subtitles; they normalize to canonical.
-        return self.canonical
-
 
 @dataclass(frozen=True)
 class TermLexicon:
@@ -40,17 +35,17 @@ class TermLexicon:
 
 
 def normalize_text(text: str, *, lexicon: TermLexicon | None, variant: str = "canonical") -> str:
+    # ``variant`` is kept for call-site compatibility but normalization always
+    # targets the canonical form: developer aliases such as kimo熊 must never
+    # leak into subtitles, whatever rendering variant asked for the text.
     if lexicon is None or not text:
         return text
     normalized = text
     for override in lexicon.overrides:
-        target = override.target_for(variant)
+        target = override.canonical
         candidates = [alias for alias in override.aliases if alias]
-        if variant == "canonical":
-            if override.display and override.display != target:
-                candidates.append(override.display)
-        elif override.canonical != target:
-            candidates.append(override.canonical)
+        if override.display and override.display != target:
+            candidates.append(override.display)
         seen: set[str] = set()
         for source in sorted(candidates, key=len, reverse=True):
             if source == target or source in seen:

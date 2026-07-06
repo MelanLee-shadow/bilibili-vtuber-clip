@@ -2,6 +2,10 @@
 reports/**
 !reports/slice_monitor
 !reports/slice_monitor/README.md
+# Publish evidence (Ivan policy 2026-07-05): anything Ivan authorized for upload
+# must be committed — *.uploaded.json manifests stay tracked even under reports/.
+!reports/**/
+!reports/**/*.uploaded.json
 cleanup_manifests/*.tmp
 
 # Local media/artifact pulls; remote free:/opt/bilive/app and container:/app are source of truth

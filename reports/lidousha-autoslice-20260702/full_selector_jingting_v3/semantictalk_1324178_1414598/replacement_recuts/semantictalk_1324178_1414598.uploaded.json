@@ -1,0 +1,15 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-04T05:25:59+08:00 (free host time)",
+  "bvid": "BV1qxMc6XEM9",
+  "aid": 116860037105255,
+  "title": "反沙，不是反李豆沙！",
+  "tid": 21,
+  "tag": "直播切片",
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "video": "semantictalk_1324178_1414598.recut.burned-final-sapphire72.mp4",
+  "cover": "covers/semantictalk_1324178_1414598.ai-title.cover.png",
+  "tool": "biliup-rs v0.2.4 (free:/opt/bilive/bin/biliup)，bilitool 旧客户端投稿接口已被B站停用",
+  "authorized_by": "Ivan 2026-07-04 会话明确授权"
+}

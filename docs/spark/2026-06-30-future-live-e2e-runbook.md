@@ -34,19 +34,47 @@ Semantic QA must be script-driven CPA, not an interactive Hermes answer.
 - Response must echo the request's `request_sha256` and `artifact_paths`.
 - Missing/invalid/mismatched CPA JSON fails closed.
 
-Example mock command shape:
+The real CPA command (validated 2026-07-03, room 362064 full-song e2e). CPA stages must be REAL in workflow tests too — a fake responder is only acceptable inside pytest unit tests, never in an acceptance/e2e run:
 
 ```bash
-python3 scripts/cpa_semantic_review.py \
-  --candidate-id CANDIDATE_ID \
-  --candidate-text 'raw candidate text' \
-  --normalized-text 'terminology-normalized candidate text' \
-  --request-json /app/reports/.../candidate.cpa.request.json \
-  --response-json /app/reports/.../candidate.cpa.response.json \
-  --cpa-command 'REAL_CPA_CLI {request_json} {response_json}'
+# semantic QA judge (fills --cpa-command of the selector runner)
+python3 scripts/cpa_semantic_qa_llm.py \
+  --request {request_json} --response {response_json} \
+  --transport direct --model gpt-5.4-mini \
+  --api-base "$CPA_BASE_URL" --api-key-env CPA_API_KEY
 ```
 
-The exact `REAL_CPA_CLI` still needs to be filled from the machine's CPA provider configuration. Do not fake it in production. In tests, use a fake responder only.
+Notes:
+- `CPA_BASE_URL`/`CPA_API_KEY` live in the Mac zsh environment.
+- CPA sits behind Cloudflare: every direct HTTP call must send a browser User-Agent (`Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)`) or it 403s with error 1010. Already handled in `src/autoslice/llm_client.py`, `_call_cpa_image_edit`, and `scripts/llm_via_cpa.sh`.
+- Song-hint and title LLM stages use `scripts/llm_via_cpa.sh {prompt_file} {completion_file}` (CPA chat, default model `gpt-5.4-mini`).
+- The AI cover chain calls CPA `images/edits` with `gpt-image-2` directly from publish staging; if it cannot run, staging fails closed (`BLOCKED_AI_COVER_REQUIRED`).
+
+## Canonical validated song e2e command
+
+This exact shape produced the accepted full-song package on 2026-07-03 (`reports/live-song-test/20260703-010424-room362064/OPEN_ME.md` — complete 《雨天》, LRC-timed sapphire burn, real CPA AI cover):
+
+```bash
+python3 scripts/run_full_session_selector_cpa_shadow.py \
+  --source-video <capture>.mp4 \
+  --source-srt <capture>.source.srt \
+  --output-dir <report_dir>/full_selector_no_upload \
+  --room-id <room_id> \
+  --copy-draft-context \
+  --max-candidates 4 \
+  --cpa-command "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} --transport direct --model gpt-5.4-mini --api-base $CPA_BASE_URL --api-key-env CPA_API_KEY" \
+  --lrc-provider netease \
+  --burn-preview \
+  --publish-staging \
+  --song-hint-llm-command "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}" \
+  --title-llm-command "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
+```
+
+- `--copy-draft-context` is correct when `<capture>.source.srt` already came from a real AGY transcription (e.g. `scripts/transcribe_live_song_via_agy.sh`, Gemini 3.5 Flash (High) on the `free` host); production jingting refinement instead runs agy inside the pipeline.
+- **2026-07-03 additions** (validated on the 7/2 lidousha recording, `reports/lidousha-autoslice-20260702/full_selector_jingting_v2/`): add `--semantic-recall-llm-command "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"` so candidate discovery is viewer-perspective semantic recall (stories, danmaku banter, memes — keyword lanes are fallback only), and use `--agy-ssh-host free` for in-pipeline jingting: it now chunks the context at cue gaps into ~5 min 1280p clips per agy call (whole-session inputs deterministically return empty output — see handoff 2026-07-03). The CPA judge also enforces the viewer-context check (`VIEWER_CONTEXT_INCOMPLETE` + auto window expansion retry).
+- **Danmaku evidence** (2026-07-03 route decision): add `--danmaku-xml <capture dir>/sources/<segment>.xml` (blrec raw danmaku; scp it next to the source video first). Enables the burst recall hints, real danmaku in CPA viewer-context, and per-chunk danmaku hint lines for jingting. `--agy-ssh-host` also enables silero-VAD subtitle timing QA (provisioned at `free:/opt/bilive/vad/`; VAD is positive evidence only).
+- Capture length matters: record long enough to contain a COMPLETE song (15 min captured 3 complete songs; a 90s probe can never pass the completeness gate).
+- The song contract lives in `docs/workflows/lidousha-song-finished-package-workflow.md` §6/§6.1 and `.agent/skills/song-lyrics-timeline-aligner/SKILL.md` §8: LRC global-shift subtitle timeline, forced accurate re-encode, sapphire72 1080p ASS, real-CPA cover chain, fail-closed everywhere.
 
 ## Pre-live checklist
 
@@ -159,11 +187,11 @@ Implemented locally in this direct takeover lane:
 - `src/autoslice/term_lexicon.py` no longer emits alias as display output.
 - `scripts/cpa_semantic_review.py` writes strict request JSON, invokes external CPA command, and validates response JSON fail-closed.
 - `src/autoslice/cpa_semantic_qa.py` is the authoritative CPA request/response contract: request hash, artifact-path checks, score range checks, and ReviewEvidence integration.
-- `src/autoslice/cpa_semantic_review.py` remains only as a legacy response-only fallback for old source-context jobs.
+- `src/autoslice/cpa_semantic_review.py` was removed 2026-07-02 (plan P1.6): the response-only fallback never verified `request_sha256` binding. Jobs must provide `cpa_semantic_request_path` alongside the response, or the pipeline blocks with `CPA_SEMANTIC_QA_REQUEST_REQUIRED` (see `cleanup_manifests/local_legacy_cpa_review_module_cleanup_20260702.json`).
 - `scripts/run_auto_review_shadow_pipeline.py` can apply `cpa_semantic_request_path` + `cpa_semantic_response_path` from the source-context job and BLOCK on terminology/CPA failures.
 
 Still needed:
 
-- Fill in the real CPA command for `--cpa-command` on `free`.
-- Add or wire a full future-live runner that calls the selector, term normalizer, CPA script, and shadow pipeline in one command.
-- Run it on a livestream that occurs after this runbook is written.
+- ~~Fill in the real CPA command for `--cpa-command`~~ — filled and validated 2026-07-03 (see "Canonical validated song e2e command" above).
+- Add or wire a full future-live runner that calls the selector, term normalizer, CPA script, and shadow pipeline in one command — `scripts/run_full_session_selector_cpa_shadow.py` now is that runner for the no-upload lane; a real Li Dousha future-live run on `free` is still pending.
+- Run it on a Li Dousha livestream that occurs after this runbook is written (the 2026-07-03 validation used a non-李豆沙 singing room in no-upload mode).

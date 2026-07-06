@@ -133,7 +133,7 @@ Rules:
 - Do not store API keys in request/response artifacts.
 - Prompt must ask for no readable text/UI/watermark; title is overlaid locally afterward.
 - The overlaid cover text must omit `【李豆沙】豆沙歌，` / `【李豆沙】`; use the same short hook phrase as `cover_text`, not the full Bilibili title.
-- Use the latest project-approved cover-title evidence, not only old 6/19 examples. For the closer 6/24 approved manual recuts, song-hook covers used CPA `gpt-image-2` backgrounds plus `ZCOOLKuaiLe-Regular.ttf`, font sizes around 122–126, `angle_degrees=-4.0`, 1920x1080 final covers, and centers chosen from empty visual areas. Talk covers may have manual title-position repairs to avoid covering Li Dousha. Do not use arbitrary default fonts/layouts for finished covers.
+- Use the latest project-approved cover-title evidence, not only old 6/19 examples. The composition is now persona-driven and chosen per clip by `_lidousha_cover_art_direction` (in `scripts/run_auto_review_shadow_pipeline.py`): a stable `sha256(candidate_id)` rotation plus a persona keyword lexicon picks {role, expression, background, layout, hook color, hook word}, optionally refined by a fail-open CPA judge. Talk clips rotate `left-split` / `right-split` / `banner` (a large chest-up bust on one side or lower-center, the opposite side or top a graphic zone for a big multi-color title); song clips always use `song-clean` (a soft portrait plus a clean scenic title zone). Backgrounds come from a mood pool — talk = busy (pop-art-burst / halftone-dots / speed-lines), song/tender = clean (soft-radial / clean-scenic) — so covers are not all pop-art. The overlaid title keeps the approved base palette (cream `#FFF6D6` fill + navy `#12244F` stroke) with a rotating accent-colored hook word over a soft dark card, `ZCOOLKuaiLe-Regular.ttf` (fail-closed), and `-4.0` default tilt (talk layouts also use -3/-2). Expression fits the clip's in-character role (default soft/cute 清纯, 机灵/得意 secondary, never tongue-out) and the outfit/skin/hair follow that clip's own reference frame. The old centered/single-band placement and the `chest_safe_top_y=680` chest-line no-go zone are superseded. Do not use arbitrary default fonts/layouts for finished covers.
 - Visual-inspect the AI background and final cover for unrelated people/assets, text pollution, or wrong identity.
 - `fallback_used: false` must be recorded for finished covers.
 
@@ -146,8 +146,27 @@ Burn only after final subtitles and title/cover are ready enough for review.
 - Use the clean source video/FLV, not a previously burned MP4.
 - Burn from the final ASS, not from rough SRT styling.
 - Use approved sapphire style for the project (exact parameters: `.agent/skills/song-lyrics-timeline-aligner/SKILL.md` § 李豆沙 Burn Style, as emitted by `align_timed_lyrics.py --ass-out`).
+- Auto-review shadow burns must preserve that same contract: `scripts/run_auto_review_shadow_pipeline.py --burn-preview` emits `*.final-sapphire72.ass` and `*.burned-final-sapphire72.mp4` with `subtitle_style=lidousha-final-sapphire72`. Do not regress this to `subtitles=<srt>:force_style=...` or any default SRT/libass style.
+- The sapphire72 ASS header is the 1080p variant exactly as `align_timed_lyrics.py --ass-out --play-res 1920x1080` emits it: `PlayResX/Y 1920x1080`, Fontsize 72, margins 60,60,40, Outline 3, Shadow 2, `BackColour &H70000000`. Never pair Fontsize 72 with the 720p PlayRes/margins.
+- Song lyric timing contract (root cause of the "subtitles ~20ms early" bug class, fixed 2026-07-03):
+  - The burned lyric timeline comes from the external LRC global-shift model (`clip_time = lrc_time + offset`), never from raw ASR cue timings. The materialized recut records `subtitle_source=external_lrc_global_shift` and `lyric_offset_ms`; ASR-based `subtitle_source=asr_cues` is only for non-song clips.
+  - The lyrics-alignment proof must survive the single-global-shift validation in `src/autoslice/song_repair.py` (`enforce_global_shift_alignment`): one median offset explains the matches, cue order monotonic, performance span vs LRC span ratio plausible, no long unmatched middle run. Greedy per-line matching alone is not proof (many lines piling onto one cue previously faked a 28s "complete" song).
+  - Song recuts are always accurately re-encoded (two-stage seek + re-encode), never shipped as `-c copy` cuts: copy cuts leave audio/video stream starts quantized to packet/keyframe boundaries (measured 20-90ms skew), which shifts burned lyrics off the audio.
+  - ASS event times are rounded (not floored) to centiseconds.
+  - ASS viewability (Ivan 2026-07-03, spec source: LLM Multimodal ASR `polish_srt_for_viewing.py --max-chars 28`): at most 28 chars per visual line, at most 2 visual lines per dialogue, single line preferred; over-long cues are split into sequential sub-cues by text share (`_layout_cue_for_display`), never stacked 3-4 lines high.
 - Verify with ffprobe that the burned MP4 has video and audio streams.
 - Extract check frames around first lyric and tail lyric.
+
+## 6.1 Auto workflow binding for cover + title
+
+The unattended/no-upload shadow workflow must not silently downgrade the finished-package requirements:
+
+- `--publish-staging` must stage a CPA/OpenAI-compatible `images.edit` cover generation chain with `model=gpt-image-2`, redacted request/response artifacts, `covers_ai_original/`, local title overlay, final `covers/` output, and hashes for reference/background/final cover.
+- If CPA cover generation cannot run or fails, publish staging must fail closed with `cover_status=BLOCKED_AI_COVER_REQUIRED` and `fallback_used=false`. A raw frame extraction such as `<clip>.cover.jpg` is allowed only as explicit browse/debug fallback, not as a publish-grade cover.
+- Cover text is derived from the Bilibili title with the `【李豆沙】豆沙歌，` / `【李豆沙】` prefix removed. If the title/hook changes, the cover must be regenerated or restaged with matching `cover_text`.
+- Non-李豆沙 live-song smoke tests may exercise selector/repair/burn in no-upload mode, but must not be represented as a Li Dousha publish package or uploaded.
+- CPA stages are REAL in workflow/e2e tests too (Ivan, 2026-07-03): semantic QA judge, song-hint, title, and the AI cover must hit the real CPA endpoint. Fake responders are only acceptable inside pytest unit tests. CPA sits behind Cloudflare — every direct HTTP call needs a browser User-Agent or it 403s with error 1010.
+- The canonical validated invocation (produced the accepted 2026-07-03 full-song package, `reports/live-song-test/20260703-010424-room362064/OPEN_ME.md`) is recorded in `docs/spark/2026-06-30-future-live-e2e-runbook.md` § "Canonical validated song e2e command". Run that shape; do not re-derive the flags from scratch, and do not copy commands from acceptance reports older than 2026-07-03 (they predate the lyric-timing/cover fixes and are marked superseded).
 
 ## 7. Package workflow
 
