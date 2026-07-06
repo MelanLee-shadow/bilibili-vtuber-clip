@@ -2449,3 +2449,9 @@ def test_cover_prompt_layout_and_overlay_hook_metadata(tmp_path):
     # Regression: the overlay metadata must NOT leak image-gen/publish reserved keys.
     reserved_keys = {"model", "method", "fallback_used", "ai_background", "workflow", "image_gen_model"}
     assert reserved_keys.isdisjoint(overlay.keys())
+
+
+def test_title_policy_bans_zhijie_filler_word():
+    """Ivan 2026-07-06: 标题里不能出现"直接"（直呼打咩 >> 直接打咩）。"""
+    assert "banned_filler_word" in shadow_pipeline._title_policy_violations("【李豆沙】小李直接打咩")
+    assert shadow_pipeline._title_policy_violations("【李豆沙】小李直呼打咩") == []

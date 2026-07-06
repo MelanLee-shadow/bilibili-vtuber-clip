@@ -2156,6 +2156,9 @@ _TITLE_SUFFIX_ONLY_HYPE_WORDS: tuple[str, ...] = ("离谱",)
 _TITLE_BANNED_SUFFIX_RE = re.compile(
     "到(?:" + "|".join(_TITLE_BANNED_HYPE_WORDS + _TITLE_SUFFIX_ONLY_HYPE_WORDS) + ")"
 )
+# Filler words Ivan banned outright (2026-07-06): 直接 never appears in a title —
+# "直呼打咩" reads far better than "直接打咩"; use 直呼/当场/秒X instead.
+_TITLE_BANNED_FILLER_WORDS: tuple[str, ...] = ("直接",)
 _TITLE_MIN_LEN = 12  # counted WITH the 【李豆沙】 prefix
 _TITLE_MAX_LEN = 30
 _TITLE_MAX_ATTEMPTS = 3  # 1 initial generation + up to 2 bounded retries
@@ -2173,6 +2176,8 @@ def _title_policy_violations(title: str) -> list[str]:
         violations.append("banned_universal_suffix")
     if any(word in title for word in _TITLE_BANNED_HYPE_WORDS):
         violations.append("banned_hype_word")
+    if any(word in title for word in _TITLE_BANNED_FILLER_WORDS):
+        violations.append("banned_filler_word")
     return violations
 
 
@@ -2242,8 +2247,9 @@ def _stage_publish_draft(
             if attempt > 0:
                 prompt = (
                     base_prompt
-                    + "\n注意：上一次生成的标题命中了违禁夸张词或'X到{违禁词}'式万能后缀，已被否决。"
-                    "请删掉空洞夸张词，改成具体描述李豆沙在这条切片里到底做了/说了什么，重新只输出 JSON。"
+                    + "\n注意：上一次生成的标题命中了违禁词（夸张词/'X到{违禁词}'万能后缀/弱化词\"直接\"），已被否决。"
+                    "请删掉空洞夸张词；\"直接\"一律不用（用 直呼/当场/秒X 替代，如\"直呼打咩\"）；"
+                    "改成具体描述李豆沙在这条切片里到底做了/说了什么，重新只输出 JSON。"
                 )
             try:
                 payload = extract_json_object(title_llm_call(prompt))
