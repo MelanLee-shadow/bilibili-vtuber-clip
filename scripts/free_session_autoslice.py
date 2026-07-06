@@ -70,6 +70,13 @@ SONG_WINDOW_POST_MS = 150_000  # mid-song; the LRC completeness gate fails
                                # closed if the window still clips the song.
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CPA_CMD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
+# The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
+# JSON contract), NOT a prompt/completion LLM template — canonical validated
+# command per docs/spark/2026-06-30-future-live-e2e-runbook.md.
+CPA_QA_CMD = (
+    "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
+    "--transport direct --model gpt-5.4-mini --api-base $CPA_BASE_URL --api-key-env CPA_API_KEY"
+)
 
 
 def log(msg: str) -> None:
@@ -356,7 +363,7 @@ def produce_song(date: str, segment: Path, seg_dur_ms: int, cand, danmaku_n: int
             [sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
              "--source-video", str(window_mp4), "--source-srt", str(window_srt),
              "--output-dir", str(out_dir / "song_selector"), "--max-candidates", "1",
-             "--cpa-command", CPA_CMD,
+             "--cpa-command", CPA_QA_CMD,
              "--semantic-recall-llm-command", CPA_CMD,
              "--song-hint-llm-command", CPA_CMD,
              "--title-llm-command", CPA_CMD,
