@@ -3,6 +3,26 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-05：李豆沙 7/5 直播 → 5 条上传-ready 候选切片（本地 no-upload）
+
+**目标**：Ivan 要 7/5 直播上传-ready 候选切片到本地审；主控读全部候选池挑题，subagent 做出片体力活。
+
+**已完成**：
+- **5 条成品在 `lidousha/2026-07-05/`**（+ `OPEN_ME.md` + `index.html` 可视化过片）：A 数学讲成兄弟情虐恋(4:20，全场语义分最高)、B 以为小猪结果熊猫(0:31)、C 有没有李豆沙/缩成小点(0:54)、D 联动游戏名/聋子(1:07)、E 一本正经讲丧尸偶像/血鬼舞台(0:54)。每条 video+准字幕(cos/sin/OBS/VIVINOS等专名全准)+围绕李豆沙自动标题+CPA真图 gpt-image-2 封面。**5/5 verify PASS**（无词表泄漏、字幕行合规、含音视频轨、topic-closure 落完整句）。**未上传**。
+- 选题：主控读 6 段生产候选池(98候选/57 talk)+jingting字幕+弹幕，观众视角+围绕李豆沙+题材多样挑 5；出片 subagent 各跑一条 `produce_slice_package.py --substrate aggregate_asr --correct cpa`（Ivan 2026-07-04 定的字幕架构）。
+- **两个坑修好并入记忆**：(1) spec `remote_media` 必须 free **宿主** 123云盘 路径(`/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/...`)，**不是容器 `/app/Videos`**（脚本宿主侧 ffmpeg 无 docker exec）；FUSE 挂载~36s/小文件极慢；semantic_start/end 对准真实语音起止读 `padded.fresh.srt`，候选 start 含前置铺垫会 fail-close。记忆 `produce-slice-package-host-path-and-slow-mount`。(2) 封面字体 `ZCOOLKuaiLe` 把「自」渲成「白」形（自私→白私），A/D 封面钩子临时改写绕开(自私→还小气、自认→成了)，B站标题保留原字。记忆 `cover-font-zi-renders-as-bai`。
+- B/E 初版边界飘（B 拖进无关banter、E overshoot climax），已收紧 semantic_end 重跑（缓存切复用，快）。
+
+**进行中**：无后台进程（5 条全跑完交付）。
+
+**阻塞**：无。上传永远需 Ivan 逐条授权。
+
+**下一步**：
+1. **Ivan 审 `lidousha/2026-07-05/`**（浏览器开 `index.html` 过片）。
+2. **封面字体 `自→白` 治本**（通病应入代码，勿单例补丁）：给 `scripts/run_auto_review_shadow_pipeline.py` 的 `_overlay_lidousha_cover_title` 逐字渲染加「自」→回退字体映射（现有"缺字回退"对字形错的「自」不触发），或整体换 `自` 正确的快乐体系字体（仍 fail-closed）。
+3. 可选第二批：日语歌《男も女も恋してるべき》(20:30 段，走完整曲 LRC 全局位移 lane) + 备选 talk（米老鼠版权/被乌鸦俯冲/百合是工作/回不了家/木马/人设太帅，见 OPEN_ME）。
+4. 未提交改动：本轮 `reports/lidousha-autoslice-20260705/`(specs+verify脚本)、`lidousha/2026-07-05/`(成品+OPEN_ME+index.html) + 之前所有未提交改动（Ivan 未让 commit）。
+
 ## 目标（2026-07-04）
 
 无人值守/半自动的李豆沙直播切片流水线。本轮核心：Ivan 审 7/3 竖屏直播切片后给出多类字幕/标题/构图反馈，
@@ -73,8 +93,9 @@ AUTO_CHAIN 仍含已下线的 kuaishou（与文档/对用户报告不符）→ �
 ## 进行中
 
 - **[Claude 封面会话·已完成 2026-07-05]** 全账号(mid 55006782)**24 条李豆沙切片封面全部按新流程重做并已替换上线**(只换封面,标题/标签/合集未动;24/24 `COVER_UPDATED=True`)。含大字自适应(多换行+均衡分行)、feed 4:3 安全区(文字 x260–1660)、缺字整张换字体(镚→得意黑)、去方框/去 baked-text/永不吐舌/外观随切片(老切片无本地源→用其当前线上封面当参考帧)。换封面脚本已入库 `scripts/bili_replace_covers.py`(在 free 上跑,inspect→apply 两段,只改封面) + `scripts/regenerate_lidousha_cover.py`(出图);账号里少前2游戏视频非切片未动;规则固化进 `bilive-autoslice-publish/SKILL.md` 封面节 + 记忆 `lidousha-cover-redesign-halfbody`。**遗留**:含长英文串(shadowlee)/超长标题的封面字号有物理下限,要更大需把封面文案缩成钩子短句(待 Ivan 定)。
-- **[7/5 直播切片轮·被会话切换中断 2026-07-05]** 6 段录播(19:30–22:24,~2h54m,均有声;监控"无音轨"告警是对 raw m4s 的误报)已勘查;5 条候选 spec 已写好(`reports/lidousha-autoslice-20260705/finals/specs/`,remote_media 已修正为 host 侧 123云盘路径——**教训:produce 的 ffmpeg 在 free host 直跑,不走容器,spec 别写 /app/Videos 容器路径**)。旗舰 A(cos/sin 数学兄弟情,21:30 段)已交付 `lidousha/2026-07-05/豆沙把数学讲成兄弟情虐恋.mp4`(边界过/timing_qa 干净/自动标题"【李豆沙】cos比sin自私？小李当场共鸣"),**但**:①封面 `BLOCKED_AI_COVER_REQUIRED`(CPA 出图失败,fail-closed 正确没造假,需重出);②该条字幕用的是 `--correct cpa`(纯文本校正),**不是**默认三段式 `bcut_agy_cpa`——续跑 B/C/D/E 以及 A 重出时应回到默认三段式(专名靠 AGY 听音兜底)。B(小猪熊猫)/C(有没有李豆沙)/D(游戏名笼子)/E(丧尸偶像) 4 条 spec 就绪未产出。free/本地均无遗留进程。
-- 无后台进程。
+- ~~7/5 直播切片轮·被会话切换中断~~ **已被 Opus 会话续跑完成**（见顶部「2026-07-05」节：5/5 交付 verify PASS）。遗留提醒仍有效：该批字幕用的 `--correct cpa` 非默认三段式 `bcut_agy_cpa`（Ivan 定的架构是三段式；上传前如对专名有疑虑可按默认重出）；封面「自→白」字形坑待治本（见该节下一步2）。
+- **[无人值守自动切片 runner·已部署 2026-07-06 (Fable)]** Ivan 目标落地：**直播结束后 free 自动跑完整产出链，无需人开口**（上传仍关）。`scripts/free_session_autoslice.py` 部署在 `free:/opt/bilive/autoslice/`（repo 副本+cpa.env(600)+state/cache/logs/reports），**cron 每 10 分钟** flock 单飞 tick：blrec API(带RECORD_KEY) 判在播→在播/API失联一律跳过（fail-safe）；下播→逐新段 BCUT 转写→CPA 语义召回(带弹幕突发hints，LLM挂了退确定性兜底不静默)→**谈话 top5**（跨段轮转）逐条 `produce_slice_package --ssh-host localhost`（默认三段式 bcut_agy_cpa+真图封面）→**歌切每场至多2个、按窗口弹幕量最高排序**（Ivan 2026-07-05），走 `run_full_session_selector_cpa_shadow` LRC lane（anchor±180/150s 窗，完整性门 fail-closed，只交付 AUTO_UPLOAD 判定的）→交付 `repo/lidousha/<date>/`+`AUTOSLICE_SUMMARY.md`+报告文件。**杀开关** `touch /opt/bilive/autoslice/DISABLED`；7/1–7/5 已预认领（manual）不会被重跑；失败不自动重试（防 retry storm）。Mac 端 launchd `com.ivan.lidousha-autoslice-pull` 每 30 分钟 rsync 交付+报告回本地 `lidousha/`+`reports/slice_monitor/autoslice_free/`。冒烟：talk 全链 rc=0（cut→BCUT→AGY(ssh localhost)→CPA→烧录→真图封面→交付）✅、语义召回 lane ✅（选出的候选与 Opus 人工选题重合）、歌切 lane 冒烟见 smokesong 记录。为此 free 配置了 root 自我 ssh(ed25519)。记忆 `free-unattended-autoslice-runner`。
+- 无本会话后台进程（free 上只有常驻 cron runner + 既有 jingting daemon）。
 
 ## 阻塞
 

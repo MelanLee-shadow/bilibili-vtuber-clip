@@ -14,3 +14,7 @@
 - Do not rely on a personal/global copy of that skill. The intended workflow is project-specific: external timed lyric source, clip-local first/last lyric anchors, global shift first, tail verification, and only explicit evidence-based stretch.
 - For 李豆沙 song uploads, keep the `【李豆沙】豆沙歌，...` prefix but prefer hook-style titles that fold in the song name and live context, instead of plain catalog titles like `【李豆沙】豆沙歌，《歌名》`.
 - When a song upload title changes, update the matching cover text before considering the edit complete. Cover text should omit `【李豆沙】豆沙歌，` and use the same hook phrase in a short readable form.
+
+## Unattended runner (2026-07-06)
+
+- Post-stream automation lives in `scripts/free_session_autoslice.py`, deployed at `free:/opt/bilive/autoslice/` (cron */10, flock). It auto-produces top-5 talk clips + up to 2 song clips (ranked by danmaku volume) after each stream ends. Kill switch: `touch /opt/bilive/autoslice/DISABLED`. It has no upload path; publishing stays a separate Ivan-authorized step (and anything published must be committed — see memory `authorized-upload-must-commit`).
