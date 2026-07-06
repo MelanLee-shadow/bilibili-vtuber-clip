@@ -41,6 +41,36 @@ MAX_CONTEXT_BACKTRACK_MS = 120_000
 SEMANTIC_RECALL_STAGE = "semantic_recall"
 
 
+def _slice_selection_metric() -> str:
+    """Ivan's curated slice-selection metric (single authority asset).
+
+    Mirrors the glossary loader pattern: repo asset first, then the free-host
+    production copies; missing everywhere → empty string (prompt still builds
+    with its structural rules, it just loses the preference calibration).
+    """
+    import os
+    from pathlib import Path
+
+    override = os.environ.get("LIDOUSHA_SLICE_METRIC")
+    candidates = (
+        [override]
+        if override
+        else [
+            str(Path(__file__).resolve().parents[2] / "assets" / "lidousha" / "slice_selection_metric.md"),
+            "/opt/bilive/app/lidousha_slice_metric.md",
+            "/app/lidousha_slice_metric.md",
+        ]
+    )
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            return Path(path).read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+    return ""
+
+
 def build_semantic_recall_prompt(
     cues: Sequence[SourceCue],
     *,
@@ -58,7 +88,9 @@ def build_semantic_recall_prompt(
 观众弹幕突发区(弹幕密度显著高于全场基线的时段,观众反应最强,大概率有值得切的内容;优先检查这些时段,但窗口边界仍要按字幕内容判断):
 {danmaku_hints}
 """
-    return f"""你是李豆沙(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}
+    metric = _slice_selection_metric()
+    metric_block = f"\n选题优先级 metric(Ivan 逐条校准过的权威,选题和排序都必须对照它;历史真例/反例都在里面):\n{metric}\n" if metric else ""
+    return f"""你是李豆沙(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}
 
 你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
 

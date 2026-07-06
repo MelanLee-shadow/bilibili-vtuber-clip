@@ -11,5 +11,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 scp -q "$ROOT/assets/lidousha/glossary.txt" "$HOST:/opt/bilive/app/lidousha_glossary.txt"
 scp -q "$ROOT/assets/lidousha/subtitle_correction_principles.md" "$HOST:/opt/bilive/app/lidousha_subtitle_principles.md"
+scp -q "$ROOT/assets/lidousha/slice_selection_metric.md" "$HOST:/opt/bilive/app/lidousha_slice_metric.md"
 scp -q "$ROOT/scripts/free_silero_vad_spans.py" "$HOST:/opt/bilive/vad/silero_vad_spans.py"
-echo "synced glossary + subtitle principles + vad script to $HOST"
+echo "synced glossary + subtitle principles + slice metric + vad script to $HOST"

@@ -65,9 +65,13 @@ MAX_SONGS_PER_DATE = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按�
 PER_SEGMENT_CANDIDATES = 3
 PIECE_PRE_MS = 10_000
 PIECE_POST_MS = 32_000
-SONG_WINDOW_PRE_MS = 180_000   # generous margins: the recall anchor may sit
-SONG_WINDOW_POST_MS = 150_000  # mid-song; the LRC completeness gate fails
-                               # closed if the window still clips the song.
+SONG_WINDOW_PRE_MS = 15_000   # window must stay SONG-dominated or the in-window
+SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
+                              # ±60/45s and ±180/150s).  15/20s matches the
+                              # validated 虫儿飞 run (486a: 26:40–28:20 around a
+                              # 26:55–28:03 song).  The song lane re-detects
+                              # boundaries inside the window; the completeness
+                              # gate fails closed if the window clips the song.
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CPA_CMD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
 # The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
@@ -382,15 +386,23 @@ def produce_song(date: str, segment: Path, seg_dur_ms: int, cand, danmaku_n: int
     result["log"] = str(log_path)
     summary_path = out_dir / "song_selector" / "summary.json"
     decision = None
+    is_song = False
     if summary_path.is_file():
         try:
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            for entry in summary.get("candidates", []) if isinstance(summary, dict) else []:
+            for entry in summary.get("records", []) if isinstance(summary, dict) else []:
                 decision = entry.get("decision_action") or decision
-            result["summary"] = {k: summary.get(k) for k in ("candidates",) if isinstance(summary, dict)}
+                job = entry.get("source_context_job") or {}
+                is_song = is_song or bool(job.get("song_boundary")) or bool(job.get("lyrics_alignment"))
         except ValueError:
             pass
     result["decision"] = decision
+    result["window_classified_song"] = is_song
+    for publish in sorted((out_dir / "song_selector").glob("**/replacement_recuts/*.publish.json")):
+        try:
+            result["title"] = json.loads(publish.read_text(encoding="utf-8")).get("title")
+        except (OSError, ValueError):
+            pass
     burned = sorted((out_dir / "song_selector").glob("**/replacement_recuts/*.burned-final-sapphire72.mp4"))
     covers = sorted((out_dir / "song_selector").glob("**/covers/*.cover.png"))
     if decision == "AUTO_UPLOAD" and burned:

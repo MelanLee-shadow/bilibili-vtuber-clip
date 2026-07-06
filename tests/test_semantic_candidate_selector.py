@@ -161,3 +161,27 @@ def test_bad_completion_raises_llm_call_error():
         select_semantic_session_candidates(cues, llm_call=lambda prompt: "not json at all", max_candidates=3)
     with pytest.raises(LlmCallError):
         select_semantic_session_candidates(cues, llm_call=lambda prompt: json.dumps({"candidates": "nope"}), max_candidates=3)
+
+
+def test_prompt_injects_slice_selection_metric_asset(tmp_path, monkeypatch):
+    """Ivan's curated selection metric (assets/lidousha/slice_selection_metric.md)
+    must reach the recall prompt so unattended selection follows his taste."""
+    metric = tmp_path / "metric.md"
+    metric.write_text("# metric\n观点/立场强度测试标记词", encoding="utf-8")
+    monkeypatch.setenv("LIDOUSHA_SLICE_METRIC", str(metric))
+    prompt = build_semantic_recall_prompt(_cues(3), max_candidates=2)
+    assert "观点/立场强度测试标记词" in prompt
+    assert "选题优先级 metric" in prompt
+
+
+def test_prompt_survives_missing_metric_asset(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIDOUSHA_SLICE_METRIC", str(tmp_path / "absent.md"))
+    prompt = build_semantic_recall_prompt(_cues(3), max_candidates=2)
+    assert "观众视角" in prompt
+    assert "选题优先级 metric" not in prompt
+
+
+def test_repo_metric_asset_reaches_prompt_by_default():
+    prompt = build_semantic_recall_prompt(_cues(3), max_candidates=2)
+    assert "观点/立场强度" in prompt  # from assets/lidousha/slice_selection_metric.md
+    assert "不许因「niche/otaku 向」武断压低" in prompt
