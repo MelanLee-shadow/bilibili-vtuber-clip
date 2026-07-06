@@ -1,0 +1,17 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-06T04:46:58Z (free host)",
+  "bvid": "BV1QzTS65Enf",
+  "aid": 116871210734914,
+  "cid": 39694044113,
+  "title": "【李豆沙】cos比sin自私？小李当场共鸣",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "tag": "虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP",
+  "collection": "小李切片(season 8383206/section 9320779, add code 0)",
+  "substrate": "BCUT聚合ASR+CPA校正(--correct cpa批次)",
+  "tool": "biliup-rs, 单次运行 rc=0",
+  "authorized_by": "Ivan 2026-07-06 04:35 \"cos/sin的那个没什么问题了，可以上传了\"",
+  "cover_note": "初传为还小气改写版; Ivan 指示换自私版(04:41)→经查ZCOOL版实为白私字形,以得意黑重叠自私修正版替换(COVER_UPDATED=True, bfs b73d7446...), 换封面触发复审 state=-6→待回0"
+}

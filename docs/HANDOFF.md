@@ -13,7 +13,7 @@
 - **两个坑修好并入记忆**：(1) spec `remote_media` 必须 free **宿主** 123云盘 路径(`/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/...`)，**不是容器 `/app/Videos`**（脚本宿主侧 ffmpeg 无 docker exec）；FUSE 挂载~36s/小文件极慢；semantic_start/end 对准真实语音起止读 `padded.fresh.srt`，候选 start 含前置铺垫会 fail-close。记忆 `produce-slice-package-host-path-and-slow-mount`。(2) 封面字体 `ZCOOLKuaiLe` 把「自」渲成「白」形（自私→白私），A/D 封面钩子临时改写绕开(自私→还小气、自认→成了)，B站标题保留原字。记忆 `cover-font-zi-renders-as-bai`。
 - B/E 初版边界飘（B 拖进无关banter、E overshoot climax），已收紧 semantic_end 重跑（缓存切复用，快）。
 
-**进行中**：无后台进程（5 条全跑完交付）。
+**进行中**：**[接管声明 2026-07-06 04:45Z Fable]** Ivan 指示 Fable 会话接管本节收尾（Opus 会话勿重复执行）：A(cos/sin) 已授权上传→走 tmp_manual_upload 单次 biliup+证据+commit；D(联动游戏)/H(塞男角色) 重做收束到完整句；F(小丑鼻子) 找真正「戴上鼻子的由来」（当前版是已戴上状态）；封面本地审查=`lidousha/2026-07-05/*.cover.png` + 自-glitch 原版在 `_cover_evidence/`。B/C/E/G 及其余候选不动。
 
 **阻塞**：无。上传永远需 Ivan 逐条授权。
 
