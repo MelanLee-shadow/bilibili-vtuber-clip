@@ -4,7 +4,7 @@
   "bvid": "BV1QzTS65Enf",
   "aid": 116871210734914,
   "cid": 39694044113,
-  "title": "【李豆沙】cos比sin自私？小李当场共鸣",
+  "title": "【李豆沙】cos比sin自私？小李共鸣了",
   "tid": 21,
   "copyright": "2(转载)",
   "source": "https://live.bilibili.com/",
@@ -13,5 +13,6 @@
   "substrate": "BCUT聚合ASR+CPA校正(--correct cpa批次)",
   "tool": "biliup-rs, 单次运行 rc=0",
   "authorized_by": "Ivan 2026-07-06 04:35 \"cos/sin的那个没什么问题了，可以上传了\"",
-  "cover_note": "初传为还小气改写版; Ivan 指示换自私版(04:41)→经查ZCOOL版实为白私字形,以得意黑重叠自私修正版替换(COVER_UPDATED=True, bfs b73d7446...), 换封面触发复审 state=-6→待回0"
+  "cover_note": "初传为还小气改写版; Ivan 指示换自私版(04:41)→经查ZCOOL版实为白私字形,以得意黑重叠自私修正版替换(COVER_UPDATED=True, bfs b73d7446...), 换封面触发复审 state=-6→待回0",
+  "title_note": "2026-07-06 Ivan 授权热改：原'…小李当场共鸣'含新禁词'当场'→改'小李共鸣了'；edit code 0，复审后 state=0 公开生效"
 }
