@@ -1,0 +1,17 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-06T05:24:36Z (free host)",
+  "bvid": "BV1uCTS6kEuf",
+  "aid": 116871361797652,
+  "cid": 39694896889,
+  "title": "【李豆沙】过期（？）女大终于迎来再次联动",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "tag": "虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP",
+  "collection": "小李切片(season 8383206/section 9320779, add code 0)",
+  "substrate": "BCUT聚合ASR+三段式bcut_agy_cpa校正(礼墨/安晚awa词表闭环重出)",
+  "tool": "biliup-rs, 单次运行 rc=0",
+  "authorized_by": "Ivan 2026-07-06 定稿标题\"过期（？）女大终于迎来再次联动\"+\"重做完就可以直接上传了\"",
+  "note": "收束'这就是本周直播直播安排'；专名 礼墨×3/安晚 全对，林墨等误听残留=0"
+}

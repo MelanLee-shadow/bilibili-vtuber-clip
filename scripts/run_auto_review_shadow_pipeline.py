@@ -2156,9 +2156,13 @@ _TITLE_SUFFIX_ONLY_HYPE_WORDS: tuple[str, ...] = ("离谱",)
 _TITLE_BANNED_SUFFIX_RE = re.compile(
     "到(?:" + "|".join(_TITLE_BANNED_HYPE_WORDS + _TITLE_SUFFIX_ONLY_HYPE_WORDS) + ")"
 )
-# Filler words Ivan banned outright (2026-07-06): 直接 never appears in a title —
-# "直呼打咩" reads far better than "直接打咩"; use 直呼/当场/秒X instead.
-_TITLE_BANNED_FILLER_WORDS: tuple[str, ...] = ("直接",)
+# Filler/machine-flavored words Ivan banned outright (2026-07-06): none of these
+# ever appear in his real historical titles.  直呼打咩 >> 直接打咩; 当场/秒X are
+# auto-title tics, not his voice.  The word bank in title_style.md may only
+# contain words verified against Ivan's own titles (machine-generated legacy
+# production titles are NOT corpus).
+_TITLE_BANNED_FILLER_WORDS: tuple[str, ...] = ("直接", "当场")
+_TITLE_BANNED_MIAO_RE = re.compile(r"秒[一-鿿]")  # 秒懂/秒回/秒怼… instant-X tic
 _TITLE_MIN_LEN = 12  # counted WITH the 【李豆沙】 prefix
 _TITLE_MAX_LEN = 30
 _TITLE_MAX_ATTEMPTS = 3  # 1 initial generation + up to 2 bounded retries
@@ -2177,6 +2181,8 @@ def _title_policy_violations(title: str) -> list[str]:
     if any(word in title for word in _TITLE_BANNED_HYPE_WORDS):
         violations.append("banned_hype_word")
     if any(word in title for word in _TITLE_BANNED_FILLER_WORDS):
+        violations.append("banned_filler_word")
+    if _TITLE_BANNED_MIAO_RE.search(title):
         violations.append("banned_filler_word")
     return violations
 
@@ -2247,9 +2253,9 @@ def _stage_publish_draft(
             if attempt > 0:
                 prompt = (
                     base_prompt
-                    + "\n注意：上一次生成的标题命中了违禁词（夸张词/'X到{违禁词}'万能后缀/弱化词\"直接\"），已被否决。"
-                    "请删掉空洞夸张词；\"直接\"一律不用（用 直呼/当场/秒X 替代，如\"直呼打咩\"）；"
-                    "改成具体描述李豆沙在这条切片里到底做了/说了什么，重新只输出 JSON。"
+                    + "\n注意：上一次生成的标题命中了违禁词（夸张词/'X到{违禁词}'万能后缀/机器味弱化词\"直接/当场/秒X\"），已被否决。"
+                    "这些词 Ivan 的真实历史标题里从来没有——别用任何万能强调词，"
+                    "直接写她具体做了/说了什么（引她的原话、用梗词，如\"直呼打咩\"\"大大方方承认\"），重新只输出 JSON。"
                 )
             try:
                 payload = extract_json_object(title_llm_call(prompt))
