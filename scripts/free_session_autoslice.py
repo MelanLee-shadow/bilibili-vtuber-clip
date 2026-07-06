@@ -72,11 +72,17 @@ DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CPA_CMD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
 # The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
 # JSON contract), NOT a prompt/completion LLM template — canonical validated
-# command per docs/spark/2026-06-30-future-live-e2e-runbook.md.
-CPA_QA_CMD = (
-    "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
-    "--transport direct --model gpt-5.4-mini --api-base $CPA_BASE_URL --api-key-env CPA_API_KEY"
-)
+# command per docs/spark/2026-06-30-future-live-e2e-runbook.md.  The selector
+# does NOT run it through a shell, so the api-base must be substituted here
+# (the key stays off the command line via --api-key-env).
+
+
+def cpa_qa_cmd() -> str:
+    base = os.environ.get("CPA_BASE_URL", "").rstrip("/")
+    return (
+        "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
+        f"--transport direct --model gpt-5.4-mini --api-base {base} --api-key-env CPA_API_KEY"
+    )
 
 
 def log(msg: str) -> None:
@@ -363,7 +369,7 @@ def produce_song(date: str, segment: Path, seg_dur_ms: int, cand, danmaku_n: int
             [sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
              "--source-video", str(window_mp4), "--source-srt", str(window_srt),
              "--output-dir", str(out_dir / "song_selector"), "--max-candidates", "1",
-             "--cpa-command", CPA_QA_CMD,
+             "--cpa-command", cpa_qa_cmd(),
              "--semantic-recall-llm-command", CPA_CMD,
              "--song-hint-llm-command", CPA_CMD,
              "--title-llm-command", CPA_CMD,
