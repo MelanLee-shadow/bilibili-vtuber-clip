@@ -14,7 +14,10 @@ set -euo pipefail
 
 PROMPT_FILE="$1"
 COMPLETION_FILE="$2"
-MODEL="${CPA_CHAT_MODEL:-gpt-5.5}"
+# Model failover (Ivan-approved order): gpt-5.5 first, gpt-5.4 when the 5.5
+# provider is out (auth_unavailable 503 happens routinely while codex-pro is
+# rate-limited).  mini/compact are NOT acceptable fallbacks (Ivan 2026-07-04).
+MODELS="${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-5.5 gpt-5.4}}"
 EFFORT="${CPA_REASONING_EFFORT:-medium}"
 
 if [[ -z "${CPA_BASE_URL:-}" || -z "${CPA_API_KEY:-}" ]]; then
@@ -26,7 +29,8 @@ BODY_FILE="$(mktemp)"
 RESP_FILE="$(mktemp)"
 trap 'rm -f "$BODY_FILE" "$RESP_FILE"' EXIT
 
-python3 - "$PROMPT_FILE" "$MODEL" "$EFFORT" > "$BODY_FILE" <<'PY'
+build_body() {
+python3 - "$PROMPT_FILE" "$1" "$EFFORT" > "$BODY_FILE" <<'PY'
 import json, sys
 prompt = open(sys.argv[1], encoding="utf-8").read()
 print(json.dumps({
@@ -36,9 +40,13 @@ print(json.dumps({
     "max_output_tokens": 16000,
 }, ensure_ascii=False))
 PY
+}
 
 # The Responses endpoint intermittently returns a completed response with an
-# empty output_text (reasoning model quirk); retry a few times before failing.
+# empty output_text (reasoning model quirk); retry a few times per model, then
+# fail over to the next model in MODELS.
+for MODEL in $MODELS; do
+build_body "$MODEL"
 attempt=0
 while :; do
   attempt=$((attempt + 1))
@@ -68,10 +76,13 @@ if not isinstance(text, str) or not text.strip():
 open(sys.argv[2], "w", encoding="utf-8").write(text)
 PY
   then
+    exit 0
+  fi
+  if [[ "$attempt" -ge 3 ]]; then
+    echo "CPA /responses failed ${attempt}x on ${MODEL}, trying next model" >&2
     break
   fi
-  if [[ "$attempt" -ge 5 ]]; then
-    echo "CPA /responses failed after ${attempt} attempts" >&2
-    exit 1
-  fi
 done
+done
+echo "CPA /responses failed on all models: $MODELS" >&2
+exit 1
