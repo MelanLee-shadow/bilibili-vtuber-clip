@@ -13,4 +13,11 @@ scp -q "$ROOT/assets/lidousha/glossary.txt" "$HOST:/opt/bilive/app/lidousha_glos
 scp -q "$ROOT/assets/lidousha/subtitle_correction_principles.md" "$HOST:/opt/bilive/app/lidousha_subtitle_principles.md"
 scp -q "$ROOT/assets/lidousha/slice_selection_metric.md" "$HOST:/opt/bilive/app/lidousha_slice_metric.md"
 scp -q "$ROOT/scripts/free_silero_vad_spans.py" "$HOST:/opt/bilive/vad/silero_vad_spans.py"
+
+# 无人值守 runner 的 repo 副本优先于 /opt/bilive/app 回退路径——必须同步更新，
+# 否则 runner 用旧词表跑（2026-07-06 亲历漂移）。目录不存在则跳过。
+if ssh "$HOST" "test -d /opt/bilive/autoslice/repo/assets/lidousha"; then
+  scp -q "$ROOT/assets/lidousha/glossary.txt"          "$ROOT/assets/lidousha/subtitle_correction_principles.md"          "$ROOT/assets/lidousha/slice_selection_metric.md"          "$ROOT/assets/lidousha/title_style.md"          "$ROOT/assets/lidousha/persona.md"          "$HOST:/opt/bilive/autoslice/repo/assets/lidousha/"
+  echo "runner repo assets synced"
+fi
 echo "synced glossary + subtitle principles + slice metric + vad script to $HOST"
