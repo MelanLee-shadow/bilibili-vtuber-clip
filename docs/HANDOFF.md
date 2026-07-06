@@ -85,7 +85,7 @@ AUTO_CHAIN 仍含已下线的 kuaishou（与文档/对用户报告不符）→ �
 
 1. **熊猫伪装 / 奶龙斗虫：Ivan 决定不发**（2026-07-05）。7/3 已发 4 条（称呼大战/虫儿飞/哄睡妈妈/直播腔），本场收工。
 2. ~~sync 推 free~~ **已完成（2026-07-05 Fable 复审时执行）**：复审发现 free 上词表停在 7/4 19:43 旧版（缺 kmx 主语误听种子）、`lidousha_subtitle_principles.md` 从未推上去——已跑 `sync_lidousha_assets.sh`，三个文件 md5 与本地一致。教训：以后跑 sync 别 `>/dev/null 2>&1` 吞错，跑完 md5 核对。
-3. **7/5 直播切片续跑**（见「进行中」）：A 重出封面+按默认 `bcut_agy_cpa` 复核字幕（重点听"仙童/先童数学"这类谐音梗），B/C/D/E 按 spec 产出，全部拉到 `lidousha/2026-07-05/` 给 Ivan 审。上传永远逐条授权。
+3. **7/5 直播切片续跑**（见「进行中」，另一 Opus 会话在跑，别撞车）：A 重出封面+按默认 `bcut_agy_cpa` 复核字幕，B/C/D/E 按 spec 产出，全部拉到 `lidousha/2026-07-05/` 给 Ivan 审。上传永远逐条授权。**"仙童数学"已核实**（2026-07-05 Fable）：BCUT 声学层与 free 侧 ASR 两路独立听到 xiāntóng shùxué，上下文=她模仿数学UP收尾口播的自称，Ivan 确认写法"仙童数学"→已入 glossary（黑名单：先童/神童/线童数学）并 sync free，成品字幕现状即正确。
 4. **封面改版验收**：Ivan 看 `lidousha/2026-07-04/_封面改版评审/round3/` 4 张 → 定稿后决定 commit。persona.md 目前只在 repo（sync 脚本不推它，free 端封面不消费它，无需推）。
    可选小调：`produce_slice_package.py` 人工标题时不跑 LLM 艺术指导（走确定性基线，仍贴角色）；要人工标题也精修就把 `art_direction_llm` 提出 `if not given_title`（一行）。
-5. 未提交改动（Ivan 未让 commit）：本轮全部代码/资产改动 + 封面改版全部改动 + Fable 复审修正（AUTO_CHAIN 去 kuaishou、skill 安全区数字 260/1660、离谱两用词标注、删死代码 `_wrap_cover_title_lines`、`bili_replace_covers.py` 入库）。
+5. **commit 规矩（Ivan 2026-07-05）：授权上传的内容必须 commit**——已执行，commit `7dcfdfa`（84 files：全部管线代码/skill/资产 + 9 份 `*.uploaded.json` 上传证据含追溯补记的充电器 + 24 张换封面状态证据；`.gitignore` 已加 `!reports/**/*.uploaded.json` 例外；媒体不入库，hash 在证据里）。以后每次授权上传后：写 uploaded.json → commit。见记忆 `authorized-upload-must-commit`。
