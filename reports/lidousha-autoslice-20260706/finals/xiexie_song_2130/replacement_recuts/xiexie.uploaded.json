@@ -1,0 +1,17 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-07T07:45:34Z (free host, biliup-rs)",
+  "bvid": "BV1MgMt6UEGp",
+  "aid": 116877569297821,
+  "cid": 39727268871,
+  "title": "【李豆沙】《屑屑》你",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李歌唱(season 8410735/section 9364628) — 上传时 state=-30 审核中,由 xiexie_finalize.py 待 state=0 后补挂",
+  "song": "《屑屑》 ChiliChill乐团 (netease://song/2615403834)",
+  "substrate": "钉歌(known_songs指纹匹配→fetch_netease_lrc 2615403834,去猜化)+LRC全局位移对齐(78%行匹配,offset 168ms)+后奏保留(末唱句后~16s器乐,收在念白前)+LRC权威字幕(没洗≠没醒/high five≠beat)+LRC制作credit已滤除",
+  "tool": "biliup-rs, do_upload.sh 单次运行 rc=0(绝不重跑取bvid)",
+  "authorized_by": "Ivan 2026-07-07 \"标题取为《屑屑》你就可以上传了\" + \"不用到本地可以直接上传\"",
+  "note": "屑屑=谢谢谐音,《屑屑》你=谢谢你(封面song名黄字高亮+她持麦克风);歌切完整性误报根因=歌名识别失败(见 commit 5c634df 工作流修复);封面 right-split 字左角色右不压脸,持麦唱歌表情无吐舌"
+}
