@@ -1,0 +1,16 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-07T06:15:40Z (free host, biliup-rs)",
+  "bvid": "BV1jBMt68EqL",
+  "aid": 116877200266612,
+  "cid": 39724582461,
+  "title": "【李豆沙】电脑强制更新，直播间小皇帝透露原因是地球被熊猫人控制",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李切片(season 8383206/section 9320779, episodes/add camelCase sectionId)",
+  "substrate": "BCUT聚合ASR + bcut_agy_cpa三段式校正; 结合画面SC补专名",
+  "tool": "biliup-rs 0.2.4, do_upload.sh 单次运行 rc=0(绝不重跑取bvid)",
+  "authorized_by": "Ivan 2026-07-06 手定标题\"电脑强制更新，直播间小皇帝透露原因是地球被熊猫人控制\"+\"可以上传\"",
+  "note": "电脑强制更新逼出阴谋论;封面right-split(角色右/字左避免压脸);Ivan手定标题"
+}

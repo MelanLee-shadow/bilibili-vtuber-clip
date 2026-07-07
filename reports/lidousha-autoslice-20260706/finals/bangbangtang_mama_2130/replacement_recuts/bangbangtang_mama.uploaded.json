@@ -1,0 +1,16 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-07T06:15:33Z (free host, biliup-rs)",
+  "bvid": "BV1iBMt68EwS",
+  "aid": 116877200328467,
+  "cid": 39724517956,
+  "title": "【李豆沙】为棒棒糖喊妈妈：不要被女人骗了",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李切片(season 8383206/section 9320779, episodes/add camelCase sectionId)",
+  "substrate": "BCUT聚合ASR + bcut_agy_cpa三段式校正",
+  "tool": "biliup-rs 0.2.4, do_upload.sh 单次运行 rc=0(绝不重跑取bvid)",
+  "authorized_by": "Ivan 2026-07-06 \"棒棒糖喊妈妈可以上传了\"",
+  "note": "为棒棒糖毫无底线喊妈妈,得手后劝\"不要被女人骗了\""
+}

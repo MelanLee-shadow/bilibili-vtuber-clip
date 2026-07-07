@@ -1,0 +1,16 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-07T06:10:00Z (free host, biliup-rs)",
+  "bvid": "BV1PHMt63Epi",
+  "aid": 116877183425996,
+  "cid": 39724515703,
+  "title": "【李豆沙】当拉拉还要本科文凭？主播细思极恐",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李切片(season 8383206/section 9320779, episodes/add camelCase sectionId)",
+  "substrate": "BCUT聚合ASR + bcut_agy_cpa三段式校正; 首句SC核听\"谢谢十麻乃orient的SC\"(SC不一定是最近一条,念SC可能滞后统一念;900s backlog窗口+内容匹配,非就近匹配)",
+  "tool": "biliup-rs 0.2.4, do_upload.sh 单次运行 rc=0(绝不重跑取bvid)",
+  "authorized_by": "Ivan 2026-07-06 \"拉拉十年高考也可以上传了\"",
+  "note": "\"想成为真正的拉拉还得本科文凭\"细思极恐;封面right-split"
+}

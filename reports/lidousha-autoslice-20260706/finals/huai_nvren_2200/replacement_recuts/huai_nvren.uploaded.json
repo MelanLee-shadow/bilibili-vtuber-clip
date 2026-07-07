@@ -1,0 +1,16 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-07T06:14:27Z (free host, biliup-rs)",
+  "bvid": "BV1RBMt6bEET",
+  "aid": 116877200198980,
+  "cid": 39724581063,
+  "title": "【李豆沙】熊猫头臆想自己是熊姐，还想被坏女人玩弄（奖励）",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李切片(season 8383206/section 9320779, episodes/add camelCase sectionId)",
+  "substrate": "BCUT聚合ASR + bcut_agy_cpa三段式校正; 熊姐=panda双关(正确,非听错); 结合画面SC",
+  "tool": "biliup-rs 0.2.4, do_upload.sh 单次运行 rc=0(绝不重跑取bvid)",
+  "authorized_by": "Ivan 2026-07-06 手定标题\"熊猫头臆想自己是熊姐，还想被坏女人玩弄（奖励）\"+\"可以上传\"",
+  "note": "弹幕想看她被小女友拷打扎针,她反向臆想;Ivan手定标题"
+}

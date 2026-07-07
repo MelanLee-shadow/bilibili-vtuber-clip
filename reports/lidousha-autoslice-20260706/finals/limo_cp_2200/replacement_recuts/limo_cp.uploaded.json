@@ -1,0 +1,16 @@
+{
+  "schema_version": "manual-upload-record.v1",
+  "uploaded_at": "2026-07-07T06:09:36Z (free host, biliup-rs)",
+  "bvid": "BV1PHMt63Ez7",
+  "aid": 116877183424638,
+  "cid": 39724451948,
+  "title": "【李豆沙】被劝找礼墨学谢礼，主播看穿：你只想嗑CP",
+  "tid": 21,
+  "copyright": "2(转载)",
+  "source": "https://live.bilibili.com/",
+  "collection": "小李切片(season 8383206/section 9320779, episodes/add camelCase sectionId)",
+  "substrate": "BCUT聚合ASR + bcut_agy_cpa三段式校正; 首句SC核听(\"谢礼墨\"),反向铁律(自称李豆沙/小李绝不写成搭档礼墨Sumi); 礼墨Sumi词表闭环(李墨素/李默送等听错回退)",
+  "tool": "biliup-rs 0.2.4, do_upload.sh 单次运行 rc=0(绝不重跑取bvid)",
+  "authorized_by": "Ivan 2026-07-06 \"礼墨CP切片可以上传了\"",
+  "note": "弹幕借\"怎么谢这么多礼物\"拱CP;封面right-split(字卡左/角色右)加大字号;metric v3把百合/CP/关系置顶"
+}
