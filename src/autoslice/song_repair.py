@@ -279,12 +279,20 @@ def attempt_song_repair(
                 )
             )
             continue
-        if tail_missing:
+        # Tolerate a SHORT unmatched tail: the ASR routinely drops the last few
+        # sung lines of an outro (quiet fade, applause/'谢谢大家' bleed) even when
+        # she sang the song in full (Ivan 2026-07-07 confirmed 《屑屑》 was complete
+        # to 4:11 yet the ASR missed 3 tail lines → false BLOCK).  The LRC, not the
+        # ASR, is the subtitle authority, so those lines still render.  A GENUINELY
+        # cut-off song leaves many more unmatched tail lines and still fails.  The
+        # HEAD stays strict — a mid-song start is truly unsliceable.
+        tail_limit = max(3, len(alignment) // 12)
+        if tail_missing > tail_limit:
             attempts.append(
                 SongRepairAttempt(
                     "song_completeness",
                     "FAILED",
-                    f"{lrc.song_title!r}: song tail missing from source: last {tail_missing} LRC line(s) have no ASR match — the performance was cut off or the capture ended early",
+                    f"{lrc.song_title!r}: song tail missing from source: last {tail_missing} LRC line(s) have no ASR match (tolerated {tail_limit}) — the performance was cut off or the capture ended early",
                 )
             )
             continue
@@ -486,36 +494,55 @@ def _performance_window(
     return list(ordered[start_index : end_index + 1])
 
 
+def _cjk_clean_score(text: str) -> float:
+    """Rank a cue for use as a netease lyric search query.  A search matches on
+    LYRIC TEXT, so the best query is one CLEAN, CJK-dense, distinctive line — NOT
+    the longest.  The longest ASR lines are often the English/rap sections BCUT
+    mangles ("chewe now baby just chewe now") which match nothing; a clean line
+    like "谁说圆满的人生才能算圆满" returns 《屑屑》 as the #1 hit.  Score = CJK
+    density × capped length; lines with < 6 CJK chars are unusable (-1)."""
+    normalized = normalize_lyric_text(text)
+    if len(normalized) < 6:
+        return -1.0
+    cjk = sum(1 for ch in normalized if "一" <= ch <= "鿿")
+    if cjk < 6:
+        return -1.0
+    return (cjk / len(normalized)) * min(len(normalized), 16)
+
+
 def _build_lyric_queries(
     window: Sequence[SourceCue],
     anchor_start_ms: int | None = None,
     anchor_end_ms: int | None = None,
 ) -> list[str]:
-    # The longest cue lines are the most lyric-like and least chat-polluted.
-    # The expanded window may contain neighboring songs and talk, so cues
-    # overlapping the anchor come first — that is the song review targeted.
-    def longest(cues: Sequence[SourceCue]) -> list[SourceCue]:
-        return sorted(cues, key=lambda cue: len(normalize_lyric_text(cue.text)), reverse=True)[:3]
-
-    groups: list[Sequence[SourceCue]] = []
+    # netease search matches on lyric text, so issue the cleanest CJK-dense lines
+    # as INDIVIDUAL queries — one distinctive line finds the song even when the
+    # garbled ASR defeats title guessing (proven on 《屑屑》: the 3-longest lines
+    # were all English mondegreens and found nothing; clean lines all hit).  The
+    # anchor cues (the targeted song) are scored first.
+    anchor_cues: Sequence[SourceCue] = window
     if anchor_start_ms is not None and anchor_end_ms is not None:
-        anchor_cues = [
+        overlapping = [
             cue for cue in window if cue.source_end_ms > anchor_start_ms and cue.source_start_ms < anchor_end_ms
         ]
-        if anchor_cues:
-            groups.append(anchor_cues)
-    groups.append(window)
+        if overlapping:
+            anchor_cues = overlapping
 
     queries: list[str] = []
-    for cues in groups:
-        picked = longest(cues)
-        ordered = sorted(picked, key=lambda cue: cue.source_start_ms)
-        combined = " ".join(cue.text.strip().replace("\n", " ") for cue in ordered)[:60]
-        queries.append(combined)
-        for cue in picked[:2]:
-            single = cue.text.strip().replace("\n", " ")[:40]
-            if single:
-                queries.append(single)
+    for cue in sorted(anchor_cues, key=lambda c: _cjk_clean_score(c.text), reverse=True):
+        if _cjk_clean_score(cue.text) <= 0:
+            break
+        line = cue.text.strip().replace("\n", " ")[:40]
+        if line:
+            queries.append(line)
+        if len(queries) >= 6:
+            break
+    # safety net: the two longest lines from the full window (covers songs whose
+    # ASR is clean enough that raw length is a fine proxy, e.g. the old behavior).
+    for cue in sorted(window, key=lambda c: len(normalize_lyric_text(c.text)), reverse=True)[:2]:
+        line = cue.text.strip().replace("\n", " ")[:40]
+        if line:
+            queries.append(line)
     return list(dict.fromkeys(q for q in queries if q))
 
 
