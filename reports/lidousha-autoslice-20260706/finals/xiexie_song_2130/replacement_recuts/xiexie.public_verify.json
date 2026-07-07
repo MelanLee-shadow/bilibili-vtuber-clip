@@ -1,8 +1,9 @@
 {
-  "verified_at": "2026-07-07 (审核通过后 xiexie_finalize.py 自动补挂+验证)",
+  "verified_at": "2026-07-07 (审核通过后 finalizer 补挂+验证; 后补'豆沙歌'系列标记标题并同步合集条目, 公开复核)",
   "bvid": "BV1MgMt6UEGp",
   "state": 0,
-  "title": "【李豆沙】《屑屑》你",
+  "title": "【李豆沙】豆沙歌，《屑屑》你",
+  "collection_episode_title_synced": true,
   "season": "小李歌唱",
   "season_id": 8410735,
   "season_member_confirmed": true,
