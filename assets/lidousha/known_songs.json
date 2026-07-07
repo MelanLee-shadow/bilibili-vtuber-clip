@@ -1,0 +1,18 @@
+{
+  "schema_version": "lidousha-known-songs.v1",
+  "_doc": "Curated recurring songs 李豆沙 performs, so song-lane identification is DETERMINISTIC instead of depending on the flaky LLM song-hint + text search (which mis-guessed 《屑屑》 as 快乐崇拜/穷开心 and lost it entirely, 2026-07-07). If >=2 fingerprint lines appear in the window ASR, that song's netease LRC is pinned into the alignment pool; ranking still proves it by real match ratio, so a wrong pin is harmless (ranked out). Add a song here once its netease id is confirmed against the actual performance.",
+  "songs": [
+    {
+      "title": "屑屑",
+      "artist": "ChiliChill乐团",
+      "netease_id": "2615403834",
+      "fingerprint": [
+        "今天也过得很愉快",
+        "想写首歌庆祝",
+        "谁说圆满",
+        "勤奋和懒惰",
+        "有一段旋律"
+      ]
+    }
+  ]
+}

@@ -38,6 +38,15 @@ SHIFT_TOLERANCE_MS = 6_000
 
 _NON_LYRIC_CHARS = re.compile(r"[\s，。！？、,.!?…~〜\-—:：;；\"'“”‘’()（）\[\]【】]")
 
+# Credit/production-role terms netease puts in "role : name" metadata lines.
+# Matched as a substring of a short pre-colon head (so 音乐制作/贝斯演奏/混音、母带
+# are all caught, not just exact prefixes), to keep them out of burned lyrics.
+_LRC_CREDIT_KEYWORDS = (
+    "作词", "作曲", "编曲", "制作", "监制", "出品", "发行", "混音", "母带", "录音",
+    "演唱", "演奏", "和声", "合声", "吉他", "贝斯", "鼓", "键盘", "弦乐", "配唱",
+    "统筹", "企划", "策划", "后期", "版权",
+)
+
 
 @dataclass(frozen=True)
 class LrcLine:
@@ -109,8 +118,17 @@ def attempt_song_repair(
     max_window_gap_ms: int = 30_000,
     pre_roll_ms: int = 1_500,
     post_roll_ms: int = 4_000,
+    max_outro_ms: int = 22_000,
+    pinned_lrc_results: Sequence[LrcResult] = (),
 ) -> SongRepairResult:
-    """Try to repair a song candidate into a fully-proven full-song boundary."""
+    """Try to repair a song candidate into a fully-proven full-song boundary.
+
+    ``pinned_lrc_results`` are caller-supplied LRCs (e.g. a known recurring song
+    matched by fingerprint) that are added to the candidate pool BEFORE flaky
+    LLM/text discovery, so alignment ranking can still pick the right song when
+    search misses it.  ``max_outro_ms`` caps the instrumental 后奏 (outro) kept
+    after the last sung line up to the next spoken cue.
+    """
 
     attempts: list[SongRepairAttempt] = []
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +175,17 @@ def attempt_song_repair(
 
     candidates: list[LrcResult] = []
     seen_refs: set[str] = set()
+    for pinned in pinned_lrc_results:
+        if isinstance(pinned, LrcResult) and pinned.lines and pinned.source_ref not in seen_refs:
+            seen_refs.add(pinned.source_ref)
+            candidates.append(pinned)
+            attempts.append(
+                SongRepairAttempt(
+                    "pinned_lrc",
+                    "SUCCESS",
+                    f"{pinned.song_title!r} ({pinned.source_ref}) pinned ({len(pinned.lines)} LRC lines) — deterministic, ranked against search",
+                )
+            )
     provider_errors: list[str] = []
     for query in deduped_queries:
         if len(candidates) >= max_lrc_candidates:
@@ -323,7 +352,19 @@ def attempt_song_repair(
         first_lyric_start_ms = first_cue_start
         last_lyric_end_ms = last_cue_end
         clip_start_ms = max(0, first_lyric_start_ms - pre_roll_ms)
-        clip_end_ms = min(source_duration_ms, last_lyric_end_ms + post_roll_ms)
+        # Keep the instrumental outro (后奏): a complete song does not end on the
+        # last sung word.  The outro has no lyrics for ASR to anchor on, so extend
+        # to just before the next spoken cue after the song (the post-song talk),
+        # capped by max_outro_ms.  When the song ends the window, keep the full cap.
+        next_cue_start_ms = min(
+            (cue.source_start_ms for cue in cues if cue.source_start_ms > last_lyric_end_ms),
+            default=None,
+        )
+        outro_cap_ms = last_lyric_end_ms + max_outro_ms
+        outro_end_ms = outro_cap_ms if next_cue_start_ms is None else min(next_cue_start_ms, outro_cap_ms)
+        # never cut the last sung word's natural tail
+        outro_end_ms = max(outro_end_ms, last_lyric_end_ms + min(post_roll_ms, 1_000))
+        clip_end_ms = min(source_duration_ms, outro_end_ms)
         if clip_end_ms <= clip_start_ms:
             attempts.append(
                 SongRepairAttempt(
@@ -448,6 +489,52 @@ def build_netease_lrc_provider(*, timeout_seconds: float = 8.0, max_results: int
     return provider
 
 
+def fetch_netease_lrc(song_ref: str, *, timeout_seconds: float = 8.0) -> LrcResult | None:
+    """Fetch one NetEase song's LRC by id/ref, bypassing flaky text search.
+
+    Accepts a bare id (``"2615403834"``) or a ref (``"netease://song/2615403834"``).
+    Used to pin a known recurring song so its identification is deterministic.
+    """
+
+    match = re.search(r"(\d{4,})", str(song_ref or ""))
+    if not match:
+        return None
+    song_id = int(match.group(1))
+    try:
+        lyric_payload = _http_json(
+            f"https://music.163.com/api/song/lyric?id={song_id}&lv=1&kv=0&tv=0",
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception:
+        return None
+    lrc_text = (((lyric_payload or {}).get("lrc") or {}).get("lyric")) or ""
+    lines = parse_lrc_text(lrc_text)
+    if len(lines) < 8:
+        return None
+    song_title = ""
+    artist: str | None = None
+    try:
+        detail = _http_json(
+            f"https://music.163.com/api/song/detail?ids=%5B{song_id}%5D",
+            timeout_seconds=timeout_seconds,
+        )
+        songs = (detail or {}).get("songs") or []
+        if songs and isinstance(songs[0], Mapping):
+            song_title = str(songs[0].get("name") or "")
+            artists = songs[0].get("artists") or []
+            if artists and isinstance(artists[0], Mapping):
+                artist = str(artists[0].get("name") or "") or None
+    except Exception:
+        pass
+    return LrcResult(
+        provider="netease",
+        song_title=song_title,
+        artist=artist,
+        source_ref=f"netease://song/{song_id}",
+        lines=tuple(lines),
+    )
+
+
 def parse_lrc_text(lrc_text: str) -> list[LrcLine]:
     lines: list[LrcLine] = []
     for raw_line in lrc_text.splitlines():
@@ -455,9 +542,19 @@ def parse_lrc_text(lrc_text: str) -> list[LrcLine]:
         text = re.sub(r"\[[^\]]*\]", "", raw_line).strip()
         if not matches or not text:
             continue
-        # metadata lines such as 作词/作曲/编曲 are not sung lyrics
+        # Metadata/credit lines are not sung lyrics. netease appends them with
+        # their own timestamps (some late, inside the outro) in a "role : name"
+        # shape — sung lyrics never use a spaced colon.  The old prefix-only rule
+        # missed 音乐制作/贝斯演奏/混音、母带 (they don't START with a listed keyword),
+        # so credits got burned as subtitles over the 后奏 (Ivan 2026-07-07 《屑屑》).
+        # Match the credit keyword anywhere in a short pre-colon head instead.
         if re.match(r"^(作词|作曲|编曲|制作|混音|母带|录音|监制|出品|词|曲|演唱)\s*[:：]", text):
             continue
+        colon_split = re.split(r"[:：]", text, maxsplit=1)
+        if len(colon_split) == 2:
+            head = colon_split[0].strip()
+            if len(head) <= 12 and any(kw in head for kw in _LRC_CREDIT_KEYWORDS):
+                continue
         for minute, second, fraction in matches:
             fraction_ms = int((fraction or "0").ljust(3, "0")[:3])
             lines.append(LrcLine(time_ms=(int(minute) * 60 + int(second)) * 1000 + fraction_ms, text=text))

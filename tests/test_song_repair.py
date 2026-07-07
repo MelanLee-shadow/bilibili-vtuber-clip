@@ -5,9 +5,32 @@ from src.autoslice.review_evidence import SourceCue
 from src.autoslice.song_repair import (
     LrcLine,
     LrcResult,
+    _build_lyric_queries,
     attempt_song_repair,
     parse_lrc_text,
 )
+
+
+def test_build_lyric_queries_prefers_clean_lines_over_longest():
+    """Ivan 2026-07-06 《屑屑》: the longest ASR lines are the English/rap parts
+    BCUT mangles ("chewe now baby just chewe now") which find nothing on netease;
+    a clean CJK-dense line finds the song.  Query selection must issue the clean
+    distinctive lines, not just the longest."""
+    cues = [
+        SourceCue("c1", 1000, 4000, "chewe now baby just chewe now", kind="singing"),   # longest, garbled
+        SourceCue("c2", 5000, 8000, "just did the chely now给整片银河系", kind="singing"),  # long, garbled
+        SourceCue("c3", 9000, 12000, "谁说圆满的人生才能算圆满", kind="singing"),          # clean distinctive
+        SourceCue("c4", 13000, 16000, "简直简直忍不住想要为自己喝彩", kind="singing"),      # clean distinctive
+        SourceCue("c5", 17000, 20000, "嗯", kind="singing"),                              # too short
+    ]
+    queries = _build_lyric_queries(cues, 0, 21_000)
+    # the clean distinctive lines are issued as their OWN queries
+    assert "谁说圆满的人生才能算圆满" in queries
+    assert "简直简直忍不住想要为自己喝彩" in queries
+    # ranked ahead of the garbled English line (clean lines score higher)
+    assert queries.index("谁说圆满的人生才能算圆满") < queries.index("chewe now baby just chewe now")
+    # the sub-6-char cue is never a query
+    assert "嗯" not in queries
 
 
 def _song_cues(start_ms: int = 50_000) -> list[SourceCue]:
@@ -296,7 +319,16 @@ def test_provider_exception_is_recorded_not_raised(tmp_path):
 
 
 def test_parse_lrc_text_skips_metadata_and_sorts():
-    lrc = "[00:01.00]作词 : 某人\n[00:12.50]第二句\n[00:02.00]第一句\n[junk]\n"
+    # trailing credits with mid-head keywords (音乐制作/贝斯演奏/混音、母带) are the
+    # real 《屑屑》 lines that got burned over the outro — must be dropped too, not
+    # just the exact-prefix 作词/作曲 ones.
+    lrc = (
+        "[00:01.00]作词 : 某人\n"
+        "[03:45.00]音乐制作 : ChiliChill乐团\n"
+        "[03:47.00]贝斯演奏 : 李彦希\n"
+        "[03:48.00]混音、母带 : ChiliChill乐团\n"
+        "[00:12.50]第二句\n[00:02.00]第一句\n[junk]\n"
+    )
     lines = parse_lrc_text(lrc)
     assert [line.text for line in lines] == ["第一句", "第二句"]
     assert lines[0].time_ms == 2_000
@@ -357,6 +389,55 @@ def test_llm_song_hint_queries_reach_provider_first(tmp_path):
     assert queries_seen[0] == "侠客行 测试歌手"
     hint_attempts = [a for a in result.attempts if a.step == "llm_song_hint"]
     assert hint_attempts and hint_attempts[0].status == "SUCCESS"
+
+
+def test_pinned_lrc_repairs_when_search_finds_nothing(tmp_path):
+    # Reproduces the real 《屑屑》 failure: LLM hint guessed wrong songs and text
+    # search found nothing that aligned, so the song was never identified and the
+    # whole complete-song evidence path was skipped.  A caller-pinned LRC (matched
+    # by known-song fingerprint) is added to the ranking pool so alignment can
+    # still prove it — deterministic, not dependent on flaky discovery.
+    result = attempt_song_repair(
+        candidate_id="song-pinned",
+        cues=_song_cues(),
+        anchor_start_ms=60_000,
+        anchor_end_ms=80_000,
+        source_duration_ms=300_000,
+        output_dir=tmp_path,
+        lrc_provider=lambda query: None,  # search finds nothing (the real 屑屑 bug)
+        pinned_lrc_results=[_matching_lrc()],
+    )
+
+    assert result.repaired is True
+    assert result.song_boundary["song_title"] == "侠客行"
+    pinned = [a for a in result.attempts if a.step == "pinned_lrc"]
+    assert pinned and pinned[0].status == "SUCCESS"
+
+
+def test_outro_kept_up_to_next_talk_cue(tmp_path):
+    # Ivan 2026-07-07: a complete song must keep the instrumental 后奏 (outro)
+    # after the last sung line, ending before the post-song talk.  The last sung
+    # cue ends at 91_000; a 谢谢大家 talk cue starts 15s later — that 15s gap is
+    # the outro and must be retained (the old last_lyric+4s post-roll cut it).
+    cues = _song_cues() + [
+        SourceCue("talk-thanks", 106_000, 110_000, "谢谢大家的礼物哦", kind="talk"),
+    ]
+    result = attempt_song_repair(
+        candidate_id="song-outro",
+        cues=cues,
+        anchor_start_ms=60_000,
+        anchor_end_ms=80_000,
+        source_duration_ms=300_000,
+        output_dir=tmp_path,
+        lrc_provider=lambda query: _matching_lrc(),
+    )
+
+    assert result.repaired is True
+    clip_end = result.song_boundary["clip_end_ms"]
+    # kept the instrumental outro (old post-roll would have stopped near 95_000)…
+    assert clip_end > 100_000
+    # …but stopped before the post-song talk at 106_000
+    assert clip_end <= 106_000
 
 
 def test_llm_hint_failure_is_recorded_and_text_queries_still_tried(tmp_path):

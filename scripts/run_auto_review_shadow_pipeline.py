@@ -42,7 +42,15 @@ from src.autoslice.cpa_semantic_qa import (
 from src.autoslice.render_qa import RenderRequest, RenderedTimelineMetadata, evaluate_render_pts
 from src.autoslice.review_evidence import ReviewEvidence, SourceCue, to_candidate_review
 from src.autoslice.llm_client import LlmCall, LlmConfig, build_llm_call, extract_json_object
-from src.autoslice.song_repair import LrcProvider, SongRepairResult, attempt_song_repair, build_netease_lrc_provider
+from src.autoslice.song_repair import (
+    LrcProvider,
+    LrcResult,
+    SongRepairResult,
+    attempt_song_repair,
+    build_netease_lrc_provider,
+    fetch_netease_lrc,
+    normalize_lyric_text,
+)
 from src.autoslice.source_integrity import MediaSegmentObservation, build_source_range_ledger, plan_bilibili_replay_compensation
 from src.autoslice.source_context_executor import AgyExecutionResult, SourceContextExecutionResult, execute_source_context_job
 from src.autoslice.source_context_planner import JingtingJobProvenance, plan_source_context_jingting_jobs
@@ -1804,6 +1812,46 @@ def _recut_plan_record(
     }
 
 
+def _load_known_songs() -> list[Mapping[str, object]]:
+    """Curated recurring-song table (assets/lidousha/known_songs.json)."""
+    path = ROOT / "assets" / "lidousha" / "known_songs.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    songs = payload.get("songs") if isinstance(payload, Mapping) else None
+    return [s for s in songs if isinstance(s, Mapping)] if isinstance(songs, list) else []
+
+
+def _pinned_lrc_for_song(cues: Sequence[SourceCue]) -> list[LrcResult]:
+    """Deterministically pin a known song's LRC when its fingerprint lines appear
+    in the window ASR — so song identification never depends on the flaky LLM
+    hint + text search (which lost 《屑屑》 entirely, 2026-07-07).  Pins only ADD
+    candidates; alignment ranking still proves them, so a wrong pin is harmless.
+    """
+    table = _load_known_songs()
+    if not table:
+        return []
+    asr = normalize_lyric_text(" ".join(cue.text for cue in cues))
+    if not asr:
+        return []
+    pinned: list[LrcResult] = []
+    seen: set[str] = set()
+    for song in table:
+        fingerprints = [normalize_lyric_text(str(f)) for f in (song.get("fingerprint") or [])]
+        hits = sum(1 for fp in fingerprints if fp and fp in asr)
+        if hits < 2:
+            continue
+        netease_id = str(song.get("netease_id") or "").strip()
+        if not netease_id or netease_id in seen:
+            continue
+        lrc = fetch_netease_lrc(netease_id)
+        if lrc is not None and lrc.lines:
+            seen.add(netease_id)
+            pinned.append(lrc)
+    return pinned
+
+
 def _attempt_song_repair_stage(
     job_manifest: Mapping[str, object],
     cues: Sequence[SourceCue],
@@ -1842,6 +1890,7 @@ def _attempt_song_repair_stage(
         output_dir=output_dir / "song_repair",
         lrc_provider=lrc_provider,
         hint_llm_call=hint_llm_call,
+        pinned_lrc_results=_pinned_lrc_for_song(cues),
     )
     if result.repaired and result.song_boundary and result.lyrics_alignment:
         repaired_job = {
@@ -2208,6 +2257,7 @@ def _stage_publish_draft(
     run_ffmpeg: bool,
     title_llm_call: LlmCall | None,
     art_direction_llm_call: LlmCall | None = None,
+    skip_cover: bool = False,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
 
@@ -2288,15 +2338,25 @@ def _stage_publish_draft(
             title_source = f"job_title(llm_failed: {llm_error})"
 
     cover_text = _lidousha_cover_text(staged_title)
-    cover_result = _stage_lidousha_ai_cover(
-        record,
-        media_path=media_path,
-        candidate_id=candidate_id,
-        title=staged_title,
-        cover_text=cover_text,
-        run_ffmpeg=run_ffmpeg,
-        art_direction_llm_call=art_direction_llm_call,
-    )
+    if skip_cover:
+        # Subtitle-only re-run: keep the existing delivered cover, skip the
+        # expensive AI cover (art-direction LLM + gpt-image-2 ~90s/clip).
+        cover_result = {
+            "status": "REUSED_COVER",
+            "cover_path": None,
+            "cover_generation": {"status": "REUSED", "note": "subtitle-only re-run: existing cover kept"},
+            "reason_codes": [],
+        }
+    else:
+        cover_result = _stage_lidousha_ai_cover(
+            record,
+            media_path=media_path,
+            candidate_id=candidate_id,
+            title=staged_title,
+            cover_text=cover_text,
+            run_ffmpeg=run_ffmpeg,
+            art_direction_llm_call=art_direction_llm_call,
+        )
     cover_status = str(cover_result["status"])
     cover_path_value = cover_result.get("cover_path") if cover_status == "AI_COVER_READY" else None
     cover_generation = cover_result["cover_generation"]
@@ -2530,6 +2590,7 @@ class LidoushaCoverArtDirection:
     hook_color: str      # key in _COVER_HOOK_COLORS
     is_song: bool
     hook_word: str = ""  # verbatim substring of cover_text to highlight ("" = none)
+    line_breaks: tuple[str, ...] = ()  # LLM word-aware line split of cover_text ("" = balancer)
 
 
 _COVER_TALK_LAYOUTS = ("left-split", "right-split", "banner")
@@ -2690,8 +2751,43 @@ def _cover_art_direction_prompt(*, title: str, cover_text: str) -> str:
         "- role: 一个简短英文角色键(如 shy_cute_default/shocked_bites_back/witty_smug/tender_soft/gentle_song)\n"
         "- expression_en: 一句英文脸部表情(贴角色,不吐舌)\n"
         "- hook_word: 封面文案里最该高亮的一个词(必须是文案里出现的原词)\n"
-        '只输出一个 JSON 对象: {"role":"...","expression_en":"...","background_style":"...","layout":"...","hook_color":"...","hook_word":"..."}'
+        "- lines: 封面文案的分行方案(字符串数组)。硬约束:按顺序拼接后与封面文案一字不差(不加/不减/不改字);"
+        "**绝不把一个词拆到两行**(如\"拒绝\"\"熊猫\"\"礼墨\"这类词必须整词同行);《歌名》和 hook_word 必须完整待在同一行。\n"
+        "  **封面字要尽量大、填满文字区(这是硬要求,Ivan 反复强调字卡不能小)**:字号由最长一行的宽度决定,所以行要短。"
+        "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(建议 4-5 行,每行 3-5 字),"
+        "让文字铺满整个竖直文字区;banner 是横宽区,可以少分几行、每行长一点(2-3 行)。宁可多一行也不要留一行太长把字压小。\n"
+        '只输出一个 JSON 对象: {"role":"...","expression_en":"...","background_style":"...","layout":"...","hook_color":"...","hook_word":"...","lines":["...","..."]}'
     )
+
+
+def _cover_lines_canon(text: str) -> str:
+    """Canonical form for comparing a line split against the cover text: line
+    breaks may consume whitespace and clause punctuation (the balancer drops
+    them at line edges too), but never a content character."""
+    return re.sub(r"[\s，,、；;]+", "", text)
+
+
+def _validated_cover_lines(value: object, cover_text: str, *, hook_word: str, max_lines: int) -> tuple[str, ...]:
+    """Accept an LLM line split only when it is provably lossless and renderable:
+    same characters in the same order, 《song》 and the hook word intact within a
+    single line, sane line count/length.  Anything else → () → balancer fallback
+    (word-blind, but never worse than before)."""
+    if not isinstance(value, (list, tuple)) or not (1 <= len(value) <= max_lines):
+        return ()
+    lines = []
+    for item in value:
+        if not isinstance(item, str):
+            return ()
+        line = item.strip(" \t，,、；;")
+        if not line or len(line) > 12:
+            return ()
+        lines.append(line)
+    if _cover_lines_canon("".join(lines)) != _cover_lines_canon(cover_text):
+        return ()
+    for atom in [*re.findall(r"《[^》]*》", cover_text), *( [hook_word] if hook_word else [] )]:
+        if atom and not any(atom in line for line in lines):
+            return ()  # a song name / the highlighted hook must never break across lines
+    return tuple(lines)
 
 
 def _normalize_cover_art_direction(
@@ -2722,6 +2818,13 @@ def _normalize_cover_art_direction(
     if not (isinstance(hook_word, str) and hook_word and hook_word in cover_text.replace("\n", "")):
         hook_word = baseline.hook_word
 
+    # Word-aware line split (Ivan 2026-07-06: 均衡分行器把"拒绝/熊猫"拆到两行) —
+    # validated against the FINAL layout's line budget and the FINAL hook word.
+    # Colon-derived explicit breaks ("\n" in cover_text) stay authoritative and
+    # are handled in _fit_cover_lines; the LLM split only fills the no-colon case.
+    max_lines = _COVER_LAYOUT_RENDER.get(layout, _COVER_LAYOUT_RENDER["left-split"])["max_lines"]
+    line_breaks = _validated_cover_lines(payload.get("lines"), cover_text, hook_word=hook_word, max_lines=max_lines)
+
     return LidoushaCoverArtDirection(
         role=role,
         expression_en=expression_en,
@@ -2730,6 +2833,7 @@ def _normalize_cover_art_direction(
         hook_color=hook_color,
         is_song=baseline.is_song,
         hook_word=hook_word,
+        line_breaks=line_breaks,
     )
 
 
@@ -2840,6 +2944,33 @@ def _load_lidousha_asset(name: str) -> str:
         return "(资产文件缺失)"
 
 
+_COVER_CANVAS = (1920, 1080)
+# The CPA image gateway (new_api) rejects sizes that aren't positive multiples
+# of 16 with HTTP 400 model_price_error — 1080 isn't one (first hit 2026-07-06,
+# blanked a whole unattended batch's covers).  Request the nearest compliant
+# size and normalize the returned image back onto the 1920x1080 overlay canvas.
+_COVER_REQUEST_SIZE = "1920x1088"
+
+
+def _normalize_cover_canvas(path: Path) -> tuple[int, int]:
+    """Force the AI background onto the 1920x1080 canvas the text-overlay zones
+    assume: scale-to-cover + center-crop (never letterbox/stretch)."""
+    from PIL import Image
+
+    with Image.open(path) as img:
+        img = img.convert("RGB")
+        if img.size != _COVER_CANVAS:
+            scale = max(_COVER_CANVAS[0] / img.width, _COVER_CANVAS[1] / img.height)
+            new_w = max(_COVER_CANVAS[0], int(round(img.width * scale)))
+            new_h = max(_COVER_CANVAS[1], int(round(img.height * scale)))
+            resized = img.resize((new_w, new_h), Image.LANCZOS)
+            left = (new_w - _COVER_CANVAS[0]) // 2
+            top = (new_h - _COVER_CANVAS[1]) // 2
+            img = resized.crop((left, top, left + _COVER_CANVAS[0], top + _COVER_CANVAS[1]))
+        img.save(path)
+        return img.size
+
+
 def _call_cpa_image_edit(
     *,
     base_url: str,
@@ -2873,7 +3004,7 @@ def _call_cpa_image_edit(
     )
     try:
         body, content_type = _multipart_form_data(
-            fields={"model": "gpt-image-2", "prompt": prompt, "size": "1920x1080"},
+            fields={"model": "gpt-image-2", "prompt": prompt, "size": _COVER_REQUEST_SIZE},
             files={"image": (reference_path.name, reference_path.read_bytes(), "image/png")},
         )
         request = urllib.request.Request(
@@ -2929,6 +3060,11 @@ def _call_cpa_image_edit(
     else:
         response_path.write_text(json.dumps(redacted_response, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_NO_IMAGE", "detail": "response had no b64_json/url image"}
+    try:
+        redacted_response["canvas"] = list(_normalize_cover_canvas(output_path))
+    except Exception as exc:  # noqa: BLE001 — a broken/undecodable image must block, not deliver
+        response_path.write_text(json.dumps(redacted_response, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_BAD_IMAGE", "detail": f"{type(exc).__name__}: {exc}"}
     redacted_response["output_path"] = str(output_path)
     redacted_response["output_sha256"] = "sha256:" + _sha256(output_path)
     response_path.write_text(json.dumps(redacted_response, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -3019,12 +3155,23 @@ def _cover_fallback_font_path():
     return None
 
 
+# ZCOOLKuaiLe renders these glyphs as the WRONG SHAPE (not .notdef tofu, so the
+# missing-glyph checker can't catch them): 自 comes out looking like 白 (自私→白私,
+# 擅自→擅白).  Any title containing one must use the complete fallback font for the
+# WHOLE cover.  Extend as more wrong-shape glyphs surface (data-only fix; the title
+# JSON is always correct — only the ZCOOL-rendered PNG was wrong).
+_COVER_ZCOOL_WRONG_GLYPHS = frozenset("自")
+
+
 def _cover_font_for_text(cover_text):
     """Choose ONE font for the whole cover: default ZCOOL; if ZCOOL is MISSING any
-    glyph in the title, use the complete fallback for the ENTIRE cover (uniform)."""
+    glyph OR renders one as the wrong shape (自→白), use the complete fallback for
+    the ENTIRE cover (uniform — never mix fonts in a cover)."""
     zcool = _find_cover_font()
     missing = _cover_missing_checker(zcool)
-    if any((not ch.isspace()) and missing(ch) for ch in cover_text):
+    if any(ch in _COVER_ZCOOL_WRONG_GLYPHS for ch in cover_text) or any(
+        (not ch.isspace()) and missing(ch) for ch in cover_text
+    ):
         fallback = _cover_fallback_font_path()
         if fallback is not None:
             return fallback
@@ -3220,11 +3367,47 @@ def _wrap_even(text, n, keep=()):
     return [line for line in lines if line]
 
 
-def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_path, max_lines=3, max_size=300):
+def _regroup_lines(lines: Sequence[str], k: int) -> list[str]:
+    """Partition ``lines`` into k contiguous, length-balanced groups (joining each
+    group's text).  Merging adjacent word-safe lines is itself word-safe, so this
+    lets the fitter try FEWER lines (bigger font in wide zones) without ever
+    splitting a word — the LLM/colon split is the finest (most-lines) option."""
+    lines = [ln for ln in lines if ln]
+    if k >= len(lines):
+        return list(lines)
+    if k <= 1:
+        return ["".join(lines)]
+    lens = [len(ln) for ln in lines]
+    total = sum(lens)
+    cum, running = [], 0
+    for length in lens:
+        running += length
+        cum.append(running)
+    cuts, start = [], 0
+    for j in range(1, k):
+        ideal = total * j / k
+        best = None
+        for i in range(start, len(lines) - (k - j)):
+            dist = abs(cum[i] - ideal)
+            if best is None or dist < best[0]:
+                best = (dist, i)
+        cuts.append(best[1])
+        start = best[1] + 1
+    groups, prev = [], 0
+    for cut in cuts:
+        groups.append("".join(lines[prev:cut + 1]))
+        prev = cut + 1
+    groups.append("".join(lines[prev:]))
+    return [g for g in groups if g]
+
+
+def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_path, max_lines=3, max_size=300, forced_lines=()):
     """Choose the line-wrap + font size that makes the title as BIG as possible
-    while filling the zone: try 1..max_lines wraps, and for each binary-search the
-    largest emphasized size that fits (width AND height); keep the wrap that yields
-    the biggest font.  The hook line is emphasized; outlines scale with the font."""
+    while filling the zone: evaluate every line count (the LLM/colon word-safe
+    wraps AND balancer wraps at 1..max_lines), binary-search the largest emph size
+    that fits each (width AND height), and take the biggest — preferring a
+    word-safe wrap whenever it lands within 90% of the best so bigger text never
+    reintroduces a mid-word break.  The hook line is emphasized; outlines scale."""
     from PIL import Image, ImageDraw, ImageFont
 
     x0, y0, x1, y1 = zone
@@ -3232,6 +3415,8 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
     zone_h = (y1 - y0) * 0.96
     scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     explicit = [line.strip() for line in cover_text.splitlines() if line.strip()] if "\n" in cover_text else None
+    if explicit is None and forced_lines:
+        explicit = [line for line in (l.strip() for l in forced_lines) if line]
 
     def evaluate(line_texts, emph):
         emph_idx = 0
@@ -3251,11 +3436,30 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
         return fits, sizes, seg_lines, gaps
 
     keep = (hook_word,) if hook_word else ()
-    candidates = [explicit] if explicit else [_wrap_even(cover_text, n, keep=keep) for n in range(1, max_lines + 1)]
-    best = None
-    for line_texts in candidates:
+    # BIG TEXT (Ivan 2026-07-07 "字卡还是太小"): the font is capped by the longest
+    # line's width, so a fixed 2-clause colon split leaves a narrow side zone's
+    # font tiny with most of the height empty.  Evaluate MANY line counts and take
+    # the biggest font that fills the zone — but PREFER a word-safe wrap (the LLM's
+    # split, then the colon clauses) whenever it lands within 90% of the best, so
+    # bigger text never costs a mid-word break (拒绝/熊猫/礼墨).  The balancer wraps
+    # (word-blind, but keep hook/《song》/ASCII whole) fill the zone as the floor.
+    # Word-safe base split (finest granularity): the LLM's word-aware lines, else
+    # the colon clauses.  Regrouping it at every line count 1..len gives bigger
+    # options (fewer lines fill wide zones) that never split a word.
+    base: list[str] = []
+    if forced_lines:
+        base = [line for line in (l.strip() for l in forced_lines) if line]
+    if not base and "\n" in cover_text:
+        base = [line for line in (l.strip() for l in cover_text.splitlines()) if line]
+    wordsafe = [_regroup_lines(base, k) for k in range(1, len(base) + 1)] if base else []
+    flat = cover_text.replace("\n", "")  # balancer wraps the flat text (colon \n is a clause hint only)
+    balancer = [_wrap_even(flat, n, keep=keep) for n in range(1, max_lines + 1)]
+    candidates = [(True, w) for w in wordsafe] + [(False, w) for w in balancer]
+
+    scored: list[tuple[int, bool, list, list, list]] = []
+    for is_wordsafe, line_texts in candidates:
         line_texts = [line for line in line_texts if line]
-        if not line_texts:
+        if not line_texts or len(line_texts) > max_lines:
             continue
         lo, hi, best_emph = 46, max_size, 46
         while lo <= hi:
@@ -3266,8 +3470,18 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
             else:
                 hi = mid - 1
         _, sizes, seg_lines, gaps = evaluate(line_texts, best_emph)
-        if best is None or best_emph > best[0]:
-            best = (best_emph, seg_lines, sizes, gaps)
+        scored.append((best_emph, is_wordsafe, seg_lines, sizes, gaps))
+    # Honor the biggest WORD-SAFE wrap (the LLM's split / colon clauses).  Only
+    # fall to a word-blind balancer wrap when word-safe leaves the zone badly
+    # underfilled (< 75% of the balancer's font) — then legible size wins over an
+    # intact word.  With the LLM producing enough short lines this rarely fires.
+    best_ws = max((s for s in scored if s[1]), key=lambda s: s[0], default=None)
+    best_bl = max((s for s in scored if not s[1]), key=lambda s: s[0], default=None)
+    if best_ws is not None and (best_bl is None or best_ws[0] >= 0.75 * best_bl[0]):
+        chosen = best_ws
+    else:
+        chosen = best_bl or best_ws
+    best = (chosen[0], chosen[2], chosen[3], chosen[4])
     _, seg_lines, sizes, gaps = best
     return [{"segs": seg_lines[i], "size": sizes[i], "gap": gaps[i]} for i in range(len(seg_lines))]
 
@@ -3309,6 +3523,7 @@ def _overlay_lidousha_cover_title(
         font_path=font_path,
         max_lines=render["max_lines"],
         max_size=render["max_size"],
+        forced_lines=art_direction.line_breaks,
     )
 
     scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
@@ -3370,6 +3585,8 @@ def _overlay_lidousha_cover_title(
         "hook_word": art_direction.hook_word,
         "role": art_direction.role,
         "expression_en": art_direction.expression_en,
+        "line_split": "explicit" if "\n" in cover_text else ("llm_word_aware" if art_direction.line_breaks else "balancer"),
+        "rendered_lines": ["".join(seg[0] for seg in line["segs"]) for line in lines],
         "text_backing": _COVER_TEXT_BACKING,
         "scrim": backing is not None,
     }
