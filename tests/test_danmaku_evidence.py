@@ -80,11 +80,11 @@ def test_semantic_recall_prompt_includes_danmaku_hints():
 
 def test_agy_prompt_includes_danmaku_lines_and_visual_read_instruction():
     prompt = agy_prompt("1\n00:00:01,000 --> 00:00:02,000\n你好\n", danmaku_lines=["00:05 灰喜鹊拟人", "00:12 一眼AI"])
-    assert "Viewer danmaku timeline" in prompt
+    assert "given to you VERBATIM" in prompt  # danmaku/SC are trusted text, not re-OCR'd
     assert "TEMPORAL PAIRING RULE" in prompt
     assert "00:05 灰喜鹊拟人" in prompt
     assert "READ the on-screen text" in prompt
     # Without danmaku the visual-read instruction still stands, hint block absent.
     bare = agy_prompt("1\n00:00:01,000 --> 00:00:02,000\n你好\n")
     assert "READ the on-screen text" in bare
-    assert "Viewer danmaku timeline" not in bare
+    assert "given to you VERBATIM" not in bare

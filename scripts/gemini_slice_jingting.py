@@ -335,13 +335,30 @@ def agy_prompt(srt_text: str, *, danmaku_lines: list[str] | None = None) -> str:
     if danmaku_lines:
         joined = "\n".join(danmaku_lines)
         danmaku_block = f"""
-Viewer danmaku timeline (mm:ss relative to clip start, shown on screen as
-rolling text). TEMPORAL PAIRING RULE: a danmaku at time T is a strong wording
-candidate only for cues NEAR T (within ~10s) — she reads/reacts to danmaku the
-moment they appear; danmaku far from a cue's time (>20s) must not be borrowed
-for that cue. Same for any other on-screen text you can read in the frame:
+Viewer danmaku + superchats are given to you VERBATIM below — you do NOT need to
+squint at the blurry rolling on-screen danmaku to re-derive them; trust this
+provided text. Spend your video attention on the AUDIO (mishearings) and on OTHER
+on-screen content the provided text can't give you (image captions, UI labels,
+song lists, titles she is reading). TEMPORAL PAIRING RULE: a danmaku/SC at time T
+is a strong wording candidate only for cues NEAR T (within ~10s) — she reads/
+reacts the moment they appear; entries far from a cue's time (>20s) must not be
+borrowed for that cue.
 {joined}
-"""
+
+SUPER_CHAT handling: lines marked 【SC·<name>】<text> (and 【SC此前·<name>】 for ones
+that appeared BEFORE this clip) are EXACT on-screen superchats — sender name and
+text captured verbatim, NOT guessed. Audio ASR reliably mangles SC sender NAMES
+and read-aloud SC wording (names + foreign words are where it fails), so for a cue
+where she is THANKING an SC ("谢谢…的SC/醒目留言") or READING one aloud, use the
+matching SC's EXACT name and wording. CRUCIAL MATCHING RULES:
+- She often thanks/reads an SC a WHILE after it appeared and BATCHES several
+  thanks together, so the ±10s rule does NOT apply to SCs — an SC from earlier
+  (incl. 【SC此前】) is a valid match. Nearness is only a soft hint, not required.
+- Match a thank/read cue to the SC whose SENDER or CONTENT actually fits. If NO
+  SC's sender/content plausibly fits a cue, KEEP THE AUDIO — never force a nearby
+  SC's name onto a cue it doesn't match (a wrong name is worse than a heard one).
+- NEVER turn a streamer self-reference (李豆沙/小李/豆沙) into someone else's name.
+- Gift/灯牌 sender names are NOT provided — leave them as heard."""
     return f"""You are refining subtitles for a Li Dousha Chinese VTuber clip.
 
 Use only these local files in this job directory:

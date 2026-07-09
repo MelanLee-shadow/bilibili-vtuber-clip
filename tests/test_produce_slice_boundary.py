@@ -2,14 +2,40 @@
 cuts must land on complete-sentence boundaries near the semantic targets, and
 run-on cues near the closure trigger a fine micro-pass instead of a bad cut."""
 
+import json
+
 from scripts.produce_slice_package import (
+    ISLAND_CONTINUES_FLAG_MS,
+    _load_superchats,
     boundary_audit,
+    boundary_red_flags,
     needs_tail_refinement,
     snap_end_to_sentence,
     snap_start_to_sentence,
 )
 from src.autoslice.jingting_chunker import SrtCue
 from src.autoslice.subtitle_timing_qa import SpeechSpan
+
+
+def test_load_superchats_video_relative_and_deduped(tmp_path):
+    """SC (on-screen 醒目留言) come from the blrec .jsonl, mapped to video-relative
+    time using the earliest event as t=0, and the CN/JPN twin events dedup by
+    message (Ivan 2026-07-07: 结合画面SC)."""
+    jsonl = tmp_path / "seg.jsonl"
+    rows = [
+        {"cmd": "DANMU_MSG", "send_time": 1000_000},  # earliest event → recording start
+        {"cmd": "SUPER_CHAT_MESSAGE", "send_time": 1030_000,
+         "data": {"message": "想看她唱地球大爆炸", "user_info": {"uname": "小凑るう子"}}},
+        {"cmd": "SUPER_CHAT_MESSAGE_JPN", "send_time": 1030_050,
+         "data": {"message": "想看她唱地球大爆炸", "message_jpn": "..."}},
+        {"cmd": "SUPER_CHAT_MESSAGE",
+         "data": {"send_time": 1090_000, "message": "可以跟lmsm学谢礼物", "user_info": {"uname": "十麻乃orient"}}},
+    ]
+    jsonl.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+    scs = _load_superchats(jsonl)
+    # video-relative ms, full sender uname carried, JPN twin deduped by message
+    assert scs == [(30_000, "小凑るう子", "想看她唱地球大爆炸"), (90_000, "十麻乃orient", "可以跟lmsm学谢礼物")]
+    assert _load_superchats(tmp_path / "missing.jsonl") == []
 
 
 def test_snap_end_picks_nearest_sentence_end():
@@ -53,3 +79,65 @@ def test_boundary_audit_requires_both_snapped_boundaries():
 
     bad_start = boundary_audit(spans, start_ms=0, cut_ms=90_000, start_snapped=False, end_snapped=True)
     assert bad_start["verdict"] == "start_not_on_sentence_boundary"
+
+
+# ---------------------------------------------------------------------------
+# Deterministic red flags (2026-07-09 external audit): a snapped verdict alone
+# let 6/10 real deliveries cut inside a still-running speech island and 4/10
+# end on a different sentence than the claimed closure — all reported green.
+# Any flag → the clip is delivered as QUARANTINE, never silently green.
+# ---------------------------------------------------------------------------
+
+
+class _Txt:
+    def __init__(self, text):
+        self.text = text
+
+
+def _flags(**overrides):
+    base = dict(
+        audit={"end_island_continues_ms": 0},
+        cues=[],
+        sanitized=[_Txt("收束句。")],
+        final_start_ms=1_000,
+        final_end_ms=90_400,
+        snapped_end_ms=90_000,
+        closure_text="收束句。",
+    )
+    base.update(overrides)
+    return boundary_red_flags(**base)
+
+
+def test_no_flags_on_a_clean_cut():
+    assert _flags() == []
+
+
+def test_flag_when_speech_continues_after_cut():
+    """The old test explicitly ALLOWED a 5s continuing island — that green is
+    exactly what the audit demolished.  It still cuts, but flags quarantine."""
+    flags = _flags(audit={"end_island_continues_ms": 5_000})
+    assert "speech_continues_5000ms_after_cut" in flags
+    assert _flags(audit={"end_island_continues_ms": ISLAND_CONTINUES_FLAG_MS - 1}) == []
+
+
+def test_flag_when_clip_opens_mid_sentence():
+    # a cue that began 2s before the clip and is still running at clip start
+    flags = _flags(cues=[_cue(-1_000, 2_000)], final_start_ms=1_000)
+    assert "opens_mid_sentence" in flags
+    # the previous sentence merely ENDING inside the 250ms lead air is fine
+    assert _flags(cues=[_cue(-1_000, 1_100)], final_start_ms=1_000) == []
+
+
+def test_flag_when_next_sentence_enters_tail_pad():
+    # 收束句 snap 在 90s，pad 到 90.4s；下一句 90.2s 开始 → 全文闪现在片尾
+    flags = _flags(cues=[_cue(90_200, 93_000)])
+    assert "next_sentence_enters_tail_pad" in flags
+    assert _flags(cues=[_cue(90_400, 93_000)]) == []  # 恰在 final_end 之后 → 无害
+
+
+def test_flag_when_closure_is_not_the_final_subtitle():
+    """4/10 real deliveries: the report's closure sentence was not the burned
+    SRT's last line.  Deterministic text equality, no LLM."""
+    flags = _flags(sanitized=[_Txt("收束句。"), _Txt("其实还有下一句")])
+    assert "closure_not_final_subtitle" in flags
+    assert _flags(sanitized=[_Txt(" 收束句。 ")]) == []  # whitespace-insensitive

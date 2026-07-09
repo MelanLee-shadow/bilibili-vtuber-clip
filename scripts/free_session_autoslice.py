@@ -36,6 +36,31 @@ HARD LESSONS BAKED IN (first real run, 2026-07-06):
 - **Songs**: semantic recall's per-segment candidate cap squeezes songs out,
   so a deterministic performance-detector supplement also feeds the song
   queue; final pick = top MAX_SONGS_PER_DATE by danmaku count.
+- **Covers self-heal**: the CPA image lane fails independently of the chat
+  lane (2026-07-06: gateway 400 "multiples of 16" blanked a whole batch's
+  covers while titles/subtitles were fine).  A delivered clip without a cover
+  gets a bounded cover-only repair pass (regenerate_lidousha_cover) on later
+  ticks — never a re-produce, never silent (summary shows repair state).
+
+RUNNER v4 (2026-07-09 external audit — "the control plane was lying"):
+- **Source health first**: a dead/hung CloudDrive FUSE mount used to read as
+  "no new recordings" and the heartbeat stayed green while the RECORDER's
+  write path was broken.  Every tick now probes the mount (subprocess ls with
+  timeout, hang-proof); failure → ALERT file + SOURCE_UNAVAILABLE heartbeat +
+  do nothing.  A cron watchdog (free_mount_watchdog.sh) self-heals the mount.
+- **Honest status words**: song gate BLOCK is `blocked`, never `ok`; a batch
+  with zero deliveries is `no_delivery`, never `done`.  Delivered talk is
+  `review_ready`, or `quarantine` when deterministic boundary red flags fired
+  (produce_slice_package computes them; quarantine is delivered-but-flagged).
+- **Budget = deliveries**: gate-blocked songs no longer consume the per-date
+  song budget; the danmaku-sorted backlog backfills (bounded SONG_ATTEMPT_CAP).
+- **Global selection + sealing**: talk picks are ranked globally by recall
+  confidence (soft per-segment diversity cap) and selection only happens after
+  the segment inventory is STABLE across ticks — late segments compete instead
+  of arriving to spent quota.
+- **Atomic state**: tmp+rename writes with .bak; corrupt state quarantines the
+  file and BLOCKS the date (state_corrupt_blocked) instead of silently
+  reprocessing from scratch.
 
 Deployment (free):
     repo   /opt/bilive/autoslice/repo        (rsync of scripts/ src/ assets/)
@@ -74,16 +99,30 @@ BILIVE_ENV = Path("/opt/bilive/.env")
 CPA_ENV = BASE / "cpa.env"
 MAX_TALK_PICKS = 5
 MAX_SONGS_PER_DATE = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
+TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
+SONG_ATTEMPT_CAP = 6  # total song-lane attempts per date (delivered + blocked + failed);
+                      # gate-blocked songs do NOT consume the delivery budget — the
+                      # backlog backfills — so an unlucky date needs a hard attempt cap
+# Delivered-to-review talk statuses.  "ok" is the pre-2026-07-09 name kept for
+# old state files; new records are review_ready (clean) or quarantine (delivered
+# WITH deterministic red flags — reviewable, never silently green).
+DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
 PER_SEGMENT_CANDIDATES = 4
 MIN_SEGMENT_BYTES = 5_000_000  # blrec restart stubs are a few KB — dead on sight
 BCUT_MAX_ATTEMPTS = 2
 TITLE_MAX_ATTEMPTS = 3
+COVER_REPAIR_MAX_ATTEMPTS = 3  # one attempt per tick → retries spread ~10min apart
+MAX_PARALLEL_PRODUCE = 3  # slices are independent; produce them concurrently (each is
+                          # network-bound on AGY/CPA/gpt-image-2, so a few in flight
+                          # cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
 PIECE_PRE_MS = 10_000
 PIECE_POST_MS = 32_000
 SONG_WINDOW_PRE_MS = 15_000   # window must stay SONG-dominated or the in-window
 SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
                               # ±60/45s and ±180/150s); 15/20s matches the
                               # validated 虫儿飞 run.
+SONG_ANCHOR_TRIM_MIN_MS = 20_000  # only retry on the danmaku-dense core when the
+                                  # trim drops ≥20s of talk padding off an end
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CPA_CMD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
 # The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
@@ -192,22 +231,90 @@ def state_path(date: str) -> Path:
 
 
 def read_state(date: str) -> dict:
+    """State loader that never mistakes damage for a fresh start.
+
+    Missing file → {} (genuinely new date).  Corrupt JSON → the damaged file is
+    quarantined for forensics and the .bak (previous good write) is restored;
+    with no usable .bak the date is BLOCKED (state_corrupt_blocked), because
+    reprocessing 'from scratch' would re-produce and re-deliver everything
+    (2026-07-09 audit: corruption must be loud, not a silent reset)."""
+    path = state_path(date)
+    bak = path.with_suffix(".json.bak")
     try:
-        return json.loads(state_path(date).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        try:  # crash window between the two os.replace()s in write_state
+            return json.loads(bak.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+    except OSError as exc:
+        return {"status": "state_corrupt_blocked", "state_error": f"unreadable: {exc}"}
+    except ValueError as exc:
+        quarantined = path.with_name(f"{path.name}.corrupt-{time.strftime('%Y%m%dT%H%M%S')}")
+        try:
+            path.rename(quarantined)
+        except OSError:
+            pass
+        log(f"state for {date} is corrupt ({exc}) → kept as {quarantined.name}")
+        try:
+            restored = json.loads(bak.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # Persist the blocked marker so EVERY subsequent read agrees — a
+            # rename alone would make the next read see "new date" and happily
+            # re-produce and re-deliver the whole batch.
+            blocked = {"status": "state_corrupt_blocked", "state_error": f"corrupt json, no usable .bak: {exc}"}
+            path.write_text(json.dumps(blocked, ensure_ascii=False, indent=2), encoding="utf-8")
+            return blocked
+        log(f"state for {date} restored from .bak")
+        restored["state_restored_from_bak"] = True
+        write_state(date, restored)
+        return restored
 
 
 def write_state(date: str, state: dict) -> None:
+    """Atomic write (tmp + os.replace) keeping the previous version as .bak —
+    a mid-write crash can no longer leave a half-written unparseable state."""
     state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    state_path(date).parent.mkdir(parents=True, exist_ok=True)
-    state_path(date).write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    path = state_path(date)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    if path.exists():
+        os.replace(path, path.with_suffix(".json.bak"))
+    os.replace(tmp, path)
+
+
+def write_alert(name: str, message: str) -> None:
+    """Append-only alert files under reports/ — the Mac launchd pull is the
+    delivery channel (Ivan's rule: alerts travel via report files, not chat)."""
+    path = BASE / "reports" / f"ALERT_{name}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as sink:
+        sink.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {message}\n")
+
+
+def source_health_error() -> str | None:
+    """Probe the recordings mount via a subprocess `ls` so a HUNG FUSE mount
+    (which blocks Python's stat() forever) times out instead of wedging the
+    tick.  Returns None when healthy, else a short error string.  2026-07-09:
+    the CloudDrive endpoint died and every layer above swallowed the OSError
+    into 'no dates' — the control plane kept reporting green for hours."""
+    try:
+        completed = subprocess.run(
+            ["ls", str(REC_ROOT)], check=False, capture_output=True, text=True, timeout=25
+        )
+    except subprocess.TimeoutExpired:
+        return f"listing {REC_ROOT} timed out after 25s (hung mount?)"
+    if completed.returncode != 0:
+        return (completed.stderr.strip() or f"ls rc={completed.returncode}")[:300]
+    return None
 
 
 def list_dates() -> list[str]:
     try:
         names = [p.name for p in REC_ROOT.iterdir() if p.is_dir() and DATE_RX.match(p.name)]
-    except OSError:
+    except OSError as exc:
+        log(f"list_dates: recordings root unreadable: {exc}")
         return []
     return sorted(names)[-3:]
 
@@ -216,7 +323,8 @@ def list_segments(date: str) -> list[Path]:
     date_dir = REC_ROOT / date
     try:
         files = sorted(date_dir.glob(f"{ROOM}_*.mp4"))
-    except OSError:
+    except OSError as exc:
+        log(f"list_segments({date}): unreadable: {exc}")
         return []
     return [f for f in files if f.parent == date_dir]
 
@@ -409,12 +517,13 @@ def read_publish_meta(work_dir: Path) -> dict:
     return {}
 
 
-def produce_talk(date: str, item: dict) -> dict:
+def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
     Returns the result record; status is one of ok / title_failed / failed.
     A title_failed pick is cleaned up (no delivery with a cid title/cover) and
-    retried on a later resume.
+    retried on a later resume.  ``reuse_cover`` keeps the existing delivered
+    cover (subtitle-only re-run) and skips the ~90s AI cover step.
     """
     cid = item["cid"]
     out_root = BASE / "out" / date
@@ -442,11 +551,13 @@ def produce_talk(date: str, item: dict) -> dict:
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     log_path = BASE / "logs" / f"{date}_{cid}.log"
     log(f"producing {cid} ({(item['end_ms'] - item['start_ms']) // 1000}s) from {Path(item['segment_path']).name}")
+    cmd = [sys.executable, str(REPO_ROOT / "scripts" / "produce_slice_package.py"),
+           "--spec", str(spec_path), "--ssh-host", "localhost"]
+    if reuse_cover:
+        cmd.append("--reuse-cover")
     with open(log_path, "a", encoding="utf-8") as sink:
         completed = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "scripts" / "produce_slice_package.py"),
-             "--spec", str(spec_path), "--ssh-host", "localhost"],
-            check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
+            cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
             cwd=str(REPO_ROOT), env=child_env(),
         )
     result = {
@@ -473,104 +584,274 @@ def produce_talk(date: str, item: dict) -> dict:
             shutil.rmtree(recuts, ignore_errors=True)
         result["status"] = "title_failed"
         return result
-    result["status"] = "ok"
+    # Deterministic boundary red flags (2026-07-09 audit): delivered artifacts
+    # with a suspicious boundary are QUARANTINED for review, never silently green.
+    red_flags = list((result.get("summary") or {}).get("red_flags") or [])
+    result["red_flags"] = red_flags
+    result["status"] = "quarantine" if red_flags else "review_ready"
     return result
+
+
+_SRT_TS_RX = re.compile(
+    r"(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)"
+)
+
+
+def _srt_cue_spans(srt_path: Path, lo_ms: int, hi_ms: int) -> list[tuple[int, int]]:
+    """(start_ms, end_ms) cue spans overlapping [lo,hi] from a whole-segment SRT."""
+    try:
+        text = srt_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    spans = []
+    for m in _SRT_TS_RX.finditer(text):
+        s = (int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])) * 1000 + int(m[4])
+        e = (int(m[5]) * 3600 + int(m[6]) * 60 + int(m[7])) * 1000 + int(m[8])
+        if e >= lo_ms and s <= hi_ms:
+            spans.append((s, e))
+    return spans
+
+
+def _song_core_span(srt_path: Path, lo_ms: int, hi_ms: int,
+                    *, min_gap_ms: int = 8_000, edge_frac: float = 0.35, min_span_ms: int = 90_000,
+                    tail_gap_ms: int = 16_000, tail_frac: float = 0.12) -> tuple[int, int]:
+    """Trim [lo,hi] to the sung core using ASR speech gaps.  A performance is set
+    off from the surrounding chatter by a ≥8s music-intro gap at the front and a
+    ≥16s outro gap at the back (《屑屑》: the recall anchor bloated BOTH ends — into
+    the pig-nose talk before AND the '谢谢大家' talk after, so the window kept
+    classifying as talk).  LEAD trim: song starts after the last big gap in the
+    leading ``edge_frac``.  TAIL trim is DELIBERATELY conservative — only a LARGE
+    (≥16s, bigger than a mid-song instrumental interlude) gap in the LAST
+    ``tail_frac`` of the span counts, so the song's own late breaks are never
+    clipped (clipping → SONG_PARTIAL, worse than carrying a little outro).  Returns
+    (lo,hi) unchanged / partially-trimmed when a trim would be degenerate."""
+    cues = _srt_cue_spans(srt_path, lo_ms, hi_ms)
+    if len(cues) < 4 or hi_ms - lo_ms <= min_span_ms:
+        return lo_ms, hi_ms
+    span = hi_ms - lo_ms
+    lead_cut = lo_ms + edge_frac * span
+    lead = [(s1 - e0, s1) for (s0, e0), (s1, e1) in zip(cues, cues[1:]) if e0 <= lead_cut and (s1 - e0) >= min_gap_ms]
+    new_lo = max(lead, key=lambda g: g[0])[1] if lead else lo_ms
+    tail_cut = hi_ms - tail_frac * span
+    tail = [e0 for (s0, e0), (s1, e1) in zip(cues, cues[1:]) if s1 >= tail_cut and (s1 - e0) >= tail_gap_ms]
+    new_hi = min(tail) if tail else hi_ms
+    if new_lo == lo_ms and new_hi == hi_ms:
+        return lo_ms, hi_ms
+    if new_hi - new_lo < min_span_ms:  # a trim would over-shorten → keep the generous span
+        return lo_ms, hi_ms
+    return int(new_lo), int(new_hi)
+
+
+def song_status(rc: int, delivered: bool) -> str:
+    """Honest song-lane status words (2026-07-09 audit): the selector exiting 0
+    only means the PIPELINE ran; without a delivery that is the completeness
+    gate BLOCKING — success of the gate, not of the song."""
+    if rc != 0:
+        return "failed"
+    return "review_ready" if delivered else "blocked"
 
 
 def produce_song(date: str, item: dict) -> dict:
     """Song lane (Ivan 2026-07-05): cut a tight window around the sung anchor,
     run the canonical song pipeline (netease LRC global-shift alignment + strict
-    completeness gate, fail-closed) and deliver only gate-passing results."""
-    anchor_start = item["anchor_start_ms"]
-    anchor_end = item["anchor_end_ms"]
+    completeness gate, fail-closed) and deliver only gate-passing results.
+
+    Anchor-bleed guard (Ivan 2026-07-06): a recall song-anchor can begin dozens
+    of seconds inside the PRECEDING talk (《今天也过得很愉快》's anchor led with the
+    pig-nose banter), so the window leads with talk and the in-window recall
+    latches onto that talk (window_classified_song=False → AUTO_RECUT, no song
+    delivered).  When the first attempt misses the song, retry ONCE on the
+    danmaku-dense core of the anchor.  Self-correcting: it only fires when the
+    song was missed, so a clean song window (嘉宾) runs exactly once as before."""
     seg_dur_ms = item["seg_dur_ms"]
     segment = Path(item["segment_path"])
-    start = max(0, anchor_start - SONG_WINDOW_PRE_MS)
-    end = min(seg_dur_ms, anchor_end + SONG_WINDOW_POST_MS) if seg_dur_ms else anchor_end + SONG_WINDOW_POST_MS
     cid = item["cid"]
     out_dir = BASE / "out" / date / cid
     out_dir.mkdir(parents=True, exist_ok=True)
-    log(f"song lane {cid}: window {start // 1000}-{end // 1000}s (danmaku x{item.get('danmaku', 0)}) from {segment.name}")
 
-    result = {"candidate_id": cid, "segment": segment.name, "start_ms": start, "end_ms": end,
-              "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1}
-    window_mp4 = out_dir / f"{cid}_source.mp4"
-    if not window_mp4.is_file():
-        cut = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-             "-ss", f"{start / 1000:.3f}", "-to", f"{end / 1000:.3f}", "-i", str(segment),
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
-             str(window_mp4)],
-            check=False, capture_output=True, text=True, timeout=3600,
-        )
-        if cut.returncode != 0 or not window_mp4.is_file():
-            result["error"] = f"window cut failed: {cut.stderr[-200:]}"
+    def window_for(a0: int, a1: int) -> tuple[int, int]:
+        s = max(0, a0 - SONG_WINDOW_PRE_MS)
+        e = min(seg_dur_ms, a1 + SONG_WINDOW_POST_MS) if seg_dur_ms else a1 + SONG_WINDOW_POST_MS
+        return s, e
+
+    def attempt(start: int, end: int, tag: str) -> dict:
+        log(f"song lane {cid}{tag}: window {start // 1000}-{end // 1000}s (danmaku x{item.get('danmaku', 0)}) from {segment.name}")
+        result = {"candidate_id": cid, "segment": segment.name, "start_ms": start, "end_ms": end,
+                  "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1}
+        window_mp4 = out_dir / f"{cid}{tag}_source.mp4"
+        if not window_mp4.is_file():
+            cut = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-ss", f"{start / 1000:.3f}", "-to", f"{end / 1000:.3f}", "-i", str(segment),
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
+                 str(window_mp4)],
+                check=False, capture_output=True, text=True, timeout=3600,
+            )
+            if cut.returncode != 0 or not window_mp4.is_file():
+                result["error"] = f"window cut failed: {cut.stderr[-200:]}"
+                result["status"] = "failed"
+                return result
+
+        src_srt = BASE / "cache" / date / f"{segment.stem}.bcut.srt"
+        window_srt = out_dir / f"{cid}{tag}_source.srt"
+        if slice_srt(src_srt, start, end, window_srt) == 0:
+            result["error"] = "empty window srt"
             result["status"] = "failed"
             return result
 
-    src_srt = BASE / "cache" / date / f"{segment.stem}.bcut.srt"
-    window_srt = out_dir / f"{cid}_source.srt"
-    if slice_srt(src_srt, start, end, window_srt) == 0:
-        result["error"] = "empty window srt"
-        result["status"] = "failed"
+        # NOTE: segment danmaku XML is segment-relative — do not pass it to the
+        # selector (it would misalign against the window-relative video); LRC is
+        # the subtitle authority for songs anyway.
+        selector_dir = out_dir / f"song_selector{tag}"
+        log_path = BASE / "logs" / f"{date}_{cid}.log"
+        with open(log_path, "a", encoding="utf-8") as sink:
+            completed = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
+                 "--source-video", str(window_mp4), "--source-srt", str(window_srt),
+                 "--output-dir", str(selector_dir), "--max-candidates", "1",
+                 "--cpa-command", cpa_qa_cmd(),
+                 "--semantic-recall-llm-command", CPA_CMD,
+                 "--song-hint-llm-command", CPA_CMD,
+                 "--title-llm-command", CPA_CMD,
+                 "--cover-art-direction-llm-command", CPA_CMD,
+                 "--lrc-provider", "netease", "--burn-preview", "--publish-staging"],
+                check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
+                cwd=str(REPO_ROOT), env=child_env(),
+            )
+        result["rc"] = completed.returncode
+        result["log"] = str(log_path)
+        decision = None
+        reasons: list = []
+        is_song = False
+        summary_path = selector_dir / "summary.json"
+        if summary_path.is_file():
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                for entry in summary.get("records", []) if isinstance(summary, dict) else []:
+                    decision = entry.get("decision_action") or decision
+                    reasons = list(entry.get("reason_codes") or reasons)
+                    job = entry.get("source_context_job") or {}
+                    is_song = is_song or bool(job.get("song_boundary")) or bool(job.get("lyrics_alignment"))
+            except ValueError:
+                pass
+        result["decision"] = decision
+        result["reason_codes"] = reasons
+        result["window_classified_song"] = is_song
+        for publish in sorted(selector_dir.glob("**/replacement_recuts/*.publish.json")):
+            try:
+                result["title"] = json.loads(publish.read_text(encoding="utf-8")).get("title")
+            except (OSError, ValueError):
+                pass
+        burned = sorted(selector_dir.glob("**/replacement_recuts/*.burned-final-sapphire72.mp4"))
+        covers = sorted(selector_dir.glob("**/covers/*.cover.png"))
+        if decision == "AUTO_UPLOAD" and burned:
+            delivery = REPO_ROOT / "lidousha" / date
+            delivery.mkdir(parents=True, exist_ok=True)
+            import shutil
+
+            name = safe_name("歌切_" + (result.get("title") or item.get("hook") or ""), f"歌切_{cid}")
+            shutil.copy2(burned[0], delivery / f"{name}.mp4")
+            if covers:
+                shutil.copy2(covers[-1], delivery / f"{name}.cover.png")
+            result["delivered"] = str(delivery / f"{name}.mp4")
+        result["status"] = song_status(completed.returncode, bool(result.get("delivered")))
         return result
 
-    # NOTE: segment danmaku XML is segment-relative — do not pass it here (the
-    # selector would misalign it against the window-relative video); LRC is the
-    # subtitle authority for songs anyway.
-    log_path = BASE / "logs" / f"{date}_{cid}.log"
-    with open(log_path, "a", encoding="utf-8") as sink:
-        completed = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
-             "--source-video", str(window_mp4), "--source-srt", str(window_srt),
-             "--output-dir", str(out_dir / "song_selector"), "--max-candidates", "1",
-             "--cpa-command", cpa_qa_cmd(),
-             "--semantic-recall-llm-command", CPA_CMD,
-             "--song-hint-llm-command", CPA_CMD,
-             "--title-llm-command", CPA_CMD,
-             "--cover-art-direction-llm-command", CPA_CMD,
-             "--lrc-provider", "netease", "--burn-preview", "--publish-staging"],
-            check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
-            cwd=str(REPO_ROOT), env=child_env(),
-        )
-    result["rc"] = completed.returncode
-    result["log"] = str(log_path)
-    summary_path = out_dir / "song_selector" / "summary.json"
-    decision = None
-    reasons: list = []
-    is_song = False
-    if summary_path.is_file():
-        try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            for entry in summary.get("records", []) if isinstance(summary, dict) else []:
-                decision = entry.get("decision_action") or decision
-                reasons = list(entry.get("reason_codes") or reasons)
-                job = entry.get("source_context_job") or {}
-                is_song = is_song or bool(job.get("song_boundary")) or bool(job.get("lyrics_alignment"))
-        except ValueError:
-            pass
-    result["decision"] = decision
-    result["reason_codes"] = reasons
-    result["window_classified_song"] = is_song
-    for publish in sorted((out_dir / "song_selector").glob("**/replacement_recuts/*.publish.json")):
-        try:
-            result["title"] = json.loads(publish.read_text(encoding="utf-8")).get("title")
-        except (OSError, ValueError):
-            pass
-    burned = sorted((out_dir / "song_selector").glob("**/replacement_recuts/*.burned-final-sapphire72.mp4"))
-    covers = sorted((out_dir / "song_selector").glob("**/covers/*.cover.png"))
-    if decision == "AUTO_UPLOAD" and burned:
-        delivery = REPO_ROOT / "lidousha" / date
-        delivery.mkdir(parents=True, exist_ok=True)
-        import shutil
-
-        name = safe_name("歌切_" + (result.get("title") or item.get("hook") or ""), f"歌切_{cid}")
-        shutil.copy2(burned[0], delivery / f"{name}.mp4")
-        if covers:
-            shutil.copy2(covers[-1], delivery / f"{name}.cover.png")
-        result["delivered"] = str(delivery / f"{name}.mp4")
-    result["status"] = "ok" if completed.returncode == 0 else "failed"
+    anchor_start, anchor_end = item["anchor_start_ms"], item["anchor_end_ms"]
+    src_srt = BASE / "cache" / date / f"{segment.stem}.bcut.srt"
+    result = attempt(*window_for(anchor_start, anchor_end), "")
+    if not result.get("window_classified_song") and not result.get("delivered"):
+        d0, d1 = _song_core_span(src_srt, anchor_start, anchor_end)
+        if d0 >= anchor_start + SONG_ANCHOR_TRIM_MIN_MS or d1 <= anchor_end - SONG_ANCHOR_TRIM_MIN_MS:
+            log(f"song lane {cid}: window classified as talk — retrying on sung core {d0 // 1000}-{d1 // 1000}s")
+            retry = attempt(*window_for(d0, d1), "_core")
+            if retry.get("window_classified_song") or retry.get("delivered"):
+                result = {**retry, "retried_core": True}
     return result
+
+
+def delivered_paths(date: str, rec: dict) -> tuple[Path, Path] | None:
+    """(mp4, cover) delivery paths for a pick/song record, or None if the mp4
+    was never delivered (failed/gated records have nothing to repair)."""
+    if rec.get("delivered"):  # song lane records the delivered path explicitly
+        mp4 = Path(rec["delivered"])
+    else:
+        name = safe_name(rec.get("hook", ""), rec.get("candidate_id", ""))
+        mp4 = REPO_ROOT / "lidousha" / date / f"{name}.mp4"
+    if not mp4.is_file():
+        return None
+    return mp4, mp4.with_suffix(".cover.png")
+
+
+def image_lane_down(log_tail: str) -> bool:
+    """CPA image-lane outage signatures (channel unrouted / gateway 5xx).  These
+    are operator-side and self-resolve — they must NOT burn bounded repair
+    attempts, mirroring the chat lane's paused_cpa_down patience."""
+    return "可用渠道不存在" in log_tail or "HTTP 50" in log_tail
+
+
+def cover_ref_for(date: str, cid: str) -> Path | None:
+    """The producer's CLEAN reference frame (pre-burn).  Preferred over frame
+    grabs from the delivered mp4, whose burned subtitles would leak into the
+    gpt-image-2 identity reference."""
+    return next(iter(sorted((BASE / "out" / date / cid).glob("**/cover_refs/*.cover-ref.png"))), None)
+
+
+def cover_repair_needed(date: str, rec: dict) -> bool:
+    delivered = rec.get("status") in DELIVERED_TALK_STATUSES or bool(rec.get("delivered"))
+    if not delivered or not rec.get("title"):
+        return False
+    if rec.get("cover_repair_attempts", 0) >= COVER_REPAIR_MAX_ATTEMPTS:
+        return False
+    paths = delivered_paths(date, rec)
+    return paths is not None and not paths[1].is_file()
+
+
+def repair_covers(date: str, state: dict) -> None:
+    """Phase D: delivered clips whose REAL-AI cover was blocked (CPA image lane
+    hiccups: gateway 400s, provider outages) get a bounded cover-only retry —
+    the mp4 is already good, nothing is re-produced.  One attempt per record
+    per tick; permanently blocked covers stay loud in the review summary."""
+    todo = [r for r in state.get("picks", []) + state.get("songs", []) if cover_repair_needed(date, r)]
+    if not todo:
+        return
+    for rec in todo:
+        mp4, cover = delivered_paths(date, rec)
+        rec["cover_repair_attempts"] = rec.get("cover_repair_attempts", 0) + 1
+        cid = rec.get("candidate_id", "?")
+        log(f"cover repair {cid} (attempt {rec['cover_repair_attempts']}/{COVER_REPAIR_MAX_ATTEMPTS})")
+        log_path = BASE / "logs" / f"{date}_{cid}_cover.log"
+        ref = cover_ref_for(date, cid)
+        src_args = ["--ref", str(ref)] if ref else ["--media", str(mp4)]
+        try:
+            with open(log_path, "a", encoding="utf-8") as sink:
+                completed = subprocess.run(
+                    [sys.executable, str(REPO_ROOT / "scripts" / "regenerate_lidousha_cover.py"),
+                     "--title", str(rec["title"]), *src_args,
+                     "--candidate-id", str(cid), "--out", str(cover)],
+                    check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=1200,
+                    cwd=str(REPO_ROOT), env=child_env(),
+                )
+            rc = completed.returncode
+        except subprocess.TimeoutExpired:
+            rc = -1
+        if rc == 0 and cover.is_file():
+            rec["cover_status"] = "REPAIRED_AI_COVER"
+            log(f"cover repaired → {cover.name}")
+        else:
+            try:
+                tail = log_path.read_text(encoding="utf-8", errors="replace")[-800:]
+            except OSError:
+                tail = ""
+            if image_lane_down(tail):
+                rec["cover_repair_attempts"] -= 1  # lane outage, not this pick's failure
+                log("cover repair: CPA image lane down — deferring ALL repairs to a later tick")
+                write_state(date, state)
+                return
+            if rec["cover_repair_attempts"] >= COVER_REPAIR_MAX_ATTEMPTS:
+                rec["cover_status"] = f"{rec.get('cover_status') or 'BLOCKED_AI_COVER_REQUIRED'}(repair_failed_x{rec['cover_repair_attempts']})"
+                log(f"cover repair failed {rec['cover_repair_attempts']}x — left for human review (see {log_path.name})")
+        write_state(date, state)
 
 
 def write_reports(date: str, state: dict) -> None:
@@ -581,10 +862,18 @@ def write_reports(date: str, state: dict) -> None:
         secs = max(0, (pick.get("end_ms", 0) - pick.get("start_ms", 0)) // 1000)
         return f"{secs // 60}:{secs % 60:02d}"
 
+    picks = state.get("picks", [])
+    songs = state.get("songs", [])
+    delivered_talk = sum(1 for p in picks if p.get("status") in DELIVERED_TALK_STATUSES)
+    quarantined = sum(1 for p in picks if p.get("status") == "quarantine")
+    delivered_songs = sum(1 for s in songs if s.get("delivered"))
+    blocked_songs = sum(1 for s in songs if s.get("status") == "blocked")
     lines = [
         f"# {date} 无人值守自动切片批次",
         "",
-        f"- 状态: **{state.get('status')}**  (runner v3; 上传永远关闭，全部成品仅供人工审查)",
+        f"- 状态: **{state.get('status')}**  (runner v4; 上传永远关闭，全部成品仅供人工审查)",
+        f"- 交付实况: 谈话 **{delivered_talk} 交付**（其中 {quarantined} 条 ⚠quarantine 需人工看边界）/ "
+        f"歌 **{delivered_songs} 交付** · {blocked_songs} 被完整性门拦截 · 共尝试 {len(songs)}",
         f"- 段: 完成 {len(state.get('segments_done', []))} / 死段 {len(state.get('segments_dead', {}))} / 待产出 talk {len(state.get('pending_talk', []))} + song {len(state.get('pending_song', []))}",
         "",
         "## 谈话成品（审查要点：标题、选片理由、边界收束）",
@@ -594,7 +883,12 @@ def write_reports(date: str, state: dict) -> None:
     ]
     for pick in state.get("picks", []):
         s = pick.get("summary") or {}
-        status_mark = "" if pick.get("status") == "ok" else f" ⚠{pick.get('status')}"
+        if pick.get("status") in ("ok", "review_ready"):
+            status_mark = ""
+        elif pick.get("status") == "quarantine":
+            status_mark = f" ⚠quarantine[{','.join(pick.get('red_flags') or [])}]"
+        else:
+            status_mark = f" ⚠{pick.get('status')}"
         lines.append(
             f"| `{safe_name(pick.get('hook',''), pick.get('candidate_id','?'))}`{status_mark} "
             f"| {fmt_dur(pick)} "
@@ -605,8 +899,7 @@ def write_reports(date: str, state: dict) -> None:
             f"| {s.get('boundary_verdict') or '?'} "
             f"| {pick.get('cover_status') or s.get('cover_status') or '?'} |"
         )
-    songs = state.get("songs", [])
-    lines += ["", f"## 歌切（每场至多 {MAX_SONGS_PER_DATE}，弹幕最高优先；LRC 完整性门 fail-closed）", ""]
+    lines += ["", f"## 歌切（每场至多 {MAX_SONGS_PER_DATE} 交付，弹幕最高优先；被门拦不占配额、自动从备份回填；LRC 完整性门 fail-closed）", ""]
     if songs:
         lines += ["| 歌 | 弹幕 | 门判定 | 原因码 | 标题 | 交付 |", "|---|---|---|---|---|---|"]
         for song in songs:
@@ -620,7 +913,14 @@ def write_reports(date: str, state: dict) -> None:
         lines.append("(本场未检出/未产出歌切)")
     backlog = state.get("song_backlog", [])
     if backlog:
-        lines += ["", "## 歌切候选备份（超每场上限，未产出）", ""] + [f"- {b}" for b in backlog]
+        def fmt_backlog(b) -> str:
+            if not isinstance(b, dict):
+                return str(b)  # legacy pre-v4 string entries
+            return (
+                f"{Path(b['segment_path']).name} {b['anchor_start_ms'] // 1000}-{b['anchor_end_ms'] // 1000}s "
+                f"弹幕x{b.get('danmaku', 0)}: {b.get('hook') or b.get('preview', '')[:40]}"
+            )
+        lines += ["", "## 歌切候选备份（按弹幕排序；门拦截后自动回填的来源）", ""] + [f"- {fmt_backlog(b)}" for b in backlog]
     not_selected = state.get("not_selected", [])
     if not_selected:
         lines += ["", "## 落选谈话候选（供复核选片是否漏才）", ""] + [f"- {n}" for n in not_selected]
@@ -629,16 +929,17 @@ def write_reports(date: str, state: dict) -> None:
         lines += ["", "## 死段（不再重试）", ""] + [f"- {k}: {v}" for k, v in dead.items()]
     if state.get("status") == "paused_cpa_down":
         lines += ["", "> ⚠ CPA 链路不可用，批次已暂停；cron 每 10 分钟自动重试，恢复后从断点续产。"]
+    if state.get("status") == "no_delivery":
+        lines += ["", "> ⚠ 本场 0 条交付（候选被门拦截/失败/耗尽）。这不是成功状态，需人工过目落选与拦截原因。"]
     (delivery / "AUTOSLICE_SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     report = BASE / "reports" / "latest.md"
     report.parent.mkdir(parents=True, exist_ok=True)
-    ok_picks = sum(1 for p in state.get("picks", []) if p.get("status") == "ok")
     report.write_text(
         f"# autoslice runner 最新状态\n\n- 时间: {time.strftime('%Y-%m-%d %H:%M:%S %z')}\n"
         f"- 日期: {date}  状态: {state.get('status')}\n"
-        f"- 谈话: {ok_picks} 成品 / {len(state.get('picks', []))} 尝试 (pending {len(state.get('pending_talk', []))})\n"
-        f"- 歌切: {sum(1 for s in state.get('songs', []) if s.get('delivered'))} 交付 / {len(state.get('songs', []))} 尝试 (pending {len(state.get('pending_song', []))})\n"
+        f"- 谈话: {delivered_talk} 交付(含 {quarantined} quarantine) / {len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
+        f"- 歌切: {delivered_songs} 交付 / {blocked_songs} 门拦 / {len(songs)} 尝试 (pending {len(state.get('pending_song', []))})\n"
         f"- 交付: {REPO_ROOT}/lidousha/{date}/ (Mac launchd 拉取)\n",
         encoding="utf-8",
     )
@@ -710,49 +1011,120 @@ def discover_segments(date: str, state: dict) -> None:
     state["segments_done"] = sorted(done)
 
 
+def session_sealed(date: str, state: dict) -> bool:
+    """The date's recordings are STABLE: same segment inventory (names+sizes)
+    as the previous tick, with at least one segment.  Selecting before seal
+    hands the early segments the whole quota (2026-07-09 audit: a conf=0.94
+    late-arriving candidate lost to five earlier 0.85-0.90 ones).  Costs one
+    extra tick (~10 min) of latency after stream end; also absorbs the
+    recorder's final flush.  Mutates state['seg_snapshot'] for the next tick."""
+    snapshot: dict[str, int] = {}
+    for segment in list_segments(date):
+        try:
+            snapshot[segment.stem] = segment.stat().st_size
+        except OSError:
+            return False  # flaky source read — never seal on a lie
+    prev = state.get("seg_snapshot")
+    state["seg_snapshot"] = snapshot
+    return bool(snapshot) and prev == snapshot
+
+
+def song_delivery_budget(state: dict) -> int:
+    """Remaining song DELIVERIES wanted.  Only delivered songs consume the
+    per-date budget — a gate-BLOCKED attempt must not eat a slot (2026-07-09
+    audit: two BLOCKs consumed both slots and the date still read 'done')."""
+    delivered = sum(1 for s in state.get("songs", []) if s.get("delivered"))
+    return max(0, MAX_SONGS_PER_DATE - delivered)
+
+
+def refill_songs(state: dict) -> None:
+    """Top up pending_song from the structured backlog, danmaku-desc, honoring
+    both the delivery budget and the hard per-date attempt cap.  Legacy string
+    backlog entries (pre-v4 states) stay for the report but cannot backfill."""
+    backlog = state.setdefault("song_backlog", [])
+    pool = state.get("pending_song", []) + [b for b in backlog if isinstance(b, dict)]
+    legacy = [b for b in backlog if not isinstance(b, dict)]
+    pool.sort(key=lambda x: (-(x.get("danmaku") or 0), -(x["anchor_end_ms"] - x["anchor_start_ms"])))
+    attempts_left = max(0, SONG_ATTEMPT_CAP - len(state.get("songs", [])))
+    allowed = min(song_delivery_budget(state), attempts_left)
+    state["pending_song"] = pool[:allowed]
+    state["song_backlog"] = pool[allowed:] + legacy
+
+
 def prioritize(state: dict) -> None:
-    """Phase B: cap talk picks (round-robin across segments) and songs (top
-    danmaku).  Overflow is recorded with reasons so review can catch misses."""
+    """Phase B: GLOBAL talk ranking by recall confidence (the metric asset is
+    embedded in the recall prompt, so confidence carries its hard tiers), with
+    a soft per-segment diversity cap that yields when slots would go unfilled.
+    Replaces the segment round-robin that let five early candidates claim the
+    whole quota regardless of score.  Songs: top danmaku, budget = deliveries."""
     pending_talk = state.get("pending_talk", [])
-    produced_ok = sum(1 for p in state.get("picks", []) if p.get("status") == "ok")
-    slots = max(0, MAX_TALK_PICKS - produced_ok)
-    by_segment: dict[str, list] = {}
-    for item in pending_talk:
-        by_segment.setdefault(item["segment_path"], []).append(item)
-    ordered: list[dict] = []
-    while any(by_segment.values()):
-        for seg in sorted(by_segment):
-            if by_segment[seg]:
-                ordered.append(by_segment[seg].pop(0))
-    keep, drop = ordered[:slots], ordered[slots:]
+    produced = sum(1 for p in state.get("picks", []) if p.get("status") in DELIVERED_TALK_STATUSES)
+    slots = max(0, MAX_TALK_PICKS - produced)
+    ranked = sorted(pending_talk, key=lambda x: -(x.get("confidence") or 0.0))
+    keep: list[dict] = []
+    deferred: list[dict] = []
+    per_seg: dict[str, int] = {}
+    for item in ranked:
+        seg = item["segment_path"]
+        if len(keep) < slots and per_seg.get(seg, 0) < TALK_PER_SEGMENT_CAP:
+            keep.append(item)
+            per_seg[seg] = per_seg.get(seg, 0) + 1
+        else:
+            deferred.append(item)
+    # The diversity cap is SOFT: refill unused slots from the deferred list
+    # (still confidence-ordered) rather than deliver fewer than `slots` picks.
+    for item in list(deferred):
+        if len(keep) >= slots:
+            break
+        keep.append(item)
+        deferred.remove(item)
     state["pending_talk"] = keep
-    for item in drop:
+    for item in deferred:
         state.setdefault("not_selected", []).append(
             f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
-            f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} (超每场{MAX_TALK_PICKS}条上限)"
+            f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
+            f"(落选:全场按信心分全局排序取{MAX_TALK_PICKS}席,同段软上限{TALK_PER_SEGMENT_CAP})"
         )
+    refill_songs(state)
 
-    pending_song = state.get("pending_song", [])
-    pending_song.sort(key=lambda x: (-(x.get("danmaku") or 0), -(x["anchor_end_ms"] - x["anchor_start_ms"])))
-    produced_songs = len(state.get("songs", []))
-    budget = max(0, MAX_SONGS_PER_DATE - produced_songs)
-    keep_s, drop_s = pending_song[:budget], pending_song[budget:]
-    state["pending_song"] = keep_s
-    for item in drop_s:
-        state.setdefault("song_backlog", []).append(
-            f"{Path(item['segment_path']).name} {item['anchor_start_ms'] // 1000}-{item['anchor_end_ms'] // 1000}s "
-            f"弹幕x{item.get('danmaku', 0)}: {item.get('hook') or item.get('preview', '')[:40]} (超出每场{MAX_SONGS_PER_DATE}个上限)"
-        )
+
+def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
+    """Produce ``items`` CONCURRENTLY (bounded by MAX_PARALLEL_PRODUCE), preserving
+    input order.  Each slice is an independent subprocess (produce_slice_package /
+    the song selector), so threads just wait on those; a crash in one becomes a
+    failed result and never kills the batch.  ``produce_fn`` is produce_talk /
+    produce_song, called as fn(date, item)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(item: dict) -> dict:
+        try:
+            return produce_fn(date, item)
+        except Exception as exc:  # noqa: BLE001 — one bad slice must not kill the batch
+            log(f"produce crashed for {item.get('cid')}: {exc}")
+            return {"candidate_id": item.get("cid"), "rc": -1, "status": "failed", "error": str(exc),
+                    **{k: item[k] for k in ("hook", "confidence", "danmaku") if k in item}}
+
+    if not items:
+        return []
+    workers = min(MAX_PARALLEL_PRODUCE, len(items))
+    log(f"producing {len(items)} slice(s), up to {workers} in parallel")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_one, items))
 
 
 def process_date(date: str) -> None:
     state = read_state(date)
+    if state.get("status") == "state_corrupt_blocked":
+        write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
+        log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
+        return
     has_new = any(
         s.stem not in set(state.get("segments_done", [])) and s.stem not in state.get("segments_dead", {})
         for s in list_segments(date)
     )
     has_pending = bool(state.get("pending_talk") or state.get("pending_song"))
-    if not has_new and not has_pending:
+    needs_cover = any(cover_repair_needed(date, r) for r in state.get("picks", []) + state.get("songs", []))
+    if not has_new and not has_pending and not needs_cover:
         return
     # CPA gate: recall, reconcile, titles and covers all need the chat lane.
     # Recordings can wait — never produce garbage during a provider outage.
@@ -768,61 +1140,82 @@ def process_date(date: str) -> None:
     write_state(date, state)
 
     discover_segments(date, state)
+    # Session sealing: transcription/recall above runs as segments appear, but
+    # SELECTION waits until the inventory is stable so every candidate of the
+    # session competes for the quota (late segments used to arrive after the
+    # slots were spent).  Cover repairs for already-delivered clips still run.
+    if (has_new or has_pending) and not session_sealed(date, state):
+        state["status"] = "sealing"
+        write_state(date, state)
+        log(f"{date}: segment inventory not stable yet — selection deferred to next tick (sealing)")
+        return
     prioritize(state)
     write_state(date, state)
 
-    # Phase C: produce with mid-batch CPA gate + bounded title retries.
-    while state["pending_talk"]:
-        if not cpa_healthy():
+    # Phase C: produce talk picks CONCURRENTLY (they're independent; each is
+    # network-bound on AGY/CPA/gpt-image-2).  title_failed picks (CPA title lane
+    # flaky) stay pending and retry on a later tick — the succeeded ones are kept,
+    # not re-done.  CPA was gated at entry; a mid-batch outage just fails a slice.
+    if state["pending_talk"]:
+        talk_items = list(state["pending_talk"])
+        results = produce_batch(date, talk_items, produce_talk)
+        retry: list[dict] = []
+        for item, result in zip(talk_items, results):
+            if result.get("status") == "title_failed":
+                item["title_attempts"] = item.get("title_attempts", 0) + 1
+                log(f"{item['cid']}: title generation failed (attempt {item['title_attempts']})")
+                if item["title_attempts"] < TITLE_MAX_ATTEMPTS:
+                    retry.append(item)
+                    continue
+                result["status"] = "failed"
+                result["error"] = "title generation failed 3x"
+            state["picks"].append(result)
+        state["pending_talk"] = retry
+        write_state(date, state)
+        if retry:  # some title lanes flaky → back off, resume the rest next tick
             state["status"] = "paused_cpa_down"
             write_state(date, state)
             write_reports(date, state)
-            log(f"{date}: CPA went down mid-batch — pausing, will resume")
+            log(f"{date}: {len(retry)} title(s) failed — will retry on a later tick")
             return
-        item = state["pending_talk"][0]
-        try:
-            result = produce_talk(date, item)
-        except Exception as exc:  # noqa: BLE001 — one bad candidate must not kill the batch
-            log(f"produce crashed for {item['cid']}: {exc}")
-            result = {**{k: item.get(k) for k in ("cid", "hook", "confidence")},
-                      "candidate_id": item["cid"], "rc": -1, "status": "failed", "error": str(exc)}
-        if result.get("status") == "title_failed":
-            item["title_attempts"] = item.get("title_attempts", 0) + 1
-            log(f"{item['cid']}: title generation failed (attempt {item['title_attempts']})")
-            if item["title_attempts"] < TITLE_MAX_ATTEMPTS:
-                state["status"] = "paused_cpa_down"  # title lane is flaky → back off to a later tick
-                write_state(date, state)
-                write_reports(date, state)
-                return
-            result["status"] = "failed"
-            result["error"] = "title generation failed 3x"
-        state["pending_talk"].pop(0)
-        state["picks"].append(result)
-        write_state(date, state)
 
+    # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
+    # the next backlog song (danmaku-desc) until the delivery budget is met,
+    # the backlog runs dry, or SONG_ATTEMPT_CAP is hit.
     while state["pending_song"]:
-        if not cpa_healthy():
-            state["status"] = "paused_cpa_down"
-            write_state(date, state)
-            write_reports(date, state)
-            log(f"{date}: CPA went down mid-batch (songs) — pausing, will resume")
-            return
-        item = state["pending_song"][0]
-        try:
-            result = produce_song(date, item)
-        except Exception as exc:  # noqa: BLE001
-            log(f"song lane crashed for {item['cid']}: {exc}")
-            result = {"candidate_id": item["cid"], "rc": -1, "status": "failed",
-                      "danmaku": item.get("danmaku", 0), "error": str(exc)}
-        state["pending_song"].pop(0)
-        state["songs"].append(result)
+        song_items = list(state["pending_song"])
+        state["songs"].extend(produce_batch(date, song_items, produce_song))
+        state["pending_song"] = []
+        refill_songs(state)
         write_state(date, state)
 
-    failures = [p for p in state["picks"] if p.get("status") != "ok"] + [s for s in state["songs"] if s.get("status") != "ok"]
-    state["status"] = "done_with_failures" if failures else "done"
+    repair_covers(date, state)
+
+    picks, songs = state["picks"], state["songs"]
+    delivered_talk = [p for p in picks if p.get("status") in DELIVERED_TALK_STATUSES]
+    quarantined = [p for p in picks if p.get("status") == "quarantine"]
+    delivered_songs = [s for s in songs if s.get("delivered")]
+    blocked_songs = [s for s in songs if s.get("status") == "blocked"]
+    failures = [r for r in picks + songs if r.get("status") == "failed"]
+    # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
+    # 0 failures').  A batch is review_ready only when something REACHED review.
+    if delivered_talk or delivered_songs:
+        state["status"] = "review_ready_with_failures" if failures else "review_ready"
+    else:
+        state["status"] = "no_delivery"
     write_state(date, state)
     write_reports(date, state)
-    log(f"{date} batch finished: {len(state['picks'])} picks / {len(state['songs'])} songs, {len(failures)} failure(s)")
+    log(
+        f"{date} batch finished [{state['status']}]: talk {len(delivered_talk)}/{len(picks)} delivered"
+        f" ({len(quarantined)} quarantined), song {len(delivered_songs)} delivered"
+        f" / {len(blocked_songs)} gate-blocked / {len(songs)} attempted, {len(failures)} failure(s)"
+    )
+
+
+def write_heartbeat(body: str) -> None:
+    heartbeat = BASE / "reports" / "heartbeat.txt"
+    heartbeat.parent.mkdir(parents=True, exist_ok=True)
+    heartbeat.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {body}\n", encoding="utf-8")
 
 
 def tick() -> int:
@@ -831,11 +1224,23 @@ def tick() -> int:
         return 0
     if not cjk_font_present():
         log("WARNING: no CJK font on this host — subtitles would burn as tofu boxes; run: apt install fonts-noto-cjk")
+    # Source health FIRST (2026-07-09: a dead CloudDrive mount read as 'no new
+    # recordings' and the heartbeat stayed green for hours while the recorder's
+    # write path was broken).  A sick source is loud in the heartbeat AND in an
+    # alert file, and the tick does nothing else — fail-closed.
+    source_err = source_health_error()
+    if source_err:
+        write_alert("SOURCE_UNAVAILABLE", source_err)
+        write_heartbeat(f"SOURCE_UNAVAILABLE({source_err}) dates=(skipped)")
+        log(f"recordings source UNAVAILABLE: {source_err} — tick aborted, alert written")
+        return 0
     live = blrec_live_status()
     if live is None:
+        write_heartbeat("live=? source=ok (blrec API unavailable — fail-safe skip)")
         log("live status unknown — fail-safe skip this tick")
         return 0
     if live:
+        write_heartbeat("live=True source=ok (waiting for stream end)")
         log("room is LIVE — waiting for stream end")
         return 0
     checked = []
@@ -846,12 +1251,7 @@ def tick() -> int:
             continue
         checked.append(f"{date}:{state.get('status', 'new')}")
         process_date(date)
-    heartbeat = BASE / "reports" / "heartbeat.txt"
-    heartbeat.parent.mkdir(parents=True, exist_ok=True)
-    heartbeat.write_text(
-        f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} live={live} dates={' '.join(checked) or '(none)'}\n",
-        encoding="utf-8",
-    )
+    write_heartbeat(f"live={live} source=ok dates={' '.join(checked) or '(none)'}")
     log(f"tick done: live={live} dates={' '.join(checked) or '(none)'}")
     return 0
 
@@ -901,7 +1301,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         result = produce_talk(date, item)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
-        return 0 if result.get("status") == "ok" else 1
+        return 0 if result.get("status") in DELIVERED_TALK_STATUSES else 1
     if args.once:
         return tick()
     parser.print_help()

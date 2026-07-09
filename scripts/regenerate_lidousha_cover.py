@@ -70,6 +70,7 @@ def regenerate_cover(
     ai_bg_path: Path | None = None,
     reuse_bg: bool = False,
     use_llm: bool = True,
+    layout: str | None = None,
 ) -> dict:
     """Produce one redesigned cover. Returns a metadata dict (also written next to
     the cover as ``<out>.cover_generation.json``)."""
@@ -86,6 +87,12 @@ def regenerate_cover(
     art_direction = _lidousha_cover_art_direction(
         candidate_id=candidate_id, title=title, cover_text=cover_text, art_direction_llm_call=art_direction_llm
     )
+    if layout:
+        # Force the text side (the AI bg's character is fixed; put text OPPOSITE it):
+        # right-split = text LEFT (character on the right), left-split = text RIGHT.
+        import dataclasses
+
+        art_direction = dataclasses.replace(art_direction, layout=layout)
 
     if reuse_bg:
         if not ai_bg_path.is_file():
@@ -152,6 +159,8 @@ def main(argv=None) -> int:
     p.add_argument("--ai-bg", type=Path, help="Path for the no-text AI background (default: <out>.ai-bg.png).")
     p.add_argument("--reuse-bg", action="store_true", help="Re-overlay onto an existing --ai-bg without calling CPA.")
     p.add_argument("--no-llm", action="store_true", help="Skip the CPA art-direction judge; use the deterministic baseline.")
+    p.add_argument("--layout", choices=("left-split", "right-split", "banner", "song-clean"),
+                   help="force the text layout (right-split=text LEFT/character RIGHT; left-split=text RIGHT). Use when the reused AI bg's character is on the side the auto-layout put text.")
     args = p.parse_args(argv)
 
     meta = regenerate_cover(
@@ -163,6 +172,7 @@ def main(argv=None) -> int:
         ai_bg_path=args.ai_bg,
         reuse_bg=args.reuse_bg,
         use_llm=not args.no_llm,
+        layout=args.layout,
     )
     ad = meta["art_direction"]
     print(json.dumps({"out": str(args.out), "layout": ad["layout"], "role": ad["role"],

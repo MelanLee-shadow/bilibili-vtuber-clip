@@ -61,6 +61,58 @@ from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sani
 
 SNAP_BEFORE_MS = 6_000
 SNAP_AFTER_MS = 9_000
+SC_PRE_CONTEXT_MS = 900_000  # include SCs up to 15min before the clip: she CLEARS THE
+                             # SC BACKLOG in batches, reading SCs minutes after they
+                             # appeared (《想要成为真正的拉拉》SC was read ~4min later),
+                             # so "recent" is not enough — content-match picks the right
+                             # one out of the backlog, irrelevant ones are ignored.
+
+
+def _load_superchats(jsonl_path: Path) -> list[tuple[int, str, str]]:
+    """(video_relative_ms, sender_uname, message) for SUPER_CHAT events in a blrec
+    .jsonl event log.  SUPER_CHAT carries the EXACT full sender uname (unlike gift
+    events, whose uname is masked to 小***), so both the name and the on-screen
+    text she reads/thanks are recoverable ground truth.  Video-relative time uses
+    the earliest event's send_time as t=0 (same as the danmaku XML offsets).
+    De-duplicates the CN/JPN twin events by message text."""
+    if not jsonl_path.is_file():
+        return []
+
+    def _send_time(d: dict) -> float | None:
+        st = d.get("send_time")
+        if not isinstance(st, (int, float)):
+            st = (d.get("data") or {}).get("send_time")
+        return st if isinstance(st, (int, float)) else None
+
+    raw: list[tuple[float, str, str]] = []
+    base: float | None = None
+    for line in jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        st = _send_time(d)
+        if st is not None:
+            base = st if base is None else min(base, st)
+        if str(d.get("cmd", "")).startswith("SUPER_CHAT_MESSAGE") and st is not None:
+            data = d.get("data") or {}
+            msg = data.get("message")
+            uname = (data.get("user_info") or {}).get("uname") or ""
+            if isinstance(msg, str) and msg.strip():
+                raw.append((st, str(uname).strip(), msg.strip()))
+    if base is None:
+        return []
+    out: list[tuple[int, str, str]] = []
+    seen: set[str] = set()
+    for st, uname, msg in raw:
+        if msg in seen:
+            continue
+        seen.add(msg)
+        out.append((int(st - base), uname, msg))
+    return out
 START_SNAP_MS = 2_500
 TAIL_PAD_MS = 400
 LEAD_AIR_MS = 250
@@ -118,6 +170,44 @@ def boundary_audit(spans, *, start_ms: int, cut_ms: int, start_snapped: bool, en
     }
 
 
+ISLAND_CONTINUES_FLAG_MS = 1_500
+
+
+def _norm_cue_text(text: str) -> str:
+    return "".join(str(text).split())
+
+
+def boundary_red_flags(
+    *,
+    audit: dict,
+    cues,
+    sanitized,
+    final_start_ms: int,
+    final_end_ms: int,
+    snapped_end_ms: int,
+    closure_text: str,
+) -> list[str]:
+    """Deterministic reviewer red flags (2026-07-09 external audit).
+
+    A green boundary verdict only says both cuts SNAPPED to ASR cue boundaries;
+    the real 7/6+7/9 deliveries showed that is not enough (cuts inside a still-
+    running speech island, final SRT ending on a different sentence than the
+    claimed closure, next-topic text flashing in the tail pad).  These checks
+    need no LLM; any hit means the clip is delivered as QUARANTINE — reviewable,
+    never silently green."""
+    flags: list[str] = []
+    continues_ms = int(audit.get("end_island_continues_ms") or 0)
+    if continues_ms >= ISLAND_CONTINUES_FLAG_MS:
+        flags.append(f"speech_continues_{continues_ms}ms_after_cut")
+    if any(c.start_ms < final_start_ms - 50 and c.end_ms > final_start_ms + 300 for c in cues):
+        flags.append("opens_mid_sentence")
+    if any(snapped_end_ms <= c.start_ms < final_end_ms for c in cues):
+        flags.append("next_sentence_enters_tail_pad")
+    if sanitized and _norm_cue_text(sanitized[-1].text) != _norm_cue_text(closure_text):
+        flags.append("closure_not_final_subtitle")
+    return flags
+
+
 def run(cmd: list[str], *, timeout: int = 3600) -> None:
     completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
     if completed.returncode != 0:
@@ -156,6 +246,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="cpa correct only: also feed agy-extracted on-screen text (superchat cards/titles) to CPA. Off by default — the glossary is the reliable authority for known names; agy vision on stylized cards is unreliable and can override the glossary. Use only when a clip's meaning hinges on on-screen text NOT yet in the glossary.",
     )
+    parser.add_argument(
+        "--reuse-cover",
+        action="store_true",
+        help="subtitle-only re-run: keep the EXISTING delivered cover, skip the AI cover (art-direction LLM + gpt-image-2 ~90s/clip). Title still regenerates. Use when re-correcting subtitles on an already-covered clip.",
+    )
     args = parser.parse_args(argv)
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
 
@@ -193,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
              "-i", str(concat_list), "-c", "copy", str(padded)])
     padded_dur = ffprobe_duration_ms(padded)
 
-    # 2. Danmaku merged onto the concat timeline.
+    # 2. Danmaku + on-screen SUPER_CHATs merged onto the concat timeline.
     merged: list[DanmakuItem] = []
     offset = 0
     for piece, dur in zip(spec["pieces"], durations):
@@ -203,6 +298,21 @@ def main(argv: list[str] | None = None) -> int:
                 rel = item.offset_ms - piece["start_ms"]
                 if -1_000 <= rel <= dur + 1_000:
                     merged.append(DanmakuItem(offset_ms=offset + max(0, rel), text=item.text))
+            # On-screen superchats (exact text from the blrec .jsonl sibling) — the
+            # audio-only ASR garbles what she reads off an SC card, so feed the SC
+            # text as strong wording context (Ivan 2026-07-07: 有些地方要结合画面SC).
+            jsonl = piece.get("superchat_jsonl_local") or str(Path(xml).with_suffix(".jsonl"))
+            for sc_ms, sc_uname, sc_text in _load_superchats(Path(jsonl)):
+                rel = sc_ms - piece["start_ms"]
+                # she reads/thanks SCs a while after they appear and BATCHES them
+                # (Ivan 2026-07-07), so include SCs from up to ~2min BEFORE the clip —
+                # an opening thank often clears older SCs.  Pre-clip ones are marked
+                # (此前) and placed at the clip start; content-match decides the pairing.
+                if -SC_PRE_CONTEXT_MS <= rel <= dur + 1_000:
+                    marker = f"·{sc_uname}" if sc_uname else ""
+                    prefix = "【SC此前" if rel < 0 else "【SC"
+                    label = f"{prefix}{marker}】{sc_text}"
+                    merged.append(DanmakuItem(offset_ms=offset + max(0, rel), text=label))
         offset += dur
     merged.sort(key=lambda item: item.offset_ms)
 
@@ -303,6 +413,20 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(timing_qa, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
+    red_flags = boundary_red_flags(
+        audit=audit,
+        cues=cues,
+        sanitized=sanitized,
+        final_start_ms=final_start,
+        final_end_ms=final_end,
+        snapped_end_ms=snapped,
+        closure_text=closure_cue.text,
+    )
+    audit["red_flags"] = red_flags
+    (out_root / f"{cid}.boundary_audit.json").write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
     record: dict = {
         "status": "MATERIALIZED",
         "media_path": str(media_path),
@@ -331,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
         title_llm = build_llm_call(
             LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=180.0)
         )
-    art_direction_llm = build_llm_call(
+    art_direction_llm = None if args.reuse_cover else build_llm_call(
         LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=180.0)
     )
     record = _stage_publish_draft(
@@ -342,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
         run_ffmpeg=True,
         title_llm_call=title_llm,
         art_direction_llm_call=art_direction_llm,
+        skip_cover=args.reuse_cover,
     )
     staging = record.get("publish_staging") or {}
     json.dump(record, open(recut_dir / f"{cid}.record.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2, sort_keys=True)
@@ -362,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
             "final_end_ms": final_end,
             "closure_sentence": closure_cue.text,
             "boundary_verdict": audit["verdict"],
+            "red_flags": red_flags,
             "timing_qa": timing_qa.get("counts"),
             "cover_status": staging.get("cover_status"),
             "title": staging.get("title"),

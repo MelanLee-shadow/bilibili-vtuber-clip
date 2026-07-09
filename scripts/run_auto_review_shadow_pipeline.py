@@ -25,6 +25,7 @@ from src.autoslice.auto_review import (
     DecisionAction,
     JingtingProvenance,
     REQUIRED_PUBLISH_ARTIFACT_KEYS,
+    ReviewDecision,
     auto_review_manifest_sha256,
     evaluate_required_evidence,
     is_publish_gate_satisfied,
@@ -372,16 +373,6 @@ def _run_live_source(
     )
     if burn_preview:
         materialized_recut = _burn_preview_subtitles(materialized_recut, run_ffmpeg=source_context_run_ffmpeg)
-    if publish_staging:
-        materialized_recut = _stage_publish_draft(
-            materialized_recut,
-            candidate_id=candidate_id,
-            title=title,
-            cues=cues,
-            run_ffmpeg=source_context_run_ffmpeg,
-            title_llm_call=title_llm_call,
-            art_direction_llm_call=art_direction_llm_call,
-        )
     evidence = _apply_materialized_recut_render_qa(evidence, materialized_recut)
     evidence = _apply_cpa_semantic_review_from_job(evidence, job_manifest, output_dir=output_dir)
     evidence = _apply_semantic_authority_evidence(evidence, job_manifest)
@@ -403,6 +394,19 @@ def _run_live_source(
     # the talk-boundary fallback would otherwise dispose of the candidate.
     decision = _merge_song_proof_into_decision(decision, evidence)
     _increment_action_count(counts, decision.action.value)
+
+    if publish_staging:
+        materialized_recut = _stage_publish_after_release_gate(
+            materialized_recut,
+            decision=decision,
+            candidate_id=candidate_id,
+            title=title,
+            cues=cues,
+            output_dir=output_dir,
+            run_ffmpeg=source_context_run_ffmpeg,
+            title_llm_call=title_llm_call,
+            art_direction_llm_call=art_direction_llm_call,
+        )
 
     evidence_path = output_dir / "evidence" / f"{candidate_id}.evidence.json"
     evidence_path.write_text(json.dumps(evidence.to_manifest(), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -2246,6 +2250,66 @@ def _ensure_lidousha_prefix(title: str) -> str:
 
     stripped = title.strip()
     return stripped if stripped.startswith(_LIDOUSHA_TITLE_PREFIX) else _LIDOUSHA_TITLE_PREFIX + stripped
+
+
+def _stage_publish_after_release_gate(
+    materialized_recut: dict[str, object] | None,
+    *,
+    decision: ReviewDecision,
+    candidate_id: str,
+    title: str,
+    cues: Sequence[SourceCue],
+    output_dir: Path,
+    run_ffmpeg: bool,
+    title_llm_call: LlmCall | None,
+    art_direction_llm_call: LlmCall | None = None,
+) -> dict[str, object] | None:
+    """Persist the final content decision before any title or cover side effect."""
+
+    recut = dict(materialized_recut or {})
+    reason_codes = list(decision.reason_codes)
+    gate_satisfied = bool(
+        decision.action == DecisionAction.AUTO_UPLOAD
+        and not reason_codes
+        and recut.get("status") == "MATERIALIZED"
+    )
+    snapshot_path = output_dir / f"{candidate_id}.cover-release-gate.json"
+    snapshot = {
+        "schema_version": "slice-cover-release-gate.v1",
+        "candidate_id": candidate_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "decision_action": decision.action.value,
+        "reason_codes": reason_codes,
+        "materialized_recut_status": recut.get("status"),
+        "artifact_hashes": dict(recut.get("artifact_hashes") or {}),
+        "satisfied": gate_satisfied,
+    }
+    _write_json_file(snapshot_path, snapshot)
+    recut["cover_release_gate"] = {**snapshot, "path": str(snapshot_path)}
+
+    if not gate_satisfied:
+        recut["publish_staging"] = {
+            "status": "SKIPPED_RELEASE_GATE",
+            "decision_action": decision.action.value,
+            "reason_codes": reason_codes,
+            "release_gate_path": str(snapshot_path),
+            "upload_enabled": False,
+        }
+        return recut
+
+    staged = _stage_publish_draft(
+        recut,
+        candidate_id=candidate_id,
+        title=title,
+        cues=cues,
+        run_ffmpeg=run_ffmpeg,
+        title_llm_call=title_llm_call,
+        art_direction_llm_call=art_direction_llm_call,
+    )
+    if staged is not None:
+        staged = dict(staged)
+        staged["cover_release_gate"] = recut["cover_release_gate"]
+    return staged
 
 
 def _stage_publish_draft(

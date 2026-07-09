@@ -132,6 +132,11 @@ procs = {
 }
 
 ORIG_RX = lambda room: re.compile(r"^%s_\d{8}-\d\d-\d\d-\d\d\.(mp4|flv|m4s)$" % room)
+# The FINISHED, remuxed recording (dashed date + trailing dash) — ffprobe reads
+# its moov in a few seconds. The raw blrec `.m4s` fragment (compact date) is 1GB+
+# fMP4 and ffprobe TIMES OUT scanning it over the slow mount → false audio_missing.
+# Audio health must be checked on this readable file, not the raw fragment.
+FINISHED_MP4_RX = lambda room: re.compile(r"^%s_\d{4}-\d\d-\d\d-\d\d-\d\d-\d\d-\.mp4$" % room)
 SLICE_RX = lambda room: re.compile(r"\d+s_.*%s.*\.(flv|mp4)$" % room)
 
 def date_dirs(room):
@@ -215,17 +220,21 @@ proom = ROOMS[0]
 pinfo = rooms.get(proom, {})
 active_bn = os.path.basename(((pinfo.get("blrec_api") or {}).get("recording_path") or ""))
 ld = pinfo.get("latest_date_dir")
-cand, cand_m = None, 0
+# Prefer the finished remuxed .mp4 (ffprobe-readable); only fall back to a raw
+# ORIG_RX match (.m4s) if no remuxed file exists yet.
+cand, cand_m, cand_finished = None, 0, False
 if ld:
     for f in glob.glob(os.path.join(VIDEOS, proom, ld, "*")):
         bn = os.path.basename(f)
-        if ORIG_RX(proom).match(bn) and bn != active_bn:
+        finished = bool(FINISHED_MP4_RX(proom).match(bn))
+        if (finished or ORIG_RX(proom).match(bn)) and bn != active_bn:
             try:
                 m = os.path.getmtime(f)
             except OSError:
                 continue
-            if m > cand_m:
-                cand_m, cand = m, f
+            # a finished .mp4 always wins over a raw fragment; else newest wins
+            if (finished and not cand_finished) or (finished == cand_finished and m > cand_m):
+                cand_m, cand, cand_finished = m, f, finished
 if cand:
     audio = {"file": os.path.basename(cand)}
     try:
@@ -233,14 +242,17 @@ if cand:
             ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
              "stream=codec_name,profile,sample_rate,channels", "-of",
              "default=noprint_wrappers=1", cand],
-            text=True, stderr=subprocess.STDOUT, timeout=20)
+            text=True, stderr=subprocess.STDOUT, timeout=30)
         for line in out.splitlines():
             if "=" in line:
                 k, v = line.split("=", 1)
                 audio[k] = v
     except Exception as e:
         audio["ffprobe_error"] = str(e)[:80]
-    audio["has_audio"] = "codec_name" in audio
+    # A probe timeout/error is UNKNOWN, not "audio missing" — the raw .m4s times
+    # out even when the audio is fine.  Only an explicit no-audio-stream result
+    # (ffprobe succeeded, no codec_name) counts as missing.
+    audio["has_audio"] = None if "ffprobe_error" in audio else ("codec_name" in audio)
     if audio["file"] != AUDIO_LAST:  # expensive silence check only on a new file
         try:
             vd = subprocess.run(
@@ -782,6 +794,10 @@ def evaluate(probe, state):
             problems.append({"id": "audio_missing", "sev": "DEGRADED",
                              "msg": f"最新录播 {au['file']} 没有音轨。",
                              "fix": "检查录制源/格式；必要时用官方录播音频替换。"})
+        elif au.get("has_audio") is None:
+            # probe couldn't read the file (e.g. still-remuxing / raw fragment) —
+            # UNKNOWN, not a failure.  Note it, don't raise a false DEGRADED.
+            notes.append(f"音频未能校验(探测失败，多为文件尚在合成或裸片段): {au.get('ffprobe_error','')[:60]}")
         elif prof in ("-1", "unknown"):
             problems.append({"id": "audio_bad_profile", "sev": "DEGRADED",
                              "msg": f"最新录播 {au['file']} 音频 profile={prof}(6/20 无声同款异常)。",
@@ -968,8 +984,14 @@ def main():
     print(f"[{ts:%Y-%m-%d %H:%M:%S}] {verdict}  problems={prob_ids}  "
           f"actions={[a[0] for a in actions]}")
     print(md)
-    # exit code: 0 ok/warn, 1 degraded, 2 down — handy for cron/quick checks
-    sys.exit({"OK": 0, "WARN": 0, "DEGRADED": 1, "DOWN": 2}[verdict])
+    # A SUCCESSFUL monitor run exits 0 — the health verdict is surfaced via the
+    # report file + email (Ivan 的约定：告警只走报告文件), NOT the process exit
+    # code.  Under launchd, exit 1 on a monitored-DEGRADED made `launchctl list`
+    # show a permanent "1" that reads as the monitor itself failing.  Opt into
+    # the old verdict-as-exit-code behavior with --health-exit (manual/cron).
+    if "--health-exit" in sys.argv:
+        sys.exit({"OK": 0, "WARN": 0, "DEGRADED": 1, "DOWN": 2}[verdict])
+    sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -1152,6 +1152,13 @@ def test_live_source_applies_cpa_semantic_review_and_blocks_terminology_failure(
     _patch_complete_evidence(monkeypatch)
     monkeypatch.setattr(
         shadow_pipeline,
+        "_stage_publish_draft",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("blocked semantic review must not enter publish staging")
+        ),
+    )
+    monkeypatch.setattr(
+        shadow_pipeline,
         "_resolve_live_source_boundary",
         lambda job_manifest, cues, **_kwargs: shadow_pipeline.BoundaryResolution(
             candidate_id="cpa-terms",
@@ -1214,6 +1221,7 @@ def test_live_source_applies_cpa_semantic_review_and_blocks_terminology_failure(
         output_dir=tmp_path / "output",
         no_upload=True,
         source_context_run_ffmpeg=False,
+        publish_staging=True,
     )
 
     record = summary["records"][0]
@@ -1221,6 +1229,8 @@ def test_live_source_applies_cpa_semantic_review_and_blocks_terminology_failure(
 
     assert record["decision_action"] == "BLOCK"
     assert "TERMINOLOGY_QA_FAILED" in record["reason_codes"]
+    assert record["materialized_recut"]["publish_staging"]["status"] == "SKIPPED_RELEASE_GATE"
+    assert record["materialized_recut"]["cover_release_gate"]["satisfied"] is False
     assert evidence["checks"][-1]["code"] == "CPA_SEMANTIC_QA"
     assert evidence["checks"][-1]["pass"] is False
     assert evidence["metadata"]["cpa_semantic_qa"]["response_path"] == str(response_path)
@@ -1351,6 +1361,16 @@ def test_live_source_auto_upload_candidate_materializes_preview_render_qa(tmp_pa
         tmp_path / "refined.srt",
         "1\n00:00:00,000 --> 00:00:02,000\n我跟你们说一个事\n\n2\n00:00:06,000 --> 00:00:07,500\n最后大家都笑了\n",
     )
+    staged_calls: list[str] = []
+
+    def fake_stage(record, *, candidate_id, **_kwargs):
+        gate_path = tmp_path / "output" / f"{candidate_id}.cover-release-gate.json"
+        assert gate_path.is_file()
+        assert _load_json(gate_path)["satisfied"] is True
+        staged_calls.append(candidate_id)
+        return {**record, "publish_staging": {"status": "STAGED", "upload_enabled": False}}
+
+    monkeypatch.setattr(shadow_pipeline, "_stage_publish_draft", fake_stage)
 
     summary = shadow_pipeline.run_shadow_pipeline(
         source_video=source_video,
@@ -1370,6 +1390,7 @@ def test_live_source_auto_upload_candidate_materializes_preview_render_qa(tmp_pa
         output_dir=tmp_path / "output",
         no_upload=True,
         source_context_run_ffmpeg=True,
+        publish_staging=True,
     )
 
     record = summary["records"][0]
@@ -1377,6 +1398,9 @@ def test_live_source_auto_upload_candidate_materializes_preview_render_qa(tmp_pa
 
     assert record["materialized_recut"]["status"] == "MATERIALIZED"
     assert record["materialized_recut"]["dry_run_placeholder"] is False
+    assert record["materialized_recut"]["publish_staging"]["status"] == "STAGED"
+    assert record["materialized_recut"]["cover_release_gate"]["satisfied"] is True
+    assert staged_calls == ["preview-upload"]
     assert "ACTUAL_CUT_ERROR_MISSING" not in record["reason_codes"]
     assert evidence["metrics"]["actual_cut_error_ms"] is not None
 
@@ -1706,6 +1730,69 @@ def test_load_lyric_timeline_requires_verified_proof_and_offset(tmp_path):
     # tampered report → proof fails → no LRC subtitle timeline
     report_path.write_text(json.dumps({**report_payload, "offset_ms": 0}), encoding="utf-8")
     assert shadow_pipeline._load_lyric_timeline(job, output_dir=tmp_path) is None
+
+
+def test_publish_staging_release_gate_skips_title_and_cover_side_effects(tmp_path, monkeypatch):
+    def must_not_stage(*_args, **_kwargs):
+        raise AssertionError("release-gated candidate must not enter publish staging")
+
+    monkeypatch.setattr(shadow_pipeline, "_stage_publish_draft", must_not_stage)
+    record = shadow_pipeline._stage_publish_after_release_gate(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(tmp_path / "blocked.mp4"),
+            "artifact_hashes": {"video_sha256": "sha256:blocked"},
+        },
+        decision=shadow_pipeline.ReviewDecision(
+            action=shadow_pipeline.DecisionAction.BLOCK,
+            reason_codes=("TERMINOLOGY_QA_FAILED",),
+        ),
+        candidate_id="blocked-song",
+        title="blocked",
+        cues=[],
+        output_dir=tmp_path,
+        run_ffmpeg=False,
+        title_llm_call=lambda _prompt: '{"title":"must not run"}',
+    )
+
+    staging = record["publish_staging"]
+    gate = _load_json(tmp_path / "blocked-song.cover-release-gate.json")
+    assert staging["status"] == "SKIPPED_RELEASE_GATE"
+    assert staging["decision_action"] == "BLOCK"
+    assert staging["reason_codes"] == ["TERMINOLOGY_QA_FAILED"]
+    assert gate["satisfied"] is False
+    assert gate["artifact_hashes"]["video_sha256"] == "sha256:blocked"
+
+
+def test_publish_staging_release_gate_runs_only_after_auto_upload_snapshot(tmp_path, monkeypatch):
+    observed: dict[str, object] = {}
+
+    def fake_stage(record, **_kwargs):
+        gate_path = tmp_path / "ready-song.cover-release-gate.json"
+        observed["gate_existed_before_stage"] = gate_path.is_file()
+        observed["gate"] = _load_json(gate_path)
+        return {**record, "publish_staging": {"status": "STAGED", "upload_enabled": False}}
+
+    monkeypatch.setattr(shadow_pipeline, "_stage_publish_draft", fake_stage)
+    record = shadow_pipeline._stage_publish_after_release_gate(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(tmp_path / "ready.mp4"),
+            "artifact_hashes": {"video_sha256": "sha256:ready"},
+        },
+        decision=shadow_pipeline.ReviewDecision(action=shadow_pipeline.DecisionAction.AUTO_UPLOAD),
+        candidate_id="ready-song",
+        title="ready",
+        cues=[],
+        output_dir=tmp_path,
+        run_ffmpeg=False,
+        title_llm_call=None,
+    )
+
+    assert observed["gate_existed_before_stage"] is True
+    assert observed["gate"]["satisfied"] is True
+    assert record["publish_staging"]["status"] == "STAGED"
+    assert record["cover_release_gate"]["decision_action"] == "AUTO_UPLOAD"
 
 
 def test_publish_staging_blocks_without_cpa_ai_cover_and_never_extracts_frame_cover(tmp_path, monkeypatch):
@@ -2387,6 +2474,154 @@ def test_cover_art_direction_llm_guardrail_strips_tongue_keeps_layout():
     assert resolved.hook_color == "pink"
 
 
+# ---------------------------------------------------------------------------
+# Word-aware cover line splitting (Ivan 2026-07-06): the balanced-partition
+# wrapper is word-BLIND — it split 小皇帝拒/绝更新 and 吵闹熊/猫头的 mid-word on
+# the first unattended batch.  The art-direction LLM now proposes a word-aware
+# line split; it is accepted ONLY when provably lossless + renderable, else the
+# balancer stays as the fallback.
+# ---------------------------------------------------------------------------
+
+
+def test_validated_cover_lines_accepts_lossless_word_split():
+    v = shadow_pipeline._validated_cover_lines
+    assert v(["电脑要造反？", "小皇帝", "拒绝更新"], "电脑要造反？小皇帝拒绝更新", hook_word="", max_lines=5) == (
+        "电脑要造反？",
+        "小皇帝",
+        "拒绝更新",
+    )
+
+
+def test_validated_cover_lines_rejects_lossy_or_unrenderable():
+    v = shadow_pipeline._validated_cover_lines
+    ct = "小皇帝拒绝更新"
+    assert v(["小皇帝", "拒绝跟新"], ct, hook_word="", max_lines=5) == ()      # a character was changed
+    assert v(["小皇帝拒绝"], ct, hook_word="", max_lines=5) == ()             # characters dropped
+    assert v(["拒绝更新", "小皇帝"], ct, hook_word="", max_lines=5) == ()      # reordered
+    assert v(["小", "皇", "帝", "拒", "绝", "新"], ct, hook_word="", max_lines=5) == ()  # 6 lines > max
+    assert v("小皇帝拒绝更新", ct, hook_word="", max_lines=5) == ()           # not a list
+    assert v([], ct, hook_word="", max_lines=5) == ()                        # empty
+    long_line = "一二三四五六七八九十甲乙丙"  # 13 chars — over the single-line budget
+    assert v([long_line], long_line, hook_word="", max_lines=5) == ()
+
+
+def test_validated_cover_lines_keeps_song_and_hook_whole():
+    v = shadow_pipeline._validated_cover_lines
+    ct = "吵闹熊猫头的《嘉宾》"
+    # 《song》split across lines → rejected (must stay whole on one line)
+    assert v(["吵闹熊猫头的《嘉", "宾》"], ct, hook_word="《嘉宾》", max_lines=5) == ()
+    assert v(["吵闹熊猫头的", "《嘉宾》"], ct, hook_word="《嘉宾》", max_lines=5) == ("吵闹熊猫头的", "《嘉宾》")
+    # the highlighted hook word broken across lines → rejected (its color would tear)
+    assert v(["小李当场反", "杀"], "小李当场反杀", hook_word="反杀", max_lines=5) == ()
+
+
+def test_normalize_cover_art_direction_fills_word_aware_line_breaks():
+    title = "【李豆沙】电脑要造反？小皇帝拒绝更新"
+    cover_text = "电脑要造反？小皇帝拒绝更新"
+
+    def llm(_prompt: str) -> str:
+        return json.dumps(
+            {
+                "role": "witty_smug",
+                "expression_en": "clever pleased grin",
+                "layout": "banner",
+                "hook_color": "yellow",
+                "background_style": "halftone-dots",
+                "hook_word": "",
+                "lines": ["电脑要造反？", "小皇帝", "拒绝更新"],
+            },
+            ensure_ascii=False,
+        )
+
+    resolved = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-lines", title=title, cover_text=cover_text, art_direction_llm_call=llm
+    )
+    assert resolved.line_breaks == ("电脑要造反？", "小皇帝", "拒绝更新")
+
+    # No judge → no forced split → the balancer fallback (line_breaks empty).
+    baseline = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-lines", title=title, cover_text=cover_text
+    )
+    assert baseline.line_breaks == ()
+
+
+def test_normalize_cover_art_direction_rejects_lossy_llm_lines():
+    title = "【李豆沙】电脑要造反？小皇帝拒绝更新"
+    cover_text = "电脑要造反？小皇帝拒绝更新"
+
+    def llm(_prompt: str) -> str:  # drops 新 → must fall back to the balancer
+        return json.dumps(
+            {
+                "role": "witty_smug",
+                "expression_en": "clever pleased grin",
+                "layout": "banner",
+                "hook_color": "yellow",
+                "background_style": "halftone-dots",
+                "hook_word": "",
+                "lines": ["电脑要造反？", "小皇帝", "拒绝更"],
+            },
+            ensure_ascii=False,
+        )
+
+    resolved = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-lossy", title=title, cover_text=cover_text, art_direction_llm_call=llm
+    )
+    assert resolved.line_breaks == ()  # lossy split refused; balancer still runs
+
+
+def test_overlay_honors_word_aware_lines_without_midword_break(tmp_path):
+    from PIL import Image
+
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1920, 1080), (40, 80, 160)).save(bg)
+    out = tmp_path / "cover.png"
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="witty_smug",
+        expression_en="clever grin",
+        background_style="halftone-dots",
+        layout="banner",
+        hook_color="yellow",
+        is_song=False,
+        hook_word="",
+        line_breaks=("电脑要造反？", "小皇帝", "拒绝更新"),
+    )
+    meta = shadow_pipeline._overlay_lidousha_cover_title(
+        bg, out, cover_text="电脑要造反？小皇帝拒绝更新", art_direction=art_direction
+    )
+    assert out.is_file()
+    assert meta["line_split"] == "llm_word_aware"
+    rendered = meta["rendered_lines"]
+    # lossless: the rendered lines concatenate back to the cover text in order
+    assert "".join(rendered) == "电脑要造反？小皇帝拒绝更新"
+    # NO word is torn across lines — each stays whole within a single line (the
+    # fitter may regroup the LLM lines for a bigger font, but never splits a word).
+    for word in ("电脑", "造反", "小皇帝", "拒绝", "更新", "拒绝更新"):
+        assert any(word in line for line in rendered), f"{word} was split across lines: {rendered}"
+
+
+def test_overlay_falls_back_to_balancer_without_forced_lines(tmp_path):
+    from PIL import Image
+
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1920, 1080), (40, 80, 160)).save(bg)
+    out = tmp_path / "cover.png"
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="shy_cute_default",
+        expression_en="soft smile",
+        background_style="halftone-dots",
+        layout="banner",
+        hook_color="yellow",
+        is_song=False,
+        hook_word="",
+        line_breaks=(),
+    )
+    meta = shadow_pipeline._overlay_lidousha_cover_title(
+        bg, out, cover_text="电脑要造反？小皇帝拒绝更新", art_direction=art_direction
+    )
+    assert out.is_file()
+    assert meta["line_split"] == "balancer"  # no forced split, no colon → balancer path
+
+
 def test_cover_prompt_layout_and_overlay_hook_metadata(tmp_path):
     from PIL import Image
 
@@ -2455,3 +2690,57 @@ def test_title_policy_bans_zhijie_filler_word():
     """Ivan 2026-07-06: 标题里不能出现"直接"（直呼打咩 >> 直接打咩）。"""
     assert "banned_filler_word" in shadow_pipeline._title_policy_violations("【李豆沙】小李直接打咩")
     assert shadow_pipeline._title_policy_violations("【李豆沙】小李直呼打咩") == []
+
+
+def test_cover_request_size_satisfies_gateway_multiple_of_16():
+    """2026-07-06: CPA 图像网关(new_api)开始 400 拒绝非 16 倍数尺寸——1920x1080
+    整批封面全灭。请求尺寸必须合规，画布归一由 _normalize_cover_canvas 负责。"""
+    w, h = map(int, shadow_pipeline._COVER_REQUEST_SIZE.split("x"))
+    assert w % 16 == 0 and h % 16 == 0
+
+
+def test_normalize_cover_canvas_crops_and_covers(tmp_path):
+    from PIL import Image
+
+    canvas = shadow_pipeline._COVER_CANVAS
+    # 请求尺寸 1920x1088 回图 → 居中裁回画布
+    tall = tmp_path / "tall.png"
+    Image.new("RGB", (1920, 1088), (10, 20, 30)).save(tall)
+    assert shadow_pipeline._normalize_cover_canvas(tall) == canvas
+    with Image.open(tall) as img:
+        assert img.size == canvas
+    # 模型自作主张回方图 → scale-to-cover + 居中裁，不拉伸不留黑边
+    square = tmp_path / "square.png"
+    Image.new("RGB", (1024, 1024), (1, 2, 3)).save(square)
+    assert shadow_pipeline._normalize_cover_canvas(square) == canvas
+    # 已是画布尺寸 → 原样
+    exact = tmp_path / "exact.png"
+    Image.new("RGB", canvas, (5, 5, 5)).save(exact)
+    assert shadow_pipeline._normalize_cover_canvas(exact) == canvas
+
+
+def test_regroup_lines_merges_contiguously_and_word_safely():
+    """_regroup_lines merges adjacent word-safe lines into k balanced groups —
+    fewer lines fill wide zones with bigger text and never split a word."""
+    lines = ["电脑要造反？", "小皇帝", "拒绝更新"]
+    assert shadow_pipeline._regroup_lines(lines, 3) == lines          # k>=len → unchanged
+    assert shadow_pipeline._regroup_lines(lines, 1) == ["电脑要造反？小皇帝拒绝更新"]
+    two = shadow_pipeline._regroup_lines(lines, 2)                    # balanced 2-group
+    assert len(two) == 2 and "".join(two) == "电脑要造反？小皇帝拒绝更新"
+    # every group is a run of whole original lines → no word split
+    for word in ("小皇帝", "拒绝更新"):
+        assert any(word in g for g in two)
+
+
+def test_cover_font_swaps_whole_cover_on_wrong_shape_glyph():
+    """ZCOOLKuaiLe renders 自 as 白 (擅自→擅白) — not tofu, so the missing-glyph
+    checker misses it.  A title with 自 must swap the WHOLE cover to the complete
+    fallback font (Ivan 2026-07-07, the recurring 自→白 通病)."""
+    zcool = shadow_pipeline._find_cover_font()
+    fallback = shadow_pipeline._cover_fallback_font_path()
+    assert fallback is not None, "fallback font (SmileySans/得意黑) must be present"
+    # a title WITH 自 → fallback (whole-cover swap)
+    assert shadow_pipeline._cover_font_for_text("电脑擅自更新") == fallback
+    assert shadow_pipeline._cover_font_for_text("cos比sin自私") == fallback
+    # a title WITHOUT 自 → stays ZCOOL
+    assert shadow_pipeline._cover_font_for_text("电脑要造反小皇帝拒绝更新") == zcool
