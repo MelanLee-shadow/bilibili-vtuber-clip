@@ -15,6 +15,19 @@
 6. **弹幕 top2 选择**已在 runner v4 的 `prioritize/refill_songs`（配额=交付+回填），你不用做。
 7. **歌切交付语义的实现权**：runner-v4 会话不动你 working tree 里在改的 `free_session_autoslice.py`/`tests/test_free_session_autoslice.py`。你落地时请直接按第 1/2 条实现；若先 commit 了相反语义，runner-v4 会话会在其后按第 1 条改正并重部署。
 
+## 2026-07-10（续）：切片流水线在 blrec 原生输入上端到端验证 + monitor 复活逻辑根除 + GitHub 预检
+
+**目标**：Ivan 指出退役旧控制面只证明了"能录播"没证明"能自动切片"（流程的核心）；且之后要发布 GitHub。
+
+**已完成**：
+- **切片流水线 e2e 实证（compact 命名，旧面已死）**：拿 7/9 真实 blrec 原生段 `sources/22966160_20260709-20-00-28.mp4`（1.3GB，弹幕 xml/jsonl 同目录）跑 runner `--smoke-segment` 全链：BCUT 转写→CPA 语义召回（5 候选）→边界 snap+audit（red_flags=[]）→精确重切→AGY+CPA 字幕→sapphire72 烧录→真标题（「【李豆沙】0是什么手势？小李终于懂了：原来是豆沙」）→gpt-image 真封面（AI_COVER_READY）→交付 `review_ready`。**结论：新链路对 blrec 原生输入完全可用，不依赖旧面任何产物**。另补 `tests/test_compact_segment_names.py` 钉住两种命名兼容（compact/dashed、xml 在 parent/sources 都能配）。smoke 产物已清理。
+- **monitor 是旧面复活的真凶（根除）**：`lidousha_slice_monitor.py` 有 `slice_blessed` crash-recovery——旧面进程不在就 `docker exec` 拉回来（实锤：我 20:2xZ 跑了一次监控，scan+local_prepare 20:29 就复活了）。已重写：①删除全部 start_scan/start_local_prepare/_start_daemon/FORCE_START_SCAN/AUTOSLICE_ENABLED 复活逻辑——旧面进程在跑只 WARN 绝不重启；②新增 `run_autoslice_probe()`：监控新面健康（heartbeat 新鲜度>30min 告警、SOURCE_UNAVAILABLE=DOWN、近 6h ALERT_* 文件上报、下播后日期状态卡 new/sealing/processing 超 90min 告警）；③jingting 旧遗留 backlog 降为 note 不再永久 WARN；④upload 进程 kill 守卫保留。实跑验证：verdict=无问题、心跳/日期状态入报告、跑完旧面仍为 0（不复活）。
+- **GitHub 预检 + 秘密修复**：`lidousha_slice_monitor.py` 硬编码 blrec RECORD_KEY 两处已改为运行时读 env/.env（工作区秘密 0 命中）；预检清单见上节"GitHub 发布预检"。
+
+**进行中/阻塞**：歌切去语义门（Ivan 拍板的交付规则）仍待另一 agent 落地其 produce_song 改动后实施——契约见顶部 2026-07-10 节第 1/2/7 条。
+
+**下一步**：①另一 agent 落地后：按契约改 produce_song 交付语义 + 补交付 7/9《ただそばにいて》(x18) + commit/deploy；②GitHub 发布前：轮换 RECORD_KEY（git 历史含旧值）+ LICENSE/README + 定发布范围（建议只发流水线骨架）；③7/9 旧面遗留的 12 个 hybrid 切片/.jingting backlog 是死数据，可择机归档。
+
 ## 2026-07-09/10：外部审计修复轮（"控制面在撒谎"）—— runner v4 + 生产现场急救
 
 **目标**：外部三轮审计（+ChatGPT Pro 终审）判定系统"关键处假绿"：①挂载死了心跳报绿；②BLOCK 记成 ok、0 交付叫 done；③上传授权不绑定最终文件；④talk 边界门是假门；⑤top5 先到先占坑；⑥state 覆盖写+损坏静默清零；⑦dirty tree 部署。**全部意见经逐条代码/现场复核认可**，本轮修复。
@@ -37,6 +50,11 @@
 **进行中**：无后台进程。7/9 批次 5 条 talk 已交付待 Ivan 审（历史摘要头的 done 字样属修复前产物，歌切表格本身诚实）。
 
 **阻塞**：无。上传永远逐条授权。
+
+**GitHub 发布预检（Ivan 2026-07-10 提出"之后要发布 github"，本轮先扫了一遍）**：
+- ✅ 已修：`lidousha_slice_monitor.py` 硬编码 blrec RECORD_KEY（两处）→ 改为容器环境变量 / free 侧 `.env` 运行时读取，工作区秘密扫描现为 0 命中（SESSDATA/bili_jct 匹配均为字段名非值；GROQ/CPA key 全部只活在 free:/opt/bilive/.env）。
+- ⚠ **发布前必做**：①**轮换 RECORD_KEY**——git 历史里仍有旧值（比洗历史便宜：改 /opt/bilive/.env + 容器重建，monitor 已改为读 env 不用再动）；②加 LICENSE + README（现在都没有）；③决定发布范围——整仓含大量运营数据（HANDOFF 运营细节、uploaded.json 证据、李豆沙 persona/词表/选题 metric 等编辑私产），建议只发布流水线骨架（scripts/src/tests + 脱敏文档）或新开 public 仓抽取；④字体资产 SmileySans/ZCOOLKuaiLe 均 OFL 许可，可随仓发布。
+- 主机名/IP 未泄露（committed 文件 0 命中）；媒体/大文件未入库（最大是字体 2.5MB）。
 
 **下一步（审计"一周内"项，待排期/待 Ivan）**：①候选池 candidate_pool.jsonl + 封场后全局去重/多样性（本轮全局排序+封场已覆盖大半）；②talk/song 统一生命周期、golden replay（用 7/6、7/9 建回归集）；③审查界面（标题/hook/首尾上下文/红旗/Accept-Reject-Needs trim，落选默认折叠）；④根盘 88% 用量的水位/保留策略（审计正确指出：无背压设计前别上 local-first spool）。核心指标改口径：Ivan 接受并发布的片数 ÷ Ivan 审核分钟。
 

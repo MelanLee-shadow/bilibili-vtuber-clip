@@ -62,9 +62,7 @@ EMAIL_ENABLED = False
 # thresholds
 RECORDING_ACTIVE_AGE = 300      # file touched within 5 min => live/recording
 SLICE_GRACE_SEC = 90 * 60       # after a stream ends, allow 90 min before "no slices" is a problem
-SCAN_STALL_SEC = 45 * 60        # scan process alive but log silent this long => stalled
 DISK_MIN_BYTES = 15 * 1024**3   # warn under 15 GiB free
-SCAN_ERROR_BURST = 8            # >= this many ERROR lines in recent log window => degraded
 
 CET8 = timezone(timedelta(hours=8))
 
@@ -79,9 +77,10 @@ ROOMS = ["__ROOMS__"]
 VIDEOS = "/app/Videos"
 NOW = time.time()
 
-# blrec HTTP API (inside the container): room -> port
+# blrec HTTP API (inside the container): room -> port.  The key comes from the
+# container environment (compose env_file) — never hardcoded (repo goes public).
 BLREC_PORT = {"22966160": 2233, "23222837": 2234}
-BLREC_KEY = "V3YZM5cl17GXIvhF52lmxlxbJePLYrKpMTwzz3PC"
+BLREC_KEY = os.environ.get("RECORD_KEY", "")
 
 def blrec_status(room):
     port = BLREC_PORT.get(room)
@@ -400,6 +399,7 @@ def find_srt(path):
             return cand
     return None
 
+
 def ps_count(needle):
     try:
         out = subprocess.check_output(["ps", "-eo", "args"], text=True, errors="replace")
@@ -463,6 +463,47 @@ print(json.dumps({
         return {"ok": False, "fatal": f"jingting probe parse error: {p.stdout[:300]}"}
 
 
+def run_autoslice_probe():
+    """Health of the NEW control plane: the autoslice runner on the free host
+    (heartbeat freshness, SOURCE_UNAVAILABLE, recent ALERT_* files)."""
+    cmd = (
+        "cat /opt/bilive/autoslice/reports/heartbeat.txt 2>/dev/null; echo __SEP__; "
+        "for f in /opt/bilive/autoslice/reports/ALERT_*.txt; do "
+        "[ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\")|$(tail -1 \"$f\")\"; done 2>/dev/null; true"
+    )
+    try:
+        p = subprocess.run(["ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes", SSH_HOST, cmd],
+                           capture_output=True, text=True, timeout=40)
+    except Exception as e:
+        return {"fatal": f"ssh error: {e}"}
+    if p.returncode != 0:
+        return {"fatal": f"rc={p.returncode}: {p.stderr.strip()[:200]}"}
+    head, _, alerts_raw = p.stdout.partition("__SEP__")
+    heartbeat = head.strip() or None
+    out = {"heartbeat": heartbeat, "age_sec": None, "alerts": []}
+    if heartbeat:
+        m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4})", heartbeat)
+        if m:
+            try:
+                from datetime import datetime
+                out["age_sec"] = time.time() - datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S%z").timestamp()
+            except ValueError:
+                pass
+    now = time.time()
+    for line in alerts_raw.strip().splitlines():
+        parts = line.strip().split("|", 2)
+        if len(parts) != 3:
+            continue
+        path_, mtime_, last = parts
+        try:
+            fresh = (now - float(mtime_)) < 6 * 3600
+        except ValueError:
+            fresh = False
+        if fresh:  # only recent alerts; old ones would spam every report forever
+            out["alerts"].append({"name": os.path.basename(path_), "last": last})
+    return out
+
+
 def ssh_exec(cmd_inside_container, detached=False):
     """Run a bash command inside the container over ssh.
 
@@ -486,9 +527,10 @@ def kill_upload():
     return rc == 0
 
 
-# blrec API exposed on the host: room -> mapped port
+# blrec API exposed on the host: room -> mapped port.  The API key never
+# leaves the free host: the ssh'd command reads it from /opt/bilive/.env at
+# run time (repo goes public; no credentials in source).
 BLREC_HOST_PORT = {"22966160": 22333, "23222837": 22334}
-BLREC_KEY = "V3YZM5cl17GXIvhF52lmxlxbJePLYrKpMTwzz3PC"
 
 
 def restart_recorder(room):
@@ -499,10 +541,11 @@ def restart_recorder(room):
         return False
     base = f"http://127.0.0.1:{port}/api/v1/tasks/{room}/recorder"
     cmd = (
-        f"curl -s -m 10 -X POST '{base}/disable' -H 'X-API-KEY: *** "
+        "KEY=$(grep -m1 '^RECORD_KEY=' /opt/bilive/.env | cut -d= -f2); "
+        f"curl -s -m 10 -X POST '{base}/disable' -H \"X-API-KEY: $KEY\" "
         f"-H 'content-type: application/json' -d '{{\"force\":true}}' >/dev/null; "
         f"sleep 5; "
-        f"curl -s -m 10 -X POST '{base}/enable' -H 'X-API-KEY: *** >/dev/null; echo done"
+        f"curl -s -m 10 -X POST '{base}/enable' -H \"X-API-KEY: $KEY\" >/dev/null; echo done"
     )
     try:
         p = subprocess.run(
@@ -513,37 +556,6 @@ def restart_recorder(room):
         return False
 
 
-def _start_daemon(module, logbase):
-    """Start a long-running bilive module detached via `docker exec -d` (no nohup/&;
-    -d already backgrounds it, and adding & makes bash exit and kill the child)."""
-    log = f"logs/runtime/{logbase}-$(date +%Y%m%d-%H%M%S).log"
-    cmd = f"cd /app && exec python -m {module} >> {log} 2>&1"
-    rc, out, err = ssh_exec(cmd, detached=True)
-    if rc != 0:
-        return False
-    # verify it's actually alive a moment later
-    import time as _t
-    _t.sleep(3)
-    rc2, out2, _ = ssh_exec(
-        f"ps -eo args | grep -F '{module}' | grep -v grep | grep -v defunct | wc -l")
-    try:
-        return int(out2.strip()) > 0
-    except ValueError:
-        return False
-
-
-def start_scan():
-    return _start_daemon("src.burn.scan", "scan-monitor")
-
-
-def start_local_prepare():
-    """No-publish staging daemon: drains upload_queue -> title/cover/publish.json. Never uploads."""
-    return _start_daemon("src.upload.local_prepare", "local-prepare-monitor")
-
-
-# ----------------------------------------------------------------------------
-# Verdict
-# ----------------------------------------------------------------------------
 def fmt_age(sec):
     if sec is None:
         return "n/a"
@@ -588,7 +600,6 @@ def evaluate(probe, state):
     if live and latest_dir:
         dirty = [d for d in dirty if d.get("dir") != latest_dir]
 
-    uq = probe.get("upload_queue", {})
     notes.append(f"blrec={procs['blrec']} scan={procs['scan']} "
                  f"local_prepare={procs.get('local_prepare', 0)} upload={procs['upload']} "
                  f"auto_review_shadow={procs.get('auto_review_shadow', 0)}")
@@ -598,7 +609,6 @@ def evaluate(probe, state):
     notes.append(f"切片最新 age={fmt_age(sl.get('age_sec'))} "
                  f"count={sl.get('count_latest_dir')} covers={sl.get('cover_count_latest_dir')} "
                  f"publish.json={sl.get('publish_json_latest_dir')}")
-    notes.append(f"upload_queue 待处理={uq.get('count')} (locked={uq.get('locked')})")
     jt = probe.get("jingting") or {}
     if jt.get("ok"):
         notes.append(f"jingting agy daemon={jt.get('daemon_count')} agy={jt.get('agy_count')} "
@@ -606,9 +616,14 @@ def evaluate(probe, state):
                      f"done={jt.get('done_latest')} review_required={jt.get('review_required_latest', 0)} "
                      f"log_age={fmt_age(jt.get('log_age_sec'))}")
         if jt.get("pending_latest", 0) > 0 and jt.get("daemon_count", 0) == 0:
-            problems.append({"id": "jingting_daemon_down", "sev": "WARN",
-                             "msg": "已有待精听切片，但 agy jingting daemon 未运行。",
-                             "fix": "启动宿主机精听 daemon：`/opt/bilive/app/scripts/gemini_slice_jingting.py --provider agy --daemon --room 22966160`。"})
+            # .jingting pendings are OLD-plane hybrid slices; with that plane
+            # retired (2026-07-10) the stale backlog must not WARN forever.
+            if procs.get("scan", 0) > 0:
+                problems.append({"id": "jingting_daemon_down", "sev": "WARN",
+                                 "msg": "已有待精听切片，但 agy jingting daemon 未运行。",
+                                 "fix": "启动宿主机精听 daemon：`/opt/bilive/app/scripts/gemini_slice_jingting.py --provider agy --daemon --room 22966160`。"})
+            else:
+                notes.append(f"旧管线遗留 {jt.get('pending_latest')} 个 .jingting 待精听切片（旧面已退役，仅存档不告警）")
         if jt.get("review_required_latest", 0) > 0:
             problems.append({"id": "jingting_review_required", "sev": "WARN",
                              "msg": f"{jt.get('review_required_latest')} 条精听字幕需要人工/歌词校对。",
@@ -623,14 +638,6 @@ def evaluate(probe, state):
                      f"age={fmt_age(ars.get('age_sec'))} status={ars.get('last_status')} "
                      f"auto_upload={counts.get('auto_upload')} block={counts.get('block')} "
                      f"gaps={gaps}")
-        if procs.get("auto_review_shadow", 0) == 0 and (jt.get("done_latest") or 0) > 0:
-            problems.append({"id": "auto_review_shadow_down", "sev": "WARN",
-                             "msg": "精听已有完成项，但 no-upload auto-review shadow daemon 未运行。",
-                             "fix": "启动 transient service：`systemd-run --unit=lidousha-auto-review-shadow-22966160 ... lidousha_auto_review_shadow_daemon.py --daemon`。"})
-        if ars.get("missing"):
-            problems.append({"id": "auto_review_shadow_missing_state", "sev": "WARN",
-                             "msg": "auto-review shadow 尚未写入 state 文件，说明 review gate 还没有跑过。",
-                             "fix": "先运行 `/app/scripts/lidousha_auto_review_shadow_daemon.py --once --force --room 22966160`。"})
     if api:
         notes.append(f"blrec API: live_status={live_status} run={api.get('running_status')} "
                      f"fmt={api.get('real_stream_format')} qn={api.get('real_quality_number')} "
@@ -680,101 +687,58 @@ def evaluate(probe, state):
                          "msg": "容器在跑但没有 blrec 录制进程。",
                          "fix": "进容器执行 ./record.sh 重新拉起 blrec（录制链路，需人工确认）。"})
 
-    # ---- the core: slicing (scan) + no-publish staging (local_prepare) ----
-    # local_prepare只产标题/封面/publish.json，从不投稿 => 启动它永远安全。
-    # scan会扫全盘 => 有脏 backlog 时不敢冷启动，怕重切手动处理的旧日期。
-    scan_running = procs.get("scan", 0) > 0
-    prep_running = procs.get("local_prepare", 0) > 0
-    blessed = state.get("slice_blessed")
+    # ---- OLD control plane RETIRED (2026-07-10, Ivan) ----
+    # blrec records; the autoslice runner (free cron, /opt/bilive/autoslice)
+    # slices.  scan/local_prepare/shadow-daemon must NOT run: they double-
+    # produce, burn AI-cover money on full segments, and their full-tree FUSE
+    # rescans destabilized the CloudDrive mount (the 7/9 outage).  This monitor
+    # used to AUTO-RESURRECT them (slice_blessed crash-recovery) — that logic is
+    # deliberately gone; a running copy is reported, never restarted.
+    for label, key in (("scan", "scan"), ("local_prepare", "local_prepare"),
+                       ("auto-review-shadow-daemon", "auto_review_shadow")):
+        if procs.get(key, 0) > 0:
+            problems.append({"id": f"old_plane_{key}_running", "sev": "WARN",
+                             "msg": f"已退役的旧控制面进程 {label} 在容器里运行（疑被手动/旧脚本拉起）。",
+                             "fix": "旧管线 2026-07-10 已退役（HANDOFF 有据）。若无人在调试，"
+                                    "进容器 pkill 对应模块；勿恢复 compose 旧 command。"})
 
-    def ensure_prep(reason):
-        nonlocal prep_running
-        if not prep_running:
-            ok = start_local_prepare()
-            actions.append(("started_local_prepare",
-                            f"{reason} 已{'成功' if ok else '尝试'}启动 local_prepare(出标题/封面/不投稿)。"))
-            prep_running = True
+    # ---- NEW plane health: autoslice runner heartbeat + alerts (free host) ----
+    hb = probe.get("autoslice") or {}
+    if hb.get("fatal"):
+        problems.append({"id": "autoslice_probe_failed", "sev": "DEGRADED",
+                         "msg": f"autoslice 健康探测失败: {hb['fatal']}",
+                         "fix": "检查 ssh free 与 /opt/bilive/autoslice/reports/。"})
+    if hb.get("heartbeat"):
+        notes.append(f"autoslice 心跳: {hb['heartbeat'][:140]}")
+    if not hb.get("fatal"):
+        if hb.get("age_sec") is None:
+            problems.append({"id": "autoslice_heartbeat_missing", "sev": "DEGRADED",
+                             "msg": "读不到 autoslice runner 心跳（heartbeat.txt 缺失/无时间戳）。",
+                             "fix": "查 free crontab 的 */10 tick 与 /opt/bilive/autoslice/logs/runner.log。"})
+        elif hb["age_sec"] > 30 * 60:
+            problems.append({"id": "autoslice_heartbeat_stale", "sev": "DEGRADED",
+                             "msg": f"autoslice 心跳已 {fmt_age(int(hb['age_sec']))} 未更新（cron 每 10 分钟应一跳）。",
+                             "fix": "查 free crontab 与 runner.log；确认 DISABLED 杀开关没被误留。"})
+    if "SOURCE_UNAVAILABLE" in (hb.get("heartbeat") or ""):
+        problems.append({"id": "autoslice_source_unavailable", "sev": "DOWN",
+                         "msg": "autoslice 心跳报 SOURCE_UNAVAILABLE——录播挂载不可读（录制写入路径可能同断）。",
+                         "fix": "mount 看门狗（*/5）应自愈；看 ALERT_MOUNT_WATCHDOG/ALERT_SOURCE_UNAVAILABLE，"
+                                "未自愈按 HANDOFF 2026-07-09 手动修挂载并重启 bilive_record。"})
+    for alert in hb.get("alerts", []):
+        problems.append({"id": f"autoslice_alert_{alert['name']}", "sev": "WARN",
+                         "msg": f"autoslice 近 6h 告警 {alert['name']}: {alert['last'][:160]}",
+                         "fix": "看 free:/opt/bilive/autoslice/reports/ 对应 ALERT 文件全文。"})
 
-    # the slice pipeline only cold-starts itself once Ivan opts in (touch AUTOSLICE_ENABLED).
-    # the recording-watchdog above always runs regardless of this gate.
-    autoslice_enabled = os.path.exists(os.path.join(REPORT_DIR, "AUTOSLICE_ENABLED"))
-    if live:
-        if not scan_running:
-            if dirty:
-                problems.append({"id": "scan_down_live_dirty", "sev": "DOWN",
-                                 "msg": "李豆沙正在直播但切片 scan 没运行；因仍有旧 backlog "
-                                        f"{[d['dir'] for d in dirty]} 在顶层，未自动启动(怕重切你手动处理的那几天)。",
-                                 "fix": "先把这些日期目录的原始录播归档/隔离(移入 sources/ 或别处)，"
-                                        "再启动 scan：`docker exec -d bilive_record bash -lc "
-                                        "'cd /app && nohup python -m src.burn.scan >logs/runtime/scan.log 2>&1 &'`。"
-                                        "或在 reports/slice_monitor/ 放一个 FORCE_START_SCAN 文件让监控强行启动。"})
-            elif autoslice_enabled:
-                ok = start_scan()
-                actions.append(("started_scan",
-                                f"李豆沙在播且无脏 backlog，已{'成功' if ok else '尝试'}启动 scan 切片循环。"))
-                state["slice_blessed"] = True
-                ensure_prep("配套：")
-            else:
-                problems.append({"id": "autoslice_disabled", "sev": "WARN",
-                                 "msg": "李豆沙在播、backlog 已清、可以自动切片了，但自动切片开关未打开。",
-                                 "fix": "确认要自动切这场就 `touch reports/slice_monitor/AUTOSLICE_ENABLED`，"
-                                        "之后开播会自动跑 scan+local_prepare(出标题/封面、不投稿)。"})
-        else:
-            state["slice_blessed"] = True
-            ensure_prep("scan 在跑、")
-    else:
-        # not live. crash-recovery only for what we'd previously blessed.
-        if blessed and not scan_running:
-            ok = start_scan()
-            actions.append(("restarted_scan",
-                            f"之前已在跑的 scan 崩了，已{'成功' if ok else '尝试'}重启(崩溃恢复)。"))
-        if blessed and not prep_running:
-            ensure_prep("崩溃恢复：")
-        if not blessed and not scan_running:
-            notes.append("scan 未运行——当前无直播、未被监控接管，视为正常空闲(等开播再启动)。")
-
-    # FORCE_START_SCAN override file (forces scan even with dirty backlog)
-    force = os.path.join(REPORT_DIR, "FORCE_START_SCAN")
-    if os.path.exists(force) and not scan_running:
-        ok = start_scan()
-        actions.append(("force_started_scan", f"检测到 FORCE_START_SCAN，已{'成功' if ok else '尝试'}启动 scan。"))
-        state["slice_blessed"] = True
-        ensure_prep("FORCE：")
-        try:
-            os.remove(force)
-        except OSError:
-            pass
-
-    # ---- staging lag: slices produced but local_prepare not turning them into titles/covers ----
-    if scan_running and not prep_running:
-        n_sl = sl.get("count_latest_dir") or 0
-        n_pub = sl.get("publish_json_latest_dir") or 0
-        if n_sl > n_pub:
-            ensure_prep(f"有 {n_sl} 个切片但只 {n_pub} 个已出标题/封面，")
-
-    # ---- scan alive but stalled ----
-    if scan_running:
-        rt_mtime = probe["scan_log"].get("runtime_log_mtime")
-        if rt_mtime and (probe["now"] - rt_mtime) > SCAN_STALL_SEC:
-            problems.append({"id": "scan_stalled", "sev": "DEGRADED",
-                             "msg": f"scan 进程在，但运行日志已 {fmt_age(int(probe['now']-rt_mtime))} 没更新，疑似卡住。",
-                             "fix": "查看最新 scan 运行日志；必要时重启 scan。"})
-
-    # ---- scan log error burst ----
-    if probe["scan_log"].get("error_count", 0) >= SCAN_ERROR_BURST:
-        problems.append({"id": "scan_errors", "sev": "DEGRADED",
-                         "msg": f"scan 日志近窗口有 {probe['scan_log']['error_count']} 条 ERROR。",
-                         "fix": "看 reports 里附的最近错误；常见是 ASR/CPA 接口或坏分段。",
-                         "detail": probe["scan_log"].get("recent_errors", [])})
-
-    # ---- finished stream produced no slices ----
+    # ---- finished stream but the runner hasn't concluded that date ----
     if (not live) and rec.get("mtime"):
         ended_ago = probe["now"] - rec["mtime"]
-        produced_after = sl.get("mtime") and sl["mtime"] >= rec["mtime"] - 3600
-        if ended_ago > SLICE_GRACE_SEC and not produced_after and scan_running:
-            problems.append({"id": "no_slices", "sev": "DEGRADED",
-                             "msg": f"李豆沙最近一场已结束 {fmt_age(int(ended_ago))}，scan 在跑但没产出对应切片。",
-                             "fix": "检查该场录播是否被 scan 跳过/锁住；看 upload_queue 与 scan 日志。"})
+        date_states = dict(re.findall(r"(\d{4}-\d{2}-\d{2}):(\S+)", hb.get("heartbeat") or ""))
+        latest_state = date_states.get(str(primary.get("latest_date_dir") or ""))
+        if ended_ago > SLICE_GRACE_SEC and latest_state in (None, "new", "sealing", "processing"):
+            problems.append({"id": "autoslice_not_concluded", "sev": "DEGRADED",
+                             "msg": f"最近一场已结束 {fmt_age(int(ended_ago))}，autoslice 该日期状态仍为 "
+                                    f"{latest_state or '未知'}（应到 review_ready/no_delivery/paused_cpa_down）。",
+                             "fix": "看 free runner.log 与 state/<date>.json；CPA 断供会显示 paused_cpa_down（属正常等待）。"})
 
     # ---- disk ----
     free = probe["disk"].get("free")
@@ -957,6 +921,7 @@ def main():
     state = load_state()
     probe = run_probe(state.get("last_audio_file", ""))
     probe["jingting"] = run_jingting_probe()
+    probe["autoslice"] = run_autoslice_probe()
     verdict, problems, actions, notes = evaluate(probe, state)
     md = write_reports(probe, verdict, problems, actions, notes, ts)
 
