@@ -3,6 +3,18 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-10 跨 agent 协调契约（歌切 gate/封面 与 runner v4 会话）【给正在修 local_prepare+歌切封面顺序的 agent】
+
+**背景**：Ivan 2026-07-10 给 runner-v4 会话的指令：「歌切不需要语义，只要是弹幕最高两个歌就可以」。你（另一 agent）正在做：local_prepare 先过 gate 再出封面、整段录播默认不做 AI 封面、autoslice 歌切先过 release gate 再做封面。两边在 `produce_song` 相撞，契约如下：
+
+1. **歌切交付规则（Ivan 拍板，权威）**：交付条件 = **是歌（window_classified_song）+ burned 物料齐**（+保留你的 sha256 验证，hash 卫生是好的）。`decision_action`/`reason_codes`（AUTO_UPLOAD/BLOCK/ADVISORY_*）**只作摘要参考，不再拦交付**。你当前 working tree 里 `gated_song_delivery_artifacts` 要求 `decision==AUTO_UPLOAD 且 reason_codes 为空` —— 这与 Ivan 指令相反（7/9 的《ただそばにいて》x18 该交付而不交付），请按本条改。
+2. **封面顺序**：先过（上面新定义的）gate 再做封面 ✓ 不冲突；但 `cover_repair_needed` 的歌切守卫别锁在语义门上——按新交付规则交付的歌必须能补封面，守卫条件同第 1 条。
+3. **已部署事实**：你管线侧的 `cover_release_gate`（run_auto_review_shadow_pipeline.py:2288）已被 runner-v4 会话在 commit `bc14ee1` 一并 commit 并部署到 free（当时以为是 7/7 遗留）。别重复提交；线上已有。
+4. **部署纪律**：free 部署只走 `scripts/deploy_free_autoslice.sh`（dirty tree 拒绝、DEPLOYED_COMMIT 指纹、md5 校验）。**不要 scp 单文件上 free**——会被下次 rsync --delete 冲掉。
+5. **旧控制面已退役（2026-07-09 20:26Z 执行完毕）**：live 实测（虚拟区房间 22499290 实录 3.5min，scan/local_prepare 全程死透）证明**仅 blrec 就产出 runner 全部输入**——compact 名 `.mp4`（remux_to_mp4，ffprobe 201s ✓）+ `.xml` 弹幕 + `.jsonl`(SC)，date 目录布局不变；runner 的 `{ROOM}_*.mp4` glob 与 `find_danmaku_xml`（查 parent+sources/）天然兼容 compact 名，**零代码搬运**。已做：compose.yml 删掉 scan+local_prepare 两行（备份 `/opt/bilive/compose.yml.bak-20260710`）+ 容器重建（两 blrec 实例/监控/录制开关验证 OK，runner tick 绿）；shadow daemon systemd unit `lidousha-auto-review-shadow-22966160` 已 `disable --now`（它每 5min 全树重扫老日期 slice_candidates.json 是 FUSE 挂载不稳的主嫌——clouddrive 死前最后一条日志就是在读 6/17 的这个文件）。**注意**：⑴ 20:26Z 容器重建杀掉了你 docker exec 起的 scan/local_prepare 测试进程——要继续测直接 `docker exec bilive_record python -m src.upload.local_prepare`，不依赖容器 Cmd；⑵ 你 local_prepare 侧修复对生产已 moot（进程不再常驻），autoslice 歌切侧（第 1/2 条）仍有效；⑶ 旧管线的全段 AI 封面/whisper ASR/hybrid 切片/publish 草稿随退役全部停止（"整段录播默认不做 AI 封面"的根除版）。
+6. **弹幕 top2 选择**已在 runner v4 的 `prioritize/refill_songs`（配额=交付+回填），你不用做。
+7. **歌切交付语义的实现权**：runner-v4 会话不动你 working tree 里在改的 `free_session_autoslice.py`/`tests/test_free_session_autoslice.py`。你落地时请直接按第 1/2 条实现；若先 commit 了相反语义，runner-v4 会话会在其后按第 1 条改正并重部署。
+
 ## 2026-07-09/10：外部审计修复轮（"控制面在撒谎"）—— runner v4 + 生产现场急救
 
 **目标**：外部三轮审计（+ChatGPT Pro 终审）判定系统"关键处假绿"：①挂载死了心跳报绿；②BLOCK 记成 ok、0 交付叫 done；③上传授权不绑定最终文件；④talk 边界门是假门；⑤top5 先到先占坑；⑥state 覆盖写+损坏静默清零；⑦dirty tree 部署。**全部意见经逐条代码/现场复核认可**，本轮修复。
@@ -236,3 +248,29 @@ AUTO_CHAIN 仍含已下线的 kuaishou（与文档/对用户报告不符）→ �
 4. **封面改版验收**：Ivan 看 `lidousha/2026-07-04/_封面改版评审/round3/` 4 张 → 定稿后决定 commit。persona.md 目前只在 repo（sync 脚本不推它，free 端封面不消费它，无需推）。
    可选小调：`produce_slice_package.py` 人工标题时不跑 LLM 艺术指导（走确定性基线，仍贴角色）；要人工标题也精修就把 `art_direction_llm` 提出 `if not given_title`（一行）。
 5. **commit 规矩（Ivan 2026-07-05）：授权上传的内容必须 commit**——已执行，commit `7dcfdfa`（84 files：全部管线代码/skill/资产 + 9 份 `*.uploaded.json` 上传证据含追溯补记的充电器 + 24 张换封面状态证据；`.gitignore` 已加 `!reports/**/*.uploaded.json` 例外；媒体不入库，hash 在证据里）。以后每次授权上传后：写 uploaded.json → commit。见记忆 `authorized-upload-must-commit`。
+
+## 2026-07-09 封面 release gate 与歌切交付绑定
+
+### 目标
+
+`local_prepare` 必须先过 release gate 再生成切片封面；整段录播默认不生成 AI 封面；autoslice 歌切先过最终 release gate，再做封面并交付。
+
+### 已完成
+
+- `scripts/run_auto_review_shadow_pipeline.py` 已把 publish/title/cover staging 移到所有 review decision merge 之后；先写 `slice-cover-release-gate.v1`，仅最终 `AUTO_UPLOAD`、无 reason code、recut 已 materialized 才调用封面路径。
+- free 的 `/opt/bilive/app/src/upload/local_prepare.py` 已部署：非 `.flv` 整段录播 cover policy=`none`；切片必须同时满足 Jingting done、最终 AUTO_UPLOAD、无 reason code、AGY provenance、would-upload marker 与 pre-cover artifact hashes 才调用 cover。
+- `scripts/free_session_autoslice.py` 不再 glob 目录取旧 video/cover；只读取当前 summary record 的 gate-bound 路径，校验 video/cover SHA-256，拒绝 symlink/改写文件。歌切自动 cover-repair 也要求当前记录 `AUTO_UPLOAD`、无 reason code、`release_gate_satisfied=true`。
+- 已部署到 `free:/opt/bilive/autoslice/repo/scripts/`，本地/远端 SHA-256 一致。`local_prepare` 容器进程加载的文件 hash 与部署文件一致。
+- 验证：仓库全量 `345 passed`；production local-prepare 关键分支 `6 passed`，包括整段录播 no-cover、仅 `.flv` 扩展不能授权 cover、blocked slice no-cover、合格 gate 只调用一次 cover。
+
+### 进行中（含后台进程）
+
+- free 的 `python -m src.upload.local_prepare` 在最终核验时发现原启动子进程已退出（日志无 traceback，主机同时有另一套 blrec watchdog 操作）；本轮于 20:23Z 恢复为 PID 717409，并跨过完整 2 分钟空队列轮询周期仍正常，运行中源码 hash 与受测文件一致。autoslice 仍由既有 cron 每 10 分钟触发；未改 compose 或并行 blrec watchdog。
+
+### 阻塞
+
+- 无硬阻塞。手动 operator cover 工具仍可显式重做已交付封面，不属于无人值守自动 gate policy；上传仍保持关闭并需 Ivan 明确授权。
+
+### 下一步
+
+- 下一次真实直播歌切时检查对应 `*.cover-release-gate.json`、summary 中 artifact hashes 与交付文件 hash；如 gate BLOCK，应看到 `SKIPPED_RELEASE_GATE` 且没有新的 AI cover 调用。
