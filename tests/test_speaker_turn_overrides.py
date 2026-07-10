@@ -1,5 +1,7 @@
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -261,6 +263,44 @@ def test_successful_cli_writes_self_consistent_bundle(
     assert manifest["dropped_source_cues"] == []
     assert manifest["fully_reviewed"] is False
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_script_entrypoint_runs_from_repo_without_pythonpath(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE_TEXT, encoding="utf-8")
+    document = _document()
+    document["source_srt_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    output_srt = tmp_path / "output.srt"
+    output_ass = tmp_path / "output.ass"
+    manifest = tmp_path / "manifest.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/apply_speaker_turn_overrides.py",
+            "--source",
+            str(source),
+            "--overrides",
+            str(overrides),
+            "--output-srt",
+            str(output_srt),
+            "--output-ass",
+            str(output_ass),
+            "--manifest",
+            str(manifest),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert output_srt.is_file()
+    assert output_ass.is_file()
+    assert json.loads(manifest.read_text(encoding="utf-8"))["output_cue_count"] == 3
 
 
 def test_cli_manifest_records_drop_and_reliable_overlap(
