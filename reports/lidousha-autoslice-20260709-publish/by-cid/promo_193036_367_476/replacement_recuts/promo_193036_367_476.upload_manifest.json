@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "2930876f1e05",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/熊猫头竟然不知道我去炸学校的完整歌词.mp4",
+    "sha256": "2930876f1e058a5aca930399b33c06963ab7bb530093e3d9a77b1a172fb21a6a",
+    "bytes": 29396683
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/熊猫头竟然不知道我去炸学校的完整歌词.cover.png",
+    "sha256": "1926d31c22f144b98567a211144f701b50bb9bc0fbf5ddde6cd53335e88e5829",
+    "bytes": 2637925
+  },
+  "title": "【李豆沙】熊猫头竟然不知道我去炸学校的完整歌词，只知道一句我去炸学校，谁是卧底不言而喻了！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:06:09+0000"
+  },
+  "created_at": "2026-07-10T06:06:09+0000"
+}

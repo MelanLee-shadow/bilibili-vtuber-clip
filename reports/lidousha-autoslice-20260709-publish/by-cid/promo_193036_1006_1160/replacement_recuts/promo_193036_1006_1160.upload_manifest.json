@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "e1fb3f56d10a",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/竟敢无视灯！语言学里的经典问题，对“.mp4",
+    "sha256": "e1fb3f56d10a0d41e87d6bd8abd8d58c66fba6f3af9ce20957631945ea971cb7",
+    "bytes": 41614597
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/竟敢无视灯！语言学里的经典问题，对“.cover.png",
+    "sha256": "e5463d412a2d57884a708ff713dffde49c3ec7e94cd075ef607bd1cc903fc96e",
+    "bytes": 2636982
+  },
+  "title": "【李豆沙】竟敢无视灯！语言学里的经典问题，对“灯有没有关系”这个问题的回答是点头，究竟灯有没有关系呢？",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:05:14+0000"
+  },
+  "created_at": "2026-07-10T06:05:14+0000"
+}

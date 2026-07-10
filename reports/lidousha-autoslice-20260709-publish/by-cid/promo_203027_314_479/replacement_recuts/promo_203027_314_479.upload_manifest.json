@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "a83a57bc2909",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/吵闹熊猫头成为哑巴后顿感被吵到，发出.mp4",
+    "sha256": "a83a57bc2909ac35ff4ab5475ef37cdc46c1972cbc3bd89f1533dfeaf41861e9",
+    "bytes": 47861463
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/吵闹熊猫头成为哑巴后顿感被吵到，发出.cover.png",
+    "sha256": "6b083b4a0e2371185d346a172a3d90449dc2aa6123cd84617aeb23b44d6ec0e5",
+    "bytes": 2608322
+  },
+  "title": "【李豆沙】吵闹熊猫头成为哑巴后顿感被吵到，发出好吵的尖叫，可惜已经没人能听到了",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:01:40+0000"
+  },
+  "created_at": "2026-07-10T06:01:40+0000"
+}

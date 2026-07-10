@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "64e3e4d52fac",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/已经7月了，不会打麻将的小李只好给大.mp4",
+    "sha256": "64e3e4d52fac9e5eda7131cfb84c6a667acfc69f0dbca1ca4cfd22f89ef5ae13",
+    "bytes": 78252715
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/已经7月了，不会打麻将的小李只好给大.cover.png",
+    "sha256": "769d40e3ebf8f3fa349b2af6c2792eddbcade7b1043d92bd739fee1907b8742d",
+    "bytes": 2552221
+  },
+  "title": "【李豆沙】已经7月了，不会打麻将的小李只好给大家拜个早年了",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:00:49+0000"
+  },
+  "created_at": "2026-07-10T06:00:49+0000"
+}
