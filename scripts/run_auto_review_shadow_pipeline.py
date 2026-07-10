@@ -2348,6 +2348,7 @@ def _to_talk_cue(cue: SourceCue, index: int, cues: Sequence[SourceCue]) -> TalkC
 
 def _source_context_job_record(job_manifest: Mapping[str, object]) -> dict[str, object]:
     return {
+        "schema_version": job_manifest.get("schema_version"),
         "job_id": job_manifest.get("job_id"),
         "candidate_id": job_manifest.get("candidate_id"),
         "job_kind": job_manifest.get("job_kind"),

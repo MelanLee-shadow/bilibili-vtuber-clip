@@ -866,6 +866,18 @@ def test_self_consistent_negative_with_unrelated_seed_range_cannot_authorize_app
     assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
 
 
+def test_negative_source_context_schema_drift_cannot_authorize_apply(tmp_path, capsys):
+    fixture = _incident_fixture(tmp_path)
+    negative = json.loads(fixture["negative"].read_text(encoding="utf-8"))
+    for record in (negative["records"][0], negative["last_shadow_summary"]["records"][0]):
+        record["source_context_job"]["schema_version"] = "wrong-source-context-schema.v1"
+    _json(fixture["negative"], negative)
+
+    assert repair.main(_args(fixture, "--apply")) == 2
+    assert "not the immutable incident song seed" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
+
+
 def test_incident_report_rejects_source_segment_duration_drift(tmp_path):
     fixture = _incident_fixture(tmp_path)
     v4 = json.loads(fixture["v4"].read_text(encoding="utf-8"))

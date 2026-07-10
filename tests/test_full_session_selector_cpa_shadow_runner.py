@@ -190,6 +190,12 @@ def test_seeded_song_cli_bypasses_empty_semantic_recall(tmp_path):
     assert summary["selector_stage"] == "seeded_song_anchor"
     record = summary["records"][0]
     assert record["candidate_id"] == "seededsong_1000_19000"
+    assert record["source_context_job"]["schema_version"] == (
+        "source-context-job-from-full-session-candidate.v1"
+    )
+    assert summary["last_shadow_summary"]["records"][0]["source_context_job"][
+        "schema_version"
+    ] == record["source_context_job"]["schema_version"]
     assert record["source_context_job"]["song_candidate"] is True
     assert not (output_dir / "semantic_recall.json").exists()
 
