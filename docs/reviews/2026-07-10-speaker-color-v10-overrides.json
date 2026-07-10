@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "source_srt_sha256": "84efbef9fb4d04e433cad052e7dd059d1571184b5929b49bd9462b2ff2c58cc9",
+  "scope": "说话人分色v9_二分色_已校正.srt",
+  "status": "targeted_user_review_complete",
+  "review_completed_at": "2026-07-10",
+  "overlap_policy": "The main speaker subtitle is required. A secondary overlapping subtitle is rendered only when its words and timing are reliable enough; otherwise keep only the main speaker.",
+  "overrides": [
+    {
+      "source_cue": 3,
+      "expect": {
+        "start": "00:00:02,490",
+        "end": "00:00:03,330",
+        "text": "这中间"
+      },
+      "authority": "Ivan direct correction, 2026-07-10",
+      "note": "Ivan confirmed that 这中间 is spoken by 李豆沙.",
+      "segments": [
+        {
+          "start": "00:00:02,490",
+          "end": "00:00:03,330",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "这中间"
+        }
+      ]
+    },
+    {
+      "source_cue": 17,
+      "expect": {
+        "start": "00:00:29,670",
+        "end": "00:00:33,320",
+        "text": "因为李豆沙会一直说，啊？啥意思？啊？"
+      },
+      "authority": "Ivan direct speaker, text, and 32.250s boundary confirmation, 2026-07-10",
+      "note": "Ivan confirmed 礼墨 says 因为李豆沙会一直说话, 李豆沙 replies 啥意思啊, and the 32.250s color switch is correctly placed.",
+      "segments": [
+        {
+          "start": "00:00:29,670",
+          "end": "00:00:32,250",
+          "speaker": "连线",
+          "speaker_detail": "礼墨/Sumi",
+          "text": "因为李豆沙会一直说话"
+        },
+        {
+          "start": "00:00:32,250",
+          "end": "00:00:33,320",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "啥意思啊"
+        }
+      ]
+    },
+    {
+      "source_cue": 27,
+      "expect": {
+        "start": "00:00:55,720",
+        "end": "00:00:56,840",
+        "text": "哼，啊，不对"
+      },
+      "authority": "Ivan direct correction, 2026-07-10",
+      "action": "drop",
+      "reason": "Simultaneous non-semantic laughter and vocalizations from multiple speakers; Ivan approved omitting the subtitle."
+    },
+    {
+      "source_cue": 33,
+      "expect": {
+        "start": "00:01:05,820",
+        "end": "00:01:06,720",
+        "text": "哈哈"
+      },
+      "authority": "Ivan direct correction, 2026-07-10",
+      "note": "Multiple guests laugh simultaneously; 李豆沙 is not laughing.",
+      "segments": [
+        {
+          "start": "00:01:05,820",
+          "end": "00:01:06,720",
+          "speaker": "连线",
+          "speaker_detail": "多人同时笑（无李豆沙）",
+          "text": "哈哈"
+        }
+      ]
+    },
+    {
+      "source_cue": 34,
+      "expect": {
+        "start": "00:01:06,720",
+        "end": "00:01:08,820",
+        "text": "那你当时就不要看这个吧"
+      },
+      "authority": "Ivan direct correction, 2026-07-10",
+      "note": "Corrected both speaker and misheard wording.",
+      "segments": [
+        {
+          "start": "00:01:06,720",
+          "end": "00:01:08,820",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "你当时要不就看这个吧"
+        }
+      ]
+    },
+    {
+      "source_cue": 36,
+      "expect": {
+        "start": "00:01:09,660",
+        "end": "00:01:12,620",
+        "text": "你看穿了，哈哈哈哈哈"
+      },
+      "authority": "Ivan direct speaker/text correction; 70.800s boundary from the reviewed text/laughter cut, 2026-07-10",
+      "note": "The spoken line is 李豆沙 saying 你看她啊, followed by joint guest laughter with no 李豆沙 laughter.",
+      "segments": [
+        {
+          "start": "00:01:09,660",
+          "end": "00:01:10,800",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "你看她啊"
+        },
+        {
+          "start": "00:01:10,800",
+          "end": "00:01:12,620",
+          "speaker": "连线",
+          "speaker_detail": "多人共同笑（无李豆沙）",
+          "text": "哈哈哈哈哈"
+        }
+      ]
+    },
+    {
+      "source_cue": 38,
+      "expect": {
+        "start": "00:01:16,040",
+        "end": "00:01:19,250",
+        "text": "不是，我是说我在，我在分"
+      },
+      "authority": "Ivan direct speaker/text correction; 78.000s seam localized at the stable acoustic gap, 2026-07-10",
+      "note": "礼墨/Sumi laughs at the start, then 李豆沙 says 我真的分不清. The earlier 77.020s candidate cut through the laugh; 78.000s follows the stable 77.955–78.044s gap.",
+      "segments": [
+        {
+          "start": "00:01:16,040",
+          "end": "00:01:18,000",
+          "speaker": "连线",
+          "speaker_detail": "礼墨/Sumi",
+          "text": "哈哈"
+        },
+        {
+          "start": "00:01:18,000",
+          "end": "00:01:19,250",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "我真的分不清"
+        }
+      ]
+    },
+    {
+      "source_cue": 39,
+      "expect": {
+        "start": "00:01:19,250",
+        "end": "00:01:20,250",
+        "text": "我真的分不清左右"
+      },
+      "authority": "Adjacent Ivan correction plus source-cue continuation timing, 2026-07-10",
+      "note": "The source ASR repeated the complete phrase across cues 38–39. Ivan confirmed cue 38 contains 我真的分不清; cue 39 is the timed continuation 左右, so the duplicated prefix is removed.",
+      "segments": [
+        {
+          "start": "00:01:19,250",
+          "end": "00:01:20,250",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "左右"
+        }
+      ]
+    },
+    {
+      "source_cue": 49,
+      "expect": {
+        "start": "00:01:40,250",
+        "end": "00:01:42,780",
+        "text": "但是暂时对我来说"
+      },
+      "authority": "Ivan direct speaker/text correction; secondary word timing localized best-effort from the waveform/spectrogram, 2026-07-10",
+      "note": "李豆沙 is the main speaker saying 但是对我来说. 安晚/Awa overlaps with the single word 暂时. The secondary line is included because both word and overlap interval are distinguishable; the main line remains authoritative.",
+      "segments": [
+        {
+          "start": "00:01:40,250",
+          "end": "00:01:42,780",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "但是对我来说"
+        }
+      ],
+      "overlays": [
+        {
+          "start": "00:01:41,120",
+          "end": "00:01:41,750",
+          "speaker": "连线",
+          "speaker_detail": "安晚/Awa",
+          "text": "暂时",
+          "layer": 1
+        }
+      ]
+    },
+    {
+      "source_cue": 69,
+      "expect": {
+        "start": "00:02:23,740",
+        "end": "00:02:26,460",
+        "text": "哑人跟盲人没办法传信息啊"
+      },
+      "authority": "Ivan direct confirmation of the audible trailing 传信息, 2026-07-10",
+      "note": "Ivan confirmed the trailing 传信息 in the review clip is spoken by 礼墨/Sumi. The earlier part of this binary guest cue was outside that identity confirmation.",
+      "segments": [
+        {
+          "start": "00:02:23,740",
+          "end": "00:02:26,460",
+          "speaker": "连线",
+          "speaker_detail": "末尾“传信息”=礼墨/Sumi；前段具体连线人未确认",
+          "text": "哑人跟盲人没办法传信息啊"
+        }
+      ]
+    },
+    {
+      "source_cue": 70,
+      "expect": {
+        "start": "00:02:26,460",
+        "end": "00:02:30,180",
+        "text": "是的，只是单方面的，盲人跟哑人说话"
+      },
+      "authority": "Ivan direct speaker/text correction; 148.300s boundary from the reviewed acoustic transition, 2026-07-10",
+      "note": "安晚/Awa says 是的，只是单方面的; 李豆沙 then says 盲人跟哑人说话.",
+      "segments": [
+        {
+          "start": "00:02:26,460",
+          "end": "00:02:28,300",
+          "speaker": "连线",
+          "speaker_detail": "安晚/Awa",
+          "text": "是的，只是单方面的"
+        },
+        {
+          "start": "00:02:28,300",
+          "end": "00:02:30,180",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "盲人跟哑人说话"
+        }
+      ]
+    }
+  ]
+}
