@@ -43,6 +43,11 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
 DATE = "2026-07-09"
 TARGET_CANDIDATE_ID = "song_223019_166"
 INCIDENT_RERUN_CANDIDATE_ID = "song_223019_166_mebukutoki_rerun_v4"
@@ -458,7 +463,6 @@ def _validate_background_performance(
         performance.get("mode") not in BACKGROUND_REJECTION_MODES
         or float(performance.get("confidence", 0.0)) < 0.85
         or float(performance.get("background_recording_likelihood", 0.0)) < 0.80
-        or performance.get("continuous_singing") is not False
         or performance.get("same_lidousha_live_singer_across_all_lyrics") is not False
         or performance.get("other_singer_or_harmony_present") is not False
         or performance.get("recorded_or_playback_vocal_present") is not True

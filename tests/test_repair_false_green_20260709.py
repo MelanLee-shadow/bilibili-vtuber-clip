@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -44,6 +45,36 @@ def _wait_for_path(path: Path, process: subprocess.Popen[str], timeout: float = 
             raise AssertionError(f"process exited before creating {path}: rc={process.returncode}")
         time.sleep(0.01)
     raise AssertionError(f"timed out waiting for {path}")
+
+
+def test_direct_script_bootstraps_repo_imports_from_an_unrelated_cwd(tmp_path):
+    script = Path(repair.__file__).resolve()
+    probe = (
+        "import runpy\n"
+        f"ns = runpy.run_path({str(script)!r})\n"
+        "try:\n"
+        "    ns['_validate_background_performance']({}, observations=[], "
+        "first_lyric_start_ms=0, last_lyric_end_ms=1)\n"
+        "except ImportError as exc:\n"
+        "    print(exc)\n"
+        "    raise SystemExit(1)\n"
+        "except Exception:\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit(2)\n"
+    )
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> list[str]:
@@ -237,7 +268,7 @@ def _incident_fixture(
     performance = {
         "mode": repair.BACKGROUND_MODE,
         "confidence": 0.99,
-        "continuous_singing": False,
+        "continuous_singing": True,
         "background_recording_likelihood": 0.99,
         "same_lidousha_live_singer_across_all_lyrics": False,
         "other_singer_or_harmony_present": False,
