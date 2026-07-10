@@ -506,3 +506,31 @@ AUTO_CHAIN 仍含已下线的 kuaishou（与文档/对用户报告不符）→ �
 ### 下一步
 
 - 下一次真实直播歌切时检查对应 `*.cover-release-gate.json`、summary 中 artifact hashes 与交付文件 hash；如 gate BLOCK，应看到 `SKIPPED_RELEASE_GATE` 且没有新的 AI cover 调用。
+
+## 2026-07-10 成品二分离流水线与逐人分离实验
+
+### 目标
+
+把 `promo_210025_643_801` 的人工说话人真值修进正式流水线，严格按“文本/专名/代词/人工终稿 → 说话人 → 分色 ASS → 烧录”生产成品；随后独立验证是否能把李豆沙、礼墨 Sumi、安晚 Awa、shadow 逐人分离。全程 no-upload。
+
+### 已完成
+
+- 工作分支 `codex/speaker-final-pipeline` 已到 `f8f7a55ce4855b0c3177bbd326125384cd7b0c13`，事务化部署在 `free:/opt/bilive/autoslice/repo`；live frozen tree/stamp/cron/locks/external scripts 均经独立核验。全量 `535 passed`。
+- `speaker_finalizer.py` 现支持 CAM++ 二分类、hash-bound 文本/媒体/自动标签、accepted context baseline、显式 split/drop/overlap override、分色 ASS 与 fail-closed manifest。已验收片的 43 个模糊上下文判断被冻结为 pre-override baseline；自动标签任一漂移都会在应用人工 override 前阻断。新片无 override 时仍走原自动上下文流程。
+- 生产重跑 `free:/opt/bilive/autoslice/out/acceptance/speaker-final-20260710-f8f7a55`：context call `0`，43/43 baseline 命中，unresolved `[]`；text `63438b34…`、automatic `c13e178f…`、final SRT `41b2ea5f…`、ASS `cd2bfce…`。显式人工输出 25、accepted-context 输出 31、overlap 1。
+- 最终烧录 MP4 `f9c02879…`，1920×1080/60fps/165.066667s，完整解码通过，烧录前后 decoded PCM MD5 同为 `eb2e38b…`。12 个关键点视觉 QA 通过，包括“她”、礼墨→李豆沙换色、礼墨笑→李豆沙、安晚“暂时”上层抢话、礼墨“最难的还是聋人啊”和结尾安晚→李豆沙。
+- 本地成品包：`/Users/ivan/Project/vtuber-slice/lidousha/2026-07-09/说话人分离实验/v11_成品说话人分离/`；`final-package.record.json` SHA `79935f5b…`，本地/远端逐文件哈希一致。没有 AUTO_UPLOAD/publish marker、没有 uploader 进程、没有上传。
+- 逐人实验包：`/Users/ivan/Project/vtuber-slice/lidousha/2026-07-09/说话人分离实验/v12_逐人分离实验/`。包含：只使用 Ivan direct identity 的“已确认版”；oracle=4 的“四簇候选版（非成品）”；以及 10 个无身份提示的短盲听样本。两视频完整解码、音频 PCM 与源一致。
+
+### 进行中（含后台进程）
+
+- 无本轮后台进程。生产 autoslice 只保留原 cron；逐人模型及其下载缓存没有接入生产代码、profile 或 runner。
+
+### 阻塞
+
+- 逐人身份目前不能生产化：礼墨两段干净锚互相 cosine `0.58058`，与安晚单锚交叉可到 `0.45034`；安晚只有一个 1.93s 干净锚，shadow 没有 direct anchor。四簇对照还会把李豆沙“啥意思啊”的开头归入礼墨簇，并拆错“我真的分不清”。因此 production-safe 能力仍是“李豆沙 vs 其他”，不能强制把每条 guest cue 三选一。
+
+### 下一步
+
+- 若 Ivan 愿意继续逐人分离，只需核听 `v12_逐人分离实验/盲听10句/` 并按 `1=礼墨` 等格式返回，不必重听整片。用这些结果补 Awa/shadow 干净锚与独立 holdout，再验证 guest-only refinement；通过前不得合入 production finalizer。
+- 任何上传仍需 Ivan 对具体成品单独明确授权；本轮产物全部保持 no-upload。
