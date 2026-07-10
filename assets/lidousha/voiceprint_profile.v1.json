@@ -5,6 +5,7 @@
     "tree_sha256": "f01588f1ceacd25fb3853e765846e3e34befddcff5c61bc14ddaf529745ed0c3"
   },
   "policy": {
+    "checkpoint_required_lyric_role": "SINGING_THIS_LYRIC",
     "checkpoint_buckets": [
       "head",
       "head",

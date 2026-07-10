@@ -121,9 +121,9 @@ Write relative `alignment.json` as JSON only, with exactly these keys:
   "live_performance": {{
     "mode": "LIVE_STREAMER_SINGING",
     "confidence": 0.95,
-    "continuous_singing": true,
+    "continuous_live_song_performance": true,
     "background_recording_likelihood": 0.05,
-    "same_lidousha_live_singer_across_all_lyrics": true,
+    "same_lidousha_live_performer_across_all_lyrics": true,
     "other_singer_or_harmony_present": false,
     "recorded_or_playback_vocal_present": false,
     "evidence": [
@@ -146,19 +146,27 @@ Requirements:
    produces that exact LRC line and Li Dousha's role at that moment. Use only:
    - `lyric_vocal_subject`: `LIDOUSHA`, `OTHER_OR_MIXED_SINGER`,
      `RECORDED_OR_PLAYBACK_SINGER`, `NO_AUDIBLE_LYRIC_VOCAL`, or `AMBIGUOUS`.
-   - `lidousha_role`: `SINGING_THIS_LYRIC`, `SPEAKING_NOT_SINGING`,
+   - `lidousha_role`: `SINGING_THIS_LYRIC`,
+     `PERFORMING_THIS_LYRIC_SPOKEN`, `SPEAKING_NOT_SINGING`,
      `SILENT_OR_NOT_AUDIBLE`, or `AMBIGUOUS`.
    - the three boolean fields shown. Set
      `same_live_vocal_source_as_lidousha` true only when the active, live sound
-     source for this lyric is Li Dousha herself singing it. Visual presence,
-     lip movement, speaking, humming between lines, matching LRC timing, or a
-     Li-like recorded voice is not sufficient. Any guest, duet partner,
-     offscreen singer, chorus/harmony singer, or uncertainty makes it false;
-     set the corresponding other/recorded/ambiguous fields honestly.
+     source for this exact canonical lyric is Li Dousha herself singing it or
+     intentionally performing that exact lyric as a spoken theatrical line
+     inside the same song. Use `PERFORMING_THIS_LYRIC_SPOKEN` only for that
+     narrow case. Ordinary speech, commentary, ad-libs, humming between lines,
+     visual presence/lip movement, matching LRC timing, or a Li-like recorded
+     voice is not sufficient and must use `SPEAKING_NOT_SINGING` or another
+     honest role/subject. Any guest, duet partner, offscreen singer,
+     chorus/harmony singer, playback singer, or uncertainty makes the boolean
+     false; set the corresponding other/recorded/ambiguous fields honestly.
 4. Use exactly the five spot-check names shown. Each time must point to the
    named audible event; use `result: "OK"` only after checking that point.
    If the LRC contains an exact repeated lyric, `repeated_section` must point
    to a later audible recurrence, not the first occurrence.
+   The `tail` time must be inside the final heard lyric interval using the
+   half-open rule `live_start_ms <= tail < live_end_ms`; never copy the final
+   row's `live_end_ms` as the tail point.
 5. `post_song_talk_start_ms` is the first surrounding speech after the song,
    or null if no post-song talk occurs in this window.
 6. `live_performance` is a separate anti-background and same-subject
@@ -168,13 +176,23 @@ Requirements:
    of `LIVE_STREAMER_SINGING`, `ORIGINAL_OR_BACKGROUND_PLAYBACK`,
    `OTHER_SINGER`, `STREAMER_TALKING_OVER_MUSIC`, or `AMBIGUOUS`.
    `LIVE_STREAMER_SINGING` is allowed only when EVERY heard LRC row affirms the
-   same live sound source is Li Dousha herself singing that lyric, continuously
-   across the complete song, with no guest/duet/offscreen/chorus/harmony singer
-   and no prerecorded, original, replay, ending-card, static-screen, or other
-   playback vocal anywhere in the lyric span. Li Dousha talking over a guest or
-   playback song is `STREAMER_TALKING_OVER_MUSIC`; a live guest/duet/other or
-   harmony singer is `OTHER_SINGER`; any active-singer ambiguity is
-   `AMBIGUOUS`; any recorded vocal is `ORIGINAL_OR_BACKGROUND_PLAYBACK`.
+   same live lyric source is Li Dousha herself across the complete song, at
+   least 80% of canonical rows are `SINGING_THIS_LYRIC`, the first and final
+   rows are sung, and no more than six consecutive rows are the narrow
+   `PERFORMING_THIS_LYRIC_SPOKEN` case. There may be at most one such spoken
+   block; its summed voiced duration must be at most 12 seconds and 20% of all
+   lyric-vocal duration, and its first-to-last span must be at most 15 seconds.
+   There must be no
+   guest/duet/offscreen/chorus/harmony singer and no prerecorded, original,
+   replay, ending-card, static-screen, or other playback vocal anywhere in the
+   lyric span. `continuous_live_song_performance` means one continuous live
+   song performance and may include only such a short embedded canonical spoken
+   passage. Each of the three top-level evidence timestamps must land inside a
+   `SINGING_THIS_LYRIC` row, never the spoken exception. Li
+   Dousha talking over a guest or playback song is
+   `STREAMER_TALKING_OVER_MUSIC`; a live guest/duet/other or harmony singer is
+   `OTHER_SINGER`; any active-singer ambiguity is `AMBIGUOUS`; any recorded
+   vocal is `ORIGINAL_OR_BACKGROUND_PLAYBACK`.
    Provide exactly three evidence timestamps, one in each third of the observed
    lyric span. Code also combines this with a separate pinned Li-Dousha
    voiceprint gate; that speaker-similarity gate is not a singing classifier.

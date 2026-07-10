@@ -22,7 +22,7 @@ READY_LYRIC_VOCAL_ASSERTIONS = {
 }
 
 READY_LIVE_PERFORMANCE_ASSERTIONS = {
-    "same_lidousha_live_singer_across_all_lyrics": True,
+    "same_lidousha_live_performer_across_all_lyrics": True,
     "other_singer_or_harmony_present": False,
     "recorded_or_playback_vocal_present": False,
 }
@@ -62,7 +62,7 @@ def _ensure_alignment_rows(alignment: dict[str, object]) -> None:
 def bind_ready_live_performance_report(
     report_path: Path, *, source_media: Path, candidate_id: str
 ) -> None:
-    """Upgrade a synthetic alignment report to the bound AGY-v2 contract."""
+    """Upgrade a synthetic alignment report to the bound AGY-v4 contract."""
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     _ensure_alignment_rows(report)
@@ -72,13 +72,16 @@ def bind_ready_live_performance_report(
     live_performance = {
         "mode": "LIVE_STREAMER_SINGING",
         "confidence": 0.96,
-        "continuous_singing": True,
+        "continuous_live_song_performance": True,
         "background_recording_likelihood": 0.03,
         **READY_LIVE_PERFORMANCE_ASSERTIONS,
         "evidence": [
-            {"time_ms": first_ms + span // 6, "observation": "live vocal head"},
-            {"time_ms": first_ms + span // 2, "observation": "live vocal middle"},
-            {"time_ms": first_ms + span * 5 // 6, "observation": "live vocal tail"},
+            {"time_ms": report["alignment"][1]["cue_start_ms"], "observation": "live vocal head"},
+            {
+                "time_ms": report["alignment"][len(report["alignment"]) // 2]["cue_start_ms"],
+                "observation": "live vocal middle",
+            },
+            {"time_ms": report["alignment"][-2]["cue_start_ms"], "observation": "live vocal tail"},
         ],
         "notes": "synthetic bound live-performance fixture",
     }
@@ -90,7 +93,7 @@ def bind_ready_live_performance_report(
     lyric_lines = report["lyric_lines"]
     lrc_path.write_text("\n".join(str(row["text"]) for row in lyric_lines) + "\n", encoding="utf-8")
     prompt_path = artifact_dir / "prompt.md"
-    prompt_path.write_text("strict AGY v2 test prompt\n", encoding="utf-8")
+    prompt_path.write_text("strict AGY v4 test prompt\n", encoding="utf-8")
     source_sha = _sha(bound_source)
     lrc_sha = _sha(lrc_path)
     raw_rows = []
@@ -228,17 +231,19 @@ def make_ready_audio_alignment_run(
     last_ms = int(observations[-1]["live_end_ms"])
     if last_ms + 6_000 > source_duration_ms:
         raise ValueError("strict audio-alignment fixture leaves no post-song host anchor")
-    span = last_ms - first_ms
     live_performance = {
         "mode": "LIVE_STREAMER_SINGING",
         "confidence": 0.96,
-        "continuous_singing": True,
+        "continuous_live_song_performance": True,
         "background_recording_likelihood": 0.03,
         **READY_LIVE_PERFORMANCE_ASSERTIONS,
         "evidence": [
-            {"time_ms": first_ms + span // 6, "observation": "live vocal head"},
-            {"time_ms": first_ms + span // 2, "observation": "live vocal middle"},
-            {"time_ms": first_ms + span * 5 // 6, "observation": "live vocal tail"},
+            {"time_ms": observations[1]["live_start_ms"], "observation": "live vocal head"},
+            {
+                "time_ms": observations[len(observations) // 2]["live_start_ms"],
+                "observation": "live vocal middle",
+            },
+            {"time_ms": observations[-2]["live_start_ms"], "observation": "live vocal tail"},
         ],
         "notes": "strict synthetic live-performance fixture",
     }
@@ -268,7 +273,7 @@ def make_ready_audio_alignment_run(
         "post_song_talk_start_ms": last_ms + 2_000,
     }
     prompt_path = output_dir / "prompt.md"
-    prompt_path.write_text("strict AGY v2 test prompt\n", encoding="utf-8")
+    prompt_path.write_text("strict AGY v4 test prompt\n", encoding="utf-8")
     raw_output = output_dir / "alignment.json"
     _write_json(raw_output, payload)
     raw_sha = _sha(raw_output)
@@ -396,6 +401,10 @@ def make_ready_host_vocal_claim(
                 "lrc_text": lyric_row["lrc_text"],
                 "lyric_cue_start_ms": lyric_row["cue_start_ms"],
                 "lyric_cue_end_ms": lyric_row["cue_end_ms"],
+                **{
+                    key: lyric_row[key]
+                    for key in hv.READY_SINGING_ASSERTIONS
+                },
                 "center_ms": center_ms,
                 "start_ms": start_ms,
                 "end_ms": end_ms,

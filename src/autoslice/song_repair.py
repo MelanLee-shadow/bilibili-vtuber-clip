@@ -49,7 +49,7 @@ LIVE_PERFORMANCE_MODES = {
     "AMBIGUOUS",
 }
 
-AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v3"
+AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v4"
 LYRIC_VOCAL_SUBJECTS = {
     "LIDOUSHA",
     "OTHER_OR_MIXED_SINGER",
@@ -59,10 +59,17 @@ LYRIC_VOCAL_SUBJECTS = {
 }
 LIDOUSHA_LYRIC_ROLES = {
     "SINGING_THIS_LYRIC",
+    "PERFORMING_THIS_LYRIC_SPOKEN",
     "SPEAKING_NOT_SINGING",
     "SILENT_OR_NOT_AUDIBLE",
     "AMBIGUOUS",
 }
+MIN_READY_SUNG_LYRIC_ROWS = 7
+MIN_READY_SUNG_LYRIC_RATIO = 0.80
+MAX_READY_CONSECUTIVE_SPOKEN_LYRIC_ROWS = 6
+MAX_READY_SPOKEN_LYRIC_DURATION_MS = 12_000
+MAX_READY_SPOKEN_BLOCK_SPAN_MS = 15_000
+MAX_READY_SPOKEN_BLOCKS = 1
 LYRIC_VOCAL_ASSERTION_KEYS = {
     "lyric_vocal_subject",
     "lidousha_role",
@@ -1735,6 +1742,29 @@ def _validated_audio_lrc_selection(
     )
 
 
+def _lyric_row_interval(row: Mapping[str, object], index: int) -> tuple[int, int]:
+    """Read one strict raw-AGY or projected-report lyric interval."""
+
+    has_live = "live_start_ms" in row or "live_end_ms" in row
+    has_cue = "cue_start_ms" in row or "cue_end_ms" in row
+    if has_live and not {"live_start_ms", "live_end_ms"}.issubset(row):
+        raise ValueError(f"live performance lyric row {index} has a partial raw interval")
+    if has_cue and not {"cue_start_ms", "cue_end_ms"}.issubset(row):
+        raise ValueError(f"live performance lyric row {index} has a partial report interval")
+    if not has_live and not has_cue:
+        raise ValueError(f"live performance lyric row {index} timing is missing")
+    live_pair = (row.get("live_start_ms"), row.get("live_end_ms")) if has_live else None
+    cue_pair = (row.get("cue_start_ms"), row.get("cue_end_ms")) if has_cue else None
+    if live_pair is not None and cue_pair is not None and live_pair != cue_pair:
+        raise ValueError(f"live performance lyric row {index} raw/report intervals conflict")
+    selected_pair = live_pair if live_pair is not None else cue_pair
+    assert selected_pair is not None
+    start_ms, end_ms = selected_pair
+    if not (_is_int(start_ms) and _is_int(end_ms) and 0 <= start_ms < end_ms):
+        raise ValueError(f"live performance lyric row {index} timing is invalid")
+    return int(start_ms), int(end_ms)
+
+
 def _validate_lyric_vocal_observations(
     observations: object,
     *,
@@ -1743,10 +1773,12 @@ def _validate_lyric_vocal_observations(
     """Recompute the singer/role aggregates from every canonical lyric row.
 
     The AGY top-level summary is never trusted as a substitute for the rows.
-    A READY result requires each line to say that the same live vocal source is
-    李豆沙 herself singing that line, with no guest/duet/harmony or recorded
-    vocal audible.  CAM++ remains an independent speaker-similarity subclaim;
-    it is not treated here (or elsewhere) as a singing classifier.
+    A READY result requires each line to say that the same live lyric source is
+    李豆沙 herself, with no guest/duet/harmony or recorded vocal audible.  A
+    narrowly labelled canonical spoken passage is allowed only inside an
+    otherwise predominantly sung performance; ordinary speech over music is
+    not.  CAM++ remains an independent speaker-similarity subclaim and is not
+    treated here (or elsewhere) as a singing classifier.
     """
 
     if (
@@ -1758,6 +1790,17 @@ def _validate_lyric_vocal_observations(
     all_same_lidousha = True
     any_other_singer = False
     any_recorded_vocal = False
+    singing_rows = 0
+    consecutive_spoken_rows = 0
+    longest_spoken_run = 0
+    spoken_blocks = 0
+    spoken_duration_ms = 0
+    total_lyric_vocal_duration_ms = 0
+    spoken_block_start_ms: int | None = None
+    longest_spoken_block_span_ms = 0
+    previous_start_ms: int | None = None
+    previous_end_ms: int | None = None
+    roles: list[object] = []
     for index, row in enumerate(observations):
         if not isinstance(row, Mapping) or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(row):
             raise ValueError(f"live performance lyric row {index} singer schema is invalid")
@@ -1771,29 +1814,101 @@ def _validate_lyric_vocal_observations(
         if not all(isinstance(value, bool) for value in (same_lidousha, other_singer, recorded_vocal)):
             raise ValueError(f"live performance lyric row {index} singer assertions are invalid")
 
-        affirmative = (
+        live_lidousha_lyric = (
             subject == "LIDOUSHA"
-            and role == "SINGING_THIS_LYRIC"
+            and role in {"SINGING_THIS_LYRIC", "PERFORMING_THIS_LYRIC_SPOKEN"}
             and other_singer is False
             and recorded_vocal is False
         )
-        if same_lidousha is not affirmative:
+        if same_lidousha is not live_lidousha_lyric:
             raise ValueError(f"live performance lyric row {index} same-subject assertion is inconsistent")
-        if subject == "LIDOUSHA" and role != "SINGING_THIS_LYRIC":
+        if subject == "LIDOUSHA" and role not in {
+            "SINGING_THIS_LYRIC",
+            "PERFORMING_THIS_LYRIC_SPOKEN",
+        }:
             raise ValueError(f"live performance lyric row {index} Li-Dousha role contradicts its subject")
+        if role in {"SINGING_THIS_LYRIC", "PERFORMING_THIS_LYRIC_SPOKEN"} and subject != "LIDOUSHA":
+            raise ValueError(f"live performance lyric row {index} performance role contradicts its subject")
         if subject == "OTHER_OR_MIXED_SINGER" and other_singer is not True:
             raise ValueError(f"live performance lyric row {index} other-singer assertion is inconsistent")
         if subject == "RECORDED_OR_PLAYBACK_SINGER" and recorded_vocal is not True:
             raise ValueError(f"live performance lyric row {index} recorded-vocal assertion is inconsistent")
         if subject == "NO_AUDIBLE_LYRIC_VOCAL" and (other_singer or recorded_vocal):
             raise ValueError(f"live performance lyric row {index} no-vocal assertion is inconsistent")
-        if require_ready and not affirmative:
+        if require_ready and not live_lidousha_lyric:
             raise ValueError(
-                f"live performance lyric row {index} does not affirm the same live Li-Dousha singer"
+                f"live performance lyric row {index} does not affirm the same live Li-Dousha lyric source"
             )
+        roles.append(role)
+        row_interval: tuple[int, int] | None = None
+        if require_ready:
+            start_ms, end_ms = _lyric_row_interval(row, index)
+            row_interval = (start_ms, end_ms)
+            if previous_start_ms is not None and start_ms <= previous_start_ms:
+                raise ValueError("live performance lyric starts are not strictly monotonic")
+            if previous_end_ms is not None and previous_end_ms - start_ms > 250:
+                raise ValueError("live performance adjacent lyric rows overlap by more than 250ms")
+            total_lyric_vocal_duration_ms += end_ms - start_ms
+            previous_start_ms = start_ms
+            previous_end_ms = end_ms
+        if role == "SINGING_THIS_LYRIC":
+            singing_rows += 1
+            consecutive_spoken_rows = 0
+            spoken_block_start_ms = None
+        elif role == "PERFORMING_THIS_LYRIC_SPOKEN":
+            if require_ready and consecutive_spoken_rows == 0:
+                spoken_blocks += 1
+                assert row_interval is not None
+                spoken_block_start_ms = row_interval[0]
+            consecutive_spoken_rows += 1
+            longest_spoken_run = max(longest_spoken_run, consecutive_spoken_rows)
+            if require_ready:
+                assert row_interval is not None
+                spoken_duration_ms += row_interval[1] - row_interval[0]
+                assert spoken_block_start_ms is not None
+                longest_spoken_block_span_ms = max(
+                    longest_spoken_block_span_ms,
+                    row_interval[1] - spoken_block_start_ms,
+                )
+        else:
+            consecutive_spoken_rows = 0
+            spoken_block_start_ms = None
         all_same_lidousha = all_same_lidousha and bool(same_lidousha)
         any_other_singer = any_other_singer or bool(other_singer)
         any_recorded_vocal = any_recorded_vocal or bool(recorded_vocal)
+    if require_ready:
+        if roles[0] != "SINGING_THIS_LYRIC" or roles[-1] != "SINGING_THIS_LYRIC":
+            raise ValueError("live performance first and final canonical lyric rows must be sung")
+        if singing_rows < MIN_READY_SUNG_LYRIC_ROWS or singing_rows / len(roles) < MIN_READY_SUNG_LYRIC_RATIO:
+            raise ValueError(
+                "live performance is not predominantly sung by Li Dousha: "
+                f"{singing_rows}/{len(roles)} canonical lyric rows are sung"
+            )
+        if longest_spoken_run > MAX_READY_CONSECUTIVE_SPOKEN_LYRIC_ROWS:
+            raise ValueError(
+                "live performance canonical spoken passage is too long: "
+                f"{longest_spoken_run} consecutive rows"
+            )
+        if spoken_blocks > MAX_READY_SPOKEN_BLOCKS:
+            raise ValueError(
+                "live performance has multiple canonical spoken passages: "
+                f"{spoken_blocks} blocks"
+            )
+        if (
+            spoken_duration_ms > MAX_READY_SPOKEN_LYRIC_DURATION_MS
+            # Integer cross-multiplication keeps an exact 20% boundary from
+            # becoming 20.000000000000004% through binary float rounding.
+            or spoken_duration_ms * 5 > total_lyric_vocal_duration_ms
+        ):
+            raise ValueError(
+                "live performance canonical spoken passage is too long by voiced duration: "
+                f"{spoken_duration_ms}/{total_lyric_vocal_duration_ms}ms"
+            )
+        if longest_spoken_block_span_ms > MAX_READY_SPOKEN_BLOCK_SPAN_MS:
+            raise ValueError(
+                "live performance canonical spoken block span is too long: "
+                f"{longest_spoken_block_span_ms}ms"
+            )
     return all_same_lidousha, any_other_singer, any_recorded_vocal
 
 
@@ -1816,9 +1931,9 @@ def validate_live_performance_observation(
         if not isinstance(performance, Mapping) or set(performance) != {
             "mode",
             "confidence",
-            "continuous_singing",
+            "continuous_live_song_performance",
             "background_recording_likelihood",
-            "same_lidousha_live_singer_across_all_lyrics",
+            "same_lidousha_live_performer_across_all_lyrics",
             "other_singer_or_harmony_present",
             "recorded_or_playback_vocal_present",
             "evidence",
@@ -1837,8 +1952,8 @@ def validate_live_performance_observation(
             or isinstance(background, bool)
             or not isinstance(background, (int, float))
             or not 0.0 <= float(background) <= 1.0
-            or not isinstance(performance.get("continuous_singing"), bool)
-            or not isinstance(performance.get("same_lidousha_live_singer_across_all_lyrics"), bool)
+            or not isinstance(performance.get("continuous_live_song_performance"), bool)
+            or not isinstance(performance.get("same_lidousha_live_performer_across_all_lyrics"), bool)
             or not isinstance(performance.get("other_singer_or_harmony_present"), bool)
             or not isinstance(performance.get("recorded_or_playback_vocal_present"), bool)
             or not isinstance(performance.get("notes"), str)
@@ -1850,17 +1965,24 @@ def validate_live_performance_observation(
             require_ready=require_ready,
         )
         if (
-            performance.get("same_lidousha_live_singer_across_all_lyrics") is not all_same_lidousha
+            performance.get("same_lidousha_live_performer_across_all_lyrics") is not all_same_lidousha
             or performance.get("other_singer_or_harmony_present") is not any_other_singer
             or performance.get("recorded_or_playback_vocal_present") is not any_recorded_vocal
         ):
-            raise ValueError("live performance top-level singer assertions do not match lyric rows")
+            raise ValueError("live performance top-level performer assertions do not match lyric rows")
         evidence = performance.get("evidence")
         if not isinstance(evidence, list) or len(evidence) != 3:
             raise ValueError("live performance observation needs exactly three evidence timestamps")
         if not 0 <= first_lyric_start_ms < last_lyric_end_ms:
             raise ValueError("live performance lyric span is invalid")
         span = last_lyric_end_ms - first_lyric_start_ms
+        sung_intervals: list[tuple[int, int]] = []
+        if require_ready:
+            sung_intervals = [
+                _lyric_row_interval(row, index)
+                for index, row in enumerate(observations)
+                if isinstance(row, Mapping) and row.get("lidousha_role") == "SINGING_THIS_LYRIC"
+            ]
         buckets: set[int] = set()
         previous_time = -1
         for index, row in enumerate(evidence):
@@ -1876,14 +1998,21 @@ def validate_live_performance_observation(
                 or not observation.strip()
             ):
                 raise ValueError(f"live performance evidence[{index}] is invalid")
+            if require_ready and not any(
+                start_ms <= int(time_ms) < end_ms
+                for start_ms, end_ms in sung_intervals
+            ):
+                raise ValueError(
+                    f"live performance evidence[{index}] does not bind a sung canonical lyric row"
+                )
             previous_time = int(time_ms)
             buckets.add(min(2, ((int(time_ms) - first_lyric_start_ms) * 3) // max(1, span)))
         if buckets != {0, 1, 2}:
             raise ValueError("live performance evidence must cover lyric head, middle, and tail")
         if require_ready and (
             mode != LIVE_PERFORMANCE_READY_MODE
-            or performance.get("continuous_singing") is not True
-            or performance.get("same_lidousha_live_singer_across_all_lyrics") is not True
+            or performance.get("continuous_live_song_performance") is not True
+            or performance.get("same_lidousha_live_performer_across_all_lyrics") is not True
             or performance.get("other_singer_or_harmony_present") is not False
             or performance.get("recorded_or_playback_vocal_present") is not False
             or float(confidence) < 0.85

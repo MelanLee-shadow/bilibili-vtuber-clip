@@ -30,6 +30,7 @@ def _fixture(tmp_path: Path, *, passes: tuple[bool, ...] = (True, False, True, T
             "matched_cue_id": f"cue-{index}",
             "cue_start_ms": 10_000 + index * 12_000,
             "cue_end_ms": 15_000 + index * 12_000,
+            **host_vocal.READY_SINGING_ASSERTIONS,
         }
         for index, row in enumerate(lyric_lines)
     ]
@@ -117,6 +118,10 @@ def _fixture(tmp_path: Path, *, passes: tuple[bool, ...] = (True, False, True, T
                 "lrc_text": lyric_row["lrc_text"],
                 "lyric_cue_start_ms": lyric_row["cue_start_ms"],
                 "lyric_cue_end_ms": lyric_row["cue_end_ms"],
+                **{
+                    key: lyric_row[key]
+                    for key in host_vocal.READY_SINGING_ASSERTIONS
+                },
                 "center_ms": center_ms,
                 "start_ms": start_ms,
                 "end_ms": end_ms,
@@ -203,6 +208,28 @@ def test_valid_hash_bound_ready_claim(tmp_path):
     assert bundle["claim"]["status"] == host_vocal.READY_STATUS
     assert bundle["claim"]["decision"] == host_vocal.READY_DECISION
     assert _verify(bundle) is None
+
+
+def test_spoken_canonical_rows_never_supply_campp_singing_checkpoints(tmp_path):
+    bundle = _fixture(tmp_path)
+    alignment = json.loads(bundle["alignment"].read_text(encoding="utf-8"))
+    alignment["alignment"][3].update(host_vocal.READY_SPOKEN_ASSERTIONS)
+
+    selected = host_vocal._selected_lyric_rows(alignment)
+
+    assert len(selected) == len(host_vocal.CHECKPOINT_FRACTIONS)
+    assert 3 not in {row["alignment_index"] for row in selected}
+    assert {row["lidousha_role"] for row in selected} == {"SINGING_THIS_LYRIC"}
+
+
+def test_checkpoint_singing_role_binding_is_reverified(tmp_path):
+    bundle = _fixture(tmp_path)
+    bundle["proof"]["checkpoints"][0]["lidousha_role"] = "PERFORMING_THIS_LYRIC_SPOKEN"
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    error = _verify(bundle)
+
+    assert error is not None and "not bound to its selected lyric row" in error
 
 
 def test_duplicate_checkpoint_pcm_is_rejected(tmp_path):

@@ -1500,7 +1500,7 @@ def _verify_live_performance_observation(
         or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
         or not str(lyrics_alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
     ):
-        return "live-performance proof is not a production AGY audio-v3 alignment"
+        return "live-performance proof is not a production AGY audio alignment"
 
     artifacts = report.get("audio_alignment_artifacts")
     if not isinstance(artifacts, Mapping):
@@ -1583,7 +1583,7 @@ def _verify_live_performance_observation(
         or raw_record.get("source_duration_ms") != artifacts.get("source_duration_ms")
         or not isinstance(raw_rows, list)
     ):
-        return "live-performance raw AGY v3 observation is invalid"
+        return "live-performance raw AGY observation schema is invalid"
     if raw.get("live_performance") != report.get("live_performance"):
         return "live-performance raw/report observation mismatch"
     lyric_lines = report.get("lyric_lines")

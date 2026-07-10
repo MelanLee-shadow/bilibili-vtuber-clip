@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-PROOF_SCHEMA_VERSION = "host-vocal-proof.v1"
+PROOF_SCHEMA_VERSION = "host-vocal-proof.v2"
 PROFILE_SCHEMA_VERSION = "lidousha-voiceprint-profile.v1"
 
 CHECKPOINT_FRACTIONS = (0.08, 0.22, 0.36, 0.50, 0.64, 0.78, 0.92)
@@ -46,6 +46,18 @@ MIN_CHECKPOINT_MEDIAN = 0.31
 MIN_PASSED_CHECKPOINTS = 5
 REQUIRED_BUCKETS = ("head", "middle", "tail")
 EXPECTED_REFERENCE_COUNT = 3
+CHECKPOINT_REQUIRED_LYRIC_ROLE = "SINGING_THIS_LYRIC"
+READY_SINGING_ASSERTIONS = {
+    "lyric_vocal_subject": "LIDOUSHA",
+    "lidousha_role": CHECKPOINT_REQUIRED_LYRIC_ROLE,
+    "same_live_vocal_source_as_lidousha": True,
+    "other_singer_or_harmony_audible": False,
+    "recorded_or_playback_vocal_audible": False,
+}
+READY_SPOKEN_ASSERTIONS = {
+    **READY_SINGING_ASSERTIONS,
+    "lidousha_role": "PERFORMING_THIS_LYRIC_SPOKEN",
+}
 
 READY_STATUS = "READY"
 BLOCKED_STATUS = "BLOCKED"
@@ -152,6 +164,7 @@ def _canonical_policy() -> dict[str, object]:
         "minimum_checkpoint_median": MIN_CHECKPOINT_MEDIAN,
         "minimum_passed_checkpoints": MIN_PASSED_CHECKPOINTS,
         "required_buckets": list(REQUIRED_BUCKETS),
+        "checkpoint_required_lyric_role": CHECKPOINT_REQUIRED_LYRIC_ROLE,
     }
 
 
@@ -252,6 +265,16 @@ def _selected_lyric_rows(alignment: Mapping[str, object]) -> list[dict[str, obje
         if cue_id in seen_cue_ids:
             raise HostVocalProofError("matched lyric alignment rows reuse a cue id")
         seen_cue_ids.add(cue_id)
+        assertions = {key: raw_row.get(key) for key in READY_SINGING_ASSERTIONS}
+        if assertions == READY_SPOKEN_ASSERTIONS:
+            # A short canonical spoken passage can keep the song READY, but a
+            # speaker-similarity hit on speech must never count as one of the
+            # five required *singing* checkpoints.
+            continue
+        if assertions != READY_SINGING_ASSERTIONS:
+            raise HostVocalProofError(
+                f"alignment[{alignment_index}] is not a structurally READY Li-Dousha lyric row"
+            )
         if end_ms - start_ms < MIN_LYRIC_CUE_MS:
             continue
         matched.append(
@@ -262,6 +285,7 @@ def _selected_lyric_rows(alignment: Mapping[str, object]) -> list[dict[str, obje
                 "lrc_text": text_value,
                 "cue_start_ms": start_ms,
                 "cue_end_ms": end_ms,
+                **assertions,
             }
         )
     if len(matched) < len(CHECKPOINT_FRACTIONS):
@@ -547,6 +571,17 @@ def generate_host_vocal_proof(
                 "lrc_text": lyric_row["lrc_text"],
                 "lyric_cue_start_ms": lyric_row["cue_start_ms"],
                 "lyric_cue_end_ms": lyric_row["cue_end_ms"],
+                "lyric_vocal_subject": lyric_row["lyric_vocal_subject"],
+                "lidousha_role": lyric_row["lidousha_role"],
+                "same_live_vocal_source_as_lidousha": lyric_row[
+                    "same_live_vocal_source_as_lidousha"
+                ],
+                "other_singer_or_harmony_audible": lyric_row[
+                    "other_singer_or_harmony_audible"
+                ],
+                "recorded_or_playback_vocal_audible": lyric_row[
+                    "recorded_or_playback_vocal_audible"
+                ],
                 "center_ms": center_ms,
                 "start_ms": start_ms,
                 "end_ms": end_ms,
@@ -804,6 +839,14 @@ def _verify_host_vocal_proof_claim(
             or raw_checkpoint.get("lrc_text") != lyric_row["lrc_text"]
             or raw_checkpoint.get("lyric_cue_start_ms") != lyric_row["cue_start_ms"]
             or raw_checkpoint.get("lyric_cue_end_ms") != lyric_row["cue_end_ms"]
+            or raw_checkpoint.get("lyric_vocal_subject") != lyric_row["lyric_vocal_subject"]
+            or raw_checkpoint.get("lidousha_role") != lyric_row["lidousha_role"]
+            or raw_checkpoint.get("same_live_vocal_source_as_lidousha")
+            is not lyric_row["same_live_vocal_source_as_lidousha"]
+            or raw_checkpoint.get("other_singer_or_harmony_audible")
+            is not lyric_row["other_singer_or_harmony_audible"]
+            or raw_checkpoint.get("recorded_or_playback_vocal_audible")
+            is not lyric_row["recorded_or_playback_vocal_audible"]
         ):
             raise HostVocalProofError(f"checkpoint[{index}] is not bound to its selected lyric row")
         center_ms, start_ms, end_ms = _checkpoint_position_for_row(lyric_row)

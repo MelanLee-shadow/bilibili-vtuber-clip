@@ -53,7 +53,7 @@ def test_direct_script_bootstraps_repo_imports_from_an_unrelated_cwd(tmp_path):
         "import runpy\n"
         f"ns = runpy.run_path({str(script)!r})\n"
         "try:\n"
-        "    ns['_validate_background_performance']({}, observations=[], "
+        "    ns['_validate_background_performance']({}, schema_version='agy-audio-lrc-observation.v4', observations=[], "
         "first_lyric_start_ms=0, last_lyric_end_ms=1)\n"
         "except ImportError as exc:\n"
         "    print(exc)\n"
@@ -268,9 +268,9 @@ def _incident_fixture(
     performance = {
         "mode": repair.BACKGROUND_MODE,
         "confidence": 0.99,
-        "continuous_singing": True,
+        "continuous_live_song_performance": True,
         "background_recording_likelihood": 0.99,
-        "same_lidousha_live_singer_across_all_lyrics": False,
+        "same_lidousha_live_performer_across_all_lyrics": False,
         "other_singer_or_harmony_present": False,
         "recorded_or_playback_vocal_present": True,
         "evidence": [
@@ -469,6 +469,38 @@ def test_default_plan_is_read_only_and_lists_state_last(tmp_path):
     assert after == before
     assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
     assert not (fixture["base"] / "reports" / "manual_rerun_2026-07-09_mebukutoki_v5.json").exists()
+
+
+def test_committed_literal_v3_incident_evidence_remains_plan_recoverable(tmp_path):
+    fixture = _incident_fixture(tmp_path)
+
+    def to_literal_v3(performance: dict[str, object]) -> None:
+        performance["continuous_singing"] = performance.pop("continuous_live_song_performance")
+        performance["same_lidousha_live_singer_across_all_lyrics"] = performance.pop(
+            "same_lidousha_live_performer_across_all_lyrics"
+        )
+
+    raw = json.loads(fixture["agy_output"].read_text(encoding="utf-8"))
+    raw["schema_version"] = "agy-audio-lrc-observation.v3"
+    to_literal_v3(raw["live_performance"])
+    _json(fixture["agy_output"], raw)
+    manifest = json.loads(fixture["agy_manifest"].read_text(encoding="utf-8"))
+    manifest["artifacts"]["output_sha256"] = _sha(fixture["agy_output"])
+    _json(fixture["agy_manifest"], manifest)
+
+    negative = json.loads(fixture["negative"].read_text(encoding="utf-8"))
+    outer_gate = negative["records"][0]["source_context_job"]["song_repair_gate"]
+    inner_gate = negative["last_shadow_summary"]["records"][0]["source_context_job"]["song_repair_gate"]
+    for gate in (outer_gate, inner_gate):
+        to_literal_v3(gate["live_performance"])
+    repair_report = Path(outer_gate["repair_report_path"])
+    report = json.loads(repair_report.read_text(encoding="utf-8"))
+    to_literal_v3(report["live_performance"])
+    _json(repair_report, report)
+    _json(fixture["negative"], negative)
+
+    assert repair.main(_args(fixture)) == 0
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
 
 
 def test_snapshot_materializes_durable_empty_ledger_inode_when_absent(tmp_path):

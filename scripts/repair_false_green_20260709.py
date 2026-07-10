@@ -89,6 +89,7 @@ BACKGROUND_REJECTION_MODES = frozenset(
 V5_STATUS = "NEGATIVE_ACCEPTANCE_PASSED_NO_UPLOAD"
 REVOCATION_STATUS = "REVOKED_FALSE_GREEN_BACKGROUND_PLAYBACK"
 NO_UPLOAD_SNAPSHOT_SCHEMA = "autoslice-no-upload-preflight.v1"
+HISTORICAL_INCIDENT_AGY_SCHEMA = "agy-audio-lrc-observation.v3"
 
 AUTHORITY_TARGET_ORDER = (
     "state_backup",
@@ -419,6 +420,7 @@ def _walk_strings(value: object) -> Iterator[str]:
 def _validate_background_performance(
     performance: Mapping[str, Any],
     *,
+    schema_version: str,
     observations: object,
     first_lyric_start_ms: int,
     last_lyric_end_ms: int,
@@ -432,10 +434,28 @@ def _validate_background_performance(
     to the exact production contract that minted the negative result.
     """
 
-    from src.autoslice.song_repair import validate_live_performance_observation
+    from src.autoslice.song_repair import (
+        AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+        validate_live_performance_observation,
+    )
+
+    canonical_performance = dict(performance)
+    if schema_version == HISTORICAL_INCIDENT_AGY_SCHEMA:
+        # The already-COMMITTED incident transaction is permanently bound to
+        # v3 evidence.  Preserve its audit/recovery path while production moves
+        # to v4's clearer performer wording; all values and raw hashes remain
+        # unchanged in the forensic artifact itself.
+        canonical_performance["continuous_live_song_performance"] = canonical_performance.pop(
+            "continuous_singing", None
+        )
+        canonical_performance["same_lidousha_live_performer_across_all_lyrics"] = canonical_performance.pop(
+            "same_lidousha_live_singer_across_all_lyrics", None
+        )
+    elif schema_version != AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION:
+        raise RepairError(f"unsupported fresh negative AGY schema: {schema_version}")
 
     error = validate_live_performance_observation(
-        performance,
+        canonical_performance,
         first_lyric_start_ms=first_lyric_start_ms,
         last_lyric_end_ms=last_lyric_end_ms,
         observations=observations,
@@ -460,12 +480,12 @@ def _validate_background_performance(
                 "with Li Dousha not singing"
             )
     if (
-        performance.get("mode") not in BACKGROUND_REJECTION_MODES
-        or float(performance.get("confidence", 0.0)) < 0.85
-        or float(performance.get("background_recording_likelihood", 0.0)) < 0.80
-        or performance.get("same_lidousha_live_singer_across_all_lyrics") is not False
-        or performance.get("other_singer_or_harmony_present") is not False
-        or performance.get("recorded_or_playback_vocal_present") is not True
+        canonical_performance.get("mode") not in BACKGROUND_REJECTION_MODES
+        or float(canonical_performance.get("confidence", 0.0)) < 0.85
+        or float(canonical_performance.get("background_recording_likelihood", 0.0)) < 0.80
+        or canonical_performance.get("same_lidousha_live_performer_across_all_lyrics") is not False
+        or canonical_performance.get("other_singer_or_harmony_present") is not False
+        or canonical_performance.get("recorded_or_playback_vocal_present") is not True
     ):
         raise RepairError(
             "fresh negative does not prove recorded/background vocals and exclude "
@@ -582,7 +602,10 @@ def _validate_agy_background_evidence(
         "post_song_talk_start_ms",
     }:
         raise RepairError("fresh negative AGY alignment top-level schema is invalid")
-    if raw.get("schema_version") != AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION:
+    if raw.get("schema_version") not in {
+        HISTORICAL_INCIDENT_AGY_SCHEMA,
+        AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+    }:
         raise RepairError("fresh negative AGY alignment schema version is stale")
     record = _as_mapping(raw.get("record"))
     if (
@@ -625,6 +648,7 @@ def _validate_agy_background_evidence(
         raise RepairError("fresh negative AGY lyric starts are not strictly increasing")
     _validate_background_performance(
         raw_performance,
+        schema_version=str(raw.get("schema_version") or ""),
         observations=observations,
         first_lyric_start_ms=first_lyric_start_ms,
         last_lyric_end_ms=last_lyric_end_ms,

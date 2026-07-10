@@ -155,7 +155,7 @@ def _bind_ready_alignment_claim(
 
 
 def _rebind_background_playback_observation(claim: dict[str, object]) -> None:
-    """Turn a bound AGY-v3 fixture into the speech-over-BGM hard negative."""
+    """Turn a bound AGY-v4 fixture into the speech-over-BGM hard negative."""
 
     report_path = Path(str(claim["alignment_report_path"]))
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -165,9 +165,9 @@ def _rebind_background_playback_observation(claim: dict[str, object]) -> None:
     observation = {
         "mode": "STREAMER_TALKING_OVER_MUSIC",
         "confidence": 0.98,
-        "continuous_singing": False,
+        "continuous_live_song_performance": False,
         "background_recording_likelihood": 0.97,
-        "same_lidousha_live_singer_across_all_lyrics": False,
+        "same_lidousha_live_performer_across_all_lyrics": False,
         "other_singer_or_harmony_present": False,
         "recorded_or_playback_vocal_present": True,
         "evidence": [
@@ -947,16 +947,22 @@ def _run_song_ready_shadow_with_lyrics_alignment(
         )
     preexisting_host_claim: dict[str, object] = {}
     if background_playback_with_ready_host:
+        # Mint identity evidence while the alignment still affirms singing.
+        # Applying the hard-negative AGY result afterward proves a speaker hit
+        # cannot override background/playback classification; proof generation
+        # itself must never use recorded or spoken rows as singing checkpoints.
+        preexisting_host_claim, _profile = make_ready_host_vocal_claim(
+            tmp_path / "preexisting-host-proof",
+            source_media=source_video,
+            alignment_report=Path(str(lyrics_alignment["alignment_report_path"])),
+            candidate_id="travel-meaning-anchor",
+        )
         _rebind_background_playback_observation(lyrics_alignment)
     if raw_report_mismatch_with_ready_host:
         _rebind_raw_report_timing_mismatch(lyrics_alignment)
     if raw_vocal_role_mismatch_with_ready_host:
         _rebind_raw_vocal_role_mismatch(lyrics_alignment)
-    if (
-        background_playback_with_ready_host
-        or raw_report_mismatch_with_ready_host
-        or raw_vocal_role_mismatch_with_ready_host
-    ):
+    if raw_report_mismatch_with_ready_host or raw_vocal_role_mismatch_with_ready_host:
         preexisting_host_claim, _profile = make_ready_host_vocal_claim(
             tmp_path / "preexisting-host-proof",
             source_media=source_video,
@@ -1103,9 +1109,9 @@ def test_background_mode_from_real_song_repair_cannot_fall_back_to_talk_or_mater
         payload["live_performance"].update(
             mode="ORIGINAL_OR_BACKGROUND_PLAYBACK",
             confidence=0.99,
-            continuous_singing=False,
+            continuous_live_song_performance=False,
             background_recording_likelihood=0.99,
-            same_lidousha_live_singer_across_all_lyrics=False,
+            same_lidousha_live_performer_across_all_lyrics=False,
             other_singer_or_harmony_present=False,
             recorded_or_playback_vocal_present=True,
             notes="bound hard negative: original recording playback",
