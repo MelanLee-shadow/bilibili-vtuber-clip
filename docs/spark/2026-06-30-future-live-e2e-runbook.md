@@ -63,7 +63,7 @@ python3 scripts/run_full_session_selector_cpa_shadow.py \
   --copy-draft-context \
   --max-candidates 4 \
   --cpa-command "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} --transport direct --model gpt-5.4-mini --api-base $CPA_BASE_URL --api-key-env CPA_API_KEY" \
-  --lrc-provider netease \
+  --lrc-provider auto \
   --burn-preview \
   --publish-staging \
   --song-hint-llm-command "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}" \
@@ -75,6 +75,33 @@ python3 scripts/run_full_session_selector_cpa_shadow.py \
 - **Danmaku evidence** (2026-07-03 route decision): add `--danmaku-xml <capture dir>/sources/<segment>.xml` (blrec raw danmaku; scp it next to the source video first). Enables the burst recall hints, real danmaku in CPA viewer-context, and per-chunk danmaku hint lines for jingting. `--agy-ssh-host` also enables silero-VAD subtitle timing QA (provisioned at `free:/opt/bilive/vad/`; VAD is positive evidence only).
 - Capture length matters: record long enough to contain a COMPLETE song (15 min captured 3 complete songs; a 90s probe can never pass the completeness gate).
 - The song contract lives in `docs/workflows/lidousha-song-finished-package-workflow.md` §6/§6.1 and `.agent/skills/song-lyrics-timeline-aligner/SKILL.md` §8: LRC global-shift subtitle timeline, forced accurate re-encode, sapphire72 1080p ASS, real-CPA cover chain, fail-closed everywhere.
+
+## Seeded no-upload song repair rerun
+
+When the unattended runner already selected an upstream song-lane anchor, do not make a second semantic-recall result decide whether sparse/garbled Japanese ASR is a song. Use a fresh output directory and carry the clip-local seed into the selector. The expensive audio proof flag belongs only on the expanded full proof window:
+
+```bash
+python3 scripts/run_full_session_selector_cpa_shadow.py \
+  --source-video <expanded-full-proof-window>.mp4 \
+  --source-srt <expanded-full-proof-window>.srt \
+  --output-dir <fresh-attempt-dir> \
+  --max-candidates 1 \
+  --cpa-command "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} --transport direct --model gpt-5.4-mini --api-base $CPA_BASE_URL --api-key-env CPA_API_KEY" \
+  --seed-song-candidate-id seeded-song-rerun \
+  --seed-song-anchor-start-ms <anchor-start-inside-window-ms> \
+  --seed-song-anchor-end-ms <anchor-end-inside-window-ms> \
+  --song-lrc-query '芽吹くとき' \
+  --lrc-provider auto \
+  --agy-audio-lrc-align \
+  --burn-preview \
+  --publish-staging \
+  --song-hint-llm-command "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}" \
+  --title-llm-command "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
+```
+
+- Search the clean title first; `auto` queries NetEase and LRCLIB. The seed preserves recall only. It does not create `FULL_SONG_READY` or `lyrics_alignment=READY`.
+- Low-ASR audio escalation requires one sufficiently supported canonical LRC identity. An ambiguous title/version, unrelated LRC, malformed observation, wrong provider/model, hash mismatch, incomplete canonical sequence, non-single-shift timing, or failed five-point/tail check remains blocked. For an exact repeated lyric, the repeated-section point must be a later recurrence rather than the first occurrence.
+- For a direct production incident rerun through `free_session_autoslice.py`, pause cron with `/opt/bilive/autoslice/DISABLED`, own `/opt/bilive/autoslice/runner.lock`, use a fresh run id, and write an explicit report with `manual_no_upload=true` and `state_write=false`. Do not mutate the normal state ledger or remove the kill switch until the new package has passed acceptance.
 
 ## Pre-live checklist
 
@@ -157,16 +184,21 @@ The intended unattended runner should perform these steps:
 6. Accurate re-render when keyframe drift exceeds threshold.
 7. Persist summary, evidence, materialized recut, render QA, CPA request/response.
 
-No-upload acceptance criteria:
+An honest fail-closed/blocked run is accepted as an accurate **run result** when it records the current attempt and concrete blocker, does not reuse stale artifacts, and proves no upload process ran. It is not a review-package acceptance and need not have a materialized render.
 
-- `AUTO_UPLOAD >= 1` or explicit fail-closed explanation.
-- `reason_codes == []` for the accepted candidate.
-- `no_upload: true`.
-- `no_upload_or_free_deploy_performed: true`.
-- CPA response JSON present and valid.
-- `actual_cut_error_ms <= 100`.
-- final subtitle text contains `kmx` and not `天不熊`/`kimo熊`.
-- no upload process before/after.
+A materialized no-upload review package has these shared acceptance criteria:
+
+- `no_upload: true` (or an incident report with `manual_no_upload=true`) and no uploader process before/after.
+- Current-run evidence/artifact paths exist and their recorded hashes recompute exactly; no stale summary or glob-inherited artifact.
+- CPA response JSON is present and valid where that stage is required.
+- `actual_cut_error_ms <= 100` and render QA passes.
+- Final subtitle text contains `kmx` and not `天不熊`/`kimo熊` where those terms appear.
+
+Candidate-specific acceptance:
+
+- Talk/release-like shadow acceptance still requires its semantic release decision and applicable reason-code gates.
+- A song may be delivered as a **no-upload review package** when the window is classified/seeded as song and independent positive proof is complete: `song_boundary.status=FULL_SONG_READY`, `lyrics_alignment.status=READY`, bound external-LRC report, `subtitle_source=external_lrc_global_shift`, accurate re-render, render QA, and current SRT/burned-MP4 hashes. Semantic `decision_action` and closure/viewer-context advisory codes are review metadata for this song delivery path, not substitutes for or blockers of the machine song proof.
+- Missing or ambiguous song proof remains an explicit fail-closed run result, not a materialized review-package acceptance. A no-upload `review_ready` song is not `AUTO_UPLOAD` or publish-ready.
 
 ## Production blockers before real upload
 

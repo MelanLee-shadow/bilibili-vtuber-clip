@@ -36,6 +36,7 @@ Required evidence:
 - Tail delta.
 - Stretch flag and ratio when used.
 - Alignment report JSON.
+- For a sparse-ASR audio fallback: the selected canonical LRC identity, nominal LRC zero, current-media/LRC/prompt/raw-observation/run-manifest SHA-256 values, `agy` provider and exact `Gemini 3.5 Flash (High)` model provenance, and the five named audio spot checks.
 
 Default method:
 
@@ -47,20 +48,23 @@ Default method:
 6. Use stretch only if first/tail anchors prove a consistent speed difference.
 7. For mixed clips, append separately sourced talk cues after the lyric-aligned section and label that in evidence.
 
-For stubborn lyrics or visible defects, add a spectrogram/Gemini pass before final burn:
+For manual stubborn lyrics or visible defects, add a spectrogram/Gemini pass before final burn. In the unattended song lane, when lyric-to-ASR matching is below threshold but one canonical LRC identity is uniquely supported, the current full proof window plus that LRC must go through the strict audio fallback instead of treating sparse Japanese ASR as a terminal failure:
 
 - Generate waveform and spectrogram images for the lyric window and full clip.
 - Send the audio window plus LRC/current SRT to the project-approved Gemini/audio route: agy on `free` with the `Gemini 3.5 Flash` model family, preferably `Gemini 3.5 Flash (High)` for alignment probes when available. (The coded jingting default is `Gemini 3.5 Flash (Low)` via `AGY_MODEL` in `scripts/gemini_slice_jingting.py`; override to `(High)` for alignment probes.)
 - Save model timing JSON and job logs under `audio_analysis/` or `evidence/`.
 - Accept model timing only where the spectrogram/full-clip context supports it.
 - Record rejected model claims explicitly. Do not preserve old Gemini 3.1/2.5 model names as the current workflow. If older evidence exists, regenerate it with agy `Gemini 3.5 Flash` or mark it stale.
+- Automated audio proof is narrower than an ordinary model suggestion: `src/autoslice/song_repair.py` independently binds the current source and canonical LRC hashes, requires every canonical line to be heard at confidence `>=0.8`, validates monotonic timings and one global shift, rejects unproved tempo stretch, and requires first-line/chorus/repeated-section/longest-gap/tail checks plus the post-song talk boundary. If an exact lyric repeats, `repeated_section` must point to a later audible recurrence, not its first occurrence. Search ranking or an AGY verdict alone is never proof.
 
-Blockers (each fires on its own; this matches `scripts/audit_lidousha_review_package.py` behavior):
+Blockers (each fires on its own; package-shape checks are enforced by `scripts/audit_lidousha_review_package.py`, while live audio-proof checks are enforced by `src/autoslice/song_repair.py` and the runner final gate):
 
 - `source_srt` is `.jingting.srt` for a song candidate (blocks unconditionally, even with an alignment report).
 - No alignment report exists.
 - No external lyric source.
 - No first/tail anchor.
+- Sparse/noisy ASR leaves more than one plausible song/LRC identity, or the best identity lacks the required recall/margin.
+- The audio observation is missing, malformed, produced by the wrong provider/model or fallback, mismatches current source/LRC hashes, omits a canonical line, fails confidence/monotonic/single-shift checks, or lacks any of the five spot checks/post-song boundary evidence.
 - A lyric/credit cue hangs through a 10s+ gap without explicit evidence.
 - Only the first line was fixed while tail was not checked.
 

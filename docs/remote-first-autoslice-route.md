@@ -1,15 +1,17 @@
 # Remote-first 自动切片路线
 
-更新时间：2026-06-26
+更新时间：2026-07-10
 
 ## 一句话结论
 
-`vtuber-slice` 的最终执行面只认远端 `free` 主机上的 bilive 运行树：
+`vtuber-slice` 的最终执行面只认远端 `free`；录制/app 与 post-stream autoslice 是两个明确分开的运行面：
 
 ```text
-free:/opt/bilive/app        # git 工作树 / 生产代码落点
-container:/app              # bilive_record 容器内运行路径
-container:/app/Videos       # 录播、候选切片、shadow/review 产物
+free:/opt/bilive/autoslice/repo   # commit-only 部署的 autoslice scripts/src/assets + DEPLOYED_COMMIT
+free:/opt/bilive/autoslice/       # runner state/cache/out/reports/logs/locks/DISABLED
+free:/opt/bilive/app              # recorder/legacy app 与受保护的人工 uploader bridge
+container:/app                    # bilive_record 容器内 app 路径
+container:/app/Videos             # 录播输入与 app 侧产物
 ```
 
 本地 `/Users/ivan/Project/vtuber-slice` 只用于：
@@ -24,11 +26,12 @@ container:/app/Videos       # 录播、候选切片、shadow/review 产物
 
 ## 当前事实边界
 
-- 本地目录不是 git repo；`git status` 在本地会失败。
-- 远端 `/opt/bilive/app` 是 git repo，并且是最终执行目的地。
-- 远端现在仍有生产运行修改、备份文件、测试产物和运行产物混在工作树里；清远端前必须先分清“生产热补丁 / 运行必需文件 / 纯垃圾”。
+- 本地目录现在是 git repo；生产 autoslice 只允许从 clean commit 经 `scripts/deploy_free_autoslice.sh` 部署。
+- unattended runner 读取 `/opt/bilive/autoslice/repo`，部署后以 `DEPLOYED_COMMIT` 与 runner hash 核对实际代码；不要向远端单文件热补丁。
+- `/opt/bilive/app` / container `/app` 仍是 recorder 和 legacy/emergency upload 运行面，但不再冒充 post-stream autoslice 的 commit 指纹。
 - 上传必须 fail-closed：没有 `AUTO_UPLOAD` manifest 和 artifact hash gate，就不能发布。
 - `*.jingting.done` 只代表精听完成，不代表 release-ready。
+- 2026-07-10 部署的 song repair 路线已在《芽吹くとき》v4 no-upload live rerun 验收：日语稀疏/乱码 ASR 不再让已知 song-lane anchor 被二次语义召回随机丢失；只有唯一 canonical LRC 身份 + 当前音频严格证明才能产生 `FULL_SONG_READY`。
 
 ## 目标流水线
 
@@ -36,7 +39,7 @@ container:/app/Videos       # 录播、候选切片、shadow/review 产物
 原始录播 + 粗字幕 + 弹幕
 → 高召回内容锚点（candidate 是 anchor，不是最终边界）
 → 扩展源上下文
-→ agy 精听 source-context
+→ talk: aggregate ASR/CPA correction；song: auto LRC discovery + full-window audio proof when needed
 → 歌曲/对话结构 evidence
 → 自动边界解析
 → AUTO_UPLOAD / AUTO_RECUT / DROP / BLOCK / RETRY
@@ -64,7 +67,7 @@ docs/remote-first-autoslice-route.md
 docs/lidousha-auto-review-architecture.md
                                   # 详细架构、gate、manifest、阶段拆解
 src/autoslice/                    # 本地可测的纯逻辑 gate / evidence / resolver
-scripts/                          # 远端/本地桥接脚本；部署后应在 /opt/bilive/app/scripts 下运行
+scripts/                          # autoslice 部署到 /opt/bilive/autoslice/repo/scripts；app 专用脚本另按入口落位
 tests/                            # 本地纯逻辑测试，部署前必须通过
 ops/                              # 远端运行补丁或运维脚本，必须注明落点
 prompts/                          # 可复用 prompt，不放运行输出
@@ -94,11 +97,11 @@ __pycache__ .pytest_cache .DS_Store # 工具缓存
 
 这轮整理只解决本地工作区混乱和文档路线问题；它没有把生产推进到 full unattended。当前必须继续收敛的缺口是：
 
-- 远端 `/opt/bilive/app` 仍是实际 source of truth，但工作树里混有 hotfix、配置、cookie、备份、运行产物和未跟踪代码；远端清理必须先做只读分类和 cleanup manifest，不能直接批量删除。
-- 当前监控入口仍由本地 Mac LaunchAgent 驱动；目标状态应改为远端 systemd/timer 管理 scan、local_prepare、jingting、auto-review shadow 和未来 gated uploader。
-- `AUTOSLICE_ENABLED` 与 dirty backlog 防护仍会让冷启动依赖人工确认；无人值守路线需要把这些情况转成明确的 `BLOCK`/`RETRY_INFRA`/自动隔离策略。
+- 远端 autoslice 代码与运行数据已经分目录，但 state/cache/out/reports 仍要按 manifest 与保留策略清理，不能批量盲删。
+- post-stream runner 已由远端 cron + flock + `DISABLED` kill switch 管理；监控仍需持续证明 heartbeat、录制输入、锁和 mount 的真实状态。
 - auto-review 仍是 shadow/no-upload；`is_publish_gate_satisfied()` 尚未接入真实上传器。
-- source-context executor 目前接收 agy/refined SRT 结果，但真实 source ASR、真实 agy 调度、歌词自动对齐、duplicate/PTS/title/cover artifact hash 还没有完整串进生产闭环。
+- 唯一可靠 LRC 身份的 sparse-ASR 歌曲已经能走 current-audio/AGY High 正证据、external-LRC burn、精确重渲染和 hash gate；无同步 LRC、身份歧义或 live arrangement 不匹配仍会 fail closed，不能宣称任意日语歌自动成功。
+- review-package audit 仍需继续扩充音频观察、波形/频谱和 approved-cover-style 的结构化检查；真实发布仍是单独授权面。
 - Bilibili 上传/编辑脚本属于 legacy/emergency path，不能重新成为正常流水线入口。
 
 ## 下一步工程路线
@@ -171,7 +174,8 @@ python3 -m pytest tests -q
 远端只读状态验证：
 
 ```bash
-ssh free 'cd /opt/bilive/app && git status --short --branch'
+ssh free 'cat /opt/bilive/autoslice/repo/DEPLOYED_COMMIT'
+ssh free 'test -f /opt/bilive/autoslice/DISABLED && echo paused || echo enabled'
 ssh free 'docker exec bilive_record sh -lc "ps -ef | grep -E \"src\\.upload\\.upload|src\\.upload\\.local_prepare|run_auto_review\" | grep -v grep || true"'
 ```
 

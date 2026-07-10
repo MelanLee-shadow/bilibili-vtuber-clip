@@ -1160,7 +1160,7 @@ def verified_song_fallback_title(song_title: str | None, hook: str | None) -> st
 
 def produce_song(date: str, item: dict) -> dict:
     """Song lane (Ivan 2026-07-05): cut a tight window around the sung anchor,
-    run the canonical song pipeline (netease LRC global-shift alignment + strict
+    run the canonical song pipeline (NetEase/LRCLIB global-shift alignment + strict
     completeness gate, fail-closed) and deliver only gate-passing results.
 
     Anchor-bleed guard (Ivan 2026-07-06): a recall song-anchor can begin dozens

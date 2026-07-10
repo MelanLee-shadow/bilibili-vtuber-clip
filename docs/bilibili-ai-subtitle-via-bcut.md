@@ -1,6 +1,6 @@
 # B站 AI 字幕原理 + 大厂免费 ASR 聚合方案（替代 whisper / agy 精听）
 
-日期：2026-07-04。一句话结论：**B站 AI 字幕引擎不开源、无法本地复刻，但它的同源免费接口（必剪）可以直接白嫖；再聚合剪映作备源，就能整体替代现在管线里的 whisper 和 agy 精听——中文准、时间轴毫秒级、几秒出全场。日语这些中文接口全部不可用。**
+日期：2026-07-04（2026-07-10 补充日语歌切边界）。一句话结论：**B站 AI 字幕引擎不开源、无法本地复刻，但它的同源免费接口（必剪）可以直接白嫖；再聚合剪映作备源，就能整体替代中文管线里的 whisper 和 agy 精听——中文准、时间轴毫秒级、几秒出全场。日语对话 ASR 仍无法用这些中文接口；日语歌切不以它们的唱歌转写为歌词真相，而走外部同步 LRC + 当前音频正证据。**
 
 脚本：`scripts/free_asr_client.py`（零第三方依赖，stdlib + ffmpeg，Mac / free 都跑通）。
 
@@ -95,7 +95,7 @@ python3 scripts/free_asr_client.py input.mp4 --provider jianying --srt out.srt
 - **选题/语义召回**：`run_full_session_selector_cpa_shadow.py --source-srt` 换成聚合 ASR 产物（30min 源段 17s 出全场，语义 lane 输入质量+时间锚点全面升级）。
 - **切片 daemon**：`gemini_slice_jingting.py` 的 `find_srt()` 消费 `<slice>.srt` / `subtitles/<base>.srt`，无 SRT 即 skip。在切片落地后先跑 `free_asr_client.py` 写出该 SRT 即接入；**agy 从"听音频定时间轴"降级为可选的纯文本词表纠错**（甚至可去掉，靠 jingting 的 CPA 词表纠错）。耗时从分钟-小时级 → 秒级。
 - **排版**：现有 ≤28 字/≤2 行逻辑不变；将来可用 JSON 逐字时间戳做精确断行。
-- **歌切**：bcut 对唱歌段稀疏且歌词多误听（B站站内对音乐行也特殊处理，字幕 JSON 有未文档化 `music` 字段）。**歌切字幕继续走 LRC 对齐流程，聚合 ASR 只作参考轨。**
+- **歌切**：bcut 对唱歌段稀疏且歌词多误听（B站站内对音乐行也特殊处理，字幕 JSON 有未文档化 `music` 字段）。**歌切字幕继续走 LRC 对齐流程，聚合 ASR 只作参考轨。** 2026-07-10 起，upstream song-lane seed 会穿过 tight/core/full selector；若 ASR 对齐不足但唯一 canonical LRC 身份成立，expanded full retry 才可用当前音频 + AGY High 建立 hash-bound 单一位移/五点/尾部证明。歧义、错版或证明失败仍阻断；这不等于日语 ASR 已修复。
 
 ---
 

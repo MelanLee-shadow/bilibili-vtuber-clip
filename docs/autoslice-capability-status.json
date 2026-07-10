@@ -1,49 +1,75 @@
 {
   "schema_version": "vtuber-slice-autoslice-capability-status.v1",
-  "updated_at": "2026-07-01T03:10:37Z",
-  "updated_by": "Hermes Agent",
+  "updated_at": "2026-07-10T04:17:47Z",
+  "updated_by": "Codex",
   "scope": "no-upload shadow/review automation; publishing still requires AUTO_UPLOAD manifest plus artifact hash gate",
   "capabilities": {
     "auto_song_slicing": {
-      "status": "selector_and_shadow_complete_no_upload",
-      "completed_at": "2026-07-01T03:10:37Z",
-      "summary": "Full-session song-like windows are now emitted as song anchors instead of filtered out. Song anchors request full-source song-boundary redo, and a song job with machine-readable full-song boundary plus lyrics alignment proof emits an AUTO_RECUT plan to the complete song range instead of accepting a truncated 60-90s anchor.",
+      "status": "selector_shadow_and_seeded_sparse_asr_audio_lrc_proof_no_upload",
+      "completed_at": "2026-07-10T04:04:16Z",
+      "summary": "Song candidates remain anchors, not final boundaries. An upstream song-lane anchor now survives tight/core/full selector attempts even when Japanese singing ASR is sparse or garbled. The expanded full retry can use a uniquely supported canonical LRC plus the current audio to mint hash-bound full-song proof; ambiguity or any failed proof invariant remains fail-closed. This is a no-upload review capability, not an upload grant.",
       "implemented_front_door": [
         "full-session selector classifies song-like windows as content_type_hint=song",
         "song candidates carry requires_full_source_song_boundary_redo=true",
-        "song source-context jobs cover the full source instead of only local pre/post context",
-        "song anchors use AUTO_RECUT with SONG_BOUNDARY_REDO_REQUIRED / SONG_FULL_SOURCE_REQUIRED until proof is available"
+        "free-session song-lane anchors seed every tight/core/full selector attempt instead of relying on a second semantic-recall classification",
+        "only the expanded full-source retry enables agy audio plus canonical-LRC alignment",
+        "lrc-provider=auto searches NetEase and LRCLIB and groups same-song provider variants before audio proof",
+        "song anchors remain incomplete until independent positive proof is available"
       ],
       "required_machine_evidence": [
         "song_boundary.status=FULL_SONG_READY",
         "lyrics_alignment.status=READY",
-        "external timed lyrics or equivalent source recorded",
-        "first/last lyric anchors recorded",
-        "spectrogram/waveform and/or Gemini 3.5 Flash alignment evidence recorded",
-        "final SRT/ASS, cover workflow, render/audit evidence recorded before finished/gold status"
+        "one sufficiently supported canonical LRC identity with provider and source URL recorded",
+        "current media, canonical LRC, prompt, raw observation, and run manifest bound by SHA-256",
+        "clean agy Gemini 3.5 Flash (High) run with every canonical line heard, one global shift, five named spot checks, and post-song boundary",
+        "external_lrc_global_shift subtitle, accurate rerender, passing render QA, and current SRT/burned-video hashes"
       ],
       "fail_closed_without": [
         "full-source song boundary",
-        "lyrics alignment readiness",
-        "complete song range"
+        "unique and sufficiently supported LRC identity",
+        "current-audio lyrics alignment readiness",
+        "complete hash-bound song range and render evidence"
       ],
       "code_paths": [
-        "src/autoslice/full_session_candidate_selector.py::select_full_session_candidates",
-        "src/autoslice/full_session_candidate_selector.py::FullSessionCandidate.to_source_context_job",
+        "scripts/free_session_autoslice.py::produce_song",
+        "scripts/run_full_session_selector_cpa_shadow.py::_seeded_song_candidate",
+        "src/autoslice/song_repair.py::attempt_song_repair",
+        "src/autoslice/agy_lrc_alignment.py::run_agy_audio_lrc_alignment",
         "scripts/run_auto_review_shadow_pipeline.py::_resolve_song_boundary",
-        "scripts/run_auto_review_shadow_pipeline.py::_apply_live_source_machine_evidence",
-        "scripts/run_auto_review_shadow_pipeline.py::_recut_plan_record"
+        "scripts/run_auto_review_shadow_pipeline.py::_apply_live_source_machine_evidence"
       ],
       "tests": [
-        "tests/test_full_session_candidate_selector.py::test_song_like_window_is_emitted_as_song_anchor_not_filtered_out",
-        "tests/test_full_session_candidate_selector.py::test_filters_open_loops_and_overlapping_duplicates_while_classifying_song_windows",
+        "tests/test_full_session_selector_cpa_shadow_runner.py::test_seeded_song_cli_bypasses_empty_semantic_recall",
+        "tests/test_free_session_autoslice.py::test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc",
+        "tests/test_song_repair.py::test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof",
+        "tests/test_song_repair.py::test_audio_lrc_alignment_mutations_fail_closed",
         "tests/test_auto_review_shadow_pipeline.py::test_live_source_song_window_blocks_without_full_song_proof",
         "tests/test_auto_review_shadow_pipeline.py::test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignment_proof_present"
       ],
-      "remaining_fail_closed_p1_not_claimed_complete": [
-        "automatic external LRC discovery/ingest in source_context_executor",
+      "live_acceptance": {
+        "run_id": "song_223019_166_mebukutoki_rerun_v4",
+        "deployed_commit": "1e8818c1ed457273c38697b54d4cc6dd4e79e4a0",
+        "post_acceptance_hardening_commit": "c847325ce43e7e3914e8921c3f27c1254a6beffa",
+        "report": "free:/opt/bilive/autoslice/reports/manual_rerun_2026-07-09_mebukutoki_v4.json",
+        "status": "ACCEPTED_NO_UPLOAD",
+        "result_status": "review_ready",
+        "decision": "AUTO_RECUT",
+        "reason_codes": [
+          "SONG_FULL_BOUNDARY_READY"
+        ],
+        "cover_release_gate_satisfied_in_selector_result": false,
+        "song": "yonige - 芽吹くとき",
+        "external_lrc": "https://lrclib.net/api/get/33542202",
+        "evidence": "25/25 canonical lines heard at confidence 0.95; matched ratio 1.0; one +17000ms shift; first/chorus/longest-gap/tail plus post-song talk 227000ms observed; repeated-section later recurrence supplemented at full-window 152910ms; accurate cut error 16ms",
+        "report_sha256": "bcf0500829d6802bc4d6397ea7b48c8ab79edc2d00656d766ecf314a63241e85",
+        "manual_no_upload": true,
+        "rerun_state_write": false,
+        "post_acceptance_state_repaired": true,
+        "runner_paused_at_acceptance": true
+      },
+      "remaining_fail_closed_not_claimed_complete": [
+        "automatic success for Japanese songs without a reliable unique synchronized-LRC identity",
         "automatic waveform/spectrogram artifact generation for song redo jobs",
-        "automatic Gemini 3.5 Flash chunk-probe artifact schema from executor",
         "review-package audit expansion for spectrogram/waveform/probe/approved-cover-style finished gates"
       ]
     },
@@ -65,7 +91,7 @@
   "non_goals": [
     "No automatic upload was enabled by this status file.",
     "No Bilibili publishing path may bypass AUTO_UPLOAD manifest and artifact hash gates.",
-    "This status does not claim every future live recording has been processed end-to-end; it records the implemented no-upload selector/shadow capability and its tests.",
-    "This status does not claim executor-side automatic LRC/spectrogram/Gemini-probe generation is complete; missing proof remains fail-closed."
+    "This status does not claim every future live recording or every Japanese song can be processed end-to-end; it records one accepted seeded sparse-ASR no-upload song rerun plus the implemented fail-closed contracts.",
+    "Missing or ambiguous synchronized lyrics, mismatching audio, malformed evidence, or failed render proof remains fail-closed."
   ]
 }

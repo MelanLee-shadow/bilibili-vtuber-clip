@@ -1,5 +1,7 @@
 # 李豆沙自动切片 Auto Review 架构方案
 
+> **当前状态纠正（2026-07-10）**：本文保留了 2026-06/07 分阶段建设记录；下文“日语歌词只有风险标记 / 自动 LRC 对齐未实现 / source-context 尚未串入歌词证明”等句子是当时的历史快照，不再代表现状。当前 song lane 会把 upstream seed anchor 带过 tight/core/full selector，`--lrc-provider auto` 使用 NetEase+LRCLIB；稀疏/乱码日语唱歌 ASR 在唯一 canonical LRC 身份成立后，可由 expanded full retry 对**当前音频 + canonical LRC**运行 hash-bound AGY High 正证据门。2026-07-10《芽吹くとき》v4 no-upload live rerun 已通过；精确证据见 `docs/reviews/2026-07-09-mebukutoki-lrc-repair.md` 和 `docs/autoslice-capability-status.md`。歧义/错版/无同步 LRC/证明或渲染失败仍 BLOCK；本能力不启用上传。
+
 生成时间：2026-06-25
 来源：本地代码/远端 `free` 实测 + ChatGPT Pro Extended consult（提交前和返回后均确认 visible composer mode 为 `Pro Extended`）。
 

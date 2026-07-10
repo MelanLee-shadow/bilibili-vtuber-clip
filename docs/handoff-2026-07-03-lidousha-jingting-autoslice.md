@@ -1,5 +1,7 @@
 # Handoff 2026-07-03：李豆沙 7/2 录播自动切片（含二次精听）——已跑完，结果在下
 
+> **SUPERSEDED / 历史证据，勿照抄命令**：本文保留 2026-07-03 当时的作业状态和失败复盘。尤其下方 NetEase-only、手工清目录/pkill、长段 AGY 与 no-upload acceptance 命令不再是当前运行手册。当前 song/LRC 权威请读 `.agent/skills/song-lyrics-timeline-aligner/SKILL.md`、`docs/spark/2026-06-30-future-live-e2e-runbook.md` 与 `docs/reviews/2026-07-09-mebukutoki-lrc-repair.md`。
+
 ## 2026-07-03 下午续篇：误诊纠正 + 工作流改造（语义召回 / 观众视角审查 / 分块精听）
 
 **重要纠正：歌类候选的 BLOCK 不是精听超时。** 本文下面"超过 50m/65min 时限"的说法是误诊。实际证据：free 上作业目录 `ssh-source-context.context-20260703-144249` 显示 agy 只跑了 ~14 分钟就 rc=0 退出，stdout/stderr 均 0 字节、没写 output.srt；错误文案是 `did not produce valid SRT`（超时路径的文案是 `did not finish within 65min`）。同目录原样重跑复现了同样的空输出——**30 分钟/1.2GB 全段输入对 agy (gemini-3.5-flash) 是确定性的静默空转**。这是已知 bug 家族：antigravity-cli#76（非 TTY 下 print 模式丢 stdout、exit 0）、gemini-cli#24290（只吐 thought token 时空响应+exit 0）、官方支持帖确认 >30min 视频不可靠。

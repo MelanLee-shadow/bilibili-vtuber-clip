@@ -26,6 +26,7 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
 2. Search for an external timed lyric source.
    - Prefer official captions, official/verified LRC, music-platform synced lyrics, or a trusted lyric site with explicit timestamps.
    - Use web search when local sources do not contain a credible timed lyric file.
+   - Search the clean song title first, including the original Japanese title/kana when available. Do not make a garbled singing-ASR transcript the only query. In the unattended runner, `--lrc-provider auto` queries both NetEase and LRCLIB, groups provider variants by normalized title+artist or identical full-LRC fingerprint, and prefers the canonical LRCLIB record when the identity is otherwise the same.
    - Save the source URL/path and the exact first and last lyric timestamps in evidence.
    - If only plain lyrics exist, do not claim exact timing. Use them only as text and manually align from audio.
 
@@ -66,6 +67,9 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
 
 8. Auto-slice integration contract (implemented in `src/autoslice/full_session_candidate_selector.py` and `scripts/run_auto_review_shadow_pipeline.py`).
    - Full-session selectors must emit song-like windows as song anchors (`content_type_hint=song`, `requires_full_source_song_boundary_redo=true`) instead of filtering them out as noise.
+   - When `scripts/free_session_autoslice.py` has already placed an item in the song lane, that upstream anchor is carried into every tight/core/full selector attempt with `--seed-song-candidate-id` plus clip-local `--seed-song-anchor-start-ms` / `--seed-song-anchor-end-ms`. Do not ask a nondeterministic semantic-recall pass to rediscover whether sparse or garbled Japanese ASR is a song. Only the expanded full-source retry may add `--agy-audio-lrc-align`; seeding preserves recall but never proves completeness.
+   - If ordinary lyric-to-ASR alignment is below threshold, audio escalation is allowed only after the candidates resolve to one sufficiently supported canonical song identity. Different-provider rows with the same normalized title+artist or the same complete LRC fingerprint count as one identity; ambiguous or weakly supported different songs must fail closed rather than being forced onto the audio.
+   - The audio fallback must inspect the current full proof window and canonical LRC in a sandboxed `agy` `Gemini 3.5 Flash (High)` run. Code, not the model, mints proof: source/LRC/prompt/raw-output/run-manifest hashes must bind; every canonical line must be affirmatively heard with confidence at least 0.8; starts must be strictly monotonic with at most 250 ms adjacent overlap; one global shift must explain every line within ±1500 ms; tempo drift needs separate stretch proof; and first line/chorus/repeated section/longest instrumental gap/tail plus post-song talk must be checked. When an exact lyric repeats, the repeated-section spot must bind a later audible recurrence, not the first occurrence. A malformed, mismatching, incomplete, or fallback-model observation remains blocked.
    - A song/live-source job must carry `song_boundary` evidence with `status = FULL_SONG_READY`, full-source clip bounds (`clip_start_ms`, `clip_end_ms`), first/last lyric anchors, and the accepted evidence source such as external LRC + chunked `Gemini 3.5 Flash` + spectrogram/waveform.
    - The same job must carry `lyrics_alignment.status = READY` with provider/model/source metadata. Without this proof, song candidates remain BLOCK/DROP; do not silently pass partial songs.
    - When the original candidate anchor starts in the middle of a song, auto-review must emit an `AUTO_RECUT` plan to the full-song range instead of treating the anchor range as final.
@@ -90,6 +94,7 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
 - Do not infer first lyric time from the start of the clip. In the `梦一场` case, the correct first lyric was around 19s, not 4.5s.
 - Do not fix only the first line and leave the rest on an ASR/interpolated timeline.
 - Do not use local ASR as lyric timing truth for singing. Singing with BGM often breaks speech ASR coverage and drift.
+- Do not interpret a failed Japanese singing-ASR transcript as proof that no timed lyrics exist, but also do not interpret a search hit as proof that the returned LRC is the performed song. Preserve the song anchor, establish a unique lyric identity, then require current-audio proof.
 - Do not stretch the whole song because one middle cue feels late. Verify first and last lyric anchors first.
 - Do not let a line remain visible across a long instrumental gap.
 - Do not burn a final video from default SRT styling. SRT is timing/text; burn style must come from the approved ASS style.

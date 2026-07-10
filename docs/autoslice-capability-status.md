@@ -1,6 +1,6 @@
 # Auto-slice capability status
 
-Updated: 2026-07-04 (aggregate-ASR subtitle substrate + CPA text-only correction)
+Updated: 2026-07-10 (seeded Japanese sparse-ASR song recall + hash-bound current-audio/LRC proof)
 
 Scope: no-upload selector/shadow/review automation. Public upload remains fail-closed and still requires an explicit `AUTO_UPLOAD` decision manifest plus artifact-hash gate.
 
@@ -133,55 +133,59 @@ Whole-session contexts (30 min / 1.2GB) deterministically return empty output fr
 - runs one agy call per chunk under a pseudo-TTY (`script -qec`), validates per-chunk timing, merges texts back onto the untouched draft timeline, re-validates,
 - retries each chunk at most once, and classifies failures as `AGY_EMPTY_OUTPUT` / `AGY_TIMEOUT` / `AGY_FAILED_RC` (`AgyRunnerError`) so the review evidence names the real failure.
 
-## Auto song slicing: selector + shadow path complete for no-upload
+## Auto song slicing: seeded sparse-ASR audio/LRC proof accepted for no-upload
 
-Status: `selector_and_shadow_complete_no_upload`
+Status: `selector_shadow_and_seeded_sparse_asr_audio_lrc_proof_no_upload`
 
-The pipeline now treats song candidates as source-context anchors, not final clip boundaries.
+Song candidates remain source-context anchors, not final clip boundaries. When `free_session_autoslice.py` has already put a window in the song lane, tight/core/full attempts now retain that upstream seed instead of asking a second nondeterministic semantic-recall pass to identify a song from sparse or garbled Japanese singing ASR. Only the expanded full retry may invoke current-audio + canonical-LRC proof.
 
 Implemented front door:
 
-- Full-session song-like windows are emitted as `content_type_hint = song` candidates instead of being filtered out.
-- Song candidates carry `requires_full_source_song_boundary_redo = true`.
-- Song source-context jobs cover the full source instead of only a local pre/post window.
-- Song anchors are marked `AUTO_RECUT` with `SONG_BOUNDARY_REDO_REQUIRED` / `SONG_FULL_SOURCE_REQUIRED` until full proof is available.
+- `--lrc-provider auto` searches NetEase and LRCLIB; clean quoted song titles and Japanese kana are valid queries.
+- Same-song provider variants are grouped by normalized title+artist or identical full-LRC fingerprint. Audio escalation requires one sufficiently supported identity; different-song ambiguity blocks.
+- Tight/core/full attempts receive `--seed-song-candidate-id` and clip-local seed bounds. A seed preserves recall only; it never mints completeness evidence.
+- The expanded full retry can use sandboxed `agy` `Gemini 3.5 Flash (High)` against the current media and selected canonical LRC.
 
 Required machine evidence before a song can be treated as complete:
 
-- `song_boundary.status = FULL_SONG_READY`
-- `lyrics_alignment.status = READY`
-- external timed lyric source or equivalent recorded
-- first/last lyric anchors recorded
-- spectrogram/waveform and/or `agy` `Gemini 3.5 Flash` alignment evidence recorded
-- final SRT/ASS, cover workflow, render/audit evidence recorded before any finished/gold status
+- `song_boundary.status = FULL_SONG_READY` and `lyrics_alignment.status = READY`.
+- Current media, canonical LRC, prompt, raw observation and run manifest are SHA-256 bound.
+- Every canonical LRC line is affirmatively heard at confidence `>=0.8`; starts are monotonic, adjacent overlap is bounded, and one global shift explains the whole performance without unproved stretch.
+- First line, chorus, repeated section, longest instrumental gap and tail are explicitly checked, with the first post-song talk boundary recorded.
+- The materialized recut uses `subtitle_source=external_lrc_global_shift`, accurate re-rendering, passing render QA and current SRT/burned-video hashes.
 
-Behavior:
+Live acceptance (2026-07-10):
 
-- If a song-like full-session window is found, selector emits a song anchor rather than dropping it.
-- If a song anchor starts in the middle of a song and full-song proof is present, auto-review emits an `AUTO_RECUT` plan to the full-song range.
-- If full-song boundary or lyrics alignment proof is missing, song candidates remain fail-closed as BLOCK/DROP/AUTO_RECUT-required; they do not become publishable.
-- Fixing subtitles inside a truncated 60-90s candidate is explicitly not enough.
+- Run `song_223019_166_mebukutoki_rerun_v4`, deployed commit `1e8818c1ed457273c38697b54d4cc6dd4e79e4a0`.
+- yonige《芽吹くとき》, LRCLIB `33542202`; 25/25 canonical lines heard at confidence `0.95`, matched ratio `1.0`, one `+17000ms` shift. First/chorus/longest-gap/tail and post-song talk `227000ms` are observed; the exact repeated lyric's later recurrence is supplementally bound at full-window `152910ms` (LRC index 17), and the hardened validator now rejects a repeated-section point that only hits the first occurrence.
+- Accurate cut error `16ms <= 100ms`; result `review_ready`, decision `AUTO_RECUT` / `SONG_FULL_BOUNDARY_READY`, selector `cover_release_gate_satisfied=false`, `manual_no_upload=true`, rerun `state_write=false`.
+- Final acceptance `ACCEPTED_NO_UPLOAD`; report `free:/opt/bilive/autoslice/reports/manual_rerun_2026-07-09_mebukutoki_v4.json`, SHA-256 `bcf0500829d6802bc4d6397ea7b48c8ab79edc2d00656d766ecf314a63241e85`. State was repaired only after acceptance; `/opt/bilive/autoslice/DISABLED` was still present at acceptance readback, so the scheduled runner remained paused.
+- v4 itself ran on `1e8818c`; the later-recurrence validator/prompt and report-field hardening were subsequently deployed in `c847325ce43e7e3914e8921c3f27c1254a6beffa`. Deployment verification: focused `70 passed`, full suite `382 passed`; this documentation pass independently reran the narrow sparse-Japanese/audio-LRC mutation subset (`6 passed`).
+
+This acceptance proves the seeded sparse-ASR recovery path on one real 李豆沙 Japanese song rerun. It does **not** claim every Japanese song succeeds: missing synchronized lyrics, an ambiguous or mismatching song/version, malformed/hash-unbound audio observations, incomplete lines, non-single-shift timing, or failed render proof remains fail-closed. It also does not enable upload.
 
 Code paths:
 
-- `src/autoslice/full_session_candidate_selector.py::select_full_session_candidates`
-- `src/autoslice/full_session_candidate_selector.py::FullSessionCandidate.to_source_context_job`
+- `scripts/free_session_autoslice.py::produce_song`
+- `scripts/run_full_session_selector_cpa_shadow.py::_seeded_song_candidate`
+- `src/autoslice/song_repair.py::attempt_song_repair`
+- `src/autoslice/agy_lrc_alignment.py::run_agy_audio_lrc_alignment`
 - `scripts/run_auto_review_shadow_pipeline.py::_resolve_song_boundary`
 - `scripts/run_auto_review_shadow_pipeline.py::_apply_live_source_machine_evidence`
-- `scripts/run_auto_review_shadow_pipeline.py::_recut_plan_record`
 
 Regression tests:
 
-- `tests/test_full_session_candidate_selector.py::test_song_like_window_is_emitted_as_song_anchor_not_filtered_out`
-- `tests/test_full_session_candidate_selector.py::test_filters_open_loops_and_overlapping_duplicates_while_classifying_song_windows`
+- `tests/test_full_session_selector_cpa_shadow_runner.py::test_seeded_song_cli_bypasses_empty_semantic_recall`
+- `tests/test_free_session_autoslice.py::test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc`
+- `tests/test_song_repair.py::test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof`
+- `tests/test_song_repair.py::test_audio_lrc_alignment_mutations_fail_closed`
 - `tests/test_auto_review_shadow_pipeline.py::test_live_source_song_window_blocks_without_full_song_proof`
 - `tests/test_auto_review_shadow_pipeline.py::test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignment_proof_present`
 
-Still not claimed complete; these remain fail-closed P1/P2 work:
+Still not claimed complete:
 
-- ~~automatic external LRC discovery/ingest~~ — done 2026-07-03 in the repair-first stage (`src/autoslice/song_repair.py`: netease provider + LLM song-hint + monotonic DP alignment + single-global-shift completeness gate; validated on a real live full song, see `reports/live-song-test/20260703-010424-room362064/OPEN_ME.md`). Song lyric timing contract: burned timeline is LRC + verified global shift (`subtitle_source=external_lrc_global_shift`), song recuts always accurately re-encoded.
+- automatic success for Japanese songs without a reliable unique synchronized-LRC identity
 - automatic waveform/spectrogram artifact generation for song redo jobs
-- automatic Gemini 3.5 Flash chunk-probe artifact schema from executor
 - review-package audit expansion for spectrogram/waveform/probe/approved-cover-style finished gates
 
 ## Auto talk slicing: full-session fallback connected

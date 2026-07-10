@@ -3,6 +3,42 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-10（续）：《芽吹くとき》生产重跑验收 + 日语稀疏 ASR/LRC 路线上线
+
+> 本节是 7/9 歌切事故与当前 runner 运行态的最新权威；下方“尚未部署”、旧 probe 时间和《ただそばにいて》相关段落只保留为历史记录。
+
+### 目标
+
+按 Ivan 授权把日语歌不应因乱码/稀疏 ASR 丢失的修复正式部署到 `free:/opt/bilive/autoslice/repo`，从同一条 7/9 原始录播重跑真实歌切，校验 LRC、当前音频、完整边界、字幕、渲染、封面、state 和定时 runner；本轮没有 B 站上传授权。
+
+### 已完成
+
+- **真实重跑已验收**：v1–v3 均因缺证据安全阻断；v4 `song_223019_166_mebukutoki_rerun_v4` 在原始段 `22966160_2026-07-09-22-30-19-.mp4` 上确认 yonige《芽吹くとき》，最终 `final_acceptance.status=ACCEPTED_NO_UPLOAD`。原始 selector 结果仍诚实保留 `status=review_ready`、`decision=AUTO_RECUT`、`reason_codes=[SONG_FULL_BOUNDARY_READY]`、`cover_release_gate_satisfied=false`，不是 `AUTO_UPLOAD`。
+- **LRC + 当前音频正证据**：canonical timed LRC 为 LRCLIB `https://lrclib.net/api/get/33542202`；sandboxed AGY `Gemini 3.5 Flash (High)` 无 fallback，25/25 行均 heard、最低 confidence `0.95`、matched ratio `1.0`、唯一 global shift `+17000ms`、无需 stretch。v4 在原始录播绝对时间轴上的权威点是：LRC zero `138.220s`、首句 `145.920s`、末句结束 `343.220s`、post-song talk/切点 `348.220s`。
+- **重复段审计缺口已闭环**：原 raw 的 `repeated_section=53790ms` 误指首次出现，但 25/25 observations 已独立覆盖真正复现。manual report 已补 index `17` / full-window `152910ms` / source absolute `274130ms`，当前 report SHA-256 `bcf0500829d6802bc4d6397ea7b48c8ab79edc2d00656d766ecf314a63241e85`；原 raw 与其 SHA 不改。后续 validator/prompt 已要求 exact repeated lyric 必须绑定 later recurrence，错误首现点 fail closed；alignment report 也会直接携带 spot checks 与 post-song talk。
+- **成片与字幕通过**：210.000s、1920x1080 H.264/AAC，sample-accurate cut error `16ms <= 100ms`，烧录前后 decoded PCM MD5 相同；25 条 SRT 与 canonical LRC 一致、单调且不重叠，首句/间奏/尾句抽帧无 tofu。MP4 SHA `759bb74fa3b31f663b40547c7b45a96bec606d1470764d8eea9c3b2c97a04bee`，SRT SHA `e89a1b6d1dda509bbc44ff95ffa7d40d17761076dbc49b217e8ae91b11dcb789`，alignment report SHA `d2daa6f4ea007e587c0a99c34bce2d117bdce16f606e4db0df2b9cf8854a6c2e`，recut manifest SHA `0c17e3ad9622c2d9f99a63104bfc9ef84370574812d0180e0f6e4effc5900b7a`。
+- **标题/封面通过 no-upload 审片门**：标题为 `【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌`；selector gate 后单独用项目正规 `gpt-image-2 images.edit` / `song-clean` 流程生成封面，fallback=false，1920x1080，文案 `《芽吹くとき》｜下播前的温柔哄睡小歌`，实看通过，SHA `7ee06854118b08f573111000f766f0b22ee2d078a9f9b8a576b77ee058f8ba17`。这不把 package 提升成 publish-ready。
+- **控制面已修复**：验收后才备份并原子替换 7/9 state 中旧假绿记录，保留原逻辑 candidate id、另记 rerun id；旧错误 MP4/cover 已移入远端 `_quarantine/false-green-song_223019_166-20260710T040416Z`，本地镜像移入 `_superseded/`。当前 state SHA `0115c631d81d9f0bc7b3b990d9d0a20ed99e8aa57090935dea6a799b4a3f628c`，summary SHA `d5f051804a61a8e67005aa16f6ed1703504f52820ef0f1ec93b1ed512e310b89`，摘要当前显示《芽吹くとき》。
+- **流水线已正式部署并验证**：v4 本身运行在 `1e8818c`；hardening commit `c847325ce43e7e3914e8921c3f27c1254a6beffa` 先经 `scripts/deploy_free_autoslice.sh` 正式部署，本节所在的最终 clean HEAD 随后由同一脚本同步，远端 `DEPLOYED_COMMIT` 指向该收尾提交；runner/song-repair/AGY 等运行文件 SHA-256 与对应干净 commit 快照一致。聚焦回归 `70 passed`，全套 `382 passed`；独立 acceptance reviewer 与 docs challenger 均无剩余 P0/P1。
+- **不是“所有日语歌强行过”**：tight/core/full 均保留 upstream song seed 并使用 `--lrc-provider auto`（NetEase + LRCLIB）；只有 expanded full retry 可额外启用当前音频证明。日语/kana 不再因 ASR 乱码直接丢歌；但无唯一可靠同步 LRC、身份/版本歧义、音频或 hash 证明失败、非单一位移、渲染失败时仍 fail closed。
+- **文档已同步更新**：项目歌词 skill、song finished workflow、canonical E2E runbook、capability MD/JSON、事故/live acceptance review、remote-first/architecture/Bcut 边界说明、README 与 AGENTS source-of-truth 均已修正；旧 dated plan/handoff 仅加 `SUPERSEDED` banner，避免重写历史。
+- **runner 已恢复**：本轮临时 `DISABLED` 于 `2026-07-10 04:19Z` 在 runner lock 下移除；04:20 UTC 的真实 cron tick 成功。最终部署后又按同一 cron 命令手动跑了一次 04:25 smoke tick，两次均输出 `live=False ... 2026-07-09:review_ready`，state/summary SHA 未漂移，锁已释放。没有 `.publish.json` / `AUTO_UPLOAD` / uploader 进程，`upload_enabled=false`。
+
+### 进行中（含后台进程）
+
+- 无会话遗留进程。只有既有 cron `*/10` + flock 定时 runner 正常启用；04:20 tick 后没有常驻 runner，也没有上传器。
+
+### 阻塞
+
+- 无代码、部署或 no-upload review blocker。公开视频仍缺 Ivan 对这条具体成片的逐条上传授权；在此之前不得生成/执行 `AUTO_UPLOAD` manifest。
+- “所有日语歌必成功”不是目标：同步 LRC 缺失、身份歧义或现场改编与 canonical LRC 不符会按设计阻断，需要新增可靠来源或人工复核，不能降门伪绿。
+
+### 下一步
+
+1. Ivan 可直接审本地 `lidousha/2026-07-09/歌切_【李豆沙】豆沙歌，《芽吹くとき.mp4`、同前缀 `.cover.png` / `.srt` / `.manual-rerun-report.json`；远端 package 与本地关键 SHA 一致。
+2. 若 Ivan 明确授权发布，再单独冻结视频/封面/标题 hash，生成 `AUTO_UPLOAD` manifest 并走幂等 uploader；本次完成本身不构成上传授权。
+3. 后续普通 post-stream session 继续由 cron 无人值守运行；若遇无可靠 LRC/歧义/音频证据失败，应保留明确 blocker，不回退为 ASR 歌词假绿。
+
 ## 2026-07-10：Ivan 审片点名执行（7 补产＋3 改标题＋淘汰）+ CPA 默认模型切 gpt-5.6
 
 ### 目标
