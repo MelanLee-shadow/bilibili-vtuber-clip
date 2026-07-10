@@ -153,10 +153,10 @@ Required machine evidence before a song can be treated as complete:
 - Current media, canonical LRC, prompt, raw observation and run manifest are SHA-256 bound.
 - Every canonical LRC line is affirmatively heard at confidence `>=0.8`; starts are monotonic, adjacent overlap is bounded, and one global shift explains the whole performance without unproved stretch.
 - First line, chorus, repeated section, longest instrumental gap and tail are explicitly checked, with the first post-song talk boundary recorded.
-- AGY v2 is a hard live-performance veto, separate from lyric alignment. It must report `LIVE_STREAMER_SINGING`, confidence `>=0.85`, `continuous_singing=true`, `background_recording_likelihood<=0.20`, and exactly three specific observations covering lyric head/middle/tail. Original/background playback, another singer, streamer speech over music, ambiguity, or malformed evidence blocks.
+- AGY v3 is a hard same-subject live-performance veto, separate from lyric alignment. Besides `LIVE_STREAMER_SINGING`, confidence `>=0.85`, continuous singing, background-recording likelihood `<=0.20`, and exact head/middle/tail observations, every heard canonical-LRC row must identify `LIDOUSHA` as `SINGING_THIS_LYRIC` from the same live vocal source. Guest/duet/harmony, original/background playback, offscreen/static replay, another singer, Li Dousha speech over music, ambiguity, a missing row field, or raw/report disagreement blocks.
 - CAM++ then makes the narrower `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS` subclaim. A 4–8s post-song speech anchor must first match the three pinned Li Dousha enrollments at median `>=0.60`. Seven distinct actual aligned lyric cues of duration `>=2.5s` are sampled for 2.5–4s; each pass requires both the three-enrollment median `>=0.31` and same-session-anchor score `>=0.31`. At least 5/7 and head/middle/tail coverage are required.
 - Only the AGY-live AND CAM++-identity result is named `VERIFIED_LIDOUSHA_SINGING`. A CAM++ match alone is not a singing classifier and cannot override AGY's background/speech-over-music veto.
-- The runner verifies source/alignment/profile/model/reference/session-anchor/checkpoint hashes and recomputes the recorded medians, threshold decisions, and bucket coverage. It does not rerun CAM++ inference; this is fail-closed artifact verification, not a second ML opinion or a formal identity proof.
+- The runner verifies source/alignment/profile/model/reference/session-anchor/checkpoint hashes, rejects reused decoded PCM across checkpoints, recomputes recorded medians/thresholds/bucket coverage, and compares the AGY v3 raw/report row-level singer assertions. It does not rerun CAM++ inference; this is fail-closed artifact verification, not a second ML opinion or a formal identity proof.
 - The materialized recut uses `subtitle_source=external_lrc_global_shift`, accurate re-rendering, passing render QA and current SRT/burned-video hashes.
 
 Corrected negative acceptance (2026-07-10):
@@ -190,7 +190,7 @@ Regression tests:
 Still not claimed complete:
 
 - automatic success for Japanese songs without a reliable unique synchronized-LRC identity
-- exhaustive guest/other-singer ROC calibration or a formal performer proof
+- exhaustive real-media guest/duet/other-singer ROC calibration or a formal performer proof
 - joint-gate production deployment and fresh negative-case state repair (pending live acceptance)
 - automatic waveform/spectrogram artifact generation for song redo jobs
 - review-package audit expansion for spectrogram/waveform/probe/approved-cover-style finished gates

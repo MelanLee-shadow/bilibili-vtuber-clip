@@ -7,7 +7,7 @@
 > 改为 `BLOCK / SONG_BACKGROUND_PLAYBACK_ONLY`。旧 hash/LRC 记录仅保留为
 > 事故取证，不得作为正例或重新交付依据。
 >
-> 本文现记录的 AGY v2 + CAM++ 联合门是源码修复契约；在新 commit
+> 本文现记录的 AGY v3 + CAM++ 联合门是源码修复契约；在新 commit
 > 正式部署、fresh 重跑与 7/9 state/report 修复读回前，不得写成生产已验收。
 
 ## 演唱者身份漏门的纠正
@@ -15,7 +15,7 @@
 - 根因：AGY/LRC 层只问每句歌词是否 audible；25/25 `heard=true` 当然也会被原唱录音满足。shadow 随后把 LRC 时长直接写成 `foreground_song_overlap_seconds` 并置 `song_complete=true`，runner 既没有“是否现场唱”硬否决，也没有主播声纹门。
 - 负例证据：整段是固定的 goodbye/end-card 画面；直播告别后开始播放歌曲，结束后主播才恢复说话。旧 `+17000ms` 全局位移只证明原曲播放完整。
 - 新联合硬门：
-  1. AGY v2 先作现场演唱否决：必须是 `LIVE_STREAMER_SINGING`、confidence `>=0.85`、`continuous_singing=true`、`background_recording_likelihood<=0.20`，且有严格覆盖歌词头/中/尾的三个具体观察。原唱/背景播放、其他歌手、音乐上说话或不确定一律 BLOCK。
+  1. AGY v3 先作同主体现场演唱否决：除 `LIVE_STREAMER_SINGING`、confidence `>=0.85`、连续演唱、低背景录音概率和头/中/尾观察外，每条 heard canonical-LRC 行都必须声明李豆沙本人正在唱该行、属于同一现场声源，且逐行与聚合均无其他歌手/和声、无预录/回放人声。原唱/背景播放、guest/duet/harmony、其他歌手、offscreen/static replay、音乐上说话、不确定、缺字段或 raw/report 不一致一律 BLOCK。
   2. `src/autoslice/host_vocal_proof.py` 再生成 CAM++ 身份子证明：4–8 秒 post-song 主播说话锚点对三份 pinned enroll 的中位数必须 `>=0.60`；七个互不相同的实际 LRC cue 每个至少 2.5 秒，取中央 2.5–4 秒，同时要求 enroll 中位数 `>=0.31` 且对同会话主播锚点 `>=0.31`；至少 5/7 且头/中/尾均覆盖。这一层只能声明 `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`。
   3. 只有两者 AND 才可产生 `VERIFIED_LIDOUSHA_SINGING`。CAM++ 命中本身不是歌唱分类器，不能推翻 AGY 的背景播放/说话+BGM 否决。
 - 验证边界：runner 复核 source/alignment/profile/model/reference/session-anchor/checkpoint 的 hash 绑定，并重算已记录分数的中位数、门槛与分布；它不重跑 CAM++ 推理，不得宣传成第二个 ML 判定或形式化身份证明。
@@ -78,7 +78,7 @@ SHA-256：
 
 1. `song_boundary.status == FULL_SONG_READY`，且 `clip_start <= nominal_lrc_zero <= first_lyric <= last_lyric <= clip_end`。
 2. `lyrics_alignment.status == READY`，provider/source/model/offset/report SHA 齐全。
-3. 同一 hash-bound AGY v2 raw/report 通过 `LIVE_STREAMER_SINGING`、confidence `>=0.85`、连续演唱、背景录音概率 `<=0.20` 与头/中/尾三点证据；任一非现场 mode 硬否决。
+3. 同一 hash-bound AGY v3 raw/report 除通过 `LIVE_STREAMER_SINGING`、confidence `>=0.85`、连续演唱、背景录音概率 `<=0.20` 与头/中/尾三点证据外，还必须逐行证明李豆沙本人正在唱该歌词、同一现场声源、无其他歌手/和声、无预录/回放；任一非现场 mode、缺字段或 raw/report 分歧硬否决。
 4. `host_vocal_proof.status == READY` 且 `decision == LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`，post-song anchor 与七个 line-local checkpoint 满足 0.60 / 0.31 / 5-of-7 / 三桶覆盖，所有绑定与记录分数重算通过。
 5. runner 产生 `joint_singing_decision == VERIFIED_LIDOUSHA_SINGING`；不得用单独 AGY、CAM++ 或人工听感代写这个字段。
 6. alignment report schema 为 `lyrics-alignment-report.v1`，25 条 LRC 时间轴单调非空，匹配率至少 55%，内容与 summary 互相一致。

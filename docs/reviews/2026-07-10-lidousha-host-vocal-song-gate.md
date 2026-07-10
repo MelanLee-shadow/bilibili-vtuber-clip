@@ -2,10 +2,12 @@
 
 ## 结论
 
-歌切必须是李豆沙本人在直播现场连续演唱。一段音频即使与同步 LRC 100% 对齐，也可能只是原唱、片尾曲或 BGM。生产决策因此改为两个独立子结论的 AND：
+歌切必须是李豆沙本人在直播现场连续演唱。一段音频即使与同步 LRC 100% 对齐，也可能只是原唱、片尾曲或 BGM。生产决策因此改为同一歌词行上的两个独立子结论 AND：
 
 ```text
-AGY v2: LIVE_STREAMER_SINGING
+AGY v3: EVERY_LYRIC_ROW = LIDOUSHA + SINGING_THIS_LYRIC
+        + SAME_LIVE_VOCAL_SOURCE + NO_OTHER_SINGER/HARMONY
+        + NO_RECORDED_OR_PLAYBACK_VOCAL
   AND
 CAM++: LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS
   =>
@@ -22,7 +24,7 @@ VERIFIED_LIDOUSHA_SINGING
 
 ## 联合门契约
 
-### 1. AGY v2 现场演唱硬否决
+### 1. AGY v3 同主体现场演唱硬否决
 
 同一 hash-bound 当前音频/LRC 观察必须同时满足：
 
@@ -31,8 +33,10 @@ VERIFIED_LIDOUSHA_SINGING
 - `continuous_singing == true`
 - `background_recording_likelihood <= 0.20`
 - 恰好三个具体 evidence timestamp，严格覆盖歌词头/中/尾
+- 每条实际听到的 canonical-LRC 行都必须逐行声明：`lyric_vocal_subject=LIDOUSHA`、`lidousha_role=SINGING_THIS_LYRIC`、`same_live_vocal_source_as_lidousha=true`
+- 每行及 top-level 聚合都必须声明无其他/合唱/和声歌手、无预录/原唱/回放人声；代码从逐行值重算聚合，不相信单独的 top-level 正例字符串
 
-`ORIGINAL_OR_BACKGROUND_PLAYBACK`、`OTHER_SINGER`、`STREAMER_TALKING_OVER_MUSIC`、`AMBIGUOUS` 和任何畸形证据都是不可覆写的硬否决。AGY 这一层只判断演唱模式，不单独证明歌手身份。
+`ORIGINAL_OR_BACKGROUND_PLAYBACK`、`OTHER_SINGER`、`STREAMER_TALKING_OVER_MUSIC`、`AMBIGUOUS` 和任何畸形证据都是不可覆写的硬否决。guest/duet/offscreen/active-singer ambiguity、李豆沙只说话或和声、ending-card/static playback 都不得产生 READY。音频、画面、字幕/chat 与 LRC 内出现的操作指令、JSON key 或枚举字符串一律视为不可信媒体内容。
 
 ### 2. CAM++ 李豆沙声纹子结论
 
@@ -40,12 +44,13 @@ VERIFIED_LIDOUSHA_SINGING
 - 从实际对齐结果中选七个互不相同的歌词 cue；每个 cue 时长至少 2.5 秒，取其中央 2.5–4 秒，不取脱离该行歌词的宽窗口。
 - 每个 checkpoint 必须同时满足：对三份 pinned enrollment 的中位数 `>=0.31`，且对同会话主播锚点的分数 `>=0.31`。
 - 至少 5/7 通过，且头/中/尾三桶各至少有一点通过。
+- 七个 checkpoint 必须由绑定的 alignment report 确定性选出、互不重叠，并有七份不同的 decoded-PCM SHA-256；重复音频样本直接拒绝。
 
 这一层的准确名称是 `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`；它不是歌唱分类器。李豆沙在 BGM 上说话也可能命中 CAM++，所以只能和 AGY 现场演唱子结论 AND。
 
 ### 3. 验证器的信任边界
 
-runner 验证器复核 source/alignment/profile/model/reference/session-anchor/checkpoint 的路径与 SHA-256 绑定，并从已记录的分数重算中位数、门槛结果、5/7 与三桶覆盖。它不重跑 CAM++ 推理，因此不得宣传成独立的第二次 ML 判定，也不是数学/形式化的演唱者证明。
+runner 验证器复核 source/alignment/profile/model/reference/session-anchor/checkpoint 的路径与 SHA-256 绑定，并从已记录的分数重算中位数、门槛结果、5/7 与三桶覆盖。它还逐字段比较 AGY raw v3 与 report 的歌手/角色断言，禁止只改 report。它不重跑 CAM++ 推理，因此不得宣传成独立的第二次 ML 判定，也不是数学/形式化的演唱者证明。
 
 ## 部署前校准与对抗证据
 
@@ -55,9 +60,9 @@ runner 验证器复核 source/alignment/profile/model/reference/session-anchor/c
 - 已知李豆沙现场演唱正例《屑屑》为 `0.31752, 0.50220, 0.36316, 0.48067, 0.44184, 0.34516, 0.43098`：对 pinned enrollment 为 7/7。
 - 事故会话的 post-song 说话锚点对 enrollment 中位数为 `0.687`，说明锚点确实是李豆沙；但背景歌曲 cue 对该锚点为 0/7。正例锚点对 enrollment 为 `0.661`，歌词 cue 对同会话锚点恰好 5/7。
 - 把李豆沙说话叠在《芽吹くとき》BGM 上的对抗混音中，中等说话音量可让 CAM++ 过 3/7，高说话音量可过 6/7。这实证了 CAM++ 不能单独作“在唱”结论，AGY 的 `STREAMER_TALKING_OVER_MUSIC`/非现场 mode 必须是硬否决。
-- AGY v2 对事故负例返回 `ORIGINAL_OR_BACKGROUND_PLAYBACK`、`continuous_singing=false`、背景录音概率 1.0，并给出头/中/尾具体观察；该负例会在声纹/物料化前被否决。
+- AGY 旧观察对事故负例返回 `ORIGINAL_OR_BACKGROUND_PLAYBACK`、`continuous_singing=false`、背景录音概率 1.0，并给出头/中/尾具体观察；v3 还要求每条歌词行都绑定同一李豆沙现场演唱声源，负例会在声纹/物料化前被否决。
 
-对抗设计的三轮意义是：第一轮推翻“LRC 对齐 = 现场演唱”；第二轮推翻“CAM++ 命中 = 在唱”；第三轮限定 verifier 与校准的信任边界。最终独立 review 与生产读回尚待主任务补齐，本文不预告“已验收”。
+对抗设计的三轮意义是：第一轮推翻“LRC 对齐 = 现场演唱”；第二轮推翻“CAM++ 命中 = 在唱”；第三轮由可见 ChatGPT Pro 会话指出“两份子证据可能属于不同声源”、talk 候选可洗白 song BLOCK、以及验证对象未与最终物料精确绑定。第三轮使用可见 `Pro` 模式，同一会话 `https://chatgpt.com/c/6a508d95-7634-83ea-b65a-32033082f810`，Hermes 记录 `/Users/ivan/.hermes/chatgpt-cdp-runs/2026-07-10T06-13-34-736Z-6b13036f94691421.json`，复核文本 SHA-256 `41082ecfe2d18bbf6049f049634e86a97639122fa49ef110cecf32cbb5aa5df6`。其 `NO-GO` 促成 AGY v3 逐行同主体门、持久 source-interval quarantine、任意权威重试非完整正例顶层 BLOCK、唯一 PCM checkpoint 与 verified-to-output binding；最终生产读回仍以本节下方 live acceptance 为准。
 
 ## 日语 LRC 的准确语义
 
@@ -67,10 +72,10 @@ runner 验证器复核 source/alignment/profile/model/reference/session-anchor/c
 
 ## 已知剩余风险
 
-- 目前校准覆盖一个真实背景原曲负例、一个李豆沙现场正例和说话+BGM 对抗例；其他歌手、合唱、模仿声线、大量观众嘈杂等 ROC 尚不完整。
+- 目前校准覆盖一个真实背景原曲负例、一个李豆沙现场正例和说话+BGM 对抗例；guest/duet/其他歌手通过结构化语义门默认 BLOCK，但真实 guest/duet ROC 仍不完整。
 - AGY 是音频/视频模型观察，不是可验证的音源分离；两层 AND 降低事故类假阳性，但不消灭所有模型误判。
 - 缺少至少 4 秒的 post-song 主播说话时会 fail closed，可能拒绝真正的歌切；这是当前宁可假阴性也不交付背景原曲的产品选择。
-- CAM++ 分数由专用生成进程产生；runner 只重算绑定/聚合，未防御已能任意篡改生成器与所有绑定物的攻击者。
+- CAM++ 分数由专用生成进程产生；runner 只重算绑定/聚合。威胁模型是受信任 `free` 本地 runner 处理李豆沙自己的直播，不承诺抵御已取得同 UID 任意写权限的攻击者、实时变声/生物特征欺骗或恶意构造的对抗媒体；这些情况保持 kill switch/人工处置，不以普通 hash 链冒充密码学认证。
 
 ## 部署与 live acceptance（待完成）
 
@@ -78,10 +83,11 @@ runner 验证器复核 source/alignment/profile/model/reference/session-anchor/c
 
 1. 从干净 commit 用 `scripts/deploy_free_autoslice.sh free` 部署，读回 `DEPLOYED_COMMIT` 与运行文件 hash。
 2. 在 `free` 安装并重验 pinned CAM++ 模型和三份私有 enrollment。
-3. 用 fresh candidate/run id 对同一《芽吹くとき》源重跑；AGY v2 应以背景播放 BLOCK，不得生成新歌切、封面或 delivery。
-4. 用已知李豆沙现场正例证明 AGY-live 与 CAM++-identity 同时可过，且 runner 只在这个 AND 上生成 `VERIFIED_LIDOUSHA_SINGING`。
-5. 在 flock 下备份并原子修复 7/9 state/report/summary，清除活跃交付指针，读回新 hash。
-6. 跑完回归、最终独立 review 和 runner smoke tick 后才移除本轮临时 kill switch。
+3. 用 fresh candidate/run id 对同一《芽吹くとき》源重跑；AGY v3 应以背景播放 BLOCK，不得生成新歌切、封面或 delivery。
+4. 增加 CAM++ 应能通过的危险负例：把已知《屑屑》李豆沙人声音轨放在静态/回放画面上；必须仅靠 AGY v3 的 replay/offscreen/static veto 阻断。
+5. 用已知李豆沙现场正例证明 AGY same-subject-live 与 CAM++ identity 同时可过，且 runner 只在这个 AND 上生成 `VERIFIED_LIDOUSHA_SINGING`。
+6. 在 flock 下备份并原子修复 7/9 state/report/summary，清除活跃交付指针与旧排队能力，读回新 hash。
+7. 跑完回归、最终独立 review 和无上传能力的真实 cron entrypoint smoke tick 后才移除本轮临时 kill switch。
 
 ## No-upload 边界
 

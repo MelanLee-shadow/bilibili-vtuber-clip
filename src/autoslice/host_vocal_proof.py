@@ -564,6 +564,10 @@ def generate_host_vocal_proof(
             }
         )
 
+    checkpoint_pcm_hashes = [str(checkpoint["sample_sha256"]) for checkpoint in checkpoints]
+    if len(set(checkpoint_pcm_hashes)) != len(checkpoint_pcm_hashes):
+        raise HostVocalProofError("host-vocal checkpoints must contain seven distinct PCM samples")
+
     status, decision, distribution = _decision_from_checkpoints(checkpoints)
     proof: dict[str, object] = {
         "schema_version": PROOF_SCHEMA_VERSION,
@@ -743,6 +747,7 @@ def _verify_host_vocal_proof_claim(
     if not isinstance(raw_checkpoints, list) or len(raw_checkpoints) != len(CHECKPOINT_FRACTIONS):
         raise HostVocalProofError(f"host vocal proof must contain exactly {len(CHECKPOINT_FRACTIONS)} checkpoints")
     checked_checkpoints: list[dict[str, object]] = []
+    checked_sample_hashes: set[str] = set()
     checkpoint_root = proof_path.parent / f"{proof_path.stem}.checkpoints"
     raw_session_anchor = proof.get("session_host_anchor")
     if not isinstance(raw_session_anchor, Mapping):
@@ -817,6 +822,9 @@ def _verify_host_vocal_proof_claim(
         sample_sha = _normalize_sha256(raw_checkpoint.get("sample_sha256"), label=f"checkpoint[{index}].sample")
         if _sha256_file(sample_path) != sample_sha:
             raise HostVocalProofError(f"checkpoint[{index}] sample sha256 mismatch")
+        if sample_sha in checked_sample_hashes:
+            raise HostVocalProofError("host-vocal checkpoints reuse decoded PCM")
+        checked_sample_hashes.add(sample_sha)
         raw_scores = raw_checkpoint.get("scores")
         if not isinstance(raw_scores, list) or len(raw_scores) != EXPECTED_REFERENCE_COUNT:
             raise HostVocalProofError(f"checkpoint[{index}] must contain exactly {EXPECTED_REFERENCE_COUNT} scores")

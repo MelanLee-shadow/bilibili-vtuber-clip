@@ -91,7 +91,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
-from src.autoslice.song_repair import live_performance_failure_reason_codes, validate_live_performance_observation
+from src.autoslice.song_repair import (
+    AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+    LYRIC_VOCAL_ASSERTION_KEYS,
+    live_performance_failure_reason_codes,
+    validate_live_performance_observation,
+)
 
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 ROOM = os.environ.get("AUTOSLICE_ROOM", "22966160")
@@ -841,6 +846,8 @@ def song_delivery_artifacts(record: dict) -> dict:
             out["subtitle_sha256"] = str(recut_hashes["subtitle_sha256"])
     if recut.get("manifest_path"):
         out["recut_manifest_path"] = str(recut["manifest_path"])
+        if recut.get("manifest_sha256"):
+            out["recut_manifest_sha256"] = str(recut["manifest_sha256"])
     gate = recut.get("cover_release_gate")
     if isinstance(gate, dict):
         out["cover_release_gate_satisfied"] = gate.get("satisfied")
@@ -874,6 +881,112 @@ def _matches_sha256(path: Path, expected: str) -> bool:
     return digest.hexdigest() == expected
 
 
+MATERIALIZED_RECUT_SCHEMA_VERSION = "materialized-recut.v2"
+VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION = "verified-song-output-binding.v1"
+SONG_STREAM_CONTRACT_SCHEMA_VERSION = "song-av-stream-contract.v1"
+
+
+def _canonical_existing_path(path_value: object) -> str | None:
+    if not isinstance(path_value, str) or not path_value:
+        return None
+    try:
+        return str(Path(path_value).resolve(strict=True))
+    except OSError:
+        return None
+
+
+def _normalized_sha256(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.lower().removeprefix("sha256:")
+    return normalized if re.fullmatch(r"[0-9a-f]{64}", normalized) else None
+
+
+def _expected_song_stream_contract() -> dict[str, object]:
+    return {
+        "schema_version": SONG_STREAM_CONTRACT_SCHEMA_VERSION,
+        "input_video_stream_index": 0,
+        "input_audio_stream_index": 0,
+        "ffmpeg_maps": ["0:v:0", "0:a:0"],
+        "output_stream_types": ["video", "audio"],
+        "allow_additional_streams": False,
+        "allow_subtitle_streams": False,
+        "allow_data_streams": False,
+        "allow_attachment_streams": False,
+    }
+
+
+def _expected_song_recut_command(
+    source_path: str,
+    output_path: str,
+    start_ms: int,
+    duration_ms: int,
+    *,
+    coarse_preroll_ms: int = 10_000,
+) -> list[str]:
+    coarse_ms = max(0, start_ms - coarse_preroll_ms)
+    fine_ms = start_ms - coarse_ms
+    return [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-ss", f"{coarse_ms / 1000:.3f}", "-i", source_path,
+        "-ss", f"{fine_ms / 1000:.3f}", "-t", f"{duration_ms / 1000:.3f}",
+        "-map", "0:v:0", "-map", "0:a:0",
+        "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path,
+    ]
+
+
+def _burn_command_obeys_song_stream_contract(command: object, *, input_path: str, output_path: str) -> bool:
+    if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
+        return False
+    try:
+        input_index = command.index("-i")
+    except ValueError:
+        return False
+    maps = [command[index + 1] for index, part in enumerate(command[:-1]) if part == "-map"]
+    required_pairs = (("-map_metadata", "-1"), ("-map_chapters", "-1"))
+    return (
+        input_index + 1 < len(command)
+        and _canonical_existing_path(command[input_index + 1]) == input_path
+        and _canonical_existing_path(command[-1]) == output_path
+        and len(maps) == 2
+        and maps[0] in {"0:v:0", "[v]"}
+        and maps[1] == "0:a:0"
+        and not any("?" in item for item in maps)
+        and "-sn" in command
+        and "-dn" in command
+        and all(any(command[index:index + 2] == [flag, value] for index in range(len(command) - 1)) for flag, value in required_pairs)
+    )
+
+
+def _has_exact_av_streams(path: Path) -> bool:
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "stream=index,codec_type",
+                "-of", "json", str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if completed.returncode != 0:
+        return False
+    try:
+        payload = json.loads(completed.stdout)
+    except ValueError:
+        return False
+    streams = payload.get("streams") if isinstance(payload, dict) else None
+    if not isinstance(streams, list) or len(streams) != 2:
+        return False
+    types = [stream.get("codec_type") for stream in streams if isinstance(stream, dict)]
+    return sorted(types) == ["audio", "video"]
+
+
 def song_completion_evidence(record: dict) -> dict:
     """Verify the positive, hash-bound proof required to deliver a song.
 
@@ -886,6 +999,9 @@ def song_completion_evidence(record: dict) -> dict:
     live_performance_mode: str | None = None
     live_performance_confidence: float | None = None
     live_performance_semantic_ready = False
+    audio_artifacts: dict = {}
+    audio_manifest: dict | None = None
+    host_proof: dict | None = None
 
     def is_int(value) -> bool:
         return isinstance(value, int) and not isinstance(value, bool)
@@ -1020,6 +1136,7 @@ def song_completion_evidence(record: dict) -> dict:
                 live_performance,
                 first_lyric_start_ms=report.get("first_lyric_start_ms") if is_int(report.get("first_lyric_start_ms")) else -1,
                 last_lyric_end_ms=report.get("last_lyric_end_ms") if is_int(report.get("last_lyric_end_ms")) else -1,
+                observations=report_alignment,
                 require_ready=True,
             )
             if performance_error is not None:
@@ -1033,6 +1150,7 @@ def song_completion_evidence(record: dict) -> dict:
             ):
                 failures.append("SONG_AUDIO_LRC_PROVIDER_INVALID")
             audio_artifacts = report.get("audio_alignment_artifacts")
+            raw_rows: list | None = None
             artifact_pairs = (
                 ("source_path", "source_sha256"),
                 ("lrc_path", "lrc_sha256"),
@@ -1070,6 +1188,7 @@ def song_completion_evidence(record: dict) -> dict:
                 elif not isinstance(audio_manifest.get("artifacts"), dict) or any(
                     audio_manifest["artifacts"].get(manifest_key) != audio_artifacts.get(report_key)
                     for manifest_key, report_key in (
+                        ("source_origin_path", "source_origin_path"),
                         ("source_path", "source_path"),
                         ("source_sha256", "source_sha256"),
                         ("source_duration_ms", "source_duration_ms"),
@@ -1091,7 +1210,7 @@ def song_completion_evidence(record: dict) -> dict:
                 raw_rows = raw_observation.get("observations") if isinstance(raw_observation, dict) else None
                 if (
                     not isinstance(raw_observation, dict)
-                    or raw_observation.get("schema_version") != "agy-audio-lrc-observation.v2"
+                    or raw_observation.get("schema_version") != AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION
                     or not isinstance(raw_record, dict)
                     or raw_record.get("candidate_id") != record.get("candidate_id")
                     or raw_record.get("source_sha256") != audio_artifacts.get("source_sha256")
@@ -1106,18 +1225,46 @@ def song_completion_evidence(record: dict) -> dict:
                 ids: list[str] = []
                 starts: list[int] = []
                 residuals: list[int] = []
-                audio_rows_ok = len(report_alignment) == len(lyric_lines) == matched_count == line_count
-                for row, lyric in zip(report_alignment, lyric_lines):
-                    if not isinstance(row, dict) or not isinstance(lyric, dict):
+                audio_rows_ok = (
+                    isinstance(raw_rows, list)
+                    and len(raw_rows) == len(report_alignment) == len(lyric_lines) == matched_count == line_count
+                )
+                expected_raw_sha = str(
+                    audio_artifacts.get("raw_output_sha256") if isinstance(audio_artifacts, dict) else ""
+                ).lower().removeprefix("sha256:")
+                for index, (row, lyric) in enumerate(zip(report_alignment, lyric_lines)):
+                    raw_row = raw_rows[index] if isinstance(raw_rows, list) and index < len(raw_rows) else None
+                    if not isinstance(row, dict) or not isinstance(lyric, dict) or not isinstance(raw_row, dict):
                         audio_rows_ok = False
                         break
                     cue_id = row.get("matched_cue_id")
                     cue_start = row.get("cue_start_ms")
                     cue_end = row.get("cue_end_ms")
                     if (
-                        row.get("evidence_source") != "agy_audio_lrc"
+                        set(raw_row) != {
+                            "lrc_index",
+                            "lrc_time_ms",
+                            "text",
+                            "heard",
+                            "live_start_ms",
+                            "live_end_ms",
+                            "confidence",
+                            *LYRIC_VOCAL_ASSERTION_KEYS,
+                        }
+                        or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(row)
+                        or raw_row.get("lrc_index") != index
+                        or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
+                        or raw_row.get("text") != lyric.get("text")
+                        or raw_row.get("heard") is not True
+                        or raw_row.get("live_start_ms") != cue_start
+                        or raw_row.get("live_end_ms") != cue_end
+                        or isinstance(raw_row.get("confidence"), bool)
+                        or not isinstance(raw_row.get("confidence"), (int, float))
+                        or row.get("match_ratio") != round(float(raw_row.get("confidence") or 0.0), 4)
+                        or any(row.get(key) != raw_row.get(key) for key in LYRIC_VOCAL_ASSERTION_KEYS)
+                        or row.get("evidence_source") != "agy_audio_lrc"
                         or not isinstance(cue_id, str)
-                        or not cue_id.startswith("agy-audio:")
+                        or cue_id != f"agy-audio:{expected_raw_sha[:12]}:line-{index}"
                         or not is_int(cue_start)
                         or not is_int(cue_end)
                         or not 0 <= cue_start < cue_end
@@ -1274,6 +1421,224 @@ def song_completion_evidence(record: dict) -> dict:
         if not isinstance(burned_sha, str) or not _matches_sha256(Path(str(burned["path"])), burned_sha):
             failures.append("SONG_BURNED_PREVIEW_HASH_INVALID")
 
+    # The proofs above establish what happened in one exact source.  This
+    # second edge establishes that the delivered bytes were produced from that
+    # same source/candidate/interval with the fixed A/V stream contract.
+    recut_manifest: dict | None = None
+    manifest_value = recut.get("manifest_path") if recut else None
+    manifest_sha = recut.get("manifest_sha256") if recut else None
+    if (
+        not isinstance(manifest_value, str)
+        or not isinstance(manifest_sha, str)
+        or not _matches_sha256(Path(manifest_value), manifest_sha)
+    ):
+        failures.append("SONG_RECUT_MANIFEST_HASH_INVALID")
+    else:
+        try:
+            loaded_manifest = json.loads(Path(manifest_value).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            loaded_manifest = None
+        if not isinstance(loaded_manifest, dict):
+            failures.append("SONG_RECUT_MANIFEST_CONTENT_INVALID")
+        else:
+            recut_manifest = loaded_manifest
+
+    output_binding = recut.get("verified_output_binding") if recut else None
+    manifest_binding = recut_manifest.get("verified_output_binding") if isinstance(recut_manifest, dict) else None
+    if (
+        not isinstance(output_binding, dict)
+        or output_binding.get("schema_version") != VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION
+        or manifest_binding != output_binding
+        or not isinstance(recut_manifest, dict)
+        or recut_manifest.get("schema_version") != MATERIALIZED_RECUT_SCHEMA_VERSION
+        or recut_manifest.get("status") != "MATERIALIZED"
+        or recut_manifest.get("candidate_id") != record.get("candidate_id")
+        or recut.get("candidate_id") != record.get("candidate_id")
+        or output_binding.get("candidate_id") != record.get("candidate_id")
+        or recut_manifest.get("source_video_path") != recut.get("source_video_path")
+        or recut_manifest.get("source_binding") != recut.get("source_binding")
+        or recut_manifest.get("requested_range") != {
+            "start_ms": recut.get("start_ms"),
+            "end_ms": recut.get("end_ms"),
+            "duration_ms": recut.get("duration_ms"),
+        }
+        or recut_manifest.get("media_path") != recut.get("media_path")
+        or recut_manifest.get("subtitle_path") != recut.get("subtitle_path")
+        or recut_manifest.get("subtitle_source") != recut.get("subtitle_source")
+        or recut_manifest.get("lyric_offset_ms") != recut.get("lyric_offset_ms")
+        or recut_manifest.get("accurate_command") != recut.get("accurate_command")
+        or recut_manifest.get("stream_contract") != recut.get("stream_contract")
+        or recut_manifest.get("recut_transform") != recut.get("recut_transform")
+        or recut_manifest.get("song_output_proof_binding") != recut.get("song_output_proof_binding")
+        or not isinstance(recut_manifest.get("artifact_hashes"), dict)
+        or not isinstance(recut.get("artifact_hashes"), dict)
+        or any(
+            recut_manifest["artifact_hashes"].get(key) != recut["artifact_hashes"].get(key)
+            for key in ("video_sha256", "subtitle_sha256", "burned_video_sha256", "ass_sha256")
+        )
+        or recut_manifest.get("burned_preview") != recut.get("burned_preview")
+    ):
+        failures.append("SONG_RECUT_MANIFEST_CONTENT_INVALID")
+
+    source_binding = output_binding.get("source") if isinstance(output_binding, dict) else None
+    source_path = source_binding.get("canonical_path") if isinstance(source_binding, dict) else None
+    source_sha = source_binding.get("sha256") if isinstance(source_binding, dict) else None
+    source_canonical = _canonical_existing_path(source_path)
+    host_source = host_proof.get("source_media") if isinstance(host_proof, dict) else None
+    manifest_artifacts = audio_manifest.get("artifacts") if isinstance(audio_manifest, dict) else None
+    source_path_claims = [
+        recut.get("source_video_path") if recut else None,
+        (recut.get("source_binding") or {}).get("canonical_path") if isinstance(recut.get("source_binding") if recut else None, dict) else None,
+        recut_manifest.get("source_video_path") if isinstance(recut_manifest, dict) else None,
+        (recut_manifest.get("source_binding") or {}).get("canonical_path") if isinstance(recut_manifest.get("source_binding") if isinstance(recut_manifest, dict) else None, dict) else None,
+        host_source.get("path") if isinstance(host_source, dict) else None,
+        alignment.get("source_media_path") if isinstance(alignment, dict) else None,
+        report.get("source_media_path") if isinstance(report, dict) else None,
+        audio_artifacts.get("source_origin_path") if isinstance(audio_artifacts, dict) else None,
+        manifest_artifacts.get("source_origin_path") if isinstance(manifest_artifacts, dict) else None,
+    ]
+    source_sha_claims = [
+        (recut.get("source_binding") or {}).get("sha256") if isinstance(recut.get("source_binding") if recut else None, dict) else None,
+        (recut_manifest.get("source_binding") or {}).get("sha256") if isinstance(recut_manifest.get("source_binding") if isinstance(recut_manifest, dict) else None, dict) else None,
+        host_source.get("sha256") if isinstance(host_source, dict) else None,
+        alignment.get("source_media_sha256") if isinstance(alignment, dict) else None,
+        report.get("source_media_sha256") if isinstance(report, dict) else None,
+        audio_artifacts.get("source_sha256") if isinstance(audio_artifacts, dict) else None,
+        manifest_artifacts.get("source_sha256") if isinstance(manifest_artifacts, dict) else None,
+    ]
+    if (
+        source_canonical is None
+        or _normalized_sha256(source_sha) is None
+        or not _matches_sha256(Path(source_canonical), str(source_sha))
+        or any(_canonical_existing_path(value) != source_canonical for value in source_path_claims)
+        or any(_normalized_sha256(value) != _normalized_sha256(source_sha) for value in source_sha_claims)
+    ):
+        failures.append("SONG_RECUT_SOURCE_BINDING_INVALID")
+
+    proofs = output_binding.get("proofs") if isinstance(output_binding, dict) else None
+    expected_proofs = (
+        (
+            "lyrics_alignment_report_path", "lyrics_alignment_report_sha256",
+            alignment.get("alignment_report_path") if isinstance(alignment, dict) else None,
+            alignment.get("alignment_report_sha256") if isinstance(alignment, dict) else None,
+        ),
+        (
+            "host_vocal_proof_path", "host_vocal_proof_sha256",
+            host_vocal_proof_path, host_vocal_proof_sha,
+        ),
+        (
+            "agy_run_manifest_path", "agy_run_manifest_sha256",
+            audio_artifacts.get("run_manifest_path") if isinstance(audio_artifacts, dict) else None,
+            audio_artifacts.get("run_manifest_sha256") if isinstance(audio_artifacts, dict) else None,
+        ),
+    )
+    proof_binding_ok = isinstance(proofs, dict)
+    if proof_binding_ok:
+        for path_key, sha_key, expected_path, expected_sha in expected_proofs:
+            if (
+                _canonical_existing_path(proofs.get(path_key)) != _canonical_existing_path(expected_path)
+                or _normalized_sha256(proofs.get(sha_key)) != _normalized_sha256(expected_sha)
+            ):
+                proof_binding_ok = False
+                break
+    if (
+        not proof_binding_ok
+        or recut.get("song_output_proof_binding") != proofs
+        or (recut_manifest.get("song_output_proof_binding") if isinstance(recut_manifest, dict) else None) != proofs
+    ):
+        failures.append("SONG_RECUT_PROOF_BINDING_INVALID")
+
+    start_ms = recut.get("start_ms") if recut else None
+    end_ms = recut.get("end_ms") if recut else None
+    duration_ms = recut.get("duration_ms") if recut else None
+    expected_interval = {"start_ms": start_ms, "end_ms": end_ms, "duration_ms": duration_ms}
+    report_post_anchor = report.get("post_song_talk_start_ms") if isinstance(report, dict) else None
+    host_anchor = host_proof.get("session_host_anchor") if isinstance(host_proof, dict) else None
+    host_anchor_start = host_anchor.get("start_ms") if isinstance(host_anchor, dict) else None
+    if (
+        not all(is_int(value) for value in (start_ms, end_ms, duration_ms))
+        or duration_ms != end_ms - start_ms
+        or (output_binding.get("interval") if isinstance(output_binding, dict) else None) != expected_interval
+        or (recut_manifest.get("requested_range") if isinstance(recut_manifest, dict) else None) != expected_interval
+        or not is_int(report_post_anchor)
+        or not is_int(host_anchor_start)
+        or report_post_anchor != host_anchor_start
+        or (output_binding.get("post_song_anchor_start_ms") if isinstance(output_binding, dict) else None) != report_post_anchor
+        or (proofs.get("post_song_anchor_start_ms") if isinstance(proofs, dict) else None) != report_post_anchor
+    ):
+        failures.append("SONG_RECUT_INTERVAL_BINDING_INVALID")
+    elif end_ms > report_post_anchor:
+        failures.append("SONG_OUTPUT_OVERLAPS_POST_SONG_HOST_ANCHOR")
+
+    expected_stream_contract = _expected_song_stream_contract()
+    recut_media_path = _canonical_existing_path(recut.get("media_path") if recut else None)
+    burned_path = _canonical_existing_path(burned.get("path") if isinstance(burned, dict) else None)
+    accurate_command = recut.get("accurate_command") if recut else None
+    expected_accurate_command = (
+        _expected_song_recut_command(source_canonical, recut_media_path, start_ms, duration_ms)
+        if source_canonical is not None
+        and recut_media_path is not None
+        and all(is_int(value) for value in (start_ms, duration_ms))
+        else None
+    )
+    burn_command = burned.get("command") if isinstance(burned, dict) else None
+    transform = output_binding.get("recut_transform") if isinstance(output_binding, dict) else None
+    burn_transform = output_binding.get("burn_transform") if isinstance(output_binding, dict) else None
+    if (
+        recut.get("stream_contract") != expected_stream_contract
+        or (recut_manifest.get("stream_contract") if isinstance(recut_manifest, dict) else None) != expected_stream_contract
+        or (output_binding.get("stream_contract") if isinstance(output_binding, dict) else None) != expected_stream_contract
+        or accurate_command != expected_accurate_command
+        or not isinstance(transform, dict)
+        or transform.get("schema_version") != "song-recut-transform.v1"
+        or transform.get("command") != expected_accurate_command
+        or not isinstance(burn_transform, dict)
+        or burn_transform.get("schema_version") != "song-subtitle-burn-transform.v1"
+        or burn_transform.get("command") != burn_command
+        or (burned.get("stream_contract") if isinstance(burned, dict) else None) != expected_stream_contract
+        or not _burn_command_obeys_song_stream_contract(
+            burn_command,
+            input_path=recut_media_path or "",
+            output_path=burned_path or "",
+        )
+        or recut_media_path is None
+        or burned_path is None
+        or not _has_exact_av_streams(Path(recut_media_path))
+        or not _has_exact_av_streams(Path(burned_path))
+    ):
+        failures.append("SONG_RECUT_STREAM_CONTRACT_INVALID")
+
+    binding_artifacts = output_binding.get("artifacts") if isinstance(output_binding, dict) else None
+    ass_path = burned.get("ass_path") if isinstance(burned, dict) else None
+    ass_sha = artifact_hashes.get("ass_sha256") if isinstance(artifact_hashes, dict) else None
+    video_sha = artifact_hashes.get("video_sha256") if isinstance(artifact_hashes, dict) else None
+    relevant_manifest_hashes = recut_manifest.get("artifact_hashes") if isinstance(recut_manifest, dict) else None
+    expected_artifacts = {
+        "recut_media_path": recut_media_path,
+        "recut_media_sha256": video_sha,
+        "subtitle_path": _canonical_existing_path(subtitle_path),
+        "subtitle_sha256": subtitle_sha,
+        "burned_media_path": burned_path,
+        "burned_media_sha256": burned_sha,
+        "ass_path": _canonical_existing_path(ass_path),
+        "ass_sha256": ass_sha,
+    }
+    if (
+        binding_artifacts != expected_artifacts
+        or not isinstance(video_sha, str)
+        or recut_media_path is None
+        or not _matches_sha256(Path(recut_media_path), video_sha)
+        or not isinstance(ass_sha, str)
+        or expected_artifacts["ass_path"] is None
+        or not _matches_sha256(Path(str(expected_artifacts["ass_path"])), ass_sha)
+        or not isinstance(relevant_manifest_hashes, dict)
+        or any(relevant_manifest_hashes.get(key) != artifact_hashes.get(key) for key in (
+            "video_sha256", "subtitle_sha256", "burned_video_sha256", "ass_sha256"
+        ))
+        or (recut_manifest.get("burned_preview") if isinstance(recut_manifest, dict) else None) != burned
+    ):
+        failures.append("SONG_RECUT_ARTIFACT_BINDING_INVALID")
+
     joint_singing_decision = (
         "VERIFIED_LIDOUSHA_SINGING"
         if live_performance_status == "READY"
@@ -1302,6 +1667,10 @@ def song_completion_evidence(record: dict) -> dict:
         "subtitle_source": recut.get("subtitle_source") if recut else None,
         "burned_preview_path": burned.get("path") if isinstance(burned, dict) else None,
         "burned_preview_sha256": burned_sha,
+        "recut_manifest_path": manifest_value if isinstance(manifest_value, str) else None,
+        "recut_manifest_sha256": manifest_sha if isinstance(manifest_sha, str) else None,
+        "recut_source_path": source_canonical,
+        "recut_source_sha256": source_sha if isinstance(source_sha, str) else None,
         "matched_line_ratio": report.get("matched_line_ratio") if report is not None else None,
         "lyric_offset_ms": alignment.get("offset_ms") if alignment else None,
     }
@@ -1546,20 +1915,27 @@ def produce_song(date: str, item: dict) -> dict:
                         "song_completion_evidence",
                     )
                 }
-                # The full-source AGY/CAM++ pass is the authoritative performer
-                # check.  Keep the tight attempt for timeline forensics, but do
-                # not bury a concrete background/original/other-singer rejection
-                # only inside ``full_source_retry``: state and the human summary
-                # consume top-level reason_codes.
+                # The full-source AGY/CAM++ pass is authoritative.  A timeout,
+                # nonzero exit, malformed/missing artifact, unknown reason, or
+                # semantic rejection are all the same at this boundary: not a
+                # complete positive.  Keep the tight attempt only for timeline
+                # forensics; every nonpositive authoritative result revokes all
+                # top-level authorization rather than promoting a hand-picked
+                # subset of known performer reason codes.
                 proof_reasons = [str(code) for code in (proof_retry.get("reason_codes") or [])]
-                if SONG_PERFORMER_REJECTION_CODES.intersection(proof_reasons):
-                    result["decision"] = "BLOCK"
-                    result["reason_codes"] = list(
-                        dict.fromkeys([*(result.get("reason_codes") or []), *proof_reasons])
-                    )
-                    result["song_completion_evidence"] = proof_retry.get("song_completion_evidence")
-                    result["song_complete"] = False
-                    result["lyrics_alignment_ready"] = bool(proof_retry.get("lyrics_alignment_ready"))
+                if not proof_reasons:
+                    proof_reasons = ["SONG_AUTHORITATIVE_RETRY_INCOMPLETE"]
+                result["decision"] = "BLOCK"
+                result["reason_codes"] = list(
+                    dict.fromkeys([*(result.get("reason_codes") or []), *proof_reasons])
+                )
+                result["song_completion_evidence"] = proof_retry.get("song_completion_evidence")
+                result["song_complete"] = False
+                result["lyrics_alignment_ready"] = bool(proof_retry.get("lyrics_alignment_ready"))
+                result["full_source_authoritative_block"] = True
+                result.pop("delivered", None)
+                result.pop("delivered_sidecars", None)
+                if proof_retry.get("rc") == 0 and SONG_PERFORMER_REJECTION_CODES.intersection(proof_reasons):
                     result["full_source_performer_rejection"] = True
     if not result.get("window_classified_song") and not result.get("delivered"):
         d0, d1 = _song_core_span(src_srt, anchor_start, anchor_end)
@@ -1807,13 +2183,15 @@ def discover_segments(date: str, state: dict) -> None:
             }
             if getattr(cand, "content_type_hint", "talk") == "song":
                 a0, a1 = int(cand.anchor.anchor_start_ms), int(cand.anchor.anchor_end_ms)
-                pending_song.append({
+                song_item = {
                     **base_item,
                     "cid": f"song_{seg_tag}_{a0 // 1000}",
                     "anchor_start_ms": a0,
                     "anchor_end_ms": a1,
                     "danmaku": danmaku_count_in(str(xml) if xml else None, a0, a1),
-                })
+                }
+                pending_song.append(song_item)
+                _remember_song_quarantine_interval(state, song_item)
             else:
                 b = cand.boundary
                 s0 = max(0, int(b.resolved_start_ms))
@@ -1854,6 +2232,127 @@ def song_delivery_budget(state: dict) -> int:
     return max(0, MAX_SONGS_PER_DATE - delivered)
 
 
+def _remember_song_quarantine_interval(state: dict, item: dict) -> None:
+    """Persist source intervals that may contain a song before any rendering.
+
+    Candidate-local BLOCK was insufficient: an overlapping semantic talk
+    candidate could otherwise be produced first and launder background music,
+    a guest song, or an unverified performance through the talk lane.  The
+    interval taint survives song backlog moves, retries, and later state ticks.
+    """
+
+    segment = str(item.get("segment_path") or item.get("segment") or "").strip()
+    anchor_start_ms = item.get("anchor_start_ms")
+    anchor_end_ms = item.get("anchor_end_ms")
+    if (
+        not segment
+        or isinstance(anchor_start_ms, bool)
+        or not isinstance(anchor_start_ms, int)
+        or isinstance(anchor_end_ms, bool)
+        or not isinstance(anchor_end_ms, int)
+        or not 0 <= anchor_start_ms < anchor_end_ms
+    ):
+        return
+    # Quarantining only the recall anchor still lets a talk sibling escape with
+    # the song's intro or tail.  Cover the same conservative source range that
+    # the authoritative full-proof retry is allowed to inspect.
+    start_ms = max(0, anchor_start_ms - SONG_PROOF_RETRY_PRE_MS)
+    end_ms = anchor_end_ms + SONG_PROOF_RETRY_POST_MS
+    segment_duration_ms = item.get("seg_dur_ms")
+    if (
+        isinstance(segment_duration_ms, int)
+        and not isinstance(segment_duration_ms, bool)
+        and segment_duration_ms > 0
+    ):
+        end_ms = min(segment_duration_ms, end_ms)
+    interval = {
+        "segment_path": segment,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "original_anchor_start_ms": anchor_start_ms,
+        "original_anchor_end_ms": anchor_end_ms,
+        "candidate_id": str(item.get("cid") or item.get("candidate_id") or ""),
+        "reason_code": "SONG_INTERVAL_REQUIRES_JOINT_SINGING_PROOF",
+    }
+    intervals = state.setdefault("song_quarantine_intervals", [])
+    identity = (Path(segment).name, anchor_start_ms, anchor_end_ms)
+    if any(
+        isinstance(existing, dict)
+        and (
+            Path(str(existing.get("segment_path") or "")).name,
+            existing.get("original_anchor_start_ms", existing.get("start_ms")),
+            existing.get("original_anchor_end_ms", existing.get("end_ms")),
+        )
+        == identity
+        for existing in intervals
+    ):
+        return
+    intervals.append(interval)
+
+
+def quarantine_overlapping_talk_candidates(state: dict) -> None:
+    """Remove every talk candidate overlapping a known song-like interval.
+
+    Songs have their own proof-bearing lane.  A talk-shaped sibling, parent,
+    child, merge, or retry may never materialize the same audio while the song
+    interval is unresolved or blocked.  We deliberately keep the quarantine
+    even after a valid song delivery: the same interval must not also escape as
+    an ordinary talk artifact that bypasses the song gate.
+    """
+
+    for source in (state.get("pending_song", []), state.get("song_backlog", [])):
+        for item in (source if isinstance(source, list) else []):
+            if isinstance(item, dict):
+                _remember_song_quarantine_interval(state, item)
+
+    intervals = [item for item in state.get("song_quarantine_intervals", []) if isinstance(item, dict)]
+    kept: list[dict] = []
+    blocked = state.setdefault("song_overlap_blocked_talk", [])
+    for talk in state.get("pending_talk", []):
+        talk_segment = Path(str(talk.get("segment_path") or talk.get("segment") or "")).name
+        talk_start = talk.get("start_ms")
+        talk_end = talk.get("end_ms")
+        overlap = next(
+            (
+                interval
+                for interval in intervals
+                if talk_segment
+                and talk_segment == Path(str(interval.get("segment_path") or "")).name
+                and isinstance(talk_start, int)
+                and not isinstance(talk_start, bool)
+                and isinstance(talk_end, int)
+                and not isinstance(talk_end, bool)
+                and isinstance(interval.get("start_ms"), int)
+                and not isinstance(interval.get("start_ms"), bool)
+                and isinstance(interval.get("end_ms"), int)
+                and not isinstance(interval.get("end_ms"), bool)
+                and max(talk_start, int(interval["start_ms"])) < min(talk_end, int(interval["end_ms"]))
+            ),
+            None,
+        )
+        if overlap is None:
+            kept.append(talk)
+            continue
+        tombstone = {
+            "candidate_id": str(talk.get("cid") or talk.get("candidate_id") or ""),
+            "segment_path": str(talk.get("segment_path") or talk.get("segment") or ""),
+            "start_ms": talk_start,
+            "end_ms": talk_end,
+            "status": "blocked",
+            "reason_code": "TALK_OVERLAPS_UNVERIFIED_SONG_INTERVAL",
+            "song_candidate_id": str(overlap.get("candidate_id") or ""),
+            "song_start_ms": overlap.get("start_ms"),
+            "song_end_ms": overlap.get("end_ms"),
+        }
+        if tombstone not in blocked:
+            blocked.append(tombstone)
+        state.setdefault("not_selected", []).append(
+            f"{talk_segment} {int(talk_start or 0) // 1000}-{int(talk_end or 0) // 1000}s "
+            "(门拦:与未验证/已阻断歌切区间重叠,不得走 talk 旁路)"
+        )
+    state["pending_talk"] = kept
+
+
 def refill_songs(state: dict) -> None:
     """Top up pending_song from the structured backlog, danmaku-desc, honoring
     both the delivery budget and the hard per-date attempt cap.  Legacy string
@@ -1874,6 +2373,7 @@ def prioritize(state: dict) -> None:
     a soft per-segment diversity cap that yields when slots would go unfilled.
     Replaces the segment round-robin that let five early candidates claim the
     whole quota regardless of score.  Songs: top danmaku, budget = deliveries."""
+    quarantine_overlapping_talk_candidates(state)
     pending_talk = state.get("pending_talk", [])
     produced = sum(1 for p in state.get("picks", []) if p.get("status") in DELIVERED_TALK_STATUSES)
     slots = max(0, MAX_TALK_PICKS - produced)

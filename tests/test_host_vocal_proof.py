@@ -205,6 +205,20 @@ def test_valid_hash_bound_ready_claim(tmp_path):
     assert _verify(bundle) is None
 
 
+def test_duplicate_checkpoint_pcm_is_rejected(tmp_path):
+    bundle = _fixture(tmp_path)
+    first = bundle["proof"]["checkpoints"][0]
+    duplicate = bundle["proof"]["checkpoints"][1]
+    duplicate["sample_path"] = first["sample_path"]
+    duplicate["sample_sha256"] = first["sample_sha256"]
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    error = _verify(bundle)
+
+    assert error is not None
+    assert "reuse decoded PCM" in error
+
+
 @pytest.mark.parametrize(
     ("status", "expected_rc"),
     [(host_vocal.READY_STATUS, 0), (host_vocal.BLOCKED_STATUS, 3)],

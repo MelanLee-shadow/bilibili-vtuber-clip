@@ -6,7 +6,26 @@ import shutil
 from pathlib import Path
 
 from src.autoslice import host_vocal_proof as hv
-from src.autoslice.song_repair import AudioLrcAlignmentRun, LrcResult
+from src.autoslice.song_repair import (
+    AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+    AudioLrcAlignmentRun,
+    LrcResult,
+)
+
+
+READY_LYRIC_VOCAL_ASSERTIONS = {
+    "lyric_vocal_subject": "LIDOUSHA",
+    "lidousha_role": "SINGING_THIS_LYRIC",
+    "same_live_vocal_source_as_lidousha": True,
+    "other_singer_or_harmony_audible": False,
+    "recorded_or_playback_vocal_audible": False,
+}
+
+READY_LIVE_PERFORMANCE_ASSERTIONS = {
+    "same_lidousha_live_singer_across_all_lyrics": True,
+    "other_singer_or_harmony_present": False,
+    "recorded_or_playback_vocal_present": False,
+}
 
 
 def _sha(path: Path) -> str:
@@ -55,6 +74,7 @@ def bind_ready_live_performance_report(
         "confidence": 0.96,
         "continuous_singing": True,
         "background_recording_likelihood": 0.03,
+        **READY_LIVE_PERFORMANCE_ASSERTIONS,
         "evidence": [
             {"time_ms": first_ms + span // 6, "observation": "live vocal head"},
             {"time_ms": first_ms + span // 2, "observation": "live vocal middle"},
@@ -84,6 +104,7 @@ def bind_ready_live_performance_report(
                 "live_start_ms": proof_row["cue_start_ms"],
                 "live_end_ms": proof_row["cue_end_ms"],
                 "confidence": 0.95,
+                **READY_LYRIC_VOCAL_ASSERTIONS,
             }
         )
     spots = [
@@ -95,7 +116,7 @@ def bind_ready_live_performance_report(
     ]
     raw_output = artifact_dir / "alignment.json"
     raw_payload = {
-        "schema_version": "agy-audio-lrc-observation.v2",
+        "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
         "record": {
             "attempt_id": "fixture-attempt",
             "candidate_id": candidate_id,
@@ -114,8 +135,10 @@ def bind_ready_live_performance_report(
         row["matched_cue_id"] = f"agy-audio:{raw_sha[:12]}:line-{index}"
         row["evidence_source"] = "agy_audio_lrc"
         row["match_ratio"] = 0.95
+        row.update(READY_LYRIC_VOCAL_ASSERTIONS)
     manifest = artifact_dir / "run.manifest.json"
     artifacts = {
+        "source_origin_path": str(source_media.resolve()),
         "source_path": str(bound_source),
         "source_sha256": source_sha,
         "source_duration_ms": last_ms + 10_000,
@@ -147,6 +170,8 @@ def bind_ready_live_performance_report(
             "spot_checks": spots,
             "live_performance": live_performance,
             "post_song_talk_start_ms": last_ms + 1_000,
+            "source_media_path": str(source_media.resolve()),
+            "source_media_sha256": source_sha,
             "audio_alignment_artifacts": {
                 **artifacts,
                 "raw_output_path": artifacts["output_path"],
@@ -196,6 +221,7 @@ def make_ready_audio_alignment_run(
                 "live_start_ms": start_ms,
                 "live_end_ms": start_ms + 3_000,
                 "confidence": 0.96,
+                **READY_LYRIC_VOCAL_ASSERTIONS,
             }
         )
     first_ms = int(observations[0]["live_start_ms"])
@@ -208,6 +234,7 @@ def make_ready_audio_alignment_run(
         "confidence": 0.96,
         "continuous_singing": True,
         "background_recording_likelihood": 0.03,
+        **READY_LIVE_PERFORMANCE_ASSERTIONS,
         "evidence": [
             {"time_ms": first_ms + span // 6, "observation": "live vocal head"},
             {"time_ms": first_ms + span // 2, "observation": "live vocal middle"},
@@ -227,7 +254,7 @@ def make_ready_audio_alignment_run(
         for name, index in zip(spot_names, spot_indexes, strict=True)
     ]
     payload = {
-        "schema_version": "agy-audio-lrc-observation.v2",
+        "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
         "record": {
             "attempt_id": "fixture-attempt",
             "candidate_id": candidate_id,
@@ -247,6 +274,7 @@ def make_ready_audio_alignment_run(
     raw_sha = _sha(raw_output)
     manifest = output_dir / "run.manifest.json"
     artifacts = {
+        "source_origin_path": str(source_media.resolve()),
         "source_path": str(source_media),
         "source_sha256": source_sha,
         "source_duration_ms": source_duration_ms,
@@ -276,6 +304,7 @@ def make_ready_audio_alignment_run(
         model="Gemini 3.5 Flash (High)",
         rc=0,
         provider_fallback_used=False,
+        source_origin_path=str(source_media.resolve()),
         source_path=str(source_media),
         source_sha256=source_sha,
         source_duration_ms=source_duration_ms,

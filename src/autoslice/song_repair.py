@@ -49,6 +49,28 @@ LIVE_PERFORMANCE_MODES = {
     "AMBIGUOUS",
 }
 
+AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v3"
+LYRIC_VOCAL_SUBJECTS = {
+    "LIDOUSHA",
+    "OTHER_OR_MIXED_SINGER",
+    "RECORDED_OR_PLAYBACK_SINGER",
+    "NO_AUDIBLE_LYRIC_VOCAL",
+    "AMBIGUOUS",
+}
+LIDOUSHA_LYRIC_ROLES = {
+    "SINGING_THIS_LYRIC",
+    "SPEAKING_NOT_SINGING",
+    "SILENT_OR_NOT_AUDIBLE",
+    "AMBIGUOUS",
+}
+LYRIC_VOCAL_ASSERTION_KEYS = {
+    "lyric_vocal_subject",
+    "lidousha_role",
+    "same_live_vocal_source_as_lidousha",
+    "other_singer_or_harmony_audible",
+    "recorded_or_playback_vocal_audible",
+}
+
 
 class LivePerformanceRejected(ValueError):
     """A structurally valid AGY observation that proves this is not a live song.
@@ -117,6 +139,7 @@ class AudioLrcAlignmentRun:
     model: str
     rc: int
     provider_fallback_used: bool
+    source_origin_path: str
     source_path: str
     source_sha256: str
     source_duration_ms: int
@@ -577,7 +600,10 @@ def attempt_song_repair(
                 "spot_checks": audio_alignment_run.payload["spot_checks"],
                 "live_performance": audio_alignment_run.payload["live_performance"],
                 "post_song_talk_start_ms": audio_alignment_run.payload["post_song_talk_start_ms"],
+                "source_media_path": audio_alignment_run.source_origin_path,
+                "source_media_sha256": audio_alignment_run.source_sha256,
                 "audio_alignment_artifacts": {
+                    "source_origin_path": audio_alignment_run.source_origin_path,
                     "source_path": audio_alignment_run.source_path,
                     "source_sha256": audio_alignment_run.source_sha256,
                     "source_duration_ms": audio_alignment_run.source_duration_ms,
@@ -623,6 +649,8 @@ def attempt_song_repair(
         "nominal_lrc_zero_ms": offset_ms,
         "alignment_report_path": str(report_path),
         "alignment_report_sha256": report_sha,
+        "source_media_path": audio_alignment_run.source_origin_path if audio_alignment_run is not None else None,
+        "source_media_sha256": audio_alignment_run.source_sha256 if audio_alignment_run is not None else None,
     }
     return _finish(
         candidate_id,
@@ -1445,6 +1473,13 @@ def _validated_audio_lrc_selection(
         raise ValueError(f"audio aligner was not a clean no-fallback run (rc={run.rc})")
     if not source_media_path.is_file():
         raise ValueError(f"current source media is missing: {source_media_path}")
+    try:
+        current_source_origin = str(source_media_path.resolve(strict=True))
+        declared_source_origin = str(Path(run.source_origin_path).resolve(strict=True))
+    except OSError as exc:
+        raise ValueError(f"audio source origin cannot be resolved: {exc}") from exc
+    if declared_source_origin != current_source_origin:
+        raise ValueError("audio observation source origin is not the current source media")
     source_path = _require_bound_artifact(run.source_path, run.source_sha256, "audio source")
     if _sha256_file(source_media_path) != run.source_sha256 or _sha256_file(source_path) != run.source_sha256:
         raise ValueError("audio observation is not bound to the current source media")
@@ -1471,6 +1506,7 @@ def _validated_audio_lrc_selection(
             manifest_artifacts.get(key) != value
             for key, value in (
                 ("source_path", run.source_path),
+                ("source_origin_path", run.source_origin_path),
                 ("source_sha256", run.source_sha256),
                 ("source_duration_ms", run.source_duration_ms),
                 ("lrc_path", run.lrc_path),
@@ -1503,7 +1539,7 @@ def _validated_audio_lrc_selection(
     }
     if not isinstance(payload, Mapping) or set(payload) != required_top:
         raise ValueError("audio observation top-level schema/keys are invalid")
-    if payload.get("schema_version") != "agy-audio-lrc-observation.v2":
+    if payload.get("schema_version") != AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION:
         raise ValueError("audio observation schema_version is invalid")
     record = payload.get("record")
     if not isinstance(record, Mapping) or set(record) != {
@@ -1540,6 +1576,7 @@ def _validated_audio_lrc_selection(
             "live_start_ms",
             "live_end_ms",
             "confidence",
+            *LYRIC_VOCAL_ASSERTION_KEYS,
         }:
             raise ValueError(f"audio observation row {index} has invalid keys")
         if row.get("lrc_index") != index or row.get("lrc_time_ms") != line.time_ms or row.get("text") != line.text:
@@ -1570,6 +1607,17 @@ def _validated_audio_lrc_selection(
                 "cue_end_ms": end_ms,
                 "match_ratio": round(float(confidence), 4),
                 "evidence_source": "agy_audio_lrc",
+                "lyric_vocal_subject": row.get("lyric_vocal_subject"),
+                "lidousha_role": row.get("lidousha_role"),
+                "same_live_vocal_source_as_lidousha": row.get(
+                    "same_live_vocal_source_as_lidousha"
+                ),
+                "other_singer_or_harmony_audible": row.get(
+                    "other_singer_or_harmony_audible"
+                ),
+                "recorded_or_playback_vocal_audible": row.get(
+                    "recorded_or_playback_vocal_audible"
+                ),
             }
         )
         previous_start = start_ms
@@ -1592,6 +1640,7 @@ def _validated_audio_lrc_selection(
         live_performance,
         first_lyric_start_ms=first_lyric_start_ms,
         last_lyric_end_ms=last_lyric_end_ms,
+        observations=observations,
         require_ready=False,
     )
     if performance_schema_error is not None:
@@ -1600,6 +1649,7 @@ def _validated_audio_lrc_selection(
         live_performance,
         first_lyric_start_ms=first_lyric_start_ms,
         last_lyric_end_ms=last_lyric_end_ms,
+        observations=observations,
         require_ready=True,
     )
     if performance_error is not None:
@@ -1669,18 +1719,81 @@ def _validated_audio_lrc_selection(
     )
 
 
+def _validate_lyric_vocal_observations(
+    observations: object,
+    *,
+    require_ready: bool,
+) -> tuple[bool, bool, bool]:
+    """Recompute the singer/role aggregates from every canonical lyric row.
+
+    The AGY top-level summary is never trusted as a substitute for the rows.
+    A READY result requires each line to say that the same live vocal source is
+    李豆沙 herself singing that line, with no guest/duet/harmony or recorded
+    vocal audible.  CAM++ remains an independent speaker-similarity subclaim;
+    it is not treated here (or elsewhere) as a singing classifier.
+    """
+
+    if (
+        not isinstance(observations, Sequence)
+        or isinstance(observations, (str, bytes, bytearray))
+        or not observations
+    ):
+        raise ValueError("live performance lyric-source observations are missing")
+    all_same_lidousha = True
+    any_other_singer = False
+    any_recorded_vocal = False
+    for index, row in enumerate(observations):
+        if not isinstance(row, Mapping) or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(row):
+            raise ValueError(f"live performance lyric row {index} singer schema is invalid")
+        subject = row.get("lyric_vocal_subject")
+        role = row.get("lidousha_role")
+        same_lidousha = row.get("same_live_vocal_source_as_lidousha")
+        other_singer = row.get("other_singer_or_harmony_audible")
+        recorded_vocal = row.get("recorded_or_playback_vocal_audible")
+        if subject not in LYRIC_VOCAL_SUBJECTS or role not in LIDOUSHA_LYRIC_ROLES:
+            raise ValueError(f"live performance lyric row {index} singer enum is invalid")
+        if not all(isinstance(value, bool) for value in (same_lidousha, other_singer, recorded_vocal)):
+            raise ValueError(f"live performance lyric row {index} singer assertions are invalid")
+
+        affirmative = (
+            subject == "LIDOUSHA"
+            and role == "SINGING_THIS_LYRIC"
+            and other_singer is False
+            and recorded_vocal is False
+        )
+        if same_lidousha is not affirmative:
+            raise ValueError(f"live performance lyric row {index} same-subject assertion is inconsistent")
+        if subject == "LIDOUSHA" and role != "SINGING_THIS_LYRIC":
+            raise ValueError(f"live performance lyric row {index} Li-Dousha role contradicts its subject")
+        if subject == "OTHER_OR_MIXED_SINGER" and other_singer is not True:
+            raise ValueError(f"live performance lyric row {index} other-singer assertion is inconsistent")
+        if subject == "RECORDED_OR_PLAYBACK_SINGER" and recorded_vocal is not True:
+            raise ValueError(f"live performance lyric row {index} recorded-vocal assertion is inconsistent")
+        if subject == "NO_AUDIBLE_LYRIC_VOCAL" and (other_singer or recorded_vocal):
+            raise ValueError(f"live performance lyric row {index} no-vocal assertion is inconsistent")
+        if require_ready and not affirmative:
+            raise ValueError(
+                f"live performance lyric row {index} does not affirm the same live Li-Dousha singer"
+            )
+        all_same_lidousha = all_same_lidousha and bool(same_lidousha)
+        any_other_singer = any_other_singer or bool(other_singer)
+        any_recorded_vocal = any_recorded_vocal or bool(recorded_vocal)
+    return all_same_lidousha, any_other_singer, any_recorded_vocal
+
+
 def validate_live_performance_observation(
     performance: object,
     *,
     first_lyric_start_ms: int,
     last_lyric_end_ms: int,
+    observations: object,
     require_ready: bool,
 ) -> str | None:
-    """Validate AGY's anti-background performance-mode observation.
+    """Validate AGY's anti-background and same-subject singing observation.
 
-    This claim deliberately does not identify the singer.  Final delivery must
-    combine it with the independently generated Li-Dousha voiceprint claim on
-    the same lyric rows.
+    AGY must assert the active lyric vocalist and Li-Dousha's role on every
+    canonical line.  Final delivery additionally combines this with the
+    independently generated Li-Dousha voiceprint claim on the same lyric rows.
     """
 
     try:
@@ -1689,6 +1802,9 @@ def validate_live_performance_observation(
             "confidence",
             "continuous_singing",
             "background_recording_likelihood",
+            "same_lidousha_live_singer_across_all_lyrics",
+            "other_singer_or_harmony_present",
+            "recorded_or_playback_vocal_present",
             "evidence",
             "notes",
         }:
@@ -1706,10 +1822,23 @@ def validate_live_performance_observation(
             or not isinstance(background, (int, float))
             or not 0.0 <= float(background) <= 1.0
             or not isinstance(performance.get("continuous_singing"), bool)
+            or not isinstance(performance.get("same_lidousha_live_singer_across_all_lyrics"), bool)
+            or not isinstance(performance.get("other_singer_or_harmony_present"), bool)
+            or not isinstance(performance.get("recorded_or_playback_vocal_present"), bool)
             or not isinstance(performance.get("notes"), str)
             or not str(performance.get("notes")).strip()
         ):
             raise ValueError("live performance observation values are invalid")
+        all_same_lidousha, any_other_singer, any_recorded_vocal = _validate_lyric_vocal_observations(
+            observations,
+            require_ready=require_ready,
+        )
+        if (
+            performance.get("same_lidousha_live_singer_across_all_lyrics") is not all_same_lidousha
+            or performance.get("other_singer_or_harmony_present") is not any_other_singer
+            or performance.get("recorded_or_playback_vocal_present") is not any_recorded_vocal
+        ):
+            raise ValueError("live performance top-level singer assertions do not match lyric rows")
         evidence = performance.get("evidence")
         if not isinstance(evidence, list) or len(evidence) != 3:
             raise ValueError("live performance observation needs exactly three evidence timestamps")
@@ -1738,6 +1867,9 @@ def validate_live_performance_observation(
         if require_ready and (
             mode != LIVE_PERFORMANCE_READY_MODE
             or performance.get("continuous_singing") is not True
+            or performance.get("same_lidousha_live_singer_across_all_lyrics") is not True
+            or performance.get("other_singer_or_harmony_present") is not False
+            or performance.get("recorded_or_playback_vocal_present") is not False
             or float(confidence) < 0.85
             or float(background) > 0.20
         ):

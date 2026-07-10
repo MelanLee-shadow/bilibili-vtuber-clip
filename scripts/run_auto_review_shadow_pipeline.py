@@ -44,7 +44,9 @@ from src.autoslice.render_qa import RenderRequest, RenderedTimelineMetadata, eva
 from src.autoslice.review_evidence import ReviewEvidence, SourceCue, to_candidate_review
 from src.autoslice.llm_client import LlmCall, LlmConfig, build_llm_call, extract_json_object
 from src.autoslice.song_repair import (
+    AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
     AudioLrcAligner,
+    LYRIC_VOCAL_ASSERTION_KEYS,
     LrcProvider,
     LrcResult,
     SongRepairResult,
@@ -357,7 +359,10 @@ def _run_live_source(
         lrc_provider=lrc_provider,
         hint_llm_call=song_hint_llm_call,
         extra_queries=song_lrc_queries,
-        source_media_path=Path(source_context.context_media_path) if source_context.context_media_path else None,
+        # The AGY audio/LRC proof, CAM++ proof, and final recut must share one
+        # canonical source.  Proving a disposable context copy and rendering
+        # from ``source_video`` left no exact verified-to-output path binding.
+        source_media_path=source_video,
         audio_lrc_aligner=audio_lrc_aligner,
     )
     job_manifest = _attempt_host_vocal_proof_stage(
@@ -394,6 +399,11 @@ def _run_live_source(
     evidence = apply_style_profile(evidence, _default_lidousha_profile(), title=title, duration_seconds=duration_seconds)
     counts["candidates_with_style_profile_evidence"] = 1
     lyric_timeline_loaded = _load_lyric_timeline(job_manifest, output_dir=output_dir)
+    song_output_proof_binding = (
+        _song_output_proof_binding(job_manifest, output_dir=output_dir)
+        if lyric_timeline_loaded is not None
+        else None
+    )
     materialized_recut = _materialize_recut_record(
         source_video=source_video,
         candidate_id=candidate_id,
@@ -403,6 +413,7 @@ def _run_live_source(
         run_ffmpeg=source_context_run_ffmpeg,
         lyric_timeline=lyric_timeline_loaded[0] if lyric_timeline_loaded else None,
         lyric_offset_ms=lyric_timeline_loaded[1] if lyric_timeline_loaded else None,
+        song_output_proof_binding=song_output_proof_binding,
         speech_spans_provider=speech_spans_provider,
         fresh_talk_transcriber=fresh_talk_transcriber,
     )
@@ -462,6 +473,7 @@ def _run_live_source(
             candidate_id=candidate_id,
             boundary_resolution=boundary_resolution,
             output_dir=output_dir,
+            strict_song_streams=lyric_timeline_loaded is not None,
         ),
         "materialized_recut": materialized_recut,
     }
@@ -947,6 +959,39 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+MATERIALIZED_RECUT_SCHEMA_VERSION = "materialized-recut.v2"
+TALK_MATERIALIZED_RECUT_SCHEMA_VERSION = "materialized-recut.v1"
+VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION = "verified-song-output-binding.v1"
+SONG_STREAM_CONTRACT_SCHEMA_VERSION = "song-av-stream-contract.v1"
+
+
+def _sha256_prefixed(path: Path) -> str:
+    return "sha256:" + _sha256(path)
+
+
+def _canonical_existing_path(path: Path | str) -> str:
+    return str(Path(path).resolve(strict=True))
+
+
+def _song_stream_contract() -> dict[str, object]:
+    return {
+        "schema_version": SONG_STREAM_CONTRACT_SCHEMA_VERSION,
+        "input_video_stream_index": 0,
+        "input_audio_stream_index": 0,
+        "ffmpeg_maps": ["0:v:0", "0:a:0"],
+        "output_stream_types": ["video", "audio"],
+        "allow_additional_streams": False,
+        "allow_subtitle_streams": False,
+        "allow_data_streams": False,
+        "allow_attachment_streams": False,
+    }
+
+
+def _write_bound_materialized_manifest(path: Path, payload: Mapping[str, object]) -> str:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return _sha256_prefixed(path)
+
+
 def _stat_fingerprint(path: Path | None) -> dict[str, object]:
     if path is None:
         return {"path": None, "exists": False}
@@ -1144,9 +1189,36 @@ def _prepare_live_source_job(
         post_ms=_int(requested.get("post_ms"), 150_000),
         provider=str(requested.get("provider") or "agy"),
     )[0].to_manifest()
+    # Planning fills in the missing context window; it must not replace the
+    # upstream candidate identity.  In particular, dropping these song-lane
+    # fields turns a seeded song into an ordinary talk job, which can then take
+    # the talk boundary fallback and materialize before the final review gate.
+    # Keep planner-owned execution fields/times while retaining every upstream
+    # extension and the proof/guard claims that make the job fail closed.
+    merged = {**requested, **planned}
+    merged["timeline"] = {
+        **timeline,
+        **dict(_mapping(planned.get("timeline"))),
+    }
+    merged["provenance"] = {
+        **dict(_mapping(requested.get("provenance"))),
+        **dict(_mapping(planned.get("provenance"))),
+    }
+    for guard_field in (
+        "content_type_hint",
+        "song_candidate",
+        "requires_full_source_song_boundary_redo",
+        "song_boundary",
+        "lyrics_alignment",
+        "live_performance_proof",
+        "host_vocal_proof",
+        "song_repair_gate",
+    ):
+        if guard_field in requested:
+            merged[guard_field] = requested[guard_field]
     if room_id:
-        planned["room_id"] = room_id
-    return planned
+        merged["room_id"] = room_id
+    return merged
 
 
 def _job_provenance(requested: Mapping[str, object], *, source_video: Path, room_id: str | None) -> JingtingJobProvenance:
@@ -1279,8 +1351,9 @@ def _resolve_song_boundary(
             end_boundary_score=0.0,
             reason_codes=performance_reasons,
         )
+    host_vocal_claim = _mapping(job_manifest.get("host_vocal_proof"))
     host_vocal_error, host_vocal_reason = _verify_host_vocal_claim(
-        _mapping(job_manifest.get("host_vocal_proof")),
+        host_vocal_claim,
         expected_candidate_id=anchor.candidate_id,
         lyrics_alignment=lyrics_alignment,
     )
@@ -1302,6 +1375,23 @@ def _resolve_song_boundary(
         song_boundary.get("post_song_reaction_end_ms"),
         song_boundary.get("last_lyric_end_ms"),
     )
+    # The CAM++ session sample starts at the first verified post-song host
+    # speech.  That speech is evidence input, not song output.  Resolve against
+    # the verified proof's current anchor as well as the earlier AGY boundary:
+    # a proof/report refresh may legitimately tighten the end after repair.
+    host_anchor_start_ms = _host_vocal_post_song_anchor_start(host_vocal_claim)
+    if host_anchor_start_ms is None:
+        return BoundaryResolution(
+            candidate_id=anchor.candidate_id,
+            action=DecisionAction.BLOCK,
+            resolved_start_ms=anchor.anchor_start_ms,
+            resolved_end_ms=anchor.anchor_end_ms,
+            start_boundary_score=0.0,
+            end_boundary_score=0.0,
+            reason_codes=("SONG_HOST_VOCAL_PROOF_INVALID",),
+        )
+    if clip_end_ms is not None:
+        clip_end_ms = min(clip_end_ms, host_anchor_start_ms)
     if clip_start_ms is None or clip_end_ms is None or clip_end_ms <= clip_start_ms:
         return BoundaryResolution(
             candidate_id=anchor.candidate_id,
@@ -1392,12 +1482,14 @@ def _verify_live_performance_observation(
         return "live-performance alignment report is not a JSON object"
     first_ms = report.get("first_lyric_start_ms")
     last_ms = report.get("last_lyric_end_ms")
+    report_rows = report.get("alignment")
     if not isinstance(first_ms, int) or isinstance(first_ms, bool) or not isinstance(last_ms, int) or isinstance(last_ms, bool):
         return "live-performance lyric span is missing"
     performance_error = validate_live_performance_observation(
         report.get("live_performance"),
         first_lyric_start_ms=first_ms,
         last_lyric_end_ms=last_ms,
+        observations=report_rows,
         require_ready=True,
     )
     if performance_error is not None:
@@ -1408,7 +1500,7 @@ def _verify_live_performance_observation(
         or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
         or not str(lyrics_alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
     ):
-        return "live-performance proof is not a production AGY audio-v2 alignment"
+        return "live-performance proof is not a production AGY audio-v3 alignment"
 
     artifacts = report.get("audio_alignment_artifacts")
     if not isinstance(artifacts, Mapping):
@@ -1465,6 +1557,7 @@ def _verify_live_performance_observation(
     ):
         return "live-performance AGY run manifest is invalid"
     for manifest_key, report_key in (
+        ("source_origin_path", "source_origin_path"),
         ("source_path", "source_path"),
         ("source_sha256", "source_sha256"),
         ("source_duration_ms", "source_duration_ms"),
@@ -1482,7 +1575,7 @@ def _verify_live_performance_observation(
     raw_rows = raw.get("observations") if isinstance(raw, Mapping) else None
     if (
         not isinstance(raw, Mapping)
-        or raw.get("schema_version") != "agy-audio-lrc-observation.v2"
+        or raw.get("schema_version") != AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION
         or not isinstance(raw_record, Mapping)
         or raw_record.get("candidate_id") != candidate_id
         or raw_record.get("source_sha256") != artifacts.get("source_sha256")
@@ -1490,10 +1583,9 @@ def _verify_live_performance_observation(
         or raw_record.get("source_duration_ms") != artifacts.get("source_duration_ms")
         or not isinstance(raw_rows, list)
     ):
-        return "live-performance raw AGY v2 observation is invalid"
+        return "live-performance raw AGY v3 observation is invalid"
     if raw.get("live_performance") != report.get("live_performance"):
         return "live-performance raw/report observation mismatch"
-    report_rows = report.get("alignment")
     lyric_lines = report.get("lyric_lines")
     if (
         not isinstance(report_rows, list)
@@ -1512,7 +1604,18 @@ def _verify_live_performance_observation(
         end_ms = raw_row.get("live_end_ms")
         confidence = raw_row.get("confidence")
         if (
-            raw_row.get("lrc_index") != index
+            set(raw_row) != {
+                "lrc_index",
+                "lrc_time_ms",
+                "text",
+                "heard",
+                "live_start_ms",
+                "live_end_ms",
+                "confidence",
+                *LYRIC_VOCAL_ASSERTION_KEYS,
+            }
+            or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(report_row)
+            or raw_row.get("lrc_index") != index
             or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
             or raw_row.get("text") != lyric.get("text")
             or raw_row.get("heard") is not True
@@ -1532,6 +1635,7 @@ def _verify_live_performance_observation(
             or report_row.get("match_ratio") != round(float(confidence), 4)
             or report_row.get("evidence_source") != "agy_audio_lrc"
             or report_row.get("matched_cue_id") != f"agy-audio:{expected_raw_sha[:12]}:line-{index}"
+            or any(report_row.get(key) != raw_row.get(key) for key in LYRIC_VOCAL_ASSERTION_KEYS)
         ):
             return f"live-performance raw/report lyric row {index} mismatch"
         previous_start = start_ms
@@ -1608,6 +1712,62 @@ def _verify_host_vocal_claim(
             return "no Li Dousha vocal was detected across the lyric span", "SONG_NOT_LIDOUSHA_SINGING"
         return "host-vocal proof did not reach READY", "SONG_HOST_VOCAL_UNPROVEN"
     return None, "SONG_HOST_VOCAL_VERIFIED"
+
+
+def _host_vocal_post_song_anchor_start(claim: Mapping[str, object]) -> int | None:
+    """Read the post-song speech start from an already verified proof claim."""
+
+    proof_value = claim.get("proof_path")
+    if not isinstance(proof_value, str) or not proof_value:
+        return None
+    try:
+        proof = json.loads(Path(proof_value).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    session_anchor = _mapping(proof.get("session_host_anchor")) if isinstance(proof, Mapping) else {}
+    start_ms = session_anchor.get("start_ms")
+    if not isinstance(start_ms, int) or isinstance(start_ms, bool) or start_ms < 0:
+        return None
+    return start_ms
+
+
+def _tighten_song_boundary_to_verified_host_anchor(
+    job_manifest: Mapping[str, object],
+    *,
+    candidate_id: str,
+    alignment: Mapping[str, object],
+    claim: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Persist the proof-tightened end so runner and renderer share one range."""
+
+    error, _reason = _verify_host_vocal_claim(
+        claim,
+        expected_candidate_id=candidate_id,
+        lyrics_alignment=alignment,
+    )
+    anchor_start_ms = _host_vocal_post_song_anchor_start(claim) if error is None else None
+    boundary = dict(_mapping(job_manifest.get("song_boundary")))
+    clip_start_ms = _first_int(
+        boundary.get("clip_start_ms"),
+        boundary.get("source_start_ms"),
+        boundary.get("song_start_ms"),
+    )
+    clip_end_ms = _first_int(
+        boundary.get("clip_end_ms"),
+        boundary.get("source_end_ms"),
+        boundary.get("post_song_reaction_end_ms"),
+        boundary.get("last_lyric_end_ms"),
+    )
+    if (
+        anchor_start_ms is None
+        or clip_start_ms is None
+        or clip_end_ms is None
+        or anchor_start_ms <= clip_start_ms
+        or anchor_start_ms >= clip_end_ms
+    ):
+        return dict(job_manifest)
+    boundary["clip_end_ms"] = anchor_start_ms
+    return {**dict(job_manifest), "song_boundary": boundary}
 
 
 def _apply_live_source_machine_evidence(
@@ -2232,6 +2392,7 @@ def _recut_plan_record(
     candidate_id: str,
     boundary_resolution: BoundaryResolution | None,
     output_dir: Path,
+    strict_song_streams: bool = False,
 ) -> dict[str, object] | None:
     if boundary_resolution is None or boundary_resolution.action not in {DecisionAction.AUTO_RECUT, DecisionAction.AUTO_UPLOAD}:
         return None
@@ -2264,6 +2425,18 @@ def _recut_plan_record(
         str(source_video),
         "-t",
         f"{duration_ms / 1000:.3f}",
+        *(
+            [
+                "-map", "0:v:0",
+                "-map", "0:a:0",
+                "-sn",
+                "-dn",
+                "-map_metadata", "-1",
+                "-map_chapters", "-1",
+            ]
+            if strict_song_streams
+            else []
+        ),
         "-c",
         "copy",
         str(output_media),
@@ -2431,7 +2604,12 @@ def _attempt_host_vocal_proof_stage(
         return with_performance
     existing = _mapping(job_manifest.get("host_vocal_proof"))
     if existing.get("status") == "READY":
-        return with_performance
+        return _tighten_song_boundary_to_verified_host_anchor(
+            with_performance,
+            candidate_id=candidate_id,
+            alignment=alignment,
+            claim=existing,
+        )
     if source_media_path is None or not source_media_path.is_file():
         claim: Mapping[str, object] = {
             "status": "ERROR",
@@ -2462,7 +2640,13 @@ def _attempt_host_vocal_proof_stage(
                 "reason_code": "SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE",
                 "error": f"{type(exc).__name__}: {exc}",
             }
-    return {**with_performance, "host_vocal_proof": dict(claim)}
+    with_host_claim = {**with_performance, "host_vocal_proof": dict(claim)}
+    return _tighten_song_boundary_to_verified_host_anchor(
+        with_host_claim,
+        candidate_id=candidate_id,
+        alignment=alignment,
+        claim=_mapping(claim),
+    )
 
 
 def _job_is_song_candidate(job_manifest: Mapping[str, object]) -> bool:
@@ -2504,6 +2688,7 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
     ass_path = media_path.with_suffix(".final-sapphire72.ass")
     burned_path = media_path.with_suffix(".burned-final-sapphire72.mp4")
     record = dict(materialized_recut)
+    strict_song_output = record.get("subtitle_source") == "external_lrc_global_shift"
     _write_lidousha_sapphire_ass_from_srt(subtitle_path, ass_path)
     if not run_ffmpeg:
         burned_path.write_bytes(b"dry-run burned preview placeholder\n")
@@ -2522,20 +2707,40 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
         # copy of itself (pillarbox), then burn subtitles on the 16:9 frame so
         # the subtitle is sized/positioned for 1920x1080.
         fc = (
-            "[0:v]split=2[bg][fg];"
+            ("[0:v:0]" if strict_song_output else "[0:v]") + "split=2[bg][fg];"
             "[bg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,gblur=sigma=24,eq=brightness=-0.06[bgb];"
             "[fg]scale=-2:1080[fgs];"
             "[bgb][fgs]overlay=(W-w)/2:0[pad];"
             f"[pad]{sub}[v]"
         )
+        stream_args = (
+            [
+                "-map", "[v]", "-map", "0:a:0",
+                "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
+            ]
+            if strict_song_output
+            else ["-map", "[v]", "-map", "0:a?"]
+        )
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(media_path),
-            "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-c:a", "copy", str(burned_path),
+            "-filter_complex", fc, *stream_args,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:a", "copy", str(burned_path),
         ]
     else:
+        stream_args = (
+            [
+                "-map", "0:v:0", "-map", "0:a:0",
+                "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
+            ]
+            if strict_song_output
+            else []
+        )
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(media_path),
-            "-vf", sub, "-c:a", "copy", str(burned_path),
+            "-vf", sub, *stream_args,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:a", "copy", str(burned_path),
         ]
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     if completed.returncode != 0 or not burned_path.is_file():
@@ -2554,11 +2759,51 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
         "burned_sha256": burned_sha,
         "subtitle_style": "lidousha-final-sapphire72",
         "pillarbox_16_9": bool(vertical),
+        "command": command,
+        "stream_contract": _song_stream_contract() if strict_song_output else None,
     }
     hashes = dict(record.get("artifact_hashes") or {})
     hashes["burned_video_sha256"] = burned_sha
     hashes["ass_sha256"] = "sha256:" + _sha256(ass_path)
     record["artifact_hashes"] = hashes
+    if strict_song_output:
+        manifest_value = record.get("manifest_path")
+        manifest_path = Path(str(manifest_value)) if isinstance(manifest_value, str) else None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path is not None else None
+        except (OSError, ValueError):
+            manifest = None
+        binding = dict(record.get("verified_output_binding") or {})
+        binding_artifacts = dict(binding.get("artifacts") or {})
+        if not isinstance(manifest, dict) or manifest.get("schema_version") != MATERIALIZED_RECUT_SCHEMA_VERSION or not binding:
+            record["status"] = "RETRY_INFRA"
+            record["reason_codes"] = list(dict.fromkeys([*(record.get("reason_codes") or []), "SONG_RECUT_MANIFEST_UPDATE_FAILED"]))
+            record["burned_preview"] = {
+                **dict(record["burned_preview"]),
+                "status": "FAILED",
+                "reason_code": "SONG_RECUT_MANIFEST_UPDATE_FAILED",
+            }
+            return record
+        binding_artifacts.update(
+            {
+                "burned_media_path": _canonical_existing_path(burned_path),
+                "burned_media_sha256": burned_sha,
+                "ass_path": _canonical_existing_path(ass_path),
+                "ass_sha256": hashes["ass_sha256"],
+            }
+        )
+        binding["artifacts"] = binding_artifacts
+        binding["burn_transform"] = {
+            "schema_version": "song-subtitle-burn-transform.v1",
+            "command": command,
+            "subtitle_style": "lidousha-final-sapphire72",
+            "pillarbox_16_9": bool(vertical),
+        }
+        record["verified_output_binding"] = binding
+        manifest["artifact_hashes"] = hashes
+        manifest["burned_preview"] = dict(record["burned_preview"])
+        manifest["verified_output_binding"] = binding
+        record["manifest_sha256"] = _write_bound_materialized_manifest(manifest_path, manifest)
     return record
 
 
@@ -4298,14 +4543,47 @@ def _materialize_recut_record(
     run_ffmpeg: bool,
     lyric_timeline: Sequence[tuple[int, str]] | None = None,
     lyric_offset_ms: int | None = None,
+    song_output_proof_binding: Mapping[str, object] | None = None,
     speech_spans_provider: SpeechSpansProvider | None = None,
     fresh_talk_transcriber: Callable[[Path], str] | None = None,
 ) -> dict[str, object] | None:
+    strict_song_output = lyric_timeline is not None and lyric_offset_ms is not None
+    manifest_schema_version = (
+        MATERIALIZED_RECUT_SCHEMA_VERSION
+        if strict_song_output
+        else TALK_MATERIALIZED_RECUT_SCHEMA_VERSION
+    )
+    source_binding: dict[str, object] | None = None
+    stream_contract: dict[str, object] | None = None
+    if strict_song_output:
+        if not isinstance(song_output_proof_binding, Mapping):
+            return {
+                "status": "BLOCKED",
+                "reason_codes": ["SONG_OUTPUT_PROOF_BINDING_MISSING"],
+                "candidate_id": candidate_id,
+                "artifact_hashes": {},
+            }
+        try:
+            source_video = Path(_canonical_existing_path(source_video))
+            source_binding = {
+                "canonical_path": str(source_video),
+                "sha256": _sha256_prefixed(source_video),
+            }
+        except OSError as exc:
+            return {
+                "status": "RETRY_INFRA",
+                "reason_codes": ["SONG_SOURCE_BINDING_UNAVAILABLE"],
+                "candidate_id": candidate_id,
+                "error": f"{type(exc).__name__}: {exc}",
+                "artifact_hashes": {},
+            }
+        stream_contract = _song_stream_contract()
     plan = _recut_plan_record(
         source_video=source_video,
         candidate_id=candidate_id,
         boundary_resolution=boundary_resolution,
         output_dir=output_dir,
+        strict_song_streams=lyric_timeline is not None and lyric_offset_ms is not None,
     )
     if plan is None:
         return None
@@ -4314,6 +4592,23 @@ def _materialize_recut_record(
     start_ms = _int(plan.get("start_ms"), 0)
     end_ms = _int(plan.get("end_ms"), start_ms)
     duration_ms = max(0, end_ms - start_ms)
+    if strict_song_output:
+        post_song_anchor_start_ms = song_output_proof_binding.get("post_song_anchor_start_ms")
+        if (
+            not isinstance(post_song_anchor_start_ms, int)
+            or isinstance(post_song_anchor_start_ms, bool)
+            or end_ms > post_song_anchor_start_ms
+        ):
+            return {
+                "status": "BLOCKED",
+                "reason_codes": ["SONG_OUTPUT_OVERLAPS_POST_SONG_HOST_ANCHOR"],
+                "candidate_id": candidate_id,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "post_song_anchor_start_ms": post_song_anchor_start_ms,
+                "source_binding": source_binding,
+                "artifact_hashes": {},
+            }
     media_path = Path(str(plan["output_media_path"]))
     subtitle_path = media_path.with_suffix(".srt")
     manifest_path = media_path.with_suffix(".manifest.json")
@@ -4355,14 +4650,18 @@ def _materialize_recut_record(
         if completed.returncode != 0:
             reason_codes.append("FFMPEG_RECUT_FAILED")
             manifest = {
-                "schema_version": "materialized-recut.v1",
+                "schema_version": manifest_schema_version,
                 "status": "RETRY_INFRA",
                 "reason_codes": reason_codes,
                 "requested_range": {"start_ms": start_ms, "end_ms": end_ms, "duration_ms": duration_ms},
                 "command": plan["command"],
+                "candidate_id": candidate_id,
+                "source_binding": source_binding,
+                "stream_contract": stream_contract,
+                "song_output_proof_binding": dict(song_output_proof_binding or {}),
                 "stderr_tail": completed.stderr[-1000:],
             }
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            manifest_sha256 = _write_bound_materialized_manifest(manifest_path, manifest)
             return {
                 "status": "RETRY_INFRA",
                 "reason_codes": reason_codes,
@@ -4372,6 +4671,10 @@ def _materialize_recut_record(
                 "media_path": str(media_path),
                 "subtitle_path": str(subtitle_path),
                 "manifest_path": str(manifest_path),
+                "manifest_sha256": manifest_sha256,
+                "candidate_id": candidate_id,
+                "source_binding": source_binding,
+                "stream_contract": stream_contract,
                 "dry_run_placeholder": False,
                 "artifact_hashes": {},
             }
@@ -4407,11 +4710,19 @@ def _materialize_recut_record(
             output_media=media_path,
             start_ms=start_ms,
             duration_ms=duration_ms,
+            strict_song_streams=strict_song_output,
         )
         completed = subprocess.run(accurate_command, check=False, capture_output=True, text=True)
         if completed.returncode == 0:
             accurate_rerender_used = True
             artifact_hashes["video_sha256"] = "sha256:" + _sha256(media_path)
+            if strict_song_output and source_binding is not None:
+                try:
+                    source_sha_after = _sha256_prefixed(source_video)
+                except OSError:
+                    source_sha_after = None
+                if source_sha_after != source_binding.get("sha256"):
+                    reason_codes.append("SONG_SOURCE_DRIFT_DURING_RECUT")
             render_qa = _evaluate_materialized_recut_render_qa(
                 candidate_id=candidate_id,
                 media_path=media_path,
@@ -4436,6 +4747,7 @@ def _materialize_recut_record(
             and isinstance(render_qa, Mapping)
             and render_qa.get("pass") is True
             and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes
+            and "SONG_SOURCE_DRIFT_DURING_RECUT" not in reason_codes
         )
         if not song_render_ready and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes:
             reason_codes.append("SONG_ACCURATE_RENDER_QA_FAILED")
@@ -4484,12 +4796,46 @@ def _materialize_recut_record(
                 "status": "FAILED_FALLBACK_ASR_CUES",
                 "error": f"{type(exc).__name__}: {exc}",
             }
+    recut_transform = (
+        {
+            "schema_version": "song-recut-transform.v1",
+            "method": "two_stage_seek_reencode",
+            "start_ms": start_ms,
+            "duration_ms": duration_ms,
+            "command": accurate_command,
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+        }
+        if strict_song_output
+        else None
+    )
+    verified_output_binding = (
+        {
+            "schema_version": VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION,
+            "candidate_id": candidate_id,
+            "source": dict(source_binding or {}),
+            "interval": {"start_ms": start_ms, "end_ms": end_ms, "duration_ms": duration_ms},
+            "post_song_anchor_start_ms": song_output_proof_binding.get("post_song_anchor_start_ms"),
+            "proofs": dict(song_output_proof_binding),
+            "stream_contract": dict(stream_contract or {}),
+            "recut_transform": recut_transform,
+            "artifacts": {
+                "recut_media_path": _canonical_existing_path(media_path),
+                "recut_media_sha256": artifact_hashes["video_sha256"],
+                "subtitle_path": _canonical_existing_path(subtitle_path),
+                "subtitle_sha256": artifact_hashes["subtitle_sha256"],
+            },
+        }
+        if strict_song_output
+        else None
+    )
     manifest = {
-        "schema_version": "materialized-recut.v1",
+        "schema_version": manifest_schema_version,
         "status": materialized_status,
         "reason_codes": reason_codes,
         "candidate_id": candidate_id,
         "source_video_path": str(source_video),
+        "source_binding": source_binding,
         "requested_range": {"start_ms": start_ms, "end_ms": end_ms, "duration_ms": duration_ms},
         "media_path": str(media_path),
         "subtitle_path": str(subtitle_path),
@@ -4497,6 +4843,10 @@ def _materialize_recut_record(
         "lyric_offset_ms": lyric_offset_ms if subtitle_source == "external_lrc_global_shift" else None,
         "command": plan["command"],
         "accurate_command": accurate_command,
+        "stream_contract": stream_contract,
+        "recut_transform": recut_transform,
+        "song_output_proof_binding": dict(song_output_proof_binding or {}),
+        "verified_output_binding": verified_output_binding,
         "dry_run_placeholder": not run_ffmpeg,
         "accurate_rerender_used": accurate_rerender_used,
         "artifact_hashes": artifact_hashes,
@@ -4505,21 +4855,29 @@ def _materialize_recut_record(
         "subtitle_timing_qa": timing_qa_record,
         "fresh_transcription": fresh_transcription_record,
     }
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_sha256 = _write_bound_materialized_manifest(manifest_path, manifest)
     return {
         "status": materialized_status,
         "reason_codes": reason_codes,
         "start_ms": start_ms,
         "end_ms": end_ms,
         "duration_ms": duration_ms,
+        "candidate_id": candidate_id,
+        "source_video_path": str(source_video),
+        "source_binding": source_binding,
         "media_path": str(media_path),
         "subtitle_path": str(subtitle_path),
         "subtitle_source": subtitle_source,
         "lyric_offset_ms": lyric_offset_ms if subtitle_source == "external_lrc_global_shift" else None,
         "manifest_path": str(manifest_path),
+        "manifest_sha256": manifest_sha256,
         "dry_run_placeholder": not run_ffmpeg,
         "accurate_rerender_used": accurate_rerender_used,
         "accurate_command": accurate_command,
+        "stream_contract": stream_contract,
+        "recut_transform": recut_transform,
+        "song_output_proof_binding": dict(song_output_proof_binding or {}),
+        "verified_output_binding": verified_output_binding,
         "artifact_hashes": artifact_hashes,
         "render_qa": render_qa,
         "render_qa_path": str(render_qa_path) if render_qa is not None else None,
@@ -4587,6 +4945,7 @@ def _accurate_reencode_recut_command(
     start_ms: int,
     duration_ms: int,
     coarse_preroll_ms: int = 10_000,
+    strict_song_streams: bool = False,
 ) -> list[str]:
     # Two-stage seek: live-captured MPEG-TS has no reliable seek index, so a
     # pure input-side -ss can land *after* the requested point (byte-position
@@ -4608,6 +4967,18 @@ def _accurate_reencode_recut_command(
         f"{fine_ms / 1000:.3f}",
         "-t",
         f"{duration_ms / 1000:.3f}",
+        *(
+            [
+                "-map", "0:v:0",
+                "-map", "0:a:0",
+                "-sn",
+                "-dn",
+                "-map_metadata", "-1",
+                "-map_chapters", "-1",
+            ]
+            if strict_song_streams
+            else []
+        ),
         "-c:v",
         "libx264",
         "-preset",
@@ -4798,6 +5169,55 @@ def _load_lyric_timeline(
     if not isinstance(offset_value, int) or isinstance(offset_value, bool):
         return None
     return timeline, offset_value
+
+
+def _song_output_proof_binding(
+    job_manifest: Mapping[str, object],
+    *,
+    output_dir: Path,
+) -> dict[str, object] | None:
+    """Return the exact proof artifacts that authorize a song output.
+
+    This is producer metadata, not the final trust decision: the unattended
+    runner reopens every artifact and compares the same fields independently.
+    """
+
+    alignment = _mapping(job_manifest.get("lyrics_alignment"))
+    host_claim = _mapping(job_manifest.get("host_vocal_proof"))
+    if _verify_lyrics_alignment_proof(alignment, output_dir=output_dir) is not None:
+        return None
+    report_value = alignment.get("alignment_report_path")
+    host_value = host_claim.get("proof_path")
+    if not isinstance(report_value, str) or not isinstance(host_value, str):
+        return None
+    report_path = Path(report_value)
+    if not report_path.is_absolute() and not report_path.is_file():
+        report_path = output_dir / report_path
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    audio_artifacts = _mapping(report.get("audio_alignment_artifacts")) if isinstance(report, Mapping) else {}
+    agy_manifest_value = audio_artifacts.get("run_manifest_path")
+    post_song_anchor_start_ms = report.get("post_song_talk_start_ms") if isinstance(report, Mapping) else None
+    if (
+        not isinstance(agy_manifest_value, str)
+        or not isinstance(post_song_anchor_start_ms, int)
+        or isinstance(post_song_anchor_start_ms, bool)
+    ):
+        return None
+    try:
+        return {
+            "lyrics_alignment_report_path": _canonical_existing_path(report_path),
+            "lyrics_alignment_report_sha256": str(alignment.get("alignment_report_sha256") or ""),
+            "host_vocal_proof_path": _canonical_existing_path(host_value),
+            "host_vocal_proof_sha256": str(host_claim.get("proof_sha256") or ""),
+            "agy_run_manifest_path": _canonical_existing_path(agy_manifest_value),
+            "agy_run_manifest_sha256": str(audio_artifacts.get("run_manifest_sha256") or ""),
+            "post_song_anchor_start_ms": post_song_anchor_start_ms,
+        }
+    except OSError:
+        return None
 
 
 def _write_lyric_timeline_srt(

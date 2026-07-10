@@ -40,7 +40,7 @@ def test_prioritize_caps_talk_and_songs_with_reasons():
     state = {
         "picks": [], "songs": [],
         "pending_talk": [
-            {"segment_path": f"/rec/seg{i % 2}.mp4", "start_ms": i * 1000, "end_ms": i * 1000 + 30_000,
+            {"segment_path": f"/rec/talkseg{i % 2}.mp4", "start_ms": i * 1000, "end_ms": i * 1000 + 30_000,
              "hook": f"hook{i}", "confidence": 0.9, "cid": f"auto_{i}"}
             for i in range(MAX_TALK_PICKS + 3)
         ],
@@ -233,6 +233,63 @@ def test_prioritize_diversity_cap_is_soft():
     }
     prioritize(state)
     assert len(state["pending_talk"]) == MAX_TALK_PICKS
+
+
+def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
+    """A blocked/background song cannot be laundered as a sibling talk cut."""
+
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_song": [
+            {
+                "segment_path": "/rec/session.mp4",
+                "anchor_start_ms": 100_000,
+                "anchor_end_ms": 160_000,
+                "danmaku": 9,
+                "cid": "song_background",
+            }
+        ],
+        "pending_talk": [
+            {"segment_path": "/rec/session.mp4", "start_ms": 98_000, "end_ms": 164_000, "cid": "parent"},
+            {"segment_path": "/rec/session.mp4", "start_ms": 110_000, "end_ms": 120_000, "cid": "child"},
+            {"segment_path": "/rec/session.mp4", "start_ms": 159_999, "end_ms": 170_000, "cid": "tail"},
+            {"segment_path": "/rec/session.mp4", "start_ms": 160_000, "end_ms": 170_000, "cid": "adjacent"},
+            {"segment_path": "/rec/session.mp4", "start_ms": 205_000, "end_ms": 215_000, "cid": "outside"},
+            {"segment_path": "/rec/other.mp4", "start_ms": 110_000, "end_ms": 120_000, "cid": "other"},
+        ],
+    }
+
+    prioritize(state)
+
+    assert {item["cid"] for item in state["pending_talk"]} == {"outside", "other"}
+    assert {item["candidate_id"] for item in state["song_overlap_blocked_talk"]} == {
+        "parent",
+        "child",
+        "tail",
+        "adjacent",
+    }
+    assert state["song_quarantine_intervals"] == [
+        {
+            "segment_path": "/rec/session.mp4",
+            "start_ms": 55_000,
+            "end_ms": 205_000,
+            "original_anchor_start_ms": 100_000,
+            "original_anchor_end_ms": 160_000,
+            "candidate_id": "song_background",
+            "reason_code": "SONG_INTERVAL_REQUIRES_JOINT_SINGING_PROOF",
+        }
+    ]
+
+    # The taint is durable even after the song leaves pending/backlog.
+    state["pending_song"] = []
+    state["song_backlog"] = []
+    state["pending_talk"] = [
+        {"segment_path": "/rec/session.mp4", "start_ms": 120_000, "end_ms": 130_000, "cid": "late_clone"}
+    ]
+    prioritize(state)
+    assert state["pending_talk"] == []
+    assert state["song_overlap_blocked_talk"][-1]["candidate_id"] == "late_clone"
 
 
 def test_song_status_words():
@@ -513,6 +570,7 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
     assert result["window_classified_song"] is True
     assert "full_source_retry" in result
     assert result["decision"] == "BLOCK"
+    assert result["full_source_authoritative_block"] is True
     assert result["full_source_performer_rejection"] is True
     assert "SONG_BACKGROUND_PLAYBACK_ONLY" in result["reason_codes"]
     assert "SONG_NOT_LIDOUSHA_SINGING" in result["reason_codes"]
@@ -532,6 +590,91 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
         "芽吹くとき",
         "下播前演唱 yonige《芽吹くとき》",
     ]
+
+
+def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, monkeypatch):
+    date = "2026-07-09"
+    cid = "song_timeout_retry"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    out_dir = base / "out" / date / cid
+    (base / "logs").mkdir(parents=True)
+    out_dir.mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "cpa_qa_cmd", lambda: "judge")
+    monkeypatch.setattr(
+        runner,
+        "slice_srt",
+        lambda _src, _start, _end, dest: (dest.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n歌词\n", encoding="utf-8"
+        ) or 1),
+    )
+
+    segment = tmp_path / "segment.mp4"
+    segment.write_bytes(b"segment")
+    for tag in ("", "_full"):
+        (out_dir / f"{cid}{tag}_source.mp4").write_bytes(tag.encode() or b"tight")
+
+    calls = 0
+
+    class Completed:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        selector_dir = Path(command[command.index("--output-dir") + 1])
+        if calls == 1:
+            (selector_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "records": [
+                            {
+                                "candidate_id": "seededsong_15000_65000",
+                                "decision_action": "BLOCK",
+                                "reason_codes": ["SONG_FULL_BOUNDARY_PROOF_MISSING"],
+                                "source_context_job": {
+                                    "content_type_hint": "song",
+                                    "song_candidate": True,
+                                    "requires_full_source_song_boundary_redo": True,
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return Completed(0)
+        # Authoritative full-source attempt times out and writes no summary.
+        return Completed(124)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_song(
+        date,
+        {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": 200_000,
+            "anchor_start_ms": 50_000,
+            "anchor_end_ms": 100_000,
+            "danmaku": 18,
+            "hook": "测试",
+            "preview": "《测试歌》",
+        },
+    )
+
+    assert calls == 2
+    assert result["decision"] == "BLOCK"
+    assert result["song_complete"] is False
+    assert result["full_source_authoritative_block"] is True
+    assert result.get("full_source_performer_rejection") is not True
+    assert result["full_source_retry"]["rc"] == 124
+    assert "SONG_FULL_BOUNDARY_PROOF_MISSING" in result["reason_codes"]
+    assert "delivered" not in result
 
 
 def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path, monkeypatch):
@@ -568,9 +711,112 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     subtitle = tmp_path / "song.srt"
     subtitle.write_text("1\n00:00:01,500 --> 00:00:02,500\n歌词0\n", encoding="utf-8")
     subtitle_sha = "sha256:" + hashlib.sha256(subtitle.read_bytes()).hexdigest()
+    recut_media = tmp_path / "song.recut.mp4"
+    recut_media.write_bytes(b"recut-video")
+    recut_media_sha = "sha256:" + hashlib.sha256(recut_media.read_bytes()).hexdigest()
     burned = tmp_path / "song.burned.mp4"
     burned.write_bytes(b"burned-video")
     burned_sha = "sha256:" + hashlib.sha256(burned.read_bytes()).hexdigest()
+    ass = tmp_path / "song.final-sapphire72.ass"
+    ass.write_text("[Script Info]\n", encoding="utf-8")
+    ass_sha = "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
+    source_path = str(source.resolve())
+    source_sha = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+    report_bound = json.loads(report.read_text(encoding="utf-8"))
+    audio_artifacts = report_bound["audio_alignment_artifacts"]
+    stream_contract = runner._expected_song_stream_contract()
+    accurate_command = runner._expected_song_recut_command(
+        source_path, str(recut_media.resolve()), 0, 33_500
+    )
+    burn_command = [
+        "ffmpeg", "-i", str(recut_media.resolve()), "-vf", "subtitles=test.ass",
+        "-map", "0:v:0", "-map", "0:a:0", "-sn", "-dn",
+        "-map_metadata", "-1", "-map_chapters", "-1", str(burned.resolve()),
+    ]
+    proofs = {
+        "lyrics_alignment_report_path": str(report.resolve()),
+        "lyrics_alignment_report_sha256": report_sha,
+        "host_vocal_proof_path": str(Path(host_vocal_claim["proof_path"]).resolve()),
+        "host_vocal_proof_sha256": host_vocal_claim["proof_sha256"],
+        "agy_run_manifest_path": str(Path(audio_artifacts["run_manifest_path"]).resolve()),
+        "agy_run_manifest_sha256": audio_artifacts["run_manifest_sha256"],
+        "post_song_anchor_start_ms": 33_500,
+    }
+    artifact_hashes = {
+        "video_sha256": recut_media_sha,
+        "subtitle_sha256": subtitle_sha,
+        "burned_video_sha256": burned_sha,
+        "ass_sha256": ass_sha,
+    }
+    burned_record = {
+        "status": "BURNED",
+        "path": str(burned.resolve()),
+        "ass_path": str(ass.resolve()),
+        "burned_sha256": burned_sha,
+        "subtitle_style": "lidousha-final-sapphire72",
+        "pillarbox_16_9": False,
+        "command": burn_command,
+        "stream_contract": stream_contract,
+    }
+    output_binding = {
+        "schema_version": runner.VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION,
+        "candidate_id": "song-proof",
+        "source": {"canonical_path": source_path, "sha256": source_sha},
+        "interval": {"start_ms": 0, "end_ms": 33_500, "duration_ms": 33_500},
+        "post_song_anchor_start_ms": 33_500,
+        "proofs": proofs,
+        "stream_contract": stream_contract,
+        "recut_transform": {
+            "schema_version": "song-recut-transform.v1",
+            "method": "two_stage_seek_reencode",
+            "start_ms": 0,
+            "duration_ms": 33_500,
+            "command": accurate_command,
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+        },
+        "artifacts": {
+            "recut_media_path": str(recut_media.resolve()),
+            "recut_media_sha256": recut_media_sha,
+            "subtitle_path": str(subtitle.resolve()),
+            "subtitle_sha256": subtitle_sha,
+            "burned_media_path": str(burned.resolve()),
+            "burned_media_sha256": burned_sha,
+            "ass_path": str(ass.resolve()),
+            "ass_sha256": ass_sha,
+        },
+        "burn_transform": {
+            "schema_version": "song-subtitle-burn-transform.v1",
+            "command": burn_command,
+            "subtitle_style": "lidousha-final-sapphire72",
+            "pillarbox_16_9": False,
+        },
+    }
+    recut_manifest = tmp_path / "song.recut.manifest.json"
+    manifest_payload = {
+        "schema_version": runner.MATERIALIZED_RECUT_SCHEMA_VERSION,
+        "status": "MATERIALIZED",
+        "reason_codes": [],
+        "candidate_id": "song-proof",
+        "source_video_path": source_path,
+        "source_binding": output_binding["source"],
+        "requested_range": output_binding["interval"],
+        "media_path": str(recut_media.resolve()),
+        "subtitle_path": str(subtitle.resolve()),
+        "subtitle_source": "external_lrc_global_shift",
+        "lyric_offset_ms": 1_500,
+        "accurate_command": accurate_command,
+        "stream_contract": stream_contract,
+        "recut_transform": output_binding["recut_transform"],
+        "song_output_proof_binding": proofs,
+        "verified_output_binding": output_binding,
+        "artifact_hashes": artifact_hashes,
+        "burned_preview": burned_record,
+        "accurate_rerender_used": True,
+    }
+    recut_manifest.write_text(json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    recut_manifest_sha = "sha256:" + hashlib.sha256(recut_manifest.read_bytes()).hexdigest()
+    monkeypatch.setattr(runner, "_has_exact_av_streams", lambda _path: True)
     record = {
         "candidate_id": "song-proof",
         "source_context_job": {
@@ -594,14 +840,21 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
                 "matched_line_ratio": 1.0,
                 "alignment_report_path": str(report),
                 "alignment_report_sha256": report_sha,
+                "source_media_path": source_path,
+                "source_media_sha256": source_sha,
             },
             "host_vocal_proof": host_vocal_claim,
         },
         "materialized_recut": {
             "status": "MATERIALIZED",
             "reason_codes": [],
+            "candidate_id": "song-proof",
             "start_ms": 0,
             "end_ms": 33_500,
+            "duration_ms": 33_500,
+            "source_video_path": source_path,
+            "source_binding": output_binding["source"],
+            "media_path": str(recut_media.resolve()),
             "subtitle_source": "external_lrc_global_shift",
             "accurate_rerender_used": True,
             "render_qa": {
@@ -612,20 +865,79 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
             },
             "subtitle_path": str(subtitle),
             "lyric_offset_ms": 1_500,
-            "burned_preview": {
-                "status": "BURNED",
-                "path": str(burned),
-                "burned_sha256": burned_sha,
-            },
-            "artifact_hashes": {
-                "subtitle_sha256": subtitle_sha,
-                "burned_video_sha256": burned_sha,
-            },
+            "manifest_path": str(recut_manifest),
+            "manifest_sha256": recut_manifest_sha,
+            "accurate_command": accurate_command,
+            "stream_contract": stream_contract,
+            "recut_transform": output_binding["recut_transform"],
+            "song_output_proof_binding": proofs,
+            "verified_output_binding": output_binding,
+            "burned_preview": burned_record,
+            "artifact_hashes": artifact_hashes,
         },
     }
+    # Publish staging may append cover hashes after the recut manifest has
+    # already sealed the media/subtitle/burn artifacts; that extension is not
+    # a recut-manifest mismatch.
+    record["materialized_recut"]["artifact_hashes"]["cover_sha256"] = "sha256:" + "0" * 64
     evidence = runner.song_completion_evidence(record)
     assert evidence["ready"] is True
     assert evidence["reason_codes"] == []
+
+    original_source_bytes = source.read_bytes()
+    source.write_bytes(b"tampered-source-video")
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_RECUT_SOURCE_BINDING_INVALID" in evidence["reason_codes"]
+    source.write_bytes(original_source_bytes)
+
+    saved_binding = json.loads(json.dumps(record["materialized_recut"]["verified_output_binding"]))
+    record["materialized_recut"]["verified_output_binding"]["source"]["canonical_path"] = str(
+        (tmp_path / "different-source.mp4").resolve()
+    )
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_RECUT_SOURCE_BINDING_INVALID" in evidence["reason_codes"]
+    record["materialized_recut"]["verified_output_binding"] = saved_binding
+
+    record["materialized_recut"]["end_ms"] = 33_499
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_RECUT_INTERVAL_BINDING_INVALID" in evidence["reason_codes"]
+    record["materialized_recut"]["end_ms"] = 33_500
+
+    saved_contract = record["materialized_recut"]["stream_contract"]
+    record["materialized_recut"]["stream_contract"] = {
+        **saved_contract,
+        "ffmpeg_maps": ["0:v:0", "0:a:1"],
+    }
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_RECUT_STREAM_CONTRACT_INVALID" in evidence["reason_codes"]
+    record["materialized_recut"]["stream_contract"] = saved_contract
+
+    original_manifest_bytes = recut_manifest.read_bytes()
+    original_manifest_sha = record["materialized_recut"]["manifest_sha256"]
+    self_consistent_tamper = json.loads(original_manifest_bytes)
+    self_consistent_tamper["accurate_command"] = [*accurate_command[:-1], "tampered-output.mp4"]
+    recut_manifest.write_text(
+        json.dumps(self_consistent_tamper, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    record["materialized_recut"]["manifest_sha256"] = (
+        "sha256:" + hashlib.sha256(recut_manifest.read_bytes()).hexdigest()
+    )
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_RECUT_MANIFEST_CONTENT_INVALID" in evidence["reason_codes"]
+    recut_manifest.write_bytes(original_manifest_bytes)
+    record["materialized_recut"]["manifest_sha256"] = original_manifest_sha
+
+    recut_manifest.write_text("{}\n", encoding="utf-8")
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_RECUT_MANIFEST_HASH_INVALID" in evidence["reason_codes"]
+    recut_manifest.write_bytes(original_manifest_bytes)
 
     # Regression for the 2026-07-09 《芽吹くとき》 false positive: even a
     # perfect 8/8 LRC/global-shift proof cannot stand in for 李豆沙 singing.

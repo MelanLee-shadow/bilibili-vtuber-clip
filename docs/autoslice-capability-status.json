@@ -7,7 +7,7 @@
     "auto_song_slicing": {
       "status": "joint_live_performance_plus_lidousha_vocal_gate_implemented_deploy_pending_no_upload",
       "source_implementation_updated_at": "2026-07-10T05:38:26Z",
-      "summary": "A song delivery requires a complete current-audio/LRC proof plus two independent performer subclaims on the same evidence: AGY v2 must identify continuous live streamer singing, and CAM++ must find Li Dousha vocal identity on lyric checkpoints. Only their AND result is VERIFIED_LIDOUSHA_SINGING. Original/background playback, speech over music, another singer, ambiguity, missing runtime, or proof/hash uncertainty fails closed. Source implementation is present, but production deployment and a fresh incident rerun are still pending. This is not an upload grant.",
+      "summary": "A song delivery requires a complete current-audio/LRC proof plus two independent performer subclaims on the same evidence: AGY v3 must prove on every heard lyric row that Li Dousha is singing that lyric from the same live vocal source, with no other singer/harmony and no recorded/playback vocal; CAM++ must independently find Li Dousha vocal identity on distinct lyric checkpoints. Only their AND result is VERIFIED_LIDOUSHA_SINGING. Original/background playback, offscreen/static replay, speech over music, guest/duet/harmony, another singer, ambiguity, missing runtime, or proof/hash uncertainty fails closed. Source implementation is present, but production deployment and a fresh incident rerun are still pending. This is not an upload grant.",
       "implemented_front_door": [
         "full-session selector classifies song-like windows as content_type_hint=song",
         "song candidates carry requires_full_source_song_boundary_redo=true",
@@ -15,8 +15,9 @@
         "only the expanded full-source retry enables agy audio plus canonical-LRC alignment",
         "lrc-provider=auto searches NetEase, LRCLIB, and Kugou and groups same-song provider variants before audio proof; manual recovery may use Google/public-web discovery but must retain the direct timed-LRC source",
         "Japanese language and sparse or garbled singing ASR are not terminal failure reasons",
-        "song anchors remain incomplete until lyric completion, AGY v2 live-performance, and Li Dousha host-vocal proofs are all available",
-        "semantic recall explicitly excludes original-track playback, ending-card music, and other background music"
+        "song anchors remain incomplete until lyric completion, AGY v3 every-row same-Li-Dousha-live-singer evidence, and Li Dousha host-vocal proofs are all available",
+        "semantic recall explicitly excludes original-track playback, ending-card music, other background music, guest/duet/harmony, and offscreen/static replay",
+        "known song source intervals persistently quarantine every overlapping talk candidate so a song BLOCK cannot be laundered through another lane"
       ],
       "required_machine_evidence": [
         "song_boundary.status=FULL_SONG_READY",
@@ -24,19 +25,20 @@
         "one sufficiently supported canonical LRC identity with provider and source URL recorded",
         "current media, canonical LRC, prompt, raw observation, and run manifest bound by SHA-256",
         "clean agy Gemini 3.5 Flash (High) run with every canonical line heard, one global shift, five named lyric spot checks, and post-song boundary",
-        "AGY v2 live_performance mode=LIVE_STREAMER_SINGING, confidence >=0.85, continuous_singing=true, background_recording_likelihood <=0.20, and exactly three evidence timestamps covering lyric head/middle/tail",
+        "AGY v3 live_performance mode=LIVE_STREAMER_SINGING, confidence >=0.85, continuous_singing=true, background_recording_likelihood <=0.20, and exactly three evidence timestamps covering lyric head/middle/tail",
+        "every heard canonical-LRC row has lyric_vocal_subject=LIDOUSHA, lidousha_role=SINGING_THIS_LYRIC, same_live_vocal_source_as_lidousha=true, other_singer_or_harmony_audible=false, and recorded_or_playback_vocal_audible=false; the aggregate is recomputed from rows and raw/report projections must match",
         "a 4-8 second post-song host speech anchor whose median against three hash-pinned Li Dousha enrollments is >=0.60",
         "host_vocal_proof.status=READY and decision=LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
         "seven distinct actual aligned lyric cues of duration >=2.5 seconds, sampled for 2.5-4 seconds; each pass requires both three-enrollment median >=0.31 and same-session host-anchor score >=0.31; >=5/7 passes and every bucket covered",
         "only the AGY-live AND CAM++-identity result mints joint_singing_decision=VERIFIED_LIDOUSHA_SINGING",
-        "source media, alignment report, voiceprint profile, model tree, references, session anchor, checkpoint WAVs, recorded scores, medians, and aggregate decision hash/recompute verified; the verifier does not rerun ML inference",
+        "source media, alignment report, voiceprint profile, model tree, references, session anchor, seven distinct decoded-PCM checkpoint WAVs, recorded scores, medians, and aggregate decision hash/recompute verified; the verifier does not rerun ML inference",
         "external_lrc_global_shift subtitle, accurate rerender, passing render QA, and current SRT/burned-video hashes"
       ],
       "fail_closed_without": [
         "full-source song boundary",
         "unique and sufficiently supported LRC identity",
         "current-audio lyrics alignment readiness",
-        "AGY v2 positive continuous live-streamer performance evidence across head/middle/tail",
+        "AGY v3 positive every-row same-Li-Dousha-live-singer evidence across head/middle/tail, with no guest/duet/harmony or replay vocal",
         "positive Li Dousha vocal identity across head/middle/tail and against a verified same-session host anchor",
         "available hash-matching CAM++ runtime and three private enrollments",
         "a usable 4-8 second post-song host speech anchor",
@@ -90,7 +92,7 @@
       },
       "remaining_fail_closed_not_claimed_complete": [
         "automatic success for Japanese songs without a reliable unique synchronized-LRC identity",
-        "exhaustive guest or other-singer ROC calibration or formal performer proof",
+        "exhaustive real-media guest, duet, harmony, or other-singer ROC calibration or formal performer proof",
         "joint-gate production deployment and a fresh negative-case state repair",
         "automatic waveform/spectrogram artifact generation for song redo jobs",
         "review-package audit expansion for spectrogram/waveform/probe/approved-cover-style finished gates"

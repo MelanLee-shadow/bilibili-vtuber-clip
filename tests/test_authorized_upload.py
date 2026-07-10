@@ -1,9 +1,19 @@
 """Manifest-bound upload channel (2026-07-09 audit P0-3): authorization must be
 cryptographically tied to the exact reviewed artifacts, uploads must be
 idempotent, and the uploader can only receive manifest args — never hand-typed."""
+import fcntl
 import json
+import os
+import sys
+
+import pytest
 
 import scripts.authorized_upload as au
+
+
+@pytest.fixture(autouse=True)
+def _isolated_default_upload_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(au, "DEFAULT_UPLOAD_LOCK", tmp_path / "default-upload.lock")
 
 
 def _mk(tmp_path, title="【李豆沙】标题", quote="可以上传了"):
@@ -18,6 +28,10 @@ def _mk(tmp_path, title="【李豆沙】标题", quote="可以上传了"):
     ])
     assert rc == 0
     return video, cover, manifest
+
+
+def _ledger_rows(path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_make_manifest_then_verify_ok(tmp_path, capsys):
@@ -68,7 +82,10 @@ def test_upload_runs_uploader_with_manifest_args_and_ledgers(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert f"got: {video.resolve()} | {cover.resolve()} | 【李豆沙】标题" in out
-    entry = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+    rows = _ledger_rows(ledger)
+    assert [row["event"] for row in rows] == ["UPLOAD_ATTEMPT_STARTED", "UPLOAD_ATTEMPT_FINISHED"]
+    assert rows[0]["attempt_id"] == rows[1]["attempt_id"]
+    entry = rows[-1]
     assert entry["rc"] == 0 and entry["bvid"] == "BV1TEST"
     assert entry["video_sha256"] == json.loads(manifest.read_text())["video"]["sha256"]
     assert entry["authorization_quote"] == "可以上传了"
@@ -83,7 +100,7 @@ def test_upload_is_idempotent_by_video_hash(tmp_path, capsys):
     rc = au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger), "--uploader", str(stub)])
     assert rc == 3
     assert "already uploaded" in capsys.readouterr().err
-    assert len(ledger.read_text().splitlines()) == 1  # 拒绝的不记成功条目
+    assert len(ledger.read_text().splitlines()) == 2  # 拒绝的不追加第二个 attempt
 
 
 def test_upload_refuses_drifted_artifact(tmp_path, capsys):
@@ -103,8 +120,159 @@ def test_failed_upload_ledgered_but_retryable(tmp_path):
     bad.write_text("#!/bin/bash\necho boom >&2\nexit 7\n", encoding="utf-8")
     bad.chmod(0o755)
     assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger), "--uploader", str(bad)]) == 7
-    entry = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+    entry = _ledger_rows(ledger)[-1]
     assert entry["rc"] == 7 and entry["bvid"] is None
     # rc!=0 的账本条目不算已上传 → 重试不会被幂等门误拦
     assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger),
                     "--uploader", str(_stub_uploader(tmp_path))]) == 0
+    assert len(_ledger_rows(ledger)) == 4
+
+
+def test_upload_holds_shared_lock_through_uploader_and_ledger_append(tmp_path, capsys):
+    """The child uploader must observe the repair/upload lock as already held."""
+    ledger = tmp_path / "ledger.jsonl"
+    lock = tmp_path / "shared-upload.lock"
+    probe = tmp_path / "probe_lock.py"
+    probe.write_text(
+        "import fcntl, os, sys\n"
+        f"fd = os.open({str(lock)!r}, os.O_RDWR | os.O_CREAT, 0o600)\n"
+        "try:\n"
+        "    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "except BlockingIOError:\n"
+        "    print('LOCK_HELD')\n"
+        "    raise SystemExit(0)\n"
+        "print('LOCK_NOT_HELD')\n"
+        "raise SystemExit(9)\n",
+        encoding="utf-8",
+    )
+    probe.chmod(0o755)
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"cover")
+    manifest = tmp_path / "lock-probe.upload_manifest.json"
+    assert au.main(
+        [
+            "make-manifest",
+            "--video",
+            str(probe),
+            "--cover",
+            str(cover),
+            "--title",
+            "lock probe",
+            "--quote",
+            "test only",
+            "--out",
+            str(manifest),
+        ]
+    ) == 0
+
+    rc = au.main(
+        [
+            "upload",
+            "--manifest",
+            str(manifest),
+            "--ledger",
+            str(ledger),
+            "--lock",
+            str(lock),
+            "--uploader",
+            sys.executable,
+        ]
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "LOCK_HELD" in output
+    assert "LOCK_NOT_HELD" not in output
+    assert _ledger_rows(ledger)[-1]["rc"] == 0
+
+
+def test_upload_refuses_instead_of_queueing_behind_repair_lock(tmp_path, capsys):
+    _, _, manifest = _mk(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+    lock = tmp_path / "shared-upload.lock"
+    marker = tmp_path / "uploader-ran"
+    stub = tmp_path / "must-not-run.sh"
+    stub.write_text(f"#!/bin/bash\ntouch {str(marker)!r}\n", encoding="utf-8")
+    stub.chmod(0o755)
+
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        rc = au.main(
+            [
+                "upload",
+                "--manifest",
+                str(manifest),
+                "--ledger",
+                str(ledger),
+                "--lock",
+                str(lock),
+                "--uploader",
+                str(stub),
+            ]
+        )
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    assert rc == 4
+    assert "shared upload/repair lock is busy" in capsys.readouterr().err
+    assert not marker.exists()
+    assert not ledger.exists()
+
+
+def test_started_intent_is_fsynced_before_subprocess_and_terminal_is_durable(tmp_path, monkeypatch):
+    _, _, manifest = _mk(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+    fsync_calls = []
+    real_fsync = au.os.fsync
+
+    def tracked_fsync(fd):
+        fsync_calls.append(fd)
+        return real_fsync(fd)
+
+    def inspect_then_finish(cmd, **kwargs):
+        rows = _ledger_rows(ledger)
+        assert len(rows) == 1
+        assert rows[0]["event"] == "UPLOAD_ATTEMPT_STARTED"
+        assert len(rows[0]["manifest_sha256"]) == 64
+        # file + parent directory were both fsynced before the side effect.
+        assert len(fsync_calls) >= 2
+        return au.subprocess.CompletedProcess(cmd, 0, stdout="BVID=BV1INTENT\n", stderr="")
+
+    monkeypatch.setattr(au.os, "fsync", tracked_fsync)
+    monkeypatch.setattr(au.subprocess, "run", inspect_then_finish)
+
+    assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger)]) == 0
+    rows = _ledger_rows(ledger)
+    assert [row["event"] for row in rows] == ["UPLOAD_ATTEMPT_STARTED", "UPLOAD_ATTEMPT_FINISHED"]
+    assert rows[0]["attempt_id"] == rows[1]["attempt_id"]
+    assert rows[1]["bvid"] == "BV1INTENT"
+    assert len(fsync_calls) >= 4
+
+
+def test_crash_after_started_intent_blocks_all_later_uploads(tmp_path, monkeypatch, capsys):
+    _, _, manifest = _mk(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+
+    def crash_after_intent(cmd, **kwargs):
+        assert _ledger_rows(ledger)[-1]["event"] == "UPLOAD_ATTEMPT_STARTED"
+        raise RuntimeError("simulated process crash before terminal row")
+
+    monkeypatch.setattr(au.subprocess, "run", crash_after_intent)
+    with pytest.raises(RuntimeError, match="simulated process crash"):
+        au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger)])
+    assert [row["event"] for row in _ledger_rows(ledger)] == ["UPLOAD_ATTEMPT_STARTED"]
+
+    called = False
+
+    def must_not_run(cmd, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("unresolved intent must block before uploader")
+
+    monkeypatch.setattr(au.subprocess, "run", must_not_run)
+    assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger)]) == 5
+    assert "unresolved UPLOAD_ATTEMPT_STARTED" in capsys.readouterr().err
+    assert called is False
+    assert len(_ledger_rows(ledger)) == 1
