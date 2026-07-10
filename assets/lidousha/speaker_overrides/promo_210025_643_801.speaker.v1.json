@@ -2,12 +2,31 @@
   "schema_version": 1,
   "source_media_sha256": "a34440a7ee29e4555289eca08b3922b11fb487d3717ff54add5bb53683dedeb1",
   "text_final_srt_sha256": "63438b34dd879c077cc2af6c16f692ae9625a67ed851b31a2cd5a61098874750",
-  "source_srt_sha256": "c13e178fc001d8c58c67afd0f824cf6a4a9e9d11f8464cbcf8b79c88f9f7c2ed",
+  "source_srt_sha256": "563a87dd4633c1a841d93de5683872bb27b642c208c59d3b18c9150199721838",
   "candidate_id": "promo_210025_643_801",
   "status": "ivan_reviewed_turns_on_production_text",
   "reviewed_at": "2026-07-10",
   "overlap_policy": "保留主说话人；只有词和时间都可靠时才增加抢话层。",
   "overrides": [
+    {
+      "source_cue": 1,
+      "expect": {
+        "start": "00:00:00,000",
+        "end": "00:00:00,250",
+        "text": "真是太快了"
+      },
+      "authority": "accepted v9/v10 opening baseline; Ivan identified the following 这中间 as the opening correction, 2026-07-10",
+      "note": "The reviewed opening keeps this short reaction on the guest side; the following merged cue is 李豆沙.",
+      "segments": [
+        {
+          "start": "00:00:00,000",
+          "end": "00:00:00,250",
+          "speaker": "连线",
+          "speaker_detail": "连线（具体来宾未确认）",
+          "text": "真是太快了"
+        }
+      ]
+    },
     {
       "source_cue": 2,
       "expect": {
