@@ -15,7 +15,7 @@ from src.autoslice.cpa_semantic_qa import (
     write_cpa_semantic_response_artifact,
 )
 from src.autoslice.review_evidence import ReviewEvidence
-from src.autoslice.song_repair import LrcLine
+from src.autoslice.song_repair import LrcLine, LrcResult
 from tests.host_vocal_test_support import (
     bind_ready_live_performance_report,
     make_ready_audio_alignment_run,
@@ -884,6 +884,147 @@ def test_ready_host_identity_plus_speech_over_background_music_stays_blocked(tmp
         next((tmp_path / "preexisting-host-proof").glob("*.host-vocal-proof.json")).read_text(encoding="utf-8")
     )
     assert preexisting_proof["status"] == "READY"
+
+
+def test_background_mode_from_real_song_repair_cannot_fall_back_to_talk_or_materialize(tmp_path):
+    """Exercise the production full-retry path, not a pre-bound report fixture.
+
+    Before this regression, the valid negative AGY observation made song repair
+    return ``repaired=False``; orchestration forgot the mode, resolved the
+    seeded song as talk, and produced an AUTO_UPLOAD/MATERIALIZED recut.
+    """
+
+    candidate_id = "seededsong_50000_86000"
+    lyric_texts = (
+        "春风吹过山野",
+        "我们看见花开",
+        "音乐还在播放",
+        "窗外落下星光",
+        "故事慢慢展开",
+        "人群经过夜晚",
+        "回声留在远方",
+        "最后大家都笑了",
+    )
+    lrc = LrcResult(
+        provider="lrclib",
+        song_title="背景歌",
+        artist="original",
+        source_ref="https://example.invalid/background.lrc",
+        lines=tuple(LrcLine(index * 5_000, text) for index, text in enumerate(lyric_texts)),
+    )
+    def srt_time(total_seconds: int) -> str:
+        return f"00:{total_seconds // 60:02d}:{total_seconds % 60:02d},000"
+
+    srt = "\n\n".join(
+        f"{index + 1}\n{srt_time(50 + index * 5)} --> {srt_time(53 + index * 5)}\n{text}"
+        for index, text in enumerate(lyric_texts)
+    ) + "\n"
+    source_video, source_srt, refined_srt = _write_live_source_inputs(
+        tmp_path,
+        source_srt=srt,
+        refined_srt=srt,
+    )
+    cpa_fields = _write_passing_cpa_job_fields(
+        tmp_path,
+        candidate_id=candidate_id,
+        source_video=source_video,
+        source_srt=source_srt,
+        start_ms=50_000,
+        end_ms=86_000,
+        text="最后大家都笑了",
+    )
+
+    def background_audio_aligner(source_media, selected_lrc, selected_candidate_id, output_dir):
+        run = make_ready_audio_alignment_run(
+            source_media=Path(source_media),
+            source_duration_ms=100_000,
+            lrc=selected_lrc,
+            candidate_id=selected_candidate_id,
+            output_dir=output_dir,
+            offset_ms=50_000,
+        )
+        payload = json.loads(json.dumps(run.payload))
+        payload["live_performance"].update(
+            mode="ORIGINAL_OR_BACKGROUND_PLAYBACK",
+            confidence=0.99,
+            continuous_singing=False,
+            background_recording_likelihood=0.99,
+            notes="bound hard negative: original recording playback",
+        )
+        raw_path = Path(run.output_path)
+        raw_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        raw_sha = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+        manifest_path = Path(run.manifest_path)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifacts"]["output_sha256"] = raw_sha
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return dataclasses.replace(
+            run,
+            payload=payload,
+            output_sha256=raw_sha,
+            manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        )
+
+    summary = shadow_pipeline.run_shadow_pipeline(
+        source_video=source_video,
+        source_srt=source_srt,
+        refined_srt=refined_srt,
+        source_context_job={
+            "candidate_id": candidate_id,
+            "content_type_hint": "song",
+            "song_candidate": True,
+            "requires_full_source_song_boundary_redo": True,
+            "timeline": {
+                "source_duration_ms": 100_000,
+                "anchor_start_ms": 50_000,
+                "anchor_end_ms": 86_000,
+                "context_start_ms": 0,
+                "context_end_ms": 100_000,
+                "context_duration_ms": 100_000,
+            },
+            **cpa_fields,
+        },
+        agy_result=shadow_pipeline.AgyExecutionResult(
+            provider="agy",
+            model="Gemini 3.5 Flash (High)",
+            agy_rc=0,
+            provider_fallback_used=False,
+        ),
+        output_dir=tmp_path / "output",
+        no_upload=True,
+        source_context_run_ffmpeg=False,
+        lrc_provider=lambda _query: lrc,
+        song_lrc_queries=("背景歌",),
+        audio_lrc_aligner=background_audio_aligner,
+        host_vocal_prover=_ready_host_vocal_prover,
+        burn_preview=True,
+        publish_staging=True,
+    )
+
+    record = summary["records"][0]
+    evidence = _load_json(Path(record["evidence_path"]))
+    repair_gate = record["source_context_job"]["song_repair_gate"]
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_BACKGROUND_PLAYBACK_ONLY" in record["reason_codes"]
+    assert "SONG_NOT_LIDOUSHA_SINGING" in record["reason_codes"]
+    assert record["boundary_resolution"]["action"] == "BLOCK"
+    assert record.get("materialized_recut") is None
+    assert record.get("cover_path") is None
+    assert not (tmp_path / "output" / "replacement_recuts").exists()
+    assert repair_gate["status"] == "BLOCKED"
+    assert repair_gate["live_performance"]["mode"] == "ORIGINAL_OR_BACKGROUND_PLAYBACK"
+    assert repair_gate["reason_codes"] == [
+        "SONG_BACKGROUND_PLAYBACK_ONLY",
+        "SONG_NOT_LIDOUSHA_SINGING",
+    ]
+    assert evidence["metrics"]["song_complete"] is False
+    assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
 
 
 def test_raw_agy_timing_cannot_be_reprojected_in_report_before_materialization(tmp_path):

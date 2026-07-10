@@ -48,6 +48,21 @@ LIVE_PERFORMANCE_MODES = {
 }
 
 
+class LivePerformanceRejected(ValueError):
+    """A structurally valid AGY observation that proves this is not a live song.
+
+    Keep this distinct from malformed/unbound AGY output.  The caller still
+    fails closed in both cases, but a valid background/original-playback verdict
+    must survive song repair so the orchestration layer cannot forget it and
+    fall back to treating the seeded song as an ordinary talk candidate.
+    """
+
+    def __init__(self, detail: str, performance: Mapping[str, object]) -> None:
+        super().__init__(detail)
+        self.performance = dict(performance)
+        self.reason_codes = live_performance_failure_reason_codes(performance)
+
+
 def live_performance_failure_reason_codes(performance: object) -> tuple[str, ...]:
     """Map an observed non-live mode to honest user-facing block reasons."""
 
@@ -133,6 +148,8 @@ class SongRepairResult:
     song_boundary: Mapping[str, object] | None
     lyrics_alignment: Mapping[str, object] | None
     report_path: str | None
+    reason_codes: tuple[str, ...] = ()
+    live_performance: Mapping[str, object] | None = None
 
     def to_manifest(self) -> dict[str, object]:
         return {
@@ -142,6 +159,8 @@ class SongRepairResult:
             "song_boundary": dict(self.song_boundary) if self.song_boundary else None,
             "lyrics_alignment": dict(self.lyrics_alignment) if self.lyrics_alignment else None,
             "report_path": self.report_path,
+            "reason_codes": list(self.reason_codes),
+            "live_performance": dict(self.live_performance) if self.live_performance else None,
         }
 
 
@@ -322,6 +341,21 @@ def attempt_song_repair(
                 source_media_path=Path(source_media_path),
                 source_duration_ms=source_duration_ms,
                 min_matched_ratio=min_matched_ratio,
+            )
+        except LivePerformanceRejected as exc:
+            attempts.append(
+                SongRepairAttempt(
+                    "agy_audio_lrc_alignment",
+                    "FAILED",
+                    f"{type(exc).__name__}: {exc}",
+                )
+            )
+            return _finish(
+                candidate_id,
+                attempts,
+                output_dir,
+                reason_codes=exc.reason_codes,
+                live_performance=exc.performance,
             )
         except Exception as exc:
             attempts.append(
@@ -1394,14 +1428,24 @@ def _validated_audio_lrc_selection(
 
     first_lyric_start_ms = int(alignment[0]["cue_start_ms"])
     last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
+    live_performance = payload.get("live_performance")
+    performance_schema_error = validate_live_performance_observation(
+        live_performance,
+        first_lyric_start_ms=first_lyric_start_ms,
+        last_lyric_end_ms=last_lyric_end_ms,
+        require_ready=False,
+    )
+    if performance_schema_error is not None:
+        raise ValueError(performance_schema_error)
     performance_error = validate_live_performance_observation(
-        payload.get("live_performance"),
+        live_performance,
         first_lyric_start_ms=first_lyric_start_ms,
         last_lyric_end_ms=last_lyric_end_ms,
         require_ready=True,
     )
     if performance_error is not None:
-        raise ValueError(performance_error)
+        assert isinstance(live_performance, Mapping)
+        raise LivePerformanceRejected(performance_error, live_performance)
     spot_checks = payload.get("spot_checks")
     required_spots = {"first_line", "chorus", "repeated_section", "longest_instrumental_gap", "tail"}
     if not isinstance(spot_checks, list) or len(spot_checks) != 5:
@@ -1642,6 +1686,8 @@ def _finish(
     repaired: bool = False,
     song_boundary: Mapping[str, object] | None = None,
     lyrics_alignment: Mapping[str, object] | None = None,
+    reason_codes: Sequence[str] = (),
+    live_performance: Mapping[str, object] | None = None,
 ) -> SongRepairResult:
     report_path = output_dir / f"{candidate_id}.song-repair.json"
     result = SongRepairResult(
@@ -1650,6 +1696,8 @@ def _finish(
         song_boundary=song_boundary,
         lyrics_alignment=lyrics_alignment,
         report_path=str(report_path),
+        reason_codes=tuple(dict.fromkeys(str(code) for code in reason_codes if code)),
+        live_performance=dict(live_performance) if live_performance else None,
     )
     report_path.write_text(json.dumps(result.to_manifest(), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result

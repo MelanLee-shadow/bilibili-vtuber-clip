@@ -1176,6 +1176,21 @@ def _resolve_live_source_boundary(
     song_boundary_resolution = _resolve_song_boundary(job_manifest, anchor, output_dir=output_dir)
     if song_boundary_resolution is not None:
         return song_boundary_resolution
+    if _job_is_song_candidate(job_manifest):
+        # A seeded/upstream song is never eligible for the ordinary talk
+        # fallback.  In particular, a structurally valid AGY background-mode
+        # rejection makes song repair return no READY boundary; falling through
+        # here used to re-label that same window as talk and materialize it
+        # before the outer delivery gate could object.
+        return BoundaryResolution(
+            candidate_id=anchor.candidate_id,
+            action=DecisionAction.BLOCK,
+            resolved_start_ms=anchor.anchor_start_ms,
+            resolved_end_ms=anchor.anchor_end_ms,
+            start_boundary_score=0.0,
+            end_boundary_score=0.0,
+            reason_codes=_song_candidate_gate_reason_codes(job_manifest, output_dir=output_dir),
+        )
     if all(cue.kind == "singing" for cue in cues):
         return None
     talk_cues = [_to_talk_cue(cue, index, cues) for index, cue in enumerate(cues)]
@@ -1199,6 +1214,34 @@ def _resolve_live_source_boundary(
             next_end_ms=anchor.anchor_end_ms,
         )
     return resolution
+
+
+def _song_candidate_gate_reason_codes(
+    job_manifest: Mapping[str, object], *, output_dir: Path
+) -> tuple[str, ...]:
+    """Return the strongest fail-closed reason retained by song repair."""
+
+    repair_gate = _mapping(job_manifest.get("song_repair_gate"))
+    raw_reasons = repair_gate.get("reason_codes")
+    if isinstance(raw_reasons, Sequence) and not isinstance(raw_reasons, (str, bytes)):
+        reasons = tuple(
+            dict.fromkeys(
+                reason
+                for reason in raw_reasons
+                if isinstance(reason, str) and reason.startswith("SONG_")
+            )
+        )
+        if reasons:
+            return reasons
+    song_boundary = _mapping(job_manifest.get("song_boundary"))
+    lyrics_alignment = _mapping(job_manifest.get("lyrics_alignment"))
+    if _song_boundary_ready(song_boundary):
+        if _verify_lyrics_alignment_proof(lyrics_alignment, output_dir=output_dir) is not None:
+            return ("SONG_PROOF_UNVERIFIED",)
+        performance_error = _verify_live_performance_observation(lyrics_alignment, output_dir=output_dir)
+        if performance_error is not None:
+            return _live_performance_block_reasons(lyrics_alignment, output_dir=output_dir)
+    return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
 
 
 def _job_anchor_candidate(job_manifest: Mapping[str, object]) -> AnchorCandidate | None:
@@ -1580,6 +1623,7 @@ def _apply_live_source_machine_evidence(
     song_boundary = _mapping(source_context_job.get("song_boundary"))
     lyrics_alignment = _mapping(source_context_job.get("lyrics_alignment"))
     host_vocal_claim = _mapping(source_context_job.get("host_vocal_proof"))
+    song_candidate = _job_is_song_candidate(source_context_job)
     song_boundary_claimed = _song_boundary_ready(song_boundary)
     lyrics_proof_error = _verify_lyrics_alignment_proof(lyrics_alignment, output_dir=output_dir)
     live_performance_error = _verify_live_performance_observation(lyrics_alignment, output_dir=output_dir)
@@ -1594,6 +1638,33 @@ def _apply_live_source_machine_evidence(
         and live_performance_error is None
         and host_vocal_error is None
     )
+    if song_candidate and not song_boundary_claimed:
+        unproven_reasons = _song_candidate_gate_reason_codes(source_context_job, output_dir=output_dir)
+        checks.append(
+            {
+                "code": "SONG_JOINT_SINGING_GATE",
+                "pass": False,
+                "severity": "BLOCK",
+                "evidence": {
+                    "reason_codes": list(unproven_reasons),
+                    "song_repair_gate": dict(_mapping(source_context_job.get("song_repair_gate"))),
+                },
+            }
+        )
+        updates["evidence_gaps"] = tuple(
+            dict.fromkeys(tuple(evidence.evidence_gaps) + unproven_reasons)
+        )
+        updates["metadata"] = {
+            **dict(evidence.metadata),
+            "song_joint_singing_gate": {
+                "verified": False,
+                "reason_codes": list(unproven_reasons),
+                "song_repair_gate": dict(_mapping(source_context_job.get("song_repair_gate"))),
+            },
+        }
+        updates["foreground_song_overlap_seconds"] = 0.0
+        updates["song_complete"] = False
+        updates["lyrics_alignment_ready"] = False
     if song_boundary_claimed and lyrics_proof_error is not None:
         checks.append(
             {
@@ -2069,6 +2140,8 @@ def _merge_boundary_resolution_into_decision(decision, boundary_resolution: Boun
     merged_reasons = tuple(dict.fromkeys(tuple(decision.reason_codes) + tuple(boundary_resolution.reason_codes)))
     if boundary_resolution.action == DecisionAction.DROP:
         return replace(decision, action=DecisionAction.DROP, reason_codes=merged_reasons)
+    if boundary_resolution.action == DecisionAction.BLOCK:
+        return replace(decision, action=DecisionAction.BLOCK, reason_codes=merged_reasons)
     if boundary_resolution.action == DecisionAction.AUTO_RECUT:
         if decision.action in {DecisionAction.BLOCK, DecisionAction.DROP}:
             return replace(decision, reason_codes=merged_reasons)
@@ -2125,6 +2198,7 @@ def _source_context_job_record(job_manifest: Mapping[str, object]) -> dict[str, 
         "song_boundary": dict(_mapping(job_manifest.get("song_boundary"))),
         "lyrics_alignment": dict(_mapping(job_manifest.get("lyrics_alignment"))),
         "host_vocal_proof": dict(_mapping(job_manifest.get("host_vocal_proof"))),
+        "song_repair_gate": dict(_mapping(job_manifest.get("song_repair_gate"))),
         "provenance": dict(_mapping(job_manifest.get("provenance"))),
         "cpa_semantic_request_path": job_manifest.get("cpa_semantic_request_path"),
         "cpa_semantic_response_path": job_manifest.get("cpa_semantic_response_path"),
@@ -2301,8 +2375,16 @@ def _attempt_song_repair_stage(
             "song_boundary": dict(result.song_boundary),
             "lyrics_alignment": dict(result.lyrics_alignment),
         }
+        repaired_job.pop("song_repair_gate", None)
         return repaired_job, result
-    return job_manifest, result
+    reason_codes = result.reason_codes or ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
+    repair_gate = {
+        "status": "BLOCKED",
+        "reason_codes": list(reason_codes),
+        "live_performance": dict(result.live_performance) if result.live_performance else None,
+        "repair_report_path": result.report_path,
+    }
+    return {**dict(job_manifest), "song_repair_gate": repair_gate}, result
 
 
 def _attempt_host_vocal_proof_stage(
@@ -2761,6 +2843,11 @@ def _stage_publish_after_release_gate(
         "satisfied": gate_satisfied,
     }
     _write_json_file(snapshot_path, snapshot)
+    if materialized_recut is None:
+        # Keep the release decision snapshot as audit evidence, but do not
+        # manufacture a recut-shaped record when the singing gate prevented
+        # materialization in the first place.
+        return None
     recut["cover_release_gate"] = {**snapshot, "path": str(snapshot_path)}
 
     if not gate_satisfied:
