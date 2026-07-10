@@ -13,7 +13,7 @@
         "song candidates carry requires_full_source_song_boundary_redo=true",
         "free-session song-lane anchors seed every tight/core/full selector attempt instead of relying on a second semantic-recall classification",
         "only the expanded full-source retry enables agy audio plus canonical-LRC alignment",
-        "lrc-provider=auto searches NetEase and LRCLIB and groups same-song provider variants before audio proof; manual recovery may use Google/public-web timed-LRC discovery",
+        "lrc-provider=auto searches NetEase, LRCLIB, and Kugou and groups same-song provider variants before audio proof; manual recovery may use Google/public-web discovery but must retain the direct timed-LRC source",
         "Japanese language and sparse or garbled singing ASR are not terminal failure reasons",
         "song anchors remain incomplete until lyric completion, AGY v2 live-performance, and Li Dousha host-vocal proofs are all available",
         "semantic recall explicitly excludes original-track playback, ending-card music, and other background music"

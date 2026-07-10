@@ -24,7 +24,12 @@ from src.autoslice.full_session_candidate_selector import (
 from src.autoslice.llm_client import LlmCallError, LlmConfig, build_llm_call
 from src.autoslice.danmaku_evidence import danmaku_in_window, find_danmaku_bursts, load_danmaku_xml
 from src.autoslice.semantic_candidate_selector import select_semantic_session_candidates
-from src.autoslice.song_repair import build_composite_lrc_provider, build_lrclib_lrc_provider, build_netease_lrc_provider
+from src.autoslice.song_repair import (
+    build_composite_lrc_provider,
+    build_kugou_lrc_provider,
+    build_lrclib_lrc_provider,
+    build_netease_lrc_provider,
+)
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
 
@@ -253,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Run the jingting second-listen (agy refine) on this ssh host (e.g. 'free') instead of a local agy binary.",
     )
     parser.add_argument("--no-ffmpeg", action="store_true", help="Testing only: skip ffmpeg materialization.")
-    parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "auto"), default="none", help="External LRC discovery for repair-first song completeness.")
+    parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "kugou", "auto"), default="none", help="External LRC discovery for repair-first song completeness.")
     parser.add_argument(
         "--agy-audio-lrc-align",
         action="store_true",
@@ -548,7 +553,13 @@ def main(argv: list[str] | None = None) -> int:
                 if args.lrc_provider == "netease"
                 else build_lrclib_lrc_provider()
                 if args.lrc_provider == "lrclib"
-                else build_composite_lrc_provider(build_netease_lrc_provider(), build_lrclib_lrc_provider())
+                else build_kugou_lrc_provider()
+                if args.lrc_provider == "kugou"
+                else build_composite_lrc_provider(
+                    build_netease_lrc_provider(),
+                    build_lrclib_lrc_provider(),
+                    build_kugou_lrc_provider(),
+                )
                 if args.lrc_provider == "auto"
                 else None
             ),

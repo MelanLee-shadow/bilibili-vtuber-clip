@@ -1,3 +1,4 @@
+import base64
 import json
 import hashlib
 from pathlib import Path
@@ -14,6 +15,7 @@ from src.autoslice.song_repair import (
     _build_lyric_queries,
     attempt_song_repair,
     build_composite_lrc_provider,
+    build_kugou_lrc_provider,
     build_lrclib_lrc_provider,
     fetch_lrclib_lrc,
     live_performance_failure_reason_codes,
@@ -921,6 +923,95 @@ def test_build_lrclib_provider_searches_and_filters_unusable_results(monkeypatch
     assert results[0].song_title == "芽吹くとき"
     assert captured[0][1] == 3.0
     assert "q=%E8%8A%BD%E5%90%B9%E3%81%8F%E3%81%A8%E3%81%8D+yonige" in captured[0][0]
+
+
+def test_build_kugou_provider_filters_timed_title_card_and_exactly_matches_identity(monkeypatch):
+    captured = []
+    lrc_text = "\n".join(
+        [
+            "[ti:芽吹くとき]",
+            "[ar:yonige]",
+            "[00:00.00]芽吹くとき - yonige (ヨニゲ)",
+            "[00:02.55]词：牛丸ありさ",
+        ]
+        + [f"[00:{index + 7:02d}.00]第{index}句ただそばにいて" for index in range(9)]
+    )
+
+    def fake_http_json_value(url, *, timeout_seconds, request_headers=None):
+        captured.append((url, timeout_seconds, request_headers))
+        if "song_search_v2" in url:
+            return {
+                "status": 1,
+                "data": {
+                    "lists": [
+                        {
+                            "SongName": "<em>芽吹くとき</em>",
+                            "SingerName": "yonige",
+                            "FileHash": "29DEC9D504258A3EAD9EA1BCE08222E7",
+                            "Duration": 219,
+                        }
+                    ]
+                },
+            }
+        if "/search?" in url:
+            return {
+                "status": 200,
+                "candidates": [
+                    {"id": "1", "accesskey": "A" * 32, "song": "別の歌", "singer": "yonige", "duration": 219000},
+                    {"id": "2", "accesskey": "B" * 32, "song": "芽吹くとき", "singer": "別の歌手", "duration": 219000},
+                    {"id": "3", "accesskey": "C" * 32, "song": "芽吹くとき", "singer": "yonige", "duration": 180000},
+                    {"id": "572454275", "accesskey": "D" * 32, "song": "芽吹くとき", "singer": "yonige", "duration": 219000},
+                ],
+            }
+        if "/download?" in url:
+            assert "id=572454275" in url
+            return {"status": 200, "content": base64.b64encode(lrc_text.encode()).decode()}
+        raise AssertionError(f"unexpected Kugou URL: {url}")
+
+    monkeypatch.setattr(song_repair, "_http_json_value", fake_http_json_value)
+
+    results = build_kugou_lrc_provider(timeout_seconds=2.5)("芽吹くとき yonige")
+
+    assert len(results) == 1
+    result = results[0]
+    assert (result.provider, result.song_title, result.artist) == ("kugou", "芽吹くとき", "yonige")
+    assert "lyrics.kugou.com/download" in result.source_ref
+    assert len(result.lines) == 9
+    assert result.lines[0].time_ms == 7_000
+    assert all("yonige" not in line.text for line in result.lines)
+    assert len([url for url, _timeout, _headers in captured if "/download?" in url]) == 1
+    assert all(headers == {"Referer": "https://www.kugou.com/"} for _url, _timeout, headers in captured)
+
+
+def test_build_kugou_provider_rejects_lyric_candidates_with_wrong_title_or_artist(monkeypatch):
+    def fake_http_json_value(url, *, timeout_seconds, request_headers=None):
+        if "song_search_v2" in url:
+            return {
+                "status": 1,
+                "data": {
+                    "lists": [
+                        {
+                            "SongName": "芽吹くとき",
+                            "SingerName": "yonige",
+                            "FileHash": "29DEC9D504258A3EAD9EA1BCE08222E7",
+                            "Duration": 219,
+                        }
+                    ]
+                },
+            }
+        if "/search?" in url:
+            return {
+                "status": 200,
+                "candidates": [
+                    {"id": "1", "accesskey": "A" * 32, "song": "芽吹くとき", "singer": "cover singer", "duration": 219000},
+                    {"id": "2", "accesskey": "B" * 32, "song": "芽吹くころ", "singer": "yonige", "duration": 219000},
+                ],
+            }
+        raise AssertionError("identity mismatch must block before lyric download")
+
+    monkeypatch.setattr(song_repair, "_http_json_value", fake_http_json_value)
+
+    assert build_kugou_lrc_provider()("芽吹くとき yonige") == []
 
 
 def test_composite_provider_preserves_provenance_dedupes_and_survives_failure():

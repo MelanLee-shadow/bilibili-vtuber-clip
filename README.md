@@ -38,7 +38,7 @@ container:/app/Videos                      # 原始录播输入
 - `.jingting.done` 不等于 release-ready。
 - 没有 `AUTO_UPLOAD` manifest 和 artifact hash gate 就不能发布。
 - 无人值守意味着自动隔离/重试/丢弃/放行，不意味着把坏片自动发出去。
-- 日语/稀疏 ASR 歌曲会保留 seed song anchor；可用日文原名/kana 做 Google/公开网页检索，自动路径的 `--lrc-provider auto` 会查 NetEase + LRCLIB，再在扩大后的 full window 上用唯一 canonical LRC + 当前音频证明。日语或歌唱 ASR 乱码本身不再是失败理由；找不到唯一可靠同步 LRC、版本不符或后续现场/身份证据不足时仍 fail closed。
+- 日语/稀疏 ASR 歌曲会保留 seed song anchor；可用日文原名/kana 做 Google/公开网页人工检索，自动路径的 `--lrc-provider auto` 会查 NetEase + LRCLIB + Kugou，再在扩大后的 full window 上用唯一 canonical LRC + 当前音频证明。Google 结果页不作为无人值守 API 或歌词证据；日语或歌唱 ASR 乱码本身不再是失败理由，但找不到唯一可靠同步 LRC、版本不符或后续现场/身份证据不足时仍 fail closed。
 - “歌切”只指李豆沙本人现场演唱。原唱播放、片尾/下播卡音乐、游戏/视频 BGM 不得切。交付必须同时通过：① AGY v2 现场演唱硬否决（`LIVE_STREAMER_SINGING`、confidence `>=0.85`、连续演唱、录音背景概率 `<=0.20`、头/中/尾证据）；② hash-bound CAM++ `host_vocal_proof` 证明同一些歌词点上存在李豆沙声纹。只有两者 AND 才产生 `VERIFIED_LIDOUSHA_SINGING`；单独 LRC、AGY 或声纹命中都不算。
 
 ## 文档入口

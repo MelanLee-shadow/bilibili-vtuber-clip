@@ -141,7 +141,7 @@ Song candidates remain source-context anchors, not final clip boundaries. When `
 
 Implemented front door:
 
-- `--lrc-provider auto` searches NetEase and LRCLIB; clean quoted song titles and Japanese kana are valid queries.
+- `--lrc-provider auto` searches NetEase, LRCLIB, and Kugou; clean quoted song titles and Japanese kana are valid queries. Google/public-web search remains a manual discovery route, not an unattended provider or proof source.
 - Manual recovery may use Google/public-web search for a credible timed LRC. Japanese language and sparse/garbled singing ASR are discovery inputs, not terminal failure reasons.
 - Same-song provider variants are grouped by normalized title+artist or identical full-LRC fingerprint. Audio escalation requires one sufficiently supported identity; different-song ambiguity blocks.
 - Tight/core/full attempts receive `--seed-song-candidate-id` and clip-local seed bounds. A seed preserves recall only; it never mints completeness evidence.

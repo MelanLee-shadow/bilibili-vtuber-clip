@@ -126,6 +126,16 @@ TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; sl
 SONG_ATTEMPT_CAP = 6  # total song-lane attempts per date (delivered + blocked + failed);
                       # gate-blocked songs do NOT consume the delivery budget — the
                       # backlog backfills — so an unlucky date needs a hard attempt cap
+SONG_PERFORMER_REJECTION_CODES = frozenset(
+    {
+        "SONG_BACKGROUND_PLAYBACK_ONLY",
+        "SONG_NOT_LIDOUSHA_SINGING",
+        "SONG_LIVE_PERFORMANCE_UNPROVEN",
+        "SONG_HOST_VOCAL_PROOF_INVALID",
+        "SONG_HOST_VOCAL_UNPROVEN",
+        "SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE",
+    }
+)
 # Delivered-to-review talk statuses.  "ok" (pre-2026-07-09) and "quarantine"
 # (pre-2026-07-10 delivered-with-flags) are kept ONLY so old state files still
 # count as delivered; new records are always review_ready — boundary red flags
@@ -1530,6 +1540,21 @@ def produce_song(date: str, item: dict) -> dict:
                         "song_completion_evidence",
                     )
                 }
+                # The full-source AGY/CAM++ pass is the authoritative performer
+                # check.  Keep the tight attempt for timeline forensics, but do
+                # not bury a concrete background/original/other-singer rejection
+                # only inside ``full_source_retry``: state and the human summary
+                # consume top-level reason_codes.
+                proof_reasons = [str(code) for code in (proof_retry.get("reason_codes") or [])]
+                if SONG_PERFORMER_REJECTION_CODES.intersection(proof_reasons):
+                    result["decision"] = "BLOCK"
+                    result["reason_codes"] = list(
+                        dict.fromkeys([*(result.get("reason_codes") or []), *proof_reasons])
+                    )
+                    result["song_completion_evidence"] = proof_retry.get("song_completion_evidence")
+                    result["song_complete"] = False
+                    result["lyrics_alignment_ready"] = bool(proof_retry.get("lyrics_alignment_ready"))
+                    result["full_source_performer_rejection"] = True
     if not result.get("window_classified_song") and not result.get("delivered"):
         d0, d1 = _song_core_span(src_srt, anchor_start, anchor_end)
         if d0 >= anchor_start + SONG_ANCHOR_TRIM_MIN_MS or d1 <= anchor_end - SONG_ANCHOR_TRIM_MIN_MS:

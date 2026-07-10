@@ -469,6 +469,7 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
         selector_commands.append(command)
         selector_dir = Path(command[command.index("--output-dir") + 1])
         seeded = "--seed-song-candidate-id" in command
+        full_source = "--agy-audio-lrc-align" in command
         (selector_dir / "summary.json").write_text(
             json.dumps(
                 {
@@ -476,7 +477,11 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
                         {
                             "candidate_id": "seededsong_45000_95000" if seeded else "semanticsong_15000_65000",
                             "decision_action": "BLOCK",
-                            "reason_codes": ["SONG_FULL_BOUNDARY_PROOF_MISSING"],
+                            "reason_codes": (
+                                ["SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING"]
+                                if full_source
+                                else ["SONG_FULL_BOUNDARY_PROOF_MISSING"]
+                            ),
                             "source_context_job": {
                                 "content_type_hint": "song",
                                 "song_candidate": True,
@@ -507,6 +512,10 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
 
     assert result["window_classified_song"] is True
     assert "full_source_retry" in result
+    assert result["decision"] == "BLOCK"
+    assert result["full_source_performer_rejection"] is True
+    assert "SONG_BACKGROUND_PLAYBACK_ONLY" in result["reason_codes"]
+    assert "SONG_NOT_LIDOUSHA_SINGING" in result["reason_codes"]
     assert len(selector_commands) == 2
     tight_command = selector_commands[0]
     full_command = selector_commands[1]

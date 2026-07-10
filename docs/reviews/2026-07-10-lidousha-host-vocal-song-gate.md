@@ -18,7 +18,7 @@ VERIFIED_LIDOUSHA_SINGING
 
 2026-07-09 的 yonige《芽吹くとき》在固定 goodbye/end-card 画面下播放了原曲。旧 AGY/LRC 观察得到 25/25 行 `heard=true`、高 confidence 和单一 global shift，这些只证明“这首歌的录音完整可听”，却被旧 shadow/runner 错写成 foreground singing 和 `song_complete=true`。
 
-根因不是日语 LRC 难找；正确 LRC 可通过 Google/公开网页或自动 NetEase + LRCLIB 检索得到。根因是把“歌曲录音对齐”错当成“李豆沙现场演唱”，且没有对背景播放和说话+BGM 设硬否决。
+根因不是日语 LRC 难找；正确 LRC 可通过 Google/公开网页人工发现，或由自动 NetEase + LRCLIB + Kugou 检索得到。Google 结果页本身不是无人值守歌词 API 或证据源。根因是把“歌曲录音对齐”错当成“李豆沙现场演唱”，且没有对背景播放和说话+BGM 设硬否决。
 
 ## 联合门契约
 
@@ -61,7 +61,7 @@ runner 验证器复核 source/alignment/profile/model/reference/session-anchor/c
 
 ## 日语 LRC 的准确语义
 
-日语/kana 可直接用于 Google/公开网页检索，自动路径的 `--lrc-provider auto` 会查 NetEase 和 LRCLIB。歌唱 ASR 稀疏、乱码或不含可用日语歌词，不再自动导致该 song-lane anchor 丢失。
+日语/kana 可直接用于 Google/公开网页人工检索，自动路径的 `--lrc-provider auto` 会查 NetEase、LRCLIB 和 Kugou。歌唱 ASR 稀疏、乱码或不含可用日语歌词，不再自动导致该 song-lane anchor 丢失。
 
 这不是“所有日语歌必过”：没有唯一可靠的同步 LRC、版本不符、当前音频无法形成单一位移，或现场/身份联合门失败，都会正确 BLOCK。
 

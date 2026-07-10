@@ -50,6 +50,7 @@ from src.autoslice.song_repair import (
     SongRepairResult,
     attempt_song_repair,
     build_composite_lrc_provider,
+    build_kugou_lrc_provider,
     build_lrclib_lrc_provider,
     build_netease_lrc_provider,
     fetch_lrclib_lrc,
@@ -5016,7 +5017,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--skip-ffmpeg", action="store_true", help="Use executor dry-run media placeholder instead of invoking ffmpeg.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--allow-upload", action="store_true", help="Reserved; default shadow mode never uploads.")
-    parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "auto"), default="none", help="External LRC discovery provider for repair-first song completeness.")
+    parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "kugou", "auto"), default="none", help="External LRC discovery provider for repair-first song completeness.")
     parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
     parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing from garbled ASR.")
     parser.add_argument("--publish-staging", action="store_true", help="Stage AI title + cover + publish.json draft (upload_enabled always false).")
@@ -5039,10 +5040,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         lrc_provider = build_netease_lrc_provider()
     elif args.lrc_provider == "lrclib":
         lrc_provider = build_lrclib_lrc_provider()
+    elif args.lrc_provider == "kugou":
+        lrc_provider = build_kugou_lrc_provider()
     elif args.lrc_provider == "auto":
         lrc_provider = build_composite_lrc_provider(
             build_netease_lrc_provider(),
             build_lrclib_lrc_provider(),
+            build_kugou_lrc_provider(),
         )
     summary = run_shadow_pipeline(
         review_package=args.review_package,

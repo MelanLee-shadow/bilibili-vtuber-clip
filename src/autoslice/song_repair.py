@@ -19,6 +19,8 @@ BLOCK can say what was tried instead of silently giving up.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -699,6 +701,163 @@ def build_lrclib_lrc_provider(*, timeout_seconds: float = 20.0, max_results: int
             result = _lrclib_record_to_result(record)
             if result is not None:
                 results.append(result)
+        return results
+
+    return provider
+
+
+def build_kugou_lrc_provider(*, timeout_seconds: float = 12.0, max_results: int = 3) -> LrcProvider:
+    """Build a no-credential Kugou synced-lyric fallback.
+
+    Kugou exposes search, lyric-candidate and lyric-download endpoints used by
+    its web client.  Search ranking is still only discovery: before downloading
+    a candidate, this adapter requires its title, artist and duration to agree
+    with the selected search row.  The downloaded LRC then enters the same
+    audio/alignment proof gates as every other provider result.
+
+    Kugou commonly inserts ``[00:00] title - artist`` as a timed metadata row.
+    That row is provider-specific metadata, not a sung lyric, and is removed
+    here rather than weakening the generic LRC parser.
+    """
+
+    def provider(query: str) -> list[LrcResult]:
+        search_url = "https://songsearch.kugou.com/song_search_v2?" + urllib.parse.urlencode(
+            {
+                "keyword": query,
+                "page": 1,
+                "pagesize": 6,
+                "platform": "WebFilter",
+                "userid": -1,
+                "iscorrection": 1,
+                "privilege_filter": 0,
+            }
+        )
+        payload = _http_json_value(
+            search_url,
+            timeout_seconds=timeout_seconds,
+            request_headers={"Referer": "https://www.kugou.com/"},
+        )
+        if not isinstance(payload, Mapping) or payload.get("status") != 1:
+            return []
+        data = payload.get("data")
+        tracks = data.get("lists") if isinstance(data, Mapping) else None
+        if not isinstance(tracks, list):
+            return []
+
+        results: list[LrcResult] = []
+        seen_fingerprints: set[str] = set()
+        # Three distinct search rows are enough for a fallback.  Bounding the
+        # fan-out keeps an unsuccessful ASR-derived query from issuing dozens
+        # of lyric downloads before the next independent query/provider runs.
+        for track in tracks[:3]:
+            if len(results) >= max_results:
+                break
+            if not isinstance(track, Mapping):
+                continue
+            song_title = _strip_kugou_markup(track.get("SongName") or track.get("OriSongName"))
+            artist = _strip_kugou_markup(track.get("SingerName"))
+            file_hash = str(track.get("FileHash") or "").strip().upper()
+            duration_s = track.get("Duration")
+            if (
+                not song_title
+                or not artist
+                or not re.fullmatch(r"[0-9A-F]{32}", file_hash)
+                or isinstance(duration_s, bool)
+                or not isinstance(duration_s, (int, float))
+                or duration_s <= 0
+            ):
+                continue
+            duration_ms = int(round(float(duration_s) * 1_000))
+            lyric_search_url = "https://lyrics.kugou.com/search?" + urllib.parse.urlencode(
+                {
+                    "ver": 1,
+                    "man": "yes",
+                    "client": "pc",
+                    "keyword": f"{artist} - {song_title}",
+                    "hash": file_hash,
+                    "timelength": duration_ms,
+                }
+            )
+            try:
+                lyric_payload = _http_json_value(
+                    lyric_search_url,
+                    timeout_seconds=timeout_seconds,
+                    request_headers={"Referer": "https://www.kugou.com/"},
+                )
+            except Exception:
+                continue
+            if not isinstance(lyric_payload, Mapping) or lyric_payload.get("status") != 200:
+                continue
+            candidates = lyric_payload.get("candidates")
+            if not isinstance(candidates, list):
+                continue
+
+            # Candidate scores are advisory.  Only exact normalized identity
+            # and a near-exact catalog duration are allowed to reach download.
+            # Try at most two exact candidates for this track to bound requests.
+            exact_downloads = 0
+            for lyric_candidate in candidates:
+                if not isinstance(lyric_candidate, Mapping):
+                    continue
+                if not _kugou_candidate_matches_track(
+                    lyric_candidate,
+                    song_title=song_title,
+                    artist=artist,
+                    duration_ms=duration_ms,
+                ):
+                    continue
+                lyric_id = str(lyric_candidate.get("id") or "").strip()
+                access_key = str(lyric_candidate.get("accesskey") or "").strip()
+                if not lyric_id.isdigit() or not re.fullmatch(r"[0-9A-Fa-f]{32}", access_key):
+                    continue
+                exact_downloads += 1
+                download_url = "https://lyrics.kugou.com/download?" + urllib.parse.urlencode(
+                    {
+                        "ver": 1,
+                        "client": "pc",
+                        "id": lyric_id,
+                        "accesskey": access_key,
+                        "fmt": "lrc",
+                        "charset": "utf8",
+                    }
+                )
+                try:
+                    download_payload = _http_json_value(
+                        download_url,
+                        timeout_seconds=timeout_seconds,
+                        request_headers={"Referer": "https://www.kugou.com/"},
+                    )
+                    if not isinstance(download_payload, Mapping) or download_payload.get("status") != 200:
+                        raise ValueError("Kugou lyric download returned an invalid response")
+                    content = download_payload.get("content")
+                    if not isinstance(content, str):
+                        raise ValueError("Kugou lyric download did not return base64 content")
+                    lrc_text = base64.b64decode(content, validate=True).decode("utf-8")
+                except (binascii.Error, UnicodeDecodeError, ValueError, OSError):
+                    if exact_downloads >= 2:
+                        break
+                    continue
+                lines = _filter_kugou_timed_metadata(
+                    parse_lrc_text(lrc_text),
+                    song_title=song_title,
+                    artist=artist,
+                )
+                if len(lines) < 8:
+                    if exact_downloads >= 2:
+                        break
+                    continue
+                result = LrcResult(
+                    provider="kugou",
+                    song_title=song_title,
+                    artist=artist,
+                    source_ref=download_url,
+                    lines=tuple(lines),
+                )
+                fingerprint = _lrc_fingerprint(result)
+                if fingerprint not in seen_fingerprints:
+                    seen_fingerprints.add(fingerprint)
+                    results.append(result)
+                break
         return results
 
     return provider
@@ -1625,13 +1784,21 @@ def _http_json(url: str, *, timeout_seconds: float) -> Mapping[str, object] | No
     return payload if isinstance(payload, Mapping) else None
 
 
-def _http_json_value(url: str, *, timeout_seconds: float) -> object:
+def _http_json_value(
+    url: str,
+    *,
+    timeout_seconds: float,
+    request_headers: Mapping[str, str] | None = None,
+) -> object:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        "Referer": "https://music.163.com/",
+    }
+    if request_headers:
+        headers.update({str(key): str(value) for key, value in request_headers.items()})
     request = urllib.request.Request(
         url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Referer": "https://music.163.com/",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         return json.loads(response.read().decode("utf-8", errors="replace"))
@@ -1643,6 +1810,60 @@ def _coerce_lrc_results(found: LrcResult | Sequence[LrcResult] | None) -> list[L
     if isinstance(found, LrcResult):
         return [found]
     return [item for item in found if isinstance(item, LrcResult)]
+
+
+def _strip_kugou_markup(value: object) -> str:
+    """Remove search-result highlighting while preserving the exact identity text."""
+
+    return re.sub(r"<[^>]*>", "", str(value or "")).strip()
+
+
+def _kugou_identity_text(value: object) -> str:
+    return normalize_lyric_text(_strip_kugou_markup(value))
+
+
+def _kugou_candidate_matches_track(
+    candidate: Mapping[str, object],
+    *,
+    song_title: str,
+    artist: str,
+    duration_ms: int,
+) -> bool:
+    """Fail closed unless the lyric row belongs to this exact catalog track."""
+
+    if _kugou_identity_text(candidate.get("song")) != _kugou_identity_text(song_title):
+        return False
+    if _kugou_identity_text(candidate.get("singer")) != _kugou_identity_text(artist):
+        return False
+    candidate_duration = candidate.get("duration")
+    if isinstance(candidate_duration, bool) or not isinstance(candidate_duration, (int, float)):
+        return False
+    return abs(int(candidate_duration) - duration_ms) <= 3_000
+
+
+def _filter_kugou_timed_metadata(
+    lines: Sequence[LrcLine],
+    *,
+    song_title: str,
+    artist: str,
+) -> list[LrcLine]:
+    """Drop Kugou's timed title card without dropping a real opening lyric."""
+
+    title_identity = _kugou_identity_text(song_title)
+    artist_identity = _kugou_identity_text(artist)
+    filtered: list[LrcLine] = []
+    for line in lines:
+        line_identity = _kugou_identity_text(line.text)
+        is_timed_title_card = (
+            line.time_ms <= 1_000
+            and bool(title_identity)
+            and bool(artist_identity)
+            and title_identity in line_identity
+            and artist_identity in line_identity
+        )
+        if not is_timed_title_card:
+            filtered.append(line)
+    return filtered
 
 
 def _parse_lrclib_id(song_ref: str) -> int | None:
