@@ -216,7 +216,8 @@ fi
 # Freeze the exact committed bytes locally. Every later comparison and remote
 # archive uses COMMIT, never a mutable worktree or a HEAD that could advance.
 LOCAL_ARCHIVE_DIR=$(mktemp -d)
-git archive --format=tar "$COMMIT" scripts src assets | tar -xf - -C "$LOCAL_ARCHIVE_DIR"
+git archive --format=tar "$COMMIT" scripts src assets \
+    | (umask 022; tar -xf - -C "$LOCAL_ARCHIVE_DIR")
 LOCAL_MANIFEST=$(python3 - "$LOCAL_ARCHIVE_DIR" <<'LOCAL_MANIFEST_PY'
 import hashlib
 import json
@@ -257,7 +258,8 @@ STAGE_CREATED=1
 # `git archive` is the deployment source of truth: only COMMIT-tracked bytes can
 # enter staging. assets/ is intentionally replaced as a repo-owned tree; private
 # enrollment WAVs and the CAM++ model live outside repo/.
-git archive --format=tar "$COMMIT" scripts src assets | ssh "$HOST" "tar -xf - -C '$STAGE'"
+git archive --format=tar "$COMMIT" scripts src assets \
+    | ssh "$HOST" "umask 022; tar --no-same-permissions -xf - -C '$STAGE'"
 
 REMOTE_MANIFEST=$(ssh "$HOST" python3 - "$STAGE" <<'REMOTE_MANIFEST_PY'
 import hashlib
