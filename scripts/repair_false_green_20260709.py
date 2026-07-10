@@ -69,6 +69,9 @@ REQUIRED_REASONS = {
     "SONG_NOT_LIDOUSHA_SINGING",
 }
 BACKGROUND_MODE = "ORIGINAL_OR_BACKGROUND_PLAYBACK"
+BACKGROUND_REJECTION_MODES = frozenset(
+    {BACKGROUND_MODE, "STREAMER_TALKING_OVER_MUSIC"}
+)
 V5_STATUS = "NEGATIVE_ACCEPTANCE_PASSED_NO_UPLOAD"
 REVOCATION_STATUS = "REVOKED_FALSE_GREEN_BACKGROUND_PLAYBACK"
 NO_UPLOAD_SNAPSHOT_SCHEMA = "autoslice-no-upload-preflight.v1"
@@ -411,7 +414,7 @@ def _validate_background_performance(
     if error is not None:
         raise RepairError(f"fresh negative live-performance evidence is invalid: {error}")
     if (
-        performance.get("mode") != BACKGROUND_MODE
+        performance.get("mode") not in BACKGROUND_REJECTION_MODES
         or performance.get("same_lidousha_live_singer_across_all_lyrics") is not False
         or performance.get("recorded_or_playback_vocal_present") is not True
     ):
@@ -705,8 +708,11 @@ def validate_negative_result(
     performance = _as_mapping(gate.get("live_performance"))
     if gate.get("status") != "BLOCKED":
         raise RepairError("fresh negative song_repair_gate.status must be BLOCKED")
-    if performance.get("mode") != BACKGROUND_MODE:
-        raise RepairError(f"fresh negative live-performance mode must be {BACKGROUND_MODE}")
+    if performance.get("mode") not in BACKGROUND_REJECTION_MODES:
+        raise RepairError(
+            "fresh negative live-performance mode is not a recorded-vocal incident rejection: "
+            f"expected one of {sorted(BACKGROUND_REJECTION_MODES)}, observed {performance.get('mode')}"
+        )
     gate_reasons = _as_reason_set(gate.get("reason_codes"))
     if not REQUIRED_REASONS.issubset(gate_reasons):
         raise RepairError("fresh negative song repair gate lost the two hard performer reasons")
@@ -729,8 +735,8 @@ def validate_negative_result(
     if not REQUIRED_REASONS.issubset(_as_reason_set(repair_report.get("reason_codes"))):
         raise RepairError("fresh negative song repair report lost the two hard performer reasons")
     report_performance = _as_mapping(repair_report.get("live_performance"))
-    if report_performance.get("mode") != BACKGROUND_MODE:
-        raise RepairError("fresh negative song repair report is not bound to background playback")
+    if report_performance.get("mode") not in BACKGROUND_REJECTION_MODES:
+        raise RepairError("fresh negative song repair report is not bound to recorded-vocal playback")
     if dict(report_performance) != dict(performance):
         raise RepairError("fresh negative gate/report live-performance observations differ")
     source_path = Path(str(summary.get("source_video") or ""))

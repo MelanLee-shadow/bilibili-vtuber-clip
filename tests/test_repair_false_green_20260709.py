@@ -684,6 +684,36 @@ def test_raw_agy_evidence_must_cover_lyric_head_middle_tail(tmp_path, capsys):
     assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
 
 
+def test_streamer_talking_over_recorded_vocal_is_valid_incident_rejection(tmp_path):
+    fixture = _incident_fixture(tmp_path)
+    mode = "STREAMER_TALKING_OVER_MUSIC"
+
+    raw = json.loads(fixture["agy_output"].read_text(encoding="utf-8"))
+    raw["live_performance"]["mode"] = mode
+    _json(fixture["agy_output"], raw)
+    manifest = json.loads(fixture["agy_manifest"].read_text(encoding="utf-8"))
+    manifest["artifacts"]["output_sha256"] = _sha(fixture["agy_output"])
+    _json(fixture["agy_manifest"], manifest)
+
+    negative = json.loads(fixture["negative"].read_text(encoding="utf-8"))
+    outer_gate = negative["records"][0]["source_context_job"]["song_repair_gate"]
+    inner_gate = negative["last_shadow_summary"]["records"][0]["source_context_job"]["song_repair_gate"]
+    outer_gate["live_performance"]["mode"] = mode
+    inner_gate["live_performance"]["mode"] = mode
+    repair_report = Path(outer_gate["repair_report_path"])
+    report = json.loads(repair_report.read_text(encoding="utf-8"))
+    report["live_performance"]["mode"] = mode
+    _json(repair_report, report)
+    _json(fixture["negative"], negative)
+
+    assert repair.main(_args(fixture, "--apply")) == 0
+    state = json.loads(fixture["active_state"].read_text(encoding="utf-8"))
+    repaired_song = next(
+        song for song in state["songs"] if song["candidate_id"] == repair.TARGET_CANDIDATE_ID
+    )
+    assert repaired_song["song_repair_gate"]["live_performance"]["mode"] == mode
+
+
 def test_agy_source_origin_must_match_selector_source(tmp_path, capsys):
     fixture = _incident_fixture(tmp_path)
     unrelated = tmp_path / "unrelated-source.mp4"
