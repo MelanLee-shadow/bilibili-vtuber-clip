@@ -492,7 +492,11 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
     assert result["window_classified_song"] is True
     assert "full_source_retry" in result
     assert len(selector_commands) == 2
+    tight_command = selector_commands[0]
     full_command = selector_commands[1]
+    assert "--seed-song-candidate-id" in tight_command
+    assert tight_command[tight_command.index("--seed-song-candidate-id") + 1] == "seededsong_15000_65000"
+    assert "--agy-audio-lrc-align" not in tight_command
     assert "--agy-audio-lrc-align" in full_command
     assert full_command[full_command.index("--seed-song-candidate-id") + 1] == "seededsong_45000_95000"
     assert full_command[full_command.index("--seed-song-anchor-start-ms") + 1] == "45000"

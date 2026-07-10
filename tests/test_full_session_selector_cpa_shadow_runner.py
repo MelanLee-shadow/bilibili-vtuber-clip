@@ -136,6 +136,64 @@ def test_seeded_song_candidate_bypasses_wide_window_talk_recall():
     assert job["requires_full_source_song_boundary_redo"] is True
 
 
+def test_seeded_song_cli_bypasses_empty_semantic_recall(tmp_path):
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"fake video")
+    source_srt = tmp_path / "source.srt"
+    source_srt.write_text(
+        "1\n00:00:01,000 --> 00:00:05,000\n最初に望んだ未来とは\n\n"
+        "2\n00:00:12,000 --> 00:00:19,000\n最後はなにもいらない\n\n"
+        "3\n00:00:22,000 --> 00:00:25,000\n大家晚安\n",
+        encoding="utf-8",
+    )
+    # If the seed is honored this command is never called.  Without the seed
+    # the same zero/failed recall would lead to NO_FULL_SESSION_CANDIDATES for
+    # sparse Japanese ASR.
+    broken_recall = tmp_path / "broken_recall.py"
+    broken_recall.write_text("raise SystemExit(99)\n", encoding="utf-8")
+    responder = _write_ok_cpa_responder(tmp_path)
+    output_dir = tmp_path / "out"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_full_session_selector_cpa_shadow.py",
+            "--source-video",
+            str(source_video),
+            "--source-srt",
+            str(source_srt),
+            "--output-dir",
+            str(output_dir),
+            "--source-duration-ms",
+            "26000",
+            "--seed-song-candidate-id",
+            "seededsong_1000_19000",
+            "--seed-song-anchor-start-ms",
+            "1000",
+            "--seed-song-anchor-end-ms",
+            "19000",
+            "--semantic-recall-llm-command",
+            f"{sys.executable} {broken_recall} {{prompt_file}} {{completion_file}}",
+            "--cpa-command",
+            f"{sys.executable} {responder} {{request_json}} {{response_json}}",
+            "--copy-draft-context",
+            "--no-ffmpeg",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["selector_stage"] == "seeded_song_anchor"
+    record = summary["records"][0]
+    assert record["candidate_id"] == "seededsong_1000_19000"
+    assert record["source_context_job"]["song_candidate"] is True
+    assert not (output_dir / "semantic_recall.json").exists()
+
+
 def test_semantic_recall_lane_runs_first_and_marks_semantic_authority(tmp_path):
     source_video = tmp_path / "source.mp4"
     source_video.write_bytes(b"fake video")

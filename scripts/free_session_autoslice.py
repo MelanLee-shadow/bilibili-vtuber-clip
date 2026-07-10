@@ -1220,18 +1220,25 @@ def produce_song(date: str, item: dict) -> dict:
             for query in [*quoted_titles[:1], known_song_query]:
                 if query:
                     selector_command.extend(["--song-lrc-query", query])
+            # Every invocation already came from the upstream song lane, which
+            # owns this anchor.  Re-asking a nondeterministic semantic LLM to
+            # decide whether the same window is a song made Japanese garbage
+            # ASR randomly produce NO_FULL_SESSION_CANDIDATES.  Keep the anchor
+            # for tight/core/full attempts; only the full attempt may escalate
+            # to expensive audio+LRC proof.  Delivery still requires the
+            # independent positive full-song proof below.
+            selector_command.extend(
+                [
+                    "--seed-song-candidate-id",
+                    f"seededsong_{max(0, anchor_start - start)}_{min(end - start, anchor_end - start)}",
+                    "--seed-song-anchor-start-ms",
+                    str(max(0, anchor_start - start)),
+                    "--seed-song-anchor-end-ms",
+                    str(min(end - start, anchor_end - start)),
+                ]
+            )
             if tag == "_full":
-                selector_command.extend(
-                    [
-                        "--agy-audio-lrc-align",
-                        "--seed-song-candidate-id",
-                        f"seededsong_{max(0, anchor_start - start)}_{min(end - start, anchor_end - start)}",
-                        "--seed-song-anchor-start-ms",
-                        str(max(0, anchor_start - start)),
-                        "--seed-song-anchor-end-ms",
-                        str(min(end - start, anchor_end - start)),
-                    ]
-                )
+                selector_command.append("--agy-audio-lrc-align")
             completed = subprocess.run(
                 selector_command,
                 check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
