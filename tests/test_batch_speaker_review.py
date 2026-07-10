@@ -6,6 +6,7 @@ import pytest
 from scripts.batch_speaker_review import (
     PLAN_SCHEMA,
     BatchSpeakerReviewError,
+    REQUIRED_ARTIFACTS,
     _result_is_reusable,
     validate_plan,
 )
@@ -64,9 +65,56 @@ def test_batch_plan_rejects_duplicate_identity_and_path_names() -> None:
 
 
 def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
-    artifact = tmp_path / "review.mp4"
-    artifact.write_bytes(b"video")
     import hashlib
+
+    names = {
+        "video": "01_测试.mp4",
+        "text_final_srt": "01_测试.text-final.srt",
+        "speaker_srt": "01_测试.speaker.srt",
+        "ass": "01_测试.ass",
+        "speaker_manifest": "01_测试.speaker.json",
+    }
+    paths = {key: tmp_path / value for key, value in names.items()}
+    paths["video"].write_bytes(b"video")
+    paths["text_final_srt"].write_bytes(b"text")
+    paths["speaker_srt"].write_bytes(b"speaker")
+    paths["ass"].write_text(
+        "[V4+ Styles]\n"
+        "Style: LDS,Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,0,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1\n"
+        "Style: GUEST,Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00203050,&H70000000,-1,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1\n"
+        "[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,LDS,,0,0,0,,测试\n",
+        encoding="utf-8",
+    )
+    artifact_rows = {
+        key: {
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "bytes": path.stat().st_size,
+        }
+        for key, path in paths.items()
+        if key != "speaker_manifest"
+    }
+    paths["speaker_manifest"].write_text(
+        json.dumps(
+            {
+                "status": "READY",
+                "production_ready": True,
+                "subtitle_style": "lidousha-speaker-sapphire-host-white-guest-v2",
+                "speaker_taxonomy": "binary_visual_host_vs_guest",
+                "source_media_sha256": SHA_A,
+                "text_final_srt_sha256": SHA_B,
+                "speaker_override_sha256": None,
+                "output_review_srt_sha256": artifact_rows["speaker_srt"]["sha256"],
+                "output_ass_sha256": artifact_rows["ass"]["sha256"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifact_rows["speaker_manifest"] = {
+        "path": str(paths["speaker_manifest"]),
+        "sha256": hashlib.sha256(paths["speaker_manifest"].read_bytes()).hexdigest(),
+        "bytes": paths["speaker_manifest"].stat().st_size,
+    }
 
     result = tmp_path / "item.result.json"
     result.write_text(
@@ -74,21 +122,56 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
             {
                 "schema_version": "lidousha-speaker-review-item.v1",
                 "status": "READY",
+                "candidate_id": "promo_1",
+                "review_name": "01_测试",
                 "source_media_sha256": SHA_A,
                 "text_final_srt_sha256": SHA_B,
-                "artifacts": {
-                    "video": {
-                        "path": str(artifact),
-                        "sha256": hashlib.sha256(b"video").hexdigest(),
-                    }
-                },
+                "speaker_override_sha256": None,
+                "subtitle_style": "lidousha-speaker-sapphire-host-white-guest-v2",
+                "upload_authorized": False,
+                "artifacts": artifact_rows,
             }
         ),
         encoding="utf-8",
     )
-    entry = {"source_media_sha256": SHA_A, "text_final_srt_sha256": SHA_B}
+    entry = {
+        "candidate_id": "promo_1",
+        "review_name": "01_测试",
+        "source_media_sha256": SHA_A,
+        "text_final_srt_sha256": SHA_B,
+        "speaker_override_sha256": None,
+    }
     assert _result_is_reusable(result, entry)
-    artifact.write_bytes(b"drift")
+    paths["video"].write_bytes(b"drift")
+    assert not _result_is_reusable(result, entry)
+
+
+def test_resume_rejects_empty_partial_wrong_identity_override_or_style(tmp_path: Path) -> None:
+    result = tmp_path / "item.result.json"
+    base = {
+        "schema_version": "lidousha-speaker-review-item.v1",
+        "status": "READY",
+        "candidate_id": "wrong",
+        "review_name": "01_测试",
+        "source_media_sha256": SHA_A,
+        "text_final_srt_sha256": SHA_B,
+        "speaker_override_sha256": "c" * 64,
+        "subtitle_style": "old-yellow-style",
+        "upload_authorized": False,
+        "artifacts": {},
+    }
+    result.write_text(json.dumps(base), encoding="utf-8")
+    entry = {
+        "candidate_id": "promo_1",
+        "review_name": "01_测试",
+        "source_media_sha256": SHA_A,
+        "text_final_srt_sha256": SHA_B,
+        "speaker_override_sha256": None,
+    }
+    assert not _result_is_reusable(result, entry)
+    base.update(candidate_id="promo_1", speaker_override_sha256=None, subtitle_style="lidousha-speaker-sapphire-host-white-guest-v2")
+    base["artifacts"] = {name: {} for name in list(REQUIRED_ARTIFACTS)[:1]}
+    result.write_text(json.dumps(base), encoding="utf-8")
     assert not _result_is_reusable(result, entry)
 
 

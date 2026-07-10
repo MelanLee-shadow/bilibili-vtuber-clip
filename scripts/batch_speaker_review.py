@@ -43,6 +43,13 @@ PLAN_SCHEMA = "lidousha-speaker-review-batch-plan.v1"
 RESULT_SCHEMA = "lidousha-speaker-review-item.v1"
 BATCH_SCHEMA = "lidousha-speaker-review-batch.v1"
 SHA256_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
+REQUIRED_ARTIFACTS = {
+    "video",
+    "text_final_srt",
+    "speaker_srt",
+    "ass",
+    "speaker_manifest",
+}
 
 
 class BatchSpeakerReviewError(RuntimeError):
@@ -98,6 +105,12 @@ def validate_plan(document: object) -> dict[str, Any]:
             raise BatchSpeakerReviewError(f"duplicate review_name: {review_name}")
         candidate_ids.add(candidate_id)
         review_names.add(review_name)
+        override_path = str(raw.get("speaker_override_path") or "").strip()
+        override_digest_raw = raw.get("speaker_override_sha256")
+        if bool(override_path) != bool(override_digest_raw):
+            raise BatchSpeakerReviewError(
+                f"entry {position} must bind speaker_override_path and speaker_override_sha256 together"
+            )
         normalized.append(
             {
                 **dict(raw),
@@ -108,6 +121,12 @@ def validate_plan(document: object) -> dict[str, Any]:
                 ),
                 "text_final_srt_sha256": _expected_digest(
                     raw.get("text_final_srt_sha256"), f"entry {position} text_final_srt_sha256"
+                ),
+                "speaker_override_path": override_path or None,
+                "speaker_override_sha256": (
+                    _expected_digest(override_digest_raw, f"entry {position} speaker_override_sha256")
+                    if override_path
+                    else None
                 ),
             }
         )
@@ -132,19 +151,101 @@ def _artifact(path: Path) -> dict[str, object]:
     return {"path": str(path.resolve()), "sha256": sha256_file(path), "bytes": path.stat().st_size}
 
 
+def _expected_artifact_paths(output_dir: Path, review_name: str) -> dict[str, Path]:
+    return {
+        "video": output_dir / f"{review_name}.mp4",
+        "text_final_srt": output_dir / f"{review_name}.text-final.srt",
+        "speaker_srt": output_dir / f"{review_name}.speaker.srt",
+        "ass": output_dir / f"{review_name}.ass",
+        "speaker_manifest": output_dir / f"{review_name}.speaker.json",
+    }
+
+
+def _validate_ass_style_contract(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    style_lines = [line for line in text.splitlines() if line.startswith("Style: ")]
+    expected_styles = [
+        f"Style: LDS,{LDS_SAPPHIRE_STYLE}",
+        f"Style: GUEST,{GUEST_WHITE_STYLE}",
+    ]
+    if style_lines != expected_styles:
+        raise BatchSpeakerReviewError(f"ASS style contract drift: {path}")
+    if "&H0000FFFF" in text or "_OVERLAP" in text:
+        raise BatchSpeakerReviewError(f"ASS contains retired speaker style: {path}")
+    for line in text.splitlines():
+        if not line.startswith("Dialogue: "):
+            continue
+        fields = line.split(",", 9)
+        if len(fields) != 10 or fields[3] not in {"LDS", "GUEST"}:
+            raise BatchSpeakerReviewError(f"ASS dialogue uses an invalid style: {line[:160]}")
+        if fields[7] not in {"0", "142"}:
+            raise BatchSpeakerReviewError(f"ASS dialogue uses an invalid MarginV: {line[:160]}")
+
+
+def _validate_speaker_manifest(
+    path: Path,
+    *,
+    entry: Mapping[str, object],
+    artifacts: Mapping[str, Mapping[str, object]],
+) -> None:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest.get("status") != "READY" or manifest.get("production_ready") is not True:
+        raise BatchSpeakerReviewError(f"speaker manifest is not READY: {path}")
+    if manifest.get("subtitle_style") != SPEAKER_SUBTITLE_STYLE_ID:
+        raise BatchSpeakerReviewError(f"speaker manifest style drift: {path}")
+    if manifest.get("speaker_taxonomy") != "binary_visual_host_vs_guest":
+        raise BatchSpeakerReviewError(f"speaker manifest taxonomy drift: {path}")
+    if manifest.get("source_media_sha256") != entry["source_media_sha256"]:
+        raise BatchSpeakerReviewError(f"speaker manifest media binding drift: {path}")
+    if manifest.get("text_final_srt_sha256") != entry["text_final_srt_sha256"]:
+        raise BatchSpeakerReviewError(f"speaker manifest text binding drift: {path}")
+    if manifest.get("speaker_override_sha256") != entry.get("speaker_override_sha256"):
+        raise BatchSpeakerReviewError(f"speaker manifest override binding drift: {path}")
+    if manifest.get("output_review_srt_sha256") != artifacts["speaker_srt"]["sha256"]:
+        raise BatchSpeakerReviewError(f"speaker manifest SRT output drift: {path}")
+    if manifest.get("output_ass_sha256") != artifacts["ass"]["sha256"]:
+        raise BatchSpeakerReviewError(f"speaker manifest ASS output drift: {path}")
+
+
 def _result_is_reusable(path: Path, entry: Mapping[str, object]) -> bool:
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
         if result.get("schema_version") != RESULT_SCHEMA or result.get("status") != "READY":
             return False
+        if result.get("candidate_id") != entry["candidate_id"]:
+            return False
+        if result.get("review_name") != entry["review_name"]:
+            return False
         if result.get("source_media_sha256") != entry["source_media_sha256"]:
             return False
         if result.get("text_final_srt_sha256") != entry["text_final_srt_sha256"]:
             return False
-        for artifact in (result.get("artifacts") or {}).values():
-            artifact_path = Path(str(artifact["path"]))
-            if not artifact_path.is_file() or sha256_file(artifact_path) != artifact["sha256"]:
+        if result.get("speaker_override_sha256") != entry.get("speaker_override_sha256"):
+            return False
+        if result.get("subtitle_style") != SPEAKER_SUBTITLE_STYLE_ID:
+            return False
+        if result.get("upload_authorized") is not False:
+            return False
+        artifacts = result.get("artifacts")
+        if not isinstance(artifacts, Mapping) or set(artifacts) != REQUIRED_ARTIFACTS:
+            return False
+        expected_paths = _expected_artifact_paths(path.parent, str(entry["review_name"]))
+        for name, artifact in artifacts.items():
+            if not isinstance(artifact, Mapping):
                 return False
+            artifact_path = Path(str(artifact["path"]))
+            if artifact_path.resolve() != expected_paths[name].resolve():
+                return False
+            if (
+                not artifact_path.is_file()
+                or sha256_file(artifact_path) != artifact["sha256"]
+                or artifact_path.stat().st_size != artifact["bytes"]
+            ):
+                return False
+        _validate_ass_style_contract(expected_paths["ass"])
+        _validate_speaker_manifest(
+            expected_paths["speaker_manifest"], entry=entry, artifacts=artifacts
+        )
         return True
     except (OSError, TypeError, ValueError, KeyError):
         return False
@@ -187,13 +288,7 @@ def build_review_item(
     if resume and result_path.is_file() and _result_is_reusable(result_path, entry):
         return json.loads(result_path.read_text(encoding="utf-8"))
 
-    paths = {
-        "video": output_dir / f"{review_name}.mp4",
-        "text_final_srt": output_dir / f"{review_name}.text-final.srt",
-        "speaker_srt": output_dir / f"{review_name}.speaker.srt",
-        "ass": output_dir / f"{review_name}.ass",
-        "speaker_manifest": output_dir / f"{review_name}.speaker.json",
-    }
+    paths = _expected_artifact_paths(output_dir, review_name)
     for path in (*paths.values(), result_path):
         path.unlink(missing_ok=True)
 
@@ -212,6 +307,7 @@ def build_review_item(
         override_path=override_path,
         speaker_python=speaker_python,
     )
+    _validate_ass_style_contract(paths["ass"])
 
     render_source = work_dir / "render-source.mp4"
     _link_or_copy(source_media, render_source)
@@ -235,11 +331,23 @@ def build_review_item(
     finally:
         render_source.unlink(missing_ok=True)
 
+    # Close the long-run TOCTOU window.  The model and ffmpeg may spend many
+    # minutes reading these inputs; a hash change at any point invalidates the
+    # whole item instead of producing a mixed-era READY artifact.
+    _verify_bound_file(source_media, str(entry["source_media_sha256"]), "source media post-run")
+    _verify_bound_file(text_final, str(entry["text_final_srt_sha256"]), "text-final SRT post-run")
+    if override_path is not None and sha256_file(override_path) != entry["speaker_override_sha256"]:
+        raise BatchSpeakerReviewError(f"speaker override post-run hash drift: {override_path}")
+
     decisions = speaker_manifest.get("final_decisions") or []
     speaker_counts = {
         "李豆沙": sum(item.get("speaker") == "李豆沙" for item in decisions),
         "连线": sum(item.get("speaker") == "连线" for item in decisions),
     }
+    artifacts = {name: _artifact(path) for name, path in paths.items()}
+    _validate_speaker_manifest(
+        paths["speaker_manifest"], entry=entry, artifacts=artifacts
+    )
     result: dict[str, object] = {
         "schema_version": RESULT_SCHEMA,
         "status": "READY",
@@ -258,7 +366,7 @@ def build_review_item(
         "source_cue_count": speaker_manifest.get("source_cue_count"),
         "output_cue_count": speaker_manifest.get("output_cue_count"),
         "upload_authorized": False,
-        "artifacts": {name: _artifact(path) for name, path in paths.items()},
+        "artifacts": artifacts,
         "completed_at": _utc_now(),
     }
     _write_json(result_path, result)
