@@ -60,7 +60,12 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
         "spot_checks": [
             {"name": "first_line", "live_time_ms": 10_000, "result": "OK", "notes": "heard"},
             {"name": "chorus", "live_time_ms": 24_000, "result": "OK", "notes": "heard"},
-            {"name": "repeated_section", "live_time_ms": 38_000, "result": "OK", "notes": "heard"},
+            {
+                "name": "repeated_section",
+                "live_time_ms": observations[8]["live_start_ms"],
+                "result": "OK",
+                "notes": "heard later recurrence",
+            },
             {"name": "longest_instrumental_gap", "live_time_ms": 52_000, "result": "OK", "notes": "heard"},
             {"name": "tail", "live_time_ms": observations[-1]["live_start_ms"], "result": "OK", "notes": "heard"},
         ],
@@ -134,7 +139,7 @@ def _japanese_lrc() -> LrcResult:
         "最初に望んだ未来とは少し違うけれど",
         "最後はなにもいらないただそばにいて",
         "季節が進むことをためらわないでね",
-        "今までの全てはいつかに繋がるから",
+        "最初に望んだ未来とは少し違うけれど",
         "伝えなくちゃ最後は",
     ]
     return LrcResult(
@@ -217,9 +222,14 @@ def test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof(tmp_p
     assert report["evidence_source"] == "agy_audio_lrc"
     assert report["matched_line_count"] == report["line_count"] == 10
     assert all(row["evidence_source"] == "agy_audio_lrc" for row in report["alignment"])
+    assert report["spot_checks"] == run.payload["spot_checks"]
+    assert report["post_song_talk_start_ms"] == run.payload["post_song_talk_start_ms"]
 
 
-@pytest.mark.parametrize("mutation", ["unheard", "drift", "wrong_text", "bad_tail_spot"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["unheard", "drift", "wrong_text", "bad_tail_spot", "bad_repeated_spot"],
+)
 def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
     lrc = _japanese_lrc()
     run = _write_fake_audio_alignment_run(tmp_path, lrc)
@@ -233,8 +243,10 @@ def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
         payload["post_song_talk_start_ms"] += 8_000
     elif mutation == "wrong_text":
         payload["observations"][2]["text"] = "別の歌詞"
-    else:
+    elif mutation == "bad_tail_spot":
         payload["spot_checks"][-1]["live_time_ms"] = 20_000
+    else:
+        payload["spot_checks"][2]["live_time_ms"] = payload["observations"][5]["live_start_ms"]
     output = Path(run.output_path)
     output.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     run = AudioLrcAlignmentRun(

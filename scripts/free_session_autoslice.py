@@ -733,9 +733,9 @@ def fresh_song_selector_dir(out_dir: Path, tag: str) -> Path:
 
 def record_is_song(entry: dict) -> bool:
     """The window IS a song when the in-window recall classified it as one
-    (semanticsong_* record id) OR the LRC lane pinned/aligned it.  LRC evidence
-    alone misses non-CJK songs (Japanese: netease lyric lookup can't identify
-    them — 7/9 ただそばにいて x18), which ARE songs and must compete."""
+    (semanticsong_* record id) OR the LRC lane pinned/aligned it.  Keep that
+    upstream anchor through later selector retries; final delivery still needs
+    independent positive boundary and lyric evidence and otherwise fails closed."""
     job = entry.get("source_context_job") or {}
     return (
         str(entry.get("candidate_id") or "").startswith("semanticsong")

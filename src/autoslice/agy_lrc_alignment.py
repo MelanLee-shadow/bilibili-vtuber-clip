@@ -120,6 +120,8 @@ Requirements:
    Unheard rows use null times.
 3. Use exactly the five spot-check names shown. Each time must point to the
    named audible event; use `result: "OK"` only after checking that point.
+   If the LRC contains an exact repeated lyric, `repeated_section` must point
+   to a later audible recurrence, not the first occurrence.
 4. `post_song_talk_start_ms` is the first surrounding speech after the song,
    or null if no post-song talk occurs in this window.
 5. Do not output a title, offset, verdict, recommended boundary, prose, or any

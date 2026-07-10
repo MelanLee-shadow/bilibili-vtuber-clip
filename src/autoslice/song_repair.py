@@ -511,6 +511,8 @@ def attempt_song_repair(
                 "evidence_source": "agy_audio_lrc",
                 "audio_alignment_provider": audio_alignment_run.provider,
                 "audio_alignment_model": audio_alignment_run.model,
+                "spot_checks": audio_alignment_run.payload["spot_checks"],
+                "post_song_talk_start_ms": audio_alignment_run.payload["post_song_talk_start_ms"],
                 "audio_alignment_artifacts": {
                     "source_path": audio_alignment_run.source_path,
                     "source_sha256": audio_alignment_run.source_sha256,
@@ -1378,6 +1380,21 @@ def _validated_audio_lrc_selection(
         raise ValueError("first-line spot check does not bind the first observed lyric")
     if abs(int(spots["tail"]["live_time_ms"]) - int(alignment[-1]["cue_start_ms"])) > 1_500:
         raise ValueError("tail spot check does not bind the final observed lyric")
+
+    first_index_by_text: dict[str, int] = {}
+    later_repeat_starts: list[int] = []
+    for index, line in enumerate(lrc.lines):
+        normalized = normalize_lyric_text(line.text)
+        if not normalized:
+            continue
+        if normalized in first_index_by_text:
+            later_repeat_starts.append(int(alignment[index]["cue_start_ms"]))
+        else:
+            first_index_by_text[normalized] = index
+    if later_repeat_starts:
+        repeated_spot_ms = int(spots["repeated_section"]["live_time_ms"])
+        if all(abs(repeated_spot_ms - start_ms) > 1_500 for start_ms in later_repeat_starts):
+            raise ValueError("repeated-section spot check does not bind a later repeated lyric occurrence")
 
     post_song_talk_start_ms = payload.get("post_song_talk_start_ms")
     if post_song_talk_start_ms is None:
