@@ -213,7 +213,7 @@ def test_reviewed_context_votes_are_hash_bound_and_passed_to_analyzer(tmp_path: 
         assert kwargs["reviewed_context_votes"] == {0: "连线"}
         return {
             "decisions": [
-                {"speaker": "连线", "decision_source": "reviewed_context_vote", "margin": -0.1}
+                {"speaker": "连线", "decision_source": "accepted_context_baseline", "margin": -0.1}
             ],
             "context_unresolved_cues": [],
         }
@@ -234,6 +234,8 @@ def test_reviewed_context_votes_are_hash_bound_and_passed_to_analyzer(tmp_path: 
     )
     assert output_srt.read_bytes() == accepted_automatic
     assert manifest["automatic_labelled_srt_sha256"] == accepted_hash
+    assert manifest["reviewed_output_cue_count"] == 0
+    assert manifest["accepted_context_output_cue_count"] == 1
 
 
 def test_reviewed_speaker_override_rejects_media_drift(tmp_path: Path) -> None:

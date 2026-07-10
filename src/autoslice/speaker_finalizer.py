@@ -491,7 +491,7 @@ def _run_campplus_analysis(
     resolved, sources = resolve_ambiguous_labels(labels, margins, threshold, votes)
     for index in reviewed_votes:
         if index in ambiguous:
-            sources[index] = "reviewed_context_vote"
+            sources[index] = "accepted_context_baseline"
 
     # Smooth only acoustically ambiguous one-cue islands; never override a
     # whole-clip context judgement or confident audio label.
@@ -659,6 +659,9 @@ def finalize_speaker_subtitles(
         "source_cue_count": len(cues),
         "output_cue_count": len(final_cues),
         "reviewed_output_cue_count": sum(cue.decision_source.startswith("reviewed_") for cue in final_cues),
+        "accepted_context_output_cue_count": sum(
+            cue.decision_source == "accepted_context_baseline" for cue in final_cues
+        ),
         "overlap_output_cue_count": sum(cue.placement == "above" for cue in final_cues),
         "analysis": analysis,
         "final_decisions": [asdict(cue) for cue in final_cues],
