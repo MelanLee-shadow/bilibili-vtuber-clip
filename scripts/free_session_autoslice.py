@@ -717,6 +717,9 @@ def record_is_song(entry: dict) -> bool:
     job = entry.get("source_context_job") or {}
     return (
         str(entry.get("candidate_id") or "").startswith("semanticsong")
+        or job.get("content_type_hint") == "song"
+        or job.get("song_candidate") is True
+        or job.get("requires_full_source_song_boundary_redo") is True
         or bool(job.get("song_boundary"))
         or bool(job.get("lyrics_alignment"))
     )
@@ -907,6 +910,150 @@ def song_completion_evidence(record: dict) -> dict:
         elif sum(1 for entry in report_alignment if isinstance(entry, dict) and entry.get("matched_cue_id") is not None) != matched_count:
             failures.append("SONG_ALIGNMENT_MATCH_EVIDENCE_INVALID")
 
+        is_audio_report = report.get("evidence_source") == "agy_audio_lrc"
+        is_audio_model = str(alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
+        if is_audio_report != is_audio_model:
+            failures.append("SONG_ALIGNMENT_EVIDENCE_TYPE_MISMATCH")
+
+        if is_audio_report:
+            if (
+                report.get("audio_alignment_provider") != "agy"
+                or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
+                or not str(alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
+            ):
+                failures.append("SONG_AUDIO_LRC_PROVIDER_INVALID")
+            audio_artifacts = report.get("audio_alignment_artifacts")
+            artifact_pairs = (
+                ("source_path", "source_sha256"),
+                ("lrc_path", "lrc_sha256"),
+                ("prompt_path", "prompt_sha256"),
+                ("raw_output_path", "raw_output_sha256"),
+                ("run_manifest_path", "run_manifest_sha256"),
+            )
+            if not isinstance(audio_artifacts, dict):
+                failures.append("SONG_AUDIO_LRC_ARTIFACTS_INVALID")
+            else:
+                for path_key, sha_key in artifact_pairs:
+                    path_value = audio_artifacts.get(path_key)
+                    sha_value = audio_artifacts.get(sha_key)
+                    if (
+                        not isinstance(path_value, str)
+                        or not isinstance(sha_value, str)
+                        or not _matches_sha256(Path(path_value), sha_value)
+                    ):
+                        failures.append("SONG_AUDIO_LRC_ARTIFACTS_INVALID")
+                manifest_value = audio_artifacts.get("run_manifest_path")
+                try:
+                    audio_manifest = json.loads(Path(str(manifest_value)).read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    audio_manifest = None
+                if not isinstance(audio_manifest, dict) or (
+                    audio_manifest.get("schema_version") != "agy-audio-lrc-run.v1"
+                    or audio_manifest.get("candidate_id") != record.get("candidate_id")
+                    or audio_manifest.get("provider") != "agy"
+                    or audio_manifest.get("model") != "Gemini 3.5 Flash (High)"
+                    or audio_manifest.get("agy_rc") != 0
+                    or audio_manifest.get("provider_fallback_used") is not False
+                    or audio_manifest.get("sandbox") is not True
+                ):
+                    failures.append("SONG_AUDIO_LRC_MANIFEST_INVALID")
+                elif not isinstance(audio_manifest.get("artifacts"), dict) or any(
+                    audio_manifest["artifacts"].get(manifest_key) != audio_artifacts.get(report_key)
+                    for manifest_key, report_key in (
+                        ("source_path", "source_path"),
+                        ("source_sha256", "source_sha256"),
+                        ("source_duration_ms", "source_duration_ms"),
+                        ("lrc_path", "lrc_path"),
+                        ("lrc_sha256", "lrc_sha256"),
+                        ("prompt_path", "prompt_path"),
+                        ("prompt_sha256", "prompt_sha256"),
+                        ("output_path", "raw_output_path"),
+                        ("output_sha256", "raw_output_sha256"),
+                    )
+                ):
+                    failures.append("SONG_AUDIO_LRC_MANIFEST_BINDING_INVALID")
+                raw_value = audio_artifacts.get("raw_output_path")
+                try:
+                    raw_observation = json.loads(Path(str(raw_value)).read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    raw_observation = None
+                raw_record = raw_observation.get("record") if isinstance(raw_observation, dict) else None
+                raw_rows = raw_observation.get("observations") if isinstance(raw_observation, dict) else None
+                if (
+                    not isinstance(raw_observation, dict)
+                    or raw_observation.get("schema_version") != "agy-audio-lrc-observation.v1"
+                    or not isinstance(raw_record, dict)
+                    or raw_record.get("candidate_id") != record.get("candidate_id")
+                    or raw_record.get("source_sha256") != audio_artifacts.get("source_sha256")
+                    or raw_record.get("lrc_sha256") != audio_artifacts.get("lrc_sha256")
+                    or raw_record.get("source_duration_ms") != audio_artifacts.get("source_duration_ms")
+                    or not isinstance(raw_rows, list)
+                ):
+                    failures.append("SONG_AUDIO_LRC_RAW_OBSERVATION_INVALID")
+            if isinstance(report_alignment, list) and isinstance(lyric_lines, list):
+                ids: list[str] = []
+                starts: list[int] = []
+                residuals: list[int] = []
+                audio_rows_ok = len(report_alignment) == len(lyric_lines) == matched_count == line_count
+                for row, lyric in zip(report_alignment, lyric_lines):
+                    if not isinstance(row, dict) or not isinstance(lyric, dict):
+                        audio_rows_ok = False
+                        break
+                    cue_id = row.get("matched_cue_id")
+                    cue_start = row.get("cue_start_ms")
+                    cue_end = row.get("cue_end_ms")
+                    if (
+                        row.get("evidence_source") != "agy_audio_lrc"
+                        or not isinstance(cue_id, str)
+                        or not cue_id.startswith("agy-audio:")
+                        or not is_int(cue_start)
+                        or not is_int(cue_end)
+                        or not 0 <= cue_start < cue_end
+                        or row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
+                        or row.get("lrc_text") != lyric.get("text")
+                    ):
+                        audio_rows_ok = False
+                        break
+                    ids.append(cue_id)
+                    starts.append(cue_start)
+                    residuals.append(cue_start - lyric["lrc_time_ms"])
+                if (
+                    not audio_rows_ok
+                    or len(set(ids)) != len(ids)
+                    or starts != sorted(starts)
+                    or not is_int(offset_ms)
+                    or any(abs(value - offset_ms) > 1_500 for value in residuals)
+                    or (starts and starts[0] != report.get("first_lyric_start_ms"))
+                    or (
+                        report_alignment
+                        and isinstance(report_alignment[-1], dict)
+                        and report_alignment[-1].get("cue_end_ms") != report.get("last_lyric_end_ms")
+                    )
+                ):
+                    failures.append("SONG_AUDIO_LRC_OBSERVATION_INVALID")
+                if isinstance(audio_artifacts, dict) and isinstance(raw_rows, list):
+                    raw_rows_match = len(raw_rows) == len(report_alignment) == len(lyric_lines)
+                    if raw_rows_match:
+                        for index, (raw_row, proof_row, lyric) in enumerate(zip(raw_rows, report_alignment, lyric_lines)):
+                            if (
+                                not isinstance(raw_row, dict)
+                                or not isinstance(proof_row, dict)
+                                or not isinstance(lyric, dict)
+                                or raw_row.get("lrc_index") != index
+                                or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
+                                or raw_row.get("text") != lyric.get("text")
+                                or raw_row.get("heard") is not True
+                                or raw_row.get("live_start_ms") != proof_row.get("cue_start_ms")
+                                or raw_row.get("live_end_ms") != proof_row.get("cue_end_ms")
+                                or not isinstance(raw_row.get("confidence"), (int, float))
+                                or isinstance(raw_row.get("confidence"), bool)
+                                or round(float(raw_row["confidence"]), 4) != proof_row.get("match_ratio")
+                            ):
+                                raw_rows_match = False
+                                break
+                    if not raw_rows_match:
+                        failures.append("SONG_AUDIO_LRC_RAW_REPORT_MISMATCH")
+
     recut = record.get("materialized_recut")
     if not isinstance(recut, dict) or recut.get("status") != "MATERIALIZED":
         recut = {}
@@ -1045,16 +1192,40 @@ def produce_song(date: str, item: dict) -> dict:
         with open(log_path, "a", encoding="utf-8") as sink:
             selector_env = child_env()
             selector_env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
-            completed = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
+            selector_command = [
+                 sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
                  "--source-video", str(window_mp4), "--source-srt", str(window_srt),
                  "--output-dir", str(selector_dir), "--max-candidates", "1",
+                 "--source-duration-ms", str(max(0, end - start)),
                  "--cpa-command", cpa_qa_cmd(),
                  "--semantic-recall-llm-command", CPA_CMD,
                  "--song-hint-llm-command", CPA_CMD,
                  "--title-llm-command", CPA_CMD,
                  "--cover-art-direction-llm-command", CPA_CMD,
-                 "--lrc-provider", "auto", "--burn-preview", "--publish-staging"],
+                 "--lrc-provider", "auto", "--burn-preview", "--publish-staging",
+            ]
+            known_song_query = str(item.get("preview") or "").strip()
+            # Search the quoted song title first.  Passing the entire prose
+            # preview ("下播前演唱 yonige《芽吹くとき》") made LRCLIB return no
+            # rows even though the exact title returns the canonical timed LRC.
+            quoted_titles = re.findall(r"[《「『]([^》」』]{1,80})[》」』]", known_song_query)
+            for query in [*quoted_titles[:1], known_song_query]:
+                if query:
+                    selector_command.extend(["--song-lrc-query", query])
+            if tag == "_full":
+                selector_command.extend(
+                    [
+                        "--agy-audio-lrc-align",
+                        "--seed-song-candidate-id",
+                        f"seededsong_{max(0, anchor_start - start)}_{min(end - start, anchor_end - start)}",
+                        "--seed-song-anchor-start-ms",
+                        str(max(0, anchor_start - start)),
+                        "--seed-song-anchor-end-ms",
+                        str(min(end - start, anchor_end - start)),
+                    ]
+                )
+            completed = subprocess.run(
+                selector_command,
                 check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
                 cwd=str(REPO_ROOT), env=selector_env,
             )

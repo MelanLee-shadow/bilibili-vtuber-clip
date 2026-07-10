@@ -11,6 +11,8 @@
 # (api_mode="responses", reasoning_effort="medium").  NEVER bypass CPA to hit
 # the upstream provider directly.
 set -euo pipefail
+set +x
+umask 077
 
 PROMPT_FILE="$1"
 COMPLETION_FILE="$2"
@@ -25,9 +27,31 @@ if [[ -z "${CPA_BASE_URL:-}" || -z "${CPA_API_KEY:-}" ]]; then
   exit 2
 fi
 
+BODY_FILE=""
+RESP_FILE=""
+HEADER_FILE=""
+cleanup() {
+  local path
+  for path in "$BODY_FILE" "$RESP_FILE" "$HEADER_FILE"; do
+    [[ -z "$path" ]] || rm -f -- "$path" || true
+  done
+}
+trap cleanup EXIT
+
 BODY_FILE="$(mktemp)"
 RESP_FILE="$(mktemp)"
-trap 'rm -f "$BODY_FILE" "$RESP_FILE"' EXIT
+HEADER_FILE="$(mktemp)"
+
+# Keep the bearer out of curl's argv (and out of every later child process).
+# printf is a bash builtin, so expanding the key here does not create another
+# process whose arguments can be inspected.  curl reads all request headers
+# from the mode-0600 temporary file instead.
+{
+  builtin printf 'Authorization: Bearer %s\n' "$CPA_API_KEY"
+  builtin printf 'Content-Type: application/json\n'
+  builtin printf 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)\n'
+} > "$HEADER_FILE"
+unset CPA_API_KEY
 
 build_body() {
 python3 - "$PROMPT_FILE" "$1" "$EFFORT" > "$BODY_FILE" <<'PY'
@@ -52,9 +76,7 @@ while :; do
   attempt=$((attempt + 1))
   # CPA sits behind Cloudflare, which 403s (error 1010) non-browser user agents.
   if curl -sS --fail-with-body --max-time 180 \
-      -H "Authorization: Bearer ${CPA_API_KEY}" \
-      -H "Content-Type: application/json" \
-      -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" \
+      -H @"$HEADER_FILE" \
       -d @"$BODY_FILE" \
       "${CPA_BASE_URL%/}/responses" > "$RESP_FILE" \
      && python3 - "$RESP_FILE" "$COMPLETION_FILE" <<'PY'

@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -6,8 +7,10 @@ import pytest
 import src.autoslice.song_repair as song_repair
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.song_repair import (
+    AudioLrcAlignmentRun,
     LrcLine,
     LrcResult,
+    _choose_audio_lrc_candidate,
     _build_lyric_queries,
     attempt_song_repair,
     build_composite_lrc_provider,
@@ -15,6 +18,245 @@ from src.autoslice.song_repair import (
     fetch_lrclib_lrc,
     parse_lrc_text,
 )
+
+
+def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate_id: str = "jp-audio") -> AudioLrcAlignmentRun:
+    source = tmp_path / "current-full-window.mp4"
+    source.write_bytes(b"current-audio-bound-media")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    lrc_path = tmp_path / "source.lrc"
+    lrc_path.write_text(
+        "".join(
+            f"[{line.time_ms // 60000:02d}:{(line.time_ms % 60000) // 1000:02d}.{line.time_ms % 1000:03d}]{line.text}\n"
+            for line in lrc.lines
+        ),
+        encoding="utf-8",
+    )
+    lrc_sha = hashlib.sha256(lrc_path.read_bytes()).hexdigest()
+    observations = []
+    for index, line in enumerate(lrc.lines):
+        start = line.time_ms + 10_000
+        observations.append(
+            {
+                "lrc_index": index,
+                "lrc_time_ms": line.time_ms,
+                "text": line.text,
+                "heard": True,
+                "live_start_ms": start,
+                "live_end_ms": start + 3_000,
+                "confidence": 0.98,
+            }
+        )
+    payload = {
+        "schema_version": "agy-audio-lrc-observation.v1",
+        "record": {
+            "attempt_id": "attempt-test",
+            "candidate_id": candidate_id,
+            "source_sha256": source_sha,
+            "lrc_sha256": lrc_sha,
+            "source_duration_ms": 100_000,
+        },
+        "observations": observations,
+        "spot_checks": [
+            {"name": "first_line", "live_time_ms": 10_000, "result": "OK", "notes": "heard"},
+            {"name": "chorus", "live_time_ms": 24_000, "result": "OK", "notes": "heard"},
+            {"name": "repeated_section", "live_time_ms": 38_000, "result": "OK", "notes": "heard"},
+            {"name": "longest_instrumental_gap", "live_time_ms": 52_000, "result": "OK", "notes": "heard"},
+            {"name": "tail", "live_time_ms": observations[-1]["live_start_ms"], "result": "OK", "notes": "heard"},
+        ],
+        "post_song_talk_start_ms": observations[-1]["live_end_ms"] + 2_000,
+    }
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("strict test prompt\n", encoding="utf-8")
+    output = tmp_path / "alignment.json"
+    output.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    manifest = tmp_path / "run.manifest.json"
+    prompt_sha = hashlib.sha256(prompt.read_bytes()).hexdigest()
+    output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "agy-audio-lrc-run.v1",
+                "candidate_id": candidate_id,
+                "provider": "agy",
+                "model": "Gemini 3.5 Flash (High)",
+                "agy_rc": 0,
+                "provider_fallback_used": False,
+                "sandbox": True,
+                "artifacts": {
+                    "source_path": str(source),
+                    "source_sha256": source_sha,
+                    "source_duration_ms": 100_000,
+                    "lrc_path": str(lrc_path),
+                    "lrc_sha256": lrc_sha,
+                    "prompt_path": str(prompt),
+                    "prompt_sha256": prompt_sha,
+                    "output_path": str(output),
+                    "output_sha256": output_sha,
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def sha(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    return AudioLrcAlignmentRun(
+        payload=payload,
+        provider="agy",
+        model="Gemini 3.5 Flash (High)",
+        rc=0,
+        provider_fallback_used=False,
+        source_path=str(source),
+        source_sha256=source_sha,
+        source_duration_ms=100_000,
+        lrc_path=str(lrc_path),
+        lrc_sha256=lrc_sha,
+        prompt_path=str(prompt),
+        prompt_sha256=prompt_sha,
+        output_path=str(output),
+        output_sha256=output_sha,
+        manifest_path=str(manifest),
+        manifest_sha256=sha(manifest),
+    )
+
+
+def _japanese_lrc() -> LrcResult:
+    texts = [
+        "めいっぱい背伸びしてきたけど",
+        "君の前じゃ上手くできない",
+        "炭酸が抜けるより早いスピードで",
+        "変わっていく気持ち",
+        "まだ自分でも気づいてない",
+        "最初に望んだ未来とは少し違うけれど",
+        "最後はなにもいらないただそばにいて",
+        "季節が進むことをためらわないでね",
+        "今までの全てはいつかに繋がるから",
+        "伝えなくちゃ最後は",
+    ]
+    return LrcResult(
+        provider="lrclib",
+        song_title="芽吹くとき",
+        artist="yonige",
+        source_ref="https://lrclib.net/api/get/33542202",
+        lines=tuple(LrcLine(index * 7_000, text) for index, text in enumerate(texts)),
+    )
+
+
+def test_audio_identity_collapses_same_song_provider_variants_and_prefers_lrclib():
+    canonical = _japanese_lrc()
+    netease_variant = LrcResult(
+        provider="netease",
+        song_title=canonical.song_title,
+        artist=canonical.artist,
+        source_ref="netease://song/3363527827",
+        lines=tuple(LrcLine(line.time_ms + 10, line.text) for line in canonical.lines),
+    )
+    unrelated = LrcResult(
+        provider="lrclib",
+        song_title="だからね",
+        artist="別の歌手",
+        source_ref="https://lrclib.net/api/get/1",
+        lines=tuple(LrcLine(line.time_ms, f"別の歌詞{index}") for index, line in enumerate(canonical.lines)),
+    )
+    translated_title_alias = LrcResult(
+        provider="lrclib",
+        song_title="芽吹くとき - Blooming With you",
+        artist=canonical.artist,
+        source_ref="https://lrclib.net/api/get/33851710",
+        lines=canonical.lines,
+    )
+    chosen = _choose_audio_lrc_candidate(
+        [
+            (0.28, netease_variant, []),
+            (0.28, canonical, []),
+            (0.28, translated_title_alias, []),
+            (0.09, unrelated, []),
+        ],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+    assert chosen.source_ref == "https://lrclib.net/api/get/33542202"
+
+
+def test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof(tmp_path):
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc)
+    cues = [
+        SourceCue("jp-0", 10_000, 13_000, lrc.lines[0].text, kind="singing"),
+        SourceCue("jp-1", 17_000, 20_000, lrc.lines[1].text, kind="singing"),
+    ]
+    calls = []
+
+    def aligner(media, chosen_lrc, candidate_id, output_dir):
+        calls.append((media, chosen_lrc, candidate_id, output_dir))
+        return run
+
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=cues,
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=aligner,
+    )
+
+    assert len(calls) == 1
+    assert result.repaired is True
+    assert result.song_boundary["status"] == "FULL_SONG_READY"
+    assert result.song_boundary["nominal_lrc_zero_ms"] == 10_000
+    assert result.lyrics_alignment["model"] == "lrclib-agy-audio-lrc-global-shift-v1"
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    assert report["evidence_source"] == "agy_audio_lrc"
+    assert report["matched_line_count"] == report["line_count"] == 10
+    assert all(row["evidence_source"] == "agy_audio_lrc" for row in report["alignment"])
+
+
+@pytest.mark.parametrize("mutation", ["unheard", "drift", "wrong_text", "bad_tail_spot"])
+def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc)
+    payload = json.loads(json.dumps(run.payload))
+    if mutation == "unheard":
+        payload["observations"][3].update(heard=False, live_start_ms=None, live_end_ms=None)
+    elif mutation == "drift":
+        payload["observations"][-1]["live_start_ms"] += 8_000
+        payload["observations"][-1]["live_end_ms"] += 8_000
+        payload["spot_checks"][-1]["live_time_ms"] += 8_000
+        payload["post_song_talk_start_ms"] += 8_000
+    elif mutation == "wrong_text":
+        payload["observations"][2]["text"] = "別の歌詞"
+    else:
+        payload["spot_checks"][-1]["live_time_ms"] = 20_000
+    output = Path(run.output_path)
+    output.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    run = AudioLrcAlignmentRun(
+        **{**run.__dict__, "payload": payload, "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
+    )
+    cues = [
+        SourceCue("jp-0", 10_000, 13_000, lrc.lines[0].text, kind="singing"),
+        SourceCue("jp-1", 17_000, 20_000, lrc.lines[1].text, kind="singing"),
+    ]
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=cues,
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+    )
+    assert result.repaired is False
+    assert any(item.step == "agy_audio_lrc_alignment" and item.status == "FAILED" for item in result.attempts)
 
 
 def test_build_lyric_queries_prefers_clean_lines_over_longest():

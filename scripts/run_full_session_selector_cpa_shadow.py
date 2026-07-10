@@ -31,6 +31,60 @@ from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_t
 VIEWER_CONTEXT_MAX_EXPANSION_MS = 300_000
 
 
+def _seeded_song_candidate(
+    cues,
+    *,
+    candidate_id: str,
+    anchor_start_ms: int,
+    anchor_end_ms: int,
+    source_duration_ms: int,
+) -> FullSessionCandidate:
+    """Materialize the song anchor supplied by the unattended runner.
+
+    A full-source proof retry must keep reviewing the song that triggered the
+    retry.  Re-running top-1 semantic recall across the expanded window can
+    otherwise select surrounding talk instead (the 2026-07-09 ``芽吹くとき``
+    retry selected the post-song good-night chat).  The seed is only a recall
+    anchor; LRC/audio proof still decides whether a full song may ship.
+    """
+
+    if not (0 <= anchor_start_ms < anchor_end_ms <= source_duration_ms):
+        raise ValueError(
+            "seeded song anchor must satisfy "
+            f"0 <= start < end <= source duration ({anchor_start_ms}, {anchor_end_ms}, {source_duration_ms})"
+        )
+    window = tuple(
+        cue
+        for cue in sorted(cues, key=lambda item: (item.source_start_ms, item.source_end_ms, item.cue_id))
+        if cue.source_end_ms > anchor_start_ms and cue.source_start_ms < anchor_end_ms
+    )
+    if not window:
+        raise ValueError("seeded song anchor overlaps no source cues")
+    anchor = AnchorCandidate(
+        candidate_id=candidate_id,
+        anchor_start_ms=anchor_start_ms,
+        anchor_end_ms=anchor_end_ms,
+    )
+    boundary = BoundaryResolution(
+        candidate_id=candidate_id,
+        action=DecisionAction.AUTO_RECUT,
+        resolved_start_ms=anchor_start_ms,
+        resolved_end_ms=anchor_end_ms,
+        start_boundary_score=0.0,
+        end_boundary_score=0.0,
+        reason_codes=("SEEDED_SONG_ANCHOR", "FULL_SOURCE_SONG_PROOF_REQUIRED"),
+        next_start_ms=anchor_start_ms,
+        next_end_ms=anchor_end_ms,
+    )
+    return FullSessionCandidate(
+        anchor=anchor,
+        boundary=boundary,
+        cues=window,
+        text_preview=" ".join(cue.text.strip() for cue in window if cue.text.strip())[:160],
+        content_type_hint="song",
+    )
+
+
 def _mmss_hint(ms: int) -> str:
     seconds = max(0, ms) // 1000
     return f"{seconds // 60:02d}:{seconds % 60:02d}"
@@ -96,6 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--room-id", default="22966160")
     parser.add_argument("--source-duration-ms", type=int)
+    parser.add_argument("--seed-song-candidate-id")
+    parser.add_argument("--seed-song-anchor-start-ms", type=int)
+    parser.add_argument("--seed-song-anchor-end-ms", type=int)
     parser.add_argument("--max-candidates", type=int, default=1)
     parser.add_argument("--cpa-command", required=True)
     parser.add_argument("--copy-draft-context", action="store_true", help="Testing only: copy context draft SRT instead of calling agy.")
@@ -105,8 +162,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--no-ffmpeg", action="store_true", help="Testing only: skip ffmpeg materialization.")
     parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "auto"), default="none", help="External LRC discovery for repair-first song completeness.")
+    parser.add_argument(
+        "--agy-audio-lrc-align",
+        action="store_true",
+        help="Seeded full-song retry only: align current audio against a uniquely identified LRC when ASR is sparse.",
+    )
     parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
     parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing.")
+    parser.add_argument(
+        "--song-lrc-query",
+        action="append",
+        default=[],
+        help="Known title/artist/lyric query to try before ASR-derived LRC searches (repeatable).",
+    )
     parser.add_argument("--publish-staging", action="store_true", help="Stage AI title + cover + publish.json draft (upload_enabled always false).")
     parser.add_argument("--title-llm-command", help="LLM command template for title generation.")
     parser.add_argument(
@@ -129,6 +197,16 @@ def main(argv: list[str] | None = None) -> int:
     if not cues:
         raise SystemExit("NO_SOURCE_CUES")
     source_duration_ms = args.source_duration_ms or max(cue.source_end_ms for cue in cues)
+
+    seed_values = (
+        args.seed_song_candidate_id,
+        args.seed_song_anchor_start_ms,
+        args.seed_song_anchor_end_ms,
+    )
+    if any(value is not None for value in seed_values) and not all(value is not None for value in seed_values):
+        raise SystemExit("seeded song arguments must be supplied together")
+    if args.agy_audio_lrc_align and not all(value is not None for value in seed_values):
+        raise SystemExit("--agy-audio-lrc-align requires a seeded full-song anchor")
 
     # Danmaku evidence (blrec raw XML): burst windows steer recall, window
     # text feeds CPA viewer-context, and per-chunk lines feed jingting.
@@ -173,7 +251,21 @@ def main(argv: list[str] | None = None) -> int:
     candidates: list[FullSessionCandidate] = []
     selector_stage = None
     semantic_diagnostics: dict[str, object] | None = None
-    if args.semantic_recall_llm_command:
+    if all(value is not None for value in seed_values):
+        try:
+            candidates = [
+                _seeded_song_candidate(
+                    cues,
+                    candidate_id=str(args.seed_song_candidate_id),
+                    anchor_start_ms=int(args.seed_song_anchor_start_ms),
+                    anchor_end_ms=int(args.seed_song_anchor_end_ms),
+                    source_duration_ms=source_duration_ms,
+                )
+            ]
+        except ValueError as exc:
+            raise SystemExit(f"INVALID_SEEDED_SONG_ANCHOR: {exc}") from exc
+        selector_stage = "seeded_song_anchor"
+    elif args.semantic_recall_llm_command:
         try:
             recall_llm = build_llm_call(
                 LlmConfig(transport="command", command_template=args.semantic_recall_llm_command, timeout_seconds=600.0)
@@ -318,6 +410,12 @@ def main(argv: list[str] | None = None) -> int:
                 else candidate.boundary.resolved_start_ms,
                 source_video=args.source_video,
             )
+        if args.agy_audio_lrc_align:
+            from src.autoslice.agy_lrc_alignment import run_agy_audio_lrc_alignment
+
+            audio_lrc_aligner = run_agy_audio_lrc_alignment
+        else:
+            audio_lrc_aligner = None
         summary = run_shadow_pipeline(
             source_video=args.source_video,
             source_srt=args.source_srt,
@@ -345,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             if args.song_hint_llm_command
             else None,
+            song_lrc_queries=tuple(args.song_lrc_query),
+            audio_lrc_aligner=audio_lrc_aligner,
             burn_preview=args.burn_preview,
             publish_staging=args.publish_staging,
             title_llm_call=build_llm_call(

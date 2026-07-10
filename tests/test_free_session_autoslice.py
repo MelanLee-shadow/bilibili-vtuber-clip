@@ -419,6 +419,92 @@ def test_failed_song_selector_cannot_reuse_stale_summary_or_deliver(tmp_path, mo
     assert not list((repo / "lidousha" / date).glob("*.mp4"))
 
 
+def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_path, monkeypatch):
+    date = "2026-07-09"
+    cid = "song_seed_retry"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    out_dir = base / "out" / date / cid
+    (base / "logs").mkdir(parents=True)
+    out_dir.mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "cpa_qa_cmd", lambda: "judge")
+
+    segment = tmp_path / "segment.mp4"
+    segment.write_bytes(b"segment")
+    anchor_start, anchor_end, duration = 50_000, 100_000, 200_000
+    (out_dir / f"{cid}_source.mp4").write_bytes(b"tight")
+    (out_dir / f"{cid}_full_source.mp4").write_bytes(b"full")
+
+    def fake_slice_srt(_source, _start, _end, destination):
+        destination.write_text("1\n00:00:00,000 --> 00:00:01,000\n歌词\n", encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(runner, "slice_srt", fake_slice_srt)
+    selector_commands = []
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(command, **_kwargs):
+        selector_commands.append(command)
+        selector_dir = Path(command[command.index("--output-dir") + 1])
+        seeded = "--seed-song-candidate-id" in command
+        (selector_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "records": [
+                        {
+                            "candidate_id": "seededsong_45000_95000" if seeded else "semanticsong_15000_65000",
+                            "decision_action": "BLOCK",
+                            "reason_codes": ["SONG_FULL_BOUNDARY_PROOF_MISSING"],
+                            "source_context_job": {
+                                "content_type_hint": "song",
+                                "song_candidate": True,
+                                "requires_full_source_song_boundary_redo": True,
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_song(
+        date,
+        {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": duration,
+            "anchor_start_ms": anchor_start,
+            "anchor_end_ms": anchor_end,
+            "danmaku": 18,
+            "hook": "测试",
+            "preview": "下播前演唱 yonige《芽吹くとき》",
+        },
+    )
+
+    assert result["window_classified_song"] is True
+    assert "full_source_retry" in result
+    assert len(selector_commands) == 2
+    full_command = selector_commands[1]
+    assert "--agy-audio-lrc-align" in full_command
+    assert full_command[full_command.index("--seed-song-candidate-id") + 1] == "seededsong_45000_95000"
+    assert full_command[full_command.index("--seed-song-anchor-start-ms") + 1] == "45000"
+    assert full_command[full_command.index("--seed-song-anchor-end-ms") + 1] == "95000"
+    assert full_command[full_command.index("--source-duration-ms") + 1] == "140000"
+    query_indexes = [index for index, value in enumerate(full_command) if value == "--song-lrc-query"]
+    assert [full_command[index + 1] for index in query_indexes] == [
+        "芽吹くとき",
+        "下播前演唱 yonige《芽吹くとき》",
+    ]
+
+
 def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path):
     report = tmp_path / "song.lyrics-alignment-report.json"
     report_payload = {
@@ -500,6 +586,28 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     evidence = runner.song_completion_evidence(record)
     assert evidence["ready"] is True
     assert evidence["reason_codes"] == []
+
+    # The model name and report evidence type are a two-way binding.  Removing
+    # evidence_source from an audio report must not downgrade it to the looser
+    # legacy-text proof gate.
+    record["source_context_job"]["lyrics_alignment"]["model"] = "lrclib-agy-audio-lrc-global-shift-v1"
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_ALIGNMENT_EVIDENCE_TYPE_MISMATCH" in evidence["reason_codes"]
+    record["source_context_job"]["lyrics_alignment"]["model"] = "lrclib-lrc-global-shift-align-v2"
+
+    # An audio-derived report cannot rely on its own hash alone: the final
+    # runner edge also requires the current audio/LRC/prompt/raw-output/run
+    # manifest bindings and an attested High-model no-fallback run.
+    report_payload["evidence_source"] = "agy_audio_lrc"
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_AUDIO_LRC_ARTIFACTS_INVALID" in evidence["reason_codes"]
+    report_payload.pop("evidence_source")
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
 
     # The same negative nominal zero in all three documents is still invalid:
     # equality cannot make unavailable pre-source music become complete.
@@ -737,5 +845,8 @@ def test_record_is_song_recognizes_non_lrc_songs():
     assert runner.record_is_song({"candidate_id": "semanticsong_15000_170540", "source_context_job": {}})
     assert runner.record_is_song({"candidate_id": "x", "source_context_job": {"song_boundary": {"a": 1}}})
     assert runner.record_is_song({"candidate_id": "x", "source_context_job": {"lyrics_alignment": {"m": 0.9}}})
+    assert runner.record_is_song({"candidate_id": "seeded", "source_context_job": {"content_type_hint": "song"}})
+    assert runner.record_is_song({"candidate_id": "seeded", "source_context_job": {"song_candidate": True}})
+    assert runner.record_is_song({"candidate_id": "seeded", "source_context_job": {"requires_full_source_song_boundary_redo": True}})
     assert not runner.record_is_song({"candidate_id": "semantictalk_3320_50570_ctxexp", "source_context_job": {}})
     assert not runner.record_is_song({})

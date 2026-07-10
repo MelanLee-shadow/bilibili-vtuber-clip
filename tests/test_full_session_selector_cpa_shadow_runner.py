@@ -108,6 +108,34 @@ def test_full_session_selector_cpa_shadow_runner_uses_cpa_response_path(tmp_path
     assert request_payload["metadata"]["content_type_hint"] == "talk"
 
 
+def test_seeded_song_candidate_bypasses_wide_window_talk_recall():
+    import importlib
+
+    shadow = importlib.import_module("scripts.run_full_session_selector_cpa_shadow")
+    from src.autoslice.review_evidence import SourceCue
+
+    cues = [
+        SourceCue("song-1", 45_000, 55_000, "最初に望んだ未来とは", kind="singing"),
+        SourceCue("song-2", 190_000, 200_000, "最後は", kind="singing"),
+        SourceCue("talk", 228_000, 244_000, "年度晚安，大家晚安", kind="speech"),
+    ]
+    candidate = shadow._seeded_song_candidate(
+        cues,
+        candidate_id="seededsong_45000_200540",
+        anchor_start_ms=45_000,
+        anchor_end_ms=200_540,
+        source_duration_ms=245_566,
+    )
+
+    assert candidate.content_type_hint == "song"
+    assert [cue.cue_id for cue in candidate.cues] == ["song-1", "song-2"]
+    job = candidate.to_source_context_job(source_duration_ms=245_566)
+    assert job["timeline"]["context_start_ms"] == 0
+    assert job["timeline"]["context_end_ms"] == 245_566
+    assert job["song_candidate"] is True
+    assert job["requires_full_source_song_boundary_redo"] is True
+
+
 def test_semantic_recall_lane_runs_first_and_marks_semantic_authority(tmp_path):
     source_video = tmp_path / "source.mp4"
     source_video.write_bytes(b"fake video")

@@ -44,6 +44,7 @@ from src.autoslice.render_qa import RenderRequest, RenderedTimelineMetadata, eva
 from src.autoslice.review_evidence import ReviewEvidence, SourceCue, to_candidate_review
 from src.autoslice.llm_client import LlmCall, LlmConfig, build_llm_call, extract_json_object
 from src.autoslice.song_repair import (
+    AudioLrcAligner,
     LrcProvider,
     LrcResult,
     SongRepairResult,
@@ -79,6 +80,8 @@ def run_shadow_pipeline(
     source_context_run_ffmpeg: bool = True,
     lrc_provider: LrcProvider | None = None,
     song_hint_llm_call: LlmCall | None = None,
+    song_lrc_queries: Sequence[str] = (),
+    audio_lrc_aligner: AudioLrcAligner | None = None,
     burn_preview: bool = False,
     publish_staging: bool = False,
     title_llm_call: LlmCall | None = None,
@@ -106,6 +109,8 @@ def run_shadow_pipeline(
             source_context_run_ffmpeg=source_context_run_ffmpeg,
             lrc_provider=lrc_provider,
             song_hint_llm_call=song_hint_llm_call,
+            song_lrc_queries=song_lrc_queries,
+            audio_lrc_aligner=audio_lrc_aligner,
             burn_preview=burn_preview,
             publish_staging=publish_staging,
             title_llm_call=title_llm_call,
@@ -256,6 +261,8 @@ def _run_live_source(
     source_context_run_ffmpeg: bool,
     lrc_provider: LrcProvider | None = None,
     song_hint_llm_call: LlmCall | None = None,
+    song_lrc_queries: Sequence[str] = (),
+    audio_lrc_aligner: AudioLrcAligner | None = None,
     burn_preview: bool = False,
     publish_staging: bool = False,
     title_llm_call: LlmCall | None = None,
@@ -336,6 +343,9 @@ def _run_live_source(
         output_dir=output_dir,
         lrc_provider=lrc_provider,
         hint_llm_call=song_hint_llm_call,
+        extra_queries=song_lrc_queries,
+        source_media_path=Path(source_context.context_media_path) if source_context.context_media_path else None,
+        audio_lrc_aligner=audio_lrc_aligner,
     )
     boundary_resolution = _resolve_live_source_boundary(job_manifest, cues, output_dir=output_dir)
     evidence = analyze_content_evidence(candidate_id=candidate_id, cues=cues, title=title)
@@ -1737,6 +1747,9 @@ def _source_context_job_record(job_manifest: Mapping[str, object]) -> dict[str, 
         "candidate_id": job_manifest.get("candidate_id"),
         "job_kind": job_manifest.get("job_kind"),
         "provider": job_manifest.get("provider"),
+        "content_type_hint": job_manifest.get("content_type_hint"),
+        "song_candidate": job_manifest.get("song_candidate") is True,
+        "requires_full_source_song_boundary_redo": job_manifest.get("requires_full_source_song_boundary_redo") is True,
         "timeline": dict(_mapping(job_manifest.get("timeline"))),
         "song_boundary": dict(_mapping(job_manifest.get("song_boundary"))),
         "lyrics_alignment": dict(_mapping(job_manifest.get("lyrics_alignment"))),
@@ -1872,6 +1885,9 @@ def _attempt_song_repair_stage(
     output_dir: Path,
     lrc_provider: LrcProvider | None,
     hint_llm_call: LlmCall | None = None,
+    extra_queries: Sequence[str] = (),
+    source_media_path: Path | None = None,
+    audio_lrc_aligner: AudioLrcAligner | None = None,
 ) -> tuple[Mapping[str, object], SongRepairResult | None]:
     """Repair-first: try to earn the full-song proof before review can BLOCK.
 
@@ -1902,7 +1918,10 @@ def _attempt_song_repair_stage(
         output_dir=output_dir / "song_repair",
         lrc_provider=lrc_provider,
         hint_llm_call=hint_llm_call,
+        extra_queries=extra_queries,
         pinned_lrc_results=_pinned_lrc_for_song(cues),
+        source_media_path=source_media_path,
+        audio_lrc_aligner=audio_lrc_aligner,
     )
     if result.repaired and result.song_boundary and result.lyrics_alignment:
         repaired_job = {
