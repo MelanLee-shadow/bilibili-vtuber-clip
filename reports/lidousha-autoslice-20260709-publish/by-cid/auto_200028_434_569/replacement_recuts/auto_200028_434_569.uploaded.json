@@ -1,0 +1,19 @@
+{
+  "bvid": "BV1YCNE6WExD",
+  "aid": 116894178743368,
+  "cid": 39813317720,
+  "title": "【李豆沙】原来说的是数字零啊，还以为在说李姐我呢",
+  "uploaded_at": "2026-07-10T06:12:07+0000",
+  "tool": "biliup via authorized_upload.py (manifest-bound)",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-09/auto_200028_434_569/replacement_recuts/auto_200028_434_569.upload_manifest.json",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。"
+  },
+  "collection": {
+    "season": "小李切片",
+    "section_id": 9320779,
+    "add_code": 0,
+    "add_msg": "0"
+  }
+}
