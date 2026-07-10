@@ -15,6 +15,7 @@ from src.autoslice.cpa_semantic_qa import (
     write_cpa_semantic_response_artifact,
 )
 from src.autoslice.review_evidence import ReviewEvidence
+from src.autoslice.song_repair import LrcLine
 
 
 def _complete_evidence(candidate_id: str, **overrides) -> ReviewEvidence:
@@ -1696,6 +1697,85 @@ def test_song_recut_burns_lyrics_from_lrc_global_shift_and_forces_accurate_reren
     assert "00:00:00,500 --> 00:00:03,500" in srt_text
     manifest = _load_json(Path(materialized["manifest_path"]))
     assert manifest["subtitle_source"] == "external_lrc_global_shift"
+
+
+def test_song_recut_accurate_rerender_failure_is_retry_infra(tmp_path, monkeypatch):
+    source_video = _write(tmp_path / "source.mp4", b"source video bytes\n")
+    boundary = shadow_pipeline.BoundaryResolution(
+        candidate_id="song-rerender-failed",
+        action=shadow_pipeline.DecisionAction.AUTO_RECUT,
+        resolved_start_ms=1_000,
+        resolved_end_ms=8_000,
+        start_boundary_score=0.98,
+        end_boundary_score=0.98,
+        reason_codes=("SONG_FULL_BOUNDARY_READY",),
+        next_start_ms=1_000,
+        next_end_ms=8_000,
+    )
+
+    calls = []
+
+    def fake_run(command, check=False, capture_output=True, text=True):
+        calls.append(command)
+        if len(calls) == 1:
+            Path(command[-1]).write_bytes(b"coarse packet-aligned copy\n")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 1, "", "accurate render failed")
+
+    monkeypatch.setattr(shadow_pipeline.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_evaluate_materialized_recut_render_qa",
+        lambda **_kwargs: {
+            "code": "ACTUAL_CUT_ERROR_OK",
+            "pass": True,
+            "severity": "PASS",
+            "evidence": {"actual_cut_error_ms": 20, "threshold_ms": 100},
+        },
+    )
+
+    materialized = shadow_pipeline._materialize_recut_record(
+        source_video=source_video,
+        candidate_id="song-rerender-failed",
+        boundary_resolution=boundary,
+        output_dir=tmp_path / "out",
+        cues=[shadow_pipeline.SourceCue("asr", 1_000, 2_000, "错听歌词", kind="singing")],
+        run_ffmpeg=True,
+        lyric_timeline=[(1_000, "真实歌词第一句"), (4_000, "真实歌词第二句")],
+        lyric_offset_ms=0,
+    )
+
+    assert materialized["status"] == "RETRY_INFRA"
+    assert materialized["accurate_rerender_used"] is False
+    assert "FFMPEG_ACCURATE_RECUT_FAILED" in materialized["reason_codes"]
+    manifest = _load_json(Path(materialized["manifest_path"]))
+    assert manifest["status"] == "RETRY_INFRA"
+    assert len(calls) == 2
+
+
+def test_known_mebukutoki_pin_dispatches_to_lrclib(monkeypatch):
+    calls = []
+
+    def fake_fetch(song_ref):
+        calls.append(song_ref)
+        return shadow_pipeline.LrcResult(
+            provider="lrclib",
+            song_title="芽吹くとき",
+            artist="yonige",
+            source_ref="https://lrclib.net/api/get/33542202",
+            lines=tuple(LrcLine(index * 1_000, f"歌词{index}") for index in range(8)),
+        )
+
+    monkeypatch.setattr(shadow_pipeline, "fetch_lrclib_lrc", fake_fetch)
+    cues = [
+        shadow_pipeline.SourceCue("a", 0, 4_000, "最初から望んだ未来とは", kind="singing"),
+        shadow_pipeline.SourceCue("b", 5_000, 10_000, "少し違うけれど 最後には何もいらない", kind="singing"),
+    ]
+
+    pinned = shadow_pipeline._pinned_lrc_for_song(cues)
+
+    assert calls == ["lrclib://track/33542202"]
+    assert [(item.provider, item.song_title) for item in pinned] == [("lrclib", "芽吹くとき")]
 
 
 def test_load_lyric_timeline_requires_verified_proof_and_offset(tmp_path):

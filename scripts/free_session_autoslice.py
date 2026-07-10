@@ -79,6 +79,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -122,6 +123,13 @@ SONG_WINDOW_PRE_MS = 15_000   # window must stay SONG-dominated or the in-window
 SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
                               # ±60/45s and ±180/150s); 15/20s matches the
                               # validated 虫儿飞 run.
+# A recall window is still only an anchor.  If it identifies a song but cannot
+# prove both LRC ends, retry once with enough original-source context for the
+# boundary resolver to recover missed intro/tail audio.  This fixed the 7/9
+# 《芽吹くとき》case where aggregate ASR began ~18s late and ended ~27s
+# early; the old 15/20 source window physically excluded the true boundaries.
+SONG_PROOF_RETRY_PRE_MS = 45_000
+SONG_PROOF_RETRY_POST_MS = 45_000
 SONG_ANCHOR_TRIM_MIN_MS = 20_000  # only retry on the danmaku-dense core when the
                                   # trim drops ≥20s of talk padding off an end
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -652,14 +660,53 @@ def song_status(rc: int, delivered: bool) -> str:
     return "review_ready" if delivered else "blocked"
 
 
-def song_delivery_ok(is_song: bool, reason_codes) -> bool:
+def song_proof_retry_window(anchor_start_ms: int, anchor_end_ms: int, segment_duration_ms: int) -> tuple[int, int]:
+    """Expand a recall anchor against the original segment for LRC proof."""
+    start_ms = max(0, anchor_start_ms - SONG_PROOF_RETRY_PRE_MS)
+    end_ms = anchor_end_ms + SONG_PROOF_RETRY_POST_MS
+    if segment_duration_ms:
+        end_ms = min(segment_duration_ms, end_ms)
+    return start_ms, end_ms
+
+
+def song_delivery_ok(
+    selector_rc: int,
+    is_song: bool,
+    reason_codes,
+    completion_evidence: bool | dict | None,
+) -> bool:
     """Ivan's FINAL song rule (2026-07-10): at most MAX_SONGS_PER_DATE per date,
     danmaku-desc; a song is delivered when the window IS a song and the
-    performance is COMPLETE.  An unfinished song (SONG_PARTIAL) is never
-    force-cut.  Everything else the semantic judge flags (closure, viewer
+    performance is AFFIRMATIVELY PROVEN complete.  Absence of ``SONG_PARTIAL``
+    is not evidence: the 2026-07-09 ``芽吹くとき`` run had no LRC proof
+    and therefore never emitted that negative code, but was still incorrectly
+    delivered.  Everything else the semantic judge flags (closure, viewer
     context, boundary style, AUTO_UPLOAD/BLOCK itself) is reviewer REFERENCE,
     not a delivery gate."""
-    return bool(is_song) and "SONG_PARTIAL" not in (reason_codes or [])
+    proof_ready = (
+        completion_evidence is True
+        or (isinstance(completion_evidence, dict) and completion_evidence.get("ready") is True)
+    )
+    return (
+        selector_rc == 0
+        and bool(is_song)
+        and proof_ready
+        and "SONG_PARTIAL" not in (reason_codes or [])
+    )
+
+
+def fresh_song_selector_dir(out_dir: Path, tag: str) -> Path:
+    """Create an empty, invocation-owned selector output directory.
+
+    Selector attempts used to share ``song_selector{tag}``.  A failed process
+    could therefore leave the runner reading a previous invocation's valid
+    ``summary.json`` and artifacts.  Keep every attempt as non-destructive
+    evidence under the stable tag directory, but give the current subprocess a
+    new empty child so only files it writes can influence this attempt.
+    """
+    history_dir = out_dir / f"song_selector{tag}"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="attempt-", dir=history_dir))
 
 
 def record_is_song(entry: dict) -> bool:
@@ -688,6 +735,17 @@ def song_delivery_artifacts(record: dict) -> dict:
     burned = recut.get("burned_preview")
     if isinstance(burned, dict) and burned.get("status") == "BURNED" and burned.get("path"):
         out["video_path"] = str(burned["path"])
+        if burned.get("burned_sha256"):
+            out["video_sha256"] = str(burned["burned_sha256"])
+    recut_hashes = recut.get("artifact_hashes")
+    if isinstance(recut_hashes, dict) and recut_hashes.get("burned_video_sha256"):
+        out["video_sha256"] = str(recut_hashes["burned_video_sha256"])
+    if recut.get("subtitle_path"):
+        out["subtitle_path"] = str(recut["subtitle_path"])
+        if isinstance(recut_hashes, dict) and recut_hashes.get("subtitle_sha256"):
+            out["subtitle_sha256"] = str(recut_hashes["subtitle_sha256"])
+    if recut.get("manifest_path"):
+        out["recut_manifest_path"] = str(recut["manifest_path"])
     gate = recut.get("cover_release_gate")
     if isinstance(gate, dict):
         out["cover_release_gate_satisfied"] = gate.get("satisfied")
@@ -719,6 +777,216 @@ def _matches_sha256(path: Path, expected: str) -> bool:
     except OSError:
         return False
     return digest.hexdigest() == expected
+
+
+def song_completion_evidence(record: dict) -> dict:
+    """Verify the positive, hash-bound proof required to deliver a song.
+
+    This deliberately duplicates the final edge checks from the selector at
+    the unattended-runner boundary.  A stale/globbed burned MP4 must not escape
+    merely because an earlier selector process happened to leave it on disk.
+    """
+    failures: list[str] = []
+
+    def is_int(value) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    job = record.get("source_context_job")
+    if not isinstance(job, dict):
+        job = {}
+    boundary = job.get("song_boundary")
+    if not isinstance(boundary, dict) or boundary.get("status") != "FULL_SONG_READY":
+        boundary = {}
+        failures.append("SONG_FULL_BOUNDARY_PROOF_MISSING")
+    boundary_values = [boundary.get(key) for key in ("clip_start_ms", "first_lyric_start_ms", "last_lyric_end_ms", "clip_end_ms")]
+    if boundary and not all(is_int(value) for value in boundary_values):
+        failures.append("SONG_BOUNDARY_TIMELINE_MISSING")
+    elif boundary and not (0 <= boundary_values[0] <= boundary_values[1] <= boundary_values[2] <= boundary_values[3]):
+        failures.append("SONG_BOUNDARY_TIMELINE_INVALID")
+    boundary_zero = boundary.get("nominal_lrc_zero_ms") if boundary else None
+    if boundary and (
+        not is_int(boundary_zero)
+        or not all(is_int(value) for value in boundary_values)
+        or not (boundary_values[0] <= boundary_zero <= boundary_values[1])
+    ):
+        failures.append("SONG_NOMINAL_LRC_ZERO_INVALID")
+
+    alignment = job.get("lyrics_alignment")
+    report: dict | None = None
+    if not isinstance(alignment, dict) or alignment.get("status") != "READY":
+        alignment = {}
+        failures.append("SONG_LYRICS_ALIGNMENT_PROOF_MISSING")
+    else:
+        for field in ("provider", "model"):
+            if not isinstance(alignment.get(field), str) or not str(alignment[field]).strip():
+                failures.append(f"SONG_LYRICS_{field.upper()}_MISSING")
+        source = alignment.get("source") or alignment.get("external_lrc")
+        if not isinstance(source, str) or not source.strip():
+            failures.append("SONG_EXTERNAL_LRC_SOURCE_MISSING")
+        report_value = alignment.get("alignment_report_path")
+        report_sha = alignment.get("alignment_report_sha256")
+        if not isinstance(report_value, str) or not report_value:
+            failures.append("SONG_ALIGNMENT_REPORT_MISSING")
+        elif not isinstance(report_sha, str) or not _matches_sha256(Path(report_value), report_sha):
+            failures.append("SONG_ALIGNMENT_REPORT_HASH_INVALID")
+        else:
+            try:
+                loaded_report = json.loads(Path(report_value).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                loaded_report = None
+            if not isinstance(loaded_report, dict):
+                failures.append("SONG_ALIGNMENT_REPORT_INVALID_JSON")
+            else:
+                report = loaded_report
+
+    if report is not None:
+        if report.get("schema_version") != "lyrics-alignment-report.v1":
+            failures.append("SONG_ALIGNMENT_REPORT_SCHEMA_INVALID")
+        if report.get("alignment_model") != "external_lrc_global_shift.v1":
+            failures.append("SONG_ALIGNMENT_REPORT_MODEL_INVALID")
+        if report.get("provider") != alignment.get("provider"):
+            failures.append("SONG_ALIGNMENT_PROVIDER_MISMATCH")
+        external_lrc = alignment.get("external_lrc")
+        if not isinstance(external_lrc, str) or report.get("source_ref") != external_lrc:
+            failures.append("SONG_ALIGNMENT_SOURCE_MISMATCH")
+        offset_ms = alignment.get("offset_ms")
+        if not is_int(offset_ms) or report.get("offset_ms") != offset_ms:
+            failures.append("SONG_ALIGNMENT_OFFSET_MISMATCH")
+        alignment_zero = alignment.get("nominal_lrc_zero_ms")
+        report_zero = report.get("nominal_lrc_zero_ms")
+        if not all(is_int(value) for value in (boundary_zero, alignment_zero, report_zero, offset_ms)):
+            failures.append("SONG_NOMINAL_LRC_ZERO_INVALID")
+        elif not (
+            boundary_zero == alignment_zero == report_zero == offset_ms == report.get("offset_ms")
+        ):
+            failures.append("SONG_NOMINAL_LRC_ZERO_MISMATCH")
+        if boundary.get("song_title") and report.get("song_title") != boundary.get("song_title"):
+            failures.append("SONG_ALIGNMENT_TITLE_MISMATCH")
+        if record.get("candidate_id") and report.get("candidate_id") != record.get("candidate_id"):
+            failures.append("SONG_ALIGNMENT_CANDIDATE_MISMATCH")
+        if boundary and (
+            report.get("first_lyric_start_ms") != boundary.get("first_lyric_start_ms")
+            or report.get("last_lyric_end_ms") != boundary.get("last_lyric_end_ms")
+        ):
+            failures.append("SONG_ALIGNMENT_BOUNDARY_MISMATCH")
+
+        lyric_lines = report.get("lyric_lines")
+        if not isinstance(lyric_lines, list) or len(lyric_lines) < 8:
+            failures.append("SONG_ALIGNMENT_LYRIC_TIMELINE_INVALID")
+            lyric_lines = []
+        else:
+            lyric_times = [line.get("lrc_time_ms") for line in lyric_lines if isinstance(line, dict)]
+            lyric_texts_ok = all(isinstance(line, dict) and str(line.get("text") or "").strip() for line in lyric_lines)
+            if (
+                len(lyric_times) != len(lyric_lines)
+                or not all(is_int(value) and value >= 0 for value in lyric_times)
+                or lyric_times != sorted(lyric_times)
+                or not lyric_texts_ok
+            ):
+                failures.append("SONG_ALIGNMENT_LYRIC_TIMELINE_INVALID")
+        line_count = report.get("line_count")
+        matched_count = report.get("matched_line_count")
+        matched_ratio = report.get("matched_line_ratio")
+        if (
+            not is_int(line_count)
+            or line_count != len(lyric_lines)
+            or not is_int(matched_count)
+            or matched_count < 0
+            or matched_count > line_count
+            or not isinstance(matched_ratio, (int, float))
+            or isinstance(matched_ratio, bool)
+            or float(matched_ratio) < 0.55
+            or (line_count and matched_count / line_count < 0.55)
+            or (line_count and float(matched_ratio) != round(matched_count / line_count, 4))
+            or alignment.get("matched_line_ratio") != matched_ratio
+        ):
+            failures.append("SONG_ALIGNMENT_MATCH_EVIDENCE_INVALID")
+        report_alignment = report.get("alignment")
+        if not isinstance(report_alignment, list) or len(report_alignment) != line_count:
+            failures.append("SONG_ALIGNMENT_MATCH_EVIDENCE_INVALID")
+        elif sum(1 for entry in report_alignment if isinstance(entry, dict) and entry.get("matched_cue_id") is not None) != matched_count:
+            failures.append("SONG_ALIGNMENT_MATCH_EVIDENCE_INVALID")
+
+    recut = record.get("materialized_recut")
+    if not isinstance(recut, dict) or recut.get("status") != "MATERIALIZED":
+        recut = {}
+        failures.append("SONG_MATERIALIZED_RECUT_MISSING")
+    elif recut.get("subtitle_source") != "external_lrc_global_shift":
+        failures.append("SONG_EXTERNAL_LRC_SUBTITLE_NOT_MATERIALIZED")
+    else:
+        recut_reasons = recut.get("reason_codes")
+        if not isinstance(recut_reasons, list):
+            recut_reasons = []
+        if recut.get("accurate_rerender_used") is not True:
+            failures.append("SONG_ACCURATE_RERENDER_REQUIRED")
+        if "FFMPEG_ACCURATE_RECUT_FAILED" in recut_reasons:
+            failures.append("SONG_ACCURATE_RERENDER_FAILED")
+        render_qa = recut.get("render_qa")
+        render_evidence = render_qa.get("evidence") if isinstance(render_qa, dict) else None
+        actual_error = render_evidence.get("actual_cut_error_ms") if isinstance(render_evidence, dict) else None
+        threshold = render_evidence.get("threshold_ms") if isinstance(render_evidence, dict) else None
+        if (
+            not isinstance(render_qa, dict)
+            or render_qa.get("pass") is not True
+            or not isinstance(actual_error, (int, float))
+            or isinstance(actual_error, bool)
+            or not isinstance(threshold, (int, float))
+            or isinstance(threshold, bool)
+            or actual_error > threshold
+        ):
+            failures.append("SONG_RENDER_QA_FAILED")
+
+    if recut and boundary:
+        if recut.get("start_ms") != boundary.get("clip_start_ms") or recut.get("end_ms") != boundary.get("clip_end_ms"):
+            failures.append("SONG_RECUT_BOUNDARY_MISMATCH")
+        if recut.get("lyric_offset_ms") != alignment.get("offset_ms"):
+            failures.append("SONG_RECUT_LYRIC_OFFSET_MISMATCH")
+
+    artifact_hashes = recut.get("artifact_hashes") if recut else None
+    subtitle_path = recut.get("subtitle_path") if recut else None
+    subtitle_sha = artifact_hashes.get("subtitle_sha256") if isinstance(artifact_hashes, dict) else None
+    if not isinstance(subtitle_path, str) or not isinstance(subtitle_sha, str) or not _matches_sha256(Path(subtitle_path), subtitle_sha):
+        failures.append("SONG_SUBTITLE_ARTIFACT_HASH_INVALID")
+
+    burned = recut.get("burned_preview") if recut else None
+    burned_sha = None
+    if not isinstance(burned, dict) or burned.get("status") != "BURNED" or not burned.get("path"):
+        failures.append("SONG_BURNED_PREVIEW_MISSING")
+    else:
+        burned_sha = burned.get("burned_sha256")
+        if isinstance(artifact_hashes, dict):
+            burned_sha = artifact_hashes.get("burned_video_sha256") or burned_sha
+        if not isinstance(burned_sha, str) or not _matches_sha256(Path(str(burned["path"])), burned_sha):
+            failures.append("SONG_BURNED_PREVIEW_HASH_INVALID")
+
+    failures = list(dict.fromkeys(failures))
+    return {
+        "ready": not failures,
+        "reason_codes": failures,
+        "song_boundary_status": boundary.get("status") if isinstance(boundary, dict) else None,
+        "lyrics_alignment_status": alignment.get("status") if alignment else None,
+        "lyrics_provider": alignment.get("provider") if alignment else None,
+        "external_lrc": (alignment.get("external_lrc") or alignment.get("source")) if alignment else None,
+        "alignment_report_path": alignment.get("alignment_report_path") if alignment else None,
+        "alignment_report_sha256": alignment.get("alignment_report_sha256") if alignment else None,
+        "subtitle_source": recut.get("subtitle_source") if recut else None,
+        "burned_preview_path": burned.get("path") if isinstance(burned, dict) else None,
+        "burned_preview_sha256": burned_sha,
+        "matched_line_ratio": report.get("matched_line_ratio") if report is not None else None,
+        "lyric_offset_ms": alignment.get("offset_ms") if alignment else None,
+    }
+
+
+def verified_song_fallback_title(song_title: str | None, hook: str | None) -> str | None:
+    """Build a hook-bearing fallback when semantic publish staging was advisory-blocked."""
+    song_title = str(song_title or "").strip()
+    if not song_title:
+        return None
+    hook = str(hook or "").strip()
+    hook = re.split(r"[，。！？；]", hook, maxsplit=1)[0].strip()
+    if hook and hook != "确定性歌检测补充(演唱段)":
+        return f"【李豆沙】豆沙歌，《{song_title}》｜{hook[:16]}"
+    return f"【李豆沙】豆沙歌，直播间唱《{song_title}》"
 
 
 def produce_song(date: str, item: dict) -> dict:
@@ -772,9 +1040,11 @@ def produce_song(date: str, item: dict) -> dict:
         # NOTE: segment danmaku XML is segment-relative — do not pass it to the
         # selector (it would misalign against the window-relative video); LRC is
         # the subtitle authority for songs anyway.
-        selector_dir = out_dir / f"song_selector{tag}"
+        selector_dir = fresh_song_selector_dir(out_dir, tag)
         log_path = BASE / "logs" / f"{date}_{cid}.log"
         with open(log_path, "a", encoding="utf-8") as sink:
+            selector_env = child_env()
+            selector_env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
             completed = subprocess.run(
                 [sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
                  "--source-video", str(window_mp4), "--source-srt", str(window_srt),
@@ -784,9 +1054,9 @@ def produce_song(date: str, item: dict) -> dict:
                  "--song-hint-llm-command", CPA_CMD,
                  "--title-llm-command", CPA_CMD,
                  "--cover-art-direction-llm-command", CPA_CMD,
-                 "--lrc-provider", "netease", "--burn-preview", "--publish-staging"],
+                 "--lrc-provider", "auto", "--burn-preview", "--publish-staging"],
                 check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
-                cwd=str(REPO_ROOT), env=child_env(),
+                cwd=str(REPO_ROOT), env=selector_env,
             )
         result["rc"] = completed.returncode
         result["log"] = str(log_path)
@@ -808,8 +1078,10 @@ def produce_song(date: str, item: dict) -> dict:
             except ValueError:
                 pass
         result["decision"] = decision
-        result["reason_codes"] = reasons
+        completion = song_completion_evidence(summary_record)
+        result["reason_codes"] = list(dict.fromkeys([*reasons, *completion["reason_codes"]]))
         result["window_classified_song"] = is_song
+        result["song_completion_evidence"] = completion
         artifacts = song_delivery_artifacts(summary_record)
         if artifacts.get("title"):
             result["title"] = artifacts["title"]
@@ -819,26 +1091,27 @@ def produce_song(date: str, item: dict) -> dict:
                     result["title"] = json.loads(publish.read_text(encoding="utf-8")).get("title")
                 except (OSError, ValueError):
                     pass
-        # Burned video: summary-recorded path first, hash-verified WHEN the
-        # pipeline recorded a hash (drift → refuse the stale artifact, loudly);
-        # glob fallback covers pre-gate-era selector outputs.
+        # Burned video: only the summary-recorded, hash-bound artifact is
+        # eligible.  Old selector debris must never inherit a newer proof.
         burned = Path(artifacts["video_path"]) if artifacts.get("video_path") else None
         if burned is not None and artifacts.get("video_sha256") and not _matches_sha256(burned, artifacts["video_sha256"]):
             log(f"song lane {cid}: burned video hash drift since materialization — refusing stale artifact")
             burned = None
-        if burned is None or not burned.is_file():
-            globbed = sorted(selector_dir.glob("**/replacement_recuts/*.burned-final-sapphire72.mp4"))
-            burned = globbed[0] if globbed else None
         cover = Path(artifacts["cover_path"]) if artifacts.get("cover_path") else None
         cover_ok = bool(cover is not None and cover.is_file() and (
             not artifacts.get("cover_sha256") or _matches_sha256(cover, artifacts["cover_sha256"])))
         if not cover_ok:
-            globbed_covers = sorted(selector_dir.glob("**/covers/*.cover.png"))
-            cover, cover_ok = (globbed_covers[-1], True) if globbed_covers else (None, False)
-        result["song_complete"] = "SONG_PARTIAL" not in (reasons or [])
+            cover = None
+        result["song_complete"] = completion["ready"] is True
+        result["lyrics_alignment_ready"] = completion["lyrics_alignment_status"] == "READY"
+        if result["song_complete"] and not result.get("title"):
+            boundary = (summary_record.get("source_context_job") or {}).get("song_boundary") or {}
+            result["title"] = verified_song_fallback_title(boundary.get("song_title"), item.get("hook"))
         if "cover_release_gate_satisfied" in artifacts:
             result["cover_release_gate_satisfied"] = artifacts["cover_release_gate_satisfied"]
-        if burned is not None and burned.is_file() and song_delivery_ok(is_song, reasons):
+        if burned is not None and burned.is_file() and song_delivery_ok(
+            completed.returncode, is_song, reasons, completion
+        ):
             delivery = REPO_ROOT / "lidousha" / date
             delivery.mkdir(parents=True, exist_ok=True)
             import shutil
@@ -847,13 +1120,59 @@ def produce_song(date: str, item: dict) -> dict:
             shutil.copy2(burned, delivery / f"{name}.mp4")
             if cover_ok and cover is not None:
                 shutil.copy2(cover, delivery / f"{name}.cover.png")
+            delivered_sidecars: dict[str, str] = {}
+            subtitle = Path(artifacts["subtitle_path"]) if artifacts.get("subtitle_path") else None
+            if subtitle is not None and subtitle.is_file() and artifacts.get("subtitle_sha256") and _matches_sha256(
+                subtitle, artifacts["subtitle_sha256"]
+            ):
+                delivered_srt = delivery / f"{name}.srt"
+                shutil.copy2(subtitle, delivered_srt)
+                delivered_sidecars["subtitle"] = str(delivered_srt)
+            alignment_report = completion.get("alignment_report_path")
+            alignment_sha = completion.get("alignment_report_sha256")
+            if isinstance(alignment_report, str) and isinstance(alignment_sha, str):
+                alignment_path = Path(alignment_report)
+                if _matches_sha256(alignment_path, alignment_sha):
+                    delivered_alignment = delivery / f"{name}.lyrics-alignment-report.json"
+                    shutil.copy2(alignment_path, delivered_alignment)
+                    delivered_sidecars["lyrics_alignment_report"] = str(delivered_alignment)
+            recut_manifest = Path(artifacts["recut_manifest_path"]) if artifacts.get("recut_manifest_path") else None
+            if recut_manifest is not None and recut_manifest.is_file():
+                delivered_manifest = delivery / f"{name}.recut.manifest.json"
+                shutil.copy2(recut_manifest, delivered_manifest)
+                delivered_sidecars["recut_manifest"] = str(delivered_manifest)
             result["delivered"] = str(delivery / f"{name}.mp4")
+            result["delivered_sidecars"] = delivered_sidecars
         result["status"] = song_status(completed.returncode, bool(result.get("delivered")))
         return result
 
     anchor_start, anchor_end = item["anchor_start_ms"], item["anchor_end_ms"]
     src_srt = BASE / "cache" / date / f"{segment.stem}.bcut.srt"
     result = attempt(*window_for(anchor_start, anchor_end), "")
+    if result.get("window_classified_song") and not result.get("song_complete"):
+        full_start, full_end = song_proof_retry_window(anchor_start, anchor_end, seg_dur_ms)
+        if full_start < result.get("start_ms", full_start) or full_end > result.get("end_ms", full_end):
+            log(
+                f"song lane {cid}: song identified but positive LRC boundary proof is missing — "
+                f"retrying with original-source context {full_start // 1000}-{full_end // 1000}s"
+            )
+            proof_retry = attempt(full_start, full_end, "_full")
+            if proof_retry.get("song_complete"):
+                result = {**proof_retry, "retried_full_source": True}
+            else:
+                result["full_source_retry"] = {
+                    key: proof_retry.get(key)
+                    for key in (
+                        "start_ms",
+                        "end_ms",
+                        "rc",
+                        "status",
+                        "reason_codes",
+                        "window_classified_song",
+                        "song_complete",
+                        "song_completion_evidence",
+                    )
+                }
     if not result.get("window_classified_song") and not result.get("delivered"):
         d0, d1 = _song_core_span(src_srt, anchor_start, anchor_end)
         if d0 >= anchor_start + SONG_ANCHOR_TRIM_MIN_MS or d1 <= anchor_end - SONG_ANCHOR_TRIM_MIN_MS:

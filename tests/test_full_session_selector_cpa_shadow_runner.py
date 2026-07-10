@@ -97,6 +97,9 @@ def test_full_session_selector_cpa_shadow_runner_uses_cpa_response_path(tmp_path
     assert record["source_context_job"]["candidate_id"].startswith("fullctx_")
     assert record["source_context_job"]["cpa_semantic_request_path"].endswith(".cpa.request.json")
     assert record["source_context_job"]["cpa_semantic_response_path"].endswith(".cpa.response.json")
+    assert record["materialized_recut"] == summary["last_shadow_summary"]["records"][0]["materialized_recut"]
+    assert record["title"] == summary["last_shadow_summary"]["records"][0]["title"]
+    assert record["materialized_recut"]["status"] == "MATERIALIZED"
     assert evidence["metadata"]["cpa_semantic_qa"]["response_path"].endswith(".cpa.response.json")
     assert Path(record["cpa_request_json"]).is_file()
     assert Path(record["cpa_response_json"]).is_file()

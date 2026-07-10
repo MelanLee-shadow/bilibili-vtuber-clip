@@ -1,12 +1,18 @@
 import json
 from pathlib import Path
 
+import pytest
+
+import src.autoslice.song_repair as song_repair
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.song_repair import (
     LrcLine,
     LrcResult,
     _build_lyric_queries,
     attempt_song_repair,
+    build_composite_lrc_provider,
+    build_lrclib_lrc_provider,
+    fetch_lrclib_lrc,
     parse_lrc_text,
 )
 
@@ -31,6 +37,17 @@ def test_build_lyric_queries_prefers_clean_lines_over_longest():
     assert queries.index("谁说圆满的人生才能算圆满") < queries.index("chewe now baby just chewe now")
     # the sub-6-char cue is never a query
     assert "嗯" not in queries
+
+
+def test_build_lyric_queries_accepts_clean_japanese_kana_lines():
+    cues = [
+        SourceCue("jp", 1_000, 4_000, "ただそばにいてほしいの", kind="singing"),
+        SourceCue("noise", 5_000, 8_000, "just stay by my sha la la", kind="singing"),
+    ]
+
+    queries = _build_lyric_queries(cues, 0, 9_000)
+
+    assert queries[0] == "ただそばにいてほしいの"
 
 
 def _song_cues(start_ms: int = 50_000) -> list[SourceCue]:
@@ -103,7 +120,10 @@ def test_repair_succeeds_and_emits_hashable_alignment_proof(tmp_path):
     assert report["matched_line_ratio"] >= 0.8
     # the burned subtitle timeline consumes this: one global shift, LRC truth
     assert report["offset_ms"] == 50_000
+    assert report["nominal_lrc_zero_ms"] == 50_000
     assert alignment["offset_ms"] == 50_000
+    assert alignment["nominal_lrc_zero_ms"] == 50_000
+    assert result.song_boundary["nominal_lrc_zero_ms"] == 50_000
     assert [line["lrc_time_ms"] for line in report["lyric_lines"]] == [0, 7_000, 14_000, 21_000, 28_000, 35_000]
     # clip covers the whole performance with pre/post roll
     assert result.song_boundary["clip_start_ms"] <= 50_000
@@ -412,6 +432,237 @@ def test_pinned_lrc_repairs_when_search_finds_nothing(tmp_path):
     assert result.song_boundary["song_title"] == "侠客行"
     pinned = [a for a in result.attempts if a.step == "pinned_lrc"]
     assert pinned and pinned[0].status == "SUCCESS"
+
+
+def test_pinned_lrc_repairs_without_any_search_provider(tmp_path):
+    result = attempt_song_repair(
+        candidate_id="song-pinned-only",
+        cues=_song_cues(),
+        anchor_start_ms=60_000,
+        anchor_end_ms=80_000,
+        source_duration_ms=300_000,
+        output_dir=tmp_path,
+        lrc_provider=None,
+        pinned_lrc_results=[_matching_lrc()],
+    )
+
+    assert result.repaired is True
+    assert result.lyrics_alignment["provider"] == "fake"
+    assert not [a for a in result.attempts if a.step == "lrc_discovery" and a.status == "SKIPPED"]
+
+
+def test_song_boundary_keeps_lrc_instrumental_intro(tmp_path):
+    cues = _song_cues(start_ms=50_000)
+    base_lrc = _matching_lrc()
+    # Move every LRC timestamp 7.7s later while keeping the live cues fixed,
+    # modelling a track with a 7.7-second instrumental intro.
+    lrc = LrcResult(
+        provider=base_lrc.provider,
+        song_title=base_lrc.song_title,
+        artist=base_lrc.artist,
+        source_ref=base_lrc.source_ref,
+        lines=tuple(LrcLine(line.time_ms + 7_700, line.text) for line in base_lrc.lines),
+    )
+    result = attempt_song_repair(
+        candidate_id="song-with-intro",
+        cues=cues,
+        anchor_start_ms=50_000,
+        anchor_end_ms=90_000,
+        source_duration_ms=150_000,
+        output_dir=tmp_path,
+        lrc_provider=None,
+        pinned_lrc_results=[lrc],
+    )
+
+    assert result.repaired is True
+    # global offset = 50_000 - 7_700 = 42_300; the 1.5s safety lead starts
+    # before LRC zero, retaining the whole instrumental intro.
+    assert result.lyrics_alignment["offset_ms"] == 42_300
+    assert result.song_boundary["clip_start_ms"] == 40_800
+    assert result.song_boundary["first_lyric_start_ms"] == 50_000
+
+
+def test_repair_fails_closed_when_nominal_lrc_zero_precedes_source(tmp_path):
+    cues = _song_cues(start_ms=5_000)
+    base_lrc = _matching_lrc()
+    # The source starts after the external track's instrumental intro.  All
+    # lyric lines still align perfectly with one global shift, but that shift
+    # places LRC time zero at -5s, outside the available source.  Clamping the
+    # recut to source 0 would silently certify a headless song as complete.
+    lrc = LrcResult(
+        provider=base_lrc.provider,
+        song_title=base_lrc.song_title,
+        artist=base_lrc.artist,
+        source_ref=base_lrc.source_ref,
+        lines=tuple(LrcLine(line.time_ms + 10_000, line.text) for line in base_lrc.lines),
+    )
+
+    result = attempt_song_repair(
+        candidate_id="song-lrc-zero-before-source",
+        cues=cues,
+        anchor_start_ms=5_000,
+        anchor_end_ms=30_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path,
+        lrc_provider=None,
+        pinned_lrc_results=[lrc],
+    )
+
+    assert result.repaired is False
+    assert result.song_boundary is None
+    assert result.lyrics_alignment is None
+    failures = [attempt for attempt in result.attempts if attempt.step == "song_boundary"]
+    assert failures and failures[-1].status == "FAILED"
+    assert "nominal LRC zero -5000ms is outside source" in failures[-1].detail
+
+
+def test_repair_fails_closed_when_nominal_lrc_zero_follows_source(tmp_path):
+    cues = _song_cues(start_ms=50_000)
+    base_lrc = _matching_lrc()
+    # A malformed/pinned timeline can imply LRC zero after the source has
+    # already ended.  Text/order matching alone must not turn that into proof.
+    lrc = LrcResult(
+        provider=base_lrc.provider,
+        song_title=base_lrc.song_title,
+        artist=base_lrc.artist,
+        source_ref=base_lrc.source_ref,
+        lines=tuple(LrcLine(line.time_ms - 60_000, line.text) for line in base_lrc.lines),
+    )
+
+    result = attempt_song_repair(
+        candidate_id="song-lrc-zero-after-source",
+        cues=cues,
+        anchor_start_ms=50_000,
+        anchor_end_ms=80_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path,
+        lrc_provider=None,
+        pinned_lrc_results=[lrc],
+    )
+
+    assert result.repaired is False
+    assert result.song_boundary is None
+    failures = [attempt for attempt in result.attempts if attempt.step == "song_boundary"]
+    assert failures and failures[-1].status == "FAILED"
+    assert "nominal LRC zero 110000ms is outside source" in failures[-1].detail
+
+
+def _lrclib_synced_lines(count: int = 8) -> str:
+    return "\n".join(f"[00:{index:02d}.00]第{index}句ただそばにいて" for index in range(count))
+
+
+@pytest.mark.parametrize(
+    "song_ref",
+    ["33542202", "lrclib://track/33542202", "https://lrclib.net/api/get/33542202"],
+)
+def test_fetch_lrclib_lrc_accepts_numeric_and_canonical_ref(monkeypatch, song_ref):
+    urls = []
+
+    def fake_http_json(url, *, timeout_seconds):
+        urls.append((url, timeout_seconds))
+        return {
+            "id": 33542202,
+            "trackName": "芽吹くとき",
+            "artistName": "yonige",
+            "syncedLyrics": _lrclib_synced_lines(),
+        }
+
+    monkeypatch.setattr(song_repair, "_http_json", fake_http_json)
+
+    result = fetch_lrclib_lrc(song_ref, timeout_seconds=2.5)
+
+    assert result is not None
+    assert result.provider == "lrclib"
+    assert result.source_ref == "https://lrclib.net/api/get/33542202"
+    assert result.song_title == "芽吹くとき"
+    assert result.artist == "yonige"
+    assert len(result.lines) == 8
+    assert urls == [("https://lrclib.net/api/get/33542202", 2.5)]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"id": 33542202, "trackName": "plain only", "plainLyrics": "lyrics", "syncedLyrics": None},
+        {"id": 33542202, "trackName": "too short", "syncedLyrics": _lrclib_synced_lines(7)},
+    ],
+)
+def test_fetch_lrclib_lrc_rejects_missing_or_short_synced_lyrics(monkeypatch, payload):
+    monkeypatch.setattr(song_repair, "_http_json", lambda url, *, timeout_seconds: payload)
+
+    assert fetch_lrclib_lrc("33542202") is None
+
+
+def test_build_lrclib_provider_searches_and_filters_unusable_results(monkeypatch):
+    captured = []
+
+    def fake_http_json_value(url, *, timeout_seconds):
+        captured.append((url, timeout_seconds))
+        return [
+            {
+                "id": 1,
+                "trackName": "plain only",
+                "artistName": "nobody",
+                "plainLyrics": "untimed",
+                "syncedLyrics": None,
+            },
+            {
+                "id": 2,
+                "trackName": "too short",
+                "artistName": "nobody",
+                "syncedLyrics": _lrclib_synced_lines(7),
+            },
+            {
+                "id": 33542202,
+                "trackName": "芽吹くとき",
+                "artistName": "yonige",
+                "syncedLyrics": _lrclib_synced_lines(9),
+            },
+        ]
+
+    monkeypatch.setattr(song_repair, "_http_json_value", fake_http_json_value)
+
+    results = build_lrclib_lrc_provider(timeout_seconds=3.0)("芽吹くとき yonige")
+
+    assert [(result.provider, result.source_ref) for result in results] == [
+        ("lrclib", "https://lrclib.net/api/get/33542202")
+    ]
+    assert results[0].song_title == "芽吹くとき"
+    assert captured[0][1] == 3.0
+    assert "q=%E8%8A%BD%E5%90%B9%E3%81%8F%E3%81%A8%E3%81%8D+yonige" in captured[0][0]
+
+
+def test_composite_provider_preserves_provenance_dedupes_and_survives_failure():
+    lrclib = LrcResult(
+        provider="lrclib",
+        song_title="芽吹くとき",
+        artist="yonige",
+        source_ref="https://lrclib.net/api/get/33542202",
+        lines=tuple(LrcLine(index * 1_000, f"歌词{index}") for index in range(8)),
+    )
+    netease = LrcResult(
+        provider="netease",
+        song_title="芽吹くとき",
+        artist="yonige",
+        source_ref="netease://song/3363527827",
+        lines=lrclib.lines,
+    )
+
+    def broken(_query):
+        raise RuntimeError("temporary outage")
+
+    provider = build_composite_lrc_provider(
+        broken,
+        lambda _query: [lrclib, lrclib],
+        lambda _query: netease,
+    )
+
+    results = provider("芽吹くとき")
+
+    assert [(result.provider, result.source_ref) for result in results] == [
+        ("lrclib", "https://lrclib.net/api/get/33542202"),
+        ("netease", "netease://song/3363527827"),
+    ]
 
 
 def test_outro_kept_up_to_next_talk_cue(tmp_path):

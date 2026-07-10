@@ -145,7 +145,7 @@ def attempt_song_repair(
         )
     )
 
-    if lrc_provider is None:
+    if lrc_provider is None and not pinned_lrc_results:
         attempts.append(
             SongRepairAttempt(
                 "lrc_discovery",
@@ -187,25 +187,20 @@ def attempt_song_repair(
                 )
             )
     provider_errors: list[str] = []
-    for query in deduped_queries:
-        if len(candidates) >= max_lrc_candidates:
-            break
-        try:
-            found = lrc_provider(query)
-        except Exception as exc:  # provider failures must not crash review; they are recorded
-            provider_errors.append(f"{query!r}: {type(exc).__name__}: {exc}")
-            continue
-        found_list: list[LrcResult]
-        if found is None:
-            found_list = []
-        elif isinstance(found, LrcResult):
-            found_list = [found]
-        else:
-            found_list = [item for item in found if isinstance(item, LrcResult)]
-        for item in found_list:
-            if item.lines and item.source_ref not in seen_refs:
-                seen_refs.add(item.source_ref)
-                candidates.append(item)
+    if lrc_provider is not None:
+        for query in deduped_queries:
+            if len(candidates) >= max_lrc_candidates:
+                break
+            try:
+                found = lrc_provider(query)
+            except Exception as exc:  # provider failures must not crash review; they are recorded
+                provider_errors.append(f"{query!r}: {type(exc).__name__}: {exc}")
+                continue
+            found_list = _coerce_lrc_results(found)
+            for item in found_list:
+                if item.lines and item.source_ref not in seen_refs:
+                    seen_refs.add(item.source_ref)
+                    candidates.append(item)
     if not candidates:
         detail = f"no LRC found for {len(deduped_queries)} queries {deduped_queries!r}"
         if provider_errors:
@@ -351,7 +346,25 @@ def attempt_song_repair(
             continue
         first_lyric_start_ms = first_cue_start
         last_lyric_end_ms = last_cue_end
-        clip_start_ms = max(0, first_lyric_start_ms - pre_roll_ms)
+        # A global shift is not sufficient proof when the implied LRC time zero
+        # falls outside the captured source.  In particular, clamping a negative
+        # offset to source 0 below would turn a recording that starts after the
+        # song's instrumental intro into a false FULL_SONG_READY result.
+        if not 0 <= offset_ms < source_duration_ms:
+            attempts.append(
+                SongRepairAttempt(
+                    "song_boundary",
+                    "FAILED",
+                    f"{lrc.song_title!r}: nominal LRC zero {offset_ms}ms is outside source "
+                    f"[0, {source_duration_ms})ms; cannot prove the complete song head",
+                )
+            )
+            continue
+        # ``offset_ms`` is where LRC time zero lands in the live source.  Start
+        # from that nominal track boundary (plus a small safety lead), not from
+        # ``first lyric - pre_roll``: the latter chopped the entire 7.7-second
+        # instrumental intro from 2026-07-09 《芽吹くとき》.
+        clip_start_ms = max(0, offset_ms - pre_roll_ms)
         # Keep the instrumental outro (后奏): a complete song does not end on the
         # last sung word.  The outro has no lyrics for ASR to anchor on, so extend
         # to just before the next spoken cue after the song (the post-song talk),
@@ -402,6 +415,7 @@ def attempt_song_repair(
         "line_count": len(alignment),
         "matched_line_count": len(matched),
         "offset_ms": offset_ms,
+        "nominal_lrc_zero_ms": offset_ms,
         "lyric_lines": [
             {"lrc_time_ms": line.time_ms, "text": line.text} for line in lrc.lines
         ],
@@ -419,6 +433,7 @@ def attempt_song_repair(
         "source": f"song_repair.{provider_label}",
         "song_title": lrc.song_title,
         "song_start_ms": clip_start_ms,
+        "nominal_lrc_zero_ms": offset_ms,
         "first_lyric_start_ms": first_lyric_start_ms,
         "last_lyric_end_ms": last_lyric_end_ms,
         "clip_start_ms": clip_start_ms,
@@ -432,6 +447,7 @@ def attempt_song_repair(
         "external_lrc": lrc.source_ref,
         "matched_line_ratio": round(matched_ratio, 4),
         "offset_ms": offset_ms,
+        "nominal_lrc_zero_ms": offset_ms,
         "alignment_report_path": str(report_path),
         "alignment_report_sha256": report_sha,
     }
@@ -487,6 +503,86 @@ def build_netease_lrc_provider(*, timeout_seconds: float = 8.0, max_results: int
         return results
 
     return provider
+
+
+def build_lrclib_lrc_provider(*, timeout_seconds: float = 20.0, max_results: int = 3) -> LrcProvider:
+    """Build an LRCLIB search provider that returns only usable synced LRCs.
+
+    LRCLIB's search response can include plain-only lyrics.  Those are useful
+    for reading but cannot prove clip timing, so this provider deliberately
+    fails closed unless ``syncedLyrics`` parses into at least eight timed lines.
+    Search order remains advisory; :func:`attempt_song_repair` reranks results
+    by alignment to the actual performance.
+    """
+
+    def provider(query: str) -> list[LrcResult]:
+        search_url = "https://lrclib.net/api/search?" + urllib.parse.urlencode({"q": query})
+        payload = _http_json_value(search_url, timeout_seconds=timeout_seconds)
+        records = payload if isinstance(payload, list) else []
+        results: list[LrcResult] = []
+        for record in records:
+            if len(results) >= max_results:
+                break
+            if not isinstance(record, Mapping):
+                continue
+            result = _lrclib_record_to_result(record)
+            if result is not None:
+                results.append(result)
+        return results
+
+    return provider
+
+
+def build_composite_lrc_provider(*providers: LrcProvider, max_results: int | None = None) -> LrcProvider:
+    """Combine providers as independent fallbacks without erasing provenance.
+
+    A temporary failure in one public lyric service must not prevent another
+    provider from supplying evidence.  Results are deduplicated by canonical
+    ``source_ref`` while each result's original ``provider`` and ``source_ref``
+    are preserved for the alignment report and proof gate.
+    """
+
+    def provider(query: str) -> list[LrcResult]:
+        results: list[LrcResult] = []
+        seen_refs: set[str] = set()
+        for candidate_provider in providers:
+            try:
+                found = candidate_provider(query)
+            except Exception:
+                continue
+            for item in _coerce_lrc_results(found):
+                if item.source_ref in seen_refs:
+                    continue
+                seen_refs.add(item.source_ref)
+                results.append(item)
+                if max_results is not None and len(results) >= max_results:
+                    return results
+        return results
+
+    return provider
+
+
+def fetch_lrclib_lrc(song_ref: str, *, timeout_seconds: float = 20.0) -> LrcResult | None:
+    """Fetch one LRCLIB synced lyric by numeric id or canonical LRCLIB ref.
+
+    Accepted forms include ``"33542202"``, ``"lrclib://track/33542202"``,
+    and ``"https://lrclib.net/api/get/33542202"``.  Plain, unsynchronised lyrics are rejected:
+    the song repair path needs timestamps, not merely lyric text.
+    """
+
+    song_id = _parse_lrclib_id(song_ref)
+    if song_id is None:
+        return None
+    try:
+        payload = _http_json(
+            f"https://lrclib.net/api/get/{song_id}",
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    return _lrclib_record_to_result(payload, fallback_id=song_id)
 
 
 def fetch_netease_lrc(song_ref: str, *, timeout_seconds: float = 8.0) -> LrcResult | None:
@@ -592,16 +688,22 @@ def _performance_window(
 
 
 def _cjk_clean_score(text: str) -> float:
-    """Rank a cue for use as a netease lyric search query.  A search matches on
-    LYRIC TEXT, so the best query is one CLEAN, CJK-dense, distinctive line — NOT
+    """Rank a cue for use as a lyric search query.  A search matches on
+    lyric text, so the best query is one clean CJK/kana-dense, distinctive line — not
     the longest.  The longest ASR lines are often the English/rap sections BCUT
     mangles ("chewe now baby just chewe now") which match nothing; a clean line
-    like "谁说圆满的人生才能算圆满" returns 《屑屑》 as the #1 hit.  Score = CJK
-    density × capped length; lines with < 6 CJK chars are unusable (-1)."""
+    like "谁说圆满的人生才能算圆满" returns 《屑屑》 as the #1 hit.  Japanese songs
+    also need kana-only lines such as ``ただそばにいてほしい`` to remain
+    searchable.  Score = CJK/kana density × capped length; lines with fewer
+    than six such characters are unusable (-1)."""
     normalized = normalize_lyric_text(text)
     if len(normalized) < 6:
         return -1.0
-    cjk = sum(1 for ch in normalized if "一" <= ch <= "鿿")
+    cjk = sum(
+        1
+        for ch in normalized
+        if "㐀" <= ch <= "鿿" or "぀" <= ch <= "ヿ" or "ｦ" <= ch <= "ﾟ"
+    )
     if cjk < 6:
         return -1.0
     return (cjk / len(normalized)) * min(len(normalized), 16)
@@ -894,6 +996,11 @@ def _trailing_unmatched(alignment: Sequence[Mapping[str, object]], *, tolerance:
 
 
 def _http_json(url: str, *, timeout_seconds: float) -> Mapping[str, object] | None:
+    payload = _http_json_value(url, timeout_seconds=timeout_seconds)
+    return payload if isinstance(payload, Mapping) else None
+
+
+def _http_json_value(url: str, *, timeout_seconds: float) -> object:
     request = urllib.request.Request(
         url,
         headers={
@@ -902,8 +1009,48 @@ def _http_json(url: str, *, timeout_seconds: float) -> Mapping[str, object] | No
         },
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        payload = json.loads(response.read().decode("utf-8", errors="replace"))
-    return payload if isinstance(payload, Mapping) else None
+        return json.loads(response.read().decode("utf-8", errors="replace"))
+
+
+def _coerce_lrc_results(found: LrcResult | Sequence[LrcResult] | None) -> list[LrcResult]:
+    if found is None:
+        return []
+    if isinstance(found, LrcResult):
+        return [found]
+    return [item for item in found if isinstance(item, LrcResult)]
+
+
+def _parse_lrclib_id(song_ref: str) -> int | None:
+    value = str(song_ref or "").strip()
+    if value.isdigit():
+        return int(value)
+    match = re.fullmatch(r"lrclib://(?:track|song|lyrics)/(\d+)", value, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.fullmatch(r"https?://(?:www\.)?lrclib\.net/api/get/(\d+)", value, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _lrclib_record_to_result(record: Mapping[str, object], *, fallback_id: int | None = None) -> LrcResult | None:
+    raw_id = record.get("id")
+    song_id = raw_id if isinstance(raw_id, int) else fallback_id
+    if song_id is None:
+        return None
+    synced_lyrics = record.get("syncedLyrics")
+    if not isinstance(synced_lyrics, str) or not synced_lyrics.strip():
+        return None
+    lines = parse_lrc_text(synced_lyrics)
+    if len(lines) < 8:
+        return None
+    song_title = str(record.get("trackName") or record.get("name") or "")
+    artist = str(record.get("artistName") or "").strip() or None
+    return LrcResult(
+        provider="lrclib",
+        song_title=song_title,
+        artist=artist,
+        source_ref=f"https://lrclib.net/api/get/{song_id}",
+        lines=tuple(lines),
+    )
 
 
 def _finish(

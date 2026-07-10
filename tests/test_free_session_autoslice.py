@@ -1,6 +1,7 @@
 """Unit tests for the unattended runner's pure helpers (first-real-run lessons)."""
 import json
 import hashlib
+from pathlib import Path
 
 import scripts.free_session_autoslice as runner
 from scripts.free_session_autoslice import (
@@ -289,16 +290,299 @@ def test_song_delivery_artifacts_video_survives_unsatisfied_cover_gate():
     assert runner.song_delivery_artifacts({}) == {}
 
 
-def test_song_delivery_rule_final():
+def test_song_delivery_rule_final_requires_positive_completion_proof():
     """Ivan 2026-07-10 最终规则：至多2个按弹幕排序（prioritize/refill 管）；
     是歌+唱完整就交付；语义判定只是参考。没唱完整(SONG_PARTIAL)不强行切。"""
     semantic_noise = ["END_BOUNDARY_LOW", "CPA_SEMANTIC_INCOMPLETE",
                       "VIEWER_CONTEXT_INCOMPLETE", "ADVISORY_NO_NATURAL_CLOSURE"]
-    assert runner.song_delivery_ok(True, semantic_noise) is True   # 语义码不拦
-    assert runner.song_delivery_ok(True, []) is True
-    assert runner.song_delivery_ok(True, semantic_noise + ["SONG_PARTIAL"]) is False  # 没唱完整不切
-    assert runner.song_delivery_ok(False, []) is False             # 不是歌不切
-    assert runner.song_delivery_ok(True, None) is True
+    proof = {"ready": True}
+    assert runner.song_delivery_ok(0, True, semantic_noise, proof) is True   # 语义码不拦
+    assert runner.song_delivery_ok(0, True, [], True) is True
+    assert runner.song_delivery_ok(0, True, semantic_noise + ["SONG_PARTIAL"], proof) is False  # 没唱完整不切
+    assert runner.song_delivery_ok(0, False, [], proof) is False             # 不是歌不切
+    assert runner.song_delivery_ok(0, True, None, None) is False             # 没有正向证据必须失败关闭
+    assert runner.song_delivery_ok(1, True, [], proof) is False               # 当前 selector 失败不得交付
+
+
+def test_failed_song_selector_cannot_reuse_stale_summary_or_deliver(tmp_path, monkeypatch):
+    """P1 regression: a previous valid selector summary used to survive in the
+    fixed output directory.  When the next selector crashed, produce_song read
+    that stale proof and copied the old video as this invocation's delivery.
+
+    The old attempt remains on disk for forensics, while the failing current
+    subprocess gets a distinct empty output directory.  Its own diagnostic
+    summary is read, but its non-zero return code still prevents delivery.
+    """
+    date = "2026-07-09"
+    cid = "song_stale_regression"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    out_dir = base / "out" / date / cid
+    logs_dir = base / "logs"
+    out_dir.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "cpa_qa_cmd", lambda: "judge")
+
+    segment = tmp_path / "segment.mp4"
+    segment.write_bytes(b"source")
+    anchor_start, anchor_end, duration = 50_000, 100_000, 200_000
+    window_start = anchor_start - runner.SONG_WINDOW_PRE_MS
+    window_end = anchor_end + runner.SONG_WINDOW_POST_MS
+    (out_dir / f"{cid}_source.mp4").write_bytes(b"current-window")
+
+    stale_video = tmp_path / "stale.burned.mp4"
+    stale_video.write_bytes(b"stale-but-valid")
+    stale_sha = "sha256:" + hashlib.sha256(stale_video.read_bytes()).hexdigest()
+    stale_dir = out_dir / "song_selector"
+    stale_dir.mkdir()
+    stale_summary = {
+        "records": [{
+            "candidate_id": "semanticsong_stale",
+            "decision_action": "AUTO_UPLOAD",
+            "reason_codes": [],
+        }]
+    }
+    stale_summary_path = stale_dir / "summary.json"
+    stale_summary_path.write_text(json.dumps(stale_summary), encoding="utf-8")
+
+    def fake_slice_srt(_source, _start, _end, destination):
+        destination.write_text("1\n00:00:00,000 --> 00:00:01,000\n歌词\n", encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(runner, "slice_srt", fake_slice_srt)
+    monkeypatch.setattr(runner, "_song_core_span", lambda *_args: (anchor_start, anchor_end))
+
+    def fake_completion(record):
+        ready = bool(record)
+        return {
+            "ready": ready,
+            "reason_codes": [] if ready else ["SONG_FULL_BOUNDARY_PROOF_MISSING"],
+            "lyrics_alignment_status": "READY" if ready else None,
+            "alignment_report_path": None,
+            "alignment_report_sha256": None,
+        }
+
+    monkeypatch.setattr(runner, "song_completion_evidence", fake_completion)
+    monkeypatch.setattr(
+        runner,
+        "song_delivery_artifacts",
+        lambda record: {
+            "video_path": str(stale_video),
+            "video_sha256": stale_sha,
+            "title": "【李豆沙】本次诊断结果" if record.get("candidate_id") == "semanticsong_current" else "【李豆沙】旧歌切",
+        } if record else {},
+    )
+
+    selector_dirs = []
+
+    class FailedSelector:
+        returncode = 1
+
+    def fake_run(command, **_kwargs):
+        selector_dir = Path(command[command.index("--output-dir") + 1])
+        selector_dirs.append(selector_dir)
+        (selector_dir / "summary.json").write_text(json.dumps({
+            "records": [{
+                "candidate_id": "semanticsong_current",
+                "decision_action": "AUTO_UPLOAD",
+                "reason_codes": [],
+            }]
+        }), encoding="utf-8")
+        return FailedSelector()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_song(date, {
+        "cid": cid,
+        "segment_path": str(segment),
+        "seg_dur_ms": duration,
+        "anchor_start_ms": anchor_start,
+        "anchor_end_ms": anchor_end,
+        "danmaku": 18,
+        "hook": "旧 summary 不能冒充本次结果",
+        "preview": "",
+    })
+
+    assert result["start_ms"] == window_start and result["end_ms"] == window_end
+    assert result["rc"] == 1 and result["status"] == "failed"
+    assert result["window_classified_song"] is True
+    assert result["title"] == "【李豆沙】本次诊断结果", "只能读本次新 summary，不能读旧标题"
+    assert "delivered" not in result, "即使失败进程写了完整 summary，rc != 0 也不得交付"
+    assert len(selector_dirs) == 1
+    assert selector_dirs[0].parent == stale_dir and selector_dirs[0] != stale_dir
+    assert (selector_dirs[0] / "summary.json").is_file()
+    assert stale_summary_path.is_file(), "旧 attempt 只隔离保留，不做破坏性删除"
+    assert json.loads(stale_summary_path.read_text(encoding="utf-8")) == stale_summary
+    assert not list((repo / "lidousha" / date).glob("*.mp4"))
+
+
+def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path):
+    report = tmp_path / "song.lyrics-alignment-report.json"
+    report_payload = {
+        "schema_version": "lyrics-alignment-report.v1",
+        "alignment_model": "external_lrc_global_shift.v1",
+        "candidate_id": "song-proof",
+        "provider": "lrclib",
+        "song_title": "芽吹くとき",
+        "source_ref": "https://lrclib.net/api/get/33542202",
+        "offset_ms": 1_500,
+        "nominal_lrc_zero_ms": 1_500,
+        "first_lyric_start_ms": 1_500,
+        "last_lyric_end_ms": 8_500,
+        "line_count": 8,
+        "matched_line_count": 8,
+        "matched_line_ratio": 1.0,
+        "lyric_lines": [{"lrc_time_ms": index * 1_000, "text": f"歌词{index}"} for index in range(8)],
+        "alignment": [{"lrc_time_ms": index * 1_000, "matched_cue_id": f"cue-{index}"} for index in range(8)],
+    }
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    report_sha = hashlib.sha256(report.read_bytes()).hexdigest()
+    subtitle = tmp_path / "song.srt"
+    subtitle.write_text("1\n00:00:01,500 --> 00:00:02,500\n歌词0\n", encoding="utf-8")
+    subtitle_sha = "sha256:" + hashlib.sha256(subtitle.read_bytes()).hexdigest()
+    burned = tmp_path / "song.burned.mp4"
+    burned.write_bytes(b"burned-video")
+    burned_sha = "sha256:" + hashlib.sha256(burned.read_bytes()).hexdigest()
+    record = {
+        "candidate_id": "song-proof",
+        "source_context_job": {
+            "song_boundary": {
+                "status": "FULL_SONG_READY",
+                "song_title": "芽吹くとき",
+                "clip_start_ms": 0,
+                "nominal_lrc_zero_ms": 1_500,
+                "first_lyric_start_ms": 1_500,
+                "last_lyric_end_ms": 8_500,
+                "clip_end_ms": 9_500,
+            },
+            "lyrics_alignment": {
+                "status": "READY",
+                "provider": "lrclib",
+                "model": "lrclib-lrc-global-shift-align-v2",
+                "source": "song_repair.lrclib",
+                "external_lrc": "https://lrclib.net/api/get/33542202",
+                "offset_ms": 1_500,
+                "nominal_lrc_zero_ms": 1_500,
+                "matched_line_ratio": 1.0,
+                "alignment_report_path": str(report),
+                "alignment_report_sha256": report_sha,
+            },
+        },
+        "materialized_recut": {
+            "status": "MATERIALIZED",
+            "reason_codes": [],
+            "start_ms": 0,
+            "end_ms": 9_500,
+            "subtitle_source": "external_lrc_global_shift",
+            "accurate_rerender_used": True,
+            "render_qa": {
+                "code": "ACTUAL_CUT_ERROR_OK",
+                "pass": True,
+                "severity": "PASS",
+                "evidence": {"actual_cut_error_ms": 0, "threshold_ms": 100},
+            },
+            "subtitle_path": str(subtitle),
+            "lyric_offset_ms": 1_500,
+            "burned_preview": {
+                "status": "BURNED",
+                "path": str(burned),
+                "burned_sha256": burned_sha,
+            },
+            "artifact_hashes": {
+                "subtitle_sha256": subtitle_sha,
+                "burned_video_sha256": burned_sha,
+            },
+        },
+    }
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is True
+    assert evidence["reason_codes"] == []
+
+    # The same negative nominal zero in all three documents is still invalid:
+    # equality cannot make unavailable pre-source music become complete.
+    report_payload["nominal_lrc_zero_ms"] = -1
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["song_boundary"]["nominal_lrc_zero_ms"] = -1
+    record["source_context_job"]["lyrics_alignment"]["nominal_lrc_zero_ms"] = -1
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_NOMINAL_LRC_ZERO_INVALID" in evidence["reason_codes"]
+
+    # A rehashed report from a different nominal-zero calculation must not be
+    # mixed with the current boundary/materialized recut.
+    report_payload["nominal_lrc_zero_ms"] = 1_501
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["song_boundary"]["nominal_lrc_zero_ms"] = 1_500
+    record["source_context_job"]["lyrics_alignment"]["nominal_lrc_zero_ms"] = 1_500
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_NOMINAL_LRC_ZERO_MISMATCH" in evidence["reason_codes"]
+
+    report_payload["nominal_lrc_zero_ms"] = 1_500
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
+
+    record["materialized_recut"]["accurate_rerender_used"] = False
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_ACCURATE_RERENDER_REQUIRED" in evidence["reason_codes"]
+    record["materialized_recut"]["accurate_rerender_used"] = True
+
+    record["materialized_recut"]["reason_codes"] = ["FFMPEG_ACCURATE_RECUT_FAILED"]
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_ACCURATE_RERENDER_FAILED" in evidence["reason_codes"]
+    record["materialized_recut"]["reason_codes"] = []
+
+    record["materialized_recut"]["render_qa"]["pass"] = False
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_RENDER_QA_FAILED" in evidence["reason_codes"]
+    record["materialized_recut"]["render_qa"]["pass"] = True
+
+    # A self-consistent hash over an empty report is not semantic proof.
+    report.write_text("{}\n", encoding="utf-8")
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_ALIGNMENT_REPORT_SCHEMA_INVALID" in evidence["reason_codes"]
+
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = report_sha
+    report.write_text("tampered\n", encoding="utf-8")
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_ALIGNMENT_REPORT_HASH_INVALID" in evidence["reason_codes"]
+
+    report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["materialized_recut"]["subtitle_source"] = "asr_cues"
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_EXTERNAL_LRC_SUBTITLE_NOT_MATERIALIZED" in evidence["reason_codes"]
+
+    record["materialized_recut"]["subtitle_source"] = "external_lrc_global_shift"
+    burned.write_bytes(b"stale-video")
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_BURNED_PREVIEW_HASH_INVALID" in evidence["reason_codes"]
+
+
+def test_verified_song_fallback_title_keeps_song_and_hook():
+    assert runner.verified_song_fallback_title("芽吹くとき", "下播前的温柔哄睡小歌，唱完刷晚安") == (
+        "【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌"
+    )
+
+
+def test_song_proof_retry_padding_exceeds_recall_padding():
+    assert runner.SONG_PROOF_RETRY_PRE_MS > runner.SONG_WINDOW_PRE_MS
+    assert runner.SONG_PROOF_RETRY_POST_MS > runner.SONG_WINDOW_POST_MS
+    assert runner.song_proof_retry_window(166_220, 321_760, 483_352) == (121_220, 366_760)
+    assert runner.song_proof_retry_window(10_000, 90_000, 100_000) == (0, 100_000)
 
 
 def test_song_artifact_hash_check_rejects_mutation_and_symlink(tmp_path):

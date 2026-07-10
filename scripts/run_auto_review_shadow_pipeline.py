@@ -48,7 +48,10 @@ from src.autoslice.song_repair import (
     LrcResult,
     SongRepairResult,
     attempt_song_repair,
+    build_composite_lrc_provider,
+    build_lrclib_lrc_provider,
     build_netease_lrc_provider,
+    fetch_lrclib_lrc,
     fetch_netease_lrc,
     normalize_lyric_text,
 )
@@ -1846,12 +1849,17 @@ def _pinned_lrc_for_song(cues: Sequence[SourceCue]) -> list[LrcResult]:
         hits = sum(1 for fp in fingerprints if fp and fp in asr)
         if hits < 2:
             continue
+        lrc_ref = str(song.get("lrc_ref") or "").strip()
         netease_id = str(song.get("netease_id") or "").strip()
-        if not netease_id or netease_id in seen:
+        lookup_ref = lrc_ref or (f"netease://song/{netease_id}" if netease_id else "")
+        if not lookup_ref or lookup_ref in seen:
             continue
-        lrc = fetch_netease_lrc(netease_id)
+        if lookup_ref.lower().startswith(("lrclib://", "https://lrclib.net/", "http://lrclib.net/")):
+            lrc = fetch_lrclib_lrc(lookup_ref)
+        else:
+            lrc = fetch_netease_lrc(lookup_ref)
         if lrc is not None and lrc.lines:
-            seen.add(netease_id)
+            seen.add(lookup_ref)
             pinned.append(lrc)
     return pinned
 
@@ -3811,6 +3819,24 @@ def _materialize_recut_record(
         else:
             reason_codes.append("FFMPEG_ACCURATE_RECUT_FAILED")
 
+    # External-LRC timing is only valid against the sample-accurate re-render.
+    # Keeping the coarse packet/keyframe copy as MATERIALIZED after that render
+    # failed made a hash-valid but timing-quantized song eligible for delivery.
+    # Dry-run placeholders remain inspectable, but every real song render must
+    # prove both that the accurate command ran and that its fresh render QA
+    # passed before materialization can be considered successful.
+    song_render_ready = True
+    if run_ffmpeg and subtitle_source == "external_lrc_global_shift":
+        song_render_ready = (
+            accurate_rerender_used is True
+            and isinstance(render_qa, Mapping)
+            and render_qa.get("pass") is True
+            and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes
+        )
+        if not song_render_ready and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes:
+            reason_codes.append("SONG_ACCURATE_RENDER_QA_FAILED")
+    materialized_status = "MATERIALIZED" if song_render_ready else "RETRY_INFRA"
+
     # Fresh whole-window transcription (talk only): the coarse integer-second
     # production ASR is fine for recall but repeatedly shipped text/timing
     # mismatches in finals — re-transcribing the finished clip media gives
@@ -3856,7 +3882,7 @@ def _materialize_recut_record(
             }
     manifest = {
         "schema_version": "materialized-recut.v1",
-        "status": "MATERIALIZED",
+        "status": materialized_status,
         "reason_codes": reason_codes,
         "candidate_id": candidate_id,
         "source_video_path": str(source_video),
@@ -3877,7 +3903,7 @@ def _materialize_recut_record(
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
-        "status": "MATERIALIZED",
+        "status": materialized_status,
         "reason_codes": reason_codes,
         "start_ms": start_ms,
         "end_ms": end_ms,
@@ -4387,7 +4413,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--skip-ffmpeg", action="store_true", help="Use executor dry-run media placeholder instead of invoking ffmpeg.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--allow-upload", action="store_true", help="Reserved; default shadow mode never uploads.")
-    parser.add_argument("--lrc-provider", choices=("none", "netease"), default="none", help="External LRC discovery provider for repair-first song completeness.")
+    parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "auto"), default="none", help="External LRC discovery provider for repair-first song completeness.")
     parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
     parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing from garbled ASR.")
     parser.add_argument("--publish-staging", action="store_true", help="Stage AI title + cover + publish.json draft (upload_enabled always false).")
@@ -4405,6 +4431,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             agy_rc=args.agy_rc,
             provider_fallback_used={"true": True, "false": False, "unknown": None}[args.agy_fallback_used],
         )
+    lrc_provider = None
+    if args.lrc_provider == "netease":
+        lrc_provider = build_netease_lrc_provider()
+    elif args.lrc_provider == "lrclib":
+        lrc_provider = build_lrclib_lrc_provider()
+    elif args.lrc_provider == "auto":
+        lrc_provider = build_composite_lrc_provider(
+            build_netease_lrc_provider(),
+            build_lrclib_lrc_provider(),
+        )
     summary = run_shadow_pipeline(
         review_package=args.review_package,
         source_video=args.source_video,
@@ -4417,7 +4453,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_dir=args.output_dir,
         no_upload=not args.allow_upload,
         source_context_run_ffmpeg=not args.skip_ffmpeg,
-        lrc_provider=build_netease_lrc_provider() if args.lrc_provider == "netease" else None,
+        lrc_provider=lrc_provider,
         song_hint_llm_call=build_llm_call(LlmConfig(transport="command", command_template=args.song_hint_llm_command))
         if args.song_hint_llm_command
         else None,

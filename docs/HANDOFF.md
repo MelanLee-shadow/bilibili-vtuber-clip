@@ -3,6 +3,39 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-10（续）：7/9 歌切假绿纠正——实际是 yonige《芽吹くとき》
+
+### 目标
+
+纠正本文件下方把 7/9 歌切写成《ただそばにいて》且“字幕是正确日语歌词”的错误结论；把“搜到 LRC”变成可验证、可追溯、缺证据就不交付的自动流程。仍然只做 review package，**没有 B 站上传授权**。
+
+### 已完成
+
+- **旧结论已证伪**：远端真实 selector 记录里 `lyrics_alignment={}`、`song_boundary={}`、`subtitle_source=asr_cues`；旧 MP4 是把 ASR 烧进去的，不是 LRC 字幕。《ただそばにいて》只是歌词句，不是歌名。下方跨-agent 契约第 7 条末句仅保留为事故记录，不再是权威状态。
+- **公开歌词源很容易拿到**：按 Ivan 提醒走公开检索，确认歌曲是 yonige《芽吹くとき》；LRCLIB `33542202` 有 25 条同步歌词，代码保留直接来源 `https://lrclib.net/api/get/33542202`，并在 `known_songs.json` 固定歌名、作者、来源与可容错指纹。yonige 官方 discography 只作身份佐证。
+- **边界重新核实**：旧源窗 `151.220–341.760s` 物理上漏了前奏和结尾。原始段上下文的 Gemini 3.5 Flash (High) 音频/LRC 审核判定单一全局位移、无需 stretch：LRC 零点约 `148.5s`、首句约 `156.2s`、尾部约 `349.0s`，下一段说话约 `348.820s`。证据留在本机忽略目录 `reports/2026-07-09-mebukutoki-lrc-repair/agy_probe/`。
+- **工作流修复已在本地完成**：新增 LRCLIB 同步歌词 provider 与 NetEase→LRCLIB 隔离 fallback；日文假名可参与搜索；钉歌即使通用搜索暂时失效也能跑；clip 从 LRC 零点前 1.5s 起而不是从首句前 1.5s 起；紧窗口识别为歌但无完整证据时，同一原始段只扩大一次到 anchor±45s 重试，并把歌曲精听固定为 High。
+- **交付门改成正证据门**：必须同时有 `FULL_SONG_READY`、`lyrics_alignment READY`、结构完整且匹配率≥55%的 alignment report、报告 SHA、边界/nominal LRC zero/offset/候选/歌名/来源互相一致、`external_lrc_global_shift` SRT、SRT SHA、精确重渲染成功、render QA 通过、materialized recut、burned MP4 SHA。旧的 MP4/cover glob 兜底已删除；outer selector summary 也已补齐向 runner 透传 materialized recut 等字段。
+- **最后 challenger 的三条 P1 已关闭**：①每次 selector 改用独占空 `attempt-*` 目录，且当前 rc 必须为 0，失败进程不能重用旧 summary；②nominal LRC zero 在源窗外直接失败，runner 再绑定 boundary/alignment/report 三处零点；③外部 LRC 的 sample-accurate 重渲染或 fresh render QA 任一失败，producer 标 `RETRY_INFRA`，runner 也独立拒绝。原 reviewer 复跑后结论为无剩余 P0/P1。
+- **验证**：`python3 -m pytest -q` 为 `367 passed`；`python3 -m py_compile ...` 与 `git diff --check` 通过；实时 LRCLIB 直取返回 `lrclib / 芽吹くとき / yonige / 25 lines / 7700–199890ms`。假绿门、source 两端丢失、stale glob/summary、outer-summary 丢字段、空报告自哈希、负 LRC 零点、准确重渲染失败均有对应回归测试。
+- **生产只读核对**：`free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` 当前仍是 `cab9a151ccd67605d087ee0aae48c1ecf1f88830`；7/9 state 仍把 `song_223019_166` 记为 `song_complete=true` 并指向旧《ただそばにいて》文件，证明本轮修复尚未上线，旧 state 也必须视为假绿证据而不是验收结果。
+
+### 进行中（含后台进程）
+
+- 无项目后台进程。代码与本地 challenge/defense 已收口；不会触碰 `free` 正式部署或上传面。
+
+### 阻塞
+
+- **本轮修复尚未部署到 `free`，也尚未生成新的 7/9 review package**；旧的《ただそばにいて》本地 MP4/cover 必须视为 quarantine，不可上传、不可作为正确歌词证据。
+- 生产部署属于外部运行面变更，Ivan 本条消息没有明确授权，所以不擅自执行。若获授权，只能走 `scripts/deploy_free_autoslice.sh`，然后用真实 7/9 原始段跑一次 no-upload acceptance。
+- ChatGPT Pro 终审的 Hermes CDP 首次尝试因可见模型标签未确认而在提交前停止，记录状态是 `mode_not_confirmed`；没有重复提交。手工向 ChatGPT 发送 prompt 也需要明确授权。独立本地 challenger 不受此阻塞影响。
+
+### 下一步
+
+1. 以本节所在提交作为唯一部署输入；不要从未提交工作树或单文件同步。
+2. Ivan 若授权部署：用正式部署脚本更新 `free`，核对 `DEPLOYED_COMMIT` 与 md5；随后只重跑 7/9 这首歌，验收 report/SRT/MP4 三份 hash、首句/副歌/重复段/最长间奏/尾部五点以及新标题/封面；**不上传**。
+3. 新 package 验收成功后，把旧错误文件移入 quarantine，并把本节更新成真实远端路径、commit 与 hash；若新精听对齐低于门槛或 sample-accurate 重渲染/QA 失败，保持 blocked，不借用这次人工审核结果伪造运行时绿灯。
+
 ## 2026-07-10 跨 agent 协调契约（歌切 gate/封面 与 runner v4 会话）【给正在修 local_prepare+歌切封面顺序的 agent】
 
 **背景**：Ivan 2026-07-10 给 runner-v4 会话的指令：「歌切不需要语义，只要是弹幕最高两个歌就可以」。你（另一 agent）正在做：local_prepare 先过 gate 再出封面、整段录播默认不做 AI 封面、autoslice 歌切先过 release gate 再做封面。两边在 `produce_song` 相撞，契约如下：
@@ -13,7 +46,7 @@
 4. **部署纪律**：free 部署只走 `scripts/deploy_free_autoslice.sh`（dirty tree 拒绝、DEPLOYED_COMMIT 指纹、md5 校验）。**不要 scp 单文件上 free**——会被下次 rsync --delete 冲掉。
 5. **旧控制面已退役（2026-07-09 20:26Z 执行完毕）**：live 实测（虚拟区房间 22499290 实录 3.5min，scan/local_prepare 全程死透）证明**仅 blrec 就产出 runner 全部输入**——compact 名 `.mp4`（remux_to_mp4，ffprobe 201s ✓）+ `.xml` 弹幕 + `.jsonl`(SC)，date 目录布局不变；runner 的 `{ROOM}_*.mp4` glob 与 `find_danmaku_xml`（查 parent+sources/）天然兼容 compact 名，**零代码搬运**。已做：compose.yml 删掉 scan+local_prepare 两行（备份 `/opt/bilive/compose.yml.bak-20260710`）+ 容器重建（两 blrec 实例/监控/录制开关验证 OK，runner tick 绿）；shadow daemon systemd unit `lidousha-auto-review-shadow-22966160` 已 `disable --now`（它每 5min 全树重扫老日期 slice_candidates.json 是 FUSE 挂载不稳的主嫌——clouddrive 死前最后一条日志就是在读 6/17 的这个文件）。**注意**：⑴ 20:26Z 容器重建杀掉了你 docker exec 起的 scan/local_prepare 测试进程——要继续测直接 `docker exec bilive_record python -m src.upload.local_prepare`，不依赖容器 Cmd；⑵ 你 local_prepare 侧修复对生产已 moot（进程不再常驻），autoslice 歌切侧（第 1/2 条）仍有效；⑶ 旧管线的全段 AI 封面/whisper ASR/hybrid 切片/publish 草稿随退役全部停止（"整段录播默认不做 AI 封面"的根除版）。
 6. **弹幕 top2 选择**已在 runner v4 的 `prioritize/refill_songs`（配额=交付+回填），你不用做。
-7. ~~歌切交付语义的实现权~~ **已由 runner-v4 会话接手落地（你的改动 4.5h 无更新，Ivan 直令收尾；commits 7209e03+cab9a15，已部署 free）**：Ivan 最终规则（较第 1 条细化）＝**至多 2 个、按弹幕量排序、没唱完整（SONG_PARTIAL）不切**；语义判定（AUTO_UPLOAD/BLOCK/closure/viewer-context）仅作参考。实现：`song_delivery_ok`（交付判定）+ `song_delivery_artifacts`（你的 hash 卫生保留：sha256 漂移拒用，`gated_*` 去语义门重写）+ `record_is_song`（semanticsong_* 召回分类也算歌——日语歌 LRC 钉不上时不再漏，7/9 ただそばにいて实锤）+ cover_repair 守卫跟随交付。你的两个门测试已按最终规则改写，349 tests 全绿。7/9《ただそばにいて》(x18) 已按新规则回填交付（含封面，字幕是正确日语歌词），本地已同步。
+7. ~~歌切交付语义的实现权~~ **已由 runner-v4 会话接手落地（你的改动 4.5h 无更新，Ivan 直令收尾；commits 7209e03+cab9a15，已部署 free）**：Ivan 最终规则（较第 1 条细化）＝**至多 2 个、按弹幕量排序、没唱完整（SONG_PARTIAL）不切**；语义判定（AUTO_UPLOAD/BLOCK/closure/viewer-context）仅作参考。实现：`song_delivery_ok`（交付判定）+ `song_delivery_artifacts`（你的 hash 卫生保留：sha256 漂移拒用，`gated_*` 去语义门重写）+ `record_is_song`（semanticsong_* 召回分类也算歌——日语歌 LRC 钉不上时不再漏，7/9 当时按《ただそばにいて》召回）+ cover_repair 守卫跟随交付。你的两个门测试已按当时规则改写，349 tests 全绿。**本条原称“含正确日语歌词”的 7/9 回填已于上方 2026-07-10 续节证伪：实际是 yonige《芽吹くとき》，旧物料为 ASR 字幕，必须 quarantine。**
 
 ## 2026-07-10（续）：切片流水线在 blrec 原生输入上端到端验证 + monitor 复活逻辑根除 + GitHub 预检
 

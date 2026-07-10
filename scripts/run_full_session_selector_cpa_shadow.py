@@ -24,7 +24,7 @@ from src.autoslice.full_session_candidate_selector import (
 from src.autoslice.llm_client import LlmCallError, LlmConfig, build_llm_call
 from src.autoslice.danmaku_evidence import danmaku_in_window, find_danmaku_bursts, load_danmaku_xml
 from src.autoslice.semantic_candidate_selector import select_semantic_session_candidates
-from src.autoslice.song_repair import build_netease_lrc_provider
+from src.autoslice.song_repair import build_composite_lrc_provider, build_lrclib_lrc_provider, build_netease_lrc_provider
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
 
@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Run the jingting second-listen (agy refine) on this ssh host (e.g. 'free') instead of a local agy binary.",
     )
     parser.add_argument("--no-ffmpeg", action="store_true", help="Testing only: skip ffmpeg materialization.")
-    parser.add_argument("--lrc-provider", choices=("none", "netease"), default="none", help="External LRC discovery for repair-first song completeness.")
+    parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "auto"), default="none", help="External LRC discovery for repair-first song completeness.")
     parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
     parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing.")
     parser.add_argument("--publish-staging", action="store_true", help="Stage AI title + cover + publish.json draft (upload_enabled always false).")
@@ -331,7 +331,15 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=candidate_dir,
             no_upload=True,
             source_context_run_ffmpeg=not args.no_ffmpeg,
-            lrc_provider=build_netease_lrc_provider() if args.lrc_provider == "netease" else None,
+            lrc_provider=(
+                build_netease_lrc_provider()
+                if args.lrc_provider == "netease"
+                else build_lrclib_lrc_provider()
+                if args.lrc_provider == "lrclib"
+                else build_composite_lrc_provider(build_netease_lrc_provider(), build_lrclib_lrc_provider())
+                if args.lrc_provider == "auto"
+                else None
+            ),
             song_hint_llm_call=build_llm_call(
                 LlmConfig(transport="command", command_template=args.song_hint_llm_command, timeout_seconds=180.0)
             )
@@ -360,7 +368,15 @@ def main(argv: list[str] | None = None) -> int:
                 "decision_action": record.get("decision_action"),
                 "reason_codes": record.get("reason_codes"),
                 "evidence_path": record.get("evidence_path"),
+                # The unattended runner consumes this OUTER summary.  Do not
+                # project away the hash-bound recut/title fields from the inner
+                # shadow record: doing so makes every proven song look
+                # unmaterialized and permanently fail closed.
+                "title": record.get("title"),
+                "subtitle_source": record.get("subtitle_source"),
                 "source_context_job": record.get("source_context_job"),
+                "boundary_resolution": record.get("boundary_resolution"),
+                "materialized_recut": record.get("materialized_recut"),
                 "cpa_request_json": str(request_json),
                 "cpa_response_json": str(response_json),
             }
