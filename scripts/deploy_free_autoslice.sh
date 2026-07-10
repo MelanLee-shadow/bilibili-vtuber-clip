@@ -37,6 +37,7 @@ SWITCHED=0
 COMMITTED=0
 STAGE_CREATED=0
 GUARD_ACQUIRED=0
+LOCAL_ARCHIVE_DIR=
 
 cleanup() {
     rc=$?
@@ -170,6 +171,7 @@ REMOTE_UNLOCK
     elif [ "$GUARD_ACQUIRED" -eq 1 ]; then
         echo "CRITICAL: rollback is unverified; retaining deploy guard owned by $DEPLOY_OWNER" >&2
     fi
+    [ -z "$LOCAL_ARCHIVE_DIR" ] || rm -rf "$LOCAL_ARCHIVE_DIR"
     exit "$rc"
 }
 
@@ -210,35 +212,82 @@ if [ -n "$RESIDUAL" ]; then
     echo "$RESIDUAL" >&2
     exit 6
 fi
+
+# Freeze the exact committed bytes locally. Every later comparison and remote
+# archive uses COMMIT, never a mutable worktree or a HEAD that could advance.
+LOCAL_ARCHIVE_DIR=$(mktemp -d)
+git archive --format=tar "$COMMIT" scripts src assets | tar -xf - -C "$LOCAL_ARCHIVE_DIR"
+LOCAL_MANIFEST=$(python3 - "$LOCAL_ARCHIVE_DIR" <<'LOCAL_MANIFEST_PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+manifest = {}
+for component in ("scripts", "src", "assets"):
+    base = root / component
+    for path in (base, *base.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        info = path.lstat()
+        mode = stat.S_IMODE(info.st_mode)
+        if path.is_symlink():
+            manifest[relative] = {"type": "symlink", "target": os.readlink(path), "mode": mode}
+        elif path.is_dir():
+            manifest[relative] = {"type": "dir", "mode": mode}
+        elif path.is_file():
+            manifest[relative] = {
+                "type": "file",
+                "mode": mode,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        else:
+            manifest[relative] = {"type": "other", "mode": mode}
+print(json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+LOCAL_MANIFEST_PY
+)
+
 ssh "$HOST" "touch '$DISABLED'; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
 DISABLED_TOUCHED=1
 ssh "$HOST" "test ! -e '$STAGE' && test ! -e '$BACKUP' && mkdir '$STAGE'"
 STAGE_CREATED=1
 
-# `git archive` is the deployment source of truth: only HEAD-tracked bytes can
+# `git archive` is the deployment source of truth: only COMMIT-tracked bytes can
 # enter staging. assets/ is intentionally replaced as a repo-owned tree; private
 # enrollment WAVs and the CAM++ model live outside repo/.
-git archive --format=tar HEAD scripts src assets | ssh "$HOST" "tar -xf - -C '$STAGE'"
+git archive --format=tar "$COMMIT" scripts src assets | ssh "$HOST" "tar -xf - -C '$STAGE'"
 
-LOCAL_MANIFEST=$(git ls-files -z scripts src assets | python3 -c '
-import hashlib, pathlib, sys
-paths = sorted(p.decode() for p in sys.stdin.buffer.read().split(b"\0") if p)
-for value in paths:
-    path = pathlib.Path(value)
-    print(hashlib.sha256(path.read_bytes()).hexdigest(), value)
-')
-REMOTE_MANIFEST=$(ssh "$HOST" "cd '$STAGE' && python3 -" <<'REMOTE_MANIFEST_PY'
+REMOTE_MANIFEST=$(ssh "$HOST" python3 - "$STAGE" <<'REMOTE_MANIFEST_PY'
 import hashlib
+import json
+import os
+import stat
+import sys
 from pathlib import Path
 
-paths = sorted(
-    path
-    for root in (Path("scripts"), Path("src"), Path("assets"))
-    for path in root.rglob("*")
-    if path.is_file()
-)
-for path in paths:
-    print(hashlib.sha256(path.read_bytes()).hexdigest(), path.as_posix())
+root = Path(sys.argv[1])
+manifest = {}
+for component in ("scripts", "src", "assets"):
+    base = root / component
+    for path in (base, *base.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        info = path.lstat()
+        mode = stat.S_IMODE(info.st_mode)
+        if path.is_symlink():
+            manifest[relative] = {"type": "symlink", "target": os.readlink(path), "mode": mode}
+        elif path.is_dir():
+            manifest[relative] = {"type": "dir", "mode": mode}
+        elif path.is_file():
+            manifest[relative] = {
+                "type": "file",
+                "mode": mode,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        else:
+            manifest[relative] = {"type": "other", "mode": mode}
+print(json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 REMOTE_MANIFEST_PY
 )
 if [ "$LOCAL_MANIFEST" != "$REMOTE_MANIFEST" ]; then
@@ -403,6 +452,8 @@ install_atomic() {
     source=$1
     destination=$2
     mode=$3
+    test -f "$source"
+    test ! -L "$source"
     mkdir -p "$(dirname "$destination")"
     tmp=$destination.deploy.$$
     cp "$source" "$tmp"
@@ -410,6 +461,9 @@ install_atomic() {
     test "$(sha256sum "$source" | awk '{print $1}')" = "$(sha256sum "$tmp" | awk '{print $1}')"
     mv -f "$tmp" "$destination"
     tmp=
+    test -f "$destination"
+    test ! -L "$destination"
+    test "$(stat -c '%a' "$destination")" = "$mode"
     test "$(sha256sum "$source" | awk '{print $1}')" = "$(sha256sum "$destination" | awk '{print $1}')"
 }
 install_atomic \
@@ -420,31 +474,52 @@ install_atomic \
     /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
     /opt/bilive/app/tmp_manual_upload/do_upload.sh \
     700
-if ! crontab -l 2>/dev/null | grep -q free_mount_watchdog; then
-    (crontab -l 2>/dev/null; echo "*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1") | crontab -
-    echo "watchdog cron installed"
-fi
+watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
+existing_crontab=$(crontab -l 2>/dev/null || true)
+{
+    printf '%s\n' "$existing_crontab" | grep -Fv '/opt/bilive/autoslice/free_mount_watchdog.sh' || true
+    printf '%s\n' "$watchdog_cron"
+} | crontab -
+crontab -l | grep -Fxq "$watchdog_cron"
+test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
 REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one
-LOCAL_MD5=$(md5 -q scripts/free_session_autoslice.py 2>/dev/null || md5sum scripts/free_session_autoslice.py | cut -d' ' -f1)
+LOCAL_MD5=$(md5 -q "$LOCAL_ARCHIVE_DIR/scripts/free_session_autoslice.py" 2>/dev/null || md5sum "$LOCAL_ARCHIVE_DIR/scripts/free_session_autoslice.py" | cut -d' ' -f1)
 REMOTE_MD5=$(ssh "$HOST" "md5sum /opt/bilive/autoslice/repo/scripts/free_session_autoslice.py" | cut -d' ' -f1)
 if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
     echo "DEPLOY VERIFY FAILED: runner md5 mismatch (local $LOCAL_MD5 remote $REMOTE_MD5)" >&2
     exit 3
 fi
-REMOTE_DEPLOYED_MANIFEST=$(ssh "$HOST" "cd '$REMOTE_REPO' && python3 -" <<'REMOTE_DEPLOYED_MANIFEST_PY'
+REMOTE_DEPLOYED_MANIFEST=$(ssh "$HOST" python3 - "$REMOTE_REPO" <<'REMOTE_DEPLOYED_MANIFEST_PY'
 import hashlib
+import json
+import os
+import stat
+import sys
 from pathlib import Path
 
-paths = sorted(
-    path
-    for root in (Path("scripts"), Path("src"), Path("assets"))
-    for path in root.rglob("*")
-    if path.is_file()
-)
-for path in paths:
-    print(hashlib.sha256(path.read_bytes()).hexdigest(), path.as_posix())
+root = Path(sys.argv[1])
+manifest = {}
+for component in ("scripts", "src", "assets"):
+    base = root / component
+    for path in (base, *base.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        info = path.lstat()
+        mode = stat.S_IMODE(info.st_mode)
+        if path.is_symlink():
+            manifest[relative] = {"type": "symlink", "target": os.readlink(path), "mode": mode}
+        elif path.is_dir():
+            manifest[relative] = {"type": "dir", "mode": mode}
+        elif path.is_file():
+            manifest[relative] = {
+                "type": "file",
+                "mode": mode,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        else:
+            manifest[relative] = {"type": "other", "mode": mode}
+print(json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 REMOTE_DEPLOYED_MANIFEST_PY
 )
 if [ "$LOCAL_MANIFEST" != "$REMOTE_DEPLOYED_MANIFEST" ]; then
