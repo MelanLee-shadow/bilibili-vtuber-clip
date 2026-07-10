@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Mapping
 
@@ -188,13 +189,20 @@ def normalize_judgment(payload: Mapping[str, object]) -> dict[str, object]:
 
 def judge_request(request, llm_call: LlmCall, *, provider_label: str, retries: int = 1) -> CpaSemanticQaResponse:
     last_error: Exception | None = None
-    for _attempt in range(retries + 1):
+    for attempt in range(retries + 1):
         try:
             completion = llm_call(build_judge_prompt(request))
             judgment = normalize_judgment(extract_json_object(completion))
             break
         except LlmCallError as exc:
             last_error = exc
+            if attempt < retries:
+                # Rate limits (429) and transient 5xx need real BACKOFF — four
+                # instant retries all land inside the same limit window
+                # (2026-07-10 luna probe).  15s → 30s → 60s, capped.
+                message = str(exc)
+                throttled = any(code in message for code in ("429", "500", "502", "503", "504"))
+                time.sleep(min(60.0, (15.0 if throttled else 3.0) * (2 ** attempt)))
     else:
         raise LlmCallError(f"LLM judge failed after {retries + 1} attempts: {last_error}")
     return CpaSemanticQaResponse(
