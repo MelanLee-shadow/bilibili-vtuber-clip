@@ -1,5 +1,6 @@
 """Unit tests for the unattended runner's pure helpers (first-real-run lessons)."""
 import json
+import hashlib
 
 import scripts.free_session_autoslice as runner
 from scripts.free_session_autoslice import (
@@ -158,15 +159,21 @@ def test_cover_ref_prefers_clean_producer_frame(tmp_path, monkeypatch):
 
 
 def test_cover_repair_needed_for_delivered_song(tmp_path, monkeypatch):
+    """Ivan 2026-07-10：交付了的歌就该有封面——语义判定(BLOCK/reason codes)不再
+    锁死补封面；没交付的(blocked)自然没有 delivered，永远不补。"""
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     delivery = tmp_path / "lidousha" / "2026-07-06"
     delivery.mkdir(parents=True)
     (delivery / "歌切_嘉宾.mp4").write_bytes(b"mp4")
-    rec = {"candidate_id": "song_1", "status": "ok", "title": "【李豆沙】《嘉宾》",
-           "delivered": str(delivery / "歌切_嘉宾.mp4")}
-    assert cover_repair_needed("2026-07-06", rec)
+    rec = {"candidate_id": "song_1", "status": "review_ready", "title": "【李豆沙】《嘉宾》",
+           "delivered": str(delivery / "歌切_嘉宾.mp4"), "decision": "BLOCK",
+           "reason_codes": ["ADVISORY_NO_NATURAL_CLOSURE"]}
+    assert cover_repair_needed("2026-07-06", rec)  # 交付但语义BLOCK → 照样补封面
     (delivery / "歌切_嘉宾.cover.png").write_bytes(b"png")
     assert not cover_repair_needed("2026-07-06", rec)
+    # 未交付(门拦)的歌永远不补封面
+    assert not cover_repair_needed("2026-07-06", {"candidate_id": "song_2", "status": "blocked",
+                                                  "title": "x", "decision": "BLOCK"})
 
 
 def test_produce_batch_preserves_order_and_isolates_crashes():
@@ -231,6 +238,79 @@ def test_song_status_words():
     assert runner.song_status(1, False) == "failed"
     assert runner.song_status(0, True) == "review_ready"
     assert runner.song_status(0, False) == "blocked"
+
+
+def test_song_delivery_artifacts_extraction_with_hashes():
+    record = {
+        "decision_action": "BLOCK",  # semantic decision must NOT gate extraction
+        "reason_codes": ["CPA_SEMANTIC_INCOMPLETE", "ADVISORY_NO_NATURAL_CLOSURE"],
+        "title": "fallback",
+        "materialized_recut": {
+            "cover_release_gate": {
+                "satisfied": True,
+                "path": "/current/gate.json",
+                "artifact_hashes": {"burned_video_sha256": "sha256:" + "a" * 64},
+            },
+            "burned_preview": {"status": "BURNED", "path": "/current/video.mp4"},
+            "artifact_hashes": {"cover_sha256": "sha256:" + "b" * 64},
+            "publish_staging": {
+                "status": "STAGED",
+                "title": "【李豆沙】本次歌切",
+                "cover_path": "/current/cover.png",
+            },
+        },
+    }
+    assert runner.song_delivery_artifacts(record) == {
+        "video_path": "/current/video.mp4",
+        "video_sha256": "sha256:" + "a" * 64,
+        "cover_path": "/current/cover.png",
+        "cover_sha256": "sha256:" + "b" * 64,
+        "title": "【李豆沙】本次歌切",
+        "release_gate_path": "/current/gate.json",
+        "cover_release_gate_satisfied": True,
+    }
+
+
+def test_song_delivery_artifacts_video_survives_unsatisfied_cover_gate():
+    """Cover gate unsatisfied = 还没出封面，不等于不是歌：video 物料必须照常
+    可提取（封面由 repair_covers 事后补）。"""
+    record = {
+        "decision_action": "AUTO_UPLOAD",
+        "reason_codes": [],
+        "materialized_recut": {
+            "cover_release_gate": {"satisfied": False},
+            "burned_preview": {"status": "BURNED", "path": "/current/video.mp4"},
+            "publish_staging": {"status": "STAGED", "cover_path": "/pending/cover.png"},
+        },
+    }
+    artifacts = runner.song_delivery_artifacts(record)
+    assert artifacts["video_path"] == "/current/video.mp4"
+    assert artifacts["cover_release_gate_satisfied"] is False
+    assert runner.song_delivery_artifacts({}) == {}
+
+
+def test_song_delivery_rule_final():
+    """Ivan 2026-07-10 最终规则：至多2个按弹幕排序（prioritize/refill 管）；
+    是歌+唱完整就交付；语义判定只是参考。没唱完整(SONG_PARTIAL)不强行切。"""
+    semantic_noise = ["END_BOUNDARY_LOW", "CPA_SEMANTIC_INCOMPLETE",
+                      "VIEWER_CONTEXT_INCOMPLETE", "ADVISORY_NO_NATURAL_CLOSURE"]
+    assert runner.song_delivery_ok(True, semantic_noise) is True   # 语义码不拦
+    assert runner.song_delivery_ok(True, []) is True
+    assert runner.song_delivery_ok(True, semantic_noise + ["SONG_PARTIAL"]) is False  # 没唱完整不切
+    assert runner.song_delivery_ok(False, []) is False             # 不是歌不切
+    assert runner.song_delivery_ok(True, None) is True
+
+
+def test_song_artifact_hash_check_rejects_mutation_and_symlink(tmp_path):
+    artifact = tmp_path / "current.mp4"
+    artifact.write_bytes(b"current")
+    digest = "sha256:" + hashlib.sha256(b"current").hexdigest()
+    assert runner._matches_sha256(artifact, digest)
+    artifact.write_bytes(b"mutated")
+    assert not runner._matches_sha256(artifact, digest)
+    link = tmp_path / "link.mp4"
+    link.symlink_to(artifact)
+    assert not runner._matches_sha256(link, "sha256:" + hashlib.sha256(b"mutated").hexdigest())
 
 
 def test_blocked_songs_do_not_consume_budget_and_backlog_backfills():

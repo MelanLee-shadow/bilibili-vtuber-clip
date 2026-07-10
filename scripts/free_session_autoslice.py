@@ -73,6 +73,7 @@ Deployment (free):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -644,11 +645,67 @@ def _song_core_span(srt_path: Path, lo_ms: int, hi_ms: int,
 
 def song_status(rc: int, delivered: bool) -> str:
     """Honest song-lane status words (2026-07-09 audit): the selector exiting 0
-    only means the PIPELINE ran; without a delivery that is the completeness
-    gate BLOCKING — success of the gate, not of the song."""
+    only means the PIPELINE ran.  blocked = not a song / performance incomplete
+    / no materialized artifact — never 'ok'."""
     if rc != 0:
         return "failed"
     return "review_ready" if delivered else "blocked"
+
+
+def song_delivery_ok(is_song: bool, reason_codes) -> bool:
+    """Ivan's FINAL song rule (2026-07-10): at most MAX_SONGS_PER_DATE per date,
+    danmaku-desc; a song is delivered when the window IS a song and the
+    performance is COMPLETE.  An unfinished song (SONG_PARTIAL) is never
+    force-cut.  Everything else the semantic judge flags (closure, viewer
+    context, boundary style, AUTO_UPLOAD/BLOCK itself) is reviewer REFERENCE,
+    not a delivery gate."""
+    return bool(is_song) and "SONG_PARTIAL" not in (reason_codes or [])
+
+
+def song_delivery_artifacts(record: dict) -> dict:
+    """Best-known materialized artifacts for a song record, with sha256 hashes
+    whenever the pipeline recorded them (hash hygiene stays; SEMANTIC gating
+    does not — the delivery decision is song_delivery_ok).  A missing/blocked
+    cover never blocks the video: covers are generated after the release gate
+    now, and repair_covers backfills delivered clips."""
+    recut = record.get("materialized_recut")
+    if not isinstance(recut, dict):
+        return {}
+    out: dict = {}
+    burned = recut.get("burned_preview")
+    if isinstance(burned, dict) and burned.get("status") == "BURNED" and burned.get("path"):
+        out["video_path"] = str(burned["path"])
+    gate = recut.get("cover_release_gate")
+    if isinstance(gate, dict):
+        out["cover_release_gate_satisfied"] = gate.get("satisfied")
+        out["release_gate_path"] = str(gate.get("path") or "")
+        gate_hashes = gate.get("artifact_hashes")
+        if isinstance(gate_hashes, dict) and gate_hashes.get("burned_video_sha256"):
+            out["video_sha256"] = str(gate_hashes["burned_video_sha256"])
+    staging = recut.get("publish_staging")
+    if isinstance(staging, dict) and staging.get("status") == "STAGED":
+        if staging.get("title") or record.get("title"):
+            out["title"] = str(staging.get("title") or record.get("title") or "")
+        if staging.get("cover_path"):
+            out["cover_path"] = str(staging["cover_path"])
+            recut_hashes = recut.get("artifact_hashes")
+            if isinstance(recut_hashes, dict) and recut_hashes.get("cover_sha256"):
+                out["cover_sha256"] = str(recut_hashes["cover_sha256"])
+    return out
+
+
+def _matches_sha256(path: Path, expected: str) -> bool:
+    expected = expected.removeprefix("sha256:").lower()
+    if path.is_symlink() or len(expected) != 64 or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return False
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return False
+    return digest.hexdigest() == expected
 
 
 def produce_song(date: str, item: dict) -> dict:
@@ -723,11 +780,15 @@ def produce_song(date: str, item: dict) -> dict:
         decision = None
         reasons: list = []
         is_song = False
+        summary_record: dict = {}
         summary_path = selector_dir / "summary.json"
         if summary_path.is_file():
             try:
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
                 for entry in summary.get("records", []) if isinstance(summary, dict) else []:
+                    if not isinstance(entry, dict):
+                        continue
+                    summary_record = entry
                     decision = entry.get("decision_action") or decision
                     reasons = list(entry.get("reason_codes") or reasons)
                     job = entry.get("source_context_job") or {}
@@ -737,22 +798,43 @@ def produce_song(date: str, item: dict) -> dict:
         result["decision"] = decision
         result["reason_codes"] = reasons
         result["window_classified_song"] = is_song
-        for publish in sorted(selector_dir.glob("**/replacement_recuts/*.publish.json")):
-            try:
-                result["title"] = json.loads(publish.read_text(encoding="utf-8")).get("title")
-            except (OSError, ValueError):
-                pass
-        burned = sorted(selector_dir.glob("**/replacement_recuts/*.burned-final-sapphire72.mp4"))
-        covers = sorted(selector_dir.glob("**/covers/*.cover.png"))
-        if decision == "AUTO_UPLOAD" and burned:
+        artifacts = song_delivery_artifacts(summary_record)
+        if artifacts.get("title"):
+            result["title"] = artifacts["title"]
+        if not result.get("title"):  # pre-gate-era summaries carry no staging title
+            for publish in sorted(selector_dir.glob("**/replacement_recuts/*.publish.json")):
+                try:
+                    result["title"] = json.loads(publish.read_text(encoding="utf-8")).get("title")
+                except (OSError, ValueError):
+                    pass
+        # Burned video: summary-recorded path first, hash-verified WHEN the
+        # pipeline recorded a hash (drift → refuse the stale artifact, loudly);
+        # glob fallback covers pre-gate-era selector outputs.
+        burned = Path(artifacts["video_path"]) if artifacts.get("video_path") else None
+        if burned is not None and artifacts.get("video_sha256") and not _matches_sha256(burned, artifacts["video_sha256"]):
+            log(f"song lane {cid}: burned video hash drift since materialization — refusing stale artifact")
+            burned = None
+        if burned is None or not burned.is_file():
+            globbed = sorted(selector_dir.glob("**/replacement_recuts/*.burned-final-sapphire72.mp4"))
+            burned = globbed[0] if globbed else None
+        cover = Path(artifacts["cover_path"]) if artifacts.get("cover_path") else None
+        cover_ok = bool(cover is not None and cover.is_file() and (
+            not artifacts.get("cover_sha256") or _matches_sha256(cover, artifacts["cover_sha256"])))
+        if not cover_ok:
+            globbed_covers = sorted(selector_dir.glob("**/covers/*.cover.png"))
+            cover, cover_ok = (globbed_covers[-1], True) if globbed_covers else (None, False)
+        result["song_complete"] = "SONG_PARTIAL" not in (reasons or [])
+        if "cover_release_gate_satisfied" in artifacts:
+            result["cover_release_gate_satisfied"] = artifacts["cover_release_gate_satisfied"]
+        if burned is not None and burned.is_file() and song_delivery_ok(is_song, reasons):
             delivery = REPO_ROOT / "lidousha" / date
             delivery.mkdir(parents=True, exist_ok=True)
             import shutil
 
             name = safe_name("歌切_" + (result.get("title") or item.get("hook") or ""), f"歌切_{cid}")
-            shutil.copy2(burned[0], delivery / f"{name}.mp4")
-            if covers:
-                shutil.copy2(covers[-1], delivery / f"{name}.cover.png")
+            shutil.copy2(burned, delivery / f"{name}.mp4")
+            if cover_ok and cover is not None:
+                shutil.copy2(cover, delivery / f"{name}.cover.png")
             result["delivered"] = str(delivery / f"{name}.mp4")
         result["status"] = song_status(completed.returncode, bool(result.get("delivered")))
         return result
@@ -798,6 +880,10 @@ def cover_ref_for(date: str, cid: str) -> Path | None:
 
 
 def cover_repair_needed(date: str, rec: dict) -> bool:
+    # Delivered = passed the delivery gate (for songs: is-song + complete, see
+    # song_delivery_ok) — every delivered clip deserves a cover, regardless of
+    # what the ADVISORY semantic judge said (Ivan 2026-07-10).  Blocked/failed
+    # records have no delivery and never get covers.
     delivered = rec.get("status") in DELIVERED_TALK_STATUSES or bool(rec.get("delivered"))
     if not delivered or not rec.get("title"):
         return False
@@ -899,7 +985,7 @@ def write_reports(date: str, state: dict) -> None:
             f"| {s.get('boundary_verdict') or '?'} "
             f"| {pick.get('cover_status') or s.get('cover_status') or '?'} |"
         )
-    lines += ["", f"## 歌切（每场至多 {MAX_SONGS_PER_DATE} 交付，弹幕最高优先；被门拦不占配额、自动从备份回填；LRC 完整性门 fail-closed）", ""]
+    lines += ["", f"## 歌切（至多 {MAX_SONGS_PER_DATE} 个、按弹幕量排序；没唱完整的歌不切(SONG_PARTIAL 不交付)；语义判定仅作参考不拦交付；被拦不占配额、备份自动回填）", ""]
     if songs:
         lines += ["| 歌 | 弹幕 | 门判定 | 原因码 | 标题 | 交付 |", "|---|---|---|---|---|---|"]
         for song in songs:
