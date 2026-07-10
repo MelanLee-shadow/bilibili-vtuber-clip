@@ -142,6 +142,56 @@ def resolve_ambiguous_labels(
     return [str(label) for label in result], sources
 
 
+def _reviewed_context_votes(
+    override_document: Mapping[str, object],
+    *,
+    cue_count: int,
+) -> dict[int, str]:
+    """Load hash-bound, human-accepted context votes from an override asset.
+
+    The JSON uses one-based cue numbers; the analyzer uses zero-based indices.
+    These votes stabilize only an already reviewed clip.  New clips continue to
+    use the normal whole-clip context judge.
+    """
+
+    raw = override_document.get("reviewed_context_votes")
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise SpeakerFinalizationError("reviewed_context_votes must be an object")
+    labels = raw.get("labels")
+    if not isinstance(labels, Mapping) or not labels:
+        raise SpeakerFinalizationError("reviewed_context_votes.labels must be a non-empty object")
+    if not str(raw.get("authority") or "").strip():
+        raise SpeakerFinalizationError("reviewed_context_votes.authority must be non-empty")
+    expected_source = str(override_document.get("source_srt_sha256") or "")
+    bound_source = str(raw.get("source_automatic_srt_sha256") or "")
+    if not expected_source or not bound_source:
+        raise SpeakerFinalizationError(
+            "reviewed context votes require source_srt_sha256 and source_automatic_srt_sha256"
+        )
+    if expected_source != bound_source:
+        raise SpeakerFinalizationError("reviewed context vote source hash does not match source_srt_sha256")
+
+    votes: dict[int, str] = {}
+    for cue_number_raw, speaker_raw in labels.items():
+        try:
+            cue_number = int(str(cue_number_raw))
+        except ValueError as exc:
+            raise SpeakerFinalizationError(
+                f"reviewed context cue number is invalid: {cue_number_raw!r}"
+            ) from exc
+        speaker = str(speaker_raw)
+        if not 1 <= cue_number <= cue_count:
+            raise SpeakerFinalizationError(f"reviewed context cue is out of range: {cue_number}")
+        if speaker not in {"李豆沙", "连线"}:
+            raise SpeakerFinalizationError(
+                f"reviewed context speaker is invalid for cue {cue_number}: {speaker!r}"
+            )
+        votes[cue_number - 1] = speaker
+    return votes
+
+
 def _context_prompt(cues: Sequence[TextCue], labels: Sequence[str | None], ambiguous: Sequence[int]) -> str:
     rows = [
         f"{index}. [{label or '待定'}] {cue.text}"
@@ -283,6 +333,7 @@ def _run_campplus_analysis(
     model_dir: Path,
     work_dir: Path,
     context_call: Callable[[str], str] | None,
+    reviewed_context_votes: Mapping[int, str] | None = None,
 ) -> dict[str, object]:
     work_dir.mkdir(parents=True, exist_ok=True)
     profile, references, model_hash, verifier = _load_runtime(profile_path, reference_dir, model_dir)
@@ -405,10 +456,15 @@ def _run_campplus_analysis(
         else:
             labels.append("李豆沙" if margin >= threshold else "连线")
 
-    votes: dict[int, str] = {}
+    reviewed_votes = {
+        index: speaker
+        for index, speaker in (reviewed_context_votes or {}).items()
+        if index in ambiguous and speaker in {"李豆沙", "连线"}
+    }
+    votes: dict[int, str] = dict(reviewed_votes)
     context_errors: list[str] = []
     context_attempts = 0
-    if ambiguous and context_call is not None:
+    if any(index not in votes for index in ambiguous) and context_call is not None:
         # Retry incomplete answers as well as transport failures. Production
         # readiness still requires every ambiguous cue to have either a context
         # vote or a hash-bound human override.
@@ -423,7 +479,9 @@ def _run_campplus_analysis(
                 for row in rows:
                     cue_index = int(row["n"]) - 1
                     speaker = str(row["speaker"])
-                    if cue_index in ambiguous and speaker in {"李豆沙", "连线"}:
+                    # A context reply may include rows that were not requested.
+                    # Never let it overwrite a frozen reviewed vote.
+                    if cue_index in pending and speaker in {"李豆沙", "连线"}:
                         votes[cue_index] = speaker
                 if all(index in votes for index in ambiguous):
                     break
@@ -431,6 +489,9 @@ def _run_campplus_analysis(
                 context_errors.append(f"{type(exc).__name__}: {exc}")
     unresolved_context = [index for index in ambiguous if index not in votes]
     resolved, sources = resolve_ambiguous_labels(labels, margins, threshold, votes)
+    for index in reviewed_votes:
+        if index in ambiguous:
+            sources[index] = "reviewed_context_vote"
 
     # Smooth only acoustically ambiguous one-cue islands; never override a
     # whole-clip context judgement or confident audio label.
@@ -456,6 +517,9 @@ def _run_campplus_analysis(
         "context_attempts": context_attempts,
         "context_errors": context_errors,
         "context_votes": {str(index + 1): speaker for index, speaker in votes.items()},
+        "reviewed_context_votes": {
+            str(index + 1): speaker for index, speaker in reviewed_votes.items()
+        },
         "context_required_cues": [index + 1 for index in ambiguous],
         "context_unresolved_cues": [index + 1 for index in unresolved_context],
         "decisions": [
@@ -491,6 +555,30 @@ def finalize_speaker_subtitles(
     media_path = media_path.resolve(strict=True)
     text_srt_path = text_srt_path.resolve(strict=True)
     cues = parse_srt(text_srt_path)
+    override_document: dict[str, object] | None = None
+    reviewed_votes: dict[int, str] = {}
+    expected_automatic = ""
+    if override_path is not None:
+        loaded = json.loads(override_path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            raise SpeakerFinalizationError("speaker override document must be an object")
+        override_document = loaded
+        expected_text = str(override_document.get("text_final_srt_sha256") or "")
+        expected_automatic = str(override_document.get("source_srt_sha256") or "")
+        expected_media = str(override_document.get("source_media_sha256") or "")
+        actual_text = sha256_file(text_srt_path)
+        actual_media = sha256_file(media_path)
+        if not expected_media:
+            raise SpeakerFinalizationError("speaker override is missing source_media_sha256")
+        if expected_media != actual_media:
+            raise SpeakerFinalizationError(
+                f"speaker override media hash mismatch: expected {expected_media!r}, got {actual_media!r}"
+            )
+        if expected_text and expected_text != actual_text:
+            raise SpeakerFinalizationError(
+                f"speaker override text-final hash mismatch: expected {expected_text!r}, got {actual_text!r}"
+            )
+        reviewed_votes = _reviewed_context_votes(override_document, cue_count=len(cues))
     analysis = analyzer(
         media_path=media_path,
         cues=cues,
@@ -499,6 +587,7 @@ def finalize_speaker_subtitles(
         model_dir=model_dir,
         work_dir=work_dir,
         context_call=context_call,
+        reviewed_context_votes=reviewed_votes,
     )
     decisions = analysis.get("decisions")
     if not isinstance(decisions, list) or len(decisions) != len(cues):
@@ -521,30 +610,9 @@ def finalize_speaker_subtitles(
     automatic_srt = work_dir / "automatic-labelled.srt"
     write_srt(automatic, automatic_srt)
     final_cues = automatic
-    override_document: dict[str, object] | None = None
-    if override_path is not None:
-        override_document = json.loads(override_path.read_text(encoding="utf-8"))
-        expected_text = str(override_document.get("text_final_srt_sha256") or "")
-        expected_automatic = str(override_document.get("source_srt_sha256") or "")
-        expected_media = str(override_document.get("source_media_sha256") or "")
-        actual_text = sha256_file(text_srt_path)
+    if override_document is not None:
         actual_automatic = sha256_file(automatic_srt)
-        actual_media = sha256_file(media_path)
-        if not expected_media:
-            raise SpeakerFinalizationError("speaker override is missing source_media_sha256")
-        if expected_media != actual_media:
-            raise SpeakerFinalizationError(
-                f"speaker override media hash mismatch: expected {expected_media!r}, got {actual_media!r}"
-            )
-        if expected_text:
-            if expected_text != actual_text:
-                raise SpeakerFinalizationError(
-                    f"speaker override text-final hash mismatch: expected {expected_text!r}, got {actual_text!r}"
-                )
-        elif expected_automatic != actual_automatic:
-            # Legacy v10 documents bind the exact labelled source.  New
-            # production documents bind the stable text-final SRT because the
-            # context judge is allowed to improve labels outside reviewed cues.
+        if expected_automatic and expected_automatic != actual_automatic:
             raise SpeakerFinalizationError(
                 f"speaker override source hash mismatch: expected {expected_automatic!r}, got {actual_automatic!r}"
             )
