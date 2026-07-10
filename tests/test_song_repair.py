@@ -262,6 +262,68 @@ def test_audio_identity_collapses_same_song_provider_variants_and_prefers_lrclib
     assert chosen.source_ref == "https://lrclib.net/api/get/33542202"
 
 
+@pytest.mark.parametrize("pinned_first", [True, False])
+def test_audio_identity_prefers_single_curated_identity_on_exact_recall_tie(pinned_first):
+    pinned = _japanese_lrc()
+    tied_variant = LrcResult(
+        provider="netease",
+        song_title="芽吹くとき Studio Live Ver.",
+        artist="別名義",
+        source_ref="netease://song/999",
+        lines=tuple(LrcLine(line.time_ms + 25, line.text) for line in pinned.lines),
+    )
+    ranked = [(0.79, pinned, []), (0.79, tied_variant, [])]
+    if not pinned_first:
+        ranked.reverse()
+
+    chosen = _choose_audio_lrc_candidate(
+        ranked,
+        pinned_lrc_results=(pinned,),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == pinned.source_ref
+
+
+def test_audio_identity_does_not_let_curated_near_tie_override_stronger_unpinned_identity():
+    pinned = _japanese_lrc()
+    stronger = LrcResult(
+        provider="netease",
+        song_title="different song",
+        artist="different artist",
+        source_ref="netease://song/1000",
+        lines=tuple(LrcLine(line.time_ms + 25, line.text) for line in pinned.lines),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.79, stronger, []), (0.78, pinned, [])],
+            pinned_lrc_results=(pinned,),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_rejects_exact_tie_between_two_curated_identities():
+    first = _japanese_lrc()
+    second = LrcResult(
+        provider="netease",
+        song_title="different pinned song",
+        artist="different artist",
+        source_ref="netease://song/1001",
+        lines=tuple(LrcLine(line.time_ms + 25, line.text) for line in first.lines),
+    )
+
+    with pytest.raises(ValueError, match="multiple pinned songs"):
+        _choose_audio_lrc_candidate(
+            [(0.79, first, []), (0.79, second, [])],
+            pinned_lrc_results=(first, second),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
 def test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof(tmp_path):
     lrc = _japanese_lrc()
     run = _write_fake_audio_alignment_run(tmp_path, lrc)

@@ -1389,23 +1389,36 @@ def _choose_audio_lrc_candidate(
         groups.setdefault(find(index), []).append(entry)
     if not groups:
         raise ValueError("no canonical LRC identity is available for audio alignment")
-    grouped = sorted(
-        (
-            max(item[0] for item in entries),
-            fingerprint,
-            entries,
-        )
-        for fingerprint, entries in groups.items()
-    )
-    grouped.reverse()
-    top_ratio, _top_group, top_entries = grouped[0]
-    second_ratio = grouped[1][0] if len(grouped) > 1 else 0.0
     pinned_identities = {_lrc_identity_key(item) for item in pinned_lrc_results}
     pinned_fingerprints = {_lrc_fingerprint(item) for item in pinned_lrc_results}
-    is_curated = any(
-        _lrc_identity_key(item) in pinned_identities or _lrc_fingerprint(item) in pinned_fingerprints
-        for _ratio, item in top_entries
-    )
+    grouped = [
+        (
+            max(item[0] for item in group_entries),
+            any(
+                _lrc_identity_key(item) in pinned_identities or _lrc_fingerprint(item) in pinned_fingerprints
+                for _ratio, item in group_entries
+            ),
+            min(item.source_ref for _ratio, item in group_entries),
+            group_entries,
+        )
+        for group_entries in groups.values()
+    ]
+    # Recall remains the primary authority.  For an *exact* top-recall tie,
+    # prefer the one identity already pinned by >=2 known-song fingerprint
+    # lines.  Previously the disjoint-set root index broke ties, so the real
+    # 《屑屑》 pin could lose arbitrarily to a Studio Live/provider variant with
+    # the same 41/52 ASR recall and the audio verifier was never reached.
+    grouped.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    top_ratio, is_curated, _top_key, top_entries = grouped[0]
+    second_ratio = grouped[1][0] if len(grouped) > 1 else 0.0
+    curated_top_ties = [
+        group for group in grouped if group[0] == top_ratio and group[1]
+    ]
+    if len(curated_top_ties) > 1:
+        raise ValueError(
+            "ambiguous curated LRC identity: multiple pinned songs share the best ASR recall; "
+            "refusing to choose one before audio verification"
+        )
     if is_curated:
         if top_ratio < 0.08:
             raise ValueError(
