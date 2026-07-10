@@ -850,3 +850,15 @@ def test_record_is_song_recognizes_non_lrc_songs():
     assert runner.record_is_song({"candidate_id": "seeded", "source_context_job": {"requires_full_source_song_boundary_redo": True}})
     assert not runner.record_is_song({"candidate_id": "semantictalk_3320_50570_ctxexp", "source_context_job": {}})
     assert not runner.record_is_song({})
+
+
+def test_cpa_qa_cmd_reads_cpa_env_for_direct_produce_song_entrypoint(tmp_path, monkeypatch):
+    cpa_env = tmp_path / "cpa.env"
+    cpa_env.write_text("CPA_BASE_URL=https://cpa.example.test/v1\nCPA_API_KEY=not-used-in-argv\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "CPA_ENV", cpa_env)
+    monkeypatch.setenv("CPA_BASE_URL", "https://stale-environment.invalid/v1")
+
+    command = runner.cpa_qa_cmd()
+
+    assert "--api-base https://cpa.example.test/v1" in command
+    assert "not-used-in-argv" not in command

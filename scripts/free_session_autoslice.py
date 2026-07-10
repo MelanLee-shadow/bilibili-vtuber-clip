@@ -142,7 +142,15 @@ CPA_CMD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
 
 
 def cpa_qa_cmd() -> str:
-    base = os.environ.get("CPA_BASE_URL", "").rstrip("/")
+    # ``produce_song`` is also a supported/manual repair entry point and does
+    # not pass through ``main()``, which injects cpa.env into os.environ.  Read
+    # the same credential file as child_env() so the judge command and its
+    # subprocess environment cannot disagree (empty --api-base used to make a
+    # manual rerun die in argparse before song proof even started).
+    env_file = load_env_file(CPA_ENV)
+    base = (env_file.get("CPA_BASE_URL") or os.environ.get("CPA_BASE_URL") or "").rstrip("/")
+    if not base:
+        raise RuntimeError(f"CPA_BASE_URL missing from environment and {CPA_ENV}")
     return (
         "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
         f"--transport direct --model gpt-5.4-mini --api-base {base} --api-key-env CPA_API_KEY"
