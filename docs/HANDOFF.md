@@ -3,6 +3,34 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-10：Ivan 审片点名执行（7 补产＋3 改标题＋淘汰）+ CPA 默认模型切 gpt-5.6
+
+### 目标
+
+Ivan 点名 7/9 落选预览 **01/02/03/04/06/07/15** 按其手定标题出成品、已产 3 条改标题（传话员→沙豆李 / 聋哑盲→黑白小猪 / 猜0→数字零）、未点名一律淘汰、**暂不上传**；出成品前把 CPA 默认模型按任务复杂度切到 **gpt-5.6 家族**（sol/terra/luna 分级、配 effort、留 5.5 fallback）。
+
+### 已完成
+
+- **CPA 模型切换（commit `beb4f13`，381 tests 全绿）**：`llm_via_cpa.sh` 增 argv 3/4（每站点模型链+effort，arg>env>默认，默认链 `gpt-5.6-sol→5.5→5.4`）。分级（Ivan challenge 后定稿）：sol/medium=语义召回+字幕校正裁决（prompt 大，high 会顶 curl 180s 单次上限）、sol/high=标题（短 prompt 单次）、**terra**/medium=歌名提示（known_songs 钉歌兜底，不承重）+封面 art direction（结构化 fail-open）。**gpt-5.6-luna 在 CPA 上 auth_unavailable（providers=codex 无权限）**，放开后 art direction 是首个切换位。语义 QA judge 仍 `gpt-5.4-mini`（direct transport 是 chat 形，5.6 Responses-only 会误路由，动它需先改 transport）。健康探针改走生产链（sol→5.5→5.4）。**免部署生效**：free `cpa.env` 已加 `CPA_CHAT_MODELS`（部署 `beb4f13` 后应删掉此 env 行，改吃 per-stage 参数）；部署版桥接 sol 实测通过，本批全程零 failover。记忆 `cpa-gpt5-responses-api` 已更新。
+- **7 条点名成品全部交付**（`lidousha/2026-07-09/`，driver=free:/opt/bilive/autoslice/produce_ivan_20260710.py，正规 produce_slice_package 链，`given_title` 手动标题直通+【李豆沙】前缀）：01 拜早年(2:47✓)、02 哑巴尖叫(2:47 ⚠quarantine：切点后语音续1.8s等3旗)、03 厨房着火(1:47✓，封面502批末修复)、04 哑人最难(2:38 ⚠quarantine：2旗)、06 下播肺腑(1:46✓)、07 无视灯(2:36 ⚠quarantine：**语音续8.4s 本批最大**+2旗，封面502已修复)、15 炸学校歌词(1:49✓)。**验收**：10/10 标题与 Ivan 原文逐字符一致；抽帧验字幕（01/06）正常；封面抽验 6 张（06 含"自"整张得意黑✓、15 背景自动画蒙眼/捂耳/封嘴三猴无爆炸元素✓）；upload_enabled 全 False。已知小瑕疵：03 封面第二行行首逗号（fitter 回流），待字排 follow-up。
+- **3 条改标题**：封面复用原 AI 背景原版式重排（零出图），publish.json title/title_source=`ivan_manual_20260710` 已更新，肉眼验收通过。
+- **淘汰**：「聊三人游戏聊到《胡闹厨房》」「李豆沙卡在动画里害全员罚站」→ `_superseded/`（free+本地）；预览 05/08-14/16-22 维持落选。处置全记录在 `lidousha/2026-07-09/落选预览/INDEX.md` 与 `AUTOSLICE_SUMMARY.md`（均已同步 free）。
+
+### 进行中（含后台进程）
+
+- 本会话无遗留后台进程（driver 已跑完，结果在 free:/opt/bilive/autoslice/reports/ivan_20260710_promote_results.json）。**另一 agent 的歌切《芽吹くとき》重产/声纹实验在同仓活跃（commits 6b35849/d43a310/60beb22），本会话未触碰其交付物。**
+
+### 阻塞
+
+- 无。上传永远逐条授权（本批 Ivan 明示暂不上传）。
+
+### 下一步
+
+1. Ivan 审 `lidousha/2026-07-09/`：4 条 review_ready + 3 条 ⚠quarantine（02/04/07 边界红旗，07 的 8.4s 续讲最值得看结尾；Ivan 预览时看过裸切端点，红旗属保守审计）。
+2. 下次授权部署带上 `beb4f13`（per-stage 模型参数生效），同时**删除 free cpa.env 里的 `CPA_CHAT_MODELS`/`CPA_REASONING_EFFORT` 两行**（否则它只对无参调用者生效，无害但易混淆）。
+3. gpt-5.6-luna 在 CPA 放开后：art direction 链 `terra→luna`（或直接 luna→5.5），顺带评估 QA judge 迁移（需 direct transport 支持 /responses）。
+4. 封面 fitter follow-up：行首标点（03 那种）在 `_fit_cover_lines`/`_wrap_even` 回流时应禁则（避头点）。
+
 ## 2026-07-10（续）：7/9 歌切假绿纠正——实际是 yonige《芽吹くとき》
 
 ### 目标
