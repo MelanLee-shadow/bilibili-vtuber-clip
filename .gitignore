@@ -4,9 +4,17 @@ reports/**
 !reports/slice_monitor/README.md
 # Publish evidence (Ivan policy 2026-07-05): anything Ivan authorized for upload
 # must be committed — *.uploaded.json manifests stay tracked even under reports/.
+# 2026-07-10: the whole audit chain is evidence — versioned/superseded copies
+# (*.uploaded.v1-BV….json), the frozen upload manifests, the idempotency
+# ledger and the batch result records all stay tracked too.
 !reports/**/
 !reports/**/*.uploaded.json
+!reports/**/*.uploaded.*.json
 !reports/**/*.public_verify.json
+!reports/**/*.public_verify.*.json
+!reports/**/*.upload_manifest*.json
+!reports/**/upload_ledger.jsonl
+!reports/**/ivan_*_results.json
 cleanup_manifests/*.tmp
 
 # Local media/artifact pulls; remote free:/opt/bilive/app and container:/app are source of truth

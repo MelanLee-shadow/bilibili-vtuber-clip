@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "69d8c25b1161",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/聋哑盲拆弹队开局十分钟才想起自己要拆.mp4",
+    "sha256": "69d8c25b1161eba8038882bf595cf1e7f3a699a8dec57fedd76ab103e269c55e",
+    "bytes": 85073834
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/聋哑盲拆弹队开局十分钟才想起自己要拆.cover.png",
+    "sha256": "c2923b718fac3119cb72e67e5e44853d0a07598cf9e60a93dbde346020ec80d2",
+    "bytes": 2834673
+  },
+  "title": "【李豆沙】最吵闹的黑白小猪成为了聋人，只能不知所措的大喊“我聋了”，进入游戏十分钟都没搞清状况",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:06:58+0000"
+  },
+  "created_at": "2026-07-10T06:06:58+0000"
+}

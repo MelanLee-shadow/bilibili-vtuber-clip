@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "c61c69774d2c",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/豆沙和队友隔空猜手势输数字，把“0”.mp4",
+    "sha256": "c61c69774d2cb392265354594a4fd575765c467b79e41233b8facb96e213ae92",
+    "bytes": 35256837
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/豆沙和队友隔空猜手势输数字，把“0”.cover.png",
+    "sha256": "fd6b50041430c76382a9147dcaa095e0a0f8df9c1d427f0f23d7c30a50effbda",
+    "bytes": 2523523
+  },
+  "title": "【李豆沙】原来说的是数字零啊，还以为在说李姐我呢",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:07:51+0000"
+  },
+  "created_at": "2026-07-10T06:07:51+0000"
+}

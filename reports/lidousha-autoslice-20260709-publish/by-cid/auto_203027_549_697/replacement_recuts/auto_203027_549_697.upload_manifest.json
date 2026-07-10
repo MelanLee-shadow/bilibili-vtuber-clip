@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "15cb48e6ee4b",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/李豆沙当“传话员”被哑人队友的扭头手.mp4",
+    "sha256": "15cb48e6ee4bd61284be9430d29bb75f36628e85c7a797788d999b74cd69016a",
+    "bytes": 53122774
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/李豆沙当“传话员”被哑人队友的扭头手.cover.png",
+    "sha256": "4f025fce77925d4e2461c2aadd03a8a7e30d7ad41b6e04fcd022de54addc8b3a",
+    "bytes": 2828015
+  },
+  "title": "【李豆沙】沙豆李沉浸在指认上下左右和疯狂摇头之中，完全听不到礼墨的声音",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:08:39+0000"
+  },
+  "created_at": "2026-07-10T06:08:39+0000"
+}

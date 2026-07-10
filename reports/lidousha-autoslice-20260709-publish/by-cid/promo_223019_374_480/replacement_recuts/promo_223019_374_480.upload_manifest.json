@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "1eea217665cc",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/温情李姐下播后说肺腑之言，跳舞时自己.mp4",
+    "sha256": "1eea217665cc9d3c469cb4d639f6e71aa075d0d95b5561e873975677f2868b03",
+    "bytes": 51405759
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/温情李姐下播后说肺腑之言，跳舞时自己.cover.png",
+    "sha256": "c4ffc3e1d636f999b978e124027325c891407b9e54a20c32f825c32700160539",
+    "bytes": 3174729
+  },
+  "title": "【李豆沙】温情李姐下播后说肺腑之言，跳舞时自己的一些小心思，想要努力把这份心情传递给大家，届不到总是一种遗憾",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "把该调大的调大，这条教训之前说过很多次了。然后就可以直接上传了。",
+    "at": "2026-07-10T06:04:24+0000"
+  },
+  "created_at": "2026-07-10T06:04:24+0000"
+}
