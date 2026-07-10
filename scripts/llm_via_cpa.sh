@@ -1,8 +1,17 @@
 #!/bin/bash
-# LLM command-transport bridge: {prompt_file} {completion_file}.
+# LLM command-transport bridge: {prompt_file} {completion_file} [models] [effort].
 # Calls the CPA endpoint using CPA_BASE_URL / CPA_API_KEY from the environment.
 # Used by the correction, song-hint and title stages so workflow tests exercise
 # the REAL CPA endpoint, mirroring the mandatory real-CPA cover chain.
+#
+# Optional argv 3/4 (2026-07-10, Ivan): pin a per-stage model chain + reasoning
+# effort at the call site (callers shlex-split the template, so a quoted chain
+# stays one argument).  Precedence: explicit arg > CPA_CHAT_MODELS env > default.
+# Stage assignment lives at the call sites: gpt-5.6-sol for deep/open-ended work
+# (semantic recall, correction adjudication, titles), gpt-5.6-terra for
+# structured picks (cover art direction).  gpt-5.6-luna would be the natural
+# fit for high-volume structured lanes but is auth_unavailable on CPA today
+# (providers=codex) — revisit when the provider enables it.
 #
 # IMPORTANT (2026-07-04): gpt-5.x are native Responses-API reasoning models.
 # Requesting gpt-5.5 on /chat/completions MISROUTES on the CPA proxy (503
@@ -16,11 +25,12 @@ umask 077
 
 PROMPT_FILE="$1"
 COMPLETION_FILE="$2"
-# Model failover (Ivan-approved order): gpt-5.5 first, gpt-5.4 when the 5.5
-# provider is out (auth_unavailable 503 happens routinely while codex-pro is
-# rate-limited).  mini/compact are NOT acceptable fallbacks (Ivan 2026-07-04).
-MODELS="${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-5.5 gpt-5.4}}"
-EFFORT="${CPA_REASONING_EFFORT:-medium}"
+# Model failover (Ivan-approved order, 2026-07-10): gpt-5.6-sol first, then
+# gpt-5.5 (the Ivan-required fallback), then gpt-5.4 (auth_unavailable 503
+# happens routinely while codex-pro is rate-limited).  mini/compact are NOT
+# acceptable fallbacks (Ivan 2026-07-04).
+MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-5.6-sol gpt-5.5 gpt-5.4}}}"
+EFFORT="${4:-${CPA_REASONING_EFFORT:-medium}}"
 
 if [[ -z "${CPA_BASE_URL:-}" || -z "${CPA_API_KEY:-}" ]]; then
   echo "CPA_BASE_URL/CPA_API_KEY missing" >&2

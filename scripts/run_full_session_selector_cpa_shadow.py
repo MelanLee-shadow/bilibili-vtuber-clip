@@ -1230,7 +1230,10 @@ def _build_aggregate_asr_transcriber(
     cpa_llm_call = build_llm_call(
         # 600s: an 11-min clip's reconcile prompt (~250 cues × two sources) can
         # legitimately take gpt-5.5(medium) past 180s (2026-07-06 long-clip run).
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=600.0)
+        # gpt-5.6-sol medium (2026-07-10, Ivan): deep reconcile/adjudication is
+        # the highest-complexity lane; medium (not high) keeps long reconciles
+        # inside the bridge's per-call 180s curl window, fallback 5.5 → 5.4.
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
     )
     agy_refine_runner = (
         _build_ssh_agy_runner(host, danmaku_items=danmaku_items, context_start_ms=window_start_ms)

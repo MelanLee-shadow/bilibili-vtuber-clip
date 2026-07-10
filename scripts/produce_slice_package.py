@@ -450,13 +450,16 @@ def main(argv: list[str] | None = None) -> int:
     # untouched). Cover art-direction LLM ALWAYS runs (Ivan 2026-07-04): even with
     # a hand-given title the cover still benefits from persona-fit expression /
     # layout / background; it is fail-open, so it never blocks.
+    # Per-stage CPA chains (2026-07-10, Ivan): title is a single brand-critical
+    # short call → gpt-5.6-sol at high effort; art direction is a structured,
+    # fail-open pick → gpt-5.6-terra at medium.  Both fall back 5.5 → 5.4.
     title_llm = None
     if not given_title:
         title_llm = build_llm_call(
-            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=180.0)
+            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high", timeout_seconds=180.0)
         )
     art_direction_llm = None if args.reuse_cover else build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}", timeout_seconds=180.0)
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-terra gpt-5.5 gpt-5.4' medium", timeout_seconds=180.0)
     )
     record = _stage_publish_draft(
         record,

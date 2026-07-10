@@ -22,9 +22,9 @@ produce_slice_package writes publish drafts with upload_enabled=false.
 
 HARD LESSONS BAKED IN (first real run, 2026-07-06):
 - **CPA health gate**: recordings can wait, garbage cannot be unshipped.  If
-  the CPA chat lane is down (gpt-5.5/5.4 provider outages happen), the batch
-  is DEFERRED (status=paused_cpa_down) and resumes on a later tick — clips are
-  never produced with cid titles / cid-text covers.
+  the CPA chat lane is down (gpt-5.6/5.5/5.4 provider outages happen), the
+  batch is DEFERRED (status=paused_cpa_down) and resumes on a later tick —
+  clips are never produced with cid titles / cid-text covers.
 - **Title is part of the product**: a pick whose title generation failed is
   NOT delivered; it stays pending and is retried on resume (bounded).
 - **Dead segments**: blrec restart stubs (a few KB of mp4) and segments whose
@@ -133,7 +133,18 @@ SONG_PROOF_RETRY_POST_MS = 45_000
 SONG_ANCHOR_TRIM_MIN_MS = 20_000  # only retry on the danmaku-dense core when the
                                   # trim drops ≥20s of talk padding off an end
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-CPA_CMD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
+# Per-stage CPA model chains (2026-07-10, Ivan): sol ONLY where open-ended
+# judgment is load-bearing — semantic recall (editorial pick over a 30-min
+# transcript) and the single brand-critical title call (high effort, short
+# prompt).  Terra (the everyday 5.5 successor) carries the supporting lanes:
+# song hints are non-load-bearing (known_songs fingerprint pinning + clean-line
+# search are the authority; a wrong hint is discarded by the alignment gate)
+# and cover art direction is a structured, fail-open pick with a deterministic
+# fallback.  Every chain falls back gpt-5.5 → gpt-5.4.  gpt-5.6-luna would suit
+# the structured lanes but is auth_unavailable on CPA today (providers=codex).
+CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
+CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-terra gpt-5.5 gpt-5.4' medium"
 # The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
 # JSON contract), NOT a prompt/completion LLM template — canonical validated
 # command per docs/spark/2026-06-30-future-live-e2e-runbook.md.  The selector
@@ -185,7 +196,9 @@ def child_env() -> dict[str, str]:
 
 
 def cpa_healthy() -> bool:
-    """One cheap real probe against the CPA chat lane (gpt-5.5, then gpt-5.4).
+    """One cheap real probe against the CPA chat lane, walking the same failover
+    order production uses (gpt-5.6-sol, then the gpt-5.5 / gpt-5.4 fallbacks) —
+    any healthy model in the chain means the lane can serve the batch.
 
     The whole batch is gated on this: provider outages (auth_unavailable 503)
     are a normal operating condition, and producing clips without a working
@@ -198,7 +211,7 @@ def cpa_healthy() -> bool:
     key = env.get("CPA_API_KEY") or os.environ.get("CPA_API_KEY", "")
     if not base or not key:
         return False
-    for model in ("gpt-5.5", "gpt-5.4"):
+    for model in ("gpt-5.6-sol", "gpt-5.5", "gpt-5.4"):
         body = json.dumps(
             {"model": model, "input": "回复:OK", "reasoning": {"effort": "low"}, "max_output_tokens": 2000}
         ).encode()
@@ -480,7 +493,8 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
     llm = build_llm_call(
         LlmConfig(
             transport="command",
-            command_template=f"bash {REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}}",
+            # Talk semantic recall = deep open-ended lane → gpt-5.6-sol medium.
+            command_template=f"bash {REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium",
             timeout_seconds=600.0,
         )
     )
@@ -1206,10 +1220,10 @@ def produce_song(date: str, item: dict) -> dict:
                  "--output-dir", str(selector_dir), "--max-candidates", "1",
                  "--source-duration-ms", str(max(0, end - start)),
                  "--cpa-command", cpa_qa_cmd(),
-                 "--semantic-recall-llm-command", CPA_CMD,
-                 "--song-hint-llm-command", CPA_CMD,
-                 "--title-llm-command", CPA_CMD,
-                 "--cover-art-direction-llm-command", CPA_CMD,
+                 "--semantic-recall-llm-command", CPA_CMD_DEEP,
+                 "--song-hint-llm-command", CPA_CMD_STANDARD,
+                 "--title-llm-command", CPA_CMD_TITLE,
+                 "--cover-art-direction-llm-command", CPA_CMD_STANDARD,
                  "--lrc-provider", "auto", "--burn-preview", "--publish-staging",
             ]
             known_song_query = str(item.get("preview") or "").strip()

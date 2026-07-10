@@ -49,11 +49,13 @@ body_refs = [
 ]
 header_path = header_refs[0] if len(header_refs) == 1 else ""
 headers = open(header_path, encoding="utf-8").read().splitlines() if header_path else []
+bodies = [json.load(open(path, encoding="utf-8")) for path in body_refs]
 capture_path = os.environ["CURL_CAPTURE"]
 previous = {{}}
 if os.path.exists(capture_path):
     previous = json.load(open(capture_path, encoding="utf-8"))
 capture = {{
+    "bodies": previous.get("bodies", []) + bodies,
     "invocation_count": previous.get("invocation_count", 0) + 1,
     "argv": args,
     "secret_in_argv": previous.get("secret_in_argv", False) or any(SECRET in arg for arg in args),
@@ -79,7 +81,13 @@ sys.stdout.write(json.dumps({{"status": "completed", "output_text": "safe comple
     return tool_dir, fake_tmp_root
 
 
-def _run_bridge(tmp_path: Path, *, curl_fails: bool = False) -> tuple[subprocess.CompletedProcess[str], dict, Path, Path]:
+def _run_bridge(
+    tmp_path: Path,
+    *,
+    curl_fails: bool = False,
+    chat_models_env: str | None = "gpt-test",
+    extra_args: tuple[str, ...] = (),
+) -> tuple[subprocess.CompletedProcess[str], dict, Path, Path]:
     tool_dir, fake_tmp_root = _write_fake_tools(tmp_path)
     prompt = tmp_path / "prompt.txt"
     completion = tmp_path / "completion.txt"
@@ -87,16 +95,20 @@ def _run_bridge(tmp_path: Path, *, curl_fails: bool = False) -> tuple[subprocess
     prompt.write_text("return a safe completion", encoding="utf-8")
 
     env = os.environ.copy()
+    env.pop("CPA_CHAT_MODELS", None)
+    env.pop("CPA_CHAT_MODEL", None)
+    env.pop("CPA_REASONING_EFFORT", None)
     env.update(
         {
             "PATH": f"{tool_dir}{os.pathsep}{env['PATH']}",
             "CPA_BASE_URL": "https://cpa.invalid/v1",
             "CPA_API_KEY": SENTINEL_SECRET,
-            "CPA_CHAT_MODELS": "gpt-test",
             "CURL_CAPTURE": str(capture_path),
             "FAKE_TMP_ROOT": str(fake_tmp_root),
         }
     )
+    if chat_models_env is not None:
+        env["CPA_CHAT_MODELS"] = chat_models_env
     if curl_fails:
         env["FAKE_CURL_FAIL"] = "1"
 
@@ -104,11 +116,12 @@ def _run_bridge(tmp_path: Path, *, curl_fails: bool = False) -> tuple[subprocess
         [
             "bash",
             "-c",
-            'umask 000; exec bash -x "$1" "$2" "$3"',
+            'umask 000; script="$1"; shift; exec bash -x "$script" "$@"',
             "llm-via-cpa-test",
             str(SCRIPT),
             str(prompt),
             str(completion),
+            *extra_args,
         ],
         cwd=REPO_ROOT,
         env=env,
@@ -153,3 +166,29 @@ def test_cpa_failure_does_not_print_secret_and_cleans_temp_files(tmp_path):
     _assert_secret_is_not_observable(completed, capture)
     assert not Path(capture["header_path"]).exists()
     assert list(fake_tmp_root.iterdir()) == []
+
+
+def test_default_chain_is_sol_then_55_then_54_medium(tmp_path):
+    """No env/argv override → the 2026-07-10 default chain, 3 attempts each."""
+    completed, capture, _completion, _tmp = _run_bridge(
+        tmp_path, curl_fails=True, chat_models_env=None
+    )
+
+    assert completed.returncode == 1
+    models = [body["model"] for body in capture["bodies"]]
+    assert models == ["gpt-5.6-sol"] * 3 + ["gpt-5.5"] * 3 + ["gpt-5.4"] * 3
+    assert {body["reasoning"]["effort"] for body in capture["bodies"]} == {"medium"}
+
+
+def test_argv_chain_and_effort_override_env(tmp_path):
+    """Per-stage argv 3/4 (quoted chain + effort) beat CPA_CHAT_MODELS env."""
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-env-model",
+        extra_args=("stage-model-a stage-model-b", "high"),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completion.read_text(encoding="utf-8") == "safe completion"
+    assert [body["model"] for body in capture["bodies"]] == ["stage-model-a"]
+    assert capture["bodies"][0]["reasoning"]["effort"] == "high"
