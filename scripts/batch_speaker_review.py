@@ -199,8 +199,12 @@ def _validate_speaker_manifest(
         raise BatchSpeakerReviewError(f"speaker manifest media binding drift: {path}")
     if manifest.get("text_final_srt_sha256") != entry["text_final_srt_sha256"]:
         raise BatchSpeakerReviewError(f"speaker manifest text binding drift: {path}")
+    if artifacts["text_final_srt"]["sha256"] != entry["text_final_srt_sha256"]:
+        raise BatchSpeakerReviewError(f"packaged text-final SRT drift: {path}")
     if manifest.get("speaker_override_sha256") != entry.get("speaker_override_sha256"):
         raise BatchSpeakerReviewError(f"speaker manifest override binding drift: {path}")
+    if manifest.get("host_identity_aliases") != ["李豆沙", "shadow"]:
+        raise BatchSpeakerReviewError(f"speaker manifest host aliases drift: {path}")
     if manifest.get("output_review_srt_sha256") != artifacts["speaker_srt"]["sha256"]:
         raise BatchSpeakerReviewError(f"speaker manifest SRT output drift: {path}")
     if manifest.get("output_ass_sha256") != artifacts["ass"]["sha256"]:
@@ -247,7 +251,7 @@ def _result_is_reusable(path: Path, entry: Mapping[str, object]) -> bool:
             expected_paths["speaker_manifest"], entry=entry, artifacts=artifacts
         )
         return True
-    except (OSError, TypeError, ValueError, KeyError):
+    except (OSError, TypeError, ValueError, KeyError, BatchSpeakerReviewError):
         return False
 
 

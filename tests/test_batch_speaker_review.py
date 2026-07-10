@@ -77,6 +77,7 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
     paths = {key: tmp_path / value for key, value in names.items()}
     paths["video"].write_bytes(b"video")
     paths["text_final_srt"].write_bytes(b"text")
+    text_sha = hashlib.sha256(paths["text_final_srt"].read_bytes()).hexdigest()
     paths["speaker_srt"].write_bytes(b"speaker")
     paths["ass"].write_text(
         "[V4+ Styles]\n"
@@ -101,8 +102,9 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
                 "production_ready": True,
                 "subtitle_style": "lidousha-speaker-sapphire-host-white-guest-v2",
                 "speaker_taxonomy": "binary_visual_host_vs_guest",
+                "host_identity_aliases": ["李豆沙", "shadow"],
                 "source_media_sha256": SHA_A,
-                "text_final_srt_sha256": SHA_B,
+                "text_final_srt_sha256": text_sha,
                 "speaker_override_sha256": None,
                 "output_review_srt_sha256": artifact_rows["speaker_srt"]["sha256"],
                 "output_ass_sha256": artifact_rows["ass"]["sha256"],
@@ -125,7 +127,7 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
                 "candidate_id": "promo_1",
                 "review_name": "01_测试",
                 "source_media_sha256": SHA_A,
-                "text_final_srt_sha256": SHA_B,
+                "text_final_srt_sha256": text_sha,
                 "speaker_override_sha256": None,
                 "subtitle_style": "lidousha-speaker-sapphire-host-white-guest-v2",
                 "upload_authorized": False,
@@ -138,9 +140,25 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
         "candidate_id": "promo_1",
         "review_name": "01_测试",
         "source_media_sha256": SHA_A,
-        "text_final_srt_sha256": SHA_B,
+        "text_final_srt_sha256": text_sha,
         "speaker_override_sha256": None,
     }
+    assert _result_is_reusable(result, entry)
+    paths["text_final_srt"].write_bytes(b"self-consistent but wrong packaged text")
+    result_document = json.loads(result.read_text(encoding="utf-8"))
+    result_document["artifacts"]["text_final_srt"].update(
+        sha256=hashlib.sha256(paths["text_final_srt"].read_bytes()).hexdigest(),
+        bytes=paths["text_final_srt"].stat().st_size,
+    )
+    result.write_text(json.dumps(result_document), encoding="utf-8")
+    assert not _result_is_reusable(result, entry)
+
+    paths["text_final_srt"].write_bytes(b"text")
+    result_document["artifacts"]["text_final_srt"].update(
+        sha256=hashlib.sha256(paths["text_final_srt"].read_bytes()).hexdigest(),
+        bytes=paths["text_final_srt"].stat().st_size,
+    )
+    result.write_text(json.dumps(result_document), encoding="utf-8")
     assert _result_is_reusable(result, entry)
     paths["video"].write_bytes(b"drift")
     assert not _result_is_reusable(result, entry)
