@@ -45,8 +45,9 @@ from scripts.run_auto_review_shadow_pipeline import (
     _sha256,
 )
 
-# Art direction is a structured, fail-open pick → gpt-5.6-terra (2026-07-10).
-_CPA_ART_DIRECTION_LLM = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-terra gpt-5.5 gpt-5.4' medium"
+# Art direction is a structured pick with a known good shape (deterministic
+# fallback + judge guardrails) → gpt-5.6-luna, the doc-exact luna lane.
+_CPA_ART_DIRECTION_LLM = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium"
 
 
 def _extract_reference_frame(media: Path, out: Path) -> None:

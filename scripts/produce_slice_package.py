@@ -8,8 +8,10 @@ lands, on a COMPLETE sentence — never mid-sentence, never mid-story.
 Flow: remote accurate piece cuts (supports cross-segment stitching) → local
 concat → fresh whole-window transcription (glossary+danmaku+screen text) →
 sentence-snap the final end to a transcription cue boundary near the semantic
-target (fail closed if none) → VAD boundary audit (speech island crossing the
-cut is recorded; a cut not on a cue boundary is refused) → final accurate cut
+target (fail closed if none) → VAD boundary audit + deterministic red flags →
+SELF-REPAIR loop (Ivan 2026-07-10: flags move the cut to the next verifiably
+clean sentence end / pull the opening onto the straddled sentence; an
+unrepairable boundary fails closed — no quarantine state) → final accurate cut
 → VAD-sanitized subtitles → burn → title/cover staging → flat delivery copy
 to lidousha/<date>/.
 
@@ -187,14 +189,16 @@ def boundary_red_flags(
     snapped_end_ms: int,
     closure_text: str,
 ) -> list[str]:
-    """Deterministic reviewer red flags (2026-07-09 external audit).
+    """Deterministic boundary red flags (2026-07-09 external audit).
 
     A green boundary verdict only says both cuts SNAPPED to ASR cue boundaries;
     the real 7/6+7/9 deliveries showed that is not enough (cuts inside a still-
     running speech island, final SRT ending on a different sentence than the
     claimed closure, next-topic text flashing in the tail pad).  These checks
-    need no LLM; any hit means the clip is delivered as QUARANTINE — reviewable,
-    never silently green."""
+    need no LLM.  Policy (Ivan 2026-07-10): an unattended pipeline REPAIRS what
+    its own auditors detect — flags drive the deterministic self-repair loop in
+    main(); a clip that cannot be repaired fails closed (no delivery).  There
+    is no deliver-and-ask-a-human quarantine state."""
     flags: list[str] = []
     continues_ms = int(audit.get("end_island_continues_ms") or 0)
     if continues_ms >= ISLAND_CONTINUES_FLAG_MS:
@@ -206,6 +210,47 @@ def boundary_red_flags(
     if sanitized and _norm_cue_text(sanitized[-1].text) != _norm_cue_text(closure_text):
         flags.append("closure_not_final_subtitle")
     return flags
+
+
+BOUNDARY_REPAIR_EXTEND_CAP_MS = 25_000
+MAX_BOUNDARY_REPAIRS = 3
+
+
+def next_clean_closure(cues, spans, *, after_ms: int, padded_dur_ms: int,
+                       cap_ms: int = BOUNDARY_REPAIR_EXTEND_CAP_MS) -> int | None:
+    """Earliest LATER sentence end whose cut raises no deterministic red flag:
+    nothing starts inside its tail pad and no speech island runs
+    ≥ ISLAND_CONTINUES_FLAG_MS past the cut.
+
+    This is the unattended repair move (Ivan 2026-07-10): extend FORWARD to
+    where the talk actually lands — never retract, which would drop the very
+    content the pick was chosen for.  Bounded by ``cap_ms`` (beyond that she is
+    mid-monologue and the clip fails closed instead)."""
+    ends = sorted({c.end_ms for c in cues if after_ms < c.end_ms <= after_ms + cap_ms})
+    for end in ends:
+        cut = min(padded_dur_ms, end + TAIL_PAD_MS)
+        if any(end <= c.start_ms < cut for c in cues):
+            continue
+        crossing = next((s for s in spans if s.start_ms < cut < s.end_ms), None)
+        if crossing and crossing.end_ms - cut >= ISLAND_CONTINUES_FLAG_MS:
+            continue
+        return end
+    return None
+
+
+def repair_start_for_straddler(cues, *, final_start_ms: int) -> int | None:
+    """Repair an ``opens_mid_sentence`` flag by opening on the straddling
+    sentence's own start — include the whole sentence rather than slicing into
+    it.  Returns that sentence's start_ms (the new snapped start; the caller
+    re-derives final_start with lead air), or None when no cue straddles the
+    opening."""
+    straddler = next(
+        (c for c in cues if c.start_ms < final_start_ms - 50 and c.end_ms > final_start_ms + 300),
+        None,
+    )
+    if straddler is None:
+        return None
+    return straddler.start_ms
 
 
 def run(cmd: list[str], *, timeout: int = 3600) -> None:
@@ -367,64 +412,96 @@ def main(argv: list[str] | None = None) -> int:
             f"NO_SENTENCE_BOUNDARY_NEAR_TARGET: target={target_rel}ms; nearest cue ends="
             f"{sorted((c.end_ms for c in cues), key=lambda e: abs(e - target_rel))[:3]}"
         )
-    final_end = min(padded_dur, snapped + TAIL_PAD_MS)
     closure_cue = next(c for c in cues if c.end_ms == snapped)
 
-    audit = boundary_audit(
-        spans,
-        start_ms=final_start,
-        cut_ms=final_end,
-        start_snapped=snapped_start is not None,
-        end_snapped=True,
-    )
-    audit.update(
-        {
-            "semantic_start_target_rel_ms": target_start_rel,
-            "snapped_sentence_start_ms": snapped_start,
-            "final_start_ms": final_start,
-            "opening_sentence": next((c.text for c in cues if c.start_ms == snapped_start), None),
-            "semantic_target_rel_ms": target_rel,
-            "snapped_sentence_end_ms": snapped,
-            "final_end_ms": final_end,
-            "closure_sentence": closure_cue.text,
-            "tail_refinement_used": refinement_used,
-        }
-    )
-    (out_root / f"{cid}.boundary_audit.json").write_text(
-        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    if audit["verdict"] != "ok_sentence_boundary_cut":
-        raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
+    # 4c. Boundary self-repair loop (Ivan 2026-07-10): unattended means the
+    # pipeline FIXES what its own deterministic auditors detect — there is no
+    # deliver-and-ask-a-human quarantine state.  Pure computation (no ffmpeg,
+    # no LLM): each pass re-audits; a flagged end moves FORWARD to the next
+    # verifiably clean sentence end, a straddled opening moves back onto that
+    # sentence's own start.  Unrepairable clips fail closed BEFORE any media
+    # is cut.
+    audit_path = out_root / f"{cid}.boundary_audit.json"
+    boundary_repairs: list[dict] = []
+    while True:
+        final_end = min(padded_dur, snapped + TAIL_PAD_MS)
+        audit = boundary_audit(
+            spans,
+            start_ms=final_start,
+            cut_ms=final_end,
+            start_snapped=snapped_start is not None,
+            end_snapped=True,
+        )
+        audit.update(
+            {
+                "semantic_start_target_rel_ms": target_start_rel,
+                "snapped_sentence_start_ms": snapped_start,
+                "final_start_ms": final_start,
+                "opening_sentence": next((c.text for c in cues if c.start_ms == snapped_start), None),
+                "semantic_target_rel_ms": target_rel,
+                "snapped_sentence_end_ms": snapped,
+                "final_end_ms": final_end,
+                "closure_sentence": closure_cue.text,
+                "tail_refinement_used": refinement_used,
+                "boundary_repairs": boundary_repairs,
+            }
+        )
+        audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if audit["verdict"] != "ok_sentence_boundary_cut":
+            raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
+        source_cues = [
+            SourceCue(f"fresh_{i:04d}", max(c.start_ms, final_start), min(c.end_ms, final_end), c.text.strip(), "zh", "speech", 1.0)
+            for i, c in enumerate(cues, start=1)
+            if c.start_ms < final_end and c.end_ms > final_start
+        ]
+        sanitized, timing_qa = sanitize_cue_timing(source_cues, spans, window_start_ms=final_start, window_end_ms=final_end)
+        red_flags = boundary_red_flags(
+            audit=audit,
+            cues=cues,
+            sanitized=sanitized,
+            final_start_ms=final_start,
+            final_end_ms=final_end,
+            snapped_end_ms=snapped,
+            closure_text=closure_cue.text,
+        )
+        if not red_flags:
+            break
+        repair: dict = {}
+        if len(boundary_repairs) < MAX_BOUNDARY_REPAIRS:
+            if "opens_mid_sentence" in red_flags:
+                new_snap_start = repair_start_for_straddler(cues, final_start_ms=final_start)
+                if new_snap_start is not None and new_snap_start != snapped_start:
+                    repair["snapped_start_ms"] = new_snap_start
+            if any(flag != "opens_mid_sentence" for flag in red_flags):
+                new_end = next_clean_closure(cues, spans, after_ms=snapped, padded_dur_ms=padded_dur)
+                if new_end is not None:
+                    repair["snapped_end_ms"] = new_end
+        if not repair:
+            audit["red_flags"] = red_flags
+            audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            raise SystemExit(
+                f"BOUNDARY_UNREPAIRABLE: {','.join(red_flags)} after {len(boundary_repairs)} repair(s); "
+                f"snapped={snapped}ms target={target_rel}ms extend_cap={BOUNDARY_REPAIR_EXTEND_CAP_MS}ms"
+            )
+        boundary_repairs.append({"flags": red_flags, **repair})
+        if "snapped_start_ms" in repair:
+            snapped_start = repair["snapped_start_ms"]
+            final_start = max(0, snapped_start - LEAD_AIR_MS)
+        if "snapped_end_ms" in repair:
+            snapped = repair["snapped_end_ms"]
+            closure_cue = next(c for c in cues if c.end_ms == snapped)
+    audit["red_flags"] = []
+    audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     # 5. Final accurate cut + VAD-sanitized subtitles rebased to the cut.
     recut_dir = out_root / "replacement_recuts"
     recut_dir.mkdir(exist_ok=True)
     media_path = recut_dir / f"{cid}.recut.mp4"
     run(_accurate_reencode_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
-    source_cues = [
-        SourceCue(f"fresh_{i:04d}", max(c.start_ms, final_start), min(c.end_ms, final_end), c.text.strip(), "zh", "speech", 1.0)
-        for i, c in enumerate(cues, start=1)
-        if c.start_ms < final_end and c.end_ms > final_start
-    ]
-    sanitized, timing_qa = sanitize_cue_timing(source_cues, spans, window_start_ms=final_start, window_end_ms=final_end)
     subtitle_path = media_path.with_suffix(".srt")
     _write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
     (recut_dir / f"{cid}.recut.timing_qa.json").write_text(
         json.dumps(timing_qa, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
-    red_flags = boundary_red_flags(
-        audit=audit,
-        cues=cues,
-        sanitized=sanitized,
-        final_start_ms=final_start,
-        final_end_ms=final_end,
-        snapped_end_ms=snapped,
-        closure_text=closure_cue.text,
-    )
-    audit["red_flags"] = red_flags
-    (out_root / f"{cid}.boundary_audit.json").write_text(
-        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
     record: dict = {
@@ -451,15 +528,17 @@ def main(argv: list[str] | None = None) -> int:
     # a hand-given title the cover still benefits from persona-fit expression /
     # layout / background; it is fail-open, so it never blocks.
     # Per-stage CPA chains (2026-07-10, Ivan): title is a single brand-critical
-    # short call → gpt-5.6-sol at high effort; art direction is a structured,
-    # fail-open pick → gpt-5.6-terra at medium.  Both fall back 5.5 → 5.4.
+    # short call → gpt-5.6-sol at high effort; art direction is a structured
+    # pick with a known good shape, deterministic fallback and judge guardrails
+    # → gpt-5.6-luna at medium (the doc-exact luna lane).  Both fall back
+    # 5.5 → 5.4.
     title_llm = None
     if not given_title:
         title_llm = build_llm_call(
             LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high", timeout_seconds=180.0)
         )
     art_direction_llm = None if args.reuse_cover else build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-terra gpt-5.5 gpt-5.4' medium", timeout_seconds=180.0)
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=180.0)
     )
     record = _stage_publish_draft(
         record,
@@ -491,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
             "closure_sentence": closure_cue.text,
             "boundary_verdict": audit["verdict"],
             "red_flags": red_flags,
+            "boundary_repairs": boundary_repairs,
             "timing_qa": timing_qa.get("counts"),
             "cover_status": staging.get("cover_status"),
             "title": staging.get("title"),

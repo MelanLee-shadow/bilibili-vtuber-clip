@@ -10,6 +10,8 @@ from scripts.produce_slice_package import (
     boundary_audit,
     boundary_red_flags,
     needs_tail_refinement,
+    next_clean_closure,
+    repair_start_for_straddler,
     snap_end_to_sentence,
     snap_start_to_sentence,
 )
@@ -85,7 +87,8 @@ def test_boundary_audit_requires_both_snapped_boundaries():
 # Deterministic red flags (2026-07-09 external audit): a snapped verdict alone
 # let 6/10 real deliveries cut inside a still-running speech island and 4/10
 # end on a different sentence than the claimed closure — all reported green.
-# Any flag → the clip is delivered as QUARANTINE, never silently green.
+# Policy since 2026-07-10 (Ivan): flags drive the SELF-REPAIR loop; a clip is
+# delivered clean or fails closed — never delivered-with-flags (quarantine).
 # ---------------------------------------------------------------------------
 
 
@@ -141,3 +144,46 @@ def test_flag_when_closure_is_not_the_final_subtitle():
     flags = _flags(sanitized=[_Txt("收束句。"), _Txt("其实还有下一句")])
     assert "closure_not_final_subtitle" in flags
     assert _flags(sanitized=[_Txt(" 收束句。 ")]) == []  # whitespace-insensitive
+
+
+# ---------------------------------------------------------------------------
+# Boundary self-repair primitives (Ivan 2026-07-10: an unattended pipeline
+# fixes what its auditors detect).  The end repair extends FORWARD to the next
+# sentence end whose tail pad is verifiably quiet; the start repair opens on
+# the straddled sentence's own start.  No candidate → the produce fails closed
+# (BOUNDARY_UNREPAIRABLE), never a delivered-with-flags state.
+# ---------------------------------------------------------------------------
+
+
+def test_repair_extends_past_continuing_speech_to_clean_pause():
+    # Closure snapped at 90s but the talk runs on (90.2s→93s enters the tail
+    # pad, the island continues).  The next verifiably clean sentence end is
+    # 93s: nothing starts in its pad and the island stops by 93.1s.
+    cues = [_cue(80_000, 90_000), _cue(90_200, 93_000), _cue(96_000, 99_000)]
+    spans = [SpeechSpan(80_000, 93_100)]
+    assert next_clean_closure(cues, spans, after_ms=90_000, padded_dur_ms=120_000) == 93_000
+
+
+def test_repair_skips_candidates_whose_island_keeps_running():
+    # 93s ends a cue but the VAD island runs to 96.2s (≥1.5s past its pad) →
+    # skip to 96s, where the island has genuinely stopped.
+    cues = [_cue(80_000, 90_000), _cue(90_200, 93_000), _cue(93_400, 96_000)]
+    spans = [SpeechSpan(80_000, 96_200)]
+    assert next_clean_closure(cues, spans, after_ms=90_000, padded_dur_ms=120_000) == 96_000
+
+
+def test_repair_fails_closed_beyond_extend_cap():
+    # Continuous back-to-back speech (every pause < tail pad) past the 25s cap:
+    # no clean closure exists → None → produce exits BOUNDARY_UNREPAIRABLE.
+    cues = [_cue(80_000, 90_000)] + [
+        _cue(90_000 + i * 1_000, 90_900 + i * 1_000) for i in range(40)
+    ]
+    spans = [SpeechSpan(80_000, 140_000)]
+    assert next_clean_closure(cues, spans, after_ms=90_000, padded_dur_ms=200_000) is None
+
+
+def test_repair_start_opens_on_straddled_sentence_start():
+    # A sentence running through the opening → open on ITS start instead.
+    assert repair_start_for_straddler([_cue(400, 2_000)], final_start_ms=1_000) == 400
+    # No straddler (previous sentence ends inside the lead air) → nothing to fix.
+    assert repair_start_for_straddler([_cue(980, 2_000)], final_start_ms=1_000) is None

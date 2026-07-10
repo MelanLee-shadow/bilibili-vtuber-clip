@@ -50,8 +50,10 @@ RUNNER v4 (2026-07-09 external audit — "the control plane was lying"):
   do nothing.  A cron watchdog (free_mount_watchdog.sh) self-heals the mount.
 - **Honest status words**: song gate BLOCK is `blocked`, never `ok`; a batch
   with zero deliveries is `no_delivery`, never `done`.  Delivered talk is
-  `review_ready`, or `quarantine` when deterministic boundary red flags fired
-  (produce_slice_package computes them; quarantine is delivered-but-flagged).
+  `review_ready` — clean by construction: deterministic boundary red flags are
+  SELF-REPAIRED inside produce_slice_package (Ivan 2026-07-10: unattended means
+  fix-or-refuse, no deliver-and-ask-a-human quarantine), and an unrepairable
+  boundary is `boundary_unrepairable` (terminal, no delivery, never retried).
 - **Budget = deliveries**: gate-blocked songs no longer consume the per-date
   song budget; the danmaku-sorted backlog backfills (bounded SONG_ATTEMPT_CAP).
 - **Global selection + sealing**: talk picks are ranked globally by recall
@@ -105,9 +107,11 @@ TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; sl
 SONG_ATTEMPT_CAP = 6  # total song-lane attempts per date (delivered + blocked + failed);
                       # gate-blocked songs do NOT consume the delivery budget — the
                       # backlog backfills — so an unlucky date needs a hard attempt cap
-# Delivered-to-review talk statuses.  "ok" is the pre-2026-07-09 name kept for
-# old state files; new records are review_ready (clean) or quarantine (delivered
-# WITH deterministic red flags — reviewable, never silently green).
+# Delivered-to-review talk statuses.  "ok" (pre-2026-07-09) and "quarantine"
+# (pre-2026-07-10 delivered-with-flags) are kept ONLY so old state files still
+# count as delivered; new records are always review_ready — boundary red flags
+# are self-repaired in produce_slice_package, and an unrepairable boundary is
+# boundary_unrepairable (no delivery, terminal).
 DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
 PER_SEGMENT_CANDIDATES = 4
 MIN_SEGMENT_BYTES = 5_000_000  # blrec restart stubs are a few KB — dead on sight
@@ -136,15 +140,17 @@ DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Per-stage CPA model chains (2026-07-10, Ivan): sol ONLY where open-ended
 # judgment is load-bearing — semantic recall (editorial pick over a 30-min
 # transcript) and the single brand-critical title call (high effort, short
-# prompt).  Terra (the everyday 5.5 successor) carries the supporting lanes:
-# song hints are non-load-bearing (known_songs fingerprint pinning + clean-line
-# search are the authority; a wrong hint is discarded by the alignment gate)
-# and cover art direction is a structured, fail-open pick with a deterministic
-# fallback.  Every chain falls back gpt-5.5 → gpt-5.4.  gpt-5.6-luna would suit
-# the structured lanes but is auth_unavailable on CPA today (providers=codex).
+# prompt).  Terra (the everyday 5.5 successor) carries song hints: fuzzy
+# world-knowledge recall from garbled ASR, NOT a known-good-shape task — and it
+# is non-load-bearing anyway (known_songs fingerprint pinning + clean-line
+# search are the authority; a wrong hint is discarded by the alignment gate).
+# Luna carries cover art direction: a structured pick with a known good shape,
+# high volume, deterministic fallback + judge guardrails — the doc-exact luna
+# lane.  Every chain falls back gpt-5.5 → gpt-5.4.
 CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
 CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
 CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-terra gpt-5.5 gpt-5.4' medium"
+CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium"
 # The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
 # JSON contract), NOT a prompt/completion LLM template — canonical validated
 # command per docs/spark/2026-06-30-future-live-e2e-runbook.md.  The selector
@@ -601,7 +607,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     result["summary"] = last_json_block(tail)
     result.update(read_publish_meta(out_root / cid))
     if completed.returncode != 0:
-        result["status"] = "failed"
+        # BOUNDARY_UNREPAIRABLE is deterministic (the self-repair loop ran out
+        # of clean closure candidates) — terminal, never retried.  Anything
+        # else is a plain failure.
+        result["status"] = (
+            "boundary_unrepairable" if "BOUNDARY_UNREPAIRABLE" in tail else "failed"
+        )
         return result
     if "llm_failed" in str(result.get("title_source") or ""):
         # No delivery with a cid title / cid-text cover — clean and retry later.
@@ -615,11 +626,13 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             shutil.rmtree(recuts, ignore_errors=True)
         result["status"] = "title_failed"
         return result
-    # Deterministic boundary red flags (2026-07-09 audit): delivered artifacts
-    # with a suspicious boundary are QUARANTINED for review, never silently green.
-    red_flags = list((result.get("summary") or {}).get("red_flags") or [])
-    result["red_flags"] = red_flags
-    result["status"] = "quarantine" if red_flags else "review_ready"
+    # Boundary self-repair (Ivan 2026-07-10) replaced quarantine: a delivered
+    # clip is clean by construction — red flags either got repaired (trail in
+    # boundary_repairs) or the produce exited non-zero above (no delivery).
+    summary = result.get("summary") or {}
+    result["red_flags"] = list(summary.get("red_flags") or [])
+    result["boundary_repairs"] = list(summary.get("boundary_repairs") or [])
+    result["status"] = "review_ready"
     return result
 
 
@@ -1223,7 +1236,7 @@ def produce_song(date: str, item: dict) -> dict:
                  "--semantic-recall-llm-command", CPA_CMD_DEEP,
                  "--song-hint-llm-command", CPA_CMD_STANDARD,
                  "--title-llm-command", CPA_CMD_TITLE,
-                 "--cover-art-direction-llm-command", CPA_CMD_STANDARD,
+                 "--cover-art-direction-llm-command", CPA_CMD_STRUCTURED,
                  "--lrc-provider", "auto", "--burn-preview", "--publish-staging",
             ]
             known_song_query = str(item.get("preview") or "").strip()
@@ -1482,14 +1495,23 @@ def write_reports(date: str, state: dict) -> None:
     picks = state.get("picks", [])
     songs = state.get("songs", [])
     delivered_talk = sum(1 for p in picks if p.get("status") in DELIVERED_TALK_STATUSES)
-    quarantined = sum(1 for p in picks if p.get("status") == "quarantine")
+    repaired = sum(1 for p in picks if p.get("boundary_repairs"))
+    unrepairable = sum(1 for p in picks if p.get("status") == "boundary_unrepairable")
+    quarantined = sum(1 for p in picks if p.get("status") == "quarantine")  # legacy states only
     delivered_songs = sum(1 for s in songs if s.get("delivered"))
     blocked_songs = sum(1 for s in songs if s.get("status") == "blocked")
+    talk_notes = []
+    if repaired:
+        talk_notes.append(f"{repaired} 条边界自修复后交付")
+    if unrepairable:
+        talk_notes.append(f"{unrepairable} 条边界不可修复未交付")
+    if quarantined:
+        talk_notes.append(f"{quarantined} 条旧版 quarantine(历史状态)")
     lines = [
         f"# {date} 无人值守自动切片批次",
         "",
         f"- 状态: **{state.get('status')}**  (runner v4; 上传永远关闭，全部成品仅供人工审查)",
-        f"- 交付实况: 谈话 **{delivered_talk} 交付**（其中 {quarantined} 条 ⚠quarantine 需人工看边界）/ "
+        f"- 交付实况: 谈话 **{delivered_talk} 交付**{('（' + '，'.join(talk_notes) + '）') if talk_notes else ''} / "
         f"歌 **{delivered_songs} 交付** · {blocked_songs} 被完整性门拦截 · 共尝试 {len(songs)}",
         f"- 段: 完成 {len(state.get('segments_done', []))} / 死段 {len(state.get('segments_dead', {}))} / 待产出 talk {len(state.get('pending_talk', []))} + song {len(state.get('pending_song', []))}",
         "",
@@ -1501,9 +1523,12 @@ def write_reports(date: str, state: dict) -> None:
     for pick in state.get("picks", []):
         s = pick.get("summary") or {}
         if pick.get("status") in ("ok", "review_ready"):
-            status_mark = ""
-        elif pick.get("status") == "quarantine":
+            repairs = pick.get("boundary_repairs") or []
+            status_mark = f"（边界自修复×{len(repairs)}）" if repairs else ""
+        elif pick.get("status") == "quarantine":  # legacy states only
             status_mark = f" ⚠quarantine[{','.join(pick.get('red_flags') or [])}]"
+        elif pick.get("status") == "boundary_unrepairable":
+            status_mark = " ✗边界不可修复未交付"
         else:
             status_mark = f" ⚠{pick.get('status')}"
         lines.append(
@@ -1555,7 +1580,7 @@ def write_reports(date: str, state: dict) -> None:
     report.write_text(
         f"# autoslice runner 最新状态\n\n- 时间: {time.strftime('%Y-%m-%d %H:%M:%S %z')}\n"
         f"- 日期: {date}  状态: {state.get('status')}\n"
-        f"- 谈话: {delivered_talk} 交付(含 {quarantined} quarantine) / {len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
+        f"- 谈话: {delivered_talk} 交付(自修复 {repaired}, 不可修复 {unrepairable}) / {len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
         f"- 歌切: {delivered_songs} 交付 / {blocked_songs} 门拦 / {len(songs)} 尝试 (pending {len(state.get('pending_song', []))})\n"
         f"- 交付: {REPO_ROOT}/lidousha/{date}/ (Mac launchd 拉取)\n",
         encoding="utf-8",
@@ -1810,10 +1835,10 @@ def process_date(date: str) -> None:
 
     picks, songs = state["picks"], state["songs"]
     delivered_talk = [p for p in picks if p.get("status") in DELIVERED_TALK_STATUSES]
-    quarantined = [p for p in picks if p.get("status") == "quarantine"]
+    repaired = [p for p in delivered_talk if p.get("boundary_repairs")]
     delivered_songs = [s for s in songs if s.get("delivered")]
     blocked_songs = [s for s in songs if s.get("status") == "blocked"]
-    failures = [r for r in picks + songs if r.get("status") == "failed"]
+    failures = [r for r in picks + songs if r.get("status") in ("failed", "boundary_unrepairable")]
     # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
     # 0 failures').  A batch is review_ready only when something REACHED review.
     if delivered_talk or delivered_songs:
@@ -1824,7 +1849,7 @@ def process_date(date: str) -> None:
     write_reports(date, state)
     log(
         f"{date} batch finished [{state['status']}]: talk {len(delivered_talk)}/{len(picks)} delivered"
-        f" ({len(quarantined)} quarantined), song {len(delivered_songs)} delivered"
+        f" ({len(repaired)} boundary-self-repaired), song {len(delivered_songs)} delivered"
         f" / {len(blocked_songs)} gate-blocked / {len(songs)} attempted, {len(failures)} failure(s)"
     )
 

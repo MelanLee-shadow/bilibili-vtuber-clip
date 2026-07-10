@@ -827,7 +827,9 @@ def test_write_reports_no_delivery_is_loud(tmp_path, monkeypatch):
     assert "done" not in text.splitlines()[2]
 
 
-def test_write_reports_quarantine_shows_red_flags(tmp_path, monkeypatch):
+def test_write_reports_legacy_quarantine_rows_still_render(tmp_path, monkeypatch):
+    """Old state files may still carry pre-2026-07-10 quarantine picks — they
+    stay visible (delivered + flags shown) but are labelled as legacy."""
     monkeypatch.setattr(runner, "BASE", tmp_path)
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     state = {
@@ -841,7 +843,35 @@ def test_write_reports_quarantine_shows_red_flags(tmp_path, monkeypatch):
     runner.write_reports("2026-07-09", state)
     text = (tmp_path / "lidousha" / "2026-07-09" / "AUTOSLICE_SUMMARY.md").read_text(encoding="utf-8")
     assert "quarantine[speech_continues_5000ms_after_cut]" in text
-    assert "1 条 ⚠quarantine" in text
+    assert "1 条旧版 quarantine" in text
+
+
+def test_write_reports_boundary_repair_and_unrepairable(tmp_path, monkeypatch):
+    """Post-2026-07-10 vocabulary (Ivan: unattended = fix-or-refuse): delivered
+    picks are clean with the repair trail shown; unrepairable boundaries are
+    undelivered failures — no new quarantine state."""
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    state = {
+        "status": "review_ready", "segments_done": [], "segments_dead": {},
+        "pending_talk": [], "pending_song": [], "songs": [],
+        "picks": [
+            {"candidate_id": "auto_1", "status": "review_ready", "hook": "钩子A",
+             "title": "【李豆沙】标题A", "confidence": 0.9,
+             "boundary_repairs": [{"flags": ["speech_continues_1800ms_after_cut"], "snapped_end_ms": 65_000}],
+             "start_ms": 0, "end_ms": 60_000, "summary": {}},
+            {"candidate_id": "auto_2", "status": "boundary_unrepairable", "hook": "钩子B",
+             "title": None, "confidence": 0.8,
+             "start_ms": 0, "end_ms": 50_000, "summary": {}},
+        ],
+    }
+    runner.write_reports("2026-07-09", state)
+    text = (tmp_path / "lidousha" / "2026-07-09" / "AUTOSLICE_SUMMARY.md").read_text(encoding="utf-8")
+    assert "边界自修复×1" in text
+    assert "1 条边界自修复后交付" in text
+    assert "1 条边界不可修复未交付" in text
+    assert "✗边界不可修复未交付" in text
+    assert "⚠quarantine" not in text
 
 def test_record_is_song_recognizes_non_lrc_songs():
     """7/9 实锤：日语歌《ただそばにいて》LRC 钉歌失败(song_boundary/alignment 全空)，
