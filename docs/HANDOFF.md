@@ -31,7 +31,7 @@ Ivan 四连指令：①封面字太小要调大，且**必须保留完整原标�
 
 ### 下一步
 
-1. 5.6 家族用量窗恢复后可选：再跑一次 luna judge 直连探针确认主路径绿灯（fallback 已实证，不阻塞）。
+1. ~~luna judge 主路径探针~~ **已完成（2026-07-10 Ivan 点跑）**：用量窗恢复后，生产同款命令（luna 主 + 5.5 fallback）在真实 request artifact 上 rc=0，provider 记 `llm:gpt-5.6-luna`（主路径亲自接住，未走 fallback），契约字段齐全（release_ready/reason_codes/scores/viewer_context/request_sha256 绑定），且与此前 5.5 fallback 对同一 artifact 的裁决 reason codes 一致（跨模型一致性佐证）。judge lane 主备双路径均实证。
 2. 下一场直播前摘 `DISABLED`（归属另一会话验收流程）。
 3. 遗留 follow-up：边界自修复的语义收束档（嗯类收尾）、封面行首标点禁则。
 
