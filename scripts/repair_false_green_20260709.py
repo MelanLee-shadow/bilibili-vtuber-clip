@@ -375,6 +375,22 @@ def _as_reason_set(value: object) -> set[str]:
     return {item for item in value if isinstance(item, str)}
 
 
+def _incident_song_reason_set(value: object) -> set[str]:
+    """Project the reason list onto song authorization/rejection claims."""
+
+    return {code for code in _as_reason_set(value) if code.startswith("SONG_")}
+
+
+def _require_exact_incident_song_reasons(value: object, label: str) -> set[str]:
+    reasons = _incident_song_reason_set(value)
+    if reasons != REQUIRED_REASONS:
+        raise RepairError(
+            f"{label} song reasons are not the exact incident hard rejection: "
+            f"expected {sorted(REQUIRED_REASONS)}, observed {sorted(reasons)}"
+        )
+    return _as_reason_set(value)
+
+
 def _walk_strings(value: object) -> Iterator[str]:
     if isinstance(value, str):
         yield value
@@ -413,9 +429,29 @@ def _validate_background_performance(
     )
     if error is not None:
         raise RepairError(f"fresh negative live-performance evidence is invalid: {error}")
+    if not isinstance(observations, list) or not observations:
+        raise RepairError("fresh negative has no canonical lyric rows")
+    for index, row in enumerate(observations):
+        if (
+            not isinstance(row, Mapping)
+            or row.get("heard") is not True
+            or row.get("lyric_vocal_subject") != "RECORDED_OR_PLAYBACK_SINGER"
+            or row.get("lidousha_role") not in {"SILENT_OR_NOT_AUDIBLE", "SPEAKING_NOT_SINGING"}
+            or row.get("same_live_vocal_source_as_lidousha") is not False
+            or row.get("other_singer_or_harmony_audible") is not False
+            or row.get("recorded_or_playback_vocal_audible") is not True
+        ):
+            raise RepairError(
+                f"fresh negative lyric row {index} does not exclusively prove recorded playback "
+                "with Li Dousha not singing"
+            )
     if (
         performance.get("mode") not in BACKGROUND_REJECTION_MODES
+        or float(performance.get("confidence", 0.0)) < 0.85
+        or float(performance.get("background_recording_likelihood", 0.0)) < 0.80
+        or performance.get("continuous_singing") is not False
         or performance.get("same_lidousha_live_singer_across_all_lyrics") is not False
+        or performance.get("other_singer_or_harmony_present") is not False
         or performance.get("recorded_or_playback_vocal_present") is not True
     ):
         raise RepairError(
@@ -694,14 +730,17 @@ def validate_negative_result(
         )
     if record.get("decision_action") != "BLOCK":
         raise RepairError("fresh negative record is not decision_action=BLOCK")
-    reasons = _as_reason_set(record.get("reason_codes"))
-    if not REQUIRED_REASONS.issubset(reasons):
-        raise RepairError(f"fresh negative reasons missing {sorted(REQUIRED_REASONS - reasons)}")
+    reasons = _require_exact_incident_song_reasons(
+        record.get("reason_codes"), "fresh negative outer record"
+    )
     if _forbidden_materialization(record):
         raise RepairError(f"fresh negative record materialized forbidden fields: {_forbidden_materialization(record)}")
     boundary = _as_mapping(record.get("boundary_resolution"))
     if boundary.get("action") != "BLOCK":
         raise RepairError("fresh negative boundary_resolution.action must be BLOCK")
+    _require_exact_incident_song_reasons(
+        boundary.get("reason_codes"), "fresh negative outer boundary"
+    )
     job = _as_mapping(record.get("source_context_job"))
     _validate_incident_source_context_job(job, incident=incident)
     gate = _as_mapping(job.get("song_repair_gate"))
@@ -713,9 +752,9 @@ def validate_negative_result(
             "fresh negative live-performance mode is not a recorded-vocal incident rejection: "
             f"expected one of {sorted(BACKGROUND_REJECTION_MODES)}, observed {performance.get('mode')}"
         )
-    gate_reasons = _as_reason_set(gate.get("reason_codes"))
-    if not REQUIRED_REASONS.issubset(gate_reasons):
-        raise RepairError("fresh negative song repair gate lost the two hard performer reasons")
+    gate_reasons = _require_exact_incident_song_reasons(
+        gate.get("reason_codes"), "fresh negative song repair gate"
+    )
     candidate_dir = Path(str(record.get("candidate_dir") or ""))
     if not candidate_dir.is_dir():
         raise RepairError(f"fresh negative candidate_dir is missing: {candidate_dir}")
@@ -732,8 +771,9 @@ def validate_negative_result(
         raise RepairError("fresh negative song repair report is not an unrepaired v1 report")
     if repair_report.get("song_boundary") is not None or repair_report.get("lyrics_alignment") is not None:
         raise RepairError("background rejection must not carry a song boundary or lyrics alignment claim")
-    if not REQUIRED_REASONS.issubset(_as_reason_set(repair_report.get("reason_codes"))):
-        raise RepairError("fresh negative song repair report lost the two hard performer reasons")
+    _require_exact_incident_song_reasons(
+        repair_report.get("reason_codes"), "fresh negative song repair report"
+    )
     report_performance = _as_mapping(repair_report.get("live_performance"))
     if report_performance.get("mode") not in BACKGROUND_REJECTION_MODES:
         raise RepairError("fresh negative song repair report is not bound to recorded-vocal playback")
@@ -784,10 +824,17 @@ def validate_negative_result(
     if not isinstance(inner_records, list) or len(inner_records) != 1 or not isinstance(inner_records[0], Mapping):
         raise RepairError("fresh negative inner shadow summary must contain exactly one record")
     inner_record = inner_records[0]
+    inner_reasons = _require_exact_incident_song_reasons(
+        inner_record.get("reason_codes"), "fresh negative inner record"
+    )
+    inner_boundary = _as_mapping(inner_record.get("boundary_resolution"))
+    _require_exact_incident_song_reasons(
+        inner_boundary.get("reason_codes"), "fresh negative inner boundary"
+    )
     if (
         inner_record.get("decision_action") != "BLOCK"
-        or not REQUIRED_REASONS.issubset(_as_reason_set(inner_record.get("reason_codes")))
-        or _as_mapping(inner_record.get("boundary_resolution")).get("action") != "BLOCK"
+        or inner_reasons != reasons
+        or inner_boundary.get("action") != "BLOCK"
         or _as_mapping(inner_record.get("source_context_job")).get("song_repair_gate") != gate
     ):
         raise RepairError("fresh negative inner/outer BLOCK evidence does not agree")

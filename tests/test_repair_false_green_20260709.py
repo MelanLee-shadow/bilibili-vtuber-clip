@@ -325,7 +325,10 @@ def _incident_fixture(
         "candidate_dir": str(candidate_dir),
         "decision_action": "BLOCK",
         "reason_codes": sorted(repair.REQUIRED_REASONS),
-        "boundary_resolution": {"action": "BLOCK"},
+        "boundary_resolution": {
+            "action": "BLOCK",
+            "reason_codes": sorted(repair.REQUIRED_REASONS),
+        },
         "source_context_job": {
             "schema_version": "source-context-job-from-full-session-candidate.v1",
             "candidate_id": negative_candidate_id,
@@ -360,7 +363,10 @@ def _incident_fixture(
                     {
                         "decision_action": "BLOCK",
                         "reason_codes": sorted(repair.REQUIRED_REASONS),
-                        "boundary_resolution": {"action": "BLOCK"},
+                        "boundary_resolution": {
+                            "action": "BLOCK",
+                            "reason_codes": sorted(repair.REQUIRED_REASONS),
+                        },
                         "source_context_job": record["source_context_job"],
                     }
                 ]
@@ -712,6 +718,58 @@ def test_streamer_talking_over_recorded_vocal_is_valid_incident_rejection(tmp_pa
         song for song in state["songs"] if song["candidate_id"] == repair.TARGET_CANDIDATE_ID
     )
     assert repaired_song["song_repair_gate"]["live_performance"]["mode"] == mode
+
+
+def test_one_recorded_row_cannot_authorize_mostly_lidousha_singing_incident_repair(tmp_path, capsys):
+    fixture = _incident_fixture(tmp_path)
+    raw = json.loads(fixture["agy_output"].read_text(encoding="utf-8"))
+    raw["live_performance"]["mode"] = "STREAMER_TALKING_OVER_MUSIC"
+    for row in raw["observations"][1:]:
+        row["lyric_vocal_subject"] = "LIDOUSHA"
+        row["lidousha_role"] = "SINGING_THIS_LYRIC"
+        row["same_live_vocal_source_as_lidousha"] = True
+        row["recorded_or_playback_vocal_audible"] = False
+    _json(fixture["agy_output"], raw)
+    manifest = json.loads(fixture["agy_manifest"].read_text(encoding="utf-8"))
+    manifest["artifacts"]["output_sha256"] = _sha(fixture["agy_output"])
+    _json(fixture["agy_manifest"], manifest)
+
+    negative = json.loads(fixture["negative"].read_text(encoding="utf-8"))
+    outer_gate = negative["records"][0]["source_context_job"]["song_repair_gate"]
+    inner_gate = negative["last_shadow_summary"]["records"][0]["source_context_job"]["song_repair_gate"]
+    outer_gate["live_performance"]["mode"] = "STREAMER_TALKING_OVER_MUSIC"
+    inner_gate["live_performance"]["mode"] = "STREAMER_TALKING_OVER_MUSIC"
+    repair_report = Path(outer_gate["repair_report_path"])
+    report = json.loads(repair_report.read_text(encoding="utf-8"))
+    report["live_performance"]["mode"] = "STREAMER_TALKING_OVER_MUSIC"
+    _json(repair_report, report)
+    _json(fixture["negative"], negative)
+
+    assert repair.main(_args(fixture, "--apply")) == 2
+    assert "does not exclusively prove recorded playback" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
+
+
+def test_conflicting_song_ready_reason_cannot_authorize_incident_repair(tmp_path, capsys):
+    fixture = _incident_fixture(tmp_path)
+    negative = json.loads(fixture["negative"].read_text(encoding="utf-8"))
+    outer = negative["records"][0]
+    inner = negative["last_shadow_summary"]["records"][0]
+    for record in (outer, inner):
+        record["reason_codes"].append("SONG_FULL_BOUNDARY_READY")
+        record["boundary_resolution"]["reason_codes"].append("SONG_FULL_BOUNDARY_READY")
+        record["source_context_job"]["song_repair_gate"]["reason_codes"].append(
+            "SONG_FULL_BOUNDARY_READY"
+        )
+    repair_report = Path(outer["source_context_job"]["song_repair_gate"]["repair_report_path"])
+    report = json.loads(repair_report.read_text(encoding="utf-8"))
+    report["reason_codes"].append("SONG_FULL_BOUNDARY_READY")
+    _json(repair_report, report)
+    _json(fixture["negative"], negative)
+
+    assert repair.main(_args(fixture, "--apply")) == 2
+    assert "not the exact incident hard rejection" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
 
 
 def test_agy_source_origin_must_match_selector_source(tmp_path, capsys):
