@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
@@ -50,10 +51,42 @@ REQUIRED_ARTIFACTS = {
     "ass",
     "speaker_manifest",
 }
+GENERATOR_FILES = (
+    Path(__file__).resolve(),
+    ROOT / "scripts" / "apply_speaker_turn_overrides.py",
+    ROOT / "scripts" / "apply_subtitle_text_overrides.py",
+    ROOT / "scripts" / "llm_via_cpa.sh",
+    ROOT / "scripts" / "produce_slice_package.py",
+    ROOT / "scripts" / "run_auto_review_shadow_pipeline.py",
+    ROOT / "src" / "autoslice" / "speaker_finalizer.py",
+    ROOT / "src" / "autoslice" / "host_vocal_proof.py",
+    ROOT / "src" / "autoslice" / "llm_client.py",
+    ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json",
+)
 
 
 class BatchSpeakerReviewError(RuntimeError):
     pass
+
+
+def _generator_sha256() -> str:
+    digest = hashlib.sha256()
+    for path in sorted(GENERATOR_FILES, key=lambda item: item.relative_to(ROOT).as_posix()):
+        relative = path.relative_to(ROOT).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        payload = path.read_bytes()
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return digest.hexdigest()
+
+
+def _assert_generator_sha256(expected: str) -> None:
+    actual = _generator_sha256()
+    if actual != expected:
+        raise BatchSpeakerReviewError(
+            f"speaker generator drift: expected {expected}, got {actual}"
+        )
 
 
 def _utc_now() -> str:
@@ -111,6 +144,13 @@ def validate_plan(document: object) -> dict[str, Any]:
             raise BatchSpeakerReviewError(
                 f"entry {position} must bind speaker_override_path and speaker_override_sha256 together"
             )
+        session_anchor_path = str(raw.get("source_session_anchor_path") or "").strip()
+        session_anchor_digest_raw = raw.get("source_session_anchor_sha256")
+        if bool(session_anchor_path) != bool(session_anchor_digest_raw):
+            raise BatchSpeakerReviewError(
+                f"entry {position} must bind source_session_anchor_path and "
+                "source_session_anchor_sha256 together"
+            )
         normalized.append(
             {
                 **dict(raw),
@@ -126,6 +166,15 @@ def validate_plan(document: object) -> dict[str, Any]:
                 "speaker_override_sha256": (
                     _expected_digest(override_digest_raw, f"entry {position} speaker_override_sha256")
                     if override_path
+                    else None
+                ),
+                "source_session_anchor_path": session_anchor_path or None,
+                "source_session_anchor_sha256": (
+                    _expected_digest(
+                        session_anchor_digest_raw,
+                        f"entry {position} source_session_anchor_sha256",
+                    )
+                    if session_anchor_path
                     else None
                 ),
             }
@@ -195,6 +244,10 @@ def _validate_speaker_manifest(
         raise BatchSpeakerReviewError(f"speaker manifest style drift: {path}")
     if manifest.get("speaker_taxonomy") != "binary_visual_host_vs_guest":
         raise BatchSpeakerReviewError(f"speaker manifest taxonomy drift: {path}")
+    if manifest.get("profile_sha256") != sha256_file(
+        ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+    ):
+        raise BatchSpeakerReviewError(f"speaker manifest voiceprint profile drift: {path}")
     if manifest.get("source_media_sha256") != entry["source_media_sha256"]:
         raise BatchSpeakerReviewError(f"speaker manifest media binding drift: {path}")
     if manifest.get("text_final_srt_sha256") != entry["text_final_srt_sha256"]:
@@ -203,6 +256,12 @@ def _validate_speaker_manifest(
         raise BatchSpeakerReviewError(f"packaged text-final SRT drift: {path}")
     if manifest.get("speaker_override_sha256") != entry.get("speaker_override_sha256"):
         raise BatchSpeakerReviewError(f"speaker manifest override binding drift: {path}")
+    expected_session_anchor = entry.get("source_session_anchor_sha256")
+    if manifest.get("source_session_anchor_manifest_sha256") != expected_session_anchor:
+        raise BatchSpeakerReviewError(f"speaker manifest source-session binding drift: {path}")
+    expected_scope = "source_session" if expected_session_anchor else "clip"
+    if manifest.get("host_anchor_scope") != expected_scope:
+        raise BatchSpeakerReviewError(f"speaker manifest host anchor scope drift: {path}")
     if manifest.get("host_identity_aliases") != ["李豆沙", "shadow"]:
         raise BatchSpeakerReviewError(f"speaker manifest host aliases drift: {path}")
     if manifest.get("output_review_srt_sha256") != artifacts["speaker_srt"]["sha256"]:
@@ -211,7 +270,12 @@ def _validate_speaker_manifest(
         raise BatchSpeakerReviewError(f"speaker manifest ASS output drift: {path}")
 
 
-def _result_is_reusable(path: Path, entry: Mapping[str, object]) -> bool:
+def _result_is_reusable(
+    path: Path,
+    entry: Mapping[str, object],
+    *,
+    generator_sha256: str,
+) -> bool:
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
         if result.get("schema_version") != RESULT_SCHEMA or result.get("status") != "READY":
@@ -225,6 +289,10 @@ def _result_is_reusable(path: Path, entry: Mapping[str, object]) -> bool:
         if result.get("text_final_srt_sha256") != entry["text_final_srt_sha256"]:
             return False
         if result.get("speaker_override_sha256") != entry.get("speaker_override_sha256"):
+            return False
+        if result.get("source_session_anchor_sha256") != entry.get("source_session_anchor_sha256"):
+            return False
+        if result.get("generator_sha256") != generator_sha256:
             return False
         if result.get("subtitle_style") != SPEAKER_SUBTITLE_STYLE_ID:
             return False
@@ -269,7 +337,9 @@ def build_review_item(
     output_dir: Path,
     speaker_python: Path,
     resume: bool,
+    generator_sha256: str,
 ) -> dict[str, object]:
+    _assert_generator_sha256(generator_sha256)
     candidate_id = str(entry["candidate_id"])
     review_name = str(entry["review_name"])
     source_media = _verify_bound_file(
@@ -287,9 +357,26 @@ def build_review_item(
             raise BatchSpeakerReviewError(f"speaker override hash drift: {override_path}")
     elif expected_override:
         raise BatchSpeakerReviewError("speaker_override_sha256 is set without a path")
+    session_anchor_value = entry.get("source_session_anchor_path")
+    source_session_anchor_path = (
+        Path(str(session_anchor_value)).resolve(strict=True) if session_anchor_value else None
+    )
+    expected_session_anchor = entry.get("source_session_anchor_sha256")
+    if source_session_anchor_path is not None:
+        expected = _expected_digest(expected_session_anchor, "source_session_anchor_sha256")
+        if sha256_file(source_session_anchor_path) != expected:
+            raise BatchSpeakerReviewError(
+                f"source-session anchor manifest hash drift: {source_session_anchor_path}"
+            )
+    elif expected_session_anchor:
+        raise BatchSpeakerReviewError(
+            "source_session_anchor_sha256 is set without a path"
+        )
 
     result_path = output_dir / f"{review_name}.result.json"
-    if resume and result_path.is_file() and _result_is_reusable(result_path, entry):
+    if resume and result_path.is_file() and _result_is_reusable(
+        result_path, entry, generator_sha256=generator_sha256
+    ):
         return json.loads(result_path.read_text(encoding="utf-8"))
 
     paths = _expected_artifact_paths(output_dir, review_name)
@@ -309,6 +396,7 @@ def build_review_item(
         output_manifest_path=paths["speaker_manifest"],
         work_dir=work_dir / "speaker",
         override_path=override_path,
+        source_session_anchor_path=source_session_anchor_path,
         speaker_python=speaker_python,
     )
     _validate_ass_style_contract(paths["ass"])
@@ -342,6 +430,14 @@ def build_review_item(
     _verify_bound_file(text_final, str(entry["text_final_srt_sha256"]), "text-final SRT post-run")
     if override_path is not None and sha256_file(override_path) != entry["speaker_override_sha256"]:
         raise BatchSpeakerReviewError(f"speaker override post-run hash drift: {override_path}")
+    if (
+        source_session_anchor_path is not None
+        and sha256_file(source_session_anchor_path) != entry["source_session_anchor_sha256"]
+    ):
+        raise BatchSpeakerReviewError(
+            f"source-session anchor manifest post-run hash drift: {source_session_anchor_path}"
+        )
+    _assert_generator_sha256(generator_sha256)
 
     decisions = speaker_manifest.get("final_decisions") or []
     speaker_counts = {
@@ -365,6 +461,13 @@ def build_review_item(
         "text_final_srt_sha256": sha256_file(text_final),
         "speaker_override": str(override_path) if override_path else None,
         "speaker_override_sha256": sha256_file(override_path) if override_path else None,
+        "source_session_anchor": (
+            str(source_session_anchor_path) if source_session_anchor_path else None
+        ),
+        "source_session_anchor_sha256": (
+            sha256_file(source_session_anchor_path) if source_session_anchor_path else None
+        ),
+        "generator_sha256": generator_sha256,
         "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
         "speaker_counts": speaker_counts,
         "source_cue_count": speaker_manifest.get("source_cue_count"),
@@ -420,8 +523,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     plan_path = args.plan.resolve(strict=True)
-    plan = validate_plan(json.loads(plan_path.read_text(encoding="utf-8")))
-    plan_sha256 = sha256_file(plan_path)
+    # Parse and hash the exact same bytes.  Reading twice can otherwise bind a
+    # batch to plan B while actually executing an already-parsed plan A.
+    plan_payload = plan_path.read_bytes()
+    plan = validate_plan(json.loads(plan_payload))
+    plan_sha256 = hashlib.sha256(plan_payload).hexdigest()
+    generator_sha256 = _generator_sha256()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     batch_path = output_dir / "batch-manifest.json"
@@ -429,6 +536,10 @@ def main(argv: list[str] | None = None) -> int:
         old = json.loads(batch_path.read_text(encoding="utf-8"))
         if old.get("plan_sha256") != plan_sha256:
             raise BatchSpeakerReviewError("output directory is bound to a different plan hash")
+        if old.get("generator_sha256") != generator_sha256:
+            raise BatchSpeakerReviewError(
+                "output directory is bound to a different speaker generator hash"
+            )
 
     results: list[dict[str, object]] = []
     failures: list[dict[str, str]] = []
@@ -439,6 +550,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_dir=output_dir,
                 speaker_python=args.speaker_python,
                 resume=args.resume,
+                generator_sha256=generator_sha256,
             )
             results.append(result)
         except Exception as exc:
@@ -455,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
             "date": plan.get("date"),
             "plan": str(plan_path),
             "plan_sha256": plan_sha256,
+            "generator_sha256": generator_sha256,
             "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
             "style_contract": {
                 "李豆沙": LDS_SAPPHIRE_STYLE,
@@ -471,7 +584,34 @@ def main(argv: list[str] | None = None) -> int:
         }
         _write_json(batch_path, batch)
 
+    if sha256_file(plan_path) != plan_sha256:
+        failures.append(
+            {
+                "candidate_id": "__batch__",
+                "review_name": "计划文件",
+                "error": "BatchSpeakerReviewError: speaker batch plan drifted during the run",
+            }
+        )
+    try:
+        _assert_generator_sha256(generator_sha256)
+    except BatchSpeakerReviewError as exc:
+        failures.append(
+            {
+                "candidate_id": "__batch__",
+                "review_name": "生成器",
+                "error": f"BatchSpeakerReviewError: {exc}",
+            }
+        )
+    if any(result.get("generator_sha256") != generator_sha256 for result in results):
+        failures.append(
+            {
+                "candidate_id": "__batch__",
+                "review_name": "生成器",
+                "error": "BatchSpeakerReviewError: mixed generator fingerprints in batch results",
+            }
+        )
     _write_review_csv(output_dir / "review_manifest.csv", results)
+    batch["failures"] = failures
     batch["status"] = "READY" if not failures and len(results) == len(plan["entries"]) else "BLOCKED"
     batch["completed_at"] = _utc_now()
     _write_json(batch_path, batch)

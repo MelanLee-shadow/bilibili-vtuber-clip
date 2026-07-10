@@ -15,6 +15,7 @@ The ML imports are lazy so ordinary unit tests do not need the production venv.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -38,6 +39,7 @@ from scripts.apply_speaker_turn_overrides import (
 )
 from scripts.apply_subtitle_text_overrides import TextCue, parse_srt
 from src.autoslice.host_vocal_proof import (
+    _extract_checkpoint,
     _extract_score,
     _load_campplus_pipeline,
     _sha256_directory,
@@ -48,6 +50,10 @@ from src.autoslice.llm_client import extract_json_object
 
 class SpeakerFinalizationError(RuntimeError):
     pass
+
+
+SOURCE_SESSION_ANCHOR_SCHEMA = "lidousha-speaker-source-session-anchors.v1"
+SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 
 DEFAULT_POLICY: dict[str, float | int] = {
@@ -61,6 +67,279 @@ DEFAULT_POLICY: dict[str, float | int] = {
     "short_cue_ms": 1_500,
     "single_host_median_seed_min": 0.55,
 }
+
+
+def _require_sha256(value: object, *, field: str) -> str:
+    digest = str(value or "")
+    if not SHA256_RE.fullmatch(digest):
+        raise SpeakerFinalizationError(f"{field} must be a SHA-256 digest")
+    return digest
+
+
+def _snapshot_bound_input(source: Path, target: Path) -> tuple[Path, str]:
+    """Freeze one small control-plane input as the exact bytes we hash/use."""
+
+    resolved = source.resolve(strict=True)
+    payload = resolved.read_bytes()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(payload)
+    return target.resolve(), hashlib.sha256(payload).hexdigest()
+
+
+def _validate_source_session_anchor_document(
+    document: object,
+    *,
+    target_media_sha256: str,
+    target_media_path: Path | None = None,
+    profile_sha256: str,
+    model_tree_sha256: str,
+    reference_hashes: Mapping[str, str],
+    host_seed_min: float,
+) -> dict[str, object]:
+    """Validate the immutable contract before any donor media is decoded.
+
+    A source-session anchor is not a relaxed threshold.  Every donor cue must
+    already pass the same static enrollment gate used for clip-local anchors,
+    and the manifest explicitly allowlists the exact target recut hash.  This
+    lets a short clip reuse trusted speech from the same source recording while
+    keeping cross-session or drifted anchors fail-closed.
+    """
+
+    if not isinstance(document, dict) or document.get("schema_version") != SOURCE_SESSION_ANCHOR_SCHEMA:
+        raise SpeakerFinalizationError(
+            f"source-session anchor schema must be {SOURCE_SESSION_ANCHOR_SCHEMA}"
+        )
+    if document.get("status") != "READY" or document.get("subject") != "李豆沙":
+        raise SpeakerFinalizationError("source-session anchor manifest is not READY for 李豆沙")
+    session_id = str(document.get("source_session_id") or "").strip()
+    if not session_id:
+        raise SpeakerFinalizationError("source-session anchor manifest is missing source_session_id")
+    if _require_sha256(document.get("profile_sha256"), field="source-session profile_sha256") != profile_sha256:
+        raise SpeakerFinalizationError("source-session anchor profile hash drift")
+    if _require_sha256(document.get("model_tree_sha256"), field="source-session model_tree_sha256") != model_tree_sha256:
+        raise SpeakerFinalizationError("source-session anchor model hash drift")
+    declared_references = document.get("reference_hashes")
+    if not isinstance(declared_references, Mapping) or dict(declared_references) != dict(reference_hashes):
+        raise SpeakerFinalizationError("source-session anchor reference hashes drift")
+    source_recording = str(document.get("source_recording") or "").strip()
+    if not source_recording or not Path(source_recording).is_absolute():
+        raise SpeakerFinalizationError(
+            "source-session anchor source_recording must be an absolute path"
+        )
+    allowed_targets = document.get("allowed_targets")
+    if not isinstance(allowed_targets, list) or not allowed_targets:
+        raise SpeakerFinalizationError("source-session anchor target allowlist is missing")
+    normalized_target_hashes: list[str] = []
+    normalized_target_ids: list[str] = []
+    matching_target: Mapping[str, object] | None = None
+    for position, target in enumerate(allowed_targets, start=1):
+        if not isinstance(target, Mapping):
+            raise SpeakerFinalizationError(
+                f"source-session allowed target {position} must be an object"
+            )
+        candidate_id = str(target.get("candidate_id") or "").strip()
+        media_path = str(target.get("media_path") or "").strip()
+        provenance_path = str(target.get("provenance_path") or "").strip()
+        if not candidate_id or not media_path or not provenance_path:
+            raise SpeakerFinalizationError(
+                f"source-session allowed target {position} is missing provenance fields"
+            )
+        if not Path(media_path).is_absolute() or not Path(provenance_path).is_absolute():
+            raise SpeakerFinalizationError(
+                f"source-session allowed target {position} paths must be absolute"
+            )
+        media_digest = _require_sha256(
+            target.get("media_sha256"),
+            field=f"source-session allowed target {position} media_sha256",
+        )
+        _require_sha256(
+            target.get("provenance_sha256"),
+            field=f"source-session allowed target {position} provenance_sha256",
+        )
+        normalized_target_hashes.append(media_digest)
+        normalized_target_ids.append(candidate_id)
+        if media_digest == target_media_sha256:
+            matching_target = target
+    if len(set(normalized_target_hashes)) != len(normalized_target_hashes):
+        raise SpeakerFinalizationError("source-session anchor target allowlist contains duplicates")
+    if len(set(normalized_target_ids)) != len(normalized_target_ids):
+        raise SpeakerFinalizationError("source-session anchor target candidate IDs contain duplicates")
+    if matching_target is None:
+        raise SpeakerFinalizationError("target media is not allowlisted for source-session anchors")
+    # The runtime may consume a byte-identical temporary copy (the remote
+    # wrapper deliberately scps to /tmp).  Identity is therefore the frozen
+    # media SHA; the canonical path remains provenance, not execution state.
+    if target_media_path is not None:
+        target_media_path.resolve(strict=True)
+
+    anchors = document.get("anchors")
+    if not isinstance(anchors, list) or len(anchors) < 2:
+        raise SpeakerFinalizationError("source-session anchor manifest requires at least two anchors")
+    reference_ids = set(reference_hashes)
+    seen_sources: set[tuple[object, ...]] = set()
+    needs_cue_donor = False
+    for position, anchor in enumerate(anchors, start=1):
+        if not isinstance(anchor, Mapping):
+            raise SpeakerFinalizationError(f"source-session anchor {position} must be an object")
+        anchor_type = str(anchor.get("anchor_type") or "donor_cue")
+        if anchor_type == "donor_cue":
+            needs_cue_donor = True
+            cue_index = anchor.get("source_cue")
+            if not isinstance(cue_index, int) or isinstance(cue_index, bool) or cue_index < 1:
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} has invalid source_cue"
+                )
+            source_key = (anchor_type, cue_index)
+            if not str(anchor.get("start") or "") or not str(anchor.get("end") or ""):
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} is missing timing"
+                )
+        elif anchor_type == "source_recording_segment":
+            start_ms = anchor.get("source_start_ms")
+            end_ms = anchor.get("source_end_ms")
+            if (
+                not isinstance(start_ms, int)
+                or isinstance(start_ms, bool)
+                or not isinstance(end_ms, int)
+                or isinstance(end_ms, bool)
+                or start_ms < 0
+                or end_ms - start_ms < 1_000
+                or end_ms - start_ms > 30_000
+            ):
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} has invalid source recording segment"
+                )
+            source_key = (anchor_type, start_ms, end_ms)
+        else:
+            raise SpeakerFinalizationError(
+                f"source-session anchor {position} has invalid anchor_type"
+            )
+        if source_key in seen_sources:
+            raise SpeakerFinalizationError("source-session anchor sources must be unique")
+        seen_sources.add(source_key)
+        if not isinstance(anchor.get("text"), str):
+            raise SpeakerFinalizationError(f"source-session anchor {position} is missing text")
+        _require_sha256(anchor.get("sample_sha256"), field=f"source-session anchor {position} sample")
+        scores = anchor.get("reference_scores")
+        if not isinstance(scores, Mapping) or set(scores) != reference_ids:
+            raise SpeakerFinalizationError(f"source-session anchor {position} reference scores drift")
+        normalized_scores: list[float] = []
+        for reference_id in sorted(reference_ids):
+            score = scores.get(reference_id)
+            if not isinstance(score, (int, float)) or isinstance(score, bool) or not 0.0 <= float(score) <= 1.0:
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} has invalid score for {reference_id}"
+                )
+            normalized_scores.append(float(score))
+        declared_median = anchor.get("enroll_median_score")
+        if not isinstance(declared_median, (int, float)) or isinstance(declared_median, bool):
+            raise SpeakerFinalizationError(f"source-session anchor {position} median is missing")
+        actual_declared_median = float(statistics.median(normalized_scores))
+        if abs(float(declared_median) - actual_declared_median) > 1e-6:
+            raise SpeakerFinalizationError(f"source-session anchor {position} median drift")
+        if actual_declared_median < host_seed_min:
+            raise SpeakerFinalizationError(
+                f"source-session anchor {position} does not pass the unchanged host seed gate"
+            )
+    donor = document.get("donor")
+    if needs_cue_donor and not isinstance(donor, Mapping):
+        raise SpeakerFinalizationError("source-session cue anchors require a donor")
+    if donor is not None:
+        if not isinstance(donor, Mapping):
+            raise SpeakerFinalizationError("source-session anchor donor must be an object")
+        if not str(donor.get("candidate_id") or "").strip():
+            raise SpeakerFinalizationError("source-session anchor donor candidate_id is missing")
+        for key in ("media_path", "text_srt_path", "provenance_path"):
+            if not str(donor.get(key) or "").strip():
+                raise SpeakerFinalizationError(f"source-session anchor donor {key} is missing")
+            if not Path(str(donor[key])).is_absolute():
+                raise SpeakerFinalizationError(
+                    f"source-session anchor donor {key} must be absolute"
+                )
+        _require_sha256(donor.get("media_sha256"), field="source-session donor media_sha256")
+        _require_sha256(
+            donor.get("text_srt_sha256"), field="source-session donor text_srt_sha256"
+        )
+        _require_sha256(
+            donor.get("provenance_sha256"), field="source-session donor provenance_sha256"
+        )
+    return dict(document)
+
+
+def _validate_source_session_provenance(
+    document: Mapping[str, object],
+    *,
+    target_media_path: Path,
+    target_media_sha256: str,
+) -> dict[str, object]:
+    """Verify hash-bound donor/target specs name the same source recording."""
+
+    source_recording = str(document["source_recording"])
+    donor = document.get("donor")
+    targets = document["allowed_targets"]
+    assert isinstance(targets, list)
+    target = next(
+        (
+            item
+            for item in targets
+            if isinstance(item, Mapping) and item.get("media_sha256") == target_media_sha256
+        ),
+        None,
+    )
+    if not isinstance(target, Mapping):
+        raise SpeakerFinalizationError("source-session target provenance is missing")
+
+    def load_spec(entry: Mapping[str, object], *, role: str) -> tuple[Path, dict[str, object]]:
+        spec_path = Path(str(entry["provenance_path"])).resolve(strict=True)
+        if sha256_file(spec_path) != entry["provenance_sha256"]:
+            raise SpeakerFinalizationError(f"source-session {role} provenance hash drift")
+        try:
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise SpeakerFinalizationError(
+                f"cannot read source-session {role} provenance: {exc}"
+            ) from exc
+        if not isinstance(spec, dict) or spec.get("candidate_id") != entry["candidate_id"]:
+            raise SpeakerFinalizationError(
+                f"source-session {role} provenance candidate drift"
+            )
+        pieces = spec.get("pieces")
+        if not isinstance(pieces, list) or not pieces:
+            raise SpeakerFinalizationError(
+                f"source-session {role} provenance has no source pieces"
+            )
+        remote_media = {
+            str(piece.get("remote_media") or "")
+            for piece in pieces
+            if isinstance(piece, Mapping)
+        }
+        if remote_media != {source_recording}:
+            raise SpeakerFinalizationError(
+                f"source-session {role} provenance names a different source recording"
+            )
+        return spec_path, spec
+
+    donor_spec_path: Path | None = None
+    if isinstance(donor, Mapping):
+        donor_spec_path, _donor_spec = load_spec(donor, role="donor")
+    target_spec_path, _target_spec = load_spec(target, role="target")
+    canonical_target_media = Path(str(target["media_path"])).resolve(strict=True)
+    if sha256_file(canonical_target_media) != target_media_sha256:
+        raise SpeakerFinalizationError("source-session canonical target media hash drift")
+    if sha256_file(target_media_path) != target_media_sha256:
+        raise SpeakerFinalizationError("source-session target media hash drift")
+    return {
+        "source_recording": source_recording,
+        "donor_provenance": str(donor_spec_path) if donor_spec_path is not None else None,
+        "donor_provenance_sha256": (
+            donor["provenance_sha256"] if isinstance(donor, Mapping) else None
+        ),
+        "target_candidate_id": target["candidate_id"],
+        "canonical_target_media": str(canonical_target_media),
+        "canonical_target_media_sha256": target_media_sha256,
+        "target_provenance": str(target_spec_path),
+        "target_provenance_sha256": target["provenance_sha256"],
+    }
 
 
 def _ms(value: str) -> int:
@@ -311,6 +590,178 @@ def _extract_cue_wavs(media_path: Path, cues: Sequence[TextCue], work_dir: Path)
     return audio, sample_rate, cue_paths
 
 
+def _load_source_session_anchor_samples(
+    manifest_path: Path,
+    *,
+    target_media_path: Path,
+    profile_path: Path,
+    references: Sequence[Mapping[str, object]],
+    model_tree_sha256: str,
+    host_seed_min: float,
+    work_dir: Path,
+    similarity: Callable[[Path, Path], float],
+) -> tuple[list[Path], dict[str, object]]:
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SpeakerFinalizationError(f"cannot read source-session anchor manifest: {exc}") from exc
+    reference_hashes = {
+        str(reference["id"]): str(reference["sha256"]) for reference in references
+    }
+    target_media_sha256 = sha256_file(target_media_path)
+    document = _validate_source_session_anchor_document(
+        raw,
+        target_media_sha256=target_media_sha256,
+        target_media_path=target_media_path,
+        profile_sha256=sha256_file(profile_path),
+        model_tree_sha256=model_tree_sha256,
+        reference_hashes=reference_hashes,
+        host_seed_min=host_seed_min,
+    )
+    provenance = _validate_source_session_provenance(
+        document,
+        target_media_path=target_media_path,
+        target_media_sha256=target_media_sha256,
+    )
+    donor = document.get("donor")
+    donor_media: Path | None = None
+    donor_srt: Path | None = None
+    donor_cues: list[TextCue] = []
+    donor_wavs: list[Path] = []
+    if isinstance(donor, Mapping):
+        donor_media = Path(str(donor["media_path"])).resolve(strict=True)
+        donor_srt = Path(str(donor["text_srt_path"])).resolve(strict=True)
+        if sha256_file(donor_media) != donor["media_sha256"]:
+            raise SpeakerFinalizationError("source-session donor media hash drift")
+        if sha256_file(donor_srt) != donor["text_srt_sha256"]:
+            raise SpeakerFinalizationError("source-session donor text SRT hash drift")
+        donor_cues = parse_srt(donor_srt)
+        donor_work_dir = work_dir / "source-session-donor"
+        donor_work_dir.mkdir(parents=True, exist_ok=True)
+        _audio, _sample_rate, donor_wavs = _extract_cue_wavs(
+            donor_media, donor_cues, donor_work_dir
+        )
+    source_recording = Path(str(document["source_recording"])).resolve(strict=True)
+    segment_work_dir = work_dir / "source-session-recording"
+    segment_work_dir.mkdir(parents=True, exist_ok=True)
+    anchor_paths: list[Path] = []
+    evidence_rows: list[dict[str, object]] = []
+    references_by_id = {str(reference["id"]): reference for reference in references}
+    anchors = document["anchors"]
+    assert isinstance(anchors, list)
+    for position, raw_anchor in enumerate(anchors, start=1):
+        assert isinstance(raw_anchor, Mapping)
+        anchor_type = str(raw_anchor.get("anchor_type") or "donor_cue")
+        if anchor_type == "donor_cue":
+            cue_index = int(raw_anchor["source_cue"])
+            if cue_index > len(donor_cues):
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} source_cue exceeds donor SRT"
+                )
+            cue = donor_cues[cue_index - 1]
+            expected_cue = (
+                str(raw_anchor["start"]),
+                str(raw_anchor["end"]),
+                str(raw_anchor["text"]),
+            )
+            if (cue.start, cue.end, cue.text) != expected_cue:
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} donor cue drift"
+                )
+            sample_path = donor_wavs[cue_index - 1]
+            evidence_source: dict[str, object] = {
+                "anchor_type": anchor_type,
+                "source_cue": cue_index,
+                "start": cue.start,
+                "end": cue.end,
+            }
+        else:
+            start_ms = int(raw_anchor["source_start_ms"])
+            end_ms = int(raw_anchor["source_end_ms"])
+            sample_path = segment_work_dir / f"anchor-{position:04d}.wav"
+            try:
+                _extract_checkpoint(
+                    source_recording,
+                    start_ms=start_ms,
+                    expected_duration_ms=end_ms - start_ms,
+                    output_path=sample_path,
+                )
+            except Exception as exc:
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} source extraction failed: {exc}"
+                ) from exc
+            evidence_source = {
+                "anchor_type": anchor_type,
+                "source_start_ms": start_ms,
+                "source_end_ms": end_ms,
+            }
+        sample_sha256 = sha256_file(sample_path)
+        if sample_sha256 != raw_anchor["sample_sha256"]:
+            raise SpeakerFinalizationError(f"source-session anchor {position} sample hash drift")
+        actual_scores = {
+            reference_id: float(
+                similarity(Path(str(references_by_id[reference_id]["path"])), sample_path)
+            )
+            for reference_id in sorted(references_by_id)
+        }
+        expected_scores = raw_anchor["reference_scores"]
+        assert isinstance(expected_scores, Mapping)
+        for reference_id, actual_score in actual_scores.items():
+            if abs(actual_score - float(expected_scores[reference_id])) > 1e-5:
+                raise SpeakerFinalizationError(
+                    f"source-session anchor {position} runtime score drift for {reference_id}"
+                )
+        enroll_median = float(statistics.median(actual_scores.values()))
+        if enroll_median < host_seed_min:
+            raise SpeakerFinalizationError(
+                f"source-session anchor {position} fails the unchanged host seed gate at runtime"
+            )
+        anchor_paths.append(sample_path)
+        evidence_rows.append(
+            {
+                **evidence_source,
+                "text": str(raw_anchor["text"]),
+                "sample_sha256": sample_sha256,
+                "reference_scores": actual_scores,
+                "enroll_median_score": enroll_median,
+            }
+        )
+    evidence: dict[str, object] = {
+        "manifest": str(manifest_path.resolve()),
+        "manifest_sha256": sha256_file(manifest_path),
+        "source_session_id": document["source_session_id"],
+        "authority": document.get("authority"),
+        "donor_candidate_id": donor["candidate_id"] if isinstance(donor, Mapping) else None,
+        "donor_media_sha256": donor["media_sha256"] if isinstance(donor, Mapping) else None,
+        "donor_text_srt_sha256": (
+            donor["text_srt_sha256"] if isinstance(donor, Mapping) else None
+        ),
+        **provenance,
+        "anchors": evidence_rows,
+    }
+    if isinstance(donor, Mapping):
+        assert donor_media is not None and donor_srt is not None
+        if sha256_file(donor_media) != donor["media_sha256"]:
+            raise SpeakerFinalizationError("source-session donor media drifted during analysis")
+        if sha256_file(donor_srt) != donor["text_srt_sha256"]:
+            raise SpeakerFinalizationError("source-session donor text SRT drifted during analysis")
+        if sha256_file(Path(str(provenance["donor_provenance"]))) != provenance[
+            "donor_provenance_sha256"
+        ]:
+            raise SpeakerFinalizationError("source-session donor provenance drifted during analysis")
+    if sha256_file(Path(str(provenance["canonical_target_media"]))) != provenance[
+        "canonical_target_media_sha256"
+    ]:
+        raise SpeakerFinalizationError(
+            "source-session canonical target media drifted during analysis"
+        )
+    if sha256_file(Path(str(provenance["target_provenance"]))) != provenance[
+        "target_provenance_sha256"
+    ]:
+        raise SpeakerFinalizationError("source-session target provenance drifted during analysis")
+    return anchor_paths, evidence
+
+
 def _load_runtime(profile_path: Path, reference_dir: Path, model_dir: Path):
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     model_info, expected_references = _validate_profile(profile)
@@ -326,6 +777,22 @@ def _load_runtime(profile_path: Path, reference_dir: Path, model_dir: Path):
     return profile, references, actual_model_hash, _load_campplus_pipeline(model_dir)
 
 
+def _assert_runtime_assets_stable(
+    *,
+    model_dir: Path,
+    model_tree_sha256: str,
+    references: Sequence[Mapping[str, object]],
+) -> None:
+    if _sha256_directory(model_dir) != model_tree_sha256:
+        raise SpeakerFinalizationError("CAM++ model tree drifted during speaker analysis")
+    for reference in references:
+        path = Path(str(reference["path"]))
+        if sha256_file(path) != reference["sha256"]:
+            raise SpeakerFinalizationError(
+                f"voiceprint reference drifted during speaker analysis: {reference['id']}"
+            )
+
+
 def _run_campplus_analysis(
     *,
     media_path: Path,
@@ -336,6 +803,7 @@ def _run_campplus_analysis(
     work_dir: Path,
     context_call: Callable[[str], str] | None,
     reviewed_context_votes: Mapping[int, str] | None = None,
+    source_session_anchor_path: Path | None = None,
 ) -> dict[str, object]:
     work_dir.mkdir(parents=True, exist_ok=True)
     profile, references, model_hash, verifier = _load_runtime(profile_path, reference_dir, model_dir)
@@ -369,13 +837,43 @@ def _run_campplus_analysis(
         for cue_path in cue_paths
     ]
     anchor_count = int(policy["host_session_anchor_count"])
-    host_indices = [
+    clip_host_indices = [
         index for index in sorted(range(len(cues)), key=seed_scores.__getitem__, reverse=True)
         if seed_scores[index] >= float(policy["host_session_seed_min"])
     ][:anchor_count]
-    if len(host_indices) < 2:
-        raise SpeakerFinalizationError(f"not enough Li Dousha session anchors: {host_indices}")
-    host_prints = [cue_paths[index] for index in host_indices]
+    source_session_evidence: dict[str, object] | None = None
+    if source_session_anchor_path is not None:
+        host_prints, source_session_evidence = _load_source_session_anchor_samples(
+            source_session_anchor_path.resolve(strict=True),
+            target_media_path=media_path,
+            profile_path=profile_path,
+            references=references,
+            model_tree_sha256=model_hash,
+            host_seed_min=float(policy["host_session_seed_min"]),
+            work_dir=work_dir,
+            similarity=similarity,
+        )
+        host_indices: list[int] = []
+        host_anchor_scope = "source_session"
+    else:
+        host_indices = clip_host_indices
+        if len(host_indices) < 2:
+            raise SpeakerFinalizationError(f"not enough Li Dousha clip anchors: {host_indices}")
+        host_prints = [cue_paths[index] for index in host_indices]
+        host_anchor_scope = "clip"
+
+    def host_bank_similarity(index: int) -> float:
+        # A trusted host bank contains complementary speaking styles.  A cue
+        # that strongly matches any unchanged-high-gate host anchor is host-
+        # explained; averaging would dilute the one matching style and create
+        # false guest evidence (notably excited/farewell delivery).
+        values = [similarity(host, cue_paths[index]) for host in host_prints]
+        if host_anchor_scope == "source_session":
+            return float(max(values))
+        # Preserve the established clip-local classifier exactly.  The
+        # any-anchor veto is authorized only by an explicit, hash-bound source
+        # session bank; it must not silently relax every historical clip.
+        return float(statistics.mean(values))
 
     guest_candidates: list[int] = []
     for index in sorted(range(len(cues)), key=seed_scores.__getitem__):
@@ -383,7 +881,7 @@ def _run_campplus_analysis(
             continue
         if _ms(cues[index].end) - _ms(cues[index].start) < int(policy["guest_min_duration_ms"]):
             continue
-        session_similarity = statistics.mean(similarity(host, cue_paths[index]) for host in host_prints)
+        session_similarity = host_bank_similarity(index)
         if session_similarity >= float(policy["guest_session_similarity_max"]):
             continue
         guest_candidates.append(index)
@@ -392,22 +890,44 @@ def _run_campplus_analysis(
 
     if len(guest_candidates) < 2:
         median_seed = statistics.median(seed_scores)
-        long_low = [
+        raw_long_low = [
             index for index, cue in enumerate(cues)
             if _ms(cue.end) - _ms(cue.start) >= int(policy["guest_min_duration_ms"])
             and seed_scores[index] < float(policy["guest_seed_max"])
         ]
-        if median_seed < float(policy["single_host_median_seed_min"]) or long_low:
+        host_explained_low = (
+            [
+                index
+                for index in raw_long_low
+                if host_bank_similarity(index)
+                >= float(policy["guest_session_similarity_max"])
+            ]
+            if host_anchor_scope == "source_session"
+            else []
+        )
+        unexplained_long_low = [
+            index for index in raw_long_low if index not in host_explained_low
+        ]
+        if median_seed < float(policy["single_host_median_seed_min"]) or unexplained_long_low:
             raise SpeakerFinalizationError(
                 f"guest evidence exists but purified guest anchors are insufficient: {guest_candidates}"
             )
+        _assert_runtime_assets_stable(
+            model_dir=model_dir,
+            model_tree_sha256=model_hash,
+            references=references,
+        )
         return {
             "mode": "single_host",
             "multi_speaker_detected": False,
+            "host_anchor_scope": host_anchor_scope,
+            "source_session_anchor": source_session_evidence,
             "policy": policy,
             "model_tree_sha256": model_hash,
             "reference_hashes": {str(reference["id"]): str(reference["sha256"]) for reference in references},
             "host_anchor_cues": [index + 1 for index in host_indices],
+            "clip_host_anchor_candidates": [index + 1 for index in clip_host_indices],
+            "host_explained_low_cues": [index + 1 for index in host_explained_low],
             "guest_anchor_groups": [],
             "threshold": None,
             "decisions": [
@@ -506,13 +1026,21 @@ def _run_campplus_analysis(
             resolved[index] = resolved[index - 1]
             sources[index] = "ambiguous_island_smoothing"
 
+    _assert_runtime_assets_stable(
+        model_dir=model_dir,
+        model_tree_sha256=model_hash,
+        references=references,
+    )
     return {
         "mode": "multi_speaker",
         "multi_speaker_detected": True,
+        "host_anchor_scope": host_anchor_scope,
+        "source_session_anchor": source_session_evidence,
         "policy": policy,
         "model_tree_sha256": model_hash,
         "reference_hashes": {str(reference["id"]): str(reference["sha256"]) for reference in references},
         "host_anchor_cues": [index + 1 for index in host_indices],
+        "clip_host_anchor_candidates": [index + 1 for index in clip_host_indices],
         "guest_anchor_groups": [[index + 1 for index in group] for group in guest_groups],
         "cluster_centers": {"guest": low_center, "lidousha": high_center},
         "threshold": threshold,
@@ -551,11 +1079,26 @@ def finalize_speaker_subtitles(
     output_manifest_path: Path,
     work_dir: Path,
     override_path: Path | None = None,
+    source_session_anchor_path: Path | None = None,
     analyzer: Callable[..., dict[str, object]] = _run_campplus_analysis,
     context_call: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
     media_path = media_path.resolve(strict=True)
     text_srt_path = text_srt_path.resolve(strict=True)
+    profile_path = profile_path.resolve(strict=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    profile_snapshot, profile_sha256 = _snapshot_bound_input(
+        profile_path, work_dir / "bound-inputs" / "voiceprint-profile.json"
+    )
+    source_session_anchor_original: Path | None = None
+    source_session_anchor_snapshot: Path | None = None
+    source_session_anchor_sha256: str | None = None
+    if source_session_anchor_path is not None:
+        source_session_anchor_original = source_session_anchor_path.resolve(strict=True)
+        source_session_anchor_snapshot, source_session_anchor_sha256 = _snapshot_bound_input(
+            source_session_anchor_original,
+            work_dir / "bound-inputs" / "source-session-anchors.json",
+        )
     cues = parse_srt(text_srt_path)
     override_document: dict[str, object] | None = None
     reviewed_votes: dict[int, str] = {}
@@ -584,13 +1127,23 @@ def finalize_speaker_subtitles(
     analysis = analyzer(
         media_path=media_path,
         cues=cues,
-        profile_path=profile_path,
+        profile_path=profile_snapshot,
         reference_dir=reference_dir,
         model_dir=model_dir,
         work_dir=work_dir,
         context_call=context_call,
         reviewed_context_votes=reviewed_votes,
+        source_session_anchor_path=source_session_anchor_snapshot,
     )
+    if sha256_file(profile_path) != profile_sha256:
+        raise SpeakerFinalizationError("voiceprint profile drifted during speaker analysis")
+    if (
+        source_session_anchor_original is not None
+        and sha256_file(source_session_anchor_original) != source_session_anchor_sha256
+    ):
+        raise SpeakerFinalizationError(
+            "source-session anchor manifest drifted during speaker analysis"
+        )
     decisions = analysis.get("decisions")
     if not isinstance(decisions, list) or len(decisions) != len(cues):
         raise SpeakerFinalizationError("speaker analyzer returned incomplete decisions")
@@ -649,10 +1202,22 @@ def finalize_speaker_subtitles(
         "text_final_srt": str(text_srt_path),
         "text_final_srt_sha256": sha256_file(text_srt_path),
         "profile": str(profile_path.resolve()),
-        "profile_sha256": sha256_file(profile_path),
+        "profile_sha256": profile_sha256,
         "automatic_labelled_srt_sha256": sha256_file(automatic_srt),
         "speaker_override": str(override_path.resolve()) if override_path is not None else None,
         "speaker_override_sha256": sha256_file(override_path) if override_path is not None else None,
+        "source_session_anchor_manifest": (
+            str(source_session_anchor_original)
+            if source_session_anchor_original is not None
+            else None
+        ),
+        "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
+        "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
+        "source_session_id": (
+            (analysis.get("source_session_anchor") or {}).get("source_session_id")
+            if isinstance(analysis.get("source_session_anchor"), Mapping)
+            else None
+        ),
         "output_review_srt": str(output_srt_path.resolve()),
         "output_review_srt_sha256": sha256_file(output_srt_path),
         "output_ass": str(output_ass_path.resolve()),
@@ -687,6 +1252,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-manifest", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--overrides", type=Path)
+    parser.add_argument("--source-session-anchors", type=Path)
     parser.add_argument("--no-context-judge", action="store_true")
     args = parser.parse_args(argv)
     repo_root = Path(__file__).resolve().parents[2]
@@ -705,6 +1271,7 @@ def main(argv: list[str] | None = None) -> int:
             output_manifest_path=args.output_manifest,
             work_dir=args.work_dir,
             override_path=args.overrides,
+            source_session_anchor_path=args.source_session_anchors,
             context_call=context_call,
         )
     except Exception as exc:

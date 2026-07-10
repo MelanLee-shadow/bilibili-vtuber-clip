@@ -312,7 +312,13 @@ PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python - <<'PY'
 import json
 from pathlib import Path
 
+from scripts.apply_speaker_turn_overrides import sha256_file
 from src.autoslice.host_vocal_proof import _sha256_directory, _validate_profile
+from src.autoslice.speaker_finalizer import (
+    _policy,
+    _validate_source_session_anchor_document,
+    _validate_source_session_provenance,
+)
 
 profile = json.loads(Path("assets/lidousha/voiceprint_profile.v1.json").read_text())
 model, references = _validate_profile(profile)
@@ -325,6 +331,33 @@ for expected in references:
     import hashlib
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
     assert actual == expected["sha256"], (expected["id"], actual, expected["sha256"])
+profile_sha256 = hashlib.sha256(
+    Path("assets/lidousha/voiceprint_profile.v1.json").read_bytes()
+).hexdigest()
+reference_hashes = {str(item["id"]): str(item["sha256"]) for item in references}
+for anchor_path in sorted(Path("assets/lidousha/speaker_session_anchors").glob("*.json")):
+    document = json.loads(anchor_path.read_text())
+    allowed = document.get("allowed_targets") or []
+    for target in allowed:
+        target_path = Path(target["media_path"])
+        validated = _validate_source_session_anchor_document(
+            document,
+            target_media_sha256=str(target["media_sha256"]),
+            target_media_path=target_path,
+            profile_sha256=profile_sha256,
+            model_tree_sha256=actual_model,
+            reference_hashes=reference_hashes,
+            host_seed_min=float(_policy(profile)["host_session_seed_min"]),
+        )
+        _validate_source_session_provenance(
+            validated,
+            target_media_path=target_path,
+            target_media_sha256=str(target["media_sha256"]),
+        )
+    donor = document.get("donor")
+    if donor is not None:
+        assert sha256_file(Path(donor["media_path"])) == donor["media_sha256"]
+        assert sha256_file(Path(donor["text_srt_path"])) == donor["text_srt_sha256"]
 print("speaker runtime assets verified", actual_model, len(references))
 PY
 REMOTE_VALIDATE

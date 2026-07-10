@@ -32,7 +32,9 @@
       "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.recut.mp4",
       "source_media_sha256": "05425367920136fc5e91896e6547d728cddf347673426df99fb0cb4084ce38ef",
       "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.recut.srt",
-      "text_final_srt_sha256": "9444fe0f62cb0a52cd5fa91f3c350d1303b82e98259e46bc3652103b4dc0d598"
+      "text_final_srt_sha256": "9444fe0f62cb0a52cd5fa91f3c350d1303b82e98259e46bc3652103b4dc0d598",
+      "source_session_anchor_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json",
+      "source_session_anchor_sha256": "2d869a8efae298257e0f17be8d15f9c51e4c64aa15a7a840f176b1b56fd99b94"
     },
     {
       "review_name": "04_哑人最难",
@@ -54,7 +56,9 @@
       "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.recut.mp4",
       "source_media_sha256": "c3fa5252b36763514d6d5151daabe5157a527f7f33708cf5ae4981dda5673ca4",
       "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.recut.srt",
-      "text_final_srt_sha256": "f96e72bec93d918b253874be36e7bbe945b4c7d2acf9c702a02267538354d07d"
+      "text_final_srt_sha256": "f96e72bec93d918b253874be36e7bbe945b4c7d2acf9c702a02267538354d07d",
+      "source_session_anchor_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_session_anchors/2026-07-09-223019.v1.json",
+      "source_session_anchor_sha256": "ec6e589be4e90de876e107dffb4c8d314e5267a0feabd4a07004210c2b3d2c48"
     },
     {
       "review_name": "07_无视灯",

@@ -309,6 +309,7 @@ def _rebase_remote_speaker_manifest(
     media_path: Path,
     text_srt_path: Path,
     override_path: Path | None,
+    source_session_anchor_path: Path | None = None,
     output_srt_path: Path,
     output_ass_path: Path,
 ) -> dict:
@@ -319,6 +320,7 @@ def _rebase_remote_speaker_manifest(
         "source_media",
         "text_final_srt",
         "speaker_override",
+        "source_session_anchor_manifest",
         "output_review_srt",
         "output_ass",
     )
@@ -329,6 +331,11 @@ def _rebase_remote_speaker_manifest(
             "source_media": str(media_path.resolve()),
             "text_final_srt": str(text_srt_path.resolve()),
             "speaker_override": str(override_path.resolve()) if override_path is not None else None,
+            "source_session_anchor_manifest": (
+                str(source_session_anchor_path.resolve())
+                if source_session_anchor_path is not None
+                else None
+            ),
             "output_review_srt": str(output_srt_path.resolve()),
             "output_ass": str(output_ass_path.resolve()),
         }
@@ -347,6 +354,7 @@ def run_speaker_finalizer(
     output_manifest_path: Path,
     work_dir: Path,
     override_path: Path | None = None,
+    source_session_anchor_path: Path | None = None,
     speaker_python: Path = Path("/opt/bilive/autoslice/venv-diar/bin/python"),
     reference_dir: Path = Path("/opt/bilive/autoslice/voiceprints/lidousha"),
     model_dir: Path = Path("/opt/bilive/autoslice/models/campp"),
@@ -360,6 +368,17 @@ def run_speaker_finalizer(
     safe_cid = re.sub(r"[^A-Za-z0-9_.-]+", "_", candidate_id)[:80]
     local_host = host in {"localhost", "127.0.0.1", "::1"}
     profile = ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+    frozen_inputs = {
+        "source_media_sha256": _sha256(media_path),
+        "text_final_srt_sha256": _sha256(text_srt_path),
+        "profile_sha256": _sha256(profile),
+        "speaker_override_sha256": _sha256(override_path) if override_path is not None else None,
+        "source_session_anchor_manifest_sha256": (
+            _sha256(source_session_anchor_path)
+            if source_session_anchor_path is not None
+            else None
+        ),
+    }
     output_srt_path.parent.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     # Never accept stale artifacts from a previous successful attempt if the
@@ -377,6 +396,8 @@ def run_speaker_finalizer(
         ]
         if override_path is not None:
             command.extend(["--overrides", str(override_path)])
+        if source_session_anchor_path is not None:
+            command.extend(["--source-session-anchors", str(source_session_anchor_path)])
         completed = subprocess.run(
             command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
         )
@@ -388,6 +409,7 @@ def run_speaker_finalizer(
         remote_output_ass = f"{remote_dir}/speaker-final.ass"
         remote_manifest = f"{remote_dir}/speaker-final.json"
         remote_override = f"{remote_dir}/overrides.json"
+        remote_session_anchors = f"{remote_dir}/source-session-anchors.json"
         run(["ssh", host, f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}/work"], timeout=120)
         try:
             run(["scp", "-q", str(media_path), str(text_srt_path), f"{host}:{remote_dir}/"], timeout=1800)
@@ -399,6 +421,11 @@ def run_speaker_finalizer(
             run(["ssh", host, remote_setup], timeout=120)
             if override_path is not None:
                 run(["scp", "-q", str(override_path), f"{host}:{remote_override}"], timeout=120)
+            if source_session_anchor_path is not None:
+                run(
+                    ["scp", "-q", str(source_session_anchor_path), f"{host}:{remote_session_anchors}"],
+                    timeout=120,
+                )
             remote_command = [
                 str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
                 "--media", remote_media, "--text-srt", remote_srt,
@@ -409,6 +436,8 @@ def run_speaker_finalizer(
             ]
             if override_path is not None:
                 remote_command.extend(["--overrides", remote_override])
+            if source_session_anchor_path is not None:
+                remote_command.extend(["--source-session-anchors", remote_session_anchors])
             shell_command = "cd /opt/bilive/autoslice/repo && " + " ".join(
                 shlex.quote(part) for part in remote_command
             )
@@ -422,12 +451,32 @@ def run_speaker_finalizer(
                     (remote_manifest, output_manifest_path),
                 ):
                     run(["scp", "-q", f"{host}:{remote_source}", str(local_target)], timeout=600)
+            else:
+                # The CLI writes a compact BLOCKED manifest before returning
+                # non-zero.  Preserve it so callers see the real fail-closed
+                # reason instead of an unrelated tail of ModelScope warnings.
+                subprocess.run(
+                    ["scp", "-q", f"{host}:{remote_manifest}", str(output_manifest_path)],
+                    check=False,
+                    timeout=120,
+                )
         finally:
             subprocess.run(["ssh", host, f"rm -rf {shlex.quote(remote_dir)}"], check=False, timeout=120)
-    if completed.returncode != 0 or not output_manifest_path.is_file():
+    if completed.returncode != 0:
+        if output_manifest_path.is_file():
+            try:
+                blocked_manifest = json.loads(output_manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                blocked_manifest = {}
+            if blocked_manifest.get("status") == "BLOCKED" and blocked_manifest.get("reason"):
+                raise RuntimeError(
+                    f"SPEAKER_FINALIZATION_BLOCKED: {blocked_manifest['reason']}"
+                )
         raise RuntimeError(
             "SPEAKER_FINALIZATION_FAILED: " + (completed.stderr or completed.stdout)[-1200:]
         )
+    if not output_manifest_path.is_file():
+        raise RuntimeError("SPEAKER_FINALIZATION_FAILED: READY process omitted its manifest")
     manifest = json.loads(output_manifest_path.read_text(encoding="utf-8"))
     if not local_host:
         manifest = _rebase_remote_speaker_manifest(
@@ -436,6 +485,7 @@ def run_speaker_finalizer(
             media_path=media_path,
             text_srt_path=text_srt_path,
             override_path=override_path,
+            source_session_anchor_path=source_session_anchor_path,
             output_srt_path=output_srt_path,
             output_ass_path=output_ass_path,
         )
@@ -451,10 +501,32 @@ def run_speaker_finalizer(
     for path, digest in expected.items():
         if not path.is_file() or digest != _sha256(path):
             raise RuntimeError(f"SPEAKER_FINALIZATION_HASH_MISMATCH: {path}")
-    if manifest.get("source_media_sha256") != _sha256(media_path):
+    if manifest.get("source_media_sha256") != frozen_inputs["source_media_sha256"]:
         raise RuntimeError("SPEAKER_FINALIZATION_MEDIA_BINDING_MISMATCH")
-    if manifest.get("text_final_srt_sha256") != _sha256(text_srt_path):
+    if manifest.get("text_final_srt_sha256") != frozen_inputs["text_final_srt_sha256"]:
         raise RuntimeError("SPEAKER_FINALIZATION_TEXT_BINDING_MISMATCH")
+    if manifest.get("profile_sha256") != frozen_inputs["profile_sha256"]:
+        raise RuntimeError("SPEAKER_FINALIZATION_PROFILE_BINDING_MISMATCH")
+    if manifest.get("speaker_override_sha256") != frozen_inputs["speaker_override_sha256"]:
+        raise RuntimeError("SPEAKER_FINALIZATION_OVERRIDE_BINDING_MISMATCH")
+    if (
+        manifest.get("source_session_anchor_manifest_sha256")
+        != frozen_inputs["source_session_anchor_manifest_sha256"]
+    ):
+        raise RuntimeError("SPEAKER_FINALIZATION_SOURCE_SESSION_BINDING_MISMATCH")
+    current_inputs = {
+        "source_media_sha256": _sha256(media_path),
+        "text_final_srt_sha256": _sha256(text_srt_path),
+        "profile_sha256": _sha256(profile),
+        "speaker_override_sha256": _sha256(override_path) if override_path is not None else None,
+        "source_session_anchor_manifest_sha256": (
+            _sha256(source_session_anchor_path)
+            if source_session_anchor_path is not None
+            else None
+        ),
+    }
+    if current_inputs != frozen_inputs:
+        raise RuntimeError("SPEAKER_FINALIZATION_INPUT_DRIFT")
     return manifest
 
 
@@ -476,6 +548,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
     parser.add_argument("--speaker-overrides", type=Path, help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference")
+    parser.add_argument(
+        "--speaker-source-session-anchors",
+        type=Path,
+        help="hash-bound high-gate Li Dousha anchors from the same source recording",
+    )
     parser.add_argument(
         "--speaker-python",
         type=Path,
@@ -728,6 +805,12 @@ def main(argv: list[str] | None = None) -> int:
         speaker_override_path = args.speaker_overrides or _resolved_optional_path(
             spec.get("speaker_overrides"), relative_to=args.spec.parent
         )
+        source_session_anchor_path = (
+            args.speaker_source_session_anchors
+            or _resolved_optional_path(
+                spec.get("speaker_source_session_anchors"), relative_to=args.spec.parent
+            )
+        )
         speaker_manifest = run_speaker_finalizer(
             host=host,
             candidate_id=cid,
@@ -738,6 +821,7 @@ def main(argv: list[str] | None = None) -> int:
             output_manifest_path=speaker_manifest_path,
             work_dir=recut_dir / f"{cid}.speaker-work",
             override_path=speaker_override_path,
+            source_session_anchor_path=source_session_anchor_path,
             speaker_python=args.speaker_python,
         )
 
