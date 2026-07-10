@@ -121,7 +121,12 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
                 "notes": "heard later recurrence",
             },
             {"name": "longest_instrumental_gap", "live_time_ms": 52_000, "result": "OK", "notes": "heard"},
-            {"name": "tail", "live_time_ms": observations[-1]["live_start_ms"], "result": "OK", "notes": "heard"},
+            {
+                "name": "tail",
+                "live_time_ms": observations[-1]["live_end_ms"] - 1,
+                "result": "OK",
+                "notes": "heard near the end of the final lyric",
+            },
         ],
         "live_performance": {
             "mode": "LIVE_STREAMER_SINGING",

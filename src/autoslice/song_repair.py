@@ -1674,7 +1674,10 @@ def _validated_audio_lrc_selection(
         raise ValueError("audio spot-check set is incomplete")
     if abs(int(spots["first_line"]["live_time_ms"]) - first_lyric_start_ms) > 1_500:
         raise ValueError("first-line spot check does not bind the first observed lyric")
-    if abs(int(spots["tail"]["live_time_ms"]) - int(alignment[-1]["cue_start_ms"])) > 1_500:
+    tail_spot_ms = int(spots["tail"]["live_time_ms"])
+    final_lyric_start_ms = int(alignment[-1]["cue_start_ms"])
+    final_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
+    if not final_lyric_start_ms <= tail_spot_ms < final_lyric_end_ms:
         raise ValueError("tail spot check does not bind the final observed lyric")
 
     first_index_by_text: dict[str, int] = {}
