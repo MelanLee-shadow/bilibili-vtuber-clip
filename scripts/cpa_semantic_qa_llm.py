@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Mapping
 
@@ -188,13 +189,20 @@ def normalize_judgment(payload: Mapping[str, object]) -> dict[str, object]:
 
 def judge_request(request, llm_call: LlmCall, *, provider_label: str, retries: int = 1) -> CpaSemanticQaResponse:
     last_error: Exception | None = None
-    for _attempt in range(retries + 1):
+    for attempt in range(retries + 1):
         try:
             completion = llm_call(build_judge_prompt(request))
             judgment = normalize_judgment(extract_json_object(completion))
             break
         except LlmCallError as exc:
             last_error = exc
+            if attempt < retries:
+                # Rate limits (429) and transient 5xx need real BACKOFF — four
+                # instant retries all land inside the same limit window
+                # (2026-07-10 luna probe).  15s → 30s → 60s, capped.
+                message = str(exc)
+                throttled = any(code in message for code in ("429", "500", "502", "503", "504"))
+                time.sleep(min(60.0, (15.0 if throttled else 3.0) * (2 ** attempt)))
     else:
         raise LlmCallError(f"LLM judge failed after {retries + 1} attempts: {last_error}")
     return CpaSemanticQaResponse(
@@ -233,25 +241,57 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-base", help="OpenAI-compatible base URL, e.g. https://api.groq.com/openai/v1")
     parser.add_argument("--api-key-env", default="CPA_API_KEY")
     parser.add_argument("--llm-command", help="Command template with {prompt_file} {completion_file} for command transport.")
+    parser.add_argument(
+        "--api-mode",
+        choices=("chat", "responses"),
+        default="chat",
+        help="direct transport endpoint: chat=/chat/completions (legacy, gpt-5.4-mini class); responses=/responses (gpt-5.x reasoning models misroute on chat — 2026-07-10).",
+    )
+    parser.add_argument("--reasoning-effort", default="medium", help="responses mode reasoning effort.")
+    parser.add_argument("--max-tokens", type=int, default=1024, help="completion budget; responses-mode reasoning models need headroom (16000 recommended).")
     parser.add_argument("--retries", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
+    parser.add_argument(
+        "--fallback-model",
+        help="direct transport only: second model tried when the primary exhausts its retries "
+        "(2026-07-10: the 5.6 family shares one provider usage window — 429s hit all of it at "
+        "once, so the judge falls back per Ivan's standing rule, e.g. gpt-5.5).",
+    )
     args = parser.parse_args(argv)
 
-    config = LlmConfig(
-        transport=args.transport,
-        model=args.model,
-        api_base=args.api_base,
-        api_key_env=args.api_key_env,
-        command_template=args.llm_command,
-        timeout_seconds=args.timeout_seconds,
-    )
+    model_chain = [args.model]
+    if args.transport == "direct" and args.fallback_model:
+        model_chain.append(args.fallback_model)
     try:
-        llm_call = build_llm_call(config)
         request = load_request_artifact(args.request)
-        provider_label = f"llm:{args.model or 'command-bridge'}"
-        response = judge_request(request, llm_call, provider_label=provider_label, retries=max(0, args.retries))
-    except (LlmCallError, ValueError) as exc:
+    except ValueError as exc:
         sys.stderr.write(f"CPA_LLM_JUDGE_FAILED: {exc}\n")
+        return 3
+    response = None
+    last_error: Exception | None = None
+    for model in model_chain:
+        config = LlmConfig(
+            transport=args.transport,
+            model=model,
+            api_base=args.api_base,
+            api_key_env=args.api_key_env,
+            command_template=args.llm_command,
+            timeout_seconds=args.timeout_seconds,
+            api_mode=args.api_mode,
+            reasoning_effort=args.reasoning_effort,
+            max_tokens=args.max_tokens,
+        )
+        try:
+            llm_call = build_llm_call(config)
+            provider_label = f"llm:{model or 'command-bridge'}"
+            response = judge_request(request, llm_call, provider_label=provider_label, retries=max(0, args.retries))
+            break
+        except (LlmCallError, ValueError) as exc:
+            last_error = exc
+            if model is not model_chain[-1]:
+                sys.stderr.write(f"CPA_LLM_JUDGE_MODEL_DOWN: {model}: {exc} — trying fallback\n")
+    if response is None:
+        sys.stderr.write(f"CPA_LLM_JUDGE_FAILED: {last_error}\n")
         return 3
     write_cpa_semantic_response_artifact(response, args.response)
     print(f"cpa llm judge ok: release_ready={response.release_ready} reasons={list(response.reason_codes)}")

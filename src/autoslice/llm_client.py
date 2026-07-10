@@ -43,6 +43,11 @@ class LlmConfig:
     temperature: float = 0.2
     max_tokens: int = 1024
     timeout_seconds: float = 60.0
+    # direct transport routing (2026-07-10): gpt-5.x are native Responses-API
+    # reasoning models — requesting them on /chat/completions MISROUTES on the
+    # CPA proxy (503 auth_unavailable).  "chat" keeps the legacy behaviour.
+    api_mode: str = "chat"  # "chat" | "responses"
+    reasoning_effort: str | None = None  # responses mode only; None → "medium"
 
 
 def build_llm_call(config: LlmConfig) -> LlmCall:
@@ -106,17 +111,26 @@ def _call_direct(prompt: str, config: LlmConfig) -> str:
     api_key = os.environ.get(config.api_key_env, "")
     if not api_key:
         raise LlmCallError(f"environment variable {config.api_key_env} is empty")
-    body = json.dumps(
-        {
+    responses_mode = config.api_mode == "responses"
+    if responses_mode:
+        endpoint = config.api_base.rstrip("/") + "/responses"
+        request_body: dict = {
+            "model": config.model,
+            "input": prompt,
+            "reasoning": {"effort": config.reasoning_effort or "medium"},
+            "max_output_tokens": config.max_tokens,
+        }
+    else:
+        endpoint = config.api_base.rstrip("/") + "/chat/completions"
+        request_body = {
             "model": config.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
         }
-    ).encode("utf-8")
     request = urllib.request.Request(
-        config.api_base.rstrip("/") + "/chat/completions",
-        data=body,
+        endpoint,
+        data=json.dumps(request_body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
@@ -130,6 +144,23 @@ def _call_direct(prompt: str, config: LlmConfig) -> str:
             payload = json.loads(response.read().decode("utf-8", errors="replace"))
     except Exception as exc:
         raise LlmCallError(f"direct LLM call failed: {type(exc).__name__}: {exc}") from exc
+    if responses_mode:
+        # Responses API: prefer the convenience output_text, else walk output[]
+        # for the assistant message parts (skipping reasoning items).  An empty
+        # completion (~15% upstream quirk) raises → the caller's bounded retry
+        # (e.g. judge_request --retries) covers it.
+        content = payload.get("output_text")
+        if not content:
+            parts = []
+            for item in payload.get("output") or []:
+                if isinstance(item, dict) and item.get("type") == "message":
+                    for chunk in item.get("content") or []:
+                        if isinstance(chunk, dict) and chunk.get("type") in ("output_text", "text") and chunk.get("text"):
+                            parts.append(chunk["text"])
+            content = "".join(parts)
+        if not isinstance(content, str) or not content.strip():
+            raise LlmCallError(f"empty responses completion (status={payload.get('status')})")
+        return content
     try:
         content = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:

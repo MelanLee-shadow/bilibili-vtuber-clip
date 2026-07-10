@@ -299,3 +299,157 @@ def test_judge_prompt_excludes_cover_songs_from_upload_risk(tmp_path: Path):
     assert "翻唱歌曲不算上传风险" in prompt
     assert "豆沙歌" in prompt
     assert "版权纠纷素材" not in prompt  # 旧口径不得残留
+
+
+def test_direct_responses_mode_posts_responses_endpoint(monkeypatch):
+    """2026-07-10: the judge moved to gpt-5.6-luna — gpt-5.x are Responses-only
+    (chat misroutes on CPA).  responses mode must hit /responses with the
+    reasoning body and parse output_text (or walk output[] message parts)."""
+    import urllib.request as _url
+
+    captured = {}
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return json.dumps(self._payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode())
+        return _Resp({"status": "completed", "output_text": '{"ok": true}'})
+
+    monkeypatch.setenv("QA_KEY", "k")
+    monkeypatch.setattr(_url, "urlopen", fake_urlopen)
+    call = build_llm_call(
+        LlmConfig(transport="direct", model="gpt-5.6-luna", api_base="https://cpa.test/v1",
+                  api_key_env="QA_KEY", api_mode="responses", reasoning_effort="medium", max_tokens=16000)
+    )
+    assert call("judge this") == '{"ok": true}'
+    assert captured["url"].endswith("/v1/responses")
+    assert captured["body"]["input"] == "judge this"
+    assert captured["body"]["reasoning"] == {"effort": "medium"}
+    assert captured["body"]["max_output_tokens"] == 16000
+    assert "messages" not in captured["body"]
+
+
+def test_direct_responses_mode_walks_output_and_raises_on_empty(monkeypatch):
+    import urllib.request as _url
+
+    payloads = [
+        {"status": "completed", "output": [
+            {"type": "reasoning"},
+            {"type": "message", "content": [{"type": "output_text", "text": '{"a":1}'}]},
+        ]},
+        {"status": "completed", "output": [{"type": "reasoning"}]},  # empty quirk
+    ]
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return json.dumps(self._payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        return _Resp(payloads.pop(0))
+
+    monkeypatch.setenv("QA_KEY", "k")
+    monkeypatch.setattr(_url, "urlopen", fake_urlopen)
+    call = build_llm_call(
+        LlmConfig(transport="direct", model="gpt-5.6-luna", api_base="https://cpa.test/v1",
+                  api_key_env="QA_KEY", api_mode="responses")
+    )
+    assert call("x") == '{"a":1}'
+    with pytest.raises(LlmCallError):
+        call("x")  # empty output[] → error → judge_request retries cover it
+
+
+def test_chat_mode_stays_legacy_endpoint(monkeypatch):
+    import urllib.request as _url
+
+    captured = {}
+
+    class _Resp:
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode())
+        return _Resp()
+
+    monkeypatch.setenv("QA_KEY", "k")
+    monkeypatch.setattr(_url, "urlopen", fake_urlopen)
+    call = build_llm_call(
+        LlmConfig(transport="direct", model="gpt-5.4-mini", api_base="https://cpa.test/v1", api_key_env="QA_KEY")
+    )
+    assert call("hi") == "ok"
+    assert captured["url"].endswith("/v1/chat/completions")
+    assert "input" not in captured["body"]
+
+
+def test_judge_falls_back_to_second_model_when_primary_rate_limited(tmp_path, monkeypatch):
+    """2026-07-10 live probe: the whole 5.6 family 429s in one provider usage
+    window — the judge must fall back (Ivan's standing rule: keep a 5.5
+    fallback) instead of BLOCKing on a rate limit."""
+    import urllib.request as _url
+
+    _request(tmp_path)  # writes tmp_path/req.json (returns the request object)
+    request_path = tmp_path / "req.json"
+    calls = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return json.dumps(self._payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        body = json.loads(request.data.decode())
+        calls.append(body["model"])
+        if body["model"] == "gpt-5.6-luna":
+            raise Exception("HTTP Error 429: Too Many Requests")
+        return _Resp({"status": "completed", "output_text": json.dumps(_good_judgment())})
+
+    monkeypatch.setenv("CPA_API_KEY", "k")
+    monkeypatch.setattr(_url, "urlopen", fake_urlopen)
+    monkeypatch.setattr("scripts.cpa_semantic_qa_llm.time.sleep", lambda _s: None)
+    response_path = tmp_path / "resp.json"
+    rc = main([
+        "--request", str(request_path), "--response", str(response_path),
+        "--transport", "direct", "--model", "gpt-5.6-luna", "--fallback-model", "gpt-5.5",
+        "--api-mode", "responses", "--max-tokens", "16000", "--retries", "1",
+        "--api-base", "https://cpa.test/v1", "--api-key-env", "CPA_API_KEY",
+    ])
+    assert rc == 0
+    assert "gpt-5.5" in calls and calls.count("gpt-5.6-luna") == 2  # retries then fallback
+    saved = json.loads(response_path.read_text())
+    assert saved["provider"]["name"] == "llm:gpt-5.5"  # evidence names the model that actually answered
