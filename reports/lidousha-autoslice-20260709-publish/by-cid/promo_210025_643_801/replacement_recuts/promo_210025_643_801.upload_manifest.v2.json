@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "9f8210cfd379",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/队友认为李豆沙当哑人最难，因为这样就.mp4",
+    "sha256": "9f8210cfd379efaf3e9e10a2fb5f4667770f3152136397da21c4dd90efa0f8c9",
+    "bytes": 42013214
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/队友认为李豆沙当哑人最难，因为这样就.cover.png",
+    "sha256": "b2ab35ae560edb6b913885d33011cf1d1c0360006778c68d0fc4fc2013c7b71b",
+    "bytes": 2732575
+  },
+  "title": "【李豆沙】队友认为李豆沙当哑人最难，因为这样就没办法吵闹了！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "你修改一下本轮受影响的字幕然后重新上传受影响的切片。",
+    "at": "2026-07-10T12:08:57+0000"
+  },
+  "created_at": "2026-07-10T12:08:57+0000"
+}

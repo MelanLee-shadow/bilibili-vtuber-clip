@@ -1,0 +1,26 @@
+{
+  "mode": "video_replace_in_place",
+  "bvid": "BV1tXNE67EHs",
+  "aid": 116894145184421,
+  "cid": 39826884789,
+  "title": "【李豆沙】已经7月了，不会打麻将的小李只好给大家拜个早年了",
+  "replaced_at": "2026-07-10T13:25:13+0000",
+  "tool": "biliup append + x/vu/web/edit (P swap)",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.upload_manifest.v2.json",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "注意是编辑视频，不是新上传"
+  },
+  "collection": {
+    "season": "小李切片",
+    "section_id": 9320779,
+    "episode_rebind_code": 20080,
+    "episode_rebind_msg": "当前稿件已存在在合集中"
+  },
+  "public": {
+    "state": 0,
+    "duration": 168,
+    "season": "小李切片",
+    "is_season_display": true
+  }
+}

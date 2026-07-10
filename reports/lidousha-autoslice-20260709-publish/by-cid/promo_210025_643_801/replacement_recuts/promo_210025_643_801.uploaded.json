@@ -1,0 +1,26 @@
+{
+  "mode": "video_replace_in_place",
+  "bvid": "BV1uDNE6SEjh",
+  "aid": 116894162099529,
+  "cid": 39826950058,
+  "title": "【李豆沙】队友认为李豆沙当哑人最难，因为这样就没办法吵闹了！",
+  "replaced_at": "2026-07-10T13:31:24+0000",
+  "tool": "biliup append + x/vu/web/edit (P swap)",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-09/promo_210025_643_801/replacement_recuts/promo_210025_643_801.upload_manifest.v2.json",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "注意是编辑视频，不是新上传"
+  },
+  "collection": {
+    "season": "小李切片",
+    "section_id": 9320779,
+    "episode_rebind_code": 20080,
+    "episode_rebind_msg": "当前稿件已存在在合集中"
+  },
+  "public": {
+    "state": 0,
+    "duration": 166,
+    "season": "小李切片",
+    "is_season_display": true
+  }
+}
