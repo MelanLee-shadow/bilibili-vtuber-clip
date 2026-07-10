@@ -407,3 +407,49 @@ def test_chat_mode_stays_legacy_endpoint(monkeypatch):
     assert call("hi") == "ok"
     assert captured["url"].endswith("/v1/chat/completions")
     assert "input" not in captured["body"]
+
+
+def test_judge_falls_back_to_second_model_when_primary_rate_limited(tmp_path, monkeypatch):
+    """2026-07-10 live probe: the whole 5.6 family 429s in one provider usage
+    window — the judge must fall back (Ivan's standing rule: keep a 5.5
+    fallback) instead of BLOCKing on a rate limit."""
+    import urllib.request as _url
+
+    _request(tmp_path)  # writes tmp_path/req.json (returns the request object)
+    request_path = tmp_path / "req.json"
+    calls = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return json.dumps(self._payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        body = json.loads(request.data.decode())
+        calls.append(body["model"])
+        if body["model"] == "gpt-5.6-luna":
+            raise Exception("HTTP Error 429: Too Many Requests")
+        return _Resp({"status": "completed", "output_text": json.dumps(_good_judgment())})
+
+    monkeypatch.setenv("CPA_API_KEY", "k")
+    monkeypatch.setattr(_url, "urlopen", fake_urlopen)
+    monkeypatch.setattr("scripts.cpa_semantic_qa_llm.time.sleep", lambda _s: None)
+    response_path = tmp_path / "resp.json"
+    rc = main([
+        "--request", str(request_path), "--response", str(response_path),
+        "--transport", "direct", "--model", "gpt-5.6-luna", "--fallback-model", "gpt-5.5",
+        "--api-mode", "responses", "--max-tokens", "16000", "--retries", "1",
+        "--api-base", "https://cpa.test/v1", "--api-key-env", "CPA_API_KEY",
+    ])
+    assert rc == 0
+    assert "gpt-5.5" in calls and calls.count("gpt-5.6-luna") == 2  # retries then fallback
+    saved = json.loads(response_path.read_text())
+    assert saved["provider"]["name"] == "llm:gpt-5.5"  # evidence names the model that actually answered

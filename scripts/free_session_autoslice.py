@@ -175,8 +175,8 @@ def cpa_qa_cmd() -> str:
         raise RuntimeError(f"CPA_BASE_URL missing from environment and {CPA_ENV}")
     return (
         "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
-        f"--transport direct --model gpt-5.6-luna --api-mode responses --reasoning-effort medium "
-        f"--max-tokens 16000 --retries 3 --api-base {base} --api-key-env CPA_API_KEY"
+        f"--transport direct --model gpt-5.6-luna --fallback-model gpt-5.5 --api-mode responses "
+        f"--reasoning-effort medium --max-tokens 16000 --retries 3 --api-base {base} --api-key-env CPA_API_KEY"
     )
 
 

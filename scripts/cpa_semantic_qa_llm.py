@@ -251,26 +251,47 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=int, default=1024, help="completion budget; responses-mode reasoning models need headroom (16000 recommended).")
     parser.add_argument("--retries", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
+    parser.add_argument(
+        "--fallback-model",
+        help="direct transport only: second model tried when the primary exhausts its retries "
+        "(2026-07-10: the 5.6 family shares one provider usage window — 429s hit all of it at "
+        "once, so the judge falls back per Ivan's standing rule, e.g. gpt-5.5).",
+    )
     args = parser.parse_args(argv)
 
-    config = LlmConfig(
-        transport=args.transport,
-        model=args.model,
-        api_base=args.api_base,
-        api_key_env=args.api_key_env,
-        command_template=args.llm_command,
-        timeout_seconds=args.timeout_seconds,
-        api_mode=args.api_mode,
-        reasoning_effort=args.reasoning_effort,
-        max_tokens=args.max_tokens,
-    )
+    model_chain = [args.model]
+    if args.transport == "direct" and args.fallback_model:
+        model_chain.append(args.fallback_model)
     try:
-        llm_call = build_llm_call(config)
         request = load_request_artifact(args.request)
-        provider_label = f"llm:{args.model or 'command-bridge'}"
-        response = judge_request(request, llm_call, provider_label=provider_label, retries=max(0, args.retries))
-    except (LlmCallError, ValueError) as exc:
+    except ValueError as exc:
         sys.stderr.write(f"CPA_LLM_JUDGE_FAILED: {exc}\n")
+        return 3
+    response = None
+    last_error: Exception | None = None
+    for model in model_chain:
+        config = LlmConfig(
+            transport=args.transport,
+            model=model,
+            api_base=args.api_base,
+            api_key_env=args.api_key_env,
+            command_template=args.llm_command,
+            timeout_seconds=args.timeout_seconds,
+            api_mode=args.api_mode,
+            reasoning_effort=args.reasoning_effort,
+            max_tokens=args.max_tokens,
+        )
+        try:
+            llm_call = build_llm_call(config)
+            provider_label = f"llm:{model or 'command-bridge'}"
+            response = judge_request(request, llm_call, provider_label=provider_label, retries=max(0, args.retries))
+            break
+        except (LlmCallError, ValueError) as exc:
+            last_error = exc
+            if model is not model_chain[-1]:
+                sys.stderr.write(f"CPA_LLM_JUDGE_MODEL_DOWN: {model}: {exc} — trying fallback\n")
+    if response is None:
+        sys.stderr.write(f"CPA_LLM_JUDGE_FAILED: {last_error}\n")
         return 3
     write_cpa_semantic_response_artifact(response, args.response)
     print(f"cpa llm judge ok: release_ready={response.release_ready} reasons={list(response.reason_codes)}")
