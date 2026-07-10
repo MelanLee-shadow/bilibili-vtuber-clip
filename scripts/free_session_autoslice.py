@@ -79,6 +79,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -884,6 +886,11 @@ def _matches_sha256(path: Path, expected: str) -> bool:
 MATERIALIZED_RECUT_SCHEMA_VERSION = "materialized-recut.v2"
 VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION = "verified-song-output-binding.v1"
 SONG_STREAM_CONTRACT_SCHEMA_VERSION = "song-av-stream-contract.v1"
+VERIFIED_SONG_DELIVERY_SCHEMA_VERSION = "verified-song-delivery.v1"
+
+
+class SongDeliveryError(RuntimeError):
+    """A verified song package could not be committed to the delivery root."""
 
 
 def _canonical_existing_path(path_value: object) -> str | None:
@@ -900,6 +907,291 @@ def _normalized_sha256(value: object) -> str | None:
         return None
     normalized = value.lower().removeprefix("sha256:")
     return normalized if re.fullmatch(r"[0-9a-f]{64}", normalized) else None
+
+
+def _sha256_regular_file(path: Path) -> str:
+    """Hash one regular file without following a final-component symlink."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise SongDeliveryError(f"cannot open verified delivery artifact {path}: {exc}") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SongDeliveryError(f"verified delivery artifact is not a regular file: {path}")
+        digest = hashlib.sha256()
+        with os.fdopen(descriptor, "rb") as source:
+            descriptor = -1
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _hidden_delivery_path(destination: Path, label: str) -> Path:
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.{label}-",
+        dir=destination.parent,
+    )
+    os.close(descriptor)
+    path = Path(name)
+    path.unlink()
+    return path
+
+
+def _stage_verified_copy(source: Path, destination: Path, expected_sha256: str) -> tuple[Path, str]:
+    """Copy to a same-directory hidden temp and fsync it before returning."""
+    normalized = _normalized_sha256(expected_sha256)
+    if normalized is None:
+        raise SongDeliveryError(f"invalid expected sha256 for {destination.name}")
+    if source.is_symlink():
+        raise SongDeliveryError(f"refusing symlink delivery source: {source}")
+
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.delivery-",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    staged = Path(name)
+    try:
+        source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        source_descriptor = os.open(source, source_flags)
+        try:
+            source_metadata = os.fstat(source_descriptor)
+            if not stat.S_ISREG(source_metadata.st_mode):
+                raise SongDeliveryError(f"delivery source is not a regular file: {source}")
+            with os.fdopen(source_descriptor, "rb") as source_file, os.fdopen(descriptor, "wb") as target_file:
+                source_descriptor = -1
+                descriptor = -1
+                shutil.copyfileobj(source_file, target_file, length=1024 * 1024)
+                os.fchmod(target_file.fileno(), stat.S_IMODE(source_metadata.st_mode))
+                target_file.flush()
+                os.fsync(target_file.fileno())
+        finally:
+            if source_descriptor >= 0:
+                os.close(source_descriptor)
+        copied_sha256 = _sha256_regular_file(staged)
+        if copied_sha256 != normalized:
+            raise SongDeliveryError(
+                f"copied hash mismatch for {destination.name}: expected {normalized}, got {copied_sha256}"
+            )
+        return staged, copied_sha256
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _stage_verified_bytes(payload: bytes, destination: Path) -> tuple[Path, str]:
+    expected = hashlib.sha256(payload).hexdigest()
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.delivery-",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    staged = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as target:
+            descriptor = -1
+            target.write(payload)
+            target.flush()
+            os.fsync(target.fileno())
+        actual = _sha256_regular_file(staged)
+        if actual != expected:
+            raise SongDeliveryError(
+                f"staged manifest hash mismatch for {destination.name}: expected {expected}, got {actual}"
+            )
+        return staged, actual
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_verified_song_delivery(
+    *,
+    candidate_id: str,
+    manifest_path: Path,
+    artifact_specs: dict[str, tuple[Path, Path, str]],
+    absent_artifacts: dict[str, Path] | None = None,
+) -> dict:
+    """Atomically expose a hash-bound song package, committing its manifest last.
+
+    All artifact bytes are copied and verified in hidden, same-directory files
+    before any public delivery name is touched.  Existing files are held under
+    hidden backup names during the short commit window so a caught replace or
+    post-copy verification failure can restore the previous complete package.
+    The manifest is installed last and is the durable commit marker; it is
+    explicitly no-upload and its own hash is returned for state binding.
+    """
+    if not candidate_id or "video" not in artifact_specs:
+        raise SongDeliveryError("verified song delivery requires candidate_id and video")
+    absent_artifacts = absent_artifacts or {}
+    parent = manifest_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    parent_real = parent.resolve(strict=True)
+    if manifest_path.parent.resolve(strict=True) != parent_real:
+        raise SongDeliveryError("delivery manifest escaped its parent")
+
+    staged: dict[str, tuple[Path, Path, str]] = {}
+    manifest_artifacts: dict[str, dict[str, str]] = {}
+    destinations: set[Path] = set()
+    try:
+        for role, spec in artifact_specs.items():
+            if not isinstance(role, str) or not role or not isinstance(spec, tuple) or len(spec) != 3:
+                raise SongDeliveryError("invalid verified delivery artifact specification")
+            source, destination, expected_value = spec
+            if not isinstance(source, Path) or not isinstance(destination, Path):
+                raise SongDeliveryError(f"invalid paths for verified delivery artifact {role}")
+            if destination.parent.resolve(strict=True) != parent_real or destination.name.startswith("."):
+                raise SongDeliveryError(f"delivery destination escaped or is hidden: {destination}")
+            if destination in destinations or destination == manifest_path:
+                raise SongDeliveryError(f"duplicate delivery destination: {destination}")
+            destinations.add(destination)
+            normalized = _normalized_sha256(expected_value)
+            if normalized is None:
+                raise SongDeliveryError(f"invalid expected sha256 for {role}")
+            source_real = source.resolve(strict=True)
+            temp_path, copied_sha = _stage_verified_copy(source, destination, normalized)
+            staged[role] = (temp_path, destination, copied_sha)
+            manifest_artifacts[role] = {
+                "path": str(destination.absolute()),
+                "sha256": f"sha256:{copied_sha}",
+                "source_path": str(source_real),
+                "source_sha256": f"sha256:{normalized}",
+            }
+
+        manifest_absent: dict[str, dict[str, str]] = {}
+        for role, destination in absent_artifacts.items():
+            if (
+                not isinstance(role, str)
+                or not role
+                or role in artifact_specs
+                or not isinstance(destination, Path)
+                or destination.parent.resolve(strict=True) != parent_real
+                or destination.name.startswith(".")
+                or destination in destinations
+                or destination == manifest_path
+            ):
+                raise SongDeliveryError(f"invalid absent delivery artifact specification: {role}")
+            destinations.add(destination)
+            manifest_absent[role] = {"path": str(destination.absolute()), "status": "ABSENT"}
+
+        manifest_payload = {
+            "schema_version": VERIFIED_SONG_DELIVERY_SCHEMA_VERSION,
+            "status": "DELIVERED_NO_UPLOAD",
+            "candidate_id": candidate_id,
+            "upload_enabled": False,
+            "artifacts": manifest_artifacts,
+            "absent_artifacts": manifest_absent,
+        }
+        manifest_bytes = (
+            json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+        manifest_temp, manifest_sha = _stage_verified_bytes(manifest_bytes, manifest_path)
+        staged["__manifest__"] = (manifest_temp, manifest_path, manifest_sha)
+    except BaseException:
+        for temp_path, _destination, _digest in staged.values():
+            temp_path.unlink(missing_ok=True)
+        raise
+
+    # Sidecars first, then the video, with the manifest last as the commit marker.
+    install_order = sorted(role for role in artifact_specs if role != "video") + ["video", "__manifest__"]
+    backup_order = [staged[role][1] for role in install_order] + list(absent_artifacts.values())
+    backups: dict[Path, Path] = {}
+    installed: set[Path] = set()
+    try:
+        for destination in backup_order:
+            if os.path.lexists(destination):
+                if destination.is_dir() and not destination.is_symlink():
+                    raise SongDeliveryError(f"delivery destination is a directory: {destination}")
+                backup = _hidden_delivery_path(destination, "previous")
+                backups[destination] = backup
+                os.replace(destination, backup)
+        if backups:
+            _fsync_directory(parent)
+
+        for role in install_order:
+            temp_path, destination, expected = staged[role]
+            if role == "__manifest__":
+                # Seal only after every public artifact still matches the
+                # selector/materialization hash at the commit boundary.
+                for artifact_role in artifact_specs:
+                    _artifact_temp, artifact_destination, artifact_expected = staged[artifact_role]
+                    actual = _sha256_regular_file(artifact_destination)
+                    if actual != artifact_expected:
+                        raise SongDeliveryError(
+                            f"pre-manifest delivery hash mismatch for {artifact_destination.name}: "
+                            f"expected {artifact_expected}, got {actual}"
+                        )
+            installed.add(destination)
+            os.replace(temp_path, destination)
+            _fsync_directory(parent)
+            actual = _sha256_regular_file(destination)
+            if actual != expected:
+                raise SongDeliveryError(
+                    f"final delivery hash mismatch for {destination.name}: expected {expected}, got {actual}"
+                )
+    except BaseException as exc:
+        rollback_errors: list[str] = []
+        for destination in reversed(backup_order):
+            if destination in installed:
+                try:
+                    destination.unlink(missing_ok=True)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"remove {destination}: {rollback_exc}")
+            backup = backups.get(destination)
+            if backup is not None and os.path.lexists(backup):
+                try:
+                    os.replace(backup, destination)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"restore {destination}: {rollback_exc}")
+        for temp_path, _destination, _digest in staged.values():
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError as rollback_exc:
+                rollback_errors.append(f"remove temp {temp_path}: {rollback_exc}")
+        try:
+            _fsync_directory(parent)
+        except OSError as rollback_exc:
+            rollback_errors.append(f"fsync {parent}: {rollback_exc}")
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        detail = f"; rollback errors: {'; '.join(rollback_errors)}" if rollback_errors else ""
+        raise SongDeliveryError(f"atomic verified delivery failed: {exc}{detail}") from exc
+
+    cleanup_warnings: list[str] = []
+    for backup in backups.values():
+        try:
+            backup.unlink(missing_ok=True)
+        except OSError as exc:
+            cleanup_warnings.append(f"remove superseded backup {backup}: {exc}")
+    if backups:
+        try:
+            _fsync_directory(parent)
+        except OSError as exc:
+            cleanup_warnings.append(f"fsync superseded backup cleanup: {exc}")
+    return {
+        "manifest_path": str(manifest_path.resolve(strict=True)),
+        "manifest_sha256": f"sha256:{manifest_sha}",
+        "artifacts": manifest_artifacts,
+        "upload_enabled": False,
+        "cleanup_warnings": cleanup_warnings,
+    }
 
 
 def _expected_song_stream_contract() -> dict[str, object]:
@@ -1828,12 +2120,19 @@ def produce_song(date: str, item: dict) -> dict:
         # Burned video: only the summary-recorded, hash-bound artifact is
         # eligible.  Old selector debris must never inherit a newer proof.
         burned = Path(artifacts["video_path"]) if artifacts.get("video_path") else None
-        if burned is not None and artifacts.get("video_sha256") and not _matches_sha256(burned, artifacts["video_sha256"]):
-            log(f"song lane {cid}: burned video hash drift since materialization — refusing stale artifact")
+        if burned is not None and (
+            not isinstance(artifacts.get("video_sha256"), str)
+            or not _matches_sha256(burned, artifacts["video_sha256"])
+        ):
+            log(f"song lane {cid}: burned video hash missing/drifted since materialization — refusing stale artifact")
             burned = None
         cover = Path(artifacts["cover_path"]) if artifacts.get("cover_path") else None
-        cover_ok = bool(cover is not None and cover.is_file() and (
-            not artifacts.get("cover_sha256") or _matches_sha256(cover, artifacts["cover_sha256"])))
+        cover_ok = bool(
+            cover is not None
+            and cover.is_file()
+            and isinstance(artifacts.get("cover_sha256"), str)
+            and _matches_sha256(cover, artifacts["cover_sha256"])
+        )
         if not cover_ok:
             cover = None
         result["song_complete"] = completion["ready"] is True
@@ -1848,43 +2147,81 @@ def produce_song(date: str, item: dict) -> dict:
         ):
             delivery = REPO_ROOT / "lidousha" / date
             delivery.mkdir(parents=True, exist_ok=True)
-            import shutil
-
             name = safe_name("歌切_" + (result.get("title") or item.get("hook") or ""), f"歌切_{cid}")
-            shutil.copy2(burned, delivery / f"{name}.mp4")
+            required_sources = (
+                ("subtitle", artifacts.get("subtitle_path"), artifacts.get("subtitle_sha256"), f"{name}.srt"),
+                (
+                    "lyrics_alignment_report",
+                    completion.get("alignment_report_path"),
+                    completion.get("alignment_report_sha256"),
+                    f"{name}.lyrics-alignment-report.json",
+                ),
+                (
+                    "host_vocal_proof",
+                    completion.get("host_vocal_proof_path"),
+                    completion.get("host_vocal_proof_sha256"),
+                    f"{name}.host-vocal-proof.json",
+                ),
+                (
+                    "recut_manifest",
+                    artifacts.get("recut_manifest_path"),
+                    artifacts.get("recut_manifest_sha256"),
+                    f"{name}.recut.manifest.json",
+                ),
+            )
+            specs: dict[str, tuple[Path, Path, str]] = {
+                "video": (burned, delivery / f"{name}.mp4", str(artifacts["video_sha256"])),
+            }
+            missing_binding: str | None = None
+            for role, source_value, sha_value, filename in required_sources:
+                if not isinstance(source_value, str) or not isinstance(sha_value, str):
+                    missing_binding = role
+                    break
+                specs[role] = (Path(source_value), delivery / filename, sha_value)
             if cover_ok and cover is not None:
-                shutil.copy2(cover, delivery / f"{name}.cover.png")
-            delivered_sidecars: dict[str, str] = {}
-            subtitle = Path(artifacts["subtitle_path"]) if artifacts.get("subtitle_path") else None
-            if subtitle is not None and subtitle.is_file() and artifacts.get("subtitle_sha256") and _matches_sha256(
-                subtitle, artifacts["subtitle_sha256"]
-            ):
-                delivered_srt = delivery / f"{name}.srt"
-                shutil.copy2(subtitle, delivered_srt)
-                delivered_sidecars["subtitle"] = str(delivered_srt)
-            alignment_report = completion.get("alignment_report_path")
-            alignment_sha = completion.get("alignment_report_sha256")
-            if isinstance(alignment_report, str) and isinstance(alignment_sha, str):
-                alignment_path = Path(alignment_report)
-                if _matches_sha256(alignment_path, alignment_sha):
-                    delivered_alignment = delivery / f"{name}.lyrics-alignment-report.json"
-                    shutil.copy2(alignment_path, delivered_alignment)
-                    delivered_sidecars["lyrics_alignment_report"] = str(delivered_alignment)
-            host_proof_path = completion.get("host_vocal_proof_path")
-            host_proof_sha = completion.get("host_vocal_proof_sha256")
-            if isinstance(host_proof_path, str) and isinstance(host_proof_sha, str):
-                host_path = Path(host_proof_path)
-                if _matches_sha256(host_path, host_proof_sha):
-                    delivered_host_proof = delivery / f"{name}.host-vocal-proof.json"
-                    shutil.copy2(host_path, delivered_host_proof)
-                    delivered_sidecars["host_vocal_proof"] = str(delivered_host_proof)
-            recut_manifest = Path(artifacts["recut_manifest_path"]) if artifacts.get("recut_manifest_path") else None
-            if recut_manifest is not None and recut_manifest.is_file():
-                delivered_manifest = delivery / f"{name}.recut.manifest.json"
-                shutil.copy2(recut_manifest, delivered_manifest)
-                delivered_sidecars["recut_manifest"] = str(delivered_manifest)
-            result["delivered"] = str(delivery / f"{name}.mp4")
-            result["delivered_sidecars"] = delivered_sidecars
+                specs["cover"] = (
+                    cover,
+                    delivery / f"{name}.cover.png",
+                    str(artifacts["cover_sha256"]),
+                )
+
+            if missing_binding is not None:
+                delivery_error = SongDeliveryError(f"missing hash-bound delivery sidecar: {missing_binding}")
+            else:
+                try:
+                    receipt = _atomic_verified_song_delivery(
+                        candidate_id=cid,
+                        manifest_path=delivery / f"{name}.delivery.manifest.json",
+                        artifact_specs=specs,
+                        absent_artifacts=(
+                            {} if cover_ok else {"cover": delivery / f"{name}.cover.png"}
+                        ),
+                    )
+                except (OSError, SongDeliveryError) as exc:
+                    delivery_error = exc
+                else:
+                    delivery_error = None
+                    delivered_artifacts = receipt["artifacts"]
+                    result["delivered"] = delivered_artifacts["video"]["path"]
+                    result["delivered_sha256"] = delivered_artifacts["video"]["sha256"]
+                    sidecar_roles = [role for role in delivered_artifacts if role != "video"]
+                    result["delivered_sidecars"] = {
+                        role: delivered_artifacts[role]["path"] for role in sidecar_roles
+                    }
+                    result["delivered_sidecar_hashes"] = {
+                        role: delivered_artifacts[role]["sha256"] for role in sidecar_roles
+                    }
+                    result["delivery_manifest_path"] = receipt["manifest_path"]
+                    result["delivery_manifest_sha256"] = receipt["manifest_sha256"]
+                    result["delivery_upload_enabled"] = receipt["upload_enabled"]
+                    if receipt["cleanup_warnings"]:
+                        result["delivery_cleanup_warnings"] = receipt["cleanup_warnings"]
+            if delivery_error is not None:
+                log(f"song lane {cid}: atomic verified delivery refused: {delivery_error}")
+                result["delivery_error"] = str(delivery_error)
+                result["reason_codes"] = list(
+                    dict.fromkeys([*(result.get("reason_codes") or []), "SONG_DELIVERY_ATOMIC_COPY_FAILED"])
+                )
         result["status"] = song_status(completed.returncode, bool(result.get("delivered")))
         return result
 

@@ -3,6 +3,8 @@ import json
 import hashlib
 from pathlib import Path
 
+import pytest
+
 import scripts.free_session_autoslice as runner
 from tests.host_vocal_test_support import bind_ready_live_performance_report, make_ready_host_vocal_claim
 from scripts.free_session_autoslice import (
@@ -1072,6 +1074,149 @@ def test_song_artifact_hash_check_rejects_mutation_and_symlink(tmp_path):
     link = tmp_path / "link.mp4"
     link.symlink_to(artifact)
     assert not runner._matches_sha256(link, "sha256:" + hashlib.sha256(b"mutated").hexdigest())
+
+
+def _verified_delivery_specs(tmp_path):
+    sources = tmp_path / "materialized"
+    delivery = tmp_path / "delivery"
+    sources.mkdir()
+    payloads = {
+        "video": b"verified-burned-video",
+        "cover": b"verified-cover",
+        "subtitle": b"1\n00:00:00,000 --> 00:00:01,000\nlyric\n",
+        "lyrics_alignment_report": b'{"status":"READY"}\n',
+        "host_vocal_proof": b'{"decision":"LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"}\n',
+        "recut_manifest": b'{"status":"MATERIALIZED"}\n',
+    }
+    suffixes = {
+        "video": ".mp4",
+        "cover": ".cover.png",
+        "subtitle": ".srt",
+        "lyrics_alignment_report": ".lyrics-alignment-report.json",
+        "host_vocal_proof": ".host-vocal-proof.json",
+        "recut_manifest": ".recut.manifest.json",
+    }
+    specs = {}
+    for role, payload in payloads.items():
+        source = sources / f"source{suffixes[role]}"
+        source.write_bytes(payload)
+        destination = delivery / f"song{suffixes[role]}"
+        specs[role] = (
+            source,
+            destination,
+            "sha256:" + hashlib.sha256(payload).hexdigest(),
+        )
+    return delivery, payloads, specs
+
+
+def test_atomic_verified_song_delivery_records_final_hashes_and_no_upload_manifest(tmp_path):
+    delivery, payloads, specs = _verified_delivery_specs(tmp_path)
+    manifest = delivery / "song.delivery.manifest.json"
+
+    receipt = runner._atomic_verified_song_delivery(
+        candidate_id="song_delivery_positive",
+        manifest_path=manifest,
+        artifact_specs=specs,
+    )
+
+    assert receipt["upload_enabled"] is False
+    assert receipt["manifest_path"] == str(manifest.resolve())
+    assert runner._matches_sha256(manifest, receipt["manifest_sha256"])
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert manifest_payload["schema_version"] == runner.VERIFIED_SONG_DELIVERY_SCHEMA_VERSION
+    assert manifest_payload["status"] == "DELIVERED_NO_UPLOAD"
+    assert manifest_payload["upload_enabled"] is False
+    assert manifest_payload["candidate_id"] == "song_delivery_positive"
+    assert set(manifest_payload["artifacts"]) == set(payloads)
+    for role, payload in payloads.items():
+        delivered = specs[role][1]
+        expected = "sha256:" + hashlib.sha256(payload).hexdigest()
+        assert delivered.read_bytes() == payload
+        assert receipt["artifacts"][role]["path"] == str(delivered.resolve())
+        assert receipt["artifacts"][role]["sha256"] == expected
+        assert manifest_payload["artifacts"][role]["sha256"] == expected
+        assert runner._matches_sha256(delivered, expected)
+    assert not [path for path in delivery.iterdir() if path.name.startswith(".")]
+
+
+def test_atomic_verified_song_delivery_rejects_sidecar_copy_hash_mismatch(tmp_path):
+    delivery, _payloads, specs = _verified_delivery_specs(tmp_path)
+    subtitle_source, subtitle_destination, _subtitle_hash = specs["subtitle"]
+    specs["subtitle"] = (subtitle_source, subtitle_destination, "sha256:" + "0" * 64)
+
+    with pytest.raises(runner.SongDeliveryError, match="copied hash mismatch"):
+        runner._atomic_verified_song_delivery(
+            candidate_id="song_sidecar_mismatch",
+            manifest_path=delivery / "song.delivery.manifest.json",
+            artifact_specs=specs,
+        )
+
+    assert list(delivery.iterdir()) == [], "a sidecar mismatch must expose no partial package"
+
+
+def test_atomic_verified_song_delivery_removes_unverified_optional_sidecar(tmp_path):
+    delivery, _payloads, specs = _verified_delivery_specs(tmp_path)
+    delivery.mkdir()
+    stale_cover = specs["cover"][1]
+    stale_cover.write_bytes(b"stale-cover-from-previous-attempt")
+    specs.pop("cover")
+    manifest = delivery / "song.delivery.manifest.json"
+
+    runner._atomic_verified_song_delivery(
+        candidate_id="song_without_verified_cover",
+        manifest_path=manifest,
+        artifact_specs=specs,
+        absent_artifacts={"cover": stale_cover},
+    )
+
+    assert not stale_cover.exists(), "an unverified old cover must not survive beside the new video"
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert manifest_payload["absent_artifacts"] == {
+        "cover": {"path": str(stale_cover.absolute()), "status": "ABSENT"}
+    }
+
+
+def test_atomic_verified_song_delivery_detects_post_replace_corruption_and_rolls_back(tmp_path, monkeypatch):
+    delivery, _payloads, specs = _verified_delivery_specs(tmp_path)
+    manifest = delivery / "song.delivery.manifest.json"
+    video_destination = specs["video"][1]
+    real_replace = runner.os.replace
+
+    def replace_then_corrupt(source, destination):
+        real_replace(source, destination)
+        if Path(destination) == video_destination:
+            video_destination.write_bytes(b"corrupted-after-atomic-replace")
+
+    monkeypatch.setattr(runner.os, "replace", replace_then_corrupt)
+    with pytest.raises(runner.SongDeliveryError, match="final delivery hash mismatch"):
+        runner._atomic_verified_song_delivery(
+            candidate_id="song_post_copy_corruption",
+            manifest_path=manifest,
+            artifact_specs=specs,
+        )
+
+    assert list(delivery.iterdir()) == [], "post-copy corruption must revoke video and every sidecar"
+
+
+def test_atomic_verified_song_delivery_manifest_replace_failure_exposes_no_partial(tmp_path, monkeypatch):
+    delivery, _payloads, specs = _verified_delivery_specs(tmp_path)
+    manifest = delivery / "song.delivery.manifest.json"
+    real_replace = runner.os.replace
+
+    def interrupted_replace(source, destination):
+        real_replace(source, destination)
+        if Path(destination) == manifest:
+            raise OSError("simulated interruption after manifest replace")
+
+    monkeypatch.setattr(runner.os, "replace", interrupted_replace)
+    with pytest.raises(runner.SongDeliveryError, match="simulated interruption after manifest replace"):
+        runner._atomic_verified_song_delivery(
+            candidate_id="song_interrupted_commit",
+            manifest_path=manifest,
+            artifact_specs=specs,
+        )
+
+    assert list(delivery.iterdir()) == [], "manifest-last failure must roll back all public artifact names"
 
 
 def test_blocked_songs_do_not_consume_budget_and_backlog_backfills():

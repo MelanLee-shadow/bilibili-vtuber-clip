@@ -5,9 +5,25 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from scripts import authorized_upload
 from scripts import repair_false_green_20260709 as repair
 from src.autoslice.song_repair import AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION
+
+
+INCIDENT_SOURCE_PAYLOAD = b"background-song-source"
+
+
+@pytest.fixture(autouse=True)
+def _pin_fixture_incident_source_hash(monkeypatch):
+    """Keep tiny fixture media while exercising the production hash pin."""
+
+    monkeypatch.setattr(
+        repair,
+        "INCIDENT_FULL_SOURCE_SHA256",
+        hashlib.sha256(INCIDENT_SOURCE_PAYLOAD).hexdigest(),
+    )
 
 
 def _json(path: Path, value: object) -> None:
@@ -66,7 +82,13 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
     ]
 
 
-def _incident_fixture(tmp_path: Path) -> dict[str, object]:
+def _incident_fixture(
+    tmp_path: Path,
+    *,
+    negative_candidate_id: str = repair.INCIDENT_RERUN_CANDIDATE_ID,
+    source_path: Path | None = None,
+    source_payload: bytes = INCIDENT_SOURCE_PAYLOAD,
+) -> dict[str, object]:
     base = tmp_path / "autoslice"
     repo = base / "repo"
     (base / "DISABLED").parent.mkdir(parents=True)
@@ -83,9 +105,13 @@ def _incident_fixture(tmp_path: Path) -> dict[str, object]:
             ),
             "anchor_start_ms": 166_220,
             "anchor_end_ms": 321_760,
+            "seg_dur_ms": repair.INCIDENT_SEGMENT_DURATION_MS,
         },
         "result": {
-            "candidate_id": "song_223019_166_mebukutoki_rerun_v4",
+            "candidate_id": repair.INCIDENT_RERUN_CANDIDATE_ID,
+            "start_ms": repair.INCIDENT_RETRY_START_MS,
+            "end_ms": repair.INCIDENT_RETRY_END_MS,
+            "retried_full_source": True,
             "song_complete": True,
             "delivered": str(delivery / "old-false-green.mp4"),
             "title": "【李豆沙】豆沙歌，《芽吹くとき》",
@@ -164,9 +190,9 @@ def _incident_fixture(tmp_path: Path) -> dict[str, object]:
     ).encode("utf-8")
     summary.write_bytes(b"# stale automatic front\n\n" + tail)
 
-    source = tmp_path / "negative-source.mp4"
-    source.write_bytes(b"background-song-source")
-    negative_candidate_id = "seededsong_mebukutoki_bg_20260710T120000Z"
+    source = source_path or (base / repair.INCIDENT_FULL_SOURCE_RELATIVE)
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(source_payload)
     run_root = base / "out" / "acceptance" / "negative-run"
     ledger = base / "reports" / "upload_ledger.jsonl"
     unrelated = json.dumps(
@@ -248,7 +274,7 @@ def _incident_fixture(tmp_path: Path) -> dict[str, object]:
                 "candidate_id": negative_candidate_id,
                 "source_sha256": _sha(agy_source),
                 "lrc_sha256": _sha(agy_lrc),
-                "source_duration_ms": 12_000,
+                "source_duration_ms": repair.INCIDENT_FULL_SOURCE_DURATION_MS,
             },
             "observations": observations,
             "spot_checks": [],
@@ -271,7 +297,7 @@ def _incident_fixture(tmp_path: Path) -> dict[str, object]:
                 "source_origin_path": str(source.resolve()),
                 "source_path": str(agy_source),
                 "source_sha256": _sha(agy_source),
-                "source_duration_ms": 12_000,
+                "source_duration_ms": repair.INCIDENT_FULL_SOURCE_DURATION_MS,
                 "lrc_path": str(agy_lrc),
                 "lrc_sha256": _sha(agy_lrc),
                 "prompt_path": str(agy_prompt),
@@ -301,7 +327,19 @@ def _incident_fixture(tmp_path: Path) -> dict[str, object]:
         "reason_codes": sorted(repair.REQUIRED_REASONS),
         "boundary_resolution": {"action": "BLOCK"},
         "source_context_job": {
+            "schema_version": "source-context-job-from-full-session-candidate.v1",
+            "candidate_id": negative_candidate_id,
+            "content_type_hint": "song",
             "song_candidate": True,
+            "requires_full_source_song_boundary_redo": True,
+            "timeline": {
+                "source_duration_ms": repair.INCIDENT_FULL_SOURCE_DURATION_MS,
+                "anchor_start_ms": repair.INCIDENT_LOCAL_ANCHOR_START_MS,
+                "anchor_end_ms": repair.INCIDENT_LOCAL_ANCHOR_END_MS,
+                "context_start_ms": 0,
+                "context_end_ms": repair.INCIDENT_FULL_SOURCE_DURATION_MS,
+                "context_duration_ms": repair.INCIDENT_FULL_SOURCE_DURATION_MS,
+            },
             "song_repair_gate": {
                 "status": "BLOCKED",
                 "reason_codes": sorted(repair.REQUIRED_REASONS),
@@ -508,7 +546,7 @@ def test_apply_commits_six_file_cas_and_preserves_manual_tail(tmp_path):
     v5 = json.loads(v5_path.read_text(encoding="utf-8"))
     assert v5["status"] == repair.V5_STATUS
     assert v5["no_upload_verification"]["status"] == "PASSED_RUN_SCOPED"
-    assert v5["no_upload_verification"]["run_id"].startswith("seededsong_mebukutoki_bg_")
+    assert v5["no_upload_verification"]["run_id"] == repair.INCIDENT_RERUN_CANDIDATE_ID
     assert v5["fresh_negative_result"]["sha256"] == _sha(fixture["negative"])
 
     tx_dir = fixture["base"] / "forensics" / "false-green-20260709-pytest-tx"
@@ -659,7 +697,74 @@ def test_agy_source_origin_must_match_selector_source(tmp_path, capsys):
     assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
 
 
-def test_incident_quarantine_tail_is_capped_by_segment_duration(tmp_path):
+def test_self_consistent_agy_from_other_media_cannot_bind_to_incident_source(tmp_path, capsys):
+    fixture = _incident_fixture(tmp_path)
+    manifest = json.loads(fixture["agy_manifest"].read_text(encoding="utf-8"))
+    agy_source = Path(manifest["artifacts"]["source_path"])
+    agy_source.write_bytes(b"unrelated-background-media-used-only-by-agy")
+    unrelated_sha = _sha(agy_source)
+    manifest["artifacts"]["source_sha256"] = unrelated_sha
+
+    raw = json.loads(fixture["agy_output"].read_text(encoding="utf-8"))
+    raw["record"]["source_sha256"] = unrelated_sha
+    _json(fixture["agy_output"], raw)
+    manifest["artifacts"]["output_sha256"] = _sha(fixture["agy_output"])
+    _json(fixture["agy_manifest"], manifest)
+
+    assert repair.main(_args(fixture, "--apply")) == 2
+    assert "AGY input media is not the immutable incident full-source bytes" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
+
+
+@pytest.mark.parametrize("extra", [(), ("--apply",)])
+def test_unrelated_background_candidate_cannot_authorize_plan_or_apply(tmp_path, capsys, extra):
+    fixture = _incident_fixture(
+        tmp_path,
+        negative_candidate_id="unrelated_background_song_negative",
+    )
+
+    assert repair.main(_args(fixture, *extra)) == 2
+    assert "not the verified incident rerun candidate" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
+
+
+def test_byte_identical_background_at_unrelated_origin_cannot_authorize_apply(tmp_path, capsys):
+    unrelated_source = tmp_path / "other-session" / "background.mp4"
+    fixture = _incident_fixture(tmp_path, source_path=unrelated_source)
+
+    assert repair.main(_args(fixture, "--apply")) == 2
+    assert "fresh negative incident full-source video" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
+
+
+def test_operator_asserted_hash_for_unrelated_bytes_cannot_authorize_apply(tmp_path, capsys):
+    fixture = _incident_fixture(
+        tmp_path,
+        source_payload=b"different-background-negative-with-self-consistent-evidence",
+    )
+
+    # _incident_fixture binds the snapshot, selector, AGY source copy, and CLI
+    # assertion to these bytes.  Only the immutable incident hash disagrees.
+    assert repair.main(_args(fixture, "--apply")) == 2
+    assert "not the immutable incident full-source hash" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
+
+
+def test_self_consistent_negative_with_unrelated_seed_range_cannot_authorize_apply(tmp_path, capsys):
+    fixture = _incident_fixture(tmp_path)
+    negative = json.loads(fixture["negative"].read_text(encoding="utf-8"))
+    for record in (negative["records"][0], negative["last_shadow_summary"]["records"][0]):
+        timeline = record["source_context_job"]["timeline"]
+        timeline["anchor_start_ms"] += 1_000
+        timeline["anchor_end_ms"] += 1_000
+    _json(fixture["negative"], negative)
+
+    assert repair.main(_args(fixture, "--apply")) == 2
+    assert "seed timeline is not the incident retry range" in capsys.readouterr().err
+    assert not list((fixture["base"] / "forensics").glob("false-green-20260709-*"))
+
+
+def test_incident_report_rejects_source_segment_duration_drift(tmp_path):
     fixture = _incident_fixture(tmp_path)
     v4 = json.loads(fixture["v4"].read_text(encoding="utf-8"))
     v4["item"]["seg_dur_ms"] = 340_000
@@ -668,12 +773,32 @@ def test_incident_quarantine_tail_is_capped_by_segment_duration(tmp_path):
     paths = repair.authority_paths(fixture["base"], fixture["repo"], fixture["superseded"])
     inputs, _hashes = repair.read_authority_inputs(paths)
 
-    interval = repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
+    with pytest.raises(repair.RepairError, match="not the immutable source-segment duration"):
+        repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
 
-    assert interval["start_ms"] == 121_220
-    assert interval["end_ms"] == 340_000
-    assert interval["original_anchor_start_ms"] == 166_220
-    assert interval["original_anchor_end_ms"] == 321_760
+
+@pytest.mark.parametrize(
+    ("section", "field", "bad_value"),
+    [
+        ("result", "candidate_id", "other_rerun"),
+        ("result", "start_ms", repair.INCIDENT_RETRY_START_MS + 1),
+        ("result", "end_ms", repair.INCIDENT_RETRY_END_MS - 1),
+        ("item", "segment_path", "/root/clouddrive2/other-recording.mp4"),
+        ("item", "anchor_start_ms", repair.INCIDENT_ANCHOR_START_MS + 1),
+        ("item", "anchor_end_ms", repair.INCIDENT_ANCHOR_END_MS - 1),
+    ],
+)
+def test_verified_v4_authority_must_match_exact_incident_spec(tmp_path, section, field, bad_value):
+    fixture = _incident_fixture(tmp_path)
+    v4 = json.loads(fixture["v4"].read_text(encoding="utf-8"))
+    v4[section][field] = bad_value
+    _json(fixture["v4"], v4)
+    fixture["superseded"].write_bytes(fixture["v4"].read_bytes())
+    paths = repair.authority_paths(fixture["base"], fixture["repo"], fixture["superseded"])
+    inputs, _hashes = repair.read_authority_inputs(paths)
+
+    with pytest.raises(repair.RepairError):
+        repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
 
 
 def test_recover_rolls_forward_prepared_partial_transaction(tmp_path):

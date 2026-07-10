@@ -6,6 +6,8 @@ It consumes a *fresh* negative selector ``summary.json`` and refuses to proceed
 unless that result proves all of the following:
 
 * the run was no-upload;
+* its candidate, source bytes, source duration, and seed range are the pinned
+  2026-07-09 incident retry, not merely an operator-named negative;
 * the candidate was blocked as background/original playback and not Li Dousha;
 * the song repair gate retained the same hard negative;
 * no recut, cover, delivery, or upload artifact was materialized; and
@@ -43,6 +45,24 @@ from typing import Any, Iterator, Mapping, Sequence
 
 DATE = "2026-07-09"
 TARGET_CANDIDATE_ID = "song_223019_166"
+INCIDENT_RERUN_CANDIDATE_ID = "song_223019_166_mebukutoki_rerun_v4"
+INCIDENT_SEGMENT_PATH = (
+    "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-09/"
+    "22966160_2026-07-09-22-30-19-.mp4"
+)
+INCIDENT_ANCHOR_START_MS = 166_220
+INCIDENT_ANCHOR_END_MS = 321_760
+INCIDENT_SEGMENT_DURATION_MS = 483_352
+INCIDENT_RETRY_START_MS = 121_220
+INCIDENT_RETRY_END_MS = 366_760
+INCIDENT_FULL_SOURCE_DURATION_MS = 245_566
+INCIDENT_LOCAL_ANCHOR_START_MS = INCIDENT_ANCHOR_START_MS - INCIDENT_RETRY_START_MS
+INCIDENT_LOCAL_ANCHOR_END_MS = INCIDENT_ANCHOR_END_MS - INCIDENT_RETRY_START_MS
+INCIDENT_FULL_SOURCE_RELATIVE = Path(
+    f"out/{DATE}/{INCIDENT_RERUN_CANDIDATE_ID}/"
+    f"{INCIDENT_RERUN_CANDIDATE_ID}_full_source.mp4"
+)
+INCIDENT_FULL_SOURCE_SHA256 = "706efcc51cfa37d2d3ce73cac5ea42ffe3c35a2c0654387428b20a7bf0b8e48c"
 TAIL_MARKER = b"## 2026-07-10 Ivan \xe5\xae\xa1\xe7\x89\x87\xe7\x82\xb9\xe5\x90\x8d\xe6\x89\xa7\xe8\xa1\x8c"
 REQUIRED_REASONS = {
     "SONG_BACKGROUND_PLAYBACK_ONLY",
@@ -406,6 +426,8 @@ def _validate_agy_background_evidence(
     repair_report_path: Path,
     candidate_id: str,
     expected_source_origin_path: Path,
+    expected_source_sha256: str,
+    expected_source_duration_ms: int,
     expected_performance: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Bind the report's negative to the one fresh AGY run and its raw rows."""
@@ -479,10 +501,20 @@ def _validate_agy_background_evidence(
             artifact_sha256 = sha256_bytes(payload)
         if artifact_sha256 != artifacts.get(hash_key):
             raise RepairError(f"fresh negative AGY {path_key} hash does not match its manifest")
+        if path_key == "source_path" and artifact_sha256 != expected_source_sha256:
+            raise RepairError(
+                "fresh negative AGY input media is not the immutable incident full-source bytes: "
+                f"expected {expected_source_sha256}, observed {artifact_sha256}"
+            )
         bound_paths[path_key] = artifact_path
     source_duration_ms = artifacts.get("source_duration_ms")
     if isinstance(source_duration_ms, bool) or not isinstance(source_duration_ms, int) or source_duration_ms <= 0:
         raise RepairError("fresh negative AGY source duration is invalid")
+    if source_duration_ms != expected_source_duration_ms:
+        raise RepairError(
+            "fresh negative AGY source duration is not the immutable incident full-source duration: "
+            f"expected {expected_source_duration_ms}, observed {source_duration_ms}"
+        )
 
     raw_payload = bound_payloads["output_path"]
     try:
@@ -550,6 +582,7 @@ def _validate_agy_background_evidence(
         "run_manifest_sha256": sha256_bytes(manifest_payload),
         "raw_alignment_path": str(bound_paths["output_path"].resolve()),
         "raw_alignment_sha256": sha256_bytes(raw_payload),
+        "source_duration_ms": source_duration_ms,
         "first_lyric_start_ms": first_lyric_start_ms,
         "last_lyric_end_ms": last_lyric_end_ms,
         "forensic_payloads": {
@@ -601,7 +634,49 @@ def _forbidden_materialization(record: Mapping[str, Any]) -> list[str]:
     return violations
 
 
-def validate_negative_result(path: Path, *, expected_source_sha256: str | None) -> dict[str, Any]:
+def _validate_incident_source_context_job(
+    job: Mapping[str, Any], *, incident: Mapping[str, Any]
+) -> None:
+    """Require the selector seed to be the immutable incident retry window.
+
+    The operator-supplied run directory and a self-consistent AGY result are
+    not incident identity.  Identity comes from the verified v4 report plus
+    the pinned full-source artifact.  In particular, another background-song
+    negative must not be able to revoke the 2026-07-09 false green.
+    """
+
+    if (
+        job.get("schema_version") != "source-context-job-from-full-session-candidate.v1"
+        or job.get("candidate_id") != incident["rerun_candidate_id"]
+        or job.get("content_type_hint") != "song"
+        or job.get("song_candidate") is not True
+        or job.get("requires_full_source_song_boundary_redo") is not True
+    ):
+        raise RepairError("fresh negative source-context job is not the immutable incident song seed")
+    timeline = _as_mapping(job.get("timeline"))
+    expected_timeline = {
+        "source_duration_ms": incident["full_source_duration_ms"],
+        "anchor_start_ms": incident["local_anchor_start_ms"],
+        "anchor_end_ms": incident["local_anchor_end_ms"],
+        "context_start_ms": 0,
+        "context_end_ms": incident["full_source_duration_ms"],
+        "context_duration_ms": incident["full_source_duration_ms"],
+    }
+    mismatches = {
+        key: {"expected": expected, "observed": timeline.get(key)}
+        for key, expected in expected_timeline.items()
+        if isinstance(timeline.get(key), bool) or timeline.get(key) != expected
+    }
+    if mismatches:
+        raise RepairError(f"fresh negative seed timeline is not the incident retry range: {mismatches}")
+
+
+def validate_negative_result(
+    path: Path,
+    *,
+    incident: Mapping[str, Any],
+    expected_source_sha256: str | None,
+) -> dict[str, Any]:
     summary, summary_payload = _load_json_bytes(path, "fresh negative selector result")
     if summary.get("schema_version") != "full-session-selector-cpa-shadow-run.v1":
         raise RepairError("fresh negative selector result has the wrong schema version")
@@ -609,8 +684,11 @@ def validate_negative_result(path: Path, *, expected_source_sha256: str | None) 
         raise RepairError("fresh negative selector result must have no_upload=true")
     record = _select_negative_record(summary)
     candidate_id = str(record.get("candidate_id") or "")
-    if not candidate_id:
-        raise RepairError("fresh negative record has no candidate_id/run id")
+    if candidate_id != incident["rerun_candidate_id"]:
+        raise RepairError(
+            "fresh negative candidate id is not the verified incident rerun candidate: "
+            f"expected {incident['rerun_candidate_id']}, observed {candidate_id or '<missing>'}"
+        )
     if record.get("decision_action") != "BLOCK":
         raise RepairError("fresh negative record is not decision_action=BLOCK")
     reasons = _as_reason_set(record.get("reason_codes"))
@@ -622,6 +700,7 @@ def validate_negative_result(path: Path, *, expected_source_sha256: str | None) 
     if boundary.get("action") != "BLOCK":
         raise RepairError("fresh negative boundary_resolution.action must be BLOCK")
     job = _as_mapping(record.get("source_context_job"))
+    _validate_incident_source_context_job(job, incident=incident)
     gate = _as_mapping(job.get("song_repair_gate"))
     performance = _as_mapping(gate.get("live_performance"))
     if gate.get("status") != "BLOCKED":
@@ -656,15 +735,36 @@ def validate_negative_result(path: Path, *, expected_source_sha256: str | None) 
         raise RepairError("fresh negative gate/report live-performance observations differ")
     source_path = Path(str(summary.get("source_video") or ""))
     require_regular_file(source_path, "fresh negative source video")
-    source_sha = sha256_file(source_path)
-    if expected_source_sha256 and source_sha != expected_source_sha256.removeprefix("sha256:"):
+    require_no_symlink_components(
+        source_path,
+        Path(str(incident["base_path"])),
+        "fresh negative incident full-source video",
+    )
+    if source_path.resolve() != Path(str(incident["full_source_path"])).resolve(strict=False):
         raise RepairError(
-            f"fresh negative source hash mismatch: expected {expected_source_sha256}, observed {source_sha}"
+            "fresh negative source video is not the immutable incident full-source artifact: "
+            f"expected {incident['full_source_path']}, observed {source_path.resolve()}"
+        )
+    source_sha = sha256_file(source_path)
+    if source_sha != incident["full_source_sha256"]:
+        raise RepairError(
+            "fresh negative source hash is not the immutable incident full-source hash: "
+            f"expected {incident['full_source_sha256']}, observed {source_sha}"
+        )
+    if (
+        expected_source_sha256
+        and expected_source_sha256.removeprefix("sha256:") != incident["full_source_sha256"]
+    ):
+        raise RepairError(
+            "operator source-hash assertion disagrees with the immutable incident spec; "
+            "the command-line value is not an authority"
         )
     agy_evidence = _validate_agy_background_evidence(
         repair_report_path=repair_report_path,
         candidate_id=candidate_id,
         expected_source_origin_path=source_path,
+        expected_source_sha256=str(incident["full_source_sha256"]),
+        expected_source_duration_ms=int(incident["full_source_duration_ms"]),
         expected_performance=performance,
     )
     inner = _as_mapping(summary.get("last_shadow_summary"))
@@ -707,6 +807,24 @@ def validate_negative_result(path: Path, *, expected_source_sha256: str | None) 
         "candidate_dir": str(candidate_dir.resolve()),
         "lyrics_alignment_ready": lyrics_alignment_ready,
         "agy_evidence": agy_evidence,
+        "incident_binding": {
+            key: copy.deepcopy(incident[key])
+            for key in (
+                "segment_path",
+                "start_ms",
+                "end_ms",
+                "original_anchor_start_ms",
+                "original_anchor_end_ms",
+                "segment_duration_ms",
+                "candidate_id",
+                "rerun_candidate_id",
+                "full_source_path",
+                "full_source_sha256",
+                "full_source_duration_ms",
+                "local_anchor_start_ms",
+                "local_anchor_end_ms",
+            )
+        },
     }
 
 
@@ -1163,6 +1281,10 @@ def validate_known_false_green_inputs(inputs: Mapping[str, bytes], *, repo_root:
         or acceptance.get("state_repaired") is not True
         or result.get("song_complete") is not True
         or not result.get("delivered")
+        or result.get("candidate_id") != INCIDENT_RERUN_CANDIDATE_ID
+        or result.get("start_ms") != INCIDENT_RETRY_START_MS
+        or result.get("end_ms") != INCIDENT_RETRY_END_MS
+        or result.get("retried_full_source") is not True
     ):
         raise RepairError("the selected v4 files no longer have the known false-green acceptance shape")
     # Revoking metadata while leaving its MP4/cover/sidecars in the active
@@ -1205,32 +1327,39 @@ def validate_known_false_green_inputs(inputs: Mapping[str, bytes], *, repo_root:
     end_ms = item.get("anchor_end_ms")
     if (
         not isinstance(segment_path, str)
-        or not segment_path.startswith("/root/clouddrive2/")
-        or Path(segment_path).name != "22966160_2026-07-09-22-30-19-.mp4"
+        or segment_path != INCIDENT_SEGMENT_PATH
         or isinstance(start_ms, bool)
-        or start_ms != 166_220
+        or start_ms != INCIDENT_ANCHOR_START_MS
         or isinstance(end_ms, bool)
-        or end_ms != 321_760
+        or end_ms != INCIDENT_ANCHOR_END_MS
     ):
         raise RepairError("v4 incident item does not identify the exact original 166220..321760ms source interval")
     segment_duration_ms = item.get("seg_dur_ms")
-    if segment_duration_ms is not None and (
+    if (
         isinstance(segment_duration_ms, bool)
-        or not isinstance(segment_duration_ms, int)
-        or segment_duration_ms < end_ms
+        or segment_duration_ms != INCIDENT_SEGMENT_DURATION_MS
     ):
-        raise RepairError("v4 incident seg_dur_ms is invalid or shorter than its anchor")
-    quarantine_start_ms = max(0, start_ms - 45_000)
-    quarantine_end_ms = end_ms + 45_000
-    if isinstance(segment_duration_ms, int):
-        quarantine_end_ms = min(segment_duration_ms, quarantine_end_ms)
+        raise RepairError(
+            "v4 incident seg_dur_ms is not the immutable source-segment duration: "
+            f"expected {INCIDENT_SEGMENT_DURATION_MS}, observed {segment_duration_ms}"
+        )
+    quarantine_start_ms = INCIDENT_RETRY_START_MS
+    quarantine_end_ms = INCIDENT_RETRY_END_MS
     return {
         "segment_path": segment_path,
         "start_ms": quarantine_start_ms,
         "end_ms": quarantine_end_ms,
         "original_anchor_start_ms": start_ms,
         "original_anchor_end_ms": end_ms,
+        "segment_duration_ms": segment_duration_ms,
         "candidate_id": TARGET_CANDIDATE_ID,
+        "rerun_candidate_id": INCIDENT_RERUN_CANDIDATE_ID,
+        "base_path": str(repo_root.parent.resolve()),
+        "full_source_path": str((repo_root.parent / INCIDENT_FULL_SOURCE_RELATIVE).resolve(strict=False)),
+        "full_source_sha256": INCIDENT_FULL_SOURCE_SHA256,
+        "full_source_duration_ms": INCIDENT_FULL_SOURCE_DURATION_MS,
+        "local_anchor_start_ms": INCIDENT_LOCAL_ANCHOR_START_MS,
+        "local_anchor_end_ms": INCIDENT_LOCAL_ANCHOR_END_MS,
         "reason_code": "SONG_INTERVAL_REQUIRES_JOINT_SINGING_PROOF",
     }
 
@@ -1357,7 +1486,20 @@ def build_repaired_state(
             incident_interval["original_anchor_end_ms"],
         )
     ]
-    intervals.append(copy.deepcopy(dict(incident_interval)))
+    intervals.append(
+        {
+            key: copy.deepcopy(incident_interval[key])
+            for key in (
+                "segment_path",
+                "start_ms",
+                "end_ms",
+                "original_anchor_start_ms",
+                "original_anchor_end_ms",
+                "candidate_id",
+                "reason_code",
+            )
+        }
+    )
     state["song_quarantine_intervals"] = intervals
     state["songs"] = songs
     state["status"] = "review_ready"
@@ -1441,6 +1583,7 @@ def _report_tombstone(
             "repair_report_path": negative["repair_report_path"],
             "repair_report_sha256": negative["repair_report_sha256"],
             "forensic_repair_report_path": negative["forensic_repair_report_path"],
+            "incident_binding": copy.deepcopy(negative["incident_binding"]),
         },
         "run_scoped_no_upload_verification": copy.deepcopy(no_upload),
         "repaired_state_sha256": state_sha256,
@@ -1534,6 +1677,7 @@ def build_outputs(
             "song_repair_report_path": negative["repair_report_path"],
             "song_repair_report_sha256": negative["repair_report_sha256"],
             "forensic_song_repair_report_path": negative["forensic_repair_report_path"],
+            "incident_binding": copy.deepcopy(negative["incident_binding"]),
         },
         "no_upload_verification": copy.deepcopy(no_upload),
         "state_repair": {
@@ -2094,6 +2238,7 @@ def _plan_payload(
             "result_path": negative["result_path"],
             "result_sha256": negative["result_sha256"],
             "source_video_sha256": negative["source_video_sha256"],
+            "incident_binding": copy.deepcopy(negative["incident_binding"]),
             "mode": negative["performance"].get("mode"),
             "reason_codes": negative["reason_codes"],
         },
@@ -2135,7 +2280,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--planned-run-id")
     parser.add_argument("--planned-run-root", type=Path)
     parser.add_argument("--planned-source-video", type=Path)
-    parser.add_argument("--expected-source-sha256")
+    parser.add_argument(
+        "--expected-source-sha256",
+        help="optional operator consistency check; immutable incident spec remains authoritative",
+    )
     parser.add_argument("--expected-hashes", type=Path, help="optional operator-pinned six-target hash JSON")
     parser.add_argument("--transaction-id", help="test/forensic override; default is UTC+random")
     return parser
@@ -2190,18 +2338,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             args.negative_result is None
             or args.superseded_v4_report is None
             or args.no_upload_snapshot is None
-            or not args.expected_source_sha256
         ):
             raise RepairError(
-                "--negative-result, --superseded-v4-report, --no-upload-snapshot, and "
-                "--expected-source-sha256 are required for plan/apply"
+                "--negative-result, --superseded-v4-report, and --no-upload-snapshot "
+                "are required for plan/apply"
             )
         paths = authority_paths(base, repo_root, args.superseded_v4_report.resolve())
         inputs, input_hashes = read_authority_inputs(paths)
         incident_interval = validate_known_false_green_inputs(inputs, repo_root=repo_root)
         _assert_expected_hashes(input_hashes, args.expected_hashes)
         negative = validate_negative_result(
-            args.negative_result.resolve(), expected_source_sha256=args.expected_source_sha256
+            args.negative_result.resolve(),
+            incident=incident_interval,
+            expected_source_sha256=args.expected_source_sha256,
         )
         snapshot = validate_no_upload_snapshot(args.no_upload_snapshot.resolve(), negative=negative, ledger=ledger)
         no_upload = build_no_upload_proof(negative, ledger, snapshot)
