@@ -58,6 +58,7 @@ from scripts.run_full_session_selector_cpa_shadow import (
     _build_ssh_agy_transcribe_runner,
 )
 from scripts.apply_subtitle_text_overrides import apply_document as apply_text_override_document
+from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
 from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
@@ -757,7 +758,7 @@ def main(argv: list[str] | None = None) -> int:
         "text_finalization_manifest_path": str(text_manifest_path) if text_manifest_path is not None else None,
         "speaker_review_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
         "subtitle_ass_path": str(speaker_ass) if speaker_ass is not None else None,
-        "subtitle_style": "lidousha-speaker-colour-v1" if speaker_ass is not None else "lidousha-final-sapphire72",
+        "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID if speaker_ass is not None else "lidousha-final-sapphire72",
         "speaker_finalization_manifest_path": str(speaker_manifest_path) if speaker_manifest_path is not None else None,
         "speaker_finalization_manifest_sha256": ("sha256:" + _sha256(speaker_manifest_path)) if speaker_manifest_path is not None else None,
         "speaker_finalization": speaker_manifest,

@@ -34,6 +34,23 @@ SRT_BLOCK_RE = re.compile(
 )
 LABEL_RE = re.compile(r"^\[(李豆沙|连线)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)$", re.S)
 SPEAKERS = {"李豆沙", "连线"}
+SPEAKER_SUBTITLE_STYLE_ID = "lidousha-speaker-sapphire-host-white-guest-v2"
+
+# Ivan-approved production contract (2026-07-10):
+# - every Li Dousha cue must byte-for-byte reuse the established sapphire72
+#   typography/colour metrics;
+# - every non-Li-Dousha cue uses the white style accepted in the v11 review,
+#   not a newly invented colour;
+# - overlap cues move only through an event-level MarginV override; they reuse
+#   the exact same two styles and cannot drift in typography or colours.
+LDS_SAPPHIRE_STYLE = (
+    "Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,"
+    "0,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1"
+)
+GUEST_WHITE_STYLE = (
+    "Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00203050,&H70000000,"
+    "-1,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1"
+)
 
 
 @dataclass(frozen=True)
@@ -316,7 +333,7 @@ def _ass_escape(value: str) -> str:
 
 
 def write_ass(cues: list[Cue], path: Path, *, show_speaker_labels: bool = False) -> None:
-    header = """[Script Info]
+    header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -325,10 +342,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: LDS,Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00203050,&H70000000,-1,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1
-Style: GUEST,Microsoft YaHei,72,&H0000FFFF,&H000000FF,&H00203050,&H70000000,-1,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1
-Style: LDS_OVERLAP,Microsoft YaHei,58,&H00FFFFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,80,80,142,1
-Style: GUEST_OVERLAP,Microsoft YaHei,58,&H0000FFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,80,80,142,1
+Style: LDS,{LDS_SAPPHIRE_STYLE}
+Style: GUEST,{GUEST_WHITE_STYLE}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -340,8 +355,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     for cue in cues:
         style = "LDS" if cue.speaker == "李豆沙" else "GUEST"
-        if cue.placement == "above":
-            style += "_OVERLAP"
+        margin_v = 142 if cue.placement == "above" else 0
         visible = f"[{cue.speaker}] {cue.text}" if show_speaker_labels else cue.text
         for start_ms, end_ms, display_text in _layout_cue_for_display(
             timestamp_ms(cue.start), timestamp_ms(cue.end), visible
@@ -349,7 +363,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text = _ass_escape(display_text)
             events.append(
                 f"Dialogue: {cue.layer},{_ass_timestamp_ms(start_ms)},{_ass_timestamp_ms(end_ms)},"
-                f"{style},,0,0,0,,{text}"
+                f"{style},,0,0,{margin_v},,{text}"
             )
     atomic_write_text(path, header + "\n".join(events) + "\n")
 

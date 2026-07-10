@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from src.autoslice.speaker_finalizer import (
+    _context_prompt,
     _pair_cache_key,
     _speaker_context_env,
     finalize_speaker_subtitles,
@@ -12,6 +13,12 @@ from src.autoslice.speaker_finalizer import (
 def test_pair_cache_key_is_symmetric_and_model_bound() -> None:
     assert _pair_cache_key("model-a", "left", "right") == _pair_cache_key("model-a", "right", "left")
     assert _pair_cache_key("model-a", "left", "right") != _pair_cache_key("model-b", "left", "right")
+
+
+def test_context_prompt_treats_exact_shadow_name_as_lidousha_not_fourth_speaker() -> None:
+    prompt = _context_prompt([], [], [])
+    assert "精确词 shadow 是李豆沙的自称之一" in prompt
+    assert "不是第四位说话人" in prompt
 
 
 def test_speaker_context_loads_private_runtime_cpa_env(tmp_path: Path, monkeypatch) -> None:
@@ -91,6 +98,9 @@ def test_finalizer_binds_text_before_speaker_and_renders_colour_without_prefixes
     assert "Dialogue: 0,0:00:02.00,0:00:04.00,GUEST" in ass
     assert manifest["stage_order"] == "text_final_then_speaker_then_ass_then_burn"
     assert manifest["visible_speaker_prefixes"] is False
+    assert manifest["subtitle_style"] == "lidousha-speaker-sapphire-host-white-guest-v2"
+    assert manifest["speaker_taxonomy"] == "binary_visual_host_vs_guest"
+    assert manifest["host_identity_aliases"] == ["李豆沙", "shadow"]
     assert json.loads(output_manifest.read_text(encoding="utf-8"))["production_ready"] is True
 
 

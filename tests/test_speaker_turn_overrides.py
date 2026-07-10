@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from scripts.apply_speaker_turn_overrides import (
+    GUEST_WHITE_STYLE,
+    LDS_SAPPHIRE_STYLE,
     apply_overrides,
     parse_labelled_srt,
     write_ass,
@@ -79,6 +81,23 @@ def test_override_can_split_one_asr_cue_into_two_speaker_turns(tmp_path: Path) -
     assert "Style: GUEST" in output_ass.read_text(encoding="utf-8")
 
 
+def test_ass_uses_exact_sapphire_for_lidousha_and_v11_white_for_all_guests(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE_TEXT, encoding="utf-8")
+    output_ass = tmp_path / "output.ass"
+    write_ass(apply_overrides(parse_labelled_srt(source), _document()), output_ass)
+    ass = output_ass.read_text(encoding="utf-8")
+
+    assert f"Style: LDS,{LDS_SAPPHIRE_STYLE}" in ass
+    assert f"Style: GUEST,{GUEST_WHITE_STYLE}" in ass
+    assert "Style: LDS_OVERLAP" not in ass
+    assert "Style: GUEST_OVERLAP" not in ass
+    assert "&H0000FFFF" not in ass  # the old yellow guest colour is retired
+    assert "Microsoft YaHei,58" not in ass  # overlap must keep the approved typography
+
+
 def test_override_can_drop_non_content_source_cue(tmp_path: Path) -> None:
     source = tmp_path / "source.srt"
     source.write_text(SOURCE_TEXT, encoding="utf-8")
@@ -131,8 +150,8 @@ def test_override_can_render_reliable_overlap_on_second_ass_layer(tmp_path: Path
     write_ass(cues, output_ass)
     assert "[连线] 暂时" in output_srt.read_text(encoding="utf-8")
     ass_text = output_ass.read_text(encoding="utf-8")
-    assert "Style: GUEST_OVERLAP" in ass_text
-    assert "Dialogue: 1,0:00:01.50,0:00:02.10,GUEST_OVERLAP" in ass_text
+    assert "Style: GUEST_OVERLAP" not in ass_text
+    assert "Dialogue: 1,0:00:01.50,0:00:02.10,GUEST,,0,0,142" in ass_text
     assert "[连线]" not in ass_text  # production ASS uses colour, not debug prefixes
 
 

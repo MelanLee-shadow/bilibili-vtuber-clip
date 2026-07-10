@@ -2692,7 +2692,7 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
     if isinstance(prebuilt_ass_value, str) and prebuilt_ass_value:
         ass_path = Path(prebuilt_ass_value)
         burned_path = media_path.with_suffix(".burned-final-speaker.mp4")
-        subtitle_style = str(record.get("subtitle_style") or "lidousha-speaker-colour-v1")
+        subtitle_style = str(record.get("subtitle_style") or "lidousha-speaker-sapphire-host-white-guest-v2")
         expected_ass_sha = (record.get("artifact_hashes") or {}).get("ass_sha256")
         actual_ass_sha = "sha256:" + _sha256(ass_path) if ass_path.is_file() else None
         if (

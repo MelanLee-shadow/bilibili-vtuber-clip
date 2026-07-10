@@ -29,6 +29,7 @@ from typing import Callable, Mapping, Sequence
 
 from scripts.apply_speaker_turn_overrides import (
     Cue,
+    SPEAKER_SUBTITLE_STYLE_ID,
     apply_overrides,
     atomic_write_text,
     sha256_file,
@@ -201,6 +202,7 @@ def _context_prompt(cues: Sequence[TextCue], labels: Sequence[str | None], ambig
         "这是李豆沙（直播间主人）与连线主播的完整切片字幕，文本、专名和代词已经最终定稿。"
         "大部分行已经由声纹标为[李豆沙]/[连线]；只有[待定]行因太短或处于声纹分界带，需要根据整段问答、称呼方向和上下文判断。\n"
         "规则：别人评价李豆沙后，她的反问/自辩通常是李豆沙；对李豆沙使用第三人称评价的通常是连线；"
+        "对话中作为名字出现的精确词 shadow 是李豆沙的自称之一，不是第四位说话人或连线嘉宾；"
         "不要修改文字，不要把相邻两个人的连续短句合成同一说话人。\n"
         f"待定行号（1-based）：{[index + 1 for index in ambiguous]}\n\n"
         + "\n".join(rows)
@@ -656,6 +658,9 @@ def finalize_speaker_subtitles(
         "output_ass": str(output_ass_path.resolve()),
         "output_ass_sha256": sha256_file(output_ass_path),
         "visible_speaker_prefixes": False,
+        "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
+        "speaker_taxonomy": "binary_visual_host_vs_guest",
+        "host_identity_aliases": ["李豆沙", "shadow"],
         "source_cue_count": len(cues),
         "output_cue_count": len(final_cues),
         "reviewed_output_cue_count": sum(cue.decision_source.startswith("reviewed_") for cue in final_cues),

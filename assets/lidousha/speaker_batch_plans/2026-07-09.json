@@ -1,0 +1,110 @@
+{
+  "schema_version": "lidousha-speaker-review-batch-plan.v1",
+  "date": "2026-07-09",
+  "expected_count": 10,
+  "upload_authorized": false,
+  "entries": [
+    {
+      "review_name": "01_拜早年",
+      "candidate_id": "promo_220021_1091_1257",
+      "bvid": "BV1tXNE67EHs",
+      "title": "【李豆沙】已经7月了，不会打麻将的小李只好给大家拜个早年了",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.recut.mp4",
+      "source_media_sha256": "59563b942af7f1e1a534d8e84df1c5990396fc1f2fc9872655d9d70475882933",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.recut.srt",
+      "text_final_srt_sha256": "5cf52c08c2bdcebc4566f0eef2831da2063bbf74c3f51ceacdb65e42385b2448"
+    },
+    {
+      "review_name": "02_哑巴尖叫",
+      "candidate_id": "promo_203027_314_479",
+      "bvid": "BV1tXNE6EE5g",
+      "title": "【李豆沙】吵闹熊猫头成为哑巴后顿感被吵到，发出好吵的尖叫，可惜已经没人能听到了",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.recut.mp4",
+      "source_media_sha256": "0666a2a366f94b8cb82f18391e96926d4bac98de60242787e2a0709e674eb8c8",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.recut.srt",
+      "text_final_srt_sha256": "cb4b8bac386ce9d510128ecd6ba9bf586dd5483ad8c76172d2fbbab7a56911f1"
+    },
+    {
+      "review_name": "03_厨房着火",
+      "candidate_id": "promo_220021_125_232",
+      "bvid": "BV1bDNE6UEb6",
+      "title": "【李豆沙】奶p的弱项，对着着火的厨房对于如何灭火没有任何头绪",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.recut.mp4",
+      "source_media_sha256": "05425367920136fc5e91896e6547d728cddf347673426df99fb0cb4084ce38ef",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.recut.srt",
+      "text_final_srt_sha256": "9444fe0f62cb0a52cd5fa91f3c350d1303b82e98259e46bc3652103b4dc0d598"
+    },
+    {
+      "review_name": "04_哑人最难",
+      "candidate_id": "promo_210025_643_801",
+      "bvid": "BV1uDNE6SEjh",
+      "title": "【李豆沙】队友认为李豆沙当哑人最难，因为这样就没办法吵闹了！",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_210025_643_801/replacement_recuts/promo_210025_643_801.recut.mp4",
+      "source_media_sha256": "a34440a7ee29e4555289eca08b3922b11fb487d3717ff54add5bb53683dedeb1",
+      "text_srt_path": "/opt/bilive/autoslice/out/acceptance/speaker-final-20260710-f8f7a55/text-final.srt",
+      "text_final_srt_sha256": "63438b34dd879c077cc2af6c16f692ae9625a67ed851b31a2cd5a61098874750",
+      "speaker_override_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_overrides/promo_210025_643_801.speaker.v1.json",
+      "speaker_override_sha256": "ba8f8386ae614cb338af84f273856e7228ce7893cc15fae3719a6d0565008d4c"
+    },
+    {
+      "review_name": "06_温情肺腑",
+      "candidate_id": "promo_223019_374_480",
+      "bvid": "BV18DNE6UEFq",
+      "title": "【李豆沙】温情李姐下播后说肺腑之言，跳舞时自己的一些小心思，想要努力把这份心情传递给大家，届不到总是一种遗憾",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.recut.mp4",
+      "source_media_sha256": "c3fa5252b36763514d6d5151daabe5157a527f7f33708cf5ae4981dda5673ca4",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.recut.srt",
+      "text_final_srt_sha256": "f96e72bec93d918b253874be36e7bbe945b4c7d2acf9c702a02267538354d07d"
+    },
+    {
+      "review_name": "07_无视灯",
+      "candidate_id": "promo_193036_1006_1160",
+      "bvid": "BV1UDNE6UEcy",
+      "title": "【李豆沙】竟敢无视灯！语言学里的经典问题，对“灯有没有关系”这个问题的回答是点头，究竟灯有没有关系呢？",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_193036_1006_1160/replacement_recuts/promo_193036_1006_1160.recut.mp4",
+      "source_media_sha256": "43b727c32150213d4c599750e93fca110413a0918308fd7f5c4cb494d0c893de",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_193036_1006_1160/replacement_recuts/promo_193036_1006_1160.recut.srt",
+      "text_final_srt_sha256": "ee7051ea22c58aad6bbe1d83237dac6fe1c52cc14dbd3c8c6551dbaa8e8506d2"
+    },
+    {
+      "review_name": "15_炸学校",
+      "candidate_id": "promo_193036_367_476",
+      "bvid": "BV1gDNE6SENa",
+      "title": "【李豆沙】熊猫头竟然不知道我去炸学校的完整歌词，只知道一句我去炸学校，谁是卧底不言而喻了！",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_193036_367_476/replacement_recuts/promo_193036_367_476.recut.mp4",
+      "source_media_sha256": "a327a0d0cde1ee26f5a9f2e11c5b7f708ddb0345f11124e4f8641f7735c76598",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_193036_367_476/replacement_recuts/promo_193036_367_476.recut.srt",
+      "text_final_srt_sha256": "1529026cf1bdc55424dc271eecd4f7cd034f00f5b336dc18ad3e3e45b37343b5"
+    },
+    {
+      "review_name": "R1_黑白小猪",
+      "candidate_id": "auto_193036_487_758",
+      "bvid": "BV1XCNE6WEYr",
+      "title": "【李豆沙】最吵闹的黑白小猪成为了聋人，只能不知所措的大喊“我聋了”，进入游戏十分钟都没搞清状况",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/auto_193036_487_758/replacement_recuts/auto_193036_487_758.recut.mp4",
+      "source_media_sha256": "c0661f965fd848f40b66bd241e10c2a43c74bebcb176613cd89b6dfddaecaf39",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/auto_193036_487_758/replacement_recuts/auto_193036_487_758.recut.srt",
+      "text_final_srt_sha256": "9139aa78aca4e982cd188ba911b6aa0b3fefbfe807be9cf1411451be5b521e6f"
+    },
+    {
+      "review_name": "R2_数字零",
+      "candidate_id": "auto_200028_434_569",
+      "bvid": "BV1YCNE6WExD",
+      "title": "【李豆沙】原来说的是数字零啊，还以为在说李姐我呢",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/auto_200028_434_569/replacement_recuts/auto_200028_434_569.recut.mp4",
+      "source_media_sha256": "c7f40e5730216f4901a362aff1f50779d195d9d1e693f3cd7e2e1ff2f5ddf76f",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/auto_200028_434_569/replacement_recuts/auto_200028_434_569.recut.srt",
+      "text_final_srt_sha256": "8c0b8c34020a5f960732596977038c1b0a46da1f0fb0965a12fb99cead47e372"
+    },
+    {
+      "review_name": "R3_传话员",
+      "candidate_id": "auto_203027_549_697",
+      "bvid": "BV19CNE6WEGJ",
+      "title": "【李豆沙】沙豆李沉浸在指认上下左右和疯狂摇头之中，完全听不到礼墨的声音",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/replacement_recuts/auto_203027_549_697.recut.mp4",
+      "source_media_sha256": "58d405033a57c9eaeb0cd2f4591603b635d31508472d81e3b8b45e7b8b3f4331",
+      "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/replacement_recuts/auto_203027_549_697.recut.srt",
+      "text_final_srt_sha256": "5a257c673ab8a6527d99c6242770ecd51ad01b3baf2eada53529a3ade6a029e9"
+    }
+  ]
+}

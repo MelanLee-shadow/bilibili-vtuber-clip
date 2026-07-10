@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 from scripts.run_auto_review_shadow_pipeline import _burn_preview_subtitles  # noqa: E402
 from scripts.run_auto_review_shadow_pipeline import _sha256  # noqa: E402
 from scripts.produce_slice_package import run_speaker_finalizer  # noqa: E402
+from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
 
 BASE = Path("/opt/bilive/autoslice")
 
@@ -99,7 +100,7 @@ def main(argv=None) -> int:
                 "media_path": record["media_path"],
                 "subtitle_path": str(srt_path),
                 "subtitle_ass_path": str(speaker_ass),
-                "subtitle_style": "lidousha-speaker-colour-v1",
+                "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
                 "artifact_hashes": {"ass_sha256": "sha256:" + _sha256(speaker_ass)},
             },
             run_ffmpeg=True,
@@ -148,7 +149,7 @@ def main(argv=None) -> int:
             "artifact_hashes": hashes,
             "speaker_review_srt_path": str(speaker_srt),
             "subtitle_ass_path": str(speaker_ass),
-            "subtitle_style": "lidousha-speaker-colour-v1",
+            "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
             "speaker_finalization_manifest_path": str(speaker_manifest_path),
             "speaker_finalization_manifest_sha256": "sha256:" + _sha256(speaker_manifest_path),
             "speaker_finalization": speaker_manifest,
