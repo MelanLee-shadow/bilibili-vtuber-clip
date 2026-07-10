@@ -662,6 +662,19 @@ def song_delivery_ok(is_song: bool, reason_codes) -> bool:
     return bool(is_song) and "SONG_PARTIAL" not in (reason_codes or [])
 
 
+def record_is_song(entry: dict) -> bool:
+    """The window IS a song when the in-window recall classified it as one
+    (semanticsong_* record id) OR the LRC lane pinned/aligned it.  LRC evidence
+    alone misses non-CJK songs (Japanese: netease lyric lookup can't identify
+    them — 7/9 ただそばにいて x18), which ARE songs and must compete."""
+    job = entry.get("source_context_job") or {}
+    return (
+        str(entry.get("candidate_id") or "").startswith("semanticsong")
+        or bool(job.get("song_boundary"))
+        or bool(job.get("lyrics_alignment"))
+    )
+
+
 def song_delivery_artifacts(record: dict) -> dict:
     """Best-known materialized artifacts for a song record, with sha256 hashes
     whenever the pipeline recorded them (hash hygiene stays; SEMANTIC gating
@@ -791,8 +804,7 @@ def produce_song(date: str, item: dict) -> dict:
                     summary_record = entry
                     decision = entry.get("decision_action") or decision
                     reasons = list(entry.get("reason_codes") or reasons)
-                    job = entry.get("source_context_job") or {}
-                    is_song = is_song or bool(job.get("song_boundary")) or bool(job.get("lyrics_alignment"))
+                    is_song = is_song or record_is_song(entry)
             except ValueError:
                 pass
         result["decision"] = decision

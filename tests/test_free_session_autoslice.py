@@ -446,3 +446,12 @@ def test_write_reports_quarantine_shows_red_flags(tmp_path, monkeypatch):
     text = (tmp_path / "lidousha" / "2026-07-09" / "AUTOSLICE_SUMMARY.md").read_text(encoding="utf-8")
     assert "quarantine[speech_continues_5000ms_after_cut]" in text
     assert "1 条 ⚠quarantine" in text
+
+def test_record_is_song_recognizes_non_lrc_songs():
+    """7/9 实锤：日语歌《ただそばにいて》LRC 钉歌失败(song_boundary/alignment 全空)，
+    但召回记录是 semanticsong_* —— 它是歌，必须参与交付竞争。"""
+    assert runner.record_is_song({"candidate_id": "semanticsong_15000_170540", "source_context_job": {}})
+    assert runner.record_is_song({"candidate_id": "x", "source_context_job": {"song_boundary": {"a": 1}}})
+    assert runner.record_is_song({"candidate_id": "x", "source_context_job": {"lyrics_alignment": {"m": 0.9}}})
+    assert not runner.record_is_song({"candidate_id": "semantictalk_3320_50570_ctxexp", "source_context_job": {}})
+    assert not runner.record_is_song({})
