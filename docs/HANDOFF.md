@@ -59,6 +59,10 @@
 
 **进行中/阻塞**：~~歌切去语义门~~ 已落地（见契约第 7 条，commits 7209e03+cab9a15）。
 
+**2026-07-10 Gemini 免费 key 落位（AGY 到期预案，已完成）**：3 把免费 key（尾号 fvPo/w7AA/vtXA，各 20 RPD=共60次/天）就位——本机 `~/.config/vtuber-slice/gemini_keys.env`(600) + free `/opt/bilive/.env`(600)；逐 key 实测 gemini-3.5-flash 全部 HTTP 200。旧付费 key(...lCdc) 已从 .env+备份删净，**Google 控制台吊销待 Ivan 手动**。HF token(...pDQL) 也已落位 free `/opt/bilive/autoslice/hf.env`。待办：`gemini_slice_jingting.py` 加 429 轮换+每 key 当日记账（现只有 KEY→KEY_2 简单 fallback），AGY 到期日切 `--provider gemini`。
+
+**2026-07-10 声纹分离实验 v2（CAM++，待 Ivan 验收）**：free 建 `venv-diar`（uv+py3.11+funasr/pyannote，CPU）。**CAM++ 结果**：李豆沙声纹 enroll（7/6 独播成品 60s）匹配 **0.90**（另两簇 0.51/0.67）；`oracle_num=3` 钉簇（不钉会 3人拆6簇）；73 条字幕分布 李豆沙31/连线A30/连线B12/?1；158s 片段 CPU 59s（nice -10，配合 free 能力）。**demo：本地 `lidousha/2026-07-09/说话人分离实验/说话人分色v2_campp.mp4`**。**pyannote 403**：HF token 有效但账号未在 `hf.co/pyannote/speaker-diarization-3.1`+`hf.co/pyannote/segmentation-3.0` 接受条款——Ivan 点完可重跑对比。验收留意：0.67 那簇声纹分偏高，可能混入少量李豆沙语音。脚本 free:/tmp/diar_compare.py。
+
 **2026-07-10 说话人分离实验（3人联动）——Ivan 验收：不合格，LLM 路径否决**：demo（`lidousha/2026-07-09/说话人分离实验/`）被打回："一塌糊涂，Sumi 一个人说话中途换色"。**根因（Ivan 指出的坑）：画面没有说话人线索，只能靠音色**——AGY 声称"从画面锚定、有充分把握"是幻觉式自信，实际靠内容/轮转在猜。结论入记忆 `lidousha-speaker-diarization`：LLM 路径死刑，prompt 调不回来；若再做走专职声纹模型（pyannote/FunASR CAM++ 聚类 + 李豆沙声纹 enroll，她声音跨场恒定可一次建库），需再实验验证，待 Ivan 决定是否投入。烧录侧分色（ASS 三样式）技术已验证可复用。此失败不否定 AGY 精听纠错本职（纠错=听力+上下文，非音色分辨）。**AGY 到期预案**：`gemini_slice_jingting.py --provider gemini` API 直连路径代码现成（GEMINI_API_KEY 即换）；按 2026-07 现价测算月成本（每场5talk+2song≈30min媒体×25场/月）：同档 3.5 Flash≈$22-25、3 Flash Preview≈$8-9、2.5 Flash≈$6、音频优先≈$2-3、Flash-Lite纯音频≈$0.6；免费档可能覆盖（~10次/天，配额需验证）。备选：Groq whisper-turbo 第二耳朵（已接线，$0.04/音频小时≈$0.5/月，无视觉/无diarization）。
 
 **2026-07-10 补充（Ivan 审片支援）**：①7/9 全部 22 条落选候选已裸切预览拉回本地 `lidousha/2026-07-09/落选预览/`（按 conf 降序编号+INDEX.md；stream-copy 裸切开头±2s 关键帧对齐；未做成品，Ivan 过目选中哪条再产）。②conf=0.94 落选根因=7/9 批次跑在 v4 修复前：晚段（22-00）因云盘上传延迟晚进候选池+旧跨段轮转不看分数，早段五条先占满配额——正是审计第 5 条，修复（封场+全局排序）已部署，下场生效。③**说话人分离/分色字幕（3 人联动场景）**：现链路无 diarization（BCUT 不支持）；可行路径=AGY 精听时标注说话人（听音色+看画面）+ 烧录侧 ASS 按说话人换色（技术现成），准确率需拿真实联动片段实验一轮，待 Ivan 点头再开工。
