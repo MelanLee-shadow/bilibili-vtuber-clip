@@ -26,6 +26,8 @@
 
 **进行中/阻塞**：~~歌切去语义门~~ 已落地（见契约第 7 条，commits 7209e03+cab9a15）。
 
+**2026-07-10 说话人分离实验（3人联动，Ivan 待验收）**：demo 在本地 `lidousha/2026-07-09/说话人分离实验/`（158s，`04_队友锐评聋人最难` 片段，三色字幕：李豆沙白/连线A黄/连线B青）。AGY 标注 74 条 cue（李豆沙14/A35/B25，0 条不确定），且**自动从画面锚定了连线者真实身份**（A=SUMI(聋人角色,声线温柔偏低)、B=aWaWa/shadow(高亢活泼)），自评"有充分把握"。实现路径已验证：说话人标注**搭在已有的 AGY 精听 pass 上**（多一个输出字段，不需要全局精听，BCUT 全场粗听架构不变），烧录侧 ASS 按说话人换色。实验脚本 `/tmp/diarization_experiment.py`（free）+ scratchpad 留档；产线集成待 Ivan 验收 demo 后拍板。**AGY 到期预案**：`gemini_slice_jingting.py --provider gemini` API 直连路径代码现成（GEMINI_API_KEY 即换）；按 2026-07 现价测算月成本（每场5talk+2song≈30min媒体×25场/月）：同档 3.5 Flash≈$22-25、3 Flash Preview≈$8-9、2.5 Flash≈$6、音频优先≈$2-3、Flash-Lite纯音频≈$0.6；免费档可能覆盖（~10次/天，配额需验证）。备选：Groq whisper-turbo 第二耳朵（已接线，$0.04/音频小时≈$0.5/月，无视觉/无diarization）。
+
 **2026-07-10 补充（Ivan 审片支援）**：①7/9 全部 22 条落选候选已裸切预览拉回本地 `lidousha/2026-07-09/落选预览/`（按 conf 降序编号+INDEX.md；stream-copy 裸切开头±2s 关键帧对齐；未做成品，Ivan 过目选中哪条再产）。②conf=0.94 落选根因=7/9 批次跑在 v4 修复前：晚段（22-00）因云盘上传延迟晚进候选池+旧跨段轮转不看分数，早段五条先占满配额——正是审计第 5 条，修复（封场+全局排序）已部署，下场生效。③**说话人分离/分色字幕（3 人联动场景）**：现链路无 diarization（BCUT 不支持）；可行路径=AGY 精听时标注说话人（听音色+看画面）+ 烧录侧 ASS 按说话人换色（技术现成），准确率需拿真实联动片段实验一轮，待 Ivan 点头再开工。
 
 **下一步**：①另一 agent 落地后：按契约改 produce_song 交付语义 + 补交付 7/9《ただそばにいて》(x18) + commit/deploy；②GitHub 发布前：轮换 RECORD_KEY（git 历史含旧值）+ LICENSE/README + 定发布范围（建议只发流水线骨架）；③7/9 旧面遗留的 12 个 hybrid 切片/.jingting backlog 是死数据，可择机归档。
