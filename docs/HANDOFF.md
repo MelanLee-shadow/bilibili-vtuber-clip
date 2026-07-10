@@ -3,6 +3,35 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-10（续二）：quarantine 裁决落地（边界自修复）+ luna 上线矩阵定稿 + 歌切淘汰 + 部署 0d7150a
+
+### 目标
+
+Ivan 三连指令：①luna 已可用，独立重判模型分配矩阵；②歌切未被点名 → 按"没提到=淘汰"补执行 superseded；③**否决 quarantine 状态**——无人值守流水线检测到问题要自己修，修不好 fail-closed，不许"贴标签等人看"。另纠正执行面：重产应在 free 做完拉回本地，不是本地跑。
+
+### 已完成
+
+- **边界自修复替代 quarantine（commit `0d7150a`，387 tests，已正式部署 free）**：`produce_slice_package` 在切媒体**之前**跑纯计算修复环——红旗触发时向后找下一个"可验证干净收束点"（该 cue 尾垫内无新句起头、无 VAD 岛续讲≥1.5s，cap +25s，最多 3 步），开头被句子横跨则回退到该句自身起点；audit 记录完整修复轨迹（`boundary_repairs`）；修不到 → `BOUNDARY_UNREPAIRABLE` fail-closed 不交付（终态不重试）。runner 移除 quarantine 状态词（旧 state 只作 legacy 渲染），摘要改说"自修复×N / 不可修复未交付"。已知边界：修复只保证**声学/句边界卫生**，不判语义收束强度（见下一步①）。
+- **02/04/07 在 free 上用部署版流水线重产成功**（Ivan 纠正后从本地跑切回 free：正式部署 `0d7150a` md5 验证 → 复用原 spec/pieces + `--reuse-cover` → 拉回）：02 +2.9s 收「嗯」、04 +6.9s 收「嗯」、07（原 8.4s 续讲）+9.7s 收「所以先是第一个模块」，三条红旗全部清零、时长/末字幕核验过；publish.json 封面字段已从 canonical 合并回（AI_COVER_READY）。本地半途重产已停止并清理（504MB）。
+- **模型矩阵重判（luna 实测可用后定稿，随 0d7150a 部署）**：sol/medium=语义召回+字幕校正裁决（开放式、承重、量小）；sol/high=标题；terra/medium=歌名提示（模糊世界知识推断，非 luna 形，且有钉歌兜底不承重）；**luna/medium=封面 art direction**（结构化选择+已知好结果形状+确定性兜底+judge 护栏 = luna 教科书位）。QA judge 仍 gpt-5.4-mini（direct transport 是 chat 形，5.6 Responses-only；迁 luna 需先改 transport）。cpa.env 的临时 `CPA_CHAT_MODELS` 行已按计划删除（每站点 argv 参数接管）。
+- **歌切淘汰补执行**：旧《ただ》错词版 + 重产《芽吹くとき》的交付副本全部移入 `_superseded/`（free+本地一致，交付面现恰好 10 条 = Ivan 点名集合）；另一会话的 LRC 修复工程证据（out/、reports/、known_songs）不受影响。摘要/INDEX 处置说明已同步（另一会话曾重写摘要顶掉我 append 的节，已重新追加并保留他们的歌切验收行）。
+- 记忆更新：`cpa-gpt5-responses-api`（5.6 矩阵终稿+luna）、`vtuber-slice-goal-repair-first`（quarantine 裁决=修复或拒绝，适用于一切审计门）。
+
+### 进行中（含后台进程）
+
+- 无本会话后台进程。**free `/opt/bilive/autoslice/DISABLED` 杀开关在位**（另一会话 04:30Z 部署后放置的保护，我未动）——cron runner 目前不 tick，下一场直播前需要该会话/Ivan 决定摘除。
+
+### 阻塞
+
+- 无。上传逐条授权（本批明示暂不上传）。
+
+### 下一步
+
+1. **语义收束 follow-up（待 Ivan 定）**：确定性修复会落在「嗯」这类声学干净但文本弱的收束句；廉价改进=修复候选跳过纯语气词 cue（嗯/哦/啊）取下一个干净点，或加一档 CPA 收束判据。07 的「所以先是第一个模块」同理。
+2. Ivan 审 `lidousha/2026-07-09/`：10 条 review_ready（其中 02/04/07 带修复轨迹，审片留意结尾语义）。
+3. 下一场直播前摘 `DISABLED`（归属另一会话的验收流程）。
+4. 封面 fitter 行首标点禁则（03 那张的行首逗号）仍待做。
+
 ## 2026-07-10（续）：《芽吹くとき》生产重跑验收 + 日语稀疏 ASR/LRC 路线上线
 
 > 本节是 7/9 歌切事故与当前 runner 运行态的最新权威；下方“尚未部署”、旧 probe 时间和《ただそばにいて》相关段落只保留为历史记录。
