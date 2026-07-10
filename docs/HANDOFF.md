@@ -3,6 +3,36 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-10（续三）：封面全文排版修复 + 10 条全部发布 + 何意味/人称字幕修正重传 + judge /responses 落地
+
+### 目标
+
+Ivan 四连指令：①封面字太小要调大，且**必须保留完整原标题**（多换行放大；词/hook/专名不可拆，其余任意断行——我先用了"缩短文案"是错杠杆，已纠正）；②10 条直接上传；③上传后把语义 QA judge 迁到 /responses 并跑通；④新专名"何意味"+第三人称规则（联动主播→她；名人查证，小室=女；查不到→TA），修受影响字幕并重传。
+
+### 已完成
+
+- **排版器工作流修复（commit `1303fd4`，391 tests，已部署）**：行帽提升（侧分 5→8、banner 3→4、song 5→7）+ art direction 新增 `words` 词组切分（无损校验）喂给 `_wrap_even` 作不可拆原子——全文保留、多行放大、换行永不拆词。10 张全部按完整 Ivan 标题重排：传话员 105→145px(7行)、聋哑盲 73→116px(7行)、猜0 186px；**06 温情(49字/banner) 105px 为全文约束下的物理上限**。逐张目视验收过。
+- **10 条全部发布闭环（Ivan 授权原话入 manifest）**：全部 state=0、入小李切片(section 现查=9320779)、公开验证 ✓。BV 清单见 `lidousha/2026-07-09/AUTOSLICE_SUMMARY.md` 发布记录节。审计链（manifest/幂等账本/uploaded/public_verify/批次结果）全部 commit（`7c3a4eb`+`5433464`，gitignore 白名单扩到完整审计链）。踩坑记录：新版 biliup 的 ResponseData 带引号导致 do_upload.sh bvid 抓取失效（已修 `4ace7b0`，本批 bvid 从创作中心 archives API 按标题回捞——绝不为取 bvid 重跑上传）。
+- **语义 QA judge → /responses（commits `4ace7b0`+`67580e3`+`590cd18`，396 tests，已部署）**：`llm_client` direct transport 加 `api_mode=responses`（gpt-5.x chat 误路由）；judge lane `gpt-5.4-mini/chat` → **`gpt-5.6-luna/responses`**（max-tokens 16000、retries 3 带 429/5xx 指数退避、**fallback 链 luna→gpt-5.5**）。**live 实测**：真实 request artifact 上 luna 429（当晚 5.6 全家共享 provider 用量窗）→ 退避 → fallback gpt-5.5 → rc=0，response 契约完整、provider 如实记 `llm:gpt-5.5`——failover 全链验证通过。
+- **何意味 + 第三人称规则（已入权威+同步 free）**：glossary 加 何意味（nani-imi 梗=什么意思；02 切片 Gemini 音频实锤她连说两遍，字幕曾错写"什么意思啊"）；principles 第六条改为：联动主播默认女→她/她们、名人查证（小室=女）、查不到→TA。**受影响字幕已修**（apply_subtitle_correction 重烧）：01 他们→她们(旗袍主播)、02 什么意思啊→何意味啊+TA说是二→她说是二×2、04 TA想问→她想问；音频裁决 R2「啥意思」为真中文不改、15 歌中小学生 TA 正确保留。
+- 记忆/摘要/INDEX 已更新；修正版 mp4 已拉回本地。
+
+### 进行中（含后台进程）
+
+- **free `refix_loop.sh`**：3 条修正切片重传撞 B站"投稿过于频繁"（25 分钟后仍拦→疑似**日投稿上限**，当日已发 10 稿）。2 小时节奏自动重试（≤12 轮≈24h），成功即自动 审核等待→入集→公开验证→落 evidence json（`logs/refix_loop.log` 看进度，终态 REFIX_COMPLETE/REFIX_GAVE_UP）。本会话挂了持续监控。
+- free `DISABLED` 杀开关仍在位（另一会话的保护）；cron runner 不 tick。
+
+### 阻塞
+
+- **旧稿删除只能 Ivan 手动**（删稿接口要验证码 340022）：待修正版重传成功后，删 3 个旧 BV——**01 BV1tXNE67EHs / 02 BV1tXNE6EE5g / 04 BV1uDNE6SEjh**（v1 证据已归档入库）。
+
+### 下一步
+
+1. refix_loop 完成后：拉回 3 条新 evidence + 新 BV 入摘要 → 证据第二波 commit；Ivan 删 3 个旧 BV。
+2. 5.6 家族用量窗恢复后可选：再跑一次 luna judge 直连探针确认主路径绿灯（fallback 已实证，不阻塞）。
+3. 下一场直播前摘 `DISABLED`（归属另一会话验收流程）。
+4. 遗留 follow-up：边界自修复的语义收束档（嗯类收尾）、封面行首标点禁则。
+
 ## 2026-07-10（续二）：quarantine 裁决落地（边界自修复）+ luna 上线矩阵定稿 + 歌切淘汰 + 部署 0d7150a
 
 ### 目标
