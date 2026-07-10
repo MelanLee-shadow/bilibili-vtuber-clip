@@ -63,6 +63,15 @@ INCIDENT_FULL_SOURCE_RELATIVE = Path(
     f"{INCIDENT_RERUN_CANDIDATE_ID}_full_source.mp4"
 )
 INCIDENT_FULL_SOURCE_SHA256 = "706efcc51cfa37d2d3ce73cac5ea42ffe3c35a2c0654387428b20a7bf0b8e48c"
+INCIDENT_PREVIOUS_QUARANTINE_RELATIVE = Path(
+    f"lidousha/{DATE}/_quarantine/false-green-{TARGET_CANDIDATE_ID}-20260710T040416Z"
+)
+INCIDENT_PREVIOUS_QUARANTINE_FILENAMES = frozenset(
+    {
+        "歌切_【李豆沙】豆沙歌，轻声唱「ただ.cover.png",
+        "歌切_【李豆沙】豆沙歌，轻声唱「ただ.mp4",
+    }
+)
 TAIL_MARKER = b"## 2026-07-10 Ivan \xe5\xae\xa1\xe7\x89\x87\xe7\x82\xb9\xe5\x90\x8d\xe6\x89\xa7\xe8\xa1\x8c"
 REQUIRED_REASONS = {
     "SONG_BACKGROUND_PLAYBACK_ONLY",
@@ -1355,6 +1364,54 @@ def validate_known_false_green_inputs(inputs: Mapping[str, bytes], *, repo_root:
         if isinstance(value, str) and value:
             candidate_paths.append(value)
     delivery_root = repo_root / "lidousha" / DATE
+    expected_previous_quarantine = _lexical_absolute(
+        repo_root / INCIDENT_PREVIOUS_QUARANTINE_RELATIVE
+    )
+    reported_previous_quarantine = acceptance.get("old_package_quarantine")
+    if (
+        not isinstance(reported_previous_quarantine, str)
+        or reported_previous_quarantine != str(expected_previous_quarantine)
+    ):
+        raise RepairError(
+            "the v4 acceptance does not name the exact previously quarantined false-green package"
+        )
+    require_no_symlink_components(
+        expected_previous_quarantine,
+        repo_root,
+        "previous false-green quarantine",
+    )
+    try:
+        quarantine_mode = expected_previous_quarantine.lstat().st_mode
+    except OSError as exc:
+        raise RepairError(
+            f"previous false-green quarantine is missing/unreadable: {expected_previous_quarantine}"
+        ) from exc
+    if not stat.S_ISDIR(quarantine_mode):
+        raise RepairError(
+            f"previous false-green quarantine is not a real directory: {expected_previous_quarantine}"
+        )
+    reported_quarantined_files = acceptance.get("quarantined_files")
+    expected_quarantined_files = {
+        expected_previous_quarantine / name
+        for name in INCIDENT_PREVIOUS_QUARANTINE_FILENAMES
+    }
+    if (
+        not isinstance(reported_quarantined_files, list)
+        or not all(isinstance(value, str) for value in reported_quarantined_files)
+        or set(reported_quarantined_files)
+        != {str(path) for path in expected_quarantined_files}
+        or len(reported_quarantined_files) != len(expected_quarantined_files)
+    ):
+        raise RepairError(
+            "the v4 acceptance quarantined_files are not the exact two previous false-green artifacts"
+        )
+    for quarantined_file in sorted(expected_quarantined_files, key=str):
+        require_no_symlink_components(
+            quarantined_file,
+            repo_root,
+            "previous false-green quarantined artifact",
+        )
+        require_regular_file(quarantined_file, "previous false-green quarantined artifact")
     state_songs = active_state.get("songs")
     state_target = [
         song
@@ -1363,16 +1420,38 @@ def validate_known_false_green_inputs(inputs: Mapping[str, bytes], *, repo_root:
     ]
     if len(state_target) != 1:
         raise RepairError("pre-repair active state does not have exactly one target false-green song")
-    candidate_paths.extend(_walk_strings(state_target[0]))
+    state_target_copy = copy.deepcopy(dict(state_target[0]))
+    supersedes = state_target_copy.get("supersedes_false_green")
+    state_previous_quarantine = (
+        supersedes.get("quarantine") if isinstance(supersedes, dict) else None
+    )
+    if (
+        not isinstance(state_previous_quarantine, str)
+        or state_previous_quarantine != str(expected_previous_quarantine)
+    ):
+        raise RepairError(
+            "the target state does not point to the exact previously quarantined false-green package"
+        )
+    # This single JSON pointer is containment metadata, not an active artifact.
+    # Remove only that pointer before scanning every other string in the record;
+    # a delivered/cover/sidecar field cannot hide under the same directory.
+    supersedes.pop("quarantine")
+    candidate_paths.extend(_walk_strings(state_target_copy))
     still_active = []
+    delivery_root_abs = _lexical_absolute(delivery_root)
     for value in candidate_paths:
         path = Path(value)
+        path_abs = _lexical_absolute(path)
         try:
-            path.resolve(strict=False).relative_to(delivery_root.resolve(strict=True))
-        except (OSError, ValueError):
+            relative = path_abs.relative_to(delivery_root_abs)
+        except ValueError:
             continue
-        if "_superseded" not in path.parts and path.exists():
-            still_active.append(str(path))
+        if not path.exists() and not path.is_symlink():
+            continue
+        require_no_symlink_components(path_abs, delivery_root_abs, "false-green delivery path")
+        if relative.parts and relative.parts[0] == "_superseded":
+            continue
+        still_active.append(str(path))
     if still_active:
         raise RepairError(f"false-green package files still exist in the active delivery root: {still_active}")
     segment_path = item.get("segment_path")

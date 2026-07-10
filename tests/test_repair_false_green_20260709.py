@@ -95,6 +95,14 @@ def _incident_fixture(
     (base / "DISABLED").write_text("disabled for acceptance\n", encoding="utf-8")
     delivery = repo / "lidousha" / repair.DATE
     superseded = delivery / "_superseded" / "歌切_芽吹くとき.manual-rerun-report.json"
+    previous_quarantine = repo / repair.INCIDENT_PREVIOUS_QUARANTINE_RELATIVE
+    previous_quarantine.mkdir(parents=True)
+    previous_quarantine_files = [
+        previous_quarantine / name
+        for name in sorted(repair.INCIDENT_PREVIOUS_QUARANTINE_FILENAMES)
+    ]
+    for path in previous_quarantine_files:
+        path.write_bytes(f"already quarantined: {path.name}".encode("utf-8"))
     v4 = {
         "schema_version": "manual-rerun.v1",
         "status": "completed",
@@ -120,6 +128,8 @@ def _incident_fixture(
             "status": "ACCEPTED_NO_UPLOAD",
             "state_repaired": True,
             "cover": {"status": "AI_COVER_READY"},
+            "old_package_quarantine": str(previous_quarantine),
+            "quarantined_files": [str(path) for path in previous_quarantine_files],
         },
     }
     v4_path = base / "reports" / "manual_rerun_2026-07-09_mebukutoki_v4.json"
@@ -173,6 +183,9 @@ def _incident_fixture(
                 "danmaku": 18,
                 "rc": 0,
                 "window_classified_song": True,
+                "supersedes_false_green": {
+                    "quarantine": str(previous_quarantine),
+                },
             },
         ],
     }
@@ -389,6 +402,7 @@ def _incident_fixture(
         "snapshot": snapshot,
         "agy_output": agy_output,
         "agy_manifest": agy_job / "run.manifest.json",
+        "previous_quarantine": previous_quarantine,
     }
 
 
@@ -862,6 +876,65 @@ def test_incident_report_rejects_source_segment_duration_drift(tmp_path):
     inputs, _hashes = repair.read_authority_inputs(paths)
 
     with pytest.raises(repair.RepairError, match="not the immutable source-segment duration"):
+        repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
+
+
+def test_unrelated_existing_quarantine_cannot_hide_an_active_false_green_path(tmp_path):
+    fixture = _incident_fixture(tmp_path)
+    unexpected = fixture["repo"] / "lidousha" / repair.DATE / "_quarantine" / "unrelated"
+    unexpected.mkdir(parents=True)
+    (unexpected / "hidden.mp4").write_bytes(b"not the pinned previous quarantine")
+    state = json.loads(fixture["active_state"].read_text(encoding="utf-8"))
+    target = next(song for song in state["songs"] if song["candidate_id"] == repair.TARGET_CANDIDATE_ID)
+    target["supersedes_false_green"]["quarantine"] = str(unexpected)
+    _json(fixture["active_state"], state)
+    paths = repair.authority_paths(fixture["base"], fixture["repo"], fixture["superseded"])
+    inputs, _hashes = repair.read_authority_inputs(paths)
+
+    with pytest.raises(repair.RepairError, match="does not point to the exact previously quarantined"):
+        repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
+
+
+def test_delivered_field_cannot_hide_inside_the_pinned_previous_quarantine(tmp_path):
+    fixture = _incident_fixture(tmp_path)
+    hidden = next(path for path in fixture["previous_quarantine"].iterdir() if path.suffix == ".mp4")
+    state = json.loads(fixture["active_state"].read_text(encoding="utf-8"))
+    target = next(song for song in state["songs"] if song["candidate_id"] == repair.TARGET_CANDIDATE_ID)
+    target["delivered"] = str(hidden)
+    _json(fixture["active_state"], state)
+    paths = repair.authority_paths(fixture["base"], fixture["repo"], fixture["superseded"])
+    inputs, _hashes = repair.read_authority_inputs(paths)
+
+    with pytest.raises(repair.RepairError, match="still exist in the active delivery root"):
+        repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
+
+
+def test_previous_quarantine_report_path_must_be_canonical_absolute(tmp_path):
+    fixture = _incident_fixture(tmp_path)
+    v4 = json.loads(fixture["v4"].read_text(encoding="utf-8"))
+    pinned = fixture["previous_quarantine"]
+    v4["final_acceptance"]["old_package_quarantine"] = str(
+        pinned.parent / ".." / pinned.parent.name / pinned.name
+    )
+    _json(fixture["v4"], v4)
+    fixture["superseded"].write_bytes(fixture["v4"].read_bytes())
+    paths = repair.authority_paths(fixture["base"], fixture["repo"], fixture["superseded"])
+    inputs, _hashes = repair.read_authority_inputs(paths)
+
+    with pytest.raises(repair.RepairError, match="does not name the exact previously quarantined"):
+        repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
+
+
+def test_symlinked_delivery_path_cannot_escape_false_green_containment(tmp_path):
+    fixture = _incident_fixture(tmp_path)
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"outside")
+    active_link = fixture["repo"] / "lidousha" / repair.DATE / "old-false-green.mp4"
+    active_link.symlink_to(outside)
+    paths = repair.authority_paths(fixture["base"], fixture["repo"], fixture["superseded"])
+    inputs, _hashes = repair.read_authority_inputs(paths)
+
+    with pytest.raises(repair.RepairError, match="contains a symlink component"):
         repair.validate_known_false_green_inputs(inputs, repo_root=fixture["repo"])
 
 
