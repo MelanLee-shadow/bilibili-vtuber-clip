@@ -1219,6 +1219,98 @@ def test_atomic_verified_song_delivery_manifest_replace_failure_exposes_no_parti
     assert list(delivery.iterdir()) == [], "manifest-last failure must roll back all public artifact names"
 
 
+def _specs_with_basename(tmp_path, candidate_id, payload_prefix):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    delivery, payloads, specs = _verified_delivery_specs(tmp_path)
+    basename = runner._song_delivery_basename("【李豆沙】豆沙歌，同一个很长的标题", candidate_id)
+    renamed = {}
+    for role, (source, _destination, expected) in specs.items():
+        payload = payload_prefix + payloads[role]
+        source.write_bytes(payload)
+        suffix = {
+            "video": ".mp4",
+            "cover": ".cover.png",
+            "subtitle": ".srt",
+            "lyrics_alignment_report": ".lyrics-alignment-report.json",
+            "host_vocal_proof": ".host-vocal-proof.json",
+            "recut_manifest": ".recut.manifest.json",
+        }[role]
+        renamed[role] = (
+            source,
+            delivery / f"{basename}{suffix}",
+            "sha256:" + hashlib.sha256(payload).hexdigest(),
+        )
+    return delivery, basename, renamed
+
+
+def test_same_title_different_song_candidates_have_distinct_sequential_deliveries(tmp_path):
+    _delivery_a, basename_a, specs_a = _specs_with_basename(tmp_path / "a", "song_candidate_a", b"a-")
+    _delivery_b, basename_b, specs_b = _specs_with_basename(tmp_path / "b", "song_candidate_b", b"b-")
+    shared = tmp_path / "delivery"
+    shared.mkdir()
+    specs_a = {role: (source, shared / destination.name, sha) for role, (source, destination, sha) in specs_a.items()}
+    specs_b = {role: (source, shared / destination.name, sha) for role, (source, destination, sha) in specs_b.items()}
+
+    receipt_a = runner._atomic_verified_song_delivery(
+        candidate_id="song_candidate_a",
+        manifest_path=shared / f"{basename_a}.delivery.manifest.json",
+        artifact_specs=specs_a,
+    )
+    receipt_b = runner._atomic_verified_song_delivery(
+        candidate_id="song_candidate_b",
+        manifest_path=shared / f"{basename_b}.delivery.manifest.json",
+        artifact_specs=specs_b,
+    )
+
+    assert basename_a != basename_b
+    assert receipt_a["manifest_path"] != receipt_b["manifest_path"]
+    assert Path(receipt_a["artifacts"]["video"]["path"]).is_file()
+    assert Path(receipt_b["artifacts"]["video"]["path"]).is_file()
+    assert runner._matches_sha256(
+        Path(receipt_a["artifacts"]["video"]["path"]), receipt_a["artifacts"]["video"]["sha256"]
+    )
+    assert runner._matches_sha256(
+        Path(receipt_b["artifacts"]["video"]["path"]), receipt_b["artifacts"]["video"]["sha256"]
+    )
+
+
+def test_same_title_different_song_candidates_have_distinct_concurrent_deliveries(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    _delivery_a, basename_a, specs_a = _specs_with_basename(tmp_path / "a", "song_parallel_a", b"a-")
+    _delivery_b, basename_b, specs_b = _specs_with_basename(tmp_path / "b", "song_parallel_b", b"b-")
+    shared = tmp_path / "delivery"
+    shared.mkdir()
+    specs_a = {role: (source, shared / destination.name, sha) for role, (source, destination, sha) in specs_a.items()}
+    specs_b = {role: (source, shared / destination.name, sha) for role, (source, destination, sha) in specs_b.items()}
+
+    def deliver(candidate_id, basename, specs):
+        return runner._atomic_verified_song_delivery(
+            candidate_id=candidate_id,
+            manifest_path=shared / f"{basename}.delivery.manifest.json",
+            artifact_specs=specs,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(deliver, "song_parallel_a", basename_a, specs_a),
+            pool.submit(deliver, "song_parallel_b", basename_b, specs_b),
+        ]
+        receipts = [future.result() for future in futures]
+
+    assert basename_a != basename_b
+    assert len({receipt["manifest_path"] for receipt in receipts}) == 2
+    for receipt in receipts:
+        video = Path(receipt["artifacts"]["video"]["path"])
+        assert runner._matches_sha256(video, receipt["artifacts"]["video"]["sha256"])
+
+
+@pytest.mark.parametrize("candidate_id", ["", "../escape", "id with spaces", "x" * 97])
+def test_song_delivery_basename_rejects_unsafe_candidate_ids(candidate_id):
+    with pytest.raises(runner.SongDeliveryError, match="unsafe song delivery candidate id"):
+        runner._song_delivery_basename("same title", candidate_id)
+
+
 def test_blocked_songs_do_not_consume_budget_and_backlog_backfills():
     blocked = {"status": "blocked", "candidate_id": "song_a"}
     state = {

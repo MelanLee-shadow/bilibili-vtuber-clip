@@ -893,6 +893,22 @@ class SongDeliveryError(RuntimeError):
     """A verified song package could not be committed to the delivery root."""
 
 
+def _song_delivery_basename(title_or_hook: object, candidate_id: object) -> str:
+    """Readable basename with an injective, runner-owned candidate suffix.
+
+    The readable title prefix is deliberately short, so it cannot own
+    uniqueness.  Song candidates are generated from the safe ASCII id grammar;
+    retain that complete id in the public basename so concurrent songs with the
+    same title can never replace one another's verified package.
+    """
+
+    candidate = str(candidate_id or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate):
+        raise SongDeliveryError(f"unsafe song delivery candidate id: {candidate!r}")
+    readable = safe_name(f"歌切_{str(title_or_hook or '')}", "歌切")
+    return f"{readable}__{candidate}"
+
+
 def _canonical_existing_path(path_value: object) -> str | None:
     if not isinstance(path_value, str) or not path_value:
         return None
@@ -2147,7 +2163,16 @@ def produce_song(date: str, item: dict) -> dict:
         ):
             delivery = REPO_ROOT / "lidousha" / date
             delivery.mkdir(parents=True, exist_ok=True)
-            name = safe_name("歌切_" + (result.get("title") or item.get("hook") or ""), f"歌切_{cid}")
+            try:
+                name = _song_delivery_basename(result.get("title") or item.get("hook"), cid)
+            except SongDeliveryError as exc:
+                log(f"song lane {cid}: verified delivery basename refused: {exc}")
+                result["delivery_error"] = str(exc)
+                result["reason_codes"] = list(
+                    dict.fromkeys([*(result.get("reason_codes") or []), "SONG_DELIVERY_ATOMIC_COPY_FAILED"])
+                )
+                result["status"] = song_status(completed.returncode, False)
+                return result
             required_sources = (
                 ("subtitle", artifacts.get("subtitle_path"), artifacts.get("subtitle_sha256"), f"{name}.srt"),
                 (
