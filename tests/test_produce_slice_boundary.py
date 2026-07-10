@@ -4,9 +4,13 @@ run-on cues near the closure trigger a fine micro-pass instead of a bad cut."""
 
 import json
 
+import pytest
+
 from scripts.produce_slice_package import (
     ISLAND_CONTINUES_FLAG_MS,
     _load_superchats,
+    _rebase_remote_speaker_manifest,
+    _validated_burned_artifact,
     boundary_audit,
     boundary_red_flags,
     needs_tail_refinement,
@@ -38,6 +42,62 @@ def test_load_superchats_video_relative_and_deduped(tmp_path):
     # video-relative ms, full sender uname carried, JPN twin deduped by message
     assert scs == [(30_000, "小凑るう子", "想看她唱地球大爆炸"), (90_000, "十麻乃orient", "可以跟lmsm学谢礼物")]
     assert _load_superchats(tmp_path / "missing.jsonl") == []
+
+
+def test_delivery_burn_binding_ignores_coexisting_old_render(tmp_path):
+    import hashlib
+
+    old = tmp_path / "clip.recut.burned-final-sapphire72.mp4"
+    old.write_bytes(b"old single-colour render")
+    speaker = tmp_path / "clip.recut.burned-final-speaker.mp4"
+    speaker.write_bytes(b"new speaker-colour render")
+    digest = "sha256:" + hashlib.sha256(speaker.read_bytes()).hexdigest()
+    record = {
+        "burned_preview": {"status": "BURNED", "path": str(speaker), "burned_sha256": digest},
+        "artifact_hashes": {"burned_video_sha256": digest},
+    }
+    assert _validated_burned_artifact(record) == speaker
+
+
+def test_delivery_burn_binding_rejects_hash_drift(tmp_path):
+    burned = tmp_path / "clip.recut.burned-final-speaker.mp4"
+    burned.write_bytes(b"current")
+    record = {
+        "burned_preview": {"status": "BURNED", "path": str(burned), "burned_sha256": "sha256:stale"},
+        "artifact_hashes": {"burned_video_sha256": "sha256:stale"},
+    }
+    with pytest.raises(RuntimeError, match="BURN_HASH_MISMATCH"):
+        _validated_burned_artifact(record)
+
+
+def test_remote_speaker_manifest_keeps_provenance_but_rebases_deleted_tmp_paths(tmp_path):
+    media = tmp_path / "clip.mp4"
+    text_srt = tmp_path / "text.srt"
+    override = tmp_path / "override.json"
+    output_srt = tmp_path / "speaker.srt"
+    output_ass = tmp_path / "speaker.ass"
+    manifest = {
+        "source_media": "/tmp/run/media.mp4",
+        "text_final_srt": "/tmp/run/text.srt",
+        "speaker_override": "/tmp/run/overrides.json",
+        "output_review_srt": "/tmp/run/speaker.srt",
+        "output_ass": "/tmp/run/speaker.ass",
+        "output_ass_sha256": "unchanged",
+    }
+    rebased = _rebase_remote_speaker_manifest(
+        manifest,
+        host="free",
+        media_path=media,
+        text_srt_path=text_srt,
+        override_path=override,
+        output_srt_path=output_srt,
+        output_ass_path=output_ass,
+    )
+    assert rebased["runtime_host"] == "free"
+    assert rebased["ephemeral_runtime_paths"]["source_media"] == "/tmp/run/media.mp4"
+    assert rebased["source_media"] == str(media.resolve())
+    assert rebased["output_ass"] == str(output_ass.resolve())
+    assert rebased["output_ass_sha256"] == "unchanged"
 
 
 def test_snap_end_picks_nearest_sentence_end():

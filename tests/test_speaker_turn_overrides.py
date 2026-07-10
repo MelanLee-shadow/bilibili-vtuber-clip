@@ -131,6 +131,21 @@ def test_override_can_render_reliable_overlap_on_second_ass_layer(tmp_path: Path
     ass_text = output_ass.read_text(encoding="utf-8")
     assert "Style: GUEST_OVERLAP" in ass_text
     assert "Dialogue: 1,0:00:01.50,0:00:02.10,GUEST_OVERLAP" in ass_text
+    assert "[连线]" not in ass_text  # production ASS uses colour, not debug prefixes
+
+
+def test_ass_layout_preserves_libass_line_break_marker(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n"
+        "[李豆沙] 这是一个需要在标点附近换行，才能保持两行以内的很长字幕文本\n",
+        encoding="utf-8",
+    )
+    output_ass = tmp_path / "output.ass"
+    write_ass(parse_labelled_srt(source), output_ass)
+    ass_text = output_ass.read_text(encoding="utf-8")
+    assert r"\N" in ass_text
+    assert r"\\N" not in ass_text
 
 
 def test_override_rejects_overlay_outside_source_interval(tmp_path: Path) -> None:

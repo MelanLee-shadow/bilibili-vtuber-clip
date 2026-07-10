@@ -286,11 +286,30 @@ def _ass_timestamp(value: str) -> str:
     return f"{int(hours)}:{minutes}:{seconds}.{millis[:2]}"
 
 
+def _ass_timestamp_ms(value: int) -> str:
+    centiseconds = max(0, (int(value) + 5) // 10)
+    hours, remainder = divmod(centiseconds, 360_000)
+    minutes, remainder = divmod(remainder, 6_000)
+    seconds, centis = divmod(remainder, 100)
+    return f"{hours}:{minutes:02d}:{seconds:02d}.{centis:02d}"
+
+
 def _ass_escape(value: str) -> str:
-    return value.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
+    # ``_layout_cue_for_display`` already uses ASS's literal ``\N`` line-break
+    # marker. Preserve that marker while escaping arbitrary user backslashes;
+    # turning it into ``\\N`` makes libass render characters instead of a break.
+    line_break = "\u0000ASS_LINE_BREAK\u0000"
+    return (
+        value.replace(r"\N", line_break)
+        .replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\n", line_break)
+        .replace(line_break, r"\N")
+    )
 
 
-def write_ass(cues: list[Cue], path: Path) -> None:
+def write_ass(cues: list[Cue], path: Path, *, show_speaker_labels: bool = False) -> None:
     header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -300,24 +319,32 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: LDS,Noto Sans CJK SC,62,&H00FFFFFF,&H000000FF,&H00203050,&H78000000,-1,0,0,0,100,100,0,0,1,4,1,2,80,80,50,1
-Style: GUEST,Noto Sans CJK SC,62,&H0000FFFF,&H000000FF,&H00203050,&H78000000,-1,0,0,0,100,100,0,0,1,4,1,2,80,80,50,1
-Style: LDS_OVERLAP,Noto Sans CJK SC,54,&H00FFFFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,100,100,145,1
-Style: GUEST_OVERLAP,Noto Sans CJK SC,54,&H0000FFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,100,100,145,1
+Style: LDS,Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00203050,&H70000000,-1,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1
+Style: GUEST,Microsoft YaHei,72,&H0000FFFF,&H000000FF,&H00203050,&H70000000,-1,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1
+Style: LDS_OVERLAP,Microsoft YaHei,58,&H00FFFFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,80,80,142,1
+Style: GUEST_OVERLAP,Microsoft YaHei,58,&H0000FFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,80,80,142,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
+    # Reuse the approved production line-layout policy: <=28 display chars per
+    # line, <=2 lines, and sequential sub-cues for genuinely long text.
+    from scripts.run_auto_review_shadow_pipeline import _layout_cue_for_display
+
     for cue in cues:
         style = "LDS" if cue.speaker == "李豆沙" else "GUEST"
         if cue.placement == "above":
             style += "_OVERLAP"
-        text = _ass_escape(f"[{cue.speaker}] {cue.text}")
-        events.append(
-            f"Dialogue: {cue.layer},{_ass_timestamp(cue.start)},{_ass_timestamp(cue.end)},"
-            f"{style},,0,0,0,,{text}"
-        )
+        visible = f"[{cue.speaker}] {cue.text}" if show_speaker_labels else cue.text
+        for start_ms, end_ms, display_text in _layout_cue_for_display(
+            timestamp_ms(cue.start), timestamp_ms(cue.end), visible
+        ):
+            text = _ass_escape(display_text)
+            events.append(
+                f"Dialogue: {cue.layer},{_ass_timestamp_ms(start_ms)},{_ass_timestamp_ms(end_ms)},"
+                f"{style},,0,0,0,,{text}"
+            )
     atomic_write_text(path, header + "\n".join(events) + "\n")
 
 

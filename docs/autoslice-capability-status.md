@@ -1,20 +1,38 @@
 # Auto-slice capability status
 
-Updated: 2026-07-10 (AGY v4 + host-vocal-proof.v2 joint gate deployed and accepted no-upload at `f64cd29`; cron restored)
+Updated: 2026-07-10 (talk text-final → speaker-colour production stage added; song AGY v4 + host-vocal-proof.v2 gate retained; no upload)
 
 Scope: no-upload selector/shadow/review automation. Public upload remains fail-closed and still requires an explicit `AUTO_UPLOAD` decision manifest plus artifact-hash gate.
 
-## Subtitle substrate = free aggregate ASR + CPA correction (2026-07-04, Ivan decision)
+## Talk final subtitles = text-final first, speaker colour second (2026-07-10)
 
-Status: `aggregate_asr_timeline_plus_cpa_text_correction`
+Status: `talk_text_final_then_required_speaker_colour`
 
-The subtitle timeline+draft no longer comes from an LLM listening to audio. The free aggregate ASR (`scripts/free_asr_client.py`: bcut 必剪 primary, jianying 剪映 backup; kuaishou removed — B站 AI-subtitle-同源引擎, no login) returns **sentence-level millisecond boundaries in seconds** (30 min → ~17s). That owns the timeline and the draft text. Correction is then a pure TEXT task, so it goes to **CPA**, not agy:
+The production talk path now has an explicit final boundary between wording and speaker identity:
 
-- `_build_aggregate_asr_transcriber` (`run_full_session_selector_cpa_shadow.py`): aggregate ASR draft → `_cpa_correct_draft_cues` (CPA gpt-5.4-mini corrects proper nouns / memes / homophones from `assets/lidousha/glossary.txt` + time-paired danmaku). The LLM only sees/returns numbered cue **texts**; corrected texts are spliced back onto the ASR timestamps, so **timeline preservation is structural**, not a validation afterthought.
-- **agy's former job (listen to audio, invent a 1–2s-grid transcript) is gone.** agy is available only as a legacy `--correct agy` multimodal refine (also reads on-screen frames; slower) or the `agy_fresh` fallback substrate for a total ASR outage.
+1. aggregate ASR timeline/draft → optional AGY audio refinement → CPA reconcile/glossary/danmaku/SC corrections;
+2. whole-clip singular-pronoun finalizer (`TA|他|她|它`) with occurrence-scoped edits only; known female streamers use `她`, unknown-gender people alone use `TA`;
+3. optional source-hash-bound human text decisions; the clean SRT is now text-final;
+4. CAM++ host voiceprints + purified session anchors + whole-conversation context for short/threshold-band cues;
+5. optional text/media-hash-bound reviewed turn, split, drop, and reliable-overlap decisions;
+6. a labelled review SRT plus a white-Li-Dousha/yellow-guest ASS with no visible speaker prefixes;
+7. burn from that exact ASS only, with hash verification. A missing/drifted ASS or blocked speaker manifest stops delivery.
+
+Flat delivery also carries `<name>.record.json`; its `burned_preview.path`, `burned_sha256`, and `artifact_hashes.burned_video_sha256` bind the exact MP4 copied to the review surface. Delivery never selects `*.burned-final-*` by glob, so a stale single-colour render cannot win by directory order.
+
+`scripts/produce_slice_package.py` requires `--speaker-mode required`; there is no production off path. Every short/threshold-band cue must receive a whole-clip context vote or a hash-bound human decision. `scripts/apply_subtitle_correction.py` also reruns speaker finalization before re-burn, so a late wording fix cannot leave stale colours. Song/LRC rendering remains a separate path and is unchanged.
+
+## Subtitle substrate = free aggregate ASR + audio/text correction (2026-07-04; updated 2026-07-10)
+
+Status: `aggregate_asr_timeline_plus_agy_cpa_text_correction`
+
+The free aggregate ASR (`scripts/free_asr_client.py`: bcut 必剪 primary, jianying 剪映 backup; kuaishou removed) returns **sentence-level millisecond boundaries** and owns both the timeline and rough draft. The current default correction chain is `bcut_agy_cpa`: AGY listens to refine wording while keeping the same cue grid, then CPA reconciles BCUT vs AGY against the glossary/context. If AGY is unavailable, CPA works from BCUT alone:
+
+- `_build_aggregate_asr_transcriber` (`run_full_session_selector_cpa_shadow.py`): aggregate draft → AGY refine on the existing grid → `_cpa_reconcile_draft_cues`; all model outputs are reattached to original ASR timestamps, so **timeline preservation is structural**.
+- AGY does not own or invent the final timeline. `agy_fresh` remains only a fallback substrate for total aggregate-ASR outage.
 - Fail-open: a correction outage ships the accurate raw ASR draft (proper nouns uncorrected) rather than failing the clip; a total ASR outage raises so the caller can fall back.
 - **Song clips unchanged**: aggregate ASR is sparse/error-prone on singing (B站 also special-cases music rows); song subtitles keep the LRC global-shift flow, aggregate ASR only a reference track.
-- Driver: `scripts/produce_slice_package.py --substrate aggregate_asr --correct cpa` (default). Why CPA over agy: correction is text; CPA is the pipeline's existing judge, one fast call vs chunked-agy-on-free, and splice-back guarantees the timeline. agy's only unique value (reading pixels) narrows to optional on-screen-text extraction, later replaceable by OCR.
+- Driver default: `scripts/produce_slice_package.py --substrate aggregate_asr --correct bcut_agy_cpa --speaker-mode required`.
 
 ## Semantic recall + viewer-context QA (primary discovery lane, 2026-07-03)
 

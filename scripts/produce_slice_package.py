@@ -12,8 +12,8 @@ target (fail closed if none) → VAD boundary audit + deterministic red flags �
 SELF-REPAIR loop (Ivan 2026-07-10: flags move the cut to the next verifiably
 clean sentence end / pull the opening onto the straddled sentence; an
 unrepairable boundary fails closed — no quarantine state) → final accurate cut
-→ VAD-sanitized subtitles → burn → title/cover staging → flat delivery copy
-to lidousha/<date>/.
+→ VAD-sanitized text-final subtitles → speaker finalization → colour ASS burn
+→ title/cover staging → flat delivery copy to lidousha/<date>/.
 
 Spec JSON:
 {
@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shlex
 import subprocess
 import sys
@@ -55,6 +57,7 @@ from scripts.run_full_session_selector_cpa_shadow import (
     _build_aggregate_asr_transcriber,
     _build_ssh_agy_transcribe_runner,
 )
+from scripts.apply_subtitle_text_overrides import apply_document as apply_text_override_document
 from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
@@ -270,6 +273,190 @@ def ffprobe_duration_ms(path: Path) -> int:
     return int(float(completed.stdout.strip()) * 1000)
 
 
+def _validated_burned_artifact(record: dict) -> Path:
+    """Return the exact burn bound into the record, never a directory glob."""
+
+    preview = record.get("burned_preview")
+    if not isinstance(preview, dict) or preview.get("status") != "BURNED":
+        raise RuntimeError(f"FINAL_SUBTITLE_BURN_NOT_READY: {preview}")
+    value = preview.get("path")
+    burned = Path(str(value)) if value else None
+    if burned is None or not burned.is_file():
+        raise RuntimeError(f"FINAL_SUBTITLE_BURN_MISSING: {value}")
+    actual = "sha256:" + _sha256(burned)
+    expected_preview = preview.get("burned_sha256")
+    expected_record = (record.get("artifact_hashes") or {}).get("burned_video_sha256")
+    if expected_preview != actual or expected_record != actual:
+        raise RuntimeError(
+            f"FINAL_SUBTITLE_BURN_HASH_MISMATCH: preview={expected_preview} "
+            f"record={expected_record} actual={actual}"
+        )
+    return burned
+
+
+def _resolved_optional_path(value: object, *, relative_to: Path) -> Path | None:
+    if not isinstance(value, (str, Path)) or not str(value):
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else (relative_to / path).resolve()
+
+
+def _rebase_remote_speaker_manifest(
+    manifest: dict,
+    *,
+    host: str,
+    media_path: Path,
+    text_srt_path: Path,
+    override_path: Path | None,
+    output_srt_path: Path,
+    output_ass_path: Path,
+) -> dict:
+    """Replace deleted /tmp paths while retaining their execution provenance."""
+
+    rebased = dict(manifest)
+    path_keys = (
+        "source_media",
+        "text_final_srt",
+        "speaker_override",
+        "output_review_srt",
+        "output_ass",
+    )
+    rebased["runtime_host"] = host
+    rebased["ephemeral_runtime_paths"] = {key: manifest.get(key) for key in path_keys}
+    rebased.update(
+        {
+            "source_media": str(media_path.resolve()),
+            "text_final_srt": str(text_srt_path.resolve()),
+            "speaker_override": str(override_path.resolve()) if override_path is not None else None,
+            "output_review_srt": str(output_srt_path.resolve()),
+            "output_ass": str(output_ass_path.resolve()),
+        }
+    )
+    return rebased
+
+
+def run_speaker_finalizer(
+    *,
+    host: str,
+    candidate_id: str,
+    media_path: Path,
+    text_srt_path: Path,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+    work_dir: Path,
+    override_path: Path | None = None,
+    speaker_python: Path = Path("/opt/bilive/autoslice/venv-diar/bin/python"),
+    reference_dir: Path = Path("/opt/bilive/autoslice/voiceprints/lidousha"),
+    model_dir: Path = Path("/opt/bilive/autoslice/models/campp"),
+) -> dict:
+    """Run the pinned speaker runtime locally on free or through a remote temp.
+
+    The command consumes the already-final text SRT.  Outputs are accepted only
+    when the manifest says READY and every returned artifact hash matches.
+    """
+
+    safe_cid = re.sub(r"[^A-Za-z0-9_.-]+", "_", candidate_id)[:80]
+    local_host = host in {"localhost", "127.0.0.1", "::1"}
+    profile = ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+    output_srt_path.parent.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    # Never accept stale artifacts from a previous successful attempt if the
+    # current runtime exits without replacing one of them.
+    for stale in (output_srt_path, output_ass_path, output_manifest_path):
+        stale.unlink(missing_ok=True)
+    if local_host:
+        command = [
+            str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
+            "--media", str(media_path), "--text-srt", str(text_srt_path),
+            "--profile", str(profile), "--reference-dir", str(reference_dir),
+            "--model-dir", str(model_dir), "--output-srt", str(output_srt_path),
+            "--output-ass", str(output_ass_path), "--output-manifest", str(output_manifest_path),
+            "--work-dir", str(work_dir),
+        ]
+        if override_path is not None:
+            command.extend(["--overrides", str(override_path)])
+        completed = subprocess.run(
+            command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
+        )
+    else:
+        remote_dir = f"/tmp/autoslice-speaker-{safe_cid}-{os.getpid()}"
+        remote_media = f"{remote_dir}/media.mp4"
+        remote_srt = f"{remote_dir}/text-final.srt"
+        remote_output_srt = f"{remote_dir}/speaker-final.srt"
+        remote_output_ass = f"{remote_dir}/speaker-final.ass"
+        remote_manifest = f"{remote_dir}/speaker-final.json"
+        remote_override = f"{remote_dir}/overrides.json"
+        run(["ssh", host, f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}/work"], timeout=120)
+        try:
+            run(["scp", "-q", str(media_path), str(text_srt_path), f"{host}:{remote_dir}/"], timeout=1800)
+            # scp preserves local basenames, normalize to fixed remote names.
+            remote_setup = (
+                f"mv {shlex.quote(remote_dir + '/' + media_path.name)} {shlex.quote(remote_media)}; "
+                f"mv {shlex.quote(remote_dir + '/' + text_srt_path.name)} {shlex.quote(remote_srt)}"
+            )
+            run(["ssh", host, remote_setup], timeout=120)
+            if override_path is not None:
+                run(["scp", "-q", str(override_path), f"{host}:{remote_override}"], timeout=120)
+            remote_command = [
+                str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
+                "--media", remote_media, "--text-srt", remote_srt,
+                "--profile", "/opt/bilive/autoslice/repo/assets/lidousha/voiceprint_profile.v1.json",
+                "--reference-dir", str(reference_dir), "--model-dir", str(model_dir),
+                "--output-srt", remote_output_srt, "--output-ass", remote_output_ass,
+                "--output-manifest", remote_manifest, "--work-dir", f"{remote_dir}/work",
+            ]
+            if override_path is not None:
+                remote_command.extend(["--overrides", remote_override])
+            shell_command = "cd /opt/bilive/autoslice/repo && " + " ".join(
+                shlex.quote(part) for part in remote_command
+            )
+            completed = subprocess.run(
+                ["ssh", host, shell_command], check=False, capture_output=True, text=True, timeout=1800
+            )
+            if completed.returncode == 0:
+                for remote_source, local_target in (
+                    (remote_output_srt, output_srt_path),
+                    (remote_output_ass, output_ass_path),
+                    (remote_manifest, output_manifest_path),
+                ):
+                    run(["scp", "-q", f"{host}:{remote_source}", str(local_target)], timeout=600)
+        finally:
+            subprocess.run(["ssh", host, f"rm -rf {shlex.quote(remote_dir)}"], check=False, timeout=120)
+    if completed.returncode != 0 or not output_manifest_path.is_file():
+        raise RuntimeError(
+            "SPEAKER_FINALIZATION_FAILED: " + (completed.stderr or completed.stdout)[-1200:]
+        )
+    manifest = json.loads(output_manifest_path.read_text(encoding="utf-8"))
+    if not local_host:
+        manifest = _rebase_remote_speaker_manifest(
+            manifest,
+            host=host,
+            media_path=media_path,
+            text_srt_path=text_srt_path,
+            override_path=override_path,
+            output_srt_path=output_srt_path,
+            output_ass_path=output_ass_path,
+        )
+        output_manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    if manifest.get("status") != "READY" or manifest.get("production_ready") is not True:
+        raise RuntimeError(f"SPEAKER_FINALIZATION_BLOCKED: {manifest.get('reason')}")
+    expected = {
+        output_srt_path: manifest.get("output_review_srt_sha256"),
+        output_ass_path: manifest.get("output_ass_sha256"),
+    }
+    for path, digest in expected.items():
+        if not path.is_file() or digest != _sha256(path):
+            raise RuntimeError(f"SPEAKER_FINALIZATION_HASH_MISMATCH: {path}")
+    if manifest.get("source_media_sha256") != _sha256(media_path):
+        raise RuntimeError("SPEAKER_FINALIZATION_MEDIA_BINDING_MISMATCH")
+    if manifest.get("text_final_srt_sha256") != _sha256(text_srt_path):
+        raise RuntimeError("SPEAKER_FINALIZATION_TEXT_BINDING_MISMATCH")
+    return manifest
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", type=Path, required=True)
@@ -279,6 +466,19 @@ def main(argv: list[str] | None = None) -> int:
         choices=("aggregate_asr", "agy_fresh"),
         default="aggregate_asr",
         help="subtitle substrate: aggregate_asr = free ASR (bcut/jianying, accurate ms timeline) + text-only correction (default); agy_fresh = legacy agy whole-window transcription.",
+    )
+    parser.add_argument(
+        "--speaker-mode",
+        choices=("required",),
+        default="required",
+        help="talk speaker finalization is required and fails closed",
+    )
+    parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
+    parser.add_argument("--speaker-overrides", type=Path, help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference")
+    parser.add_argument(
+        "--speaker-python",
+        type=Path,
+        default=Path(os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")),
     )
     parser.add_argument(
         "--correct",
@@ -499,27 +699,75 @@ def main(argv: list[str] | None = None) -> int:
     media_path = recut_dir / f"{cid}.recut.mp4"
     run(_accurate_reencode_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
     subtitle_path = media_path.with_suffix(".srt")
-    _write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
+    text_override_path = args.subtitle_text_overrides or _resolved_optional_path(
+        spec.get("subtitle_text_overrides"), relative_to=args.spec.parent
+    )
+    text_manifest_path: Path | None = None
+    if text_override_path is not None:
+        automatic_text_path = media_path.with_suffix(".automatic-text.srt")
+        _write_source_range_srt(sanitized, final_start, final_end, automatic_text_path)
+        text_manifest_path = media_path.with_suffix(".text-finalization.json")
+        apply_text_override_document(
+            automatic_text_path, text_override_path, subtitle_path, text_manifest_path
+        )
+    else:
+        _write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
     (recut_dir / f"{cid}.recut.timing_qa.json").write_text(
         json.dumps(timing_qa, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+    speaker_manifest: dict | None = None
+    speaker_review_srt: Path | None = None
+    speaker_ass: Path | None = None
+    speaker_manifest_path: Path | None = None
+    if args.speaker_mode == "required":
+        speaker_review_srt = media_path.with_suffix(".speaker-final.srt")
+        speaker_ass = media_path.with_suffix(".speaker-final.ass")
+        speaker_manifest_path = media_path.with_suffix(".speaker-final.json")
+        speaker_override_path = args.speaker_overrides or _resolved_optional_path(
+            spec.get("speaker_overrides"), relative_to=args.spec.parent
+        )
+        speaker_manifest = run_speaker_finalizer(
+            host=host,
+            candidate_id=cid,
+            media_path=media_path,
+            text_srt_path=subtitle_path,
+            output_srt_path=speaker_review_srt,
+            output_ass_path=speaker_ass,
+            output_manifest_path=speaker_manifest_path,
+            work_dir=recut_dir / f"{cid}.speaker-work",
+            override_path=speaker_override_path,
+            speaker_python=args.speaker_python,
+        )
 
     record: dict = {
         "status": "MATERIALIZED",
         "media_path": str(media_path),
         "subtitle_path": str(subtitle_path),
-        "subtitle_source": "fresh_agy_transcription",
+        "subtitle_source": f"{args.substrate}+{args.correct}+pronoun+text_final",
         "start_ms": 0,
         "end_ms": final_end - final_start,
         "duration_ms": final_end - final_start,
         "artifact_hashes": {
             "video_sha256": "sha256:" + _sha256(media_path),
             "subtitle_sha256": "sha256:" + _sha256(subtitle_path),
+            **({"ass_sha256": "sha256:" + _sha256(speaker_ass)} if speaker_ass is not None else {}),
+            **({"speaker_review_srt_sha256": "sha256:" + _sha256(speaker_review_srt)} if speaker_review_srt is not None else {}),
         },
+        "text_finalization_manifest_path": str(text_manifest_path) if text_manifest_path is not None else None,
+        "speaker_review_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
+        "subtitle_ass_path": str(speaker_ass) if speaker_ass is not None else None,
+        "subtitle_style": "lidousha-speaker-colour-v1" if speaker_ass is not None else "lidousha-final-sapphire72",
+        "speaker_finalization_manifest_path": str(speaker_manifest_path) if speaker_manifest_path is not None else None,
+        "speaker_finalization_manifest_sha256": ("sha256:" + _sha256(speaker_manifest_path)) if speaker_manifest_path is not None else None,
+        "speaker_finalization": speaker_manifest,
         "subtitle_timing_qa": timing_qa,
         "boundary_audit": audit,
     }
     record = _burn_preview_subtitles(record, run_ffmpeg=True)
+    if not isinstance(record.get("burned_preview"), dict) or record["burned_preview"].get("status") != "BURNED":
+        raise SystemExit(f"FINAL_SUBTITLE_BURN_FAILED: {record.get('burned_preview')}")
+    burned = _validated_burned_artifact(record)
 
     # 6. Title (Ivan-given verbatim, else style-asset LLM) + cover + delivery.
     given_title = spec.get("given_title")
@@ -540,25 +788,47 @@ def main(argv: list[str] | None = None) -> int:
     art_direction_llm = None if args.reuse_cover else build_llm_call(
         LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=180.0)
     )
+    final_title_cues = [
+        SourceCue(
+            f"text_final_{index:04d}", cue.start_ms, cue.end_ms, cue.text.strip(),
+            "zh", "speech", 1.0,
+        )
+        for index, cue in enumerate(parse_srt_cues(subtitle_path.read_text(encoding="utf-8")), start=1)
+        if cue.text.strip()
+    ]
     record = _stage_publish_draft(
         record,
         candidate_id=cid,
         title=given_title or cid,
-        cues=sanitized,
+        cues=final_title_cues,
         run_ffmpeg=True,
         title_llm_call=title_llm,
         art_direction_llm_call=art_direction_llm,
         skip_cover=args.reuse_cover,
     )
     staging = record.get("publish_staging") or {}
-    json.dump(record, open(recut_dir / f"{cid}.record.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2, sort_keys=True)
+    record_path = recut_dir / f"{cid}.record.json"
+    with record_path.open("w", encoding="utf-8") as handle:
+        json.dump(record, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
 
     delivery = ROOT / "lidousha" / spec["date"]
     delivery.mkdir(parents=True, exist_ok=True)
-    burned = next(recut_dir.glob(f"{cid}.recut.burned-final-*.mp4"), None)
     name = spec.get("delivery_name") or cid
-    if burned:
-        run(["cp", str(burned), str(delivery / f"{name}.mp4")])
+    # Old sapphire renders may coexist in replacement_recuts; copy only the
+    # exact hash-bound speaker burn made by this run.
+    burned = _validated_burned_artifact(record)
+    run(["cp", str(burned), str(delivery / f"{name}.mp4")])
+    run(["cp", str(subtitle_path), str(delivery / f"{name}.srt")])
+    for source, suffix in (
+        (speaker_review_srt, ".speaker.srt"),
+        (speaker_ass, ".speaker.ass"),
+        (speaker_manifest_path, ".speaker.json"),
+        (text_manifest_path, ".text-finalization.json"),
+        (record_path, ".record.json"),
+    ):
+        if source is not None and source.is_file():
+            run(["cp", str(source), str(delivery / f"{name}{suffix}")])
     cover = staging.get("cover_path")
     if cover and Path(cover).is_file():
         run(["cp", str(cover), str(delivery / f"{name}.cover.png")])
@@ -575,6 +845,10 @@ def main(argv: list[str] | None = None) -> int:
             "cover_status": staging.get("cover_status"),
             "title": staging.get("title"),
             "delivery": str(delivery / f"{name}.mp4"),
+            "subtitle": str(delivery / f"{name}.srt"),
+            "speaker_subtitle": str(delivery / f"{name}.speaker.srt") if speaker_review_srt else None,
+            "speaker_ass": str(delivery / f"{name}.speaker.ass") if speaker_ass else None,
+            "speaker_status": speaker_manifest.get("status") if speaker_manifest else "OFF",
         },
         ensure_ascii=False,
         indent=2,

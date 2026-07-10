@@ -10,9 +10,10 @@ canonical pipeline by itself — no human kick-off:
         curated slice-selection metric; deterministic fallback lanes if the
         LLM is down — zero-output is loud, never silent)
       → top-N talk candidates + up to 2 songs (highest danmaku)
-      → produce_slice_package per candidate (BCUT+AGY+CPA subtitles, sentence
-        boundaries, pillarbox, sapphire72 burn, REAL CPA cover, 李豆沙-style
-        title) / song LRC lane with the strict completeness gate
+      → produce_slice_package per candidate (BCUT+AGY+CPA text, final pronouns,
+        sentence boundaries, CAM+++context speaker finalization, colour ASS
+        burn, REAL CPA cover, 李豆沙-style title) / song LRC lane with the strict
+        completeness gate
       → delivery under <repo>/lidousha/<date>/ + AUTOSLICE_SUMMARY.md with the
         selection reason (hook) and confidence per clip for human review
       → status report file (no chat/email; Mac pulls via launchd)
@@ -70,7 +71,8 @@ Deployment (free):
     state  /opt/bilive/autoslice/state/<date>.json
     cron   */10 min: flock -n lock python3 scripts/free_session_autoslice.py --once
     kill   touch /opt/bilive/autoslice/DISABLED to pause everything
-    deps   fonts-noto-cjk (subtitle rendering), ffmpeg, PIL, self-ssh key
+    deps   fonts-noto-cjk (subtitle rendering), ffmpeg, PIL, self-ssh key,
+           /opt/bilive/autoslice/venv-diar + pinned CAM++ model/voiceprints
 """
 from __future__ import annotations
 

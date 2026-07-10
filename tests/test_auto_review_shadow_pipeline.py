@@ -2168,6 +2168,88 @@ def test_burn_preview_uses_lidousha_sapphire_ass_style_not_default_srt_force_sty
     assert "force_style=" not in ffmpeg_filter
 
 
+def test_burn_preview_uses_hash_bound_prebuilt_speaker_ass_without_rebuilding(tmp_path, monkeypatch):
+    media_path = _write(tmp_path / "recuts" / "talk.mp4", b"fake media bytes\n")
+    subtitle_path = _write(
+        tmp_path / "recuts" / "talk.srt",
+        "1\n00:00:00,000 --> 00:00:02,000\n她想问是三个位置哦\n",
+    )
+    ass_path = _write(
+        tmp_path / "recuts" / "talk.speaker-final.ass",
+        "[Script Info]\n[V4+ Styles]\nStyle: LDS\nStyle: GUEST\n[Events]\n",
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(command, check=False, capture_output=True, text=True, timeout=None):
+        calls.append(command)
+        if command and command[0] == "ffprobe":
+            return subprocess.CompletedProcess(command, 0, "1920,1080\n", "")
+        Path(command[-1]).write_bytes(b"speaker burned\n")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(shadow_pipeline.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_write_lidousha_sapphire_ass_from_srt",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not rebuild speaker ASS")),
+    )
+    ass_sha = "sha256:" + shadow_pipeline._sha256(ass_path)
+    record = shadow_pipeline._burn_preview_subtitles(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media_path),
+            "subtitle_path": str(subtitle_path),
+            "subtitle_ass_path": str(ass_path),
+            "subtitle_style": "lidousha-speaker-colour-v1",
+            "artifact_hashes": {"ass_sha256": ass_sha},
+        },
+        run_ffmpeg=True,
+    )
+
+    assert record["burned_preview"]["status"] == "BURNED"
+    assert record["burned_preview"]["ass_path"] == str(ass_path)
+    assert record["burned_preview"]["subtitle_style"] == "lidousha-speaker-colour-v1"
+    assert record["burned_preview"]["path"].endswith(".burned-final-speaker.mp4")
+    ffmpeg = next(command for command in calls if command and command[0] == "ffmpeg")
+    assert "speaker-final.ass" in ffmpeg[ffmpeg.index("-vf") + 1]
+
+
+def test_burn_preview_rejects_prebuilt_speaker_ass_hash_drift(tmp_path):
+    media_path = _write(tmp_path / "talk.mp4", b"media")
+    subtitle_path = _write(tmp_path / "talk.srt", "1\n00:00:00,000 --> 00:00:01,000\n文本\n")
+    ass_path = _write(tmp_path / "talk.ass", "ass")
+    record = shadow_pipeline._burn_preview_subtitles(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media_path),
+            "subtitle_path": str(subtitle_path),
+            "subtitle_ass_path": str(ass_path),
+            "artifact_hashes": {"ass_sha256": "sha256:" + "0" * 64},
+        },
+        run_ffmpeg=False,
+    )
+    assert record["burned_preview"]["status"] == "FAILED"
+    assert record["burned_preview"]["reason_code"] == "PREBUILT_ASS_MISSING_OR_HASH_MISMATCH"
+
+
+def test_burn_preview_rejects_prebuilt_speaker_ass_without_expected_hash(tmp_path):
+    media_path = _write(tmp_path / "talk.mp4", b"media")
+    subtitle_path = _write(tmp_path / "talk.srt", "1\n00:00:00,000 --> 00:00:01,000\n文本\n")
+    ass_path = _write(tmp_path / "talk.ass", "ass")
+    record = shadow_pipeline._burn_preview_subtitles(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media_path),
+            "subtitle_path": str(subtitle_path),
+            "subtitle_ass_path": str(ass_path),
+            "artifact_hashes": {},
+        },
+        run_ffmpeg=False,
+    )
+    assert record["burned_preview"]["status"] == "FAILED"
+    assert record["burned_preview"]["reason_code"] == "PREBUILT_ASS_MISSING_OR_HASH_MISMATCH"
+
+
 def test_ass_layout_never_exceeds_two_lines_of_28_chars(tmp_path):
     # Viewability spec from the LLM Multimodal ASR project (polish_srt_for_viewing
     # --max-chars 28) tightened by Ivan 2026-07-03: <=28 chars per visual line,

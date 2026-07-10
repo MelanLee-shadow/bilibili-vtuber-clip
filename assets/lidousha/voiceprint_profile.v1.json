@@ -57,5 +57,16 @@
     }
   ],
   "schema_version": "lidousha-voiceprint-profile.v1",
-  "subject": "李豆沙"
+  "subject": "李豆沙",
+  "talk_speaker_policy": {
+    "host_session_seed_min": 0.68,
+    "host_session_anchor_count": 4,
+    "guest_seed_max": 0.42,
+    "guest_min_duration_ms": 1800,
+    "guest_session_similarity_max": 0.45,
+    "guest_cluster_similarity_min": 0.45,
+    "ambiguity_band": 0.1,
+    "short_cue_ms": 1500,
+    "single_host_median_seed_min": 0.55
+  }
 }

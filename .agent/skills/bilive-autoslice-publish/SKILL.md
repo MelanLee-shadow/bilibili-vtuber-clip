@@ -27,7 +27,7 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
 
 - **语义召回**为主 lane（`--semantic-recall-llm-command`，观众视角），关键词 lane 只作 LLM 故障退路；弹幕突发 hints（`--danmaku-xml`）必带。
 - **CPA 观众视角审查**：窗内真实弹幕 + 前后 90s 原文进证据；`VIEWER_CONTEXT_INCOMPLETE` 自动扩窗一次重审。
-- **talk 成品字幕 = 聚合 ASR 基底 + CPA 纯文本校正**（Ivan 2026-07-04 定架构）：`scripts/free_asr_client.py`（必剪 bcut 主 / 剪映 jianying 备，快手已移除）出**句级毫秒时间轴 + draft 文本**（30min 段 ~17s），CPA(gpt-5.4-mini) 只按 `assets/lidousha/glossary.txt` 词表 + 同段弹幕改专名/梗词/谐音字，**LLM 只碰编号文本、时间轴按 ASR 原值拼回（结构性保时间轴）**。agy"听音频定时间轴"角色已废，仅作 `--correct agy`(多模态读帧,慢) 或 `agy_fresh`(ASR 全挂时兜底) 备选。为何用 CPA 不用 agy：校正是文本任务，CPA 是管线现成 judge、一次调用、拼回即保时间轴；agy 唯一独占价值(读画面像素)收窄为可选画面文字提取，将来可换 OCR。失败 fail-open 出裸 ASR draft。**歌切字幕 = LRC 全局位移**，聚合 ASR 只作参考轨（见 `docs/workflows/lidousha-song-finished-package-workflow.md`）。
+- **talk 成品字幕顺序（2026-07-10 起的强制契约）**：`聚合 ASR 句级毫秒时间轴 + draft → AGY 听音精修（可用时）→ CPA 对照裁决/词表/弹幕/SC 校正 → 全片人称定稿 → 可选 hash-bound 人工文本真值 → CAM++ 李豆沙声纹 + 全片语境二分色 → 可选 hash-bound 人工换人/拆句/抢话真值 → 分色 ASS → 烧录`。`scripts/free_asr_client.py`（必剪 bcut 主 / 剪映 jianying 备）仍拥有时间轴；AGY/CPA/人称层只改文本，不得重写时间。已知女主播（李豆沙、礼墨Sumi、安晚Awa 等）一律用“她”，已知男性用“他”，动物/物体用“它”，只有全文仍无法确认的人才用 `TA`；人称 pass 必须同时支持 `TA→她/他/它` 与错误性别代词 `→TA`。说话人阶段只消费已经 text-final 的 SRT，`--speaker-mode required` 且 fail closed；产出一份带 `[李豆沙]/[连线]` 的复核 SRT 和一份**无可见标签**的白/黄分色 ASS，烧录器只能使用 hash 匹配的该 ASS，不能临时重建成单色字幕。短句/阈值带必须被全片语境逐条回答，缺答只可由 hash-bound 人工真值补齐，否则整条拒绝交付；抢话 best effort，副说话人字词或区间不可靠时只保主说话人。人工改字必须重新跑说话人阶段再烧录，禁止直接改单个已烧录 SRT。**歌切字幕仍是 LRC 全局位移**，不进入 talk 说话人链（见 `docs/workflows/lidousha-song-finished-package-workflow.md`）。
 - **VAD 时间轴 QA**：silero（free:/opt/bilive/vad/）只作正证据；唯一删除规则=卡住幻觉（重复文本+≥12s+零VAD）；起止吸附到语音岛。
 - 精听分块 ≤5min/块（全段输入=agy 确定性空输出）；失败码区分 AGY_EMPTY_OUTPUT/AGY_TIMEOUT/AGY_FAILED_RC。
 - 人工订正通道：Ivan 给出的字幕/标题真值即定稿，落 `*.human_corrections.json`，不再烧配额重试。
@@ -42,6 +42,10 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
 ```text
 <project>/lidousha/<YYYY-MM-DD>/
   <描述性名称>.mp4          # 候选预览或成品视频，扁平直放
+  <描述性名称>.srt          # 成品干净文本（无说话人前缀）
+  <描述性名称>.speaker.srt  # 带说话人标签的复核字幕（talk）
+  <描述性名称>.speaker.ass  # 实际烧录的分色字幕（talk，无可见标签）
+  <描述性名称>.record.json  # 绑定文本/ASS/最终烧录 MP4 哈希的成品记录
   <描述性名称>.cover.png    # 封面
   README.md                 # 一句话索引（可选）
 ```

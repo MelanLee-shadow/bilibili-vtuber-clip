@@ -1171,15 +1171,13 @@ def _cpa_reconcile_draft_cues(bcut_srt: str, agy_srt: str, *, danmaku_lines, cpa
 
 
 def _cpa_pronoun_ta_pass(srt: str, *, cpa_llm_call):
-    """Dedicated whole-clip pronoun pass: 他/她 → TA for unknown-gender people.
+    """Resolve singular pronouns after every other text correction.
 
-    Referent-gender resolution is a DISCOURSE task the general per-cue
-    correction/reconcile does poorly (the rule gets buried and 他 is the default,
-    so the model leaves it).  This is a single-purpose pass over the WHOLE clip:
-    find who each 他/她 refers to, and if the clip never established that person's
-    gender (a classmate / friend / kmx mentioned without a gender cue), rewrite
-    every 他/她 for them to TA.  Animals/objects are 它 and out of scope.  Text
-    only — timeline untouched; fail-open to the input.
+    This is deliberately the last text pass and works in both directions:
+    existing ``TA`` can become 她/他/它 when the whole clip establishes the
+    referent, while an unjustified 他/她 can become TA.  The model only returns
+    occurrence-level edits; code applies them to the original cue text so the
+    timeline and all non-pronoun wording remain structurally immutable.
     """
 
     import re
@@ -1187,42 +1185,74 @@ def _cpa_pronoun_ta_pass(srt: str, *, cpa_llm_call):
     from src.autoslice.jingting_chunker import parse_srt_cues
     from src.autoslice.llm_client import extract_json_object
 
-    # Personal-pronoun 他/她 (not 其他 / 他们 / 她们).  Used both to gate and to do
-    # the mechanical rewrite once CPA has judged which cues qualify.
-    pron = re.compile(r"(?<!其)[他她](?!们)")
+    # Singular candidate tokens only.  Do not match 其他/他们/她们/它们.
+    pron = re.compile(r"(?<![A-Za-z0-9_])TA(?![A-Za-z0-9_们])|(?<!其)[他她它](?!们)")
     cues = parse_srt_cues(srt)
     if not cues:
         return srt
-    candidate_idx = [i for i, c in enumerate(cues, start=1) if pron.search(c.text)]
-    if not candidate_idx:
+    occurrences: dict[int, list[re.Match[str]]] = {
+        i: list(pron.finditer(c.text)) for i, c in enumerate(cues, start=1)
+    }
+    occurrences = {i: matches for i, matches in occurrences.items() if matches}
+    if not occurrences:
         return srt  # cheap gate: no personal pronoun to resolve
 
     numbered = "\n".join(f"{i}. {c.text}" for i, c in enumerate(cues, start=1))
-    # The MODEL only judges (which cue numbers), the CODE does the 他/她→TA rewrite.
-    # A tiny numbers-only output is safer than asking the model to re-emit full
-    # cue texts (deterministic rewrite = no risk of the LLM garbling the rest).
+    candidate_lines = []
+    for cue_no, matches in occurrences.items():
+        candidate_lines.append(
+            f"{cue_no}: " + ", ".join(
+                f"occurrence={position} token={match.group(0)}"
+                for position, match in enumerate(matches, start=1)
+            )
+        )
     prompt = (
-        "你在给李豆沙(B站虚拟主播)切片字幕判断代词。下面是整条切片的完整字幕(带编号),先通读,搞清每个“他/她”指代谁。\n"
-        f"候选编号(这些 cue 里有指人的“他/她”):{candidate_idx}\n"
-        "从候选里挑出**指代匿名、性别无从判断的人**(例如“我同学/一个朋友/那个人/kmx”这种通篇没名没姓、也没提性别的)的编号。\n"
-        "**不要挑**:(a)片里已点明性别的;(b)有名有姓、性别是常识的具体人物(历史人物司马懿/曹操、明星、动漫角色等)。\n"
+        "你在给李豆沙(B站虚拟主播)切片字幕做最终定稿代词。通读整条切片，逐个判断候选代词的实际指代。\n"
+        "硬规则：已知女性用‘她’（李豆沙、礼墨Sumi、安晚Awa及其他已知女主播均如此）；已知男性用‘他’；动物/物体用‘它’；"
+        "只有人的性别确实无法从全文、姓名或常识判断时才用‘TA’。不能因为草稿已经写成TA就跳过。\n"
+        "每个候选按 cue 编号和 occurrence(该 cue 内从左到右第几个候选)定位。只列真正需要改变的项；from 必须照抄候选 token。"
+        "不要重写整句，也不要修改复数代词。\n"
+        f"\n候选:\n" + "\n".join(candidate_lines) + "\n"
         f"\n字幕:\n{numbered}\n"
-        '\n只输出 JSON(挑出的编号列表,可为空):{"ta_cues": [编号, ...]}'
+        '\n只输出 JSON（to 只能是 TA/他/她/它）:'
+        '{"rewrites":[{"n":1,"occurrence":1,"from":"TA","to":"她"}]}'
     )
     # CPA intermittently returns an empty completion; retry before giving up.
-    ta_cues = None
+    rewrites = None
     for _attempt in range(3):
         try:
             payload = extract_json_object(cpa_llm_call(prompt))
-            ta_cues = {int(n) for n in payload.get("ta_cues", [])}
+            rewrites = payload.get("rewrites", [])
+            if not isinstance(rewrites, list):
+                raise ValueError("rewrites must be a list")
             break
         except Exception:
             continue
-    if not ta_cues:
+    if not rewrites:
         return srt  # fail-open: nothing to change, or CPA never returned usable JSON
+    allowed = {"TA", "他", "她", "它"}
+    by_cue: dict[int, list[tuple[int, int, str]]] = {}
+    seen: set[tuple[int, int]] = set()
+    for item in rewrites:
+        try:
+            cue_no = int(item["n"])
+            occurrence = int(item["occurrence"])
+            source = str(item["from"])
+            target = str(item["to"])
+            match = occurrences[cue_no][occurrence - 1]
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        key = (cue_no, occurrence)
+        if key in seen or source not in allowed or target not in allowed or match.group(0) != source:
+            continue
+        seen.add(key)
+        if source != target:
+            by_cue.setdefault(cue_no, []).append((match.start(), match.end(), target))
     blocks = []
     for index, cue in enumerate(cues, start=1):
-        text = pron.sub("TA", cue.text) if index in ta_cues else cue.text
+        text = cue.text
+        for start, end, target in sorted(by_cue.get(index, []), reverse=True):
+            text = text[:start] + target + text[end:]
         blocks.append(f"{index}\n{_asr_ts(cue.start_ms)} --> {_asr_ts(cue.end_ms)}\n{text}")
     return "\n\n".join(blocks) + "\n"
 
@@ -1413,8 +1443,9 @@ def _build_aggregate_asr_transcriber(
             corrected = _cpa_correct_draft_cues(
                 draft_srt, danmaku_lines=danmaku_lines, cpa_llm_call=cpa_llm_call, screen_text_lines=screen_text_lines
             )
-        # Dedicated whole-clip pronoun pass (他/她 → TA for unknown-gender people);
-        # a discourse task the general correction can't reliably do inline.
+        # Dedicated whole-clip final pronoun pass (TA/他/她/它 in either
+        # direction); a discourse task the general correction cannot reliably
+        # do inline. Later hash-bound human text decisions are final authority.
         return _cpa_pronoun_ta_pass(corrected, cpa_llm_call=cpa_llm_call)
 
     return transcriber

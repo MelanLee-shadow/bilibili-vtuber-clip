@@ -313,36 +313,67 @@ def test_viewer_context_incomplete_expands_window_and_rereviews(tmp_path):
     assert record["source_context_job"]["boundary_authority"] == "semantic"
 
 
-def test_cpa_pronoun_ta_pass_converts_unknown_gender_he_to_ta():
-    """Dedicated pronoun pass: the MODEL judges which cue numbers refer to an
-    unknown-gender person, the CODE mechanically rewrites 他/她 → TA in exactly
-    those cues.  Other cues, 其他/他们, and the timeline stay untouched; the LLM
-    is skipped entirely when the clip has no personal pronoun."""
+def test_cpa_pronoun_ta_pass_resolves_each_occurrence_bidirectionally():
+    """The final pronoun pass sees existing TA as well as 他/她/它 and applies
+    occurrence-scoped rewrites without letting the model re-emit cue text."""
     import importlib
 
     shadow = importlib.import_module("scripts.run_full_session_selector_cpa_shadow")
     srt = (
         "1\n00:00:00,000 --> 00:00:02,000\n我想跟他说\n\n"
-        "2\n00:00:02,000 --> 00:00:04,000\n他就看傻子一样看我\n\n"
-        "3\n00:00:04,000 --> 00:00:06,000\n还有其他人在\n"
+        "2\n00:00:02,000 --> 00:00:04,000\nTA想问的是三个位置哦\n\n"
+        "3\n00:00:04,000 --> 00:00:06,000\n她说那只猫饿了就喂他，还有其他人在\n"
     )
 
     def fake_cpa(prompt):
-        # numbers-only judgement prompt, sees the whole clip + candidate list
-        assert "判断代词" in prompt and "候选编号" in prompt and "他就看傻子" in prompt
-        return '{"ta_cues":[1,2]}'
+        assert "最终定稿代词" in prompt and "TA想问的是三个位置哦" in prompt
+        assert "李豆沙、礼墨Sumi、安晚Awa" in prompt
+        return json.dumps(
+            {
+                "rewrites": [
+                    {"n": 1, "occurrence": 1, "from": "他", "to": "TA"},
+                    {"n": 2, "occurrence": 1, "from": "TA", "to": "她"},
+                    {"n": 3, "occurrence": 2, "from": "他", "to": "它"},
+                ]
+            },
+            ensure_ascii=False,
+        )
 
     out = shadow._cpa_pronoun_ta_pass(srt, cpa_llm_call=fake_cpa)
-    assert "我想跟TA说" in out and "TA就看傻子一样看我" in out  # cues 1,2 rewritten
-    assert out.count("TA") == 2
+    assert "我想跟TA说" in out
+    assert "她想问的是三个位置哦" in out
+    assert "她说那只猫饿了就喂它" in out
     assert "还有其他人在" in out  # 其他 is not a pronoun → untouched (guards against 其他→其TA)
 
-    # Cheap gate: only 其他/他们 (no bare pronoun) → never calls the LLM.
-    only_qita = "1\n00:00:00,000 --> 00:00:02,000\n还有其他他们的东西\n"
+    # Cheap gate: 其他/他们/TA们 and TA inside an ASCII token are not singular
+    # pronoun candidates, so the LLM must not be called.
+    only_qita = "1\n00:00:00,000 --> 00:00:02,000\n还有其他他们的东西，TA们来了，META也来了\n"
     assert shadow._cpa_pronoun_ta_pass(only_qita, cpa_llm_call=lambda p: 1 / 0) == only_qita
-    # Empty ta_cues (e.g. named figure 司马懿) → no rewrite.
+    # Empty rewrite list (e.g. named figure 司马懿 already correct) → no rewrite.
     named = "1\n00:00:00,000 --> 00:00:02,000\n他后来就造反了\n"
-    assert shadow._cpa_pronoun_ta_pass(named, cpa_llm_call=lambda p: '{"ta_cues":[]}') == named
+    assert shadow._cpa_pronoun_ta_pass(named, cpa_llm_call=lambda p: '{"rewrites":[]}') == named
+
+
+def test_cpa_pronoun_ta_pass_rejects_stale_or_invalid_occurrence_rewrites():
+    import importlib
+
+    shadow = importlib.import_module("scripts.run_full_session_selector_cpa_shadow")
+    srt = "1\n00:00:00,000 --> 00:00:02,000\nTA问她信不信\n"
+
+    out = shadow._cpa_pronoun_ta_pass(
+        srt,
+        cpa_llm_call=lambda _prompt: json.dumps(
+            {
+                "rewrites": [
+                    {"n": 1, "occurrence": 1, "from": "她", "to": "他"},
+                    {"n": 1, "occurrence": 2, "from": "她", "to": "未知"},
+                    {"n": 99, "occurrence": 1, "from": "TA", "to": "她"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+    assert out == srt
 
 
 def test_cpa_pronoun_ta_pass_fails_open_on_llm_error():

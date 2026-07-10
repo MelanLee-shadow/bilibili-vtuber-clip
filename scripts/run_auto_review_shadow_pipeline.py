@@ -2686,11 +2686,33 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
         return materialized_recut
     media_path = Path(str(materialized_recut["media_path"]))
     subtitle_path = Path(str(materialized_recut["subtitle_path"]))
-    ass_path = media_path.with_suffix(".final-sapphire72.ass")
-    burned_path = media_path.with_suffix(".burned-final-sapphire72.mp4")
     record = dict(materialized_recut)
     strict_song_output = record.get("subtitle_source") == "external_lrc_global_shift"
-    _write_lidousha_sapphire_ass_from_srt(subtitle_path, ass_path)
+    prebuilt_ass_value = record.get("subtitle_ass_path")
+    if isinstance(prebuilt_ass_value, str) and prebuilt_ass_value:
+        ass_path = Path(prebuilt_ass_value)
+        burned_path = media_path.with_suffix(".burned-final-speaker.mp4")
+        subtitle_style = str(record.get("subtitle_style") or "lidousha-speaker-colour-v1")
+        expected_ass_sha = (record.get("artifact_hashes") or {}).get("ass_sha256")
+        actual_ass_sha = "sha256:" + _sha256(ass_path) if ass_path.is_file() else None
+        if (
+            actual_ass_sha is None
+            or not isinstance(expected_ass_sha, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", expected_ass_sha) is None
+            or expected_ass_sha != actual_ass_sha
+        ):
+            record["burned_preview"] = {
+                "status": "FAILED",
+                "path": str(burned_path),
+                "ass_path": str(ass_path),
+                "reason_code": "PREBUILT_ASS_MISSING_OR_HASH_MISMATCH",
+            }
+            return record
+    else:
+        ass_path = media_path.with_suffix(".final-sapphire72.ass")
+        burned_path = media_path.with_suffix(".burned-final-sapphire72.mp4")
+        subtitle_style = "lidousha-final-sapphire72"
+        _write_lidousha_sapphire_ass_from_srt(subtitle_path, ass_path)
     if not run_ffmpeg:
         burned_path.write_bytes(b"dry-run burned preview placeholder\n")
         record["burned_preview"] = {"status": "DRY_RUN", "path": str(burned_path), "ass_path": str(ass_path)}
@@ -2758,7 +2780,7 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
         "path": str(burned_path),
         "ass_path": str(ass_path),
         "burned_sha256": burned_sha,
-        "subtitle_style": "lidousha-final-sapphire72",
+        "subtitle_style": subtitle_style,
         "pillarbox_16_9": bool(vertical),
         "command": command,
         "stream_contract": _song_stream_contract() if strict_song_output else None,
@@ -2797,7 +2819,7 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
         binding["burn_transform"] = {
             "schema_version": "song-subtitle-burn-transform.v1",
             "command": command,
-            "subtitle_style": "lidousha-final-sapphire72",
+            "subtitle_style": subtitle_style,
             "pillarbox_16_9": bool(vertical),
         }
         record["verified_output_binding"] = binding
