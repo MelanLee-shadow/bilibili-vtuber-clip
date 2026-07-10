@@ -21,5 +21,7 @@ DESC="李豆沙个人主页：https://space.bilibili.com/1703797642
   --desc "$DESC" --submit app 2>&1 | tee /tmp/last_upload.log
 rc=${PIPESTATUS[0]}
 echo "rc=$rc"
-grep -oE "bvid: String\(\"BV[A-Za-z0-9]+\"\)" /tmp/last_upload.log | grep -oE "BV[A-Za-z0-9]+" | head -1 | sed "s/^/BVID=/"
+# biliup's ResponseData debug print varies by version: `bvid: String("BV..")`
+# vs `"bvid": String("BV..")` (2026-07-10 APP submit) — match both.
+grep -oE "\"?bvid\"?: String\(\"BV[A-Za-z0-9]+\"\)" /tmp/last_upload.log | grep -oE "BV[A-Za-z0-9]+" | head -1 | sed "s/^/BVID=/"
 exit $rc

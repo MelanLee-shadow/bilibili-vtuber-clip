@@ -156,6 +156,11 @@ CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file
 # command per docs/spark/2026-06-30-future-live-e2e-runbook.md.  The selector
 # does NOT run it through a shell, so the api-base must be substituted here
 # (the key stays off the command line via --api-key-env).
+# 2026-07-10 (Ivan): the judge moved to gpt-5.6-luna on the /responses route
+# (structured verdict = the doc-exact luna lane; gpt-5.x misroute on chat).
+# max-tokens 16000 keeps headroom for reasoning burn; --retries 3 absorbs the
+# upstream empty-completion quirk.  Judge failure stays fail-closed (BLOCK,
+# advisory-only for delivery since the 2026-07-10 song contract).
 
 
 def cpa_qa_cmd() -> str:
@@ -170,7 +175,8 @@ def cpa_qa_cmd() -> str:
         raise RuntimeError(f"CPA_BASE_URL missing from environment and {CPA_ENV}")
     return (
         "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
-        f"--transport direct --model gpt-5.4-mini --api-base {base} --api-key-env CPA_API_KEY"
+        f"--transport direct --model gpt-5.6-luna --api-mode responses --reasoning-effort medium "
+        f"--max-tokens 16000 --retries 3 --api-base {base} --api-key-env CPA_API_KEY"
     )
 
 

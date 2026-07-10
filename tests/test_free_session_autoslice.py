@@ -896,3 +896,15 @@ def test_cpa_qa_cmd_reads_cpa_env_for_direct_produce_song_entrypoint(tmp_path, m
 
     assert "--api-base https://cpa.example.test/v1" in command
     assert "not-used-in-argv" not in command
+
+
+def test_cpa_qa_cmd_routes_judge_to_luna_responses(monkeypatch):
+    """2026-07-10: the semantic-QA judge lane runs gpt-5.6-luna on /responses
+    (structured verdict = the doc-exact luna lane; gpt-5.x misroute on chat)."""
+    monkeypatch.setattr(runner, "load_env_file", lambda _p: {"CPA_BASE_URL": "https://cpa.test/v1"})
+    cmd = runner.cpa_qa_cmd()
+    assert "--model gpt-5.6-luna" in cmd
+    assert "--api-mode responses" in cmd
+    assert "--max-tokens 16000" in cmd
+    assert "--retries 3" in cmd
+    assert "--api-base https://cpa.test/v1" in cmd

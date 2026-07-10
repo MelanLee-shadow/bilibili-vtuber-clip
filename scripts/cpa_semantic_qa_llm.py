@@ -233,6 +233,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-base", help="OpenAI-compatible base URL, e.g. https://api.groq.com/openai/v1")
     parser.add_argument("--api-key-env", default="CPA_API_KEY")
     parser.add_argument("--llm-command", help="Command template with {prompt_file} {completion_file} for command transport.")
+    parser.add_argument(
+        "--api-mode",
+        choices=("chat", "responses"),
+        default="chat",
+        help="direct transport endpoint: chat=/chat/completions (legacy, gpt-5.4-mini class); responses=/responses (gpt-5.x reasoning models misroute on chat — 2026-07-10).",
+    )
+    parser.add_argument("--reasoning-effort", default="medium", help="responses mode reasoning effort.")
+    parser.add_argument("--max-tokens", type=int, default=1024, help="completion budget; responses-mode reasoning models need headroom (16000 recommended).")
     parser.add_argument("--retries", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
     args = parser.parse_args(argv)
@@ -244,6 +252,9 @@ def main(argv: list[str] | None = None) -> int:
         api_key_env=args.api_key_env,
         command_template=args.llm_command,
         timeout_seconds=args.timeout_seconds,
+        api_mode=args.api_mode,
+        reasoning_effort=args.reasoning_effort,
+        max_tokens=args.max_tokens,
     )
     try:
         llm_call = build_llm_call(config)
