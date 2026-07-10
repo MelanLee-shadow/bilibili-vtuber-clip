@@ -90,6 +90,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
+from src.autoslice.song_repair import live_performance_failure_reason_codes, validate_live_performance_observation
+
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 ROOM = os.environ.get("AUTOSLICE_ROOM", "22966160")
 REC_ROOT = Path(
@@ -101,6 +104,22 @@ REC_ROOT = Path(
 BLREC_PORT = int(os.environ.get("AUTOSLICE_BLREC_PORT", "22333"))
 BILIVE_ENV = Path("/opt/bilive/.env")
 CPA_ENV = BASE / "cpa.env"
+HOST_VOCAL_PYTHON = Path(os.environ.get("AUTOSLICE_HOST_VOCAL_PYTHON", str(BASE / "venv-diar/bin/python")))
+HOST_VOCAL_PROFILE = Path(
+    os.environ.get(
+        "AUTOSLICE_HOST_VOCAL_PROFILE",
+        str(REPO_ROOT / "assets/lidousha/voiceprint_profile.v1.json"),
+    )
+)
+HOST_VOCAL_REFERENCE_DIR = Path(
+    os.environ.get("AUTOSLICE_HOST_VOCAL_REFERENCE_DIR", str(BASE / "voiceprints/lidousha"))
+)
+HOST_VOCAL_MODEL_DIR = Path(
+    os.environ.get(
+        "AUTOSLICE_HOST_VOCAL_MODEL_DIR",
+        str(BASE / "models/campp"),
+    )
+)
 MAX_TALK_PICKS = 5
 MAX_SONGS_PER_DATE = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
@@ -718,15 +737,37 @@ def song_delivery_ok(
     delivered.  Everything else the semantic judge flags (closure, viewer
     context, boundary style, AUTO_UPLOAD/BLOCK itself) is reviewer REFERENCE,
     not a delivery gate."""
+    # A bare bool was the pre-host-vocal compatibility shortcut.  It can carry
+    # no hash-bound performer identity and is therefore no longer acceptable.
+    reasons = {str(code) for code in (reason_codes or [])}
+    proof_path = completion_evidence.get("host_vocal_proof_path") if isinstance(completion_evidence, dict) else None
+    proof_sha256 = completion_evidence.get("host_vocal_proof_sha256") if isinstance(completion_evidence, dict) else None
     proof_ready = (
-        completion_evidence is True
-        or (isinstance(completion_evidence, dict) and completion_evidence.get("ready") is True)
+        isinstance(completion_evidence, dict)
+        and completion_evidence.get("ready") is True
+        and completion_evidence.get("host_vocal_status") == "READY"
+        and completion_evidence.get("host_vocal_decision") == "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
+        and completion_evidence.get("live_performance_status") == "READY"
+        and completion_evidence.get("live_performance_mode") == "LIVE_STREAMER_SINGING"
+        and completion_evidence.get("joint_singing_decision") == "VERIFIED_LIDOUSHA_SINGING"
+        and isinstance(proof_path, str)
+        and isinstance(proof_sha256, str)
+        and _matches_sha256(Path(proof_path), proof_sha256)
+    )
+    identity_failure = (
+        "SONG_NOT_LIDOUSHA_SINGING" in reasons
+        or "SONG_BACKGROUND_PLAYBACK_ONLY" in reasons
+        or "SONG_LIVE_PERFORMANCE_UNPROVEN" in reasons
+        or any(
+        code.startswith("SONG_HOST_VOCAL_") and code != "SONG_HOST_VOCAL_VERIFIED" for code in reasons
+        )
     )
     return (
         selector_rc == 0
         and bool(is_song)
         and proof_ready
-        and "SONG_PARTIAL" not in (reason_codes or [])
+        and "SONG_PARTIAL" not in reasons
+        and not identity_failure
     )
 
 
@@ -825,6 +866,10 @@ def song_completion_evidence(record: dict) -> dict:
     merely because an earlier selector process happened to leave it on disk.
     """
     failures: list[str] = []
+    live_performance_status: str | None = None
+    live_performance_mode: str | None = None
+    live_performance_confidence: float | None = None
+    live_performance_semantic_ready = False
 
     def is_int(value) -> bool:
         return isinstance(value, int) and not isinstance(value, bool)
@@ -950,7 +995,21 @@ def song_completion_evidence(record: dict) -> dict:
         if is_audio_report != is_audio_model:
             failures.append("SONG_ALIGNMENT_EVIDENCE_TYPE_MISMATCH")
 
+        if not is_audio_report:
+            failures.append("SONG_LIVE_PERFORMANCE_UNPROVEN")
+
         if is_audio_report:
+            live_performance = report.get("live_performance")
+            performance_error = validate_live_performance_observation(
+                live_performance,
+                first_lyric_start_ms=report.get("first_lyric_start_ms") if is_int(report.get("first_lyric_start_ms")) else -1,
+                last_lyric_end_ms=report.get("last_lyric_end_ms") if is_int(report.get("last_lyric_end_ms")) else -1,
+                require_ready=True,
+            )
+            if performance_error is not None:
+                failures.extend(live_performance_failure_reason_codes(live_performance))
+            else:
+                live_performance_semantic_ready = True
             if (
                 report.get("audio_alignment_provider") != "agy"
                 or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
@@ -1016,7 +1075,7 @@ def song_completion_evidence(record: dict) -> dict:
                 raw_rows = raw_observation.get("observations") if isinstance(raw_observation, dict) else None
                 if (
                     not isinstance(raw_observation, dict)
-                    or raw_observation.get("schema_version") != "agy-audio-lrc-observation.v1"
+                    or raw_observation.get("schema_version") != "agy-audio-lrc-observation.v2"
                     or not isinstance(raw_record, dict)
                     or raw_record.get("candidate_id") != record.get("candidate_id")
                     or raw_record.get("source_sha256") != audio_artifacts.get("source_sha256")
@@ -1025,6 +1084,8 @@ def song_completion_evidence(record: dict) -> dict:
                     or not isinstance(raw_rows, list)
                 ):
                     failures.append("SONG_AUDIO_LRC_RAW_OBSERVATION_INVALID")
+                elif raw_observation.get("live_performance") != report.get("live_performance"):
+                    failures.append("SONG_LIVE_PERFORMANCE_BINDING_INVALID")
             if isinstance(report_alignment, list) and isinstance(lyric_lines, list):
                 ids: list[str] = []
                 starts: list[int] = []
@@ -1089,6 +1150,62 @@ def song_completion_evidence(record: dict) -> dict:
                     if not raw_rows_match:
                         failures.append("SONG_AUDIO_LRC_RAW_REPORT_MISMATCH")
 
+            # A schema-valid dict is not a READY proof until every bound AGY
+            # artifact, manifest, raw-v2 row, and report projection above has
+            # survived validation.  Keep state evidence non-contradictory.
+            if live_performance_semantic_ready and not failures and isinstance(live_performance, dict):
+                live_performance_status = "READY"
+                live_performance_mode = str(live_performance.get("mode"))
+                live_performance_confidence = float(live_performance.get("confidence"))
+
+    host_vocal_claim = job.get("host_vocal_proof")
+    host_vocal_status = host_vocal_claim.get("status") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_decision = host_vocal_claim.get("decision") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_proof_path = host_vocal_claim.get("proof_path") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_proof_sha = host_vocal_claim.get("proof_sha256") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_verified = False
+    if not isinstance(host_vocal_claim, dict):
+        failures.append("SONG_HOST_VOCAL_UNPROVEN")
+    elif not isinstance(host_vocal_proof_path, str) or not isinstance(host_vocal_proof_sha, str):
+        reason = host_vocal_claim.get("reason_code")
+        failures.append(
+            reason
+            if reason in {"SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE", "SONG_HOST_VOCAL_UNPROVEN"}
+            else "SONG_HOST_VOCAL_UNPROVEN"
+        )
+    elif not _matches_sha256(Path(host_vocal_proof_path), host_vocal_proof_sha):
+        failures.append("SONG_HOST_VOCAL_PROOF_INVALID")
+    else:
+        try:
+            host_proof = json.loads(Path(host_vocal_proof_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            host_proof = None
+        source_binding = host_proof.get("source_media") if isinstance(host_proof, dict) else None
+        source_value = host_vocal_claim.get("source_media_path")
+        if not isinstance(source_value, str) and isinstance(source_binding, dict):
+            source_value = source_binding.get("path")
+        alignment_value = alignment.get("alignment_report_path") if alignment else None
+        if not isinstance(source_value, str) or not isinstance(alignment_value, str):
+            failures.append("SONG_HOST_VOCAL_PROOF_INVALID")
+        else:
+            host_error = verify_host_vocal_proof_claim(
+                host_vocal_claim,
+                str(record.get("candidate_id") or ""),
+                Path(source_value),
+                Path(alignment_value),
+                HOST_VOCAL_PROFILE,
+            )
+            if host_error is not None:
+                failures.append("SONG_HOST_VOCAL_PROOF_INVALID")
+            elif host_vocal_status != "READY" or host_vocal_decision != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS":
+                failures.append(
+                    "SONG_NOT_LIDOUSHA_SINGING"
+                    if host_vocal_status == "BLOCKED" and host_vocal_decision == "NO_LIDOUSHA_VOCAL_DETECTED"
+                    else "SONG_HOST_VOCAL_UNPROVEN"
+                )
+            else:
+                host_vocal_verified = True
+
     recut = record.get("materialized_recut")
     if not isinstance(recut, dict) or recut.get("status") != "MATERIALIZED":
         recut = {}
@@ -1141,12 +1258,27 @@ def song_completion_evidence(record: dict) -> dict:
         if not isinstance(burned_sha, str) or not _matches_sha256(Path(str(burned["path"])), burned_sha):
             failures.append("SONG_BURNED_PREVIEW_HASH_INVALID")
 
+    joint_singing_decision = (
+        "VERIFIED_LIDOUSHA_SINGING"
+        if live_performance_status == "READY"
+        and live_performance_mode == "LIVE_STREAMER_SINGING"
+        and host_vocal_verified
+        else None
+    )
     failures = list(dict.fromkeys(failures))
     return {
         "ready": not failures,
         "reason_codes": failures,
         "song_boundary_status": boundary.get("status") if isinstance(boundary, dict) else None,
         "lyrics_alignment_status": alignment.get("status") if alignment else None,
+        "host_vocal_status": host_vocal_status,
+        "host_vocal_decision": host_vocal_decision,
+        "host_vocal_proof_path": host_vocal_proof_path,
+        "host_vocal_proof_sha256": host_vocal_proof_sha,
+        "live_performance_status": live_performance_status,
+        "live_performance_mode": live_performance_mode,
+        "live_performance_confidence": live_performance_confidence,
+        "joint_singing_decision": joint_singing_decision,
         "lyrics_provider": alignment.get("provider") if alignment else None,
         "external_lrc": (alignment.get("external_lrc") or alignment.get("source")) if alignment else None,
         "alignment_report_path": alignment.get("alignment_report_path") if alignment else None,
@@ -1238,6 +1370,10 @@ def produce_song(date: str, item: dict) -> dict:
                  "--title-llm-command", CPA_CMD_TITLE,
                  "--cover-art-direction-llm-command", CPA_CMD_STRUCTURED,
                  "--lrc-provider", "auto", "--burn-preview", "--publish-staging",
+                 "--host-vocal-python", str(HOST_VOCAL_PYTHON),
+                 "--host-vocal-reference-profile", str(HOST_VOCAL_PROFILE),
+                 "--host-vocal-reference-dir", str(HOST_VOCAL_REFERENCE_DIR),
+                 "--host-vocal-model-dir", str(HOST_VOCAL_MODEL_DIR),
             ]
             known_song_query = str(item.get("preview") or "").strip()
             # Search the quoted song title first.  Passing the entire prose
@@ -1349,6 +1485,14 @@ def produce_song(date: str, item: dict) -> dict:
                     delivered_alignment = delivery / f"{name}.lyrics-alignment-report.json"
                     shutil.copy2(alignment_path, delivered_alignment)
                     delivered_sidecars["lyrics_alignment_report"] = str(delivered_alignment)
+            host_proof_path = completion.get("host_vocal_proof_path")
+            host_proof_sha = completion.get("host_vocal_proof_sha256")
+            if isinstance(host_proof_path, str) and isinstance(host_proof_sha, str):
+                host_path = Path(host_proof_path)
+                if _matches_sha256(host_path, host_proof_sha):
+                    delivered_host_proof = delivery / f"{name}.host-vocal-proof.json"
+                    shutil.copy2(host_path, delivered_host_proof)
+                    delivered_sidecars["host_vocal_proof"] = str(delivered_host_proof)
             recut_manifest = Path(artifacts["recut_manifest_path"]) if artifacts.get("recut_manifest_path") else None
             if recut_manifest is not None and recut_manifest.is_file():
                 delivered_manifest = delivery / f"{name}.recut.manifest.json"
@@ -1541,7 +1685,7 @@ def write_reports(date: str, state: dict) -> None:
             f"| {s.get('boundary_verdict') or '?'} "
             f"| {pick.get('cover_status') or s.get('cover_status') or '?'} |"
         )
-    lines += ["", f"## 歌切（至多 {MAX_SONGS_PER_DATE} 个、按弹幕量排序；没唱完整的歌不切(SONG_PARTIAL 不交付)；语义判定仅作参考不拦交付；被拦不占配额、备份自动回填）", ""]
+    lines += ["", f"## 歌切（至多 {MAX_SONGS_PER_DATE} 个、按弹幕量排序；仅李豆沙本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）", ""]
     if songs:
         lines += ["| 歌 | 弹幕 | 门判定 | 原因码 | 标题 | 交付 |", "|---|---|---|---|---|---|"]
         for song in songs:

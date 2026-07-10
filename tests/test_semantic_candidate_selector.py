@@ -40,6 +40,8 @@ def test_prompt_is_viewer_perspective_and_lists_all_cues():
     assert "观众视角" in prompt
     assert "弹幕" in prompt
     assert "context_trigger_cue" in prompt
+    assert "只播放原唱" in prompt
+    assert "背景音乐都不是歌切" in prompt
     assert "#1 " in prompt and "#5 " in prompt
     assert "第5句话" in prompt
 

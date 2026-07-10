@@ -7,6 +7,19 @@ description: Rebuild accurate song lyric subtitles from an external timed lyric 
 
 ## Core Rule
 
+Before treating aligned lyrics as a song clip, materializing a recut, or doing
+cover/package work, prove the clip contains **李豆沙本人现场演唱**. LRC
+discovery and alignment may run first because the proof consumes actual aligned
+lyric cues, but those steps must not set `song_complete` or create delivery.
+An LRC match proves only that a song recording is audible; studio vocals,
+ending-card music, game/video BGM, and a played original track are not song
+clips. Production requires two independent, hash-bound subclaims on the same
+source/LRC evidence: AGY v2 must classify a continuous live streamer
+performance, and CAM++ must find Li Dousha vocal identity on the selected lyric
+checkpoints. Only their AND result is `VERIFIED_LIDOUSHA_SINGING`. Missing,
+unavailable, uncertain, other-singer, speech-over-music, or playback-only
+evidence fails closed.
+
 For song clips, do not invent a lyric timeline from ASR, visual rhythm, or only the clip opening. The preferred source of truth is an external timed lyric timeline for the original song, then a clip-local alignment:
 
 ```text
@@ -26,7 +39,7 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
 2. Search for an external timed lyric source.
    - Prefer official captions, official/verified LRC, music-platform synced lyrics, or a trusted lyric site with explicit timestamps.
    - Use web search when local sources do not contain a credible timed lyric file.
-   - Search the clean song title first, including the original Japanese title/kana when available. Do not make a garbled singing-ASR transcript the only query. In the unattended runner, `--lrc-provider auto` queries both NetEase and LRCLIB, groups provider variants by normalized title+artist or identical full-LRC fingerprint, and prefers the canonical LRCLIB record when the identity is otherwise the same.
+   - Search the clean song title first, including the original Japanese title/kana when available. Google or another public-web search is appropriate for manual discovery; do not make a garbled singing-ASR transcript the only query. In the unattended runner, `--lrc-provider auto` queries both NetEase and LRCLIB, groups provider variants by normalized title+artist or identical full-LRC fingerprint, and prefers the canonical LRCLIB record when the identity is otherwise the same. Japanese language or sparse/garbled singing ASR is not itself a terminal failure.
    - Save the source URL/path and the exact first and last lyric timestamps in evidence.
    - If only plain lyrics exist, do not claim exact timing. Use them only as text and manually align from audio.
 
@@ -66,12 +79,17 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
    - If ASS was generated for burn preview, sync that too.
 
 8. Auto-slice integration contract (implemented in `src/autoslice/full_session_candidate_selector.py` and `scripts/run_auto_review_shadow_pipeline.py`).
+   - `kind=song` means 李豆沙 herself is audibly singing. Merely hearing the canonical recording, a stream outro/ending card, game/video audio, or background music is never sufficient. Recall prompts should exclude those cases, but recall remains advisory; the final machine gate is authoritative.
    - Full-session selectors must emit song-like windows as song anchors (`content_type_hint=song`, `requires_full_source_song_boundary_redo=true`) instead of filtering them out as noise.
    - When `scripts/free_session_autoslice.py` has already placed an item in the song lane, that upstream anchor is carried into every tight/core/full selector attempt with `--seed-song-candidate-id` plus clip-local `--seed-song-anchor-start-ms` / `--seed-song-anchor-end-ms`. Do not ask a nondeterministic semantic-recall pass to rediscover whether sparse or garbled Japanese ASR is a song. Only the expanded full-source retry may add `--agy-audio-lrc-align`; seeding preserves recall but never proves completeness.
    - If ordinary lyric-to-ASR alignment is below threshold, audio escalation is allowed only after the candidates resolve to one sufficiently supported canonical song identity. Different-provider rows with the same normalized title+artist or the same complete LRC fingerprint count as one identity; ambiguous or weakly supported different songs must fail closed rather than being forced onto the audio.
-   - The audio fallback must inspect the current full proof window and canonical LRC in a sandboxed `agy` `Gemini 3.5 Flash (High)` run. Code, not the model, mints proof: source/LRC/prompt/raw-output/run-manifest hashes must bind; every canonical line must be affirmatively heard with confidence at least 0.8; starts must be strictly monotonic with at most 250 ms adjacent overlap; one global shift must explain every line within ±1500 ms; tempo drift needs separate stretch proof; and first line/chorus/repeated section/longest instrumental gap/tail plus post-song talk must be checked. When an exact lyric repeats, the repeated-section spot must bind a later audible recurrence, not the first occurrence. A malformed, mismatching, incomplete, or fallback-model observation remains blocked.
+   - The audio fallback must inspect the current full proof window and canonical LRC in a sandboxed `agy` `Gemini 3.5 Flash (High)` run. Code, not the model, mints lyric-alignment proof: source/LRC/prompt/raw-output/run-manifest hashes must bind; every canonical line must be affirmatively heard with confidence at least 0.8; starts must be strictly monotonic with at most 250 ms adjacent overlap; one global shift must explain every line within ±1500 ms; tempo drift needs separate stretch proof; and first line/chorus/repeated section/longest instrumental gap/tail plus post-song talk must be checked. When an exact lyric repeats, the repeated-section spot must bind a later audible recurrence, not the first occurrence. A malformed, mismatching, incomplete, or fallback-model observation remains blocked.
+   - The same AGY v2 observation is a hard live-performance veto. It must report `mode=LIVE_STREAMER_SINGING`, confidence `>=0.85`, `continuous_singing=true`, `background_recording_likelihood<=0.20`, and exactly three specific evidence timestamps covering lyric head/middle/tail. `ORIGINAL_OR_BACKGROUND_PLAYBACK`, `OTHER_SINGER`, `STREAMER_TALKING_OVER_MUSIC`, `AMBIGUOUS`, or malformed evidence blocks even if all LRC lines align and CAM++ sees occasional Li Dousha speech.
    - A song/live-source job must carry `song_boundary` evidence with `status = FULL_SONG_READY`, full-source clip bounds (`clip_start_ms`, `clip_end_ms`), first/last lyric anchors, and the accepted evidence source such as external LRC + chunked `Gemini 3.5 Flash` + spectrogram/waveform.
    - The same job must carry `lyrics_alignment.status = READY` with provider/model/source metadata. Without this proof, song candidates remain BLOCK/DROP; do not silently pass partial songs.
+   - The same job must also carry a separately generated `host_vocal_proof`. First extract 4–8 seconds of post-song host speech and require its median against three hash-pinned Li Dousha enrollments to be `>=0.60`. Then select seven distinct, actually aligned lyric cues of at least 2.5 seconds, sample the central 2.5–4 seconds of each, and require both the three-enrollment median `>=0.31` and the same-session host-anchor score `>=0.31`. At least 5/7 checkpoints and at least one in each of head/middle/tail must pass. This subclaim is honestly named `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`; it does not by itself prove that the matching voice is singing rather than talking over music.
+   - The runner verifies source/alignment/profile/model/reference/session-anchor/checkpoint hash bindings and recomputes recorded score medians, thresholds, and bucket coverage. It does **not** rerun CAM++ inference, so do not describe this as an independent ML reclassification or formal identity proof.
+   - Only after AGY's live-performance subclaim and `host_vocal_proof.status=READY` / `decision=LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS` both pass may the runner mint the joint `VERIFIED_LIDOUSHA_SINGING` decision, set `foreground_song_overlap_seconds`, set `song_complete=true`, resolve a full-song recut boundary, apply the complete-song semantic waiver, or deliver a song artifact. Non-live performance mode, `NO_LIDOUSHA_VOCAL_DETECTED`, verifier outage, missing references/model, a missing/short post-song host anchor, or any hash drift remains BLOCK.
    - When the original candidate anchor starts in the middle of a song, auto-review must emit an `AUTO_RECUT` plan to the full-song range instead of treating the anchor range as final.
    - The generated package must include final SRT/ASS, alignment report, cover workflow metadata, and render/audit evidence before it can be considered complete. Package layout and `review_manifest.json.status` vocabulary follow `docs/workflows/lidousha-song-finished-package-workflow.md` §7 (`corrected_review_sample_passed_no_upload` / `invalid_review_draft*` / `blocked_*`).
    - Burn previews from the auto pipeline must use the 李豆沙 sapphire ASS style (`*.final-sapphire72.ass`, `subtitle_style=lidousha-final-sapphire72`), not direct SRT/default `force_style` rendering. The sapphire72 header is the 1080p variant (PlayRes 1920x1080, margins 60,60,40, Shadow 2, BackColour `&H70000000`), and ASS event times are rounded to centiseconds, not floored.
@@ -95,6 +113,7 @@ For the unattended auto-slice pipeline, a song candidate is only a recall anchor
 - Do not fix only the first line and leave the rest on an ASR/interpolated timeline.
 - Do not use local ASR as lyric timing truth for singing. Singing with BGM often breaks speech ASR coverage and drift.
 - Do not interpret a failed Japanese singing-ASR transcript as proof that no timed lyrics exist, but also do not interpret a search hit as proof that the returned LRC is the performed song. Preserve the song anchor, establish a unique lyric identity, then require current-audio proof.
+- Do not interpret perfect LRC alignment as proof that 李豆沙 is singing. The 2026-07-09《芽吹くとき》false positive had 25/25 lines at confidence 0.95 because the original recording played under a static goodbye card; it is a negative golden case, not an accepted song clip.
 - Do not stretch the whole song because one middle cue feels late. Verify first and last lyric anchors first.
 - Do not let a line remain visible across a long instrumental gap.
 - Do not burn a final video from default SRT styling. SRT is timing/text; burn style must come from the approved ASS style.

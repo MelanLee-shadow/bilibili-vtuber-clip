@@ -22,7 +22,8 @@ container:/app/Videos                      # 原始录播输入
 原始录播 + 粗字幕 + 弹幕
 → 高召回内容锚点
 → 扩展源上下文
-→ agy 精听 source-context
+→ 外部同步 LRC + agy 当前音频对齐/现场演唱观察
+→ CAM++ 李豆沙主播声纹子门
 → 自动 evidence / boundary resolver
 → AUTO_RECUT / DROP / BLOCK / RETRY（语义结果只作证据，不替代歌曲正证据）
 → no-upload review 成片 + QA + hash gate
@@ -37,7 +38,8 @@ container:/app/Videos                      # 原始录播输入
 - `.jingting.done` 不等于 release-ready。
 - 没有 `AUTO_UPLOAD` manifest 和 artifact hash gate 就不能发布。
 - 无人值守意味着自动隔离/重试/丢弃/放行，不意味着把坏片自动发出去。
-- 日语/稀疏 ASR 歌曲会保留 seed song anchor，并在扩大后的 full window 上用唯一 canonical LRC + 当前音频证明；找不到唯一可靠 LRC、音频证据不完整或 hash 不一致时仍 fail-closed，不承诺所有日语歌都自动成功。
+- 日语/稀疏 ASR 歌曲会保留 seed song anchor；可用日文原名/kana 做 Google/公开网页检索，自动路径的 `--lrc-provider auto` 会查 NetEase + LRCLIB，再在扩大后的 full window 上用唯一 canonical LRC + 当前音频证明。日语或歌唱 ASR 乱码本身不再是失败理由；找不到唯一可靠同步 LRC、版本不符或后续现场/身份证据不足时仍 fail closed。
+- “歌切”只指李豆沙本人现场演唱。原唱播放、片尾/下播卡音乐、游戏/视频 BGM 不得切。交付必须同时通过：① AGY v2 现场演唱硬否决（`LIVE_STREAMER_SINGING`、confidence `>=0.85`、连续演唱、录音背景概率 `<=0.20`、头/中/尾证据）；② hash-bound CAM++ `host_vocal_proof` 证明同一些歌词点上存在李豆沙声纹。只有两者 AND 才产生 `VERIFIED_LIDOUSHA_SINGING`；单独 LRC、AGY 或声纹命中都不算。
 
 ## 文档入口
 
@@ -60,7 +62,8 @@ container:/app/Videos                      # 原始录播输入
 - `scripts/lidousha_slice_monitor.py`：本地监控 `free` 上 bilive 运行状态。
 - `scripts/free_session_autoslice.py`：`free` 上 cron 每 10 分钟调用的 post-stream autoslice runner。
 - `src/autoslice/song_repair.py`：canonical LRC 搜索、稀疏 ASR 音频证明与 fail-closed 校验。
-- `src/autoslice/agy_lrc_alignment.py`：当前 full window 音频对同步歌词逐行观察的隔离执行器。
+- `src/autoslice/agy_lrc_alignment.py`：当前 full window 音频对同步歌词逐行观察，并输出 AGY v2 现场/背景播放分类证据。
+- `src/autoslice/host_vocal_proof.py`：生成 CAM++ 七个歌词点的李豆沙声纹子证明，并由 runner 复核 hash 绑定、分数中位数和门槛；复核器不重跑 ML 推理。
 
 ## 本地验证
 

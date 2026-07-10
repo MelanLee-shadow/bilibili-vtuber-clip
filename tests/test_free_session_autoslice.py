@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 
 import scripts.free_session_autoslice as runner
+from tests.host_vocal_test_support import bind_ready_live_performance_report, make_ready_host_vocal_claim
 from scripts.free_session_autoslice import (
     COVER_REPAIR_MAX_ATTEMPTS,
     MAX_SONGS_PER_DATE,
@@ -290,18 +291,33 @@ def test_song_delivery_artifacts_video_survives_unsatisfied_cover_gate():
     assert runner.song_delivery_artifacts({}) == {}
 
 
-def test_song_delivery_rule_final_requires_positive_completion_proof():
+def test_song_delivery_rule_final_requires_positive_completion_proof(tmp_path):
     """Ivan 2026-07-10 最终规则：至多2个按弹幕排序（prioritize/refill 管）；
     是歌+唱完整就交付；语义判定只是参考。没唱完整(SONG_PARTIAL)不强行切。"""
     semantic_noise = ["END_BOUNDARY_LOW", "CPA_SEMANTIC_INCOMPLETE",
                       "VIEWER_CONTEXT_INCOMPLETE", "ADVISORY_NO_NATURAL_CLOSURE"]
-    proof = {"ready": True}
+    proof_path = tmp_path / "host-vocal-proof.json"
+    proof_path.write_text("{}", encoding="utf-8")
+    proof = {
+        "ready": True,
+        "host_vocal_status": "READY",
+        "host_vocal_decision": "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
+        "live_performance_status": "READY",
+        "live_performance_mode": "LIVE_STREAMER_SINGING",
+        "joint_singing_decision": "VERIFIED_LIDOUSHA_SINGING",
+        "host_vocal_proof_path": str(proof_path),
+        "host_vocal_proof_sha256": hashlib.sha256(proof_path.read_bytes()).hexdigest(),
+    }
     assert runner.song_delivery_ok(0, True, semantic_noise, proof) is True   # 语义码不拦
-    assert runner.song_delivery_ok(0, True, [], True) is True
+    assert runner.song_delivery_ok(0, True, [], True) is False  # bool cannot carry performer/hash proof
     assert runner.song_delivery_ok(0, True, semantic_noise + ["SONG_PARTIAL"], proof) is False  # 没唱完整不切
     assert runner.song_delivery_ok(0, False, [], proof) is False             # 不是歌不切
     assert runner.song_delivery_ok(0, True, None, None) is False             # 没有正向证据必须失败关闭
     assert runner.song_delivery_ok(1, True, [], proof) is False               # 当前 selector 失败不得交付
+    assert runner.song_delivery_ok(0, True, ["SONG_NOT_LIDOUSHA_SINGING"], proof) is False
+    assert runner.song_delivery_ok(0, True, ["SONG_HOST_VOCAL_PROOF_INVALID"], proof) is False
+    proof["host_vocal_status"] = "BLOCKED"
+    assert runner.song_delivery_ok(0, True, [], proof) is False
 
 
 def test_failed_song_selector_cannot_reuse_stale_summary_or_deliver(tmp_path, monkeypatch):
@@ -509,7 +525,7 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
     ]
 
 
-def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path):
+def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path, monkeypatch):
     report = tmp_path / "song.lyrics-alignment-report.json"
     report_payload = {
         "schema_version": "lyrics-alignment-report.v1",
@@ -521,14 +537,24 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
         "offset_ms": 1_500,
         "nominal_lrc_zero_ms": 1_500,
         "first_lyric_start_ms": 1_500,
-        "last_lyric_end_ms": 8_500,
+        "last_lyric_end_ms": 32_500,
         "line_count": 8,
         "matched_line_count": 8,
         "matched_line_ratio": 1.0,
-        "lyric_lines": [{"lrc_time_ms": index * 1_000, "text": f"歌词{index}"} for index in range(8)],
-        "alignment": [{"lrc_time_ms": index * 1_000, "matched_cue_id": f"cue-{index}"} for index in range(8)],
+        "lyric_lines": [{"lrc_time_ms": index * 4_000, "text": f"歌词{index}"} for index in range(8)],
+        "alignment": [{"lrc_time_ms": index * 4_000, "matched_cue_id": f"cue-{index}"} for index in range(8)],
     }
     report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    source = tmp_path / "song.source.mp4"
+    source.write_bytes(b"source-video")
+    bind_ready_live_performance_report(report, source_media=source, candidate_id="song-proof")
+    host_vocal_claim, host_vocal_profile = make_ready_host_vocal_claim(
+        tmp_path / "host-vocal",
+        source_media=source,
+        alignment_report=report,
+        candidate_id="song-proof",
+    )
+    monkeypatch.setattr(runner, "HOST_VOCAL_PROFILE", host_vocal_profile)
     report_sha = hashlib.sha256(report.read_bytes()).hexdigest()
     subtitle = tmp_path / "song.srt"
     subtitle.write_text("1\n00:00:01,500 --> 00:00:02,500\n歌词0\n", encoding="utf-8")
@@ -545,13 +571,13 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
                 "clip_start_ms": 0,
                 "nominal_lrc_zero_ms": 1_500,
                 "first_lyric_start_ms": 1_500,
-                "last_lyric_end_ms": 8_500,
-                "clip_end_ms": 9_500,
+                "last_lyric_end_ms": 32_500,
+                "clip_end_ms": 33_500,
             },
             "lyrics_alignment": {
                 "status": "READY",
                 "provider": "lrclib",
-                "model": "lrclib-lrc-global-shift-align-v2",
+                "model": "lrclib-agy-audio-lrc-global-shift-v1",
                 "source": "song_repair.lrclib",
                 "external_lrc": "https://lrclib.net/api/get/33542202",
                 "offset_ms": 1_500,
@@ -560,12 +586,13 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
                 "alignment_report_path": str(report),
                 "alignment_report_sha256": report_sha,
             },
+            "host_vocal_proof": host_vocal_claim,
         },
         "materialized_recut": {
             "status": "MATERIALIZED",
             "reason_codes": [],
             "start_ms": 0,
-            "end_ms": 9_500,
+            "end_ms": 33_500,
             "subtitle_source": "external_lrc_global_shift",
             "accurate_rerender_used": True,
             "render_qa": {
@@ -591,14 +618,29 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     assert evidence["ready"] is True
     assert evidence["reason_codes"] == []
 
+    # Regression for the 2026-07-09 《芽吹くとき》 false positive: even a
+    # perfect 8/8 LRC/global-shift proof cannot stand in for 李豆沙 singing.
+    saved_host_claim = record["source_context_job"].pop("host_vocal_proof")
+    evidence = runner.song_completion_evidence(record)
+    assert evidence["ready"] is False
+    assert "SONG_HOST_VOCAL_UNPROVEN" in evidence["reason_codes"]
+    record["source_context_job"]["host_vocal_proof"] = saved_host_claim
+
     # The model name and report evidence type are a two-way binding.  Removing
     # evidence_source from an audio report must not downgrade it to the looser
     # legacy-text proof gate.
-    record["source_context_job"]["lyrics_alignment"]["model"] = "lrclib-agy-audio-lrc-global-shift-v1"
+    ready_report_payload = json.loads(report.read_text(encoding="utf-8"))
+    missing_type_payload = dict(ready_report_payload)
+    missing_type_payload.pop("evidence_source", None)
+    report.write_text(json.dumps(missing_type_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
     evidence = runner.song_completion_evidence(record)
     assert evidence["ready"] is False
     assert "SONG_ALIGNMENT_EVIDENCE_TYPE_MISMATCH" in evidence["reason_codes"]
-    record["source_context_job"]["lyrics_alignment"]["model"] = "lrclib-lrc-global-shift-align-v2"
+    assert evidence["live_performance_status"] is None
+    assert evidence["joint_singing_decision"] is None
+    report.write_text(json.dumps(ready_report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
 
     # An audio-derived report cannot rely on its own hash alone: the final
     # runner edge also requires the current audio/LRC/prompt/raw-output/run
@@ -609,6 +651,8 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     evidence = runner.song_completion_evidence(record)
     assert evidence["ready"] is False
     assert "SONG_AUDIO_LRC_ARTIFACTS_INVALID" in evidence["reason_codes"]
+    assert evidence["live_performance_status"] is None
+    assert evidence["joint_singing_decision"] is None
     report_payload.pop("evidence_source")
     report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
     record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()

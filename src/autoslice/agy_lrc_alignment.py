@@ -83,7 +83,7 @@ in that case set `heard` false and both times null.  Never invent a timestamp.
 Write relative `alignment.json` as JSON only, with exactly these keys:
 
 {{
-  "schema_version": "agy-audio-lrc-observation.v1",
+  "schema_version": "agy-audio-lrc-observation.v2",
   "record": {{
     "attempt_id": {json.dumps(attempt_id)},
     "candidate_id": {json.dumps(candidate_id, ensure_ascii=False)},
@@ -109,6 +109,18 @@ Write relative `alignment.json` as JSON only, with exactly these keys:
     {{"name":"longest_instrumental_gap","live_time_ms":1234,"result":"OK","notes":"audio evidence"}},
     {{"name":"tail","live_time_ms":1234,"result":"OK","notes":"audio evidence"}}
   ],
+  "live_performance": {{
+    "mode": "LIVE_STREAMER_SINGING",
+    "confidence": 0.95,
+    "continuous_singing": true,
+    "background_recording_likelihood": 0.05,
+    "evidence": [
+      {{"time_ms": 1234, "observation": "specific audible/visible evidence near the song head"}},
+      {{"time_ms": 1234, "observation": "specific audible/visible evidence near the song middle"}},
+      {{"time_ms": 1234, "observation": "specific audible/visible evidence near the song tail"}}
+    ],
+    "notes": "short explanation"
+  }},
   "post_song_talk_start_ms": 1234
 }}
 
@@ -124,7 +136,19 @@ Requirements:
    to a later audible recurrence, not the first occurrence.
 4. `post_song_talk_start_ms` is the first surrounding speech after the song,
    or null if no post-song talk occurs in this window.
-5. Do not output a title, offset, verdict, recommended boundary, prose, or any
+5. `live_performance` is a separate anti-background-music observation. Matching
+   LRC lines does not prove a live performance. Classify `mode` as exactly one
+   of `LIVE_STREAMER_SINGING`, `ORIGINAL_OR_BACKGROUND_PLAYBACK`,
+   `OTHER_SINGER`, `STREAMER_TALKING_OVER_MUSIC`, or `AMBIGUOUS`.
+   `LIVE_STREAMER_SINGING` is allowed only when the primary streamer audibly
+   performs the supplied lyrics continuously across head, middle, and tail.
+   A mastered/studio vocal, original recording, ending-card track, game/video
+   BGM, another singer, or streamer speech over a playing song must use the
+   corresponding non-live mode (or `AMBIGUOUS`). Provide exactly three
+   evidence timestamps, one in each third of the observed lyric span. This is
+   performance-mode evidence only; code combines it with a separate pinned
+   Li-Dousha voiceprint gate for identity.
+6. Do not output a title, offset, verdict, recommended boundary, prose, or any
    other key. Code derives those independently and rejects malformed output.
 
 Allowed actions: view `prompt.md`, `input.mp4`, and `source.lrc`; write relative

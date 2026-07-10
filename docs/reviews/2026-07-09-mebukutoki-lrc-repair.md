@@ -1,8 +1,30 @@
 # 2026-07-09《芽吹くとき》LRC 假绿修复审查
 
+> **SUPERSEDED / REJECTED（2026-07-10）**：本文后半段的
+> `ACCEPTED_NO_UPLOAD` 只验了“歌曲录音与 LRC 完整对齐”，遗漏了
+> “李豆沙本人正在唱”这一产品前提。Ivan 已确认这段是下播画面播放的
+> 背景原曲，不是李豆沙演唱；因此该交付已移入 `_superseded`，最终结论
+> 改为 `BLOCK / SONG_BACKGROUND_PLAYBACK_ONLY`。旧 hash/LRC 记录仅保留为
+> 事故取证，不得作为正例或重新交付依据。
+>
+> 本文现记录的 AGY v2 + CAM++ 联合门是源码修复契约；在新 commit
+> 正式部署、fresh 重跑与 7/9 state/report 修复读回前，不得写成生产已验收。
+
+## 演唱者身份漏门的纠正
+
+- 根因：AGY/LRC 层只问每句歌词是否 audible；25/25 `heard=true` 当然也会被原唱录音满足。shadow 随后把 LRC 时长直接写成 `foreground_song_overlap_seconds` 并置 `song_complete=true`，runner 既没有“是否现场唱”硬否决，也没有主播声纹门。
+- 负例证据：整段是固定的 goodbye/end-card 画面；直播告别后开始播放歌曲，结束后主播才恢复说话。旧 `+17000ms` 全局位移只证明原曲播放完整。
+- 新联合硬门：
+  1. AGY v2 先作现场演唱否决：必须是 `LIVE_STREAMER_SINGING`、confidence `>=0.85`、`continuous_singing=true`、`background_recording_likelihood<=0.20`，且有严格覆盖歌词头/中/尾的三个具体观察。原唱/背景播放、其他歌手、音乐上说话或不确定一律 BLOCK。
+  2. `src/autoslice/host_vocal_proof.py` 再生成 CAM++ 身份子证明：4–8 秒 post-song 主播说话锚点对三份 pinned enroll 的中位数必须 `>=0.60`；七个互不相同的实际 LRC cue 每个至少 2.5 秒，取中央 2.5–4 秒，同时要求 enroll 中位数 `>=0.31` 且对同会话主播锚点 `>=0.31`；至少 5/7 且头/中/尾均覆盖。这一层只能声明 `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`。
+  3. 只有两者 AND 才可产生 `VERIFIED_LIDOUSHA_SINGING`。CAM++ 命中本身不是歌唱分类器，不能推翻 AGY 的背景播放/说话+BGM 否决。
+- 验证边界：runner 复核 source/alignment/profile/model/reference/session-anchor/checkpoint 的 hash 绑定，并重算已记录分数的中位数、门槛与分布；它不重跑 CAM++ 推理，不得宣传成第二个 ML 判定或形式化身份证明。
+- 语义修复：host proof 未通过时不得设置 foreground/song complete，不得套用 complete-song CPA waiver，不得出 full-song delivery；模型/声纹缺失或漂移一律 fail closed。
+- 无上传：该误判从未获得上传授权，也没有上传。
+
 ## 结论
 
-旧回填不能验收：歌曲身份错写成歌词句《ただそばにいて》，源窗漏首尾，且 selector 没有 LRC 对齐/完整边界证明，实际烧录来源是 `asr_cues`。修复已经以 commit `1e8818c1ed457273c38697b54d4cc6dd4e79e4a0` 部署，并在同一条 7/9 原始段的 v4 no-upload 重跑中通过歌曲身份、完整边界、LRC 字幕和精确重渲染验收。它是 `review_ready` 的 no-upload delivery，不是 `AUTO_UPLOAD` 或 publish-ready 结论。
+旧回填的 LRC/边界层确实被修复，但 v4 仍不能验收为歌切：它只通过了歌曲身份、完整边界、LRC 字幕和精确重渲染，没有通过演唱者身份。它现为 rejected negative golden，既不是 `review_ready`，也不是 `AUTO_UPLOAD` / publish-ready。
 
 ## 事故证据
 
@@ -48,25 +70,28 @@ SHA-256：
   2. 负 global offset 被截成 clip start 0，会给缺失器乐前奏的源发 `FULL_SONG_READY`。
   3. 外部 LRC 必须 sample-accurate 重渲染，但失败后仍曾保留 `MATERIALIZED`，hash 正确的 coarse copy 仍可能交付。
 - 防御：每次 selector 使用独占空 `attempt-*` 目录并要求当前 rc=0；nominal LRC zero 必须在源内且由 boundary/alignment/report/recut 全链一致绑定；外部 LRC 精确重渲染与 fresh render QA 必须都成功，否则 producer=`RETRY_INFRA` 且 runner 独立拒绝。
-- reviewer 用原复现方法复跑并检查最终 diff，结论：**无剩余 P0/P1**。聚焦回归 `135 passed`，全套 `367 passed`。
+- reviewer 用原复现方法复跑并检查当时的 LRC/边界 diff，结论：**当时这一层无剩余 P0/P1**。聚焦回归 `135 passed`，全套 `367 passed`。该结论早于本次演唱者事故，不能外推为联合演唱门已通过终审。
 
-## Live acceptance gate
+## Fresh live acceptance gate（联合门尚待部署/重跑）
 
 部署后只接受同一条新运行记录绑定的以下证据：
 
 1. `song_boundary.status == FULL_SONG_READY`，且 `clip_start <= nominal_lrc_zero <= first_lyric <= last_lyric <= clip_end`。
 2. `lyrics_alignment.status == READY`，provider/source/model/offset/report SHA 齐全。
-3. alignment report schema 为 `lyrics-alignment-report.v1`，25 条 LRC 时间轴单调非空，匹配率至少 55%，内容与 summary 互相一致。
-4. `materialized_recut.status == MATERIALIZED` 且 `subtitle_source == external_lrc_global_shift`；边界/nominal LRC zero/offset 与证明完全相等。
-5. `accurate_rerender_used == true`、没有 `FFMPEG_ACCURATE_RECUT_FAILED`，fresh render QA 必须 pass 且 `actual_cut_error_ms <= threshold_ms`。
-6. record-bound SRT 与 burned MP4 的 SHA-256 重算一致；交付 sidecar 正是这份 report/SRT/manifest。
-7. 实看首句、副歌、重复段、最长间奏、尾部五点；确认前奏保留、后续晚安说话不混入。
-8. 标题使用真实歌名并带直播语境；封面按项目 AI-cover 流程生成并同步标题文案。
-9. `upload_enabled=false`，不存在上传 manifest/上传进程。
+3. 同一 hash-bound AGY v2 raw/report 通过 `LIVE_STREAMER_SINGING`、confidence `>=0.85`、连续演唱、背景录音概率 `<=0.20` 与头/中/尾三点证据；任一非现场 mode 硬否决。
+4. `host_vocal_proof.status == READY` 且 `decision == LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`，post-song anchor 与七个 line-local checkpoint 满足 0.60 / 0.31 / 5-of-7 / 三桶覆盖，所有绑定与记录分数重算通过。
+5. runner 产生 `joint_singing_decision == VERIFIED_LIDOUSHA_SINGING`；不得用单独 AGY、CAM++ 或人工听感代写这个字段。
+6. alignment report schema 为 `lyrics-alignment-report.v1`，25 条 LRC 时间轴单调非空，匹配率至少 55%，内容与 summary 互相一致。
+7. `materialized_recut.status == MATERIALIZED` 且 `subtitle_source == external_lrc_global_shift`；边界/nominal LRC zero/offset 与证明完全相等。
+8. `accurate_rerender_used == true`、没有 `FFMPEG_ACCURATE_RECUT_FAILED`，fresh render QA 必须 pass 且 `actual_cut_error_ms <= threshold_ms`。
+9. record-bound SRT 与 burned MP4 的 SHA-256 重算一致；交付 sidecar 正是这份 report/SRT/manifest。
+10. 实看首句、副歌、重复段、最长间奏、尾部五点；确认前奏保留、后续晚安说话不混入。
+11. 标题使用真实歌名并带直播语境；封面按项目 AI-cover 流程生成并同步标题文案。
+12. `upload_enabled=false`，不存在上传 manifest/上传进程。
 
 任一项失败即保持 blocked；不得借用本次人工 AGY audit 去伪造新运行记录的运行时绿灯。
 
-## 2026-07-10 live acceptance
+## 2026-07-10 historical LRC-only acceptance（已推翻）
 
 部署后连续使用 fresh run id 重跑，失败轮次均没有借用旧 summary/artifact：
 
@@ -86,4 +111,4 @@ v4 绑定证据：
 - rerun 过程没有上传且 `state_write=false`。验收后才备份并修复 7/9 state、把旧假绿 MP4/cover 移入 `_quarantine/false-green-song_223019_166-20260710T040416Z`；final acceptance 仍记录 `no_upload_verified=true`。公开视频发布仍须另行获得 Ivan 授权，并满足独立 `AUTO_UPLOAD` manifest + artifact-hash gate。
 - 本次 live acceptance 读回时 `/opt/bilive/autoslice/DISABLED` 仍存在，scheduled runner 是 paused；部署/验收成功不等于 cron 已恢复。恢复与最终运行态由顶层 `docs/HANDOFF.md` 的收尾步骤记录。
 
-这次验收证明的是：日语唱歌 ASR 稀疏/乱码时，已知 song-lane anchor 不再被二次语义召回随机丢失；在外部检索得到唯一可靠 LRC 身份后，流水线能用当前音频建立严格正证据。它不保证任意日语歌都会通过；无可靠 LRC、身份歧义、版本不符或音频证明任一 gate 失败仍会 fail closed。
+这次被推翻的验收只证明：日语唱歌 ASR 稀疏/乱码时，已知 song-lane anchor 不再被二次语义召回随机丢失；在 Google/公开网页或自动 provider 找到唯一可靠同步 LRC 身份后，流水线能建立歌曲/边界证据。它不曾证明李豆沙在唱。新联合门在日语 LRC 路径之后另行验证现场演唱和主播身份；无可靠 LRC、身份歧义、版本不符、背景播放、其他歌手、说话+BGM、无合格 post-song 锚点或任一 hash 门失败均 fail closed。

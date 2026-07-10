@@ -31,6 +31,98 @@ from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_t
 VIEWER_CONTEXT_MAX_EXPANSION_MS = 300_000
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _build_host_vocal_prover(
+    *,
+    python_path: Path,
+    reference_profile: Path,
+    reference_dir: Path,
+    model_dir: Path,
+):
+    """Run the pinned CAM++ verifier out-of-process in its dedicated venv."""
+
+    def prove(source_media, candidate_id, _boundary, alignment, output_dir):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report_value = alignment.get("alignment_report_path")
+        if not isinstance(report_value, str) or not report_value:
+            return {
+                "status": "ERROR",
+                "decision": "UNKNOWN",
+                "reason_code": "SONG_HOST_VOCAL_PROOF_INVALID",
+                "error": "lyrics alignment report path is missing",
+            }
+        proof_path = output_dir / f"{candidate_id}.host-vocal-proof.json"
+        completed = subprocess.run(
+            [
+                str(python_path),
+                "-m",
+                "src.autoslice.host_vocal_proof",
+                "--source-media",
+                str(source_media),
+                "--candidate-id",
+                candidate_id,
+                "--lyrics-alignment-report",
+                report_value,
+                "--reference-profile",
+                str(reference_profile),
+                "--reference-dir",
+                str(reference_dir),
+                "--model-dir",
+                str(model_dir),
+                "--output",
+                str(proof_path),
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+        if completed.returncode not in {0, 3} or not proof_path.is_file():
+            return {
+                "status": "ERROR",
+                "decision": "UNKNOWN",
+                "reason_code": "SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE",
+                "error": (completed.stderr or completed.stdout)[-1000:],
+                "verifier_rc": completed.returncode,
+            }
+        try:
+            proof = json.loads(proof_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return {
+                "status": "ERROR",
+                "decision": "UNKNOWN",
+                "reason_code": "SONG_HOST_VOCAL_PROOF_INVALID",
+                "error": f"invalid verifier output: {exc}",
+            }
+        status = str(proof.get("status") or "BLOCKED")
+        decision = str(proof.get("decision") or "UNKNOWN")
+        return {
+            "status": status,
+            "decision": decision,
+            "reason_code": (
+                None if status == "READY" and decision == "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
+                else "SONG_NOT_LIDOUSHA_SINGING"
+                if decision == "NO_LIDOUSHA_VOCAL_DETECTED"
+                else "SONG_HOST_VOCAL_UNPROVEN"
+            ),
+            "proof_path": str(proof_path),
+            "proof_sha256": "sha256:" + _sha256_file(proof_path),
+            "source_media_path": str(source_media),
+            "alignment_report_path": report_value,
+            "profile_path": str(reference_profile),
+        }
+
+    return prove
+
+
 def _seeded_song_candidate(
     cues,
     *,
@@ -167,6 +259,10 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Seeded full-song retry only: align current audio against a uniquely identified LRC when ASR is sparse.",
     )
+    parser.add_argument("--host-vocal-python", type=Path, help="Python executable for the pinned CAM++ host-vocal verifier.")
+    parser.add_argument("--host-vocal-reference-profile", type=Path, help="Versioned voiceprint threshold/hash profile.")
+    parser.add_argument("--host-vocal-reference-dir", type=Path, help="Private runtime directory containing 李豆沙 enrollment WAVs.")
+    parser.add_argument("--host-vocal-model-dir", type=Path, help="Pinned local CAM++ model directory.")
     parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
     parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing.")
     parser.add_argument(
@@ -207,6 +303,24 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("seeded song arguments must be supplied together")
     if args.agy_audio_lrc_align and not all(value is not None for value in seed_values):
         raise SystemExit("--agy-audio-lrc-align requires a seeded full-song anchor")
+    host_vocal_values = (
+        args.host_vocal_python,
+        args.host_vocal_reference_profile,
+        args.host_vocal_reference_dir,
+        args.host_vocal_model_dir,
+    )
+    if any(value is not None for value in host_vocal_values) and not all(value is not None for value in host_vocal_values):
+        raise SystemExit("host-vocal verifier arguments must be supplied together")
+    host_vocal_prover = (
+        _build_host_vocal_prover(
+            python_path=args.host_vocal_python,
+            reference_profile=args.host_vocal_reference_profile,
+            reference_dir=args.host_vocal_reference_dir,
+            model_dir=args.host_vocal_model_dir,
+        )
+        if all(value is not None for value in host_vocal_values)
+        else None
+    )
 
     # Danmaku evidence (blrec raw XML): burst windows steer recall, window
     # text feeds CPA viewer-context, and per-chunk lines feed jingting.
@@ -445,6 +559,7 @@ def main(argv: list[str] | None = None) -> int:
             else None,
             song_lrc_queries=tuple(args.song_lrc_query),
             audio_lrc_aligner=audio_lrc_aligner,
+            host_vocal_prover=host_vocal_prover,
             burn_preview=args.burn_preview,
             publish_staging=args.publish_staging,
             title_llm_call=build_llm_call(

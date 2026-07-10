@@ -24,6 +24,22 @@ rsync -a --delete "$ROOT/scripts/" "$HOST:/opt/bilive/autoslice/repo/scripts/"
 rsync -a --delete "$ROOT/src/" "$HOST:/opt/bilive/autoslice/repo/src/"
 rsync -a "$ROOT/assets/" "$HOST:/opt/bilive/autoslice/repo/assets/"
 
+# Performer-identity gate: private enrollment audio stays on the runtime host;
+# only its versioned hashes/threshold policy live in git.  Migrate the already
+# audited enrollment files once, then verify every subsequent deploy in place.
+ssh "$HOST" '
+  set -eu
+  cd /opt/bilive/autoslice/repo
+  python3 scripts/install_lidousha_voiceprints.py \
+    --profile assets/lidousha/voiceprint_profile.v1.json \
+    --source-dir /opt/bilive/autoslice/preview/diar_v2 \
+    --target-dir /opt/bilive/autoslice/voiceprints/lidousha \
+    --model-source-dir /root/.cache/modelscope/models/damo--speech_campplus_sv_zh-cn_16k-common/snapshots/master \
+    --model-target-dir /opt/bilive/autoslice/models/campp
+  /opt/bilive/autoslice/venv-diar/bin/python -c "import modelscope"
+  python3 -c "import json; from pathlib import Path; from src.autoslice.host_vocal_proof import _sha256_directory; p=json.loads(Path(\"assets/lidousha/voiceprint_profile.v1.json\").read_text()); actual=_sha256_directory(Path(\"/opt/bilive/autoslice/models/campp\")); assert actual == p[\"model\"][\"tree_sha256\"], (actual,p[\"model\"][\"tree_sha256\"]); print(\"host-vocal runtime verified\", actual)"
+'
+
 ssh "$HOST" "echo '$COMMIT  deployed $(date -u +%Y-%m-%dT%H:%M:%SZ)' > /opt/bilive/autoslice/repo/DEPLOYED_COMMIT"
 
 # mount watchdog + cron (idempotent)

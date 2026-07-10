@@ -31,7 +31,7 @@ container:/app/Videos             # 录播输入与 app 侧产物
 - `/opt/bilive/app` / container `/app` 仍是 recorder 和 legacy/emergency upload 运行面，但不再冒充 post-stream autoslice 的 commit 指纹。
 - 上传必须 fail-closed：没有 `AUTO_UPLOAD` manifest 和 artifact hash gate，就不能发布。
 - `*.jingting.done` 只代表精听完成，不代表 release-ready。
-- 2026-07-10 部署的 song repair 路线已在《芽吹くとき》v4 no-upload live rerun 验收：日语稀疏/乱码 ASR 不再让已知 song-lane anchor 被二次语义召回随机丢失；只有唯一 canonical LRC 身份 + 当前音频严格证明才能产生 `FULL_SONG_READY`。
+- 2026-07-10 的《芽吹くとき》v4 只验证了日语稀疏/garbled ASR 下的 canonical-LRC 召回、对齐与完整边界；它后来被确认为下播卡播放的背景原曲，已 superseded/rejected，不是李豆沙歌切正例。当前源码增加 AGY v2 现场演唱否决 AND CAM++ 李豆沙声纹子门；新 commit 部署、fresh 负例重跑与 state/report 修复尚待 live acceptance。
 
 ## 目标流水线
 
@@ -39,7 +39,7 @@ container:/app/Videos             # 录播输入与 app 侧产物
 原始录播 + 粗字幕 + 弹幕
 → 高召回内容锚点（candidate 是 anchor，不是最终边界）
 → 扩展源上下文
-→ talk: aggregate ASR/CPA correction；song: auto LRC discovery + full-window audio proof when needed
+→ talk: aggregate ASR/CPA correction；song: auto LRC discovery + full-window audio/LRC proof + AGY-live AND CAM++ identity gate
 → 歌曲/对话结构 evidence
 → 自动边界解析
 → AUTO_UPLOAD / AUTO_RECUT / DROP / BLOCK / RETRY

@@ -16,8 +16,22 @@ from src.autoslice.song_repair import (
     build_composite_lrc_provider,
     build_lrclib_lrc_provider,
     fetch_lrclib_lrc,
+    live_performance_failure_reason_codes,
     parse_lrc_text,
 )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("ORIGINAL_OR_BACKGROUND_PLAYBACK", ("SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING")),
+        ("STREAMER_TALKING_OVER_MUSIC", ("SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING")),
+        ("OTHER_SINGER", ("SONG_NOT_LIDOUSHA_SINGING",)),
+        ("AMBIGUOUS", ("SONG_LIVE_PERFORMANCE_UNPROVEN",)),
+    ],
+)
+def test_live_performance_failure_reason_codes_are_specific(mode, expected):
+    assert live_performance_failure_reason_codes({"mode": mode}) == expected
 
 
 def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate_id: str = "jp-audio") -> AudioLrcAlignmentRun:
@@ -47,8 +61,11 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
                 "confidence": 0.98,
             }
         )
+    first_live_ms = observations[0]["live_start_ms"]
+    last_live_ms = observations[-1]["live_end_ms"]
+    live_span_ms = last_live_ms - first_live_ms
     payload = {
-        "schema_version": "agy-audio-lrc-observation.v1",
+        "schema_version": "agy-audio-lrc-observation.v2",
         "record": {
             "attempt_id": "attempt-test",
             "candidate_id": candidate_id,
@@ -69,6 +86,18 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
             {"name": "longest_instrumental_gap", "live_time_ms": 52_000, "result": "OK", "notes": "heard"},
             {"name": "tail", "live_time_ms": observations[-1]["live_start_ms"], "result": "OK", "notes": "heard"},
         ],
+        "live_performance": {
+            "mode": "LIVE_STREAMER_SINGING",
+            "confidence": 0.96,
+            "continuous_singing": True,
+            "background_recording_likelihood": 0.03,
+            "evidence": [
+                {"time_ms": first_live_ms + live_span_ms // 6, "observation": "live vocal at head"},
+                {"time_ms": first_live_ms + live_span_ms // 2, "observation": "live vocal at middle"},
+                {"time_ms": first_live_ms + live_span_ms * 5 // 6, "observation": "live vocal at tail"},
+            ],
+            "notes": "continuous live streamer vocal",
+        },
         "post_song_talk_start_ms": observations[-1]["live_end_ms"] + 2_000,
     }
     prompt = tmp_path / "prompt.md"
@@ -223,12 +252,13 @@ def test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof(tmp_p
     assert report["matched_line_count"] == report["line_count"] == 10
     assert all(row["evidence_source"] == "agy_audio_lrc" for row in report["alignment"])
     assert report["spot_checks"] == run.payload["spot_checks"]
+    assert report["live_performance"] == run.payload["live_performance"]
     assert report["post_song_talk_start_ms"] == run.payload["post_song_talk_start_ms"]
 
 
 @pytest.mark.parametrize(
     "mutation",
-    ["unheard", "drift", "wrong_text", "bad_tail_spot", "bad_repeated_spot"],
+    ["unheard", "drift", "wrong_text", "bad_tail_spot", "bad_repeated_spot", "background_playback"],
 )
 def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
     lrc = _japanese_lrc()
@@ -245,8 +275,15 @@ def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
         payload["observations"][2]["text"] = "別の歌詞"
     elif mutation == "bad_tail_spot":
         payload["spot_checks"][-1]["live_time_ms"] = 20_000
-    else:
+    elif mutation == "bad_repeated_spot":
         payload["spot_checks"][2]["live_time_ms"] = payload["observations"][5]["live_start_ms"]
+    else:
+        payload["live_performance"].update(
+            mode="ORIGINAL_OR_BACKGROUND_PLAYBACK",
+            confidence=0.98,
+            continuous_singing=False,
+            background_recording_likelihood=0.99,
+        )
     output = Path(run.output_path)
     output.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     run = AudioLrcAlignmentRun(

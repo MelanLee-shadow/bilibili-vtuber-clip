@@ -54,14 +54,23 @@ from src.autoslice.song_repair import (
     build_netease_lrc_provider,
     fetch_lrclib_lrc,
     fetch_netease_lrc,
+    live_performance_failure_reason_codes,
     normalize_lyric_text,
+    validate_live_performance_observation,
 )
+from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.source_integrity import MediaSegmentObservation, build_source_range_ledger, plan_bilibili_replay_compensation
 from src.autoslice.source_context_executor import AgyExecutionResult, SourceContextExecutionResult, execute_source_context_job
 from src.autoslice.source_context_planner import JingtingJobProvenance, plan_source_context_jingting_jobs
 from src.autoslice.subtitle_timing_qa import SpeechSpansProvider, sanitize_cue_timing
 from src.autoslice.style_profile import ManualStyleProfile, apply_style_profile
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
+
+
+HostVocalProver = Callable[
+    [Path, str, Mapping[str, object], Mapping[str, object], Path],
+    Mapping[str, object],
+]
 
 
 def run_shadow_pipeline(
@@ -82,6 +91,7 @@ def run_shadow_pipeline(
     song_hint_llm_call: LlmCall | None = None,
     song_lrc_queries: Sequence[str] = (),
     audio_lrc_aligner: AudioLrcAligner | None = None,
+    host_vocal_prover: HostVocalProver | None = None,
     burn_preview: bool = False,
     publish_staging: bool = False,
     title_llm_call: LlmCall | None = None,
@@ -111,6 +121,7 @@ def run_shadow_pipeline(
             song_hint_llm_call=song_hint_llm_call,
             song_lrc_queries=song_lrc_queries,
             audio_lrc_aligner=audio_lrc_aligner,
+            host_vocal_prover=host_vocal_prover,
             burn_preview=burn_preview,
             publish_staging=publish_staging,
             title_llm_call=title_llm_call,
@@ -263,6 +274,7 @@ def _run_live_source(
     song_hint_llm_call: LlmCall | None = None,
     song_lrc_queries: Sequence[str] = (),
     audio_lrc_aligner: AudioLrcAligner | None = None,
+    host_vocal_prover: HostVocalProver | None = None,
     burn_preview: bool = False,
     publish_staging: bool = False,
     title_llm_call: LlmCall | None = None,
@@ -346,6 +358,15 @@ def _run_live_source(
         extra_queries=song_lrc_queries,
         source_media_path=Path(source_context.context_media_path) if source_context.context_media_path else None,
         audio_lrc_aligner=audio_lrc_aligner,
+    )
+    job_manifest = _attempt_host_vocal_proof_stage(
+        job_manifest,
+        candidate_id=candidate_id,
+        # song_boundary/alignment timestamps are source-video-relative; the
+        # refined context media may begin later and would shift every sample.
+        source_media_path=source_video,
+        output_dir=output_dir,
+        host_vocal_prover=host_vocal_prover,
     )
     boundary_resolution = _resolve_live_source_boundary(job_manifest, cues, output_dir=output_dir)
     evidence = analyze_content_evidence(candidate_id=candidate_id, cues=cues, title=title)
@@ -1202,6 +1223,33 @@ def _resolve_song_boundary(
         return None
     if _verify_lyrics_alignment_proof(lyrics_alignment, output_dir=output_dir) is not None:
         return None
+    performance_error = _verify_live_performance_observation(lyrics_alignment, output_dir=output_dir)
+    if performance_error is not None:
+        performance_reasons = _live_performance_block_reasons(lyrics_alignment, output_dir=output_dir)
+        return BoundaryResolution(
+            candidate_id=anchor.candidate_id,
+            action=DecisionAction.BLOCK,
+            resolved_start_ms=anchor.anchor_start_ms,
+            resolved_end_ms=anchor.anchor_end_ms,
+            start_boundary_score=0.0,
+            end_boundary_score=0.0,
+            reason_codes=performance_reasons,
+        )
+    host_vocal_error, host_vocal_reason = _verify_host_vocal_claim(
+        _mapping(job_manifest.get("host_vocal_proof")),
+        expected_candidate_id=anchor.candidate_id,
+        lyrics_alignment=lyrics_alignment,
+    )
+    if host_vocal_error is not None:
+        return BoundaryResolution(
+            candidate_id=anchor.candidate_id,
+            action=DecisionAction.BLOCK,
+            resolved_start_ms=anchor.anchor_start_ms,
+            resolved_end_ms=anchor.anchor_end_ms,
+            start_boundary_score=0.0,
+            end_boundary_score=0.0,
+            reason_codes=(host_vocal_reason,),
+        )
 
     clip_start_ms = _first_int(song_boundary.get("clip_start_ms"), song_boundary.get("source_start_ms"), song_boundary.get("song_start_ms"))
     clip_end_ms = _first_int(
@@ -1281,6 +1329,243 @@ def _verify_lyrics_alignment_proof(lyrics_alignment: Mapping[str, object], *, ou
     return None
 
 
+def _verify_live_performance_observation(
+    lyrics_alignment: Mapping[str, object], *, output_dir: Path
+) -> str | None:
+    proof_error = _verify_lyrics_alignment_proof(lyrics_alignment, output_dir=output_dir)
+    if proof_error is not None:
+        return proof_error
+    report_value = lyrics_alignment.get("alignment_report_path")
+    assert isinstance(report_value, str)
+    report_path = Path(report_value)
+    if not report_path.is_absolute() and not report_path.is_file():
+        report_path = output_dir / report_path
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"cannot read live-performance alignment report: {exc}"
+    if not isinstance(report, Mapping):
+        return "live-performance alignment report is not a JSON object"
+    first_ms = report.get("first_lyric_start_ms")
+    last_ms = report.get("last_lyric_end_ms")
+    if not isinstance(first_ms, int) or isinstance(first_ms, bool) or not isinstance(last_ms, int) or isinstance(last_ms, bool):
+        return "live-performance lyric span is missing"
+    performance_error = validate_live_performance_observation(
+        report.get("live_performance"),
+        first_lyric_start_ms=first_ms,
+        last_lyric_end_ms=last_ms,
+        require_ready=True,
+    )
+    if performance_error is not None:
+        return performance_error
+    if (
+        report.get("evidence_source") != "agy_audio_lrc"
+        or report.get("audio_alignment_provider") != "agy"
+        or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
+        or not str(lyrics_alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
+    ):
+        return "live-performance proof is not a production AGY audio-v2 alignment"
+
+    artifacts = report.get("audio_alignment_artifacts")
+    if not isinstance(artifacts, Mapping):
+        return "live-performance audio artifacts are missing"
+
+    def bound_artifact(path_key: str, sha_key: str) -> tuple[Path | None, str | None]:
+        path_value = artifacts.get(path_key)
+        sha_value = artifacts.get(sha_key)
+        if not isinstance(path_value, str) or not path_value or not isinstance(sha_value, str):
+            return None, f"live-performance {path_key}/{sha_key} binding is missing"
+        normalized_sha = sha_value.lower().removeprefix("sha256:")
+        if len(normalized_sha) != 64 or any(character not in "0123456789abcdef" for character in normalized_sha):
+            return None, f"live-performance {sha_key} is malformed"
+        path = Path(path_value)
+        if not path.is_absolute() and not path.is_file():
+            path = report_path.parent / path
+        try:
+            if path.is_symlink() or not path.is_file() or _sha256(path) != normalized_sha:
+                return None, f"live-performance {path_key} hash mismatch"
+        except OSError as exc:
+            return None, f"cannot read live-performance {path_key}: {exc}"
+        return path, None
+
+    artifact_paths: dict[str, Path] = {}
+    for path_key, sha_key in (
+        ("source_path", "source_sha256"),
+        ("lrc_path", "lrc_sha256"),
+        ("prompt_path", "prompt_sha256"),
+        ("raw_output_path", "raw_output_sha256"),
+        ("run_manifest_path", "run_manifest_sha256"),
+    ):
+        path, error = bound_artifact(path_key, sha_key)
+        if error is not None or path is None:
+            return error or f"live-performance {path_key} is invalid"
+        artifact_paths[path_key] = path
+
+    try:
+        manifest = json.loads(artifact_paths["run_manifest_path"].read_text(encoding="utf-8"))
+        raw = json.loads(artifact_paths["raw_output_path"].read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"cannot read live-performance raw proof: {exc}"
+    candidate_id = report.get("candidate_id")
+    manifest_artifacts = manifest.get("artifacts") if isinstance(manifest, Mapping) else None
+    if (
+        not isinstance(manifest, Mapping)
+        or manifest.get("schema_version") != "agy-audio-lrc-run.v1"
+        or manifest.get("candidate_id") != candidate_id
+        or manifest.get("provider") != "agy"
+        or manifest.get("model") != "Gemini 3.5 Flash (High)"
+        or manifest.get("agy_rc") != 0
+        or manifest.get("provider_fallback_used") is not False
+        or manifest.get("sandbox") is not True
+        or not isinstance(manifest_artifacts, Mapping)
+    ):
+        return "live-performance AGY run manifest is invalid"
+    for manifest_key, report_key in (
+        ("source_path", "source_path"),
+        ("source_sha256", "source_sha256"),
+        ("source_duration_ms", "source_duration_ms"),
+        ("lrc_path", "lrc_path"),
+        ("lrc_sha256", "lrc_sha256"),
+        ("prompt_path", "prompt_path"),
+        ("prompt_sha256", "prompt_sha256"),
+        ("output_path", "raw_output_path"),
+        ("output_sha256", "raw_output_sha256"),
+    ):
+        if manifest_artifacts.get(manifest_key) != artifacts.get(report_key):
+            return "live-performance AGY manifest/artifact binding mismatch"
+
+    raw_record = raw.get("record") if isinstance(raw, Mapping) else None
+    raw_rows = raw.get("observations") if isinstance(raw, Mapping) else None
+    if (
+        not isinstance(raw, Mapping)
+        or raw.get("schema_version") != "agy-audio-lrc-observation.v2"
+        or not isinstance(raw_record, Mapping)
+        or raw_record.get("candidate_id") != candidate_id
+        or raw_record.get("source_sha256") != artifacts.get("source_sha256")
+        or raw_record.get("lrc_sha256") != artifacts.get("lrc_sha256")
+        or raw_record.get("source_duration_ms") != artifacts.get("source_duration_ms")
+        or not isinstance(raw_rows, list)
+    ):
+        return "live-performance raw AGY v2 observation is invalid"
+    if raw.get("live_performance") != report.get("live_performance"):
+        return "live-performance raw/report observation mismatch"
+    report_rows = report.get("alignment")
+    lyric_lines = report.get("lyric_lines")
+    if (
+        not isinstance(report_rows, list)
+        or not isinstance(lyric_lines, list)
+        or len(raw_rows) != len(report_rows)
+        or len(report_rows) != len(lyric_lines)
+        or len(raw_rows) < 8
+    ):
+        return "live-performance raw/report lyric rows are incomplete"
+    expected_raw_sha = str(artifacts.get("raw_output_sha256") or "").lower().removeprefix("sha256:")
+    previous_start: int | None = None
+    for index, (raw_row, report_row, lyric) in enumerate(zip(raw_rows, report_rows, lyric_lines, strict=True)):
+        if not isinstance(raw_row, Mapping) or not isinstance(report_row, Mapping) or not isinstance(lyric, Mapping):
+            return f"live-performance raw/report lyric row {index} is invalid"
+        start_ms = raw_row.get("live_start_ms")
+        end_ms = raw_row.get("live_end_ms")
+        confidence = raw_row.get("confidence")
+        if (
+            raw_row.get("lrc_index") != index
+            or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
+            or raw_row.get("text") != lyric.get("text")
+            or raw_row.get("heard") is not True
+            or not isinstance(start_ms, int)
+            or isinstance(start_ms, bool)
+            or not isinstance(end_ms, int)
+            or isinstance(end_ms, bool)
+            or not 0 <= start_ms < end_ms
+            or (previous_start is not None and start_ms <= previous_start)
+            or isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0.8 <= float(confidence) <= 1.0
+            or report_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
+            or report_row.get("lrc_text") != lyric.get("text")
+            or report_row.get("cue_start_ms") != start_ms
+            or report_row.get("cue_end_ms") != end_ms
+            or report_row.get("match_ratio") != round(float(confidence), 4)
+            or report_row.get("evidence_source") != "agy_audio_lrc"
+            or report_row.get("matched_cue_id") != f"agy-audio:{expected_raw_sha[:12]}:line-{index}"
+        ):
+            return f"live-performance raw/report lyric row {index} mismatch"
+        previous_start = start_ms
+    if (
+        report_rows[0].get("cue_start_ms") != first_ms
+        or report_rows[-1].get("cue_end_ms") != last_ms
+        or len({row.get("matched_cue_id") for row in report_rows if isinstance(row, Mapping)}) != len(report_rows)
+    ):
+        return "live-performance raw/report lyric boundary mismatch"
+    return None
+
+
+def _live_performance_block_reasons(
+    lyrics_alignment: Mapping[str, object], *, output_dir: Path
+) -> tuple[str, ...]:
+    """Preserve a valid non-live AGY mode in state/summary reason codes."""
+
+    if _verify_lyrics_alignment_proof(lyrics_alignment, output_dir=output_dir) is not None:
+        return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
+    report_value = lyrics_alignment.get("alignment_report_path")
+    if not isinstance(report_value, str):
+        return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
+    report_path = Path(report_value)
+    if not report_path.is_absolute() and not report_path.is_file():
+        report_path = output_dir / report_path
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
+    return live_performance_failure_reason_codes(
+        report.get("live_performance") if isinstance(report, Mapping) else None
+    )
+
+
+def _verify_host_vocal_claim(
+    claim: Mapping[str, object],
+    *,
+    expected_candidate_id: str,
+    lyrics_alignment: Mapping[str, object],
+) -> tuple[str | None, str]:
+    """Validate the CAM++ proof and classify failure without trusting labels."""
+
+    if not claim:
+        return "host-vocal proof claim is missing", "SONG_HOST_VOCAL_UNPROVEN"
+    proof_value = claim.get("proof_path")
+    if not isinstance(proof_value, str) or not proof_value:
+        reason = str(claim.get("reason_code") or "SONG_HOST_VOCAL_UNPROVEN")
+        return str(claim.get("error") or "host-vocal proof artifact is missing"), reason
+    try:
+        proof = json.loads(Path(proof_value).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"cannot read host-vocal proof: {exc}", "SONG_HOST_VOCAL_PROOF_INVALID"
+    if not isinstance(proof, Mapping):
+        return "host-vocal proof is not a JSON object", "SONG_HOST_VOCAL_PROOF_INVALID"
+
+    source_binding = _mapping(proof.get("source_media"))
+    profile_binding = _mapping(proof.get("reference_profile"))
+    source_value = claim.get("source_media_path") or source_binding.get("path")
+    alignment_value = lyrics_alignment.get("alignment_report_path")
+    profile_value = claim.get("profile_path") or profile_binding.get("path")
+    if not all(isinstance(value, str) and value for value in (source_value, alignment_value, profile_value)):
+        return "host-vocal input bindings are incomplete", "SONG_HOST_VOCAL_PROOF_INVALID"
+    error = verify_host_vocal_proof_claim(
+        claim,
+        expected_candidate_id,
+        Path(str(source_value)),
+        Path(str(alignment_value)),
+        Path(str(profile_value)),
+    )
+    if error is not None:
+        return error, "SONG_HOST_VOCAL_PROOF_INVALID"
+    if claim.get("status") != "READY" or claim.get("decision") != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS":
+        if claim.get("status") == "BLOCKED" and claim.get("decision") == "NO_LIDOUSHA_VOCAL_DETECTED":
+            return "no Li Dousha vocal was detected across the lyric span", "SONG_NOT_LIDOUSHA_SINGING"
+        return "host-vocal proof did not reach READY", "SONG_HOST_VOCAL_UNPROVEN"
+    return None, "SONG_HOST_VOCAL_VERIFIED"
+
+
 def _apply_live_source_machine_evidence(
     evidence: ReviewEvidence,
     *,
@@ -1294,9 +1579,21 @@ def _apply_live_source_machine_evidence(
 
     song_boundary = _mapping(source_context_job.get("song_boundary"))
     lyrics_alignment = _mapping(source_context_job.get("lyrics_alignment"))
+    host_vocal_claim = _mapping(source_context_job.get("host_vocal_proof"))
     song_boundary_claimed = _song_boundary_ready(song_boundary)
     lyrics_proof_error = _verify_lyrics_alignment_proof(lyrics_alignment, output_dir=output_dir)
-    full_song_evidence_ready = song_boundary_claimed and lyrics_proof_error is None
+    live_performance_error = _verify_live_performance_observation(lyrics_alignment, output_dir=output_dir)
+    host_vocal_error, host_vocal_reason = _verify_host_vocal_claim(
+        host_vocal_claim,
+        expected_candidate_id=evidence.candidate_id,
+        lyrics_alignment=lyrics_alignment,
+    )
+    full_song_evidence_ready = (
+        song_boundary_claimed
+        and lyrics_proof_error is None
+        and live_performance_error is None
+        and host_vocal_error is None
+    )
     if song_boundary_claimed and lyrics_proof_error is not None:
         checks.append(
             {
@@ -1315,6 +1612,56 @@ def _apply_live_source_machine_evidence(
             **dict(evidence.metadata),
             "song_proof": {"verified": False, "error": lyrics_proof_error},
         }
+    if song_boundary_claimed and live_performance_error is not None:
+        performance_reasons = _live_performance_block_reasons(lyrics_alignment, output_dir=output_dir)
+        checks.append(
+            {
+                "code": "SONG_LIVE_PERFORMANCE_PROOF",
+                "pass": False,
+                "severity": "BLOCK",
+                "evidence": {
+                    "error": live_performance_error,
+                    "reason_codes": list(performance_reasons),
+                    "lyrics_alignment": dict(lyrics_alignment),
+                },
+            }
+        )
+        current_gaps = tuple(updates.get("evidence_gaps", evidence.evidence_gaps))
+        updates["evidence_gaps"] = tuple(
+            dict.fromkeys(current_gaps + performance_reasons)
+        )
+        updates["metadata"] = {
+            **dict(updates.get("metadata", evidence.metadata)),
+            "live_performance_proof": {"verified": False, "error": live_performance_error},
+        }
+        updates["foreground_song_overlap_seconds"] = 0.0
+        updates["song_complete"] = False
+        updates["lyrics_alignment_ready"] = lyrics_proof_error is None
+    if song_boundary_claimed and host_vocal_error is not None:
+        checks.append(
+            {
+                "code": "SONG_HOST_VOCAL_PROOF",
+                "pass": False,
+                "severity": "BLOCK",
+                "evidence": {
+                    "error": host_vocal_error,
+                    "reason_code": host_vocal_reason,
+                    "claim": dict(host_vocal_claim),
+                },
+            }
+        )
+        current_gaps = tuple(updates.get("evidence_gaps", evidence.evidence_gaps))
+        updates["evidence_gaps"] = tuple(dict.fromkeys(current_gaps + (host_vocal_reason,)))
+        updates["metadata"] = {
+            **dict(updates.get("metadata", evidence.metadata)),
+            "host_vocal_proof": {"verified": False, "error": host_vocal_error, "claim": dict(host_vocal_claim)},
+        }
+        # Never inherit content-evidence's text-overlap estimate as a claim of
+        # foreground singing.  Until performer identity verifies, this is only
+        # "a song is audible" and must remain non-complete/non-foreground.
+        updates["foreground_song_overlap_seconds"] = 0.0
+        updates["song_complete"] = False
+        updates["lyrics_alignment_ready"] = lyrics_proof_error is None
     if full_song_evidence_ready:
         song_duration_seconds = _song_boundary_duration_seconds(song_boundary)
         updates.update(
@@ -1336,6 +1683,8 @@ def _apply_live_source_machine_evidence(
                     **dict(evidence.metadata),
                     "song_boundary": dict(song_boundary),
                     "lyrics_alignment": dict(lyrics_alignment),
+                    "live_performance_proof": {"verified": True, "mode": "LIVE_STREAMER_SINGING"},
+                    "host_vocal_proof": {"verified": True, "claim": dict(host_vocal_claim)},
                     "song_duration_seconds": song_duration_seconds,
                 },
             }
@@ -1345,7 +1694,20 @@ def _apply_live_source_machine_evidence(
                 "code": "SONG_FULL_BOUNDARY_READY",
                 "pass": True,
                 "severity": "PASS",
-                "evidence": {"song_boundary": dict(song_boundary), "lyrics_alignment": dict(lyrics_alignment)},
+                "evidence": {
+                    "song_boundary": dict(song_boundary),
+                    "lyrics_alignment": dict(lyrics_alignment),
+                    "live_performance": "LIVE_STREAMER_SINGING",
+                    "host_vocal_proof": dict(host_vocal_claim),
+                },
+            }
+        )
+        checks.append(
+            {
+                "code": "SONG_HOST_VOCAL_VERIFIED",
+                "pass": True,
+                "severity": "PASS",
+                "evidence": {"decision": host_vocal_claim.get("decision")},
             }
         )
 
@@ -1686,9 +2048,18 @@ def _merge_cpa_semantic_review_into_decision(decision, evidence: ReviewEvidence)
 
 
 def _merge_song_proof_into_decision(decision, evidence: ReviewEvidence):
-    if "SONG_PROOF_UNVERIFIED" not in evidence.evidence_gaps:
+    blocking = tuple(
+        reason
+        for reason in evidence.evidence_gaps
+        if reason == "SONG_PROOF_UNVERIFIED"
+        or reason.startswith("SONG_HOST_VOCAL_")
+        or reason.startswith("SONG_LIVE_PERFORMANCE_")
+        or reason == "SONG_BACKGROUND_PLAYBACK_ONLY"
+        or reason == "SONG_NOT_LIDOUSHA_SINGING"
+    )
+    if not blocking:
         return decision
-    merged_reasons = tuple(dict.fromkeys(tuple(decision.reason_codes) + ("SONG_PROOF_UNVERIFIED",)))
+    merged_reasons = tuple(dict.fromkeys(tuple(decision.reason_codes) + blocking))
     return replace(decision, action=DecisionAction.BLOCK, reason_codes=merged_reasons)
 
 
@@ -1753,6 +2124,7 @@ def _source_context_job_record(job_manifest: Mapping[str, object]) -> dict[str, 
         "timeline": dict(_mapping(job_manifest.get("timeline"))),
         "song_boundary": dict(_mapping(job_manifest.get("song_boundary"))),
         "lyrics_alignment": dict(_mapping(job_manifest.get("lyrics_alignment"))),
+        "host_vocal_proof": dict(_mapping(job_manifest.get("host_vocal_proof"))),
         "provenance": dict(_mapping(job_manifest.get("provenance"))),
         "cpa_semantic_request_path": job_manifest.get("cpa_semantic_request_path"),
         "cpa_semantic_response_path": job_manifest.get("cpa_semantic_response_path"),
@@ -1931,6 +2303,83 @@ def _attempt_song_repair_stage(
         }
         return repaired_job, result
     return job_manifest, result
+
+
+def _attempt_host_vocal_proof_stage(
+    job_manifest: Mapping[str, object],
+    *,
+    candidate_id: str,
+    source_media_path: Path | None,
+    output_dir: Path,
+    host_vocal_prover: HostVocalProver | None,
+) -> Mapping[str, object]:
+    """Mint the independent performer-identity proof after lyric repair.
+
+    LRC alignment proves which song is present, not who is singing it.  Every
+    song path (ASR-rich and audio+LRC fallback alike) passes through this stage.
+    Missing runtime/model/reference inputs are recorded and later block; they
+    never silently fall back to the old LRC-only completion rule.
+    """
+
+    if not _job_is_song_candidate(job_manifest):
+        return job_manifest
+    boundary = _mapping(job_manifest.get("song_boundary"))
+    alignment = _mapping(job_manifest.get("lyrics_alignment"))
+    if not _song_boundary_ready(boundary) or _verify_lyrics_alignment_proof(alignment, output_dir=output_dir) is not None:
+        return job_manifest
+    performance_error = _verify_live_performance_observation(alignment, output_dir=output_dir)
+    performance_reasons = (
+        () if performance_error is None else _live_performance_block_reasons(alignment, output_dir=output_dir)
+    )
+    performance_claim: dict[str, object] = {
+        "status": "READY" if performance_error is None else "BLOCKED",
+        "mode": "LIVE_STREAMER_SINGING" if performance_error is None else "UNPROVEN",
+        "reason_code": None if performance_error is None else performance_reasons[0],
+        "reason_codes": list(performance_reasons),
+        "error": performance_error,
+        "alignment_report_path": alignment.get("alignment_report_path"),
+        "alignment_report_sha256": alignment.get("alignment_report_sha256"),
+    }
+    with_performance = {**dict(job_manifest), "live_performance_proof": performance_claim}
+    if performance_error is not None:
+        stale_host = with_performance.pop("host_vocal_proof", None)
+        if stale_host:
+            with_performance["superseded_host_vocal_proof"] = stale_host
+        return with_performance
+    existing = _mapping(job_manifest.get("host_vocal_proof"))
+    if existing.get("status") == "READY":
+        return with_performance
+    if source_media_path is None or not source_media_path.is_file():
+        claim: Mapping[str, object] = {
+            "status": "ERROR",
+            "decision": "UNKNOWN",
+            "reason_code": "SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE",
+            "error": "source media for host-vocal verification is unavailable",
+        }
+    elif host_vocal_prover is None:
+        claim = {
+            "status": "MISSING",
+            "decision": "UNKNOWN",
+            "reason_code": "SONG_HOST_VOCAL_UNPROVEN",
+            "error": "host-vocal prover is not configured",
+        }
+    else:
+        try:
+            claim = host_vocal_prover(
+                source_media_path,
+                candidate_id,
+                boundary,
+                alignment,
+                output_dir / "host_vocal_proof",
+            )
+        except Exception as exc:  # fail closed at the orchestration boundary
+            claim = {
+                "status": "ERROR",
+                "decision": "UNKNOWN",
+                "reason_code": "SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    return {**with_performance, "host_vocal_proof": dict(claim)}
 
 
 def _job_is_song_candidate(job_manifest: Mapping[str, object]) -> bool:

@@ -38,6 +38,26 @@ SHIFT_TOLERANCE_MS = 6_000
 
 _NON_LYRIC_CHARS = re.compile(r"[\s，。！？、,.!?…~〜\-—:：;；\"'“”‘’()（）\[\]【】]")
 
+LIVE_PERFORMANCE_READY_MODE = "LIVE_STREAMER_SINGING"
+LIVE_PERFORMANCE_MODES = {
+    LIVE_PERFORMANCE_READY_MODE,
+    "ORIGINAL_OR_BACKGROUND_PLAYBACK",
+    "OTHER_SINGER",
+    "STREAMER_TALKING_OVER_MUSIC",
+    "AMBIGUOUS",
+}
+
+
+def live_performance_failure_reason_codes(performance: object) -> tuple[str, ...]:
+    """Map an observed non-live mode to honest user-facing block reasons."""
+
+    mode = performance.get("mode") if isinstance(performance, Mapping) else None
+    if mode in {"ORIGINAL_OR_BACKGROUND_PLAYBACK", "STREAMER_TALKING_OVER_MUSIC"}:
+        return ("SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING")
+    if mode == "OTHER_SINGER":
+        return ("SONG_NOT_LIDOUSHA_SINGING",)
+    return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
+
 # Credit/production-role terms netease puts in "role : name" metadata lines.
 # Matched as a substring of a short pre-colon head (so 音乐制作/贝斯演奏/混音、母带
 # are all caught, not just exact prefixes), to keep them out of burned lyrics.
@@ -265,16 +285,10 @@ def attempt_song_repair(
     ranked.sort(key=lambda item: item[0], reverse=True)
     selected: tuple[float, LrcResult, list[dict[str, object]], list[dict[str, object]], int, int, int, int, int] | None = None
     audio_alignment_run: AudioLrcAlignmentRun | None = None
-    if ranked[0][0] < min_matched_ratio:
+    if audio_lrc_aligner is not None:
         matched_ratio, lrc, _alignment = ranked[0]
-        if source_media_path is None or audio_lrc_aligner is None:
-            attempts.append(
-                SongRepairAttempt(
-                    "lyrics_alignment",
-                    "FAILED",
-                    f"best of {len(ranked)} candidate(s) {lrc.song_title!r} matched only {matched_ratio:.0%} of LRC lines (need >= {min_matched_ratio:.0%}); likely a different song or too-noisy ASR",
-                )
-            )
+        if source_media_path is None:
+            attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", "source media is required"))
             return _finish(candidate_id, attempts, output_dir)
         try:
             lrc = _choose_audio_lrc_candidate(
@@ -290,7 +304,8 @@ def attempt_song_repair(
             SongRepairAttempt(
                 "agy_audio_lrc_identity",
                 "SUCCESS",
-                f"unique low-ASR LRC identity {lrc.song_title!r} ({lrc.source_ref}); escalating current full-window audio",
+                f"unique LRC identity {lrc.song_title!r} ({lrc.source_ref}); "
+                "verifying current full-window audio and live-performance mode",
             )
         )
         try:
@@ -321,9 +336,21 @@ def attempt_song_repair(
             SongRepairAttempt(
                 "agy_audio_lrc_alignment",
                 "SUCCESS",
-                f"{lrc.song_title!r}: current audio proves {selected[0]:.0%} of canonical LRC lines with one global shift",
+                f"{lrc.song_title!r}: current audio proves {selected[0]:.0%} of canonical LRC lines, "
+                "one global shift, and LIVE_STREAMER_SINGING performance mode",
             )
         )
+    elif ranked[0][0] < min_matched_ratio:
+        matched_ratio, lrc, _alignment = ranked[0]
+        if source_media_path is None or audio_lrc_aligner is None:
+            attempts.append(
+                SongRepairAttempt(
+                    "lyrics_alignment",
+                    "FAILED",
+                    f"best of {len(ranked)} candidate(s) {lrc.song_title!r} matched only {matched_ratio:.0%} of LRC lines (need >= {min_matched_ratio:.0%}); likely a different song or too-noisy ASR",
+                )
+            )
+            return _finish(candidate_id, attempts, output_dir)
 
     for raw_matched_ratio, lrc, raw_alignment in ranked if selected is None else ():
         if raw_matched_ratio < min_matched_ratio:
@@ -512,6 +539,7 @@ def attempt_song_repair(
                 "audio_alignment_provider": audio_alignment_run.provider,
                 "audio_alignment_model": audio_alignment_run.model,
                 "spot_checks": audio_alignment_run.payload["spot_checks"],
+                "live_performance": audio_alignment_run.payload["live_performance"],
                 "post_song_talk_start_ms": audio_alignment_run.payload["post_song_talk_start_ms"],
                 "audio_alignment_artifacts": {
                     "source_path": audio_alignment_run.source_path,
@@ -1272,10 +1300,17 @@ def _validated_audio_lrc_selection(
     effective_duration_ms = min(run.source_duration_ms, source_duration_ms)
 
     payload = run.payload
-    required_top = {"schema_version", "record", "observations", "spot_checks", "post_song_talk_start_ms"}
+    required_top = {
+        "schema_version",
+        "record",
+        "observations",
+        "spot_checks",
+        "live_performance",
+        "post_song_talk_start_ms",
+    }
     if not isinstance(payload, Mapping) or set(payload) != required_top:
         raise ValueError("audio observation top-level schema/keys are invalid")
-    if payload.get("schema_version") != "agy-audio-lrc-observation.v1":
+    if payload.get("schema_version") != "agy-audio-lrc-observation.v2":
         raise ValueError("audio observation schema_version is invalid")
     record = payload.get("record")
     if not isinstance(record, Mapping) or set(record) != {
@@ -1359,6 +1394,14 @@ def _validated_audio_lrc_selection(
 
     first_lyric_start_ms = int(alignment[0]["cue_start_ms"])
     last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
+    performance_error = validate_live_performance_observation(
+        payload.get("live_performance"),
+        first_lyric_start_ms=first_lyric_start_ms,
+        last_lyric_end_ms=last_lyric_end_ms,
+        require_ready=True,
+    )
+    if performance_error is not None:
+        raise ValueError(performance_error)
     spot_checks = payload.get("spot_checks")
     required_spots = {"first_line", "chorus", "repeated_section", "longest_instrumental_gap", "tail"}
     if not isinstance(spot_checks, list) or len(spot_checks) != 5:
@@ -1421,6 +1464,84 @@ def _validated_audio_lrc_selection(
         clip_end_ms,
         offset_ms,
     )
+
+
+def validate_live_performance_observation(
+    performance: object,
+    *,
+    first_lyric_start_ms: int,
+    last_lyric_end_ms: int,
+    require_ready: bool,
+) -> str | None:
+    """Validate AGY's anti-background performance-mode observation.
+
+    This claim deliberately does not identify the singer.  Final delivery must
+    combine it with the independently generated Li-Dousha voiceprint claim on
+    the same lyric rows.
+    """
+
+    try:
+        if not isinstance(performance, Mapping) or set(performance) != {
+            "mode",
+            "confidence",
+            "continuous_singing",
+            "background_recording_likelihood",
+            "evidence",
+            "notes",
+        }:
+            raise ValueError("live performance observation schema is invalid")
+        mode = performance.get("mode")
+        if mode not in LIVE_PERFORMANCE_MODES:
+            raise ValueError("live performance observation mode is invalid")
+        confidence = performance.get("confidence")
+        background = performance.get("background_recording_likelihood")
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0.0 <= float(confidence) <= 1.0
+            or isinstance(background, bool)
+            or not isinstance(background, (int, float))
+            or not 0.0 <= float(background) <= 1.0
+            or not isinstance(performance.get("continuous_singing"), bool)
+            or not isinstance(performance.get("notes"), str)
+            or not str(performance.get("notes")).strip()
+        ):
+            raise ValueError("live performance observation values are invalid")
+        evidence = performance.get("evidence")
+        if not isinstance(evidence, list) or len(evidence) != 3:
+            raise ValueError("live performance observation needs exactly three evidence timestamps")
+        if not 0 <= first_lyric_start_ms < last_lyric_end_ms:
+            raise ValueError("live performance lyric span is invalid")
+        span = last_lyric_end_ms - first_lyric_start_ms
+        buckets: set[int] = set()
+        previous_time = -1
+        for index, row in enumerate(evidence):
+            if not isinstance(row, Mapping) or set(row) != {"time_ms", "observation"}:
+                raise ValueError(f"live performance evidence[{index}] schema is invalid")
+            time_ms = row.get("time_ms")
+            observation = row.get("observation")
+            if (
+                not _is_int(time_ms)
+                or not first_lyric_start_ms <= time_ms <= last_lyric_end_ms
+                or int(time_ms) <= previous_time
+                or not isinstance(observation, str)
+                or not observation.strip()
+            ):
+                raise ValueError(f"live performance evidence[{index}] is invalid")
+            previous_time = int(time_ms)
+            buckets.add(min(2, ((int(time_ms) - first_lyric_start_ms) * 3) // max(1, span)))
+        if buckets != {0, 1, 2}:
+            raise ValueError("live performance evidence must cover lyric head, middle, and tail")
+        if require_ready and (
+            mode != LIVE_PERFORMANCE_READY_MODE
+            or performance.get("continuous_singing") is not True
+            or float(confidence) < 0.85
+            or float(background) > 0.20
+        ):
+            raise ValueError(f"live performance not proven: mode={mode}")
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def _longest_unmatched_run(alignment: Sequence[Mapping[str, object]]) -> int:

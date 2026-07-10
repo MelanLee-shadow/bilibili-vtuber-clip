@@ -1,0 +1,60 @@
+{
+  "configuration_status": "READY",
+  "model": {
+    "model_id": "damo/speech_campplus_sv_zh-cn_16k-common",
+    "tree_sha256": "f01588f1ceacd25fb3853e765846e3e34befddcff5c61bc14ddaf529745ed0c3"
+  },
+  "policy": {
+    "checkpoint_buckets": [
+      "head",
+      "head",
+      "middle",
+      "middle",
+      "middle",
+      "tail",
+      "tail"
+    ],
+    "checkpoint_fractions": [
+      0.08,
+      0.22,
+      0.36,
+      0.5,
+      0.64,
+      0.78,
+      0.92
+    ],
+    "checkpoint_window_ms": 4000,
+    "minimum_lyric_cue_ms": 2500,
+    "session_host_anchor_window_ms": 8000,
+    "minimum_session_host_anchor_ms": 4000,
+    "minimum_session_enroll_median": 0.6,
+    "minimum_session_lyric_score": 0.31,
+    "minimum_checkpoint_median": 0.31,
+    "minimum_passed_checkpoints": 5,
+    "required_buckets": [
+      "head",
+      "middle",
+      "tail"
+    ]
+  },
+  "profile_id": "lidousha-campp-v1",
+  "references": [
+    {
+      "filename": "enroll_lds_1.wav",
+      "id": "lidousha-1",
+      "sha256": "d54a637d520df906a4a17728f2112ca3819b6afe43e2e038e8d6db52c094105f"
+    },
+    {
+      "filename": "enroll_lds_2.wav",
+      "id": "lidousha-2",
+      "sha256": "8fc095fe8558d218fadea7f6273ee5296f85662164aa125aae68eb9381ce7ef3"
+    },
+    {
+      "filename": "enroll_lds_3.wav",
+      "id": "lidousha-3",
+      "sha256": "d257b7aef63f022772fbacc61d35954a65b4727b29f062edb0b398531b95c5a2"
+    }
+  ],
+  "schema_version": "lidousha-voiceprint-profile.v1",
+  "subject": "李豆沙"
+}

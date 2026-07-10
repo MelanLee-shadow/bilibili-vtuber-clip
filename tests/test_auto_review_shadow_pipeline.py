@@ -16,6 +16,37 @@ from src.autoslice.cpa_semantic_qa import (
 )
 from src.autoslice.review_evidence import ReviewEvidence
 from src.autoslice.song_repair import LrcLine
+from tests.host_vocal_test_support import (
+    bind_ready_live_performance_report,
+    make_ready_audio_alignment_run,
+    make_ready_host_vocal_claim,
+)
+
+
+def _ready_host_vocal_prover(source_media, candidate_id, boundary, alignment, output_dir):
+    alignment_path = Path(str(alignment["alignment_report_path"]))
+    alignment_payload = json.loads(alignment_path.read_text(encoding="utf-8"))
+    alignment_payload.update(
+        {
+            "candidate_id": candidate_id,
+            "first_lyric_start_ms": int(boundary["first_lyric_start_ms"]),
+            "last_lyric_end_ms": int(boundary["last_lyric_end_ms"]),
+        }
+    )
+    alignment_path.write_text(json.dumps(alignment_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    bind_ready_live_performance_report(
+        alignment_path,
+        source_media=Path(source_media),
+        candidate_id=candidate_id,
+    )
+    claim, _profile = make_ready_host_vocal_claim(
+        output_dir,
+        source_media=Path(source_media),
+        alignment_report=alignment_path,
+        candidate_id=candidate_id,
+    )
+    alignment["alignment_report_sha256"] = hashlib.sha256(alignment_path.read_bytes()).hexdigest()
+    return claim
 
 
 def _complete_evidence(candidate_id: str, **overrides) -> ReviewEvidence:
@@ -75,6 +106,99 @@ def _write_lyrics_alignment_proof(root: Path, *, stem: str = "travel-meaning") -
         "alignment_report_path": str(report_path),
         "alignment_report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
     }
+
+
+def _bind_ready_alignment_claim(
+    claim: dict[str, object],
+    *,
+    source_media: Path,
+    candidate_id: str,
+    first_ms: int,
+    last_ms: int,
+) -> None:
+    report_path = Path(str(claim["alignment_report_path"]))
+    span = last_ms - first_ms
+    rows = []
+    lyrics = []
+    for index in range(8):
+        start_ms = first_ms + round((span - 3_000) * index / 7)
+        text = f"测试歌词{index}"
+        lyrics.append({"lrc_time_ms": index * 10_000, "text": text})
+        rows.append(
+            {
+                "lrc_time_ms": index * 10_000,
+                "lrc_text": text,
+                "cue_start_ms": start_ms,
+                "cue_end_ms": start_ms + 3_000,
+                "matched_cue_id": f"fixture-cue-{index}",
+            }
+        )
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "candidate_id": candidate_id,
+            "first_lyric_start_ms": first_ms,
+            "last_lyric_end_ms": last_ms,
+            "lyric_lines": lyrics,
+            "alignment": rows,
+        }
+    )
+    report_path.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    bind_ready_live_performance_report(
+        report_path,
+        source_media=source_media,
+        candidate_id=candidate_id,
+    )
+    claim["provider"] = "agy"
+    claim["model"] = "lrclib-agy-audio-lrc-global-shift-v1"
+    claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+def _rebind_background_playback_observation(claim: dict[str, object]) -> None:
+    """Turn a bound AGY-v2 fixture into the speech-over-BGM hard negative."""
+
+    report_path = Path(str(claim["alignment_report_path"]))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    first_ms = int(report["first_lyric_start_ms"])
+    last_ms = int(report["last_lyric_end_ms"])
+    span = last_ms - first_ms
+    observation = {
+        "mode": "STREAMER_TALKING_OVER_MUSIC",
+        "confidence": 0.98,
+        "continuous_singing": False,
+        "background_recording_likelihood": 0.97,
+        "evidence": [
+            {"time_ms": first_ms + span // 6, "observation": "host speech over recorded song at head"},
+            {"time_ms": first_ms + span // 2, "observation": "recorded singer continues under host speech"},
+            {"time_ms": first_ms + span * 5 // 6, "observation": "background recording continues at tail"},
+        ],
+        "notes": "hard-negative fixture: host identity is present but is not singing",
+    }
+    artifacts = report["audio_alignment_artifacts"]
+    raw_path = Path(str(artifacts["raw_output_path"]))
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["live_performance"] = observation
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    artifacts["raw_output_sha256"] = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+    manifest_path = Path(str(artifacts["run_manifest_path"]))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["output_sha256"] = artifacts["raw_output_sha256"]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    artifacts["run_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    report["live_performance"] = observation
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+def _rebind_raw_report_timing_mismatch(claim: dict[str, object]) -> None:
+    report_path = Path(str(claim["alignment_report_path"]))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["alignment"][3]["cue_start_ms"] += 10_000
+    report["alignment"][3]["cue_end_ms"] += 10_000
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
 
 
 def _write_review_package(
@@ -557,6 +681,14 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
         end_ms=280_000,
         text="唱完旅行的意义以后伴奏卡住，最后大家都笑了",
     )
+    lyrics_alignment = _write_lyrics_alignment_proof(tmp_path)
+    _bind_ready_alignment_claim(
+        lyrics_alignment,
+        source_media=source_video,
+        candidate_id="travel-meaning-anchor",
+        first_ms=25_000,
+        last_ms=214_800,
+    )
 
     summary = shadow_pipeline.run_shadow_pipeline(
         source_video=source_video,
@@ -583,7 +715,7 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
                 "clip_end_ms": 280_000,
                 "old_anchor_problem": "anchor starts mid-song and cuts off first/second verse",
             },
-            "lyrics_alignment": _write_lyrics_alignment_proof(tmp_path),
+            "lyrics_alignment": lyrics_alignment,
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
@@ -594,6 +726,7 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
         output_dir=tmp_path / "output",
         no_upload=True,
         source_context_run_ffmpeg=False,
+        host_vocal_prover=_ready_host_vocal_prover,
     )
 
     record = summary["records"][0]
@@ -623,6 +756,11 @@ def _run_song_ready_shadow_with_lyrics_alignment(
     tmp_path,
     lyrics_alignment: dict[str, object],
     response_overrides: dict | None = None,
+    *,
+    include_host_vocal: bool = True,
+    bind_live_proof: bool = True,
+    background_playback_with_ready_host: bool = False,
+    raw_report_mismatch_with_ready_host: bool = False,
 ):
     source_video, source_srt, refined_srt = _write_live_source_inputs(
         tmp_path,
@@ -649,6 +787,29 @@ def _run_song_ready_shadow_with_lyrics_alignment(
         text="唱完旅行的意义以后伴奏卡住，最后大家都笑了",
         response_overrides=response_overrides,
     )
+    if bind_live_proof:
+        _bind_ready_alignment_claim(
+            lyrics_alignment,
+            source_media=source_video,
+            candidate_id="travel-meaning-anchor",
+            first_ms=25_000,
+            last_ms=214_800,
+        )
+    preexisting_host_claim: dict[str, object] = {}
+    if background_playback_with_ready_host:
+        _rebind_background_playback_observation(lyrics_alignment)
+    if raw_report_mismatch_with_ready_host:
+        _rebind_raw_report_timing_mismatch(lyrics_alignment)
+    if background_playback_with_ready_host or raw_report_mismatch_with_ready_host:
+        preexisting_host_claim, _profile = make_ready_host_vocal_claim(
+            tmp_path / "preexisting-host-proof",
+            source_media=source_video,
+            alignment_report=Path(str(lyrics_alignment["alignment_report_path"])),
+            candidate_id="travel-meaning-anchor",
+        )
+        lyrics_alignment["alignment_report_sha256"] = hashlib.sha256(
+            Path(str(lyrics_alignment["alignment_report_path"])).read_bytes()
+        ).hexdigest()
     summary = shadow_pipeline.run_shadow_pipeline(
         source_video=source_video,
         source_srt=source_srt,
@@ -673,6 +834,7 @@ def _run_song_ready_shadow_with_lyrics_alignment(
                 "clip_end_ms": 280_000,
             },
             "lyrics_alignment": lyrics_alignment,
+            "host_vocal_proof": preexisting_host_claim,
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
@@ -683,10 +845,61 @@ def _run_song_ready_shadow_with_lyrics_alignment(
         output_dir=tmp_path / "output",
         no_upload=True,
         source_context_run_ffmpeg=False,
+        host_vocal_prover=_ready_host_vocal_prover if include_host_vocal else None,
     )
     record = summary["records"][0]
     evidence = _load_json(Path(record["evidence_path"]))
     return record, evidence
+
+
+def test_complete_lrc_without_lidousha_vocal_proof_stays_blocked(tmp_path):
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+        include_host_vocal=False,
+    )
+
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_HOST_VOCAL_UNPROVEN" in record["reason_codes"]
+    assert evidence["metrics"]["song_complete"] is False
+    assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
+
+
+def test_ready_host_identity_plus_speech_over_background_music_stays_blocked(tmp_path):
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+        background_playback_with_ready_host=True,
+    )
+
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_BACKGROUND_PLAYBACK_ONLY" in record["reason_codes"]
+    assert "SONG_NOT_LIDOUSHA_SINGING" in record["reason_codes"]
+    assert record.get("materialized_recut") is None
+    assert record.get("cover_path") is None
+    assert evidence["metrics"]["song_complete"] is False
+    assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
+    assert evidence["metadata"]["source_context_job"]["host_vocal_proof"] == {}
+    preexisting_proof = json.loads(
+        next((tmp_path / "preexisting-host-proof").glob("*.host-vocal-proof.json")).read_text(encoding="utf-8")
+    )
+    assert preexisting_proof["status"] == "READY"
+
+
+def test_raw_agy_timing_cannot_be_reprojected_in_report_before_materialization(tmp_path):
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+        raw_report_mismatch_with_ready_host=True,
+    )
+
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_LIVE_PERFORMANCE_UNPROVEN" in record["reason_codes"]
+    assert record.get("materialized_recut") is None
+    assert record.get("cover_path") is None
+    assert evidence["metrics"]["song_complete"] is False
+    live_check = next(check for check in evidence["checks"] if check.get("code") == "SONG_LIVE_PERFORMANCE_PROOF")
+    assert "raw/report lyric row 3 mismatch" in live_check["evidence"]["error"]
 
 
 def test_live_source_complete_song_waives_boring_context_cpa_blocks(tmp_path):
@@ -724,7 +937,9 @@ def test_live_source_song_ready_without_alignment_report_fails_closed(tmp_path):
     lyrics_alignment.pop("alignment_report_path")
     lyrics_alignment.pop("alignment_report_sha256")
 
-    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -740,7 +955,9 @@ def test_live_source_song_ready_with_alignment_report_hash_mismatch_fails_closed
     lyrics_alignment = _write_lyrics_alignment_proof(tmp_path)
     lyrics_alignment["alignment_report_sha256"] = "0" * 64
 
-    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -754,7 +971,9 @@ def test_live_source_song_ready_without_provider_model_source_fails_closed(tmp_p
     lyrics_alignment.pop("provider")
     lyrics_alignment.pop("model")
 
-    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -767,7 +986,9 @@ def test_live_source_song_ready_with_missing_report_file_fails_closed(tmp_path):
     lyrics_alignment = _write_lyrics_alignment_proof(tmp_path)
     Path(str(lyrics_alignment["alignment_report_path"])).unlink()
 
-    record, _evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, _evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -2054,6 +2275,8 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
         "沧桑了谁人的眼眸",
         "还有多少痛 埋藏在心中",
         "只为一人从容 无求孤身闯万重",
+        "一壶浊酒笑看风云动",
+        "回首江湖仍是少年梦",
     ]
     srt_blocks = []
     cursor_ms = 50_000
@@ -2118,6 +2341,14 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
         no_upload=True,
         source_context_run_ffmpeg=False,
         lrc_provider=lambda query: lrc,
+        audio_lrc_aligner=lambda source, selected_lrc, candidate, artifact_dir: make_ready_audio_alignment_run(
+            source_media=source,
+            source_duration_ms=120_000,
+            lrc=selected_lrc,
+            candidate_id=candidate,
+            output_dir=artifact_dir,
+        ),
+        host_vocal_prover=_ready_host_vocal_prover,
     )
 
     record = summary["records"][0]
