@@ -2595,6 +2595,61 @@ def test_validated_cover_lines_keeps_song_and_hook_whole():
     assert v(["小李当场反", "杀"], "小李当场反杀", hook_word="反杀", max_lines=5) == ()
 
 
+def test_validated_cover_words_accepts_lossless_segmentation():
+    """Ivan 2026-07-10: the FULL title stays on the cover; the font grows via
+    MANY line breaks and a break may fall anywhere EXCEPT inside a word / hook /
+    proper noun — so the LLM's word segmentation becomes the wrap atoms."""
+    v = shadow_pipeline._validated_cover_words
+    words = ["沙豆李", "沉浸在", "指认", "上下左右", "和", "疯狂摇头", "之中，", "完全", "听不到", "礼墨", "的", "声音"]
+    text = "沙豆李沉浸在指认上下左右和疯狂摇头之中，完全听不到礼墨的声音"
+    assert v(words, text, hook_word="听不到") == tuple(words)
+
+
+def test_validated_cover_words_rejects_lossy_or_hook_splitting():
+    v = shadow_pipeline._validated_cover_words
+    text = "沙豆李完全听不到礼墨的声音"
+    assert v(["沙豆李", "完全", "听不到", "礼墨的"], text, hook_word="") == ()  # drops 声音
+    assert v(["沙豆李", "完全", "听不", "到礼墨的声音"], text, hook_word="听不到") == ()  # hook split
+    assert v("not a list", text, hook_word="") == ()
+    assert v([], text, hook_word="") == ()
+
+
+def test_wrap_even_packs_word_atoms_without_splitting():
+    lines = shadow_pipeline._wrap_even(
+        "沙豆李沉浸在疯狂摇头之中完全听不到礼墨的声音",
+        4,
+        keep=("沙豆李", "沉浸在", "疯狂摇头", "之中", "完全", "听不到", "礼墨", "的", "声音"),
+    )
+    assert 2 <= len(lines) <= 4
+    assert "".join(lines) == "沙豆李沉浸在疯狂摇头之中完全听不到礼墨的声音"
+    for atom in ("沙豆李", "疯狂摇头", "听不到", "礼墨"):
+        assert any(atom in line for line in lines), (atom, lines)  # atom never split across lines
+
+
+def test_fit_cover_lines_full_title_grows_with_raised_line_budget():
+    """The old max_lines=5 cap pinned a 42-char side-zone title at ~73px; the
+    raised budget lets the fitter use more, shorter lines — same FULL text,
+    visibly bigger font (Ivan 2026-07-10: 多换行放大, 绝不丢字)."""
+    text = "最吵闹的黑白小猪成为了聋人只能不知所措的大喊我聋了进入游戏十分钟都没搞清状况"
+    atoms = ("最吵闹的", "黑白小猪", "成为了", "聋人", "只能", "不知所措的", "大喊", "我聋了",
+             "进入游戏", "十分钟", "都没", "搞清", "状况")
+    font_path = shadow_pipeline._cover_font_for_text(text)
+    zone = shadow_pipeline._COVER_LAYOUT_RENDER["left-split"]["zone"]
+
+    def max_font(budget):
+        lines = shadow_pipeline._fit_cover_lines(
+            text, hook_word="我聋了", base_fill=shadow_pipeline._COVER_BASE_FILL,
+            hook_rgb=(255, 82, 82), zone=zone, font_path=font_path,
+            max_lines=budget, max_size=360, word_atoms=atoms,
+        )
+        assert "".join("".join(seg[0] for seg in line["segs"]) for line in lines) == text  # full title kept
+        return max(line["size"] for line in lines)
+
+    assert shadow_pipeline._COVER_LAYOUT_RENDER["left-split"]["max_lines"] >= 8
+    assert shadow_pipeline._COVER_LAYOUT_RENDER["banner"]["max_lines"] >= 4
+    assert max_font(8) > max_font(5) * 1.15  # the raised budget buys real size
+
+
 def test_normalize_cover_art_direction_fills_word_aware_line_breaks():
     title = "【李豆沙】电脑要造反？小皇帝拒绝更新"
     cover_text = "电脑要造反？小皇帝拒绝更新"

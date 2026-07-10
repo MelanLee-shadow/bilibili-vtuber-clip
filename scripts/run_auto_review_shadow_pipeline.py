@@ -2682,6 +2682,9 @@ class LidoushaCoverArtDirection:
     is_song: bool
     hook_word: str = ""  # verbatim substring of cover_text to highlight ("" = none)
     line_breaks: tuple[str, ...] = ()  # LLM word-aware line split of cover_text ("" = balancer)
+    words: tuple[str, ...] = ()  # LLM word segmentation of cover_text — wrap atoms
+    #   (Ivan 2026-07-10: keep the FULL title and grow the font via MANY line
+    #   breaks; only whole words / hook / proper nouns may never split)
 
 
 _COVER_TALK_LAYOUTS = ("left-split", "right-split", "banner")
@@ -2842,12 +2845,16 @@ def _cover_art_direction_prompt(*, title: str, cover_text: str) -> str:
         "- role: 一个简短英文角色键(如 shy_cute_default/shocked_bites_back/witty_smug/tender_soft/gentle_song)\n"
         "- expression_en: 一句英文脸部表情(贴角色,不吐舌)\n"
         "- hook_word: 封面文案里最该高亮的一个词(必须是文案里出现的原词)\n"
+        "- words: 封面文案的**完整词组切分**(字符串数组)。硬约束:按顺序拼接后与封面文案一字不差(不加/不减/不改字);"
+        "每个自然词语(如\"传话员\"\"熊猫头\"\"不言而喻\")、专名(礼墨Sumi/kmx)、《歌名》和 hook_word 各自必须整体是一个元素(或完整包含在一个元素里);"
+        "标点跟在前一个词的元素末尾。分行器用它保证**换行永远不拆词**——除词以外任何位置都允许换行。\n"
         "- lines: 封面文案的分行方案(字符串数组)。硬约束:按顺序拼接后与封面文案一字不差(不加/不减/不改字);"
         "**绝不把一个词拆到两行**(如\"拒绝\"\"熊猫\"\"礼墨\"这类词必须整词同行);《歌名》和 hook_word 必须完整待在同一行。\n"
-        "  **封面字要尽量大、填满文字区(这是硬要求,Ivan 反复强调字卡不能小)**:字号由最长一行的宽度决定,所以行要短。"
-        "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(建议 4-5 行,每行 3-5 字),"
-        "让文字铺满整个竖直文字区;banner 是横宽区,可以少分几行、每行长一点(2-3 行)。宁可多一行也不要留一行太长把字压小。\n"
-        '只输出一个 JSON 对象: {"role":"...","expression_en":"...","background_style":"...","layout":"...","hook_color":"...","hook_word":"...","lines":["...","..."]}'
+        "  **封面字要尽量大、填满文字区,且必须保留完整文案(这是硬要求,Ivan 反复强调:字不能小,也绝不许丢字——放大靠多换行)**:"
+        "字号由最长一行的宽度决定,所以行要短。"
+        "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(长文案 5-8 行,每行 2-4 字),"
+        "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"
+        '只输出一个 JSON 对象: {"role":"...","expression_en":"...","background_style":"...","layout":"...","hook_color":"...","hook_word":"...","words":["...","..."],"lines":["...","..."]}'
     )
 
 
@@ -2879,6 +2886,31 @@ def _validated_cover_lines(value: object, cover_text: str, *, hook_word: str, ma
         if atom and not any(atom in line for line in lines):
             return ()  # a song name / the highlighted hook must never break across lines
     return tuple(lines)
+
+
+def _validated_cover_words(value: object, cover_text: str, *, hook_word: str) -> tuple[str, ...]:
+    """Accept an LLM word segmentation only when it is provably lossless: same
+    characters in the same order, every 《song》 and the hook word intact inside
+    a single element.  These become wrap ATOMS (Ivan 2026-07-10: the full title
+    stays on the cover, the font grows via MANY line breaks, and a break may
+    fall anywhere EXCEPT inside a word / hook / proper noun).  Anything invalid
+    → () → the balancer falls back to hook/《song》/ASCII atoms only."""
+    if not isinstance(value, (list, tuple)) or not (1 <= len(value) <= 40):
+        return ()
+    words = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            return ()
+        word = item.strip()
+        if len(word) > 12:
+            return ()
+        words.append(word)
+    if _cover_lines_canon("".join(words)) != _cover_lines_canon(cover_text):
+        return ()
+    for atom in [*re.findall(r"《[^》]*》", cover_text), *([hook_word] if hook_word else [])]:
+        if atom and not any(atom in word for word in words):
+            return ()
+    return tuple(words)
 
 
 def _normalize_cover_art_direction(
@@ -2915,6 +2947,7 @@ def _normalize_cover_art_direction(
     # are handled in _fit_cover_lines; the LLM split only fills the no-colon case.
     max_lines = _COVER_LAYOUT_RENDER.get(layout, _COVER_LAYOUT_RENDER["left-split"])["max_lines"]
     line_breaks = _validated_cover_lines(payload.get("lines"), cover_text, hook_word=hook_word, max_lines=max_lines)
+    words = _validated_cover_words(payload.get("words"), cover_text, hook_word=hook_word)
 
     return LidoushaCoverArtDirection(
         role=role,
@@ -2925,6 +2958,7 @@ def _normalize_cover_art_direction(
         is_song=baseline.is_song,
         hook_word=hook_word,
         line_breaks=line_breaks,
+        words=words,
     )
 
 
@@ -3206,10 +3240,13 @@ _COVER_LAYOUT_RENDER = {
     # max_lines (wrap budget — MORE lines ⇒ shorter lines ⇒ BIGGER font in the narrow
     # half, Ivan's trick), max_size (font cap). Outer edge = feed-safe band 260/1660;
     # inner edge kept off the character; zone made tall so many big lines fit.
-    "left-split": {"zone": (960, 66, 1660, 1014), "angle": -4.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 5, "max_size": 360},
-    "right-split": {"zone": (260, 66, 960, 1014), "angle": -3.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 5, "max_size": 360},
-    "banner": {"zone": (260, 16, 1660, 486), "angle": -2.0, "scrim": _COVER_SCRIM_BAR, "max_lines": 3, "max_size": 360},
-    "song-clean": {"zone": (260, 110, 1000, 940), "angle": -4.0, "scrim": _COVER_SCRIM_SOFT, "max_lines": 5, "max_size": 320},
+    # Line budgets raised 2026-07-10 (Ivan: keep the FULL title, grow the font
+    # via MANY line breaks — a 30-49 char title in a narrow side zone needs 6-8
+    # short lines to fill it; the old cap of 5 pinned long titles at ~73-105px).
+    "left-split": {"zone": (960, 66, 1660, 1014), "angle": -4.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 8, "max_size": 360},
+    "right-split": {"zone": (260, 66, 960, 1014), "angle": -3.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 8, "max_size": 360},
+    "banner": {"zone": (260, 16, 1660, 486), "angle": -2.0, "scrim": _COVER_SCRIM_BAR, "max_lines": 4, "max_size": 360},
+    "song-clean": {"zone": (260, 110, 1000, 940), "angle": -4.0, "scrim": _COVER_SCRIM_SOFT, "max_lines": 7, "max_size": 320},
 }
 _COVER_OUTLINE_NAVY_RATIO = 0.085   # outer stroke ≈ 8.5% of font size (chunky, scales up)
 _COVER_OUTLINE_WHITE_RATIO = 0.042
@@ -3492,13 +3529,19 @@ def _regroup_lines(lines: Sequence[str], k: int) -> list[str]:
     return [g for g in groups if g]
 
 
-def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_path, max_lines=3, max_size=300, forced_lines=()):
+def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_path, max_lines=3, max_size=300, forced_lines=(), word_atoms=()):
     """Choose the line-wrap + font size that makes the title as BIG as possible
     while filling the zone: evaluate every line count (the LLM/colon word-safe
     wraps AND balancer wraps at 1..max_lines), binary-search the largest emph size
     that fits each (width AND height), and take the biggest — preferring a
     word-safe wrap whenever it lands within 90% of the best so bigger text never
-    reintroduces a mid-word break.  The hook line is emphasized; outlines scale."""
+    reintroduces a mid-word break.  The hook line is emphasized; outlines scale.
+
+    ``word_atoms`` (Ivan 2026-07-10): the art direction's validated word
+    segmentation of the FULL cover text.  When present, the balancer packs these
+    atoms instead of single characters — every wrap candidate is then word-safe
+    by construction (a break may fall anywhere EXCEPT inside a word / hook /
+    proper noun), so the fitter simply takes the biggest font."""
     from PIL import Image, ImageDraw, ImageFont
 
     x0, y0, x1, y1 = zone
@@ -3526,7 +3569,7 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
         fits = (max(widths) <= zone_w) and (total_h <= zone_h)
         return fits, sizes, seg_lines, gaps
 
-    keep = (hook_word,) if hook_word else ()
+    keep = tuple(dict.fromkeys([*(w for w in word_atoms if w), *((hook_word,) if hook_word else ())]))
     # BIG TEXT (Ivan 2026-07-07 "字卡还是太小"): the font is capped by the longest
     # line's width, so a fixed 2-clause colon split leaves a narrow side zone's
     # font tiny with most of the height empty.  Evaluate MANY line counts and take
@@ -3544,8 +3587,12 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
         base = [line for line in (l.strip() for l in cover_text.splitlines()) if line]
     wordsafe = [_regroup_lines(base, k) for k in range(1, len(base) + 1)] if base else []
     flat = cover_text.replace("\n", "")  # balancer wraps the flat text (colon \n is a clause hint only)
+    # With validated word atoms the balancer itself is word-safe (atoms never
+    # split), so its wraps compete as first-class word-safe candidates and the
+    # fitter takes the plain maximum — full title, many short lines, big font.
+    balancer_wordsafe = bool(word_atoms)
     balancer = [_wrap_even(flat, n, keep=keep) for n in range(1, max_lines + 1)]
-    candidates = [(True, w) for w in wordsafe] + [(False, w) for w in balancer]
+    candidates = [(True, w) for w in wordsafe] + [(balancer_wordsafe, w) for w in balancer]
 
     scored: list[tuple[int, bool, list, list, list]] = []
     for is_wordsafe, line_texts in candidates:
@@ -3615,6 +3662,7 @@ def _overlay_lidousha_cover_title(
         max_lines=render["max_lines"],
         max_size=render["max_size"],
         forced_lines=art_direction.line_breaks,
+        word_atoms=art_direction.words,
     )
 
     scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
