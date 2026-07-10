@@ -23,7 +23,7 @@ container:/app/Videos                      # 原始录播输入
 → 高召回内容锚点
 → 扩展源上下文
 → 外部同步 LRC + agy 当前音频对齐/现场演唱观察
-→ CAM++ 李豆沙主播声纹子门
+→ CAM++ 李豆沙主播声纹子门（仅采样明确演唱行）
 → 自动 evidence / boundary resolver
 → AUTO_RECUT / DROP / BLOCK / RETRY（语义结果只作证据，不替代歌曲正证据）
 → no-upload review 成片 + QA + hash gate
@@ -39,7 +39,7 @@ container:/app/Videos                      # 原始录播输入
 - 没有 `AUTO_UPLOAD` manifest 和 artifact hash gate 就不能发布。
 - 无人值守意味着自动隔离/重试/丢弃/放行，不意味着把坏片自动发出去。
 - 日语/稀疏 ASR 歌曲会保留 seed song anchor；可用日文原名/kana 做 Google/公开网页人工检索，自动路径的 `--lrc-provider auto` 会查 NetEase + LRCLIB + Kugou，再在扩大后的 full window 上用唯一 canonical LRC + 当前音频证明。Google 结果页不作为无人值守 API 或歌词证据；日语或歌唱 ASR 乱码本身不再是失败理由，但找不到唯一可靠同步 LRC、版本不符或后续现场/身份证据不足时仍 fail closed。
-- “歌切”只指李豆沙本人现场演唱。原唱播放、片尾/下播卡音乐、游戏/视频 BGM、其他歌手主唱、合唱/和声、李豆沙只在音乐上说话都不得切。交付必须同时通过：① AGY v3 逐歌词行同主体硬门（每行都是 `LIDOUSHA + SINGING_THIS_LYRIC + SAME_LIVE_VOCAL_SOURCE`，且无其他歌手/和声、无预录/回放人声）；② hash-bound CAM++ `host_vocal_proof` 证明同一些互异歌词点上存在李豆沙声纹。只有两者 AND 才产生 `VERIFIED_LIDOUSHA_SINGING`；单独 LRC、AGY 或声纹命中都不算。已知歌段会按 full-proof retry 范围向锚点前后各扩 45 秒并持久隔离所有重叠 talk 候选，不能只截前奏/尾奏或换 lane 洗白。
+- “歌切”只指以李豆沙本人现场演唱为主体的完整歌曲。原唱播放、片尾/下播卡音乐、游戏/视频 BGM、其他歌手主唱、合唱/和声、李豆沙只在音乐上说话都不得切。交付必须同时通过：① AGY v4 同主体硬门（首尾与至少 80%/7 行明确为 `SINGING_THIS_LYRIC`；只容许一段受 6 行/12 秒/20%/15 秒四重限制的 canonical 戏剧台词；无其他歌手/和声、无预录/回放人声）；② hash-bound `host-vocal-proof.v2` 只从七个互异的明确演唱行采样，至少 5/7 且头/中/尾均通过，台词行永不采样。只有两者 AND 才产生 `VERIFIED_LIDOUSHA_SINGING`；单独 LRC、AGY 或声纹命中都不算。已知歌段会按 full-proof retry 范围向锚点前后各扩 45 秒并持久隔离所有重叠 talk 候选，不能只截前奏/尾奏或换 lane 洗白。
 
 ## 文档入口
 
@@ -62,8 +62,8 @@ container:/app/Videos                      # 原始录播输入
 - `scripts/lidousha_slice_monitor.py`：本地监控 `free` 上 bilive 运行状态。
 - `scripts/free_session_autoslice.py`：`free` 上 cron 每 10 分钟调用的 post-stream autoslice runner。
 - `src/autoslice/song_repair.py`：canonical LRC 搜索、稀疏 ASR 音频证明与 fail-closed 校验。
-- `src/autoslice/agy_lrc_alignment.py`：当前 full window 音频对同步歌词逐行观察，并输出 AGY v3 逐行同主体现场演唱/背景播放分类证据。
-- `src/autoslice/host_vocal_proof.py`：生成 CAM++ 七个歌词点的李豆沙声纹子证明，并由 runner 复核 hash 绑定、分数中位数和门槛；复核器不重跑 ML 推理。
+- `src/autoslice/agy_lrc_alignment.py`：当前 full window 音频对同步歌词逐行观察，并输出 AGY v4 以现场演唱为主体或背景播放的分类证据。
+- `src/autoslice/host_vocal_proof.py`：生成 `host-vocal-proof.v2`，CAM++ 七点只取明确演唱行；runner 复核歌词角色/hash 绑定、分数中位数和门槛，复核器不重跑 ML 推理。
 
 ## 本地验证
 

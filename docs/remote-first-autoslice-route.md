@@ -31,7 +31,7 @@ container:/app/Videos             # 录播输入与 app 侧产物
 - `/opt/bilive/app` / container `/app` 仍是 recorder 和 legacy/emergency upload 运行面，但不再冒充 post-stream autoslice 的 commit 指纹。
 - 上传必须 fail-closed：没有 `AUTO_UPLOAD` manifest 和 artifact hash gate，就不能发布。
 - `*.jingting.done` 只代表精听完成，不代表 release-ready。
-- 2026-07-10 的《芽吹くとき》v4 只验证了日语稀疏/garbled ASR 下的 canonical-LRC 召回、对齐与完整边界；它后来被确认为下播卡播放的背景原曲，已 superseded/rejected，不是李豆沙歌切正例。当前源码增加 AGY v3 逐歌词行同主体现场演唱否决 AND CAM++ 李豆沙声纹子门，并持久隔离 song interval 上的重叠 talk 候选；新 commit 部署、fresh 背景播放/回放负例与真唱正例重跑、state/report 修复尚待 live acceptance。
+- 2026-07-10 的《芽吹くとき》historical v4 只验证了日语稀疏/garbled ASR 下的 canonical-LRC 召回、对齐与完整边界；它后来被确认为下播卡播放的背景原曲，已 superseded/rejected，不是李豆沙歌切正例。当前生产 commit `f64cd29` 已部署：AGY v4 要求首尾演唱、至少七行且至少 80% 演唱，只允许一个受六行/12 秒/20%/15 秒四重限制的歌曲内戏剧对白块，且头/中/尾三点证据必须落演唱行；`host-vocal-proof.v2` 的 CAM++ checkpoint 只从演唱行取样，并重新绑定 required role 与五项逐行断言。原唱/背景播放、普通说话+BGM、其他歌手/和声、预录/回放、静态/离屏 replay 仍硬 BLOCK，song interval 上的重叠 talk 候选仍持久隔离。事故六文件修复已 `COMMITTED`；真唱《屑屑》v5 已 no-upload `READY/MATERIALIZED`，同音轨静态回放被 AGY 阻断，fresh《芽吹くとき》自动找到正确日文 LRC 后即使 AGY 误报 live，仍由 0/7 的 `host-vocal-proof.v2` 最终 `BLOCK / SONG_NOT_LIDOUSHA_SINGING`。10:50Z exact cron smoke 无 state/summary/upload-ledger 漂移，`DISABLED` 已移除。
 
 ## 目标流水线
 
@@ -98,9 +98,10 @@ __pycache__ .pytest_cache .DS_Store # 工具缓存
 这轮整理只解决本地工作区混乱和文档路线问题；它没有把生产推进到 full unattended。当前必须继续收敛的缺口是：
 
 - 远端 autoslice 代码与运行数据已经分目录，但 state/cache/out/reports 仍要按 manifest 与保留策略清理，不能批量盲删。
-- post-stream runner 已由远端 cron + flock + `DISABLED` kill switch 管理；监控仍需持续证明 heartbeat、录制输入、锁和 mount 的真实状态。
+- post-stream runner 已由远端 cron + flock + `DISABLED` kill switch 管理；本轮联合门三组媒体验收与 exact cron smoke 已完成，`DISABLED` 已在 lock 下移除。监控仍需持续证明 heartbeat、录制输入、锁和 mount 的真实状态。
 - auto-review 仍是 shadow/no-upload；`is_publish_gate_satisfied()` 尚未接入真实上传器。
 - 唯一可靠 LRC 身份的 sparse-ASR 歌曲已经能走 current-audio/AGY High 正证据、external-LRC burn、精确重渲染和 hash gate；无同步 LRC、身份歧义或 live arrangement 不匹配仍会 fail closed，不能宣称任意日语歌自动成功。
+- AGY v4 + `host-vocal-proof.v2` 已部署，真唱、同音轨静态 replay、当前《芽吹くとき》背景原曲和 cron entrypoint 均完成 no-upload 验收。当前剩余风险不是上线闸，而是 AGY 模型的重复运行方差：本轮《芽吹くとき》AGY 误报 live，最终由独立 CAM++ 0/7 正确阻断；不得因此把单层判断写成充分条件。
 - review-package audit 仍需继续扩充音频观察、波形/频谱和 approved-cover-style 的结构化检查；真实发布仍是单独授权面。
 - Bilibili 上传/编辑脚本属于 legacy/emergency path，不能重新成为正常流水线入口。
 

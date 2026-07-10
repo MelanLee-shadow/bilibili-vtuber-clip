@@ -3,6 +3,39 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-10（续四）：歌切“必须是李豆沙现场演唱”联合门上线 +《芽吹くとき》背景原曲阻断 + cron 恢复
+
+### 目标
+
+纠正“找到同步 LRC/整首歌 = 可以歌切”的产品漏门：只有李豆沙本人在直播现场以演唱为主体的歌曲才允许切；原唱/背景音乐、下播卡音乐、静态或离屏回放、其他歌手、和声/合唱、李豆沙只在音乐上说话均必须 fail closed。同时保留日语/稀疏乱码 ASR 的自动 LRC 恢复能力，fresh 重跑用户指出的 yonige《芽吹くとき》，更新全部当前文档；本轮没有上传授权。
+
+### 已完成
+
+- **生产联合门已部署**：代码承重 commit `f64cd29494fdc0d2b37d249e659897514fd701dc` 已从干净工作树通过 `scripts/deploy_free_autoslice.sh free` 部署，远端 `DEPLOYED_COMMIT`、runner 字节、CAM++ 模型树和三份私有 enrollment 均读回一致。生产 AGY 契约为 `agy-audio-lrc-observation.v4`；`host-vocal-proof.v2` 的七个 CAM++ checkpoint 只从 `SINGING_THIS_LYRIC` 行抽样并重新绑定逐行断言。
+- **v4 的窄歌曲对白例外已收口**：首尾必须演唱，至少 7 行且至少 80% canonical 行演唱；最多一个 exact canonical 戏剧对白块，且同时受 6 行、12 秒 voiced、20% lyric-vocal duration、15 秒 wall-clock span 限制；三段 live evidence 必须落演唱行。普通说话/ad-lib/BGM、其他歌手/和声、录制/回放人声仍硬 BLOCK。历史 AGY v3 只由 7/9 事故修复适配器读取，不能进入生产正例。
+- **测试与对抗复核**：`python3 -m pytest tests -q` 为 `506 passed`，`compileall`、capability JSON、`git diff --check` 全通过；两名独立 reviewer 对代码和输出绑定均无剩余 P0/P1。可见 ChatGPT Pro challenge 会话为 `https://chatgpt.com/c/6a508d95-7634-83ea-b65a-32033082f810`，复核文本 SHA-256 `41082ecfe2d18bbf6049f049634e86a97639122fa49ef110cecf32cbb5aa5df6`。
+- **事故状态已修复**：事务 `/opt/bilive/autoslice/forensics/false-green-20260709-20260710T090025Z-3ad69d0263` 为 `COMMITTED`；7/9 六个 state/report/summary/delivery 权威面均已清除假绿，旧《芽吹くとき》交付保持 superseded/quarantined。
+- **真唱正例通过**：fresh《屑屑》v5 在 `/opt/bilive/autoslice/out/acceptance/host-vocal-positive-20260710T101624Z` 完成 52/52 heard、48 行演唱 + 一个 4 行受限戏剧对白块；host-vocal proof 6/7 且头/中/尾覆盖，联合门 READY。仅物料化 241.000 秒、1V+1A 的 no-upload 验收切片，MP4 SHA-256 `fa130beb209bbc8cafa3d7c6556baa39f7a42930d35e1f2b3ed61c7e9da5fbc8`。
+- **同音轨静态回放负例通过**：`/opt/bilive/autoslice/out/acceptance/host-vocal-static-replay-20260710T103213Z` 的音轨与正例 decoded PCM 相同，但画面为静态回放；AGY raw 给出 `ORIGINAL_OR_BACKGROUND_PLAYBACK` / `recorded_or_playback_vocal_present=true`，最终 BLOCK，无 host proof、recut、cover、delivery 或 upload。
+- **用户指出的《芽吹くとき》fresh 重跑已正确不切**：`/opt/bilive/autoslice/out/acceptance/host-vocal-negative-20260710T103814Z` 自动从 NetEase/LRCLIB/Kugou 路径找出 LRCLIB `33542202`，25/25 日文 canonical 行、一个 global shift 和完整歌曲边界均 READY；因此日语/乱码 ASR 没有让 LRC 阶段失败。本轮 AGY v4 把背景原曲误报成 live，但独立 `host-vocal-proof.v2` 七点 **0/7**，最终 `BLOCK / SONG_NOT_LIDOUSHA_SINGING`、`materialized_recut=null`。这份反例保留了单模型方差，而联合 AND 门成功阻止假绿；wrapper summary SHA-256 `57d139cf584cefc7788856978419385c64fd7d06784d0303dd6ad1e3d7ba31d9`。
+- **no-upload 与 cron 恢复均验真**：三次 fresh run 前均冻结 upload-ledger prefix；运行后 ledger 仍为 SHA-256 `c95ee0690a5755b1971bd3dd5165b4bbccefdf4326ddd3736294f43dcc1adfb5`、32,015 bytes，未出现 publish/delivery/uploader。`2026-07-10 10:50:29Z` 在 runner lock 下移除 `DISABLED` 并执行 crontab 的同一 `--once` 入口，rc=0、`live=False`；active state digest `062234c7166df9b8e5724efc9030c0aab0fadba6fe005fd620e8ca7f19b7c23b`、review summary digest `f2e4a34c035435e3586f1e9db2f1c653264111f6730b1d2cf6acbcbbbb670425`、ledger 均前后不变，lock 已释放。随后 `11:00:02Z` 的真实 `*/10` cron tick 自然执行并记录 `tick done: live=False ... 2026-07-09:review_ready`；scheduled runner 现已启用。
+- **文档已同步**：README、项目歌词 skill、song-finished workflow、capability MD/JSON、host-vocal 设计审查、7/9 事故审查、remote-first route 与 architecture banner 均改为 AGY v4 / proof v2 / 已部署验收态；下方 LRC-only acceptance 已明确标为 historical/superseded。
+
+### 进行中（含后台进程）
+
+- 无本会话遗留 selector、AGY、CAM++、上传或监控进程。既有 cron `*/10` + flock 已恢复；上传路径仍独立关闭并要求逐条授权。
+
+### 阻塞
+
+- 无代码、部署、状态修复或 no-upload 验收 blocker。
+- 边界声明：不能承诺“任意日语歌必成功”；无唯一可靠同步 LRC、版本不符、当前现场改编无法用单一位移解释、缺 post-song 主播锚点或任一联合门/渲染证明失败时仍会 BLOCK。fresh《芽吹くとき》也实证 AGY 单次分类会有方差，所以禁止移除 CAM++ AND 或把 AGY 单层写成充分条件。
+
+### 下一步
+
+1. 下一场真实直播后观察一次自然 cron run 的新 session 结果，确认同一 v4/v2 门在无人值守入口继续保持 fail closed；这不是当前上线 blocker。
+2. 若要进一步校准，可对 live/background/static/说话+BGM 小集做重复 AGY 方差统计；不得以此降低现有门槛。
+3. 任何具体成片发布仍须 Ivan 另行逐条授权，再冻结 video/cover/title hash 并生成 `AUTO_UPLOAD` manifest；本轮完成本身不构成上传授权。
+
 ## 2026-07-10（续三）：封面全文排版修复 + 10 条全部发布 + 何意味/人称字幕修正重传 + judge /responses 落地
 
 ### 目标
@@ -64,7 +97,7 @@ Ivan 三连指令：①luna 已可用，独立重判模型分配矩阵；②歌�
 
 ## 2026-07-10（续）：《芽吹くとき》生产重跑验收 + 日语稀疏 ASR/LRC 路线上线
 
-> 本节是 7/9 歌切事故与当前 runner 运行态的最新权威；下方“尚未部署”、旧 probe 时间和《ただそばにいて》相关段落只保留为历史记录。
+> **SUPERSEDED / HISTORICAL LRC-ONLY ACCEPTANCE**：本节只证明日语稀疏 ASR 下的 LRC/边界恢复，遗漏“李豆沙本人现场演唱”前提，已被本文件最上方“续四”联合门验收取代。旧 hash、probe 时间、成片与当时 runner 状态仅保留为事故证据，不得作为当前歌切正例。
 
 ### 目标
 

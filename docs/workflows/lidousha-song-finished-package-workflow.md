@@ -12,7 +12,7 @@ A package is only a browse layer over artifacts that already passed the real wor
 
 For every candidate, classify before rendering:
 
-- `song`: 李豆沙本人必须是每条歌词的现场主唱主体。当前自动门不放行 `collab_song`：其他歌手、合唱/和声、只有其他人在唱、原唱/片尾/下播卡/游戏视频 BGM、offscreen/static replay，或李豆沙只在音乐上说话，一律不是可自动交付的李豆沙歌切。
+- `song`: 李豆沙本人必须是整首歌的现场演唱主体。首尾及至少 80%/7 行须明确演唱；只允许一段受严格时长/比例限制的 canonical 戏剧台词。当前自动门不放行 `collab_song`：其他歌手、合唱/和声、只有其他人在唱、原唱/片尾/下播卡/游戏视频 BGM、offscreen/static replay，或李豆沙只在音乐上说话，一律不是可自动交付的李豆沙歌切。
 - `mixed_song_talk`: a song section plus a talk/accident reaction section.
 - `talk`: dialogue / reaction clip without foreground lyrics.
 - `reject` / `block`: insufficient context, bad source, duplicate, or unsafe to publish.
@@ -28,8 +28,8 @@ Use `.agent/skills/song-lyrics-timeline-aligner/SKILL.md`.
 Required evidence:
 
 - Joint performer proof before `song_complete`, recut delivery, cover work, or package materialization (LRC discovery/alignment may run first because the gate consumes actual lyric cues):
-  - AGY v3 hard veto: every heard lyric row must identify `LIDOUSHA + SINGING_THIS_LYRIC + SAME_LIVE_VOCAL_SOURCE`, while every row and the recomputed aggregate excludes another singer/harmony and recorded/playback vocal; the existing confidence/continuity/background/head-middle-tail constraints also remain mandatory.
-  - CAM++ identity subclaim: `host_vocal_proof.status=READY`, `decision=LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`; its source/alignment/profile/model/reference/session-anchor/checkpoint hashes and recorded medians/thresholds must verify.
+  - AGY v4 hard veto: all heard lyric rows must identify the same live Li Dousha lyric source and exclude another singer/harmony and recorded/playback vocal. First/final and at least 80%/7 rows must be `SINGING_THIS_LYRIC`; the only exception is one contiguous exact-lyric `PERFORMING_THIS_LYRIC_SPOKEN` block capped at 6 rows, 12s voiced, 20%, and 15s span. Three head/middle/tail evidence points must land in sung rows.
+  - CAM++ identity subclaim: `host-vocal-proof.v2`, `status=READY`, `decision=LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`; its seven checkpoints must all bind `SINGING_THIS_LYRIC` rows, never spoken rows, and its source/alignment/profile/model/reference/session-anchor/checkpoint hashes and recorded medians/thresholds must verify.
   - Only their AND result may be `joint_singing_decision=VERIFIED_LIDOUSHA_SINGING`. LRC presence, AGY alone, CAM++ alone, or an LLM performer label is insufficient.
 - External timed lyric source: URL or local LRC/SRT path.
 - External first lyric timestamp.
@@ -60,13 +60,13 @@ For manual stubborn lyrics or visible defects, add a spectrogram/Gemini pass bef
 - Accept model timing only where the spectrogram/full-clip context supports it.
 - Record rejected model claims explicitly. Do not preserve old Gemini 3.1/2.5 model names as the current workflow. If older evidence exists, regenerate it with agy `Gemini 3.5 Flash` or mark it stale.
 - Automated audio proof is narrower than an ordinary model suggestion: `src/autoslice/song_repair.py` independently binds the current source and canonical LRC hashes, requires every canonical line to be heard at confidence `>=0.8`, validates monotonic timings and one global shift, rejects unproved tempo stretch, and requires first-line/chorus/repeated-section/longest-gap/tail checks plus the post-song talk boundary. If an exact lyric repeats, `repeated_section` must point to a later audible recurrence, not its first occurrence. Search ranking or an AGY verdict alone is never proof.
-- The same AGY v3 raw observation must independently classify the performance. Only `LIVE_STREAMER_SINGING` at confidence `>=0.85`, continuous singing, background-recording likelihood `<=0.20`, exact head/middle/tail observations, and every-row same-Li-Dousha-live-singer assertions can pass. `ORIGINAL_OR_BACKGROUND_PLAYBACK`, `OTHER_SINGER`, `STREAMER_TALKING_OVER_MUSIC`, `AMBIGUOUS`, guest/duet/harmony, offscreen/static replay, missing row fields, or raw/report disagreement is a hard veto even when LRC alignment is perfect.
-- CAM++ then checks identity on the same aligned lyric evidence. First, 4–8 seconds of post-song host speech must score a median `>=0.60` against three pinned Li Dousha enrollments. Seven distinct actual lyric cues, each at least 2.5 seconds, contribute a central 2.5–4 second sample. A checkpoint passes only when both its three-enrollment median and its comparison to the same-session host anchor are `>=0.31`; at least 5/7 plus head/middle/tail coverage is required. This only establishes `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`; the AGY AND is what turns it into a singing decision.
+- The same AGY v4 raw observation must independently classify the performance. Only `LIVE_STREAMER_SINGING` at confidence `>=0.85`, `continuous_live_song_performance=true`, background-recording likelihood `<=0.20`, exact sung-row head/middle/tail observations, and the bounded predominantly-sung contract above can pass. Ordinary speech, `ORIGINAL_OR_BACKGROUND_PLAYBACK`, `OTHER_SINGER`, `STREAMER_TALKING_OVER_MUSIC`, `AMBIGUOUS`, guest/duet/harmony, offscreen/static replay, missing row fields, or raw/report disagreement is a hard veto even when LRC alignment is perfect.
+- CAM++ then checks identity on the same aligned lyric evidence under `host-vocal-proof.v2`. First, 4–8 seconds of post-song host speech must score a median `>=0.60` against three pinned Li Dousha enrollments. Seven distinct actual `SINGING_THIS_LYRIC` cues, each at least 2.5 seconds, contribute a central 2.5–4 second sample; spoken rows are skipped. A checkpoint passes only when both its three-enrollment median and its comparison to the same-session host anchor are `>=0.31`; at least 5/7 plus head/middle/tail coverage is required. This only establishes `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS`; the AGY AND is what turns it into a singing decision.
 - The runner recomputes hash bindings, stored-score medians, thresholds, and distribution. It does not rerun CAM++ inference; do not treat artifact verification as a second classifier or a formal identity guarantee.
 
 Blockers (each fires on its own; package-shape checks are enforced by `scripts/audit_lidousha_review_package.py`, while live audio-proof checks are enforced by `src/autoslice/song_repair.py` and the runner final gate):
 
-- AGY v3 same-subject live-performance observation is missing/malformed, non-live, below confidence, discontinuous, too likely to be a background recording, lacks exact lyric head/middle/tail evidence, or fails any per-row singer/role/no-replay assertion.
+- AGY v4 same-subject live-performance observation is missing/malformed, non-live, below confidence, discontinuous, insufficiently sung, exceeds any spoken-passage cap, too likely to be a background recording, lacks exact sung-row head/middle/tail evidence, or fails any per-row singer/role/no-replay assertion.
 - No valid hash-bound `host_vocal_proof`, no usable 4–8 second post-song host speech anchor, verifier unavailable, model/reference/profile drift, or `NO_LIDOUSHA_VOCAL_DETECTED`. These block before `foreground_song_overlap_seconds`, `song_complete`, complete-song semantic waiver, recut delivery, or cover staging can become ready.
 - `source_srt` is `.jingting.srt` for a song candidate (blocks unconditionally, even with an alignment report).
 - No alignment report exists.
@@ -193,7 +193,7 @@ A review package should contain:
 - `cover_refs/` identity/reference frame
 - `publish/` title and publish metadata
 - `evidence/` lyric alignment, cover request/response, and semantic evidence
-- `evidence/` also includes the delivered `*.host-vocal-proof.json`; the runtime proof's checkpoint WAV/hash chain remains in the protected autoslice evidence store.
+- `evidence/` also includes the delivered `host-vocal-proof.v2` JSON with sung-row role bindings; the runtime proof's checkpoint WAV/hash chain remains in the protected autoslice evidence store.
 - `audio_analysis/` spectrogram/waveform images and model timing JSON when a Gemini/spectrogram pass was used
 - `review_manifest.json`
 - `audit_lidousha_review_package.json`
