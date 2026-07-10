@@ -24,7 +24,9 @@
 - **monitor 是旧面复活的真凶（根除）**：`lidousha_slice_monitor.py` 有 `slice_blessed` crash-recovery——旧面进程不在就 `docker exec` 拉回来（实锤：我 20:2xZ 跑了一次监控，scan+local_prepare 20:29 就复活了）。已重写：①删除全部 start_scan/start_local_prepare/_start_daemon/FORCE_START_SCAN/AUTOSLICE_ENABLED 复活逻辑——旧面进程在跑只 WARN 绝不重启；②新增 `run_autoslice_probe()`：监控新面健康（heartbeat 新鲜度>30min 告警、SOURCE_UNAVAILABLE=DOWN、近 6h ALERT_* 文件上报、下播后日期状态卡 new/sealing/processing 超 90min 告警）；③jingting 旧遗留 backlog 降为 note 不再永久 WARN；④upload 进程 kill 守卫保留。实跑验证：verdict=无问题、心跳/日期状态入报告、跑完旧面仍为 0（不复活）。
 - **GitHub 预检 + 秘密修复**：`lidousha_slice_monitor.py` 硬编码 blrec RECORD_KEY 两处已改为运行时读 env/.env（工作区秘密 0 命中）；预检清单见上节"GitHub 发布预检"。
 
-**进行中/阻塞**：歌切去语义门（Ivan 拍板的交付规则）仍待另一 agent 落地其 produce_song 改动后实施——契约见顶部 2026-07-10 节第 1/2/7 条。
+**进行中/阻塞**：~~歌切去语义门~~ 已落地（见契约第 7 条，commits 7209e03+cab9a15）。
+
+**2026-07-10 补充（Ivan 审片支援）**：①7/9 全部 22 条落选候选已裸切预览拉回本地 `lidousha/2026-07-09/落选预览/`（按 conf 降序编号+INDEX.md；stream-copy 裸切开头±2s 关键帧对齐；未做成品，Ivan 过目选中哪条再产）。②conf=0.94 落选根因=7/9 批次跑在 v4 修复前：晚段（22-00）因云盘上传延迟晚进候选池+旧跨段轮转不看分数，早段五条先占满配额——正是审计第 5 条，修复（封场+全局排序）已部署，下场生效。③**说话人分离/分色字幕（3 人联动场景）**：现链路无 diarization（BCUT 不支持）；可行路径=AGY 精听时标注说话人（听音色+看画面）+ 烧录侧 ASS 按说话人换色（技术现成），准确率需拿真实联动片段实验一轮，待 Ivan 点头再开工。
 
 **下一步**：①另一 agent 落地后：按契约改 produce_song 交付语义 + 补交付 7/9《ただそばにいて》(x18) + commit/deploy；②GitHub 发布前：轮换 RECORD_KEY（git 历史含旧值）+ LICENSE/README + 定发布范围（建议只发流水线骨架）；③7/9 旧面遗留的 12 个 hybrid 切片/.jingting backlog 是死数据，可择机归档。
 
