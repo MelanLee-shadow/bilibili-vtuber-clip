@@ -1,0 +1,13 @@
+{
+  "schema_version": "lidousha-referent-groups.v1",
+  "groups": [
+    {
+      "entities": ["恋青", "恋死"],
+      "reason": "Distinct works with confusable ASR spellings; an immediate reply inherits the entity in the exact message being answered."
+    },
+    {
+      "entities": ["梦限大", "Mujica", "Ave Mujica"],
+      "reason": "Distinct BanG Dream entities; preserve the exact entity across an immediate read-and-reply chain."
+    }
+  ]
+}

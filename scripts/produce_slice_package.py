@@ -34,6 +34,7 @@ Spec JSON:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -59,6 +60,17 @@ from scripts.run_full_session_selector_cpa_shadow import (
 )
 from scripts.apply_subtitle_text_overrides import apply_document as apply_text_override_document
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
+from src.autoslice.chat_authority import (
+    ChatEvidence,
+    apply_authoritative_chat_evidence,
+    load_chat_jsonl,
+    load_referent_groups,
+    normalize_chat_text,
+    normalize_srt_payload_text,
+    normalize_srt_payload_window,
+    recording_start_epoch_ms,
+    sanitize_chat_display_text,
+)
 from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
@@ -67,6 +79,7 @@ from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sani
 
 SNAP_BEFORE_MS = 6_000
 SNAP_AFTER_MS = 9_000
+DANMAKU_PRE_CONTEXT_MS = 30_000
 SC_PRE_CONTEXT_MS = 900_000  # include SCs up to 15min before the clip: she CLEARS THE
                              # SC BACKLOG in batches, reading SCs minutes after they
                              # appeared (《想要成为真正的拉拉》SC was read ~4min later),
@@ -78,47 +91,51 @@ def _load_superchats(jsonl_path: Path) -> list[tuple[int, str, str]]:
     """(video_relative_ms, sender_uname, message) for SUPER_CHAT events in a blrec
     .jsonl event log.  SUPER_CHAT carries the EXACT full sender uname (unlike gift
     events, whose uname is masked to 小***), so both the name and the on-screen
-    text she reads/thanks are recoverable ground truth.  Video-relative time uses
-    the earliest event's send_time as t=0 (same as the danmaku XML offsets).
+    text she reads/thanks are recoverable ground truth.  This compatibility
+    helper retains earliest-event fallback for filename-less fixtures;
+    production ``_piece_chat_evidence`` uses the segment filename as t=0.
     De-duplicates the CN/JPN twin events by message text."""
-    if not jsonl_path.is_file():
-        return []
+    return [
+        (item.offset_ms, item.sender, item.text)
+        for item in load_chat_jsonl(jsonl_path)
+        if item.kind == "superchat"
+    ]
 
-    def _send_time(d: dict) -> float | None:
-        st = d.get("send_time")
-        if not isinstance(st, (int, float)):
-            st = (d.get("data") or {}).get("send_time")
-        return st if isinstance(st, (int, float)) else None
 
-    raw: list[tuple[float, str, str]] = []
-    base: float | None = None
-    for line in jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            d = json.loads(line)
-        except ValueError:
-            continue
-        st = _send_time(d)
-        if st is not None:
-            base = st if base is None else min(base, st)
-        if str(d.get("cmd", "")).startswith("SUPER_CHAT_MESSAGE") and st is not None:
-            data = d.get("data") or {}
-            msg = data.get("message")
-            uname = (data.get("user_info") or {}).get("uname") or ""
-            if isinstance(msg, str) and msg.strip():
-                raw.append((st, str(uname).strip(), msg.strip()))
-    if base is None:
-        return []
-    out: list[tuple[int, str, str]] = []
-    seen: set[str] = set()
-    for st, uname, msg in raw:
-        if msg in seen:
-            continue
-        seen.add(msg)
-        out.append((int(st - base), uname, msg))
-    return out
+def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
+    """Load ordinary danmaku and SC independently from their healthy source.
+
+    A zero-byte XML no longer disables the sibling JSONL.  When XML is healthy
+    it remains the ordinary-danmaku timeline authority; JSONL still supplies
+    exact SC text and is the fallback for ordinary messages.
+    """
+
+    xml_value = piece.get("danmaku_xml_local")
+    xml_path = Path(str(xml_value)) if xml_value else None
+    jsonl_value = piece.get("chat_jsonl_local") or piece.get("superchat_jsonl_local")
+    if not jsonl_value:
+        jsonl_value = str(Path(piece["remote_media"]).with_suffix(".jsonl"))
+    jsonl_path = Path(str(jsonl_value))
+    segment_zero = recording_start_epoch_ms(piece["remote_media"])
+    jsonl_items = load_chat_jsonl(jsonl_path, recording_start_ms=segment_zero)
+
+    evidence: list[ChatEvidence] = []
+    xml_healthy = bool(xml_path and xml_path.is_file() and xml_path.stat().st_size > 0)
+    if xml_healthy and xml_path is not None:
+        evidence.extend(
+            ChatEvidence(
+                "danmaku",
+                item.offset_ms,
+                item.text,
+                source=str(xml_path),
+                source_sha256=hashlib.sha256(xml_path.read_bytes()).hexdigest(),
+            )
+            for item in load_danmaku_xml(xml_path)
+        )
+    else:
+        evidence.extend(item for item in jsonl_items if item.kind == "danmaku")
+    evidence.extend(item for item in jsonl_items if item.kind == "superchat")
+    return evidence
 START_SNAP_MS = 2_500
 TAIL_PAD_MS = 400
 LEAD_AIR_MS = 250
@@ -216,7 +233,11 @@ def boundary_red_flags(
     return flags
 
 
-BOUNDARY_REPAIR_EXTEND_CAP_MS = 25_000
+# 7/10 incident: the first plausible closure ended at +25,030ms and the old
+# 25,000ms hard edge excluded it before VAD/next-cue cleanliness could even be
+# evaluated.  Keep the repair bounded, but give semantic closure a 30s window;
+# the runner can then widen original-source context once if this is exhausted.
+BOUNDARY_REPAIR_EXTEND_CAP_MS = 30_000
 MAX_BOUNDARY_REPAIRS = 3
 
 
@@ -300,6 +321,63 @@ def _resolved_optional_path(value: object, *, relative_to: Path) -> Path | None:
         return None
     path = Path(value)
     return path if path.is_absolute() else (relative_to / path).resolve()
+
+
+def verify_chat_authority_final_surfaces(
+    audit: dict,
+    *,
+    final_text_srt: str,
+    final_speaker_srt: str,
+    delivery_start_ms: int,
+    delivery_end_ms: int,
+) -> bool:
+    """Verify every in-delivery authority decision at its original time span."""
+
+    decision_rows: list[tuple[str, dict, str]] = []
+    decision_rows.extend(
+        ("exact_read", row, str(row.get("exact_text") or ""))
+        for row in audit.get("applied") or []
+    )
+    decision_rows.extend(
+        ("sc_sender", row, str(row.get("after") or ""))
+        for row in audit.get("sender_repairs") or []
+    )
+    decision_rows.extend(
+        ("reply_coreference", row, str(row.get("after") or ""))
+        for row in audit.get("coreference_repairs") or []
+    )
+    required_rows: list[dict] = []
+    for kind, row, expected_text in decision_rows:
+        matched_start = int(row["matched_start_ms"])
+        matched_end = int(row["matched_end_ms"])
+        row["final_verification_kind"] = kind
+        if matched_end <= delivery_start_ms or matched_start >= delivery_end_ms:
+            row["final_verification_scope"] = "OUTSIDE_DELIVERY"
+            continue
+        row["final_verification_scope"] = "DELIVERY"
+        relative_start = max(0, matched_start - delivery_start_ms)
+        relative_end = min(delivery_end_ms - delivery_start_ms, matched_end - delivery_start_ms)
+        expected_norm = normalize_chat_text(expected_text)
+        text_window = normalize_srt_payload_window(
+            final_text_srt, start_ms=relative_start, end_ms=relative_end
+        )
+        speaker_window = normalize_srt_payload_window(
+            final_speaker_srt,
+            start_ms=relative_start,
+            end_ms=relative_end,
+            strip_speaker_labels=True,
+        )
+        row["final_relative_start_ms"] = relative_start
+        row["final_relative_end_ms"] = relative_end
+        row["survived_final_text_srt"] = bool(expected_norm and expected_norm in text_window)
+        row["survived_final_speaker_srt"] = bool(expected_norm and expected_norm in speaker_window)
+        required_rows.append(row)
+    audit["final_required_decision_count"] = len(required_rows)
+    audit["final_outside_delivery_count"] = len(decision_rows) - len(required_rows)
+    return all(
+        row.get("survived_final_text_srt") and row.get("survived_final_speaker_srt")
+        for row in required_rows
+    )
 
 
 def _rebase_remote_speaker_manifest(
@@ -499,6 +577,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    # Time-sensitive terminology must be evaluated as of the recording date,
+    # never the processing date.  This prevents future-news leakage when an old
+    # stream is repaired later.
+    if isinstance(spec.get("date"), str):
+        os.environ["LIDOUSHA_TERM_AS_OF"] = spec["date"]
 
     cid = spec["candidate_id"]
     out_root = Path(spec["output_root"]) / cid
@@ -523,7 +606,7 @@ def main(argv: list[str] | None = None) -> int:
         piece_paths.append(local)
     durations = [ffprobe_duration_ms(p) for p in piece_paths]
 
-    padded = out_root / f"padded_{spec['pieces'][0]['start_ms']}.mp4"
+    padded = out_root / f"padded_{spec['pieces'][0]['start_ms']}_{spec['pieces'][-1]['end_ms']}.mp4"
     if len(piece_paths) == 1:
         if not padded.exists():
             run(["cp", str(piece_paths[0]), str(padded)])
@@ -536,29 +619,32 @@ def main(argv: list[str] | None = None) -> int:
 
     # 2. Danmaku + on-screen SUPER_CHATs merged onto the concat timeline.
     merged: list[DanmakuItem] = []
+    authoritative_chat: list[ChatEvidence] = []
     offset = 0
     for piece, dur in zip(spec["pieces"], durations):
-        xml = piece.get("danmaku_xml_local")
-        if xml and Path(xml).is_file():
-            for item in load_danmaku_xml(Path(xml)):
-                rel = item.offset_ms - piece["start_ms"]
-                if -1_000 <= rel <= dur + 1_000:
-                    merged.append(DanmakuItem(offset_ms=offset + max(0, rel), text=item.text))
-            # On-screen superchats (exact text from the blrec .jsonl sibling) — the
-            # audio-only ASR garbles what she reads off an SC card, so feed the SC
-            # text as strong wording context (Ivan 2026-07-07: 有些地方要结合画面SC).
-            jsonl = piece.get("superchat_jsonl_local") or str(Path(xml).with_suffix(".jsonl"))
-            for sc_ms, sc_uname, sc_text in _load_superchats(Path(jsonl)):
-                rel = sc_ms - piece["start_ms"]
-                # she reads/thanks SCs a while after they appear and BATCHES them
-                # (Ivan 2026-07-07), so include SCs from up to ~2min BEFORE the clip —
-                # an opening thank often clears older SCs.  Pre-clip ones are marked
-                # (此前) and placed at the clip start; content-match decides the pairing.
-                if -SC_PRE_CONTEXT_MS <= rel <= dur + 1_000:
-                    marker = f"·{sc_uname}" if sc_uname else ""
-                    prefix = "【SC此前" if rel < 0 else "【SC"
-                    label = f"{prefix}{marker}】{sc_text}"
-                    merged.append(DanmakuItem(offset_ms=offset + max(0, rel), text=label))
+        for item in _piece_chat_evidence(piece):
+            rel = item.offset_ms - piece["start_ms"]
+            pre_context = SC_PRE_CONTEXT_MS if item.kind == "superchat" else DANMAKU_PRE_CONTEXT_MS
+            if not (-pre_context <= rel <= dur + 1_000):
+                continue
+            marker = f"·{item.sender}" if item.sender else ""
+            if item.kind == "superchat":
+                prefix = "【SC此前" if rel < 0 else "【SC"
+            else:
+                prefix = "【弹幕此前" if rel < 0 else "【弹幕"
+            label = f"{prefix}{marker}】{sanitize_chat_display_text(item.text)}"
+            merged.append(DanmakuItem(offset_ms=offset + max(0, rel), text=label))
+            authoritative_chat.append(
+                ChatEvidence(
+                    item.kind,
+                    offset + rel,
+                    item.text,
+                    item.sender,
+                    item.source,
+                    item.source_sha256,
+                    item.source_event_id,
+                )
+            )
         offset += dur
     merged.sort(key=lambda item: item.offset_ms)
 
@@ -572,6 +658,25 @@ def main(argv: list[str] | None = None) -> int:
     vad = build_ssh_silero_vad_provider(host)
     spans = vad(padded, 0, padded_dur)
     srt_text = transcriber(padded, [(s.start_ms, s.end_ms) for s in spans])
+    support_srts = []
+    for support_path in (padded.with_suffix(".asr_draft.srt"), padded.with_suffix(".agy_refined.srt")):
+        if support_path.is_file():
+            support_srts.append(support_path.read_text(encoding="utf-8", errors="replace"))
+    srt_text, chat_authority_audit = apply_authoritative_chat_evidence(
+        srt_text,
+        authoritative_chat,
+        support_srt_texts=support_srts,
+        referent_groups=load_referent_groups(
+            ROOT / "assets" / "lidousha" / "entity_confusables.json"
+        ),
+    )
+    chat_authority_path = out_root / f"{cid}.chat-authority.json"
+    chat_authority_path.write_text(
+        json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if chat_authority_audit["status"] == "FAILED":
+        raise SystemExit(f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}")
     (out_root / "padded.fresh.srt").write_text(srt_text, encoding="utf-8")
     cues = [c for c in parse_srt_cues(srt_text) if c.text.strip()]
     if len(cues) < 3:
@@ -741,6 +846,42 @@ def main(argv: list[str] | None = None) -> int:
             speaker_python=args.speaker_python,
         )
 
+    # Generative correction, a human override, timing sanitation, or speaker
+    # rendering must never silently undo a structured-source lock.  Recheck the
+    # exact text against both final subtitle surfaces and bind their hashes into
+    # the append-only authority audit before the burn.
+    final_text = subtitle_path.read_text(encoding="utf-8", errors="replace")
+    final_speaker_text = (
+        speaker_review_srt.read_text(encoding="utf-8", errors="replace")
+        if speaker_review_srt is not None and speaker_review_srt.is_file()
+        else final_text
+    )
+    final_authority_ok = verify_chat_authority_final_surfaces(
+        chat_authority_audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_speaker_text,
+        delivery_start_ms=final_start,
+        delivery_end_ms=final_end,
+    )
+    chat_authority_audit.update(
+        {
+            "final_status": "FINAL_ARTIFACTS_VERIFIED" if final_authority_ok else "FINAL_ARTIFACTS_FAILED",
+            "final_text_srt_path": str(subtitle_path),
+            "final_text_srt_sha256": hashlib.sha256(final_text.encode("utf-8")).hexdigest(),
+            "final_speaker_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
+            "final_speaker_srt_sha256": hashlib.sha256(final_speaker_text.encode("utf-8")).hexdigest(),
+            "speaker_ass_path": str(speaker_ass) if speaker_ass is not None else None,
+            "speaker_ass_sha256": _sha256(speaker_ass) if speaker_ass is not None else None,
+            "speaker_manifest_sha256": _sha256(speaker_manifest_path) if speaker_manifest_path is not None else None,
+        }
+    )
+    chat_authority_path.write_text(
+        json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if not final_authority_ok:
+        raise SystemExit(f"CHAT_AUTHORITY_FINAL_ARTIFACT_FAILED: {chat_authority_path}")
+
     record: dict = {
         "status": "MATERIALIZED",
         "media_path": str(media_path),
@@ -754,7 +895,9 @@ def main(argv: list[str] | None = None) -> int:
             "subtitle_sha256": "sha256:" + _sha256(subtitle_path),
             **({"ass_sha256": "sha256:" + _sha256(speaker_ass)} if speaker_ass is not None else {}),
             **({"speaker_review_srt_sha256": "sha256:" + _sha256(speaker_review_srt)} if speaker_review_srt is not None else {}),
+            "chat_authority_audit_sha256": "sha256:" + _sha256(chat_authority_path),
         },
+        "chat_authority_audit_path": str(chat_authority_path),
         "text_finalization_manifest_path": str(text_manifest_path) if text_manifest_path is not None else None,
         "speaker_review_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
         "subtitle_ass_path": str(speaker_ass) if speaker_ass is not None else None,
@@ -769,6 +912,17 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(record.get("burned_preview"), dict) or record["burned_preview"].get("status") != "BURNED":
         raise SystemExit(f"FINAL_SUBTITLE_BURN_FAILED: {record.get('burned_preview')}")
     burned = _validated_burned_artifact(record)
+    chat_authority_audit["burn_binding"] = {
+        "burned_media_path": str(burned),
+        "burned_media_sha256": _sha256(burned),
+        "ass_path": str(speaker_ass) if speaker_ass is not None else None,
+        "ass_sha256": _sha256(speaker_ass) if speaker_ass is not None else None,
+    }
+    chat_authority_path.write_text(
+        json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    record["artifact_hashes"]["chat_authority_audit_sha256"] = "sha256:" + _sha256(chat_authority_path)
 
     # 6. Title (Ivan-given verbatim, else style-asset LLM) + cover + delivery.
     given_title = spec.get("given_title")
@@ -825,6 +979,7 @@ def main(argv: list[str] | None = None) -> int:
         (speaker_review_srt, ".speaker.srt"),
         (speaker_ass, ".speaker.ass"),
         (speaker_manifest_path, ".speaker.json"),
+        (chat_authority_path, ".chat-authority.json"),
         (text_manifest_path, ".text-finalization.json"),
         (record_path, ".record.json"),
     ):
