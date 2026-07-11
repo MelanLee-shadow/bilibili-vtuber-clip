@@ -137,6 +137,13 @@ SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one date
 SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute date cap including superseded attempts;
                                 # permits two self-healing generations after the initial run
 TALK_REPAIR_LIFETIME_RETRY_CAP = 3  # all retries of one already-selected talk
+# A deployment fingerprint is provenance, not blanket authorization to replay
+# every historical failure.  Ordinary cron maintenance begins at this horizon;
+# older dates remain available to explicit/manual recovery code paths without
+# being woken by a routine --once tick after unrelated pipeline changes.
+AUTOMATIC_MAINTENANCE_NOT_BEFORE = os.environ.get(
+    "AUTOSLICE_AUTOMATIC_MAINTENANCE_NOT_BEFORE", "2026-07-11"
+)
 SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
     {
         "SONG_BACKGROUND_PLAYBACK_ONLY",
@@ -3130,8 +3137,9 @@ def process_date(date: str) -> None:
         write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
         return
-    requeued_talks = requeue_recoverable_talks(date, state)
-    requeued_songs = requeue_recoverable_songs(date, state)
+    automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
+    requeued_talks = requeue_recoverable_talks(date, state) if automatic_maintenance else 0
+    requeued_songs = requeue_recoverable_songs(date, state) if automatic_maintenance else 0
     if requeued_talks or requeued_songs:
         write_state(date, state)
         log(
@@ -3143,7 +3151,10 @@ def process_date(date: str) -> None:
         for s in list_segments(date)
     )
     has_pending = bool(state.get("pending_talk") or state.get("pending_song"))
-    needs_cover = any(cover_repair_needed(date, r) for r in state.get("picks", []) + state.get("songs", []))
+    needs_cover = automatic_maintenance and any(
+        cover_repair_needed(date, r)
+        for r in state.get("picks", []) + state.get("songs", [])
+    )
     if not has_new and not has_pending and not needs_cover:
         return
     # CPA gate: recall, reconcile, titles and covers all need the chat lane.
@@ -3209,7 +3220,8 @@ def process_date(date: str) -> None:
         refill_songs(state)
         write_state(date, state)
 
-    repair_covers(date, state)
+    if automatic_maintenance:
+        repair_covers(date, state)
 
     picks, songs = state["picks"], state["songs"]
     delivered_talk = [p for p in picks if p.get("status") in DELIVERED_TALK_STATUSES]

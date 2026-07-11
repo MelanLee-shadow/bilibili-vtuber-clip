@@ -1891,6 +1891,7 @@ def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
 
 def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatch):
     date = "2026-07-10"
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", date)
     state = {
         "status": "review_ready_with_failures",
         "segments_done": ["segment"],
@@ -1949,6 +1950,53 @@ def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatc
     assert [item["cid"] for item in produced] == ["old_boundary"]
     assert state["picks"][0]["status"] == "review_ready"
     assert state["pending_talk"] == []
+
+
+def test_process_date_does_not_auto_maintain_pre_horizon_history(monkeypatch):
+    date = "2026-07-10"
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", "2026-07-11")
+    state = {
+        "status": "review_ready_with_failures",
+        "segments_done": ["segment"],
+        "segments_dead": {},
+        "pending_talk": [],
+        "pending_song": [],
+        "songs": [{"candidate_id": "old_song", "status": "blocked"}],
+        "picks": [
+            {
+                "candidate_id": "old_talk",
+                "status": "boundary_unrepairable",
+                "pipeline_fingerprint": "sha256:old",
+            },
+            {
+                "candidate_id": "old_cover",
+                "status": "review_ready",
+                "title": "old cover",
+            },
+        ],
+    }
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_talks",
+        lambda _date, _state: pytest.fail("pre-horizon talk must not auto-requeue"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_songs",
+        lambda _date, _state: pytest.fail("pre-horizon song must not auto-requeue"),
+    )
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(
+        runner,
+        "cover_repair_needed",
+        lambda _date, _record: pytest.fail("pre-horizon cover must not auto-repair"),
+    )
+
+    runner.process_date(date)
+
+    assert state["pending_talk"] == []
+    assert state["pending_song"] == []
 
 
 def test_process_date_transient_selected_repair_remains_retryable(tmp_path, monkeypatch):
