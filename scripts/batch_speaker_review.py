@@ -35,6 +35,7 @@ from scripts.apply_speaker_turn_overrides import (  # noqa: E402
     SPEAKER_SUBTITLE_STYLE_ID,
     atomic_write_text,
     sha256_file,
+    validate_bound_speaker_override_document,
 )
 from scripts.apply_subtitle_text_overrides import (  # noqa: E402
     apply_document as apply_text_override_document,
@@ -504,6 +505,17 @@ def build_review_item(
         expected = _expected_digest(expected_override, "speaker_override_sha256")
         if sha256_file(override_path) != expected:
             raise BatchSpeakerReviewError(f"speaker override hash drift: {override_path}")
+        try:
+            validate_bound_speaker_override_document(
+                override_path,
+                candidate_id=candidate_id,
+                expected_source_media_sha256=str(entry["source_media_sha256"]),
+                expected_text_final_srt_sha256=str(entry["text_final_srt_sha256"]),
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise BatchSpeakerReviewError(
+                f"speaker override authority binding failed: {override_path}: {exc}"
+            ) from exc
     elif expected_override:
         raise BatchSpeakerReviewError("speaker_override_sha256 is set without a path")
     session_anchor_value = entry.get("source_session_anchor_path")

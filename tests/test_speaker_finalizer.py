@@ -764,6 +764,7 @@ def test_reviewed_speaker_overrides_reject_automatic_label_drift_even_when_text_
         json.dumps(
             {
                 "schema_version": 1,
+                "candidate_id": "test_candidate",
                 "source_media_sha256": hashlib.sha256(media.read_bytes()).hexdigest(),
                 "text_final_srt_sha256": hashlib.sha256(text_srt.read_bytes()).hexdigest(),
                 "source_srt_sha256": hashlib.sha256(
@@ -812,6 +813,7 @@ def test_reviewed_speaker_overrides_reject_automatic_label_drift_even_when_text_
             output_ass_path=tmp_path / "speaker.ass",
             output_manifest_path=tmp_path / "speaker.json",
             work_dir=tmp_path / "work",
+            candidate_id="test_candidate",
             override_path=overrides,
             analyzer=wrong_auto,
         )
@@ -840,6 +842,7 @@ def test_reviewed_context_votes_are_hash_bound_and_passed_to_analyzer(tmp_path: 
         json.dumps(
             {
                 "schema_version": 1,
+                "candidate_id": "test_candidate",
                 "source_media_sha256": hashlib.sha256(media.read_bytes()).hexdigest(),
                 "text_final_srt_sha256": hashlib.sha256(text_srt.read_bytes()).hexdigest(),
                 "source_srt_sha256": accepted_hash,
@@ -875,6 +878,7 @@ def test_reviewed_context_votes_are_hash_bound_and_passed_to_analyzer(tmp_path: 
         output_ass_path=tmp_path / "speaker.ass",
         output_manifest_path=tmp_path / "speaker.json",
         work_dir=tmp_path / "work",
+        candidate_id="test_candidate",
         override_path=overrides,
         analyzer=analyzer,
     )
@@ -950,6 +954,93 @@ def test_reviewed_speaker_override_rejects_media_drift(tmp_path: Path) -> None:
             analyzer=analyzer,
         )
 
+
+def test_production_candidate_rejects_cross_candidate_speaker_override(tmp_path: Path) -> None:
+    media = tmp_path / "clean.mp4"
+    media.write_bytes(b"clean media")
+    text_srt = tmp_path / "text-final.srt"
+    text_srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nhello\n",
+        encoding="utf-8",
+    )
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}", encoding="utf-8")
+    (tmp_path / "refs").mkdir()
+    (tmp_path / "model").mkdir()
+    automatic = "1\n00:00:00,000 --> 00:00:02,000\n[连线] hello\n"
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "candidate_id": "different_candidate",
+                "source_media_sha256": hashlib.sha256(media.read_bytes()).hexdigest(),
+                "text_final_srt_sha256": hashlib.sha256(text_srt.read_bytes()).hexdigest(),
+                "source_srt_sha256": hashlib.sha256(automatic.encode()).hexdigest(),
+                "overrides": [
+                    {
+                        "source_cue": 1,
+                        "expect": {
+                            "start": "00:00:00,000",
+                            "end": "00:00:02,000",
+                            "text": "hello",
+                        },
+                        "authority": "wrong candidate fixture",
+                        "segments": [
+                            {
+                                "start": "00:00:00,000",
+                                "end": "00:00:02,000",
+                                "speaker": "李豆沙",
+                                "text": "hello",
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def analyzer(**_kwargs):
+        return {
+            "decisions": [{"speaker": "连线", "decision_source": "campp_audio"}],
+            "context_unresolved_cues": [],
+        }
+
+    with pytest.raises(SpeakerFinalizationError, match="candidate_id mismatch"):
+        finalize_speaker_subtitles(
+            media_path=media,
+            text_srt_path=text_srt,
+            profile_path=profile,
+            reference_dir=tmp_path / "refs",
+            model_dir=tmp_path / "model",
+            output_srt_path=tmp_path / "speaker.srt",
+            output_ass_path=tmp_path / "speaker.ass",
+            output_manifest_path=tmp_path / "speaker.json",
+            work_dir=tmp_path / "work",
+            candidate_id="intended_candidate",
+            override_path=overrides,
+            analyzer=analyzer,
+        )
+
+    document = json.loads(overrides.read_text(encoding="utf-8"))
+    document["candidate_id"] = "intended_candidate"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(SpeakerFinalizationError, match="candidate_id is required"):
+        finalize_speaker_subtitles(
+            media_path=media,
+            text_srt_path=text_srt,
+            profile_path=profile,
+            reference_dir=tmp_path / "refs",
+            model_dir=tmp_path / "model",
+            output_srt_path=tmp_path / "speaker.srt",
+            output_ass_path=tmp_path / "speaker.ass",
+            output_manifest_path=tmp_path / "speaker.json",
+            work_dir=tmp_path / "work-omitted-candidate",
+            override_path=overrides,
+            analyzer=analyzer,
+        )
 
 def test_unanswered_ambiguous_context_blocks_production(tmp_path: Path) -> None:
     import pytest

@@ -466,6 +466,7 @@ def run_speaker_finalizer(
     if local_host:
         command = [
             str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
+            "--candidate-id", candidate_id,
             "--media", str(media_path), "--text-srt", str(text_srt_path),
             "--profile", str(profile), "--reference-dir", str(reference_dir),
             "--model-dir", str(model_dir), "--output-srt", str(output_srt_path),
@@ -506,6 +507,7 @@ def run_speaker_finalizer(
                 )
             remote_command = [
                 str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
+                "--candidate-id", candidate_id,
                 "--media", remote_media, "--text-srt", remote_srt,
                 "--profile", "/opt/bilive/autoslice/repo/assets/lidousha/voiceprint_profile.v1.json",
                 "--reference-dir", str(reference_dir), "--model-dir", str(model_dir),

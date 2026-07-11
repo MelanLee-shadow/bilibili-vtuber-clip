@@ -314,7 +314,10 @@ PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python - <<'PY'
 import json
 from pathlib import Path
 
-from scripts.apply_speaker_turn_overrides import sha256_file
+from scripts.apply_speaker_turn_overrides import (
+    sha256_file,
+    validate_bound_speaker_override_document,
+)
 from scripts.apply_subtitle_text_overrides import validate_bound_override_document
 from scripts.batch_speaker_review import resolve_staged_repo_asset, validate_plan
 from src.autoslice.host_vocal_proof import _sha256_directory, _validate_profile
@@ -392,6 +395,13 @@ for entry in batch_plan["entries"]:
                 candidate_id=entry["candidate_id"],
                 expected_source_srt_sha256=entry["text_source_srt_sha256"],
                 expected_final_srt_sha256=entry["text_final_srt_sha256"],
+            )
+        elif path_field == "speaker_override_path":
+            validate_bound_speaker_override_document(
+                staged,
+                candidate_id=entry["candidate_id"],
+                expected_source_media_sha256=entry["source_media_sha256"],
+                expected_text_final_srt_sha256=entry["text_final_srt_sha256"],
             )
 print("speaker runtime assets verified", actual_model, len(references))
 PY

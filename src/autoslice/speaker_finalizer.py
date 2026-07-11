@@ -36,6 +36,7 @@ from scripts.apply_speaker_turn_overrides import (
     apply_overrides,
     atomic_write_text,
     sha256_file,
+    validate_bound_speaker_override_document,
     write_ass,
     write_srt,
 )
@@ -1308,6 +1309,7 @@ def finalize_speaker_subtitles(
     output_ass_path: Path,
     output_manifest_path: Path,
     work_dir: Path,
+    candidate_id: str | None = None,
     override_path: Path | None = None,
     source_session_anchor_path: Path | None = None,
     analyzer: Callable[..., dict[str, object]] = _run_campplus_analysis,
@@ -1353,6 +1355,21 @@ def finalize_speaker_subtitles(
             raise SpeakerFinalizationError(
                 f"speaker override text-final hash mismatch: expected {expected_text!r}, got {actual_text!r}"
             )
+        if not str(candidate_id or "").strip():
+            raise SpeakerFinalizationError(
+                "candidate_id is required when a speaker override is present"
+            )
+        try:
+            validate_bound_speaker_override_document(
+                override_path,
+                candidate_id=str(candidate_id),
+                expected_source_media_sha256=actual_media,
+                expected_text_final_srt_sha256=actual_text,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise SpeakerFinalizationError(
+                f"speaker override authority binding failed: {exc}"
+            ) from exc
         reviewed_votes = _reviewed_context_votes(override_document, cue_count=len(cues))
     analysis = analyzer(
         media_path=media_path,
@@ -1481,6 +1498,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-ass", type=Path, required=True)
     parser.add_argument("--output-manifest", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
+    parser.add_argument("--candidate-id", required=True)
     parser.add_argument("--overrides", type=Path)
     parser.add_argument("--source-session-anchors", type=Path)
     parser.add_argument("--no-context-judge", action="store_true")
@@ -1500,6 +1518,7 @@ def main(argv: list[str] | None = None) -> int:
             output_ass_path=args.output_ass,
             output_manifest_path=args.output_manifest,
             work_dir=args.work_dir,
+            candidate_id=args.candidate_id,
             override_path=args.overrides,
             source_session_anchor_path=args.source_session_anchors,
             context_call=context_call,
