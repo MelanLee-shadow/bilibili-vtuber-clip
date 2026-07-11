@@ -361,16 +361,113 @@ def reconcile_pending_text_overrides(
     document_hash = str(text_manifest.get("override_document_sha256") or "")
     source_hash = str(text_manifest.get("source_srt_sha256") or "")
     final_hash = str(text_manifest.get("output_srt_sha256") or "")
+    rebound_document: dict[str, Any] | None = None
+
+    def rebind_deferred_verdict(
+        pending_row: Mapping[str, Any], verdict: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Move an unchanged Ivan entity verdict onto a newly frozen ASR variant.
+
+        A generative text pass may drift between attempts even though the
+        evidence id and Ivan's entity decision do not.  Rebinding is allowed
+        only through the exact decision document that produced this READY
+        text manifest; the entity itself may not change.
+        """
+
+        nonlocal rebound_document
+        if (
+            verdict.get("authority_kind") != "ivan_text_override"
+            or verdict.get("defer_to_text_override") is not True
+            or not _valid_sha256(document_hash)
+            or not _valid_sha256(source_hash)
+            or not _valid_sha256(final_hash)
+        ):
+            return None
+        document_value = text_manifest.get("override_document")
+        if not isinstance(document_value, str) or not document_value:
+            return None
+        document_path = Path(document_value)
+        try:
+            raw = document_path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != document_hash:
+                return None
+            if rebound_document is None:
+                payload = json.loads(raw)
+                if not isinstance(payload, dict):
+                    return None
+                rebound_document = payload
+        except (OSError, ValueError):
+            return None
+        document = rebound_document
+        if (
+            document.get("schema_version") != 1
+            or document.get("candidate_id") != verdict.get("candidate_id")
+            or document.get("source_srt_sha256") != source_hash
+            or document.get("text_final_srt_sha256") != final_hash
+        ):
+            return None
+        evidence_id = str(pending_row.get("evidence_id") or "")
+        rows = [
+            row
+            for row in document.get("chat_entity_verdicts") or []
+            if isinstance(row, dict) and str(row.get("evidence_id") or "") == evidence_id
+        ]
+        if (
+            len(rows) != 1
+            or rows[0].get("canonical_entity") != verdict.get("canonical_entity")
+        ):
+            return None
+        return {
+            **verdict,
+            "override_document_sha256": document_hash,
+            "source_srt_sha256": source_hash,
+            "text_final_srt_sha256": final_hash,
+            "authority": str(rows[0].get("authority") or verdict.get("authority") or ""),
+        }
+
     repaired: list[dict[str, Any]] = []
     used_decisions: set[int] = set()
     for pending_row in pending:
-        verdict = pending_row.get("verdict") or {}
+        verdict = dict(pending_row.get("verdict") or {})
         if (
             verdict.get("override_document_sha256") != document_hash
             or verdict.get("source_srt_sha256") != source_hash
             or verdict.get("text_final_srt_sha256") != final_hash
         ):
-            return False
+            rebound = rebind_deferred_verdict(pending_row, verdict)
+            if rebound is None:
+                return False
+            verdict_events = audit.get("entity_verdicts")
+            if isinstance(verdict_events, list) and verdict_events:
+                event_matches = [
+                    event
+                    for event in verdict_events
+                    if isinstance(event, dict)
+                    and event.get("evidence_id") == pending_row.get("evidence_id")
+                    and isinstance(event.get("verdict"), dict)
+                    and event["verdict"].get("request_sha256")
+                    == verdict.get("request_sha256")
+                    and event["verdict"].get("canonical_entity")
+                    == verdict.get("canonical_entity")
+                ]
+                if len(event_matches) != 1:
+                    return False
+                event_matches[0]["verdict"] = dict(rebound)
+            pending_row["verdict_rebinding"] = {
+                "status": "UNCHANGED_ENTITY_REBOUND_TO_FROZEN_SOURCE",
+                "previous_override_document_sha256": verdict.get(
+                    "override_document_sha256"
+                ),
+                "previous_source_srt_sha256": verdict.get("source_srt_sha256"),
+                "previous_text_final_srt_sha256": verdict.get(
+                    "text_final_srt_sha256"
+                ),
+                "override_document_sha256": document_hash,
+                "source_srt_sha256": source_hash,
+                "text_final_srt_sha256": final_hash,
+            }
+            pending_row["verdict"] = rebound
+            verdict = rebound
         evidence_id = str(pending_row.get("evidence_id") or "")
         match_index = next(
             (
@@ -415,7 +512,45 @@ def reconcile_pending_text_overrides(
             )
             == after
         )
-        if not minimal:
+        # A read-chat cue can legitimately combine two independent authorities:
+        # the exact platform text owns the sentence scaffold, while Ivan's
+        # hash-bound listening verdict owns only the confusable entity slot.
+        # Example: ASR ``是Mujica的风险`` + danmaku ``有母鸡卡的风险``
+        # becomes ``有梦限大的风险``.  This is not an arbitrary whole-cue
+        # override: replacing the decided entity in the output with the exact
+        # chat surface must reconstruct a contiguous substring of the platform
+        # message, and every surface must belong to the same declared group.
+        after_occurrences = _entity_occurrences(after, decision_group)
+        exact_chat = str(pending_row.get("exact_text") or "")
+        chat_occurrences = _entity_occurrences(exact_chat, decision_group)
+        chat_scaffold = False
+        structured_expectation = ""
+        if (
+            len(occurrences) == 1
+            and len(after_occurrences) == 1
+            and after_occurrences[0]["canonical"] == expected
+            and len(chat_occurrences) == 1
+            and chat_occurrences[0]["canonical"] != expected
+        ):
+            after_entity = after_occurrences[0]
+            projected = (
+                after[: int(after_entity["start"])]
+                + str(chat_occurrences[0]["surface"])
+                + after[int(after_entity["end"]) :]
+            )
+            projected_normalized = normalize_chat_text(projected)
+            chat_scaffold = bool(
+                projected_normalized
+                and projected_normalized in normalize_chat_text(exact_chat)
+            )
+            if chat_scaffold:
+                chat_entity = chat_occurrences[0]
+                structured_expectation = (
+                    exact_chat[: int(chat_entity["start"])]
+                    + expected
+                    + exact_chat[int(chat_entity["end"]) :]
+                )
+        if not (minimal or chat_scaffold):
             return False
         relative_start = _srt_clock_ms(str(source_cue.get("start") or ""))
         relative_end = _srt_clock_ms(str(source_cue.get("end") or ""))
@@ -428,16 +563,32 @@ def reconcile_pending_text_overrides(
             return False
         pending_row["reconciliation_status"] = "APPLIED_AND_HASH_VERIFIED"
         pending_row["text_override_decision_index"] = match_index
+        verification_start = absolute_start
+        verification_end = absolute_end
+        if chat_scaffold:
+            # The exact platform message may span adjacent subtitle cues.  The
+            # full read window, not only the cue whose entity slot changed,
+            # owns the final grammar scaffold (including edge particles such
+            # as ``吗`` and prefixes such as ``还没看``).
+            verification_start = int(pending_row["matched_start_ms"])
+            verification_end = int(pending_row["matched_end_ms"])
         repaired.append(
             {
                 "evidence_id": evidence_id,
-                "mode": "entity_only_human_text_override",
+                "mode": (
+                    "entity_only_human_text_override"
+                    if minimal
+                    else "chat_scaffold_plus_human_entity_override"
+                ),
                 "expected_entity": expected,
                 "cue_indexes": [int(source_cue.get("source_index") or 0)],
-                "matched_start_ms": absolute_start,
-                "matched_end_ms": absolute_end,
+                "matched_start_ms": verification_start,
+                "matched_end_ms": verification_end,
+                "override_cue_start_ms": absolute_start,
+                "override_cue_end_ms": absolute_end,
                 "before": [before],
                 "after": [after],
+                "structured_exact_text": structured_expectation or None,
                 "verdict": verdict,
                 "text_override_document_sha256": document_hash,
                 "survived": True,

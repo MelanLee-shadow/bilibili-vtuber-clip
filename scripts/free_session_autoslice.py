@@ -228,6 +228,7 @@ def pipeline_fingerprint() -> str:
         "scripts/llm_via_cpa.sh",
         "scripts/produce_slice_package.py",
         "scripts/regenerate_lidousha_cover.py",
+        "scripts/resume_frozen_talk_package.py",
         "scripts/run_auto_review_shadow_pipeline.py",
         "scripts/run_full_session_selector_cpa_shadow.py",
         "assets/lidousha/entity_confusables.json",

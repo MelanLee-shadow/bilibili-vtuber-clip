@@ -615,6 +615,144 @@ def test_hash_bound_ivan_override_supersedes_chat_and_survives_final_verifier(tm
     )
 
 
+def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
+    source = _srt("还没看", "怎么有人说是Mujica的风险")
+    final = _srt("还没看", "怎么有人说有梦限大的风险")
+    evidence = ChatEvidence("danmaku", 0, "还没看，怎么有人说有母鸡卡的风险")
+    document = {
+        "schema_version": 1,
+        "candidate_id": "auto_test",
+        "source_srt_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "text_final_srt_sha256": hashlib.sha256(final.encode()).hexdigest(),
+        "chat_entity_verdicts": [
+            {
+                "evidence_id": evidence.evidence_id,
+                "canonical_entity": "梦限大",
+                "authority": "Ivan direct correction",
+            }
+        ],
+        "overrides": [
+            {
+                "source_cue": 2,
+                "expect": {
+                    "start": "00:00:10,000",
+                    "end": "00:00:14,000",
+                    "text": "怎么有人说是Mujica的风险",
+                },
+                "text": "怎么有人说有梦限大的风险",
+                "authority": "exact chat scaffold plus Ivan entity verdict",
+                "supersedes_chat_evidence_id": evidence.evidence_id,
+            }
+        ],
+    }
+    document_path = tmp_path / "auto_test.text.v1.json"
+    document_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    document_hash = hashlib.sha256(document_path.read_bytes()).hexdigest()
+    audit = {
+        "status": "PENDING_TEXT_OVERRIDE",
+        "pending_text_overrides": [
+            {
+                "evidence_id": evidence.evidence_id,
+                "exact_text": evidence.text,
+                "matched_start_ms": 5_000,
+                "matched_end_ms": 14_000,
+                "request": {
+                    "candidate_entities": [
+                        {
+                            "canonical": entity.canonical,
+                            "surfaces": list(entity.surfaces),
+                            "readings": list(entity.readings),
+                        }
+                        for entity in DREAM_MUJICA_GROUP.entities
+                    ]
+                },
+                "verdict": {
+                    "request_sha256": "request-hash",
+                    "override_document_sha256": document_hash,
+                    "source_srt_sha256": hashlib.sha256(source.encode()).hexdigest(),
+                    "text_final_srt_sha256": hashlib.sha256(final.encode()).hexdigest(),
+                    "canonical_entity": "梦限大",
+                },
+            }
+        ],
+        "entity_verdicts": [
+            {
+                "evidence_id": evidence.evidence_id,
+                "verdict": {
+                    "request_sha256": "request-hash",
+                    "canonical_entity": "梦限大",
+                },
+            }
+        ],
+        "entity_repairs": [],
+    }
+    manifest = {
+        "status": "READY",
+        "override_document": str(document_path),
+        "override_document_sha256": document_hash,
+        "source_srt_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "output_srt_sha256": hashlib.sha256(final.encode()).hexdigest(),
+        "decisions": [
+            {
+                "source": {
+                    "source_index": 2,
+                    "start": "00:00:10,000",
+                    "end": "00:00:14,000",
+                    "text": "怎么有人说是Mujica的风险",
+                },
+                "output_text": "怎么有人说有梦限大的风险",
+                "supersedes_chat_evidence_id": evidence.evidence_id,
+            }
+        ],
+    }
+    arbitrary = copy.deepcopy(audit)
+    arbitrary_manifest = copy.deepcopy(manifest)
+    arbitrary_manifest["decisions"][0]["output_text"] = "今天完全不相关但提到梦限大"
+    assert not reconcile_pending_text_overrides(
+        arbitrary,
+        arbitrary_manifest,
+        delivery_start_ms=0,
+    )
+    audit["pending_text_overrides"][0]["verdict"].update(
+        {
+            "authority_kind": "ivan_text_override",
+            "defer_to_text_override": True,
+            "candidate_id": "auto_test",
+            "override_document_sha256": "0" * 64,
+            "source_srt_sha256": "1" * 64,
+            "text_final_srt_sha256": "2" * 64,
+        }
+    )
+    assert reconcile_pending_text_overrides(audit, manifest, delivery_start_ms=0)
+    assert audit["pending_text_overrides"][0]["verdict_rebinding"]["status"] == (
+        "UNCHANGED_ENTITY_REBOUND_TO_FROZEN_SOURCE"
+    )
+    assert audit["entity_verdicts"][0]["verdict"]["override_document_sha256"] == (
+        document_hash
+    )
+    assert audit["entity_repairs"][0]["mode"] == (
+        "chat_scaffold_plus_human_entity_override"
+    )
+    assert audit["entity_repairs"][0]["structured_exact_text"] == (
+        "还没看，怎么有人说有梦限大的风险"
+    )
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=20_000,
+    )
+    missing_prefix = _srt("前缀被丢了", "怎么有人说有梦限大的风险")
+    assert not verify_chat_authority_final_surfaces(
+        copy.deepcopy(audit),
+        final_text_srt=missing_prefix,
+        final_speaker_srt=missing_prefix,
+        delivery_start_ms=0,
+        delivery_end_ms=20_000,
+    )
+
+
 def test_nearby_unrelated_chat_is_not_treated_as_subtitle_authority():
     source = _srt("今天确实很想跟大家看新番")
     output, audit = apply_authoritative_chat_evidence(

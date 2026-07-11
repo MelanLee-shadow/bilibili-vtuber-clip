@@ -2893,6 +2893,7 @@ def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
             "scripts/cpa_semantic_qa_llm.py",
             "scripts/llm_via_cpa.sh",
             "scripts/regenerate_lidousha_cover.py",
+            "scripts/resume_frozen_talk_package.py",
             "scripts/run_auto_review_shadow_pipeline.py",
         "src/autoslice/agy_lrc_alignment.py",
         "src/autoslice/host_vocal_proof.py",

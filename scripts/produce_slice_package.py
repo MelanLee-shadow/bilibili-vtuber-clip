@@ -367,7 +367,12 @@ def verify_chat_authority_final_surfaces(
         for row in audit.get("coreference_repairs") or []
     )
     decision_rows.extend(
-        ("entity_repair", row, "".join(str(value) for value in row.get("after") or []))
+        (
+            "entity_repair",
+            row,
+            str(row.get("structured_exact_text") or "")
+            or "".join(str(value) for value in row.get("after") or []),
+        )
         for row in audit.get("entity_repairs") or []
     )
     if any(
