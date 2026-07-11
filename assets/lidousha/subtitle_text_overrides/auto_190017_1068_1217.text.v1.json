@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "candidate_id": "auto_190017_1068_1217",
-  "source_srt_sha256": "f957923b0f578f16943b24beaec914dce6bf6eb2ae15136935892081402b8ce2",
-  "text_final_srt_sha256": "10e1b6e0d2ca3e70454e08fefa5792d3eee6431dfcd581261d89618a50c9e041",
+  "source_srt_sha256": "e76926de115760964888e48304de9f945daf0829af3ca8116323720ed8edcce7",
+  "text_final_srt_sha256": "1f1d298c928ee3164ae371a454cf8767aeb14b6c5176fac307b3259820e9d84d",
   "chat_entity_verdicts": [
     {
       "evidence_id": "c6e7ecabd66f084a52adb15e677b82227e690979710b2c9fc394af310a2ecf95",
@@ -12,17 +12,149 @@
   ],
   "overrides": [
     {
+      "source_cue": 1,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:00,250",
+        "end": "00:00:01,490",
+        "text": "等小李什么时候来看"
+      },
+      "text": "等小李什么时候来看恋青呢",
+      "authority": "Ivan direct correction from the exact structured danmaku read",
+      "reason": "Keep the full platform message together instead of splitting its title into the reply cue"
+    },
+    {
+      "source_cue": 2,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:01,490",
+        "end": "00:00:03,250",
+        "text": "恋青呢，我自己有看了"
+      },
+      "text": "恋青我自己有看啦",
+      "authority": "Ivan direct correction from reply coreference and source audio",
+      "reason": "The immediate reply inherits 恋青 but must not repeat the danmaku particle"
+    },
+    {
+      "source_cue": 3,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:03,250",
+        "end": "00:00:05,400",
+        "text": "那倒是我自己有看"
+      },
+      "text": "我倒是自己有看",
+      "authority": "Ivan direct correction from clear source audio",
+      "reason": "Preserve 倒是 rather than an ASR discourse-word substitution"
+    },
+    {
+      "source_cue": 7,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:11,270",
+        "end": "00:00:13,870",
+        "text": "但是我确实很想跟大家看，梦限大"
+      },
+      "text": "但是我确实很想跟大家看梦限大",
+      "authority": "Ivan direct correction from clear source audio and current BanG Dream context",
+      "reason": "Bind the spoken meng-xian-da entity without an artificial mid-phrase comma"
+    },
+    {
+      "source_cue": 19,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:41,160",
+        "end": "00:00:43,720",
+        "text": "我们在看恋死我们已经看完第一集了"
+      },
+      "text": "我们在看恋死，我们已经看完第一集了",
+      "authority": "Ivan-approved prior final subtitle",
+      "reason": "Restore the spoken clause boundary after the work title"
+    },
+    {
+      "source_cue": 22,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:47,370",
+        "end": "00:00:52,680",
+        "text": "我看到那个推上有人说，说这个就是梦"
+      },
+      "text": "我看到那个推上有人说，说这个就是",
+      "authority": "Ivan-approved prior final subtitle and cross-cue entity continuity",
+      "reason": "Remove the duplicated first character before the next cue's 梦限大"
+    },
+    {
+      "source_cue": 23,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:52,680",
+        "end": "00:00:56,840",
+        "text": "梦限大里面出现这个坏女人是兼具了"
+      },
+      "text": "梦限大里面出现的这个坏女人是兼具了",
+      "authority": "Ivan-approved prior final subtitle",
+      "reason": "Restore the audible attributive particle"
+    },
+    {
+      "source_cue": 24,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:56,840",
+        "end": "00:01:00,480",
+        "text": "什么呃，高松灯的重女"
+      },
+      "text": "什么，呃，高松灯的重女",
+      "authority": "Ivan-approved prior final subtitle",
+      "reason": "Preserve the audible hesitation boundary"
+    },
+    {
+      "source_cue": 29,
+      "action": "replace",
+      "expect": {
+        "start": "00:01:16,600",
+        "end": "00:01:21,510",
+        "text": "然后海铃的假哭和那个喵梦齐的"
+      },
+      "text": "然后海铃的假哭和那个喵梦的",
+      "authority": "Ivan-approved BanG Dream character spelling",
+      "reason": "Keep the recognized character name 喵梦 without an ASR suffix"
+    },
+    {
+      "source_cue": 31,
+      "action": "replace",
+      "expect": {
+        "start": "00:01:24,270",
+        "end": "00:01:29,230",
+        "text": "兼具了这个这个百家之长的一个"
+      },
+      "text": "兼具了这个，这个集百家之长的一个",
+      "authority": "Ivan-approved prior final subtitle and sentence semantics",
+      "reason": "Restore 集百家之长 and its hesitation boundary"
+    },
+    {
       "source_cue": 37,
       "action": "replace",
       "expect": {
         "start": "00:01:41,940",
         "end": "00:01:44,140",
-        "text": "怎么有人说有母鸡卡的风险"
+        "text": "怎么有人说是母鸡卡的风险"
       },
       "text": "怎么有人说有梦限大的风险",
       "authority": "Ivan direct correction from clear source audio and full-clip topic continuity",
       "reason": "Resolve the confusable BanG Dream entity without copying the nearby danmaku spelling",
       "supersedes_chat_evidence_id": "c6e7ecabd66f084a52adb15e677b82227e690979710b2c9fc394af310a2ecf95"
+    },
+    {
+      "source_cue": 52,
+      "action": "replace",
+      "expect": {
+        "start": "00:02:09,580",
+        "end": "00:02:13,520",
+        "text": "但但是它现在是不是出了，出了三集了"
+      },
+      "text": "但但是她现在是不是出了，出了三集了",
+      "authority": "Ivan-approved prior final subtitle and human-character reference",
+      "reason": "Use the female-character pronoun in the continuing discussion"
     }
   ]
 }
