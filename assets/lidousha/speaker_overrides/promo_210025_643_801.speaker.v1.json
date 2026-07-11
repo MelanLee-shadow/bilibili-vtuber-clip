@@ -5,7 +5,7 @@
   "source_srt_sha256": "c13e178fc001d8c58c67afd0f824cf6a4a9e9d11f8464cbcf8b79c88f9f7c2ed",
   "candidate_id": "promo_210025_643_801",
   "status": "ivan_reviewed_turns_on_production_text",
-  "reviewed_at": "2026-07-10",
+  "reviewed_at": "2026-07-11",
   "overlap_policy": "保留主说话人；只有词和时间都可靠时才增加抢话层。",
   "reviewed_context_votes": {
     "authority": "Accepted v10 pre-override automatic context baseline, frozen 2026-07-10; Ivan's later corrections remain authoritative in the explicit overrides below",
@@ -305,6 +305,25 @@
           "speaker": "李豆沙",
           "speaker_detail": "李豆沙",
           "text": "我真的分不清"
+        }
+      ]
+    },
+    {
+      "source_cue": 47,
+      "expect": {
+        "start": "00:01:33,050",
+        "end": "00:01:35,070",
+        "text": "那分不清"
+      },
+      "authority": "Ivan direct speaker correction, 2026-07-11",
+      "note": "Ivan confirmed that this short reply is spoken by 李豆沙, not a guest.",
+      "segments": [
+        {
+          "start": "00:01:33,050",
+          "end": "00:01:35,070",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "那分不清"
         }
       ]
     },

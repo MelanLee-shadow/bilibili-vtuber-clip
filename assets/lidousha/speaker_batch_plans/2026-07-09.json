@@ -62,7 +62,7 @@
       "subtitle_text_override_path": "/opt/bilive/autoslice/repo/assets/lidousha/subtitle_overrides/promo_210025_643_801.text.v1.json",
       "subtitle_text_override_sha256": "a6f9c52517a422ccfeeec5295a6175525de84312395cde6299641b697ee88281",
       "speaker_override_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_overrides/promo_210025_643_801.speaker.v1.json",
-      "speaker_override_sha256": "ba8f8386ae614cb338af84f273856e7228ce7893cc15fae3719a6d0565008d4c"
+      "speaker_override_sha256": "281ea62a4928739b6bcc68df1c44507d884dcf7e2c09dbb38b4a1160c7eede89"
     },
     {
       "review_name": "06_温情肺腑",
@@ -106,7 +106,9 @@
       "text_source_srt_sha256": "1529026cf1bdc55424dc271eecd4f7cd034f00f5b336dc18ad3e3e45b37343b5",
       "text_final_srt_sha256": "66df43bb0478ba0106617ad1ae77f425cb3dac359e85a6d1d36db95e44debd15",
       "subtitle_text_override_path": "/opt/bilive/autoslice/repo/assets/lidousha/subtitle_text_overrides/promo_193036_367_476.text.v1.json",
-      "subtitle_text_override_sha256": "976e58ec881595abc506c022e185383aac5795df9042dad9d769ac025438d82d"
+      "subtitle_text_override_sha256": "976e58ec881595abc506c022e185383aac5795df9042dad9d769ac025438d82d",
+      "speaker_override_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_overrides/promo_193036_367_476.speaker.v1.json",
+      "speaker_override_sha256": "6d1ae3d64c267581a0c0608185e37737c5e0459f45513c37aecb686eb3137ebe"
     },
     {
       "review_name": "R1_黑白小猪",

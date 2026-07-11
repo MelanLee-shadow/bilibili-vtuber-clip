@@ -523,7 +523,27 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     assert reviewed["subtitle_text_override_sha256"] == (
         "a6f9c52517a422ccfeeec5295a6175525de84312395cde6299641b697ee88281"
     )
-    assert reviewed["speaker_override_sha256"] == "ba8f8386ae614cb338af84f273856e7228ce7893cc15fae3719a6d0565008d4c"
+    assert reviewed["speaker_override_sha256"] == "281ea62a4928739b6bcc68df1c44507d884dcf7e2c09dbb38b4a1160c7eede89"
+    reviewed_override = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/speaker_overrides/promo_210025_643_801.speaker.v1.json"
+    )
+    assert hashlib.sha256(reviewed_override.read_bytes()).hexdigest() == reviewed[
+        "speaker_override_sha256"
+    ]
+    reviewed_document = json.loads(reviewed_override.read_text(encoding="utf-8"))
+    cue_47 = next(
+        item for item in reviewed_document["overrides"] if item["source_cue"] == 47
+    )
+    assert cue_47["segments"] == [
+        {
+            "start": "00:01:33,050",
+            "end": "00:01:35,070",
+            "speaker": "李豆沙",
+            "speaker_detail": "李豆沙",
+            "text": "那分不清",
+        }
+    ]
     kitchen = next(entry for entry in plan["entries"] if entry["candidate_id"] == "promo_220021_125_232")
     assert kitchen["source_session_anchor_sha256"] == "2d869a8efae298257e0f17be8d15f9c51e4c64aa15a7a840f176b1b56fd99b94"
     anchor_path = Path(__file__).resolve().parents[1] / "assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json"
@@ -594,4 +614,35 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     )
     assert hashlib.sha256(text_override.read_bytes()).hexdigest() == pronoun_fix[
         "subtitle_text_override_sha256"
+    ]
+    pronoun_speaker_override = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/speaker_overrides/promo_193036_367_476.speaker.v1.json"
+    )
+    assert hashlib.sha256(pronoun_speaker_override.read_bytes()).hexdigest() == pronoun_fix[
+        "speaker_override_sha256"
+    ]
+    pronoun_speaker_document = json.loads(
+        pronoun_speaker_override.read_text(encoding="utf-8")
+    )
+    cue_27 = next(
+        item
+        for item in pronoun_speaker_document["overrides"]
+        if item["source_cue"] == 27
+    )
+    assert cue_27["segments"] == [
+        {
+            "start": "00:00:57,450",
+            "end": "00:00:59,440",
+            "speaker": "李豆沙",
+            "speaker_detail": "李豆沙",
+            "text": "这个学生",
+        },
+        {
+            "start": "00:00:59,440",
+            "end": "00:01:01,200",
+            "speaker": "连线",
+            "speaker_detail": "安晚/Awa",
+            "text": "是个很好的小朋友",
+        },
     ]
