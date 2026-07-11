@@ -18,7 +18,7 @@ import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +35,7 @@ SRT_BLOCK_RE = re.compile(
 LABEL_RE = re.compile(r"^\[(李豆沙|连线)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)$", re.S)
 SPEAKERS = {"李豆沙", "连线"}
 SPEAKER_SUBTITLE_STYLE_ID = "lidousha-speaker-sapphire-host-white-guest-v2"
+SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 # Ivan-approved production contract (2026-07-10):
 # - every Li Dousha cue must byte-for-byte reuse the established sapphire72
@@ -74,6 +75,41 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def validate_bound_speaker_override_document(
+    document_path: Path,
+    *,
+    candidate_id: str,
+    expected_source_media_sha256: str,
+    expected_text_final_srt_sha256: str,
+) -> dict[str, Any]:
+    """Bind a reviewed speaker decision to one candidate, media, and text."""
+
+    document = json.loads(document_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        raise ValueError("speaker override schema_version must be 1")
+    if document.get("candidate_id") != candidate_id:
+        raise ValueError(
+            "speaker override candidate_id mismatch: "
+            f"expected {candidate_id!r}, got {document.get('candidate_id')!r}"
+        )
+    if document.get("source_media_sha256") != expected_source_media_sha256:
+        raise ValueError("speaker override source_media_sha256 does not match the batch plan")
+    if document.get("text_final_srt_sha256") != expected_text_final_srt_sha256:
+        raise ValueError("speaker override text_final_srt_sha256 does not match the batch plan")
+    if not SHA256_RE.fullmatch(str(document.get("source_srt_sha256") or "")):
+        raise ValueError("speaker override source_srt_sha256 must be a SHA-256 digest")
+    overrides = document.get("overrides")
+    if not isinstance(overrides, list):
+        raise ValueError("speaker overrides must be a list")
+    if not all(isinstance(item, Mapping) for item in overrides):
+        raise ValueError("speaker override decisions must be objects")
+    reviewed_votes = document.get("reviewed_context_votes")
+    labels = reviewed_votes.get("labels") if isinstance(reviewed_votes, Mapping) else None
+    if not overrides and not isinstance(labels, Mapping):
+        raise ValueError("reviewed speaker authority requires overrides or context votes")
+    return document
 
 
 def atomic_write_text(path: Path, text: str) -> None:

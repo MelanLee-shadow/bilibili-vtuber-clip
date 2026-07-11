@@ -13,6 +13,7 @@ from scripts.batch_speaker_review import (
     REQUIRED_ARTIFACTS,
     _generator_sha256,
     _result_is_reusable,
+    resolve_staged_repo_asset,
     validate_plan,
 )
 
@@ -25,15 +26,20 @@ def _plan() -> dict:
     return {
         "schema_version": PLAN_SCHEMA,
         "date": "2026-07-09",
+        "production_scope": "retrospective_speaker_rerender",
         "expected_count": 1,
         "upload_authorized": False,
         "entries": [
             {
                 "candidate_id": "promo_1",
                 "review_name": "01_测试",
+                "production_scope": "retrospective_speaker_rerender",
                 "media_path": "/tmp/source.mp4",
                 "source_media_sha256": SHA_A,
                 "text_srt_path": "/tmp/final.srt",
+                "text_authority_mode": "historical_published_final",
+                "chat_authority_status": "NOT_EVALUATED_RETROSPECTIVE",
+                "text_revalidation": False,
                 "text_final_srt_sha256": "sha256:" + SHA_B,
             }
         ],
@@ -44,6 +50,7 @@ def test_batch_plan_requires_explicit_no_upload_and_exact_count() -> None:
     plan = validate_plan(_plan())
     assert plan["entries"][0]["source_media_sha256"] == SHA_A
     assert plan["entries"][0]["text_final_srt_sha256"] == SHA_B
+    assert plan["entries"][0]["text_authority_mode"] == "historical_published_final"
 
     bad_upload = _plan()
     bad_upload["upload_authorized"] = True
@@ -54,6 +61,52 @@ def test_batch_plan_requires_explicit_no_upload_and_exact_count() -> None:
     bad_count["expected_count"] = 10
     with pytest.raises(BatchSpeakerReviewError, match="expected_count"):
         validate_plan(bad_count)
+
+    misleading_scope = _plan()
+    misleading_scope["production_scope"] = "new_end_to_end_text_production"
+    with pytest.raises(BatchSpeakerReviewError, match="production_scope"):
+        validate_plan(misleading_scope)
+
+
+def test_batch_plan_requires_explicit_retrospective_text_authority() -> None:
+    missing_mode = _plan()
+    del missing_mode["entries"][0]["text_authority_mode"]
+    with pytest.raises(BatchSpeakerReviewError, match="text_authority_mode"):
+        validate_plan(missing_mode)
+
+    false_verified_chat = _plan()
+    false_verified_chat["entries"][0]["chat_authority_status"] = "VERIFIED"
+    with pytest.raises(BatchSpeakerReviewError, match="NOT_EVALUATED_RETROSPECTIVE"):
+        validate_plan(false_verified_chat)
+
+    false_revalidation = _plan()
+    false_revalidation["entries"][0]["text_revalidation"] = True
+    with pytest.raises(BatchSpeakerReviewError, match="text_revalidation"):
+        validate_plan(false_revalidation)
+
+    unbound_ivan_claim = _plan()
+    unbound_ivan_claim["entries"][0]["text_authority_mode"] = (
+        "historical_published_final_plus_ivan_override"
+    )
+    with pytest.raises(BatchSpeakerReviewError, match="mode and operational Ivan override disagree"):
+        validate_plan(unbound_ivan_claim)
+
+    mislabeled_human_override = _plan()
+    mislabeled_human_override["entries"][0].update(
+        text_source_srt_sha256=SHA_A,
+        subtitle_text_override_path="/tmp/text-overrides.json",
+        subtitle_text_override_sha256="c" * 64,
+    )
+    with pytest.raises(BatchSpeakerReviewError, match="mode and operational Ivan override disagree"):
+        validate_plan(mislabeled_human_override)
+
+    hash_only_authority_ref = _plan()
+    hash_only_authority_ref["entries"][0].update(
+        text_authority_ref_path="/tmp/speaker-override.json",
+        text_authority_ref_sha256="d" * 64,
+    )
+    with pytest.raises(BatchSpeakerReviewError, match="references are unsupported"):
+        validate_plan(hash_only_authority_ref)
 
 
 def test_batch_plan_rejects_duplicate_identity_and_path_names() -> None:
@@ -87,6 +140,7 @@ def test_batch_plan_hash_binds_optional_source_session_anchors() -> None:
 def test_batch_plan_hash_binds_optional_text_finalization() -> None:
     plan = _plan()
     plan["entries"][0].update(
+        text_authority_mode="historical_published_final_plus_ivan_override",
         text_source_srt_sha256=SHA_A,
         subtitle_text_override_path="/tmp/text-overrides.json",
         subtitle_text_override_sha256="c" * 64,
@@ -98,6 +152,7 @@ def test_batch_plan_hash_binds_optional_text_finalization() -> None:
 
     missing_source = _plan()
     missing_source["entries"][0].update(
+        text_authority_mode="historical_published_final_plus_ivan_override",
         subtitle_text_override_path="/tmp/text-overrides.json",
         subtitle_text_override_sha256="c" * 64,
     )
@@ -106,6 +161,7 @@ def test_batch_plan_hash_binds_optional_text_finalization() -> None:
 
     missing_override_hash = _plan()
     missing_override_hash["entries"][0].update(
+        text_authority_mode="historical_published_final_plus_ivan_override",
         text_source_srt_sha256=SHA_A,
         subtitle_text_override_path="/tmp/text-overrides.json",
     )
@@ -116,6 +172,25 @@ def test_batch_plan_hash_binds_optional_text_finalization() -> None:
     unexplained_distinct_hash["entries"][0]["text_source_srt_sha256"] = SHA_A
     with pytest.raises(BatchSpeakerReviewError, match="without an override"):
         validate_plan(unexplained_distinct_hash)
+
+
+def test_staged_repo_assets_are_canonical_and_contained(tmp_path: Path) -> None:
+    staged = tmp_path / "stage"
+    asset = staged / "assets/lidousha/decision.json"
+    asset.parent.mkdir(parents=True)
+    asset.write_text("{}", encoding="utf-8")
+    assert resolve_staged_repo_asset(
+        "/opt/bilive/autoslice/repo/assets/lidousha/decision.json",
+        staged_root=staged,
+    ) == asset.resolve()
+
+    for escaped in (
+        "/opt/bilive/autoslice/repo//etc/passwd",
+        "/opt/bilive/autoslice/repo/../decision.json",
+        "/etc/passwd",
+    ):
+        with pytest.raises(BatchSpeakerReviewError):
+            resolve_staged_repo_asset(escaped, staged_root=staged)
 
 
 def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
@@ -186,10 +261,14 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
                 "status": "READY",
                 "candidate_id": "promo_1",
                 "review_name": "01_测试",
+                "production_scope": "retrospective_speaker_rerender",
                 "source_media_sha256": SHA_A,
                 "text_source_srt_sha256": text_sha,
                 "text_final_srt_sha256": text_sha,
                 "subtitle_text_override_sha256": None,
+                "text_authority_mode": "historical_published_final",
+                "chat_authority_status": "NOT_EVALUATED_RETROSPECTIVE",
+                "text_revalidation": False,
                 "speaker_override_sha256": None,
                 "source_session_anchor_sha256": None,
                 "generator_sha256": _generator_sha256(),
@@ -207,6 +286,9 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
         "text_source_srt_sha256": text_sha,
         "text_final_srt_sha256": text_sha,
         "subtitle_text_override_sha256": None,
+        "text_authority_mode": "historical_published_final",
+        "chat_authority_status": "NOT_EVALUATED_RETROSPECTIVE",
+        "text_revalidation": False,
         "speaker_override_sha256": None,
         "source_session_anchor_sha256": None,
     }
@@ -244,6 +326,9 @@ def test_resume_rejects_empty_partial_wrong_identity_override_or_style(tmp_path:
         "text_source_srt_sha256": SHA_B,
         "text_final_srt_sha256": SHA_B,
         "subtitle_text_override_sha256": None,
+        "text_authority_mode": "historical_published_final",
+        "chat_authority_status": "NOT_EVALUATED_RETROSPECTIVE",
+        "text_revalidation": False,
         "speaker_override_sha256": "c" * 64,
         "subtitle_style": "old-yellow-style",
         "upload_authorized": False,
@@ -257,6 +342,9 @@ def test_resume_rejects_empty_partial_wrong_identity_override_or_style(tmp_path:
         "text_source_srt_sha256": SHA_B,
         "text_final_srt_sha256": SHA_B,
         "subtitle_text_override_sha256": None,
+        "text_authority_mode": "historical_published_final",
+        "chat_authority_status": "NOT_EVALUATED_RETROSPECTIVE",
+        "text_revalidation": False,
         "speaker_override_sha256": None,
     }
     assert not _result_is_reusable(result, entry, generator_sha256=generator_sha256)
@@ -278,31 +366,29 @@ def test_build_applies_bound_text_finalization_before_speaker_inference(
     )
     source_srt_sha = hashlib.sha256(source_srt.read_bytes()).hexdigest()
     override = tmp_path / "text-override.json"
-    override.write_text(
-        json.dumps(
+    decision = {
+        "schema_version": 1,
+        "candidate_id": "promo_test",
+        "source_srt_sha256": source_srt_sha,
+        "overrides": [
             {
-                "schema_version": 1,
-                "source_srt_sha256": source_srt_sha,
-                "overrides": [
-                    {
-                        "source_cue": 1,
-                        "expect": {
-                            "start": "00:00:00,000",
-                            "end": "00:00:01,000",
-                            "text": "TA想解决的只有学校这个建筑",
-                        },
-                        "authority": "Ivan: known Li Dousha referent uses 她",
-                        "text": "她想解决的只有学校这个建筑",
-                    }
-                ],
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+                "source_cue": 1,
+                "expect": {
+                    "start": "00:00:00,000",
+                    "end": "00:00:01,000",
+                    "text": "TA想解决的只有学校这个建筑",
+                },
+                "authority": "Ivan: known Li Dousha referent uses 她",
+                "text": "她想解决的只有学校这个建筑",
+            }
+        ],
+    }
+    override.write_text(json.dumps(decision, ensure_ascii=False), encoding="utf-8")
     expected = tmp_path / "expected.srt"
     apply_document(source_srt, override, expected, tmp_path / "expected.json")
     expected_sha = hashlib.sha256(expected.read_bytes()).hexdigest()
+    decision["text_final_srt_sha256"] = expected_sha
+    override.write_text(json.dumps(decision, ensure_ascii=False), encoding="utf-8")
 
     output_dir = tmp_path / "review"
     output_dir.mkdir()
@@ -364,6 +450,7 @@ def test_build_applies_bound_text_finalization_before_speaker_inference(
         {
             "schema_version": PLAN_SCHEMA,
             "date": "2026-07-09",
+            "production_scope": "retrospective_speaker_rerender",
             "expected_count": 1,
             "upload_authorized": False,
             "entries": [
@@ -373,6 +460,9 @@ def test_build_applies_bound_text_finalization_before_speaker_inference(
                     "media_path": str(source_media),
                     "source_media_sha256": hashlib.sha256(source_media.read_bytes()).hexdigest(),
                     "text_srt_path": str(source_srt),
+                    "text_authority_mode": "historical_published_final_plus_ivan_override",
+                    "chat_authority_status": "NOT_EVALUATED_RETROSPECTIVE",
+                    "text_revalidation": False,
                     "text_source_srt_sha256": source_srt_sha,
                     "text_final_srt_sha256": expected_sha,
                     "subtitle_text_override_path": str(override),
@@ -394,6 +484,11 @@ def test_build_applies_bound_text_finalization_before_speaker_inference(
     assert Path(observed["text_path"]).name == "15_测试.text-final.srt"
     assert result["text_source_srt_sha256"] == source_srt_sha
     assert result["text_final_srt_sha256"] == expected_sha
+    assert result["text_authority_mode"] == (
+        "historical_published_final_plus_ivan_override"
+    )
+    assert result["chat_authority_status"] == "NOT_EVALUATED_RETROSPECTIVE"
+    assert result["text_revalidation"] is False
     assert result["subtitle_text_override_sha256"] == hashlib.sha256(
         override.read_bytes()
     ).hexdigest()
@@ -419,6 +514,15 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     }
     reviewed = next(entry for entry in plan["entries"] if entry["candidate_id"] == "promo_210025_643_801")
     assert reviewed["text_final_srt_sha256"] == "63438b34dd879c077cc2af6c16f692ae9625a67ed851b31a2cd5a61098874750"
+    assert reviewed["text_authority_mode"] == (
+        "historical_published_final_plus_ivan_override"
+    )
+    assert reviewed["text_source_srt_sha256"] == (
+        "a61938aec26d340c6d6abb9460bc38b769ee3a26e4bd49ed11006efb4a35c55c"
+    )
+    assert reviewed["subtitle_text_override_sha256"] == (
+        "a6f9c52517a422ccfeeec5295a6175525de84312395cde6299641b697ee88281"
+    )
     assert reviewed["speaker_override_sha256"] == "ba8f8386ae614cb338af84f273856e7228ce7893cc15fae3719a6d0565008d4c"
     kitchen = next(entry for entry in plan["entries"] if entry["candidate_id"] == "promo_220021_125_232")
     assert kitchen["source_session_anchor_sha256"] == "2d869a8efae298257e0f17be8d15f9c51e4c64aa15a7a840f176b1b56fd99b94"
@@ -443,6 +547,13 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     assert pronoun_fix["text_final_srt_sha256"] == (
         "66df43bb0478ba0106617ad1ae77f425cb3dac359e85a6d1d36db95e44debd15"
     )
+    assert pronoun_fix["text_authority_mode"] == (
+        "historical_published_final_plus_ivan_override"
+    )
+    assert {entry["chat_authority_status"] for entry in plan["entries"]} == {
+        "NOT_EVALUATED_RETROSPECTIVE"
+    }
+    assert all(entry["text_revalidation"] is False for entry in plan["entries"])
     text_override = (
         Path(__file__).resolve().parents[1]
         / "assets/lidousha/subtitle_text_overrides/promo_193036_367_476.text.v1.json"

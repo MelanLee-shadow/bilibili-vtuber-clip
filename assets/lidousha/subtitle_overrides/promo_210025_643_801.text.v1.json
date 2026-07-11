@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "source_srt_sha256": "a61938aec26d340c6d6abb9460bc38b769ee3a26e4bd49ed11006efb4a35c55c",
+  "text_final_srt_sha256": "63438b34dd879c077cc2af6c16f692ae9625a67ed851b31a2cd5a61098874750",
   "candidate_id": "promo_210025_643_801",
   "status": "ivan_reviewed_text_final",
   "reviewed_at": "2026-07-10",

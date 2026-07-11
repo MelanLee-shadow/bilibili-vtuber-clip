@@ -139,12 +139,56 @@ def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list
     return output, decisions
 
 
-def write_srt(cues: list[TextCue], path: Path) -> None:
+def render_srt(cues: list[TextCue]) -> str:
     blocks = [
         f"{index}\n{cue.start} --> {cue.end}\n{cue.text}"
         for index, cue in enumerate(cues, start=1)
     ]
-    atomic_write_text(path, "\n\n".join(blocks) + "\n")
+    return "\n\n".join(blocks) + "\n"
+
+
+def write_srt(cues: list[TextCue], path: Path) -> None:
+    atomic_write_text(path, render_srt(cues))
+
+
+def validate_bound_override_document(
+    source: Path,
+    document_path: Path,
+    *,
+    candidate_id: str,
+    expected_source_srt_sha256: str,
+    expected_final_srt_sha256: str,
+) -> dict[str, Any]:
+    """Prove a human-decision asset maps one exact source SRT to one final SRT."""
+
+    document = json.loads(document_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        raise ValueError("text override schema_version must be 1")
+    if document.get("candidate_id") != candidate_id:
+        raise ValueError(
+            "text override candidate_id mismatch: "
+            f"expected {candidate_id!r}, got {document.get('candidate_id')!r}"
+        )
+    if document.get("source_srt_sha256") != expected_source_srt_sha256:
+        raise ValueError("text override source_srt_sha256 does not match the batch plan")
+    if document.get("text_final_srt_sha256") != expected_final_srt_sha256:
+        raise ValueError("text override text_final_srt_sha256 does not match the batch plan")
+    if not isinstance(document.get("overrides"), list) or not document["overrides"]:
+        raise ValueError("Ivan text authority requires at least one override decision")
+    actual_source_hash = sha256_file(source)
+    if actual_source_hash != expected_source_srt_sha256:
+        raise ValueError(
+            "source SRT hash mismatch: "
+            f"expected {expected_source_srt_sha256!r}, got {actual_source_hash!r}"
+        )
+    output_cues, _ = apply_overrides(parse_srt(source), document)
+    actual_final_hash = hashlib.sha256(render_srt(output_cues).encode("utf-8")).hexdigest()
+    if actual_final_hash != expected_final_srt_sha256:
+        raise ValueError(
+            "text override derived final SRT hash mismatch: "
+            f"expected {expected_final_srt_sha256!r}, got {actual_final_hash!r}"
+        )
+    return document
 
 
 def apply_document(source: Path, document_path: Path, output: Path, manifest_path: Path) -> dict[str, Any]:
@@ -158,6 +202,10 @@ def apply_document(source: Path, document_path: Path, output: Path, manifest_pat
     source_cues = parse_srt(source)
     output_cues, decisions = apply_overrides(source_cues, document)
     write_srt(output_cues, output)
+    declared_final_hash = document.get("text_final_srt_sha256")
+    if declared_final_hash is not None and sha256_file(output) != declared_final_hash:
+        output.unlink(missing_ok=True)
+        raise ValueError("text override derived final SRT hash does not match its decision asset")
     manifest = {
         "schema_version": "subtitle-text-finalization.v1",
         "status": "READY",

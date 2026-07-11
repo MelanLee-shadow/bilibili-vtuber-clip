@@ -306,13 +306,20 @@ set -euo pipefail
 cd "$1"
 PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python -c \
   "import modelscope, soundfile; import src.autoslice.speaker_finalizer"
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -c \
+  "import scripts.free_session_autoslice; import scripts.produce_slice_package; import src.autoslice.chat_authority"
 PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python -c \
   'from src.autoslice.speaker_finalizer import _speaker_context_env; e=_speaker_context_env(); assert e.get("CPA_BASE_URL") and e.get("CPA_API_KEY"); print("speaker context env verified")'
 PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python - <<'PY'
 import json
 from pathlib import Path
 
-from scripts.apply_speaker_turn_overrides import sha256_file
+from scripts.apply_speaker_turn_overrides import (
+    sha256_file,
+    validate_bound_speaker_override_document,
+)
+from scripts.apply_subtitle_text_overrides import validate_bound_override_document
+from scripts.batch_speaker_review import resolve_staged_repo_asset, validate_plan
 from src.autoslice.host_vocal_proof import _sha256_directory, _validate_profile
 from src.autoslice.speaker_finalizer import (
     _policy,
@@ -358,6 +365,44 @@ for anchor_path in sorted(Path("assets/lidousha/speaker_session_anchors").glob("
     if donor is not None:
         assert sha256_file(Path(donor["media_path"])) == donor["media_sha256"]
         assert sha256_file(Path(donor["text_srt_path"])) == donor["text_srt_sha256"]
+referents = json.loads(Path("assets/lidousha/entity_confusables.json").read_text())
+assert referents.get("schema_version") == "lidousha-referent-groups.v1"
+assert isinstance(referents.get("groups"), list)
+timely = json.loads(Path("assets/lidousha/timely_terms.json").read_text())
+assert timely.get("schema_version") == "lidousha-timely-terms.v1"
+assert timely.get("status") in {"fresh", "stale"}
+assert isinstance(timely.get("terms"), list)
+batch_plan_path = Path("assets/lidousha/speaker_batch_plans/2026-07-09.json")
+batch_plan = validate_plan(json.loads(batch_plan_path.read_text()))
+staged_root = Path.cwd()
+for entry in batch_plan["entries"]:
+    for path_field, hash_field in (
+        ("subtitle_text_override_path", "subtitle_text_override_sha256"),
+        ("speaker_override_path", "speaker_override_sha256"),
+        ("source_session_anchor_path", "source_session_anchor_sha256"),
+    ):
+        value = entry.get(path_field)
+        if not value:
+            continue
+        staged = resolve_staged_repo_asset(value, staged_root=staged_root)
+        assert sha256_file(staged) == entry[hash_field], (
+            entry["candidate_id"], path_field, staged, entry[hash_field]
+        )
+        if path_field == "subtitle_text_override_path":
+            validate_bound_override_document(
+                Path(entry["text_srt_path"]),
+                staged,
+                candidate_id=entry["candidate_id"],
+                expected_source_srt_sha256=entry["text_source_srt_sha256"],
+                expected_final_srt_sha256=entry["text_final_srt_sha256"],
+            )
+        elif path_field == "speaker_override_path":
+            validate_bound_speaker_override_document(
+                staged,
+                candidate_id=entry["candidate_id"],
+                expected_source_media_sha256=entry["source_media_sha256"],
+                expected_text_final_srt_sha256=entry["text_final_srt_sha256"],
+            )
 print("speaker runtime assets verified", actual_model, len(references))
 PY
 REMOTE_VALIDATE

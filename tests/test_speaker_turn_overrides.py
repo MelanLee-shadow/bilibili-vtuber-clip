@@ -11,6 +11,7 @@ from scripts.apply_speaker_turn_overrides import (
     LDS_SAPPHIRE_STYLE,
     apply_overrides,
     parse_labelled_srt,
+    validate_bound_speaker_override_document,
     write_ass,
     write_srt,
 )
@@ -79,6 +80,41 @@ def test_override_can_split_one_asr_cue_into_two_speaker_turns(tmp_path: Path) -
     )
     assert "Style: LDS" in output_ass.read_text(encoding="utf-8")
     assert "Style: GUEST" in output_ass.read_text(encoding="utf-8")
+
+
+def test_speaker_decision_asset_binds_candidate_media_and_final_text(tmp_path: Path) -> None:
+    document = _document()
+    document.update(
+        candidate_id="promo_test",
+        source_media_sha256="a" * 64,
+        text_final_srt_sha256="b" * 64,
+        source_srt_sha256="c" * 64,
+    )
+    decision = tmp_path / "speaker.json"
+    decision.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    validate_bound_speaker_override_document(
+        decision,
+        candidate_id="promo_test",
+        expected_source_media_sha256="a" * 64,
+        expected_text_final_srt_sha256="b" * 64,
+    )
+
+    mutations = (
+        ("candidate_id", "wrong_candidate", "candidate_id mismatch"),
+        ("source_media_sha256", "d" * 64, "does not match the batch plan"),
+        ("text_final_srt_sha256", "e" * 64, "does not match the batch plan"),
+    )
+    for field, value, message in mutations:
+        wrong = dict(document)
+        wrong[field] = value
+        decision.write_text(json.dumps(wrong, ensure_ascii=False), encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            validate_bound_speaker_override_document(
+                decision,
+                candidate_id="promo_test",
+                expected_source_media_sha256="a" * 64,
+                expected_text_final_srt_sha256="b" * 64,
+            )
 
 
 def test_ass_uses_exact_sapphire_for_lidousha_and_v11_white_for_all_guests(

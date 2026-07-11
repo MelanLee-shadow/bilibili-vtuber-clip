@@ -21,7 +21,7 @@ import re
 import shutil
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 
@@ -35,9 +35,11 @@ from scripts.apply_speaker_turn_overrides import (  # noqa: E402
     SPEAKER_SUBTITLE_STYLE_ID,
     atomic_write_text,
     sha256_file,
+    validate_bound_speaker_override_document,
 )
 from scripts.apply_subtitle_text_overrides import (  # noqa: E402
     apply_document as apply_text_override_document,
+    validate_bound_override_document,
 )
 from scripts.produce_slice_package import run_speaker_finalizer  # noqa: E402
 from scripts.run_auto_review_shadow_pipeline import (  # noqa: E402
@@ -48,7 +50,13 @@ from scripts.run_auto_review_shadow_pipeline import (  # noqa: E402
 PLAN_SCHEMA = "lidousha-speaker-review-batch-plan.v1"
 RESULT_SCHEMA = "lidousha-speaker-review-item.v1"
 BATCH_SCHEMA = "lidousha-speaker-review-batch.v1"
+PRODUCTION_SCOPE = "retrospective_speaker_rerender"
 SHA256_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
+HISTORICAL_CHAT_AUTHORITY_STATUS = "NOT_EVALUATED_RETROSPECTIVE"
+TEXT_AUTHORITY_MODES = {
+    "historical_published_final",
+    "historical_published_final_plus_ivan_override",
+}
 REQUIRED_ARTIFACTS = {
     "video",
     "text_final_srt",
@@ -114,11 +122,44 @@ def _safe_review_name(value: object) -> str:
     return name
 
 
+def resolve_staged_repo_asset(
+    value: object,
+    *,
+    staged_root: Path,
+    remote_repo_root: str = "/opt/bilive/autoslice/repo",
+) -> Path:
+    """Map a canonical deployed-repo path into a staged tree without escape."""
+
+    raw = str(value or "")
+    remote = PurePosixPath(raw)
+    if not raw or raw != remote.as_posix():
+        raise BatchSpeakerReviewError(f"repo asset path must be canonical: {raw!r}")
+    try:
+        relative = remote.relative_to(PurePosixPath(remote_repo_root))
+    except ValueError as exc:
+        raise BatchSpeakerReviewError(f"repo asset is outside deployed repo: {raw!r}") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise BatchSpeakerReviewError(f"repo asset path escapes staged tree: {raw!r}")
+    root = staged_root.resolve(strict=True)
+    staged = root.joinpath(*relative.parts).resolve(strict=True)
+    try:
+        staged.relative_to(root)
+    except ValueError as exc:
+        raise BatchSpeakerReviewError(f"repo asset resolves outside staged tree: {raw!r}") from exc
+    if not staged.is_file():
+        raise BatchSpeakerReviewError(f"repo asset is not a regular file: {raw!r}")
+    return staged
+
+
 def validate_plan(document: object) -> dict[str, Any]:
     if not isinstance(document, dict) or document.get("schema_version") != PLAN_SCHEMA:
         raise BatchSpeakerReviewError(f"plan schema must be {PLAN_SCHEMA}")
     if document.get("upload_authorized") is not False:
         raise BatchSpeakerReviewError("plan must explicitly set upload_authorized=false")
+    if document.get("production_scope") != PRODUCTION_SCOPE:
+        raise BatchSpeakerReviewError(
+            f"plan production_scope must explicitly be {PRODUCTION_SCOPE}"
+        )
     entries = document.get("entries")
     if not isinstance(entries, list) or not entries:
         raise BatchSpeakerReviewError("plan entries must be a non-empty list")
@@ -183,6 +224,33 @@ def validate_plan(document: object) -> dict[str, Any]:
             raise BatchSpeakerReviewError(
                 f"entry {position} has distinct source/final text hashes without an override"
             )
+        text_authority_mode = str(raw.get("text_authority_mode") or "").strip()
+        if text_authority_mode not in TEXT_AUTHORITY_MODES:
+            raise BatchSpeakerReviewError(
+                f"entry {position} text_authority_mode must be one of "
+                f"{sorted(TEXT_AUTHORITY_MODES)}"
+            )
+        if raw.get("chat_authority_status") != HISTORICAL_CHAT_AUTHORITY_STATUS:
+            raise BatchSpeakerReviewError(
+                f"entry {position} chat_authority_status must explicitly be "
+                f"{HISTORICAL_CHAT_AUTHORITY_STATUS}"
+            )
+        if raw.get("text_revalidation") is not False:
+            raise BatchSpeakerReviewError(
+                f"entry {position} retrospective text_revalidation must be false"
+            )
+        if raw.get("text_authority_ref_path") or raw.get("text_authority_ref_sha256"):
+            raise BatchSpeakerReviewError(
+                f"entry {position} text authority references are unsupported; "
+                "the human decision must be the operational subtitle text override"
+            )
+        expects_override = (
+            text_authority_mode == "historical_published_final_plus_ivan_override"
+        )
+        if bool(text_override_path) != expects_override:
+            raise BatchSpeakerReviewError(
+                f"entry {position} text_authority_mode and operational Ivan override disagree"
+            )
         normalized.append(
             {
                 **dict(raw),
@@ -193,6 +261,9 @@ def validate_plan(document: object) -> dict[str, Any]:
                 ),
                 "text_source_srt_sha256": text_source_digest,
                 "text_final_srt_sha256": text_final_digest,
+                "text_authority_mode": text_authority_mode,
+                "chat_authority_status": HISTORICAL_CHAT_AUTHORITY_STATUS,
+                "text_revalidation": False,
                 "subtitle_text_override_path": text_override_path or None,
                 "subtitle_text_override_sha256": (
                     _expected_digest(
@@ -324,6 +395,8 @@ def _result_is_reusable(
             return False
         if result.get("review_name") != entry["review_name"]:
             return False
+        if result.get("production_scope") != PRODUCTION_SCOPE:
+            return False
         if result.get("source_media_sha256") != entry["source_media_sha256"]:
             return False
         if result.get("text_final_srt_sha256") != entry["text_final_srt_sha256"]:
@@ -333,6 +406,12 @@ def _result_is_reusable(
         if result.get("subtitle_text_override_sha256") != entry.get(
             "subtitle_text_override_sha256"
         ):
+            return False
+        if result.get("text_authority_mode") != entry["text_authority_mode"]:
+            return False
+        if result.get("chat_authority_status") != entry["chat_authority_status"]:
+            return False
+        if result.get("text_revalidation") is not False:
             return False
         if result.get("speaker_override_sha256") != entry.get("speaker_override_sha256"):
             return False
@@ -407,6 +486,18 @@ def build_review_item(
             raise BatchSpeakerReviewError(
                 f"subtitle text override hash drift: {text_override_path}"
             )
+        try:
+            validate_bound_override_document(
+                text_source,
+                text_override_path,
+                candidate_id=candidate_id,
+                expected_source_srt_sha256=str(entry["text_source_srt_sha256"]),
+                expected_final_srt_sha256=str(entry["text_final_srt_sha256"]),
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise BatchSpeakerReviewError(
+                f"subtitle text override authority binding failed: {text_override_path}: {exc}"
+            ) from exc
     override_value = entry.get("speaker_override_path")
     override_path = Path(str(override_value)).resolve(strict=True) if override_value else None
     expected_override = entry.get("speaker_override_sha256")
@@ -414,6 +505,17 @@ def build_review_item(
         expected = _expected_digest(expected_override, "speaker_override_sha256")
         if sha256_file(override_path) != expected:
             raise BatchSpeakerReviewError(f"speaker override hash drift: {override_path}")
+        try:
+            validate_bound_speaker_override_document(
+                override_path,
+                candidate_id=candidate_id,
+                expected_source_media_sha256=str(entry["source_media_sha256"]),
+                expected_text_final_srt_sha256=str(entry["text_final_srt_sha256"]),
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise BatchSpeakerReviewError(
+                f"speaker override authority binding failed: {override_path}: {exc}"
+            ) from exc
     elif expected_override:
         raise BatchSpeakerReviewError("speaker_override_sha256 is set without a path")
     session_anchor_value = entry.get("source_session_anchor_path")
@@ -539,6 +641,7 @@ def build_review_item(
         "status": "READY",
         "candidate_id": candidate_id,
         "review_name": review_name,
+        "production_scope": PRODUCTION_SCOPE,
         "title": str(entry.get("title") or ""),
         "bvid": str(entry.get("bvid") or ""),
         "source_media": str(source_media),
@@ -549,6 +652,9 @@ def build_review_item(
         "subtitle_text_override_sha256": (
             sha256_file(text_override_path) if text_override_path else None
         ),
+        "text_authority_mode": str(entry["text_authority_mode"]),
+        "chat_authority_status": str(entry["chat_authority_status"]),
+        "text_revalidation": False,
         "text_final_srt": str(text_final),
         "text_final_srt_sha256": sha256_file(text_final),
         "speaker_override": str(override_path) if override_path else None,
@@ -657,6 +763,7 @@ def main(argv: list[str] | None = None) -> int:
             "schema_version": BATCH_SCHEMA,
             "status": "BLOCKED" if failures else "RUNNING",
             "date": plan.get("date"),
+            "production_scope": PRODUCTION_SCOPE,
             "plan": str(plan_path),
             "plan_sha256": plan_sha256,
             "generator_sha256": generator_sha256,
@@ -666,6 +773,12 @@ def main(argv: list[str] | None = None) -> int:
                 "连线": GUEST_WHITE_STYLE,
                 "shadow_identity": "李豆沙",
                 "production_labels": ["李豆沙", "连线"],
+            },
+            "text_authority_contract": {
+                "scope": "retrospective speaker rerender of hash-bound historical published final SRTs",
+                "chat_authority_status": HISTORICAL_CHAT_AUTHORITY_STATUS,
+                "text_revalidation": False,
+                "claim_limit": "does not claim a retrospective structured-chat re-adjudication",
             },
             "upload_authorized": False,
             "expected_count": len(plan["entries"]),
