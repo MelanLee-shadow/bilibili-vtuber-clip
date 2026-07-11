@@ -35,6 +35,11 @@ if str(ROOT) not in sys.path:
 from scripts.apply_subtitle_text_overrides import (  # noqa: E402
     apply_document as apply_text_override_document,
 )
+from scripts.authorized_upload import (  # noqa: E402
+    DEFAULT_UPLOAD_LOCK,
+    UploadLockBusy,
+    exclusive_upload_lock,
+)
 from scripts.free_session_autoslice import (  # noqa: E402
     BASE,
     _atomic_write_bytes_file,
@@ -1061,7 +1066,15 @@ def main(argv: list[str] | None = None) -> int:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise FrozenTalkResumeError("runner.lock is busy") from exc
-        summary = resume(args.plan, speaker_python=args.speaker_python)
+        # Lock order is always runner -> upload.  DISABLED stops unattended
+        # ticks, but an already authorized manual uploader is serialized by a
+        # different lock and could otherwise read a delivery while we replace
+        # it.  Hold the production uploader's fixed lock for the entire tail.
+        try:
+            with exclusive_upload_lock(DEFAULT_UPLOAD_LOCK):
+                summary = resume(args.plan, speaker_python=args.speaker_python)
+        except UploadLockBusy as exc:
+            raise FrozenTalkResumeError("upload.lock is busy") from exc
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

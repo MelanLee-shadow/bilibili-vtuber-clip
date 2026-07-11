@@ -1,5 +1,6 @@
 import hashlib
 import json
+import fcntl
 from pathlib import Path
 
 import pytest
@@ -246,3 +247,37 @@ def test_cover_clone_recovers_each_one_sided_atomic_write(tmp_path, monkeypatch)
     )
     assert target_cover.read_bytes() == source_cover.read_bytes()
     assert target_manifest.read_bytes() == intended_manifest
+
+
+def test_main_holds_runner_then_production_upload_lock_for_entire_resume(
+    tmp_path, monkeypatch, capsys
+):
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    (base / "DISABLED").write_bytes(b"")
+    upload_lock = base / "upload.lock"
+    observed = []
+
+    monkeypatch.setattr(frozen_resume, "BASE", base)
+    monkeypatch.setattr(frozen_resume, "DEFAULT_UPLOAD_LOCK", upload_lock)
+
+    def lock_is_busy(path):
+        with path.open("a+") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+    def fake_resume(_plan, *, speaker_python):
+        assert speaker_python
+        observed.append(lock_is_busy(base / "runner.lock"))
+        observed.append(lock_is_busy(upload_lock))
+        return {"status": "ok"}
+
+    monkeypatch.setattr(frozen_resume, "resume", fake_resume)
+    assert frozen_resume.main(["--plan", str(tmp_path / "plan.json")]) == 0
+    assert observed == [True, True]
+    assert '"status": "ok"' in capsys.readouterr().out
