@@ -22,13 +22,15 @@
 
 ### 阻塞
 
-- 无代码/部署/恢复 blocker。批次 review_ready，等 Ivan 逐条审片 + 逐条上传授权（本轮无授权）。
+- **封面被 CPA 拦（外部，非本次部署）**：5 条谈话 AI 封面全 `BLOCKED_AI_COVER_REQUIRED`——CPA 当前分组 `Codex-Plus` 不支持 `gpt-image-2`（HTTP 400 `client_model_unavailable`，02:47Z 三条实证一致，redacted 证据在各 clip 的 `evidence/*.cover-cpa-response.redacted.json`）。封面代码未动、23:57 pre-authority run 出图正常 → 是 CPA 账号分组权限变化，不是部署引入。需 Ivan 把 CPA 账号切到支持 gpt-image-2 的分组（我不动 CPA 服务），再重跑 `repair_covers`。盘上：2 条早片留着 12:36 旧封面(标题可能已变)，3 条恢复片无封面。**mp4 内容（说话人标签 + 字幕权威修正）已全部正确**。
+- 无代码/部署/恢复 blocker。批次内容 review_ready，等 Ivan 逐条审片 + 逐条上传授权（本轮无授权）。
 
 ### 下一步
 
-1. **#3 git 并回 main（本轮押后，Ivan 明确“先别管”）**：生产在 `codex/deploy-superset @2246f5c`，**不在 main**；main 另有 3 个独有提交（换源 / luna-handoff / speaker-v10-overrides）。**分叉注意**：那 8 个 WIP 现已 commit 在 `codex/deploy-superset` 并上线，但在 parked 的 `codex/speaker-final-pipeline` 工作树仍是未提交改动（需去重/对齐，勿重复落地）。唯一真代码冲突面 = `scripts/apply_speaker_turn_overrides.py`（main v10 overrides vs codex finalizer 依赖）。`codex/campp-perf-fix`（off 3ad0f9b 的最小 fix）已被超集部署取代，可删。
-2. 下一场直播前摘 `free:/opt/bilive/autoslice/DISABLED`（cron 恢复无人值守）——归属验收流程 / Ivan 定。
-3. 遗留 follow-up（承 3ad0f9b Pro 复核）：边界语义收束、封面行首标点禁则。
+1. **封面补齐**：Ivan 修好 CPA 分组（放开 gpt-image-2）后，重跑 `repair_covers(2026-07-10)`（顺序补 5 条封面）即可；无需改代码。
+2. **#3 git 并回 main（本轮押后，Ivan 明确“先别管”）**：生产在 `codex/deploy-superset @2246f5c`，**不在 main**；main 另有 3 个独有提交（换源 / luna-handoff / speaker-v10-overrides）。**分叉注意**：那 8 个 WIP 现已 commit 在 `codex/deploy-superset` 并上线，但在 parked 的 `codex/speaker-final-pipeline` 工作树仍是未提交改动（需去重/对齐，勿重复落地）。唯一真代码冲突面 = `scripts/apply_speaker_turn_overrides.py`（main v10 overrides vs codex finalizer 依赖）。`codex/campp-perf-fix`（off 3ad0f9b 的最小 fix）已被超集部署取代，可删。
+3. 下一场直播前摘 `free:/opt/bilive/autoslice/DISABLED`（cron 恢复无人值守）——归属验收流程 / Ivan 定。
+4. 遗留 follow-up（承 3ad0f9b Pro 复核）：边界语义收束、封面行首标点禁则。
 
 ## 2026-07-10（续四）：歌切“必须是李豆沙现场演唱”联合门上线 +《芽吹くとき》背景原曲阻断 + cron 恢复
 
