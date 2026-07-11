@@ -538,6 +538,40 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     assert hashlib.sha256(monologue_anchor.read_bytes()).hexdigest() == monologue[
         "source_session_anchor_sha256"
     ]
+    relay = next(
+        entry for entry in plan["entries"] if entry["candidate_id"] == "auto_203027_549_697"
+    )
+    relay_anchor = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/speaker_session_anchors/2026-07-09-203027.v1.json"
+    )
+    assert hashlib.sha256(relay_anchor.read_bytes()).hexdigest() == relay[
+        "source_session_anchor_sha256"
+    ]
+    relay_anchor_document = json.loads(relay_anchor.read_text(encoding="utf-8"))
+    assert relay_anchor_document["source_session_id"] == "22966160_20260709-20-30-27"
+    assert relay_anchor_document["donor"]["candidate_id"] == "promo_203027_314_479"
+    assert relay_anchor_document["allowed_targets"] == [
+        {
+            "candidate_id": "auto_203027_549_697",
+            "media_path": (
+                "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/"
+                "replacement_recuts/auto_203027_549_697.recut.mp4"
+            ),
+            "media_sha256": (
+                "58d405033a57c9eaeb0cd2f4591603b635d31508472d81e3b8b45e7b8b3f4331"
+            ),
+            "provenance_path": (
+                "/opt/bilive/autoslice/out/2026-07-09/spec_auto_203027_549_697.json"
+            ),
+            "provenance_sha256": (
+                "5d35c1236c0c0472209a66d6ea5c10ff7eb45e94fe77b0ed3644032ba80425a2"
+            ),
+        }
+    ]
+    assert min(
+        anchor["enroll_median_score"] for anchor in relay_anchor_document["anchors"]
+    ) >= 0.68
     pronoun_fix = next(
         entry for entry in plan["entries"] if entry["candidate_id"] == "promo_193036_367_476"
     )

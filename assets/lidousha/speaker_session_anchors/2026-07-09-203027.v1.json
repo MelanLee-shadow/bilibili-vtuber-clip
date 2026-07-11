@@ -1,0 +1,87 @@
+{
+  "schema_version": "lidousha-speaker-source-session-anchors.v1",
+  "status": "READY",
+  "subject": "李豆沙",
+  "source_session_id": "22966160_20260709-20-30-27",
+  "source_recording": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-09/22966160_2026-07-09-20-30-27-.mp4",
+  "authority": "CAM++ static enrollment gate >= 0.68 on hash-bound donor and target specs naming the same source recording",
+  "profile_sha256": "83fbe36e0063b88838755ec01cb0a15f255daa03fd5f014ef5c382e81a9ef56b",
+  "model_tree_sha256": "f01588f1ceacd25fb3853e765846e3e34befddcff5c61bc14ddaf529745ed0c3",
+  "reference_hashes": {
+    "lidousha-1": "d54a637d520df906a4a17728f2112ca3819b6afe43e2e038e8d6db52c094105f",
+    "lidousha-2": "8fc095fe8558d218fadea7f6273ee5296f85662164aa125aae68eb9381ce7ef3",
+    "lidousha-3": "d257b7aef63f022772fbacc61d35954a65b4727b29f062edb0b398531b95c5a2"
+  },
+  "allowed_targets": [
+    {
+      "candidate_id": "auto_203027_549_697",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/replacement_recuts/auto_203027_549_697.recut.mp4",
+      "media_sha256": "58d405033a57c9eaeb0cd2f4591603b635d31508472d81e3b8b45e7b8b3f4331",
+      "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_auto_203027_549_697.json",
+      "provenance_sha256": "5d35c1236c0c0472209a66d6ea5c10ff7eb45e94fe77b0ed3644032ba80425a2"
+    }
+  ],
+  "donor": {
+    "candidate_id": "promo_203027_314_479",
+    "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.recut.mp4",
+    "media_sha256": "0666a2a366f94b8cb82f18391e96926d4bac98de60242787e2a0709e674eb8c8",
+    "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.recut.srt",
+    "text_srt_sha256": "cb4b8bac386ce9d510128ecd6ba9bf586dd5483ad8c76172d2fbbab7a56911f1",
+    "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_203027_314_479.json",
+    "provenance_sha256": "0a7b3bb8ad5339477ba0d5f8c91b68905772e13ba5f6c699978a634af7e9eaae"
+  },
+  "anchors": [
+    {
+      "source_cue": 8,
+      "start": "00:00:18,450",
+      "end": "00:00:21,090",
+      "text": "我感觉就是，呃，换了",
+      "sample_sha256": "a53240a121d4a6c86af4bc720af4a9ac5a1f917e17d3aa951eab71c4761a901e",
+      "reference_scores": {
+        "lidousha-1": 0.69491,
+        "lidousha-2": 0.67654,
+        "lidousha-3": 0.70328
+      },
+      "enroll_median_score": 0.69491
+    },
+    {
+      "source_cue": 9,
+      "start": "00:00:21,090",
+      "end": "00:00:24,250",
+      "text": "因为我们就是已经知道另一个位置的信息了",
+      "sample_sha256": "33778718f940bbde18ec376f1eb412f1fe0b2df2348e4f5a5e74cba3e3e2eeb1",
+      "reference_scores": {
+        "lidousha-1": 0.80912,
+        "lidousha-2": 0.76074,
+        "lidousha-3": 0.81047
+      },
+      "enroll_median_score": 0.80912
+    },
+    {
+      "source_cue": 10,
+      "start": "00:00:24,250",
+      "end": "00:00:25,860",
+      "text": "所以现在换了位置之后",
+      "sample_sha256": "a927a40a8442f0e21d7da817a4facecb34ae13ab0e65b28672d5386058668b4f",
+      "reference_scores": {
+        "lidousha-1": 0.71193,
+        "lidousha-2": 0.64387,
+        "lidousha-3": 0.71859
+      },
+      "enroll_median_score": 0.71193
+    },
+    {
+      "source_cue": 11,
+      "start": "00:00:25,860",
+      "end": "00:00:29,120",
+      "text": "应该要比刚刚用更快的速度通关吧",
+      "sample_sha256": "4880dcc5efcc58b3577fa39f25973594bf93ce66d21abff2df3117a9b7111bc2",
+      "reference_scores": {
+        "lidousha-1": 0.73399,
+        "lidousha-2": 0.73574,
+        "lidousha-3": 0.76525
+      },
+      "enroll_median_score": 0.73574
+    }
+  ]
+}
