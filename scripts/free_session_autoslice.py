@@ -228,6 +228,7 @@ def pipeline_fingerprint() -> str:
         "scripts/llm_via_cpa.sh",
         "scripts/produce_slice_package.py",
         "scripts/regenerate_lidousha_cover.py",
+        "scripts/repair_reviewed_covers.py",
         "scripts/resume_frozen_talk_package.py",
         "scripts/run_auto_review_shadow_pipeline.py",
         "scripts/run_full_session_selector_cpa_shadow.py",
@@ -3181,6 +3182,7 @@ def _cover_reason_codes_without_transient_failure(value: object) -> list[str]:
         str(code)
         for code in (value if isinstance(value, list) else [])
         if not str(code).startswith(prefixes)
+        and str(code) != "REVIEWED_COVER_REPLACEMENT_REQUIRED"
     ]
 
 
@@ -4218,12 +4220,54 @@ def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> None:
         raise ValueError("legacy delivered song has no verified active-record manifest")
 
 
-def repair_covers(date: str, state: dict) -> None:
+def repair_covers(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: set[str] | frozenset[str] | None = None,
+    expected_cover_texts: dict[str, str] | None = None,
+) -> None:
     """Phase D: delivered clips whose REAL-AI cover was blocked (CPA image lane
     hiccups: gateway 400s, provider outages) get a bounded cover-only retry —
     the mp4 is already good, nothing is re-produced.  One attempt per record
     per tick; permanently blocked covers stay loud in the review summary."""
     records = state.get("picks", []) + state.get("songs", [])
+    expected_cover_texts = dict(expected_cover_texts or {})
+    if expected_cover_texts and (
+        candidate_ids is None
+        or any(
+            re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")) is None
+            or not isinstance(expected, str)
+            or not expected.strip()
+            for candidate_id, expected in expected_cover_texts.items()
+        )
+        or not set(expected_cover_texts).issubset(set(candidate_ids))
+    ):
+        raise ValueError("expected cover text authority must be scoped to selected candidates")
+    if candidate_ids is not None:
+        requested = set(candidate_ids)
+        if not requested or any(
+            re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(value or "")) is None
+            for value in requested
+        ):
+            raise ValueError("selected cover repair candidate ids are invalid or empty")
+        matches: dict[str, list[dict]] = {candidate_id: [] for candidate_id in requested}
+        for record in records:
+            if isinstance(record, dict) and record.get("candidate_id") in matches:
+                matches[str(record["candidate_id"])].append(record)
+        invalid = {
+            candidate_id: len(rows)
+            for candidate_id, rows in matches.items()
+            if len(rows) != 1
+        }
+        if invalid:
+            raise ValueError(
+                f"selected cover repair candidates are missing or duplicated: {invalid}"
+            )
+        # Scope recovery, budget refresh, exhaustion handling, and provider
+        # calls alike.  A selected repair must never mutate a neighboring
+        # candidate merely because that record also happens to need a cover.
+        records = [record for record in records if record.get("candidate_id") in requested]
     recovered = False
     for record in records:
         paths = delivered_paths(date, record)
@@ -4310,6 +4354,26 @@ def repair_covers(date: str, state: dict) -> None:
         bound = False
         if rc == 0 and generated_cover.is_file():
             try:
+                expected_cover_text = expected_cover_texts.get(str(cid))
+                if expected_cover_text is not None:
+                    generation, _generation_path = _validate_repaired_cover_generation(
+                        cover=generated_cover,
+                        title=str(rec["title"]),
+                        candidate_id=str(cid),
+                    )
+                    rendered_lines = generation.get("rendered_lines")
+                    canonical = lambda value: re.sub(r"\s+", "", str(value))
+                    if (
+                        generation.get("cover_text") != expected_cover_text
+                        or not isinstance(rendered_lines, list)
+                        or not rendered_lines
+                        or any(not isinstance(value, str) for value in rendered_lines)
+                        or canonical("".join(rendered_lines))
+                        != canonical(expected_cover_text)
+                    ):
+                        raise ValueError(
+                            "generated cover did not preserve the reviewed text/punctuation"
+                        )
                 _bind_repaired_cover(date, rec, mp4, cover, generated_cover)
             except (OSError, ValueError, SongDeliveryError) as exc:
                 with open(log_path, "a", encoding="utf-8") as sink:

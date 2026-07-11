@@ -1121,6 +1121,141 @@ def test_per_clip_http_500_consumes_attempt_and_does_not_starve_next_cover(tmp_p
     assert calls[0][1].parent != calls[1][1].parent
 
 
+def test_selected_cover_repair_scopes_recovery_budget_and_detection(monkeypatch):
+    selected = {
+        "candidate_id": "selected",
+        "status": "review_ready",
+        "title": "【李豆沙】selected",
+    }
+    neighbor = {
+        "candidate_id": "neighbor",
+        "status": "review_ready",
+        "title": "【李豆沙】neighbor",
+    }
+    state = {"picks": [selected, neighbor], "songs": []}
+    calls = []
+    monkeypatch.setattr(
+        runner,
+        "delivered_paths",
+        lambda _date, rec: (Path(f"/{rec['candidate_id']}.mp4"), Path(f"/{rec['candidate_id']}.png")),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_roll_forward_prepared_cover_transactions",
+        lambda _date, rec, *_paths: calls.append(("roll", rec["candidate_id"])) or False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_recover_committed_cover_binding",
+        lambda _date, rec, *_paths: calls.append(("recover", rec["candidate_id"])) or False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_refresh_cover_repair_budget",
+        lambda rec, _fingerprint: calls.append(("budget", rec["candidate_id"])) or False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "cover_repair_needed",
+        lambda _date, rec: calls.append(("needed", rec["candidate_id"])) or False,
+    )
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    runner.repair_covers(
+        "2026-07-10", state, candidate_ids={"selected"}
+    )
+
+    assert calls == [
+        ("roll", "selected"),
+        ("recover", "selected"),
+        ("budget", "selected"),
+        ("needed", "selected"),
+    ]
+
+
+def test_selected_cover_repair_rejects_unknown_or_duplicate_state_rows():
+    state = {
+        "picks": [
+            {"candidate_id": "duplicate"},
+            {"candidate_id": "duplicate"},
+        ],
+        "songs": [],
+    }
+    with pytest.raises(ValueError, match="missing or duplicated"):
+        runner.repair_covers(
+            "2026-07-10", state, candidate_ids={"duplicate"}
+        )
+    with pytest.raises(ValueError, match="missing or duplicated"):
+        runner.repair_covers(
+            "2026-07-10", state, candidate_ids={"unknown"}
+        )
+
+
+def test_reviewed_cover_text_gate_rejects_dropped_question_mark_before_binding(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    (runner.BASE / "logs").mkdir(parents=True)
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(b"video")
+    cover = tmp_path / "clip.cover.png"
+    record = {
+        "candidate_id": "auto_punctuation",
+        "status": "review_ready",
+        "title": "【李豆沙】去彩排前连问三遍：你们还要来找我玩，好不好？",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+    }
+    monkeypatch.setattr(runner, "delivered_paths", lambda _date, _rec: (mp4, cover))
+
+    class Completed:
+        returncode = 0
+
+    def generate(command, **_kwargs):
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"generated")
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", generate)
+    monkeypatch.setattr(
+        runner,
+        "_validate_repaired_cover_generation",
+        lambda **_kwargs: (
+            {
+                "cover_text": "去彩排前连问三遍\n你们还要来找我玩，好不好？",
+                "rendered_lines": ["去彩排前", "连问三遍", "你们还要", "来找我玩", "，好不好"],
+            },
+            tmp_path / "generation.json",
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_bind_repaired_cover",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("punctuation-bad cover must not bind")
+        ),
+    )
+
+    state = {"picks": [record], "songs": []}
+    runner.repair_covers(
+        "2026-07-10",
+        state,
+        candidate_ids={"auto_punctuation"},
+        expected_cover_texts={
+            "auto_punctuation": "去彩排前连问三遍\n你们还要来找我玩，好不好？"
+        },
+    )
+
+    assert record["cover_repair_attempts"] == 1
+    assert record["cover_integrity_status"] == "INVALID_REPAIR_PENDING"
+    assert record.get("cover_binding_path") is None
+
+
 def test_cover_repair_attempts_use_unique_immutable_generation_directories(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "b" * 64)
