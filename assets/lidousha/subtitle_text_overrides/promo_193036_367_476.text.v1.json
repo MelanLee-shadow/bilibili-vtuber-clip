@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "source_srt_sha256": "1529026cf1bdc55424dc271eecd4f7cd034f00f5b336dc18ad3e3e45b37343b5",
+  "overrides": [
+    {
+      "source_cue": 24,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:50,520",
+        "end": "00:00:53,430",
+        "text": "TA想解决的只有学校这个建筑"
+      },
+      "text": "她想解决的只有学校这个建筑",
+      "authority": "Ivan: known Li Dousha referents use 她, applied before speaker separation",
+      "reason": "Replace the unresolved generic TA token with the known female referent Li Dousha"
+    }
+  ]
+}

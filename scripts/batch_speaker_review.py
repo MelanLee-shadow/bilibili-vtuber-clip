@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Build a hash-bound, no-upload speaker-separated review package.
 
-The input plan names already-final clean recuts and text-final SRT files.  This
-runner never touches the existing delivery, publish record, upload manifest, or
-public video.  It is intentionally resumable because CAM++ analysis across a
-full day can take a long time.
+The input plan names already-final clean recuts and either final SRT files or a
+hash-bound human text-finalization decision.  Text finalization always runs
+before speaker inference and subtitle rendering.  This runner never touches
+the existing delivery, publish record, upload manifest, or public video.  It is
+intentionally resumable because CAM++ analysis across a full day can take a
+long time.
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ from scripts.apply_speaker_turn_overrides import (  # noqa: E402
     SPEAKER_SUBTITLE_STYLE_ID,
     atomic_write_text,
     sha256_file,
+)
+from scripts.apply_subtitle_text_overrides import (  # noqa: E402
+    apply_document as apply_text_override_document,
 )
 from scripts.produce_slice_package import run_speaker_finalizer  # noqa: E402
 from scripts.run_auto_review_shadow_pipeline import (  # noqa: E402
@@ -151,6 +156,33 @@ def validate_plan(document: object) -> dict[str, Any]:
                 f"entry {position} must bind source_session_anchor_path and "
                 "source_session_anchor_sha256 together"
             )
+        text_final_digest = _expected_digest(
+            raw.get("text_final_srt_sha256"), f"entry {position} text_final_srt_sha256"
+        )
+        text_override_path = str(raw.get("subtitle_text_override_path") or "").strip()
+        text_override_digest_raw = raw.get("subtitle_text_override_sha256")
+        if bool(text_override_path) != bool(text_override_digest_raw):
+            raise BatchSpeakerReviewError(
+                f"entry {position} must bind subtitle_text_override_path and "
+                "subtitle_text_override_sha256 together"
+            )
+        text_source_digest_raw = raw.get("text_source_srt_sha256")
+        if text_override_path and not text_source_digest_raw:
+            raise BatchSpeakerReviewError(
+                f"entry {position} text override requires text_source_srt_sha256"
+            )
+        text_source_digest = (
+            _expected_digest(
+                text_source_digest_raw,
+                f"entry {position} text_source_srt_sha256",
+            )
+            if text_source_digest_raw
+            else text_final_digest
+        )
+        if not text_override_path and text_source_digest != text_final_digest:
+            raise BatchSpeakerReviewError(
+                f"entry {position} has distinct source/final text hashes without an override"
+            )
         normalized.append(
             {
                 **dict(raw),
@@ -159,8 +191,16 @@ def validate_plan(document: object) -> dict[str, Any]:
                 "source_media_sha256": _expected_digest(
                     raw.get("source_media_sha256"), f"entry {position} source_media_sha256"
                 ),
-                "text_final_srt_sha256": _expected_digest(
-                    raw.get("text_final_srt_sha256"), f"entry {position} text_final_srt_sha256"
+                "text_source_srt_sha256": text_source_digest,
+                "text_final_srt_sha256": text_final_digest,
+                "subtitle_text_override_path": text_override_path or None,
+                "subtitle_text_override_sha256": (
+                    _expected_digest(
+                        text_override_digest_raw,
+                        f"entry {position} subtitle_text_override_sha256",
+                    )
+                    if text_override_path
+                    else None
                 ),
                 "speaker_override_path": override_path or None,
                 "speaker_override_sha256": (
@@ -288,6 +328,12 @@ def _result_is_reusable(
             return False
         if result.get("text_final_srt_sha256") != entry["text_final_srt_sha256"]:
             return False
+        if result.get("text_source_srt_sha256") != entry["text_source_srt_sha256"]:
+            return False
+        if result.get("subtitle_text_override_sha256") != entry.get(
+            "subtitle_text_override_sha256"
+        ):
+            return False
         if result.get("speaker_override_sha256") != entry.get("speaker_override_sha256"):
             return False
         if result.get("source_session_anchor_sha256") != entry.get("source_session_anchor_sha256"):
@@ -345,9 +391,22 @@ def build_review_item(
     source_media = _verify_bound_file(
         entry.get("media_path"), str(entry["source_media_sha256"]), "source media"
     )
-    text_final = _verify_bound_file(
-        entry.get("text_srt_path"), str(entry["text_final_srt_sha256"]), "text-final SRT"
+    text_source = _verify_bound_file(
+        entry.get("text_srt_path"), str(entry["text_source_srt_sha256"]), "text source SRT"
     )
+    text_override_value = entry.get("subtitle_text_override_path")
+    text_override_path = (
+        Path(str(text_override_value)).resolve(strict=True) if text_override_value else None
+    )
+    expected_text_override = entry.get("subtitle_text_override_sha256")
+    if text_override_path is not None:
+        expected = _expected_digest(
+            expected_text_override, "subtitle_text_override_sha256"
+        )
+        if sha256_file(text_override_path) != expected:
+            raise BatchSpeakerReviewError(
+                f"subtitle text override hash drift: {text_override_path}"
+            )
     override_value = entry.get("speaker_override_path")
     override_path = Path(str(override_value)).resolve(strict=True) if override_value else None
     expected_override = entry.get("speaker_override_sha256")
@@ -385,7 +444,22 @@ def build_review_item(
 
     work_dir = output_dir / ".work" / candidate_id
     work_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(text_final, paths["text_final_srt"])
+    text_final = paths["text_final_srt"]
+    if text_override_path is not None:
+        text_manifest = apply_text_override_document(
+            text_source,
+            text_override_path,
+            text_final,
+            work_dir / "text-finalization.json",
+        )
+        if text_manifest.get("output_srt_sha256") != entry["text_final_srt_sha256"]:
+            raise BatchSpeakerReviewError(
+                f"text-final output hash drift: {text_final}"
+            )
+    else:
+        shutil.copy2(text_source, text_final)
+    if sha256_file(text_final) != entry["text_final_srt_sha256"]:
+        raise BatchSpeakerReviewError(f"packaged text-final SRT hash drift: {text_final}")
     speaker_manifest = run_speaker_finalizer(
         host="localhost",
         candidate_id=candidate_id,
@@ -427,7 +501,19 @@ def build_review_item(
     # minutes reading these inputs; a hash change at any point invalidates the
     # whole item instead of producing a mixed-era READY artifact.
     _verify_bound_file(source_media, str(entry["source_media_sha256"]), "source media post-run")
-    _verify_bound_file(text_final, str(entry["text_final_srt_sha256"]), "text-final SRT post-run")
+    _verify_bound_file(
+        text_source, str(entry["text_source_srt_sha256"]), "text source SRT post-run"
+    )
+    _verify_bound_file(
+        text_final, str(entry["text_final_srt_sha256"]), "packaged text-final SRT post-run"
+    )
+    if (
+        text_override_path is not None
+        and sha256_file(text_override_path) != entry["subtitle_text_override_sha256"]
+    ):
+        raise BatchSpeakerReviewError(
+            f"subtitle text override post-run hash drift: {text_override_path}"
+        )
     if override_path is not None and sha256_file(override_path) != entry["speaker_override_sha256"]:
         raise BatchSpeakerReviewError(f"speaker override post-run hash drift: {override_path}")
     if (
@@ -457,6 +543,12 @@ def build_review_item(
         "bvid": str(entry.get("bvid") or ""),
         "source_media": str(source_media),
         "source_media_sha256": sha256_file(source_media),
+        "text_source_srt": str(text_source),
+        "text_source_srt_sha256": sha256_file(text_source),
+        "subtitle_text_override": str(text_override_path) if text_override_path else None,
+        "subtitle_text_override_sha256": (
+            sha256_file(text_override_path) if text_override_path else None
+        ),
         "text_final_srt": str(text_final),
         "text_final_srt_sha256": sha256_file(text_final),
         "speaker_override": str(override_path) if override_path else None,

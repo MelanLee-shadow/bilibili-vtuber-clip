@@ -78,7 +78,10 @@
       "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_193036_367_476/replacement_recuts/promo_193036_367_476.recut.mp4",
       "source_media_sha256": "a327a0d0cde1ee26f5a9f2e11c5b7f708ddb0345f11124e4f8641f7735c76598",
       "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_193036_367_476/replacement_recuts/promo_193036_367_476.recut.srt",
-      "text_final_srt_sha256": "1529026cf1bdc55424dc271eecd4f7cd034f00f5b336dc18ad3e3e45b37343b5"
+      "text_source_srt_sha256": "1529026cf1bdc55424dc271eecd4f7cd034f00f5b336dc18ad3e3e45b37343b5",
+      "text_final_srt_sha256": "66df43bb0478ba0106617ad1ae77f425cb3dac359e85a6d1d36db95e44debd15",
+      "subtitle_text_override_path": "/opt/bilive/autoslice/repo/assets/lidousha/subtitle_text_overrides/promo_193036_367_476.text.v1.json",
+      "subtitle_text_override_sha256": "20aa213b5fcb435a95cf82427da73398d1fe478d57894d75b168b2c3d33b67d7"
     },
     {
       "review_name": "R1_黑白小猪",
