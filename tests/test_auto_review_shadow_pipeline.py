@@ -3144,7 +3144,7 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     assert draft["cover_generation"]["fallback_used"] is False
 
 
-def test_publish_staging_falls_back_to_job_title_when_llm_fails(tmp_path):
+def test_publish_staging_fails_before_cover_when_title_llm_fails(tmp_path, monkeypatch):
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
     srt = tmp_path / "clip.srt"
@@ -3153,6 +3153,16 @@ def test_publish_staging_falls_back_to_job_title_when_llm_fails(tmp_path):
 
     def broken_llm(prompt: str) -> str:
         raise RuntimeError("bridge down")
+
+    cover_calls = []
+
+    def forbidden_cover_call(*args, **kwargs):
+        cover_calls.append((args, kwargs))
+        raise AssertionError("cover stage must not run before title authority")
+
+    monkeypatch.setattr(
+        shadow_pipeline, "_stage_lidousha_ai_cover", forbidden_cover_call
+    )
 
     staged = shadow_pipeline._stage_publish_draft(
         record,
@@ -3165,7 +3175,13 @@ def test_publish_staging_falls_back_to_job_title_when_llm_fails(tmp_path):
 
     staging = staged["publish_staging"]
     assert staging["title"] == "原始job标题"
-    assert staging["title_source"].startswith("job_title")
+    assert staging["title_source"].startswith("job_title(llm_failed")
+    assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["title_authority_status"] == "UNRESOLVED_AUTO"
+    assert staging["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["cover_generation"]["status"] == "NOT_ATTEMPTED"
+    assert staging["reason_codes"] == ["TITLE_AUTHORITY_UNRESOLVED"]
+    assert cover_calls == []
     assert staging["upload_enabled"] is False
 
 
@@ -3221,7 +3237,54 @@ def test_publish_staging_retries_banned_hype_word_then_accepts_clean_rewrite(tmp
     assert "已被否决" not in calls[0]
 
 
-def test_publish_staging_flags_title_policy_violation_when_retries_exhausted(tmp_path):
+def test_publish_staging_binds_title_to_selected_main_hook_and_self_heals_mismatch(tmp_path):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"placeholder video")
+    srt = tmp_path / "clip.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n上下摇以后又聊到熊猫头锤和温柔歌\n",
+        encoding="utf-8",
+    )
+    record = {
+        "status": "MATERIALIZED",
+        "media_path": str(media),
+        "subtitle_path": str(srt),
+        "artifact_hashes": {},
+    }
+    hook = "弹幕让李豆沙表演上下摇，她先把自己摇晕，又叫熊熊靠近后突然发动熊猫头锤。"
+    calls = []
+
+    def wrong_topic_llm(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps(
+            {
+                "title": "熊猫头槌解决kmx，温柔歌后再表演上下摇",
+                "selection_hook_anchor": "上下摇",
+            },
+            ensure_ascii=False,
+        )
+
+    staged = shadow_pipeline._stage_publish_draft(
+        record,
+        candidate_id="talk-hook-drift",
+        title="原始job标题",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=wrong_topic_llm,
+        selection_hook=hook,
+    )
+
+    staging = staged["publish_staging"]
+    assert len(calls) == 3
+    assert hook in calls[0]
+    assert "第一分句" in calls[0]
+    assert staging["title"] == "【李豆沙】弹幕让小李表演上下摇，结果先把自己摇晕"
+    assert staging["title_source"] == "selection_hook_fallback_after_llm_mismatch"
+    assert staging["title_policy_violations"] == []
+    assert "熊猫头槌解决" not in staging["title"]
+
+
+def test_publish_staging_blocks_title_policy_violation_before_cover(tmp_path, monkeypatch):
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
     srt = tmp_path / "clip.srt"
@@ -3234,6 +3297,13 @@ def test_publish_staging_flags_title_policy_violation_when_retries_exhausted(tmp
         calls.append(prompt)
         return '{"title": "虫儿飞温柔哄睡到犯规了"}'
 
+    cover_calls = []
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_stage_lidousha_ai_cover",
+        lambda *args, **kwargs: cover_calls.append((args, kwargs)),
+    )
+
     staged = shadow_pipeline._stage_publish_draft(
         record,
         candidate_id="song-stubborn",
@@ -3245,16 +3315,19 @@ def test_publish_staging_flags_title_policy_violation_when_retries_exhausted(tmp
 
     staging = staged["publish_staging"]
     assert len(calls) == 3  # 1 initial + 2 bounded retries
-    # Kept (length-valid, prefix forced) but flagged so a human can catch it.
+    # Retained only as audit text; it has no title authority and cannot spend on a cover.
     assert staging["title"] == "【李豆沙】虫儿飞温柔哄睡到犯规了"
     assert staging["title_source"] == "llm+lidousha_style_asset(title_policy_violation)"
     assert "banned_hype_word" in staging["title_policy_violations"]
     assert "banned_universal_suffix" in staging["title_policy_violations"]
+    assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert cover_calls == []
     draft = _load_json(Path(staging["publish_json_path"]))
     assert draft["title_policy_violations"] == staging["title_policy_violations"]
 
 
-def test_publish_staging_length_gate_rejects_short_auto_title_and_keeps_job_title(tmp_path):
+def test_publish_staging_length_gate_blocks_before_cover(tmp_path, monkeypatch):
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
     srt = tmp_path / "clip.srt"
@@ -3263,6 +3336,13 @@ def test_publish_staging_length_gate_rejects_short_auto_title_and_keeps_job_titl
 
     def short_llm(prompt: str) -> str:
         return '{"title": "好听"}'  # prefixed 【李豆沙】好听 = 7 chars < 12 lower bound
+
+    cover_calls = []
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_stage_lidousha_ai_cover",
+        lambda *args, **kwargs: cover_calls.append((args, kwargs)),
+    )
 
     staged = shadow_pipeline._stage_publish_draft(
         record,
@@ -3278,6 +3358,63 @@ def test_publish_staging_length_gate_rejects_short_auto_title_and_keeps_job_titl
     assert staging["title"] == "原始job标题"
     assert staging["title_source"].startswith("job_title(llm_length_out_of_bounds")
     assert staging["title_policy_violations"] == []
+    assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert cover_calls == []
+
+
+def test_invalid_first_title_then_retry_error_still_blocks_before_cover(tmp_path, monkeypatch):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"placeholder video")
+    srt = tmp_path / "clip.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:02,000\n测试\n", encoding="utf-8")
+    record = {"status": "MATERIALIZED", "media_path": str(media), "subtitle_path": str(srt), "artifact_hashes": {}}
+    calls = 0
+
+    def invalid_then_error(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return '{"title":"测试现场炸裂到犯规"}'
+        raise RuntimeError("retry bridge failed")
+
+    cover_calls = []
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_stage_lidousha_ai_cover",
+        lambda *args, **kwargs: cover_calls.append((args, kwargs)),
+    )
+    staged = shadow_pipeline._stage_publish_draft(
+        record,
+        candidate_id="talk-retry-error",
+        title="原始job标题",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=invalid_then_error,
+    )
+
+    assert calls == 2
+    assert staged["publish_staging"]["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staged["publish_staging"]["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert cover_calls == []
+
+
+def test_selection_hook_anchor_rejects_ascii_late_clause_and_generic_fragment():
+    assert not shadow_pipeline._selection_hook_anchor_valid(
+        anchor="熊猫头槌",
+        selection_hook="弹幕让小李表演上下摇, 后来突然发动熊猫头槌",
+        title="熊猫头槌终于来了",
+    )
+    assert not shadow_pipeline._selection_hook_anchor_valid(
+        anchor="弹幕让",
+        selection_hook="弹幕让李豆沙表演上下摇…后来发动熊猫头槌",
+        title="弹幕让熊猫头槌抢戏",
+    )
+
+
+def test_selection_hook_fallback_preserves_terminal_question_mark():
+    title = shadow_pipeline._selection_hook_fallback_title("你们还要来找我玩，好不好？")
+    assert title == "【李豆沙】你们还要来找我玩，好不好？"
 
 
 def test_publish_staging_manual_title_bypasses_prefix_and_policy_enforcement(tmp_path):
@@ -3463,6 +3600,8 @@ def test_validated_cover_lines_rejects_lossy_or_unrenderable():
     assert v(["小", "皇", "帝", "拒", "绝", "新"], ct, hook_word="", max_lines=5) == ()  # 6 lines > max
     assert v("小皇帝拒绝更新", ct, hook_word="", max_lines=5) == ()           # not a list
     assert v([], ct, hook_word="", max_lines=5) == ()                        # empty
+    assert v(["你们还要来找我玩", "好不好"], "你们还要来找我玩，好不好？", hook_word="好不好", max_lines=5) == ()
+    assert v(["你们还要来找我玩", "，好不好？"], "你们还要来找我玩，好不好？", hook_word="好不好", max_lines=5) == ()
     long_line = "一二三四五六七八九十甲乙丙"  # 13 chars — over the single-line budget
     assert v([long_line], long_line, hook_word="", max_lines=5) == ()
 
@@ -3494,6 +3633,8 @@ def test_validated_cover_words_rejects_lossy_or_hook_splitting():
     assert v(["沙豆李", "完全", "听不", "到礼墨的声音"], text, hook_word="听不到") == ()  # hook split
     assert v("not a list", text, hook_word="") == ()
     assert v([], text, hook_word="") == ()
+    punctuation_text = "你们还要来找我玩，好不好？"
+    assert v(["你们还要来找我玩", "，好不好？"], punctuation_text, hook_word="好不好") == ()
 
 
 def test_wrap_even_packs_word_atoms_without_splitting():
@@ -3506,6 +3647,15 @@ def test_wrap_even_packs_word_atoms_without_splitting():
     assert "".join(lines) == "沙豆李沉浸在疯狂摇头之中完全听不到礼墨的声音"
     for atom in ("沙豆李", "疯狂摇头", "听不到", "礼墨"):
         assert any(atom in line for line in lines), (atom, lines)  # atom never split across lines
+
+
+def test_wrap_even_preserves_visible_punctuation_and_never_strands_it():
+    text = "去彩排前连问三遍你们还要来找我玩，好不好？"
+    lines = shadow_pipeline._wrap_even(text, 5, keep=("好不好",))
+    assert "".join(lines) == text
+    assert all(not line.startswith(tuple("，,、；;！!？?。")) for line in lines)
+    assert lines[-1].endswith("？")
+    assert any(line.endswith("，") for line in lines)
 
 
 def test_fit_cover_lines_full_title_grows_with_raised_line_budget():

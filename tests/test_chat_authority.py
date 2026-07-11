@@ -1,16 +1,27 @@
+import copy
+import hashlib
 import json
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from scripts.produce_slice_package import (
+    _load_independent_chat_support_srts,
     _piece_chat_evidence,
     verify_chat_authority_final_surfaces,
 )
 from src.autoslice.chat_authority import (
     ChatEvidence,
+    ReferentEntity,
+    ReferentGroup,
+    apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
+    build_human_text_entity_verifier,
     load_chat_jsonl,
+    load_referent_groups,
+    normalize_code_switch_surfaces,
     recording_start_epoch_ms,
+    reconcile_pending_text_overrides,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 
@@ -22,6 +33,110 @@ def _srt(*texts: str) -> str:
             f"{index}\n00:00:{index * 5:02d},000 --> 00:00:{index * 5 + 4:02d},000\n{text}"
         )
     return "\n\n".join(blocks) + "\n"
+
+
+def _audio_entity_verifier(canonical: str):
+    def verify(request):
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "canonical_entity": canonical,
+            "authority_kind": "audio_forced_choice",
+            "confidence": 0.97,
+            "heard_syllables": canonical,
+            "source_media_sha256": "a" * 64,
+            "audio_clip_sha256": "b" * 64,
+            "prompt_sha256": "c" * 64,
+            "response_sha256": "d" * 64,
+        }
+
+    return verify
+
+
+DREAM_MUJICA_GROUP = ReferentGroup(
+    (
+        ReferentEntity("梦限大", ("梦限大", "梦现代"), ("meng xian da",)),
+        ReferentEntity("Ave Mujica", ("Ave Mujica", "Mujica", "母鸡卡", "木子卡"), ("mujica",)),
+    )
+)
+CHARACTER_GROUP = ReferentGroup(
+    (
+        ReferentEntity("立希", ("立希", "椎名立希"), ("li xi", "taki")),
+        ReferentEntity("祥子", ("祥子", "丰川祥子", "saki"), ("xiang zi", "saki")),
+    ),
+    audio_verify_all_surfaces=True,
+)
+
+
+def test_v2_entity_config_keeps_aliases_under_one_canonical():
+    groups = load_referent_groups(
+        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+    )
+    dream_group = next(
+        group for group in groups if {entity.canonical for entity in group.entities} == {"梦限大", "Ave Mujica"}
+    )
+    mujica = next(entity for entity in dream_group.entities if entity.canonical == "Ave Mujica")
+
+    assert {"Mujica", "母鸡卡", "木子卡"} <= set(mujica.surfaces)
+    assert all(entity.canonical != "母鸡卡" for entity in dream_group.entities)
+
+
+def test_japanese_code_switch_surface_is_canonicalized_without_timing_change():
+    source = _srt("这种哇哭哇哭的感觉")
+
+    output, audit = normalize_code_switch_surfaces(source)
+
+    assert "这种wakuwaku的感觉" in output
+    assert "00:00:05,000 --> 00:00:09,000" in output
+    assert audit["repairs"][0]["authority"] == "lidousha-code-switch-canon.v1"
+
+
+def test_ordinary_speech_audio_verifier_repairs_saki_to_lixi_entity_only():
+    source = _srt("然后那个saki的高压的态度")
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[CHARACTER_GROUP],
+        entity_verifier=_audio_entity_verifier("立希"),
+    )
+
+    assert "然后那个立希的高压的态度" in output
+    assert "saki" not in output
+    assert audit["repairs"][0]["mode"] == "transcript_entity_only"
+    assert audit["repairs"][0]["before"] == ["然后那个saki的高压的态度"]
+
+
+def test_ordinary_speech_entity_verification_fails_closed_when_uncertain():
+    source = _srt("然后那个祥子的高压的态度")
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[CHARACTER_GROUP],
+        entity_verifier=None,
+    )
+
+    assert output == source
+    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    assert audit["entity_verdict_required"][0]["cue_index"] == 1
+
+
+def test_exact_chat_owned_cue_is_excluded_from_second_entity_verdict():
+    source = _srt("等小李什么时候来看恋青呢")
+    group = ReferentGroup(
+        (ReferentEntity("恋青", ("恋青",)), ReferentEntity("恋死", ("恋死",))),
+        audio_verify_all_surfaces=True,
+    )
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[group],
+        entity_verifier=None,
+        excluded_cue_indexes=[1],
+    )
+
+    assert output == source
+    assert audit["status"] == "NO_ENTITY"
 
 
 def test_jsonl_uses_live_event_timestamps_not_ingestion_send_time(tmp_path):
@@ -125,6 +240,7 @@ def test_exact_danmaku_read_replaces_asr_span():
         evidence,
         support_srt_texts=[source],
         referent_groups=[["恋青", "恋死"]],
+        entity_verifier=_audio_entity_verifier("恋青"),
     )
 
     assert "等小李什么时候来看恋青呢" in output
@@ -278,7 +394,7 @@ def test_matched_sc_repairs_only_the_explicit_thank_name_slot():
     assert audit["sender_repairs"][0]["source_event_id"] == "17439760"
 
 
-def test_sc_sender_is_not_rewritten_without_independent_name_support():
+def test_matched_sc_body_makes_platform_sender_authoritative_for_thank_name_slot():
     source = _srt(
         "谢谢甲送的",
         "谢谢苏马奶送的",
@@ -292,8 +408,64 @@ def test_sc_sender_is_not_rewritten_without_independent_name_support():
         support_srt_texts=[source],
     )
 
-    assert "谢谢苏马奶送的" in output
+    assert "谢谢十麻乃送的" in output
+    assert "苏马奶" not in output
+    assert audit["sender_repairs"][0]["alignment_basis"] == (
+        "matched-superchat-body-plus-platform-sender.v1"
+    )
+
+
+def test_duplicate_real_sc_body_with_different_senders_fails_closed():
+    exact = "如果能唱的到想点首小城夏天，唱不到就算了"
+    source = _srt("谢谢错名送的", "如果能唱的到想点首小城夏天唱不到就算了")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("superchat", 0, exact, "甲", source_event_id="evt-a"),
+            ChatEvidence("superchat", 0, exact, "乙", source_event_id="evt-b"),
+        ],
+        support_srt_texts=[source],
+    )
+
+    assert "谢谢错名送的" in output
     assert audit["sender_repairs"] == []
+    assert audit["status"] == "SC_SENDER_VERDICT_REQUIRED"
+    assert audit["sender_verdict_required"][0]["reason_code"] == (
+        "DUPLICATE_SC_BODY_SENDER_AMBIGUOUS"
+    )
+
+
+def test_duplicate_sc_body_without_thank_name_does_not_create_sender_block():
+    exact = "如果能唱的到想点首小城夏天，唱不到就算了"
+    source = _srt("如果能唱的到想点首小城夏天唱不到就算了")
+
+    _output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("superchat", 0, exact, "甲", source_event_id="evt-a"),
+            ChatEvidence("superchat", 0, exact, "乙", source_event_id="evt-b"),
+        ],
+        support_srt_texts=[source],
+    )
+
+    assert audit["sender_verdict_required"] == []
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+
+
+def test_chat_read_support_excludes_chat_conditioned_agy_refinement(tmp_path):
+    media = tmp_path / "padded.mp4"
+    media.write_bytes(b"media")
+    media.with_suffix(".asr_draft.srt").write_text(_srt("raw audio only"), encoding="utf-8")
+    media.with_suffix(".agy_refined.srt").write_text(
+        _srt("copied exact structured chat"), encoding="utf-8"
+    )
+
+    support = _load_independent_chat_support_srts(media)
+
+    assert len(support) == 1
+    assert "raw audio only" in support[0]
+    assert "copied exact structured chat" not in support[0]
 
 
 def test_longest_confusable_alias_is_replaced_atomically():
@@ -304,12 +476,143 @@ def test_longest_confusable_alias_is_replaced_atomically():
         source,
         [ChatEvidence("danmaku", 0, exact)],
         support_srt_texts=[source],
-        referent_groups=[["梦限大", "Mujica", "Ave Mujica"]],
+        referent_groups=[DREAM_MUJICA_GROUP],
+        entity_verifier=_audio_entity_verifier("梦限大"),
     )
 
     assert "我觉得梦限大还不错" in output
     assert "Ave 梦限大" not in output
     assert audit["coreference_repairs"][0]["replaced_confusable"] == "Ave Mujica"
+
+
+def test_confusable_entity_in_nearby_chat_cannot_overwrite_audio_refined_name():
+    source = _srt(
+        "还没看",
+        "怎么有人说有梦限大的风险",
+        "我还没有看完整的",
+    )
+    exact = "还没看，怎么有人说有母鸡卡的风险"
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, exact)],
+        # Even a raw ASR agreeing with the nearby chat is only a text proxy;
+        # it cannot erase a different proper name chosen by the refined audio.
+        support_srt_texts=[_srt("还没看", "怎么有人说有母鸡卡的风险")],
+        referent_groups=[DREAM_MUJICA_GROUP],
+    )
+
+    assert output == source
+    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    assert audit["applied"] == []
+    assert audit["entity_verdict_required"][0]["matched_audio_text"] == (
+        "还没看怎么有人说有梦限大的风险"
+    )
+    assert audit["entity_verdict_required"][0]["reason_code"] == "ENTITY_VERDICT_REQUIRED"
+
+
+def test_audio_forced_choice_rejects_exact_chat_and_repairs_only_entity_slot():
+    source = _srt("还没看", "怎么有人说有母鸡卡的风险", "我还没有看完整的")
+    exact = "还没看，怎么有人说有母鸡卡的风险"
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, exact)],
+        support_srt_texts=[source],
+        referent_groups=[DREAM_MUJICA_GROUP],
+        entity_verifier=_audio_entity_verifier("梦限大"),
+    )
+
+    assert "怎么有人说有梦限大的风险" in output
+    assert "还没看，怎么有人说" not in output
+    assert audit["applied"] == []
+    assert audit["entity_repairs"][0]["mode"] == "entity_only"
+    assert audit["entity_repairs"][0]["replaced_surface"] == "母鸡卡"
+    assert audit["superseded_chat_proposals"][0]["reason_code"] == (
+        "EXACT_CHAT_REJECTED_BY_AUDIO_ENTITY_VERDICT"
+    )
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+
+
+def test_hash_bound_ivan_override_supersedes_chat_and_survives_final_verifier(tmp_path):
+    source = _srt("还没看", "怎么有人说有母鸡卡的风险")
+    final = source.replace("母鸡卡", "梦限大")
+    evidence = ChatEvidence("danmaku", 0, "还没看，怎么有人说有母鸡卡的风险")
+    document = {
+        "schema_version": 1,
+        "candidate_id": "auto_test",
+        "source_srt_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "text_final_srt_sha256": hashlib.sha256(final.encode()).hexdigest(),
+        "chat_entity_verdicts": [
+            {
+                "evidence_id": evidence.evidence_id,
+                "canonical_entity": "梦限大",
+                "authority": "Ivan direct correction",
+            }
+        ],
+        "overrides": [
+            {
+                "source_cue": 2,
+                "expect": {
+                    "start": "00:00:10,000",
+                    "end": "00:00:14,000",
+                    "text": "怎么有人说有母鸡卡的风险",
+                },
+                "text": "怎么有人说有梦限大的风险",
+                "authority": "Ivan direct correction",
+                "supersedes_chat_evidence_id": evidence.evidence_id,
+            }
+        ],
+    }
+    document_path = tmp_path / "auto_test.text.v1.json"
+    document_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    verifier = build_human_text_entity_verifier(document_path, candidate_id="auto_test")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [evidence],
+        support_srt_texts=[source],
+        referent_groups=[DREAM_MUJICA_GROUP],
+        entity_verifier=verifier,
+    )
+
+    assert output == source
+    assert audit["status"] == "PENDING_TEXT_OVERRIDE"
+    assert audit["applied"] == []
+    manifest = {
+        "status": "READY",
+        "override_document_sha256": hashlib.sha256(document_path.read_bytes()).hexdigest(),
+        "source_srt_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "output_srt_sha256": hashlib.sha256(final.encode()).hexdigest(),
+        "decisions": [
+            {
+                "source": {
+                    "source_index": 2,
+                    "start": "00:00:10,000",
+                    "end": "00:00:14,000",
+                    "text": "怎么有人说有母鸡卡的风险",
+                },
+                "output_text": "怎么有人说有梦限大的风险",
+                "supersedes_chat_evidence_id": evidence.evidence_id,
+            }
+        ],
+    }
+    drifted = copy.deepcopy(audit)
+    assert not reconcile_pending_text_overrides(
+        drifted,
+        {**manifest, "source_srt_sha256": "0" * 64},
+        delivery_start_ms=0,
+    )
+
+    assert reconcile_pending_text_overrides(audit, manifest, delivery_start_ms=0)
+    assert audit["entity_repairs"][0]["mode"] == "entity_only_human_text_override"
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=20_000,
+    )
 
 
 def test_nearby_unrelated_chat_is_not_treated_as_subtitle_authority():

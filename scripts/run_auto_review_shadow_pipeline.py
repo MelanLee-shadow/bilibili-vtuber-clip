@@ -3046,6 +3046,20 @@ _TITLE_BANNED_MIAO_RE = re.compile(r"秒[一-鿿]")  # 秒懂/秒回/秒怼… i
 _TITLE_MIN_LEN = 12  # counted WITH the 【李豆沙】 prefix
 _TITLE_MAX_LEN = 30
 _TITLE_MAX_ATTEMPTS = 3  # 1 initial generation + up to 2 bounded retries
+_SELECTION_HOOK_GENERIC_ANCHORS = {
+    "李豆沙",
+    "小李",
+    "主播",
+    "直播",
+    "弹幕",
+    "观众",
+    "自己",
+    "这个",
+    "那个",
+    "然后",
+    "时候",
+    "表演",
+}
 
 
 def _title_policy_violations(title: str) -> list[str]:
@@ -3077,6 +3091,73 @@ def _ensure_lidousha_prefix(title: str) -> str:
 
     stripped = title.strip()
     return stripped if stripped.startswith(_LIDOUSHA_TITLE_PREFIX) else _LIDOUSHA_TITLE_PREFIX + stripped
+
+
+def _selection_hook_first_clause(selection_hook: str | None) -> str:
+    return re.split(r"[，,。.!！?？；;：:\n…]", str(selection_hook or "").strip(), maxsplit=1)[0].strip()
+
+
+def _selection_hook_anchor_valid(*, anchor: object, selection_hook: str, title: str) -> bool:
+    """Require an auto title to retain one concrete phrase from the main hook.
+
+    The first selection-hook clause names why the clip was selected.  Later
+    transcript material may be valid but incidental; without this binding the
+    title model can silently retitle an "上下摇" clip around a later 熊猫头槌
+    exchange.  The LLM must therefore name the exact phrase it copied, and the
+    deterministic validator checks both source and output.
+    """
+
+    if not isinstance(anchor, str):
+        return False
+    anchor = anchor.strip()
+    first_clause = _selection_hook_first_clause(selection_hook)
+    title_body = str(title).removeprefix(_LIDOUSHA_TITLE_PREFIX).strip()
+    title_lead_clause = re.split(r"[，,。.!！?？；;：:\n…]", title_body, maxsplit=1)[0].strip()
+    meaningful = re.sub(
+        r"(?:李豆沙|小李|主播|直播|弹幕|观众|自己|这个|那个|然后|时候|表演|让|叫|她|他|的|了|在|又)",
+        "",
+        anchor,
+    ).strip()
+    return bool(
+        2 <= len(anchor) <= 12
+        and anchor not in _SELECTION_HOOK_GENERIC_ANCHORS
+        and len(meaningful) >= 2
+        and anchor in first_clause
+        # The selected event must lead the title.  Merely appending “上下摇”
+        # after a 熊猫头槌/温柔歌 headline still changes why the clip was picked.
+        and anchor in title_lead_clause
+        and title_lead_clause.find(anchor) <= 10
+    )
+
+
+def _selection_hook_fallback_title(selection_hook: str | None) -> str | None:
+    """Build a concrete, bounded title from the selected main event.
+
+    Used only after all title-LLM attempts fail the source-hook binding.  It is
+    deliberately conservative: first clause is authoritative, and a short
+    second consequence is included only when the 30-character title budget
+    remains intact.
+    """
+
+    raw = str(selection_hook or "").strip().rstrip("。；; ")
+    if not raw:
+        return None
+    clauses = [part.strip() for part in re.split(r"[，,。；;：:\n…]", raw) if part.strip()]
+    if not clauses:
+        return None
+    first = clauses[0].replace("李豆沙", "小李")
+    body = first
+    if len(clauses) > 1:
+        second = clauses[1].replace("李豆沙", "小李")
+        if second.startswith("她"):
+            second = "结果" + second[1:]
+        candidate = f"{first}，{second}"
+        if len(_ensure_lidousha_prefix(candidate)) <= _TITLE_MAX_LEN:
+            body = candidate
+    available = _TITLE_MAX_LEN - len(_LIDOUSHA_TITLE_PREFIX)
+    body = body[:available].rstrip("，,、；;：: ")
+    title = _ensure_lidousha_prefix(body)
+    return title if _TITLE_MIN_LEN <= len(title) <= _TITLE_MAX_LEN else None
 
 
 def _stage_publish_after_release_gate(
@@ -3154,6 +3235,7 @@ def _stage_publish_draft(
     title_llm_call: LlmCall | None,
     art_direction_llm_call: LlmCall | None = None,
     skip_cover: bool = False,
+    selection_hook: str | None = None,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
 
@@ -3173,10 +3255,25 @@ def _stage_publish_draft(
     staged_title = title
     title_source = "job_title"
     title_policy_violations: list[str] = []
+    title_authority_error: str | None = None
+    title_authority_status = "RESOLVED_MANUAL" if title_llm_call is None else "UNRESOLVED_AUTO"
     if title_llm_call is not None:
+        selection_hook = str(selection_hook or "").strip()
+        selection_hook_clause = _selection_hook_first_clause(selection_hook)
         transcript_sample = _staged_transcript_sample(record, cues)
         style_asset = _load_lidousha_asset("title_style.md")
         persona_asset = _load_lidousha_asset("persona.md")
+        selection_hook_contract = ""
+        output_contract = '{"title": "标题"}'
+        if selection_hook:
+            selection_hook_contract = (
+                f"\n选片主钩子（这是为什么选中本片，权威高于后续陪衬话题）: {selection_hook}\n"
+                f"标题必须保留第一分句的核心事件: {selection_hook_clause}\n"
+                "同时输出 selection_hook_anchor：从该第一分句原样复制的 2–12 字具体短语，"
+                "避开‘李豆沙/小李/主播/直播/弹幕/观众/自己/这个/那个/然后/时候/表演’等泛词；"
+                "该短语必须逐字出现在标题里。不得把片段后半段的陪衬话题偷换成主标题。\n"
+            )
+            output_contract = '{"title": "标题", "selection_hook_anchor": "第一分句中的具体短语"}'
         base_prompt = (
             "为一条李豆沙(B站虚拟主播)的直播切片起中文标题。\n"
             "最重要的原则：观众是因为'这是李豆沙'才点进来的,不是因为内容——标题必须围绕李豆沙本人"
@@ -3184,11 +3281,12 @@ def _stage_publish_draft(
             f"\n李豆沙特质:\n{persona_asset}\n"
             f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
             f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
+            f"{selection_hook_contract}"
             "硬性要求：含【李豆沙】前缀后 12–30 字；"
             "禁用空洞夸张词(炸裂/震惊/天花板/绝了/犯规/太顶),"
             "更不许用'X到犯规/炸裂/离谱'这种万能后缀——标题必须具体到这条切片里到底发生了什么"
             "(描述性的'越看越离谱/越整越离谱'这类是可以的,禁的是空洞的'X到离谱'后缀)。\n"
-            '只输出一个 JSON 对象：{"title": "标题"}'
+            f"只输出一个 JSON 对象：{output_contract}"
         )
         llm_title = ""
         llm_error: str | None = None
@@ -3199,9 +3297,9 @@ def _stage_publish_draft(
             if attempt > 0:
                 prompt = (
                     base_prompt
-                    + "\n注意：上一次生成的标题命中了违禁词（夸张词/'X到{违禁词}'万能后缀/机器味弱化词\"直接/当场/秒X\"），已被否决。"
-                    "这些词 Ivan 的真实历史标题里从来没有——别用任何万能强调词，"
-                    "直接写她具体做了/说了什么（引她的原话、用梗词，如\"直呼打咩\"\"大大方方承认\"），重新只输出 JSON。"
+                    + "\n注意：上一次标题违反了硬约束（违禁词，或没有保留选片第一分句的具体核心短语），已被否决。"
+                    "不要用任何万能强调词，也不要把后续陪衬话题改成主标题；"
+                    "写她具体做了/说了什么，并按要求重新只输出 JSON。"
                 )
             try:
                 payload = extract_json_object(title_llm_call(prompt))
@@ -3214,27 +3312,59 @@ def _stage_publish_draft(
                 break
             llm_title = candidate
             title_policy_violations = _title_policy_violations(candidate)
+            if selection_hook and not _selection_hook_anchor_valid(
+                anchor=payload.get("selection_hook_anchor"),
+                selection_hook=selection_hook,
+                title=candidate,
+            ):
+                title_policy_violations.append("selection_hook_anchor_missing")
             if not title_policy_violations:
                 break
 
         if llm_title:
+            if selection_hook and "selection_hook_anchor_missing" in title_policy_violations:
+                fallback = _selection_hook_fallback_title(selection_hook)
+                if fallback is not None:
+                    llm_title = fallback
+                    title_policy_violations = _title_policy_violations(fallback)
+                    title_source = "selection_hook_fallback_after_llm_mismatch"
             prefixed = _ensure_lidousha_prefix(llm_title)
             if _TITLE_MIN_LEN <= len(prefixed) <= _TITLE_MAX_LEN:
                 staged_title = prefixed
-                title_source = "llm+lidousha_style_asset"
-                # Retries exhausted but still violating → keep it, flag the draft.
+                if title_source == "job_title":
+                    title_source = "llm+lidousha_style_asset"
                 if title_policy_violations:
                     title_source = "llm+lidousha_style_asset(title_policy_violation)"
+                    title_authority_error = "title_policy_violation:" + ",".join(title_policy_violations)
+                elif title_source == "selection_hook_fallback_after_llm_mismatch":
+                    title_authority_status = "RESOLVED_DETERMINISTIC_FALLBACK"
+                else:
+                    title_authority_status = "RESOLVED_LLM"
             else:
                 # Length gate rejects the auto title → fall back to the job title
                 # untouched (prefix forcing never touches non-LLM titles).
-                title_policy_violations = []
                 title_source = f"job_title(llm_length_out_of_bounds:{len(prefixed)})"
+                title_authority_error = f"title_length_out_of_bounds:{len(prefixed)}"
         elif llm_error is not None:
             title_source = f"job_title(llm_failed: {llm_error})"
+            title_authority_error = llm_error
 
     cover_text = _lidousha_cover_text(staged_title)
-    if skip_cover:
+    if title_authority_error is not None:
+        # A candidate id / job fallback is not publish-title authority.  Fail
+        # before art direction or any paid image request; the runner will keep
+        # this attempt as title_failed and retry it under the bounded policy.
+        cover_result = {
+            "status": "BLOCKED_TITLE_AUTHORITY",
+            "cover_path": None,
+            "cover_generation": {
+                "status": "NOT_ATTEMPTED",
+                "reason": "title authority unresolved before cover generation",
+                "attempted_models": [],
+            },
+            "reason_codes": ["TITLE_AUTHORITY_UNRESOLVED"],
+        }
+    elif skip_cover:
         # Subtitle-only re-run: keep the existing delivered cover, skip the
         # expensive AI cover (art-direction LLM + gpt-image-2 ~90s/clip).
         cover_result = {
@@ -3270,6 +3400,8 @@ def _stage_publish_draft(
         "upload_enabled": False,
         "title": staged_title,
         "title_source": title_source,
+        "title_authority_status": title_authority_status,
+        "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "video_path": str(media_path),
         "cover_text": cover_text,
@@ -3282,9 +3414,11 @@ def _stage_publish_draft(
     publish_json_path.write_text(json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     record["artifact_hashes"] = artifact_hashes
     record["publish_staging"] = {
-        "status": "STAGED",
+        "status": "STAGED" if title_authority_error is None else "BLOCKED_TITLE_AUTHORITY",
         "title": staged_title,
         "title_source": title_source,
+        "title_authority_status": title_authority_status,
+        "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "cover_status": cover_status,
         "cover_path": cover_path_value,
@@ -3669,10 +3803,13 @@ def _cover_art_direction_prompt(*, title: str, cover_text: str) -> str:
 
 
 def _cover_lines_canon(text: str) -> str:
-    """Canonical form for comparing a line split against the cover text: line
-    breaks may consume whitespace and clause punctuation (the balancer drops
-    them at line edges too), but never a content character."""
-    return re.sub(r"[\s，,、；;]+", "", text)
+    """Canonical form for comparing a line split against the cover text.
+
+    Only layout whitespace may disappear.  Punctuation is visible title
+    content: accepting a split that drops ``？`` or moves ``，`` onto a lonely
+    line produced a visibly broken July 10 cover despite a hash-clean package.
+    """
+    return re.sub(r"\s+", "", text)
 
 
 def _validated_cover_lines(value: object, cover_text: str, *, hook_word: str, max_lines: int) -> tuple[str, ...]:
@@ -3683,11 +3820,15 @@ def _validated_cover_lines(value: object, cover_text: str, *, hook_word: str, ma
     if not isinstance(value, (list, tuple)) or not (1 <= len(value) <= max_lines):
         return ()
     lines = []
+    closing_punctuation = tuple("，,、；;！!？?。）》】”’")
+    opening_punctuation = tuple("（(《【“‘")
     for item in value:
         if not isinstance(item, str):
             return ()
-        line = item.strip(" \t，,、；;")
+        line = item.strip()
         if not line or len(line) > 12:
+            return ()
+        if line.startswith(closing_punctuation) or line.endswith(opening_punctuation):
             return ()
         lines.append(line)
     if _cover_lines_canon("".join(lines)) != _cover_lines_canon(cover_text):
@@ -3708,11 +3849,15 @@ def _validated_cover_words(value: object, cover_text: str, *, hook_word: str) ->
     if not isinstance(value, (list, tuple)) or not (1 <= len(value) <= 40):
         return ()
     words = []
+    closing_punctuation = tuple("，,、；;！!？?。）》】”’")
+    opening_punctuation = tuple("（(《【“‘")
     for item in value:
         if not isinstance(item, str) or not item.strip():
             return ()
         word = item.strip()
         if len(word) > 12:
+            return ()
+        if word.startswith(closing_punctuation) or word.endswith(opening_punctuation):
             return ()
         words.append(word)
     if _cover_lines_canon("".join(words)) != _cover_lines_canon(cover_text):
@@ -4387,16 +4532,21 @@ def _wrap_even(text, n, keep=()):
     lines.  Atoms kept WHOLE (never split across lines): each ASCII run
     (kmx/TPL/AI/0.5), any 《song name》, and any phrase in ``keep`` (the highlighted
     hook word, so its color stays intact).  Shorter lines ⇒ bigger font."""
-    text = text.strip("，,、；;！!？? ")
+    text = text.strip()
     if n <= 1 or len(text) <= 1:
         return [text]
     # A 《song name》never wraps and gets its own complete line (Ivan 2026-07-05);
     # the prefix/suffix DO wrap across the remaining lines so a long tail stays big.
     song = re.search(r"《[^》]*》", text)
     if song:
-        pre = text[:song.start()].strip("，,、；;！!？? ")
-        suf = text[song.end():].strip("，,、；;！!？? ")
+        pre = text[:song.start()].strip()
+        suf = text[song.end():].strip()
         name = song.group()
+        # Closing punctuation immediately after 《song》 belongs to that title
+        # atom, never at the start of the following line.
+        while suf and suf[0] in "，,、；;！!？?。":
+            name += suf[0]
+            suf = suf[1:].lstrip()
         total = len(pre) + len(suf)
         if total == 0:
             return [name]
@@ -4410,12 +4560,15 @@ def _wrap_even(text, n, keep=()):
         if suf:
             lines += _wrap_even(suf, suf_n)
         return [ln for ln in lines if ln]
-    parts = [p.strip() for p in re.split(r"[，,、；;]", text) if p.strip()]
-    if len(parts) == n:
-        return parts
     keeps = sorted((re.escape(k) for k in keep if k), key=len, reverse=True)
     pattern = "|".join([*keeps, r"《[^》]*》", r"[A-Za-z0-9]+", r"[^A-Za-z0-9]"])
-    atoms = re.findall(pattern, text)
+    raw_atoms = re.findall(pattern, text)
+    atoms: list[str] = []
+    for atom in raw_atoms:
+        if atoms and atom in "，,、；;！!？?。":
+            atoms[-1] += atom
+        else:
+            atoms.append(atom)
     n = min(n, len(atoms))
     if n <= 1:
         return ["".join(atoms)]

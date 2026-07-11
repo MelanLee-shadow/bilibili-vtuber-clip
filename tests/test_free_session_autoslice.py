@@ -610,6 +610,7 @@ def test_song_active_record_materialization_uses_publish_compatible_filename(tmp
         delivery_candidate_id=fx["cid"],
         title=fx["title"],
         video_sha256=fx["digest"](fx["mp4"]),
+        summary_authority_root=fx["publish_path"].parent,
     )
 
     assert path == fx["source_record"]
@@ -617,6 +618,222 @@ def test_song_active_record_materialization_uses_publish_compatible_filename(tmp
     document = json.loads(path.read_text(encoding="utf-8"))
     assert document["delivery_candidate_id"] == fx["cid"]
     assert document["source_candidate_id"] == fx["source_cid"]
+
+
+def test_song_active_record_rejects_publish_outside_bound_attempt(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    record_payload = json.loads(fx["delivery_record"].read_text(encoding="utf-8"))
+    record_payload.pop("delivery_candidate_id", None)
+    record_payload.pop("source_candidate_id", None)
+    bound_attempt = tmp_path / "bound-attempt"
+    bound_attempt.mkdir()
+
+    with pytest.raises(runner.SongDeliveryError, match="escapes the bound summary attempt"):
+        runner._write_song_active_record(
+            {
+                "candidate_id": fx["source_cid"],
+                "materialized_recut": record_payload,
+            },
+            delivery_candidate_id=fx["cid"],
+            title=fx["title"],
+            video_sha256=fx["digest"](fx["mp4"]),
+            summary_authority_root=bound_attempt,
+        )
+
+
+def _deferred_song_summary(tmp_path, *, reason_codes=None):
+    root = tmp_path / "attempt" / "seededsong_ready" / "replacement_recuts"
+    root.mkdir(parents=True)
+    media = root / "seededsong_ready.recut.mp4"
+    burned = root / "seededsong_ready.recut.burned-final.mp4"
+    subtitle = root / "seededsong_ready.recut.srt"
+    manifest = root / "seededsong_ready.recut.manifest.json"
+    alignment = tmp_path / "song.lyrics-alignment-report.json"
+    proof = tmp_path / "song.host-vocal-proof.json"
+    payloads = {
+        media: b"recut-video",
+        burned: b"burned-video",
+        subtitle: b"1\n00:00:00,000 --> 00:00:01,000\nlyric\n",
+        manifest: b'{"status":"MATERIALIZED"}\n',
+        alignment: b'{"status":"READY"}\n',
+        proof: b'{"decision":"LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"}\n',
+    }
+    for path, payload in payloads.items():
+        path.write_bytes(payload)
+
+    def digest(path):
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+    reasons = list(reason_codes or ["SONG_FULL_BOUNDARY_READY"])
+    gate_path = root.parent / "seededsong_ready.cover-release-gate.json"
+    gate_path.write_text("{}\n", encoding="utf-8")
+    summary = {
+        "candidate_id": "seededsong_ready",
+        "decision_action": "AUTO_UPLOAD",
+        "reason_codes": reasons,
+        "source_context_job": {"song_candidate": True},
+        "materialized_recut": {
+            "status": "MATERIALIZED",
+            "candidate_id": "seededsong_ready",
+            "media_path": str(media),
+            "subtitle_path": str(subtitle),
+            "manifest_path": str(manifest),
+            "manifest_sha256": digest(manifest),
+            "burned_preview": {
+                "status": "BURNED",
+                "path": str(burned),
+                "burned_sha256": digest(burned),
+            },
+            "artifact_hashes": {
+                "video_sha256": digest(media),
+                "burned_video_sha256": digest(burned),
+                "subtitle_sha256": digest(subtitle),
+            },
+            "cover_release_gate": {
+                "schema_version": "slice-cover-release-gate.v1",
+                "candidate_id": "seededsong_ready",
+                "decision_action": "AUTO_UPLOAD",
+                "reason_codes": reasons,
+                "satisfied": False,
+                "path": str(gate_path),
+            },
+            "publish_staging": {
+                "status": "SKIPPED_RELEASE_GATE",
+                "decision_action": "AUTO_UPLOAD",
+                "reason_codes": reasons,
+                "release_gate_path": str(gate_path),
+                "upload_enabled": False,
+            },
+        },
+    }
+    return {
+        "summary": summary,
+        "root": root,
+        "media": media,
+        "burned": burned,
+        "subtitle": subtitle,
+        "manifest": manifest,
+        "alignment": alignment,
+        "proof": proof,
+        "digest": digest,
+    }
+
+
+def test_song_active_record_materializes_no_upload_deferred_cover_authority(tmp_path):
+    fx = _deferred_song_summary(tmp_path)
+    title = "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
+
+    record_path, record_sha = runner._write_song_active_record(
+        fx["summary"],
+        delivery_candidate_id="song_outer",
+        title=title,
+        video_sha256=fx["digest"](fx["burned"]),
+        summary_authority_root=fx["root"].parent,
+    )
+
+    publish_path = fx["media"].with_suffix(".publish.json")
+    assert record_path == fx["root"] / "seededsong_ready.record.json"
+    assert runner._matches_sha256(record_path, record_sha)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    assert record["delivery_candidate_id"] == "song_outer"
+    assert record["source_candidate_id"] == "seededsong_ready"
+    assert record["publish_staging"]["status"] == "STAGED"
+    assert record["publish_staging"]["title"] == title
+    assert record["publish_staging"]["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert record["publish_staging"]["cover_path"] is None
+    assert record["publish_staging"]["upload_enabled"] is False
+    assert publish["schema_version"] == "shadow-publish-draft.v1"
+    assert publish["candidate_id"] == "seededsong_ready"
+    assert publish["title"] == title
+    assert publish["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert publish["cover_path"] is None
+    assert publish["upload_enabled"] is False
+    assert publish["artifact_hashes"]["burned_video_sha256"] == fx["digest"](fx["burned"])
+    assert publish["delivery_authority"]["release_gate_reason_codes"] == [
+        "SONG_FULL_BOUNDARY_READY"
+    ]
+
+    # A packaging retry is idempotent, but conflicting authority is never
+    # overwritten silently.
+    second_path, second_sha = runner._write_song_active_record(
+        fx["summary"],
+        delivery_candidate_id="song_outer",
+        title=title,
+        video_sha256=fx["digest"](fx["burned"]),
+        summary_authority_root=fx["root"].parent,
+    )
+    assert (second_path, second_sha) == (record_path, record_sha)
+    publish["title"] = "tampered"
+    publish_path.write_text(json.dumps(publish), encoding="utf-8")
+    with pytest.raises(runner.SongDeliveryError, match="conflicting deferred"):
+        runner._write_song_active_record(
+            fx["summary"],
+            delivery_candidate_id="song_outer",
+            title=title,
+            video_sha256=fx["digest"](fx["burned"]),
+            summary_authority_root=fx["root"].parent,
+        )
+
+
+def test_song_active_record_does_not_bypass_nonpositive_release_gate(tmp_path):
+    fx = _deferred_song_summary(tmp_path, reason_codes=["TERMINOLOGY_QA_FAILED"])
+    with pytest.raises(runner.SongDeliveryError, match="outside the verified deferred-cover case"):
+        runner._write_song_active_record(
+            fx["summary"],
+            delivery_candidate_id="song_outer",
+            title="【李豆沙】豆沙歌，测试",
+            video_sha256=fx["digest"](fx["burned"]),
+            summary_authority_root=fx["root"].parent,
+        )
+    assert not fx["media"].with_suffix(".publish.json").exists()
+
+
+def test_commit_verified_song_package_delivers_without_cover(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    candidate_root = base / "out" / date / "song_outer"
+    fx = _deferred_song_summary(candidate_root)
+    repo = tmp_path / "repo"
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    completion = {
+        "ready": True,
+        "reason_codes": [],
+        "alignment_report_path": str(fx["alignment"]),
+        "alignment_report_sha256": fx["digest"](fx["alignment"]),
+        "host_vocal_proof_path": str(fx["proof"]),
+        "host_vocal_proof_sha256": fx["digest"](fx["proof"]),
+    }
+    monkeypatch.setattr(runner, "song_completion_evidence", lambda _record: completion)
+    monkeypatch.setattr(runner, "song_delivery_ok", lambda *_args, **_kwargs: True)
+    title = "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
+
+    result = runner._commit_verified_song_package(
+        date=date,
+        delivery_candidate_id="song_outer",
+        summary_record=fx["summary"],
+        title=title,
+        selector_rc=0,
+        summary_authority_root=fx["root"].parent,
+    )
+
+    assert result["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert result["delivery_upload_enabled"] is False
+    manifest_path = Path(result["delivery_manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "DELIVERED_NO_UPLOAD"
+    assert manifest["upload_enabled"] is False
+    assert set(manifest["artifacts"]) == {
+        "video",
+        "subtitle",
+        "lyrics_alignment_report",
+        "host_vocal_proof",
+        "recut_manifest",
+        "active_record",
+    }
+    assert manifest["absent_artifacts"]["cover"]["status"] == "ABSENT"
+    assert not Path(manifest["absent_artifacts"]["cover"]["path"]).exists()
 
 
 def test_song_cover_binding_rolls_back_manifest_and_records_on_commit_failure(tmp_path, monkeypatch):
@@ -1881,6 +2098,9 @@ def test_verified_song_fallback_title_keeps_song_and_hook():
     assert runner.verified_song_fallback_title("芽吹くとき", "下播前的温柔哄睡小歌，唱完刷晚安") == (
         "【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌"
     )
+    assert runner.verified_song_fallback_title(
+        "想和你迎着台风去看海", "台风天唱甜甜的《和你迎着台风去看海》"
+    ) == "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
 
 
 def test_song_proof_retry_padding_exceeds_recall_padding():
@@ -2165,9 +2385,15 @@ def test_song_attempt_cap_bounds_backfill():
     assert state["pending_song"] == [], "攻击面：回填必须有硬上限，不能无限产歌"
 
 
-def test_song_delivery_budget_counts_deliveries_only():
-    state = {"songs": [{"status": "review_ready", "delivered": "/x.mp4"}, {"status": "blocked"}]}
-    assert runner.song_delivery_budget(state) == MAX_SONGS_PER_DATE - 1
+def test_song_delivery_budget_counts_deliveries_and_verified_commit_reservations():
+    state = {
+        "songs": [
+            {"status": "review_ready", "delivered": "/x.mp4"},
+            {"status": "blocked"},
+            {"status": "blocked", "verified_delivery_pending_commit": True},
+        ]
+    }
+    assert runner.song_delivery_budget(state) == MAX_SONGS_PER_DATE - 2
 
 
 def test_legacy_string_backlog_tolerated():
@@ -2302,6 +2528,268 @@ def test_write_reports_boundary_repair_and_unrepairable(tmp_path, monkeypatch):
     assert "⚠quarantine" not in text
 
 
+def test_bound_song_delivery_recovery_uses_exact_hashed_summary_before_requeue(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    cid = "song_212005_1444"
+    base = tmp_path / "autoslice"
+    summary_path = (
+        base
+        / "out"
+        / date
+        / cid
+        / "song_selector_full"
+        / "attempt-current"
+        / "seededsong_ready"
+        / "summary.json"
+    )
+    summary_path.parent.mkdir(parents=True)
+    summary_payload = {
+        "records": [
+            {
+                "candidate_id": "seededsong_ready",
+                "decision_action": "AUTO_UPLOAD",
+                "reason_codes": ["SONG_FULL_BOUNDARY_READY"],
+            }
+        ]
+    }
+    summary_path.write_text(json.dumps(summary_payload), encoding="utf-8")
+    summary_sha = "sha256:" + hashlib.sha256(summary_path.read_bytes()).hexdigest()
+    monkeypatch.setattr(runner, "BASE", base)
+    calls = []
+
+    def fake_commit(**kwargs):
+        calls.append(kwargs)
+        return {
+            "delivered": "/delivery/song.mp4",
+            "delivered_sha256": "sha256:" + "1" * 64,
+            "video_sha256": "sha256:" + "1" * 64,
+            "delivered_sidecars": {"active_record": "/delivery/song.record.json"},
+            "delivered_sidecar_hashes": {"active_record": "sha256:" + "2" * 64},
+            "delivery_manifest_path": "/delivery/song.delivery.manifest.json",
+            "delivery_manifest_sha256": "sha256:" + "3" * 64,
+            "delivery_upload_enabled": False,
+            "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        }
+
+    monkeypatch.setattr(runner, "_commit_verified_song_package", fake_commit)
+    record = {
+        "candidate_id": cid,
+        "status": "blocked",
+        "rc": 0,
+        "title": "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的",
+        "reason_codes": ["SONG_FULL_BOUNDARY_READY", "SONG_DELIVERY_ATOMIC_COPY_FAILED"],
+        "delivery_error": "old packaging bug",
+        "selector_summary_path": str(summary_path),
+        "selector_summary_sha256": summary_sha,
+        "selector_record_candidate_id": "seededsong_ready",
+        "verified_delivery_pending_commit": True,
+    }
+    record["song_delivery_recovery_authority"] = runner._song_delivery_recovery_authority(
+        date=date,
+        outer_candidate_id=cid,
+        summary_path=str(summary_path),
+        summary_sha256=summary_sha,
+        source_candidate_id="seededsong_ready",
+        title=record["title"],
+    )
+    state = {"songs": [record]}
+
+    assert runner.recover_bound_song_deliveries(date, state) == 1
+    assert len(calls) == 1
+    assert calls[0]["summary_record"]["candidate_id"] == "seededsong_ready"
+    assert calls[0]["selector_rc"] == 0
+    assert record["status"] == "review_ready"
+    assert record["delivered"] == "/delivery/song.mp4"
+    assert record["delivery_upload_enabled"] is False
+    assert record["delivery_recovered_without_selector_rerun"] is True
+    assert "SONG_DELIVERY_ATOMIC_COPY_FAILED" not in record["reason_codes"]
+    assert "delivery_error" not in record
+    assert "verified_delivery_pending_commit" not in record
+
+    # Summary drift revokes recovery instead of silently selecting another
+    # attempt from the candidate directory.
+    record.pop("delivered")
+    record["status"] = "blocked"
+    record["reason_codes"].append("SONG_DELIVERY_ATOMIC_COPY_FAILED")
+    record["verified_delivery_pending_commit"] = True
+    summary_path.write_text(json.dumps({"records": []}), encoding="utf-8")
+    assert runner.recover_bound_song_deliveries(date, state) == 0
+    assert len(calls) == 1
+
+    # State drift after binding (including a title edit) also revokes recovery.
+    summary_path.write_text(json.dumps(summary_payload), encoding="utf-8")
+    record["selector_summary_sha256"] = (
+        "sha256:" + hashlib.sha256(summary_path.read_bytes()).hexdigest()
+    )
+    record["title"] = "【李豆沙】豆沙歌，被篡改的标题"
+    assert runner.recover_bound_song_deliveries(date, state) == 0
+    assert len(calls) == 1
+
+
+def test_bound_song_delivery_recovery_never_exceeds_daily_quota(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    monkeypatch.setattr(runner, "BASE", base)
+    calls = []
+
+    def reserved_record(cid: str) -> dict:
+        summary_path = base / "out" / date / cid / "attempt" / "summary.json"
+        summary_path.parent.mkdir(parents=True)
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "records": [
+                        {
+                            "candidate_id": f"inner_{cid}",
+                            "decision_action": "AUTO_UPLOAD",
+                            "reason_codes": ["SONG_FULL_BOUNDARY_READY"],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        record = {
+            "candidate_id": cid,
+            "status": "blocked",
+            "rc": 0,
+            "title": f"【李豆沙】豆沙歌，《{cid}》｜已验证待打包",
+            "reason_codes": [
+                "SONG_FULL_BOUNDARY_READY",
+                "SONG_DELIVERY_ATOMIC_COPY_FAILED",
+            ],
+            "selector_summary_path": str(summary_path),
+            "selector_summary_sha256": (
+                "sha256:" + hashlib.sha256(summary_path.read_bytes()).hexdigest()
+            ),
+            "selector_record_candidate_id": f"inner_{cid}",
+            "verified_delivery_pending_commit": True,
+        }
+        record["song_delivery_recovery_authority"] = runner._song_delivery_recovery_authority(
+            date=date,
+            outer_candidate_id=cid,
+            summary_path=record["selector_summary_path"],
+            summary_sha256=record["selector_summary_sha256"],
+            source_candidate_id=record["selector_record_candidate_id"],
+            title=record["title"],
+        )
+        return record
+
+    def fake_commit(**kwargs):
+        cid = kwargs["delivery_candidate_id"]
+        calls.append(cid)
+        return {
+            "delivered": f"/delivery/{cid}.mp4",
+            "delivery_upload_enabled": False,
+        }
+
+    monkeypatch.setattr(runner, "_commit_verified_song_package", fake_commit)
+
+    # A full quota must stop before reading or committing the reservation.
+    full_state = {
+        "songs": [
+            *[
+                {"candidate_id": f"done_{index}", "delivered": f"/{index}.mp4"}
+                for index in range(MAX_SONGS_PER_DATE)
+            ],
+            reserved_record("reserved_full"),
+        ]
+    }
+    assert runner.recover_bound_song_deliveries(date, full_state) == 0
+    assert calls == []
+    assert full_state["songs"][-1]["verified_delivery_pending_commit"] is True
+
+    # With one slot left, only the first of two reservations may commit.
+    one_slot_state = {
+        "songs": [
+            {"candidate_id": "done", "delivered": "/done.mp4"},
+            reserved_record("reserved_first"),
+            reserved_record("reserved_second"),
+        ]
+    }
+    assert runner.recover_bound_song_deliveries(date, one_slot_state) == 1
+    assert calls == ["reserved_first"]
+    assert one_slot_state["songs"][1]["delivered"] == "/delivery/reserved_first.mp4"
+    assert "verified_delivery_pending_commit" not in one_slot_state["songs"][1]
+    assert one_slot_state["songs"][2]["verified_delivery_pending_commit"] is True
+
+
+def test_explicit_song_recovery_authority_backfill_verifies_exact_attempt_and_title(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    cid = "song_212005_1444"
+    base = tmp_path / "autoslice"
+    candidate_root = base / "out" / date / cid
+    fx = _deferred_song_summary(candidate_root)
+    fx["summary"]["source_context_job"]["song_boundary"] = {
+        "status": "FULL_SONG_READY",
+        "song_title": "想和你迎着台风去看海",
+    }
+    summary_path = candidate_root / "attempt" / "summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps({"records": [fx["summary"]]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "song_completion_evidence", lambda _record: {"ready": True})
+    monkeypatch.setattr(runner, "song_delivery_ok", lambda *_args, **_kwargs: True)
+    state_record = {
+        "candidate_id": cid,
+        "status": "blocked",
+        "rc": 0,
+        "hook": "台风天唱甜甜的《和你迎着台风去看海》",
+        "reason_codes": ["SONG_FULL_BOUNDARY_READY", "SONG_DELIVERY_ATOMIC_COPY_FAILED"],
+    }
+    state = {"songs": [state_record]}
+
+    assert runner.bind_song_delivery_recovery_authority(
+        date,
+        state,
+        candidate_id=cid,
+        summary_path=summary_path,
+    ) is True
+    assert state_record["selector_summary_path"] == str(summary_path.resolve())
+    assert runner._matches_sha256(
+        summary_path, state_record["selector_summary_sha256"]
+    )
+    assert state_record["selector_record_candidate_id"] == "seededsong_ready"
+    assert state_record["verified_delivery_pending_commit"] is True
+    assert state_record["title"] == (
+        "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
+    )
+    assert state_record["selector_summary_authority_backfill"]["upload_enabled"] is False
+    assert state_record["song_delivery_recovery_authority"] == {
+        "schema_version": "song-delivery-recovery-authority.v1",
+        "date": date,
+        "outer_candidate_id": cid,
+        "selector_summary_path": str(summary_path.resolve()),
+        "selector_summary_sha256": state_record["selector_summary_sha256"],
+        "source_candidate_id": "seededsong_ready",
+        "title": state_record["title"],
+        "upload_enabled": False,
+    }
+
+    escaped = tmp_path / "outside" / "summary.json"
+    escaped.parent.mkdir()
+    escaped.write_text(summary_path.read_text(encoding="utf-8"), encoding="utf-8")
+    state_record.pop("selector_summary_path")
+    state_record.pop("selector_summary_sha256")
+    state_record.pop("selector_record_candidate_id")
+    with pytest.raises(runner.SongDeliveryError, match="escapes the outer candidate"):
+        runner.bind_song_delivery_recovery_authority(
+            date,
+            state,
+            candidate_id=cid,
+            summary_path=escaped,
+        )
+
+
 def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer_rejection(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"
@@ -2337,11 +2825,71 @@ def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer
     assert state["pending_song"][0]["retry_reason"] == "pipeline_fingerprint_changed"
 
 
+def test_verified_song_commit_reservation_is_not_requeued(monkeypatch):
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    record = {
+        "candidate_id": "song_verified_pending_commit",
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": [
+            "SONG_FULL_BOUNDARY_READY",
+            "SONG_DELIVERY_ATOMIC_COPY_FAILED",
+        ],
+        "pipeline_fingerprint": "sha256:old",
+        "verified_delivery_pending_commit": True,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs("2026-07-10", state) == 0
+    assert state["songs"] == [record]
+    assert state["pending_song"] == []
+
+
+def test_missing_song_recovery_authority_does_not_reserve_quota_and_gets_one_retry(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-20-00-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    record = {
+        "candidate_id": "song_missing_authority",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 400_000,
+        "anchor_start_ms": 120_000,
+        "anchor_end_ms": 380_000,
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": [
+            "SONG_DELIVERY_ATOMIC_COPY_FAILED",
+            "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
+        ],
+        "pipeline_fingerprint": "sha256:same",
+        "hook": "《测试歌》",
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.song_delivery_budget(state) == MAX_SONGS_PER_DATE
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["songs"] == []
+    assert state["pending_song"][0]["cid"] == "song_missing_authority"
+    assert state["pending_song"][0]["transient_retry_count"] == 1
+
+
 def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     load_bearing = [
         "scripts/free_session_autoslice.py",
         "scripts/free_asr_client.py",
+            "scripts/apply_subtitle_text_overrides.py",
             "scripts/cpa_semantic_qa_llm.py",
             "scripts/llm_via_cpa.sh",
             "scripts/regenerate_lidousha_cover.py",
@@ -2371,6 +2919,70 @@ def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
     unrelated.parent.mkdir(parents=True, exist_ok=True)
     unrelated.write_text("unrelated\n", encoding="utf-8")
     assert runner.pipeline_fingerprint() == baseline
+
+
+def test_talk_fingerprint_scopes_candidate_override_add_edit_delete(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    root = tmp_path / "assets/lidousha/subtitle_text_overrides"
+    root.mkdir(parents=True)
+    first_before = runner.talk_pipeline_fingerprint("auto_first")
+    second_before = runner.talk_pipeline_fingerprint("auto_second")
+
+    override = root / "auto_first.text.v1.json"
+    override.write_text('{"version":1}\n', encoding="utf-8")
+    first_added = runner.talk_pipeline_fingerprint("auto_first")
+    assert first_added != first_before
+    assert runner.talk_pipeline_fingerprint("auto_second") == second_before
+
+    override.write_text('{"version":2}\n', encoding="utf-8")
+    assert runner.talk_pipeline_fingerprint("auto_first") != first_added
+    override.unlink()
+    assert runner.talk_pipeline_fingerprint("auto_first") == first_before
+
+
+def test_talk_fingerprint_scopes_candidate_regression_add_edit_delete(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    root = tmp_path / "assets/lidousha/subtitle_regressions"
+    root.mkdir(parents=True)
+    first_before = runner.talk_pipeline_fingerprint("auto_first")
+    second_before = runner.talk_pipeline_fingerprint("auto_second")
+
+    regression = root / "auto_first.subtitle-regression.v1.json"
+    regression.write_text('{"version":1}\n', encoding="utf-8")
+    first_added = runner.talk_pipeline_fingerprint("auto_first")
+    assert first_added != first_before
+    assert runner.talk_pipeline_fingerprint("auto_second") == second_before
+
+    regression.write_text('{"version":2}\n', encoding="utf-8")
+    assert runner.talk_pipeline_fingerprint("auto_first") != first_added
+    regression.unlink()
+    assert runner.talk_pipeline_fingerprint("auto_first") == first_before
+
+
+def test_candidate_override_discovery_rejects_symlink(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    root = tmp_path / "assets/lidousha/subtitle_text_overrides"
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    (root / "auto_bad.text.v1.json").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="non-symlink"):
+        runner.candidate_text_override_path("auto_bad")
+
+
+def test_candidate_regression_discovery_rejects_symlink(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    root = tmp_path / "assets/lidousha/subtitle_regressions"
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    (root / "auto_bad.subtitle-regression.v1.json").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="non-symlink"):
+        runner.candidate_subtitle_regression_path("auto_bad")
 
 
 def test_song_lifetime_cap_survives_repeated_pipeline_changes(tmp_path, monkeypatch):
@@ -2522,6 +3134,12 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
     repo = tmp_path / "repo"
     (base / "logs").mkdir(parents=True)
     repo.mkdir()
+    override = repo / "assets/lidousha/subtitle_text_overrides/auto_212005_163_311.text.v1.json"
+    override.parent.mkdir(parents=True)
+    override.write_text("{}\n", encoding="utf-8")
+    regression = repo / "assets/lidousha/subtitle_regressions/auto_212005_163_311.subtitle-regression.v1.json"
+    regression.parent.mkdir(parents=True)
+    regression.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(runner, "BASE", base)
     monkeypatch.setattr(runner, "REPO_ROOT", repo)
     monkeypatch.setattr(runner, "child_env", lambda: {})
@@ -2566,6 +3184,69 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
     spec = json.loads((base / "out" / date / "spec_auto_212005_163_311.json").read_text())
     assert spec["semantic_end_ms"] == 311_000
     assert spec["pieces"][0]["end_ms"] == 401_000
+    assert spec["subtitle_text_overrides"] == str(override)
+    assert spec["subtitle_regression"] == str(regression)
+
+
+def test_talk_title_authority_failure_is_classified_and_leaves_no_delivery(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    cid = "auto_title_blocked"
+    hook = "弹幕让李豆沙表演上下摇"
+    delivery_name = safe_name(hook, cid)
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(_command, **kwargs):
+        recuts = base / "out" / date / cid / "replacement_recuts"
+        recuts.mkdir(parents=True)
+        (recuts / f"{cid}.publish.json").write_text(
+            json.dumps(
+                {
+                    "title": cid,
+                    "title_authority_status": "UNRESOLVED_AUTO",
+                    "title_authority_error": "title_policy_violation",
+                    "artifact_hashes": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        delivery = repo / "lidousha" / date
+        delivery.mkdir(parents=True)
+        (delivery / f"{delivery_name}.mp4").write_bytes(b"stale")
+        kwargs["stdout"].write("TITLE_AUTHORITY_UNRESOLVED: title_policy_violation\n")
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": cid,
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 150_000,
+            "xml": None,
+            "chat_jsonl": None,
+            "hook": hook,
+            "confidence": 0.9,
+            "lane": "semantic",
+        },
+    )
+
+    assert result["status"] == "title_failed"
+    assert not list((repo / "lidousha" / date).glob(f"{delivery_name}.*"))
+    assert not (base / "out" / date / cid / "replacement_recuts").exists()
 
 
 def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, monkeypatch):

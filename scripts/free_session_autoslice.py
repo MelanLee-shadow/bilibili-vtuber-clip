@@ -222,6 +222,7 @@ def pipeline_fingerprint() -> str:
     explicit = {
         "scripts/free_session_autoslice.py",
         "scripts/free_asr_client.py",
+        "scripts/apply_subtitle_text_overrides.py",
         "scripts/cpa_semantic_qa_llm.py",
         "scripts/gemini_slice_jingting.py",
         "scripts/llm_via_cpa.sh",
@@ -249,6 +250,67 @@ def pipeline_fingerprint() -> str:
         hasher.update(path.relative_to(REPO_ROOT).as_posix().encode("utf-8") + b"\0MISSING\0")
     paths = [path for path in paths if path.is_file()]
     for path in sorted(paths, key=lambda value: value.relative_to(REPO_ROOT).as_posix()):
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        hasher.update(relative.encode("utf-8") + b"\0")
+        hasher.update(path.read_bytes())
+        hasher.update(b"\0")
+    return "sha256:" + hasher.hexdigest()
+
+
+def candidate_text_override_path(candidate_id: str) -> Path | None:
+    """Return the one canonical candidate override, rejecting path indirection."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
+        raise ValueError("unsafe candidate id for subtitle text override")
+    root = REPO_ROOT / "assets" / "lidousha" / "subtitle_text_overrides"
+    path = root / f"{candidate_id}.text.v1.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("candidate subtitle text override must be a regular non-symlink file")
+    if path.resolve().parent != root.resolve():
+        raise ValueError("candidate subtitle text override escapes its canonical asset root")
+    return path
+
+
+def candidate_subtitle_regression_path(candidate_id: str) -> Path | None:
+    """Return the one canonical candidate regression gate, without indirection."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
+        raise ValueError("unsafe candidate id for subtitle regression")
+    root = REPO_ROOT / "assets" / "lidousha" / "subtitle_regressions"
+    path = root / f"{candidate_id}.subtitle-regression.v1.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("candidate subtitle regression must be a regular non-symlink file")
+    if path.resolve().parent != root.resolve():
+        raise ValueError("candidate subtitle regression escapes its canonical asset root")
+    return path
+
+
+def talk_pipeline_fingerprint(candidate_id: str) -> str:
+    """Base code/config proof plus only this talk's optional truth assets."""
+
+    base = pipeline_fingerprint()
+    truth_assets = [
+        path
+        for path in (
+            candidate_text_override_path(candidate_id),
+            candidate_subtitle_regression_path(candidate_id),
+        )
+        if path is not None
+    ]
+    # Preserve the historical base fingerprint for the overwhelmingly common
+    # no-override case.  Adding/removing this candidate's truth asset still
+    # changes/reverts its fingerprint without waking every legacy talk once.
+    if not truth_assets:
+        return base
+    hasher = hashlib.sha256()
+    hasher.update(b"talk-pipeline-fingerprint.v3\0")
+    hasher.update(base.encode("utf-8") + b"\0")
+    hasher.update(str(candidate_id).encode("utf-8") + b"\0")
+    for path in sorted(truth_assets, key=lambda item: item.relative_to(REPO_ROOT).as_posix()):
         relative = path.relative_to(REPO_ROOT).as_posix()
         hasher.update(relative.encode("utf-8") + b"\0")
         hasher.update(path.read_bytes())
@@ -680,6 +742,8 @@ def read_publish_meta(work_dir: Path) -> dict:
             return {
                 "title": d.get("title"),
                 "title_source": d.get("title_source"),
+                "title_authority_status": d.get("title_authority_status"),
+                "title_authority_error": d.get("title_authority_error"),
                 "cover_status": d.get("cover_status"),
                 "cover_path": d.get("cover_path"),
                 "cover_sha256": hashes.get("cover_sha256"),
@@ -707,6 +771,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "date": date,
         "output_root": str(out_root),
         "delivery_name": delivery_name,
+        "selection_hook": item.get("hook", ""),
         "given_title": None,
         "lead_pad_ms": 400,
         "semantic_start_ms": item["start_ms"],
@@ -721,6 +786,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             }
         ],
     }
+    candidate_text_override = candidate_text_override_path(cid)
+    if candidate_text_override is not None:
+        spec["subtitle_text_overrides"] = str(candidate_text_override)
+    candidate_subtitle_regression = candidate_subtitle_regression_path(cid)
+    if candidate_subtitle_regression is not None:
+        spec["subtitle_regression"] = str(candidate_subtitle_regression)
     out_root.mkdir(parents=True, exist_ok=True)
     spec_path = out_root / f"spec_{cid}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -773,7 +844,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_transient_retry_count": int(item.get("talk_transient_retry_count") or 0),
         "selected_repair": bool(item.get("selected_repair")),
         "retry_reason": item.get("retry_reason"),
-        "pipeline_fingerprint": pipeline_fingerprint(),
+        "pipeline_fingerprint": talk_pipeline_fingerprint(cid),
     }
     # Classify only bytes written by this subprocess attempt.  The log is
     # append-only; a stale boundary marker followed by a transient CPA error
@@ -782,13 +853,30 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     result["summary"] = last_json_block(tail)
     result.update(read_publish_meta(out_root / cid))
     if completed.returncode != 0:
+        if (
+            "TITLE_AUTHORITY_UNRESOLVED" in tail
+            and str(result.get("title_authority_status") or "").startswith("UNRESOLVED")
+        ):
+            # The producer now fails before delivery.  Keep cleanup for old
+            # partial/stale attempts, then classify this deterministic lane so
+            # the bounded title retry policy can act on it.
+            delivered = REPO_ROOT / "lidousha" / date
+            for f in delivered.glob(f"{delivery_name}.*"):
+                f.unlink(missing_ok=True)
+            recuts = out_root / cid / "replacement_recuts"
+            if recuts.is_dir():
+                import shutil
+
+                shutil.rmtree(recuts, ignore_errors=True)
+            result["status"] = "title_failed"
+            return result
         # BOUNDARY_UNREPAIRABLE is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.
         result["status"] = (
             "boundary_unrepairable" if "BOUNDARY_UNREPAIRABLE" in tail else "failed"
         )
         return result
-    if "llm_failed" in str(result.get("title_source") or ""):
+    if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
         # No delivery with a cid title / cid-text cover — clean and retry later.
         delivered = REPO_ROOT / "lidousha" / date
         for f in delivered.glob(f"{delivery_name}.*"):
@@ -1007,11 +1095,21 @@ def _write_song_active_record(
     delivery_candidate_id: str,
     title: str,
     video_sha256: str,
+    summary_authority_root: Path,
 ) -> tuple[Path, str]:
     """Persist the invocation-owned materialized song record next to its
     publish draft so later cover repair has the same exact active-document
     authority as talk delivery.  The delivery copy is included in the verified
     song manifest; this source copy remains in the immutable selector attempt."""
+
+    if summary_authority_root.is_symlink():
+        raise SongDeliveryError("song summary authority root may not be a symlink")
+    try:
+        authority_root = summary_authority_root.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song summary authority root is missing: {exc}") from exc
+    if not authority_root.is_dir():
+        raise SongDeliveryError("song summary authority root is not a directory")
 
     materialized = summary_record.get("materialized_recut")
     if not isinstance(materialized, dict):
@@ -1020,7 +1118,130 @@ def _write_song_active_record(
     staging = record.get("publish_staging")
     if not isinstance(staging, dict):
         raise SongDeliveryError("song materialized record has no publish_staging")
+    source_candidate_id = str(summary_record.get("candidate_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", source_candidate_id):
+        raise SongDeliveryError("song active record has an unsafe source candidate id")
+
+    # A verified song can legitimately reach the runner while the generic
+    # publish/cover release gate is still closed.  In particular,
+    # SONG_FULL_BOUNDARY_READY is a positive song proof, but the generic gate
+    # deliberately requires *zero* reason codes.  Do not weaken that gate or
+    # pretend a cover exists.  Instead materialize the minimum no-upload
+    # publish authority required by verified delivery and later cover repair.
+    # This branch is intentionally narrow: any semantic/content blocker still
+    # fails closed and cannot manufacture a publish draft.
     publish_value = staging.get("publish_json_path")
+    if not isinstance(publish_value, str) or not publish_value:
+        gate = record.get("cover_release_gate")
+        gate_reasons = (
+            [str(code) for code in gate.get("reason_codes", [])]
+            if isinstance(gate, dict) and isinstance(gate.get("reason_codes"), list)
+            else []
+        )
+        if (
+            staging.get("status") != "SKIPPED_RELEASE_GATE"
+            or staging.get("decision_action") != "AUTO_UPLOAD"
+            or staging.get("upload_enabled") is not False
+            or not isinstance(gate, dict)
+            or gate.get("schema_version") != "slice-cover-release-gate.v1"
+            or gate.get("candidate_id") != source_candidate_id
+            or gate.get("decision_action") != "AUTO_UPLOAD"
+            or gate.get("satisfied") is not False
+            or gate_reasons != ["SONG_FULL_BOUNDARY_READY"]
+            or summary_record.get("decision_action") != "AUTO_UPLOAD"
+            or [str(code) for code in summary_record.get("reason_codes", [])]
+            != ["SONG_FULL_BOUNDARY_READY"]
+        ):
+            raise SongDeliveryError(
+                "song active publish draft missing outside the verified deferred-cover case"
+            )
+        media_value = record.get("media_path")
+        manifest_value = record.get("manifest_path")
+        burned = record.get("burned_preview")
+        burned_value = burned.get("path") if isinstance(burned, dict) else None
+        if not all(isinstance(value, str) and value for value in (media_value, manifest_value, burned_value)):
+            raise SongDeliveryError("song deferred publish authority is missing materialized paths")
+        try:
+            media_path = Path(str(media_value)).resolve(strict=True)
+            manifest_path = Path(str(manifest_value)).resolve(strict=True)
+            burned_path = Path(str(burned_value)).resolve(strict=True)
+        except OSError as exc:
+            raise SongDeliveryError(f"song deferred publish materialized path is missing: {exc}") from exc
+        artifact_root = manifest_path.parent
+        if (
+            media_path.parent != artifact_root
+            or burned_path.parent != artifact_root
+            or not artifact_root.is_relative_to(authority_root)
+            or not manifest_path.name.endswith(".recut.manifest.json")
+            or not media_path.name.endswith(".recut.mp4")
+            or not burned_path.name.endswith(".mp4")
+            or not _matches_sha256(burned_path, video_sha256)
+        ):
+            raise SongDeliveryError("song deferred publish artifact-root/video binding mismatch")
+        publish_path = media_path.with_suffix(".publish.json")
+        if publish_path.parent != artifact_root or publish_path.is_symlink():
+            raise SongDeliveryError("song deferred publish path escapes the materialized artifact root")
+
+        cover_text = title.removeprefix("【李豆沙】豆沙歌，").strip() or title
+        cover_generation = {
+            "workflow": "verified-song-delivery-deferred-cover.v1",
+            "status": "BLOCKED",
+            "detail": (
+                "cover generation deferred until the hash-bound no-upload song "
+                "delivery authority exists"
+            ),
+            "attempted_models": [],
+        }
+        artifact_hashes = copy.deepcopy(record.get("artifact_hashes"))
+        if not isinstance(artifact_hashes, dict):
+            raise SongDeliveryError("song deferred publish artifact_hashes is not an object")
+        publish = {
+            "schema_version": "shadow-publish-draft.v1",
+            "candidate_id": source_candidate_id,
+            "upload_enabled": False,
+            "title": title,
+            "title_source": "runner_verified_song_fallback",
+            "title_policy_violations": [],
+            "video_path": str(media_path),
+            "cover_text": cover_text,
+            "cover_path": None,
+            "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+            "cover_generation": cover_generation,
+            "reason_codes": ["CPA_AI_COVER_REQUIRED"],
+            "artifact_hashes": artifact_hashes,
+            "delivery_authority": {
+                "schema_version": "verified-song-deferred-cover-authority.v1",
+                "release_gate_path": str(gate.get("path") or staging.get("release_gate_path") or ""),
+                "release_gate_satisfied": False,
+                "release_gate_reason_codes": gate_reasons,
+                "upload_enabled": False,
+            },
+        }
+        if publish_path.exists():
+            existing_publish = _read_json_object(
+                publish_path, label="existing deferred song publish draft"
+            )
+            if existing_publish != publish:
+                raise SongDeliveryError("conflicting deferred song publish draft already exists")
+        else:
+            _atomic_write_json_file(publish_path, publish)
+        record["publish_staging"] = {
+            "status": "STAGED",
+            "title": title,
+            "title_source": "runner_verified_song_fallback",
+            "title_policy_violations": [],
+            "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+            "cover_path": None,
+            "cover_text": cover_text,
+            "cover_generation": cover_generation,
+            "reason_codes": ["CPA_AI_COVER_REQUIRED"],
+            "publish_json_path": str(publish_path),
+            "release_gate_path": str(gate.get("path") or staging.get("release_gate_path") or ""),
+            "upload_enabled": False,
+        }
+        staging = record["publish_staging"]
+        publish_value = str(publish_path)
+
     if (
         staging.get("title") != title
         or staging.get("upload_enabled") is not False
@@ -1029,8 +1250,15 @@ def _write_song_active_record(
     ):
         raise SongDeliveryError("song active record title/video/upload binding mismatch")
     publish_path = Path(publish_value)
+    if publish_path.is_symlink():
+        raise SongDeliveryError("song active publish draft may not be a symlink")
+    try:
+        publish_path = publish_path.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song active publish draft is missing: {exc}") from exc
+    if not publish_path.is_relative_to(authority_root):
+        raise SongDeliveryError("song active publish draft escapes the bound summary attempt")
     publish = _read_json_object(publish_path, label="song active publish draft")
-    source_candidate_id = str(summary_record.get("candidate_id") or "")
     if (
         publish.get("schema_version") != "shadow-publish-draft.v1"
         or publish.get("candidate_id") != source_candidate_id
@@ -1049,10 +1277,165 @@ def _write_song_active_record(
         )
     else:
         raise SongDeliveryError("song active publish draft has an unexpected filename")
+    if record_path.is_symlink() or not record_path.parent.resolve(strict=True).is_relative_to(
+        authority_root
+    ):
+        raise SongDeliveryError("song active record escapes the bound summary attempt")
     record["delivery_candidate_id"] = delivery_candidate_id
     record["source_candidate_id"] = source_candidate_id
     _atomic_write_json_file(record_path, record)
     return record_path, "sha256:" + _sha256_regular_file(record_path)
+
+
+def _commit_verified_song_package(
+    *,
+    date: str,
+    delivery_candidate_id: str,
+    summary_record: dict,
+    title: str,
+    selector_rc: int,
+    summary_authority_root: Path,
+) -> dict:
+    """Commit one already-proven song without rerunning ASR/LRC/AGY.
+
+    The same function is used by the fresh selector path and by bounded
+    crash/packaging recovery.  It re-verifies every positive song proof and
+    every artifact hash before exposing the manifest-last public package.
+    Covers remain optional and upload is always disabled.
+    """
+
+    if selector_rc != 0:
+        raise SongDeliveryError("song selector did not exit successfully")
+    if not isinstance(title, str) or not title.strip():
+        raise SongDeliveryError("verified song package has no title")
+    title = title.strip()
+    if summary_authority_root.is_symlink():
+        raise SongDeliveryError("song summary authority root may not be a symlink")
+    try:
+        authority_root = summary_authority_root.resolve(strict=True)
+        candidate_root = (BASE / "out" / date / delivery_candidate_id).resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song summary/candidate authority root is missing: {exc}") from exc
+    if not authority_root.is_relative_to(candidate_root):
+        raise SongDeliveryError("song summary authority root escapes the outer candidate")
+    reasons = [str(code) for code in summary_record.get("reason_codes", [])]
+    completion = song_completion_evidence(summary_record)
+    if not song_delivery_ok(
+        selector_rc,
+        record_is_song(summary_record),
+        reasons,
+        completion,
+    ):
+        raise SongDeliveryError("song proof chain is not currently delivery-ready")
+
+    artifacts = song_delivery_artifacts(summary_record)
+    video_value = artifacts.get("video_path")
+    video_sha256 = artifacts.get("video_sha256")
+    if not isinstance(video_value, str) or not isinstance(video_sha256, str):
+        raise SongDeliveryError("verified song has no hash-bound burned video")
+    burned = Path(video_value)
+    if not _matches_sha256(burned, video_sha256):
+        raise SongDeliveryError("verified song burned video hash mismatch")
+
+    required_sources = (
+        (
+            "subtitle",
+            artifacts.get("subtitle_path"),
+            artifacts.get("subtitle_sha256"),
+            ".srt",
+        ),
+        (
+            "lyrics_alignment_report",
+            completion.get("alignment_report_path"),
+            completion.get("alignment_report_sha256"),
+            ".lyrics-alignment-report.json",
+        ),
+        (
+            "host_vocal_proof",
+            completion.get("host_vocal_proof_path"),
+            completion.get("host_vocal_proof_sha256"),
+            ".host-vocal-proof.json",
+        ),
+        (
+            "recut_manifest",
+            artifacts.get("recut_manifest_path"),
+            artifacts.get("recut_manifest_sha256"),
+            ".recut.manifest.json",
+        ),
+    )
+    for role, source_value, sha_value, _suffix in required_sources:
+        if not isinstance(source_value, str) or not isinstance(sha_value, str):
+            raise SongDeliveryError(f"missing hash-bound delivery sidecar: {role}")
+        if not _matches_sha256(Path(source_value), sha_value):
+            raise SongDeliveryError(f"hash-bound delivery sidecar drifted: {role}")
+
+    name = _song_delivery_basename(title, delivery_candidate_id)
+    delivery = REPO_ROOT / "lidousha" / date
+    delivery.mkdir(parents=True, exist_ok=True)
+    specs: dict[str, tuple[Path, Path, str]] = {
+        "video": (burned, delivery / f"{name}.mp4", video_sha256),
+    }
+    for role, source_value, sha_value, suffix in required_sources:
+        specs[role] = (Path(str(source_value)), delivery / f"{name}{suffix}", str(sha_value))
+
+    active_record_path, active_record_sha256 = _write_song_active_record(
+        summary_record,
+        delivery_candidate_id=delivery_candidate_id,
+        title=title,
+        video_sha256=video_sha256,
+        summary_authority_root=authority_root,
+    )
+    specs["active_record"] = (
+        active_record_path,
+        delivery / f"{name}.record.json",
+        active_record_sha256,
+    )
+
+    cover_ok = False
+    cover: Path | None = None
+    cover_value = artifacts.get("cover_path")
+    cover_sha256 = artifacts.get("cover_sha256")
+    if isinstance(cover_value, str) and isinstance(cover_sha256, str):
+        cover = Path(cover_value)
+        cover_ok = _matches_sha256(cover, cover_sha256)
+        if cover_ok:
+            specs["cover"] = (cover, delivery / f"{name}.cover.png", cover_sha256)
+
+    receipt = _atomic_verified_song_delivery(
+        candidate_id=delivery_candidate_id,
+        manifest_path=delivery / f"{name}.delivery.manifest.json",
+        artifact_specs=specs,
+        absent_artifacts=(
+            {} if cover_ok else {"cover": delivery / f"{name}.cover.png"}
+        ),
+    )
+    delivered_artifacts = receipt["artifacts"]
+    sidecar_roles = [role for role in delivered_artifacts if role != "video"]
+    result = {
+        "delivered": delivered_artifacts["video"]["path"],
+        "delivered_sha256": delivered_artifacts["video"]["sha256"],
+        "video_sha256": delivered_artifacts["video"]["sha256"],
+        "delivered_sidecars": {
+            role: delivered_artifacts[role]["path"] for role in sidecar_roles
+        },
+        "delivered_sidecar_hashes": {
+            role: delivered_artifacts[role]["sha256"] for role in sidecar_roles
+        },
+        "delivery_manifest_path": receipt["manifest_path"],
+        "delivery_manifest_sha256": receipt["manifest_sha256"],
+        "delivery_upload_enabled": receipt["upload_enabled"],
+        "cover_status": "AI_COVER_READY" if "cover" in delivered_artifacts else "BLOCKED_AI_COVER_REQUIRED",
+    }
+    if "cover" in delivered_artifacts:
+        materialized = summary_record.get("materialized_recut")
+        staging = materialized.get("publish_staging") if isinstance(materialized, dict) else None
+        result["cover_path"] = delivered_artifacts["cover"]["path"]
+        result["cover_sha256"] = delivered_artifacts["cover"]["sha256"]
+        if isinstance(staging, dict):
+            result["cover_generation"] = staging.get("cover_generation")
+    if receipt["cleanup_warnings"]:
+        result["delivery_cleanup_warnings"] = receipt["cleanup_warnings"]
+    return result
 
 
 def _matches_sha256(path: Path, expected: str) -> bool:
@@ -2177,6 +2560,11 @@ def verified_song_fallback_title(song_title: str | None, hook: str | None) -> st
         return None
     hook = str(hook or "").strip()
     hook = re.split(r"[，。！？；]", hook, maxsplit=1)[0].strip()
+    # Recall hooks often repeat a slightly different ASR spelling of the song
+    # inside 《》.  Truncating that text at 16 characters produced broken titles
+    # such as "《和你迎着台风去看".  The LRC-verified canonical title already
+    # owns the name; keep only the hook phrase before a repeated quote.
+    hook = re.split(r"[《「『]", hook, maxsplit=1)[0].rstrip("：:｜|、 ")
     if hook and hook != "确定性歌检测补充(演唱段)":
         return f"【李豆沙】豆沙歌，《{song_title}》｜{hook[:16]}"
     return f"【李豆沙】豆沙歌，直播间唱《{song_title}》"
@@ -2314,6 +2702,19 @@ def produce_song(date: str, item: dict) -> dict:
                     is_song = is_song or record_is_song(entry)
             except ValueError:
                 pass
+        if summary_record:
+            try:
+                result["selector_summary_path"] = str(summary_path.resolve(strict=True))
+                result["selector_summary_sha256"] = "sha256:" + _sha256_regular_file(summary_path)
+                result["selector_record_candidate_id"] = str(
+                    summary_record.get("candidate_id") or ""
+                )
+            except (OSError, SongDeliveryError):
+                # Missing summary authority only disables zero-compute
+                # packaging recovery.  The current invocation can still use
+                # its in-memory record and the independently hash-bound proof
+                # chain below.
+                pass
         result["decision"] = decision
         completion = song_completion_evidence(summary_record)
         result["reason_codes"] = list(dict.fromkeys([*reasons, *completion["reason_codes"]]))
@@ -2337,15 +2738,6 @@ def produce_song(date: str, item: dict) -> dict:
         ):
             log(f"song lane {cid}: burned video hash missing/drifted since materialization — refusing stale artifact")
             burned = None
-        cover = Path(artifacts["cover_path"]) if artifacts.get("cover_path") else None
-        cover_ok = bool(
-            cover is not None
-            and cover.is_file()
-            and isinstance(artifacts.get("cover_sha256"), str)
-            and _matches_sha256(cover, artifacts["cover_sha256"])
-        )
-        if not cover_ok:
-            cover = None
         result["song_complete"] = completion["ready"] is True
         result["lyrics_alignment_ready"] = completion["lyrics_alignment_status"] == "READY"
         if result["song_complete"] and not result.get("title"):
@@ -2356,122 +2748,53 @@ def produce_song(date: str, item: dict) -> dict:
         if burned is not None and burned.is_file() and song_delivery_ok(
             completed.returncode, is_song, reasons, completion
         ):
-            delivery = REPO_ROOT / "lidousha" / date
-            delivery.mkdir(parents=True, exist_ok=True)
             try:
-                name = _song_delivery_basename(result.get("title") or item.get("hook"), cid)
-            except SongDeliveryError as exc:
-                log(f"song lane {cid}: verified delivery basename refused: {exc}")
-                result["delivery_error"] = str(exc)
-                result["reason_codes"] = list(
-                    dict.fromkeys([*(result.get("reason_codes") or []), "SONG_DELIVERY_ATOMIC_COPY_FAILED"])
-                )
-                result["status"] = song_status(completed.returncode, False)
-                return result
-            required_sources = (
-                ("subtitle", artifacts.get("subtitle_path"), artifacts.get("subtitle_sha256"), f"{name}.srt"),
-                (
-                    "lyrics_alignment_report",
-                    completion.get("alignment_report_path"),
-                    completion.get("alignment_report_sha256"),
-                    f"{name}.lyrics-alignment-report.json",
-                ),
-                (
-                    "host_vocal_proof",
-                    completion.get("host_vocal_proof_path"),
-                    completion.get("host_vocal_proof_sha256"),
-                    f"{name}.host-vocal-proof.json",
-                ),
-                (
-                    "recut_manifest",
-                    artifacts.get("recut_manifest_path"),
-                    artifacts.get("recut_manifest_sha256"),
-                    f"{name}.recut.manifest.json",
-                ),
-            )
-            specs: dict[str, tuple[Path, Path, str]] = {
-                "video": (burned, delivery / f"{name}.mp4", str(artifacts["video_sha256"])),
-            }
-            try:
-                active_record_path, active_record_sha256 = _write_song_active_record(
-                    summary_record,
+                delivery_update = _commit_verified_song_package(
+                    date=date,
                     delivery_candidate_id=cid,
-                    title=str(result.get("title") or ""),
-                    video_sha256=str(artifacts["video_sha256"]),
+                    summary_record=summary_record,
+                    title=str(result.get("title") or item.get("hook") or ""),
+                    selector_rc=completed.returncode,
+                    summary_authority_root=summary_path.parent,
                 )
             except (OSError, SongDeliveryError, ValueError) as exc:
-                active_record_path = None
-                active_record_sha256 = None
-                log(f"song lane {cid}: active record binding failed: {type(exc).__name__}: {exc}")
-            missing_binding: str | None = "active_record" if active_record_path is None else None
-            for role, source_value, sha_value, filename in required_sources:
-                if missing_binding is not None:
-                    break
-                if not isinstance(source_value, str) or not isinstance(sha_value, str):
-                    missing_binding = role
-                    break
-                specs[role] = (Path(source_value), delivery / filename, sha_value)
-            if active_record_path is not None and active_record_sha256 is not None:
-                specs["active_record"] = (
-                    active_record_path,
-                    delivery / f"{name}.record.json",
-                    active_record_sha256,
+                log(
+                    f"song lane {cid}: atomic verified delivery refused: "
+                    f"{type(exc).__name__}: {exc}"
                 )
-            if cover_ok and cover is not None:
-                specs["cover"] = (
-                    cover,
-                    delivery / f"{name}.cover.png",
-                    str(artifacts["cover_sha256"]),
-                )
-
-            if missing_binding is not None:
-                delivery_error = SongDeliveryError(f"missing hash-bound delivery sidecar: {missing_binding}")
-            else:
-                try:
-                    receipt = _atomic_verified_song_delivery(
-                        candidate_id=cid,
-                        manifest_path=delivery / f"{name}.delivery.manifest.json",
-                        artifact_specs=specs,
-                        absent_artifacts=(
-                            {} if cover_ok else {"cover": delivery / f"{name}.cover.png"}
-                        ),
-                    )
-                except (OSError, SongDeliveryError) as exc:
-                    delivery_error = exc
-                else:
-                    delivery_error = None
-                    delivered_artifacts = receipt["artifacts"]
-                    result["delivered"] = delivered_artifacts["video"]["path"]
-                    result["delivered_sha256"] = delivered_artifacts["video"]["sha256"]
-                    result["video_sha256"] = delivered_artifacts["video"]["sha256"]
-                    sidecar_roles = [role for role in delivered_artifacts if role != "video"]
-                    result["delivered_sidecars"] = {
-                        role: delivered_artifacts[role]["path"] for role in sidecar_roles
-                    }
-                    result["delivered_sidecar_hashes"] = {
-                        role: delivered_artifacts[role]["sha256"] for role in sidecar_roles
-                    }
-                    result["delivery_manifest_path"] = receipt["manifest_path"]
-                    result["delivery_manifest_sha256"] = receipt["manifest_sha256"]
-                    result["delivery_upload_enabled"] = receipt["upload_enabled"]
-                    if "cover" in delivered_artifacts:
-                        materialized = summary_record.get("materialized_recut")
-                        staging = materialized.get("publish_staging") if isinstance(materialized, dict) else None
-                        result["cover_status"] = "AI_COVER_READY"
-                        result["cover_path"] = delivered_artifacts["cover"]["path"]
-                        result["cover_sha256"] = delivered_artifacts["cover"]["sha256"]
-                        if isinstance(staging, dict):
-                            result["cover_generation"] = staging.get("cover_generation")
-                    else:
-                        result["cover_status"] = "BLOCKED_AI_COVER_REQUIRED"
-                    if receipt["cleanup_warnings"]:
-                        result["delivery_cleanup_warnings"] = receipt["cleanup_warnings"]
-            if delivery_error is not None:
-                log(f"song lane {cid}: atomic verified delivery refused: {delivery_error}")
-                result["delivery_error"] = str(delivery_error)
+                result["delivery_error"] = f"{type(exc).__name__}: {exc}"
                 result["reason_codes"] = list(
                     dict.fromkeys([*(result.get("reason_codes") or []), "SONG_DELIVERY_ATOMIC_COPY_FAILED"])
                 )
+                # Positive song/host proof has already passed.  Reserve this
+                # delivery slot so later songs cannot fill the quota before
+                # the exact hash-bound package is deterministically recovered.
+                recovery_authority = _song_delivery_recovery_authority(
+                    date=date,
+                    outer_candidate_id=cid,
+                    summary_path=result.get("selector_summary_path"),
+                    summary_sha256=result.get("selector_summary_sha256"),
+                    source_candidate_id=result.get("selector_record_candidate_id"),
+                    title=result.get("title"),
+                )
+                if recovery_authority is not None:
+                    result["verified_delivery_pending_commit"] = True
+                    result["song_delivery_recovery_authority"] = recovery_authority
+                else:
+                    # A reservation without its complete state envelope can
+                    # neither recover nor requeue, permanently consuming a
+                    # delivery slot.  Keep capacity open and allow one bounded
+                    # fresh attempt to recapture the missing authority.
+                    result["reason_codes"] = list(
+                        dict.fromkeys(
+                            [
+                                *(result.get("reason_codes") or []),
+                                "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
+                            ]
+                        )
+                    )
+            else:
+                result.update(delivery_update)
         result["status"] = song_status(completed.returncode, bool(result.get("delivered")))
         return result
 
@@ -4201,11 +4524,27 @@ def session_sealed(date: str, state: dict) -> bool:
 
 
 def song_delivery_budget(state: dict) -> int:
-    """Remaining song DELIVERIES wanted.  Only delivered songs consume the
-    per-date budget — a gate-BLOCKED attempt must not eat a slot (2026-07-09
-    audit: two BLOCKs consumed both slots and the date still read 'done')."""
-    delivered = sum(1 for s in state.get("songs", []) if s.get("delivered"))
-    return max(0, MAX_SONGS_PER_DATE - delivered)
+    """Remaining song DELIVERY slots, including verified commit reservations.
+
+    An ordinary gate-BLOCKED attempt must not eat a slot (2026-07-09 audit:
+    two BLOCKs consumed both slots and the date still read ``done``).  Once a
+    song has passed the positive full-song/host proof and only its atomic
+    packaging failed, however, that exact hash-bound attempt owns a slot until
+    deterministic recovery either commits it or an operator revokes it.  This
+    prevents two later songs from filling the quota and a delayed recovery
+    silently exposing a third delivery.
+    """
+
+    consumed = sum(
+        1
+        for song in state.get("songs", [])
+        if isinstance(song, dict)
+        and (
+            bool(song.get("delivered"))
+            or song.get("verified_delivery_pending_commit") is True
+        )
+    )
+    return max(0, MAX_SONGS_PER_DATE - consumed)
 
 
 def _remember_song_quarantine_interval(state: dict, item: dict) -> None:
@@ -4351,7 +4690,12 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     kept: list[dict] = []
     requeued: list[dict] = []
     for record in state.get("songs", []):
-        if not isinstance(record, dict) or record.get("delivered") or record.get("status") not in {"blocked", "failed"}:
+        if (
+            not isinstance(record, dict)
+            or record.get("delivered")
+            or record.get("verified_delivery_pending_commit") is True
+            or record.get("status") not in {"blocked", "failed"}
+        ):
             kept.append(record)
             continue
         reasons = {str(code) for code in record.get("reason_codes") or []}
@@ -4366,6 +4710,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                     "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
                     "PRODUCE_UNEXPECTED_EXCEPTION",
                     "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
+                    "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
                 }
             )
             and int(record.get("transient_retry_count") or 0) < 1
@@ -4419,6 +4764,281 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     return len(requeued)
 
 
+def _song_delivery_recovery_authority(
+    *,
+    date: str,
+    outer_candidate_id: str,
+    summary_path: object,
+    summary_sha256: object,
+    source_candidate_id: object,
+    title: object,
+) -> dict | None:
+    """Build the exact state envelope consumed by packaging-only recovery."""
+
+    if not (
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date or ""))
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(outer_candidate_id or ""))
+        and isinstance(summary_path, str)
+        and isinstance(summary_sha256, str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", summary_sha256)
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(source_candidate_id or ""))
+        and isinstance(title, str)
+        and bool(title.strip())
+    ):
+        return None
+    return {
+        "schema_version": "song-delivery-recovery-authority.v1",
+        "date": date,
+        "outer_candidate_id": outer_candidate_id,
+        "selector_summary_path": summary_path,
+        "selector_summary_sha256": summary_sha256,
+        "source_candidate_id": str(source_candidate_id),
+        "title": title,
+        "upload_enabled": False,
+    }
+
+
+def recover_bound_song_deliveries(date: str, state: dict) -> int:
+    """Finish a verified song's packaging without recomputing its proof.
+
+    A selector attempt records the exact summary path, hash and inner
+    candidate id before delivery packaging begins.  If the process crashes or
+    a later packaging-only bug is fixed, the next maintenance tick can replay
+    only the deterministic manifest-last commit.  No directory glob or stale
+    attempt selection is allowed.
+    """
+
+    recovered = 0
+    delivered = sum(
+        1
+        for song in state.get("songs", [])
+        if isinstance(song, dict) and bool(song.get("delivered"))
+    )
+    if delivered >= MAX_SONGS_PER_DATE:
+        return 0
+    for record in state.get("songs", []):
+        if delivered >= MAX_SONGS_PER_DATE:
+            break
+        if (
+            not isinstance(record, dict)
+            or record.get("delivered")
+            or record.get("verified_delivery_pending_commit") is not True
+            or record.get("status") not in {"blocked", "failed"}
+            or "SONG_DELIVERY_ATOMIC_COPY_FAILED"
+            not in {str(code) for code in record.get("reason_codes", [])}
+        ):
+            continue
+        cid = str(record.get("candidate_id") or "")
+        summary_value = record.get("selector_summary_path")
+        summary_sha256 = record.get("selector_summary_sha256")
+        source_candidate_id = str(record.get("selector_record_candidate_id") or "")
+        title = record.get("title")
+        expected_authority = _song_delivery_recovery_authority(
+            date=date,
+            outer_candidate_id=cid,
+            summary_path=summary_value,
+            summary_sha256=summary_sha256,
+            source_candidate_id=source_candidate_id,
+            title=title,
+        )
+        if (
+            expected_authority is None
+            or record.get("song_delivery_recovery_authority") != expected_authority
+        ):
+            log(f"song delivery recovery {cid}: state authority envelope missing or drifted")
+            continue
+        if not (
+            re.fullmatch(r"[A-Za-z0-9_-]{1,96}", cid)
+            and isinstance(summary_value, str)
+            and isinstance(summary_sha256, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", source_candidate_id)
+            and isinstance(title, str)
+            and title.strip()
+            and record.get("rc") == 0
+        ):
+            continue
+        summary_path = Path(summary_value)
+        try:
+            candidate_root = (BASE / "out" / date / cid).resolve(strict=True)
+            summary_resolved = summary_path.resolve(strict=True)
+        except OSError:
+            continue
+        if (
+            summary_path.is_symlink()
+            or not summary_resolved.is_relative_to(candidate_root)
+            or summary_resolved.name != "summary.json"
+            or not _matches_sha256(summary_path, summary_sha256)
+        ):
+            log(f"song delivery recovery {cid}: selector summary authority drifted")
+            continue
+        try:
+            summary = _read_json_object(summary_resolved, label="bound selector summary")
+        except ValueError as exc:
+            log(f"song delivery recovery {cid}: {exc}")
+            continue
+        matches = [
+            entry
+            for entry in summary.get("records", [])
+            if isinstance(entry, dict)
+            and str(entry.get("candidate_id") or "") == source_candidate_id
+        ]
+        if len(matches) != 1:
+            log(
+                f"song delivery recovery {cid}: bound selector record is not unique "
+                f"({len(matches)} match(es))"
+            )
+            continue
+        try:
+            delivery_update = _commit_verified_song_package(
+                date=date,
+                delivery_candidate_id=cid,
+                summary_record=matches[0],
+                title=title,
+                selector_rc=0,
+                summary_authority_root=summary_resolved.parent,
+            )
+        except (OSError, SongDeliveryError, ValueError) as exc:
+            log(
+                f"song delivery recovery {cid}: deterministic packaging refused: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
+        record.update(delivery_update)
+        record["reason_codes"] = [
+            str(code)
+            for code in record.get("reason_codes", [])
+            if str(code) != "SONG_DELIVERY_ATOMIC_COPY_FAILED"
+        ]
+        record.pop("delivery_error", None)
+        record.pop("verified_delivery_pending_commit", None)
+        record["status"] = "review_ready"
+        record["delivery_recovered_without_selector_rerun"] = True
+        record["delivery_recovered_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+        )
+        recovered += 1
+        delivered += 1
+        log(f"song delivery recovery {cid}: committed verified package without selector rerun")
+    return recovered
+
+
+def bind_song_delivery_recovery_authority(
+    date: str,
+    state: dict,
+    *,
+    candidate_id: str,
+    summary_path: Path,
+) -> bool:
+    """Explicitly bind a pre-fix verified attempt for deterministic recovery.
+
+    Older runner versions did not persist selector-summary authority before
+    packaging.  This migration never searches attempt directories: an operator
+    must supply the exact summary path.  The path, bytes, unique inner record,
+    complete-song proof, host identity and canonical LRC title are all verified
+    before state gains the three fields consumed by
+    ``recover_bound_song_deliveries``.
+    """
+
+    matches = [
+        record
+        for record in state.get("songs", [])
+        if isinstance(record, dict)
+        and str(record.get("candidate_id") or "") == candidate_id
+    ]
+    if len(matches) != 1:
+        raise SongDeliveryError(
+            f"song recovery backfill requires one state record, found {len(matches)}"
+        )
+    state_record = matches[0]
+    if (
+        state_record.get("delivered")
+        or state_record.get("status") not in {"blocked", "failed"}
+        or state_record.get("rc") != 0
+        or "SONG_DELIVERY_ATOMIC_COPY_FAILED"
+        not in {str(code) for code in state_record.get("reason_codes", [])}
+    ):
+        raise SongDeliveryError("song recovery backfill state is not packaging-failure eligible")
+    if summary_path.is_symlink():
+        raise SongDeliveryError("song recovery backfill summary may not be a symlink")
+    try:
+        candidate_root = (BASE / "out" / date / candidate_id).resolve(strict=True)
+        summary_resolved = summary_path.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song recovery backfill path is missing: {exc}") from exc
+    if (
+        summary_resolved.name != "summary.json"
+        or not summary_resolved.is_relative_to(candidate_root)
+        or not summary_resolved.is_file()
+    ):
+        raise SongDeliveryError("song recovery backfill summary escapes the outer candidate")
+    summary_sha256 = "sha256:" + _sha256_regular_file(summary_resolved)
+    summary = _read_json_object(summary_resolved, label="song recovery backfill summary")
+    records = [entry for entry in summary.get("records", []) if isinstance(entry, dict)]
+    if len(records) != 1:
+        raise SongDeliveryError(
+            f"song recovery backfill requires one selector record, found {len(records)}"
+        )
+    summary_record = records[0]
+    completion = song_completion_evidence(summary_record)
+    if not song_delivery_ok(
+        0,
+        record_is_song(summary_record),
+        summary_record.get("reason_codes", []),
+        completion,
+    ):
+        raise SongDeliveryError("song recovery backfill proof chain is not delivery-ready")
+    job = summary_record.get("source_context_job")
+    boundary = job.get("song_boundary") if isinstance(job, dict) else None
+    canonical_song_title = boundary.get("song_title") if isinstance(boundary, dict) else None
+    title = verified_song_fallback_title(canonical_song_title, state_record.get("hook"))
+    if title is None:
+        raise SongDeliveryError("song recovery backfill has no canonical LRC-bound title")
+    source_candidate_id = str(summary_record.get("candidate_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", source_candidate_id):
+        raise SongDeliveryError("song recovery backfill inner candidate id is unsafe")
+
+    intended = {
+        "selector_summary_path": str(summary_resolved),
+        "selector_summary_sha256": summary_sha256,
+        "selector_record_candidate_id": source_candidate_id,
+    }
+    existing = {
+        key: state_record.get(key)
+        for key in intended
+        if state_record.get(key) is not None
+    }
+    if existing and existing != intended:
+        raise SongDeliveryError("song recovery backfill conflicts with existing state authority")
+    changed = (
+        any(state_record.get(key) != value for key, value in intended.items())
+        or state_record.get("verified_delivery_pending_commit") is not True
+    )
+    state_record.update(intended)
+    state_record["verified_delivery_pending_commit"] = True
+    state_record["title"] = title
+    recovery_authority = _song_delivery_recovery_authority(
+        date=date,
+        outer_candidate_id=candidate_id,
+        summary_path=str(summary_resolved),
+        summary_sha256=summary_sha256,
+        source_candidate_id=source_candidate_id,
+        title=title,
+    )
+    if recovery_authority is None:  # defensive: all fields were validated above
+        raise SongDeliveryError("song recovery backfill authority envelope is invalid")
+    state_record["song_delivery_recovery_authority"] = recovery_authority
+    state_record["selector_summary_authority_backfill"] = {
+        "schema_version": "song-selector-summary-authority-backfill.v1",
+        "path": str(summary_resolved),
+        "sha256": summary_sha256,
+        "source_candidate_id": source_candidate_id,
+        "title": title,
+        "upload_enabled": False,
+        "bound_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    return changed
+
+
 def requeue_recoverable_talks(date: str, state: dict) -> int:
     """Retry undelivered selected talks with bounded generation semantics.
 
@@ -4428,7 +5048,6 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
     retries share one per-candidate lifetime cap.
     """
 
-    current = pipeline_fingerprint()
     existing_pending = {
         str(item.get("cid") or item.get("candidate_id") or "")
         for item in state.get("pending_talk", [])
@@ -4444,6 +5063,11 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             kept.append(record)
             continue
         cid = str(record.get("candidate_id") or record.get("cid") or "")
+        try:
+            current = talk_pipeline_fingerprint(cid)
+        except ValueError:
+            kept.append(record)
+            continue
         retry_count = int(record.get("talk_repair_retry_count") or 0)
         transient_count = int(record.get("talk_transient_retry_count") or 0)
         changed = record.get("pipeline_fingerprint") != current
@@ -4586,7 +5210,11 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
                 "status": "failed",
                 "error": str(exc),
                 "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
-                "pipeline_fingerprint": pipeline_fingerprint(),
+                "pipeline_fingerprint": (
+                    talk_pipeline_fingerprint(str(item.get("cid") or ""))
+                    if produce_fn is produce_talk
+                    else pipeline_fingerprint()
+                ),
                 **{
                     key: item[key]
                     for key in (
@@ -4634,6 +5262,15 @@ def process_date(date: str) -> None:
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
         return
     automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
+    recovered_song_deliveries = (
+        recover_bound_song_deliveries(date, state) if automatic_maintenance else 0
+    )
+    if recovered_song_deliveries:
+        write_state(date, state)
+        log(
+            f"{date}: recovered {recovered_song_deliveries} verified song delivery "
+            "package(s) without selector/ASR/LRC rerun"
+        )
     requeued_talks = requeue_recoverable_talks(date, state) if automatic_maintenance else 0
     requeued_songs = requeue_recoverable_songs(date, state) if automatic_maintenance else 0
     if requeued_talks or requeued_songs:
@@ -4652,6 +5289,27 @@ def process_date(date: str) -> None:
         for r in state.get("picks", []) + state.get("songs", [])
     )
     if not has_new and not has_pending and not needs_cover:
+        if recovered_song_deliveries:
+            delivered_talk = [
+                pick
+                for pick in state.get("picks", [])
+                if pick.get("status") in DELIVERED_TALK_STATUSES
+            ]
+            delivered_songs = [song for song in state.get("songs", []) if song.get("delivered")]
+            failures = [
+                record
+                for record in state.get("picks", []) + state.get("songs", [])
+                if record.get("status") in ("failed", "boundary_unrepairable")
+            ]
+            state["status"] = (
+                "review_ready_with_failures" if failures else "review_ready"
+            ) if delivered_talk or delivered_songs else "no_delivery"
+            write_state(date, state)
+            write_reports(date, state)
+            log(
+                f"{date}: finalized {recovered_song_deliveries} recovered song "
+                "package(s) without requiring CPA"
+            )
         return
     # CPA gate: recall, reconcile, titles and covers all need the chat lane.
     # Recordings can wait — never produce garbage during a provider outage.

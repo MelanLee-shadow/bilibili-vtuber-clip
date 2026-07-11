@@ -21,6 +21,7 @@ Spec JSON:
   "date": "2026-07-02",
   "output_root": "reports/.../finals",
   "delivery_name": "买弹幕梗当场拆台",
+  "selection_hook": "弹幕让李豆沙表演上下摇……", # selected main event; auto-title must retain it
   "given_title": null,                      # Ivan-given title is verbatim-final
   "lead_pad_ms": 300,
   "pieces": [                                # concatenated in order
@@ -62,13 +63,17 @@ from scripts.apply_subtitle_text_overrides import apply_document as apply_text_o
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
 from src.autoslice.chat_authority import (
     ChatEvidence,
+    apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
+    build_human_text_entity_verifier,
     load_chat_jsonl,
     load_referent_groups,
+    normalize_code_switch_surfaces,
     normalize_chat_text,
     normalize_srt_payload_text,
     normalize_srt_payload_window,
     recording_start_epoch_ms,
+    reconcile_pending_text_overrides,
     sanitize_chat_display_text,
 )
 from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
@@ -76,6 +81,7 @@ from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sanitize_cue_timing
+from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
 
 SNAP_BEFORE_MS = 6_000
 SNAP_AFTER_MS = 9_000
@@ -136,6 +142,20 @@ def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
         evidence.extend(item for item in jsonl_items if item.kind == "danmaku")
     evidence.extend(item for item in jsonl_items if item.kind == "superchat")
     return evidence
+
+
+def _load_independent_chat_support_srts(media_path: Path) -> list[str]:
+    """Load only transcripts that never saw chat or rendered video text.
+
+    ``.agy_refined.srt`` is deliberately excluded: that pass receives the
+    structured danmaku context and source frames, so using it to prove that the
+    streamer read the same message would be circular.
+    """
+
+    raw_audio_asr = media_path.with_suffix(".asr_draft.srt")
+    if not raw_audio_asr.is_file():
+        return []
+    return [raw_audio_asr.read_text(encoding="utf-8", errors="replace")]
 START_SNAP_MS = 2_500
 TAIL_PAD_MS = 400
 LEAD_AIR_MS = 250
@@ -346,6 +366,16 @@ def verify_chat_authority_final_surfaces(
         ("reply_coreference", row, str(row.get("after") or ""))
         for row in audit.get("coreference_repairs") or []
     )
+    decision_rows.extend(
+        ("entity_repair", row, "".join(str(value) for value in row.get("after") or []))
+        for row in audit.get("entity_repairs") or []
+    )
+    if any(
+        row.get("reconciliation_status") != "APPLIED_AND_HASH_VERIFIED"
+        for row in audit.get("pending_text_overrides") or []
+    ):
+        audit["final_verification_failure"] = "PENDING_TEXT_OVERRIDE_NOT_RECONCILED"
+        return False
     required_rows: list[dict] = []
     for kind, row, expected_text in decision_rows:
         matched_start = int(row["matched_start_ms"])
@@ -627,6 +657,11 @@ def main(argv: list[str] | None = None) -> int:
         help="talk speaker finalization is required and fails closed",
     )
     parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
+    parser.add_argument(
+        "--subtitle-regression",
+        type=Path,
+        help="candidate-scoped final subtitle truth gate evaluated before burn/delivery",
+    )
     parser.add_argument("--speaker-overrides", type=Path, help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference")
     parser.add_argument(
         "--speaker-source-session-anchors",
@@ -666,6 +701,12 @@ def main(argv: list[str] | None = None) -> int:
     out_root = Path(spec["output_root"]) / cid
     out_root.mkdir(parents=True, exist_ok=True)
     host = args.ssh_host
+    text_override_path = args.subtitle_text_overrides or _resolved_optional_path(
+        spec.get("subtitle_text_overrides"), relative_to=args.spec.parent
+    )
+    subtitle_regression_path = args.subtitle_regression or _resolved_optional_path(
+        spec.get("subtitle_regression"), relative_to=args.spec.parent
+    )
 
     # 1. Remote accurate piece cuts (production encode params), pull local.
     piece_paths: list[Path] = []
@@ -737,24 +778,76 @@ def main(argv: list[str] | None = None) -> int:
     vad = build_ssh_silero_vad_provider(host)
     spans = vad(padded, 0, padded_dur)
     srt_text = transcriber(padded, [(s.start_ms, s.end_ms) for s in spans])
-    support_srts = []
-    for support_path in (padded.with_suffix(".asr_draft.srt"), padded.with_suffix(".agy_refined.srt")):
-        if support_path.is_file():
-            support_srts.append(support_path.read_text(encoding="utf-8", errors="replace"))
+    srt_text, code_switch_audit = normalize_code_switch_surfaces(srt_text)
+    support_srts = _load_independent_chat_support_srts(padded)
+    human_entity_verifier = (
+        build_human_text_entity_verifier(text_override_path, candidate_id=cid)
+        if text_override_path is not None
+        else None
+    )
+    audio_entity_verifier = None
+    if host in {"localhost", "127.0.0.1"}:
+        from src.autoslice.entity_audio_verifier import build_local_audio_entity_verifier
+
+        audio_entity_verifier = build_local_audio_entity_verifier(
+            source_media=padded,
+            output_dir=out_root,
+            recording_date=str(spec.get("date") or ""),
+            source_duration_ms=padded_dur,
+        )
+
+    def verify_confusable_entity(request):
+        if human_entity_verifier is not None:
+            verdict = human_entity_verifier(request)
+            if verdict is not None:
+                return verdict
+        if audio_entity_verifier is not None:
+            return audio_entity_verifier(request)
+        return None
+
+    referent_groups = load_referent_groups(
+        ROOT / "assets" / "lidousha" / "entity_confusables.json"
+    )
     srt_text, chat_authority_audit = apply_authoritative_chat_evidence(
         srt_text,
         authoritative_chat,
         support_srt_texts=support_srts,
-        referent_groups=load_referent_groups(
-            ROOT / "assets" / "lidousha" / "entity_confusables.json"
-        ),
+        referent_groups=referent_groups,
+        entity_verifier=verify_confusable_entity,
     )
+    handled_entity_cues = {
+        int(index)
+        for key in ("applied", "pending_text_overrides", "entity_repairs", "coreference_repairs")
+        for row in chat_authority_audit.get(key) or []
+        for index in (
+            row.get("cue_indexes")
+            or ([row.get("cue_index")] if row.get("cue_index") is not None else [])
+        )
+    }
+    srt_text, transcript_entity_audit = apply_audio_entity_verification(
+        srt_text,
+        referent_groups=referent_groups,
+        entity_verifier=verify_confusable_entity,
+        excluded_cue_indexes=handled_entity_cues,
+    )
+    chat_authority_audit["transcript_entity_audit"] = transcript_entity_audit
+    chat_authority_audit["code_switch_surface_audit"] = code_switch_audit
+    chat_authority_audit.setdefault("entity_repairs", []).extend(
+        transcript_entity_audit.get("repairs") or []
+    )
+    chat_authority_audit["post_transcript_entity_output_srt_sha256"] = hashlib.sha256(
+        srt_text.encode("utf-8")
+    ).hexdigest()
     chat_authority_path = out_root / f"{cid}.chat-authority.json"
     chat_authority_path.write_text(
         json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if chat_authority_audit["status"] == "FAILED":
+    if (
+        chat_authority_audit["status"]
+        in {"FAILED", "ENTITY_VERDICT_REQUIRED", "SC_SENDER_VERDICT_REQUIRED"}
+        or transcript_entity_audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    ):
         raise SystemExit(f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}")
     (out_root / "padded.fresh.srt").write_text(srt_text, encoding="utf-8")
     cues = [c for c in parse_srt_cues(srt_text) if c.text.strip()]
@@ -884,15 +977,13 @@ def main(argv: list[str] | None = None) -> int:
     media_path = recut_dir / f"{cid}.recut.mp4"
     run(_accurate_reencode_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
     subtitle_path = media_path.with_suffix(".srt")
-    text_override_path = args.subtitle_text_overrides or _resolved_optional_path(
-        spec.get("subtitle_text_overrides"), relative_to=args.spec.parent
-    )
     text_manifest_path: Path | None = None
+    text_manifest: dict | None = None
     if text_override_path is not None:
         automatic_text_path = media_path.with_suffix(".automatic-text.srt")
         _write_source_range_srt(sanitized, final_start, final_end, automatic_text_path)
         text_manifest_path = media_path.with_suffix(".text-finalization.json")
-        apply_text_override_document(
+        text_manifest = apply_text_override_document(
             automatic_text_path, text_override_path, subtitle_path, text_manifest_path
         )
     else:
@@ -942,7 +1033,12 @@ def main(argv: list[str] | None = None) -> int:
         if speaker_review_srt is not None and speaker_review_srt.is_file()
         else final_text
     )
-    final_authority_ok = verify_chat_authority_final_surfaces(
+    pending_override_ok = reconcile_pending_text_overrides(
+        chat_authority_audit,
+        text_manifest,
+        delivery_start_ms=final_start,
+    )
+    final_authority_ok = pending_override_ok and verify_chat_authority_final_surfaces(
         chat_authority_audit,
         final_text_srt=final_text,
         final_speaker_srt=final_speaker_text,
@@ -968,6 +1064,25 @@ def main(argv: list[str] | None = None) -> int:
     if not final_authority_ok:
         raise SystemExit(f"CHAT_AUTHORITY_FINAL_ARTIFACT_FAILED: {chat_authority_path}")
 
+    subtitle_regression_audit_path: Path | None = None
+    subtitle_regression_audit: dict | None = None
+    if subtitle_regression_path is not None:
+        subtitle_regression_audit = verify_subtitle_regression_surfaces(
+            subtitle_regression_path,
+            candidate_id=cid,
+            final_text_srt=final_text,
+            final_speaker_srt=final_speaker_text,
+        )
+        subtitle_regression_audit_path = recut_dir / f"{cid}.subtitle-regression.json"
+        subtitle_regression_audit_path.write_text(
+            json.dumps(subtitle_regression_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if subtitle_regression_audit["status"] != "PASS":
+            raise SystemExit(
+                f"SUBTITLE_REGRESSION_FAILED: {subtitle_regression_audit_path}"
+            )
+
     record: dict = {
         "status": "MATERIALIZED",
         "media_path": str(media_path),
@@ -982,8 +1097,22 @@ def main(argv: list[str] | None = None) -> int:
             **({"ass_sha256": "sha256:" + _sha256(speaker_ass)} if speaker_ass is not None else {}),
             **({"speaker_review_srt_sha256": "sha256:" + _sha256(speaker_review_srt)} if speaker_review_srt is not None else {}),
             "chat_authority_audit_sha256": "sha256:" + _sha256(chat_authority_path),
+            **(
+                {
+                    "subtitle_regression_audit_sha256": "sha256:"
+                    + _sha256(subtitle_regression_audit_path)
+                }
+                if subtitle_regression_audit_path is not None
+                else {}
+            ),
         },
         "chat_authority_audit_path": str(chat_authority_path),
+        "subtitle_regression_audit_path": (
+            str(subtitle_regression_audit_path)
+            if subtitle_regression_audit_path is not None
+            else None
+        ),
+        "subtitle_regression": subtitle_regression_audit,
         "text_finalization_manifest_path": str(text_manifest_path) if text_manifest_path is not None else None,
         "speaker_review_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
         "subtitle_ass_path": str(speaker_ass) if speaker_ass is not None else None,
@@ -1046,12 +1175,22 @@ def main(argv: list[str] | None = None) -> int:
         title_llm_call=title_llm,
         art_direction_llm_call=art_direction_llm,
         skip_cover=args.reuse_cover,
+        selection_hook=str(spec.get("selection_hook") or ""),
     )
     staging = record.get("publish_staging") or {}
     record_path = recut_dir / f"{cid}.record.json"
     with record_path.open("w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
+
+    if str(staging.get("title_authority_status") or "").startswith("UNRESOLVED"):
+        # The standalone producer is also a supported entry point.  Never
+        # materialize delivery bytes and rely on the unattended runner to
+        # notice and delete them afterward.  The publish/record evidence above
+        # remains available for classification and bounded retry.
+        raise SystemExit(
+            f"TITLE_AUTHORITY_UNRESOLVED: {staging.get('title_authority_error') or 'unknown'}"
+        )
 
     delivery = ROOT / "lidousha" / spec["date"]
     delivery.mkdir(parents=True, exist_ok=True)
@@ -1066,6 +1205,7 @@ def main(argv: list[str] | None = None) -> int:
         (speaker_ass, ".speaker.ass"),
         (speaker_manifest_path, ".speaker.json"),
         (chat_authority_path, ".chat-authority.json"),
+        (subtitle_regression_audit_path, ".subtitle-regression.json"),
         (text_manifest_path, ".text-finalization.json"),
         (record_path, ".record.json"),
     ):
@@ -1091,6 +1231,11 @@ def main(argv: list[str] | None = None) -> int:
             "speaker_subtitle": str(delivery / f"{name}.speaker.srt") if speaker_review_srt else None,
             "speaker_ass": str(delivery / f"{name}.speaker.ass") if speaker_ass else None,
             "speaker_status": speaker_manifest.get("status") if speaker_manifest else "OFF",
+            "subtitle_regression_status": (
+                subtitle_regression_audit.get("status")
+                if subtitle_regression_audit is not None
+                else "NOT_CONFIGURED"
+            ),
         },
         ensure_ascii=False,
         indent=2,

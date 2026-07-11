@@ -1,0 +1,30 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_190017_1068_1217",
+  "required_payload_substrings": [
+    "等小李什么时候来看恋青呢",
+    "我倒是自己有看",
+    "但是我确实很想跟大家看梦限大",
+    "指神人的神",
+    "wakuwaku的感觉",
+    "恋死看吗",
+    "然后那个立希的高压的态度",
+    "怎么有人说有梦限大的风险"
+  ],
+  "forbidden_payload_substrings": [
+    "小室什么时候",
+    "来看恋死呢",
+    "到时我自己有看",
+    "母鸡卡",
+    "木子卡",
+    "Mujica",
+    "神金",
+    "哇哭哇哭",
+    "哇库哇库",
+    "然后那个Saki的高压的态度",
+    "然后那个祥子的高压的态度"
+  ],
+  "forbidden_exact_cues": [
+    "恋死看"
+  ]
+}

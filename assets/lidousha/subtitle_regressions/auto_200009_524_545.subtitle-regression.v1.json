@@ -1,0 +1,11 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_200009_524_545",
+  "required_payload_substrings": [
+    "谢谢十麻乃送的",
+    "如果能唱的到",
+    "想点首小城夏天，唱不到就算了"
+  ],
+  "forbidden_payload_substrings": [],
+  "forbidden_exact_cues": []
+}

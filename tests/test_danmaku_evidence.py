@@ -80,7 +80,10 @@ def test_semantic_recall_prompt_includes_danmaku_hints():
 
 def test_agy_prompt_includes_danmaku_lines_and_visual_read_instruction():
     prompt = agy_prompt("1\n00:00:01,000 --> 00:00:02,000\n你好\n", danmaku_lines=["00:05 灰喜鹊拟人", "00:12 一眼AI"])
-    assert "given to you VERBATIM" in prompt  # danmaku/SC are trusted text, not re-OCR'd
+    assert "given to you VERBATIM" in prompt  # exact platform text, not re-OCR'd
+    assert "not by itself proof" in prompt
+    assert "PROPER-NAME CONFLICT RULE" in prompt
+    assert "listen to the actual" in prompt
     assert "TEMPORAL PAIRING RULE" in prompt
     assert "00:05 灰喜鹊拟人" in prompt
     assert "READ the on-screen text" in prompt

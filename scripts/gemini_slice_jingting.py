@@ -794,13 +794,21 @@ def agy_prompt(
         joined = "\n".join(danmaku_lines)
         danmaku_block = f"""
 Viewer danmaku + superchats are given to you VERBATIM below — you do NOT need to
-squint at the blurry rolling on-screen danmaku to re-derive them; trust this
-provided text. Spend your video attention on the AUDIO (mishearings) and on OTHER
+squint at the blurry rolling on-screen danmaku to re-derive them; trust this as
+the exact PLATFORM-SOURCE TEXT that a viewer typed. It is not by itself proof
+that the streamer read that particular nearby line. Spend your video attention
+on the AUDIO (including whether it actually matches the supplied line) and OTHER
 on-screen content the provided text can't give you (image captions, UI labels,
 song lists, titles she is reading). TEMPORAL PAIRING RULE: a danmaku/SC at time T
 is a strong wording candidate only for cues NEAR T (within ~10s) — she reads/
 reacts the moment they appear; entries far from a cue's time (>20s) must not be
 borrowed for that cue.
+PROPER-NAME CONFLICT RULE: when the supplied chat, draft ASR, current topic, and
+the audio suggest different members of one confusable entity family (for example
+梦限大 / Mujica / 母鸡卡, 恋青 / 恋死, or 立希 / 祥子), listen to the actual
+syllables and preserve the spoken entity. A surface-similar ASR line plus a nearby
+chat line is still not independent acoustic proof. Current-news/timely terms are
+high-priority candidates, not permission to replace incompatible pronunciation.
 {joined}
 
 SUPER_CHAT handling: lines marked 【SC·<name>】<text> (and 【SC此前·<name>】 for ones
