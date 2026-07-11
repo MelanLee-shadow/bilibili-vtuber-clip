@@ -3,6 +3,33 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-11（续五）：CAM++ speaker_finalizer O(N²) 挂死修复 + speaker-final 超集部署（2246f5c）+ 2026-07-10 批次全 5 条谈话恢复
+
+### 目标
+
+接手另一会话中途的 `3ad0f9b`（结构化字幕权威）工作面：诊断 2026-07-10 无人值守批次里 4 条谈话 rc=1 失败根因、修复、按 Ivan 决定把 speaker-final 超集 + 修复一次性部署上线、把该批次恢复成一致的 review_ready。git 并回 main（#3）本轮按 Ivan 指令押后；无上传授权。
+
+### 已完成
+
+- **根因定位（4 条失败）**：3 条（`auto_190017_1068_1217` 邦多利 / `auto_200009_524_545` 21s / `auto_212005_163_311`）= `speaker_finalizer._run_campplus_analysis` 每对 wav 重嵌入 + 每对重写增长的 `pair-cache.json` → O(句×锚) CAM++ 推理 + O(对²) 磁盘写，1800s 超时把已成片切片 rc=1 崩掉（21s/19 句片也中招=挂死非片长，机器 load 才 1.35/8核）。1 条（`auto_190017_902_950` BW见面会）= 真实 `BOUNDARY_UNREPAIRABLE`（切点后 23s 连续说话、新扩源逻辑已按设计跑过），非 bug。
+- **CAM++ 修复（embed-once，保分）**：改为每句 embedding 只算一次（`verifier([wav], output_emb=True)['embs']`）再对缓存向量算 cosine。CAM++ 成对分数本就是这两向量的 cosine，按 pipeline 5 位小数取整 → 说话人裁决逐条不变，推理从 O(句×锚) 塌到 O(句)。真机实测（19 句片）：**8.2s vs 1800s 挂死**，10 对真实 wav old/new 分数 `max|diff|=0.0` 逐位相同，输出 `single_host` 合理。新增 embed-once 调用计数 / 保分 / 缓存持久化三条回归。
+- **超集部署（`2246f5c` → free；Ivan 选“并入 speaker-final 超集”）**：新建 `codex/deploy-superset`（off `942f737` = speaker-final committed tip）= 超集 + 那 8 个 parked WIP（batch speaker review + 字幕文本 override + 部署期资产断言，从 speaker-final 工作树 patch 而来，单独一 commit）+ CAM++ fix（port 到其 1294 行 finalizer）。全量 **599 passed**；`deploy_free_autoslice.sh` 自带 staged-tree 校验（含 WIP 资产断言：profile/model hash、references、session anchors、entity_confusables、timely_terms、batch plan + hash-bound overrides）全过——先校验后原子切换。`DEPLOYED_COMMIT` = `2246f5c`（2026-07-11T02:33:38Z）。`DISABLED` 保留（cron 仍暂停）。
+- **2026-07-10 批次恢复（全 5 条谈话统一到新流水线）**：复用 runner 自身 `requeue_recoverable_talks → produce_batch(produce_talk) → write_reports`（tick 的谈话路径），跳过 recall + 整个歌切 lane。先补 3 条 CAM++ 挂死片，再按 Ivan“整批统一”补 2 条早上 pre-authority 旧片（弹幕上下摇 / 3D线下见）。终态 `review_ready_with_failures` = **5 交付 / 1 真实边界(BW见面会) / 6 歌切按设计 fail-closed**。5 条全有 `speaker-final.json` + `chat-authority.json`；邦多利终字幕 恋青/梦限大/wakuwaku/立希 正确、零 小室/Mujica/Saki。5 条 mp4+封面已拉回本地 `lidousha/2026-07-10/`。
+
+### 进行中（含后台进程）
+
+- 无遗留后台进程（三个 detached 恢复/验证 driver 均已退出；free 上 scratch 目录与 `recover_*.py/.sh` 已清）。cron `*/10` runner 因 `DISABLED` 暂停不 tick；上传面独立关闭。
+
+### 阻塞
+
+- 无代码/部署/恢复 blocker。批次 review_ready，等 Ivan 逐条审片 + 逐条上传授权（本轮无授权）。
+
+### 下一步
+
+1. **#3 git 并回 main（本轮押后，Ivan 明确“先别管”）**：生产在 `codex/deploy-superset @2246f5c`，**不在 main**；main 另有 3 个独有提交（换源 / luna-handoff / speaker-v10-overrides）。**分叉注意**：那 8 个 WIP 现已 commit 在 `codex/deploy-superset` 并上线，但在 parked 的 `codex/speaker-final-pipeline` 工作树仍是未提交改动（需去重/对齐，勿重复落地）。唯一真代码冲突面 = `scripts/apply_speaker_turn_overrides.py`（main v10 overrides vs codex finalizer 依赖）。`codex/campp-perf-fix`（off 3ad0f9b 的最小 fix）已被超集部署取代，可删。
+2. 下一场直播前摘 `free:/opt/bilive/autoslice/DISABLED`（cron 恢复无人值守）——归属验收流程 / Ivan 定。
+3. 遗留 follow-up（承 3ad0f9b Pro 复核）：边界语义收束、封面行首标点禁则。
+
 ## 2026-07-10（续四）：歌切“必须是李豆沙现场演唱”联合门上线 +《芽吹くとき》背景原曲阻断 + cron 恢复
 
 ### 目标
