@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
+  "candidate_id": "promo_193036_367_476",
   "source_srt_sha256": "1529026cf1bdc55424dc271eecd4f7cd034f00f5b336dc18ad3e3e45b37343b5",
+  "text_final_srt_sha256": "66df43bb0478ba0106617ad1ae77f425cb3dac359e85a6d1d36db95e44debd15",
   "overrides": [
     {
       "source_cue": 24,
