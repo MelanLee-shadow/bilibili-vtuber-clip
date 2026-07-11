@@ -56,7 +56,7 @@ class SpeakerFinalizationError(RuntimeError):
 
 SOURCE_SESSION_ANCHOR_SCHEMA = "lidousha-speaker-source-session-anchors.v1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
-CAMPP_EMBEDDING_CACHE_SCHEMA = "lidousha-campp-embedding-cache.v2"
+CAMPP_EMBEDDING_CACHE_SCHEMA = "lidousha-campp-embedding-cache.v3"
 CAMPP_EMBEDDING_DIMENSION = 192
 CAMPP_MIN_EMBEDDING_NORM = 1e-3
 CAMPP_COSINE_EPSILON = 1e-6
@@ -429,9 +429,25 @@ def _campp_runtime_fingerprint(verifier: Callable[..., object]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _embedding_sha256(vector: Sequence[float]) -> str:
+def _embedding_binding_sha256(
+    *,
+    vector: Sequence[float],
+    model_hash: str,
+    runtime_fingerprint: str,
+    audio_sha256: str,
+) -> str:
     payload = json.dumps(
-        list(vector), allow_nan=False, separators=(",", ":")
+        {
+            "schema_version": CAMPP_EMBEDDING_CACHE_SCHEMA,
+            "model_sha256": model_hash,
+            "runtime_fingerprint": runtime_fingerprint,
+            "audio_sha256": audio_sha256,
+            "dimension": CAMPP_EMBEDDING_DIMENSION,
+            "embedding": list(vector),
+        },
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
@@ -465,7 +481,12 @@ def _load_cached_embedding(
         if not isinstance(raw_vector, list):
             return None
         vector = _validate_campp_embedding(raw_vector)
-        if document.get("embedding_sha256") != _embedding_sha256(vector):
+        if document.get("binding_sha256") != _embedding_binding_sha256(
+            vector=vector,
+            model_hash=model_hash,
+            runtime_fingerprint=runtime_fingerprint,
+            audio_sha256=audio_sha256,
+        ):
             return None
         return vector
     except (OSError, TypeError, ValueError, SpeakerFinalizationError):
@@ -487,9 +508,14 @@ def _write_cached_embedding(
         "runtime_fingerprint": runtime_fingerprint,
         "audio_sha256": audio_sha256,
         "dimension": CAMPP_EMBEDDING_DIMENSION,
-        "embedding_sha256": _embedding_sha256(validated),
         "embedding": validated,
     }
+    document["binding_sha256"] = _embedding_binding_sha256(
+        vector=validated,
+        model_hash=model_hash,
+        runtime_fingerprint=runtime_fingerprint,
+        audio_sha256=audio_sha256,
+    )
     atomic_write_text(
         path,
         json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
@@ -564,7 +590,7 @@ def _build_embedding_similarity(
     wav a single time and caching the vector is exactly score-preserving while
     collapsing the cost to O(cues) inferences.
     """
-    cache_dir = work_dir / "embedding-cache-v2"
+    cache_dir = work_dir / "embedding-cache-v3"
     embeddings: dict[str, list[float]] = {}
     runtime_fingerprint = _campp_runtime_fingerprint(verifier)
     fingerprints: dict[Path, str] = {}

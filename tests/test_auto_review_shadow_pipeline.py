@@ -1,7 +1,10 @@
+import base64
 import dataclasses
 import hashlib
+import io
 import json
 import subprocess
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -2681,6 +2684,115 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
     assert generation["font"] == "ZCOOLKuaiLe-Regular.ttf"
     assert generation["angle_degrees"] == -4.0
     assert "cover_sha256" in publish["artifact_hashes"]
+
+
+def test_cpa_image_edit_falls_back_only_on_explicit_model_unavailable(
+    tmp_path, monkeypatch
+):
+    reference = tmp_path / "ref.png"
+    reference.write_bytes(b"reference")
+    calls = []
+    unavailable = json.dumps(
+        {"error": {"code": "client_model_unavailable", "message": "unsupported"}}
+    ).encode()
+    image_payload = json.dumps(
+        {"data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+    ).encode()
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return image_payload
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                400,
+                "bad request",
+                hdrs=None,
+                fp=io.BytesIO(unavailable),
+            )
+        return Response()
+
+    monkeypatch.setattr(shadow_pipeline.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(shadow_pipeline, "_normalize_cover_canvas", lambda _path: (1920, 1080))
+    output = tmp_path / "out.png"
+    request_path = tmp_path / "request.json"
+    response_path = tmp_path / "response.json"
+    result = shadow_pipeline._call_cpa_image_edit(
+        base_url="https://cpa.example/v1",
+        api_key="secret",
+        reference_path=reference,
+        output_path=output,
+        prompt="prompt",
+        request_path=request_path,
+        response_path=response_path,
+        model_candidates=("gpt-image-2", "gpt-image-1.5"),
+    )
+
+    assert result["status"] == "AI_BACKGROUND_READY"
+    assert result["selected_model"] == "gpt-image-1.5"
+    assert result["attempted_models"] == ["gpt-image-2", "gpt-image-1.5"]
+    assert result["model_fallback_used"] is True
+    assert len(calls) == 2
+    assert b'gpt-image-2' in calls[0].data
+    assert b'gpt-image-1.5' in calls[1].data
+    request_evidence = json.loads(request_path.read_text(encoding="utf-8"))
+    response_evidence = json.loads(response_path.read_text(encoding="utf-8"))
+    assert request_evidence["api_key"] == "<redacted>"
+    assert [row["model"] for row in response_evidence["attempts"]] == [
+        "gpt-image-2",
+        "gpt-image-1.5",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_code"),
+    [(400, "model_price_error"), (403, "safety_rejection"), (500, "upstream_error")],
+)
+def test_cpa_image_edit_does_not_fallback_for_other_failures(
+    tmp_path, monkeypatch, status_code, error_code
+):
+    reference = tmp_path / "ref.png"
+    reference.write_bytes(b"reference")
+    calls = []
+    body = json.dumps({"error": {"code": error_code}}).encode()
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        raise urllib.error.HTTPError(
+            request.full_url,
+            status_code,
+            "failed",
+            hdrs=None,
+            fp=io.BytesIO(body),
+        )
+
+    monkeypatch.setattr(shadow_pipeline.urllib.request, "urlopen", fake_urlopen)
+    result = shadow_pipeline._call_cpa_image_edit(
+        base_url="https://cpa.example/v1",
+        api_key="secret",
+        reference_path=reference,
+        output_path=tmp_path / "out.png",
+        prompt="prompt",
+        request_path=tmp_path / "request.json",
+        response_path=tmp_path / "response.json",
+        model_candidates=("gpt-image-2", "gpt-image-1.5"),
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["attempted_models"] == ["gpt-image-2"]
+    assert result["model_fallback_used"] is False
+    assert len(calls) == 1
 
 
 def test_live_source_missing_srt_records_source_integrity_and_replay_plan(tmp_path):

@@ -398,6 +398,148 @@ def test_audio_identity_keeps_same_title_disjoint_cue_matches_ambiguous():
         )
 
 
+def test_audio_identity_complete_link_rejects_transitive_similarity_bridge(monkeypatch):
+    canonical = _japanese_lrc()
+
+    def variant(name: str) -> LrcResult:
+        return LrcResult(
+            provider="netease",
+            song_title="same title",
+            artist=f"artist-{name}",
+            source_ref=f"netease://song/{name}",
+            lines=tuple(LrcLine(line.time_ms, f"{name}-{line.text}") for line in canonical.lines),
+        )
+
+    a, b, c = variant("a"), variant("b"), variant("c")
+    scores = {
+        frozenset((a.source_ref, b.source_ref)): 0.70,
+        frozenset((b.source_ref, c.source_ref)): 0.70,
+        frozenset((a.source_ref, c.source_ref)): 0.425,
+    }
+    monkeypatch.setattr(
+        song_repair,
+        "_lrc_content_similarity",
+        lambda left, right: scores[frozenset((left.source_ref, right.source_ref))],
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(1.0, a, []), (0.9, b, []), (1.0, c, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_lower_margin_group_requires_every_max_row_to_match_top(
+    monkeypatch,
+):
+    canonical = _japanese_lrc()
+
+    def variant(name: str) -> LrcResult:
+        return LrcResult(
+            provider=name,
+            song_title="same title",
+            artist=name,
+            source_ref=f"{name}://song",
+            lines=tuple(LrcLine(line.time_ms, f"{name}-{line.text}") for line in canonical.lines),
+        )
+
+    a, d, b, c = (variant(name) for name in ("a", "d", "b", "c"))
+    scores = {
+        frozenset((a.source_ref, d.source_ref)): 0.80,
+        frozenset((b.source_ref, c.source_ref)): 0.80,
+        frozenset((a.source_ref, b.source_ref)): 0.80,
+        frozenset((d.source_ref, b.source_ref)): 0.50,
+        frozenset((a.source_ref, c.source_ref)): 0.50,
+        frozenset((d.source_ref, c.source_ref)): 0.50,
+    }
+    monkeypatch.setattr(
+        song_repair,
+        "_lrc_content_similarity",
+        lambda left, right: scores[frozenset((left.source_ref, right.source_ref))],
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(1.0, a, []), (1.0, d, []), (0.98, b, []), (0.98, c, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_ignores_lower_year_ring_variant_as_false_runner(monkeypatch):
+    canonical = _japanese_lrc()
+
+    def variant(name: str) -> LrcResult:
+        return LrcResult(
+            provider=name,
+            song_title="年轮",
+            artist=f"artist-{name}",
+            source_ref=f"{name}://year-ring",
+            lines=tuple(LrcLine(line.time_ms, f"{name}-{line.text}") for line in canonical.lines),
+        )
+
+    top = [variant(f"top-{index}") for index in range(4)]
+    lower = variant("live-98")
+
+    def similarity(left, right):
+        names = {left.provider, right.provider}
+        if "live-98" in names and "top-3" in names:
+            return 0.517
+        return 0.941
+
+    monkeypatch.setattr(song_repair, "_lrc_content_similarity", similarity)
+    chosen = _choose_audio_lrc_candidate(
+        [*((1.0, item, []) for item in top), (0.98, lower, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen in top
+
+
+def test_audio_identity_ignores_lower_planet_loop_variant_as_false_runner(monkeypatch):
+    canonical = _japanese_lrc()
+
+    def variant(provider: str) -> LrcResult:
+        return LrcResult(
+            provider=provider,
+            song_title="惑星ループ",
+            artist=f"artist-{provider}",
+            source_ref=f"{provider}://planet-loop",
+            lines=tuple(LrcLine(line.time_ms, f"{provider}-{line.text}") for line in canonical.lines),
+        )
+
+    top_kugou = variant("top-kugou")
+    top_netease = variant("top-netease")
+    lower_kugou = variant("lower-kugou")
+    scores = {
+        frozenset((top_kugou.source_ref, top_netease.source_ref)): 0.80,
+        frozenset((top_kugou.source_ref, lower_kugou.source_ref)): 0.860,
+        frozenset((top_netease.source_ref, lower_kugou.source_ref)): 0.608,
+    }
+    monkeypatch.setattr(
+        song_repair,
+        "_lrc_content_similarity",
+        lambda left, right: scores[frozenset((left.source_ref, right.source_ref))],
+    )
+    chosen = _choose_audio_lrc_candidate(
+        [
+            (0.46, top_kugou, []),
+            (0.46, top_netease, []),
+            (0.42, lower_kugou, []),
+        ],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen in {top_kugou, top_netease}
+
+
 def test_audio_identity_collapses_close_alias_when_lyrics_and_cues_agree():
     canonical = _japanese_lrc()
     alias = LrcResult(
@@ -410,8 +552,10 @@ def test_audio_identity_collapses_close_alias_when_lyrics_and_cues_agree():
             for line in canonical.lines[:8]
         ),
     )
-    canonical_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(10)]
-    alias_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(8)]
+    # Real July-10 shape: the full provider row explains 48 source cues while
+    # the alias row explains a 15-cue contained subset.
+    canonical_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(48)]
+    alias_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(15)]
 
     chosen = _choose_audio_lrc_candidate(
         [(1.0, canonical, canonical_alignment), (1.0, alias, alias_alignment)],
@@ -455,6 +599,58 @@ def test_audio_identity_uses_provider_consensus_title_for_mistitled_lyric_row():
     assert chosen.song_title == canonical.song_title
 
 
+def test_audio_identity_uses_direct_lower_recall_title_evidence_without_bridge(
+    monkeypatch,
+):
+    base = _japanese_lrc()
+
+    def row(provider: str, title: str, artist: str, source: str, marker: str) -> LrcResult:
+        return LrcResult(
+            provider=provider,
+            song_title=title,
+            artist=artist,
+            source_ref=source,
+            lines=tuple(
+                LrcLine(line.time_ms, f"{marker}-{index}-{line.text}")
+                for index, line in enumerate(base.lines)
+            ),
+        )
+
+    mistitled = row("netease", "Owen-只想为你撑伞", "m", "netease://a-m", "m")
+    canonical = row("netease", "园游会", "c", "netease://b-c", "c")
+    alias = row("netease", "游园会", "a", "netease://c-a", "a")
+    lrclib = row("lrclib", "园游会", "l", "https://lrclib.net/api/get/l", "l")
+    similarity = {
+        frozenset((canonical.source_ref, alias.source_ref)): 0.75,
+        frozenset((canonical.source_ref, mistitled.source_ref)): 0.75,
+        frozenset((alias.source_ref, mistitled.source_ref)): 0.75,
+        frozenset((lrclib.source_ref, canonical.source_ref)): 0.651,
+        frozenset((lrclib.source_ref, alias.source_ref)): 0.261,
+        frozenset((lrclib.source_ref, mistitled.source_ref)): 0.651,
+    }
+    monkeypatch.setattr(
+        song_repair,
+        "_lrc_content_similarity",
+        lambda left, right: similarity[frozenset((left.source_ref, right.source_ref))],
+    )
+    full_cues = [{"matched_cue_id": f"cue-{index}"} for index in range(48)]
+    alias_cues = full_cues[:15]
+    chosen = _choose_audio_lrc_candidate(
+        [
+            (1.0, mistitled, full_cues),
+            (1.0, canonical, full_cues),
+            (1.0, alias, alias_cues),
+            (0.72, lrclib, []),
+        ],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == mistitled.source_ref
+    assert chosen.song_title == "园游会"
+
+
 def test_audio_identity_does_not_retitle_from_one_provider_catalog_rows():
     canonical = _japanese_lrc()
     selected = LrcResult(
@@ -480,6 +676,36 @@ def test_audio_identity_does_not_retitle_from_one_provider_catalog_rows():
     )
 
     assert chosen.source_ref == selected.source_ref
+    assert chosen.song_title == "Alpha"
+
+
+def test_audio_identity_preserves_selected_title_on_two_provider_tie():
+    canonical = _japanese_lrc()
+
+    def row(provider: str, title: str, suffix: str) -> LrcResult:
+        return LrcResult(
+            provider=provider,
+            song_title=title,
+            artist=canonical.artist,
+            source_ref=f"{provider}://song/{suffix}",
+            lines=canonical.lines,
+        )
+
+    alpha_selected = row("netease", "Alpha", "alpha-selected")
+    candidates = [
+        (1.0, alpha_selected, []),
+        (0.9, row("lrclib", "Alpha", "alpha-support"), []),
+        (0.9, row("netease", "Zulu", "zulu-support-a"), []),
+        (0.9, row("kugou", "Zulu", "zulu-support-b"), []),
+    ]
+    chosen = _choose_audio_lrc_candidate(
+        candidates,
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == alpha_selected.source_ref
     assert chosen.song_title == "Alpha"
 
 

@@ -240,7 +240,7 @@ def test_embedding_similarity_embeds_each_wav_once_and_persists(
     assert got[("a", "b")] == got[("a", "b_again")]
 
     # A persisted cache lets a fresh builder score with zero new inferences.
-    cache_files = sorted((work_dir / "embedding-cache-v2").glob("*.json"))
+    cache_files = sorted((work_dir / "embedding-cache-v3").glob("*.json"))
     assert len(cache_files) == 3
     assert len(writes) == 3
     assert sum(size for _, size in writes) < 30_000
@@ -275,7 +275,7 @@ def test_embedding_cache_tamper_reembeds_instead_of_scoring_modified_vector(
     )
     assert similarity(wav_a, wav_b) == 0.0
 
-    cache_files = sorted((work_dir / "embedding-cache-v2").glob("*.json"))
+    cache_files = sorted((work_dir / "embedding-cache-v3").glob("*.json"))
     assert len(cache_files) == 2
     tampered = json.loads(cache_files[0].read_text(encoding="utf-8"))
     tampered["embedding"] = _campp_vector(1.0, 1.0)
@@ -287,6 +287,43 @@ def test_embedding_cache_tamper_reembeds_instead_of_scoring_modified_vector(
         verifier=verifier, model_hash="model-x", work_dir=work_dir
     )
     assert similarity2(wav_a, wav_b) == 0.0
+    assert len(verifier.calls) == 1
+
+
+def test_embedding_cache_rejects_vector_and_digest_spliced_from_other_audio(
+    tmp_path: Path,
+) -> None:
+    wav_a = tmp_path / "a.wav"
+    wav_b = tmp_path / "b.wav"
+    wav_a.write_bytes(b"a" * 32)
+    wav_b.write_bytes(b"b" * 32)
+    vectors = {
+        str(wav_a): _campp_vector(1.0),
+        str(wav_b): _campp_vector(0.0, 1.0),
+    }
+    work_dir = tmp_path / "work"
+    initial = _build_embedding_similarity(
+        verifier=_CountingCampp(vectors), model_hash="model-x", work_dir=work_dir
+    )
+    assert initial(wav_a, wav_b) == 0.0
+
+    documents: dict[str, tuple[Path, dict]] = {}
+    for path in (work_dir / "embedding-cache-v3").glob("*.json"):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        documents[document["audio_sha256"]] = (path, document)
+    audio_a = hashlib.sha256(wav_a.read_bytes()).hexdigest()
+    audio_b = hashlib.sha256(wav_b.read_bytes()).hexdigest()
+    _path_a, document_a = documents[audio_a]
+    path_b, document_b = documents[audio_b]
+    document_b["embedding"] = document_a["embedding"]
+    document_b["binding_sha256"] = document_a["binding_sha256"]
+    path_b.write_text(json.dumps(document_b), encoding="utf-8")
+
+    verifier = _CountingCampp(vectors)
+    after_splice = _build_embedding_similarity(
+        verifier=verifier, model_hash="model-x", work_dir=work_dir
+    )
+    assert after_splice(wav_a, wav_b) == 0.0
     assert len(verifier.calls) == 1
 
 

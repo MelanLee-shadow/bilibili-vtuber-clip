@@ -41,6 +41,22 @@ def test_song_selector_env_pins_term_context_to_recording_date(monkeypatch):
     assert env["LIDOUSHA_TERM_AS_OF"] == "2026-07-10"
 
 
+def test_child_env_pins_timely_snapshot_path_and_hash(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
+    snapshot = tmp_path / "assets" / "lidousha" / "timely_terms.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_bytes(b'{"snapshot":"bytes"}\n')
+
+    env = runner.child_env_for_date("2026-07-10")
+
+    assert env["LIDOUSHA_TIMELY_TERMS"] == str(snapshot.resolve())
+    assert env["LIDOUSHA_TIMELY_TERMS_SHA256"] == (
+        "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest()
+    )
+    assert env["LIDOUSHA_TERM_AS_OF"] == "2026-07-10"
+
+
 def test_safe_name_sanitizes_and_falls_back():
     assert safe_name("百合是工作？/她当场*不买书", "cid") == "百合是工作？她当场不买书"
     assert safe_name("", "cid") == "cid"
@@ -93,15 +109,20 @@ def test_cover_repair_needed_for_delivered_pick_without_cover(tmp_path, monkeypa
     assert mp4.is_file() and cover.name.endswith(".cover.png")
 
 
-def test_cover_repair_not_needed_when_cover_exists(tmp_path, monkeypatch):
+def test_blocked_stale_cover_is_repaired_even_when_file_exists(tmp_path, monkeypatch):
     rec = _delivered_talk_pick(tmp_path, monkeypatch, with_cover=True)
-    assert not cover_repair_needed("2026-07-06", rec)
+    assert cover_repair_needed("2026-07-06", rec)
+    rec["cover_status"] = "AI_COVER_READY"
+    # A bare PNG plus a status word is not proof that it matches the current
+    # title/video/generation.  Missing hashes must fail closed.
+    assert cover_repair_needed("2026-07-06", rec)
 
 
 def test_cover_repair_bounded_and_skips_undelivered(tmp_path, monkeypatch):
     rec = _delivered_talk_pick(tmp_path, monkeypatch, with_cover=False)
     rec["cover_repair_attempts"] = COVER_REPAIR_MAX_ATTEMPTS
-    assert not cover_repair_needed("2026-07-06", rec)
+    assert cover_repair_needed("2026-07-06", rec)  # integrity remains loud
+    assert not runner._cover_repair_eligible(rec)  # only paid retry is capped
     # title_failed/failed picks were never delivered → nothing to repair
     assert not cover_repair_needed("2026-07-06", {"candidate_id": "auto_9", "status": "failed", "title": "x"})
     # a pick without a title must never get a cover (title is part of the product)
@@ -152,12 +173,19 @@ def test_song_core_span_trims_leading_talk_and_outro(tmp_path):
     assert runner._song_core_span(srt, 0, 60_000) == (0, 60_000)
 
 
-def test_image_lane_down_signatures():
-    """通道断供(运营侧,自愈)不烧有限重试次数；真实 4xx/叠字失败才计数。"""
-    assert runner.image_lane_down("BLOCKED_AI_COVER_REQUIRED: ... 分组 Codex-Plus 下模型 gpt-image-2 的可用渠道不存在（retry）")
-    assert runner.image_lane_down("CPA_IMAGE_EDIT_HTTP_ERROR HTTP 500: upstream")
-    assert not runner.image_lane_down('HTTP 400: {"error":{"message":"width and height must be positive multiples of 16"}}')
-    assert not runner.image_lane_down("COVER_REFERENCE_EXTRACTION_FAILED: boom")
+def test_cover_repair_budget_resets_per_pipeline_generation_but_keeps_lifetime_cap():
+    rec = {
+        "cover_repair_generation": "sha256:old",
+        "cover_repair_attempts": 2,
+        "cover_repair_lifetime_attempts": 2,
+    }
+    assert runner._refresh_cover_repair_budget(rec, "sha256:new")
+    assert rec["cover_repair_attempts"] == 0
+    assert rec["cover_repair_lifetime_attempts"] == 2
+    assert rec["cover_repair_attempt_history"] == [
+        {"pipeline_fingerprint": "sha256:old", "attempts": 2}
+    ]
+    assert not runner._refresh_cover_repair_budget(rec, "sha256:new")
 
 
 def test_cover_ref_prefers_clean_producer_frame(tmp_path, monkeypatch):
@@ -169,6 +197,575 @@ def test_cover_ref_prefers_clean_producer_frame(tmp_path, monkeypatch):
     refs.mkdir(parents=True)
     (refs / "auto_1.cover-ref.png").write_bytes(b"png")
     assert runner.cover_ref_for("2026-07-06", "auto_1").name == "auto_1.cover-ref.png"
+
+
+def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path / "repo")
+    date = "2026-07-10"
+    cid = "song_outer" if song else "auto_1"
+    source_cid = "seededsong_100_200" if song else cid
+    title = "【李豆沙】标题"
+    delivery = runner.REPO_ROOT / "lidousha" / date
+    delivery.mkdir(parents=True)
+    mp4 = delivery / "钩子.mp4"
+    cover = delivery / "钩子.cover.png"
+    mp4.write_bytes(b"video")
+    cover.write_bytes(b"stale-cover")
+    generation_root = runner.BASE / "out" / date / cid / "cover_repair" / "generations" / "attempt-1"
+    generation_root.mkdir(parents=True)
+    generated_cover = generation_root / "final.cover.png"
+    generated_cover.write_bytes(b"new-cover")
+    evidence = generation_root / "evidence"
+    evidence.mkdir()
+    ai_bg = evidence / "ai.png"
+    reference = evidence / "ref.png"
+    request = evidence / "request.json"
+    response = evidence / "response.json"
+    for path, value in (
+        (ai_bg, b"ai"),
+        (reference, b"ref"),
+        (request, b"request"),
+        (response, b"response"),
+    ):
+        path.write_bytes(value)
+
+    def digest(path):
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+    generation_path = generated_cover.with_suffix(".cover_generation.json")
+    generation = {
+        "workflow": "regenerate_lidousha_cover",
+        "status": "AI_COVER_READY",
+        "method": "images.edit",
+        "model": "gpt-image-1.5",
+        "fallback_used": False,
+        "model_fallback_used": True,
+        "attempted_models": ["gpt-image-2", "gpt-image-1.5"],
+        "candidate_id": cid,
+        "title": title,
+        "final_cover": str(generated_cover),
+        "final_cover_sha256": digest(generated_cover),
+        "ai_background": str(ai_bg),
+        "ai_background_sha256": digest(ai_bg),
+        "reference_image": str(reference),
+        "reference_sha256": digest(reference),
+        "request_path": str(request),
+        "request_sha256": digest(request),
+        "response_path": str(response),
+        "response_sha256": digest(response),
+    }
+    generation_path.write_text(json.dumps(generation), encoding="utf-8")
+    artifact_root = runner.BASE / "out" / date / cid
+    if song:
+        artifact_root = artifact_root / "song_selector_full" / "attempt-1"
+    artifact_root = artifact_root / "replacement_recuts"
+    artifact_root.mkdir(parents=True)
+    publish_path = artifact_root / f"{source_cid}.recut.publish.json"
+    video_sha = digest(mp4)
+    record_payload = {
+        **(
+            {"delivery_candidate_id": cid, "source_candidate_id": source_cid}
+            if song
+            else {}
+        ),
+        "artifact_hashes": {"burned_video_sha256": video_sha},
+        "publish_staging": {
+            "title": title,
+            "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+            "reason_codes": ["CPA_AI_COVER_REQUIRED"],
+            "publish_json_path": str(publish_path),
+            "upload_enabled": False,
+        },
+    }
+    delivery_record = mp4.with_suffix(".record.json")
+    delivery_record.write_text(json.dumps(record_payload), encoding="utf-8")
+    source_record = artifact_root / f"{source_cid}.record.json"
+    source_record.write_text(json.dumps(record_payload), encoding="utf-8")
+    publish_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "shadow-publish-draft.v1",
+                "candidate_id": source_cid,
+                "title": title,
+                "artifact_hashes": {"burned_video_sha256": video_sha},
+                "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+                "reason_codes": ["CPA_IMAGE_EDIT_HTTP_ERROR"],
+                "upload_enabled": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    rec = {
+        "candidate_id": cid,
+        "title": title,
+        "status": "review_ready",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "summary": {},
+    }
+    delivery_manifest = None
+    if song:
+        delivery_manifest = mp4.with_suffix(".delivery.manifest.json")
+        manifest_payload = {
+            "schema_version": runner.VERIFIED_SONG_DELIVERY_SCHEMA_VERSION,
+            "status": "DELIVERED_NO_UPLOAD",
+            "candidate_id": cid,
+            "upload_enabled": False,
+            "artifacts": {
+                "video": {"path": str(mp4), "sha256": video_sha},
+                "active_record": {
+                    "path": str(delivery_record),
+                    "sha256": digest(delivery_record),
+                    "source_path": str(source_record),
+                    "source_sha256": digest(source_record),
+                },
+            },
+            "absent_artifacts": {"cover": {"path": str(cover), "status": "ABSENT"}},
+        }
+        delivery_manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+        rec.update(
+            {
+                "delivered": str(mp4),
+                "delivered_sha256": video_sha,
+                "video_sha256": video_sha,
+                "delivered_sidecars": {"active_record": str(delivery_record)},
+                "delivered_sidecar_hashes": {
+                    "active_record": digest(delivery_record)
+                },
+                "delivery_manifest_path": str(delivery_manifest),
+                "delivery_manifest_sha256": digest(delivery_manifest),
+                "delivery_upload_enabled": False,
+            }
+        )
+    return {
+        "date": date,
+        "cid": cid,
+        "source_cid": source_cid,
+        "title": title,
+        "mp4": mp4,
+        "cover": cover,
+        "generated_cover": generated_cover,
+        "generation_path": generation_path,
+        "delivery_record": delivery_record,
+        "source_record": source_record,
+        "publish_path": publish_path,
+        "delivery_manifest": delivery_manifest,
+        "rec": rec,
+        "digest": digest,
+    }
+
+
+def test_bind_repaired_cover_updates_only_active_state_publish_and_records(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    historical = runner.BASE / "out" / fx["date"] / fx["cid"] / "quarantine" / "old.publish.json"
+    historical.parent.mkdir(parents=True)
+    historical.write_bytes(b'{"historical":true}\n')
+    historical_before = historical.read_bytes()
+
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+
+    rec = fx["rec"]
+    assert rec["cover_status"] == "REPAIRED_AI_COVER"
+    assert fx["cover"].read_bytes() == b"new-cover"
+    assert runner._matches_sha256(fx["cover"], rec["cover_sha256"])
+    assert runner._matches_sha256(
+        Path(rec["cover_binding_path"]), rec["cover_binding_sha256"]
+    )
+    assert not cover_repair_needed(fx["date"], {**rec, "delivered": str(fx["mp4"])})
+    record = json.loads(fx["delivery_record"].read_text(encoding="utf-8"))
+    source = json.loads(fx["source_record"].read_text(encoding="utf-8"))
+    publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
+    assert record["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
+    assert record["publish_staging"]["cover_status"] == "AI_COVER_READY"
+    assert source["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
+    assert publish["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
+    assert publish["cover_status"] == "AI_COVER_READY"
+    assert publish["reason_codes"] == []
+    assert publish["upload_enabled"] is False
+    assert historical.read_bytes() == historical_before
+
+
+def test_repaired_cover_binding_detects_title_media_binding_and_hash_tampering(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    base = {**fx["rec"], "delivered": str(fx["mp4"])}
+    assert not cover_repair_needed(fx["date"], base)
+
+    wrong_title = {**base, "title": "【李豆沙】另一个标题"}
+    assert cover_repair_needed(fx["date"], wrong_title)
+    wrong_title["cover_repair_attempts"] = COVER_REPAIR_MAX_ATTEMPTS
+    assert cover_repair_needed(fx["date"], wrong_title)
+    assert not runner._cover_repair_eligible(wrong_title)
+
+    fx["mp4"].write_bytes(b"different-video")
+    assert cover_repair_needed(fx["date"], base)
+    fx["mp4"].write_bytes(b"video")
+
+    missing_hash = dict(base)
+    missing_hash.pop("cover_sha256")
+    assert cover_repair_needed(fx["date"], missing_hash)
+
+    wrong_cover_path = {**base, "cover_path": str(fx["cover"].with_name("wrong.png"))}
+    assert cover_repair_needed(fx["date"], wrong_cover_path)
+
+    wrong_generation = {**base, "cover_generation": {"status": "tampered"}}
+    assert cover_repair_needed(fx["date"], wrong_generation)
+
+    wrong_summary = json.loads(json.dumps(base))
+    wrong_summary["summary"]["cover_status"] = "tampered"
+    assert cover_repair_needed(fx["date"], wrong_summary)
+
+    binding_path = Path(base["cover_binding_path"])
+    binding = json.loads(binding_path.read_text(encoding="utf-8"))
+    binding["title"] = "tampered-but-rehashed"
+    binding_path.write_text(json.dumps(binding, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tampered = {**base, "cover_binding_sha256": fx["digest"](binding_path)}
+    assert cover_repair_needed(fx["date"], tampered)
+
+
+def test_repaired_cover_binding_detects_active_publish_drift(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    base = {**fx["rec"], "delivered": str(fx["mp4"])}
+    assert not cover_repair_needed(fx["date"], base)
+    publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
+    publish["cover_status"] = "BLOCKED_AI_COVER_REQUIRED"
+    fx["publish_path"].write_text(json.dumps(publish), encoding="utf-8")
+    exhausted = {**base, "cover_repair_attempts": COVER_REPAIR_MAX_ATTEMPTS}
+    assert cover_repair_needed(fx["date"], exhausted)
+    assert not runner._cover_repair_eligible(exhausted)
+
+
+def test_initial_producer_cover_accepts_hash_bound_source_to_delivery_copy(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    source_cover = fx["generated_cover"]
+    fx["cover"].write_bytes(source_cover.read_bytes())
+    generation = json.loads(fx["generation_path"].read_text(encoding="utf-8"))
+    generation.pop("status")  # real _stage_lidousha_ai_cover shape
+    generation["final_cover_sha256"] = fx["digest"](source_cover)
+    expected_cover = fx["digest"](fx["cover"])
+    video_sha = fx["digest"](fx["mp4"])
+
+    for record_path in (fx["delivery_record"], fx["source_record"]):
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["artifact_hashes"]["cover_sha256"] = expected_cover
+        record["publish_staging"].update(
+            {
+                "cover_status": "AI_COVER_READY",
+                "cover_path": str(source_cover),
+                "cover_generation": generation,
+            }
+        )
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+    publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
+    publish["artifact_hashes"]["cover_sha256"] = expected_cover
+    publish.update(
+        {
+            "cover_status": "AI_COVER_READY",
+            "cover_path": str(source_cover),
+            "cover_generation": generation,
+        }
+    )
+    fx["publish_path"].write_text(json.dumps(publish), encoding="utf-8")
+    rec = {
+        **fx["rec"],
+        "cover_status": "AI_COVER_READY",
+        "cover_path": str(source_cover),
+        "cover_sha256": expected_cover,
+        "video_sha256": video_sha,
+        "cover_generation": generation,
+        "delivered": str(fx["mp4"]),
+    }
+
+    assert not cover_repair_needed(fx["date"], rec)
+
+
+def test_cover_binding_prevalidation_leaves_everything_unchanged_on_bad_active_record(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    fx["source_record"].write_text("not-json", encoding="utf-8")
+    watched = [fx["cover"], fx["delivery_record"], fx["source_record"], fx["publish_path"]]
+    before = {path: path.read_bytes() for path in watched}
+    state_before = json.loads(json.dumps(fx["rec"]))
+
+    with pytest.raises(ValueError, match="active source record"):
+        runner._bind_repaired_cover(
+            fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+        )
+
+    assert {path: path.read_bytes() for path in watched} == before
+    assert fx["rec"] == state_before
+    assert not fx["generated_cover"].with_suffix(".cover-binding.json").exists()
+
+
+def test_cover_binding_rolls_back_target_and_documents_on_mid_commit_failure(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    watched = [fx["cover"], fx["delivery_record"], fx["source_record"], fx["publish_path"]]
+    before = {path: path.read_bytes() for path in watched}
+    state_before = json.loads(json.dumps(fx["rec"]))
+    real_write = runner._atomic_write_bytes_file
+    failed = False
+
+    def fail_second_document(path, payload):
+        nonlocal failed
+        if Path(path) == fx["source_record"] and not failed:
+            failed = True
+            raise OSError("injected mid-commit failure")
+        real_write(path, payload)
+
+    monkeypatch.setattr(runner, "_atomic_write_bytes_file", fail_second_document)
+    with pytest.raises(OSError, match="injected mid-commit failure"):
+        runner._bind_repaired_cover(
+            fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+        )
+
+    assert {path: path.read_bytes() for path in watched} == before
+    assert fx["rec"] == state_before
+    assert not fx["generated_cover"].with_suffix(".cover-binding.json").exists()
+    journal = json.loads(
+        (fx["generated_cover"].parent / "cover-transaction.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert journal["status"] == "ROLLED_BACK"
+
+
+def test_song_cover_binding_supports_distinct_outer_and_selector_candidate_ids(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    assert fx["cid"] != fx["source_cid"]
+    old_active_record_hash = fx["rec"]["delivered_sidecar_hashes"]["active_record"]
+
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+
+    assert not cover_repair_needed(fx["date"], fx["rec"])
+    manifest = json.loads(fx["delivery_manifest"].read_text(encoding="utf-8"))
+    assert runner._matches_sha256(
+        fx["delivery_manifest"], fx["rec"]["delivery_manifest_sha256"]
+    )
+    assert manifest["candidate_id"] == fx["cid"]
+    assert manifest["artifacts"]["cover"]["path"] == str(fx["cover"])
+    assert manifest["artifacts"]["cover"]["sha256"] == fx["rec"]["cover_sha256"]
+    assert fx["rec"]["delivered_sidecars"]["active_record"] == str(
+        fx["delivery_record"]
+    )
+    assert fx["rec"]["delivered_sidecar_hashes"]["active_record"] == manifest[
+        "artifacts"
+    ]["active_record"]["sha256"]
+    assert (
+        fx["rec"]["delivered_sidecar_hashes"]["active_record"]
+        != old_active_record_hash
+    )
+    assert "cover" not in manifest["absent_artifacts"]
+    publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
+    assert publish["candidate_id"] == fx["source_cid"]
+
+    drifted_state = json.loads(json.dumps(fx["rec"]))
+    drifted_state["delivered_sidecar_hashes"]["active_record"] = "sha256:" + "0" * 64
+    assert cover_repair_needed(fx["date"], drifted_state)
+
+    drifted_cover_path = json.loads(json.dumps(fx["rec"]))
+    drifted_cover_path["delivered_sidecars"]["cover"] = str(
+        fx["cover"].with_name("wrong.cover.png")
+    )
+    assert cover_repair_needed(fx["date"], drifted_cover_path)
+
+    drifted_cover_hash = json.loads(json.dumps(fx["rec"]))
+    drifted_cover_hash["delivered_sidecar_hashes"]["cover"] = "sha256:" + "0" * 64
+    assert cover_repair_needed(fx["date"], drifted_cover_hash)
+
+    drifted_top_level_cover_path = json.loads(json.dumps(fx["rec"]))
+    drifted_top_level_cover_path["cover_path"] = str(
+        fx["cover"].with_name("wrong-top-level.cover.png")
+    )
+    assert cover_repair_needed(fx["date"], drifted_top_level_cover_path)
+
+    # Manifest drift is part of the public song package and must invalidate the
+    # otherwise-valid binding.
+    manifest["artifacts"]["cover"]["sha256"] = "sha256:" + "0" * 64
+    fx["delivery_manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+    fx["rec"]["delivery_manifest_sha256"] = fx["digest"](fx["delivery_manifest"])
+    assert cover_repair_needed(fx["date"], fx["rec"])
+
+
+def test_song_active_record_materialization_uses_publish_compatible_filename(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    fx["source_record"].unlink()
+    record_payload = json.loads(fx["delivery_record"].read_text(encoding="utf-8"))
+    record_payload.pop("delivery_candidate_id", None)
+    record_payload.pop("source_candidate_id", None)
+    summary_record = {
+        "candidate_id": fx["source_cid"],
+        "materialized_recut": record_payload,
+    }
+
+    path, digest = runner._write_song_active_record(
+        summary_record,
+        delivery_candidate_id=fx["cid"],
+        title=fx["title"],
+        video_sha256=fx["digest"](fx["mp4"]),
+    )
+
+    assert path == fx["source_record"]
+    assert runner._matches_sha256(path, digest)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["delivery_candidate_id"] == fx["cid"]
+    assert document["source_candidate_id"] == fx["source_cid"]
+
+
+def test_song_cover_binding_rolls_back_manifest_and_records_on_commit_failure(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    watched = [
+        fx["cover"],
+        fx["delivery_record"],
+        fx["source_record"],
+        fx["publish_path"],
+        fx["delivery_manifest"],
+    ]
+    before = {path: path.read_bytes() for path in watched}
+    state_before = json.loads(json.dumps(fx["rec"]))
+    real_write = runner._atomic_write_bytes_file
+    failed = False
+
+    def fail_manifest_commit(path, payload):
+        nonlocal failed
+        if Path(path) == fx["delivery_manifest"] and not failed:
+            failed = True
+            raise OSError("injected song manifest commit failure")
+        real_write(path, payload)
+
+    monkeypatch.setattr(runner, "_atomic_write_bytes_file", fail_manifest_commit)
+    with pytest.raises(OSError, match="song manifest commit failure"):
+        runner._bind_repaired_cover(
+            fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+        )
+
+    assert {path: path.read_bytes() for path in watched} == before
+    assert fx["rec"] == state_before
+    assert not fx["generated_cover"].with_suffix(".cover-binding.json").exists()
+
+
+@pytest.mark.parametrize("song", [False, True])
+def test_prepared_cover_transaction_rolls_forward_after_abrupt_partial_commit(
+    tmp_path, monkeypatch, song
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=song)
+    persistent_old_state = json.loads(json.dumps(fx["rec"]))
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    journal_path = Path(fx["rec"]["cover_transaction_path"])
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal["status"] == "COMMITTED"
+
+    # Reconstruct the exact on-disk crash window: restore the pre-transaction
+    # bytes, leave only the first two public targets installed, and keep the
+    # durable journal at PREPARED as SIGKILL/host loss would.
+    for entry in journal["entries"]:
+        target = Path(entry["target"])
+        if entry["original_exists"]:
+            runner._atomic_write_bytes_file(
+                target, Path(entry["original_blob"]).read_bytes()
+            )
+        else:
+            target.unlink(missing_ok=True)
+    journal["status"] = "PREPARED"
+    runner._atomic_write_json_file(journal_path, journal)
+    for entry in journal["entries"][:2]:
+        runner._atomic_write_bytes_file(
+            Path(entry["target"]), Path(entry["intended_blob"]).read_bytes()
+        )
+
+    assert runner._roll_forward_prepared_cover_transactions(
+        fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
+    )
+    assert (
+        json.loads(journal_path.read_text(encoding="utf-8"))["status"]
+        == "COMMITTED"
+    )
+    assert runner._recover_committed_cover_binding(
+        fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
+    )
+    assert not cover_repair_needed(fx["date"], persistent_old_state)
+    if song:
+        manifest = json.loads(fx["delivery_manifest"].read_text(encoding="utf-8"))
+        assert persistent_old_state["delivered_sidecar_hashes"][
+            "active_record"
+        ] == manifest["artifacts"]["active_record"]["sha256"]
+
+
+def test_prepared_cover_transaction_rejects_redirect_to_historical_path(
+    tmp_path, monkeypatch
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    journal_path = Path(fx["rec"]["cover_transaction_path"])
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    for entry in journal["entries"]:
+        target = Path(entry["target"])
+        if entry["original_exists"]:
+            runner._atomic_write_bytes_file(
+                target, Path(entry["original_blob"]).read_bytes()
+            )
+        else:
+            target.unlink(missing_ok=True)
+
+    historical = (
+        runner.BASE
+        / "out"
+        / fx["date"]
+        / fx["cid"]
+        / "quarantine"
+        / "historical.publish.json"
+    )
+    historical.parent.mkdir(parents=True)
+    historical.write_bytes(b'{"historical":true}\n')
+    historical_before = historical.read_bytes()
+    publish_entry = next(
+        entry
+        for entry in journal["entries"]
+        if Path(entry["target"]) == fx["publish_path"]
+    )
+    publish_entry["target"] = str(historical)
+    journal["status"] = "PREPARED"
+    runner._atomic_write_json_file(journal_path, journal)
+
+    assert not runner._roll_forward_prepared_cover_transactions(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"]
+    )
+    assert historical.read_bytes() == historical_before
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["status"] == "PREPARED"
+
+
+@pytest.mark.parametrize("song", [False, True])
+def test_committed_cover_binding_recovers_after_state_write_crash_without_regeneration(
+    tmp_path, monkeypatch, song
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=song)
+    persistent_old_state = json.loads(json.dumps(fx["rec"]))
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    # Simulate a process crash before the updated in-memory record reached the
+    # atomic state JSON: filesystem transaction is new, loaded state is old.
+    assert runner._recover_committed_cover_binding(
+        fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
+    )
+    assert persistent_old_state["cover_integrity_status"] == "VALID_BOUND_RECOVERED"
+    assert not cover_repair_needed(fx["date"], persistent_old_state)
+    if song:
+        assert runner._matches_sha256(
+            Path(persistent_old_state["delivery_manifest_path"]),
+            persistent_old_state["delivery_manifest_sha256"],
+        )
 
 
 def test_cover_repair_needed_for_delivered_song(tmp_path, monkeypatch):
@@ -183,10 +780,230 @@ def test_cover_repair_needed_for_delivered_song(tmp_path, monkeypatch):
            "reason_codes": ["ADVISORY_NO_NATURAL_CLOSURE"]}
     assert cover_repair_needed("2026-07-06", rec)  # 交付但语义BLOCK → 照样补封面
     (delivery / "歌切_嘉宾.cover.png").write_bytes(b"png")
-    assert not cover_repair_needed("2026-07-06", rec)
+    assert cover_repair_needed("2026-07-06", rec)  # bare PNG has no title/video/hash authority
     # 未交付(门拦)的歌永远不补封面
     assert not cover_repair_needed("2026-07-06", {"candidate_id": "song_2", "status": "blocked",
                                                   "title": "x", "decision": "BLOCK"})
+
+
+def test_legacy_song_authority_preflight_blocks_before_image_request(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    delivery = tmp_path / "delivery"
+    delivery.mkdir()
+    mp4 = delivery / "legacy.mp4"
+    cover = delivery / "legacy.cover.png"
+    mp4.write_bytes(b"video")
+    record = {
+        "candidate_id": "semanticsong_legacy",
+        "title": "【李豆沙】旧歌切",
+        "status": "ok",
+        "delivered": str(mp4),
+        "cover_status": "REPAIRED_AI_COVER",
+    }
+    state = {"picks": [], "songs": [record]}
+    monkeypatch.setattr(runner, "delivered_paths", lambda _date, _rec: (mp4, cover))
+    writes = []
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: writes.append(True))
+
+    def forbidden_run(*_args, **_kwargs):
+        raise AssertionError("legacy authority failure must not spend an image request")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden_run)
+    runner.repair_covers("2026-07-10", state)
+
+    assert record.get("cover_repair_attempts", 0) == 0
+    assert record["cover_status"] == "BLOCKED_COVER_AUTHORITY_PREFLIGHT"
+    assert record["cover_integrity_status"] == "INVALID_AUTHORITY_PREFLIGHT"
+    assert "delivery record" in record["cover_authority_preflight_error"]
+    assert writes
+
+
+def test_delivered_lane_with_valid_active_docs_still_requires_song_manifest(
+    tmp_path, monkeypatch
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    # Candidate ids are not the lane authority (real ones include
+    # semanticsong_*).  The delivered field is the stable song signal.
+    fx["rec"]["delivered"] = str(fx["mp4"])
+    state = {"picks": [], "songs": [fx["rec"]]}
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "d" * 64)
+    monkeypatch.setattr(
+        runner, "delivered_paths", lambda _date, _rec: (fx["mp4"], fx["cover"])
+    )
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+
+    def forbidden_run(*_args, **_kwargs):
+        raise AssertionError("missing song manifest must block before provider call")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden_run)
+    runner.repair_covers(fx["date"], state)
+
+    assert fx["rec"].get("cover_repair_attempts", 0) == 0
+    assert fx["rec"]["cover_status"] == "BLOCKED_COVER_AUTHORITY_PREFLIGHT"
+    assert "no verified active-record manifest" in fx["rec"][
+        "cover_authority_preflight_error"
+    ]
+
+
+def test_per_clip_http_500_consumes_attempt_and_does_not_starve_next_cover(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    (runner.BASE / "logs").mkdir(parents=True)
+
+    paths = {}
+    picks = []
+    for cid in ("first", "second"):
+        mp4 = tmp_path / f"{cid}.mp4"
+        mp4.write_bytes(cid.encode())
+        paths[cid] = (mp4, tmp_path / f"{cid}.cover.png")
+        picks.append(
+            {
+                "candidate_id": cid,
+                "status": "review_ready",
+                "title": f"【李豆沙】{cid}",
+                "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+            }
+        )
+    monkeypatch.setattr(runner, "delivered_paths", lambda _date, rec: paths[rec["candidate_id"]])
+
+    calls = []
+
+    class Completed:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(cmd, **_kwargs):
+        cid = cmd[cmd.index("--candidate-id") + 1]
+        output = Path(cmd[cmd.index("--out") + 1])
+        calls.append((cid, output))
+        if cid == "first":
+            return Completed(1)  # deterministic per-clip 500/other failure
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"generated")
+        return Completed(0)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    def fake_bind(_date, rec, _mp4, _cover, generated_cover):
+        assert generated_cover.is_file()
+        rec["cover_status"] = "REPAIRED_AI_COVER"
+
+    monkeypatch.setattr(runner, "_bind_repaired_cover", fake_bind)
+
+    state = {"picks": picks, "songs": []}
+    runner.repair_covers("2026-07-10", state)
+
+    assert [cid for cid, _output in calls] == ["first", "second"]
+    assert picks[0]["cover_repair_attempts"] == 1
+    assert picks[1]["cover_status"] == "REPAIRED_AI_COVER"
+    assert calls[0][1].parent != calls[1][1].parent
+
+
+def test_cover_repair_attempts_use_unique_immutable_generation_directories(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "b" * 64)
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    (runner.BASE / "logs").mkdir(parents=True)
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(b"video")
+    cover = tmp_path / "clip.cover.png"
+    rec = {
+        "candidate_id": "clip",
+        "status": "review_ready",
+        "title": "【李豆沙】clip",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+    }
+    monkeypatch.setattr(runner, "delivered_paths", lambda _date, _rec: (mp4, cover))
+    outputs = []
+
+    class Failed:
+        returncode = 1
+
+    def fail(cmd, **_kwargs):
+        outputs.append(Path(cmd[cmd.index("--out") + 1]))
+        return Failed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fail)
+    state = {"picks": [rec], "songs": []}
+    runner.repair_covers("2026-07-10", state)
+    runner.repair_covers("2026-07-10", state)
+
+    assert len(outputs) == 2
+    assert outputs[0] != outputs[1]
+    assert outputs[0].parent.parent.name == "generations"
+    assert outputs[1].parent.parent.name == "generations"
+    assert rec["cover_repair_attempts"] == 2
+    assert rec["cover_repair_lifetime_attempts"] == 2
+
+
+def test_third_successful_generation_with_binding_failure_is_loudly_exhausted(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    fingerprint = "sha256:" + "c" * 64
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: fingerprint)
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_args: None)
+    writes = []
+    monkeypatch.setattr(runner, "write_state", lambda _date, state: writes.append(json.loads(json.dumps(state))))
+    (runner.BASE / "logs").mkdir(parents=True)
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(b"video")
+    cover = tmp_path / "clip.cover.png"
+    rec = {
+        "candidate_id": "clip",
+        "status": "review_ready",
+        "title": "【李豆沙】clip",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "cover_repair_generation": fingerprint,
+        "cover_repair_attempts": 2,
+        "cover_repair_lifetime_attempts": 2,
+    }
+    monkeypatch.setattr(runner, "delivered_paths", lambda _date, _rec: (mp4, cover))
+
+    class Completed:
+        returncode = 0
+
+    def generate(cmd, **_kwargs):
+        output = Path(cmd[cmd.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"generated")
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", generate)
+    monkeypatch.setattr(
+        runner,
+        "_bind_repaired_cover",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad active publish")),
+    )
+    state = {"picks": [rec], "songs": []}
+    runner.repair_covers("2026-07-10", state)
+
+    assert len(writes) >= 2  # attempt charged before provider call, outcome persisted after
+    assert rec["cover_repair_attempts"] == 3
+    assert rec["cover_repair_exhausted"] is True
+    assert rec["cover_integrity_status"] == "INVALID_REPAIR_BUDGET_EXHAUSTED"
+    assert "repair_failed_x3" in rec["cover_status"]
+
+
+def test_cover_reuse_background_without_bound_manifest_fails_closed(tmp_path):
+    from scripts.regenerate_lidousha_cover import regenerate_cover
+
+    with pytest.raises(SystemExit, match="REUSE_BG_REQUIRES_BOUND_SOURCE_MANIFEST"):
+        regenerate_cover(
+            title="【李豆沙】测试",
+            out_path=tmp_path / "cover.png",
+            ai_bg_path=tmp_path / "old-ai.png",
+            reuse_bg=True,
+            use_llm=False,
+        )
 
 
 def test_produce_batch_preserves_order_and_isolates_crashes():
@@ -1525,15 +2342,18 @@ def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
     load_bearing = [
         "scripts/free_session_autoslice.py",
         "scripts/free_asr_client.py",
-        "scripts/cpa_semantic_qa_llm.py",
-        "scripts/llm_via_cpa.sh",
-        "scripts/run_auto_review_shadow_pipeline.py",
+            "scripts/cpa_semantic_qa_llm.py",
+            "scripts/llm_via_cpa.sh",
+            "scripts/regenerate_lidousha_cover.py",
+            "scripts/run_auto_review_shadow_pipeline.py",
         "src/autoslice/agy_lrc_alignment.py",
         "src/autoslice/host_vocal_proof.py",
         "assets/lidousha/known_songs.json",
         "assets/lidousha/voiceprint_profile.v1.json",
-        "assets/lidousha/entity_confusables.json",
-    ]
+            "assets/lidousha/entity_confusables.json",
+            "assets/lidousha/persona.md",
+            "assets/lidousha/title_style.md",
+        ]
     for relative in load_bearing:
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1547,7 +2367,7 @@ def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
         assert runner.pipeline_fingerprint() != baseline, relative
         path.write_text(original, encoding="utf-8")
 
-    unrelated = tmp_path / "assets/lidousha/title_style.md"
+    unrelated = tmp_path / "README.md"
     unrelated.parent.mkdir(parents=True, exist_ok=True)
     unrelated.write_text("unrelated\n", encoding="utf-8")
     assert runner.pipeline_fingerprint() == baseline

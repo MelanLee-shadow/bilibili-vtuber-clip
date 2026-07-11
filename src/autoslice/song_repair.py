@@ -1437,28 +1437,17 @@ def _choose_audio_lrc_candidate(
     """
 
     entries = list(ranked)
-    parents = list(range(len(entries)))
-
-    def find(index: int) -> int:
-        while parents[index] != index:
-            parents[index] = parents[parents[index]]
-            index = parents[index]
-        return index
-
-    def union(left: int, right: int) -> None:
-        left_root, right_root = find(left), find(right)
-        if left_root != right_root:
-            parents[right_root] = left_root
-
     identities = [_lrc_identity_key(lrc) for _ratio, lrc, _alignment in entries]
     fingerprints = [_lrc_fingerprint(lrc) for _ratio, lrc, _alignment in entries]
+    equivalent: list[list[bool]] = [
+        [left == right for right in range(len(entries))]
+        for left in range(len(entries))
+    ]
     for left in range(len(entries)):
         for right in range(left + 1, len(entries)):
             # Provider records are the same song when either title+artist or
-            # the complete canonical timed lyric agrees.  The relation is
-            # transitive: an exact-title NetEase row can join an exact-title
-            # LRCLIB row, which in turn joins LRCLIB's translated-title alias
-            # by identical lyrics.
+            # the complete canonical timed lyric agrees. Fuzzy evidence below
+            # is deliberately kept pairwise; clustering enforces complete-link.
             same_title = bool(
                 _lrc_title_family(entries[left][1])
                 and _lrc_title_family(entries[left][1]) == _lrc_title_family(entries[right][1])
@@ -1467,7 +1456,7 @@ def _choose_audio_lrc_candidate(
             cue_overlap, cue_coverage, shared_cues = _matched_cue_overlap(
                 entries[left][2], entries[right][2]
             )
-            if (
+            same_family = (
                 identities[left] == identities[right]
                 or fingerprints[left] == fingerprints[right]
                 # Same normalized title plus either textual agreement or at
@@ -1478,7 +1467,7 @@ def _choose_audio_lrc_candidate(
                     and (
                         content_similarity >= 0.62
                         or (
-                            shared_cues >= 3
+                            shared_cues >= 5
                             and cue_overlap >= 0.80
                             and cue_coverage >= 0.60
                         )
@@ -1488,16 +1477,32 @@ def _choose_audio_lrc_candidate(
                 # agreement and near-containment of actually matched ASR cues.
                 or (
                     content_similarity >= 0.70
-                    and shared_cues >= 3
+                    and shared_cues >= 5
                     and cue_overlap >= 0.90
-                    and cue_coverage >= 0.60
+                    and cue_coverage >= 0.30
                 )
-            ):
-                union(left, right)
+            )
+            equivalent[left][right] = same_family
+            equivalent[right][left] = same_family
 
-    groups: dict[int, list[tuple[float, LrcResult, list[dict[str, object]]]]] = {}
-    for index, entry in enumerate(entries):
-        groups.setdefault(find(index), []).append(entry)
+    # A partial lyric can be similar to two unrelated full songs, so pairwise
+    # similarity is not transitive. Complete-link clusters require direct
+    # evidence between every pair and cannot bridge A--B--C when A !~ C.
+    group_indices: list[list[int]] = []
+    for index in sorted(
+        range(len(entries)),
+        key=lambda item: (-entries[item][0], entries[item][1].source_ref),
+    ):
+        compatible = [
+            group_index
+            for group_index, members in enumerate(group_indices)
+            if all(equivalent[index][member] for member in members)
+        ]
+        if compatible:
+            group_indices[compatible[0]].append(index)
+        else:
+            group_indices.append([index])
+    groups = [[entries[index] for index in members] for members in group_indices]
     if not groups:
         raise ValueError("no canonical LRC identity is available for audio alignment")
     pinned_identities = {_lrc_identity_key(item) for item in pinned_lrc_results}
@@ -1512,7 +1517,7 @@ def _choose_audio_lrc_candidate(
             min(item.source_ref for _ratio, item, _alignment in group_entries),
             group_entries,
         )
-        for group_entries in groups.values()
+        for group_entries in groups
     ]
     # Recall remains the primary authority.  For an *exact* top-recall tie,
     # prefer the one identity already pinned by >=2 known-song fingerprint
@@ -1521,7 +1526,34 @@ def _choose_audio_lrc_candidate(
     # the same 41/52 ASR recall and the audio verifier was never reached.
     grouped.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
     top_ratio, is_curated, _top_key, top_entries = grouped[0]
-    second_ratio = grouped[1][0] if len(grouped) > 1 else 0.0
+    top_indices_for_margin = {
+        index
+        for index, entry in enumerate(entries)
+        if entry[0] == top_ratio and any(entry is top for top in top_entries)
+    }
+    competing_groups = []
+    for group in grouped[1:]:
+        group_ratio, _pinned, _key, group_entries = group
+        # Equal-best disconnected cliques remain a hard ambiguity. A lower-
+        # recall provider variant that directly matches any member of the top
+        # core is the same song for margin purposes, even if complete-link
+        # correctly kept it outside the canonical selection clique.
+        if group_ratio < top_ratio:
+            max_row_indices = {
+                index
+                for index, entry in enumerate(entries)
+                if entry[0] == group_ratio and any(entry is row for row in group_entries)
+            }
+            if max_row_indices and all(
+                any(
+                    equivalent[row_index][top_index]
+                    for top_index in top_indices_for_margin
+                )
+                for row_index in max_row_indices
+            ):
+                continue
+        competing_groups.append(group)
+    second_ratio = competing_groups[0][0] if competing_groups else 0.0
     curated_top_ties = [
         group for group in grouped if group[0] == top_ratio and group[1]
     ]
@@ -1564,23 +1596,48 @@ def _choose_audio_lrc_candidate(
     # the title family corroborated by the most independent providers. Within
     # that family the shortest display form drops Cover/Live decorations.
     family_rows: dict[str, list[LrcResult]] = {}
+    top_indices = {
+        index
+        for index, entry in enumerate(entries)
+        if any(entry is top_entry for top_entry in top_entries)
+    }
     for _ratio, item, _alignment in top_entries:
         family = _lrc_title_family(item)
         if family:
             family_rows.setdefault(family, []).append(item)
+    # Complete-link is intentionally strict for identity choice, but a lower-
+    # recall provider can still corroborate a title already present in the top
+    # clique. Admit only same-family rows directly equivalent to at least one
+    # top member of that family; this strengthens naming without reopening an
+    # A--B--C identity bridge or introducing a new title family.
+    for index, (_ratio, item, _alignment) in enumerate(entries):
+        if index in top_indices:
+            continue
+        family = _lrc_title_family(item)
+        if family not in family_rows:
+            continue
+        if any(
+            equivalent[index][top_index]
+            and _lrc_title_family(entries[top_index][1]) == family
+            for top_index in top_indices
+        ):
+            family_rows[family].append(item)
     if family_rows:
-        _family, corroborated = max(
-            family_rows.items(),
-            key=lambda entry: (
-                len({item.provider for item in entry[1]}),
-                len(entry[1]),
-                -min(len(str(item.song_title)) for item in entry[1]),
-                entry[0],
-            ),
-        )
-        # A title rewrite needs corroboration from at least two independent
-        # provider families. Multiple rows from one catalog are not consensus.
-        if len({item.provider for item in corroborated}) >= 2:
+        selected_family = _lrc_title_family(selected_lrc)
+        provider_votes = {
+            family: len({item.provider for item in rows})
+            for family, rows in family_rows.items()
+        }
+        winning_votes = max(provider_votes.values())
+        winners = [
+            family for family, votes in provider_votes.items() if votes == winning_votes
+        ]
+        selected_votes = provider_votes.get(selected_family, 0)
+        # Each provider family gets one vote. Rewrite only for a unique winner
+        # with >=2 independent providers and strictly more evidence than the
+        # acoustically selected title; a 2-vs-2 tie preserves the source name.
+        if len(winners) == 1 and winning_votes >= 2 and winning_votes > selected_votes:
+            corroborated = family_rows[winners[0]]
             canonical_title = min(
                 (
                     str(item.song_title).strip()

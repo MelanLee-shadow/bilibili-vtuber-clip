@@ -8,7 +8,9 @@ one clip from its reference frame or media, in the redesigned persona-driven
 style (half-body bust one side + multi-color artistic title + varied background;
 per-clip skin from the reference; never tongue-out).
 
-Fail-closed like production: real CPA gpt-image-2 only, never a frame-grab fake.
+Fail-closed like production: real CPA image edit only, never a frame-grab fake.
+The compatibility model is tried only after an explicit model-unavailable
+response from the preferred route.
 
 Examples:
   # from a per-clip reference frame (fastest — reuses an existing cover-ref):
@@ -19,8 +21,9 @@ Examples:
   # from the clip media (extracts a fresh identity frame first):
   python scripts/regenerate_lidousha_cover.py --title "..." --media clip.recut.mp4 --out cover.png
 
-  # re-overlay only (no CPA call) onto an existing no-text AI background:
-  python scripts/regenerate_lidousha_cover.py --title "..." --reuse-bg --ai-bg bg.png --out cover.png
+Re-overlaying an existing background is deliberately fail-closed here: without
+the original generation manifest and hashes it would falsely claim a new
+``images.edit`` result.  Generate a new immutable cover attempt instead.
 """
 from __future__ import annotations
 import argparse
@@ -38,6 +41,7 @@ if str(ROOT) not in sys.path:
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from scripts.run_auto_review_shadow_pipeline import (
     _call_cpa_image_edit,
+    _cpa_image_model_candidates,
     _lidousha_cover_art_direction,
     _lidousha_cover_prompt,
     _lidousha_cover_text,
@@ -80,6 +84,14 @@ def regenerate_cover(
     candidate_id = candidate_id or out_path.stem
     out_path.parent.mkdir(parents=True, exist_ok=True)
     ai_bg_path = ai_bg_path or out_path.with_suffix(".ai-bg.png")
+    selected_model = _cpa_image_model_candidates()[0]
+    attempted_models: list[str] = []
+    model_fallback_used = False
+    request_path = out_path.with_suffix(".cpa-request.redacted.json")
+    response_path = out_path.with_suffix(".cpa-response.redacted.json")
+
+    if reuse_bg:
+        raise SystemExit("REUSE_BG_REQUIRES_BOUND_SOURCE_MANIFEST")
 
     art_direction_llm = None
     if use_llm:
@@ -96,37 +108,39 @@ def regenerate_cover(
 
         art_direction = dataclasses.replace(art_direction, layout=layout)
 
-    if reuse_bg:
-        if not ai_bg_path.is_file():
-            raise SystemExit(f"--reuse-bg but no AI background at {ai_bg_path}")
-    else:
-        base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
-        api_key = os.environ.get("CPA_API_KEY", "").strip()
-        if not base_url or not api_key:
-            raise SystemExit("BLOCKED_AI_COVER_REQUIRED: CPA_BASE_URL/CPA_API_KEY missing (no frame-grab fakery)")
-        if reference_path is None:
-            if media_path is None:
-                raise SystemExit("need --ref or --media (or --reuse-bg)")
-            reference_path = out_path.with_suffix(".cover-ref.png")
-            _extract_reference_frame(media_path, reference_path)
-        result = _call_cpa_image_edit(
-            base_url=base_url,
-            api_key=api_key,
-            reference_path=reference_path,
-            output_path=ai_bg_path,
-            prompt=_lidousha_cover_prompt(title=title, cover_text=cover_text, art_direction=art_direction),
-            request_path=out_path.with_suffix(".cpa-request.redacted.json"),
-            response_path=out_path.with_suffix(".cpa-response.redacted.json"),
-        )
-        if result.get("status") != "AI_BACKGROUND_READY" or not ai_bg_path.is_file():
-            raise SystemExit(f"BLOCKED_AI_COVER_REQUIRED: {result.get('reason_code')} {result.get('detail')}")
+    base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
+    api_key = os.environ.get("CPA_API_KEY", "").strip()
+    if not base_url or not api_key:
+        raise SystemExit("BLOCKED_AI_COVER_REQUIRED: CPA_BASE_URL/CPA_API_KEY missing (no frame-grab fakery)")
+    if reference_path is None:
+        if media_path is None:
+            raise SystemExit("need --ref or --media")
+        reference_path = out_path.with_suffix(".cover-ref.png")
+        _extract_reference_frame(media_path, reference_path)
+    result = _call_cpa_image_edit(
+        base_url=base_url,
+        api_key=api_key,
+        reference_path=reference_path,
+        output_path=ai_bg_path,
+        prompt=_lidousha_cover_prompt(title=title, cover_text=cover_text, art_direction=art_direction),
+        request_path=request_path,
+        response_path=response_path,
+    )
+    if result.get("status") != "AI_BACKGROUND_READY" or not ai_bg_path.is_file():
+        raise SystemExit(f"BLOCKED_AI_COVER_REQUIRED: {result.get('reason_code')} {result.get('detail')}")
+    selected_model = str(result.get("selected_model") or selected_model)
+    attempted_models = [str(item) for item in result.get("attempted_models") or []]
+    model_fallback_used = bool(result.get("model_fallback_used"))
 
     overlay = _overlay_lidousha_cover_title(ai_bg_path, out_path, cover_text=cover_text, art_direction=art_direction)
     meta = {
         "workflow": "regenerate_lidousha_cover",
-        "model": "gpt-image-2",
+        "status": "AI_COVER_READY",
+        "model": selected_model,
         "method": "images.edit",
         "fallback_used": False,
+        "model_fallback_used": model_fallback_used,
+        "attempted_models": attempted_models,
         "title": title,
         "cover_text": cover_text,
         "candidate_id": candidate_id,
@@ -141,6 +155,20 @@ def regenerate_cover(
         },
         "ai_background": str(ai_bg_path),
         "ai_background_sha256": "sha256:" + _sha256(ai_bg_path),
+        "reference_image": str(reference_path) if reference_path is not None else None,
+        "reference_sha256": (
+            "sha256:" + _sha256(reference_path)
+            if reference_path is not None and reference_path.is_file()
+            else None
+        ),
+        "request_path": str(request_path) if request_path.is_file() else None,
+        "request_sha256": (
+            "sha256:" + _sha256(request_path) if request_path.is_file() else None
+        ),
+        "response_path": str(response_path) if response_path.is_file() else None,
+        "response_sha256": (
+            "sha256:" + _sha256(response_path) if response_path.is_file() else None
+        ),
         "final_cover": str(out_path),
         "final_cover_sha256": "sha256:" + _sha256(out_path),
         **overlay,
@@ -159,7 +187,7 @@ def main(argv=None) -> int:
     p.add_argument("--media", type=Path, help="Clip media to extract a fresh reference frame from.")
     p.add_argument("--candidate-id", help="Stable id for deterministic layout/hook rotation (default: out filename stem).")
     p.add_argument("--ai-bg", type=Path, help="Path for the no-text AI background (default: <out>.ai-bg.png).")
-    p.add_argument("--reuse-bg", action="store_true", help="Re-overlay onto an existing --ai-bg without calling CPA.")
+    p.add_argument("--reuse-bg", action="store_true", help="Fail closed unless a future bound-source-manifest workflow is implemented.")
     p.add_argument("--no-llm", action="store_true", help="Skip the CPA art-direction judge; use the deterministic baseline.")
     p.add_argument("--layout", choices=("left-split", "right-split", "banner", "song-clean"),
                    help="force the text layout (right-split=text LEFT/character RIGHT; left-split=text RIGHT). Use when the reused AI bg's character is on the side the auto-layout put text.")

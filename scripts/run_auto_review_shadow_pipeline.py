@@ -3310,9 +3310,10 @@ def _stage_lidousha_ai_cover(
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
         "method": "images.edit",
-        "model": "gpt-image-2",
+        "model": _cpa_image_model_candidates()[0],
         "image_gen_model": "cpa",
         "fallback_used": False,
+        "model_fallback_used": False,
         "cover_text": cover_text,
         "title": title,
     }
@@ -3374,7 +3375,7 @@ def _stage_lidousha_ai_cover(
     )
     cover_generation["art_direction"] = asdict(art_direction)
 
-    ai_background_path = ai_dir / f"{candidate_id}.ai-bg.cpa-gpt-image-2.png"
+    ai_background_path = ai_dir / f"{candidate_id}.ai-bg.cpa-image-edit.png"
     request_path = evidence_dir / f"{candidate_id}.cover-cpa-request.redacted.json"
     response_path = evidence_dir / f"{candidate_id}.cover-cpa-response.redacted.json"
     cpa_result = _call_cpa_image_edit(
@@ -3392,8 +3393,12 @@ def _stage_lidousha_ai_cover(
             "reference_sha256": "sha256:" + _sha256(reference_path),
             "request_path": str(request_path),
             "response_path": str(response_path),
+            "attempted_models": list(cpa_result.get("attempted_models") or []),
+            "model_fallback_used": bool(cpa_result.get("model_fallback_used")),
         }
     )
+    if cpa_result.get("selected_model"):
+        cover_generation["model"] = str(cpa_result["selected_model"])
     if cpa_result.get("status") != "AI_BACKGROUND_READY" or not ai_background_path.is_file():
         cover_generation["cpa_status"] = cpa_result.get("status")
         return _blocked_ai_cover_result(
@@ -3880,6 +3885,34 @@ _COVER_CANVAS = (1920, 1080)
 # blanked a whole unattended batch's covers).  Request the nearest compliant
 # size and normalize the returned image back onto the 1920x1080 overlay canvas.
 _COVER_REQUEST_SIZE = "1920x1088"
+_COVER_PRIMARY_MODEL = "gpt-image-2"
+_COVER_COMPATIBILITY_MODEL = "gpt-image-1.5"
+
+
+def _cpa_image_model_candidates() -> tuple[str, ...]:
+    preferred = os.environ.get("CPA_IMAGE_MODEL", _COVER_PRIMARY_MODEL).strip()
+    if not preferred:
+        preferred = _COVER_PRIMARY_MODEL
+    if preferred == _COVER_PRIMARY_MODEL:
+        return (_COVER_PRIMARY_MODEL, _COVER_COMPATIBILITY_MODEL)
+    return (preferred,)
+
+
+def _explicit_cpa_model_unavailable(status_code: int, raw: str) -> bool:
+    """Only explicit routing/model availability errors authorize fallback."""
+
+    if status_code not in {400, 404}:
+        return False
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, Mapping):
+        error = payload.get("error")
+        if isinstance(error, Mapping) and error.get("code") == "client_model_unavailable":
+            return True
+    lowered = raw.lower()
+    return "client_model_unavailable" in lowered or "可用渠道不存在" in raw
 
 
 def _normalize_cover_canvas(path: Path) -> tuple[int, int]:
@@ -3911,94 +3944,207 @@ def _call_cpa_image_edit(
     request_path: Path,
     response_path: Path,
     timeout_seconds: float = 180.0,
+    model_candidates: Sequence[str] | None = None,
 ) -> dict[str, object]:
     endpoint = f"{base_url}/images/edits"
-    request_path.write_text(
-        json.dumps(
-            {
-                "endpoint": endpoint,
-                "model": "gpt-image-2",
-                "method": "images.edit",
-                "image_gen_model": "cpa",
-                "prompt": prompt,
-                "reference_image": str(reference_path),
-                "reference_sha256": "sha256:" + _sha256(reference_path),
-                "api_key": "<redacted>",
-            },
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
+    candidates = tuple(
+        dict.fromkeys(
+            model.strip()
+            for model in (model_candidates or _cpa_image_model_candidates())
+            if isinstance(model, str) and model.strip()
         )
-        + "\n",
-        encoding="utf-8",
     )
-    try:
-        body, content_type = _multipart_form_data(
-            fields={"model": "gpt-image-2", "prompt": prompt, "size": _COVER_REQUEST_SIZE},
-            files={"image": (reference_path.name, reference_path.read_bytes(), "image/png")},
-        )
-        request = urllib.request.Request(
-            endpoint,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": content_type,
-                # the CPA endpoint sits behind Cloudflare, which 403s (error
-                # 1010) the default Python-urllib user agent
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            status_code = response.status
-            raw = response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        response_path.write_text(
-            json.dumps({"status_code": exc.code, "body_tail": raw[-4000:]}, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        return {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_HTTP_ERROR", "detail": f"HTTP {exc.code}: {raw[-500:]}"}
-    except Exception as exc:
-        response_path.write_text(
-            json.dumps({"error": type(exc).__name__, "message": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        return {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_REQUEST_FAILED", "detail": f"{type(exc).__name__}: {exc}"}
+    if not candidates:
+        return {
+            "status": "FAILED",
+            "reason_code": "CPA_IMAGE_EDIT_MODEL_CONFIG_INVALID",
+            "detail": "no CPA image model candidate configured",
+            "attempted_models": [],
+        }
+    request_attempts: list[dict[str, object]] = []
+    response_attempts: list[dict[str, object]] = []
+    reference_sha256 = "sha256:" + _sha256(reference_path)
+    reference_bytes = reference_path.read_bytes()
+    request_path.parent.mkdir(parents=True, exist_ok=True)
+    response_path.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        response_path.write_text(
-            json.dumps({"status_code": status_code, "body_tail": raw[-4000:]}, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    def persist_evidence() -> None:
+        request_path.write_text(
+            json.dumps(
+                {
+                    "endpoint": endpoint,
+                    "method": "images.edit",
+                    "image_gen_model": "cpa",
+                    "prompt": prompt,
+                    "reference_image": str(reference_path),
+                    "reference_sha256": reference_sha256,
+                    "api_key": "<redacted>",
+                    "attempts": request_attempts,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
-        return {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_BAD_JSON", "detail": raw[-500:]}
-    image_record = (payload.get("data") or [{}])[0] if isinstance(payload.get("data"), list) else {}
-    if not isinstance(image_record, Mapping):
-        image_record = {}
-    redacted_response: dict[str, object] = {"status_code": status_code, "keys": sorted(payload.keys()), "data_keys": sorted(image_record.keys())}
-    b64_json = image_record.get("b64_json")
-    image_url = image_record.get("url")
-    if isinstance(b64_json, str) and b64_json:
-        output_path.write_bytes(base64.b64decode(b64_json))
-        redacted_response["b64_json_bytes"] = len(b64_json)
-    elif isinstance(image_url, str) and image_url:
-        with urllib.request.urlopen(image_url, timeout=timeout_seconds) as image_response:
-            output_path.write_bytes(image_response.read())
-        redacted_response["url"] = image_url
-    else:
-        response_path.write_text(json.dumps(redacted_response, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_NO_IMAGE", "detail": "response had no b64_json/url image"}
-    try:
-        redacted_response["canvas"] = list(_normalize_cover_canvas(output_path))
-    except Exception as exc:  # noqa: BLE001 — a broken/undecodable image must block, not deliver
-        response_path.write_text(json.dumps(redacted_response, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_BAD_IMAGE", "detail": f"{type(exc).__name__}: {exc}"}
-    redacted_response["output_path"] = str(output_path)
-    redacted_response["output_sha256"] = "sha256:" + _sha256(output_path)
-    response_path.write_text(json.dumps(redacted_response, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {"status": "AI_BACKGROUND_READY", "output_path": str(output_path)}
+        response_path.write_text(
+            json.dumps(
+                {"attempts": response_attempts},
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    attempted_models: list[str] = []
+    for attempt_index, model in enumerate(candidates):
+        attempted_models.append(model)
+        request_attempts.append(
+            {"attempt": attempt_index + 1, "model": model, "size": _COVER_REQUEST_SIZE}
+        )
+        persist_evidence()
+        try:
+            body, content_type = _multipart_form_data(
+                fields={"model": model, "prompt": prompt, "size": _COVER_REQUEST_SIZE},
+                files={"image": (reference_path.name, reference_bytes, "image/png")},
+            )
+            request = urllib.request.Request(
+                endpoint,
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": content_type,
+                    # the CPA endpoint sits behind Cloudflare, which 403s the
+                    # default Python-urllib user agent
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                status_code = response.status
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            unavailable = _explicit_cpa_model_unavailable(exc.code, raw)
+            response_attempts.append(
+                {
+                    "attempt": attempt_index + 1,
+                    "model": model,
+                    "status_code": exc.code,
+                    "body_tail": raw[-4000:],
+                    "explicit_model_unavailable": unavailable,
+                }
+            )
+            persist_evidence()
+            if unavailable and attempt_index + 1 < len(candidates):
+                continue
+            return {
+                "status": "FAILED",
+                "reason_code": "CPA_IMAGE_EDIT_HTTP_ERROR",
+                "detail": f"HTTP {exc.code}: {raw[-500:]}",
+                "attempted_models": attempted_models,
+                "model_fallback_used": len(attempted_models) > 1,
+            }
+        except Exception as exc:
+            response_attempts.append(
+                {
+                    "attempt": attempt_index + 1,
+                    "model": model,
+                    "error": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+            persist_evidence()
+            return {
+                "status": "FAILED",
+                "reason_code": "CPA_IMAGE_EDIT_REQUEST_FAILED",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "attempted_models": attempted_models,
+                "model_fallback_used": len(attempted_models) > 1,
+            }
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            response_attempts.append(
+                {
+                    "attempt": attempt_index + 1,
+                    "model": model,
+                    "status_code": status_code,
+                    "body_tail": raw[-4000:],
+                }
+            )
+            persist_evidence()
+            return {
+                "status": "FAILED",
+                "reason_code": "CPA_IMAGE_EDIT_BAD_JSON",
+                "detail": raw[-500:],
+                "attempted_models": attempted_models,
+                "model_fallback_used": len(attempted_models) > 1,
+            }
+        image_record = (
+            (payload.get("data") or [{}])[0]
+            if isinstance(payload.get("data"), list)
+            else {}
+        )
+        if not isinstance(image_record, Mapping):
+            image_record = {}
+        redacted_response: dict[str, object] = {
+            "attempt": attempt_index + 1,
+            "model": model,
+            "status_code": status_code,
+            "keys": sorted(payload.keys()),
+            "data_keys": sorted(image_record.keys()),
+        }
+        try:
+            b64_json = image_record.get("b64_json")
+            image_url = image_record.get("url")
+            if isinstance(b64_json, str) and b64_json:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(base64.b64decode(b64_json))
+                redacted_response["b64_json_bytes"] = len(b64_json)
+            elif isinstance(image_url, str) and image_url:
+                with urllib.request.urlopen(image_url, timeout=timeout_seconds) as image_response:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_bytes(image_response.read())
+                redacted_response["url"] = image_url
+            else:
+                response_attempts.append(redacted_response)
+                persist_evidence()
+                return {
+                    "status": "FAILED",
+                    "reason_code": "CPA_IMAGE_EDIT_NO_IMAGE",
+                    "detail": "response had no b64_json/url image",
+                    "attempted_models": attempted_models,
+                    "model_fallback_used": len(attempted_models) > 1,
+                }
+            redacted_response["canvas"] = list(_normalize_cover_canvas(output_path))
+        except Exception as exc:  # noqa: BLE001 — broken images must block
+            response_attempts.append(redacted_response)
+            persist_evidence()
+            return {
+                "status": "FAILED",
+                "reason_code": "CPA_IMAGE_EDIT_BAD_IMAGE",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "attempted_models": attempted_models,
+                "model_fallback_used": len(attempted_models) > 1,
+            }
+        redacted_response["output_path"] = str(output_path)
+        redacted_response["output_sha256"] = "sha256:" + _sha256(output_path)
+        response_attempts.append(redacted_response)
+        persist_evidence()
+        return {
+            "status": "AI_BACKGROUND_READY",
+            "output_path": str(output_path),
+            "selected_model": model,
+            "attempted_models": attempted_models,
+            "model_fallback_used": len(attempted_models) > 1,
+        }
+
+    raise AssertionError("CPA image model loop exhausted without a result")
 
 
 def _multipart_form_data(*, fields: Mapping[str, str], files: Mapping[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
