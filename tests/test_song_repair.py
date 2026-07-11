@@ -287,6 +287,67 @@ def test_audio_identity_collapses_same_song_provider_variants_and_prefers_lrclib
     assert chosen.source_ref == "https://lrclib.net/api/get/33542202"
 
 
+def test_audio_identity_collapses_same_title_with_different_line_splitting():
+    canonical = _japanese_lrc()
+    # Same lyrics, but provider B merged pairs of lines and shifted timing.
+    merged = LrcResult(
+        provider="netease",
+        song_title=canonical.song_title,
+        artist="cover singer",
+        source_ref="netease://song/merged-cover",
+        lines=tuple(
+            LrcLine(
+                canonical.lines[index].time_ms + 250,
+                canonical.lines[index].text + canonical.lines[index + 1].text,
+            )
+            for index in range(0, len(canonical.lines) - 1, 2)
+        ),
+    )
+    unrelated_same_title = LrcResult(
+        provider="netease",
+        song_title=canonical.song_title,
+        artist="different artist",
+        source_ref="netease://song/unrelated",
+        lines=tuple(LrcLine(i * 5_000, f"完全不同的歌词段落{i}") for i in range(8)),
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [(1.0, canonical, []), (1.0, merged, []), (0.1, unrelated_same_title, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == canonical.source_ref
+
+
+def test_fuzzy_family_selects_strongest_full_lrc_not_truncated_lrclib_subset():
+    canonical = _japanese_lrc()
+    full = LrcResult(
+        provider="netease",
+        song_title=canonical.song_title,
+        artist=canonical.artist,
+        source_ref="netease://song/full",
+        lines=canonical.lines,
+    )
+    truncated = LrcResult(
+        provider="lrclib",
+        song_title=canonical.song_title,
+        artist=canonical.artist,
+        source_ref="https://lrclib.net/api/get/truncated",
+        lines=canonical.lines[: max(2, len(canonical.lines) // 2)],
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [(0.90, full, []), (0.30, truncated, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == full.source_ref
+
+
 @pytest.mark.parametrize("pinned_first", [True, False])
 def test_audio_identity_prefers_single_curated_identity_on_exact_recall_tie(pinned_first):
     pinned = _japanese_lrc()

@@ -1349,6 +1349,36 @@ def _lrc_identity_key(lrc: LrcResult) -> str:
     return f"lyrics:{_lrc_fingerprint(lrc)}"
 
 
+def _lrc_content_similarity(left: LrcResult, right: LrcResult) -> float:
+    """Lyrics-only equivalence signal across cover/provider timing variants.
+
+    Exact timed fingerprints are too strict: the same song is commonly split
+    into 23/35/57-line LRCs, includes a repeated chorus in one provider, or has
+    a few credit/ad-lib differences.  Compare both full normalized streams and
+    exact normalized-line containment; neither uses provider search rank.
+    """
+
+    left_lines = [normalize_lyric_text(line.text) for line in left.lines]
+    right_lines = [normalize_lyric_text(line.text) for line in right.lines]
+    left_lines = [line for line in left_lines if line]
+    right_lines = [line for line in right_lines if line]
+    if not left_lines or not right_lines:
+        return 0.0
+    stream_ratio = SequenceMatcher(None, "".join(left_lines), "".join(right_lines)).ratio()
+    left_set, right_set = set(left_lines), set(right_lines)
+    line_f1 = 2 * len(left_set & right_set) / max(1, len(left_set) + len(right_set))
+    return max(stream_ratio, line_f1)
+
+
+def _lrc_title_family(lrc: LrcResult) -> str:
+    """Provider display-title noise stripped for same-song clustering."""
+
+    title = str(lrc.song_title or "")
+    title = re.split(r"\s+-\s+|[（(【\[]", title, maxsplit=1)[0]
+    title = re.sub(r"(?i)\b(?:cover|live|ver(?:sion)?)\b.*$", "", title)
+    return normalize_lyric_text(title)
+
+
 def _choose_audio_lrc_candidate(
     ranked: Sequence[tuple[float, LrcResult, list[dict[str, object]]]],
     *,
@@ -1388,7 +1418,16 @@ def _choose_audio_lrc_candidate(
             # transitive: an exact-title NetEase row can join an exact-title
             # LRCLIB row, which in turn joins LRCLIB's translated-title alias
             # by identical lyrics.
-            if identities[left] == identities[right] or fingerprints[left] == fingerprints[right]:
+            same_title = bool(
+                _lrc_title_family(entries[left][1])
+                and _lrc_title_family(entries[left][1]) == _lrc_title_family(entries[right][1])
+            )
+            content_similarity = _lrc_content_similarity(entries[left][1], entries[right][1])
+            if (
+                identities[left] == identities[right]
+                or fingerprints[left] == fingerprints[right]
+                or (same_title and content_similarity >= 0.62)
+            ):
                 union(left, right)
 
     groups: dict[int, list[tuple[float, LrcResult]]] = {}
@@ -1437,13 +1476,14 @@ def _choose_audio_lrc_candidate(
             f"best={top_ratio:.0%}, runner-up={second_ratio:.0%}, "
             f"need best>={min_recall_ratio:.0%} and margin>={min_margin:.0%}"
         )
-    # Prefer the public LRCLIB record when multiple providers expose exactly
-    # the same timed lyrics; otherwise retain the strongest discovery record.
+    # Always retain the strongest acoustic-discovery member of a fuzzy lyric
+    # family.  LRCLIB is only a deterministic tie-break; preferring a weaker
+    # truncated LRCLIB subset can move the canonical song boundary.
     return sorted(
         top_entries,
         key=lambda item: (
-            item[1].provider != "lrclib",
             -item[0],
+            item[1].provider != "lrclib",
             item[1].source_ref,
         ),
     )[0][1]

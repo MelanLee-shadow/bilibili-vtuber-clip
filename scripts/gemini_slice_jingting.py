@@ -77,6 +77,15 @@ PRINCIPLES_PATHS = (
         "/app/lidousha_subtitle_principles.md",
     ]
 )
+_TIMELY_TERMS_ENV = os.environ.get("LIDOUSHA_TIMELY_TERMS")
+_REPO_TIMELY_TERMS = str(
+    Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "timely_terms.json"
+)
+TIMELY_TERMS_PATHS = (
+    [_TIMELY_TERMS_ENV]
+    if _TIMELY_TERMS_ENV
+    else [_REPO_TIMELY_TERMS, "/opt/bilive/app/lidousha_timely_terms.json", "/app/lidousha_timely_terms.json"]
+)
 SLICE_RX_TEMPLATE = r"\d+s_.*_%s_.*\.(flv|mp4)$"
 SRT_TIME_RX = re.compile(
     r"\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}"
@@ -130,7 +139,81 @@ def subtitle_principles() -> str:
     return _read_first(PRINCIPLES_PATHS)
 
 
-def glossary() -> str:
+def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
+    """Render the bounded, source-backed recency prior for correction prompts."""
+
+    raw = _read_first(TIMELY_TERMS_PATHS)
+    if not raw:
+        return ""
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict) or payload.get("schema_version") != "lidousha-timely-terms.v1":
+        return ""
+    if as_of is None and os.environ.get("LIDOUSHA_TERM_AS_OF"):
+        try:
+            as_of_date = dt.date.fromisoformat(os.environ["LIDOUSHA_TERM_AS_OF"])
+            as_of = dt.datetime.combine(as_of_date, dt.time(12), tzinfo=dt.timezone.utc)
+        except ValueError:
+            as_of = None
+    now = as_of or dt.datetime.now(dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.timezone.utc)
+    expiry = None
+    try:
+        expiry = dt.datetime.fromisoformat(str(payload.get("expires_at") or ""))
+    except ValueError:
+        pass
+    stale = expiry is None or now.astimezone(expiry.tzinfo or dt.timezone.utc) > expiry
+    status = "STALE（只能作弱候选，禁止覆盖音频/结构化原文）" if stale else "FRESH"
+    lines = [
+        "时效实体快照（只提供候选，不是盲替换表）:",
+        f"- snapshot_status: {status}; generated_at={payload.get('generated_at')}; expires_at={payload.get('expires_at')}",
+    ]
+    today = now.date()
+    for term in payload.get("terms") or []:
+        if not isinstance(term, dict):
+            continue
+        try:
+            active_from = dt.date.fromisoformat(str(term.get("active_from")))
+            active_until = dt.date.fromisoformat(str(term.get("active_until")))
+        except ValueError:
+            continue
+        if not active_from <= today <= active_until:
+            continue
+        sources = []
+        for source in term.get("sources") or []:
+            if not isinstance(source, dict) or not source.get("url"):
+                continue
+            try:
+                published_at = dt.date.fromisoformat(str(source.get("published_at")))
+            except ValueError:
+                continue
+            if published_at <= today:
+                sources.append(str(source["url"]))
+        # A current term without a source that existed on the recording date
+        # is future leakage, not evidence.
+        if not sources:
+            continue
+        lines.append(
+            "- {canonical}; readings={readings}; aliases={aliases}; confusables={confusables}; "
+            "topic={topic}; active={start}..{end}; reason={reason}; sources={sources}".format(
+                canonical=term.get("canonical"),
+                readings=term.get("readings") or [],
+                aliases=term.get("aliases") or [],
+                confusables=term.get("confusables") or [],
+                topic=term.get("topic_entities") or [],
+                start=active_from,
+                end=active_until,
+                reason=term.get("reason") or "",
+                sources=sources,
+            )
+        )
+    return "\n".join(lines) + "\n" if len(lines) > 2 else ""
+
+
+def glossary(*, as_of: dt.datetime | None = None) -> str:
     """Term canon + subtitle-correction principles, concatenated.
 
     Callers get the full "what to write" (glossary.txt terms) AND "how to
@@ -139,9 +222,8 @@ def glossary() -> str:
     """
     terms = _read_first(GLOSSARY_PATHS)
     principles = subtitle_principles()
-    if terms and principles:
-        return f"{terms.rstrip()}\n\n{principles.strip()}\n"
-    return terms or principles
+    timely = timely_terms_context(as_of=as_of)
+    return "\n\n".join(part.strip() for part in (terms, timely, principles) if part).strip() + "\n"
 
 
 def find_srt(slice_path: str | Path) -> str | None:
@@ -242,9 +324,16 @@ def extract_audio(slice_path: str, out_mp3: str) -> bool:
     return result.returncode == 0 and os.path.exists(out_mp3) and os.path.getsize(out_mp3) > 0
 
 
-def gemini_correct(audio_mp3: str, srt_text: str, key: str) -> str:
+def gemini_correct(
+    audio_mp3: str,
+    srt_text: str,
+    key: str,
+    *,
+    as_of_date: str | None = None,
+) -> str:
+    as_of = _as_of_datetime(as_of_date)
     prompt = (
-        glossary()
+        glossary(as_of=as_of)
         + "\n\n----\n下面是这条李豆沙切片的 whisper 字幕草稿（SRT）。"
         "请你听这段音频，按上面的术语表和纠错规则精修每一条字幕的文本："
         "改正误听、专有名词、标点、自然断句，保留主播口癖和语气。"
@@ -328,8 +417,32 @@ def remux_for_agy(slice_path: Path, job_dir: Path) -> Path:
     )
 
 
-def agy_prompt(srt_text: str, *, danmaku_lines: list[str] | None = None) -> str:
-    glossary_text = glossary().strip()
+def _as_of_datetime(value: str | None) -> dt.datetime | None:
+    try:
+        parsed = dt.date.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return dt.datetime.combine(parsed, dt.time(12), tzinfo=dt.timezone.utc)
+
+
+def recording_date_from_path(path: str | Path) -> str | None:
+    source = Path(path)
+    for part in source.parts:
+        if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", part):
+            return part
+    match = re.search(r"(?P<date>20\d{6})[-_]", source.stem)
+    if match:
+        return dt.datetime.strptime(match.group("date"), "%Y%m%d").date().isoformat()
+    return None
+
+
+def agy_prompt(
+    srt_text: str,
+    *,
+    danmaku_lines: list[str] | None = None,
+    as_of_date: str | None = None,
+) -> str:
+    glossary_text = glossary(as_of=_as_of_datetime(as_of_date)).strip()
     glossary_block = f"\nGlossary and style rules:\n{glossary_text}\n" if glossary_text else ""
     danmaku_block = ""
     if danmaku_lines:
@@ -429,7 +542,7 @@ def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
     media = remux_for_agy(slice_p, job_dir)
     draft = job_dir / "draft.srt"
     draft.write_text(srt_text if srt_text.endswith("\n") else srt_text + "\n", encoding="utf-8")
-    prompt = agy_prompt(srt_text)
+    prompt = agy_prompt(srt_text, as_of_date=recording_date_from_path(slice_p))
     (job_dir / "prompt.md").write_text(prompt, encoding="utf-8")
     short_prompt = (
         f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
@@ -623,7 +736,12 @@ def _process_slice_locked(slice_path: str, provider: str, key: str = "", verbose
             try:
                 if not extract_audio(slice_path, mp3):
                     return "fail(audio)"
-                corrected = gemini_correct(mp3, Path(srt).read_text(encoding="utf-8"), key)
+                corrected = gemini_correct(
+                    mp3,
+                    Path(srt).read_text(encoding="utf-8"),
+                    key,
+                    as_of_date=recording_date_from_path(slice_path),
+                )
             finally:
                 try:
                     os.remove(mp3)

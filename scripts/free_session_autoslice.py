@@ -54,7 +54,8 @@ RUNNER v4 (2026-07-09 external audit — "the control plane was lying"):
   `review_ready` — clean by construction: deterministic boundary red flags are
   SELF-REPAIRED inside produce_slice_package (Ivan 2026-07-10: unattended means
   fix-or-refuse, no deliver-and-ask-a-human quarantine), and an unrepairable
-  boundary is `boundary_unrepairable` (terminal, no delivery, never retried).
+  boundary is `boundary_unrepairable` (no delivery; retried only after a
+  relevant pipeline change, with a lifetime cap).
 - **Budget = deliveries**: gate-blocked songs no longer consume the per-date
   song budget; the danmaku-sorted backlog backfills (bounded SONG_ATTEMPT_CAP).
 - **Global selection + sealing**: talk picks are ranked globally by recall
@@ -132,24 +133,21 @@ HOST_VOCAL_MODEL_DIR = Path(
 MAX_TALK_PICKS = 5
 MAX_SONGS_PER_DATE = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
-SONG_ATTEMPT_CAP = 6  # total song-lane attempts per date (delivered + blocked + failed);
-                      # gate-blocked songs do NOT consume the delivery budget — the
-                      # backlog backfills — so an unlucky date needs a hard attempt cap
-SONG_PERFORMER_REJECTION_CODES = frozenset(
+SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one date
+SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute date cap including superseded attempts;
+                                # permits two self-healing generations after the initial run
+TALK_REPAIR_LIFETIME_RETRY_CAP = 3  # all retries of one already-selected talk
+SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
     {
         "SONG_BACKGROUND_PLAYBACK_ONLY",
         "SONG_NOT_LIDOUSHA_SINGING",
-        "SONG_LIVE_PERFORMANCE_UNPROVEN",
-        "SONG_HOST_VOCAL_PROOF_INVALID",
-        "SONG_HOST_VOCAL_UNPROVEN",
-        "SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE",
     }
 )
 # Delivered-to-review talk statuses.  "ok" (pre-2026-07-09) and "quarantine"
 # (pre-2026-07-10 delivered-with-flags) are kept ONLY so old state files still
 # count as delivered; new records are always review_ready — boundary red flags
 # are self-repaired in produce_slice_package, and an unrepairable boundary is
-# boundary_unrepairable (no delivery, terminal).
+# boundary_unrepairable (no delivery; fingerprint-gated bounded self-heal).
 DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
 PER_SEGMENT_CANDIDATES = 4
 MIN_SEGMENT_BYTES = 5_000_000  # blrec restart stubs are a few KB — dead on sight
@@ -161,6 +159,7 @@ MAX_PARALLEL_PRODUCE = 3  # slices are independent; produce them concurrently (e
                           # cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
 PIECE_PRE_MS = 10_000
 PIECE_POST_MS = 32_000
+BOUNDARY_CONTEXT_RETRY_POST_MS = 90_000
 SONG_WINDOW_PRE_MS = 15_000   # window must stay SONG-dominated or the in-window
 SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
                               # ±60/45s and ±180/150s); 15/20s matches the
@@ -199,6 +198,55 @@ CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file
 # max-tokens 16000 keeps headroom for reasoning burn; --retries 3 absorbs the
 # upstream empty-completion quirk.  Judge failure stays fail-closed (BLOCK,
 # advisory-only for delivery since the 2026-07-10 song contract).
+
+
+def pipeline_fingerprint() -> str:
+    """Proof-closure fingerprint used to retry old recoverable BLOCKs.
+
+    Hash every deployed code/config surface that can affect recall, boundary,
+    lyrics, voice identity, packaging, or evidence authority.  The voiceprint
+    profile contains the expected external model/reference digests; deployment
+    refuses a runtime whose private assets disagree with that profile.
+    """
+
+    hasher = hashlib.sha256()
+    explicit = {
+        "scripts/free_session_autoslice.py",
+        "scripts/free_asr_client.py",
+        "scripts/cpa_semantic_qa_llm.py",
+        "scripts/gemini_slice_jingting.py",
+        "scripts/llm_via_cpa.sh",
+        "scripts/produce_slice_package.py",
+        "scripts/run_auto_review_shadow_pipeline.py",
+        "scripts/run_full_session_selector_cpa_shadow.py",
+        "assets/lidousha/entity_confusables.json",
+        "assets/lidousha/glossary.txt",
+        "assets/lidousha/known_songs.json",
+        "assets/lidousha/slice_selection_metric.md",
+        "assets/lidousha/subtitle_correction_principles.md",
+        "assets/lidousha/timely_terms.json",
+        "assets/lidousha/voiceprint_profile.v1.json",
+    }
+    paths = [REPO_ROOT / relative for relative in explicit]
+    autoslice_src = REPO_ROOT / "src" / "autoslice"
+    paths.extend(autoslice_src.rglob("*.py") if autoslice_src.is_dir() else [])
+    missing = [path for path in paths if not path.is_file()]
+    for path in missing:
+        hasher.update(path.relative_to(REPO_ROOT).as_posix().encode("utf-8") + b"\0MISSING\0")
+    paths = [path for path in paths if path.is_file()]
+    for path in sorted(paths, key=lambda value: value.relative_to(REPO_ROOT).as_posix()):
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        hasher.update(relative.encode("utf-8") + b"\0")
+        hasher.update(path.read_bytes())
+        hasher.update(b"\0")
+    return "sha256:" + hasher.hexdigest()
+
+
+def song_selector_env(date: str) -> dict[str, str]:
+    env = child_env()
+    env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
+    env["LIDOUSHA_TERM_AS_OF"] = date
+    return env
 
 
 def cpa_qa_cmd() -> str:
@@ -447,6 +495,20 @@ def find_danmaku_xml(segment: Path) -> Path | None:
     return None
 
 
+def find_chat_jsonl(segment: Path) -> Path | None:
+    """Find the structured live-event sidecar independently from XML health."""
+
+    digits = re.sub(r"\D", "", segment.stem)
+    for folder in (segment.parent, segment.parent / "sources"):
+        try:
+            for jsonl in folder.glob("*.jsonl"):
+                if re.sub(r"\D", "", jsonl.stem) == digits and jsonl.stat().st_size > 0:
+                    return jsonl
+        except OSError:
+            continue
+    return None
+
+
 def danmaku_hints(xml_path: Path | None) -> str | None:
     if xml_path is None:
         return None
@@ -624,6 +686,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                 "start_ms": max(0, item["start_ms"] - PIECE_PRE_MS),
                 "end_ms": min(item["seg_dur_ms"], item["end_ms"] + PIECE_POST_MS) if item["seg_dur_ms"] else item["end_ms"] + PIECE_POST_MS,
                 **({"danmaku_xml_local": item["xml"]} if item.get("xml") else {}),
+                **({"chat_jsonl_local": item["chat_jsonl"]} if item.get("chat_jsonl") else {}),
             }
         ],
     }
@@ -636,24 +699,60 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
            "--spec", str(spec_path), "--ssh-host", "localhost"]
     if reuse_cover:
         cmd.append("--reuse-cover")
-    with open(log_path, "a", encoding="utf-8") as sink:
-        completed = subprocess.run(
-            cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
-            cwd=str(REPO_ROOT), env=child_env(),
+    boundary_context_retries = 0
+
+    def run_producer():
+        attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
+        with open(log_path, "a", encoding="utf-8") as sink:
+            completed = subprocess.run(
+                cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
+                cwd=str(REPO_ROOT), env=child_env(),
+            )
+        with open(log_path, "rb") as source:
+            source.seek(attempt_offset)
+            attempt_output = source.read().decode("utf-8", "replace")
+        return completed, attempt_output
+
+    completed, attempt_output = run_producer()
+    first_tail = attempt_output[-4000:]
+    if completed.returncode != 0 and "BOUNDARY_UNREPAIRABLE" in first_tail:
+        piece = spec["pieces"][0]
+        retry_end = (
+            min(item["seg_dur_ms"], item["end_ms"] + BOUNDARY_CONTEXT_RETRY_POST_MS)
+            if item["seg_dur_ms"]
+            else item["end_ms"] + BOUNDARY_CONTEXT_RETRY_POST_MS
         )
+        if retry_end > piece["end_ms"]:
+            boundary_context_retries = 1
+            piece["end_ms"] = retry_end
+            spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+            with open(log_path, "a", encoding="utf-8") as sink:
+                sink.write(
+                    f"\nBOUNDARY_CONTEXT_RETRY: widening source post-context to {retry_end}ms "
+                    f"(semantic end remains {item['end_ms']}ms)\n"
+                )
+            completed, attempt_output = run_producer()
     result = {
         "candidate_id": cid, "segment": Path(item["segment_path"]).name,
         "start_ms": item["start_ms"], "end_ms": item["end_ms"],
         "hook": item.get("hook", ""), "confidence": item.get("confidence"),
         "lane": item.get("lane", ""), "rc": completed.returncode, "log": str(log_path),
+        "boundary_context_retries": boundary_context_retries,
+        "talk_repair_retry_count": int(item.get("talk_repair_retry_count") or 0),
+        "talk_transient_retry_count": int(item.get("talk_transient_retry_count") or 0),
+        "selected_repair": bool(item.get("selected_repair")),
+        "retry_reason": item.get("retry_reason"),
+        "pipeline_fingerprint": pipeline_fingerprint(),
     }
-    tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
+    # Classify only bytes written by this subprocess attempt.  The log is
+    # append-only; a stale boundary marker followed by a transient CPA error
+    # must not make the new attempt terminal again.
+    tail = attempt_output[-4000:]
     result["summary"] = last_json_block(tail)
     result.update(read_publish_meta(out_root / cid))
     if completed.returncode != 0:
-        # BOUNDARY_UNREPAIRABLE is deterministic (the self-repair loop ran out
-        # of clean closure candidates) — terminal, never retried.  Anything
-        # else is a plain failure.
+        # BOUNDARY_UNREPAIRABLE is deterministic for this pipeline generation;
+        # a later fingerprint change can earn a bounded retry.
         result["status"] = (
             "boundary_unrepairable" if "BOUNDARY_UNREPAIRABLE" in tail else "failed"
         )
@@ -2024,7 +2123,9 @@ def produce_song(date: str, item: dict) -> dict:
     def attempt(start: int, end: int, tag: str) -> dict:
         log(f"song lane {cid}{tag}: window {start // 1000}-{end // 1000}s (danmaku x{item.get('danmaku', 0)}) from {segment.name}")
         result = {"candidate_id": cid, "segment": segment.name, "start_ms": start, "end_ms": end,
-                  "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1}
+                  "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1,
+                  "pipeline_fingerprint": pipeline_fingerprint(),
+                  "transient_retry_count": int(item.get("transient_retry_count") or 0)}
         window_mp4 = out_dir / f"{cid}{tag}_source.mp4"
         if not window_mp4.is_file():
             cut = subprocess.run(
@@ -2052,8 +2153,7 @@ def produce_song(date: str, item: dict) -> dict:
         selector_dir = fresh_song_selector_dir(out_dir, tag)
         log_path = BASE / "logs" / f"{date}_{cid}.log"
         with open(log_path, "a", encoding="utf-8") as sink:
-            selector_env = child_env()
-            selector_env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
+            selector_env = song_selector_env(date)
             selector_command = [
                  sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
                  "--source-video", str(window_mp4), "--source-srt", str(window_srt),
@@ -2070,12 +2170,20 @@ def produce_song(date: str, item: dict) -> dict:
                  "--host-vocal-reference-dir", str(HOST_VOCAL_REFERENCE_DIR),
                  "--host-vocal-model-dir", str(HOST_VOCAL_MODEL_DIR),
             ]
+            semantic_hook = str(item.get("hook") or "").strip()
             known_song_query = str(item.get("preview") or "").strip()
             # Search the quoted song title first.  Passing the entire prose
             # preview ("下播前演唱 yonige《芽吹くとき》") made LRCLIB return no
             # rows even though the exact title returns the canonical timed LRC.
-            quoted_titles = re.findall(r"[《「『]([^》」』]{1,80})[》」』]", known_song_query)
-            for query in [*quoted_titles[:1], known_song_query]:
+            quoted_titles = re.findall(
+                r"[《「『]([^》」』]{1,80})[》」』]",
+                "\n".join([semantic_hook, known_song_query]),
+            )
+            # The semantic selector already named many songs correctly even
+            # when singing ASR was unusable.  Query that title before the ASR
+            # preview; LRC/audio proof still decides whether it is truly the
+            # performed song, so this is recall improvement rather than trust.
+            for query in dict.fromkeys([*quoted_titles[:2], known_song_query]):
                 if query:
                     selector_command.extend(["--song-lrc-query", query])
             # Every invocation already came from the upstream song lane, which
@@ -2299,7 +2407,7 @@ def produce_song(date: str, item: dict) -> dict:
                 result["full_source_authoritative_block"] = True
                 result.pop("delivered", None)
                 result.pop("delivered_sidecars", None)
-                if proof_retry.get("rc") == 0 and SONG_PERFORMER_REJECTION_CODES.intersection(proof_reasons):
+                if proof_retry.get("rc") == 0 and SONG_TERMINAL_PERFORMER_REJECTION_CODES.intersection(proof_reasons):
                     result["full_source_performer_rejection"] = True
     if not result.get("window_classified_song") and not result.get("delivered"):
         d0, d1 = _song_core_span(src_srt, anchor_start, anchor_end)
@@ -2530,6 +2638,7 @@ def discover_segments(date: str, state: dict) -> None:
                 log(f"segment {segment.name}: BCUT failed {attempts[stem]}x → dead")
             continue
         xml = find_danmaku_xml(segment)
+        chat_jsonl = find_chat_jsonl(segment)
         candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
         seg_dur = ffprobe_ms(segment)
         log(f"{segment.name}: {len(candidates)} candidate(s) via {lane}")
@@ -2540,6 +2649,7 @@ def discover_segments(date: str, state: dict) -> None:
                 "segment_path": str(segment),
                 "seg_dur_ms": seg_dur,
                 "xml": str(xml) if xml else None,
+                "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
                 "hook": meta.get("hook", ""),
                 "confidence": meta.get("confidence"),
                 "lane": lane,
@@ -2717,6 +2827,184 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
     state["pending_talk"] = kept
 
 
+def requeue_recoverable_songs(date: str, state: dict) -> int:
+    """Retry non-terminal song BLOCKs when the pipeline changes.
+
+    `UNPROVEN`, missing proof, provider ambiguity, and runner failure mean the
+    proof path did not finish; they are not evidence that someone else sang.
+    A content fingerprint change earns one new attempt budget.  A transient
+    AGY source-context failure additionally gets one same-fingerprint retry.
+    Confirmed background playback / non-Li-Dousha singing remains terminal.
+    """
+
+    current = pipeline_fingerprint()
+    lifetime_attempts = len(state.get("songs", [])) + len(state.get("song_superseded_attempts", []))
+    if lifetime_attempts >= SONG_LIFETIME_ATTEMPT_CAP:
+        return 0
+    existing_pending = {
+        str(item.get("cid") or item.get("candidate_id") or "")
+        for item in state.get("pending_song", [])
+        if isinstance(item, dict)
+    }
+    kept: list[dict] = []
+    requeued: list[dict] = []
+    for record in state.get("songs", []):
+        if not isinstance(record, dict) or record.get("delivered") or record.get("status") not in {"blocked", "failed"}:
+            kept.append(record)
+            continue
+        reasons = {str(code) for code in record.get("reason_codes") or []}
+        if reasons & SONG_TERMINAL_PERFORMER_REJECTION_CODES:
+            kept.append(record)
+            continue
+        changed = record.get("pipeline_fingerprint") != current
+        transient = (
+            bool(
+                reasons
+                & {
+                    "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
+                    "PRODUCE_UNEXPECTED_EXCEPTION",
+                }
+            )
+            and int(record.get("transient_retry_count") or 0) < 1
+        )
+        cid = str(record.get("candidate_id") or "")
+        if not cid or cid in existing_pending or not (changed or transient):
+            kept.append(record)
+            continue
+
+        segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
+        segment = REC_ROOT / date / segment_name
+        if not segment.is_file():
+            kept.append(record)
+            continue
+        start_ms, end_ms = record.get("start_ms"), record.get("end_ms")
+        if not isinstance(start_ms, int) or not isinstance(end_ms, int) or start_ms >= end_ms:
+            kept.append(record)
+            continue
+        anchor_start = int(record.get("anchor_start_ms") or max(0, start_ms + SONG_WINDOW_PRE_MS))
+        anchor_end = int(record.get("anchor_end_ms") or max(anchor_start + 1, end_ms - SONG_WINDOW_POST_MS))
+        seg_dur = ffprobe_ms(segment)
+        item = {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": seg_dur,
+            "anchor_start_ms": anchor_start,
+            "anchor_end_ms": min(seg_dur, anchor_end) if seg_dur else anchor_end,
+            "xml": str(xml) if (xml := find_danmaku_xml(segment)) else None,
+            "chat_jsonl": str(chat) if (chat := find_chat_jsonl(segment)) else None,
+            "hook": record.get("hook", ""),
+            "preview": record.get("preview", ""),
+            "danmaku": int(record.get("danmaku") or 0),
+            "transient_retry_count": int(record.get("transient_retry_count") or 0) + (1 if transient else 0),
+            "retry_reason": "pipeline_fingerprint_changed" if changed else "transient_source_context_failure",
+        }
+        requeued.append(item)
+        existing_pending.add(cid)
+        state.setdefault("song_superseded_attempts", []).append(
+            {
+                "candidate_id": cid,
+                "status": record.get("status"),
+                "reason_codes": list(record.get("reason_codes") or []),
+                "pipeline_fingerprint": record.get("pipeline_fingerprint"),
+                "superseded_by": current,
+                "retry_reason": item["retry_reason"],
+            }
+        )
+        _remember_song_quarantine_interval(state, item)
+    state["songs"] = kept
+    state.setdefault("pending_song", []).extend(requeued)
+    return len(requeued)
+
+
+def requeue_recoverable_talks(date: str, state: dict) -> int:
+    """Retry undelivered selected talks with bounded generation semantics.
+
+    Boundary failures wake on a relevant pipeline change.  A generic producer
+    failure additionally gets one same-fingerprint retry so a transient CPA or
+    worker crash cannot permanently lose an already-selected candidate.  All
+    retries share one per-candidate lifetime cap.
+    """
+
+    current = pipeline_fingerprint()
+    existing_pending = {
+        str(item.get("cid") or item.get("candidate_id") or "")
+        for item in state.get("pending_talk", [])
+        if isinstance(item, dict)
+    }
+    kept: list[dict] = []
+    requeued: list[dict] = []
+    for record in state.get("picks", []):
+        if not isinstance(record, dict) or record.get("status") not in {
+            "boundary_unrepairable",
+            "failed",
+        }:
+            kept.append(record)
+            continue
+        cid = str(record.get("candidate_id") or record.get("cid") or "")
+        retry_count = int(record.get("talk_repair_retry_count") or 0)
+        transient_count = int(record.get("talk_transient_retry_count") or 0)
+        changed = record.get("pipeline_fingerprint") != current
+        transient = record.get("status") == "failed" and transient_count < 1
+        if (
+            not cid
+            or cid in existing_pending
+            or not (changed or transient)
+            or retry_count >= TALK_REPAIR_LIFETIME_RETRY_CAP
+        ):
+            kept.append(record)
+            continue
+        segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
+        segment = REC_ROOT / date / segment_name
+        start_ms, end_ms = record.get("start_ms"), record.get("end_ms")
+        if (
+            not segment_name
+            or not segment.is_file()
+            or isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or start_ms >= end_ms
+        ):
+            kept.append(record)
+            continue
+        seg_dur = ffprobe_ms(segment)
+        item = {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": seg_dur,
+            "start_ms": start_ms,
+            "end_ms": min(seg_dur, end_ms) if seg_dur else end_ms,
+            "xml": str(xml) if (xml := find_danmaku_xml(segment)) else None,
+            "chat_jsonl": str(chat) if (chat := find_chat_jsonl(segment)) else None,
+            "hook": record.get("hook", ""),
+            "confidence": record.get("confidence"),
+            "lane": record.get("lane", ""),
+            "preview": record.get("preview", ""),
+            "selected_repair": True,
+            "talk_repair_retry_count": retry_count + 1,
+            "talk_transient_retry_count": transient_count + (1 if transient and not changed else 0),
+            "retry_reason": (
+                "pipeline_fingerprint_changed" if changed else "transient_produce_failure"
+            ),
+        }
+        requeued.append(item)
+        existing_pending.add(cid)
+        state.setdefault("talk_superseded_attempts", []).append(
+            {
+                "candidate_id": cid,
+                "status": record.get("status"),
+                "pipeline_fingerprint": record.get("pipeline_fingerprint"),
+                "superseded_by": current,
+                "talk_repair_retry_count": retry_count,
+                "talk_transient_retry_count": transient_count,
+                "retry_reason": item["retry_reason"],
+            }
+        )
+    state["picks"] = kept
+    state.setdefault("pending_talk", []).extend(requeued)
+    return len(requeued)
+
+
 def refill_songs(state: dict) -> None:
     """Top up pending_song from the structured backlog, danmaku-desc, honoring
     both the delivery budget and the hard per-date attempt cap.  Legacy string
@@ -2725,8 +3013,10 @@ def refill_songs(state: dict) -> None:
     pool = state.get("pending_song", []) + [b for b in backlog if isinstance(b, dict)]
     legacy = [b for b in backlog if not isinstance(b, dict)]
     pool.sort(key=lambda x: (-(x.get("danmaku") or 0), -(x["anchor_end_ms"] - x["anchor_start_ms"])))
-    attempts_left = max(0, SONG_ATTEMPT_CAP - len(state.get("songs", [])))
-    allowed = min(song_delivery_budget(state), attempts_left)
+    attempts_left_generation = max(0, SONG_ATTEMPT_CAP - len(state.get("songs", [])))
+    lifetime_attempts = len(state.get("songs", [])) + len(state.get("song_superseded_attempts", []))
+    attempts_left_lifetime = max(0, SONG_LIFETIME_ATTEMPT_CAP - lifetime_attempts)
+    allowed = min(song_delivery_budget(state), attempts_left_generation, attempts_left_lifetime)
     state["pending_song"] = pool[:allowed]
     state["song_backlog"] = pool[allowed:] + legacy
 
@@ -2739,6 +3029,8 @@ def prioritize(state: dict) -> None:
     whole quota regardless of score.  Songs: top danmaku, budget = deliveries."""
     quarantine_overlapping_talk_candidates(state)
     pending_talk = state.get("pending_talk", [])
+    selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
+    pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
     produced = sum(1 for p in state.get("picks", []) if p.get("status") in DELIVERED_TALK_STATUSES)
     slots = max(0, MAX_TALK_PICKS - produced)
     ranked = sorted(pending_talk, key=lambda x: -(x.get("confidence") or 0.0))
@@ -2759,7 +3051,10 @@ def prioritize(state: dict) -> None:
             break
         keep.append(item)
         deferred.remove(item)
-    state["pending_talk"] = keep
+    # These candidates already won selection in an earlier generation and
+    # failed without delivery.  Do not discard the retry merely because
+    # successful siblings now fill the ordinary delivery quota.
+    state["pending_talk"] = selected_repairs + keep
     for item in deferred:
         state.setdefault("not_selected", []).append(
             f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
@@ -2782,8 +3077,44 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
             return produce_fn(date, item)
         except Exception as exc:  # noqa: BLE001 — one bad slice must not kill the batch
             log(f"produce crashed for {item.get('cid')}: {exc}")
-            return {"candidate_id": item.get("cid"), "rc": -1, "status": "failed", "error": str(exc),
-                    **{k: item[k] for k in ("hook", "confidence", "danmaku") if k in item}}
+            result = {
+                "candidate_id": item.get("cid"),
+                "rc": -1,
+                "status": "failed",
+                "error": str(exc),
+                "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
+                "pipeline_fingerprint": pipeline_fingerprint(),
+                **{
+                    key: item[key]
+                    for key in (
+                        "hook",
+                        "confidence",
+                        "danmaku",
+                        "preview",
+                        "segment_path",
+                        "seg_dur_ms",
+                        "start_ms",
+                        "end_ms",
+                        "lane",
+                        "selected_repair",
+                        "talk_repair_retry_count",
+                        "talk_transient_retry_count",
+                        "retry_reason",
+                        "anchor_start_ms",
+                        "anchor_end_ms",
+                        "transient_retry_count",
+                    )
+                    if key in item
+                },
+            }
+            if item.get("segment_path"):
+                result["segment"] = Path(str(item["segment_path"])).name
+            anchor_start = item.get("anchor_start_ms")
+            anchor_end = item.get("anchor_end_ms")
+            if isinstance(anchor_start, int) and isinstance(anchor_end, int):
+                result["start_ms"] = max(0, anchor_start - SONG_WINDOW_PRE_MS)
+                result["end_ms"] = anchor_end + SONG_WINDOW_POST_MS
+            return result
 
     if not items:
         return []
@@ -2799,6 +3130,14 @@ def process_date(date: str) -> None:
         write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
         return
+    requeued_talks = requeue_recoverable_talks(date, state)
+    requeued_songs = requeue_recoverable_songs(date, state)
+    if requeued_talks or requeued_songs:
+        write_state(date, state)
+        log(
+            f"{date}: requeued {requeued_talks} boundary talk failure(s) and "
+            f"{requeued_songs} recoverable song BLOCK(s) for pipeline {pipeline_fingerprint()[:19]}…"
+        )
     has_new = any(
         s.stem not in set(state.get("segments_done", [])) and s.stem not in state.get("segments_dead", {})
         for s in list_segments(date)
@@ -2960,6 +3299,7 @@ def main(argv: list[str] | None = None) -> int:
         if srt is None:
             return 1
         xml = find_danmaku_xml(segment)
+        chat_jsonl = find_chat_jsonl(segment)
         candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
         talk = [c for c in candidates if getattr(c, "content_type_hint", "talk") != "song"]
         log(f"smoke: {len(candidates)} candidates via {lane}; producing first talk candidate")
@@ -2976,6 +3316,7 @@ def main(argv: list[str] | None = None) -> int:
             "start_ms": max(0, int(cand.boundary.resolved_start_ms)),
             "end_ms": int(cand.boundary.resolved_end_ms),
             "xml": str(xml) if xml else None,
+            "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
             "hook": meta.get("hook", ""),
             "confidence": meta.get("confidence"),
             "lane": lane,

@@ -32,6 +32,15 @@ def test_last_json_block_empty_on_garbage():
     assert last_json_block("no json here }{ broken") == {}
 
 
+def test_song_selector_env_pins_term_context_to_recording_date(monkeypatch):
+    monkeypatch.setattr(runner, "child_env", lambda: {"BASE": "kept"})
+
+    env = runner.song_selector_env("2026-07-10")
+
+    assert env["BASE"] == "kept"
+    assert env["LIDOUSHA_TERM_AS_OF"] == "2026-07-10"
+
+
 def test_safe_name_sanitizes_and_falls_back():
     assert safe_name("百合是工作？/她当场*不买书", "cid") == "百合是工作？她当场不买书"
     assert safe_name("", "cid") == "cid"
@@ -1474,6 +1483,540 @@ def test_write_reports_boundary_repair_and_unrepairable(tmp_path, monkeypatch):
     assert "1 条边界不可修复未交付" in text
     assert "✗边界不可修复未交付" in text
     assert "⚠quarantine" not in text
+
+
+def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer_rejection(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-20-00-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    state = {
+        "pending_song": [],
+        "songs": [
+            {
+                "candidate_id": "song_200009_217",
+                "segment": segment.name,
+                "start_ms": 202_000,
+                "end_ms": 483_000,
+                "status": "blocked",
+                "reason_codes": ["SONG_LIVE_PERFORMANCE_UNPROVEN", "SONG_HOST_VOCAL_UNPROVEN"],
+                "pipeline_fingerprint": "sha256:old",
+                "hook": "《怎么办》",
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["songs"] == []
+    assert state["pending_song"][0]["anchor_start_ms"] == 217_000
+    assert state["pending_song"][0]["anchor_end_ms"] == 463_000
+    assert state["pending_song"][0]["retry_reason"] == "pipeline_fingerprint_changed"
+
+
+def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    load_bearing = [
+        "scripts/free_session_autoslice.py",
+        "scripts/free_asr_client.py",
+        "scripts/cpa_semantic_qa_llm.py",
+        "scripts/llm_via_cpa.sh",
+        "scripts/run_auto_review_shadow_pipeline.py",
+        "src/autoslice/agy_lrc_alignment.py",
+        "src/autoslice/host_vocal_proof.py",
+        "assets/lidousha/known_songs.json",
+        "assets/lidousha/voiceprint_profile.v1.json",
+        "assets/lidousha/entity_confusables.json",
+    ]
+    for relative in load_bearing:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"base:{relative}\n", encoding="utf-8")
+    baseline = runner.pipeline_fingerprint()
+
+    for relative in load_bearing:
+        path = tmp_path / relative
+        original = path.read_text(encoding="utf-8")
+        path.write_text(original + "changed\n", encoding="utf-8")
+        assert runner.pipeline_fingerprint() != baseline, relative
+        path.write_text(original, encoding="utf-8")
+
+    unrelated = tmp_path / "assets/lidousha/title_style.md"
+    unrelated.parent.mkdir(parents=True, exist_ok=True)
+    unrelated.write_text("unrelated\n", encoding="utf-8")
+    assert runner.pipeline_fingerprint() == baseline
+
+
+def test_song_lifetime_cap_survives_repeated_pipeline_changes(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-20-00-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "SONG_LIFETIME_ATTEMPT_CAP", 2)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:generation-3")
+    state = {
+        "pending_song": [],
+        "song_superseded_attempts": [{"candidate_id": "song_old_generation"}],
+        "songs": [
+            {
+                "candidate_id": "song_current",
+                "segment": segment.name,
+                "start_ms": 100_000,
+                "end_ms": 300_000,
+                "status": "blocked",
+                "reason_codes": ["SONG_LIVE_PERFORMANCE_UNPROVEN"],
+                "pipeline_fingerprint": "sha256:generation-2",
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_songs(date, state) == 0
+    assert state["pending_song"] == []
+    assert len(state["songs"]) == 1
+
+
+def test_confirmed_non_host_song_is_terminal_across_pipeline_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    state = {
+        "pending_song": [],
+        "songs": [
+            {
+                "candidate_id": "song_other",
+                "status": "blocked",
+                "reason_codes": ["SONG_NOT_LIDOUSHA_SINGING"],
+                "pipeline_fingerprint": "sha256:old",
+            }
+        ],
+    }
+    assert runner.requeue_recoverable_songs("2026-07-10", state) == 0
+    assert len(state["songs"]) == 1
+
+
+def test_transient_agy_failure_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-19-30-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    record = {
+        "candidate_id": "song_timeout",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "blocked",
+        "reason_codes": ["AGY_SOURCE_CONTEXT_RUNNER_FAILED"],
+        "pipeline_fingerprint": "sha256:same",
+        "transient_retry_count": 0,
+    }
+    state = {"pending_song": [], "songs": [record]}
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["transient_retry_count"] == 1
+
+    state = {"pending_song": [], "songs": [{**record, "transient_retry_count": 1}]}
+    assert runner.requeue_recoverable_songs(date, state) == 0
+
+
+def test_unexpected_song_crash_preserves_retry_reconstruction(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-20-00-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+
+    def crash(_date, _item):
+        raise TimeoutError("worker vanished")
+
+    item = {
+        "cid": "song_crash",
+        "segment_path": str(segment),
+        "seg_dur_ms": 600_000,
+        "anchor_start_ms": 200_000,
+        "anchor_end_ms": 400_000,
+        "hook": "《测试歌》",
+    }
+    record = runner.produce_batch(date, [item], crash)[0]
+    state = {"pending_song": [], "songs": [record]}
+
+    assert record["reason_codes"] == ["PRODUCE_UNEXPECTED_EXCEPTION"]
+    assert record["segment"] == segment.name
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["anchor_start_ms"] == 200_000
+    assert state["pending_song"][0]["transient_retry_count"] == 1
+
+
+def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+    calls = []
+
+    class Completed:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        sink = kwargs["stdout"]
+        if len(calls) == 1:
+            sink.write("BOUNDARY_UNREPAIRABLE: no closure after 0 repair(s)\n")
+            sink.flush()
+            return Completed(1)
+        sink.write('{"red_flags": [], "boundary_repairs": [{"snapped_end_ms": 182540}]}\n')
+        sink.flush()
+        return Completed(0)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": "auto_212005_163_311",
+            "segment_path": "/recordings/22966160_20260710-21-20-05.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 163_000,
+            "end_ms": 311_000,
+            "xml": None,
+            "chat_jsonl": None,
+            "hook": "小李嘴硬",
+            "confidence": 0.9,
+            "lane": "semantic",
+        },
+    )
+
+    assert len(calls) == 2
+    assert result["status"] == "review_ready"
+    assert result["boundary_context_retries"] == 1
+    spec = json.loads((base / "out" / date / "spec_auto_212005_163_311.json").read_text())
+    assert spec["semantic_end_ms"] == 311_000
+    assert spec["pieces"][0]["end_ms"] == 401_000
+
+
+def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+    log_path = base / "logs" / f"{date}_auto_stale.log"
+    log_path.write_text("BOUNDARY_UNREPAIRABLE: old attempt\n", encoding="utf-8")
+    calls = []
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        kwargs["stdout"].write("CPA temporarily unavailable\n")
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": "auto_stale",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 200_000,
+            "hook": "test",
+        },
+    )
+
+    assert len(calls) == 1
+    assert result["status"] == "failed"
+    assert result["boundary_context_retries"] == 0
+
+
+def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-21-20-05.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "auto_212005_163_311",
+                "segment": segment.name,
+                "start_ms": 163_000,
+                "end_ms": 311_000,
+                "status": "boundary_unrepairable",
+                "pipeline_fingerprint": "sha256:old",
+                "hook": "小李嘴硬",
+                "confidence": 0.94,
+            },
+            {"candidate_id": "delivered", "status": "review_ready"},
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert [row["candidate_id"] for row in state["picks"]] == ["delivered"]
+    assert state["pending_talk"][0]["selected_repair"] is True
+    assert state["pending_talk"][0]["talk_repair_retry_count"] == 1
+    assert state["talk_superseded_attempts"][0]["superseded_by"] == "sha256:new"
+
+
+def test_selected_talk_transient_failure_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-21-20-05.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    failed = {
+        "candidate_id": "auto_212005_163_311",
+        "segment": segment.name,
+        "start_ms": 163_000,
+        "end_ms": 311_000,
+        "status": "failed",
+        "pipeline_fingerprint": "sha256:same",
+        "selected_repair": True,
+        "talk_repair_retry_count": 1,
+        "talk_transient_retry_count": 0,
+    }
+    state = {"pending_talk": [], "picks": [failed]}
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["pending_talk"][0]["retry_reason"] == "transient_produce_failure"
+    assert state["pending_talk"][0]["talk_repair_retry_count"] == 2
+    assert state["pending_talk"][0]["talk_transient_retry_count"] == 1
+
+    state = {
+        "pending_talk": [],
+        "picks": [{**failed, "talk_repair_retry_count": 2, "talk_transient_retry_count": 1}],
+    }
+    assert runner.requeue_recoverable_talks(date, state) == 0
+
+
+def test_selected_talk_retry_respects_lifetime_cap_after_pipeline_change(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "segment.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "TALK_REPAIR_LIFETIME_RETRY_CAP", 3)
+    state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "repair",
+                "segment": segment.name,
+                "start_ms": 1,
+                "end_ms": 2,
+                "status": "failed",
+                "pipeline_fingerprint": "sha256:old",
+                "talk_repair_retry_count": 3,
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["pending_talk"] == []
+
+
+def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
+    monkeypatch.setattr(runner, "MAX_TALK_PICKS", 1)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    state = {
+        "picks": [{"candidate_id": "already", "status": "review_ready"}],
+        "pending_talk": [
+            {
+                "cid": "repair",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 1,
+                "end_ms": 2,
+                "selected_repair": True,
+                "confidence": 0.1,
+            },
+            {
+                "cid": "new",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 3,
+                "end_ms": 4,
+                "confidence": 1.0,
+            },
+        ],
+    }
+
+    runner.prioritize(state)
+
+    assert [item["cid"] for item in state["pending_talk"]] == ["repair"]
+
+
+def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatch):
+    date = "2026-07-10"
+    state = {
+        "status": "review_ready_with_failures",
+        "segments_done": ["segment"],
+        "segments_dead": {},
+        "pending_talk": [],
+        "pending_song": [],
+        "songs": [],
+        "picks": [
+            {
+                "candidate_id": "old_boundary",
+                "segment": "segment.mp4",
+                "start_ms": 10_000,
+                "end_ms": 20_000,
+                "status": "boundary_unrepairable",
+                "pipeline_fingerprint": "sha256:old",
+            }
+        ],
+    }
+    produced = []
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+
+    def wake(_date, value):
+        value["pending_talk"].append(
+            {
+                "cid": "old_boundary",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 10_000,
+                "end_ms": 20_000,
+                "selected_repair": True,
+            }
+        )
+        value["picks"] = []
+        return 1
+
+    monkeypatch.setattr(runner, "requeue_recoverable_talks", wake)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(runner, "cover_repair_needed", lambda _date, _row: False)
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
+    monkeypatch.setattr(runner, "discover_segments", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "session_sealed", lambda _date, _state: True)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+
+    def produce(_date, items, _fn):
+        produced.extend(items)
+        return [{"candidate_id": items[0]["cid"], "status": "review_ready"}]
+
+    monkeypatch.setattr(runner, "produce_batch", produce)
+    monkeypatch.setattr(runner, "repair_covers", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_reports", lambda _date, _state: None)
+
+    runner.process_date(date)
+
+    assert [item["cid"] for item in produced] == ["old_boundary"]
+    assert state["picks"][0]["status"] == "review_ready"
+    assert state["pending_talk"] == []
+
+
+def test_process_date_transient_selected_repair_remains_retryable(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "segment.mp4"
+    segment.write_bytes(b"media")
+    pending = {
+        "cid": "old_boundary",
+        "segment_path": str(segment),
+        "seg_dur_ms": 100_000,
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "selected_repair": True,
+        "talk_repair_retry_count": 1,
+        "talk_transient_retry_count": 0,
+    }
+    state = {
+        "status": "processing",
+        "segments_done": ["segment"],
+        "segments_dead": {},
+        "pending_talk": [pending],
+        "pending_song": [],
+        "songs": [],
+        "picks": [],
+    }
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(runner, "cover_repair_needed", lambda _date, _row: False)
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
+    monkeypatch.setattr(runner, "discover_segments", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "session_sealed", lambda _date, _state: True)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 100_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+
+    def fail_once(_date, items, _fn):
+        item = items[0]
+        return [
+            {
+                "candidate_id": item["cid"],
+                "segment": Path(item["segment_path"]).name,
+                "start_ms": item["start_ms"],
+                "end_ms": item["end_ms"],
+                "status": "failed",
+                "pipeline_fingerprint": "sha256:same",
+                "selected_repair": True,
+                "talk_repair_retry_count": item["talk_repair_retry_count"],
+                "talk_transient_retry_count": item["talk_transient_retry_count"],
+            }
+        ]
+
+    monkeypatch.setattr(runner, "produce_batch", fail_once)
+    monkeypatch.setattr(runner, "repair_covers", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_reports", lambda _date, _state: None)
+
+    runner.process_date(date)
+
+    assert state["picks"][0]["status"] == "failed"
+    assert state["pending_talk"] == []
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["pending_talk"][0]["talk_transient_retry_count"] == 1
 
 def test_record_is_song_recognizes_non_lrc_songs():
     """7/9 实锤：日语歌《ただそばにいて》LRC 钉歌失败(song_boundary/alignment 全空)，
