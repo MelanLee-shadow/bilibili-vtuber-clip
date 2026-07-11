@@ -320,6 +320,7 @@ from scripts.apply_speaker_turn_overrides import (
 )
 from scripts.apply_subtitle_text_overrides import validate_bound_override_document
 from scripts.batch_speaker_review import resolve_staged_repo_asset, validate_plan
+from src.autoslice.chat_authority import load_referent_groups
 from src.autoslice.host_vocal_proof import _sha256_directory, _validate_profile
 from src.autoslice.speaker_finalizer import (
     _policy,
@@ -366,8 +367,9 @@ for anchor_path in sorted(Path("assets/lidousha/speaker_session_anchors").glob("
         assert sha256_file(Path(donor["media_path"])) == donor["media_sha256"]
         assert sha256_file(Path(donor["text_srt_path"])) == donor["text_srt_sha256"]
 referents = json.loads(Path("assets/lidousha/entity_confusables.json").read_text())
-assert referents.get("schema_version") == "lidousha-referent-groups.v1"
+assert referents.get("schema_version") == "lidousha-referent-groups.v2"
 assert isinstance(referents.get("groups"), list)
+assert load_referent_groups(Path("assets/lidousha/entity_confusables.json"))
 timely = json.loads(Path("assets/lidousha/timely_terms.json").read_text())
 assert timely.get("schema_version") == "lidousha-timely-terms.v1"
 assert timely.get("status") in {"fresh", "stale"}
