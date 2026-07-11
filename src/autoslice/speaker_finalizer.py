@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -54,6 +55,11 @@ class SpeakerFinalizationError(RuntimeError):
 
 SOURCE_SESSION_ANCHOR_SCHEMA = "lidousha-speaker-source-session-anchors.v1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+CAMPP_EMBEDDING_CACHE_SCHEMA = "lidousha-campp-embedding-cache.v2"
+CAMPP_EMBEDDING_DIMENSION = 192
+CAMPP_MIN_EMBEDDING_NORM = 1e-3
+CAMPP_COSINE_EPSILON = 1e-6
+CAMPP_SCORE_ROUNDING_TOLERANCE = 1e-5
 
 
 DEFAULT_POLICY: dict[str, float | int] = {
@@ -360,14 +366,174 @@ def _policy(profile: Mapping[str, object]) -> dict[str, float | int]:
 
 
 def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+    """Dependency-free equivalent of Torch cosine for test/runtime fallbacks.
+
+    ``torch.nn.CosineSimilarity`` clamps each vector norm independently, not
+    their product. Production still delegates to the loaded ModelScope
+    pipeline's own scorer so float32 rounding stays identical to the original
+    pair path.
+    """
+
+    if not left or not right:
+        raise SpeakerFinalizationError("CAM++ embedding must not be empty")
+    if len(left) != len(right):
+        raise SpeakerFinalizationError("CAM++ embedding dimensions do not match")
     dot = left_norm_sq = right_norm_sq = 0.0
-    for a, b in zip(left, right, strict=True):
+    for raw_a, raw_b in zip(left, right, strict=True):
+        a, b = float(raw_a), float(raw_b)
+        if not math.isfinite(a) or not math.isfinite(b):
+            raise SpeakerFinalizationError("CAM++ embedding values must be finite")
         dot += a * b
         left_norm_sq += a * a
         right_norm_sq += b * b
-    if left_norm_sq <= 0.0 or right_norm_sq <= 0.0:
-        return 0.0
-    return dot / math.sqrt(left_norm_sq * right_norm_sq)
+    if not all(math.isfinite(value) for value in (dot, left_norm_sq, right_norm_sq)):
+        raise SpeakerFinalizationError("CAM++ embedding arithmetic must be finite")
+    denominator = max(math.sqrt(left_norm_sq), CAMPP_COSINE_EPSILON) * max(
+        math.sqrt(right_norm_sq), CAMPP_COSINE_EPSILON
+    )
+    score = dot / denominator
+    if not math.isfinite(score):
+        raise SpeakerFinalizationError("CAM++ similarity must be finite")
+    if not -1.0 - CAMPP_SCORE_ROUNDING_TOLERANCE <= score <= 1.0 + CAMPP_SCORE_ROUNDING_TOLERANCE:
+        raise SpeakerFinalizationError("CAM++ similarity must be finite and within [-1, 1]")
+    return min(1.0, max(-1.0, score))
+
+
+def _validate_campp_embedding(values: Sequence[float]) -> list[float]:
+    vector = [float(value) for value in values]
+    if len(vector) != CAMPP_EMBEDDING_DIMENSION:
+        raise SpeakerFinalizationError(
+            f"CAM++ embedding must have {CAMPP_EMBEDDING_DIMENSION} values"
+        )
+    if any(not math.isfinite(value) for value in vector):
+        raise SpeakerFinalizationError("CAM++ embedding values must be finite")
+    norm = math.sqrt(sum(value * value for value in vector))
+    if not math.isfinite(norm) or norm < CAMPP_MIN_EMBEDDING_NORM:
+        raise SpeakerFinalizationError("CAM++ embedding norm is degenerate")
+    return vector
+
+
+def _campp_runtime_fingerprint(verifier: Callable[..., object]) -> str:
+    components: dict[str, str] = {
+        "pipeline_class": (
+            f"{verifier.__class__.__module__}.{verifier.__class__.__qualname__}"
+        )
+    }
+    for package in ("modelscope", "torch", "numpy"):
+        try:
+            components[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            components[package] = "unavailable"
+    payload = json.dumps(components, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _embedding_sha256(vector: Sequence[float]) -> str:
+    payload = json.dumps(
+        list(vector), allow_nan=False, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _load_cached_embedding(
+    path: Path,
+    *,
+    model_hash: str,
+    runtime_fingerprint: str,
+    audio_sha256: str,
+) -> list[float] | None:
+    """Return a fully bound cache entry, or require a trusted re-embedding."""
+
+    if not path.is_file():
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(document, Mapping):
+            return None
+        if document.get("schema_version") != CAMPP_EMBEDDING_CACHE_SCHEMA:
+            return None
+        if document.get("model_sha256") != model_hash:
+            return None
+        if document.get("runtime_fingerprint") != runtime_fingerprint:
+            return None
+        if document.get("audio_sha256") != audio_sha256:
+            return None
+        if document.get("dimension") != CAMPP_EMBEDDING_DIMENSION:
+            return None
+        raw_vector = document.get("embedding")
+        if not isinstance(raw_vector, list):
+            return None
+        vector = _validate_campp_embedding(raw_vector)
+        if document.get("embedding_sha256") != _embedding_sha256(vector):
+            return None
+        return vector
+    except (OSError, TypeError, ValueError, SpeakerFinalizationError):
+        return None
+
+
+def _write_cached_embedding(
+    path: Path,
+    *,
+    vector: Sequence[float],
+    model_hash: str,
+    runtime_fingerprint: str,
+    audio_sha256: str,
+) -> None:
+    validated = _validate_campp_embedding(vector)
+    document = {
+        "schema_version": CAMPP_EMBEDDING_CACHE_SCHEMA,
+        "model_sha256": model_hash,
+        "runtime_fingerprint": runtime_fingerprint,
+        "audio_sha256": audio_sha256,
+        "dimension": CAMPP_EMBEDDING_DIMENSION,
+        "embedding_sha256": _embedding_sha256(validated),
+        "embedding": validated,
+    }
+    atomic_write_text(
+        path,
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+    )
+
+
+def _campp_similarity_score(
+    verifier: Callable[..., object],
+    left: Sequence[float],
+    right: Sequence[float],
+) -> float:
+    """Score cached embeddings through ModelScope's exact float32 code path."""
+
+    # Validate structure and model-specific magnitude before handing data to
+    # Torch; do not pre-compute cosine in Python because its float64 rounding
+    # is not the production authority.
+    validated_left = _validate_campp_embedding(left)
+    validated_right = _validate_campp_embedding(right)
+    compute = getattr(verifier, "compute_cos_similarity", None)
+    if not callable(compute):
+        raise SpeakerFinalizationError("CAM++ runtime has no compute_cos_similarity method")
+    try:
+        try:
+            import torch  # type: ignore[import-not-found]
+        except ImportError:
+            # Lightweight unit-test fakes can accept validated Python lists;
+            # the production speaker venv always has Torch.
+            raw_score = compute(validated_left, validated_right)
+        else:  # pragma: no cover - exercised by the production ML runtime
+            raw_score = compute(
+                torch.tensor(validated_left, dtype=torch.float32),
+                torch.tensor(validated_right, dtype=torch.float32),
+            )
+        score = float(raw_score)
+    except SpeakerFinalizationError:
+        raise
+    except Exception as exc:
+        raise SpeakerFinalizationError(
+            f"CAM++ cached-embedding similarity failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    if not math.isfinite(score):
+        raise SpeakerFinalizationError("CAM++ similarity must be finite")
+    if not -1.0 - CAMPP_SCORE_ROUNDING_TOLERANCE <= score <= 1.0 + CAMPP_SCORE_ROUNDING_TOLERANCE:
+        raise SpeakerFinalizationError("CAM++ similarity must be finite and within [-1, 1]")
+    return min(1.0, max(-1.0, score))
 
 
 def _campp_embedding(verifier: Callable[..., object], path: Path) -> list[float]:
@@ -382,13 +548,13 @@ def _campp_embedding(verifier: Callable[..., object], path: Path) -> list[float]
     embeddings = result["embs"] if isinstance(result, Mapping) and "embs" in result else result
     row = embeddings[0]
     values = row.tolist() if hasattr(row, "tolist") else list(row)
-    return [float(value) for value in values]
+    return _validate_campp_embedding(values)
 
 
 def _build_embedding_similarity(
     *, verifier: Callable[..., object], model_hash: str, work_dir: Path
 ) -> Callable[[Path, Path], float]:
-    """Embed each cue once, then score pairs by cosine.
+    """Embed each cue once, then score pairs by ModelScope cosine.
 
     The previous implementation asked the pipeline for every (cue, anchor) pair
     and re-embedded both wavs each time, so a talk clip paid O(cues x anchors)
@@ -397,16 +563,9 @@ def _build_embedding_similarity(
     wav a single time and caching the vector is exactly score-preserving while
     collapsing the cost to O(cues) inferences.
     """
-    cache_path = work_dir / "embedding-cache.json"
-    try:
-        raw_cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.is_file() else {}
-    except (OSError, ValueError):
-        raw_cache = {}
-    embeddings: dict[str, list[float]] = {
-        key: [float(value) for value in vector]
-        for key, vector in raw_cache.items()
-        if isinstance(vector, list)
-    }
+    cache_dir = work_dir / "embedding-cache-v2"
+    embeddings: dict[str, list[float]] = {}
+    runtime_fingerprint = _campp_runtime_fingerprint(verifier)
     fingerprints: dict[Path, str] = {}
 
     def fingerprint(path: Path) -> str:
@@ -418,16 +577,37 @@ def _build_embedding_similarity(
     def embedding(path: Path) -> list[float]:
         # Cue basenames are reused after text/timing corrections. Content-bound
         # keys keep a persistent work dir from serving stale voice vectors.
-        key = model_hash + "|" + fingerprint(path)
+        audio_sha256 = fingerprint(path)
+        key = model_hash + "|" + runtime_fingerprint + "|" + audio_sha256
         vector = embeddings.get(key)
         if vector is None:
+            cache_name = hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json"
+            cache_path = cache_dir / cache_name
+            vector = _load_cached_embedding(
+                cache_path,
+                model_hash=model_hash,
+                runtime_fingerprint=runtime_fingerprint,
+                audio_sha256=audio_sha256,
+            )
+        if vector is None:
             vector = _campp_embedding(verifier, path)
+            _write_cached_embedding(
+                cache_path,
+                vector=vector,
+                model_hash=model_hash,
+                runtime_fingerprint=runtime_fingerprint,
+                audio_sha256=audio_sha256,
+            )
             embeddings[key] = vector
-            atomic_write_text(cache_path, json.dumps(embeddings, sort_keys=True))
+        else:
+            embeddings[key] = vector
         return vector
 
     def similarity(left: Path, right: Path) -> float:
-        return round(_cosine_similarity(embedding(left), embedding(right)), 5)
+        return round(
+            _campp_similarity_score(verifier, embedding(left), embedding(right)),
+            5,
+        )
 
     return similarity
 

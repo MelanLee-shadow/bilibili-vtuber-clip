@@ -2863,6 +2863,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 & {
                     "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
                     "PRODUCE_UNEXPECTED_EXCEPTION",
+                    "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
                 }
             )
             and int(record.get("transient_retry_count") or 0) < 1

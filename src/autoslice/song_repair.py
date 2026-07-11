@@ -350,7 +350,12 @@ def attempt_song_repair(
             )
         except ValueError as exc:
             attempts.append(SongRepairAttempt("agy_audio_lrc_identity", "FAILED", str(exc)))
-            return _finish(candidate_id, attempts, output_dir)
+            return _finish(
+                candidate_id,
+                attempts,
+                output_dir,
+                reason_codes=("SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",),
+            )
         attempts.append(
             SongRepairAttempt(
                 "agy_audio_lrc_identity",
@@ -397,7 +402,12 @@ def attempt_song_repair(
                     f"{type(exc).__name__}: {exc}",
                 )
             )
-            return _finish(candidate_id, attempts, output_dir)
+            return _finish(
+                candidate_id,
+                attempts,
+                output_dir,
+                reason_codes=("SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
+            )
         attempts.append(
             SongRepairAttempt(
                 "agy_audio_lrc_alignment",
@@ -1379,6 +1389,37 @@ def _lrc_title_family(lrc: LrcResult) -> str:
     return normalize_lyric_text(title)
 
 
+def _matched_cue_ids(alignment: Sequence[Mapping[str, object]]) -> set[str]:
+    return {
+        str(row["matched_cue_id"])
+        for row in alignment
+        if isinstance(row, Mapping) and row.get("matched_cue_id") is not None
+    }
+
+
+def _matched_cue_overlap(
+    left: Sequence[Mapping[str, object]],
+    right: Sequence[Mapping[str, object]],
+) -> tuple[float, float, int]:
+    """Return containment, bilateral coverage, and shared ASR-cue count.
+
+    Same-song LRCs routinely split one lyric into different numbers of rows.
+    Containment handles line splitting, while coverage against the larger set
+    prevents a short unrelated candidate from merging after matching only
+    three cherry-picked cues.
+    """
+
+    left_ids, right_ids = _matched_cue_ids(left), _matched_cue_ids(right)
+    if not left_ids or not right_ids:
+        return 0.0, 0.0, 0
+    shared = len(left_ids & right_ids)
+    return (
+        shared / min(len(left_ids), len(right_ids)),
+        shared / max(len(left_ids), len(right_ids)),
+        shared,
+    )
+
+
 def _choose_audio_lrc_candidate(
     ranked: Sequence[tuple[float, LrcResult, list[dict[str, object]]]],
     *,
@@ -1395,7 +1436,7 @@ def _choose_audio_lrc_candidate(
     onto unrelated audio.
     """
 
-    entries = [(ratio, lrc) for ratio, lrc, _alignment in ranked]
+    entries = list(ranked)
     parents = list(range(len(entries)))
 
     def find(index: int) -> int:
@@ -1409,8 +1450,8 @@ def _choose_audio_lrc_candidate(
         if left_root != right_root:
             parents[right_root] = left_root
 
-    identities = [_lrc_identity_key(lrc) for _ratio, lrc in entries]
-    fingerprints = [_lrc_fingerprint(lrc) for _ratio, lrc in entries]
+    identities = [_lrc_identity_key(lrc) for _ratio, lrc, _alignment in entries]
+    fingerprints = [_lrc_fingerprint(lrc) for _ratio, lrc, _alignment in entries]
     for left in range(len(entries)):
         for right in range(left + 1, len(entries)):
             # Provider records are the same song when either title+artist or
@@ -1423,14 +1464,38 @@ def _choose_audio_lrc_candidate(
                 and _lrc_title_family(entries[left][1]) == _lrc_title_family(entries[right][1])
             )
             content_similarity = _lrc_content_similarity(entries[left][1], entries[right][1])
+            cue_overlap, cue_coverage, shared_cues = _matched_cue_overlap(
+                entries[left][2], entries[right][2]
+            )
             if (
                 identities[left] == identities[right]
                 or fingerprints[left] == fingerprints[right]
-                or (same_title and content_similarity >= 0.62)
+                # Same normalized title plus either textual agreement or at
+                # least three high-overlap source cues handles provider line
+                # splitting without merging same-title homonyms on title alone.
+                or (
+                    same_title
+                    and (
+                        content_similarity >= 0.62
+                        or (
+                            shared_cues >= 3
+                            and cue_overlap >= 0.80
+                            and cue_coverage >= 0.60
+                        )
+                    )
+                )
+                # Close aliases such as 园游会/游园会 require both lyric-text
+                # agreement and near-containment of actually matched ASR cues.
+                or (
+                    content_similarity >= 0.70
+                    and shared_cues >= 3
+                    and cue_overlap >= 0.90
+                    and cue_coverage >= 0.60
+                )
             ):
                 union(left, right)
 
-    groups: dict[int, list[tuple[float, LrcResult]]] = {}
+    groups: dict[int, list[tuple[float, LrcResult, list[dict[str, object]]]]] = {}
     for index, entry in enumerate(entries):
         groups.setdefault(find(index), []).append(entry)
     if not groups:
@@ -1442,9 +1507,9 @@ def _choose_audio_lrc_candidate(
             max(item[0] for item in group_entries),
             any(
                 _lrc_identity_key(item) in pinned_identities or _lrc_fingerprint(item) in pinned_fingerprints
-                for _ratio, item in group_entries
+                for _ratio, item, _alignment in group_entries
             ),
-            min(item.source_ref for _ratio, item in group_entries),
+            min(item.source_ref for _ratio, item, _alignment in group_entries),
             group_entries,
         )
         for group_entries in groups.values()
@@ -1479,14 +1544,61 @@ def _choose_audio_lrc_candidate(
     # Always retain the strongest acoustic-discovery member of a fuzzy lyric
     # family.  LRCLIB is only a deterministic tie-break; preferring a weaker
     # truncated LRCLIB subset can move the canonical song boundary.
-    return sorted(
+    selected_lrc = sorted(
         top_entries,
         key=lambda item: (
             -item[0],
+            # Exact recall ties prefer the version explaining more distinct
+            # source cues, then the fuller timed lyric, before provider order.
+            -len(_matched_cue_ids(item[2])),
+            -(item[1].lines[-1].time_ms - item[1].lines[0].time_ms),
+            -len(item[1].lines),
             item[1].provider != "lrclib",
             item[1].source_ref,
         ),
     )[0][1]
+
+    # Catalog aliases can carry the right synced lyrics under a misleading
+    # display title (real July 10 example: 园游会 lyrics under
+    # ``Owen-只想为你撑伞``). Preserve the selected lyric bytes/source, but use
+    # the title family corroborated by the most independent providers. Within
+    # that family the shortest display form drops Cover/Live decorations.
+    family_rows: dict[str, list[LrcResult]] = {}
+    for _ratio, item, _alignment in top_entries:
+        family = _lrc_title_family(item)
+        if family:
+            family_rows.setdefault(family, []).append(item)
+    if family_rows:
+        _family, corroborated = max(
+            family_rows.items(),
+            key=lambda entry: (
+                len({item.provider for item in entry[1]}),
+                len(entry[1]),
+                -min(len(str(item.song_title)) for item in entry[1]),
+                entry[0],
+            ),
+        )
+        # A title rewrite needs corroboration from at least two independent
+        # provider families. Multiple rows from one catalog are not consensus.
+        if len({item.provider for item in corroborated}) >= 2:
+            canonical_title = min(
+                (
+                    str(item.song_title).strip()
+                    for item in corroborated
+                    if str(item.song_title).strip()
+                ),
+                key=lambda title: (len(title), title),
+                default=str(selected_lrc.song_title),
+            )
+            if canonical_title != selected_lrc.song_title:
+                selected_lrc = LrcResult(
+                    provider=selected_lrc.provider,
+                    song_title=canonical_title,
+                    artist=selected_lrc.artist,
+                    source_ref=selected_lrc.source_ref,
+                    lines=selected_lrc.lines,
+                )
+    return selected_lrc
 
 
 def _sha256_file(path: Path) -> str:
@@ -1715,6 +1827,17 @@ def _validated_audio_lrc_selection(
     if performance_error is not None:
         assert isinstance(live_performance, Mapping)
         raise LivePerformanceRejected(performance_error, live_performance)
+
+    post_song_talk_start_ms = payload.get("post_song_talk_start_ms")
+    if post_song_talk_start_ms is None:
+        clip_end_ms = effective_duration_ms
+        instrumental_spot_end_ms = last_lyric_end_ms
+    elif _is_int(post_song_talk_start_ms) and last_lyric_end_ms <= post_song_talk_start_ms <= effective_duration_ms:
+        clip_end_ms = post_song_talk_start_ms
+        instrumental_spot_end_ms = post_song_talk_start_ms
+    else:
+        raise ValueError("post-song talk boundary is invalid or precedes the last lyric")
+
     spot_checks = payload.get("spot_checks")
     required_spots = {"first_line", "chorus", "repeated_section", "longest_instrumental_gap", "tail"}
     if not isinstance(spot_checks, list) or len(spot_checks) != 5:
@@ -1727,7 +1850,16 @@ def _validated_audio_lrc_selection(
         time_ms = spot.get("live_time_ms")
         if name not in required_spots or name in spots or spot.get("result") != "OK":
             raise ValueError("audio spot-check names/results are invalid")
-        if not _is_int(time_ms) or not first_lyric_start_ms <= time_ms <= last_lyric_end_ms:
+        if not _is_int(time_ms):
+            raise ValueError(f"audio spot-check {name} time is outside the performed song")
+        if name == "longest_instrumental_gap":
+            # The longest instrumental can be an intro before the first lyric
+            # or an outro after the last. It still must lie inside the
+            # independently derived full-song boundary.
+            in_allowed_range = offset_ms <= time_ms <= instrumental_spot_end_ms
+        else:
+            in_allowed_range = first_lyric_start_ms <= time_ms <= last_lyric_end_ms
+        if not in_allowed_range:
             raise ValueError(f"audio spot-check {name} time is outside the performed song")
         spots[str(name)] = spot
     if set(spots) != required_spots:
@@ -1755,13 +1887,6 @@ def _validated_audio_lrc_selection(
         if all(abs(repeated_spot_ms - start_ms) > 1_500 for start_ms in later_repeat_starts):
             raise ValueError("repeated-section spot check does not bind a later repeated lyric occurrence")
 
-    post_song_talk_start_ms = payload.get("post_song_talk_start_ms")
-    if post_song_talk_start_ms is None:
-        clip_end_ms = effective_duration_ms
-    elif _is_int(post_song_talk_start_ms) and last_lyric_end_ms <= post_song_talk_start_ms <= effective_duration_ms:
-        clip_end_ms = post_song_talk_start_ms
-    else:
-        raise ValueError("post-song talk boundary is invalid or precedes the last lyric")
     clip_start_ms = offset_ms
     if not 0 <= clip_start_ms <= offset_ms <= first_lyric_start_ms <= last_lyric_end_ms <= clip_end_ms <= effective_duration_ms:
         raise ValueError("derived full-song boundary ordering is invalid")

@@ -8,10 +8,13 @@ import pytest
 from scripts.produce_slice_package import run_speaker_finalizer
 
 from src.autoslice.speaker_finalizer import (
+    CAMPP_EMBEDDING_CACHE_SCHEMA,
+    CAMPP_EMBEDDING_DIMENSION,
     SOURCE_SESSION_ANCHOR_SCHEMA,
     SpeakerFinalizationError,
     _assert_runtime_assets_stable,
     _build_embedding_similarity,
+    _campp_similarity_score,
     _campp_embedding,
     _context_prompt,
     _cosine_similarity,
@@ -75,6 +78,7 @@ class _CountingCampp:
     def __init__(self, vectors: dict[str, list[float]]) -> None:
         self._vectors = vectors
         self.calls: list[dict[str, object]] = []
+        self.score_calls: list[tuple[object, object]] = []
 
     def __call__(self, inputs, output_emb: bool = False, thr=None):
         self.calls.append({"inputs": list(inputs), "output_emb": output_emb})
@@ -83,6 +87,17 @@ class _CountingCampp:
                 "embed-once path must call the pipeline with one wav and output_emb=True"
             )
         return {"embs": [list(self._vectors[str(inputs[0])])]}
+
+    def compute_cos_similarity(self, left, right):
+        self.score_calls.append((left, right))
+        left_values = left.tolist() if hasattr(left, "tolist") else left
+        right_values = right.tolist() if hasattr(right, "tolist") else right
+        return _cosine_similarity(left_values, right_values)
+
+
+def _campp_vector(*head: float) -> list[float]:
+    assert len(head) <= CAMPP_EMBEDDING_DIMENSION
+    return [*head, *([0.0] * (CAMPP_EMBEDDING_DIMENSION - len(head)))]
 
 
 def test_cosine_similarity_matches_pipeline_pairwise_semantics() -> None:
@@ -93,11 +108,68 @@ def test_cosine_similarity_matches_pipeline_pairwise_semantics() -> None:
     assert abs(_cosine_similarity([2.0, 1.0], [4.0, 2.0]) - 1.0) < 1e-9
     # A silent/degenerate embedding must not divide by zero.
     assert _cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
+    # Torch clamps each norm independently; 1e-4 is above its 1e-6 epsilon.
+    assert _cosine_similarity([1e-4], [1e-4]) == 1.0
+    # Values below epsilon are attenuated on both sides.
+    assert abs(_cosine_similarity([1e-8], [1e-8]) - 1e-4) < 1e-12
+
+
+@pytest.mark.parametrize(
+    "left,right",
+    [
+        ([float("nan"), 0.0], [1.0, 0.0]),
+        ([float("inf"), 0.0], [1.0, 0.0]),
+        ([], []),
+        ([1.0], [1.0, 0.0]),
+    ],
+)
+def test_cosine_similarity_rejects_invalid_embeddings(left, right) -> None:
+    with pytest.raises(SpeakerFinalizationError):
+        _cosine_similarity(left, right)
+
+
+def test_campp_similarity_uses_runtime_float32_scorer_and_validates_score() -> None:
+    class _Runtime:
+        def __init__(self, score):
+            self.score = score
+            self.calls = []
+
+        def compute_cos_similarity(self, left, right):
+            self.calls.append((left, right))
+            return self.score
+
+    runtime = _Runtime(0.1234567)
+    assert _campp_similarity_score(
+        runtime, _campp_vector(1.0), _campp_vector(0.0, 1.0)
+    ) == 0.1234567
+    assert len(runtime.calls) == 1
+
+    for invalid in (float("nan"), float("inf"), 1.1):
+        with pytest.raises(SpeakerFinalizationError):
+            _campp_similarity_score(
+                _Runtime(invalid), _campp_vector(1.0), _campp_vector(0.0, 1.0)
+            )
+
+    # Float32 cosine can overshoot one by a few ULP; production rounds this to
+    # 1.0, while a materially invalid score must still fail closed.
+    assert _campp_similarity_score(
+        _Runtime(1.000000119), _campp_vector(1.0), _campp_vector(1.0)
+    ) == 1.0
+
+
+def test_campp_embedding_rejects_wrong_dimension_and_degenerate_norm() -> None:
+    with pytest.raises(SpeakerFinalizationError, match="192 values"):
+        _campp_embedding(_CountingCampp({"x.wav": [1.0, 0.0]}), Path("x.wav"))
+    with pytest.raises(SpeakerFinalizationError, match="norm is degenerate"):
+        _campp_embedding(
+            _CountingCampp({"x.wav": _campp_vector(1e-10)}), Path("x.wav")
+        )
 
 
 def test_campp_embedding_uses_single_input_output_emb() -> None:
-    verifier = _CountingCampp({"/tmp/a.wav": [0.6, 0.8]})
-    assert _campp_embedding(verifier, Path("/tmp/a.wav")) == [0.6, 0.8]
+    expected = _campp_vector(0.6, 0.8)
+    verifier = _CountingCampp({"/tmp/a.wav": expected})
+    assert _campp_embedding(verifier, Path("/tmp/a.wav")) == expected
     assert verifier.calls == [{"inputs": ["/tmp/a.wav"], "output_emb": True}]
 
 
@@ -108,15 +180,22 @@ def test_campp_embedding_accepts_numpy_like_and_raw_array_returns() -> None:
 
     class _RawArray:
         def __call__(self, inputs, output_emb: bool = False, thr=None):
-            return [_Row([0.1, 0.2, 0.3])]  # no Mapping wrapper, embs indexed directly
+            return [_Row(_campp_vector(0.1, 0.2, 0.3))]  # no Mapping wrapper
 
-    assert _campp_embedding(_RawArray(), Path("x.wav")) == [0.1, 0.2, 0.3]
+    assert _campp_embedding(_RawArray(), Path("x.wav")) == _campp_vector(0.1, 0.2, 0.3)
 
 
-def test_embedding_similarity_embeds_each_wav_once_and_persists(tmp_path: Path) -> None:
+def test_embedding_similarity_embeds_each_wav_once_and_persists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import math as _math
+    import src.autoslice.speaker_finalizer as speaker_finalizer
 
-    unit = {"a": [1.0, 0.0], "b": [0.0, 1.0], "c": [1.0, 1.0]}
+    unit = {
+        "a": _campp_vector(1.0),
+        "b": _campp_vector(0.0, 1.0),
+        "c": _campp_vector(1.0, 1.0),
+    }
     wavs: dict[str, Path] = {}
     vectors: dict[str, list[float]] = {}
     for name, vec in unit.items():
@@ -128,6 +207,14 @@ def test_embedding_similarity_embeds_each_wav_once_and_persists(tmp_path: Path) 
     verifier = _CountingCampp(vectors)
     work_dir = tmp_path / "work"
     work_dir.mkdir()
+    writes: list[tuple[Path, int]] = []
+    real_atomic_write = speaker_finalizer.atomic_write_text
+
+    def counted_write(path: Path, value: str) -> None:
+        writes.append((path, len(value.encode("utf-8"))))
+        real_atomic_write(path, value)
+
+    monkeypatch.setattr(speaker_finalizer, "atomic_write_text", counted_write)
     similarity = _build_embedding_similarity(
         verifier=verifier, model_hash="model-x", work_dir=work_dir
     )
@@ -144,6 +231,7 @@ def test_embedding_similarity_embeds_each_wav_once_and_persists(tmp_path: Path) 
     assert len(verifier.calls) == 3
     assert sorted(c["inputs"][0] for c in verifier.calls) == sorted(vectors)
     assert all(len(c["inputs"]) == 1 for c in verifier.calls)
+    assert len(verifier.score_calls) == 5
 
     # Score parity with a cosine pipeline, rounded to the pipeline's 5 dp.
     assert got[("a", "b")] == 0.0
@@ -152,13 +240,80 @@ def test_embedding_similarity_embeds_each_wav_once_and_persists(tmp_path: Path) 
     assert got[("a", "b")] == got[("a", "b_again")]
 
     # A persisted cache lets a fresh builder score with zero new inferences.
-    assert (work_dir / "embedding-cache.json").is_file()
+    cache_files = sorted((work_dir / "embedding-cache-v2").glob("*.json"))
+    assert len(cache_files) == 3
+    assert len(writes) == 3
+    assert sum(size for _, size in writes) < 30_000
+    for cache_file in cache_files:
+        assert json.loads(cache_file.read_text(encoding="utf-8"))["schema_version"] == (
+            CAMPP_EMBEDDING_CACHE_SCHEMA
+        )
     verifier2 = _CountingCampp(vectors)
     similarity2 = _build_embedding_similarity(
         verifier=verifier2, model_hash="model-x", work_dir=work_dir
     )
     assert similarity2(wavs["b"], wavs["c"]) == round(1.0 / _math.sqrt(2.0), 5)
     assert verifier2.calls == []
+    assert len(verifier2.score_calls) == 1
+    assert len(writes) == 3
+
+
+def test_embedding_cache_tamper_reembeds_instead_of_scoring_modified_vector(
+    tmp_path: Path,
+) -> None:
+    wav_a = tmp_path / "a.wav"
+    wav_b = tmp_path / "b.wav"
+    wav_a.write_bytes(b"a" * 32)
+    wav_b.write_bytes(b"b" * 32)
+    vectors = {
+        str(wav_a): _campp_vector(1.0),
+        str(wav_b): _campp_vector(0.0, 1.0),
+    }
+    work_dir = tmp_path / "work"
+    similarity = _build_embedding_similarity(
+        verifier=_CountingCampp(vectors), model_hash="model-x", work_dir=work_dir
+    )
+    assert similarity(wav_a, wav_b) == 0.0
+
+    cache_files = sorted((work_dir / "embedding-cache-v2").glob("*.json"))
+    assert len(cache_files) == 2
+    tampered = json.loads(cache_files[0].read_text(encoding="utf-8"))
+    tampered["embedding"] = _campp_vector(1.0, 1.0)
+    # Deliberately leave the old checksum: this entry must never be scored.
+    cache_files[0].write_text(json.dumps(tampered), encoding="utf-8")
+
+    verifier = _CountingCampp(vectors)
+    similarity2 = _build_embedding_similarity(
+        verifier=verifier, model_hash="model-x", work_dir=work_dir
+    )
+    assert similarity2(wav_a, wav_b) == 0.0
+    assert len(verifier.calls) == 1
+
+
+def test_embedding_cache_runtime_drift_reembeds_all_entries(tmp_path: Path) -> None:
+    class _OtherCountingCampp(_CountingCampp):
+        pass
+
+    wav_a = tmp_path / "a.wav"
+    wav_b = tmp_path / "b.wav"
+    wav_a.write_bytes(b"a" * 32)
+    wav_b.write_bytes(b"b" * 32)
+    vectors = {
+        str(wav_a): _campp_vector(1.0),
+        str(wav_b): _campp_vector(0.0, 1.0),
+    }
+    work_dir = tmp_path / "work"
+    initial = _build_embedding_similarity(
+        verifier=_CountingCampp(vectors), model_hash="model-x", work_dir=work_dir
+    )
+    assert initial(wav_a, wav_b) == 0.0
+
+    verifier = _OtherCountingCampp(vectors)
+    after_drift = _build_embedding_similarity(
+        verifier=verifier, model_hash="model-x", work_dir=work_dir
+    )
+    assert after_drift(wav_a, wav_b) == 0.0
+    assert len(verifier.calls) == 2
 
 
 def test_runtime_model_and_reference_assets_are_rehashed_before_ready(tmp_path: Path) -> None:

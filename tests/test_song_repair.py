@@ -321,6 +321,168 @@ def test_audio_identity_collapses_same_title_with_different_line_splitting():
     assert chosen.source_ref == canonical.source_ref
 
 
+def test_audio_identity_uses_shared_source_cues_for_low_text_similarity_variants():
+    full = _japanese_lrc()
+    split_variant = LrcResult(
+        provider="netease",
+        song_title=full.song_title,
+        artist="cover singer",
+        source_ref="netease://song/split-variant",
+        # Deliberately low direct text similarity: providers can segment and
+        # annotate the same performance very differently.
+        lines=tuple(
+            LrcLine(index * 14_000, f"provider split fragment {index}")
+            for index in range(5)
+        ),
+    )
+
+    full_alignment = [
+        {"matched_cue_id": f"cue-{index}", "cue_start_ms": index * 7_000}
+        for index in range(10)
+    ]
+    split_alignment = [
+        {"matched_cue_id": f"cue-{index}", "cue_start_ms": index * 7_000}
+        for index in range(6)
+    ]
+    chosen = _choose_audio_lrc_candidate(
+        [(1.0, split_variant, split_alignment), (1.0, full, full_alignment)],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    # Exact recall tie: the version explaining more source cues and a fuller
+    # canonical timeline is sent to audio verification.
+    assert chosen.source_ref == full.source_ref
+
+
+def test_audio_identity_rejects_three_cue_subset_of_unrelated_same_title():
+    first = _japanese_lrc()
+    second = LrcResult(
+        provider="netease",
+        song_title=first.song_title,
+        artist="different artist",
+        source_ref="netease://song/three-cue-subset",
+        lines=tuple(LrcLine(index * 7_000, f"unrelated lyric {index}") for index in range(7)),
+    )
+    first_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(7)]
+    second_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(3)]
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.375, first, first_alignment), (0.35, second, second_alignment)],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_keeps_same_title_disjoint_cue_matches_ambiguous():
+    first = _japanese_lrc()
+    second = LrcResult(
+        provider="netease",
+        song_title=first.song_title,
+        artist="different artist",
+        source_ref="netease://song/same-title-homonym",
+        lines=tuple(LrcLine(index * 7_000, f"unrelated lyric {index}") for index in range(10)),
+    )
+    first_alignment = [{"matched_cue_id": f"a-{index}"} for index in range(5)]
+    second_alignment = [{"matched_cue_id": f"b-{index}"} for index in range(5)]
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(1.0, first, first_alignment), (1.0, second, second_alignment)],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_collapses_close_alias_when_lyrics_and_cues_agree():
+    canonical = _japanese_lrc()
+    alias = LrcResult(
+        provider="netease",
+        song_title="芽吹きの時",
+        artist="catalog alias",
+        source_ref="netease://song/catalog-alias",
+        lines=tuple(
+            LrcLine(line.time_ms, line.text)
+            for line in canonical.lines[:8]
+        ),
+    )
+    canonical_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(10)]
+    alias_alignment = [{"matched_cue_id": f"cue-{index}"} for index in range(8)]
+
+    chosen = _choose_audio_lrc_candidate(
+        [(1.0, canonical, canonical_alignment), (1.0, alias, alias_alignment)],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == canonical.source_ref
+
+
+def test_audio_identity_uses_provider_consensus_title_for_mistitled_lyric_row():
+    canonical = _japanese_lrc()
+    canonical_netease = LrcResult(
+        provider="netease",
+        song_title=canonical.song_title,
+        artist="cover",
+        source_ref="netease://song/canonical-title",
+        lines=canonical.lines,
+    )
+    mistitled = LrcResult(
+        provider="kugou",
+        song_title="unrelated catalog alias",
+        artist="dj alias",
+        source_ref="https://lyrics.kugou.com/download?id=mistitled",
+        lines=canonical.lines,
+    )
+    all_cues = [{"matched_cue_id": f"cue-{index}"} for index in range(10)]
+    chosen = _choose_audio_lrc_candidate(
+        [
+            (0.95, canonical, all_cues[:9]),
+            (0.95, canonical_netease, all_cues[:9]),
+            (1.0, mistitled, all_cues),
+        ],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == mistitled.source_ref
+    assert chosen.song_title == canonical.song_title
+
+
+def test_audio_identity_does_not_retitle_from_one_provider_catalog_rows():
+    canonical = _japanese_lrc()
+    selected = LrcResult(
+        provider="netease",
+        song_title="Alpha",
+        artist=canonical.artist,
+        source_ref="netease://song/alpha",
+        lines=canonical.lines,
+    )
+    alternate = LrcResult(
+        provider="netease",
+        song_title="Zulu",
+        artist=canonical.artist,
+        source_ref="netease://song/zulu",
+        lines=canonical.lines,
+    )
+    cues = [{"matched_cue_id": f"cue-{index}"} for index in range(10)]
+    chosen = _choose_audio_lrc_candidate(
+        [(1.0, selected, cues), (0.9, alternate, cues)],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == selected.source_ref
+    assert chosen.song_title == "Alpha"
+
+
 def test_fuzzy_family_selects_strongest_full_lrc_not_truncated_lrclib_subset():
     canonical = _japanese_lrc()
     full = LrcResult(
@@ -447,6 +609,74 @@ def test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof(tmp_p
     assert report["spot_checks"] == run.payload["spot_checks"]
     assert report["live_performance"] == run.payload["live_performance"]
     assert report["post_song_talk_start_ms"] == run.payload["post_song_talk_start_ms"]
+
+
+def test_instrumental_intro_spot_is_valid_before_first_lyric(tmp_path):
+    base = _japanese_lrc()
+    lrc = LrcResult(
+        provider=base.provider,
+        song_title=base.song_title,
+        artist=base.artist,
+        source_ref=base.source_ref,
+        # Canonical LRC begins 10 seconds after nominal LRC zero, leaving a
+        # real instrumental intro inside the full-song boundary.
+        lines=tuple(LrcLine(line.time_ms + 10_000, line.text) for line in base.lines),
+    )
+    run = _write_fake_audio_alignment_run(tmp_path, lrc)
+    payload = json.loads(json.dumps(run.payload))
+    first_live_ms = payload["observations"][0]["live_start_ms"]
+    payload["spot_checks"][0]["live_time_ms"] = first_live_ms
+    payload["spot_checks"][1]["live_time_ms"] = first_live_ms + 4_000
+    payload["spot_checks"][3]["live_time_ms"] = 15_000
+    run = _rebind_fake_audio_alignment_run(run, payload)
+    cues = [
+        SourceCue("jp-0", first_live_ms, first_live_ms + 3_000, lrc.lines[0].text, kind="singing"),
+        SourceCue("jp-1", first_live_ms + 7_000, first_live_ms + 10_000, lrc.lines[1].text, kind="singing"),
+    ]
+
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=cues,
+        anchor_start_ms=first_live_ms,
+        anchor_end_ms=first_live_ms + 10_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+    )
+
+    assert result.repaired is True
+    assert result.song_boundary["nominal_lrc_zero_ms"] == 10_000
+    assert payload["spot_checks"][3]["live_time_ms"] < first_live_ms
+
+
+def test_instrumental_outro_without_post_song_boundary_fails_closed(tmp_path):
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc)
+    payload = json.loads(json.dumps(run.payload))
+    payload["post_song_talk_start_ms"] = None
+    payload["spot_checks"][3]["live_time_ms"] = 99_999
+    run = _rebind_fake_audio_alignment_run(run, payload)
+    cues = [
+        SourceCue("jp-0", 10_000, 13_000, lrc.lines[0].text, kind="singing"),
+        SourceCue("jp-1", 17_000, 20_000, lrc.lines[1].text, kind="singing"),
+    ]
+
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=cues,
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+    )
+
+    assert result.repaired is False
+    assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
 
 
 def test_predominantly_sung_song_accepts_short_embedded_canonical_spoken_passage(tmp_path):
@@ -774,6 +1004,8 @@ def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
         assert "SONG_NOT_LIDOUSHA_SINGING" in result.reason_codes
     elif mutation == "ambiguous_lyric_singer":
         assert result.reason_codes == ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
+    else:
+        assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
 
 
 def test_build_lyric_queries_prefers_clean_lines_over_longest():

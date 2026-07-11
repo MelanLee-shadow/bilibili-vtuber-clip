@@ -1631,6 +1631,37 @@ def test_transient_agy_failure_gets_one_same_fingerprint_retry(tmp_path, monkeyp
     assert runner.requeue_recoverable_songs(date, state) == 0
 
 
+def test_invalid_audio_lrc_observation_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-21-20-05.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    record = {
+        "candidate_id": "song_invalid_agy",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "blocked",
+        "reason_codes": ["SONG_AUDIO_LRC_ALIGNMENT_INVALID"],
+        "pipeline_fingerprint": "sha256:same",
+        "transient_retry_count": 0,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["transient_retry_count"] == 1
+
+    state = {"pending_song": [], "songs": [{**record, "transient_retry_count": 1}]}
+    assert runner.requeue_recoverable_songs(date, state) == 0
+
+
 def test_unexpected_song_crash_preserves_retry_reconstruction(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"
