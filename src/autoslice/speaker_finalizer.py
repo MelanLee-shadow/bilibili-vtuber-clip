@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -41,7 +42,6 @@ from scripts.apply_speaker_turn_overrides import (
 from scripts.apply_subtitle_text_overrides import TextCue, parse_srt
 from src.autoslice.host_vocal_proof import (
     _extract_checkpoint,
-    _extract_score,
     _load_campplus_pipeline,
     _sha256_directory,
     _validate_profile,
@@ -360,8 +360,77 @@ def _policy(profile: Mapping[str, object]) -> dict[str, float | int]:
     return result
 
 
-def _pair_cache_key(model_hash: str, left_hash: str, right_hash: str) -> str:
-    return model_hash + "|" + "|".join(sorted((left_hash, right_hash)))
+def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+    dot = left_norm_sq = right_norm_sq = 0.0
+    for a, b in zip(left, right, strict=True):
+        dot += a * b
+        left_norm_sq += a * a
+        right_norm_sq += b * b
+    if left_norm_sq <= 0.0 or right_norm_sq <= 0.0:
+        return 0.0
+    return dot / math.sqrt(left_norm_sq * right_norm_sq)
+
+
+def _campp_embedding(verifier: Callable[..., object], path: Path) -> list[float]:
+    """Return the CAM++ speaker embedding for one wav.
+
+    ModelScope's speaker-verification pipeline embeds every input inside
+    ``forward`` and only derives a pairwise score when exactly two inputs are
+    passed (``postprocess`` returns no score otherwise), so a single-input
+    ``output_emb`` call yields that clip's embedding with one inference.
+    """
+    result = verifier([str(path)], output_emb=True)
+    embeddings = result["embs"] if isinstance(result, Mapping) and "embs" in result else result
+    row = embeddings[0]
+    values = row.tolist() if hasattr(row, "tolist") else list(row)
+    return [float(value) for value in values]
+
+
+def _build_embedding_similarity(
+    *, verifier: Callable[..., object], model_hash: str, work_dir: Path
+) -> Callable[[Path, Path], float]:
+    """Embed each cue once, then score pairs by cosine.
+
+    The previous implementation asked the pipeline for every (cue, anchor) pair
+    and re-embedded both wavs each time, so a talk clip paid O(cues x anchors)
+    CAM++ inferences and long clips blew past the finalizer timeout.  A CAM++
+    pair score is the cosine of the two per-clip embeddings, so embedding each
+    wav a single time and caching the vector is exactly score-preserving while
+    collapsing the cost to O(cues) inferences.
+    """
+    cache_path = work_dir / "embedding-cache.json"
+    try:
+        raw_cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.is_file() else {}
+    except (OSError, ValueError):
+        raw_cache = {}
+    embeddings: dict[str, list[float]] = {
+        key: [float(value) for value in vector]
+        for key, vector in raw_cache.items()
+        if isinstance(vector, list)
+    }
+    fingerprints: dict[Path, str] = {}
+
+    def fingerprint(path: Path) -> str:
+        resolved = path.resolve()
+        if resolved not in fingerprints:
+            fingerprints[resolved] = sha256_file(resolved)
+        return fingerprints[resolved]
+
+    def embedding(path: Path) -> list[float]:
+        # Cue basenames are reused after text/timing corrections. Content-bound
+        # keys keep a persistent work dir from serving stale voice vectors.
+        key = model_hash + "|" + fingerprint(path)
+        vector = embeddings.get(key)
+        if vector is None:
+            vector = _campp_embedding(verifier, path)
+            embeddings[key] = vector
+            atomic_write_text(cache_path, json.dumps(embeddings, sort_keys=True))
+        return vector
+
+    def similarity(left: Path, right: Path) -> float:
+        return round(_cosine_similarity(embedding(left), embedding(right)), 5)
+
+    return similarity
 
 
 def _two_means(values: Sequence[float]) -> tuple[float, float, float]:
@@ -810,28 +879,9 @@ def _run_campplus_analysis(
     profile, references, model_hash, verifier = _load_runtime(profile_path, reference_dir, model_dir)
     policy = _policy(profile)
     _audio, _sample_rate, cue_paths = _extract_cue_wavs(media_path, cues, work_dir)
-    cache_path = work_dir / "pair-cache.json"
-    try:
-        cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.is_file() else {}
-    except (OSError, ValueError):
-        cache = {}
-
-    fingerprints: dict[Path, str] = {}
-
-    def fingerprint(path: Path) -> str:
-        resolved = path.resolve()
-        if resolved not in fingerprints:
-            fingerprints[resolved] = sha256_file(resolved)
-        return fingerprints[resolved]
-
-    def similarity(left: Path, right: Path) -> float:
-        # Cue basenames are reused after text/timing corrections. Content-bound
-        # keys prevent a persistent work dir from serving stale voice scores.
-        key = _pair_cache_key(model_hash, fingerprint(left), fingerprint(right))
-        if key not in cache:
-            cache[key] = float(_extract_score(verifier([str(left), str(right)])))
-            atomic_write_text(cache_path, json.dumps(cache, sort_keys=True))
-        return float(cache[key])
+    similarity = _build_embedding_similarity(
+        verifier=verifier, model_hash=model_hash, work_dir=work_dir
+    )
 
     seed_scores = [
         float(statistics.median(similarity(Path(reference["path"]), cue_path) for reference in references))

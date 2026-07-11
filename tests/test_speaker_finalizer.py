@@ -11,9 +11,11 @@ from src.autoslice.speaker_finalizer import (
     SOURCE_SESSION_ANCHOR_SCHEMA,
     SpeakerFinalizationError,
     _assert_runtime_assets_stable,
+    _build_embedding_similarity,
+    _campp_embedding,
     _context_prompt,
+    _cosine_similarity,
     _load_source_session_anchor_samples,
-    _pair_cache_key,
     _speaker_context_env,
     _validate_source_session_anchor_document,
     finalize_speaker_subtitles,
@@ -67,9 +69,96 @@ def _source_session_document() -> dict:
     }
 
 
-def test_pair_cache_key_is_symmetric_and_model_bound() -> None:
-    assert _pair_cache_key("model-a", "left", "right") == _pair_cache_key("model-a", "right", "left")
-    assert _pair_cache_key("model-a", "left", "right") != _pair_cache_key("model-b", "left", "right")
+class _CountingCampp:
+    """Fake ModelScope SV pipeline: one embedding per call, records every call."""
+
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        self._vectors = vectors
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, inputs, output_emb: bool = False, thr=None):
+        self.calls.append({"inputs": list(inputs), "output_emb": output_emb})
+        if not output_emb or len(inputs) != 1:
+            raise AssertionError(
+                "embed-once path must call the pipeline with one wav and output_emb=True"
+            )
+        return {"embs": [list(self._vectors[str(inputs[0])])]}
+
+
+def test_cosine_similarity_matches_pipeline_pairwise_semantics() -> None:
+    assert _cosine_similarity([1.0, 0.0], [1.0, 0.0]) == 1.0
+    assert _cosine_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
+    assert _cosine_similarity([1.0, 0.0], [-1.0, 0.0]) == -1.0
+    # Magnitude-invariant, like the torch CosineSimilarity the CAM++ pipeline uses.
+    assert abs(_cosine_similarity([2.0, 1.0], [4.0, 2.0]) - 1.0) < 1e-9
+    # A silent/degenerate embedding must not divide by zero.
+    assert _cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
+
+
+def test_campp_embedding_uses_single_input_output_emb() -> None:
+    verifier = _CountingCampp({"/tmp/a.wav": [0.6, 0.8]})
+    assert _campp_embedding(verifier, Path("/tmp/a.wav")) == [0.6, 0.8]
+    assert verifier.calls == [{"inputs": ["/tmp/a.wav"], "output_emb": True}]
+
+
+def test_campp_embedding_accepts_numpy_like_and_raw_array_returns() -> None:
+    class _Row(list):
+        def tolist(self):  # emulate a numpy ndarray row
+            return [float(x) for x in self]
+
+    class _RawArray:
+        def __call__(self, inputs, output_emb: bool = False, thr=None):
+            return [_Row([0.1, 0.2, 0.3])]  # no Mapping wrapper, embs indexed directly
+
+    assert _campp_embedding(_RawArray(), Path("x.wav")) == [0.1, 0.2, 0.3]
+
+
+def test_embedding_similarity_embeds_each_wav_once_and_persists(tmp_path: Path) -> None:
+    import math as _math
+
+    unit = {"a": [1.0, 0.0], "b": [0.0, 1.0], "c": [1.0, 1.0]}
+    wavs: dict[str, Path] = {}
+    vectors: dict[str, list[float]] = {}
+    for name, vec in unit.items():
+        p = tmp_path / f"cue-{name}.wav"
+        p.write_bytes(name.encode() * 32)  # distinct content -> distinct fingerprint
+        wavs[name] = p
+        vectors[str(p)] = vec
+
+    verifier = _CountingCampp(vectors)
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    similarity = _build_embedding_similarity(
+        verifier=verifier, model_hash="model-x", work_dir=work_dir
+    )
+
+    got = {
+        ("a", "b"): similarity(wavs["a"], wavs["b"]),
+        ("a", "c"): similarity(wavs["a"], wavs["c"]),
+        ("b", "c"): similarity(wavs["b"], wavs["c"]),
+        ("a", "b_again"): similarity(wavs["a"], wavs["b"]),
+        ("a", "a"): similarity(wavs["a"], wavs["a"]),
+    }
+
+    # O(cues): exactly one embedding inference per distinct wav, never a pair call.
+    assert len(verifier.calls) == 3
+    assert sorted(c["inputs"][0] for c in verifier.calls) == sorted(vectors)
+    assert all(len(c["inputs"]) == 1 for c in verifier.calls)
+
+    # Score parity with a cosine pipeline, rounded to the pipeline's 5 dp.
+    assert got[("a", "b")] == 0.0
+    assert got[("a", "a")] == 1.0
+    assert got[("a", "c")] == round(1.0 / _math.sqrt(2.0), 5)
+    assert got[("a", "b")] == got[("a", "b_again")]
+
+    # A persisted cache lets a fresh builder score with zero new inferences.
+    assert (work_dir / "embedding-cache.json").is_file()
+    verifier2 = _CountingCampp(vectors)
+    similarity2 = _build_embedding_similarity(
+        verifier=verifier2, model_hash="model-x", work_dir=work_dir
+    )
+    assert similarity2(wavs["b"], wavs["c"]) == round(1.0 / _math.sqrt(2.0), 5)
+    assert verifier2.calls == []
 
 
 def test_runtime_model_and_reference_assets_are_rehashed_before_ready(tmp_path: Path) -> None:
