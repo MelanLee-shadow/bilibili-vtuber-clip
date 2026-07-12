@@ -3,6 +3,82 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-12：失败自治恢复与 AGY -> Gemini API 故障转移（当前）
+
+### 目标
+
+消除 7/11、7/12 暴露的伪终态失败：运行环境缺件不能消耗候选重试，
+provider 配额/网络故障必须自治恢复，明确下一话题只进入尾气时应缩短尾气，
+不安全的内容候选要自动淘汰并由下一名补位。保持人工真值 withheld、
+生产 `DISABLED` 和 no-upload。
+
+### 已完成
+
+- 取证确认两类主根因：隔离 `repo-34b9b26` 漏掉 tracked
+  `voiceprint_profile.v1.json`，使 6 个 talk 在 speaker preflight 重复失败；
+  两日歌曲均先遇到 `AGY_SOURCE_CONTEXT_RUNNER_FAILED`，随后整日
+  `6 current + 12 superseded = 18` 的总上限压过单曲基础设施重试。
+  AGY job 的稳定 stderr 进一步确认当时为 `Individual quota reached`，并
+  自带 17–41 分钟 reset 时间。下游 LRC/边界/人声/hash 缺失主要是同一
+  上游失败的级联结果，不是十二个独立内容错误。
+- 新增 runtime preflight 和 commit-exact eval builder：候选执行前验证
+  tracked speaker profile、talk producer、source-context executor；缺件时
+  日期进入 `paused_runtime_invalid`，pending 与重试计数不动。builder 只从
+  `git archive <commit> scripts src assets` 生成快照，写逐文件 SHA manifest，
+  缺 profile 直接拒绝构建。
+- 歌曲基础设施重试改为 per-candidate 优先：不再被整日 18 次 tombstone
+  提前掐死；等待 retry-after 的日期保持 `retry_wait` /
+  `review_ready_retry_wait` 非终态。AGY quota reset 被解析并加安全余量，
+  429/5xx/timeout/quota 等可恢复故障不因历史计数变成内容失败。
+- 按 Ivan 指示接入远端 Gemini API failover：正式顺序为
+  **AGY -> GEMINI_API_KEY / _2 / _3 ->（仅歌切）draft 继续独立 LRC/边界/
+  host-vocal 证明**。Gemini API 只能改文本；cue index 必须一一对应，最终
+  时间轴强制恢复为 draft。远端现有 `gemini-3.5-flash` + key#1 实际音频
+  smoke 成功，provider=`gemini_api`、输出非空、timing signature 完全一致；
+  key 值未输出/落 manifest。
+- 7/12 `auto_154845_1140_1254` 的真实事故已修：closure=123310ms、下一 cue
+  `我要找一下`=123470ms、VAD=123592ms；旧 VAD-only clamp 仍让下一字幕进入
+  22ms。现在 cue timeline 优先，把 final tail 缩到 123370ms，不再误报
+  `next_sentence_enters_tail_pad / closure_not_final_subtitle`。
+- AGY 保留全部 cue index 但擅改 timestamp（真实 48/48、96/96）时，文本会
+  确定性重新挂回 draft 时间轴；漏 cue、重复或重排仍 fail closed。talk
+  failure 现在持久化 stage/kind/message/fingerprint/recoverable，不再只有
+  generic `failed`。speaker stale sidecar 在读取 profile 前清理。
+- 结构化 talk reserve backlog 已加入：`boundary_unrepairable` 或
+  `speaker_review_required` 不再让整日少一席，而会记为
+  `candidate_rejected` 并按置信度补下一候选；基础设施等待不会用补位掩盖
+  outage。全套回归 **879 passed**，代码提交
+  `6f9da78606dc764cfedb549fe248bf7e85897727`。
+
+### 进行中（含后台进程）
+
+- 新隔离 BASE：`free:/opt/bilive/autoslice/evals/failure-selfheal-6f9da78`；
+  repo 由新 builder 从上述 commit 生成，manifest 98 个 tracked 文件且 profile
+  存在。只挂 7/11、7/12 录像，复用机器 ASR cache，
+  `AUTOSLICE_HUMAN_TRUTH_MODE=withheld`，显式使用 machine timely snapshot
+  与机器角色图。
+- transient systemd timer `autoslice-failure-selfheal-6f9da78.timer` 每 5 分钟
+  调正式 `free_session_autoslice.py --once`，flock 单飞；没有手工调用
+  `process_date` 或候选阶段。首次只读状态为 7/11 `processing`、7/12 尚未建
+  state，尚不能声称两日成片收敛。
+- 生产 `/opt/bilive/autoslice/DISABLED` 仍存在；本轮未上传，也尚未把
+  `6f9da78` 正式部署为生产 `DEPLOYED_COMMIT`。
+
+### 阻塞
+
+- 无需 Ivan 决策的代码 blocker。当前只等待隔离正式入口自治完成；在两日
+  state/summary/媒体没有收敛前，不把单测与 Gemini smoke 冒充完整直播验收。
+
+### 下一步
+
+1. 只读检查两日 state、`AUTOSLICE_SUMMARY.md` 和媒体/SRT/封面；不读取进程、
+   阶段日志或手工推进。要求等待 provider 的条目保持非终态，明确内容拒绝有
+   reserve 补位，最终 package 全部 no-upload。
+2. 收敛后停止并移除隔离 timer，更新本节最终结果。
+3. 再用正式 `scripts/deploy_free_autoslice.sh free` 部署干净 HEAD，回读
+   `DEPLOYED_COMMIT`、runtime assets 和 Gemini key 可见性；继续保留生产
+   `DISABLED`，不得上传。
+
 ## 2026-07-12：多新番角色图广度调度与最新直播产物（当前）
 
 ### 目标
