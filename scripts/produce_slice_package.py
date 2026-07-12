@@ -43,6 +43,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +84,15 @@ from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
+    finalize_fast_solo_subtitles,
     validate_speaker_review_manifest_document,
+)
+from src.autoslice.speaker_session_router import (
+    FAST_SOLO,
+    SpeakerRoutingError,
+    segment_binding_sha256,
+    verify_speaker_routing_claim,
+    verify_speaker_routing_claim_for_candidate,
 )
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sanitize_cue_timing
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
@@ -418,6 +427,379 @@ def _resolved_optional_path(value: object, *, relative_to: Path) -> Path | None:
     return path if path.is_absolute() else (relative_to / path).resolve()
 
 
+RECUT_PROVENANCE_SCHEMA = "lidousha-speaker-recut-provenance.v1"
+
+
+def _write_json_atomic(path: Path, document: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _source_media_sha256(host: str, source: Path) -> tuple[str, str]:
+    """Hash the exact source bytes on the execution host."""
+
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        resolved = source.resolve(strict=True)
+        return str(resolved), segment_binding_sha256(resolved)
+    completed = subprocess.run(
+        ["ssh", host, "sha256sum -- " + shlex.quote(str(source))],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3600,
+    )
+    match = re.fullmatch(r"([0-9a-f]{64})\s+.+\n?", completed.stdout)
+    if completed.returncode != 0 or match is None:
+        raise RuntimeError(f"SOURCE_HASH_FAILED: {source}: {completed.stderr[-400:]}")
+    return str(source), match.group(1)
+
+
+def _valid_cached_provenance(
+    path: Path, *, expected_without_output_hash: dict, output: Path
+) -> bool:
+    if not path.is_file() or not output.is_file():
+        return False
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected = {
+        **expected_without_output_hash,
+        "output_sha256": _sha256(output),
+    }
+    return document == expected
+
+
+FAST_FRESH_DERIVATION_SCHEMA = "lidousha-speaker-fast-fresh-derivation.v1"
+
+
+class FastMediaRollbackError(RuntimeError):
+    """Raised when the original media cannot be proven restored."""
+
+
+def _begin_fast_media_transaction(media_path: Path) -> dict[str, object]:
+    """Move the original media to an invocation-owned same-filesystem backup."""
+
+    parent = media_path.parent.resolve(strict=True)
+    destination = media_path.absolute()
+    if destination.parent.resolve(strict=True) != parent:
+        raise SpeakerRoutingError("FAST media destination escapes its parent")
+    if destination.exists() and (
+        destination.is_symlink() or not destination.is_file()
+    ):
+        raise SpeakerRoutingError("FAST media destination is not a regular file")
+    descriptor, backup_name = tempfile.mkstemp(
+        prefix=f".{media_path.name}.fast-backup-", dir=parent
+    )
+    os.close(descriptor)
+    backup = Path(backup_name).absolute()
+    if (
+        backup.parent != parent
+        or backup.is_symlink()
+        or backup.resolve(strict=True) != backup
+    ):
+        backup.unlink(missing_ok=True)
+        raise SpeakerRoutingError("FAST backup path is not invocation-owned")
+    original_existed = destination.is_file()
+    original_sha256 = _sha256(destination) if original_existed else None
+    try:
+        if original_existed:
+            os.replace(destination, backup)
+            if _sha256(backup) != original_sha256:
+                raise FastMediaRollbackError("FAST backup hash mismatch")
+    except Exception as exc:
+        if original_existed and backup.is_file():
+            destination.unlink(missing_ok=True)
+            os.replace(backup, destination)
+            if _sha256(destination) != original_sha256:
+                raise FastMediaRollbackError(
+                    "FAST transaction initialization could not restore original media"
+                ) from exc
+        else:
+            backup.unlink(missing_ok=True)
+        raise
+    return {
+        "media_path": destination,
+        "backup_path": backup,
+        "original_existed": original_existed,
+        "original_sha256": original_sha256,
+    }
+
+
+def _rollback_fast_media_transaction(
+    transaction: dict[str, object],
+    *,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+) -> None:
+    """Remove partial FAST outputs and prove the original media is restored."""
+
+    media_path = Path(str(transaction["media_path"])).absolute()
+    backup_path = Path(str(transaction["backup_path"])).absolute()
+    for output in (output_srt_path, output_ass_path, output_manifest_path):
+        output.unlink(missing_ok=True)
+    media_path.unlink(missing_ok=True)
+    if transaction["original_existed"] is True:
+        if not backup_path.is_file() or backup_path.is_symlink():
+            raise FastMediaRollbackError("FAST original backup is unavailable")
+        os.replace(backup_path, media_path)
+        if _sha256(media_path) != transaction["original_sha256"]:
+            raise FastMediaRollbackError("FAST original media hash was not restored")
+    else:
+        backup_path.unlink(missing_ok=True)
+        if media_path.exists():
+            raise FastMediaRollbackError("FAST installed media survived absent-original rollback")
+    if backup_path.exists():
+        raise FastMediaRollbackError("FAST backup survived rollback")
+
+
+def _commit_fast_media_transaction(transaction: dict[str, object]) -> None:
+    """Commit fresh media by deleting the verified original backup."""
+
+    media_path = Path(str(transaction["media_path"])).absolute()
+    backup_path = Path(str(transaction["backup_path"])).absolute()
+    if not media_path.is_file() or media_path.is_symlink():
+        raise SpeakerRoutingError("FAST committed media is missing")
+    backup_path.unlink(missing_ok=False)
+    if backup_path.exists():
+        raise SpeakerRoutingError("FAST backup was not removed after commit")
+
+
+def _validate_fast_transaction_outputs(
+    *,
+    manifest: object,
+    media_path: Path,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+    fresh_derivation: dict[str, object],
+) -> None:
+    """Validate every installed FAST surface before deleting the backup."""
+
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("status") != "READY"
+        or manifest.get("production_ready") is not True
+    ):
+        raise SpeakerRoutingError("FAST renderer did not return production READY")
+    if not all(
+        path.is_file() and not path.is_symlink()
+        for path in (output_srt_path, output_ass_path, output_manifest_path)
+    ):
+        raise SpeakerRoutingError("FAST renderer omitted a required output")
+    loaded_manifest = json.loads(output_manifest_path.read_text(encoding="utf-8"))
+    if loaded_manifest != manifest:
+        raise SpeakerRoutingError("FAST manifest bytes differ from returned manifest")
+    if (
+        manifest.get("source_media_sha256") != _sha256(media_path)
+        or manifest.get("output_review_srt_sha256") != _sha256(output_srt_path)
+        or manifest.get("output_ass_sha256") != _sha256(output_ass_path)
+        or manifest.get("fresh_fast_derivation") != fresh_derivation
+        or fresh_derivation.get("output_sha256") != _sha256(media_path)
+    ):
+        raise SpeakerRoutingError("FAST output/derivation hash validation failed")
+
+
+def _derive_fresh_fast_media(
+    *,
+    host: str,
+    media_path: Path,
+    claimed_segment_path: Path,
+    expected_segment_sha256: str,
+    final_source_start_ms: int,
+    final_source_end_ms: int,
+) -> dict[str, object]:
+    """Freshly derive FAST media from the verified source, bypassing caches.
+
+    The temporary output is invocation-owned and lives beside the destination,
+    so the final ``os.replace`` is atomic.  Existing piece/padded/final bytes
+    and their caller-writable provenance are never read here.
+    """
+
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        raise SpeakerRoutingError("FAST fresh derivation requires a local sealed source")
+    if final_source_start_ms < 0 or final_source_end_ms <= final_source_start_ms:
+        raise SpeakerRoutingError("FAST fresh derivation interval is invalid")
+    source = claimed_segment_path.resolve(strict=True)
+    if source.is_symlink() or not source.is_file():
+        raise SpeakerRoutingError("FAST claimed source is not a regular file")
+    source_before = segment_binding_sha256(source)
+    if source_before != expected_segment_sha256:
+        raise SpeakerRoutingError("FAST claimed source hash drifted before derivation")
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_duration_ms = final_source_end_ms - final_source_start_ms
+    with tempfile.TemporaryDirectory(
+        prefix=f".{media_path.name}.fast-derive-", dir=media_path.parent
+    ) as temporary_dir:
+        temporary_output = Path(temporary_dir) / "fresh-recut.mp4"
+        command = _accurate_reencode_recut_command(
+            source_video=source,
+            output_media=temporary_output,
+            start_ms=final_source_start_ms,
+            duration_ms=expected_duration_ms,
+        )
+        try:
+            run(command, timeout=3600)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            raise SpeakerRoutingError(f"FAST fresh derivation command failed: {exc}") from exc
+        if (
+            not temporary_output.is_file()
+            or temporary_output.is_symlink()
+            or temporary_output.stat().st_size <= 0
+        ):
+            raise SpeakerRoutingError("FAST fresh derivation produced no regular media")
+        source_after = segment_binding_sha256(source)
+        if source_after != source_before:
+            raise SpeakerRoutingError("FAST claimed source drifted during derivation")
+        actual_duration_ms = ffprobe_duration_ms(temporary_output)
+        duration_tolerance_ms = max(350, int(expected_duration_ms * 0.01))
+        if (
+            actual_duration_ms <= 0
+            or abs(actual_duration_ms - expected_duration_ms) > duration_tolerance_ms
+        ):
+            raise SpeakerRoutingError(
+                "FAST fresh derivation duration mismatch: "
+                f"expected={expected_duration_ms} actual={actual_duration_ms}"
+            )
+        output_sha256 = _sha256(temporary_output)
+        os.replace(temporary_output, media_path)
+    resolved_output = media_path.resolve(strict=True)
+    if _sha256(resolved_output) != output_sha256:
+        raise SpeakerRoutingError("FAST fresh derivation changed during atomic install")
+    return {
+        "schema_version": FAST_FRESH_DERIVATION_SCHEMA,
+        "method": "canonical_accurate_recut_direct_from_claimed_segment",
+        "cache_reused": False,
+        "source_path": str(source),
+        "source_sha256": source_before,
+        "absolute_source_start_ms": final_source_start_ms,
+        "absolute_source_end_ms": final_source_end_ms,
+        "expected_duration_ms": expected_duration_ms,
+        "actual_duration_ms": actual_duration_ms,
+        "output_path": str(resolved_output),
+        "output_sha256": output_sha256,
+    }
+
+
+def _format_srt_timestamp(ms: int) -> str:
+    hours, remainder = divmod(ms, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _write_route_mixed_overlap_evidence(
+    *,
+    media_path: Path,
+    text_srt_path: Path,
+    work_dir: Path,
+    claim: dict,
+    verified_route: object,
+) -> Path:
+    """Turn provider-wide mixed/overlap evidence into a bound terminal review.
+
+    The acoustic provider currently reports at candidate-window granularity.
+    Therefore every final cue is conservatively affected.  Each row includes a
+    real extracted cue-audio digest, and the downstream finalizer emits no SRT
+    or ASS unless exact speaker overrides cover all affected cues.
+    """
+
+    candidate_result = getattr(verified_route, "candidate_result")
+    evidence = candidate_result["evidence"]
+    reasons = []
+    if evidence.get("mixed_speaker_within_unit_detected"):
+        reasons.append("CUE_MIXED_SPEAKER")
+    if evidence.get("overlap_detected"):
+        reasons.append("CUE_OVERLAPPING_SPEECH")
+    if not reasons:
+        raise SpeakerRoutingError("provider route has no mixed/overlap evidence")
+    cues = [
+        cue
+        for cue in parse_srt_cues(text_srt_path.read_text(encoding="utf-8"))
+        if cue.text.strip()
+    ]
+    if not cues:
+        raise SpeakerRoutingError("mixed/overlap review has no final subtitle cues")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for source_cue, cue in enumerate(cues, start=1):
+        audio_path = work_dir / f"mixed-review-cue-{source_cue:04d}.wav"
+        run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                f"{cue.start_ms / 1000:.3f}",
+                "-i",
+                str(media_path),
+                "-t",
+                f"{max(1, cue.end_ms - cue.start_ms) / 1000:.3f}",
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                str(audio_path),
+            ],
+            timeout=300,
+        )
+        rows.append(
+            {
+                "source_cue": source_cue,
+                "zero_based_index": source_cue - 1,
+                "start": _format_srt_timestamp(cue.start_ms),
+                "end": _format_srt_timestamp(cue.end_ms),
+                "text": cue.text,
+                "audio_sha256": _sha256(audio_path),
+                "reason_codes": reasons,
+                "provider_details": {
+                    "cluster_count": max(
+                        2, int(evidence.get("speaker_count_lower_bound") or 1)
+                    ),
+                    "overlap_detected": bool(evidence.get("overlap_detected")),
+                    "audio_path": str(audio_path.resolve()),
+                    "provider_audio_window_sha256": evidence["audio_window_sha256"],
+                    "provider_acoustic_observation_sha256": evidence[
+                        "acoustic_observation_sha256"
+                    ],
+                    "routing_claim_sha256": getattr(verified_route, "claim_sha256"),
+                    "provider_evidence_sha256": getattr(
+                        verified_route, "provider_evidence_sha256"
+                    ),
+                },
+            }
+        )
+    provider = claim.get("provider") or {}
+    config_sha = (((provider.get("artifacts") or {}).get("config") or {}).get("sha256"))
+    output = work_dir / "provider-mixed-overlap-evidence.json"
+    _write_json_atomic(
+        output,
+        {
+            "schema_version": "lidousha-speaker-mixed-overlap-evidence.v1",
+            "status": "REVIEW_REQUIRED",
+            "source_media_sha256": _sha256(media_path),
+            "text_final_srt_sha256": _sha256(text_srt_path),
+            "provider": {
+                "name": str(provider.get("name") or "sealed-acoustic-provider"),
+                "config_sha256": str(config_sha or ""),
+            },
+            "review_required_cues": rows,
+        },
+    )
+    return output
+
+
 def verify_chat_authority_final_surfaces(
     audit: dict,
     *,
@@ -498,6 +880,7 @@ def _rebase_remote_speaker_manifest(
     text_srt_path: Path,
     override_path: Path | None,
     source_session_anchor_path: Path | None = None,
+    mixed_overlap_evidence_path: Path | None = None,
     output_srt_path: Path,
     output_ass_path: Path,
 ) -> dict:
@@ -509,6 +892,7 @@ def _rebase_remote_speaker_manifest(
         "text_final_srt",
         "speaker_override",
         "source_session_anchor_manifest",
+        "mixed_overlap_evidence",
         "output_review_srt",
         "output_ass",
     )
@@ -522,6 +906,11 @@ def _rebase_remote_speaker_manifest(
             "source_session_anchor_manifest": (
                 str(source_session_anchor_path.resolve())
                 if source_session_anchor_path is not None
+                else None
+            ),
+            "mixed_overlap_evidence": (
+                str(mixed_overlap_evidence_path.resolve())
+                if mixed_overlap_evidence_path is not None
                 else None
             ),
             "output_review_srt": str(output_srt_path.resolve()),
@@ -543,6 +932,7 @@ def run_speaker_finalizer(
     work_dir: Path,
     override_path: Path | None = None,
     source_session_anchor_path: Path | None = None,
+    mixed_overlap_evidence_path: Path | None = None,
     speaker_python: Path = Path("/opt/bilive/autoslice/venv-diar/bin/python"),
     reference_dir: Path = Path("/opt/bilive/autoslice/voiceprints/lidousha"),
     model_dir: Path = Path("/opt/bilive/autoslice/models/campp"),
@@ -564,6 +954,11 @@ def run_speaker_finalizer(
         "source_session_anchor_manifest_sha256": (
             _sha256(source_session_anchor_path)
             if source_session_anchor_path is not None
+            else None
+        ),
+        "mixed_overlap_evidence_sha256": (
+            _sha256(mixed_overlap_evidence_path)
+            if mixed_overlap_evidence_path is not None
             else None
         ),
     }
@@ -599,6 +994,8 @@ def run_speaker_finalizer(
             command.extend(["--overrides", str(override_path)])
         if source_session_anchor_path is not None:
             command.extend(["--source-session-anchors", str(source_session_anchor_path)])
+        if mixed_overlap_evidence_path is not None:
+            command.extend(["--mixed-overlap-evidence", str(mixed_overlap_evidence_path)])
         completed = subprocess.run(
             command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
         )
@@ -611,6 +1008,7 @@ def run_speaker_finalizer(
         remote_manifest = f"{remote_dir}/speaker-final.json"
         remote_override = f"{remote_dir}/overrides.json"
         remote_session_anchors = f"{remote_dir}/source-session-anchors.json"
+        remote_mixed_overlap = f"{remote_dir}/mixed-overlap-evidence.json"
         run(["ssh", host, f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}/work"], timeout=120)
         try:
             run(["scp", "-q", str(media_path), str(text_srt_path), f"{host}:{remote_dir}/"], timeout=1800)
@@ -627,6 +1025,11 @@ def run_speaker_finalizer(
                     ["scp", "-q", str(source_session_anchor_path), f"{host}:{remote_session_anchors}"],
                     timeout=120,
                 )
+            if mixed_overlap_evidence_path is not None:
+                run(
+                    ["scp", "-q", str(mixed_overlap_evidence_path), f"{host}:{remote_mixed_overlap}"],
+                    timeout=120,
+                )
             remote_command = [
                 str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
                 "--candidate-id", candidate_id,
@@ -640,6 +1043,8 @@ def run_speaker_finalizer(
                 remote_command.extend(["--overrides", remote_override])
             if source_session_anchor_path is not None:
                 remote_command.extend(["--source-session-anchors", remote_session_anchors])
+            if mixed_overlap_evidence_path is not None:
+                remote_command.extend(["--mixed-overlap-evidence", remote_mixed_overlap])
             shell_command = "cd /opt/bilive/autoslice/repo && " + " ".join(
                 shlex.quote(part) for part in remote_command
             )
@@ -696,6 +1101,7 @@ def run_speaker_finalizer(
             text_srt_path=text_srt_path,
             override_path=override_path,
             source_session_anchor_path=source_session_anchor_path,
+            mixed_overlap_evidence_path=mixed_overlap_evidence_path,
             output_srt_path=output_srt_path,
             output_ass_path=output_ass_path,
         )
@@ -728,6 +1134,11 @@ def run_speaker_finalizer(
         != frozen_inputs["source_session_anchor_manifest_sha256"]
     ):
         raise RuntimeError("SPEAKER_FINALIZATION_SOURCE_SESSION_BINDING_MISMATCH")
+    if (
+        manifest.get("mixed_overlap_evidence_sha256")
+        != frozen_inputs["mixed_overlap_evidence_sha256"]
+    ):
+        raise RuntimeError("SPEAKER_FINALIZATION_MIXED_OVERLAP_BINDING_MISMATCH")
     current_inputs = {
         "source_media_sha256": _sha256(media_path),
         "text_final_srt_sha256": _sha256(text_srt_path),
@@ -738,9 +1149,235 @@ def run_speaker_finalizer(
             if source_session_anchor_path is not None
             else None
         ),
+        "mixed_overlap_evidence_sha256": (
+            _sha256(mixed_overlap_evidence_path)
+            if mixed_overlap_evidence_path is not None
+            else None
+        ),
     }
     if current_inputs != frozen_inputs:
         raise RuntimeError("SPEAKER_FINALIZATION_INPUT_DRIFT")
+    return manifest
+
+
+def run_producer_speaker_finalization(
+    *,
+    speaker_mode: str,
+    host: str,
+    candidate_id: str,
+    media_path: Path,
+    text_srt_path: Path,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+    work_dir: Path,
+    spec: dict,
+    spec_parent: Path,
+    override_path: Path | None,
+    source_session_anchor_path: Path | None,
+    mixed_overlap_evidence_path: Path | None,
+    speaker_python: Path,
+    final_source_start_ms: int | None,
+    final_source_end_ms: int | None,
+) -> dict:
+    """Dispatch a verified FAST route or the existing binary finalizer.
+
+    Any missing, malformed, stale, or uncertain routing authority falls back
+    to the full finalizer.  The FAST branch is unavailable when candidate-local
+    override/session/mixed evidence exists, so it cannot bypass stronger
+    authority or a review gate.
+    """
+
+    fallback_reason = "SPEAKER_MODE_REQUIRED"
+    if speaker_mode == "auto":
+        fallback_reason = "ROUTING_CLAIM_MISSING"
+        claim_path = _resolved_optional_path(
+            spec.get("speaker_routing_claim"), relative_to=spec_parent
+        )
+        expected_claim_sha256 = str(
+            spec.get("speaker_routing_claim_sha256") or ""
+        ).removeprefix("sha256:")
+        candidate = spec.get("speaker_routing_candidate")
+        if claim_path is not None and expected_claim_sha256:
+            try:
+                if _sha256(claim_path) != expected_claim_sha256:
+                    raise SpeakerRoutingError("routing claim bytes drifted")
+                claim = json.loads(claim_path.read_text(encoding="utf-8"))
+                if not isinstance(claim, dict):
+                    raise SpeakerRoutingError("routing claim must be an object")
+                if claim.get("decision") != FAST_SOLO:
+                    reasons = claim.get("reason_codes")
+                    fallback_reason = (
+                        "ROUTER_REQUIRED:"
+                        + ",".join(str(value) for value in reasons)
+                        if isinstance(reasons, list) and reasons
+                        else "ROUTER_REQUIRED"
+                    )
+                    if isinstance(candidate, dict):
+                        verified_binary = verify_speaker_routing_claim_for_candidate(
+                            claim,
+                            claim_path=claim_path,
+                            expected_claim_sha256=expected_claim_sha256,
+                            expected_date=str(spec.get("date") or ""),
+                            expected_candidate_id=candidate_id,
+                            expected_segment_binding_sha256=str(
+                                candidate.get("segment_binding_sha256") or ""
+                            ),
+                            expected_start_ms=int(candidate["start_ms"]),
+                            expected_end_ms=int(candidate["end_ms"]),
+                            expected_pipeline_fingerprint=str(
+                                candidate.get("pipeline_fingerprint") or ""
+                            ),
+                            expected_segment_path=Path(str(candidate["segment_path"])),
+                            expected_segment_stat_signature=candidate[
+                                "segment_stat_signature"
+                            ],
+                            expected_bcut_srt_path=Path(
+                                str(candidate["bcut_srt_path"])
+                            ),
+                            expected_bcut_srt_sha256=str(
+                                candidate.get("bcut_srt_sha256") or ""
+                            ),
+                        )
+                        result = verified_binary.candidate_result
+                        if (
+                            result.get("mixed_or_overlap_detected") is True
+                            and mixed_overlap_evidence_path is None
+                        ):
+                            mixed_overlap_evidence_path = (
+                                _write_route_mixed_overlap_evidence(
+                                    media_path=media_path,
+                                    text_srt_path=text_srt_path,
+                                    work_dir=work_dir,
+                                    claim=claim,
+                                    verified_route=verified_binary,
+                                )
+                            )
+                            fallback_reason = "ROUTER_MIXED_OVERLAP_REVIEW_REQUIRED"
+                elif any(
+                    path is not None
+                    for path in (
+                        override_path,
+                        source_session_anchor_path,
+                        mixed_overlap_evidence_path,
+                    )
+                ):
+                    fallback_reason = "CANDIDATE_SPEAKER_AUTHORITY_REQUIRES_BINARY"
+                elif not isinstance(candidate, dict):
+                    fallback_reason = "ROUTING_CANDIDATE_BINDING_MISSING"
+                elif (
+                    final_source_start_ms is None
+                    or final_source_end_ms is None
+                    or not int(candidate["start_ms"])
+                    <= final_source_start_ms
+                    < final_source_end_ms
+                    <= int(candidate["end_ms"])
+                ):
+                    fallback_reason = "FINAL_RECUT_OUTSIDE_ROUTING_COVERAGE"
+                else:
+                    verified = verify_speaker_routing_claim(
+                        claim,
+                        claim_path=claim_path,
+                        expected_claim_sha256=expected_claim_sha256,
+                        expected_date=str(spec.get("date") or ""),
+                        expected_candidate_id=candidate_id,
+                        expected_segment_binding_sha256=str(
+                            candidate.get("segment_binding_sha256") or ""
+                        ),
+                        expected_start_ms=int(candidate["start_ms"]),
+                        expected_end_ms=int(candidate["end_ms"]),
+                        expected_pipeline_fingerprint=str(
+                            candidate.get("pipeline_fingerprint") or ""
+                        ),
+                        expected_segment_path=Path(str(candidate["segment_path"])),
+                        expected_segment_stat_signature=candidate["segment_stat_signature"],
+                        expected_bcut_srt_path=Path(str(candidate["bcut_srt_path"])),
+                        expected_bcut_srt_sha256=str(
+                            candidate.get("bcut_srt_sha256") or ""
+                        ),
+                    )
+                    transaction = _begin_fast_media_transaction(media_path)
+                    try:
+                        fresh_derivation = _derive_fresh_fast_media(
+                            host=host,
+                            media_path=media_path,
+                            claimed_segment_path=Path(str(candidate["segment_path"])),
+                            expected_segment_sha256=str(
+                                candidate.get("segment_binding_sha256") or ""
+                            ),
+                            final_source_start_ms=final_source_start_ms,
+                            final_source_end_ms=final_source_end_ms,
+                        )
+                        fast_manifest = finalize_fast_solo_subtitles(
+                            media_path=media_path,
+                            text_srt_path=text_srt_path,
+                            output_srt_path=output_srt_path,
+                            output_ass_path=output_ass_path,
+                            output_manifest_path=output_manifest_path,
+                            candidate_id=candidate_id,
+                            routing_claim_path=claim_path,
+                            verified_route=verified,
+                            fresh_derivation=fresh_derivation,
+                        )
+                        _validate_fast_transaction_outputs(
+                            manifest=fast_manifest,
+                            media_path=media_path,
+                            output_srt_path=output_srt_path,
+                            output_ass_path=output_ass_path,
+                            output_manifest_path=output_manifest_path,
+                            fresh_derivation=fresh_derivation,
+                        )
+                        _commit_fast_media_transaction(transaction)
+                    except Exception as fast_exc:
+                        try:
+                            _rollback_fast_media_transaction(
+                                transaction,
+                                output_srt_path=output_srt_path,
+                                output_ass_path=output_ass_path,
+                                output_manifest_path=output_manifest_path,
+                            )
+                        except Exception as rollback_exc:
+                            raise FastMediaRollbackError(
+                                "FAST failed and original media rollback could not be verified"
+                            ) from rollback_exc
+                        raise SpeakerRoutingError(
+                            f"FAST transaction rolled back: {type(fast_exc).__name__}: {fast_exc}"
+                        ) from fast_exc
+                    return fast_manifest
+            except (
+                KeyError,
+                OSError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+                SpeakerFinalizationError,
+                SpeakerRoutingError,
+            ) as exc:
+                fallback_reason = f"ROUTING_UNCERTAIN:{type(exc).__name__}:{exc}"
+
+    manifest = run_speaker_finalizer(
+        host=host,
+        candidate_id=candidate_id,
+        media_path=media_path,
+        text_srt_path=text_srt_path,
+        output_srt_path=output_srt_path,
+        output_ass_path=output_ass_path,
+        output_manifest_path=output_manifest_path,
+        work_dir=work_dir,
+        override_path=override_path,
+        source_session_anchor_path=source_session_anchor_path,
+        mixed_overlap_evidence_path=mixed_overlap_evidence_path,
+        speaker_python=speaker_python,
+    )
+    manifest["speaker_routing"] = {
+        "requested_mode": speaker_mode,
+        "decision": "RUN_BINARY_FINALIZER",
+        "reason": fallback_reason,
+    }
+    output_manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return manifest
 
 
@@ -756,9 +1393,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--speaker-mode",
-        choices=("required",),
+        choices=("required", "auto"),
         default="required",
-        help="talk speaker finalization is required and fails closed",
+        help="required = always run binary; auto = verified FAST_SOLO else binary fallback",
     )
     parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
     parser.add_argument(
@@ -771,6 +1408,11 @@ def main(argv: list[str] | None = None) -> int:
         "--speaker-source-session-anchors",
         type=Path,
         help="hash-bound high-gate Li Dousha anchors from the same source recording",
+    )
+    parser.add_argument(
+        "--speaker-mixed-overlap-evidence",
+        type=Path,
+        help="hash-bound provider evidence that mixed/overlap cues require review",
     )
     parser.add_argument(
         "--speaker-python",
@@ -846,9 +1488,27 @@ def main(argv: list[str] | None = None) -> int:
 
     # 1. Remote accurate piece cuts (production encode params), pull local.
     piece_paths: list[Path] = []
+    piece_provenance_rows: list[dict] = []
     for index, piece in enumerate(spec["pieces"]):
         local = out_root / f"piece_{index}_{piece['start_ms']}_{piece['end_ms']}.mp4"
-        if not local.exists():
+        source_path, source_sha256 = _source_media_sha256(
+            host, Path(piece["remote_media"])
+        )
+        piece_provenance_path = local.with_suffix(".provenance.json")
+        expected_piece = {
+            "source_path": source_path,
+            "source_sha256": source_sha256,
+            "start_ms": int(piece["start_ms"]),
+            "end_ms": int(piece["end_ms"]),
+            "output_path": str(local.resolve()),
+        }
+        if not _valid_cached_provenance(
+            piece_provenance_path,
+            expected_without_output_hash=expected_piece,
+            output=local,
+        ):
+            local.unlink(missing_ok=True)
+            piece_provenance_path.unlink(missing_ok=True)
             remote_tmp = f"/tmp/produce_{cid}_{index}.mp4"
             cmd = _accurate_reencode_recut_command(
                 source_video=Path(piece["remote_media"]),
@@ -859,10 +1519,39 @@ def main(argv: list[str] | None = None) -> int:
             run(["ssh", host, " ".join(shlex.quote(str(part)) for part in cmd)], timeout=3600)
             run(["scp", "-q", f"{host}:{remote_tmp}", str(local)], timeout=1800)
             run(["ssh", host, f"rm -f {shlex.quote(remote_tmp)}"], timeout=60)
+            if _source_media_sha256(host, Path(piece["remote_media"])) != (
+                source_path,
+                source_sha256,
+            ):
+                local.unlink(missing_ok=True)
+                raise RuntimeError("SOURCE_MEDIA_DRIFT_DURING_PIECE_RECUT")
+            _write_json_atomic(
+                piece_provenance_path,
+                {**expected_piece, "output_sha256": _sha256(local)},
+            )
         piece_paths.append(local)
+        piece_provenance_rows.append(
+            json.loads(piece_provenance_path.read_text(encoding="utf-8"))
+        )
     durations = [ffprobe_duration_ms(p) for p in piece_paths]
 
     padded = out_root / f"padded_{spec['pieces'][0]['start_ms']}_{spec['pieces'][-1]['end_ms']}.mp4"
+    padded_provenance_path = padded.with_suffix(".provenance.json")
+    expected_padded = {
+        "inputs": [
+            {"path": str(path.resolve()), "sha256": _sha256(path)}
+            for path in piece_paths
+        ],
+        "output_path": str(padded.resolve()),
+    }
+    padded_cache_valid = _valid_cached_provenance(
+        padded_provenance_path,
+        expected_without_output_hash=expected_padded,
+        output=padded,
+    )
+    if not padded_cache_valid:
+        padded.unlink(missing_ok=True)
+        padded_provenance_path.unlink(missing_ok=True)
     if len(piece_paths) == 1:
         if not padded.exists():
             run(["cp", str(piece_paths[0]), str(padded)])
@@ -871,6 +1560,11 @@ def main(argv: list[str] | None = None) -> int:
         concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in piece_paths), encoding="utf-8")
         run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
              "-i", str(concat_list), "-c", "copy", str(padded)])
+    if not padded_cache_valid:
+        _write_json_atomic(
+            padded_provenance_path,
+            {**expected_padded, "output_sha256": _sha256(padded)},
+        )
     padded_dur = ffprobe_duration_ms(padded)
 
     # 2. Danmaku + on-screen SUPER_CHATs merged onto the concat timeline.
@@ -1210,6 +1904,33 @@ def main(argv: list[str] | None = None) -> int:
     recut_dir.mkdir(exist_ok=True)
     media_path = recut_dir / f"{cid}.recut.mp4"
     run(_accurate_reencode_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
+    recut_provenance_path = media_path.with_suffix(".provenance.json")
+    _write_json_atomic(
+        recut_provenance_path,
+        {
+            "schema_version": RECUT_PROVENANCE_SCHEMA,
+            "source_piece": piece_provenance_rows[0] if len(piece_provenance_rows) == 1 else None,
+            "padded": json.loads(padded_provenance_path.read_text(encoding="utf-8")),
+            "final_recut": {
+                "source_path": str(padded.resolve()),
+                "source_sha256": _sha256(padded),
+                "start_ms": final_start,
+                "end_ms": final_end,
+                "absolute_source_start_ms": (
+                    int(spec["pieces"][0]["start_ms"]) + final_start
+                    if len(spec["pieces"]) == 1
+                    else None
+                ),
+                "absolute_source_end_ms": (
+                    int(spec["pieces"][0]["start_ms"]) + final_end
+                    if len(spec["pieces"]) == 1
+                    else None
+                ),
+                "output_path": str(media_path.resolve()),
+                "output_sha256": _sha256(media_path),
+            },
+        },
+    )
     subtitle_path = media_path.with_suffix(".srt")
     text_manifest_path: Path | None = None
     text_manifest: dict | None = None
@@ -1230,7 +1951,7 @@ def main(argv: list[str] | None = None) -> int:
     speaker_review_srt: Path | None = None
     speaker_ass: Path | None = None
     speaker_manifest_path: Path | None = None
-    if args.speaker_mode == "required":
+    if args.speaker_mode in {"required", "auto"}:
         speaker_review_srt = media_path.with_suffix(".speaker-final.srt")
         speaker_ass = media_path.with_suffix(".speaker-final.ass")
         speaker_manifest_path = media_path.with_suffix(".speaker-final.json")
@@ -1243,7 +1964,15 @@ def main(argv: list[str] | None = None) -> int:
                 spec.get("speaker_source_session_anchors"), relative_to=args.spec.parent
             )
         )
-        speaker_manifest = run_speaker_finalizer(
+        mixed_overlap_evidence_path = (
+            args.speaker_mixed_overlap_evidence
+            or _resolved_optional_path(
+                spec.get("speaker_mixed_overlap_evidence"),
+                relative_to=args.spec.parent,
+            )
+        )
+        speaker_manifest = run_producer_speaker_finalization(
+            speaker_mode=args.speaker_mode,
             host=host,
             candidate_id=cid,
             media_path=media_path,
@@ -1254,7 +1983,20 @@ def main(argv: list[str] | None = None) -> int:
             work_dir=recut_dir / f"{cid}.speaker-work",
             override_path=speaker_override_path,
             source_session_anchor_path=source_session_anchor_path,
+            mixed_overlap_evidence_path=mixed_overlap_evidence_path,
             speaker_python=args.speaker_python,
+            spec=spec,
+            spec_parent=args.spec.parent,
+            final_source_start_ms=(
+                int(spec["pieces"][0]["start_ms"]) + final_start
+                if len(spec.get("pieces") or []) == 1
+                else None
+            ),
+            final_source_end_ms=(
+                int(spec["pieces"][0]["start_ms"]) + final_end
+                if len(spec.get("pieces") or []) == 1
+                else None
+            ),
         )
 
     # Generative correction, a human override, timing sanitation, or speaker

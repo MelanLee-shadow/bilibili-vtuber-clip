@@ -55,6 +55,7 @@ class SpeakerFinalizationError(RuntimeError):
 
 
 SOURCE_SESSION_ANCHOR_SCHEMA = "lidousha-speaker-source-session-anchors.v1"
+MIXED_OVERLAP_EVIDENCE_SCHEMA = "lidousha-speaker-mixed-overlap-evidence.v1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 CAMPP_EMBEDDING_CACHE_SCHEMA = "lidousha-campp-embedding-cache.v3"
 CAMPP_EMBEDDING_DIMENSION = 192
@@ -85,6 +86,41 @@ def _review_sha256(value: object, *, field: str) -> str:
     if not matched:
         raise SpeakerFinalizationError(f"{field} must be a SHA-256 digest")
     return matched.group(1)
+
+
+def _validate_review_audio_binding(
+    *,
+    audio_path_value: object,
+    expected_sha256: object,
+    field: str,
+    expected_root: Path | None = None,
+) -> Path:
+    if not isinstance(audio_path_value, str) or not audio_path_value:
+        raise SpeakerFinalizationError(f"{field} audio_path is missing")
+    raw_path = Path(audio_path_value)
+    if not raw_path.is_absolute():
+        raise SpeakerFinalizationError(f"{field} audio_path must be absolute")
+    absolute = raw_path.absolute()
+    try:
+        resolved = absolute.resolve(strict=True)
+    except OSError as exc:
+        raise SpeakerFinalizationError(f"{field} audio_path is missing: {exc}") from exc
+    if absolute.is_symlink() or resolved != absolute or not absolute.is_file():
+        raise SpeakerFinalizationError(
+            f"{field} audio_path must be a regular non-symlink path"
+        )
+    if expected_root is not None:
+        root = expected_root.absolute()
+        try:
+            resolved.relative_to(root.resolve(strict=True))
+        except (OSError, ValueError) as exc:
+            raise SpeakerFinalizationError(
+                f"{field} audio_path escapes the evidence root"
+            ) from exc
+    expected = _review_sha256(expected_sha256, field=f"{field} audio_sha256")
+    if sha256_file(resolved) != expected:
+        raise SpeakerFinalizationError(f"{field} audio bytes drifted")
+    return resolved
 
 
 def validate_speaker_review_manifest_document(
@@ -149,6 +185,13 @@ def validate_speaker_review_manifest_document(
         ):
             raise SpeakerFinalizationError("speaker review evidence cue indexes are invalid")
         _review_sha256(raw.get("audio_sha256"), field=f"cue {source_cue} audio_sha256")
+        provider_details = raw.get("provider_details")
+        if isinstance(provider_details, Mapping) and provider_details.get("audio_path"):
+            _validate_review_audio_binding(
+                audio_path_value=provider_details.get("audio_path"),
+                expected_sha256=raw.get("audio_sha256"),
+                field=f"cue {source_cue}",
+            )
         if not REVIEW_TIMESTAMP_RE.fullmatch(str(raw.get("start") or "")) or not REVIEW_TIMESTAMP_RE.fullmatch(
             str(raw.get("end") or "")
         ):
@@ -171,6 +214,134 @@ def validate_speaker_review_manifest_document(
         rows.append(dict(raw))
     if seen != set(unresolved):
         raise SpeakerFinalizationError("speaker review evidence does not exactly cover unresolved cues")
+    return rows
+
+
+def validate_mixed_overlap_evidence_document(
+    document: object,
+    *,
+    expected_media_sha256: str,
+    expected_text_sha256: str,
+    cues: Sequence[TextCue],
+    expected_audio_root: Path,
+) -> list[dict[str, object]]:
+    """Validate provider evidence that one subtitle cue is not one clean speaker.
+
+    This is deliberately a review gate, not a diarization implementation.  A
+    provider may report multiple speaker clusters inside one subtitle cue or
+    overlapping speech; the finalizer then refuses to render that cue as one
+    colour unless a hash-bound human override covers it.
+    """
+
+    if not isinstance(document, Mapping):
+        raise SpeakerFinalizationError("mixed/overlap evidence must be an object")
+    if document.get("schema_version") != MIXED_OVERLAP_EVIDENCE_SCHEMA:
+        raise SpeakerFinalizationError(
+            f"mixed/overlap evidence schema must be {MIXED_OVERLAP_EVIDENCE_SCHEMA}"
+        )
+    status = document.get("status")
+    if status not in {"CLEAR", "REVIEW_REQUIRED"}:
+        raise SpeakerFinalizationError("mixed/overlap evidence status is invalid")
+    media_sha256 = _review_sha256(
+        document.get("source_media_sha256"), field="mixed/overlap source_media_sha256"
+    )
+    text_sha256 = _review_sha256(
+        document.get("text_final_srt_sha256"), field="mixed/overlap text_final_srt_sha256"
+    )
+    if media_sha256 != _review_sha256(
+        expected_media_sha256, field="expected mixed/overlap source_media_sha256"
+    ):
+        raise SpeakerFinalizationError("mixed/overlap evidence media hash mismatch")
+    if text_sha256 != _review_sha256(
+        expected_text_sha256, field="expected mixed/overlap text_final_srt_sha256"
+    ):
+        raise SpeakerFinalizationError("mixed/overlap evidence text hash mismatch")
+
+    provider = document.get("provider")
+    if not isinstance(provider, Mapping) or not str(provider.get("name") or "").strip():
+        raise SpeakerFinalizationError("mixed/overlap evidence provider is missing")
+    _review_sha256(
+        provider.get("config_sha256"), field="mixed/overlap provider config_sha256"
+    )
+
+    rows_raw = document.get("review_required_cues")
+    if not isinstance(rows_raw, list):
+        raise SpeakerFinalizationError("mixed/overlap review_required_cues must be a list")
+    if status == "CLEAR":
+        if rows_raw:
+            raise SpeakerFinalizationError("CLEAR mixed/overlap evidence contains review cues")
+        return []
+    if not rows_raw:
+        raise SpeakerFinalizationError("mixed/overlap REVIEW_REQUIRED evidence has no cues")
+
+    allowed_reasons = {
+        "CUE_MULTI_CLUSTER",
+        "CUE_MIXED_SPEAKER",
+        "CUE_OVERLAPPING_SPEECH",
+    }
+    rows: list[dict[str, object]] = []
+    seen: set[int] = set()
+    for raw in rows_raw:
+        if not isinstance(raw, Mapping):
+            raise SpeakerFinalizationError("mixed/overlap evidence row must be an object")
+        source_cue = raw.get("source_cue")
+        zero_based = raw.get("zero_based_index")
+        if (
+            isinstance(source_cue, bool)
+            or not isinstance(source_cue, int)
+            or isinstance(zero_based, bool)
+            or not isinstance(zero_based, int)
+            or zero_based != source_cue - 1
+            or source_cue < 1
+            or source_cue > len(cues)
+            or source_cue in seen
+        ):
+            raise SpeakerFinalizationError("mixed/overlap evidence cue indexes are invalid")
+        cue = cues[source_cue - 1]
+        if (raw.get("start"), raw.get("end"), raw.get("text")) != (
+            cue.start,
+            cue.end,
+            cue.text,
+        ):
+            raise SpeakerFinalizationError(
+                f"mixed/overlap cue {source_cue} text/timeline binding mismatch"
+            )
+        _review_sha256(
+            raw.get("audio_sha256"), field=f"mixed/overlap cue {source_cue} audio_sha256"
+        )
+        reasons_raw = raw.get("reason_codes")
+        if (
+            not isinstance(reasons_raw, list)
+            or not reasons_raw
+            or any(not isinstance(reason, str) or reason not in allowed_reasons for reason in reasons_raw)
+            or len(set(reasons_raw)) != len(reasons_raw)
+        ):
+            raise SpeakerFinalizationError(
+                f"mixed/overlap cue {source_cue} reason codes are invalid"
+            )
+        details = raw.get("provider_details")
+        if not isinstance(details, Mapping):
+            raise SpeakerFinalizationError(
+                f"mixed/overlap cue {source_cue} provider details are missing"
+            )
+        _validate_review_audio_binding(
+            audio_path_value=details.get("audio_path"),
+            expected_sha256=raw.get("audio_sha256"),
+            field=f"mixed/overlap cue {source_cue}",
+            expected_root=expected_audio_root,
+        )
+        if any(reason in {"CUE_MULTI_CLUSTER", "CUE_MIXED_SPEAKER"} for reason in reasons_raw):
+            cluster_count = details.get("cluster_count")
+            if isinstance(cluster_count, bool) or not isinstance(cluster_count, int) or cluster_count < 2:
+                raise SpeakerFinalizationError(
+                    f"mixed/overlap cue {source_cue} multi-cluster evidence is invalid"
+                )
+        if "CUE_OVERLAPPING_SPEECH" in reasons_raw and details.get("overlap_detected") is not True:
+            raise SpeakerFinalizationError(
+                f"mixed/overlap cue {source_cue} overlap evidence is invalid"
+            )
+        seen.add(source_cue)
+        rows.append(dict(raw))
     return rows
 
 
@@ -1697,6 +1868,7 @@ def finalize_speaker_subtitles(
     candidate_id: str | None = None,
     override_path: Path | None = None,
     source_session_anchor_path: Path | None = None,
+    mixed_overlap_evidence_path: Path | None = None,
     analyzer: Callable[..., dict[str, object]] = _run_campplus_analysis,
     context_call: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
@@ -1715,6 +1887,15 @@ def finalize_speaker_subtitles(
         source_session_anchor_snapshot, source_session_anchor_sha256 = _snapshot_bound_input(
             source_session_anchor_original,
             work_dir / "bound-inputs" / "source-session-anchors.json",
+        )
+    mixed_overlap_evidence_original: Path | None = None
+    mixed_overlap_evidence_snapshot: Path | None = None
+    mixed_overlap_evidence_sha256: str | None = None
+    if mixed_overlap_evidence_path is not None:
+        mixed_overlap_evidence_original = mixed_overlap_evidence_path.resolve(strict=True)
+        mixed_overlap_evidence_snapshot, mixed_overlap_evidence_sha256 = _snapshot_bound_input(
+            mixed_overlap_evidence_original,
+            work_dir / "bound-inputs" / "mixed-overlap-evidence.json",
         )
     cues = parse_srt(text_srt_path)
     override_document: dict[str, object] | None = None
@@ -1756,6 +1937,87 @@ def finalize_speaker_subtitles(
                 f"speaker override authority binding failed: {exc}"
             ) from exc
         reviewed_votes = _reviewed_context_votes(override_document, cue_count=len(cues))
+    mixed_overlap_document: Mapping[str, object] | None = None
+    if mixed_overlap_evidence_snapshot is not None:
+        try:
+            mixed_overlap_document = json.loads(
+                mixed_overlap_evidence_snapshot.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SpeakerFinalizationError(f"mixed/overlap evidence is invalid JSON: {exc}") from exc
+        media_sha256 = sha256_file(media_path)
+        text_sha256 = sha256_file(text_srt_path)
+        mixed_rows = validate_mixed_overlap_evidence_document(
+            mixed_overlap_document,
+            expected_media_sha256=media_sha256,
+            expected_text_sha256=text_sha256,
+            cues=cues,
+            expected_audio_root=mixed_overlap_evidence_original.parent,
+        )
+        override_sources = {
+            int(item.get("source_cue", 0))
+            for item in ((override_document or {}).get("overrides") or [])
+            if isinstance(item, Mapping)
+        }
+        remaining_rows = [
+            row for row in mixed_rows if int(row["source_cue"]) not in override_sources
+        ]
+        if remaining_rows:
+            if sha256_file(mixed_overlap_evidence_original) != mixed_overlap_evidence_sha256:
+                raise SpeakerFinalizationError("mixed/overlap evidence drifted during validation")
+            output_srt_path.unlink(missing_ok=True)
+            output_ass_path.unlink(missing_ok=True)
+            reason_codes = sorted(
+                {
+                    str(reason)
+                    for row in remaining_rows
+                    for reason in row.get("reason_codes", [])
+                }
+            )
+            unresolved = [int(row["source_cue"]) for row in remaining_rows]
+            review_manifest: dict[str, object] = {
+                "schema_version": "lidousha-speaker-finalization.v1",
+                "status": "SPEAKER_REVIEW_REQUIRED",
+                "production_ready": False,
+                "reason_code": "SPEAKER_REVIEW_REQUIRED",
+                "reason": "mixed/overlap speaker evidence requires review: " + ",".join(reason_codes),
+                "stage_order": "text_final_then_speaker_then_ass_then_burn",
+                "source_media": str(media_path),
+                "source_media_sha256": media_sha256,
+                "text_final_srt": str(text_srt_path),
+                "text_final_srt_sha256": text_sha256,
+                "profile": str(profile_path.resolve()),
+                "profile_sha256": profile_sha256,
+                "speaker_override": str(override_path.resolve()) if override_path is not None else None,
+                "speaker_override_sha256": sha256_file(override_path) if override_path is not None else None,
+                "source_session_anchor_manifest": (
+                    str(source_session_anchor_original)
+                    if source_session_anchor_original is not None
+                    else None
+                ),
+                "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
+                "mixed_overlap_evidence": str(mixed_overlap_evidence_original),
+                "mixed_overlap_evidence_sha256": mixed_overlap_evidence_sha256,
+                "source_cue_count": len(cues),
+                "context_unresolved_cues": unresolved,
+                "review_reason_codes": reason_codes,
+                "review_required_cues": remaining_rows,
+                "analysis": {
+                    "mode": "provider_mixed_overlap_gate",
+                    "provider": mixed_overlap_document.get("provider"),
+                },
+            }
+            validate_speaker_review_manifest_document(
+                review_manifest,
+                expected_media_sha256=media_sha256,
+                expected_text_sha256=text_sha256,
+                cues=cues,
+            )
+            atomic_write_text(
+                output_manifest_path,
+                json.dumps(review_manifest, ensure_ascii=False, indent=2) + "\n",
+            )
+            return review_manifest
     analysis = analyzer(
         media_path=media_path,
         cues=cues,
@@ -1775,6 +2037,23 @@ def finalize_speaker_subtitles(
     ):
         raise SpeakerFinalizationError(
             "source-session anchor manifest drifted during speaker analysis"
+        )
+    if (
+        mixed_overlap_evidence_original is not None
+        and sha256_file(mixed_overlap_evidence_original) != mixed_overlap_evidence_sha256
+    ):
+        raise SpeakerFinalizationError(
+            "mixed/overlap evidence drifted during speaker analysis"
+        )
+    if mixed_overlap_document is not None:
+        # Recheck the actual extracted review audio after analyzer/override
+        # work so a concurrent byte change cannot be blessed by a prior hash.
+        validate_mixed_overlap_evidence_document(
+            mixed_overlap_document,
+            expected_media_sha256=sha256_file(media_path),
+            expected_text_sha256=sha256_file(text_srt_path),
+            cues=cues,
+            expected_audio_root=mixed_overlap_evidence_original.parent,
         )
     decisions = analysis.get("decisions")
     if not isinstance(decisions, list) or len(decisions) != len(cues):
@@ -1823,9 +2102,15 @@ def finalize_speaker_subtitles(
         if analysis.get("review_required") is True:
             output_srt_path.unlink(missing_ok=True)
             output_ass_path.unlink(missing_ok=True)
-            reason_codes = [
-                str(value) for value in (analysis.get("review_reason_codes") or [])
-            ]
+            reason_codes_raw = analysis.get("review_reason_codes") or []
+            if not isinstance(reason_codes_raw, list) or any(
+                not isinstance(value, str) or not value.strip() for value in reason_codes_raw
+            ):
+                raise SpeakerFinalizationError("speaker analyzer returned invalid review reason codes")
+            reason_codes = list(dict.fromkeys(reason_codes_raw))
+            review_rows = analysis.get("review_required_cues")
+            if review_rows is None:
+                review_rows = analysis.get("singleton_evidence") or []
             media_sha256 = sha256_file(media_path)
             text_sha256 = sha256_file(text_srt_path)
             review_manifest: dict[str, object] = {
@@ -1833,10 +2118,8 @@ def finalize_speaker_subtitles(
                 "status": "SPEAKER_REVIEW_REQUIRED",
                 "production_ready": False,
                 "reason_code": "SPEAKER_REVIEW_REQUIRED",
-                "reason": (
-                    "singleton speaker evidence requires review: "
-                    + ",".join(reason_codes or ["UNRESOLVED_SINGLETON"])
-                ),
+                "reason": "speaker evidence requires review: "
+                + ",".join(reason_codes or ["UNRESOLVED_SPEAKER_EVIDENCE"]),
                 "stage_order": "text_final_then_speaker_then_ass_then_burn",
                 "source_media": str(media_path),
                 "source_media_sha256": media_sha256,
@@ -1858,11 +2141,17 @@ def finalize_speaker_subtitles(
                     else None
                 ),
                 "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
+                "mixed_overlap_evidence": (
+                    str(mixed_overlap_evidence_original)
+                    if mixed_overlap_evidence_original is not None
+                    else None
+                ),
+                "mixed_overlap_evidence_sha256": mixed_overlap_evidence_sha256,
                 "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
                 "source_cue_count": len(cues),
                 "context_unresolved_cues": remaining_unresolved,
                 "review_reason_codes": reason_codes,
-                "review_required_cues": analysis.get("singleton_evidence") or [],
+                "review_required_cues": review_rows,
                 "analysis": analysis,
             }
             validate_speaker_review_manifest_document(
@@ -1902,6 +2191,12 @@ def finalize_speaker_subtitles(
             else None
         ),
         "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
+        "mixed_overlap_evidence": (
+            str(mixed_overlap_evidence_original)
+            if mixed_overlap_evidence_original is not None
+            else None
+        ),
+        "mixed_overlap_evidence_sha256": mixed_overlap_evidence_sha256,
         "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
         "source_session_id": (
             (analysis.get("source_session_anchor") or {}).get("source_session_id")
@@ -1930,6 +2225,171 @@ def finalize_speaker_subtitles(
     return manifest
 
 
+def finalize_fast_solo_subtitles(
+    *,
+    media_path: Path,
+    text_srt_path: Path,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+    candidate_id: str,
+    routing_claim_path: Path,
+    verified_route: object,
+    fresh_derivation: Mapping[str, object],
+) -> dict[str, object]:
+    """Render an all-host result from an already verified session authority.
+
+    This function intentionally has no profile, reference, model, analyzer, or
+    context arguments.  The opaque ``VerifiedFastSoloRoute`` value is produced
+    only by the current-state verifier in ``speaker_session_router``.
+    """
+
+    from src.autoslice.speaker_session_router import VerifiedFastSoloRoute
+
+    if not isinstance(verified_route, VerifiedFastSoloRoute):
+        raise SpeakerFinalizationError("FAST_SOLO renderer requires a verified route")
+    if verified_route.candidate_id != candidate_id:
+        raise SpeakerFinalizationError("FAST_SOLO candidate authority mismatch")
+    media_path = media_path.resolve(strict=True)
+    text_srt_path = text_srt_path.resolve(strict=True)
+    routing_claim_path = routing_claim_path.resolve(strict=True)
+    source_media_sha256 = sha256_file(media_path)
+    text_final_srt_sha256 = sha256_file(text_srt_path)
+    expected_derivation_keys = {
+        "schema_version",
+        "method",
+        "cache_reused",
+        "source_path",
+        "source_sha256",
+        "absolute_source_start_ms",
+        "absolute_source_end_ms",
+        "expected_duration_ms",
+        "actual_duration_ms",
+        "output_path",
+        "output_sha256",
+    }
+    if not isinstance(fresh_derivation, Mapping) or set(fresh_derivation) != expected_derivation_keys:
+        raise SpeakerFinalizationError("FAST_SOLO fresh derivation schema is incomplete")
+    if (
+        fresh_derivation.get("schema_version")
+        != "lidousha-speaker-fast-fresh-derivation.v1"
+        or fresh_derivation.get("method")
+        != "canonical_accurate_recut_direct_from_claimed_segment"
+        or fresh_derivation.get("cache_reused") is not False
+    ):
+        raise SpeakerFinalizationError("FAST_SOLO fresh derivation method is invalid")
+    derivation_source = Path(str(fresh_derivation.get("source_path") or "")).resolve(
+        strict=True
+    )
+    derivation_start = fresh_derivation.get("absolute_source_start_ms")
+    derivation_end = fresh_derivation.get("absolute_source_end_ms")
+    expected_duration = fresh_derivation.get("expected_duration_ms")
+    actual_duration = fresh_derivation.get("actual_duration_ms")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in (
+            derivation_start,
+            derivation_end,
+            expected_duration,
+            actual_duration,
+        )
+    ):
+        raise SpeakerFinalizationError("FAST_SOLO fresh derivation timing is invalid")
+    if (
+        str(derivation_source) != verified_route.segment_path
+        or fresh_derivation.get("source_sha256")
+        != verified_route.segment_binding_sha256
+        or sha256_file(derivation_source) != verified_route.segment_binding_sha256
+        or not (
+            verified_route.start_ms
+            <= derivation_start
+            < derivation_end
+            <= verified_route.end_ms
+        )
+    ):
+        raise SpeakerFinalizationError("FAST_SOLO fresh derivation source binding mismatch")
+    derived_duration = derivation_end - derivation_start
+    if (
+        expected_duration != derived_duration
+        or actual_duration <= 0
+        or str(media_path) != fresh_derivation.get("output_path")
+        or source_media_sha256 != fresh_derivation.get("output_sha256")
+    ):
+        raise SpeakerFinalizationError("FAST_SOLO fresh derivation output binding mismatch")
+    if sha256_file(routing_claim_path) != verified_route.claim_sha256:
+        raise SpeakerFinalizationError("FAST_SOLO routing claim drifted before render")
+    cues = parse_srt(text_srt_path)
+    if not cues:
+        raise SpeakerFinalizationError("FAST_SOLO text-final SRT has no cues")
+    final_cues = [
+        Cue(
+            source_index=index,
+            start=cue.start,
+            end=cue.end,
+            speaker="李豆沙",
+            text=cue.text,
+            decision_source="verified_session_fast_solo",
+        )
+        for index, cue in enumerate(cues, start=1)
+    ]
+    output_srt_path.unlink(missing_ok=True)
+    output_ass_path.unlink(missing_ok=True)
+    write_srt(final_cues, output_srt_path)
+    write_ass(final_cues, output_ass_path, show_speaker_labels=False)
+    if (
+        sha256_file(routing_claim_path) != verified_route.claim_sha256
+        or sha256_file(media_path) != source_media_sha256
+        or sha256_file(text_srt_path) != text_final_srt_sha256
+        or sha256_file(derivation_source) != verified_route.segment_binding_sha256
+    ):
+        output_srt_path.unlink(missing_ok=True)
+        output_ass_path.unlink(missing_ok=True)
+        raise SpeakerFinalizationError("FAST_SOLO authority inputs drifted during render")
+    manifest: dict[str, object] = {
+        "schema_version": "lidousha-speaker-finalization.v1",
+        "status": "READY",
+        "production_ready": True,
+        "stage_order": "text_final_then_speaker_then_ass_then_burn",
+        "source_media": str(media_path),
+        "source_media_sha256": source_media_sha256,
+        "text_final_srt": str(text_srt_path),
+        "text_final_srt_sha256": text_final_srt_sha256,
+        "speaker_routing_claim": str(routing_claim_path),
+        "speaker_routing_claim_sha256": verified_route.claim_sha256,
+        "speaker_routing_request_sha256": verified_route.request_sha256,
+        "speaker_routing_provider_evidence_sha256": (
+            verified_route.provider_evidence_sha256
+        ),
+        "pipeline_fingerprint": verified_route.pipeline_fingerprint,
+        "fresh_fast_derivation": dict(fresh_derivation),
+        "output_review_srt": str(output_srt_path.resolve()),
+        "output_review_srt_sha256": sha256_file(output_srt_path),
+        "output_ass": str(output_ass_path.resolve()),
+        "output_ass_sha256": sha256_file(output_ass_path),
+        "visible_speaker_prefixes": False,
+        "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
+        "speaker_taxonomy": "binary_visual_host_vs_guest",
+        "host_identity_aliases": ["李豆沙", "shadow"],
+        "host_anchor_scope": "verified_session_fast_solo",
+        "source_cue_count": len(cues),
+        "output_cue_count": len(final_cues),
+        "reviewed_output_cue_count": 0,
+        "accepted_context_output_cue_count": 0,
+        "overlap_output_cue_count": 0,
+        "analysis": {
+            "mode": "speaker_session_fast_solo_v1",
+            "campp_invoked": False,
+            "context_invoked": False,
+        },
+        "final_decisions": [asdict(cue) for cue in final_cues],
+    }
+    atomic_write_text(
+        output_manifest_path,
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+    )
+    return manifest
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--media", type=Path, required=True)
@@ -1944,6 +2404,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--candidate-id", required=True)
     parser.add_argument("--overrides", type=Path)
     parser.add_argument("--source-session-anchors", type=Path)
+    parser.add_argument("--mixed-overlap-evidence", type=Path)
     parser.add_argument("--no-context-judge", action="store_true")
     args = parser.parse_args(argv)
     repo_root = Path(__file__).resolve().parents[2]
@@ -1964,6 +2425,7 @@ def main(argv: list[str] | None = None) -> int:
             candidate_id=args.candidate_id,
             override_path=args.overrides,
             source_session_anchor_path=args.source_session_anchors,
+            mixed_overlap_evidence_path=args.mixed_overlap_evidence,
             context_call=context_call,
         )
     except Exception as exc:

@@ -11,6 +11,7 @@ from scripts.apply_subtitle_text_overrides import TextCue
 from src.autoslice.speaker_finalizer import (
     CAMPP_EMBEDDING_CACHE_SCHEMA,
     CAMPP_EMBEDDING_DIMENSION,
+    MIXED_OVERLAP_EVIDENCE_SCHEMA,
     SOURCE_SESSION_ANCHOR_SCHEMA,
     SpeakerFinalizationError,
     _assert_runtime_assets_stable,
@@ -27,6 +28,7 @@ from src.autoslice.speaker_finalizer import (
     _validate_source_session_anchor_document,
     finalize_speaker_subtitles,
     resolve_ambiguous_labels,
+    validate_mixed_overlap_evidence_document,
     validate_speaker_review_manifest_document,
 )
 from src.autoslice.host_vocal_proof import _sha256_directory
@@ -1499,6 +1501,246 @@ def test_singleton_review_manifest_preserves_bound_evidence(tmp_path: Path) -> N
             analyzer=evidence_free_analyzer,
         )
     assert not invalid_manifest.exists()
+
+
+def test_generic_review_evidence_is_not_limited_to_singletons(tmp_path: Path) -> None:
+    media = tmp_path / "clean.mp4"
+    media.write_bytes(b"clean media")
+    text_srt = tmp_path / "text-final.srt"
+    text_srt.write_text("1\n00:00:00,000 --> 00:00:02,030\n两个人同时说话\n", encoding="utf-8")
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}", encoding="utf-8")
+    (tmp_path / "refs").mkdir()
+    (tmp_path / "model").mkdir()
+    evidence = {
+        "source_cue": 1,
+        "zero_based_index": 0,
+        "start": "00:00:00,000",
+        "end": "00:00:02,030",
+        "text": "两个人同时说话",
+        "audio_sha256": "a" * 64,
+        "reason_codes": ["CUE_OVERLAPPING_SPEECH"],
+    }
+
+    manifest = finalize_speaker_subtitles(
+        media_path=media,
+        text_srt_path=text_srt,
+        profile_path=profile,
+        reference_dir=tmp_path / "refs",
+        model_dir=tmp_path / "model",
+        output_srt_path=tmp_path / "speaker.srt",
+        output_ass_path=tmp_path / "speaker.ass",
+        output_manifest_path=tmp_path / "speaker.json",
+        work_dir=tmp_path / "work",
+        analyzer=lambda **_kwargs: {
+            "review_required": True,
+            "review_reason_codes": ["CUE_OVERLAPPING_SPEECH"],
+            "context_unresolved_cues": [1],
+            "review_required_cues": [evidence],
+            "decisions": [
+                {"speaker": "连线", "decision_source": "speaker_review_required_overlap"}
+            ],
+        },
+    )
+
+    assert manifest["review_required_cues"] == [evidence]
+    assert manifest["review_reason_codes"] == ["CUE_OVERLAPPING_SPEECH"]
+    assert "singleton" not in manifest["reason"]
+
+
+def test_mixed_overlap_provider_evidence_stops_before_analyzer_and_render(tmp_path: Path) -> None:
+    media = tmp_path / "clean.mp4"
+    media.write_bytes(b"clean media")
+    text_srt = tmp_path / "text-final.srt"
+    text_srt.write_text("1\n00:00:00,000 --> 00:00:02,030\n两个人同时说话\n", encoding="utf-8")
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}", encoding="utf-8")
+    (tmp_path / "refs").mkdir()
+    (tmp_path / "model").mkdir()
+    review_audio = tmp_path / "mixed-review-cue-0001.wav"
+    review_audio.write_bytes(b"actual extracted cue audio")
+    evidence_path = tmp_path / "mixed-overlap.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": MIXED_OVERLAP_EVIDENCE_SCHEMA,
+                "status": "REVIEW_REQUIRED",
+                "source_media_sha256": hashlib.sha256(media.read_bytes()).hexdigest(),
+                "text_final_srt_sha256": hashlib.sha256(text_srt.read_bytes()).hexdigest(),
+                "provider": {"name": "fixture", "config_sha256": "b" * 64},
+                "review_required_cues": [
+                    {
+                        "source_cue": 1,
+                        "zero_based_index": 0,
+                        "start": "00:00:00,000",
+                        "end": "00:00:02,030",
+                        "text": "两个人同时说话",
+                        "audio_sha256": hashlib.sha256(
+                            review_audio.read_bytes()
+                        ).hexdigest(),
+                        "reason_codes": [
+                            "CUE_MULTI_CLUSTER",
+                            "CUE_OVERLAPPING_SPEECH",
+                        ],
+                        "provider_details": {
+                            "cluster_count": 2,
+                            "overlap_detected": True,
+                            "audio_path": str(review_audio.resolve()),
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    analyzer_called = False
+
+    def analyzer(**_kwargs):
+        nonlocal analyzer_called
+        analyzer_called = True
+        raise AssertionError("mixed/overlap gate must stop before CAM++")
+
+    output_srt = tmp_path / "speaker.srt"
+    output_ass = tmp_path / "speaker.ass"
+    manifest = finalize_speaker_subtitles(
+        media_path=media,
+        text_srt_path=text_srt,
+        profile_path=profile,
+        reference_dir=tmp_path / "refs",
+        model_dir=tmp_path / "model",
+        output_srt_path=output_srt,
+        output_ass_path=output_ass,
+        output_manifest_path=tmp_path / "speaker.json",
+        work_dir=tmp_path / "work",
+        mixed_overlap_evidence_path=evidence_path,
+        analyzer=analyzer,
+    )
+
+    assert analyzer_called is False
+    assert manifest["status"] == "SPEAKER_REVIEW_REQUIRED"
+    assert manifest["context_unresolved_cues"] == [1]
+    assert manifest["mixed_overlap_evidence_sha256"] == hashlib.sha256(
+        evidence_path.read_bytes()
+    ).hexdigest()
+    assert not output_srt.exists()
+    assert not output_ass.exists()
+
+
+def test_mixed_overlap_provider_evidence_rejects_binding_drift(tmp_path: Path) -> None:
+    cues = [TextCue(1, "00:00:00,000", "00:00:02,030", "原文")]
+    document = {
+        "schema_version": MIXED_OVERLAP_EVIDENCE_SCHEMA,
+        "status": "REVIEW_REQUIRED",
+        "source_media_sha256": "a" * 64,
+        "text_final_srt_sha256": "b" * 64,
+        "provider": {"name": "fixture", "config_sha256": "c" * 64},
+        "review_required_cues": [
+            {
+                "source_cue": 1,
+                "zero_based_index": 0,
+                "start": "00:00:00,000",
+                "end": "00:00:02,030",
+                "text": "被篡改的文字",
+                "audio_sha256": "d" * 64,
+                "reason_codes": ["CUE_MULTI_CLUSTER"],
+                "provider_details": {"cluster_count": 2},
+            }
+        ],
+    }
+
+    with pytest.raises(SpeakerFinalizationError, match="text/timeline binding mismatch"):
+        validate_mixed_overlap_evidence_document(
+            document,
+            expected_media_sha256="a" * 64,
+            expected_text_sha256="b" * 64,
+            cues=cues,
+            expected_audio_root=tmp_path,
+        )
+
+
+@pytest.mark.parametrize("attack", ["escape", "symlink", "drift"])
+def test_mixed_overlap_provider_evidence_rejects_audio_path_or_byte_attack(
+    tmp_path: Path, attack: str
+) -> None:
+    evidence_root = tmp_path / "evidence"
+    evidence_root.mkdir()
+    inside_audio = evidence_root / "cue.wav"
+    inside_audio.write_bytes(b"sealed cue audio")
+    audio_path = inside_audio
+    if attack == "escape":
+        audio_path = tmp_path / "outside.wav"
+        audio_path.write_bytes(b"sealed cue audio")
+    elif attack == "symlink":
+        target = evidence_root / "target.wav"
+        target.write_bytes(b"sealed cue audio")
+        audio_path = evidence_root / "cue-link.wav"
+        audio_path.symlink_to(target)
+    digest = hashlib.sha256(audio_path.read_bytes()).hexdigest()
+    document = {
+        "schema_version": MIXED_OVERLAP_EVIDENCE_SCHEMA,
+        "status": "REVIEW_REQUIRED",
+        "source_media_sha256": "a" * 64,
+        "text_final_srt_sha256": "b" * 64,
+        "provider": {"name": "fixture", "config_sha256": "c" * 64},
+        "review_required_cues": [
+            {
+                "source_cue": 1,
+                "zero_based_index": 0,
+                "start": "00:00:00,000",
+                "end": "00:00:02,030",
+                "text": "原文",
+                "audio_sha256": digest,
+                "reason_codes": ["CUE_MULTI_CLUSTER"],
+                "provider_details": {
+                    "cluster_count": 2,
+                    "audio_path": str(audio_path.absolute()),
+                },
+            }
+        ],
+    }
+    if attack == "drift":
+        inside_audio.write_bytes(b"tampered after evidence generation")
+
+    with pytest.raises(
+        SpeakerFinalizationError,
+        match="escapes the evidence root|non-symlink|audio bytes drifted",
+    ):
+        validate_mixed_overlap_evidence_document(
+            document,
+            expected_media_sha256="a" * 64,
+            expected_text_sha256="b" * 64,
+            cues=[TextCue(1, "00:00:00,000", "00:00:02,030", "原文")],
+            expected_audio_root=evidence_root,
+        )
+
+
+def test_review_manifest_rechecks_bound_audio_bytes(tmp_path: Path) -> None:
+    audio = tmp_path / "review.wav"
+    audio.write_bytes(b"review bytes")
+    manifest = {
+        "status": "SPEAKER_REVIEW_REQUIRED",
+        "production_ready": False,
+        "reason": "mixed review",
+        "source_media_sha256": "a" * 64,
+        "text_final_srt_sha256": "b" * 64,
+        "context_unresolved_cues": [1],
+        "review_required_cues": [
+            {
+                "source_cue": 1,
+                "zero_based_index": 0,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "fixture",
+                "audio_sha256": hashlib.sha256(audio.read_bytes()).hexdigest(),
+                "provider_details": {"audio_path": str(audio.resolve())},
+            }
+        ],
+    }
+    assert validate_speaker_review_manifest_document(manifest)
+    audio.write_bytes(b"tampered review bytes")
+    with pytest.raises(SpeakerFinalizationError, match="audio bytes drifted"):
+        validate_speaker_review_manifest_document(manifest)
 
 
 def test_speaker_review_manifest_validator_rejects_unbound_rows() -> None:

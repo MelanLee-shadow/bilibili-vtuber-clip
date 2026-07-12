@@ -1,12 +1,15 @@
 """Unit tests for the unattended runner's pure helpers (first-real-run lessons)."""
 import json
 import hashlib
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import scripts.free_session_autoslice as runner
+import src.autoslice.speaker_session_router as speaker_router
 from src.autoslice.visual_song_discovery import VisualSongCandidate, VisualSongDiscoveryResult
 from tests.host_vocal_test_support import bind_ready_live_performance_report, make_ready_host_vocal_claim
 from scripts.free_session_autoslice import (
@@ -28,6 +31,463 @@ def test_last_json_block_parses_nested_produce_summary():
     obj = last_json_block(tail)
     assert obj["title"] == "真标题"
     assert obj["timing_qa"]["retimed"] == 3
+
+
+def _routing_item(tmp_path: Path) -> dict:
+    segment = tmp_path / "segment.mp4"
+    segment.write_bytes(b"sealed segment")
+    srt = tmp_path / "segment.bcut.srt"
+    srt.write_text(
+        "1\n00:00:20,000 --> 00:00:22,000\n测试\n",
+        encoding="utf-8",
+    )
+    return {
+        "cid": "candidate-1",
+        "segment_path": str(segment),
+        "bcut_srt_path": str(srt),
+        "seg_dur_ms": 120_000,
+        "start_ms": 20_000,
+        "end_ms": 30_000,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _empty_test_speaker_provider_allowlist():
+    speaker_router.AUDITED_PROVIDER_BUNDLES.clear()
+    yield
+    speaker_router.AUDITED_PROVIDER_BUNDLES.clear()
+
+
+def _allow_configured_test_speaker_provider() -> None:
+    authority = runner._speaker_routing_provider_authority(require_audited=False)
+    assert authority is not None
+    speaker_router.AUDITED_PROVIDER_BUNDLES[
+        str(authority["algorithm_fingerprint"])
+    ] = str(authority["provider_bundle_fingerprint"])
+
+
+def test_speaker_router_absent_provider_adds_no_hash_or_model_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = _routing_item(tmp_path)
+    item["speaker_routing_claim"] = "stale"
+    monkeypatch.delenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", raising=False)
+    monkeypatch.setattr(
+        runner,
+        "segment_binding_sha256",
+        lambda _path: pytest.fail("no provider must not hash the recording"),
+    )
+
+    assert runner.prepare_speaker_routing("2026-07-10", [item]) is None
+    assert "speaker_routing_claim" not in item
+    assert "speaker_routing_candidate" not in item
+
+
+def test_speaker_router_rejects_date_path_escape_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = tmp_path / "autoslice"
+    monkeypatch.setattr(runner, "BASE", base)
+    item = _routing_item(tmp_path)
+    state: dict = {}
+
+    assert (
+        runner.prepare_speaker_routing("../../escape", [item], state=state) is None
+    )
+    assert "speaker_routing_session" not in state
+    assert not (tmp_path / "escape").exists()
+    assert not (base / "escape").exists()
+    assert not (base / "state" / "escape").exists()
+    assert not (base / "state" / "speaker-routing").exists()
+
+
+def test_speaker_router_runtime_authority_changes_pipeline_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in (
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON",
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME",
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID",
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    baseline = runner.pipeline_fingerprint()
+    monkeypatch.setenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME", "new-provider")
+    assert runner.pipeline_fingerprint() != baseline
+
+
+@pytest.mark.parametrize(
+    "verdict,expected_decision",
+    [("SOLO_HOST", "FAST_SOLO"), ("UNCERTAIN", "RUN_BINARY_FINALIZER")],
+)
+def test_speaker_router_provider_command_is_shell_free_and_fail_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: str,
+    expected_decision: str,
+) -> None:
+    item = _routing_item(tmp_path)
+    provider_script = tmp_path / "provider.py"
+    provider_script.write_text(
+        "import hashlib,json,sys\n"
+        f"verdict={verdict!r}\n"
+        "request_path,output_path=sys.argv[1:]\n"
+        "payload=open(request_path,'rb').read()\n"
+        "request=json.loads(payload)\n"
+        "results=[]\n"
+        "for candidate in request['candidates']:\n"
+        " unresolved=1 if verdict=='UNCERTAIN' else 0\n"
+        " evidence={'schema_version':'lidousha-speaker-routing-acoustic-evidence.v1',"
+        "'source_media_sha256':candidate['segment_content_sha256'],"
+        "'window_start_ms':candidate['start_ms'],'window_end_ms':candidate['end_ms'],"
+        "'audio_window_sha256':'b'*64,'analyzed_speech_ms':1000,"
+        "'coverage_unit_count':2,'covered_unit_count':2-unresolved,"
+        "'unresolved_unit_count':unresolved,'speaker_count_lower_bound':1,"
+        "'overlap_detected':False,'mixed_speaker_within_unit_detected':False,"
+        "'acoustic_observation_sha256':'c'*64}\n"
+        " results.append({'candidate_id':candidate['candidate_id'],"
+        "'segment_binding_sha256':candidate['segment_binding_sha256'],"
+        "'bcut_srt_sha256':candidate['bcut_srt_sha256'],'verdict':verdict,"
+        "'complete_coverage':not unresolved,'unresolved_cue_count':unresolved,"
+        "'mixed_or_overlap_detected':False,'evidence':evidence,"
+        "'evidence_sha256':hashlib.sha256(json.dumps(evidence,sort_keys=True,"
+        "separators=(',',':')).encode()).hexdigest()})\n"
+        "document={'schema_version':'lidousha-speaker-routing-provider-evidence.v3',"
+        "'status':'READY','request_sha256':hashlib.sha256(payload).hexdigest(),"
+        "'pipeline_fingerprint':request['pipeline_fingerprint'],"
+        "'routing_runtime_fingerprint':request['routing_runtime_fingerprint'],"
+        "'input_modality':'audio','transcript_or_llm_used':False,"
+        "'provider':request['provider_authority'],"
+        "'candidate_results':results}\n"
+        "open(output_path,'w').write(json.dumps(document))\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "9" * 64)
+    monkeypatch.setenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON",
+        json.dumps(
+            [
+                sys.executable,
+                str(provider_script),
+                "{request}",
+                "{output}",
+            ]
+        ),
+    )
+    monkeypatch.setenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME", "fixture")
+    monkeypatch.setenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID", "fixture-v1")
+    artifacts = {}
+    for role in ("config", "model", "profile"):
+        path = tmp_path / f"provider-{role}.bin"
+        path.write_bytes(f"sealed {role}".encode())
+        artifacts[role] = str(path)
+    artifacts.update({"executable": str(Path(sys.executable).resolve()), "script": str(provider_script)})
+    monkeypatch.setenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON", json.dumps(artifacts)
+    )
+    command_template = json.loads(
+        os.environ["AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON"]
+    )
+    command_template[0] = str(Path(sys.executable).resolve())
+    monkeypatch.setenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", json.dumps(command_template)
+    )
+    _allow_configured_test_speaker_provider()
+
+    claim = runner.prepare_speaker_routing("2026-07-10", [item])
+
+    assert claim["decision"] == expected_decision
+    assert Path(item["speaker_routing_claim"]).is_file()
+    assert item["speaker_routing_candidate"]["start_ms"] == 10_000
+    assert item["speaker_routing_candidate"]["end_ms"] == 91_000
+    assert item["speaker_routing_candidate"]["pipeline_fingerprint"] == "sha256:" + "9" * 64
+
+
+def _configure_provider_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    declared_script: Path,
+    executed_script: Path | None = None,
+) -> None:
+    executable = str(Path(sys.executable).resolve())
+    monkeypatch.setenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON",
+        json.dumps(
+            [
+                executable,
+                str(executed_script or declared_script),
+                "{request}",
+                "{output}",
+            ]
+        ),
+    )
+    monkeypatch.setenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME", "fixture")
+    monkeypatch.setenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID", "fixture-v1")
+    artifacts = {"executable": executable, "script": str(declared_script)}
+    for role in ("config", "model", "profile"):
+        path = tmp_path / f"closure-{role}.bin"
+        path.write_bytes(role.encode())
+        artifacts[role] = str(path)
+    monkeypatch.setenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON", json.dumps(artifacts)
+    )
+
+
+def test_production_empty_allowlist_never_executes_external_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = _routing_item(tmp_path)
+    marker = tmp_path / "executed"
+    script = tmp_path / "untrusted-provider.py"
+    script.write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n",
+        encoding="utf-8",
+    )
+    _configure_provider_artifacts(tmp_path, monkeypatch, declared_script=script)
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+
+    assert runner.prepare_speaker_routing("2026-07-10", [item]) is None
+    assert not marker.exists()
+    assert "speaker_routing_claim" not in item
+
+
+def test_declared_benign_script_cannot_hide_executed_transcript_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = _routing_item(tmp_path)
+    benign = tmp_path / "benign-acoustic.py"
+    benign.write_text("raise SystemExit('test-only benign bundle')\n", encoding="utf-8")
+    marker = tmp_path / "transcript-script-executed"
+    transcript = tmp_path / "transcript-provider.py"
+    transcript.write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n",
+        encoding="utf-8",
+    )
+    _configure_provider_artifacts(
+        tmp_path,
+        monkeypatch,
+        declared_script=benign,
+        executed_script=transcript,
+    )
+    artifacts = json.loads(
+        os.environ["AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON"]
+    )
+    authority = speaker_router.build_provider_authority(
+        name="fixture",
+        algorithm_id="fixture-v1",
+        artifact_paths=artifacts,
+    )
+    speaker_router.AUDITED_PROVIDER_BUNDLES[
+        str(authority["algorithm_fingerprint"])
+    ] = str(authority["provider_bundle_fingerprint"])
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+
+    assert runner.prepare_speaker_routing("2026-07-10", [item]) is None
+    assert not marker.exists()
+    assert "speaker_routing_claim" not in item
+
+
+def test_inline_or_extra_provider_argv_is_rejected() -> None:
+    request = Path("/tmp/request.json")
+    output = Path("/tmp/output.json")
+    for argv in (
+        [str(Path(sys.executable).resolve()), "-c", "print('unsafe')", "{request}", "{output}"],
+        [str(Path(sys.executable).resolve()), "/provider.py", "/undeclared/model", "{request}", "{output}"],
+    ):
+        os.environ["AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON"] = json.dumps(argv)
+        try:
+            with pytest.raises(ValueError, match="exactly executable, script"):
+                runner._speaker_routing_provider_command(
+                    request_path=request, output_path=output
+                )
+        finally:
+            os.environ.pop("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", None)
+
+
+def test_speaker_router_seals_full_inventory_and_keeps_binary_on_subset_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    solo_dir = tmp_path / "solo"
+    collab_dir = tmp_path / "collab"
+    solo_dir.mkdir()
+    collab_dir.mkdir()
+    solo = _routing_item(solo_dir)
+    collab = _routing_item(collab_dir)
+    solo["cid"] = "solo"
+    collab["cid"] = "collab"
+    provider_script = tmp_path / "provider.py"
+    provider_script.write_text(
+        "import hashlib,json,sys\n"
+        "request_path,output_path=sys.argv[1:]\n"
+        "payload=open(request_path,'rb').read(); request=json.loads(payload)\n"
+        "results=[]\n"
+        "for index,candidate in enumerate(request['candidates']):\n"
+        " verdict='SOLO_HOST' if index==0 else 'MULTI_SPEAKER'\n"
+        " evidence={'schema_version':'lidousha-speaker-routing-acoustic-evidence.v1',"
+        "'source_media_sha256':candidate['segment_content_sha256'],"
+        "'window_start_ms':candidate['start_ms'],'window_end_ms':candidate['end_ms'],"
+        "'audio_window_sha256':'b'*64,'analyzed_speech_ms':1000,"
+        "'coverage_unit_count':1,'covered_unit_count':1,'unresolved_unit_count':0,"
+        "'speaker_count_lower_bound':1 if index==0 else 2,"
+        "'overlap_detected':False,'mixed_speaker_within_unit_detected':False,"
+        "'acoustic_observation_sha256':'c'*64}\n"
+        " results.append({'candidate_id':candidate['candidate_id'],"
+        "'segment_binding_sha256':candidate['segment_binding_sha256'],"
+        "'bcut_srt_sha256':candidate['bcut_srt_sha256'],'verdict':verdict,"
+        "'complete_coverage':True,'unresolved_cue_count':0,"
+        "'mixed_or_overlap_detected':False,'evidence':evidence,"
+        "'evidence_sha256':hashlib.sha256(json.dumps(evidence,sort_keys=True,"
+        "separators=(',',':')).encode()).hexdigest()})\n"
+        "document={'schema_version':'lidousha-speaker-routing-provider-evidence.v3',"
+        "'status':'READY','request_sha256':hashlib.sha256(payload).hexdigest(),"
+        "'pipeline_fingerprint':request['pipeline_fingerprint'],"
+        "'routing_runtime_fingerprint':request['routing_runtime_fingerprint'],"
+        "'input_modality':'audio','transcript_or_llm_used':False,"
+        "'provider':request['provider_authority'],'candidate_results':results}\n"
+        "open(output_path,'w').write(json.dumps(document))\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "9" * 64)
+    monkeypatch.setenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON",
+        json.dumps([str(Path(sys.executable).resolve()), str(provider_script), "{request}", "{output}"]),
+    )
+    monkeypatch.setenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME", "fixture")
+    monkeypatch.setenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID", "fixture-v1")
+    artifacts = {"executable": str(Path(sys.executable).resolve()), "script": str(provider_script)}
+    for role in ("config", "model", "profile"):
+        path = tmp_path / f"sticky-{role}.bin"
+        path.write_bytes(role.encode())
+        artifacts[role] = str(path)
+    monkeypatch.setenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON", json.dumps(artifacts)
+    )
+    _allow_configured_test_speaker_provider()
+    state: dict = {}
+
+    first = runner.prepare_speaker_routing(
+        "2026-07-10", [solo, collab], state=state
+    )
+    first_claim = solo["speaker_routing_claim"]
+    assert first["decision"] == "RUN_BINARY_FINALIZER"
+    assert state["speaker_routing_session"]["provider_classification_sealed"] is True
+    assert [row["cid"] for row in state["speaker_routing_session"]["sealed_inventory"]] == [
+        "solo",
+        "collab",
+    ]
+
+    monkeypatch.delenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON")
+    retry = _routing_item(solo_dir)
+    retry["cid"] = "solo"
+    second = runner.prepare_speaker_routing("2026-07-10", [retry], state=state)
+
+    assert second["decision"] == "RUN_BINARY_FINALIZER"
+    assert retry["speaker_routing_claim"] == first_claim
+    assert len(second["candidate_results"]) == 2
+    authority_path = Path(
+        state["speaker_routing_session"]["authority_path"]
+    )
+    assert authority_path.is_file()
+    assert "/generations/" in str(authority_path)
+
+    state["speaker_routing_session"]["sealed_inventory"] = [
+        state["speaker_routing_session"]["sealed_inventory"][0]
+    ]
+    tampered_retry = _routing_item(solo_dir)
+    tampered_retry["cid"] = "solo"
+    assert (
+        runner.prepare_speaker_routing(
+            "2026-07-10", [tampered_retry], state=state
+        )
+        is None
+    )
+    assert "speaker_routing_claim" not in tampered_retry
+    assert state["speaker_routing_authority_status"] == "ROLLBACK_OR_TAMPER_DETECTED"
+
+    state.pop("speaker_routing_session")
+    deleted_retry = _routing_item(solo_dir)
+    deleted_retry["cid"] = "solo"
+    assert (
+        runner.prepare_speaker_routing(
+            "2026-07-10", [deleted_retry], state=state
+        )
+        is None
+    )
+    assert "speaker_routing_claim" not in deleted_retry
+    assert state["speaker_routing_authority_status"] == (
+        "ROLLBACK_STATE_AUTHORITY_MISSING"
+    )
+
+
+def test_speaker_router_new_unmatched_candidate_stays_binary_unbound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    known = _routing_item(tmp_path)
+    state = {
+        "speaker_routing_session": {
+            "schema_version": "lidousha-speaker-routing-session.v1",
+            "date": "2026-07-10",
+            "sealed_inventory": [],
+            "sealed_inventory_sha256": hashlib.sha256(b"[]").hexdigest(),
+            "decision": None,
+            "claim_path": None,
+            "claim_sha256": None,
+            "pipeline_fingerprint": None,
+            "provider_classification_sealed": False,
+        }
+    }
+    monkeypatch.delenv("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", raising=False)
+
+    assert runner.prepare_speaker_routing("2026-07-10", [known], state=state) is None
+    assert "speaker_routing_claim" not in known
+
+
+def test_speaker_router_new_pipeline_generation_reuses_full_external_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    solo = _routing_item(first_dir)
+    collab = _routing_item(second_dir)
+    solo["cid"] = "solo"
+    collab["cid"] = "collab"
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.delenv(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", raising=False
+    )
+    generation_a = "sha256:" + "a" * 64
+    generation_b = "sha256:" + "b" * 64
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: generation_a)
+    state: dict = {}
+
+    assert (
+        runner.prepare_speaker_routing(
+            "2026-07-10", [solo, collab], state=state
+        )
+        is None
+    )
+    first_authority = state["speaker_routing_session"]["authority_path"]
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: generation_b)
+    retry = _routing_item(first_dir)
+    retry["cid"] = "solo"
+
+    assert (
+        runner.prepare_speaker_routing("2026-07-10", [retry], state=state)
+        is None
+    )
+    session = state["speaker_routing_session"]
+    assert session["generation_pipeline_fingerprint"] == generation_b
+    assert [row["cid"] for row in session["sealed_inventory"]] == [
+        "solo",
+        "collab",
+    ]
+    new_authority = json.loads(Path(session["authority_path"]).read_text())
+    assert new_authority["previous_authority_path"] == first_authority
 
 
 def test_last_json_block_empty_on_garbage():

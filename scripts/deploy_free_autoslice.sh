@@ -305,7 +305,7 @@ ssh "$HOST" bash -s -- "$STAGE" <<'REMOTE_VALIDATE'
 set -euo pipefail
 cd "$1"
 PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python -c \
-  "import modelscope, soundfile; import src.autoslice.speaker_finalizer"
+  "import modelscope, soundfile; import src.autoslice.speaker_finalizer; import src.autoslice.speaker_session_router"
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -c \
   "import scripts.free_session_autoslice; import scripts.produce_slice_package; import src.autoslice.chat_authority"
 PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python -c \
