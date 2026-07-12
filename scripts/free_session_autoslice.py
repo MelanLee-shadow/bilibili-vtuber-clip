@@ -162,6 +162,7 @@ SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
 )
 SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
     {
+        "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
         "CPA_RATE_LIMITED",
         "CPA_MODEL_DOWN",
         "CPA_UPSTREAM_5XX",
@@ -358,6 +359,13 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
 def song_selector_env(date: str) -> dict[str, str]:
     env = child_env_for_date(date)
     env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
+    # Full-song source-context inspection is materially heavier than ordinary
+    # talk windows.  A 269 s real 《怎么办》 run wrote its valid output.srt only
+    # near the generic 15 minute deadline and was killed while finalizing.
+    # Keep the retry bounded, but use the same 30 minute budget as the
+    # established live-song AGY workflow instead of treating slow completion
+    # as content failure.
+    env["AGY_PRINT_TIMEOUT"] = os.environ.get("SONG_AGY_PRINT_TIMEOUT", "30m")
     env["LIDOUSHA_TERM_AS_OF"] = date
     return env
 
@@ -2843,6 +2851,10 @@ def produce_song(date: str, item: dict) -> dict:
                 pass
         result["decision"] = decision
         completion = song_completion_evidence(summary_record)
+        if transient_code is None and "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in {
+            str(code) for code in reasons
+        }:
+            transient_code = "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
         result["reason_codes"] = list(
             dict.fromkeys(
                 [*reasons, *completion["reason_codes"], *([transient_code] if transient_code else [])]

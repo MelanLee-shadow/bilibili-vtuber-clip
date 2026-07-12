@@ -3252,7 +3252,7 @@ def test_confirmed_non_host_song_is_terminal_across_pipeline_change(tmp_path, mo
     assert len(state["songs"]) == 1
 
 
-def test_transient_agy_failure_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):
+def test_transient_agy_failure_retries_across_ticks_with_backoff(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"
     date_dir = rec_root / date
@@ -3264,6 +3264,7 @@ def test_transient_agy_failure_gets_one_same_fingerprint_retry(tmp_path, monkeyp
     monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
     monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
     monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    monkeypatch.setattr(runner.time, "time", lambda: 10_000)
     record = {
         "candidate_id": "song_timeout",
         "segment": segment.name,
@@ -3273,13 +3274,29 @@ def test_transient_agy_failure_gets_one_same_fingerprint_retry(tmp_path, monkeyp
         "reason_codes": ["AGY_SOURCE_CONTEXT_RUNNER_FAILED"],
         "pipeline_fingerprint": "sha256:same",
         "transient_retry_count": 0,
+        "next_retry_at_epoch": 9_999,
     }
     state = {"pending_song": [], "songs": [record]}
     assert runner.requeue_recoverable_songs(date, state) == 1
     assert state["pending_song"][0]["transient_retry_count"] == 1
 
-    state = {"pending_song": [], "songs": [{**record, "transient_retry_count": 1}]}
+    state = {
+        "pending_song": [],
+        "songs": [{**record, "transient_retry_count": 1, "next_retry_at_epoch": 10_001}],
+    }
     assert runner.requeue_recoverable_songs(date, state) == 0
+    state["songs"][0]["next_retry_at_epoch"] = 9_999
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["transient_retry_count"] == 2
+
+
+def test_song_selector_env_gives_song_context_a_bounded_long_timeout(monkeypatch):
+    monkeypatch.delenv("SONG_AGY_PRINT_TIMEOUT", raising=False)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    assert runner.song_selector_env("2026-07-10")["AGY_PRINT_TIMEOUT"] == "30m"
+
+    monkeypatch.setenv("SONG_AGY_PRINT_TIMEOUT", "24m")
+    assert runner.song_selector_env("2026-07-10")["AGY_PRINT_TIMEOUT"] == "24m"
 
 
 @pytest.mark.parametrize(
