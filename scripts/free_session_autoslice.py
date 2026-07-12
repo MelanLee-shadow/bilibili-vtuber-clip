@@ -2950,6 +2950,18 @@ def produce_song(date: str, item: dict) -> dict:
 
     anchor_start, anchor_end = item["anchor_start_ms"], item["anchor_end_ms"]
     src_srt = BASE / "cache" / date / f"{segment.stem}.bcut.srt"
+    # A previous authoritative full-source pass that failed only because its
+    # AGY runner timed out already proved that the tight window is a song but
+    # lacks complete boundary evidence.  Cross-tick infrastructure recovery
+    # should resume that expensive stage directly instead of spending another
+    # model call rediscovering the same incomplete tight result.
+    if item.get("resume_full_source") is True:
+        full_start, full_end = song_proof_retry_window(anchor_start, anchor_end, seg_dur_ms)
+        resumed = attempt(full_start, full_end, "_full")
+        resumed["retried_full_source"] = True
+        resumed["resumed_full_source_after_transient"] = True
+        return resumed
+
     result = attempt(*window_for(anchor_start, anchor_end), "")
     if result.get("window_classified_song") and not result.get("song_complete"):
         full_start, full_end = song_proof_retry_window(anchor_start, anchor_end, seg_dur_ms)
@@ -2973,8 +2985,18 @@ def produce_song(date: str, item: dict) -> dict:
                         "window_classified_song",
                         "song_complete",
                         "song_completion_evidence",
+                        "transient_failure_code",
+                        "next_retry_at_epoch",
+                        "next_retry_at",
                     )
                 }
+                for key in (
+                    "transient_failure_code",
+                    "next_retry_at_epoch",
+                    "next_retry_at",
+                ):
+                    if proof_retry.get(key) is not None:
+                        result[key] = proof_retry[key]
                 # The full-source AGY/CAM++ pass is authoritative.  A timeout,
                 # nonzero exit, malformed/missing artifact, unknown reason, or
                 # semantic rejection are all the same at this boundary: not a
@@ -5042,6 +5064,10 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 else "transient_infrastructure_failure"
                 if infra_retry_due
                 else "transient_source_context_failure"
+            ),
+            "resume_full_source": bool(
+                "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in reasons
+                and isinstance(record.get("full_source_retry"), dict)
             ),
         }
         requeued.append(item)

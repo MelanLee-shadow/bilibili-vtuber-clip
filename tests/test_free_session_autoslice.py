@@ -3275,10 +3275,12 @@ def test_transient_agy_failure_retries_across_ticks_with_backoff(tmp_path, monke
         "pipeline_fingerprint": "sha256:same",
         "transient_retry_count": 0,
         "next_retry_at_epoch": 9_999,
+        "full_source_retry": {"status": "blocked"},
     }
     state = {"pending_song": [], "songs": [record]}
     assert runner.requeue_recoverable_songs(date, state) == 1
     assert state["pending_song"][0]["transient_retry_count"] == 1
+    assert state["pending_song"][0]["resume_full_source"] is True
 
     state = {
         "pending_song": [],
