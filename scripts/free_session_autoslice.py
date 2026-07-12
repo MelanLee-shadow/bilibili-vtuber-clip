@@ -1256,17 +1256,18 @@ def _write_song_active_record(
             if isinstance(gate, dict) and isinstance(gate.get("reason_codes"), list)
             else []
         )
+        deferred_decision = str(staging.get("decision_action") or "")
         if (
             staging.get("status") != "SKIPPED_RELEASE_GATE"
-            or staging.get("decision_action") != "AUTO_UPLOAD"
+            or deferred_decision not in {"AUTO_UPLOAD", "AUTO_RECUT"}
             or staging.get("upload_enabled") is not False
             or not isinstance(gate, dict)
             or gate.get("schema_version") != "slice-cover-release-gate.v1"
             or gate.get("candidate_id") != source_candidate_id
-            or gate.get("decision_action") != "AUTO_UPLOAD"
+            or gate.get("decision_action") != deferred_decision
             or gate.get("satisfied") is not False
             or gate_reasons != ["SONG_FULL_BOUNDARY_READY"]
-            or summary_record.get("decision_action") != "AUTO_UPLOAD"
+            or summary_record.get("decision_action") != deferred_decision
             or [str(code) for code in summary_record.get("reason_codes", [])]
             != ["SONG_FULL_BOUNDARY_READY"]
         ):

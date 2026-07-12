@@ -715,7 +715,7 @@ def test_song_active_record_rejects_publish_outside_bound_attempt(tmp_path, monk
         )
 
 
-def _deferred_song_summary(tmp_path, *, reason_codes=None):
+def _deferred_song_summary(tmp_path, *, reason_codes=None, decision_action="AUTO_UPLOAD"):
     root = tmp_path / "attempt" / "seededsong_ready" / "replacement_recuts"
     root.mkdir(parents=True)
     media = root / "seededsong_ready.recut.mp4"
@@ -743,7 +743,7 @@ def _deferred_song_summary(tmp_path, *, reason_codes=None):
     gate_path.write_text("{}\n", encoding="utf-8")
     summary = {
         "candidate_id": "seededsong_ready",
-        "decision_action": "AUTO_UPLOAD",
+        "decision_action": decision_action,
         "reason_codes": reasons,
         "source_context_job": {"song_candidate": True},
         "materialized_recut": {
@@ -766,14 +766,14 @@ def _deferred_song_summary(tmp_path, *, reason_codes=None):
             "cover_release_gate": {
                 "schema_version": "slice-cover-release-gate.v1",
                 "candidate_id": "seededsong_ready",
-                "decision_action": "AUTO_UPLOAD",
+                "decision_action": decision_action,
                 "reason_codes": reasons,
                 "satisfied": False,
                 "path": str(gate_path),
             },
             "publish_staging": {
                 "status": "SKIPPED_RELEASE_GATE",
-                "decision_action": "AUTO_UPLOAD",
+                "decision_action": decision_action,
                 "reason_codes": reasons,
                 "release_gate_path": str(gate_path),
                 "upload_enabled": False,
@@ -793,8 +793,11 @@ def _deferred_song_summary(tmp_path, *, reason_codes=None):
     }
 
 
-def test_song_active_record_materializes_no_upload_deferred_cover_authority(tmp_path):
-    fx = _deferred_song_summary(tmp_path)
+@pytest.mark.parametrize("decision_action", ["AUTO_UPLOAD", "AUTO_RECUT"])
+def test_song_active_record_materializes_no_upload_deferred_cover_authority(
+    tmp_path, decision_action
+):
+    fx = _deferred_song_summary(tmp_path, decision_action=decision_action)
     title = "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
 
     record_path, record_sha = runner._write_song_active_record(
