@@ -158,6 +158,7 @@ def _load_independent_chat_support_srts(media_path: Path) -> list[str]:
     return [raw_audio_asr.read_text(encoding="utf-8", errors="replace")]
 START_SNAP_MS = 2_500
 TAIL_PAD_MS = 400
+NEXT_SPEECH_ISLAND_GUARD_MS = 100
 LEAD_AIR_MS = 250
 REFINE_IF_OFF_BY_MS = 2_500
 REFINE_IF_CUE_LONGER_MS = 10_000
@@ -255,25 +256,87 @@ def boundary_red_flags(
 
 # 7/10 incident: the first plausible closure ended at +25,030ms and the old
 # 25,000ms hard edge excluded it before VAD/next-cue cleanliness could even be
-# evaluated.  Keep the repair bounded, but give semantic closure a 30s window;
-# the runner can then widen original-source context once if this is exhausted.
+# evaluated.  Keep the normal repair bounded to 30s.  A runner retry may raise
+# that absolute-from-semantic-target ceiling once to 60s, but only alongside
+# more source context and only for deterministic continuation evidence.
 BOUNDARY_REPAIR_EXTEND_CAP_MS = 30_000
+BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS = 60_000
 MAX_BOUNDARY_REPAIRS = 3
 
 
+def adaptive_tail_cut(spans, *, snapped_end_ms: int, padded_dur_ms: int) -> dict:
+    """Keep normal tail air unless it would enter a distinct next VAD island.
+
+    A sentence-end snap is already semantic closure evidence.  If VAD then
+    observes a *new* island after that closure, consuming the island is not
+    evidence that the closure was incomplete: it is usually the next turn or
+    topic.  Leave a small guard before that island, but only when the silence
+    gap is wide enough to distinguish two islands robustly.  A narrow gap is
+    left to the existing continuation/open-loop repair checks.
+    """
+
+    nominal_end_ms = min(padded_dur_ms, snapped_end_ms + TAIL_PAD_MS)
+    next_span = min(
+        (span for span in spans if span.start_ms > snapped_end_ms),
+        key=lambda span: span.start_ms,
+        default=None,
+    )
+    gap_ms = next_span.start_ms - snapped_end_ms if next_span is not None else None
+    final_end_ms = nominal_end_ms
+    reason = None
+    if (
+        next_span is not None
+        and next_span.start_ms < nominal_end_ms
+        and gap_ms is not None
+        and gap_ms >= 2 * NEXT_SPEECH_ISLAND_GUARD_MS
+    ):
+        final_end_ms = min(nominal_end_ms, next_span.start_ms - NEXT_SPEECH_ISLAND_GUARD_MS)
+        reason = "tail_clamped_before_next_speech_island"
+    return {
+        "nominal_end_ms": nominal_end_ms,
+        "final_end_ms": final_end_ms,
+        "tail_pad_ms": TAIL_PAD_MS,
+        "next_speech_island_start_ms": next_span.start_ms if next_span is not None else None,
+        "next_speech_island_gap_ms": gap_ms,
+        "next_speech_island_guard_ms": NEXT_SPEECH_ISLAND_GUARD_MS,
+        "reason": reason,
+    }
+
+
+def tail_requires_forward_extension(cues, spans, *, snapped_end_ms: int, cut_ms: int) -> bool:
+    """True only when speech already in progress crosses the proposed cut.
+
+    A later, distinct VAD island is not a reason to swallow another topic.
+    Forward repair is reserved for a continuation island that began before the
+    snapped closure, or an ASR cue/open loop that visibly crosses the cut.
+    """
+
+    continuation_island = any(
+        span.start_ms < snapped_end_ms and span.end_ms > cut_ms for span in spans
+    )
+    crossing_cue = any(
+        cue.start_ms <= snapped_end_ms < cut_ms < cue.end_ms for cue in cues
+    )
+    return continuation_island or crossing_cue
+
+
 def next_clean_closure(cues, spans, *, after_ms: int, padded_dur_ms: int,
-                       cap_ms: int = BOUNDARY_REPAIR_EXTEND_CAP_MS) -> int | None:
+                       cap_ms: int = BOUNDARY_REPAIR_EXTEND_CAP_MS,
+                       search_origin_ms: int | None = None) -> int | None:
     """Earliest LATER sentence end whose cut raises no deterministic red flag:
     nothing starts inside its tail pad and no speech island runs
     ≥ ISLAND_CONTINUES_FLAG_MS past the cut.
 
     This is the unattended repair move (Ivan 2026-07-10): extend FORWARD to
     where the talk actually lands — never retract, which would drop the very
-    content the pick was chosen for.  Bounded by ``cap_ms`` (beyond that she is
-    mid-monologue and the clip fails closed instead)."""
-    ends = sorted({c.end_ms for c in cues if after_ms < c.end_ms <= after_ms + cap_ms})
+    content the pick was chosen for.  ``cap_ms`` is absolute from the original
+    semantic target (``search_origin_ms``), so repeated repairs cannot ratchet
+    the window forward indefinitely."""
+    origin_ms = after_ms if search_origin_ms is None else search_origin_ms
+    max_end_ms = min(padded_dur_ms, origin_ms + cap_ms)
+    ends = sorted({c.end_ms for c in cues if after_ms < c.end_ms <= max_end_ms})
     for end in ends:
-        cut = min(padded_dur_ms, end + TAIL_PAD_MS)
+        cut = adaptive_tail_cut(spans, snapped_end_ms=end, padded_dur_ms=padded_dur_ms)["final_end_ms"]
         if any(end <= c.start_ms < cut for c in cues):
             continue
         crossing = next((s for s in spans if s.start_ms < cut < s.end_ms), None)
@@ -696,6 +759,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    repair_cap_raw = spec.get("boundary_repair_extend_cap_ms", BOUNDARY_REPAIR_EXTEND_CAP_MS)
+    if isinstance(repair_cap_raw, bool) or not isinstance(repair_cap_raw, int):
+        raise ValueError("boundary_repair_extend_cap_ms must be an integer")
+    if not BOUNDARY_REPAIR_EXTEND_CAP_MS <= repair_cap_raw <= BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS:
+        raise ValueError(
+            "boundary_repair_extend_cap_ms must stay within "
+            f"{BOUNDARY_REPAIR_EXTEND_CAP_MS}..{BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS}"
+        )
+    boundary_repair_extend_cap_ms = repair_cap_raw
     truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
     if truth_mode not in {"delivery", "withheld"}:
         raise ValueError("AUTOSLICE_HUMAN_TRUTH_MODE must be delivery or withheld")
@@ -929,8 +1001,23 @@ def main(argv: list[str] | None = None) -> int:
     # is cut.
     audit_path = out_root / f"{cid}.boundary_audit.json"
     boundary_repairs: list[dict] = []
+    recorded_tail_clamps: set[tuple[int, int]] = set()
     while True:
-        final_end = min(padded_dur, snapped + TAIL_PAD_MS)
+        tail_adjustment = adaptive_tail_cut(spans, snapped_end_ms=snapped, padded_dur_ms=padded_dur)
+        final_end = tail_adjustment["final_end_ms"]
+        clamp_key = (snapped, final_end)
+        if tail_adjustment["reason"] and clamp_key not in recorded_tail_clamps:
+            boundary_repairs.append(
+                {
+                    "reason": tail_adjustment["reason"],
+                    "snapped_end_ms": snapped,
+                    "nominal_final_end_ms": tail_adjustment["nominal_end_ms"],
+                    "final_end_ms": final_end,
+                    "next_speech_island_start_ms": tail_adjustment["next_speech_island_start_ms"],
+                    "next_speech_island_guard_ms": tail_adjustment["next_speech_island_guard_ms"],
+                }
+            )
+            recorded_tail_clamps.add(clamp_key)
         audit = boundary_audit(
             spans,
             start_ms=final_start,
@@ -948,7 +1035,13 @@ def main(argv: list[str] | None = None) -> int:
                 "snapped_sentence_end_ms": snapped,
                 "final_end_ms": final_end,
                 "closure_sentence": closure_cue.text,
+                "tail_adjustment": tail_adjustment,
                 "tail_refinement_used": refinement_used,
+                "boundary_repair_search_origin_ms": target_rel,
+                "boundary_repair_extend_cap_ms": boundary_repair_extend_cap_ms,
+                "boundary_repair_max_end_ms": min(
+                    padded_dur, target_rel + boundary_repair_extend_cap_ms
+                ),
                 "boundary_repairs": boundary_repairs,
             }
         )
@@ -972,22 +1065,37 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not red_flags:
             break
+        forward_extension_eligible = tail_requires_forward_extension(
+            cues, spans, snapped_end_ms=snapped, cut_ms=final_end
+        )
+        audit["forward_extension_eligible"] = forward_extension_eligible
         repair: dict = {}
-        if len(boundary_repairs) < MAX_BOUNDARY_REPAIRS:
+        flagged_repair_count = sum(1 for item in boundary_repairs if "flags" in item)
+        if flagged_repair_count < MAX_BOUNDARY_REPAIRS:
             if "opens_mid_sentence" in red_flags:
                 new_snap_start = repair_start_for_straddler(cues, final_start_ms=final_start)
                 if new_snap_start is not None and new_snap_start != snapped_start:
                     repair["snapped_start_ms"] = new_snap_start
-            if any(flag != "opens_mid_sentence" for flag in red_flags):
-                new_end = next_clean_closure(cues, spans, after_ms=snapped, padded_dur_ms=padded_dur)
+            if any(flag != "opens_mid_sentence" for flag in red_flags) and forward_extension_eligible:
+                new_end = next_clean_closure(
+                    cues,
+                    spans,
+                    after_ms=snapped,
+                    padded_dur_ms=padded_dur,
+                    cap_ms=boundary_repair_extend_cap_ms,
+                    search_origin_ms=target_rel,
+                )
                 if new_end is not None:
                     repair["snapped_end_ms"] = new_end
         if not repair:
             audit["red_flags"] = red_flags
+            retry_scope = "same_topic_continues" if forward_extension_eligible else "none"
+            audit["boundary_context_retry_scope"] = retry_scope
             audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             raise SystemExit(
-                f"BOUNDARY_UNREPAIRABLE: {','.join(red_flags)} after {len(boundary_repairs)} repair(s); "
-                f"snapped={snapped}ms target={target_rel}ms extend_cap={BOUNDARY_REPAIR_EXTEND_CAP_MS}ms"
+                f"BOUNDARY_UNREPAIRABLE: {','.join(red_flags)} after {flagged_repair_count} repair(s); "
+                f"snapped={snapped}ms target={target_rel}ms "
+                f"extend_cap={boundary_repair_extend_cap_ms}ms retry_scope={retry_scope}"
             )
         boundary_repairs.append({"flags": red_flags, **repair})
         if "snapped_start_ms" in repair:

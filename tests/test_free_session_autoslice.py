@@ -3468,7 +3468,10 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
         calls.append(command)
         sink = kwargs["stdout"]
         if len(calls) == 1:
-            sink.write("BOUNDARY_UNREPAIRABLE: no closure after 0 repair(s)\n")
+            sink.write(
+                "BOUNDARY_UNREPAIRABLE: no closure after 0 repair(s); "
+                "extend_cap=30000ms retry_scope=same_topic_continues\n"
+            )
             sink.flush()
             return Completed(1)
         sink.write('{"red_flags": [], "boundary_repairs": [{"snapped_end_ms": 182540}]}\n')
@@ -3498,8 +3501,54 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
     spec = json.loads((base / "out" / date / "spec_auto_212005_163_311.json").read_text())
     assert spec["semantic_end_ms"] == 311_000
     assert spec["pieces"][0]["end_ms"] == 401_000
+    assert spec["boundary_repair_extend_cap_ms"] == 60_000
     assert spec["subtitle_text_overrides"] == str(override)
     assert spec["subtitle_regression"] == str(regression)
+
+
+def test_talk_boundary_failure_does_not_retry_without_continuation_scope(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+    calls = []
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        kwargs["stdout"].write(
+            "BOUNDARY_UNREPAIRABLE: distinct next island; "
+            "extend_cap=30000ms retry_scope=none\n"
+        )
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": "auto_distinct_next_topic",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 150_000,
+            "hook": "已经收束的话题",
+        },
+    )
+
+    assert len(calls) == 1
+    assert result["status"] == "boundary_unrepairable"
+    assert result["boundary_context_retries"] == 0
+    spec = json.loads((base / "out" / date / "spec_auto_distinct_next_topic.json").read_text())
+    assert spec["pieces"][0]["end_ms"] == 182_000
+    assert spec["boundary_repair_extend_cap_ms"] == 30_000
 
 
 def test_talk_title_authority_failure_is_classified_and_leaves_no_delivery(tmp_path, monkeypatch):

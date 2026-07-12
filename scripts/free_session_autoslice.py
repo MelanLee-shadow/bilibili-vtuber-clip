@@ -187,6 +187,8 @@ MAX_PARALLEL_PRODUCE = 3  # slices are independent; produce them concurrently (e
 PIECE_PRE_MS = 10_000
 PIECE_POST_MS = 32_000
 BOUNDARY_CONTEXT_RETRY_POST_MS = 90_000
+BOUNDARY_REPAIR_INITIAL_CAP_MS = 30_000
+BOUNDARY_REPAIR_RETRY_CAP_MS = 60_000
 SONG_WINDOW_PRE_MS = 15_000   # window must stay SONG-dominated or the in-window
 SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
                               # ±60/45s and ±180/150s); 15/20s matches the
@@ -850,6 +852,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "lead_pad_ms": 400,
         "semantic_start_ms": item["start_ms"],
         "semantic_end_ms": item["end_ms"],
+        "boundary_repair_extend_cap_ms": BOUNDARY_REPAIR_INITIAL_CAP_MS,
         "pieces": [
             {
                 "remote_media": item["segment_path"],
@@ -891,20 +894,27 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
 
     completed, attempt_output = run_producer()
     first_tail = attempt_output[-4000:]
-    if completed.returncode != 0 and "BOUNDARY_UNREPAIRABLE" in first_tail:
+    if (
+        completed.returncode != 0
+        and "BOUNDARY_UNREPAIRABLE" in first_tail
+        and "retry_scope=same_topic_continues" in first_tail
+    ):
         piece = spec["pieces"][0]
         retry_end = (
             min(item["seg_dur_ms"], item["end_ms"] + BOUNDARY_CONTEXT_RETRY_POST_MS)
             if item["seg_dur_ms"]
             else item["end_ms"] + BOUNDARY_CONTEXT_RETRY_POST_MS
         )
-        if retry_end > piece["end_ms"]:
+        current_cap = int(spec["boundary_repair_extend_cap_ms"])
+        if retry_end > piece["end_ms"] and BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap:
             boundary_context_retries = 1
             piece["end_ms"] = retry_end
+            spec["boundary_repair_extend_cap_ms"] = BOUNDARY_REPAIR_RETRY_CAP_MS
             spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
             with open(log_path, "a", encoding="utf-8") as sink:
                 sink.write(
                     f"\nBOUNDARY_CONTEXT_RETRY: widening source post-context to {retry_end}ms "
+                    f"and absolute repair cap to {BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
                     f"(semantic end remains {item['end_ms']}ms)\n"
                 )
             completed, attempt_output = run_producer()
