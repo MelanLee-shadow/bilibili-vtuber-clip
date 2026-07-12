@@ -3,6 +3,35 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-12：社区专名、边界/声纹自愈与最新直播自治盲测
+
+### 目标
+
+不再由 agent 逐阶段驱动候选片：修复社区时效专名、下一话题边界误判和单个声纹离群点误杀后，由正式 `--once -> tick()` 入口在隔离目录自行处理 2026-07-11/12；主线只按里程碑检查 state/report/artifact。人工真值必须 withheld，不上传。
+
+### 已完成
+
+- 社区 crawler 集成为 `4044433 -> 2d53963`：在官方/ACG 时间窗口外加入有界 Bilibili 社区证据，修复假别名、跨实体桥接、非确定性、部分 HTTP 失败隐藏和 consumer 冲突。排除 reviewed seed 的 live 机器盲测得到唯一 `BanG Dream! YUME∞MITA`，自动别名含「梦限大」，证据来自 2026-07-10..12 的 8 个 Bilibili 社区视频，不依赖 Ivan 给的答案表。生产快照 `/opt/bilive/autoslice/state/timely_terms.json` 为 202 terms，SHA-256 `20245740472d1e5e9739908cdfc9749122822d4f9e207e363170f084258ef8e9`；隔离盲测固定在 `evals/community-latest-20260712/timely_terms.machine-blind.json`。
+- 边界修复 `31bc17c`：默认 400ms tail 如果跨入独立的下一话题 VAD island，在证据空白后自适应截断；只有真正穿过语义切点的说话/收束 cue 才能延长。事故 fixture `auto_170019_305_355` 的预期切点为 60.420s，不再被后面的新话题拖延 19.7s。
+- 单例声纹修复 `34b9b26`：单个笑声/语气词离群点只在强主播多数、两侧主播、非词汇内容和 whole-clip judge >=0.90 全部成立时自动判李豆沙；其余进入 hash-bound `SPEAKER_REVIEW_REQUIRED`，不烧字/不交付。`confidence:true`、marker-only、缺 media/text/cue-audio hash、stale manifest 均已负向验证为普通失败，不会永久卡死。独立复核无剩余 P0/P1；全量 `818 passed`、compileall 和 diff-check 通过。
+- 正式部署脚本已将 `34b9b265d538484348df74a145bde63b60c37dbe` 部署到 `free:/opt/bilive/autoslice/repo`；远端 `DEPLOYED_COMMIT`、runner md5、speaker runtime assets 均验证通过。生产 `/opt/bilive/autoslice/DISABLED` 保留，无上传路径。
+
+### 进行中（含后台进程）
+
+- 隔离 BASE 为 `/opt/bilive/autoslice/evals/community-latest-20260712`，最终代码快照为 `repo-34b9b26`。systemd transient timer `autoslice-blind-20260711-12-34b9b26.timer` 处于 active/waiting，每次完整 tick 结束 10 分钟后再调用正式 `free_session_autoslice.py --once`；使用 `runner.lock` 单飞、`AUTOSLICE_HUMAN_TRUTH_MODE=withheld`、固定机器专名快照，仅可见 7/11 与 7/12 录像目录。
+- 旧的一次性 7/11 driver PID 1696379 尚在自然收尾时，timer 只做 PID guard 后立即跳过；它退出后，timer 自动把旧隔离 repo 的已成功交付复制到新 repo，然后由 tick 自行重排旧指纹的边界/声纹失败并处理 7/12。agent 不再轮询子阶段或日志。
+
+### 阻塞
+
+- 无需 Ivan 决策的代码 blocker。当前只等待旧 driver 自然退出及自治 tick 生成最终产物；CPA/AGY 限流会按已持久化的 backoff 跨 tick 重试，不由 agent 手动促进。
+- 生产 `DISABLED` 不在本次隔离验收范围内；它何时移除仍需 Ivan 另行授权。
+
+### 下一步
+
+1. 只定时读取 `state/2026-07-11.json` 和 `state/2026-07-12.json`，不看阶段进程。每日期必须达到 `review_ready | review_ready_with_failures | no_delivery`、pending talk/song 为空、segment snapshot 稳定、无同指纹可重试项，且生成对应 `AUTOSLICE_SUMMARY.md`，才称为收敛。
+2. 收敛后停止隔离 timer，核对新专名、边界、说话人、歌切、每个媒体/SRT/封面和 no-upload 证据；对 fail-closed 项如实记录，不把 `review_ready_with_failures` 写成全成功。
+3. 用最终运行结果更新本节并再跑正式部署脚本，使生产 `DEPLOYED_COMMIT` 与最终干净 HEAD 一致；仍不上传。
+
 ## 2026-07-12：7/10 歌切自愈、16 首视觉歌单与时效专名 crawler 集成
 
 ### 目标
