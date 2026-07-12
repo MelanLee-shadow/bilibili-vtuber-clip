@@ -212,6 +212,63 @@ def test_planner_prefers_few_long_natural_segments_and_reuses_verified_zero(tmp_
     }
 
 
+def test_planner_prefers_fuller_single_syllable_at_clause_end(tmp_path):
+    short_dir = tmp_path / "short"
+    full_dir = tmp_path / "full"
+    short_dir.mkdir()
+    full_dir.mkdir()
+    short_zero = {
+        "start_time": 0,
+        "end_time": 480,
+        "transcript": "零食不对",
+        "words": [
+            {"label": "零", "start_time": 0, "end_time": 120},
+            {"label": "食", "start_time": 120, "end_time": 240},
+            {"label": "不", "start_time": 240, "end_time": 360},
+            {"label": "对", "start_time": 360, "end_time": 480},
+        ],
+    }
+    full_zero = {
+        "start_time": 1_000,
+        "end_time": 1_480,
+        "transcript": "做零了",
+        "words": [
+            {"label": "做", "start_time": 1_000, "end_time": 1_120},
+            {"label": "零", "start_time": 1_120, "end_time": 1_360},
+            {"label": "了", "start_time": 1_360, "end_time": 1_480},
+        ],
+    }
+    short_manifest = _source_manifest(
+        short_dir,
+        [short_zero],
+        source_id="short-high-confidence",
+        speaker_confidence=1.0,
+    )
+    full_manifest = _source_manifest(
+        full_dir,
+        [full_zero],
+        source_id="full-terminal-syllable",
+        speaker_confidence=0.99,
+    )
+    corpus = build_corpus(
+        {
+            "schema_version": SOURCE_MANIFEST_SCHEMA,
+            "sources": [
+                short_manifest["sources"][0],
+                full_manifest["sources"][0],
+            ],
+        },
+        manifest_dir=tmp_path,
+    )
+
+    terminal_plan = plan_text("零", corpus)
+    assert terminal_plan["pieces"][0]["source_id"] == "full-terminal-syllable"
+    assert terminal_plan["pieces"][0]["core_end_ms"] - terminal_plan["pieces"][0]["core_start_ms"] == 240
+
+    nonterminal_plan = plan_text("零不对", corpus)
+    assert nonterminal_plan["pieces"][0]["source_id"] == "short-high-confidence"
+
+
 def test_match_must_align_to_asr_token_boundaries(tmp_path):
     # A provider may occasionally return a multi-character token.  Cutting
     # "本来" out of that token would invent timings, so it must not match.
@@ -553,6 +610,16 @@ def test_comparison_bundle_hash_binds_both_rendered_choices(tmp_path):
         original_target,
         suggested_target,
     ]
+    selected = huozi_cli.build_comparison_manifest(
+        original_manifest,
+        suggested_manifest,
+        suggestion_report,
+        selection="original",
+    )
+    assert selected["status"] == "USER_SELECTED_NO_UPLOAD"
+    assert selected["selection"] == "original"
+    assert selected["upload_enabled"] is False
+
     Path(suggested_video).write_bytes(b"drift")
     with pytest.raises(RuntimeError, match="artifact hash drift"):
         huozi_cli.build_comparison_manifest(

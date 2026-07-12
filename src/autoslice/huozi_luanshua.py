@@ -27,6 +27,10 @@ DEFAULT_MIN_SPEAKER_CONFIDENCE = 0.98
 DEFAULT_MIN_TRANSCRIPT_CONFIDENCE = 0.90
 RENDER_MIN_TRANSCRIPT_CONFIDENCE = 0.98
 DEFAULT_MIN_TRANSCRIPT_AUTHORITIES = 2
+# Long ASR tokens can be timing errors.  For a one-character clause ending,
+# reward a naturally fuller syllable only up to a conservative Mandarin-speech
+# ceiling instead of letting an anomalously long token dominate selection.
+TERMINAL_SINGLE_FULLNESS_REWARD_CAP_MS = 420
 ALLOWED_SPEAKER_AUTHORITIES = {
     "ivan_confirmed_solo_session",
     "ivan_confirmed_phrase",
@@ -622,7 +626,25 @@ def _occurrences(utterance: CorpusUtterance, fragment: str) -> Iterable[MatchPie
         )
 
 
-def _piece_preference(piece: MatchPiece) -> tuple[object, ...]:
+def _piece_preference(
+    piece: MatchPiece, *, prefer_full_terminal_single: bool = False
+) -> tuple[object, ...]:
+    core_duration_ms = piece.core_end_ms - piece.core_start_ms
+    if prefer_full_terminal_single and piece.char_count == 1:
+        source_utterance_terminal = int(
+            piece.source_char_end == len(piece.utterance.normalized_text)
+        )
+        return (
+            0 if piece.utterance.content_kind == "talk" else 1,
+            -source_utterance_terminal,
+            -min(core_duration_ms, TERMINAL_SINGLE_FULLNESS_REWARD_CAP_MS),
+            -piece.utterance.speaker_confidence,
+            -piece.utterance.transcript_confidence,
+            -piece.boundary_score,
+            piece.cut_end_ms - piece.cut_start_ms,
+            piece.utterance.source_id,
+            piece.core_start_ms,
+        )
     return (
         0 if piece.utterance.content_kind == "talk" else 1,
         -piece.utterance.speaker_confidence,
@@ -716,7 +738,14 @@ def plan_clause(
                 >= min_transcript_authorities
             ]
             if occurrences:
-                occurrences.sort(key=_piece_preference)
+                occurrences.sort(
+                    key=lambda piece: _piece_preference(
+                        piece,
+                        prefer_full_terminal_single=(
+                            target_end == len(normalized) and len(fragment) == 1
+                        ),
+                    )
+                )
                 # Multiple acoustic alternatives are useful for later QA, but
                 # the exact-text segmentation score only needs the strongest.
                 target_candidates.append(occurrences[0])

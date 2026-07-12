@@ -20,7 +20,7 @@
 1. **全历史发现**：把 CloudDrive 上已有完整 SRT 镜像到本地磁盘后运行 `history-scan`。扫描可跨相邻 cue，但不跨默认 1500ms 的长停顿，并按最长精确连续片段排序。
 2. **候选晋升**：只对更好的发现候选补跑 BCUT + 剪映逐字转写和说话人复核。失败候选仍留在发现报告，不进入 corpus。
 3. **语料构建**：`corpus` 读取显式 source manifest，执行说话人、逐字时间、内容类型和 hash 门。
-4. **原句规划**：`plan` 使用动态规划，先最小化片段数，再最小化单字片段，并偏好更长的自然片段。
+4. **原句规划**：`plan` 使用动态规划，先最小化片段数，再最小化单字片段，并偏好更长的自然片段。若句尾仍只能使用单字，会在同样通过双 ASR 与说话人门的候选中优先选择源句尾发音或更饱满的自然音节；异常长 token 的奖励封顶，不能靠错误时间轴胜出。
 5. **建议句**：`suggest` 只接受编辑距离不超过 4 且确实降低碎片度的候选。报告同时保留原句 plan 和建议句 plan，必须两版都渲染供 Ivan 选择。
 6. **证据与渲染**：`evidence` 生成双 ASR + 媒体 hash 观察，`verify` 产生 `READY_TO_RENDER` plan，`render` 会做逐片段响度对齐、120ms 片头留白和 260ms 分句停顿，再输出 MP4、SRT、ASS 和 no-upload manifest。
 
@@ -100,6 +100,14 @@ python3 scripts/huozi_luanshua.py bundle \
   --original-manifest /tmp/huozi/original.manifest.json \
   --suggested-manifest /tmp/huozi/suggested.manifest.json \
   --suggestion-report /tmp/huozi/suggestion-report.json \
+  --output /tmp/huozi/comparison.manifest.json
+
+# Ivan 选定后重建同一份 hash-bound manifest；仍然不会上传
+python3 scripts/huozi_luanshua.py bundle \
+  --original-manifest /tmp/huozi/original.manifest.json \
+  --suggested-manifest /tmp/huozi/suggested.manifest.json \
+  --suggestion-report /tmp/huozi/suggestion-report.json \
+  --select original \
   --output /tmp/huozi/comparison.manifest.json
 ```
 
