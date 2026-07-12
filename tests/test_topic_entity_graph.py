@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.gemini_slice_jingting import agy_prompt
+from scripts.crawl_topic_entity_graph import parser as graph_crawler_parser
 from scripts.crawl_topic_entity_graph import write_complete_graph
 from scripts.run_full_session_selector_cpa_shadow import _cpa_correct_draft_cues
 from src.autoslice.chat_authority import (
@@ -16,7 +17,11 @@ from src.autoslice.chat_authority import (
     apply_audio_entity_verification,
 )
 from src.autoslice.timely_term_crawler import CrawlError
-from src.autoslice.topic_entity_crawler import GraphCrawlResult, crawl_topic_entity_graph
+from src.autoslice.topic_entity_crawler import (
+    GraphCrawlResult,
+    _search_score,
+    crawl_topic_entity_graph,
+)
 from src.autoslice.topic_entity_graph import (
     TopicEntityGraphError,
     TopicEvidence,
@@ -308,10 +313,10 @@ def _timely_snapshot() -> dict:
         "terms": [
             {
                 "canonical": "Current Franchise",
-                "readings": ["Current Franchise"],
+                "readings": ["Current Work"],
                 "aliases": ["当前企划"],
                 "confusables": [],
-                "topic_entities": ["Current Work"],
+                "topic_entities": ["Anime", "Current Work"],
                 "active_from": "2026-01-01",
                 "active_until": "2027-01-01",
                 "sources": [_source("https://anilist.co/anime/1")],
@@ -358,6 +363,7 @@ class _FakeClient:
                                 {"key": "jp", "value": "椎名 立希"},
                                 {"key": "kana", "value": "しいな たき"},
                                 {"key": "romaji", "value": "Shiina Taki"},
+                                {"key": "nickname", "value": "Rikki、立希队长"},
                             ],
                         },
                     }
@@ -380,8 +386,215 @@ def test_crawler_builds_chinese_name_and_short_reading_from_structured_subject()
     work = result.graph["works"][0]
     assert entity["canonical_zh"] == "椎名立希"
     assert "立希" in entity["aliases"]
+    assert {"Rikki", "立希队长"} <= set(entity["aliases"])
     assert "Taki" in entity["readings"]
     assert "Current Work" in work["aliases"]
+
+
+def _term(
+    canonical: str,
+    *,
+    active_from: str = "2026-01-01",
+    topic_entities: list[str] | None = None,
+    community: bool = False,
+    source_url: str = "https://anilist.co/anime/1",
+) -> dict:
+    source = _source(source_url)
+    if community:
+        source["publisher"] = "Bilibili community fixture"
+    return {
+        "canonical": canonical,
+        "readings": [canonical],
+        "aliases": [],
+        "confusables": [],
+        "topic_entities": ["Anime", *(topic_entities or [])],
+        "active_from": active_from,
+        "active_until": "2027-01-01",
+        "sources": [source],
+    }
+
+
+def _snapshot(*terms: dict) -> dict:
+    return {
+        "schema_version": "lidousha-timely-terms.v1",
+        "generated_at": "2026-07-12T12:00:00+00:00",
+        "expires_at": "2026-07-14T12:00:00+00:00",
+        "status": "fresh",
+        "terms": list(terms),
+    }
+
+
+class _BreadthFakeClient:
+    requests_made = 0
+    cache_hits = 0
+    stale_hits = 0
+
+    def __init__(self, search_ids: dict[str, int | None], *, empty_cast_ids: set[int] | None = None):
+        self.search_ids = search_ids
+        self.empty_cast_ids = empty_cast_ids or set()
+        self.search_queries: list[str] = []
+
+    def fetch(self, url, *, method="GET", body=None, content_type="", headers=None):
+        del content_type, headers
+        self.requests_made += 1
+        if method == "POST":
+            query = json.loads(body)["keyword"]
+            self.search_queries.append(query)
+            subject_id = self.search_ids.get(query)
+            rows = []
+            if subject_id is not None:
+                rows.append(
+                    {
+                        "id": subject_id,
+                        "type": 2,
+                        "name": query,
+                        "name_cn": query,
+                        "collection": {"collect": 100},
+                    }
+                )
+            payload = {"data": rows}
+        else:
+            subject_id = int(url.split("/subject/")[1].split("?")[0])
+            characters = []
+            if subject_id not in self.empty_cast_ids:
+                characters = [
+                    {
+                        "id": 1000 + subject_id,
+                        "name": f"角色{subject_id}",
+                        "name_cn": f"角色{subject_id}",
+                        "role_name": "主角",
+                        "info": {"name_cn": f"角色{subject_id}", "alias": []},
+                    }
+                ]
+            payload = {
+                "id": subject_id,
+                "name": f"Work {subject_id}",
+                "name_cn": f"作品{subject_id}",
+                "air_date": "2026-04-01",
+                "crt": characters,
+            }
+        return SimpleNamespace(body=json.dumps(payload, ensure_ascii=False).encode())
+
+
+def test_crawler_discovers_topics_breadth_first_then_expands_community_siblings():
+    client = _BreadthFakeClient(
+        {
+            "社区昵称": None,
+            "Current Franchise Work": 1,
+            "Sibling Work": 4,
+            "Work Two": 2,
+            "Work Three": 3,
+        }
+    )
+    community = _term(
+        "社区昵称",
+        topic_entities=["Parent Franchise", "Current Franchise Work", "Sibling Work", "Bilibili community"],
+        community=True,
+    )
+    community["readings"] = ["Current Franchise Work"]
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(community, _term("Work Two"), _term("Work Three")),
+        input_timely_terms_sha256="d" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=3,
+        max_queries=5,
+        max_works_per_topic=2,
+    )
+
+    assert client.search_queries[:3] == ["社区昵称", "Work Two", "Work Three"]
+    assert len(result.graph["topics"]) == 3
+    community_topic = next(row for row in result.graph["topics"] if row["canonical"] == "社区昵称")
+    assert len(community_topic["work_ids"]) == 2
+
+
+def test_crawler_reserves_quarter_of_primary_frontier_for_upcoming_anime():
+    terms = [*(_term(f"Current {index}") for index in range(4)), _term("Upcoming", active_from="2026-10-01")]
+    client = _BreadthFakeClient({term["canonical"]: index + 1 for index, term in enumerate(terms)})
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(*terms),
+        input_timely_terms_sha256="c" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=4,
+        max_queries=4,
+    )
+
+    canonicals = {row["canonical"] for row in result.graph["topics"]}
+    assert "Upcoming" in canonicals
+    assert "Current 3" not in canonicals
+
+
+def test_search_score_rejects_same_prefix_from_different_franchise():
+    assert _search_score("Black Clover Season 2", {"name": "BLACK LAGOON"}) == 0.0
+    assert _search_score("Black Clover Season 2", {"name": "Black Clover"}) == 0.0
+    assert _search_score("Black Clover Season 2", {"name": "Black Clover Season 2"}) == 1.0
+
+
+def test_direct_bangumi_subject_with_empty_cast_falls_back_within_franchise():
+    current = _term(
+        "Current Season 3",
+        topic_entities=["Established Base Work"],
+        source_url="https://bgm.tv/subject/99",
+    )
+    client = _BreadthFakeClient({"Established Base Work": 42}, empty_cast_ids={99})
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(current),
+        input_timely_terms_sha256="b" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=2,
+    )
+
+    assert client.search_queries == ["Established Base Work"]
+    assert result.graph["works"][0]["work_id"] == "bgm:subject:42"
+
+
+def test_community_current_work_precedes_sibling_expansion_and_parent_franchise():
+    dream = _term(
+        "梦限大",
+        topic_entities=["BanG Dream!", "邦多利", "MyGO!!!!!", "Ave Mujica", "Bilibili community"],
+        community=True,
+    )
+    dream["readings"] = ["meng xianda", "BanG Dream YUME MITA"]
+    dream["aliases"] = ["BanG Dream! YUME∞MITA"]
+    client = _BreadthFakeClient(
+        {
+            "梦限大": None,
+            "BanG Dream YUME MITA": 10,
+            "MyGO!!!!!": 11,
+            "Ave Mujica": 12,
+            "BanG Dream!": 13,
+        }
+    )
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(dream),
+        input_timely_terms_sha256="a" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=5,
+        max_works_per_topic=3,
+    )
+
+    assert client.search_queries[:4] == ["梦限大", "BanG Dream YUME MITA", "MyGO!!!!!", "Ave Mujica"]
+    assert "BanG Dream!" not in client.search_queries
+    assert set(result.graph["topics"][0]["work_ids"]) == {
+        "bgm:subject:10",
+        "bgm:subject:11",
+        "bgm:subject:12",
+    }
+
+
+def test_cli_defaults_match_daily_breadth_budget():
+    args = graph_crawler_parser().parse_args([])
+    assert (args.max_requests, args.max_topics, args.max_queries, args.max_works_per_topic) == (
+        80,
+        16,
+        40,
+        3,
+    )
 
 
 def test_partial_crawl_refuses_to_replace_last_good_graph(tmp_path):
