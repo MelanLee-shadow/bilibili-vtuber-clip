@@ -48,12 +48,21 @@ truth withheld、生产 `DISABLED` 和 no-upload。
   requeue 现保留 `lane/title_hint/visual_song_evidence`，不会在重试时丢掉画面歌名。
 - 当前完整回归 `python3 -m pytest -q` 为 **835 passed**；部署脚本语法、
   `git diff --check` 和相关编译检查通过。
+- Fresh 只读对抗审查的所有材料性反例均已接受并修复：包括 sibling chat 覆盖
+  主播明确作品、静态/动态图 surface 重叠、非双向 edge、partial crawl 覆盖好图、
+  blind lineage 不绑定、短 chunk 超过 3% 仍补 cue、异常 song wrapper 丢画面证据。
+  最终审查未发现剩余材料性代码风险。
+- 代码承重 commit `03ac31efea735eda82884a9d66b367ac7b2b5d1c` 已通过正式
+  `scripts/deploy_free_autoslice.sh free` 部署。远端 runner md5、声纹 runtime
+  assets、graph schema/lineage 均验证通过；`DEPLOYED_COMMIT` readback 一致，
+  committed graph SHA 为 `72ab9274...`、1/3/23，06:37 graph cron 恰好一条，
+  `/opt/bilive/autoslice/DISABLED` 仍存在。没有上传。
 
 ### 进行中（含后台进程）
 
 - 代码位于 `/Users/ivan/Project/vtuber-slice-song-selfheal`、分支
-  `codex/july10-song-selfheal`，正在做最后只读对抗审查，尚未形成本节最终 commit/
-  部署 readback。
+  `codex/july10-song-selfheal`。本节代码与部署已完成；本次 HANDOFF 同步是后续
+  docs-only 收尾，远端 exact authority 始终以 `DEPLOYED_COMMIT` 为准。
 - 远端旧隔离 timer 仍可自治运行旧 `repo-34b9b26`；没有本对话 heartbeat 继续
   追踪它。生产 `/opt/bilive/autoslice/DISABLED` 仍须保留。
 
@@ -66,11 +75,10 @@ truth withheld、生产 `DISABLED` 和 no-upload。
 
 ### 下一步
 
-1. 接受或修复只读审查提出的材料性问题，再提交干净 HEAD。
-2. 用正式部署脚本同步生产代码/资产/06:37 图谱刷新 cron，读回
-   `DEPLOYED_COMMIT`、图谱和 `DISABLED`；不得上传。
-3. 后续盲测必须从完整 committed archive 创建等价 repo，并显式传入由机器
+1. 后续盲测必须从完整 committed archive 创建等价 repo，并显式传入由机器
    timely snapshot 生成的 blind graph；不得再用空 `assets/` 的 repo 归因生产能力。
+2. 若继续旧 7/11/12 自治验收，应新建 immutable 完整部署快照，让 runner 自己
+   运行并只在终态读产物；不要恢复本对话 heartbeat 或手工逐阶段推进。
 
 ## 2026-07-12：社区专名、边界/声纹自愈与最新直播自治盲测（历史快照）
 
