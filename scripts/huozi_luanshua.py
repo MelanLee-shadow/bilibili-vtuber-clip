@@ -634,7 +634,11 @@ def build_comparison_manifest(
     original_manifest_path: Path,
     suggested_manifest_path: Path,
     suggestion_report_path: Path,
+    *,
+    selection: str | None = None,
 ) -> dict[str, object]:
+    if selection not in {None, "original", "suggested"}:
+        raise RuntimeError(f"unsupported user selection: {selection!r}")
     original = _load_bound_render_manifest(original_manifest_path)
     suggested = _load_bound_render_manifest(suggested_manifest_path)
     suggestion_report = _read_json(suggestion_report_path)
@@ -671,9 +675,13 @@ def build_comparison_manifest(
         )
     comparison: dict[str, object] = {
         "schema_version": COMPOSITE_MANIFEST_SCHEMA,
-        "status": "USER_CHOICE_REQUIRED_NO_UPLOAD",
+        "status": (
+            "USER_SELECTED_NO_UPLOAD"
+            if selection is not None
+            else "USER_CHOICE_REQUIRED_NO_UPLOAD"
+        ),
         "upload_enabled": False,
-        "selection": None,
+        "selection": selection,
         "suggestion_report": {
             "path": str(suggestion_report_path.resolve()),
             "sha256": sha256_file(suggestion_report_path),
@@ -893,6 +901,7 @@ def _bundle_command(args: argparse.Namespace) -> int:
         args.original_manifest,
         args.suggested_manifest,
         args.suggestion_report,
+        selection=args.select,
     )
     _write_json(args.output, manifest)
     print(
@@ -972,6 +981,7 @@ def build_parser() -> argparse.ArgumentParser:
     bundle.add_argument("--original-manifest", type=Path, required=True)
     bundle.add_argument("--suggested-manifest", type=Path, required=True)
     bundle.add_argument("--suggestion-report", type=Path, required=True)
+    bundle.add_argument("--select", choices=("original", "suggested"))
     bundle.add_argument("--output", type=Path, required=True)
     bundle.set_defaults(func=_bundle_command)
     return parser
