@@ -118,6 +118,46 @@ The production deploy installs a daily 06:17 bounded refresh into
 `/opt/bilive/autoslice/state/timely_terms.json`. The runner prefers that runtime
 snapshot over the committed fallback without modifying the deployed Git tree.
 
+## Topic -> work -> character subgraph
+
+`scripts/crawl_topic_entity_graph.py` is the second, narrower stage. It consumes
+the validated timely-term snapshot, discovers bounded Bangumi subject IDs, and
+emits `assets/lidousha/topic_entity_graph.json` with stable topic, work, and
+character nodes. Character Chinese canon, Japanese/native surfaces, kana or
+romaji readings, role, and provenance come only from structured catalog fields;
+community aliases are topic-routing evidence, not character-name authority.
+
+At subtitle time the runner uses this order:
+
+1. Resolve a topic or explicit work from BCUT draft, selection hook, structured
+   SC/danmaku, and available screen text.
+2. If an explicit work matched, expose only that work's characters. If only a
+   franchise/topic matched, expose the bounded union of its child works. No
+   match or an unrelated-topic ambiguity exposes no character graph.
+3. Give the scoped names/readings to AGY and CPA as candidates.
+4. Convert names that actually appear in the corrected SRT into a narrow
+   forced-choice group. Raw audio selects the entity; only after that selection
+   may the graph repair a wrong/non-Chinese surface. A correct spoken Chinese
+   short name such as `立希` remains short instead of being expanded with an
+   unspoken surname.
+
+Generate the graph from the current runtime snapshot:
+
+```bash
+python3 scripts/crawl_topic_entity_graph.py \
+  --timely-terms /opt/bilive/autoslice/state/timely_terms.json \
+  --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler \
+  --write /opt/bilive/autoslice/state/topic_entity_graph.json
+```
+
+The production deploy installs this bounded refresh daily at 06:37, after the
+06:17 timely-term refresh. A partial crawl with any enrichment diagnostic
+refuses to replace the last good graph. The runner SHA-binds the selected graph. In
+`AUTOSLICE_HUMAN_TRUTH_MODE=withheld`, the committed/reviewed graph is disabled;
+a blind run must explicitly provide a machine-only graph via
+`AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH`, and its embedded input snapshot hash must
+match `AUTOSLICE_BLIND_TIMELY_TERMS`, or the run proceeds with no graph.
+
 `--write` validates the complete payload before replacement, fsyncs the new
 file, and is idempotent: identical bytes report `"changed": false`.
 

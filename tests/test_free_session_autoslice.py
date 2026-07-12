@@ -3035,6 +3035,9 @@ def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer
                 "reason_codes": ["SONG_LIVE_PERFORMANCE_UNPROVEN", "SONG_HOST_VOCAL_UNPROVEN"],
                 "pipeline_fingerprint": "sha256:old",
                 "hook": "《怎么办》",
+                "discovery_lane": "visual_song_list",
+                "title_hint": "怎么办",
+                "visual_song_evidence": {"frame_ms": 217_000, "list_index": 3},
             }
         ],
     }
@@ -3044,6 +3047,12 @@ def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer
     assert state["pending_song"][0]["anchor_start_ms"] == 217_000
     assert state["pending_song"][0]["anchor_end_ms"] == 463_000
     assert state["pending_song"][0]["retry_reason"] == "pipeline_fingerprint_changed"
+    assert state["pending_song"][0]["lane"] == "visual_song_list"
+    assert state["pending_song"][0]["title_hint"] == "怎么办"
+    assert state["pending_song"][0]["visual_song_evidence"] == {
+        "frame_ms": 217_000,
+        "list_index": 3,
+    }
 
 
 def test_verified_song_commit_reservation_is_not_requeued(monkeypatch):
@@ -3431,6 +3440,9 @@ def test_unexpected_song_crash_preserves_retry_reconstruction(tmp_path, monkeypa
         "anchor_start_ms": 200_000,
         "anchor_end_ms": 400_000,
         "hook": "《测试歌》",
+        "lane": "visual_song_inventory",
+        "title_hint": "测试歌",
+        "visual_song_evidence": {"frame_ms": 205_000, "text": "测试歌"},
     }
     record = runner.produce_batch(date, [item], crash)[0]
     state = {"pending_song": [], "songs": [record]}
@@ -3440,6 +3452,8 @@ def test_unexpected_song_crash_preserves_retry_reconstruction(tmp_path, monkeypa
     assert runner.requeue_recoverable_songs(date, state) == 1
     assert state["pending_song"][0]["anchor_start_ms"] == 200_000
     assert state["pending_song"][0]["transient_retry_count"] == 1
+    assert state["pending_song"][0]["title_hint"] == "测试歌"
+    assert state["pending_song"][0]["visual_song_evidence"]["frame_ms"] == 205_000
 
 
 def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monkeypatch):

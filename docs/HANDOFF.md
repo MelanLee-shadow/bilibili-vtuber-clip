@@ -3,7 +3,76 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
-## 2026-07-12：社区专名、边界/声纹自愈与最新直播自治盲测
+## 2026-07-12：失败归因与话题子专名图（当前）
+
+### 目标
+
+说明最新自治盲测为什么失败，并把字幕专名链改成「先识别话题/作品，
+再进入该话题的角色子图，最后由原始音频确认角色身份并写回规范中文名」。
+同时修复已确认的 99→98 AGY 漏 cue 和歌曲重试丢失画面歌名证据；保持
+truth withheld、生产 `DISABLED` 和 no-upload。
+
+### 已完成
+
+- 已删除 Codex thread automation `vtuber-slice-latest-blind-artifact-check`；
+  不再由本对话定时检查。远端隔离 systemd timer 是流水线自身的自治运行面，
+  本次没有停止、轮询或手动驱动任何候选阶段。
+- 最新 7/11 state 真实为 2 个 talk failed、0 个当前 song blocked、2 个 song
+  pending。`auto_170019_305_355` 的旧边界失败已经自愈，当前失败是隔离 repo
+  缺 `voiceprint_profile.v1.json`；`auto_170019_580_757` 当前先失败于 AGY
+  `expected 99, got 98`，即使越过也会遇到同一缺资产问题。隔离 repo 的
+  `assets/` 为空，而相同 commit 的生产 repo 有声纹资产，因此该 eval 副本
+  不能视为生产等价部署。7/12 仍在 sealing、尚无最终产物，不能把等待态写成
+  内容失败。
+- 新增 `lidousha-topic-entity-graph.v1`、有界 Bangumi 结构化 enrichment 和
+  `scripts/crawl_topic_entity_graph.py`。运行时从 BCUT 草稿、selection hook、
+  结构化 SC/弹幕及可用 screen text 解析 topic/work；显式作品只加载该作品角色，
+  仅命中家族话题时加载其有界子作品并集，无匹配/无关歧义则不注入。图只提供
+  `canonical_zh`、别名和读音；动态 referent group 仍调用原始音频 forced-choice
+  决定身份。
+- 当前机器生成快照包含 1 个 BanG Dream 相关话题、3 个结构化作品、23 个角色，
+  可提供高松灯、要乐奈、椎名立希、丰川祥子、三角初华等中文规范名及日文/
+  假名/罗马字读音。`梦限大` 等 Bilibili 社区别名只负责把字幕路由进该话题，
+  不能直接充当角色名真值。当前图 SHA-256 为
+  `72ab92748f8defcfa8fc70a90de3bd0ce3b35534645fbf12d519c00cf740cc2b`；
+  `MyGO` 可窄路由到其 11 个角色，只有家族话题时才使用 3 个子作品/23 角色并集。
+- `withheld` 模式默认禁用 committed/reviewed 角色图，只接受显式
+  `AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH` 机器快照，并要求图内 generator/
+  `input_timely_terms_sha256` 与当次 blind timely snapshot 精确匹配；图文件另有
+  严格 schema、双向 edge、来源 allowlist、大小/数量上限、过期和 SHA-256 绑定。
+- 结构化弹幕只在没有 transcript/selection hook/screen 的明确作品命中时用于
+  work routing；弹幕中的 sibling work 名不能覆盖主播明确说出的 MyGO/Ave。
+  crawler 任一 enrichment diagnostics 都拒绝覆盖 last-good runtime graph。
+- AGY 仅在输出时间戳全部精确属于草稿、且最多漏 2 条/3% 时，按 timestamp
+  补回原 BCUT cue；多漏、重复或时间漂移继续 fail closed。歌曲 recoverable
+  requeue 现保留 `lane/title_hint/visual_song_evidence`，不会在重试时丢掉画面歌名。
+- 当前完整回归 `python3 -m pytest -q` 为 **835 passed**；部署脚本语法、
+  `git diff --check` 和相关编译检查通过。
+
+### 进行中（含后台进程）
+
+- 代码位于 `/Users/ivan/Project/vtuber-slice-song-selfheal`、分支
+  `codex/july10-song-selfheal`，正在做最后只读对抗审查，尚未形成本节最终 commit/
+  部署 readback。
+- 远端旧隔离 timer 仍可自治运行旧 `repo-34b9b26`；没有本对话 heartbeat 继续
+  追踪它。生产 `/opt/bilive/autoslice/DISABLED` 仍须保留。
+
+### 阻塞
+
+- 旧 eval repo 的部署资产不完整，导致边界修好后仍在 speaker finalizer 确定性
+  失败；这不是重试预算耗尽，也不能靠重复同指纹重试自救。
+- 7/12 尚无终态产物。不能在没有新 immutable eval/deploy 证据时声称新图已在
+  最新全部直播上端到端通过。
+
+### 下一步
+
+1. 接受或修复只读审查提出的材料性问题，再提交干净 HEAD。
+2. 用正式部署脚本同步生产代码/资产/06:37 图谱刷新 cron，读回
+   `DEPLOYED_COMMIT`、图谱和 `DISABLED`；不得上传。
+3. 后续盲测必须从完整 committed archive 创建等价 repo，并显式传入由机器
+   timely snapshot 生成的 blind graph；不得再用空 `assets/` 的 repo 归因生产能力。
+
+## 2026-07-12：社区专名、边界/声纹自愈与最新直播自治盲测（历史快照）
 
 ### 目标
 
@@ -20,7 +89,7 @@
 
 - 隔离 BASE 为 `/opt/bilive/autoslice/evals/community-latest-20260712`，最终代码快照为 `repo-34b9b26`。systemd transient timer `autoslice-blind-20260711-12-34b9b26.timer` 处于 active/waiting，每次完整 tick 结束 10 分钟后再调用正式 `free_session_autoslice.py --once`；使用 `runner.lock` 单飞、`AUTOSLICE_HUMAN_TRUTH_MODE=withheld`、固定机器专名快照，仅可见 7/11 与 7/12 录像目录。
 - 旧的一次性 7/11 driver PID 1696379 尚在自然收尾时，timer 只做 PID guard 后立即跳过；它退出后，timer 自动把旧隔离 repo 的已成功交付复制到新 repo，然后由 tick 自行重排旧指纹的边界/声纹失败并处理 7/12。agent 不再轮询子阶段或日志。
-- Codex thread heartbeat `vtuber-slice-latest-blind-artifact-check` 每 15 分钟只读两份日期 state 与最终 summary/media；未收敛时不做任何运行面动作，收敛后才停隔离 timer、做最终验收并删除自身。
+- Codex thread heartbeat `vtuber-slice-latest-blind-artifact-check` 已删除；其历史检查规则由上方当前节取代。
 
 ### 阻塞
 

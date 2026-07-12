@@ -35,6 +35,7 @@ Spec JSON:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
@@ -86,6 +87,13 @@ from src.autoslice.speaker_finalizer import (
 )
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sanitize_cue_timing
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
+from src.autoslice.topic_entity_graph import (
+    TopicEvidence,
+    dynamic_referent_groups,
+    load_topic_entity_graph,
+    merge_referent_groups,
+    resolve_topic_context,
+)
 
 SNAP_BEFORE_MS = 6_000
 SNAP_AFTER_MS = 9_000
@@ -899,7 +907,14 @@ def main(argv: list[str] | None = None) -> int:
     # 3. Fresh transcription of the padded window.
     if args.substrate == "aggregate_asr":
         transcriber = _build_aggregate_asr_transcriber(
-            host, danmaku_items=merged or None, window_start_ms=0, source_video=padded, correct=args.correct, screen_text=args.screen_text
+            host,
+            danmaku_items=merged or None,
+            window_start_ms=0,
+            source_video=padded,
+            correct=args.correct,
+            screen_text=args.screen_text,
+            recording_date=str(spec.get("date") or ""),
+            topic_hint=str(spec.get("selection_hook") or ""),
         )
     else:
         transcriber = _build_ssh_agy_transcribe_runner(host, danmaku_items=merged or None, window_start_ms=0)
@@ -933,9 +948,64 @@ def main(argv: list[str] | None = None) -> int:
             return audio_entity_verifier(request)
         return None
 
-    referent_groups = load_referent_groups(
+    static_referent_groups = load_referent_groups(
         ROOT / "assets" / "lidousha" / "entity_confusables.json"
     )
+    dynamic_groups = []
+    topic_resolution_audit: dict[str, object] = {
+        "schema_version": "topic-resolution.v1",
+        "status": "NO_GRAPH",
+        "recording_date": str(spec.get("date") or ""),
+        "selected_topic_ids": [],
+        "selected_work_ids": [],
+        "scoped_entity_ids": [],
+        "evidence": [],
+    }
+    if os.environ.get("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH") != "1":
+        graph_path = Path(
+            os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH")
+            or ROOT / "assets" / "lidousha" / "topic_entity_graph.json"
+        )
+        if graph_path.is_file() and not graph_path.is_symlink():
+            try:
+                graph, graph_sha = load_topic_entity_graph(
+                    graph_path,
+                    expected_sha256=os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", ""),
+                )
+                if dt.datetime.now(dt.timezone.utc) <= dt.datetime.fromisoformat(
+                    graph["expires_at"]
+                ):
+                    topic_evidence = [TopicEvidence("transcript", srt_text)]
+                    selection_hook = str(spec.get("selection_hook") or "")
+                    if selection_hook:
+                        topic_evidence.append(TopicEvidence("selection_hook", selection_hook))
+                    if authoritative_chat:
+                        topic_evidence.append(
+                            TopicEvidence(
+                                "structured_chat",
+                                "\n".join(item.text for item in authoritative_chat),
+                            )
+                        )
+                    resolution = resolve_topic_context(
+                        graph,
+                        topic_evidence,
+                        recording_date=str(spec.get("date") or ""),
+                        graph_sha256=graph_sha,
+                    )
+                    topic_resolution_audit = resolution.as_dict()
+                    dynamic_groups = dynamic_referent_groups(graph, resolution, srt_text)
+                else:
+                    topic_resolution_audit["status"] = "GRAPH_EXPIRED"
+                    topic_resolution_audit["graph_sha256"] = graph_sha
+            except (OSError, ValueError) as exc:
+                topic_resolution_audit["status"] = "GRAPH_INVALID"
+                topic_resolution_audit["error"] = f"{type(exc).__name__}: {exc}"
+    topic_resolution_path = out_root / f"{cid}.topic-resolution.json"
+    topic_resolution_path.write_text(
+        json.dumps(topic_resolution_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    referent_groups = merge_referent_groups(static_referent_groups, dynamic_groups)
     srt_text, chat_authority_audit = apply_authoritative_chat_evidence(
         srt_text,
         authoritative_chat,

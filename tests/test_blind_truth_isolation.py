@@ -59,6 +59,73 @@ def test_withheld_mode_accepts_explicit_machine_only_crawler_snapshot(tmp_path, 
     assert "LIDOUSHA_DISABLE_TIMELY_TERMS" not in env
 
 
+def test_withheld_mode_disables_reviewed_topic_graph_without_machine_graph(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "BASE", tmp_path / "runtime")
+    monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
+    reviewed = repo / "assets/lidousha/topic_entity_graph.json"
+    reviewed.parent.mkdir(parents=True)
+    reviewed.write_text('{"reviewed":"character answer"}\n', encoding="utf-8")
+    monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
+    monkeypatch.delenv("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH", raising=False)
+
+    env = runner.child_env_for_date("2026-07-10")
+
+    assert env["LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH"] == "1"
+    assert "LIDOUSHA_TOPIC_ENTITY_GRAPH" not in env
+
+
+def test_withheld_mode_accepts_explicit_machine_only_topic_graph(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
+    machine_terms = tmp_path / "machine-timely.json"
+    machine_terms.write_text('{"machine":true}\n', encoding="utf-8")
+    machine_graph = tmp_path / "machine-topic-graph.json"
+    machine_graph.write_text(
+        json.dumps(
+            {
+                "generator": "scripts/crawl_topic_entity_graph.py",
+                "input_timely_terms_sha256": hashlib.sha256(machine_terms.read_bytes()).hexdigest(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
+    monkeypatch.setenv("AUTOSLICE_BLIND_TIMELY_TERMS", str(machine_terms))
+    monkeypatch.setenv("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH", str(machine_graph))
+
+    env = runner.child_env_for_date("2026-07-10")
+
+    assert env["LIDOUSHA_TOPIC_ENTITY_GRAPH"] == str(machine_graph.resolve())
+    assert "LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH" not in env
+
+
+def test_withheld_mode_rejects_topic_graph_from_different_timely_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
+    machine_terms = tmp_path / "machine-timely.json"
+    machine_terms.write_text('{"machine":"current"}\n', encoding="utf-8")
+    stale_graph = tmp_path / "stale-topic-graph.json"
+    stale_graph.write_text(
+        json.dumps(
+            {
+                "generator": "scripts/crawl_topic_entity_graph.py",
+                "input_timely_terms_sha256": hashlib.sha256(b"different").hexdigest(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
+    monkeypatch.setenv("AUTOSLICE_BLIND_TIMELY_TERMS", str(machine_terms))
+    monkeypatch.setenv("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH", str(stale_graph))
+
+    env = runner.child_env_for_date("2026-07-10")
+
+    assert env["LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH"] == "1"
+    assert "LIDOUSHA_TOPIC_ENTITY_GRAPH" not in env
+
+
 def test_blind_generator_fails_closed_if_truth_path_leaks_into_spec(tmp_path, monkeypatch):
     spec = tmp_path / "spec.json"
     spec.write_text(

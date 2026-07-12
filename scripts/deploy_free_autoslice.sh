@@ -327,6 +327,7 @@ from src.autoslice.speaker_finalizer import (
     _validate_source_session_anchor_document,
     _validate_source_session_provenance,
 )
+from src.autoslice.topic_entity_graph import validate_topic_entity_graph
 
 profile = json.loads(Path("assets/lidousha/voiceprint_profile.v1.json").read_text())
 model, references = _validate_profile(profile)
@@ -374,6 +375,10 @@ timely = json.loads(Path("assets/lidousha/timely_terms.json").read_text())
 assert timely.get("schema_version") == "lidousha-timely-terms.v1"
 assert timely.get("status") in {"fresh", "stale"}
 assert isinstance(timely.get("terms"), list)
+topic_graph = validate_topic_entity_graph(
+    json.loads(Path("assets/lidousha/topic_entity_graph.json").read_text())
+)
+assert topic_graph["topics"] and topic_graph["works"] and topic_graph["entities"]
 batch_plan_path = Path("assets/lidousha/speaker_batch_plans/2026-07-09.json")
 batch_plan = validate_plan(json.loads(batch_plan_path.read_text()))
 staged_root = Path.cwd()
@@ -558,18 +563,23 @@ install_atomic \
     700
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
 timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
+topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
 existing_crontab=$(crontab -l 2>/dev/null || true)
 {
     printf '%s\n' "$existing_crontab" \
         | grep -Fv '/opt/bilive/autoslice/free_mount_watchdog.sh' \
-        | grep -Fv 'scripts/crawl_timely_terms.py' || true
+        | grep -Fv 'scripts/crawl_timely_terms.py' \
+        | grep -Fv 'scripts/crawl_topic_entity_graph.py' || true
     printf '%s\n' "$watchdog_cron"
     printf '%s\n' "$timely_terms_cron"
+    printf '%s\n' "$topic_entity_cron"
 } | crontab -
 crontab -l | grep -Fxq "$watchdog_cron"
 test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
 crontab -l | grep -Fxq "$timely_terms_cron"
 test "$(crontab -l | grep -Fxc "$timely_terms_cron")" -eq 1
+crontab -l | grep -Fxq "$topic_entity_cron"
+test "$(crontab -l | grep -Fxc "$topic_entity_cron")" -eq 1
 REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one

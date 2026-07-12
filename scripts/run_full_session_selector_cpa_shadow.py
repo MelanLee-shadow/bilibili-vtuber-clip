@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -1032,7 +1034,14 @@ timeline below are TIME-PAIRED evidence.
     return transcriber
 
 
-def _cpa_correct_draft_cues(draft_srt: str, *, danmaku_lines, cpa_llm_call, screen_text_lines=None):
+def _cpa_correct_draft_cues(
+    draft_srt: str,
+    *,
+    danmaku_lines,
+    cpa_llm_call,
+    screen_text_lines=None,
+    topic_entity_context: str = "",
+):
     """Text-only proper-noun/meme correction via CPA (Ivan 2026-07-04).
 
     The correction is a TEXT task, so it belongs to CPA — the same judge the
@@ -1074,6 +1083,7 @@ def _cpa_correct_draft_cues(draft_srt: str, *, danmaku_lines, cpa_llm_call, scre
         "代词一致(动物→它/性别未知的人→TA/已知→他她)、SC=superchat('谢SC'非'修完')、幻听孤立碎片删除、口语保真不书面化等全部规则,"
         "不要只改专名而漏掉这些类。先确认实体再套术语表规范写法;结构化原文/音频/接话链高于静态词表。\n"
         f"\n{glossary_text}\n"
+        f"{topic_entity_context}\n"
         f"{screen_block}"
         f"{danmaku_block}"
         f"\n字幕草稿(每行:[时间] 编号. 文本):\n{numbered}\n"
@@ -1100,7 +1110,14 @@ def _cpa_correct_draft_cues(draft_srt: str, *, danmaku_lines, cpa_llm_call, scre
     return "\n\n".join(blocks) + "\n" if blocks else draft_srt
 
 
-def _cpa_reconcile_draft_cues(bcut_srt: str, agy_srt: str, *, danmaku_lines, cpa_llm_call):
+def _cpa_reconcile_draft_cues(
+    bcut_srt: str,
+    agy_srt: str,
+    *,
+    danmaku_lines,
+    cpa_llm_call,
+    topic_entity_context: str = "",
+):
     """Reconcile BCUT (timeline authority) vs AGY (heard the audio) per cue —
     CPA is the judge (Ivan 2026-07-04 architecture).
 
@@ -1149,6 +1166,7 @@ def _cpa_reconcile_draft_cues(bcut_srt: str, agy_srt: str, *, danmaku_lines, cpa
         "⑤ **幻听丢弃**:若某条 cue 是和上下文完全不搭的孤立碎片(通常是对背景音乐/杂音的幻听,例如一段哄睡对话里突然冒出"
         "'贡丸'、'虫儿飞~'这种歌名/词碎片),把它的 text 设为空字符串 \"\" 表示删除这条。\n"
         f"\n{glossary_text}\n"
+        f"{topic_entity_context}\n"
         f"{danmaku_block}"
         f"\n字幕(每行:[时间] 编号. BCUT: ... | AGY: ...):\n{numbered}\n"
         '\n只输出一个 JSON 对象,cues 数量和上面完全一致(要删的条 text 给空串):'
@@ -1355,6 +1373,8 @@ def _build_aggregate_asr_transcriber(
     source_video: Path | None = None,
     correct: str = "bcut_agy_cpa",
     screen_text: bool = False,
+    recording_date: str = "",
+    topic_hint: str = "",
 ):
     """Finished-clip subtitle substrate = BCUT aggregate ASR + AGY refine + CPA
     reconcile (Ivan 2026-07-04 3-way architecture).
@@ -1382,6 +1402,12 @@ def _build_aggregate_asr_transcriber(
     from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
     from src.autoslice.llm_client import LlmConfig, build_llm_call
     from src.autoslice.source_context_executor import AgyRunnerError
+    from src.autoslice.topic_entity_graph import (
+        TopicEvidence,
+        load_topic_entity_graph,
+        render_scoped_entity_context,
+        resolve_topic_context,
+    )
 
     danmaku_lines = []
     if danmaku_items:
@@ -1395,11 +1421,50 @@ def _build_aggregate_asr_transcriber(
         # inside the bridge's per-call 180s curl window, fallback 5.5 → 5.4.
         LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
     )
+    topic_context_state = {"value": ""}
     agy_refine_runner = (
-        _build_ssh_agy_runner(host, danmaku_items=danmaku_items, context_start_ms=window_start_ms)
+        _build_ssh_agy_runner(
+            host,
+            danmaku_items=danmaku_items,
+            context_start_ms=window_start_ms,
+            topic_entity_context_provider=lambda: topic_context_state["value"],
+        )
         if correct in ("agy", "bcut_agy_cpa")
         else None
     )
+
+    def _resolve_topic_entities(draft_srt: str, screen_lines=None) -> str:
+        if os.environ.get("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH") == "1" or not recording_date:
+            return ""
+        graph_path = Path(
+            os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH")
+            or Path(__file__).resolve().parents[1] / "assets/lidousha/topic_entity_graph.json"
+        )
+        if not graph_path.is_file() or graph_path.is_symlink():
+            return ""
+        try:
+            graph, graph_sha = load_topic_entity_graph(
+                graph_path,
+                expected_sha256=os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", ""),
+            )
+            if dt.datetime.now(dt.timezone.utc) > dt.datetime.fromisoformat(graph["expires_at"]):
+                return ""
+            evidence = [TopicEvidence("transcript", draft_srt)]
+            if topic_hint:
+                evidence.append(TopicEvidence("selection_hook", topic_hint))
+            if danmaku_lines:
+                evidence.append(TopicEvidence("structured_chat", "\n".join(danmaku_lines)))
+            if screen_lines:
+                evidence.append(TopicEvidence("screen_text", "\n".join(screen_lines)))
+            resolution = resolve_topic_context(
+                graph,
+                evidence,
+                recording_date=recording_date,
+                graph_sha256=graph_sha,
+            )
+            return render_scoped_entity_context(graph, resolution)
+        except (OSError, ValueError):
+            return ""
 
     def _agy_refine(media_path, draft_srt):
         """AGY jingting refine on the BCUT draft: same timeline, AGY's text."""
@@ -1428,6 +1493,7 @@ def _build_aggregate_asr_transcriber(
         media_path.with_suffix(".asr_draft.srt").write_text(
             draft_srt if draft_srt.endswith("\n") else draft_srt + "\n", encoding="utf-8"
         )
+        topic_context_state["value"] = _resolve_topic_entities(draft_srt)
         if correct == "none":
             return draft_srt
         if correct == "agy":
@@ -1438,14 +1504,33 @@ def _build_aggregate_asr_transcriber(
             agy_srt = _agy_refine(media_path, draft_srt)
             if agy_srt is None:
                 # AGY down → fall back to CPA text-only on the BCUT draft.
-                corrected = _cpa_correct_draft_cues(draft_srt, danmaku_lines=danmaku_lines, cpa_llm_call=cpa_llm_call)
+                corrected = _cpa_correct_draft_cues(
+                    draft_srt,
+                    danmaku_lines=danmaku_lines,
+                    cpa_llm_call=cpa_llm_call,
+                    topic_entity_context=topic_context_state["value"],
+                )
             else:
-                corrected = _cpa_reconcile_draft_cues(draft_srt, agy_srt, danmaku_lines=danmaku_lines, cpa_llm_call=cpa_llm_call)
+                corrected = _cpa_reconcile_draft_cues(
+                    draft_srt,
+                    agy_srt,
+                    danmaku_lines=danmaku_lines,
+                    cpa_llm_call=cpa_llm_call,
+                    topic_entity_context=topic_context_state["value"],
+                )
         else:
             # correct == "cpa": text-only, enriched with agy screen text when asked.
             screen_text_lines = _agy_screen_text_lines(host, media_path) if screen_text else None
+            if screen_text_lines:
+                topic_context_state["value"] = _resolve_topic_entities(
+                    draft_srt, screen_lines=screen_text_lines
+                )
             corrected = _cpa_correct_draft_cues(
-                draft_srt, danmaku_lines=danmaku_lines, cpa_llm_call=cpa_llm_call, screen_text_lines=screen_text_lines
+                draft_srt,
+                danmaku_lines=danmaku_lines,
+                cpa_llm_call=cpa_llm_call,
+                screen_text_lines=screen_text_lines,
+                topic_entity_context=topic_context_state["value"],
             )
         # Dedicated whole-clip final pronoun pass (TA/他/她/它 in either
         # direction); a discourse task the general correction cannot reliably
@@ -1460,7 +1545,13 @@ def _copy_draft_runner(media_path: Path, draft_srt_path: Path, output_srt_path: 
     return AgyExecutionResult(provider="agy", model="copy-draft-test-runner", agy_rc=0, provider_fallback_used=False)
 
 
-def _build_ssh_agy_runner(host: str, *, danmaku_items=None, context_start_ms: int = 0):
+def _build_ssh_agy_runner(
+    host: str,
+    *,
+    danmaku_items=None,
+    context_start_ms: int = 0,
+    topic_entity_context_provider=None,
+):
     """Chunked jingting second-listen over ssh: agy lives on the remote host.
 
     gemini-3.5-flash silently returns empty output (rc=0, no file, no stderr)
@@ -1487,7 +1578,11 @@ def _build_ssh_agy_runner(host: str, *, danmaku_items=None, context_start_ms: in
         strip_markdown_fence,
         validate_same_timing,
     )
-    from src.autoslice.jingting_chunker import merge_refined_chunks, plan_jingting_chunks
+    from src.autoslice.jingting_chunker import (
+        merge_refined_chunks,
+        plan_jingting_chunks,
+        repair_sparse_refined_chunk,
+    )
     from src.autoslice.source_context_executor import AgyRunnerError
 
     chunk_print_timeout = "15m"
@@ -1546,7 +1641,16 @@ def _build_ssh_agy_runner(host: str, *, danmaku_items=None, context_start_ms: in
             in_window = danmaku_in_window(danmaku_items, window_start, window_end, max_items=60)
             if in_window:
                 chunk_danmaku_lines = format_danmaku_lines(in_window, base_ms=window_start)
-        prompt = agy_prompt(chunk_srt_text, danmaku_lines=chunk_danmaku_lines)
+        topic_entity_context = (
+            str(topic_entity_context_provider() or "")
+            if topic_entity_context_provider is not None
+            else ""
+        )
+        prompt = agy_prompt(
+            chunk_srt_text,
+            danmaku_lines=chunk_danmaku_lines,
+            topic_entity_context=topic_entity_context,
+        )
         run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
         with tempfile.TemporaryDirectory(prefix="ssh_agy_chunk_") as tmp:
             prompt_file = Path(tmp) / "prompt.md"
@@ -1613,7 +1717,21 @@ def _build_ssh_agy_runner(host: str, *, danmaku_items=None, context_start_ms: in
                 "AGY_EMPTY_OUTPUT",
                 f"remote agy exited rc=0 but produced no valid output.srt; see {host}:{job_dir}",
             )
-        validate_same_timing(chunk_srt_text, corrected)
+        try:
+            validate_same_timing(chunk_srt_text, corrected)
+        except RuntimeError as timing_error:
+            try:
+                corrected, sparse_audit = repair_sparse_refined_chunk(
+                    chunk_srt_text, corrected
+                )
+            except ValueError:
+                raise timing_error
+            print(
+                "[agy] bounded sparse-cue self-heal: "
+                + json.dumps(sparse_audit, ensure_ascii=False, sort_keys=True),
+                flush=True,
+            )
+            validate_same_timing(chunk_srt_text, corrected)
         return corrected
 
     def runner(media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:

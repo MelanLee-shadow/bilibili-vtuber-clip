@@ -826,9 +826,13 @@ def agy_prompt(
     *,
     danmaku_lines: list[str] | None = None,
     as_of_date: str | None = None,
+    topic_entity_context: str = "",
 ) -> str:
     glossary_text = glossary(as_of=_as_of_datetime(as_of_date)).strip()
     glossary_block = f"\nGlossary and style rules:\n{glossary_text}\n" if glossary_text else ""
+    scoped_entity_block = topic_entity_context.strip()
+    if scoped_entity_block:
+        scoped_entity_block = f"\nTopic-scoped entity graph:\n{scoped_entity_block}\n"
     danmaku_block = ""
     if danmaku_lines:
         joined = "\n".join(danmaku_lines)
@@ -902,7 +906,7 @@ Output requirement:
 - output.srt must contain SRT only.
 - Same cue count, same cue indices, and same timestamps as draft.srt.
 - No Markdown fences, no explanations.
-{glossary_block}
+{glossary_block}{scoped_entity_block}
 Current draft.srt content:
 {srt_text}
 """

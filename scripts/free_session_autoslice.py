@@ -263,6 +263,7 @@ def pipeline_fingerprint() -> str:
         "assets/lidousha/slice_selection_metric.md",
         "assets/lidousha/subtitle_correction_principles.md",
         "assets/lidousha/timely_terms.json",
+        "assets/lidousha/topic_entity_graph.json",
         "assets/lidousha/title_style.md",
         "assets/lidousha/voiceprint_profile.v1.json",
     }
@@ -454,10 +455,57 @@ def child_env() -> dict[str, str]:
         env["LIDOUSHA_TIMELY_TERMS_SHA256"] = (
             "sha256:" + _sha256_regular_file(timely_terms)
         )
+        env.pop("LIDOUSHA_DISABLE_TIMELY_TERMS", None)
     elif truth_mode == "withheld":
         env["LIDOUSHA_DISABLE_TIMELY_TERMS"] = "1"
         env.pop("LIDOUSHA_TIMELY_TERMS", None)
         env.pop("LIDOUSHA_TIMELY_TERMS_SHA256", None)
+
+    blind_topic_graph = os.environ.get("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH")
+    configured_topic_graph = os.environ.get("AUTOSLICE_TOPIC_ENTITY_GRAPH")
+    runtime_topic_graph = BASE / "state" / "topic_entity_graph.json"
+    committed_topic_graph = REPO_ROOT / "assets" / "lidousha" / "topic_entity_graph.json"
+    if truth_mode == "withheld":
+        topic_graph = Path(blind_topic_graph) if blind_topic_graph else None
+    elif configured_topic_graph:
+        topic_graph = Path(configured_topic_graph)
+    elif runtime_topic_graph.is_file() and not runtime_topic_graph.is_symlink():
+        topic_graph = runtime_topic_graph
+    else:
+        topic_graph = committed_topic_graph
+    if (
+        truth_mode == "withheld"
+        and topic_graph is not None
+        and topic_graph.is_file()
+        and not topic_graph.is_symlink()
+    ):
+        # A blind graph must be generated from the exact blind timely snapshot
+        # selected above.  This prevents a reviewed/committed graph from being
+        # relabeled by path alone and makes the lineage auditable in the graph.
+        try:
+            graph_payload = json.loads(topic_graph.read_text(encoding="utf-8"))
+            graph_matches_blind_snapshot = (
+                timely_terms is not None
+                and timely_terms.is_file()
+                and not timely_terms.is_symlink()
+                and graph_payload.get("generator") == "scripts/crawl_topic_entity_graph.py"
+                and graph_payload.get("input_timely_terms_sha256")
+                == _sha256_regular_file(timely_terms)
+            )
+        except (OSError, ValueError, AttributeError):
+            graph_matches_blind_snapshot = False
+        if not graph_matches_blind_snapshot:
+            topic_graph = None
+    if topic_graph is not None and topic_graph.is_file() and not topic_graph.is_symlink():
+        env["LIDOUSHA_TOPIC_ENTITY_GRAPH"] = str(topic_graph.resolve())
+        env["LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256"] = (
+            "sha256:" + _sha256_regular_file(topic_graph)
+        )
+        env.pop("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH", None)
+    elif truth_mode == "withheld":
+        env["LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH"] = "1"
+        env.pop("LIDOUSHA_TOPIC_ENTITY_GRAPH", None)
+        env.pop("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", None)
     return env
 
 
@@ -5163,6 +5211,13 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             "hook": record.get("hook", ""),
             "preview": record.get("preview", ""),
             "danmaku": int(record.get("danmaku") or 0),
+            # Visual title evidence is a first-class song identity hint.  A
+            # retry that drops it is weaker than the failed attempt and can
+            # repeat the same LRC ambiguity forever (for example 群青 variants
+            # or a wide frame window that attached the next song title).
+            "lane": record.get("discovery_lane") or record.get("lane"),
+            "title_hint": record.get("title_hint"),
+            "visual_song_evidence": record.get("visual_song_evidence"),
             "transient_retry_count": retry_count + (1 if transient else 0),
             "retry_reason": (
                 "pipeline_fingerprint_changed"
@@ -5658,6 +5713,8 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
                         "start_ms",
                         "end_ms",
                         "lane",
+                        "title_hint",
+                        "visual_song_evidence",
                         "selected_repair",
                         "talk_repair_retry_count",
                         "talk_transient_retry_count",

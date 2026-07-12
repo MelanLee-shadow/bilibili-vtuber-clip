@@ -55,6 +55,10 @@ container:/app/Videos                      # 原始录播输入
 - `scripts/crawl_timely_terms.py`：有界的动漫/二次元新闻/漫展专名快照生成器，
   默认向前看 6 个月、向后回溯 9 个月；详见
   `docs/workflows/timely-term-crawler.md`。
+- `scripts/crawl_topic_entity_graph.py`：把时效话题进一步展开成
+  `话题 -> 作品 -> 角色` 子图。字幕先解析当前话题/作品，只向 AGY/CPA
+  暴露该子图内的中文规范名、别名和读音；角色身份仍须由原始音频或
+  结构化 SC/弹幕确认，图谱不能按热度硬改。
 
 - `src/autoslice/auto_review.py`：`AUTO_UPLOAD / AUTO_RECUT / DROP / BLOCK / RETRY` 判定核心。
 - `src/autoslice/review_evidence.py`：source-timeline evidence schema。
