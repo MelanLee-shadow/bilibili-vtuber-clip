@@ -17,6 +17,7 @@ from src.autoslice.timely_term_crawler import (  # noqa: E402
     BoundedHttpClient,
     CrawlError,
     CrawlWindow,
+    DEFAULT_NETWORK_REQUEST_BUDGET,
     HttpCache,
     SeedSnapshotAdapter,
     crawl,
@@ -64,7 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=ROOT / ".cache/timely-term-crawler",
     )
     parser.add_argument("--cache-ttl-hours", type=float, default=18.0)
-    parser.add_argument("--max-requests", type=int, default=12)
+    parser.add_argument(
+        "--max-requests", type=int, default=DEFAULT_NETWORK_REQUEST_BUDGET
+    )
     parser.add_argument("--max-response-bytes", type=int, default=2 * 1024 * 1024)
     parser.add_argument("--timeout-seconds", type=float, default=15.0)
     parser.add_argument("--max-terms", type=int, default=240)
@@ -110,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             "terms": len(result.snapshot["terms"]),
             "adapter_counts": result.adapter_counts,
             "adapter_errors": result.errors,
+            "adapter_diagnostics": result.diagnostics,
             "network_requests": result.network_requests,
             "cache_hits": result.cache_hits,
             "stale_cache_hits": result.stale_cache_hits,

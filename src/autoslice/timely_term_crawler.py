@@ -9,7 +9,7 @@ snapshot consumed by the subtitle pipeline.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime as dt
 import email.utils
 import html
@@ -28,6 +28,8 @@ import xml.etree.ElementTree as ET
 
 
 SCHEMA_VERSION = "lidousha-timely-term-sources.v2"
+DEFAULT_NETWORK_REQUEST_BUDGET = 13
+NETWORK_RETRY_RESERVE = 1
 DEFAULT_ALLOWED_HOSTS = frozenset(
     {
         "graphql.anilist.co",
@@ -161,6 +163,71 @@ def _match_key(value: str) -> str:
     return _MATCH_RX.sub("", unicodedata.normalize("NFKC", value).casefold())
 
 
+def _identity_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(
+        char
+        for char in normalized
+        if unicodedata.category(char)[:1] in {"L", "M", "N"}
+    )
+
+
+_HAN_RUN_RX = re.compile(r"[\u3400-\u9fff]{2,}")
+# Compact, generic common-character subset of Unicode Unihan
+# kSimplifiedVariant.  Unknown variants fail closed instead of fuzzy matching.
+_CJK_SCRIPT_VARIANT_PAIRS = (
+    "萬万 與与 專专 業业 東东 絲丝 丟丢 兩两 嚴严 喪丧 個个 豐丰 臨临 "
+    "為为 麗丽 舉举 麼么 義义 烏乌 樂乐 喬乔 習习 鄉乡 書书 買买 亂乱 "
+    "爭争 於于 虧亏 雲云 亞亚 產产 親亲 億亿 僅仅 從从 倉仓 儀仪 們们 "
+    "價价 眾众 優优 會会 傳传 傷伤 倫伦 偽伪 體体 餘余 俠侠 側侧 偵侦 "
+    "儉俭 債债 傾倾 償偿 兒儿 黨党 蘭兰 關关 興兴 養养 獸兽 內内 寫写 "
+    "軍军 農农 沖冲 決决 況况 凍冻 淨净 準准 涼凉 減减 鳳凤 劃划 劉刘 "
+    "則则 剛刚 創创 刪删 別别 劍剑 劇剧 勸劝 辦办 務务 動动 勵励 勞劳 "
+    "勢势 區区 醫医 華华 協协 單单 賣卖 衛卫 卻却 廠厂 歷历 壓压 厭厌 "
+    "廚厨 縣县 參参 雙双 發发 變变 葉叶 號号 嘆叹 嚇吓 嗎吗 啟启 員员 "
+    "問问 喚唤 團团 園园 國国 圖图 圓圆 場场 壞坏 塊块 堅坚 壇坛 壽寿 "
+    "夢梦 實实 寶宝 對对 導导 將将 層层 屬属 歲岁 島岛 嶺岭 幣币 幫帮 "
+    "廣广 慶庆 應应 懷怀 戲戏 戶户 據据 擇择 擔担 擴扩 擺摆 敗败 數数 "
+    "斷断 無无 時时 暫暂 術术 機机 殺杀 氣气 漢汉 湯汤 滿满 灣湾 滅灭 "
+    "燈灯 爐炉 獨独 現现 畫画 異异 當当 疊叠 盡尽 監监 盤盘 睜睁 禮礼 "
+    "種种 積积 穩稳 窮穷 競竞 筆笔 簡简 糧粮 級级 終终 組组 經经 結结 "
+    "給给 統统 線线 練练 總总 績绩 繼继 續续 網网 羅罗 罰罚 聲声 聯联 "
+    "聽听 腦脑 臉脸 舊旧 艦舰 藝艺 藥药 處处 虛虚 蟲虫 裝装 見见 規规 "
+    "覺觉 計计 訊讯 討讨 訓训 記记 講讲 識识 議议 讀读 調调 談谈 請请 "
+    "論论 證证 詞词 試试 話话 語语 誤误 說说 課课 誰谁 資资 質质 車车 "
+    "軟软 轉转 輕轻 還还 這这 進进 遠远 選选 邊边 郵邮 錄录 錯错 鍵键 "
+    "門门 開开 間间 陽阳 陰阴 隊队 際际 難难 電电 頁页 頂顶 項项 順顺 "
+    "預预 領领 頭头 類类 顧顾 風风 飛飞 飲饮 飯饭 館馆 馬马 驗验 魚鱼 "
+    "鳥鸟 麥麦 黃黄 點点 齊齐 龍龙"
+).split()
+_CJK_SIMPLIFIED_MAP = {
+    pair[0]: pair[1] for pair in _CJK_SCRIPT_VARIANT_PAIRS if len(pair) == 2
+}
+
+
+def _cjk_script_stem_match(candidate: str, trusted: str) -> bool:
+    """Conservatively match a Han stem across CJK script variants.
+
+    Han runs are extracted after Unicode normalization and mapped through the
+    generic Unicode Unihan ``kSimplifiedVariant`` subset above.  No
+    term-specific aliases or fuzzy character substitutions enter this
+    derivation.
+    """
+    candidate_stems = _HAN_RUN_RX.findall(unicodedata.normalize("NFKC", candidate))
+    trusted_stems = _HAN_RUN_RX.findall(unicodedata.normalize("NFKC", trusted))
+    for candidate_stem in candidate_stems:
+        for trusted_stem in trusted_stems:
+            candidate_key = "".join(
+                _CJK_SIMPLIFIED_MAP.get(char, char) for char in candidate_stem
+            )
+            trusted_key = "".join(
+                _CJK_SIMPLIFIED_MAP.get(char, char) for char in trusted_stem
+            )
+            if candidate_key == trusted_key:
+                return True
+    return False
+
+
 def _surface_in_title(surface: str, title: str, title_key: str) -> bool:
     key = _match_key(surface)
     if not key:
@@ -219,6 +286,18 @@ class Provenance:
         }
 
 
+def _is_community_provenance(source: Provenance) -> bool:
+    try:
+        host = (urllib.parse.urlsplit(source.url).hostname or "").lower()
+    except ValueError:
+        host = ""
+    return (
+        host == "bilibili.com"
+        or host.endswith(".bilibili.com")
+        or source.publisher.casefold().startswith("bilibili community")
+    )
+
+
 @dataclass
 class TermCandidate:
     canonical: str
@@ -233,23 +312,96 @@ class TermCandidate:
     reason: str | None = None
     score: int = 0
 
-    def merge(self, other: "TermCandidate") -> None:
+    def merge(
+        self,
+        other: "TermCandidate",
+        *,
+        intersect_active_window: bool = False,
+    ) -> None:
+        if intersect_active_window:
+            merged_from = max(self.active_from, other.active_from)
+            merged_until = min(self.active_until, other.active_until)
+            if merged_from > merged_until:
+                raise ValueError("cannot merge aliases with disjoint active windows")
+        else:
+            merged_from = min(self.active_from, other.active_from)
+            merged_until = max(self.active_until, other.active_until)
         self.readings = _unique_atoms([*self.readings, *other.readings], limit=12)
-        self.aliases = _unique_atoms([*self.aliases, *other.aliases], limit=16)
+        self.aliases = [
+            alias
+            for alias in _unique_atoms(
+                [*self.aliases, other.canonical, *other.aliases], limit=16
+            )
+            if _identity_key(alias) != _identity_key(self.canonical)
+        ]
         self.confusables = _unique_atoms([*self.confusables, *other.confusables], limit=16)
         self.topic_entities = _unique_atoms(
             [*self.topic_entities, *other.topic_entities], limit=16
         )
-        self.active_from = min(self.active_from, other.active_from)
-        self.active_until = max(self.active_until, other.active_until)
+        self.active_from = merged_from
+        self.active_until = merged_until
+        # ``self`` is the confidence winner selected by _merge_candidates.
+        # Keep its trusted provenance represented while also reserving room for
+        # genuinely new corroboration from the merged candidate.
+        preferred_urls = {source.url for source in self.sources}
         source_by_url = {source.url: source for source in self.sources}
         for source in other.sources:
             prior = source_by_url.get(source.url)
             if prior is None or source.published_at < prior.published_at:
                 source_by_url[source.url] = source
+        preferred = sorted(
+            (source_by_url[url] for url in preferred_urls),
+            key=lambda item: (item.published_at, item.url),
+            reverse=True,
+        )
+        corroborating = sorted(
+            (
+                source
+                for url, source in source_by_url.items()
+                if url not in preferred_urls
+            ),
+            key=lambda item: (item.published_at, item.url),
+            reverse=True,
+        )
+        # Pin one winner source, one genuinely new loser source, and one
+        # non-community/official source whenever those categories exist.
+        # Then fill the bounded remainder with winner provenance first.
+        all_sources = [*preferred, *corroborating]
+        preferred_anchor = min(
+            preferred, key=lambda item: (item.published_at, item.url), default=None
+        )
+        corroborating_anchor = min(
+            corroborating,
+            key=lambda item: (item.published_at, item.url),
+            default=None,
+        )
+        official_anchor = min(
+            (
+                source
+                for source in all_sources
+                if not _is_community_provenance(source)
+            ),
+            key=lambda item: (item.published_at, item.url),
+            default=None,
+        )
+        selected: list[Provenance] = []
+        selected_urls: set[str] = set()
+        for source in (preferred_anchor, corroborating_anchor, official_anchor):
+            if source and source.url not in selected_urls:
+                selected.append(source)
+                selected_urls.add(source.url)
+        fill_order = [*preferred, *corroborating]
+        for source in fill_order:
+            if len(selected) >= 8:
+                break
+            if source.url not in selected_urls:
+                selected.append(source)
+                selected_urls.add(source.url)
         self.sources = sorted(
-            source_by_url.values(), key=lambda item: (item.published_at, item.url), reverse=True
-        )[:8]
+            selected,
+            key=lambda item: (item.published_at, item.url),
+            reverse=True,
+        )
         self.score = max(self.score, other.score)
         self.display_name = self.display_name or other.display_name
         self.reason = self.reason or other.reason
@@ -1016,6 +1168,7 @@ class BilibiliCommunityAdapter:
         self.max_results = max_results
         self.min_videos = min_videos
         self.min_uploaders = min_uploaders
+        self.diagnostics: tuple[str, ...] = ()
 
     def collect(
         self,
@@ -1045,23 +1198,95 @@ class BilibiliCommunityAdapter:
                 )
             )
 
+        self.diagnostics = ()
         results: list[TermCandidate] = []
         successful_queries = 0
-        failed_queries = 0
-        for target in targets:
-            rows: list[dict[str, object]] = []
-            for query in target.queries:
+        failed_attempts: list[tuple[int, str, str]] = []
+        rows_by_target: list[list[dict[str, object]]] = [[] for _ in targets]
+        jobs = [
+            (target_index, query)
+            for target_index, target in enumerate(targets)
+            for query in target.queries
+        ]
+
+        # Keep one real network request in reserve for a single bounded retry.
+        # Cache hits do not consume the client's counter, so this calculation is
+        # deliberately conservative.  Clients without an exposed budget retain
+        # the historical collect() behavior (all configured queries, no retry).
+        max_requests = getattr(client, "max_requests", None)
+        requests_made = getattr(client, "requests_made", 0)
+        budgeted_client = isinstance(max_requests, int)
+        retry_reserved = budgeted_client and max_requests > requests_made
+        if budgeted_client:
+            base_limit = max(
+                0, max_requests - requests_made - NETWORK_RETRY_RESERVE
+            )
+            scheduled_jobs = jobs[:base_limit]
+        else:
+            scheduled_jobs = jobs
+        deferred = len(jobs) - len(scheduled_jobs)
+
+        for target_index, query in scheduled_jobs:
+            try:
+                rows_by_target[target_index].extend(self._search(client, query))
+                successful_queries += 1
+            except Exception as exc:
+                failed_attempts.append(
+                    (target_index, query, self._diagnostic_exception(exc))
+                )
+
+        retried = False
+        retry_succeeded = False
+        if failed_attempts and retry_reserved:
+            target_index, query, _ = failed_attempts[0]
+            if getattr(client, "requests_made", 0) < max_requests:
+                retried = True
                 try:
-                    rows.extend(self._search(client, query))
+                    rows_by_target[target_index].extend(self._search(client, query))
                     successful_queries += 1
-                except Exception:
-                    failed_queries += 1
-            candidate = self._candidate_from_rows(target, rows, window)
+                    retry_succeeded = True
+                except Exception as exc:
+                    failed_attempts.append(
+                        (target_index, query, self._diagnostic_exception(exc))
+                    )
+
+        diagnostics: list[str] = []
+        if failed_attempts:
+            details = "; ".join(item[2] for item in failed_attempts[:3])
+            retry_text = (
+                " retry recovered one query" if retry_succeeded else
+                " retry also failed" if retried else
+                " no retry budget was available"
+            )
+            diagnostics.append(
+                f"partial query failure: {len(failed_attempts)} failed attempt(s);"
+                f"{retry_text}; {details}"
+            )
+        if deferred:
+            diagnostics.append(
+                f"query budget deferred {deferred} of {len(jobs)} planned "
+                "Bilibili search query/queries while preserving one retry request"
+            )
+        self.diagnostics = tuple(diagnostics)
+
+        for target_index, target in enumerate(targets):
+            candidate = self._candidate_from_rows(
+                target, rows_by_target[target_index], window
+            )
             if candidate:
                 results.append(candidate)
-        if failed_queries and not successful_queries:
-            raise CrawlError(f"all {failed_queries} Bilibili community queries failed")
+        if failed_attempts and not successful_queries:
+            raise CrawlError(
+                f"all {len(failed_attempts)} Bilibili community query attempts failed"
+            )
+        if jobs and not scheduled_jobs:
+            raise FetchLimitError("no Bilibili community request budget remained")
         return results
+
+    @staticmethod
+    def _diagnostic_exception(exc: Exception) -> str:
+        message = _SPACE_RX.sub(" ", str(exc)).strip()[:120]
+        return f"{type(exc).__name__}: {message or 'no detail'}"
 
     def _search(self, client: BoundedHttpClient, query: str) -> list[dict[str, object]]:
         parameters = urllib.parse.urlencode(
@@ -1100,44 +1325,129 @@ class BilibiliCommunityAdapter:
     def _has_cjk(value: str) -> bool:
         return bool(re.search(r"[\u3400-\u9fff]{2,}", value))
 
+    @staticmethod
+    def _stable_uploader_id(value: object) -> str | None:
+        """Return only Bilibili's stable positive numeric mid.
+
+        Author display names and missing mids are not identities: treating one
+        valid mid plus one missing mid as two uploaders defeats the quorum.
+        """
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return str(value) if value > 0 else None
+        if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,19}", value):
+            return value
+        return None
+
+    @staticmethod
+    def _title_explicitly_links(
+        title: str, alias: str, anchor_surfaces: Iterable[str]
+    ) -> bool:
+        """Recognize title-level alias/equivalence notation, not co-mention.
+
+        Only semantic markers such as ``中文名`` or ``又名`` qualify.  Ordinary
+        parentheses/brackets and mere co-mention are intentionally insufficient.
+        """
+        text = unicodedata.normalize("NFKC", title)
+        alias_pattern = re.escape(unicodedata.normalize("NFKC", alias))
+        marker = r"(?:中文(?:名|译名)|又名|简称|即|=|＝)"
+        bridge = rf"\s*(?:\(\s*)?{marker}\s*[:：]?\s*"
+        for surface in anchor_surfaces:
+            anchor = unicodedata.normalize("NFKC", surface)
+            if not anchor or _match_key(anchor) == _match_key(alias):
+                continue
+            anchor_pattern = re.escape(anchor)
+            patterns = (
+                rf"{anchor_pattern}{bridge}{alias_pattern}",
+                rf"{alias_pattern}{bridge}{anchor_pattern}",
+            )
+            if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns):
+                return True
+        return False
+
     @classmethod
-    def _related_family(cls, surfaces: dict[str, dict[str, object]]) -> list[str]:
-        names = list(surfaces)
+    def _related_family(
+        cls,
+        surfaces: dict[str, dict[str, object]],
+        *,
+        min_videos: int = 2,
+        min_uploaders: int = 2,
+    ) -> list[str]:
+        names = sorted(surfaces, key=lambda name: (name.casefold(), name))
         adjacency: dict[str, set[str]] = {name: set() for name in names}
         for index, left in enumerate(names):
             left_key = _match_key(left)
             for right in names[index + 1 :]:
                 right_key = _match_key(right)
                 shorter, longer = sorted((left_key, right_key), key=len)
+                shared_videos = set(surfaces[left]["videos"]).intersection(
+                    surfaces[right]["videos"]
+                )
+                left_video_uploaders = surfaces[left].get("video_uploaders", {})
+                right_video_uploaders = surfaces[right].get("video_uploaders", {})
+                shared_uploaders = {
+                    left_video_uploaders.get(video)
+                    for video in shared_videos
+                    if left_video_uploaders.get(video)
+                    and left_video_uploaders.get(video)
+                    == right_video_uploaders.get(video)
+                }
                 if len(shorter) >= 3 and shorter in longer and (
                     cls._has_cjk(left) or cls._has_cjk(right)
-                ):
+                ) and len(shared_videos) >= min_videos and len(
+                    shared_uploaders
+                ) >= min_uploaders:
                     adjacency[left].add(right)
                     adjacency[right].add(left)
         components: list[list[str]] = []
         unseen = set(names)
         while unseen:
-            first = unseen.pop()
+            first = min(unseen, key=lambda name: (name.casefold(), name))
+            unseen.remove(first)
             stack = [first]
             component = [first]
             while stack:
                 current = stack.pop()
-                for neighbor in adjacency[current]:
+                for neighbor in sorted(
+                    adjacency[current], key=lambda name: (name.casefold(), name)
+                ):
                     if neighbor in unseen:
                         unseen.remove(neighbor)
                         stack.append(neighbor)
                         component.append(neighbor)
             if len(component) >= 2:
-                components.append(component)
+                ordered = sorted(component, key=lambda name: (name.casefold(), name))
+                base = min(
+                    ordered,
+                    key=lambda name: (len(_match_key(name)), name.casefold(), name),
+                )
+                if (
+                    (
+                        surfaces[base].get("trusted_stem_match")
+                        or surfaces[base].get("explicit_title_links")
+                    )
+                    and len(surfaces[base].get("title_cooccurrence_videos", set()))
+                    >= min_videos
+                    and len(
+                        surfaces[base].get("title_cooccurrence_uploaders", set())
+                    )
+                    >= min_uploaders
+                ):
+                    components.append(ordered)
         if not components:
             return []
         components.sort(
             key=lambda component: (
-                sum(len(surfaces[name]["videos"]) for name in component),
-                sum(len(surfaces[name]["uploaders"]) for name in component),
-                -min(len(name) for name in component),
-            ),
-            reverse=True,
+                -sum(
+                    len(surfaces[name].get("explicit_title_links", set()))
+                    for name in component
+                ),
+                -sum(len(surfaces[name]["videos"]) for name in component),
+                -sum(len(surfaces[name]["uploaders"]) for name in component),
+                min(len(name) for name in component),
+                tuple((name.casefold(), name) for name in component),
+            )
         )
         return sorted(
             components[0],
@@ -1150,10 +1460,14 @@ class BilibiliCommunityAdapter:
         rows: list[dict[str, object]],
         window: CrawlWindow,
     ) -> TermCandidate | None:
-        anchor_keys = {
-            _match_key(surface)
+        anchor_surfaces = tuple(
+            surface
             for surface in (target.canonical, *target.queries, *target.readings)
             if len(_match_key(surface)) >= 3
+        )
+        anchor_keys = {
+            _match_key(surface)
+            for surface in anchor_surfaces
         }
         surfaces: dict[str, dict[str, object]] = {}
         for row in rows:
@@ -1166,10 +1480,12 @@ class BilibiliCommunityAdapter:
             title = self._plain_text(row.get("title"))
             description = self._plain_text(row.get("description"))
             tag_text = self._plain_text(row.get("tag"))
+            title_key = _match_key(title)
+            anchor_in_title = any(anchor in title_key for anchor in anchor_keys)
             combined_key = _match_key(" ".join((title, description, tag_text)))
             if not any(anchor in combined_key for anchor in anchor_keys):
                 continue
-            uploader = str(row.get("mid") or row.get("author") or "")
+            uploader = self._stable_uploader_id(row.get("mid"))
             author = _clean_atom(row.get("author")) or "unknown uploader"
             source = Provenance(url, published, f"Bilibili community video by {author}")
             for raw_tag in re.split(r"[,，]", tag_text):
@@ -1186,18 +1502,48 @@ class BilibiliCommunityAdapter:
                     continue
                 stats = surfaces.setdefault(
                     tag,
-                    {"videos": set(), "uploaders": set(), "sources": {}},
+                    {
+                        "videos": set(),
+                        "uploaders": set(),
+                        "sources": {},
+                        "explicit_title_links": set(),
+                        "title_cooccurrence_videos": set(),
+                        "title_cooccurrence_uploaders": set(),
+                        "video_uploaders": {},
+                        "trusted_stem_match": False,
+                    },
                 )
                 stats["videos"].add(url)
-                stats["uploaders"].add(uploader)
+                if uploader:
+                    stats["uploaders"].add(uploader)
+                    prior_uploader = stats["video_uploaders"].get(url)
+                    if prior_uploader is None:
+                        stats["video_uploaders"][url] = uploader
+                    elif prior_uploader != uploader:
+                        stats["video_uploaders"][url] = ""
                 stats["sources"][url] = source
+                if anchor_in_title and tag_key in title_key:
+                    stats["title_cooccurrence_videos"].add(url)
+                    if uploader:
+                        stats["title_cooccurrence_uploaders"].add(uploader)
+                if self._title_explicitly_links(title, tag, anchor_surfaces):
+                    stats["explicit_title_links"].add(url)
+                if any(
+                    _cjk_script_stem_match(tag, trusted)
+                    for trusted in (target.canonical, *target.readings)
+                ):
+                    stats["trusted_stem_match"] = True
         eligible = {
             name: stats
             for name, stats in surfaces.items()
             if len(stats["videos"]) >= self.min_videos
             and len(stats["uploaders"]) >= self.min_uploaders
         }
-        family = self._related_family(eligible)
+        family = self._related_family(
+            eligible,
+            min_videos=self.min_videos,
+            min_uploaders=self.min_uploaders,
+        )
         if not family:
             return None
         source_by_url: dict[str, Provenance] = {}
@@ -1217,16 +1563,19 @@ class BilibiliCommunityAdapter:
             topic_entities=_unique_atoms(
                 [*target.topic_entities, "Bilibili community", "二次元社区"], limit=16
             ),
-            active_from=max(window.start, first_date - dt.timedelta(days=90)),
+            active_from=max(window.start, first_date),
             active_until=min(window.end, window.as_of + dt.timedelta(days=120)),
             sources=sources,
             display_name=display_name,
             reason=(
-                "Alias family repeated across multiple Bilibili community videos "
-                "and distinct uploaders for the same anchored entity."
+                "Base alias is derived from a trusted CJK stem or an explicit "
+                "semantic title marker, repeats in titles across distinct uploaders, "
+                "and has thresholded shared-video tag support for its family."
             ),
             score=300_000 + sum(len(eligible[name]["videos"]) for name in family),
         )
+
+
 @dataclass
 class CrawlResult:
     snapshot: dict[str, object]
@@ -1235,19 +1584,82 @@ class CrawlResult:
     network_requests: int
     cache_hits: int
     stale_cache_hits: int
+    diagnostics: dict[str, list[str]] = field(default_factory=dict)
+
+
+def _canonical_alias_match(left: TermCandidate, right: TermCandidate) -> bool:
+    left_canonical = _identity_key(left.canonical)
+    right_canonical = _identity_key(right.canonical)
+    if left_canonical == right_canonical:
+        return True
+    left_aliases = {_identity_key(alias) for alias in left.aliases}
+    right_aliases = {_identity_key(alias) for alias in right.aliases}
+    return left_canonical in right_aliases or right_canonical in left_aliases
+
+
+def _active_windows_overlap(left: TermCandidate, right: TermCandidate) -> bool:
+    return max(left.active_from, right.active_from) <= min(
+        left.active_until, right.active_until
+    )
 
 
 def _merge_candidates(
-    destination: dict[str, TermCandidate], candidates: Iterable[TermCandidate]
+    destination: dict[str, TermCandidate],
+    candidates: Iterable[TermCandidate],
+    *,
+    conflict_diagnostics: list[str] | None = None,
 ) -> int:
     count = 0
     for candidate in candidates:
-        key = candidate.canonical.casefold()
-        prior = destination.get(key)
-        if prior:
-            prior.merge(candidate)
-        else:
-            destination[key] = candidate
+        matches = [
+            (key, prior)
+            for key, prior in destination.items()
+            if _canonical_alias_match(prior, candidate)
+        ]
+        if len(matches) > 1:
+            if conflict_diagnostics is not None:
+                matched = ", ".join(
+                    sorted(prior.canonical for _, prior in matches)
+                )
+                conflict_diagnostics.append(
+                    f"entity_merge conflict: candidate {candidate.canonical} matched "
+                    f"multiple existing canonicals ({matched}); candidate dropped"
+                )
+            count += 1
+            continue
+        if not matches:
+            destination[_identity_key(candidate.canonical)] = candidate
+            count += 1
+            continue
+
+        prior_key, prior = matches[0]
+        cross_canonical_alias = _identity_key(prior.canonical) != _identity_key(
+            candidate.canonical
+        )
+        if cross_canonical_alias and not _active_windows_overlap(prior, candidate):
+            if conflict_diagnostics is not None:
+                conflict_diagnostics.append(
+                    f"entity_merge conflict: candidate {candidate.canonical} has a "
+                    f"disjoint active window from {prior.canonical}; candidate dropped"
+                )
+            count += 1
+            continue
+        group = [candidate, prior]
+        winner = min(
+            group,
+            key=lambda item: (-item.score, item.canonical.casefold(), item.canonical),
+        )
+        losers = sorted(
+            (item for item in group if item is not winner),
+            key=lambda item: (-item.score, item.canonical.casefold(), item.canonical),
+        )
+        for loser in losers:
+            winner.merge(
+                loser,
+                intersect_active_window=cross_canonical_alias,
+            )
+        del destination[prior_key]
+        destination[_identity_key(winner.canonical)] = winner
         count += 1
     return count
 
@@ -1268,12 +1680,28 @@ def crawl(
     candidates: dict[str, TermCandidate] = {}
     counts: dict[str, int] = {}
     errors: dict[str, str] = {}
+    diagnostics: dict[str, list[str]] = {}
     for adapter in adapters:
         try:
             collected = adapter.collect(client, window, candidates)
-            counts[adapter.name] = _merge_candidates(candidates, collected)
+            merge_conflicts: list[str] = []
+            counts[adapter.name] = _merge_candidates(
+                candidates,
+                collected,
+                conflict_diagnostics=merge_conflicts,
+            )
+            if merge_conflicts:
+                diagnostics.setdefault("entity_merge", []).extend(
+                    f"{adapter.name}: {message}" for message in merge_conflicts
+                )
+            adapter_diagnostics = getattr(adapter, "diagnostics", ())
+            if adapter_diagnostics:
+                diagnostics[adapter.name] = [str(item) for item in adapter_diagnostics]
         except Exception as exc:  # adapters are deliberately failure-isolated
             errors[adapter.name] = f"{type(exc).__name__}: {exc}"
+            adapter_diagnostics = getattr(adapter, "diagnostics", ())
+            if adapter_diagnostics:
+                diagnostics[adapter.name] = [str(item) for item in adapter_diagnostics]
     if not candidates:
         raise CrawlError("all adapters failed or produced no safe terms")
     ranked = sorted(
@@ -1297,12 +1725,13 @@ def crawl(
 
     normalized = validate_timely_terms_payload(snapshot)
     return CrawlResult(
-        normalized,
-        counts,
-        errors,
-        client.requests_made,
-        client.cache_hits,
-        client.stale_hits,
+        snapshot=normalized,
+        adapter_counts=counts,
+        errors=errors,
+        network_requests=client.requests_made,
+        cache_hits=client.cache_hits,
+        stale_cache_hits=client.stale_hits,
+        diagnostics=diagnostics,
     )
 
 

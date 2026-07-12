@@ -243,6 +243,15 @@ def _require_term_atom_list(
     return result
 
 
+def _timely_term_identity_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(
+        char
+        for char in normalized
+        if unicodedata.category(char)[:1] in {"L", "M", "N"}
+    )
+
+
 def _require_iso_date(value: object, *, label: str) -> dt.date:
     text = _require_metadata_text(value, label=label, max_chars=10)
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
@@ -329,7 +338,7 @@ def validate_timely_terms_payload(payload: object) -> dict[str, object]:
             f"terms must contain between 1 and {TIMELY_TERMS_MAX_COUNT} entries"
         )
     terms: list[dict[str, object]] = []
-    canonicals: set[str] = set()
+    canonical_owners: dict[str, int] = {}
     for index, raw_term in enumerate(raw_terms):
         label = f"terms[{index}]"
         term = _require_exact_fields(
@@ -350,10 +359,10 @@ def validate_timely_terms_payload(payload: object) -> dict[str, object]:
             label=label,
         )
         canonical = _require_term_atom(term["canonical"], label=f"{label}.canonical")
-        canonical_key = canonical.casefold()
-        if canonical_key in canonicals:
+        canonical_key = _timely_term_identity_key(canonical)
+        if canonical_key in canonical_owners:
             raise TimelyTermsValidationError("canonical timely terms must be unique")
-        canonicals.add(canonical_key)
+        canonical_owners[canonical_key] = index
         active_from = _require_iso_date(term["active_from"], label=f"{label}.active_from")
         active_until = _require_iso_date(term["active_until"], label=f"{label}.active_until")
         if active_from > active_until:
@@ -414,6 +423,18 @@ def validate_timely_terms_payload(payload: object) -> dict[str, object]:
                 term["reason"], label=f"{label}.reason", max_chars=512
             )
         terms.append(normalized)
+
+    # A canonical duplicated as another term's alias/reading is the same ambiguous
+    # entity split that the crawler is required to merge.  Fail closed here as
+    # well so manually supplied or stale snapshots cannot bypass that invariant.
+    for index, term in enumerate(terms):
+        for surface in [*term["aliases"], *term["readings"]]:
+            surface_key = _timely_term_identity_key(surface)
+            owner = canonical_owners.get(surface_key)
+            if owner is not None and owner != index:
+                raise TimelyTermsValidationError(
+                    "canonical timely term conflicts with another term alias or reading"
+                )
 
     return {
         "schema_version": TIMELY_TERMS_SCHEMA,

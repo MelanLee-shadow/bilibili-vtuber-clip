@@ -288,6 +288,26 @@ def test_strict_snapshot_accepts_stable_bilibili_community_video_provenance():
     )
 
 
+@pytest.mark.parametrize("conflicting_field", ("aliases", "readings"))
+def test_strict_snapshot_rejects_cross_term_canonical_surface_conflict(
+    conflicting_field,
+):
+    payload = _valid_snapshot()
+    second = copy.deepcopy(payload["terms"][0])
+    second["canonical"] = "YUME MITA"
+    second["aliases"] = []
+    second["readings"] = ["yume mita"]
+    second["sources"][0]["url"] = "https://anilist.co/anime/200000/YUME-MITA"
+    payload["terms"][0][conflicting_field].append("YUME∞MITA")
+    payload["terms"].append(second)
+
+    with pytest.raises(
+        jingting.TimelyTermsValidationError,
+        match="conflicts with another term alias or reading",
+    ):
+        jingting.validate_timely_terms_payload(payload)
+
+
 def test_offline_validation_cli_writes_once_to_read_only_canonical_snapshot(
     tmp_path, capsys
 ):

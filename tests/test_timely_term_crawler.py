@@ -1,9 +1,13 @@
 import datetime as dt
 import email.utils
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
+import scripts.gemini_slice_jingting as jingting
 
 from src.autoslice.timely_term_crawler import (
     AniListSeasonAdapter,
@@ -15,12 +19,15 @@ from src.autoslice.timely_term_crawler import (
     CrawlError,
     CrawlWindow,
     CommunityEntityWatch,
+    DEFAULT_NETWORK_REQUEST_BUDGET,
     EventWatch,
     HttpCache,
+    NETWORK_RETRY_RESERVE,
     Provenance,
     RssNewsAdapter,
     TermCandidate,
     crawl,
+    load_source_config,
     snapshot_json,
     write_snapshot_atomically,
 )
@@ -31,12 +38,14 @@ WINDOW = CrawlWindow.around(NOW.date())
 
 
 class FakeClient:
-    def __init__(self, responses):
+    def __init__(self, responses, *, max_requests=None, requests_made=0):
         self.responses = list(responses)
         self.requests = []
-        self.requests_made = 0
+        self.requests_made = requests_made
         self.cache_hits = 0
         self.stale_hits = 0
+        if max_requests is not None:
+            self.max_requests = max_requests
 
     def fetch(self, url, **kwargs):
         self.requests.append((url, kwargs))
@@ -99,7 +108,9 @@ def _bilibili_row(*, aid, mid, title, tags, day="2026-07-11", author="community-
     }
 
 
-def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed():
+def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed(
+    tmp_path, monkeypatch
+):
     payload = {
         "code": 0,
         "data": {
@@ -148,6 +159,27 @@ def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed()
     assert "藤都子" not in terms[0].aliases
     assert len(terms[0].sources) == 3
     assert all(source.url.startswith("https://www.bilibili.com/video/") for source in terms[0].sources)
+    assert terms[0].active_from == dt.date(2026, 7, 11)
+
+    snapshot = {
+        "schema_version": "lidousha-timely-terms.v1",
+        "generated_at": NOW.isoformat(timespec="seconds"),
+        "expires_at": (NOW + dt.timedelta(days=2)).isoformat(timespec="seconds"),
+        "status": "fresh",
+        "terms": [terms[0].as_snapshot_term()],
+    }
+    path = tmp_path / "community-candidate.json"
+    path.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(jingting, "TIMELY_TERMS_PATHS", [str(path)])
+    monkeypatch.delenv("LIDOUSHA_DISABLE_TIMELY_TERMS", raising=False)
+    june_context = jingting.timely_terms_context(
+        as_of=dt.datetime(2026, 6, 30, 12, tzinfo=dt.timezone.utc)
+    )
+    july_context = jingting.timely_terms_context(
+        as_of=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc)
+    )
+    assert "梦限大" not in june_context
+    assert "梦限大" in july_context
 
 
 def test_bilibili_community_rejects_single_uploader_alias_campaign():
@@ -177,12 +209,290 @@ def test_bilibili_community_rejects_single_uploader_alias_campaign():
     assert adapter.collect(FakeClient([_response({"code": 0, "data": {"result": rows}})]), WINDOW, {}) == []
 
 
+def test_bilibili_community_rejects_repeated_unrelated_character_tag_family():
+    rows = [
+        _bilibili_row(
+            aid=index,
+            mid=10 + index,
+            title=f"BanG Dream! YUME∞MITA 第{index}话讨论",
+            tags="藤都子,藤都子角色歌,BanG Dream!",
+        )
+        for index in range(1, 3)
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA",),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    assert adapter.collect(
+        FakeClient([_response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "【BanG Dream! YUME∞MITA】藤都子角色歌",
+        "BanG Dream! YUME∞MITA（藤都子）角色歌",
+    ),
+)
+def test_bilibili_community_does_not_treat_brackets_as_alias_proof(title):
+    rows = [
+        _bilibili_row(
+            aid=index,
+            mid=10 + index,
+            title=title,
+            tags="藤都子,藤都子角色歌,BanG Dream!",
+        )
+        for index in range(1, 3)
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    assert adapter.collect(
+        FakeClient([_response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    ) == []
+
+
+def test_bilibili_community_accepts_explicit_semantic_alias_marker():
+    rows = [
+        _bilibili_row(
+            aid=index,
+            mid=10 + index,
+            title="Official Project（中文名：神秘坏女人）",
+            tags="神秘坏女人,神秘坏女人企划,动画",
+        )
+        for index in range(1, 3)
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "Official Project",
+                ("Official Project",),
+                ("Official Project",),
+                ("Anime",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    terms = adapter.collect(
+        FakeClient([_response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    )
+
+    assert terms[0].aliases == ["神秘坏女人", "神秘坏女人企划"]
+
+
+def test_bilibili_community_missing_mid_does_not_create_second_uploader():
+    rows = [
+        _bilibili_row(
+            aid=1,
+            mid=11,
+            author="same display name",
+            title="BanG Dream! YUME∞MITA（梦限大）",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=2,
+            mid=None,
+            author="same display name",
+            title="BanG Dream! YUME∞MITA（梦限大）",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        ),
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA",),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    assert adapter.collect(
+        FakeClient([_response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    ) == []
+
+
+def test_bilibili_community_family_requires_overlapping_video_support():
+    rows = [
+        _bilibili_row(
+            aid=1,
+            mid=11,
+            title="BanG Dream! YUME∞MITA（梦限大）",
+            tags="梦限大,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=2,
+            mid=22,
+            title="BanG Dream! YUME∞MITA（梦限大）",
+            tags="梦限大,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=3,
+            mid=33,
+            title="BanG Dream! YUME∞MITA PV",
+            tags="梦限大MewType,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=4,
+            mid=44,
+            title="BanG Dream! YUME∞MITA ED",
+            tags="梦限大MewType,BanG Dream!",
+        ),
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA",),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    assert adapter.collect(
+        FakeClient([_response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    ) == []
+
+
+def test_bilibili_community_family_rejects_only_one_shared_video():
+    rows = [
+        _bilibili_row(
+            aid=1,
+            mid=11,
+            title="BanG Dream! YUME∞MITA（梦限大）",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=2,
+            mid=22,
+            title="BanG Dream! YUME∞MITA 梦限大",
+            tags="梦限大,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=3,
+            mid=33,
+            title="BanG Dream! YUME∞MITA 梦限大MewType",
+            tags="梦限大MewType,BanG Dream!",
+        ),
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    assert adapter.collect(
+        FakeClient([_response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    ) == []
+
+
+def test_bilibili_community_family_rejects_shared_videos_from_one_uploader():
+    rows = [
+        _bilibili_row(
+            aid=1,
+            mid=11,
+            title="BanG Dream! YUME∞MITA 梦限大",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=2,
+            mid=11,
+            title="BanG Dream! YUME∞MITA 梦限大",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=3,
+            mid=22,
+            title="BanG Dream! YUME∞MITA 梦限大",
+            tags="梦限大,BanG Dream!",
+        ),
+        _bilibili_row(
+            aid=4,
+            mid=33,
+            title="BanG Dream! YUME∞MITA 梦限大MewType",
+            tags="梦限大MewType,BanG Dream!",
+        ),
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    assert adapter.collect(
+        FakeClient([_response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    ) == []
+
+
 def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limited():
     rows = [
         _bilibili_row(
             aid=index,
             mid=10 + index,
-            title="BanG Dream YUME MITA 梦限大",
+            title="BanG Dream YUME MITA（梦限大）",
             tags="梦限大,梦限大MewType,BanG Dream!",
         )
         for index in range(1, 4)
@@ -194,7 +504,7 @@ def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limite
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA", "BanG Dream YUME MITA"),
-                ("YUME∞MITA",),
+                ("YUME∞MITA", "夢限大みゅーたいぷ"),
                 ("BanG Dream!",),
             ),
         ),
@@ -208,6 +518,152 @@ def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limite
     )
 
     assert terms[0].aliases == ["梦限大", "梦限大MewType"]
+    assert "partial query failure" in adapter.diagnostics[0]
+
+
+def test_related_family_is_deterministic_across_python_hash_seeds():
+    code = """
+import json
+from src.autoslice.timely_term_crawler import BilibiliCommunityAdapter
+
+def stats(prefix):
+    return {
+        "videos": {prefix + "1", prefix + "2"},
+        "uploaders": {prefix + "u1", prefix + "u2"},
+        "explicit_title_links": {prefix + "1"},
+        "title_cooccurrence_videos": {prefix + "1", prefix + "2"},
+        "title_cooccurrence_uploaders": {prefix + "u1", prefix + "u2"},
+        "video_uploaders": {
+            prefix + "1": prefix + "u1",
+            prefix + "2": prefix + "u2",
+        },
+    }
+
+surfaces = {
+    "藤都子": stats("f"),
+    "藤都子角色歌": stats("f"),
+    "梦限大": stats("y"),
+    "梦限大MewType": stats("y"),
+}
+print(json.dumps(BilibiliCommunityAdapter._related_family(surfaces), ensure_ascii=False))
+"""
+    root = Path(__file__).resolve().parents[1]
+    outputs = []
+    for seed in ("1", "2", "7", "99"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        outputs.append(
+            subprocess.check_output(
+                [sys.executable, "-c", code], cwd=root, env=env, text=True
+            ).strip()
+        )
+
+    assert len(set(outputs)) == 1
+
+
+def test_bilibili_budget_leaves_one_request_for_retry_on_full_default_plan():
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA", "BanG Dream YUME MITA"),
+                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=3,
+    )
+    existing = {
+        "auto one": _candidate("Auto One"),
+        "auto two": _candidate("Auto Two"),
+        "auto three": _candidate("Auto Three"),
+    }
+    empty = _response({"code": 0, "data": {"result": []}})
+    client = FakeClient(
+        [empty, empty, empty, empty, empty],
+        max_requests=DEFAULT_NETWORK_REQUEST_BUDGET,
+        requests_made=7,
+    )
+
+    assert adapter.collect(client, WINDOW, existing) == []
+    assert len(client.requests) == 5
+    assert client.requests_made == 12
+    assert client.max_requests - client.requests_made == 1
+    assert adapter.diagnostics == ()
+
+
+def test_repo_source_config_leaves_one_request_in_default_budget_for_retry():
+    config = Path(__file__).resolve().parents[1] / "assets/lidousha/timely_term_sources.json"
+    anilist, manga, _bangumi, rss, bilibili = load_source_config(config)
+    planned = (
+        anilist.max_pages
+        + manga.max_pages
+        + 1  # Bangumi calendar
+        + len(rss)
+        + sum(len(watch.queries) for watch in bilibili.entity_watches)
+        + bilibili.auto_query_count
+    )
+
+    assert planned == DEFAULT_NETWORK_REQUEST_BUDGET - NETWORK_RETRY_RESERVE
+
+
+def test_partial_bilibili_failure_is_retried_and_exposed_by_crawl_result():
+    rows = [
+        _bilibili_row(
+            aid=index,
+            mid=10 + index,
+            title="BanG Dream! YUME∞MITA（梦限大）",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        )
+        for index in range(1, 4)
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA", "BanG Dream YUME MITA"),
+                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=3,
+    )
+    existing = {
+        "auto one": _candidate("Auto One"),
+        "auto two": _candidate("Auto Two"),
+        "auto three": _candidate("Auto Three"),
+    }
+
+    class ExistingAdapter:
+        name = "existing"
+
+        def collect(self, client, window, current):
+            del client, window, current
+            return list(existing.values())
+
+    empty = _response({"code": 0, "data": {"result": []}})
+    populated = _response({"code": 0, "data": {"result": rows}})
+    client = FakeClient(
+        [CrawlError("HTTP 412"), populated, empty, empty, empty, populated],
+        max_requests=DEFAULT_NETWORK_REQUEST_BUDGET,
+        requests_made=7,
+    )
+
+    result = crawl(
+        client=client,
+        window=WINDOW,
+        generated_at=NOW,
+        adapters=[ExistingAdapter(), adapter],
+        max_terms=10,
+    )
+
+    assert client.requests_made == DEFAULT_NETWORK_REQUEST_BUDGET
+    assert result.errors == {}
+    assert "partial query failure" in result.diagnostics[adapter.name][0]
+    assert result.snapshot["terms"][0]["canonical"] == "BanG Dream! YUME∞MITA"
 
 
 def test_anilist_adapter_extracts_only_structured_fields_and_bounds_pages():
@@ -417,6 +873,181 @@ class BrokenAdapter:
 
     def collect(self, client, window, existing):
         raise RuntimeError("source temporarily unavailable")
+
+
+def test_crawl_merges_seed_canonical_with_community_alias_before_rank_cap(
+    tmp_path, monkeypatch
+):
+    seed_sources = [
+        Provenance(
+            f"https://anime.bang-dream.com/yumemita/news/post-{index}",
+            dt.date(2026, 6, min(index, 8)),
+            "BanG Dream official anime site",
+        )
+        for index in range(1, 9)
+    ]
+    seed = TermCandidate(
+        canonical="梦限大",
+        readings=["meng xianda", "夢限大みゅーたいぷ"],
+        aliases=["梦限大MewType"],
+        confusables=["Mujica"],
+        topic_entities=["BanG Dream!"],
+        active_from=dt.date(2026, 6, 1),
+        active_until=dt.date(2026, 9, 30),
+        sources=seed_sources,
+        score=1_000_000,
+    )
+    community = TermCandidate(
+        canonical="BanG Dream! YUME∞MITA",
+        readings=["YUME∞MITA"],
+        aliases=["梦限大", "梦限大MewType"],
+        confusables=[],
+        topic_entities=["Bilibili community"],
+        active_from=dt.date(2026, 7, 1),
+        active_until=dt.date(2026, 11, 1),
+        sources=[
+            Provenance(
+                f"https://www.bilibili.com/video/av{index}",
+                dt.date(2026, 7, min(index, 8)),
+                f"Bilibili community video by uploader {index}",
+            )
+            for index in range(1, 9)
+        ],
+        score=300_000,
+    )
+
+    class StaticAdapter:
+        def __init__(self, name, terms):
+            self.name = name
+            self.terms = terms
+
+        def collect(self, client, window, existing):
+            del client, window, existing
+            return self.terms
+
+    result = crawl(
+        client=FakeClient([]),
+        window=WINDOW,
+        generated_at=NOW,
+        adapters=[
+            StaticAdapter("seed", [seed]),
+            StaticAdapter("community", [community]),
+        ],
+        max_terms=1,
+    )
+
+    assert len(result.snapshot["terms"]) == 1
+    term = result.snapshot["terms"][0]
+    assert term["canonical"] == "梦限大"
+    assert "BanG Dream! YUME∞MITA" in term["aliases"]
+    assert term["active_from"] == "2026-07-01"
+    assert term["active_until"] == "2026-09-30"
+    assert len(term["sources"]) == 8
+    assert any(
+        "anime.bang-dream.com/" in source["url"] for source in term["sources"]
+    )
+    assert any("bilibili.com/video/" in source["url"] for source in term["sources"])
+    source_urls = {source["url"] for source in term["sources"]}
+    assert "https://anime.bang-dream.com/yumemita/news/post-1" in source_urls
+    assert "https://www.bilibili.com/video/av1" in source_urls
+
+    snapshot = tmp_path / "merged.json"
+    snapshot.write_text(json.dumps(result.snapshot, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(jingting, "TIMELY_TERMS_PATHS", [str(snapshot)])
+    monkeypatch.delenv("LIDOUSHA_DISABLE_TIMELY_TERMS", raising=False)
+    june_context = jingting.timely_terms_context(
+        as_of=dt.datetime(2026, 6, 15, 12, tzinfo=dt.timezone.utc)
+    )
+    july_context = jingting.timely_terms_context(
+        as_of=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc)
+    )
+    assert "BanG Dream! YUME∞MITA" not in june_context
+    assert "BanG Dream! YUME∞MITA" in july_context
+
+
+def test_exact_canonical_merge_unions_independent_source_windows():
+    early = _candidate("Same Canonical")
+    early.active_from = dt.date(2026, 1, 1)
+    early.active_until = dt.date(2026, 3, 31)
+    late = _candidate("Same Canonical")
+    late.active_from = dt.date(2026, 7, 1)
+    late.active_until = dt.date(2026, 12, 31)
+    late.sources = [
+        Provenance(
+            "https://anilist.co/anime/2/Same-Canonical",
+            dt.date(2026, 7, 1),
+            "AniList structured anime catalog",
+        )
+    ]
+
+    class StaticAdapter:
+        def __init__(self, name, term):
+            self.name = name
+            self.term = term
+
+        def collect(self, client, window, existing):
+            del client, window, existing
+            return [self.term]
+
+    result = crawl(
+        client=FakeClient([]),
+        window=WINDOW,
+        generated_at=NOW,
+        adapters=[StaticAdapter("early", early), StaticAdapter("late", late)],
+        max_terms=10,
+    )
+
+    term = result.snapshot["terms"][0]
+    assert term["active_from"] == "2026-01-01"
+    assert term["active_until"] == "2026-12-31"
+
+
+def test_crawl_drops_candidate_that_would_bridge_two_existing_entities():
+    alpha = _candidate("Alpha Project")
+    beta = _candidate("Beta Project")
+    bridge = TermCandidate(
+        canonical="Ambiguous Bridge",
+        readings=["Ambiguous Bridge"],
+        aliases=["Alpha Project", "Beta Project"],
+        confusables=[],
+        topic_entities=["Anime"],
+        active_from=dt.date(2026, 4, 1),
+        active_until=dt.date(2026, 10, 1),
+        sources=[
+            Provenance(
+                "https://anilist.co/anime/999/Ambiguous-Bridge",
+                dt.date(2026, 7, 1),
+                "AniList structured anime catalog",
+            )
+        ],
+        score=2_000_000,
+    )
+
+    class StaticAdapter:
+        def __init__(self, name, terms):
+            self.name = name
+            self.terms = terms
+
+        def collect(self, client, window, existing):
+            del client, window, existing
+            return self.terms
+
+    result = crawl(
+        client=FakeClient([]),
+        window=WINDOW,
+        generated_at=NOW,
+        adapters=[
+            StaticAdapter("existing", [alpha, beta]),
+            StaticAdapter("ambiguous", [bridge]),
+        ],
+        max_terms=10,
+    )
+
+    assert {term["canonical"] for term in result.snapshot["terms"]} == {
+        "Alpha Project",
+        "Beta Project",
+    }
+    assert "entity_merge conflict" in result.diagnostics["entity_merge"][0]
 
 
 def test_adapter_failure_is_isolated_and_snapshot_is_deterministic():
