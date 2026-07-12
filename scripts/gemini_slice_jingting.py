@@ -952,10 +952,14 @@ def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
         corrected = strip_markdown_fence(output_file.read_text(encoding="utf-8"))
     if not looks_like_srt(corrected):
         corrected = strip_markdown_fence(proc.stdout)
-    if proc.returncode != 0:
-        raise RuntimeError(f"agy failed rc={proc.returncode}; see {job_dir}/agy.stderr")
     if not looks_like_srt(corrected):
-        raise RuntimeError(f"agy did not produce valid SRT; see {job_dir}")
+        detail = f"agy failed rc={proc.returncode}; " if proc.returncode != 0 else ""
+        raise RuntimeError(f"{detail}agy did not produce valid SRT; see {job_dir}")
+    # AGY occasionally writes the complete output.srt and then terminates with
+    # its generic "Agent execution terminated due to error" while finalizing.
+    # Treat the file, not the wrapper epilogue, as the result authority only
+    # after the strict full cue-count/index/timestamp check succeeds.  A
+    # partial/truncated file still fails closed above or in this validator.
     validate_same_timing(srt_text, corrected)
 
     Path(out_path).write_text(corrected if corrected.endswith("\n") else corrected + "\n", encoding="utf-8")
@@ -972,6 +976,7 @@ def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
         "output_srt_sha256": sha256_file(out_path),
         "job_dir": str(job_dir),
         "agy_rc": proc.returncode,
+        "accepted_valid_output_after_nonzero": proc.returncode != 0,
         "agy_sandbox": True,
         "prepared_media": str(media),
         "prepared_media_size": media.stat().st_size,
