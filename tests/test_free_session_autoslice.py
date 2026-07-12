@@ -2,10 +2,12 @@
 import json
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import scripts.free_session_autoslice as runner
+from src.autoslice.visual_song_discovery import VisualSongCandidate, VisualSongDiscoveryResult
 from tests.host_vocal_test_support import bind_ready_live_performance_report, make_ready_host_vocal_claim
 from scripts.free_session_autoslice import (
     COVER_REPAIR_MAX_ATTEMPTS,
@@ -82,6 +84,57 @@ def test_safe_name_sanitizes_and_falls_back():
     assert safe_name("百合是工作？/她当场*不买书", "cid") == "百合是工作？她当场不买书"
     assert safe_name("", "cid") == "cid"
     assert len(safe_name("很长" * 40, "cid")) <= 18
+
+
+def test_discover_segments_unions_visual_songs_and_attaches_title_hint(tmp_path, monkeypatch):
+    segment = tmp_path / "22966160_20260710-21-49-59.mp4"
+    with segment.open("wb") as target:
+        target.seek(runner.MIN_SEGMENT_BYTES)
+        target.write(b"x")
+    srt = tmp_path / "segment.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n歌词\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [segment])
+    monkeypatch.setattr(runner, "bcut_transcribe", lambda *_args: srt)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _segment: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: None)
+    monkeypatch.setattr(runner, "danmaku_hints", lambda _xml: None)
+    monkeypatch.setattr(runner, "danmaku_count_in", lambda *_args: 0)
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _segment: 700_000)
+    asr_song = SimpleNamespace(
+        anchor=SimpleNamespace(candidate_id="semanticsong_100000_260000", anchor_start_ms=100_000, anchor_end_ms=260_000),
+        content_type_hint="song",
+        text_preview="ASR歌词",
+    )
+    monkeypatch.setattr(
+        runner,
+        "recall_candidates",
+        lambda *_args: ([asr_song], "semantic_recall", {"semanticsong_100000_260000": {"hook": "ASR召回", "confidence": 0.8}}),
+    )
+    visual = VisualSongDiscoveryResult(
+        status="READY",
+        candidates=(
+            VisualSongCandidate("晴る", 90_000, 280_000, {"list_index": 10}, 0.98),
+            VisualSongCandidate("太阳系disco", 400_000, 620_000, {"list_index": 15}, 0.97),
+        ),
+        cache_path=str(tmp_path / "cache.json"),
+        content_fingerprint="a" * 64,
+        config_sha256="b" * 64,
+    )
+    monkeypatch.setattr(runner, "discover_visual_songs", lambda *_args, **_kwargs: visual)
+    monkeypatch.setattr(runner, "BASE", tmp_path / "base")
+    state = {}
+
+    runner.discover_segments("2026-07-10", state)
+
+    assert len(state["pending_song"]) == 2
+    matched, visual_only = state["pending_song"]
+    assert matched["cid"] == "song_214959_100"
+    assert matched["title_hint"] == "晴る"
+    assert matched["visual_song_matched_to_asr"] is True
+    assert visual_only["cid"].startswith("songvis_214959_400_")
+    assert visual_only["title_hint"] == "太阳系disco"
+    assert len(state["song_quarantine_intervals"]) == 2
+    assert state["visual_song_seen_entries"] == ["list:10:晴る", "list:15:太阳系disco"]
 
 
 def test_prioritize_caps_talk_and_songs_with_reasons():

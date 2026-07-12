@@ -103,6 +103,12 @@ from src.autoslice.song_repair import (
     live_performance_failure_reason_codes,
     validate_live_performance_observation,
 )
+from src.autoslice.visual_song_discovery import (
+    VisualSongConfig,
+    discover_visual_songs,
+    normalize_visual_title,
+    union_visual_song_candidates,
+)
 
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 ROOM = os.environ.get("AUTOSLICE_ROOM", "22966160")
@@ -2701,6 +2707,8 @@ def produce_song(date: str, item: dict) -> dict:
         log(f"song lane {cid}{tag}: window {start // 1000}-{end // 1000}s (danmaku x{item.get('danmaku', 0)}) from {segment.name}")
         result = {"candidate_id": cid, "segment": segment.name, "start_ms": start, "end_ms": end,
                   "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1,
+                  "discovery_lane": item.get("lane"), "title_hint": item.get("title_hint"),
+                  "visual_song_evidence": item.get("visual_song_evidence"),
                   "pipeline_fingerprint": pipeline_fingerprint(),
                   "transient_retry_count": int(item.get("transient_retry_count") or 0),
                   "anchor_start_ms": item.get("anchor_start_ms"),
@@ -2755,6 +2763,7 @@ def produce_song(date: str, item: dict) -> dict:
             ]
             semantic_hook = str(item.get("hook") or "").strip()
             known_song_query = str(item.get("preview") or "").strip()
+            visual_title_hint = str(item.get("title_hint") or "").strip()
             # Search the quoted song title first.  Passing the entire prose
             # preview ("下播前演唱 yonige《芽吹くとき》") made LRCLIB return no
             # rows even though the exact title returns the canonical timed LRC.
@@ -2766,7 +2775,7 @@ def produce_song(date: str, item: dict) -> dict:
             # when singing ASR was unusable.  Query that title before the ASR
             # preview; LRC/audio proof still decides whether it is truly the
             # performed song, so this is recall improvement rather than trust.
-            for query in dict.fromkeys([*quoted_titles[:2], known_song_query]):
+            for query in dict.fromkeys([visual_title_hint, *quoted_titles[:2], known_song_query]):
                 if query:
                     selector_command.extend(["--song-lrc-query", query])
             # Every invocation already came from the upstream song lane, which
@@ -4627,6 +4636,20 @@ def write_reports(date: str, state: dict) -> None:
     )
 
 
+def visual_song_config_from_env() -> VisualSongConfig:
+    """Malformed optional tuning cannot disable the independent ASR lane."""
+
+    try:
+        sample_seconds = int(os.environ.get("AUTOSLICE_VISUAL_SONG_SAMPLE_SECONDS", "10"))
+        timeout_seconds = int(os.environ.get("AUTOSLICE_VISUAL_SONG_TIMEOUT_SECONDS", "900"))
+    except ValueError:
+        sample_seconds, timeout_seconds = 10, 900
+    return VisualSongConfig(
+        sample_every_seconds=max(5, sample_seconds),
+        timeout_seconds=max(60, timeout_seconds),
+    )
+
+
 def discover_segments(date: str, state: dict) -> None:
     """Phase A: transcribe + recall new segments into pending queues."""
     done = set(state.setdefault("segments_done", []))
@@ -4634,6 +4657,8 @@ def discover_segments(date: str, state: dict) -> None:
     attempts = state.setdefault("bcut_attempts", {})
     pending_talk = state.setdefault("pending_talk", [])
     pending_song = state.setdefault("pending_song", [])
+    visual_inventory = state.setdefault("visual_song_inventory", {})
+    visual_seen = set(state.setdefault("visual_song_seen_entries", []))
 
     for segment in list_segments(date):
         stem = segment.stem
@@ -4658,8 +4683,39 @@ def discover_segments(date: str, state: dict) -> None:
         chat_jsonl = find_chat_jsonl(segment)
         candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
         seg_dur = ffprobe_ms(segment)
+        visual_result = discover_visual_songs(
+            segment,
+            BASE / "cache" / date / "visual-song-inventory",
+            duration_ms=seg_dur,
+            config=visual_song_config_from_env(),
+        )
+        visual_inventory[stem] = visual_result.to_manifest()
+        fresh_visual = []
+        for visual_candidate in visual_result.candidates:
+            # The numbered overlay is cumulative across recording segments.
+            # Deduplicate a stable numbered row across the date while still
+            # allowing an unnumbered/repeated performance at another interval.
+            list_index = visual_candidate.list_index
+            identity = (
+                f"list:{list_index}:{normalize_visual_title(visual_candidate.song_title)}"
+                if list_index is not None
+                else f"media:{stem}:{visual_candidate.start_ms}:{normalize_visual_title(visual_candidate.song_title)}"
+            )
+            if identity in visual_seen:
+                continue
+            visual_seen.add(identity)
+            fresh_visual.append(visual_candidate)
+        state["visual_song_seen_entries"] = sorted(visual_seen)
+        if visual_result.status == "FAILED":
+            log(f"{segment.name}: visual song inventory failed open ({visual_result.error})")
+        else:
+            log(
+                f"{segment.name}: visual song inventory {len(fresh_visual)} new / "
+                f"{len(visual_result.candidates)} visible ({'cache' if visual_result.cache_hit else 'AGY High'})"
+            )
         log(f"{segment.name}: {len(candidates)} candidate(s) via {lane}")
         seg_tag = re.sub(r"\D", "", stem)[-6:]
+        recalled_song_items: list[dict] = []
         for cand in candidates:
             meta = extras.get(cand.anchor.candidate_id, {})
             base_item = {
@@ -4681,8 +4737,7 @@ def discover_segments(date: str, state: dict) -> None:
                     "anchor_end_ms": a1,
                     "danmaku": danmaku_count_in(str(xml) if xml else None, a0, a1),
                 }
-                pending_song.append(song_item)
-                _remember_song_quarantine_interval(state, song_item)
+                recalled_song_items.append(song_item)
             else:
                 b = cand.boundary
                 s0 = max(0, int(b.resolved_start_ms))
@@ -4693,6 +4748,26 @@ def discover_segments(date: str, state: dict) -> None:
                     "start_ms": s0,
                     "end_ms": s1,
                 })
+        combined_song_items = union_visual_song_candidates(
+            recalled_song_items,
+            fresh_visual,
+            segment_tag=seg_tag,
+        )
+        for song_item in combined_song_items:
+            song_item.setdefault("segment_path", str(segment))
+            song_item.setdefault("seg_dur_ms", seg_dur)
+            song_item.setdefault("xml", str(xml) if xml else None)
+            song_item.setdefault("chat_jsonl", str(chat_jsonl) if chat_jsonl else None)
+            song_item.setdefault(
+                "danmaku",
+                danmaku_count_in(
+                    str(xml) if xml else None,
+                    int(song_item["anchor_start_ms"]),
+                    int(song_item["anchor_end_ms"]),
+                ),
+            )
+            pending_song.append(song_item)
+            _remember_song_quarantine_interval(state, song_item)
         done.add(stem)
     state["segments_done"] = sorted(done)
 
