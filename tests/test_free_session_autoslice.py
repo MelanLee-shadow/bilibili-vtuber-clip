@@ -3889,7 +3889,7 @@ def test_selected_talk_transient_failure_gets_one_same_fingerprint_retry(tmp_pat
     assert runner.requeue_recoverable_talks(date, state) == 0
 
 
-def test_selected_talk_retry_respects_lifetime_cap_after_pipeline_change(tmp_path, monkeypatch):
+def test_selected_talk_relevant_fix_bypasses_exhausted_legacy_lifetime_cap(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"
     date_dir = rec_root / date
@@ -3914,8 +3914,31 @@ def test_selected_talk_retry_respects_lifetime_cap_after_pipeline_change(tmp_pat
         ],
     }
 
-    assert runner.requeue_recoverable_talks(date, state) == 0
-    assert state["pending_talk"] == []
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["picks"] == []
+    assert state["pending_talk"][0]["talk_repair_retry_count"] == 4
+
+
+def test_failure_scoped_talk_fingerprint_ignores_unrelated_graph_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    for relative in (
+        "scripts/produce_slice_package.py",
+        "src/autoslice/jingting_chunker.py",
+        "src/autoslice/subtitle_timing_qa.py",
+        "assets/lidousha/topic_entity_graph.json",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative, encoding="utf-8")
+    baseline = runner.talk_failure_recovery_fingerprint("content_boundary", "candidate")
+
+    graph = tmp_path / "assets/lidousha/topic_entity_graph.json"
+    graph.write_text("unrelated graph update", encoding="utf-8")
+    assert runner.talk_failure_recovery_fingerprint("content_boundary", "candidate") == baseline
+
+    producer = tmp_path / "scripts/produce_slice_package.py"
+    producer.write_text("boundary fix", encoding="utf-8")
+    assert runner.talk_failure_recovery_fingerprint("content_boundary", "candidate") != baseline
 
 
 def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):

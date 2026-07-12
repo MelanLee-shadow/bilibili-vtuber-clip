@@ -388,6 +388,48 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
     return "sha256:" + hasher.hexdigest()
 
 
+def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: str) -> str:
+    """Hash only the code/assets capable of repairing a classified failure.
+
+    A broad graph/crawler edit must not wake a speaker failure, while a real
+    boundary or speaker fix must still earn a recovery attempt even after the
+    old global lifetime counter was exhausted.  Legacy unclassified records
+    use the historical full fingerprint once; the fresh attempt then persists
+    a scoped identity.
+    """
+
+    if failure_kind not in {"content_boundary", "speaker_evidence", "runtime_prerequisite"}:
+        return talk_pipeline_fingerprint(candidate_id)
+    if failure_kind == "content_boundary":
+        relatives = (
+            "scripts/produce_slice_package.py",
+            "src/autoslice/jingting_chunker.py",
+            "src/autoslice/subtitle_timing_qa.py",
+        )
+    else:
+        relatives = (
+            "scripts/produce_slice_package.py",
+            "src/autoslice/speaker_finalizer.py",
+            "assets/lidousha/voiceprint_profile.v1.json",
+        )
+    paths = [REPO_ROOT / relative for relative in relatives]
+    if failure_kind in {"speaker_evidence", "runtime_prerequisite"}:
+        override = candidate_speaker_override_path(candidate_id)
+        if override is not None:
+            paths.append(override)
+    hasher = hashlib.sha256()
+    hasher.update(f"talk-failure-recovery.v1\0{failure_kind}\0".encode("utf-8"))
+    for path in sorted(paths, key=lambda item: str(item)):
+        try:
+            relative = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            relative = str(path)
+        hasher.update(relative.encode("utf-8") + b"\0")
+        hasher.update(path.read_bytes() if path.is_file() else b"MISSING")
+        hasher.update(b"\0")
+    return "sha256:" + hasher.hexdigest()
+
+
 def song_selector_env(date: str) -> dict[str, str]:
     env = child_env_for_date(date)
     env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
@@ -1149,6 +1191,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     result.update(read_publish_meta(out_root / cid))
     if completed.returncode != 0:
         result.update(classify_talk_failure(attempt_output))
+        result["failure_recovery_fingerprint"] = talk_failure_recovery_fingerprint(
+            str(result["failure_kind"]), cid
+        )
         if result["failure_recoverable"]:
             retry_epoch = int(time.time()) + SONG_INFRA_RETRY_BASE_SECONDS
             result["next_retry_at_epoch"] = retry_epoch
@@ -5714,12 +5759,18 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         cid = str(record.get("candidate_id") or record.get("cid") or "")
         try:
             current = talk_pipeline_fingerprint(cid)
+            current_recovery = talk_failure_recovery_fingerprint(
+                record.get("failure_kind"), cid
+            )
         except ValueError:
             kept.append(record)
             continue
         retry_count = int(record.get("talk_repair_retry_count") or 0)
         transient_count = int(record.get("talk_transient_retry_count") or 0)
-        changed = record.get("pipeline_fingerprint") != current
+        recorded_recovery = record.get("failure_recovery_fingerprint") or record.get(
+            "pipeline_fingerprint"
+        )
+        changed = recorded_recovery != current_recovery
         next_retry_at = record.get("next_retry_at_epoch")
         infrastructure_retry = bool(
             record.get("failure_recoverable") is True
@@ -5736,7 +5787,11 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             not cid
             or cid in existing_pending
             or not (changed or transient)
-            or (retry_count >= TALK_REPAIR_LIFETIME_RETRY_CAP and not infrastructure_retry)
+            or (
+                retry_count >= TALK_REPAIR_LIFETIME_RETRY_CAP
+                and not infrastructure_retry
+                and not changed
+            )
         ):
             kept.append(record)
             continue
@@ -5786,6 +5841,10 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 "status": record.get("status"),
                 "pipeline_fingerprint": record.get("pipeline_fingerprint"),
                 "superseded_by": current,
+                "failure_recovery_fingerprint": record.get(
+                    "failure_recovery_fingerprint"
+                ),
+                "superseded_recovery_fingerprint": current_recovery,
                 "talk_repair_retry_count": retry_count,
                 "talk_transient_retry_count": transient_count,
                 "retry_reason": item["retry_reason"],
