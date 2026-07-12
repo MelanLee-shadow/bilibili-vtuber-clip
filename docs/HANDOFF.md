@@ -20,6 +20,7 @@
 
 - 隔离 BASE 为 `/opt/bilive/autoslice/evals/community-latest-20260712`，最终代码快照为 `repo-34b9b26`。systemd transient timer `autoslice-blind-20260711-12-34b9b26.timer` 处于 active/waiting，每次完整 tick 结束 10 分钟后再调用正式 `free_session_autoslice.py --once`；使用 `runner.lock` 单飞、`AUTOSLICE_HUMAN_TRUTH_MODE=withheld`、固定机器专名快照，仅可见 7/11 与 7/12 录像目录。
 - 旧的一次性 7/11 driver PID 1696379 尚在自然收尾时，timer 只做 PID guard 后立即跳过；它退出后，timer 自动把旧隔离 repo 的已成功交付复制到新 repo，然后由 tick 自行重排旧指纹的边界/声纹失败并处理 7/12。agent 不再轮询子阶段或日志。
+- Codex thread heartbeat `vtuber-slice-latest-blind-artifact-check` 每 15 分钟只读两份日期 state 与最终 summary/media；未收敛时不做任何运行面动作，收敛后才停隔离 timer、做最终验收并删除自身。
 
 ### 阻塞
 
