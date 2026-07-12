@@ -3,6 +3,37 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-11（续六）：偏航 worktree 隔离 + 当前生产真相复核
+
+### 目标
+
+接管上一 agent 留下的多 worktree 现场，先恢复干净、可逆的 Git 状态，再从 `free` 真实运行面确认当前部署、7/10 批次终态和下一条主线；本轮不上传、不重新部署、不摘 `DISABLED`。
+
+### 已完成
+
+- **8 个 worktree 已全部恢复 clean**。已验证但被后续超集取代的 `codex/campp-perf-fix` 两文件 WIP 隔离在 stash `42e848c9a9e907f529b8738fffe086c7624e858c`；明显偏航的 `codex/speaker-review-corrections` 大型实验（124 文件、约 112k 新增行）及其生成残留分别隔离在 stashes `6419723eb3e3615ec7db38c0c83716c64c0a6be9`、`43ead04413139ba171d2f3aa72629f4ab66fd37f`。三份均可恢复，但不属于当前生产主线。
+- **主 worktree 污染根因已修**：Mac launchd 每 30 分钟拉取的 `reports/slice_monitor/autoslice_free/` 是 disposable mirror，却被上传审计证据的全局反忽略规则重新暴露。已删除本地 146MB 镜像，并在 main commit `14cdaf0` 只对该 mirror 重新忽略；canonical 上传证据目录不受影响。
+- **生产真相已更新**：`free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` 当前为 `0f31119f3d1f1d56fc77639fceaac8969792084d`（2026-07-11T09:35:50Z），是 `2246f5c` CAM++ / speaker-final 超集之后的后续 authority、frozen resume、song self-heal 和 cover repair 集成，不再是下节记载的旧部署点。
+- **当前代码确定性验绿**：在干净的 `codex/july10-song-selfheal @ 0f31119` 运行 `python3 -m pytest -q`，结果 **728 passed in 18.59s**；旧 `.pytest_cache` 中两个 `lastfailed` nodeid 在当前测试文件已不存在，属于陈旧缓存，不是当前失败。
+- **7/10 真实交付终态**：远端 `review_ready_with_failures`；talk 为 5 条 `review_ready` + 1 条真实 `boundary_unrepairable`，song 为 1 条 `review_ready` + 3 条 blocked + 2 条 failed。6 条交付物均有 MP4、SRT 和 `REPAIRED_AI_COVER / VALID_BOUND` 封面，早先 CPA `gpt-image-2` blocker 已解除。无上传进程或本会话后台进程。
+
+### 进行中（含后台进程）
+
+- 无 agent 遗留进程。free cron 仍每 10 分钟触发，但 `/opt/bilive/autoslice/DISABLED` 自 09:35Z 在位，runner 每轮只记录 paused；上传面仍关闭。
+
+### 阻塞
+
+- **恢复无人值守前的唯一运行面 blocker 是 `DISABLED`**。本轮没有授权移除；应在接受当前生产基线、下一场直播前由验收流程明确摘除。
+- **Git 集成仍未收口**：生产 `0f31119` 与 main 已明显分叉；不能把隔离的 112k 行实验 stash 当成待合并内容，也不能从旧 `2246f5c` 文档状态推断当前生产。
+- 6 条 review package 是否接受、是否逐条上传仍由 Ivan 决定；本轮没有上传授权。
+
+### 下一步
+
+1. 以 **`0f31119` 为当前生产基线**审 7/10 的 5 条谈话 + 1 条歌切；发现具体字幕/说话人/封面问题时走窄修复，不恢复 binary-v4 大型实验 stash。
+2. 新建干净集成面，审慎把 main 独有提交与 `0f31119` 汇合；先做 diff/冲突审查和全量测试，再决定是否形成下一部署 commit。
+3. 集成基线被接受后、下一场直播前移除 `free:/opt/bilive/autoslice/DISABLED`，随后观察一次自然 cron end-to-end；这一步需要明确运行面授权。
+4. 保持 no-upload；任何发布继续要求逐条授权和 hash-bound `AUTO_UPLOAD` manifest。
+
 ## 2026-07-11（续五）：CAM++ speaker_finalizer O(N²) 挂死修复 + speaker-final 超集部署（2246f5c）+ 2026-07-10 批次全 5 条谈话恢复
 
 ### 目标
