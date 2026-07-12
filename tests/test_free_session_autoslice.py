@@ -57,6 +57,27 @@ def test_child_env_pins_timely_snapshot_path_and_hash(tmp_path, monkeypatch):
     assert env["LIDOUSHA_TERM_AS_OF"] == "2026-07-10"
 
 
+def test_child_env_prefers_runtime_crawler_snapshot_without_dirtying_repo(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    base = tmp_path / "runtime"
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
+    committed = repo / "assets/lidousha/timely_terms.json"
+    runtime = base / "state/timely_terms.json"
+    committed.parent.mkdir(parents=True)
+    runtime.parent.mkdir(parents=True)
+    committed.write_bytes(b'{"source":"committed"}\n')
+    runtime.write_bytes(b'{"source":"crawler"}\n')
+
+    env = runner.child_env_for_date("2026-07-12")
+
+    assert env["LIDOUSHA_TIMELY_TERMS"] == str(runtime.resolve())
+    assert env["LIDOUSHA_TIMELY_TERMS_SHA256"] == (
+        "sha256:" + hashlib.sha256(runtime.read_bytes()).hexdigest()
+    )
+
+
 def test_safe_name_sanitizes_and_falls_back():
     assert safe_name("百合是工作？/她当场*不买书", "cid") == "百合是工作？她当场不买书"
     assert safe_name("", "cid") == "cid"
@@ -1585,7 +1606,9 @@ def test_failed_song_selector_cannot_reuse_stale_summary_or_deliver(tmp_path, mo
     anchor_start, anchor_end, duration = 50_000, 100_000, 200_000
     window_start = anchor_start - runner.SONG_WINDOW_PRE_MS
     window_end = anchor_end + runner.SONG_WINDOW_POST_MS
-    (out_dir / f"{cid}_source.mp4").write_bytes(b"current-window")
+    runner.song_window_media_path(
+        out_dir, cid, "", window_start, window_end
+    ).write_bytes(b"current-window")
 
     stale_video = tmp_path / "stale.burned.mp4"
     stale_video.write_bytes(b"stale-but-valid")
@@ -1689,8 +1712,11 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
     segment = tmp_path / "segment.mp4"
     segment.write_bytes(b"segment")
     anchor_start, anchor_end, duration = 50_000, 100_000, 200_000
-    (out_dir / f"{cid}_source.mp4").write_bytes(b"tight")
-    (out_dir / f"{cid}_full_source.mp4").write_bytes(b"full")
+    tight_start = max(0, anchor_start - runner.SONG_WINDOW_PRE_MS)
+    tight_end = min(duration, anchor_end + runner.SONG_WINDOW_POST_MS)
+    full_start, full_end = runner.song_proof_retry_window(anchor_start, anchor_end, duration)
+    runner.song_window_media_path(out_dir, cid, "", tight_start, tight_end).write_bytes(b"tight")
+    runner.song_window_media_path(out_dir, cid, "_full", full_start, full_end).write_bytes(b"full")
 
     def fake_slice_srt(_source, _start, _end, destination):
         destination.write_text("1\n00:00:00,000 --> 00:00:01,000\n歌词\n", encoding="utf-8")
@@ -1795,8 +1821,12 @@ def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, m
 
     segment = tmp_path / "segment.mp4"
     segment.write_bytes(b"segment")
-    for tag in ("", "_full"):
-        (out_dir / f"{cid}{tag}_source.mp4").write_bytes(tag.encode() or b"tight")
+    anchor_start, anchor_end, duration = 50_000, 100_000, 200_000
+    tight_start = max(0, anchor_start - runner.SONG_WINDOW_PRE_MS)
+    tight_end = min(duration, anchor_end + runner.SONG_WINDOW_POST_MS)
+    full_start, full_end = runner.song_proof_retry_window(anchor_start, anchor_end, duration)
+    runner.song_window_media_path(out_dir, cid, "", tight_start, tight_end).write_bytes(b"tight")
+    runner.song_window_media_path(out_dir, cid, "_full", full_start, full_end).write_bytes(b"full")
 
     calls = 0
 
@@ -1839,8 +1869,8 @@ def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, m
             "cid": cid,
             "segment_path": str(segment),
             "seg_dur_ms": 200_000,
-            "anchor_start_ms": 50_000,
-            "anchor_end_ms": 100_000,
+            "anchor_start_ms": anchor_start,
+            "anchor_end_ms": anchor_end,
             "danmaku": 18,
             "hook": "测试",
             "preview": "《测试歌》",
@@ -3196,6 +3226,79 @@ def test_transient_agy_failure_gets_one_same_fingerprint_retry(tmp_path, monkeyp
     assert state["pending_song"][0]["transient_retry_count"] == 1
 
     state = {"pending_song": [], "songs": [{**record, "transient_retry_count": 1}]}
+    assert runner.requeue_recoverable_songs(date, state) == 0
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "expected"),
+    [
+        ("HTTP Error 429: Too Many Requests", "CPA_RATE_LIMITED"),
+        ("CPA_LLM_JUDGE_MODEL_DOWN: luna", "CPA_MODEL_DOWN"),
+        ("direct LLM call failed: HTTP Error 503", "CPA_UPSTREAM_5XX"),
+        ("request timed out", "CPA_UPSTREAM_TIMEOUT"),
+        ("semantic decision: BLOCK", None),
+    ],
+)
+def test_song_selector_transient_diagnostics_are_structured(diagnostic, expected):
+    assert runner.classify_song_selector_transient(diagnostic) == expected
+
+
+def test_rate_limited_song_retries_across_ticks_with_exponential_backoff(tmp_path, monkeypatch):
+    date = "2026-07-12"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260712-19-00-17.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    monkeypatch.setattr(runner.time, "time", lambda: 10_000)
+    record = {
+        "candidate_id": "song_rate_limited",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "failed",
+        "reason_codes": ["CPA_RATE_LIMITED"],
+        "pipeline_fingerprint": "sha256:same",
+        "transient_retry_count": 2,
+        "next_retry_at_epoch": 10_001,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs(date, state) == 0
+    record["next_retry_at_epoch"] = 9_999
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["transient_retry_count"] == 3
+    assert state["pending_song"][0]["retry_reason"] == "transient_infrastructure_failure"
+    assert runner.song_infra_retry_delay_seconds(0) == 15 * 60
+    assert runner.song_infra_retry_delay_seconds(20) == runner.SONG_INFRA_RETRY_MAX_SECONDS
+
+
+def test_rate_limited_song_retry_cap_is_terminal_for_same_pipeline(tmp_path, monkeypatch):
+    date = "2026-07-12"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260712-19-00-17.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    record = {
+        "candidate_id": "song_rate_limited",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "failed",
+        "reason_codes": ["CPA_RATE_LIMITED"],
+        "pipeline_fingerprint": "sha256:same",
+        "transient_retry_count": runner.SONG_INFRA_RETRY_CAP,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
     assert runner.requeue_recoverable_songs(date, state) == 0
 
 

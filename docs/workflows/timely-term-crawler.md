@@ -101,6 +101,23 @@ Repeat from cache without network:
 python3 scripts/crawl_timely_terms.py --offline --dry-run
 ```
 
+Blind evaluation must exclude reviewed seed terms so Ivan's corrections cannot
+leak back through the terminology prior:
+
+```bash
+python3 scripts/crawl_timely_terms.py \
+  --offline \
+  --exclude-reviewed-seed \
+  --write /tmp/timely_terms.machine-only.json
+AUTOSLICE_HUMAN_TRUTH_MODE=withheld \
+AUTOSLICE_BLIND_TIMELY_TERMS=/tmp/timely_terms.machine-only.json \
+python3 scripts/free_session_autoslice.py --once
+```
+
+The production deploy installs a daily 06:17 bounded refresh into
+`/opt/bilive/autoslice/state/timely_terms.json`. The runner prefers that runtime
+snapshot over the committed fallback without modifying the deployed Git tree.
+
 `--write` validates the complete payload before replacement, fsyncs the new
 file, and is idempotent: identical bytes report `"changed": false`.
 

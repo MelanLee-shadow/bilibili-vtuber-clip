@@ -499,6 +499,8 @@ def subtitle_principles() -> str:
 def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
     """Render only approved term fields from a validated, date-bounded snapshot."""
 
+    if os.environ.get("LIDOUSHA_DISABLE_TIMELY_TERMS") == "1":
+        return ""
     raw = _read_first(TIMELY_TERMS_PATHS)
     if not raw:
         return ""

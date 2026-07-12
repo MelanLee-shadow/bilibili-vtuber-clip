@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=ROOT / "assets/lidousha/timely_term_seeds.json",
     )
     parser.add_argument(
+        "--exclude-reviewed-seed",
+        action="store_true",
+        help="blind evaluation: exclude the reviewed/manual seed adapter",
+    )
+    parser.add_argument(
         "--cache-dir",
         type=Path,
         default=ROOT / ".cache/timely-term-crawler",
@@ -90,7 +95,9 @@ def main(argv: list[str] | None = None) -> int:
             offline=args.offline,
             now=now,
         )
-        adapters = [SeedSnapshotAdapter(args.seed), anilist, manga, bangumi, *rss]
+        adapters = [anilist, manga, bangumi, *rss]
+        if not args.exclude_reviewed_seed:
+            adapters.insert(0, SeedSnapshotAdapter(args.seed))
         result = crawl(
             client=client,
             window=window,

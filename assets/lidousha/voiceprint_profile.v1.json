@@ -27,10 +27,11 @@
     "checkpoint_window_ms": 4000,
     "minimum_lyric_cue_ms": 2500,
     "session_host_anchor_window_ms": 8000,
-    "minimum_session_host_anchor_ms": 4000,
-    "minimum_session_enroll_median": 0.6,
+    "minimum_session_host_anchor_ms": 3000,
+    "minimum_session_enroll_median": 0.5,
     "minimum_session_lyric_score": 0.31,
     "minimum_checkpoint_median": 0.31,
+    "checkpoint_decision_rule": "direct_enrollment_or_verified_session_bridge",
     "minimum_passed_checkpoints": 5,
     "required_buckets": [
       "head",

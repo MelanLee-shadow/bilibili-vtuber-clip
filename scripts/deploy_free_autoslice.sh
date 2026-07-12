@@ -557,13 +557,19 @@ install_atomic \
     /opt/bilive/app/tmp_manual_upload/do_upload.sh \
     700
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
+timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
 existing_crontab=$(crontab -l 2>/dev/null || true)
 {
-    printf '%s\n' "$existing_crontab" | grep -Fv '/opt/bilive/autoslice/free_mount_watchdog.sh' || true
+    printf '%s\n' "$existing_crontab" \
+        | grep -Fv '/opt/bilive/autoslice/free_mount_watchdog.sh' \
+        | grep -Fv 'scripts/crawl_timely_terms.py' || true
     printf '%s\n' "$watchdog_cron"
+    printf '%s\n' "$timely_terms_cron"
 } | crontab -
 crontab -l | grep -Fxq "$watchdog_cron"
 test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
+crontab -l | grep -Fxq "$timely_terms_cron"
+test "$(crontab -l | grep -Fxc "$timely_terms_cron")" -eq 1
 REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one

@@ -137,6 +137,9 @@ TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; sl
 SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one date
 SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute date cap including superseded attempts;
                                 # permits two self-healing generations after the initial run
+SONG_INFRA_RETRY_CAP = 6
+SONG_INFRA_RETRY_BASE_SECONDS = 15 * 60
+SONG_INFRA_RETRY_MAX_SECONDS = 6 * 60 * 60
 TALK_REPAIR_LIFETIME_RETRY_CAP = 3  # all retries of one already-selected talk
 # A deployment fingerprint is provenance, not blanket authorization to replay
 # every historical failure.  Ordinary cron maintenance begins at this horizon;
@@ -149,6 +152,14 @@ SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
     {
         "SONG_BACKGROUND_PLAYBACK_ONLY",
         "SONG_NOT_LIDOUSHA_SINGING",
+    }
+)
+SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
+    {
+        "CPA_RATE_LIMITED",
+        "CPA_MODEL_DOWN",
+        "CPA_UPSTREAM_5XX",
+        "CPA_UPSTREAM_TIMEOUT",
     }
 )
 # Delivered-to-review talk statuses.  "ok" (pre-2026-07-09) and "quarantine"
@@ -259,11 +270,22 @@ def pipeline_fingerprint() -> str:
     return "sha256:" + hasher.hexdigest()
 
 
+def human_truth_mode() -> str:
+    """Select whether reviewed candidate truth may enter generation inputs."""
+
+    mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
+    if mode not in {"delivery", "withheld"}:
+        raise ValueError("AUTOSLICE_HUMAN_TRUTH_MODE must be delivery or withheld")
+    return mode
+
+
 def candidate_text_override_path(candidate_id: str) -> Path | None:
     """Return the one canonical candidate override, rejecting path indirection."""
 
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
         raise ValueError("unsafe candidate id for subtitle text override")
+    if human_truth_mode() == "withheld":
+        return None
     root = REPO_ROOT / "assets" / "lidousha" / "subtitle_text_overrides"
     path = root / f"{candidate_id}.text.v1.json"
     if not path.exists():
@@ -280,6 +302,8 @@ def candidate_subtitle_regression_path(candidate_id: str) -> Path | None:
 
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
         raise ValueError("unsafe candidate id for subtitle regression")
+    if human_truth_mode() == "withheld":
+        return None
     root = REPO_ROOT / "assets" / "lidousha" / "subtitle_regressions"
     path = root / f"{candidate_id}.subtitle-regression.v1.json"
     if not path.exists():
@@ -307,6 +331,11 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
     # no-override case.  Adding/removing this candidate's truth asset still
     # changes/reverts its fingerprint without waking every legacy talk once.
     if not truth_assets:
+        if human_truth_mode() == "withheld":
+            hasher = hashlib.sha256()
+            hasher.update(b"talk-pipeline-fingerprint.v4\0")
+            hasher.update(base.encode("utf-8") + b"\0human_truth=withheld\0")
+            return "sha256:" + hasher.hexdigest()
         return base
     hasher = hashlib.sha256()
     hasher.update(b"talk-pipeline-fingerprint.v3\0")
@@ -368,12 +397,28 @@ def child_env() -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_env_file(CPA_ENV))
     env.setdefault("HOME", "/root")
-    timely_terms = REPO_ROOT / "assets" / "lidousha" / "timely_terms.json"
-    if timely_terms.is_file():
+    truth_mode = human_truth_mode()
+    blind_timely_terms = os.environ.get("AUTOSLICE_BLIND_TIMELY_TERMS")
+    configured_timely_terms = os.environ.get("AUTOSLICE_TIMELY_TERMS")
+    runtime_timely_terms = BASE / "state" / "timely_terms.json"
+    committed_timely_terms = REPO_ROOT / "assets" / "lidousha" / "timely_terms.json"
+    if truth_mode == "withheld":
+        timely_terms = Path(blind_timely_terms) if blind_timely_terms else None
+    elif configured_timely_terms:
+        timely_terms = Path(configured_timely_terms)
+    elif runtime_timely_terms.is_file() and not runtime_timely_terms.is_symlink():
+        timely_terms = runtime_timely_terms
+    else:
+        timely_terms = committed_timely_terms
+    if timely_terms is not None and timely_terms.is_file() and not timely_terms.is_symlink():
         env["LIDOUSHA_TIMELY_TERMS"] = str(timely_terms.resolve())
         env["LIDOUSHA_TIMELY_TERMS_SHA256"] = (
             "sha256:" + _sha256_regular_file(timely_terms)
         )
+    elif truth_mode == "withheld":
+        env["LIDOUSHA_DISABLE_TIMELY_TERMS"] = "1"
+        env.pop("LIDOUSHA_TIMELY_TERMS", None)
+        env.pop("LIDOUSHA_TIMELY_TERMS_SHA256", None)
     return env
 
 
@@ -685,7 +730,10 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
     review summary can show WHY each clip was picked (Ivan 2026-07-06).
     """
     from scripts.run_auto_review_shadow_pipeline import _parse_srt
-    from src.autoslice.full_session_candidate_selector import select_full_session_candidates
+    from src.autoslice.full_session_candidate_selector import (
+        select_fallback_session_candidates,
+        select_full_session_candidates,
+    )
     from src.autoslice.llm_client import LlmCallError, LlmConfig, build_llm_call
     from src.autoslice.semantic_candidate_selector import select_semantic_session_candidates
 
@@ -715,7 +763,7 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
         # Deterministic song supplement: recall's candidate cap squeezes songs
         # out on song-heavy streams (first real run: 4+ songs sung, 1 caught).
         try:
-            supplement = select_full_session_candidates(cues, max_candidates=8)
+            supplement = select_fallback_session_candidates(cues, max_candidates=8)
         except Exception:  # noqa: BLE001
             supplement = []
         for cand in supplement:
@@ -732,8 +780,17 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
         return candidates, "semantic_recall", extras
     except LlmCallError as exc:
         log(f"semantic recall failed ({exc}); falling back to deterministic lanes")
-        fallback = select_full_session_candidates(cues, max_candidates=PER_SEGMENT_CANDIDATES)
-        return fallback, "deterministic_fallback", {}
+        primary = select_full_session_candidates(cues, max_candidates=PER_SEGMENT_CANDIDATES)
+        fallback = select_fallback_session_candidates(cues, max_candidates=8)
+        for candidate in fallback:
+            if any(
+                min(candidate.anchor.anchor_end_ms, existing.anchor.anchor_end_ms)
+                > max(candidate.anchor.anchor_start_ms, existing.anchor.anchor_start_ms)
+                for existing in primary
+            ):
+                continue
+            primary.append(candidate)
+        return primary, "deterministic_fallback", {}
 
 
 def read_publish_meta(work_dir: Path) -> dict:
@@ -771,6 +828,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     spec = {
         "candidate_id": cid,
         "date": date,
+        "human_truth_mode": human_truth_mode(),
         "output_root": str(out_root),
         "delivery_name": delivery_name,
         "selection_hook": item.get("hook", ""),
@@ -1028,6 +1086,50 @@ def fresh_song_selector_dir(out_dir: Path, tag: str) -> Path:
     history_dir = out_dir / f"song_selector{tag}"
     history_dir.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix="attempt-", dir=history_dir))
+
+
+def song_window_media_path(
+    out_dir: Path,
+    candidate_id: str,
+    tag: str,
+    start_ms: int,
+    end_ms: int,
+) -> Path:
+    """Return an interval-bound path for a materialized song proof window.
+
+    The old fixed ``<candidate><tag>_source.mp4`` name let a later retry reuse
+    bytes cut for a different interval.  The SRT and declared duration then
+    described the new interval while AGY/CAM++ read the old media.  Bind the
+    exact source interval into the filename so stale windows remain available
+    for forensics but can never satisfy a different attempt.
+    """
+
+    lane = tag.removeprefix("_") or "tight"
+    return out_dir / f"{candidate_id}_{lane}_{start_ms}_{end_ms}_source.mp4"
+
+
+def classify_song_selector_transient(log_text: str) -> str | None:
+    """Turn selector/provider diagnostics into a stable retry reason code."""
+
+    upper = log_text.upper()
+    if "TOO MANY REQUESTS" in upper or re.search(
+        r"(?:HTTP(?: ERROR)?|STATUS(?: CODE)?|RESPONSE)\D{0,12}429\b", upper
+    ):
+        return "CPA_RATE_LIMITED"
+    if "CPA_LLM_JUDGE_MODEL_DOWN" in upper:
+        return "CPA_MODEL_DOWN"
+    if re.search(r"HTTP(?: ERROR)?\s*(?:5\d\d|ERROR 5\d\d)", upper):
+        return "CPA_UPSTREAM_5XX"
+    if "TIMEOUT" in upper or "TIMED OUT" in upper:
+        return "CPA_UPSTREAM_TIMEOUT"
+    return None
+
+
+def song_infra_retry_delay_seconds(completed_retry_count: int) -> int:
+    """Exponential cross-tick backoff, capped so a provider outage stays bounded."""
+
+    exponent = max(0, int(completed_retry_count))
+    return min(SONG_INFRA_RETRY_MAX_SECONDS, SONG_INFRA_RETRY_BASE_SECONDS * (2**exponent))
 
 
 def record_is_song(entry: dict) -> bool:
@@ -2600,8 +2702,10 @@ def produce_song(date: str, item: dict) -> dict:
         result = {"candidate_id": cid, "segment": segment.name, "start_ms": start, "end_ms": end,
                   "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1,
                   "pipeline_fingerprint": pipeline_fingerprint(),
-                  "transient_retry_count": int(item.get("transient_retry_count") or 0)}
-        window_mp4 = out_dir / f"{cid}{tag}_source.mp4"
+                  "transient_retry_count": int(item.get("transient_retry_count") or 0),
+                  "anchor_start_ms": item.get("anchor_start_ms"),
+                  "anchor_end_ms": item.get("anchor_end_ms")}
+        window_mp4 = song_window_media_path(out_dir, cid, tag, start, end)
         if not window_mp4.is_file():
             cut = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -2627,6 +2731,10 @@ def produce_song(date: str, item: dict) -> dict:
         # the subtitle authority for songs anyway.
         selector_dir = fresh_song_selector_dir(out_dir, tag)
         log_path = BASE / "logs" / f"{date}_{cid}.log"
+        try:
+            log_offset = log_path.stat().st_size
+        except OSError:
+            log_offset = 0
         with open(log_path, "a", encoding="utf-8") as sink:
             selector_env = song_selector_env(date)
             selector_command = [
@@ -2685,6 +2793,13 @@ def produce_song(date: str, item: dict) -> dict:
                 check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
                 cwd=str(REPO_ROOT), env=selector_env,
             )
+        try:
+            with log_path.open("r", encoding="utf-8", errors="replace") as source:
+                source.seek(log_offset)
+                invocation_log = source.read()
+        except OSError:
+            invocation_log = ""
+        transient_code = classify_song_selector_transient(invocation_log)
         result["rc"] = completed.returncode
         result["log"] = str(log_path)
         decision = None
@@ -2719,7 +2834,19 @@ def produce_song(date: str, item: dict) -> dict:
                 pass
         result["decision"] = decision
         completion = song_completion_evidence(summary_record)
-        result["reason_codes"] = list(dict.fromkeys([*reasons, *completion["reason_codes"]]))
+        result["reason_codes"] = list(
+            dict.fromkeys(
+                [*reasons, *completion["reason_codes"], *([transient_code] if transient_code else [])]
+            )
+        )
+        if transient_code:
+            retry_count = int(result.get("transient_retry_count") or 0)
+            next_retry_epoch = int(time.time()) + song_infra_retry_delay_seconds(retry_count)
+            result["transient_failure_code"] = transient_code
+            result["next_retry_at_epoch"] = next_retry_epoch
+            result["next_retry_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(next_retry_epoch)
+            )
         result["window_classified_song"] = is_song
         result["song_completion_evidence"] = completion
         artifacts = song_delivery_artifacts(summary_record)
@@ -4768,7 +4895,19 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             kept.append(record)
             continue
         changed = record.get("pipeline_fingerprint") != current
-        transient = (
+        retry_count = int(record.get("transient_retry_count") or 0)
+        infra_transient = bool(reasons & SONG_INFRA_TRANSIENT_REASON_CODES)
+        next_retry_at = record.get("next_retry_at_epoch")
+        infra_retry_due = (
+            infra_transient
+            and retry_count < SONG_INFRA_RETRY_CAP
+            and (
+                not isinstance(next_retry_at, (int, float))
+                or isinstance(next_retry_at, bool)
+                or time.time() >= float(next_retry_at)
+            )
+        )
+        legacy_transient = (
             bool(
                 reasons
                 & {
@@ -4778,8 +4917,9 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                     "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
                 }
             )
-            and int(record.get("transient_retry_count") or 0) < 1
+            and retry_count < 1
         )
+        transient = infra_retry_due or legacy_transient
         cid = str(record.get("candidate_id") or "")
         if not cid or cid in existing_pending or not (changed or transient):
             kept.append(record)
@@ -4808,8 +4948,14 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             "hook": record.get("hook", ""),
             "preview": record.get("preview", ""),
             "danmaku": int(record.get("danmaku") or 0),
-            "transient_retry_count": int(record.get("transient_retry_count") or 0) + (1 if transient else 0),
-            "retry_reason": "pipeline_fingerprint_changed" if changed else "transient_source_context_failure",
+            "transient_retry_count": retry_count + (1 if transient else 0),
+            "retry_reason": (
+                "pipeline_fingerprint_changed"
+                if changed
+                else "transient_infrastructure_failure"
+                if infra_retry_due
+                else "transient_source_context_failure"
+            ),
         }
         requeued.append(item)
         existing_pending.add(cid)

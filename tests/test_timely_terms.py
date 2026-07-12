@@ -80,6 +80,16 @@ def test_normal_yumemita_context_exposes_only_approved_term_fields(tmp_path, mon
         assert forbidden not in context
 
 
+def test_explicit_blind_mode_disables_even_a_valid_reviewed_snapshot(tmp_path, monkeypatch):
+    snapshot = _write_snapshot(tmp_path, _valid_snapshot())
+    monkeypatch.setattr(jingting, "TIMELY_TERMS_PATHS", [str(snapshot)])
+    monkeypatch.setenv("LIDOUSHA_DISABLE_TIMELY_TERMS", "1")
+
+    assert jingting.timely_terms_context(
+        as_of=dt.datetime(2026, 7, 10, 12, tzinfo=dt.timezone.utc)
+    ) == ""
+
+
 def test_pinned_snapshot_hash_accepts_exact_bytes_and_rejects_drift(tmp_path, monkeypatch):
     snapshot = _write_snapshot(tmp_path, _valid_snapshot())
     monkeypatch.setattr(jingting, "TIMELY_TERMS_PATHS", [str(snapshot)])

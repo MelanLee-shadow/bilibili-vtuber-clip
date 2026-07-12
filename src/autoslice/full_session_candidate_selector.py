@@ -153,6 +153,13 @@ def select_full_session_candidates(
                 text_preview=text_preview,
                 content_type_hint="song" if song_like else "talk",
             )
+            if song_like and _duplicates_unresolved_song_fragment(candidate, selected):
+                # This legacy setup/payoff selector can split one continuous
+                # lyric run into several fragments.  Collapse only very close
+                # fragments here; semantic and visual song lanes use the
+                # ordinary real-overlap rule below, so distinct adjacent songs
+                # with their own title evidence are not swallowed.
+                continue
             if _overlaps_selected(candidate, selected):
                 continue
             selected.append(candidate)
@@ -429,9 +436,17 @@ def _overlaps_selected(candidate: FullSessionCandidate, selected: Sequence[FullS
     end = candidate.boundary.resolved_end_ms
     for existing in selected:
         if candidate.content_type_hint == "song" and existing.content_type_hint == "song":
-            anchor_gap = candidate.anchor.anchor_start_ms - existing.anchor.anchor_end_ms
-            if anchor_gap < 180_000:
+            overlap = min(
+                candidate.anchor.anchor_end_ms, existing.anchor.anchor_end_ms
+            ) - max(candidate.anchor.anchor_start_ms, existing.anchor.anchor_start_ms)
+            # Song anchors are recall windows, not trusted final boundaries.
+            # Any real temporal overlap is duplicate evidence for the same
+            # performance; merely being adjacent (even by only a few seconds)
+            # is not.  The old <180s gap rule swallowed distinct back-to-back
+            # songs and was asymmetric for candidates emitted out of order.
+            if overlap > 0:
                 return True
+            continue
         if existing.content_type_hint == "song" and candidate.content_type_hint != "song":
             anchor_gap = candidate.anchor.anchor_start_ms - existing.anchor.anchor_end_ms
             if 0 <= anchor_gap < 180_000 and _is_song_continuation_like(candidate.text_preview):
@@ -441,6 +456,25 @@ def _overlaps_selected(candidate: FullSessionCandidate, selected: Sequence[FullS
             continue
         shorter = min(end - start, existing.boundary.resolved_end_ms - existing.boundary.resolved_start_ms)
         if shorter > 0 and overlap / shorter >= 0.5:
+            return True
+    return False
+
+
+def _duplicates_unresolved_song_fragment(
+    candidate: FullSessionCandidate,
+    selected: Sequence[FullSessionCandidate],
+) -> bool:
+    if candidate.content_type_hint != "song":
+        return False
+    for existing in selected:
+        if existing.content_type_hint != "song":
+            continue
+        gap = max(
+            0,
+            max(candidate.anchor.anchor_start_ms, existing.anchor.anchor_start_ms)
+            - min(candidate.anchor.anchor_end_ms, existing.anchor.anchor_end_ms),
+        )
+        if gap <= 12_000:
             return True
     return False
 

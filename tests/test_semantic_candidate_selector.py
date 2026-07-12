@@ -108,6 +108,23 @@ def test_song_candidate_gets_full_source_boundary_redo():
     assert job["timeline"]["context_end_ms"] == cues[-1].source_end_ms
 
 
+def test_distinct_adjacent_semantic_songs_are_not_deduped_by_gap_alone():
+    cues = _cues(count=80)
+
+    def llm(prompt: str) -> str:
+        return _completion(
+            [
+                {"start_cue": 5, "end_cue": 30, "kind": "song", "hook": "画面歌名《第一首》", "confidence": 0.95},
+                {"start_cue": 31, "end_cue": 55, "kind": "song", "hook": "画面歌名《第二首》", "confidence": 0.94},
+            ]
+        )
+
+    selected, _ = select_semantic_session_candidates(cues, llm_call=llm, max_candidates=4)
+
+    assert len(selected) == 2
+    assert [candidate.content_type_hint for candidate in selected] == ["song", "song"]
+
+
 def test_out_of_range_and_too_short_candidates_are_skipped():
     cues = _cues()
 

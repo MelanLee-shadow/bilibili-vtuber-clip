@@ -132,7 +132,7 @@ def _fixture(tmp_path: Path, *, passes: tuple[bool, ...] = (True, False, True, T
                     {"reference_id": reference["id"], "score": score} for reference in reference_specs
                 ],
                 "median_score": score,
-                "session_anchor_score": 0.40,
+                "session_anchor_score": 0.40 if passed else 0.10,
                 "passed": passed,
             }
         )
@@ -208,6 +208,32 @@ def test_valid_hash_bound_ready_claim(tmp_path):
     assert bundle["claim"]["status"] == host_vocal.READY_STATUS
     assert bundle["claim"]["decision"] == host_vocal.READY_DECISION
     assert _verify(bundle) is None
+
+
+def test_verified_session_anchor_bridges_spoken_enrollment_to_singing_checkpoint(tmp_path):
+    bundle = _fixture(tmp_path)
+    checkpoint = bundle["proof"]["checkpoints"][0]
+    for score in checkpoint["scores"]:
+        score["score"] = 0.20
+    checkpoint["median_score"] = 0.20
+    checkpoint["session_anchor_score"] = 0.40
+    checkpoint["passed"] = True
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    assert _verify(bundle) is None
+
+
+def test_three_second_post_song_speech_anchor_is_accepted_without_backfill(tmp_path):
+    bundle = _fixture(tmp_path)
+    alignment = json.loads(bundle["alignment"].read_text(encoding="utf-8"))
+    alignment["audio_alignment_artifacts"]["source_duration_ms"] = (
+        alignment["post_song_talk_start_ms"] + 3_450
+    )
+
+    assert host_vocal._session_host_anchor_position(alignment) == (
+        alignment["post_song_talk_start_ms"],
+        alignment["post_song_talk_start_ms"] + 3_450,
+    )
 
 
 def test_spoken_canonical_rows_never_supply_campp_singing_checkpoints(tmp_path):

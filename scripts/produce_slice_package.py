@@ -696,6 +696,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
+    if truth_mode not in {"delivery", "withheld"}:
+        raise ValueError("AUTOSLICE_HUMAN_TRUTH_MODE must be delivery or withheld")
+    spec_truth_mode = str(spec.get("human_truth_mode") or truth_mode).strip().lower()
+    if spec_truth_mode != truth_mode:
+        raise ValueError("spec human_truth_mode does not match the process truth-isolation mode")
+    if truth_mode == "withheld":
+        leaked_inputs = [
+            name
+            for name, value in (
+                ("--subtitle-text-overrides", args.subtitle_text_overrides),
+                ("--subtitle-regression", args.subtitle_regression),
+                ("--speaker-overrides", args.speaker_overrides),
+                ("spec.subtitle_text_overrides", spec.get("subtitle_text_overrides")),
+                ("spec.subtitle_regression", spec.get("subtitle_regression")),
+                ("spec.speaker_overrides", spec.get("speaker_overrides")),
+            )
+            if value is not None
+        ]
+        if leaked_inputs:
+            raise ValueError(
+                "blind subtitle generation refuses human-truth inputs: " + ", ".join(leaked_inputs)
+            )
     # Time-sensitive terminology must be evaluated as of the recording date,
     # never the processing date.  This prevents future-news leakage when an old
     # stream is repaired later.
