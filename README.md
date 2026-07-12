@@ -52,6 +52,10 @@ container:/app/Videos                      # 原始录播输入
 
 ## 代码入口
 
+- `scripts/crawl_timely_terms.py`：有界的动漫/二次元新闻/漫展专名快照生成器，
+  默认向前看 6 个月、向后回溯 9 个月；详见
+  `docs/workflows/timely-term-crawler.md`。
+
 - `src/autoslice/auto_review.py`：`AUTO_UPLOAD / AUTO_RECUT / DROP / BLOCK / RETRY` 判定核心。
 - `src/autoslice/review_evidence.py`：source-timeline evidence schema。
 - `src/autoslice/source_context_planner.py`：从 anchor 规划 source-context 精听 job。

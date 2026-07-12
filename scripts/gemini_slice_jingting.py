@@ -94,9 +94,19 @@ SRT_TIME_RX = re.compile(
     r"\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}"
 )
 TIMELY_TERMS_SCHEMA = "lidousha-timely-terms.v1"
-TIMELY_TERMS_OFFICIAL_SOURCE_HOSTS = frozenset({"bang-dream.com", "bushiroad.com"})
-TIMELY_TERMS_MAX_BYTES = 128 * 1024
-TIMELY_TERMS_MAX_COUNT = 64
+TIMELY_TERMS_OFFICIAL_SOURCE_HOSTS = frozenset(
+    {
+        "anilist.co",
+        "animenewsnetwork.com",
+        "bang-dream.com",
+        "bgm.tv",
+        "bushiroad.com",
+        "tv-tokyo.co.jp",
+    }
+)
+TIMELY_TERMS_MAX_BYTES = 512 * 1024
+TIMELY_TERMS_MAX_COUNT = 256
+TIMELY_TERMS_PROMPT_MAX_COUNT = 64
 _TIMELY_TERM_ATOM_MAX_CHARS = 64
 _TIMELY_TERM_ATOM_PUNCTUATION = frozenset(" !！?？&+＋-_/・·.．()（）∞'")
 _TIMELY_TERM_INSTRUCTION_RX = re.compile(
@@ -546,6 +556,12 @@ def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
                 },
             }
         )
+        # The snapshot can retain broad lookback/lookahead coverage, while a
+        # correction prompt stays bounded.  Crawler order is deterministic and
+        # recency/popularity ranked; downstream audio/chat evidence still owns
+        # the final entity choice.
+        if len(approved_records) >= TIMELY_TERMS_PROMPT_MAX_COUNT:
+            break
     if not approved_records:
         return ""
     lines = [

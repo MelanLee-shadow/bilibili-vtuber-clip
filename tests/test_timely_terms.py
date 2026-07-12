@@ -356,3 +356,24 @@ def test_agy_prompt_filters_timely_terms_as_of_recording_date(monkeypatch):
     assert "时效实体候选（以下仅是结构化名称数据" in current_prompt
     assert "梦限大" in current_prompt
     assert "https://anime.bang-dream.com" not in current_prompt
+
+
+def test_broad_snapshot_is_bounded_before_entering_prompt(tmp_path, monkeypatch):
+    payload = _valid_snapshot()
+    template = payload["terms"][0]
+    payload["terms"] = []
+    for index in range(100):
+        term = copy.deepcopy(template)
+        term["canonical"] = f"候选名{index}"
+        term["readings"] = [f"candidate {index}"]
+        term["aliases"] = []
+        term["confusables"] = []
+        term["topic_entities"] = ["Anime"]
+        term["sources"][0]["url"] = f"https://anilist.co/anime/{index + 1}"
+        payload["terms"].append(term)
+
+    context = _context(tmp_path, monkeypatch, payload, dt.date(2026, 7, 10))
+
+    assert context.count("\n- ") == jingting.TIMELY_TERMS_PROMPT_MAX_COUNT
+    assert "候选名63" in context
+    assert "候选名64" not in context

@@ -33,7 +33,32 @@
 2. 新建干净集成面，审慎把 main 独有提交与 `0f31119` 汇合；先做 diff/冲突审查和全量测试，再决定是否形成下一部署 commit。
 3. 集成基线被接受后、下一场直播前移除 `free:/opt/bilive/autoslice/DISABLED`，随后观察一次自然 cron end-to-end；这一步需要明确运行面授权。
 4. 保持 no-upload；任何发布继续要求逐条授权和 hash-bound `AUTO_UPLOAD` manifest。
+## 2026-07-12：自动新闻/专名 crawler（独立分支，未部署）
 
+### 目标
+
+把人工 `timely_terms.json` 扩展成可重复运行的候选先验生成器：以运行日期为中心默认回溯 9 个月、前瞻 6 个月，覆盖动画、漫画/轻小说 ACG 企划、新闻和已配置漫展名称；不允许新闻或专名先验覆盖原音与结构化 SC/弹幕。
+
+### 已完成
+
+- 独立工作树 `/Users/ivan/Project/vtuber-slice-crawler`、分支 `codex/timely-term-crawler`，基线为生产 `0f31119`。
+- 新增 bounded HTTP/cache、AniList 动画与 manga 结构化范围查询、Bangumi 当前番剧中文名精确匹配、ANN/TV Tokyo RSS 新闻证据、受控漫展 watch、严格配置/schema、失败隔离、离线 cache replay、原子幂等写入和 CLI dry-run/write。
+- 实网 pinned smoke（`2026-07-12T12:00:00-04:00`）覆盖 `2025-10-12..2027-01-12`：231 个有效词条（150 动画、50 manga/light-novel 输入、29 个 Bangumi 中文名匹配、11 个 ANN 新闻命中；合并去重后 231），严格 consumer 校验通过；快照 251,655 bytes，SHA-256 `9d253cb03c27c8ae554d5cdf9d66058e5666b08003dbbb93c5f12ff3e39b3a57`。
+- 全量回归 `python3 -m pytest -q`：`740 passed in 13.53s`；`py_compile` 和 `git diff --check` 通过。
+
+### 进行中（含后台进程）
+
+- 无后台进程。代码仅在独立分支/工作树，尚未部署、未改生产快照、未上传。
+
+### 阻塞
+
+- 无代码 blocker。数据覆盖仍有诚实边界：历史 RSS 不是归档；Bangumi 中文规范名目前只补当前周表；新创漫展仍需将稳定名称加入受控 watch；自动生成同音 confusable 的误伤成本过高，因此继续由音频回归/人工真值增补。
+
+### 下一步
+
+1. root 集成该分支提交后，在生产候选基线做一次禁用人工 override 的字幕盲测；crawler 只供候选，不作为正确答案。
+2. 经集成验收后再决定是否部署，并把 CLI 接入每日有界定时刷新；本分支没有执行部署。
+3. 后续可增加有权威中文本地化和稳定发布日期的结构化源，逐步降低 seed 依赖。
 ## 2026-07-11（续五）：CAM++ speaker_finalizer O(N²) 挂死修复 + speaker-final 超集部署（2246f5c）+ 2026-07-10 批次全 5 条谈话恢复
 
 ### 目标

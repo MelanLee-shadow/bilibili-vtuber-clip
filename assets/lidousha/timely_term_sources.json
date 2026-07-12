@@ -1,0 +1,82 @@
+{
+  "schema_version": "lidousha-timely-term-sources.v1",
+  "anilist": {
+    "endpoint": "https://graphql.anilist.co",
+    "max_pages": 3,
+    "per_page": 50
+  },
+  "anilist_manga": {
+    "endpoint": "https://graphql.anilist.co",
+    "per_page": 50
+  },
+  "bangumi": {
+    "endpoint": "https://api.bgm.tv/calendar"
+  },
+  "rss_feeds": [
+    {
+      "name": "Anime News Network",
+      "url": "https://www.animenewsnetwork.com/all/rss.xml",
+      "publisher": "Anime News Network",
+      "allowed_categories": [
+        "anime",
+        "animation",
+        "events",
+        "games",
+        "manga",
+        "merch"
+      ],
+      "source_hosts": [
+        "animenewsnetwork.com"
+      ],
+      "max_items": 100
+    },
+    {
+      "name": "TV Tokyo Anime",
+      "url": "https://www.tv-tokyo.co.jp/contents/anime/onair/index.xml",
+      "publisher": "TV Tokyo official anime site",
+      "allowed_categories": [],
+      "source_hosts": [
+        "tv-tokyo.co.jp"
+      ],
+      "max_items": 100
+    }
+  ],
+  "event_watches": [
+    {
+      "canonical": "AnimeJapan",
+      "aliases": ["Anime Japan"],
+      "readings": ["AnimeJapan", "anime japan"],
+      "topic_entities": ["Anime", "ACG event", "动漫展"]
+    },
+    {
+      "canonical": "Anime Expo",
+      "aliases": ["AX"],
+      "readings": ["Anime Expo", "anime expo"],
+      "topic_entities": ["Anime", "ACG event", "动漫展"]
+    },
+    {
+      "canonical": "Comic Market",
+      "aliases": ["Comiket", "コミックマーケット"],
+      "readings": ["Comic Market", "Comiket", "コミックマーケット"],
+      "topic_entities": ["同人", "ACG event", "漫展"]
+    },
+    {
+      "canonical": "Jump Festa",
+      "aliases": ["ジャンプフェスタ"],
+      "readings": ["Jump Festa", "ジャンプフェスタ"],
+      "topic_entities": ["Shueisha", "Anime", "ACG event"]
+    },
+    {
+      "canonical": "BilibiliWorld",
+      "aliases": ["Bilibili World", "BW"],
+      "readings": ["BilibiliWorld", "Bilibili World", "BW"],
+      "topic_entities": ["Bilibili", "二次元", "漫展"]
+    },
+    {
+      "canonical": "ChinaJoy",
+      "aliases": ["中国国际数码互动娱乐展览会"],
+      "readings": ["ChinaJoy", "China Joy"],
+      "topic_entities": ["游戏", "二次元", "漫展"]
+    }
+  ]
+}
