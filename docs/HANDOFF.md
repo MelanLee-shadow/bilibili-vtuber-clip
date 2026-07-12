@@ -3,7 +3,82 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
-## 2026-07-12：失败归因与话题子专名图（当前）
+## 2026-07-12：多新番角色图广度调度与最新直播产物（当前）
+
+### 目标
+
+修复角色知识图只有 BanG Dream 的实际调度缺陷，使每日 crawler
+从机器时效快照中广度优先生成「话题 -> 当前作品 -> 角色中文名/读音」
+子图，并为未来 183 天新番保留固定配额。同时只读回答 7/11、7/12
+最新直播是否已有切片；保持生产 `DISABLED` 和 no-upload。
+
+### 已完成
+
+- 根因不是“设计上只做 BangDream”：旧 crawler 按一个 term 连续最多
+  6 次搜索，`max_queries=12` 可被前两个 term 吃完；且 committed
+  fallback timely asset 本身只有一个人工审阅的「梦限大」term。生产机器
+  timely snapshot 实为 202 terms，其中符合当前/未来动漫图条件的有
+  96 个。
+- crawler 改为 breadth-first：默认 16 topics / 40 searches / 80 HTTP requests，
+  首轮每个动漫只查一次，未解析者才进入第二轮；当前 term 占
+  12 个槽位，未来 183 天新番占 4 个槽位。漫画、新闻与漫展不进
+  角色图；它们仍保留在 timely-term crawler 层。
+- 当前作品优先使用 timely snapshot 里的 Bangumi subject 稳定 ID，
+  否则依次用 canonical 和带季号/当前标题的 structured readings/aliases。
+  Season/Cour/Part 查询不再默默退化为旧本篇，`Black Clover Season 2`
+  也不会因为模糊前缀匹配被错接到 `BLACK LAGOON`。当前作 subject
+  尚无角色时，才从同 franchise 已有季/本篇回退取候选角色。
+- 社区昵称特例改为「梦限大 -> BanG Dream! YUME∞MITA -> MyGO!!!!! /
+  Ave Mujica」：先解析当前作，再在广度发现结束后有界扩展兄弟
+  作品，不再让父 franchise 提前占满 work 槽位。Bangumi 合并别名中
+  的「、，,;/」也已分成独立可语音匹配的 alias。
+- 用生产 202-term 机器快照做了无人工真值的临时实网重放：
+  **12 topics / 14 works / 127 characters**，38 次搜索、52 次网络请求、
+  diagnostics 为空。图包含梦限大当前作/MyGO/Ave、无职转生第三季、
+  实教第四季、超市后门吸烟、幼女战记第二季、婚姻剧毒、死神千年血战、
+  胆大党第三季、影之实力者残响篇、艾莉同学第二季等。例如
+  `Takakura Ken` 可在胆大党子图中对应规范中文「高仓健」，
+  `Ayanokouji Kiyotaka` 对应「绫小路清隆」。
+- 新增了 breadth/current-work/source-ID/empty-cast fallback/跨 franchise 误匹配/
+  current-before-sibling/CLI 默认值回归；完整测试为 **861 passed**，
+  compileall 与 `git diff --check` 通过。
+- 代码 commit `f5385e85f2635f0b3e02a232b517763ed347fa01` 已用正式
+  `scripts/deploy_free_autoslice.sh free` 部署；远程 `DEPLOYED_COMMIT`、runner
+  md5 和 crawler CLI 默认值回读一致。每日 06:37 graph cron 恰好一条，
+  `/opt/bilive/autoslice/DISABLED` 仍存在，未上传。
+- 最新直播产物只读核对：7/11 隔离自治验收为
+  `review_ready_with_failures`，已有 3 个 talk MP4+SRT+cover，另有 2 talk failed，
+  6 song 全部 blocked；7/12 仍是 `processing`，当时 2 song pending，交付目录
+  只有已过时 summary，没有 MP4/SRT/cover。正式生产 state/out 仍只到
+  7/10，7/11、7/12 都是隔离验收面。
+
+### 进行中（含后台进程）
+
+- 生产 runtime `state/topic_entity_graph.json` 在本次部署后尚未生成；它由
+  已安装的每日 06:37 cron 自动从最新 machine timely snapshot 构建，不由
+  agent 手工启动。生产在该文件出现前仍回退到 committed 1-topic graph。
+- 7/12 隔离验收读取时仍在自治变化；本轮没有看进程/阶段日志，
+  没有手工调用任何切片阶段。
+
+### 阻塞
+
+- 无需 Ivan 决策的代码 blocker。尚未有新 runtime graph 的自治 cron 产物，
+  因此不能宣称 12-topic 临时重放已经在生产新直播中端到端命中。
+- 7/11 的 6 个 song blocked 和 7/12 无成片仍是真实验收失败/等待状态，
+  不能因为本次 crawler 修复而改写成成功。
+
+### 下一步
+
+1. 只读检查下一次 06:37 cron 之后的 `state/topic_entity_graph.json`：要求
+   lineage 绑定当次 `timely_terms.json`，diagnostics 为空，且 topics/works/entities
+   不再是 1/3/23。不手工触发 crawler 或切片候选阶段。
+2. 后续新直播字幕验收时，选取一个非 BanG Dream 话题，核对话题路由、
+   原始音频 forced-choice 与最终中文角色名三者；不能只用 crawler JSON
+   存在代替端到端字幕真值。
+3. 7/12 只在状态自治收敛后重读 state/summary/媒体产物；不恢复对话
+   heartbeat，不手工促进 runner。
+
+## 2026-07-12：失败归因与话题子专名图（历史基线）
 
 ### 目标
 
