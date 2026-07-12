@@ -545,7 +545,7 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
         }
     ]
     kitchen = next(entry for entry in plan["entries"] if entry["candidate_id"] == "promo_220021_125_232")
-    assert kitchen["source_session_anchor_sha256"] == "2d869a8efae298257e0f17be8d15f9c51e4c64aa15a7a840f176b1b56fd99b94"
+    assert kitchen["source_session_anchor_sha256"] == "da5a8b7f8a8a51bbf684f24f608d6ae3db2245e3d61233d0a2efff889d9c0b14"
     anchor_path = Path(__file__).resolve().parents[1] / "assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json"
     assert hashlib.sha256(anchor_path.read_bytes()).hexdigest() == kitchen["source_session_anchor_sha256"]
     monologue = next(
@@ -569,6 +569,14 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
         "source_session_anchor_sha256"
     ]
     relay_anchor_document = json.loads(relay_anchor.read_text(encoding="utf-8"))
+    profile_path = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/voiceprint_profile.v1.json"
+    )
+    profile_sha256 = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    for source_anchor in (anchor_path, monologue_anchor, relay_anchor):
+        source_document = json.loads(source_anchor.read_text(encoding="utf-8"))
+        assert source_document["profile_sha256"] == profile_sha256
     assert relay_anchor_document["source_session_id"] == "22966160_20260709-20-30-27"
     assert relay_anchor_document["donor"]["candidate_id"] == "promo_203027_314_479"
     assert relay_anchor_document["allowed_targets"] == [

@@ -5,7 +5,7 @@
   "source_session_id": "22966160_20260709-20-30-27",
   "source_recording": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-09/22966160_2026-07-09-20-30-27-.mp4",
   "authority": "CAM++ static enrollment gate >= 0.68 on hash-bound donor and target specs naming the same source recording",
-  "profile_sha256": "83fbe36e0063b88838755ec01cb0a15f255daa03fd5f014ef5c382e81a9ef56b",
+  "profile_sha256": "663eee9820d7b0df9021c148ebe21c39f10d782f73cba22bfeeee0ff1a85ad1d",
   "model_tree_sha256": "f01588f1ceacd25fb3853e765846e3e34befddcff5c61bc14ddaf529745ed0c3",
   "reference_hashes": {
     "lidousha-1": "d54a637d520df906a4a17728f2112ca3819b6afe43e2e038e8d6db52c094105f",
