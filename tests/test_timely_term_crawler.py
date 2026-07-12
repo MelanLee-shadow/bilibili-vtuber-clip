@@ -9,10 +9,12 @@ from src.autoslice.timely_term_crawler import (
     AniListSeasonAdapter,
     AniListMangaAdapter,
     BangumiCalendarAdapter,
+    BilibiliCommunityAdapter,
     BoundedHttpClient,
     CachedResponse,
     CrawlError,
     CrawlWindow,
+    CommunityEntityWatch,
     EventWatch,
     HttpCache,
     Provenance,
@@ -79,6 +81,133 @@ def test_default_window_is_nine_months_back_and_six_forward():
     month_end = CrawlWindow.around(dt.date(2026, 3, 31), lookback_months=1, lookahead_months=1)
     assert month_end.start == dt.date(2026, 2, 28)
     assert month_end.end == dt.date(2026, 4, 30)
+
+
+def _bilibili_row(*, aid, mid, title, tags, day="2026-07-11", author="community-up"):
+    published = int(
+        dt.datetime.fromisoformat(day + "T12:00:00+00:00").timestamp()
+    )
+    return {
+        "aid": aid,
+        "mid": mid,
+        "author": author,
+        "pubdate": published,
+        "arcurl": f"http://www.bilibili.com/video/av{aid}",
+        "title": title,
+        "description": "BanG Dream! YUME∞MITA community discussion",
+        "tag": tags,
+    }
+
+
+def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed():
+    payload = {
+        "code": 0,
+        "data": {
+            "result": [
+                _bilibili_row(
+                    aid=1,
+                    mid=11,
+                    title='【动画<em class="keyword">YUME MITA</em>】梦限大',
+                    tags="梦限大MewType,梦限大,BanG Dream!,动画,藤都子",
+                ),
+                _bilibili_row(
+                    aid=2,
+                    mid=22,
+                    title="梦限大 ED 翻唱 - YUME MITA",
+                    tags="梦限大,梦限大MewType,BanG Dream!,翻唱,藤都子",
+                ),
+                _bilibili_row(
+                    aid=3,
+                    mid=33,
+                    title="BanG Dream! YUME∞MITA reaction",
+                    tags="梦限大MewType,梦限大,BanG Dream!,reaction,仲町阿拉蕾",
+                ),
+            ]
+        },
+    }
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("BanG Dream!", "Anime"),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    terms = adapter.collect(FakeClient([_response(payload)]), WINDOW, {})
+
+    assert len(terms) == 1
+    assert terms[0].canonical == "BanG Dream! YUME∞MITA"
+    assert terms[0].display_name == "梦限大"
+    assert terms[0].aliases == ["梦限大", "梦限大MewType"]
+    assert "藤都子" not in terms[0].aliases
+    assert len(terms[0].sources) == 3
+    assert all(source.url.startswith("https://www.bilibili.com/video/") for source in terms[0].sources)
+
+
+def test_bilibili_community_rejects_single_uploader_alias_campaign():
+    rows = [
+        _bilibili_row(
+            aid=index,
+            mid=11,
+            title="YUME MITA 梦限大",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        )
+        for index in range(1, 4)
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA",),
+                ("YUME∞MITA",),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    assert adapter.collect(FakeClient([_response({"code": 0, "data": {"result": rows}})]), WINDOW, {}) == []
+
+
+def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limited():
+    rows = [
+        _bilibili_row(
+            aid=index,
+            mid=10 + index,
+            title="BanG Dream YUME MITA 梦限大",
+            tags="梦限大,梦限大MewType,BanG Dream!",
+        )
+        for index in range(1, 4)
+    ]
+    adapter = BilibiliCommunityAdapter(
+        endpoint="https://api.bilibili.com/x/web-interface/search/type",
+        source_hosts=frozenset({"bilibili.com"}),
+        entity_watches=(
+            CommunityEntityWatch(
+                "BanG Dream! YUME∞MITA",
+                ("YUME MITA", "BanG Dream YUME MITA"),
+                ("YUME∞MITA",),
+                ("BanG Dream!",),
+            ),
+        ),
+        auto_query_count=0,
+    )
+
+    terms = adapter.collect(
+        FakeClient([CrawlError("HTTP 412"), _response({"code": 0, "data": {"result": rows}})]),
+        WINDOW,
+        {},
+    )
+
+    assert terms[0].aliases == ["梦限大", "梦限大MewType"]
 
 
 def test_anilist_adapter_extracts_only_structured_fields_and_bounds_pages():

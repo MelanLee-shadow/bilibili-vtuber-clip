@@ -1,5 +1,5 @@
 {
-  "schema_version": "lidousha-timely-term-sources.v1",
+  "schema_version": "lidousha-timely-term-sources.v2",
   "anilist": {
     "endpoint": "https://graphql.anilist.co",
     "max_pages": 3,
@@ -11,6 +11,35 @@
   },
   "bangumi": {
     "endpoint": "https://api.bgm.tv/calendar"
+  },
+  "bilibili_community": {
+    "endpoint": "https://api.bilibili.com/x/web-interface/search/type",
+    "source_hosts": [
+      "bilibili.com"
+    ],
+    "auto_query_count": 3,
+    "max_results": 20,
+    "min_videos": 2,
+    "min_uploaders": 2,
+    "entity_watches": [
+      {
+        "canonical": "BanG Dream! YUME∞MITA",
+        "queries": [
+          "YUME MITA",
+          "BanG Dream YUME MITA"
+        ],
+        "readings": [
+          "YUME∞MITA",
+          "ゆめ∞みた",
+          "夢限大みゅーたいぷ"
+        ],
+        "topic_entities": [
+          "BanG Dream!",
+          "Anime",
+          "Bilibili community"
+        ]
+      }
+    ]
   },
   "rss_feeds": [
     {

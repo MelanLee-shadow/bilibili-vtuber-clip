@@ -12,6 +12,7 @@ import base64
 from dataclasses import dataclass
 import datetime as dt
 import email.utils
+import html
 import hashlib
 import json
 import os
@@ -26,18 +27,25 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 
-SCHEMA_VERSION = "lidousha-timely-term-sources.v1"
+SCHEMA_VERSION = "lidousha-timely-term-sources.v2"
 DEFAULT_ALLOWED_HOSTS = frozenset(
     {
         "graphql.anilist.co",
         "anilist.co",
         "api.bgm.tv",
+        "api.bilibili.com",
         "animenewsnetwork.com",
+        "bilibili.com",
         "bgm.tv",
         "tv-tokyo.co.jp",
     }
 )
 USER_AGENT = "vtuber-slice-timely-terms/1.0 (+local bounded crawler)"
+BILIBILI_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/138.0.0.0 Safari/537.36"
+)
 _INSTRUCTION_RX = re.compile(
     r"(?i)(?:\bignore\b.{0,24}\binstructions?\b|"
     r"\b(?:system|developer)\b.{0,24}\bprompt\b|"
@@ -415,6 +423,23 @@ class BoundedHttpClient:
         )
         return hashlib.sha256(material).hexdigest()
 
+    def _validated_extra_headers(self, headers: dict[str, str] | None) -> dict[str, str]:
+        if not headers:
+            return {}
+        if set(headers) - {"User-Agent", "Referer"}:
+            raise CrawlError("unsupported request header")
+        result: dict[str, str] = {}
+        user_agent = headers.get("User-Agent")
+        if user_agent:
+            if "\n" in user_agent or "\r" in user_agent or len(user_agent) > 256:
+                raise CrawlError("unsafe User-Agent header")
+            result["User-Agent"] = user_agent
+        referer = headers.get("Referer")
+        if referer:
+            self._validate_endpoint(referer)
+            result["Referer"] = referer
+        return result
+
     def fetch(
         self,
         url: str,
@@ -422,12 +447,17 @@ class BoundedHttpClient:
         method: str = "GET",
         body: bytes | None = None,
         content_type: str = "",
+        headers: dict[str, str] | None = None,
     ) -> CachedResponse:
         method = method.upper()
         if method not in {"GET", "POST"}:
             raise CrawlError("only GET and POST are allowed")
         self._validate_endpoint(url)
-        key = self._cache_key(method, url, body, content_type)
+        extra_headers = self._validated_extra_headers(headers)
+        header_material = "\n".join(
+            f"{key}:{value}" for key, value in sorted(extra_headers.items())
+        )
+        key = self._cache_key(method, url, body, content_type + "\n" + header_material)
         cached = self.cache.load(key) if self.cache else None
         if cached and self.now - cached.fetched_at <= self.cache_ttl:
             self.cache_hits += 1
@@ -440,10 +470,14 @@ class BoundedHttpClient:
         if self.requests_made >= self.max_requests:
             raise FetchLimitError("network request budget exhausted")
         self.requests_made += 1
-        headers = {"User-Agent": USER_AGENT, "Accept": "application/json, application/rss+xml, text/xml"}
+        request_headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json, application/rss+xml, text/xml",
+            **extra_headers,
+        }
         if content_type:
-            headers["Content-Type"] = content_type
-        request = urllib.request.Request(url, data=body, method=method, headers=headers)
+            request_headers["Content-Type"] = content_type
+        request = urllib.request.Request(url, data=body, method=method, headers=request_headers)
         try:
             with self._opener.open(request, timeout=self.timeout_seconds) as response:
                 length = response.headers.get("Content-Length")
@@ -913,6 +947,286 @@ class RssNewsAdapter:
             return None
 
 
+@dataclass(frozen=True)
+class CommunityEntityWatch:
+    canonical: str
+    queries: tuple[str, ...]
+    readings: tuple[str, ...]
+    topic_entities: tuple[str, ...]
+
+
+class BilibiliCommunityAdapter:
+    """Discover community-used aliases from repeated structured video tags.
+
+    Search results are untrusted community evidence.  A tag is never accepted
+    on one uploader's say-so: an alias family must repeat across multiple
+    videos and uploaders, and must contain both a short surface and an extended
+    surface (for example ``梦限大`` and ``梦限大MewType``).  The adapter only
+    emits priors; it cannot rewrite subtitle text by itself.
+    """
+
+    name = "bilibili_community"
+    _HTML_TAG_RX = re.compile(r"<[^>]{1,256}>")
+    _GENERIC_TAGS = frozenset(
+        {
+            "acg",
+            "bilibili",
+            "live",
+            "op",
+            "ed",
+            "pv",
+            "reaction",
+            "动画",
+            "动漫",
+            "新番",
+            "七月新番",
+            "二次元",
+            "虚拟偶像",
+            "虚拟主播",
+            "翻唱",
+            "音乐",
+            "日语",
+            "中字",
+            "完整版",
+            "必剪创作",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        source_hosts: frozenset[str],
+        entity_watches: tuple[CommunityEntityWatch, ...],
+        auto_query_count: int = 3,
+        max_results: int = 20,
+        min_videos: int = 2,
+        min_uploaders: int = 2,
+    ) -> None:
+        if not 0 <= auto_query_count <= 8:
+            raise ValueError("Bilibili auto_query_count is invalid")
+        if not 5 <= max_results <= 50:
+            raise ValueError("Bilibili max_results is invalid")
+        if not 2 <= min_videos <= max_results or not 2 <= min_uploaders <= max_results:
+            raise ValueError("Bilibili evidence thresholds are invalid")
+        self.endpoint = endpoint
+        self.source_hosts = source_hosts
+        self.entity_watches = entity_watches
+        self.auto_query_count = auto_query_count
+        self.max_results = max_results
+        self.min_videos = min_videos
+        self.min_uploaders = min_uploaders
+
+    def collect(
+        self,
+        client: BoundedHttpClient,
+        window: CrawlWindow,
+        existing: dict[str, TermCandidate],
+    ) -> list[TermCandidate]:
+        targets = list(self.entity_watches)
+        configured_keys = {_match_key(item.canonical) for item in targets}
+        ranked_existing = sorted(
+            (
+                item
+                for item in existing.values()
+                if item.active_from <= window.as_of <= item.active_until
+                and _match_key(item.canonical) not in configured_keys
+            ),
+            key=lambda item: (item.score, item.canonical.casefold()),
+            reverse=True,
+        )
+        for candidate in ranked_existing[: self.auto_query_count]:
+            targets.append(
+                CommunityEntityWatch(
+                    canonical=candidate.canonical,
+                    queries=(candidate.canonical,),
+                    readings=tuple(candidate.readings),
+                    topic_entities=tuple(candidate.topic_entities),
+                )
+            )
+
+        results: list[TermCandidate] = []
+        successful_queries = 0
+        failed_queries = 0
+        for target in targets:
+            rows: list[dict[str, object]] = []
+            for query in target.queries:
+                try:
+                    rows.extend(self._search(client, query))
+                    successful_queries += 1
+                except Exception:
+                    failed_queries += 1
+            candidate = self._candidate_from_rows(target, rows, window)
+            if candidate:
+                results.append(candidate)
+        if failed_queries and not successful_queries:
+            raise CrawlError(f"all {failed_queries} Bilibili community queries failed")
+        return results
+
+    def _search(self, client: BoundedHttpClient, query: str) -> list[dict[str, object]]:
+        parameters = urllib.parse.urlencode(
+            {
+                "search_type": "video",
+                "keyword": query,
+                "page": 1,
+                "page_size": self.max_results,
+                "order": "pubdate",
+            }
+        )
+        response = client.fetch(
+            f"{self.endpoint}?{parameters}",
+            headers={
+                "User-Agent": BILIBILI_USER_AGENT,
+                "Referer": "https://search.bilibili.com/",
+            },
+        )
+        try:
+            payload = json.loads(response.body)
+            data = payload["data"]
+            rows = data["result"]
+        except (UnicodeError, json.JSONDecodeError, TypeError, KeyError) as exc:
+            raise CrawlError("Bilibili returned malformed search JSON") from exc
+        if payload.get("code") != 0 or not isinstance(rows, list) or len(rows) > self.max_results:
+            raise CrawlError("Bilibili search result has an unexpected shape")
+        return [row for row in rows if isinstance(row, dict)]
+
+    @classmethod
+    def _plain_text(cls, value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        return html.unescape(cls._HTML_TAG_RX.sub("", value))
+
+    @staticmethod
+    def _has_cjk(value: str) -> bool:
+        return bool(re.search(r"[\u3400-\u9fff]{2,}", value))
+
+    @classmethod
+    def _related_family(cls, surfaces: dict[str, dict[str, object]]) -> list[str]:
+        names = list(surfaces)
+        adjacency: dict[str, set[str]] = {name: set() for name in names}
+        for index, left in enumerate(names):
+            left_key = _match_key(left)
+            for right in names[index + 1 :]:
+                right_key = _match_key(right)
+                shorter, longer = sorted((left_key, right_key), key=len)
+                if len(shorter) >= 3 and shorter in longer and (
+                    cls._has_cjk(left) or cls._has_cjk(right)
+                ):
+                    adjacency[left].add(right)
+                    adjacency[right].add(left)
+        components: list[list[str]] = []
+        unseen = set(names)
+        while unseen:
+            first = unseen.pop()
+            stack = [first]
+            component = [first]
+            while stack:
+                current = stack.pop()
+                for neighbor in adjacency[current]:
+                    if neighbor in unseen:
+                        unseen.remove(neighbor)
+                        stack.append(neighbor)
+                        component.append(neighbor)
+            if len(component) >= 2:
+                components.append(component)
+        if not components:
+            return []
+        components.sort(
+            key=lambda component: (
+                sum(len(surfaces[name]["videos"]) for name in component),
+                sum(len(surfaces[name]["uploaders"]) for name in component),
+                -min(len(name) for name in component),
+            ),
+            reverse=True,
+        )
+        return sorted(
+            components[0],
+            key=lambda name: (not cls._has_cjk(name), len(name), name.casefold()),
+        )
+
+    def _candidate_from_rows(
+        self,
+        target: CommunityEntityWatch,
+        rows: list[dict[str, object]],
+        window: CrawlWindow,
+    ) -> TermCandidate | None:
+        anchor_keys = {
+            _match_key(surface)
+            for surface in (target.canonical, *target.queries, *target.readings)
+            if len(_match_key(surface)) >= 3
+        }
+        surfaces: dict[str, dict[str, object]] = {}
+        for row in rows:
+            published = _timestamp_date(row.get("pubdate"))
+            if published is None or not window.start <= published <= window.as_of:
+                continue
+            url = _stable_feed_item_url(row.get("arcurl"), allowed_hosts=self.source_hosts)
+            if not url:
+                continue
+            title = self._plain_text(row.get("title"))
+            description = self._plain_text(row.get("description"))
+            tag_text = self._plain_text(row.get("tag"))
+            combined_key = _match_key(" ".join((title, description, tag_text)))
+            if not any(anchor in combined_key for anchor in anchor_keys):
+                continue
+            uploader = str(row.get("mid") or row.get("author") or "")
+            author = _clean_atom(row.get("author")) or "unknown uploader"
+            source = Provenance(url, published, f"Bilibili community video by {author}")
+            for raw_tag in re.split(r"[,，]", tag_text):
+                tag = _clean_atom(raw_tag, max_chars=32)
+                if not tag:
+                    continue
+                tag_key = _match_key(tag)
+                if (
+                    len(tag_key) < 3
+                    or tag_key in anchor_keys
+                    or tag.casefold() in self._GENERIC_TAGS
+                    or tag_key.isdigit()
+                ):
+                    continue
+                stats = surfaces.setdefault(
+                    tag,
+                    {"videos": set(), "uploaders": set(), "sources": {}},
+                )
+                stats["videos"].add(url)
+                stats["uploaders"].add(uploader)
+                stats["sources"][url] = source
+        eligible = {
+            name: stats
+            for name, stats in surfaces.items()
+            if len(stats["videos"]) >= self.min_videos
+            and len(stats["uploaders"]) >= self.min_uploaders
+        }
+        family = self._related_family(eligible)
+        if not family:
+            return None
+        source_by_url: dict[str, Provenance] = {}
+        for alias in family:
+            source_by_url.update(eligible[alias]["sources"])
+        sources = sorted(
+            source_by_url.values(), key=lambda item: (item.published_at, item.url), reverse=True
+        )[:8]
+        first_date = min(source.published_at for source in sources)
+        aliases = _unique_atoms(family, limit=16)
+        display_name = next((name for name in aliases if self._has_cjk(name)), aliases[0])
+        return TermCandidate(
+            canonical=target.canonical,
+            readings=_unique_atoms([*target.readings, *target.queries], limit=12),
+            aliases=aliases,
+            confusables=[],
+            topic_entities=_unique_atoms(
+                [*target.topic_entities, "Bilibili community", "二次元社区"], limit=16
+            ),
+            active_from=max(window.start, first_date - dt.timedelta(days=90)),
+            active_until=min(window.end, window.as_of + dt.timedelta(days=120)),
+            sources=sources,
+            display_name=display_name,
+            reason=(
+                "Alias family repeated across multiple Bilibili community videos "
+                "and distinct uploaders for the same anchored entity."
+            ),
+            score=300_000 + sum(len(eligible[name]["videos"]) for name in family),
+        )
 @dataclass
 class CrawlResult:
     snapshot: dict[str, object]
@@ -999,6 +1313,7 @@ def load_source_config(
     AniListMangaAdapter,
     BangumiCalendarAdapter,
     list[RssNewsAdapter],
+    BilibiliCommunityAdapter,
 ]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1011,6 +1326,7 @@ def load_source_config(
         "bangumi",
         "rss_feeds",
         "event_watches",
+        "bilibili_community",
     }:
         raise CrawlError("source config has unknown or missing top-level fields")
     if payload["schema_version"] != SCHEMA_VERSION:
@@ -1073,7 +1389,44 @@ def load_source_config(
                 max_items=int(raw["max_items"]),
             )
         )
-    return anilist, manga, bangumi, rss_adapters
+    raw_bilibili = payload["bilibili_community"]
+    bilibili_required = {
+        "endpoint",
+        "source_hosts",
+        "auto_query_count",
+        "max_results",
+        "min_videos",
+        "min_uploaders",
+        "entity_watches",
+    }
+    if not isinstance(raw_bilibili, dict) or set(raw_bilibili) != bilibili_required:
+        raise CrawlError("bilibili_community block is invalid")
+    community_watches: list[CommunityEntityWatch] = []
+    if not isinstance(raw_bilibili["entity_watches"], list):
+        raise CrawlError("Bilibili entity_watches must be a list")
+    for raw in raw_bilibili["entity_watches"]:
+        required = {"canonical", "queries", "readings", "topic_entities"}
+        if not isinstance(raw, dict) or set(raw) != required:
+            raise CrawlError("Bilibili entity watch has unknown or missing fields")
+        canonical = _clean_atom(raw["canonical"])
+        queries = _unique_atoms(raw["queries"], limit=4)
+        readings = _unique_atoms(raw["readings"], limit=12)
+        topics = _unique_atoms(raw["topic_entities"], limit=16)
+        if not canonical or not queries or not readings:
+            raise CrawlError("Bilibili entity watch contains unsafe names")
+        community_watches.append(
+            CommunityEntityWatch(canonical, tuple(queries), tuple(readings), tuple(topics))
+        )
+    bilibili = BilibiliCommunityAdapter(
+        endpoint=str(raw_bilibili["endpoint"]),
+        source_hosts=frozenset(str(item).lower() for item in raw_bilibili["source_hosts"]),
+        entity_watches=tuple(community_watches),
+        auto_query_count=int(raw_bilibili["auto_query_count"]),
+        max_results=int(raw_bilibili["max_results"]),
+        min_videos=int(raw_bilibili["min_videos"]),
+        min_uploaders=int(raw_bilibili["min_uploaders"]),
+    )
+    return anilist, manga, bangumi, rss_adapters, bilibili
 
 
 def snapshot_json(snapshot: dict[str, object]) -> str:

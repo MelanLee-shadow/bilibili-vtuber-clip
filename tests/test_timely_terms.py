@@ -273,6 +273,21 @@ def test_repo_yumemita_snapshot_satisfies_the_strict_schema():
     )
 
 
+def test_strict_snapshot_accepts_stable_bilibili_community_video_provenance():
+    payload = _valid_snapshot()
+    payload["terms"][0]["sources"][0] = {
+        "url": "https://www.bilibili.com/video/av116793297343682",
+        "published_at": "2026-07-11",
+        "publisher": "Bilibili community video by uploader",
+    }
+
+    normalized = jingting.validate_timely_terms_payload(payload)
+
+    assert normalized["terms"][0]["sources"][0]["url"].startswith(
+        "https://www.bilibili.com/video/"
+    )
+
+
 def test_offline_validation_cli_writes_once_to_read_only_canonical_snapshot(
     tmp_path, capsys
 ):

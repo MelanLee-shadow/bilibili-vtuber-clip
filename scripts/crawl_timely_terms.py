@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=ROOT / ".cache/timely-term-crawler",
     )
     parser.add_argument("--cache-ttl-hours", type=float, default=18.0)
-    parser.add_argument("--max-requests", type=int, default=8)
+    parser.add_argument("--max-requests", type=int, default=12)
     parser.add_argument("--max-response-bytes", type=int, default=2 * 1024 * 1024)
     parser.add_argument("--timeout-seconds", type=float, default=15.0)
     parser.add_argument("--max-terms", type=int, default=240)
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             lookback_months=args.lookback_months,
             lookahead_months=args.lookahead_months,
         )
-        anilist, manga, bangumi, rss = load_source_config(args.config)
+        anilist, manga, bangumi, rss, bilibili = load_source_config(args.config)
         cache = HttpCache(args.cache_dir, max_body_bytes=args.max_response_bytes)
         client = BoundedHttpClient(
             max_requests=args.max_requests,
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
             offline=args.offline,
             now=now,
         )
-        adapters = [anilist, manga, bangumi, *rss]
+        adapters = [anilist, manga, bangumi, *rss, bilibili]
         if not args.exclude_reviewed_seed:
             adapters.insert(0, SeedSnapshotAdapter(args.seed))
         result = crawl(

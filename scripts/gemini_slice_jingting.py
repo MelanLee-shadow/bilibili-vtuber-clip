@@ -94,12 +94,13 @@ SRT_TIME_RX = re.compile(
     r"\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}"
 )
 TIMELY_TERMS_SCHEMA = "lidousha-timely-terms.v1"
-TIMELY_TERMS_OFFICIAL_SOURCE_HOSTS = frozenset(
+TIMELY_TERMS_SOURCE_HOSTS = frozenset(
     {
         "anilist.co",
         "animenewsnetwork.com",
         "bang-dream.com",
         "bgm.tv",
+        "bilibili.com",
         "bushiroad.com",
         "tv-tokyo.co.jp",
     }
@@ -294,9 +295,9 @@ def _require_official_source_url(value: object, *, label: str) -> str:
         raise TimelyTermsValidationError(f"{label} has an invalid hostname") from exc
     if not any(
         host == allowed or host.endswith("." + allowed)
-        for allowed in TIMELY_TERMS_OFFICIAL_SOURCE_HOSTS
+        for allowed in TIMELY_TERMS_SOURCE_HOSTS
     ):
-        raise TimelyTermsValidationError(f"{label} host is not on the first-party allowlist")
+        raise TimelyTermsValidationError(f"{label} host is not on the source allowlist")
     decoded_path = urllib.parse.unquote(parsed.path)
     if any(char in decoded_path for char in "\\<>\r\n\t"):
         raise TimelyTermsValidationError(f"{label} contains unsafe path characters")
