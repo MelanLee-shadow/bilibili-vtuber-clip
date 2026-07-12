@@ -15,14 +15,14 @@
 - **16 首事实与发现根因**：真实画面最终歌单为年轮、可愛くなりたい、园游会、猜不透、怎么办、你的微笑、下课铃声、龙卷风、想和你迎着台风去看海、晴る、快乐星猫、MORE! JUMP! MORE!、小城夏天、行星环、太阳系disco，共 15 首；尾声《宝贝》是李豆沙演唱的第 16 首。旧流水线误把 talk setup/payoff/closure selector 当作 song fallback、共享 4 个语义候选上限，并以 180 秒邻近规则吞并相邻歌曲，所以几乎每个 30 分钟文件只留下一个候选。
 - **视觉歌单 lane 已经真实回填验收**：固定右上 ROI、每 10 秒抽帧、timestamp contact sheet、一次有界 AGY High 严格 JSON、内容+配置缓存和 fail-open；按日期累计编号歌单去重，与 ASR/语义候选取并集。远端六个有效录制段逐段 live AGY（非 mock）机器恢复编号 1–15 全部歌名和候选区间，随后六段 cache-hit 原子写入 7/10 state 的 `visual_song_inventory` / `visual_song_backfill`；`visual_song_count=15`。OCR 的 `可爱くなりたい`、`more jump more` 只作为 LRC 查询提示，不直接成为最终标题；《宝贝》由独立音频/ASR lane 保留为第 16 首。
 - **《怎么办》已真实恢复交付**：根因是重试改变窗口后仍使用固定文件名，旧 tight/full source 分别比新 job 多 42.6 秒，AGY 报 source duration mismatch。修复后 tight `214.250s`、full `269.250s` 均与 job 精确一致；full-source 得到网易云 ID `1862114887`、63 行、匹配率 `1.0`、`FULL_SONG_READY`、AGY `LIVE_STREAMER_SINGING` 0.95、host-vocal READY 和烧字视频。期间继续修复 AGY 慢任务预算、跨 tick backoff/full 断点恢复、完整 SRT 写完后 AGY epilogue 非零、AUTO_RECUT 与 runner 包装契约冲突。最终用 hash-bound summary 零计算恢复为 `review_ready`，reason 只剩 `SONG_FULL_BOUNDARY_READY`，delivery manifest 为 `DELIVERED_NO_UPLOAD / upload_enabled=false`。
-- **host-vocal 验证器修复**：不再要求每个演唱 checkpoint 都直接达到过高 enrollment 分数；仍要求 AGY 明确李豆沙现场演唱且无他人/和声/回放，并允许“直接 enrollment 或已验证同场说话桥”通过。远端隔离实证：《宝贝》READY（anchor median `0.56622`，6/7，头中尾齐）、《园游会》READY（实际 post-song speech 3450ms，median `0.50196`，7/7）。没有按歌名白名单放行。
+- **host-vocal 验证器修复**：不再要求每个演唱 checkpoint 都直接达到过高 enrollment 分数；仍要求 AGY 明确李豆沙现场演唱且无他人/和声/回放，并允许“直接 enrollment 或已验证同场说话桥”通过。远端隔离实证：《宝贝》READY（anchor median `0.56622`，6/7，头中尾齐）、《园游会》READY（实际 post-song speech 3450ms，median `0.50196`，7/7）。没有按歌名白名单放行。最终部署后又用当前代码、完整源片和既有 LRC 报告 fresh 重算《宝贝》，proof 位于 `/opt/bilive/autoslice/out/acceptance/baobei-host-vocal-current-20260712/seededsong_45000_168840.host-vocal-proof.json`，SHA-256 `29e1ac355027141bb1af251bc5ff20c06351e835eff5dac0fdc2d30d923bdd23`，仍为 READY 6/7；7/10 `songs[]` 中的旧 blocked/`SONG_NOT_LIDOUSHA_SINGING` 条目是修复前历史 selector 结果，尚未重跑完整边界/LRC/烧字包装，不得再作为当前演唱身份结论。
 - **429 跨 tick 自愈**：从日志尾部区分 `CPA_RATE_LIMITED / CPA_MODEL_DOWN / CPA_UPSTREAM_5XX / CPA_UPSTREAM_TIMEOUT`，状态持久化 `next_retry_at`；15 分钟起指数退避、最长 6 小时、最多 6 次基础设施重试，同时保留总生命周期上限。《行星环》《年轮》不会再把一次 429 当永久内容失败。
 - **人工真值隔离**：新增 `AUTOSLICE_HUMAN_TRUTH_MODE=delivery|withheld`。`withheld` 模式屏蔽候选文本 override、字幕回归 gate、人工 reviewed timely terms，并由生产器 fail-closed 防止真值字段泄漏；另有 `scripts/score_blind_subtitle.py` 在生成后单独对真值评分。crawler 支持 `--exclude-reviewed-seed` 生成机器盲测快照。
 - **时效专名 crawler 已部署并 live smoke**：AniList/Bangumi/ANN/TV Tokyo RSS/受控活动源，默认 `2025-10-12..2027-01-12`，有界 HTTP/cache、失败隔离、严格 schema、原子写入。远端实网本轮 7 次请求、231 词、adapter error 为 0，已写 `/opt/bilive/autoslice/state/timely_terms.json`；每日 06:17 cron 已安装。排除人工 seed 的机器盲测快照仍为 230 词，SHA-256 `663efd2a0982fdeaef3127c7852b5365cbe817d43113a66102170d65fe826148`。
 
 ### 进行中（含后台进程）
 
-- 无本轮遗留 AGY、selector、ffmpeg、CAM++ 或上传进程。生产已部署到 `0a79c6b`，`/opt/bilive/autoslice/DISABLED` 仍在；cron 存在但 runner 保持暂停。7/10 当前歌曲交付为原有《想和你迎着台风去看海》+ 新恢复《怎么办》共 2 条，符合项目原定 `MAX_SONGS_PER_DATE=2`；15+《宝贝》的完整演唱库存与最多交付 2 条的策略已分离。
+- 无本轮遗留 AGY、selector、ffmpeg、CAM++ 或上传进程。生产承重代码为 `0a79c6b`，其后只有本节交接文档提交；最终部署版本以远端 `DEPLOYED_COMMIT` readback 为准。`/opt/bilive/autoslice/DISABLED` 仍在；cron 存在但 runner 保持暂停。7/10 当前歌曲交付为原有《想和你迎着台风去看海》+ 新恢复《怎么办》共 2 条，符合项目原定 `MAX_SONGS_PER_DATE=2`；15+《宝贝》的完整演唱库存与最多交付 2 条的策略已分离。
 
 ### 阻塞
 
@@ -31,7 +31,7 @@
 
 ### 下一步
 
-1. Ivan 审听本地《宝贝》源片，确认演唱身份；当前流水线隔离 proof 已给出 READY，但该候选尚未占用/突破 `MAX_SONGS_PER_DATE=2`。
+1. Ivan 审听本地《宝贝》源片；当前流水线 fresh 隔离 proof 已给出 READY，但该候选尚未重跑完整边界/LRC/烧字包装，也未占用/突破 `MAX_SONGS_PER_DATE=2`。若后续要求把它形成第三个 review package，需要先明确是否临时突破现有每场最多 2 个歌切的产品策略。
 2. 后续补一个有来源约束的中文别名/新闻实体解析层，使“梦限大”在 `--exclude-reviewed-seed` 盲测也能由当季新闻证据导出；在此之前不把 reviewed seed 命中冒充 crawler 自发现。
 3. 若接受本生产基线，下一场前由 Ivan 明确授权移除 `DISABLED`，再观察一次自然直播的 15+1 视觉/音频并集和跨 tick 基础设施重试；仍保持任何发布必须另行授权。
 
