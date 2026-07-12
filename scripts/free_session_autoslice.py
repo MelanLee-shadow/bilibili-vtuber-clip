@@ -142,6 +142,7 @@ HOST_VOCAL_MODEL_DIR = Path(
     )
 )
 MAX_TALK_PICKS = 5
+TALK_ATTEMPT_CAP = 10  # reject unsafe content candidates and backfill, bounded
 MAX_SONGS_PER_DATE = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
 SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one date
@@ -167,6 +168,11 @@ SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
 SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
     {
         "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
+        "AGY_QUOTA_EXHAUSTED",
+        "AGY_EMPTY_OUTPUT",
+        "AGY_FAILED_RC",
+        "AGY_TIMEOUT",
+        "AGY_AND_GEMINI_API_FAILED",
         "CPA_RATE_LIMITED",
         "CPA_MODEL_DOWN",
         "CPA_UPSTREAM_5XX",
@@ -436,6 +442,13 @@ def load_env_file(path: Path) -> dict[str, str]:
 def child_env() -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_env_file(CPA_ENV))
+    # Gemini API is the automatic source-context failover when the AGY account
+    # is quota-limited.  Import only these named secrets from the recorder env;
+    # do not leak unrelated credentials into child processes.
+    bilive_env = load_env_file(BILIVE_ENV)
+    for key in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"):
+        if bilive_env.get(key):
+            env[key] = bilive_env[key]
     env.setdefault("HOME", "/root")
     truth_mode = human_truth_mode()
     blind_timely_terms = os.environ.get("AUTOSLICE_BLIND_TIMELY_TERMS")
@@ -657,6 +670,37 @@ def source_health_error() -> str | None:
         return f"listing {REC_ROOT} timed out after 25s (hung mount?)"
     if completed.returncode != 0:
         return (completed.stderr.strip() or f"ls rc={completed.returncode}")[:300]
+    return None
+
+
+def runtime_health_error() -> str | None:
+    """Reject an incomplete code snapshot before it consumes candidate work.
+
+    Production deploy already archives ``scripts/src/assets`` atomically, but
+    the July 11/12 isolated eval repo was assembled without the tracked
+    voiceprint profile.  Every talk then reached speaker finalization and
+    failed independently, burning the per-candidate retry budget.  Runtime
+    prerequisites are date-level infrastructure, so validate them once and
+    pause without touching any candidate state.
+    """
+
+    tracked_speaker_profile = REPO_ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+    required = {
+        "tracked_speaker_profile": tracked_speaker_profile,
+        "talk_producer": REPO_ROOT / "scripts" / "produce_slice_package.py",
+        "source_context_executor": REPO_ROOT / "src" / "autoslice" / "source_context_executor.py",
+    }
+    if HOST_VOCAL_PROFILE != tracked_speaker_profile:
+        required["configured_host_vocal_profile"] = HOST_VOCAL_PROFILE
+    missing = [f"{name}={path}" for name, path in required.items() if not path.is_file()]
+    if missing:
+        return "missing runtime prerequisite(s): " + ", ".join(missing)
+    try:
+        profile = json.loads(tracked_speaker_profile.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"invalid speaker profile {tracked_speaker_profile}: {type(exc).__name__}: {exc}"
+    if not isinstance(profile, dict):
+        return f"invalid speaker profile {tracked_speaker_profile}: root must be an object"
     return None
 
 
@@ -959,6 +1003,39 @@ def read_speaker_review_meta(
     return {}
 
 
+def classify_talk_failure(attempt_output: str) -> dict:
+    """Persist a stable failure identity instead of a bare generic status."""
+
+    tail = attempt_output[-8000:]
+    nonempty = [line.strip() for line in tail.splitlines() if line.strip()]
+    message = nonempty[-1][:1200] if nonempty else "producer exited without diagnostic"
+    if "BOUNDARY_UNREPAIRABLE" in tail:
+        kind, stage, recoverable = "content_boundary", "boundary_resolution", False
+    elif "voiceprint_profile.v1.json" in tail and (
+        "FileNotFoundError" in tail or "No such file" in tail
+    ):
+        kind, stage, recoverable = "runtime_prerequisite", "speaker_preflight", True
+    elif "SPEAKER_REVIEW_REQUIRED" in tail:
+        kind, stage, recoverable = "speaker_evidence", "speaker_finalization", False
+    elif any(
+        marker in tail.upper()
+        for marker in ("TOO MANY REQUESTS", "INDIVIDUAL QUOTA REACHED", "TIMED OUT", "TIMEOUT")
+    ):
+        kind, stage, recoverable = "provider_transient", "external_provider", True
+    else:
+        kind, stage, recoverable = "producer_error", "unknown", True
+    normalized = re.sub(r"/[^\s:'\"]+", "<path>", message)
+    normalized = re.sub(r"\b\d{8,}\b", "<n>", normalized)
+    fingerprint = hashlib.sha256(f"{kind}\0{stage}\0{normalized}".encode("utf-8")).hexdigest()
+    return {
+        "failure_kind": kind,
+        "failure_stage": stage,
+        "failure_message": message,
+        "failure_fingerprint": "sha256:" + fingerprint,
+        "failure_recoverable": recoverable,
+    }
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -1071,6 +1148,13 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     result["summary"] = last_json_block(tail)
     result.update(read_publish_meta(out_root / cid))
     if completed.returncode != 0:
+        result.update(classify_talk_failure(attempt_output))
+        if result["failure_recoverable"]:
+            retry_epoch = int(time.time()) + SONG_INFRA_RETRY_BASE_SECONDS
+            result["next_retry_at_epoch"] = retry_epoch
+            result["next_retry_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch)
+            )
         if (
             "TITLE_AUTHORITY_UNRESOLVED" in tail
             and str(result.get("title_authority_status") or "").startswith("UNRESOLVED")
@@ -1297,6 +1381,63 @@ def song_infra_retry_delay_seconds(completed_retry_count: int) -> int:
 
     exponent = max(0, int(completed_retry_count))
     return min(SONG_INFRA_RETRY_MAX_SECONDS, SONG_INFRA_RETRY_BASE_SECONDS * (2**exponent))
+
+
+def song_review_retry_after_seconds(summary_record: dict, selector_dir: Path) -> int | None:
+    """Read a retry-after value only from this selector attempt's sidecar."""
+
+    candidate_dir_raw = summary_record.get("candidate_dir")
+    if not isinstance(candidate_dir_raw, str) or not candidate_dir_raw:
+        return None
+    try:
+        candidate_dir = Path(candidate_dir_raw).resolve(strict=True)
+        candidate_dir.relative_to(selector_dir.resolve(strict=True))
+    except (OSError, ValueError):
+        return None
+    values: list[int] = []
+    for marker in candidate_dir.glob("source_context/*.jingting.review-required.json"):
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        value = (data.get("metadata") or {}).get("retry_after_seconds")
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            values.append(value)
+    return max(values) if values else None
+
+
+def scheduled_song_retry_epoch(state: dict) -> int | None:
+    """Earliest future infrastructure retry; its presence makes a date nonterminal."""
+
+    epochs: list[int] = []
+    for record in state.get("songs", []):
+        if not isinstance(record, dict) or record.get("status") not in {"blocked", "failed"}:
+            continue
+        reasons = {str(code) for code in record.get("reason_codes") or []}
+        if not reasons & SONG_INFRA_TRANSIENT_REASON_CODES:
+            continue
+        value = record.get("next_retry_at_epoch")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            epochs.append(int(value))
+    return min(epochs) if epochs else None
+
+
+def scheduled_talk_retry_epoch(state: dict) -> int | None:
+    epochs: list[int] = []
+    for record in state.get("picks", []):
+        if not isinstance(record, dict) or record.get("failure_recoverable") is not True:
+            continue
+        value = record.get("next_retry_at_epoch")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            epochs.append(int(value))
+    return min(epochs) if epochs else None
+
+
+def scheduled_retry_epoch(state: dict) -> int | None:
+    values = [scheduled_song_retry_epoch(state), scheduled_talk_retry_epoch(state)]
+    return min(value for value in values if value is not None) if any(
+        value is not None for value in values
+    ) else None
 
 
 def record_is_song(entry: dict) -> bool:
@@ -3005,9 +3146,24 @@ def produce_song(date: str, item: dict) -> dict:
                 pass
         result["decision"] = decision
         completion = song_completion_evidence(summary_record)
-        if transient_code is None and "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in {
-            str(code) for code in reasons
-        }:
+        reason_set = {str(code) for code in reasons}
+        specific_agy_transient = next(
+            (
+                code
+                for code in (
+                    "AGY_QUOTA_EXHAUSTED",
+                    "AGY_TIMEOUT",
+                    "AGY_EMPTY_OUTPUT",
+                    "AGY_FAILED_RC",
+                    "AGY_AND_GEMINI_API_FAILED",
+                )
+                if code in reason_set
+            ),
+            None,
+        )
+        if specific_agy_transient is not None:
+            transient_code = specific_agy_transient
+        elif transient_code is None and "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in reason_set:
             transient_code = "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
         result["reason_codes"] = list(
             dict.fromkeys(
@@ -3016,8 +3172,14 @@ def produce_song(date: str, item: dict) -> dict:
         )
         if transient_code:
             retry_count = int(result.get("transient_retry_count") or 0)
-            next_retry_epoch = int(time.time()) + song_infra_retry_delay_seconds(retry_count)
+            provider_retry_after = song_review_retry_after_seconds(summary_record, selector_dir)
+            retry_delay = max(
+                song_infra_retry_delay_seconds(retry_count),
+                (provider_retry_after + 60) if provider_retry_after is not None else 0,
+            )
+            next_retry_epoch = int(time.time()) + retry_delay
             result["transient_failure_code"] = transient_code
+            result["retry_after_seconds"] = retry_delay
             result["next_retry_at_epoch"] = next_retry_epoch
             result["next_retry_at"] = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime(next_retry_epoch)
@@ -5134,9 +5296,9 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     """
 
     current = pipeline_fingerprint()
-    lifetime_attempts = len(state.get("songs", [])) + len(state.get("song_superseded_attempts", []))
-    if lifetime_attempts >= SONG_LIFETIME_ATTEMPT_CAP:
-        return 0
+    lifetime_attempts = len(state.get("songs", [])) + len(
+        state.get("song_superseded_attempts", [])
+    )
     existing_pending = {
         str(item.get("cid") or item.get("candidate_id") or "")
         for item in state.get("pending_song", [])
@@ -5163,7 +5325,6 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
         next_retry_at = record.get("next_retry_at_epoch")
         infra_retry_due = (
             infra_transient
-            and retry_count < SONG_INFRA_RETRY_CAP
             and (
                 not isinstance(next_retry_at, (int, float))
                 or isinstance(next_retry_at, bool)
@@ -5183,8 +5344,9 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             and retry_count < 1
         )
         transient = infra_retry_due or legacy_transient
+        content_change_retry = changed and lifetime_attempts < SONG_LIFETIME_ATTEMPT_CAP
         cid = str(record.get("candidate_id") or "")
-        if not cid or cid in existing_pending or not (changed or transient):
+        if not cid or cid in existing_pending or not (content_change_retry or transient):
             kept.append(record)
             continue
 
@@ -5219,9 +5381,10 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             "title_hint": record.get("title_hint"),
             "visual_song_evidence": record.get("visual_song_evidence"),
             "transient_retry_count": retry_count + (1 if transient else 0),
+            "selected_repair": True,
             "retry_reason": (
                 "pipeline_fingerprint_changed"
-                if changed
+                if content_change_retry
                 else "transient_infrastructure_failure"
                 if infra_retry_due
                 else "transient_source_context_failure"
@@ -5557,12 +5720,23 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         retry_count = int(record.get("talk_repair_retry_count") or 0)
         transient_count = int(record.get("talk_transient_retry_count") or 0)
         changed = record.get("pipeline_fingerprint") != current
-        transient = record.get("status") == "failed" and transient_count < 1
+        next_retry_at = record.get("next_retry_at_epoch")
+        infrastructure_retry = bool(
+            record.get("failure_recoverable") is True
+            and (
+                not isinstance(next_retry_at, (int, float))
+                or isinstance(next_retry_at, bool)
+                or time.time() >= float(next_retry_at)
+            )
+        )
+        transient = (
+            record.get("status") == "failed" and transient_count < 1
+        ) or infrastructure_retry
         if (
             not cid
             or cid in existing_pending
             or not (changed or transient)
-            or retry_count >= TALK_REPAIR_LIFETIME_RETRY_CAP
+            or (retry_count >= TALK_REPAIR_LIFETIME_RETRY_CAP and not infrastructure_retry)
         ):
             kept.append(record)
             continue
@@ -5597,7 +5771,11 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "talk_repair_retry_count": retry_count + 1,
             "talk_transient_retry_count": transient_count + (1 if transient and not changed else 0),
             "retry_reason": (
-                "pipeline_fingerprint_changed" if changed else "transient_produce_failure"
+                "pipeline_fingerprint_changed"
+                if changed
+                else "transient_infrastructure_failure"
+                if infrastructure_retry
+                else "transient_produce_failure"
             ),
         }
         requeued.append(item)
@@ -5611,6 +5789,9 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 "talk_repair_retry_count": retry_count,
                 "talk_transient_retry_count": transient_count,
                 "retry_reason": item["retry_reason"],
+                "failure_kind": record.get("failure_kind"),
+                "failure_stage": record.get("failure_stage"),
+                "failure_fingerprint": record.get("failure_fingerprint"),
             }
         )
     state["picks"] = kept
@@ -5623,14 +5804,21 @@ def refill_songs(state: dict) -> None:
     both the delivery budget and the hard per-date attempt cap.  Legacy string
     backlog entries (pre-v4 states) stay for the report but cannot backfill."""
     backlog = state.setdefault("song_backlog", [])
-    pool = state.get("pending_song", []) + [b for b in backlog if isinstance(b, dict)]
+    pending = state.get("pending_song", [])
+    selected_repairs = [item for item in pending if item.get("selected_repair")]
+    pool = [item for item in pending if not item.get("selected_repair")] + [
+        b for b in backlog if isinstance(b, dict)
+    ]
     legacy = [b for b in backlog if not isinstance(b, dict)]
     pool.sort(key=lambda x: (-(x.get("danmaku") or 0), -(x["anchor_end_ms"] - x["anchor_start_ms"])))
     attempts_left_generation = max(0, SONG_ATTEMPT_CAP - len(state.get("songs", [])))
     lifetime_attempts = len(state.get("songs", [])) + len(state.get("song_superseded_attempts", []))
     attempts_left_lifetime = max(0, SONG_LIFETIME_ATTEMPT_CAP - lifetime_attempts)
     allowed = min(song_delivery_budget(state), attempts_left_generation, attempts_left_lifetime)
-    state["pending_song"] = pool[:allowed]
+    # Infrastructure retries belong to already-selected songs.  A date-level
+    # discovery/backfill cap must never discard them merely because sibling
+    # attempts filled the historical tombstone budget.
+    state["pending_song"] = selected_repairs + pool[:allowed]
     state["song_backlog"] = pool[allowed:] + legacy
 
 
@@ -5640,12 +5828,21 @@ def prioritize(state: dict) -> None:
     a soft per-segment diversity cap that yields when slots would go unfilled.
     Replaces the segment round-robin that let five early candidates claim the
     whole quota regardless of score.  Songs: top danmaku, budget = deliveries."""
+    # Preserve confidence-ranked reserve candidates so a deterministic
+    # boundary/speaker rejection can automatically free its slot.  They used
+    # to survive only as report strings, making top-5 mean "try exactly five
+    # and accept fewer on any content-level refusal".
+    prior_backlog = [
+        item for item in state.pop("talk_backlog", []) if isinstance(item, dict)
+    ]
+    state.setdefault("pending_talk", []).extend(prior_backlog)
     quarantine_overlapping_talk_candidates(state)
     pending_talk = state.get("pending_talk", [])
     selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
     pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
     produced = sum(1 for p in state.get("picks", []) if p.get("status") in DELIVERED_TALK_STATUSES)
-    slots = max(0, MAX_TALK_PICKS - produced)
+    attempts_left = max(0, TALK_ATTEMPT_CAP - len(state.get("picks", [])))
+    slots = min(max(0, MAX_TALK_PICKS - produced), attempts_left)
     ranked = sorted(pending_talk, key=lambda x: -(x.get("confidence") or 0.0))
     keep: list[dict] = []
     deferred: list[dict] = []
@@ -5668,11 +5865,12 @@ def prioritize(state: dict) -> None:
     # failed without delivery.  Do not discard the retry merely because
     # successful siblings now fill the ordinary delivery quota.
     state["pending_talk"] = selected_repairs + keep
+    state["talk_backlog"] = deferred
     for item in deferred:
         state.setdefault("not_selected", []).append(
             f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
             f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
-            f"(落选:全场按信心分全局排序取{MAX_TALK_PICKS}席,同段软上限{TALK_PER_SEGMENT_CAP})"
+            f"(候补:全场按信心分全局排序取{MAX_TALK_PICKS}席,同段软上限{TALK_PER_SEGMENT_CAP})"
         )
     refill_songs(state)
 
@@ -5749,6 +5947,17 @@ def process_date(date: str) -> None:
         write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
         return
+    runtime_err = runtime_health_error()
+    if runtime_err:
+        changed = state.get("runtime_error") != runtime_err or state.get("status") != "paused_runtime_invalid"
+        state["status"] = "paused_runtime_invalid"
+        state["runtime_error"] = runtime_err
+        write_state(date, state)
+        if changed:
+            write_alert("RUNTIME_INVALID", f"{date}: {runtime_err}")
+        log(f"{date}: runtime invalid — batch deferred without consuming candidate retries: {runtime_err}")
+        return
+    state.pop("runtime_error", None)
     automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
     recovered_song_deliveries = (
         recover_bound_song_deliveries(date, state) if automatic_maintenance else 0
@@ -5777,6 +5986,17 @@ def process_date(date: str) -> None:
         for r in state.get("picks", []) + state.get("songs", [])
     )
     if not has_new and not has_pending and not needs_cover:
+        retry_epoch = scheduled_retry_epoch(state)
+        if retry_epoch is not None:
+            delivered = any(
+                pick.get("status") in DELIVERED_TALK_STATUSES for pick in state.get("picks", [])
+            ) or any(song.get("delivered") for song in state.get("songs", []))
+            state["status"] = "review_ready_retry_wait" if delivered else "retry_wait"
+            state["next_retry_at_epoch"] = retry_epoch
+            state["next_retry_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch))
+            write_state(date, state)
+            write_reports(date, state)
+            return
         if recovered_song_deliveries:
             delivered_talk = [
                 pick
@@ -5830,10 +6050,12 @@ def process_date(date: str) -> None:
     # network-bound on AGY/CPA/gpt-image-2).  title_failed picks (CPA title lane
     # flaky) stay pending and retry on a later tick — the succeeded ones are kept,
     # not re-done.  CPA was gated at entry; a mid-batch outage just fails a slice.
-    if state["pending_talk"]:
+    while state["pending_talk"]:
         talk_items = list(state["pending_talk"])
         results = produce_batch(date, talk_items, produce_talk)
         retry: list[dict] = []
+        rejected = 0
+        recoverable_failure = False
         for item, result in zip(talk_items, results):
             if result.get("status") == "title_failed":
                 item["title_attempts"] = item.get("title_attempts", 0) + 1
@@ -5843,6 +6065,17 @@ def process_date(date: str) -> None:
                     continue
                 result["status"] = "failed"
                 result["error"] = "title generation failed 3x"
+            if result.get("status") in {"boundary_unrepairable", "speaker_review_required"}:
+                result["rejected_status"] = result["status"]
+                result["status"] = "candidate_rejected"
+                result["rejection_reason"] = (
+                    "unsafe_boundary_backfilled"
+                    if result["rejected_status"] == "boundary_unrepairable"
+                    else "speaker_identity_unresolved_backfilled"
+                )
+                rejected += 1
+            if result.get("failure_recoverable") is True:
+                recoverable_failure = True
             state["picks"].append(result)
         state["pending_talk"] = retry
         write_state(date, state)
@@ -5852,6 +6085,16 @@ def process_date(date: str) -> None:
             write_reports(date, state)
             log(f"{date}: {len(retry)} title(s) failed — will retry on a later tick")
             return
+        if recoverable_failure:
+            # The selected item is waiting on infrastructure.  Do not spend a
+            # second candidate merely to hide the outage or exceed top-5 when
+            # the original resumes.
+            break
+        if rejected:
+            prioritize(state)
+            write_state(date, state)
+            continue
+        break
 
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
     # the next backlog song (danmaku-desc) until the delivery budget is met,
@@ -5879,7 +6122,14 @@ def process_date(date: str) -> None:
     ]
     # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
     # 0 failures').  A batch is review_ready only when something REACHED review.
-    if delivered_talk or delivered_songs:
+    retry_epoch = scheduled_retry_epoch(state)
+    if retry_epoch is not None:
+        state["status"] = (
+            "review_ready_retry_wait" if delivered_talk or delivered_songs else "retry_wait"
+        )
+        state["next_retry_at_epoch"] = retry_epoch
+        state["next_retry_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch))
+    elif delivered_talk or delivered_songs:
         state["status"] = "review_ready_with_failures" if failures else "review_ready"
     else:
         state["status"] = "no_delivery"

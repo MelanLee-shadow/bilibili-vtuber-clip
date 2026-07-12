@@ -328,7 +328,37 @@ def _run_live_source(
         run_ffmpeg=source_context_run_ffmpeg,
     )
 
-    if source_context.decision != "READY" or not source_context.context_refined_srt_path:
+    source_context_subtitle_path = source_context.context_refined_srt_path
+    song_agy_context_fallback = bool(
+        _job_is_song_candidate(job_manifest)
+        and source_context.decision == "RETRY_INFRA"
+        and source_context.context_draft_srt_path
+        and Path(source_context.context_draft_srt_path).is_file()
+        and set(source_context.reason_codes)
+        & {
+            "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
+            "AGY_QUOTA_EXHAUSTED",
+            "AGY_EMPTY_OUTPUT",
+            "AGY_FAILED_RC",
+            "AGY_TIMEOUT",
+            "AGY_AND_GEMINI_API_FAILED",
+        }
+    )
+    if song_agy_context_fallback:
+        source_context_subtitle_path = source_context.context_draft_srt_path
+        job_manifest = {
+            **dict(job_manifest),
+            "song_context_subtitle_fallback": {
+                "status": "USED_FOR_PROOF_CONTEXT_ONLY",
+                "subtitle_path": source_context_subtitle_path,
+                "reason_codes": list(source_context.reason_codes),
+                "final_subtitle_authority": "verified_external_lrc_required",
+            },
+        }
+
+    if (
+        source_context.decision != "READY" and not song_agy_context_fallback
+    ) or not source_context_subtitle_path:
         record = _write_live_source_gap_record(
             output_dir=output_dir,
             candidate_id=candidate_id,
@@ -350,7 +380,7 @@ def _run_live_source(
 
     context_start_ms = _int(_mapping(job_manifest.get("timeline")).get("context_start_ms"), 0)
     context_duration_ms = _int(_mapping(job_manifest.get("timeline")).get("context_duration_ms"), 0)
-    cues = _parse_srt(Path(source_context.context_refined_srt_path), source_offset_ms=context_start_ms)
+    cues = _parse_srt(Path(source_context_subtitle_path), source_offset_ms=context_start_ms)
     job_manifest, song_repair_result = _attempt_song_repair_stage(
         job_manifest,
         cues,
@@ -426,12 +456,19 @@ def _run_live_source(
     live_review_required = _read_review_required_marker(
         Path(source_context.review_required_path) if source_context.review_required_path else None
     )
+    verified_song_lrc_authority = bool(
+        song_agy_context_fallback
+        and lyric_timeline_loaded is not None
+        and evidence.song_complete is True
+        and evidence.lyrics_alignment_ready is True
+    )
     decision = review_candidate(
         to_candidate_review(
             evidence,
             provenance,
             jingting_done=source_context.jingting_done,
             review_required=live_review_required,
+            verified_song_lrc_authority=verified_song_lrc_authority,
         )
     )
     decision = _merge_cpa_semantic_review_into_decision(decision, evidence)
@@ -463,8 +500,14 @@ def _run_live_source(
         "reason_codes": list(decision.reason_codes),
         "score": decision.score,
         "evidence_path": str(evidence_path),
-        "subtitle_source": "source_context_refined_srt",
-        "subtitle_path": source_context.context_refined_srt_path,
+        "subtitle_source": (
+            "verified_external_lrc"
+            if verified_song_lrc_authority
+            else "source_context_refined_srt"
+            if source_context.context_refined_srt_path
+            else "source_context_draft_for_song_proof"
+        ),
+        "subtitle_path": source_context_subtitle_path,
         "source_context_job": _source_context_job_record(job_manifest),
         "source_context": _source_context_record(source_context),
         "boundary_resolution": _boundary_resolution_record(boundary_resolution),
@@ -2368,6 +2411,10 @@ def _source_context_job_record(job_manifest: Mapping[str, object]) -> dict[str, 
         "selector_stage": job_manifest.get("selector_stage"),
         "boundary_authority": job_manifest.get("boundary_authority"),
         "viewer_context_expansion": dict(_mapping(job_manifest.get("viewer_context_expansion"))) or None,
+        "song_context_subtitle_fallback": dict(
+            _mapping(job_manifest.get("song_context_subtitle_fallback"))
+        )
+        or None,
     }
 
 
@@ -5616,9 +5663,37 @@ def _format_srt_time(ms: int) -> str:
 
 
 def _run_source_context_agy(media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:
-    from scripts.gemini_slice_jingting import AGY_MODEL, run_agy
+    from scripts.gemini_slice_jingting import (
+        AGY_MODEL,
+        GEMINI_MODEL,
+        run_agy,
+        run_gemini_api,
+    )
 
-    job_dir = run_agy(str(media_path), str(draft_srt_path), str(output_srt_path))
+    try:
+        job_dir = run_agy(str(media_path), str(draft_srt_path), str(output_srt_path))
+    except Exception as agy_exc:
+        try:
+            job_dir = run_gemini_api(
+                str(media_path), str(draft_srt_path), str(output_srt_path)
+            )
+        except Exception as gemini_exc:
+            from src.autoslice.source_context_executor import AgyRunnerError
+
+            retry_after = getattr(agy_exc, "retry_after_seconds", None)
+            raise AgyRunnerError(
+                "AGY_AND_GEMINI_API_FAILED",
+                "AGY failed and Gemini API fallback also failed: "
+                f"agy={type(agy_exc).__name__}; gemini={type(gemini_exc).__name__}: {gemini_exc}",
+                retry_after_seconds=retry_after,
+            ) from gemini_exc
+        return AgyExecutionResult(
+            provider="gemini_api",
+            model=GEMINI_MODEL,
+            agy_rc=None,
+            provider_fallback_used=True,
+            provider_request_id=job_dir,
+        )
     return AgyExecutionResult(
         provider="agy",
         model=AGY_MODEL,

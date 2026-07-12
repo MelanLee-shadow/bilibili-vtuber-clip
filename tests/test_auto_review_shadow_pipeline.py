@@ -1030,6 +1030,71 @@ def test_complete_lrc_without_lidousha_vocal_proof_stays_blocked(tmp_path):
     assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
 
 
+def test_song_agy_infrastructure_failure_continues_independent_lrc_and_vocal_proof(
+    tmp_path, monkeypatch
+):
+    """AGY corrects talk text, but a song's final subtitles come from the
+    verified LRC timeline.  Provider quota must not prevent boundary/audio/
+    host-vocal proof from running, while the failure remains in audit metadata."""
+
+    def quota_executor(
+        job_manifest,
+        *,
+        source_video_path,
+        output_dir,
+        full_source_srt_path,
+        **_kwargs,
+    ):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        marker = output_dir / "quota.jingting.review-required.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "schema_version": "jingting-review-required.v1",
+                    "release_ready": False,
+                    "findings": ["AGY_SOURCE_CONTEXT_RUNNER_FAILED", "AGY_QUOTA_EXHAUSTED"],
+                    "metadata": {"retry_after_seconds": 2458},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return shadow_pipeline.SourceContextExecutionResult(
+            decision="RETRY_INFRA",
+            reason_codes=("AGY_SOURCE_CONTEXT_RUNNER_FAILED", "AGY_QUOTA_EXHAUSTED"),
+            context_media_path=str(source_video_path),
+            context_draft_srt_path=str(full_source_srt_path),
+            context_refined_srt_path=None,
+            jingting_manifest_path=None,
+            review_required_path=str(marker),
+            source_cues_path=None,
+            jingting_done=False,
+        )
+
+    monkeypatch.setattr(shadow_pipeline, "execute_source_context_job", quota_executor)
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_load_lyric_timeline",
+        lambda *_args, **_kwargs: (
+            [(25_000, "你看过了许多美景"), (87_100, "你累积了许多飞行"), (210_300, "就是旅行的意义")],
+            0,
+        ),
+    )
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+    )
+
+    assert record["decision_action"] != "RETRY"
+    assert record["source_context_job"]["song_context_subtitle_fallback"]["status"] == (
+        "USED_FOR_PROOF_CONTEXT_ONLY"
+    )
+    assert record["subtitle_source"] == "verified_external_lrc"
+    assert record["materialized_recut"]["subtitle_source"] == "external_lrc_global_shift"
+    assert evidence["metrics"]["song_complete"] is True
+    assert "JINGTING_PENDING" not in record["reason_codes"]
+    assert "JINGTING_REVIEW_REQUIRED" not in record["reason_codes"]
+
+
 def test_ready_host_identity_plus_speech_over_background_music_stays_blocked(tmp_path):
     record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
         tmp_path,
@@ -1447,6 +1512,36 @@ def test_live_source_runs_agy_runner_when_refined_srt_is_absent(tmp_path, monkey
     assert record["source_context"]["review_required_path"] is None
     assert "REFINED_SRT_MISSING" not in record["reason_codes"]
     assert "JINGTING_REVIEW_REQUIRED" not in record["reason_codes"]
+
+
+def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_path, monkeypatch):
+    from scripts import gemini_slice_jingting as jingting
+    from src.autoslice.source_context_executor import AgyRunnerError
+
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"media")
+    draft = tmp_path / "draft.srt"
+    draft.write_text("1\n00:00:00,000 --> 00:00:01,000\n旧字\n", encoding="utf-8")
+    output = tmp_path / "output.srt"
+    monkeypatch.setattr(
+        jingting,
+        "run_agy",
+        lambda *_args: (_ for _ in ()).throw(
+            AgyRunnerError("AGY_QUOTA_EXHAUSTED", "quota", retry_after_seconds=120)
+        ),
+    )
+
+    def fake_gemini(_media, _draft, out):
+        Path(out).write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
+        return "gemini-job"
+
+    monkeypatch.setattr(jingting, "run_gemini_api", fake_gemini)
+    result = shadow_pipeline._run_source_context_agy(media, draft, output)
+
+    assert result.provider == "gemini_api"
+    assert result.provider_fallback_used is True
+    assert result.agy_rc is None
+    assert output.is_file()
 
 
 def test_live_source_backfills_duplicate_and_subtitle_alignment_machine_evidence(tmp_path, monkeypatch):

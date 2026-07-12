@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Build an immutable autoslice eval runtime from one committed Git tree.
+
+The output contains exactly the tracked ``scripts/``, ``src/``, and ``assets/``
+surfaces plus a hash manifest.  It deliberately does not copy a working tree:
+the July 11/12 blind eval omitted ``assets/lidousha/voiceprint_profile.v1.json``
+and therefore measured a broken deployment rather than the pipeline.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import tarfile
+import tempfile
+
+
+ARCHIVE_ROOTS = ("scripts", "src", "assets")
+REQUIRED_PATHS = (
+    "scripts/free_session_autoslice.py",
+    "scripts/produce_slice_package.py",
+    "src/autoslice/source_context_executor.py",
+    "assets/lidousha/voiceprint_profile.v1.json",
+)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_snapshot(*, repo: Path, commit: str, output: Path) -> dict[str, object]:
+    repo = repo.resolve(strict=True)
+    if output.exists():
+        raise FileExistsError(f"snapshot output already exists: {output}")
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{commit}^{{commit}}"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="autoslice-eval-", dir=output.parent) as temp_raw:
+        temp = Path(temp_raw)
+        archive = temp / "snapshot.tar"
+        with archive.open("wb") as sink:
+            completed = subprocess.run(
+                ["git", "archive", "--format=tar", resolved, *ARCHIVE_ROOTS],
+                cwd=repo,
+                check=False,
+                stdout=sink,
+                stderr=subprocess.PIPE,
+            )
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr.decode("utf-8", "replace"))
+        tree = temp / "tree"
+        tree.mkdir()
+        with tarfile.open(archive, "r") as bundle:
+            bundle.extractall(tree, filter="data")
+        missing = [relative for relative in REQUIRED_PATHS if not (tree / relative).is_file()]
+        if missing:
+            raise RuntimeError("committed eval snapshot missing required paths: " + ", ".join(missing))
+        try:
+            profile = json.loads(
+                (tree / "assets/lidousha/voiceprint_profile.v1.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"invalid committed speaker profile: {exc}") from exc
+        if not isinstance(profile, dict):
+            raise RuntimeError("invalid committed speaker profile: root must be an object")
+        files = {
+            path.relative_to(tree).as_posix(): "sha256:" + sha256_file(path)
+            for path in sorted(tree.rglob("*"))
+            if path.is_file()
+        }
+        manifest: dict[str, object] = {
+            "schema_version": "autoslice-eval-snapshot.v1",
+            "commit": resolved,
+            "archive_roots": list(ARCHIVE_ROOTS),
+            "required_paths": list(REQUIRED_PATHS),
+            "files": files,
+        }
+        (tree / "EVAL_SNAPSHOT_MANIFEST.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tree, output)
+    return manifest
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo", type=Path, default=Path.cwd())
+    parser.add_argument("--commit", default="HEAD")
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    manifest = build_snapshot(repo=args.repo, commit=args.commit, output=args.output)
+    print(json.dumps({"output": str(args.output), "commit": manifest["commit"], "files": len(manifest["files"])}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

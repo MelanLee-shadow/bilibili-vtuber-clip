@@ -30,9 +30,16 @@ class AgyRunnerError(RuntimeError):
     has to say which one actually happened.
     """
 
-    def __init__(self, reason_code: str, message: str):
+    def __init__(
+        self,
+        reason_code: str,
+        message: str,
+        *,
+        retry_after_seconds: int | None = None,
+    ):
         super().__init__(message)
         self.reason_code = reason_code
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass(frozen=True)
@@ -179,11 +186,15 @@ def execute_source_context_job(
             specific = getattr(exc, "reason_code", None)
             if isinstance(specific, str) and specific:
                 findings = findings + (specific,)
+            retry_after_seconds = getattr(exc, "retry_after_seconds", None)
+            metadata: dict[str, object] = {"error": f"{type(exc).__name__}: {exc}"}
+            if isinstance(retry_after_seconds, int) and retry_after_seconds > 0:
+                metadata["retry_after_seconds"] = retry_after_seconds
             _write_review_required(
                 review_required_path,
                 release_ready=False,
                 findings=findings,
-                metadata={"error": f"{type(exc).__name__}: {exc}"},
+                metadata=metadata,
             )
             return SourceContextExecutionResult(
                 decision="RETRY_INFRA",
@@ -367,11 +378,16 @@ def _format_srt_time(ms: int) -> str:
 
 def _agy_reason_codes(result: AgyExecutionResult) -> tuple[str, ...]:
     reasons: list[str] = []
-    if result.provider != "agy":
+    accepted_gemini_fallback = (
+        result.provider == "gemini_api"
+        and result.agy_rc is None
+        and result.provider_fallback_used is True
+    )
+    if result.provider not in {"agy", "gemini_api"}:
         reasons.append("JINGTING_PROVIDER_NOT_AGY")
-    if result.agy_rc != 0:
+    if result.provider == "agy" and result.agy_rc != 0:
         reasons.append("AGY_FAILED")
-    if result.provider_fallback_used is True:
+    if result.provider_fallback_used is True and not accepted_gemini_fallback:
         reasons.append("JINGTING_PROVIDER_FALLBACK_USED")
     elif result.provider_fallback_used is None:
         reasons.append("JINGTING_PROVIDER_FALLBACK_UNKNOWN")

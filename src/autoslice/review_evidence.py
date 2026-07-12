@@ -84,6 +84,7 @@ def to_candidate_review(
     recut_attempt: int = 0,
     max_recut_attempts: int = 2,
     review_required: Mapping[str, object] | None = None,
+    verified_song_lrc_authority: bool = False,
 ) -> CandidateReview:
     """Convert normalized evidence to the existing fail-closed review contract."""
 
@@ -113,8 +114,9 @@ def to_candidate_review(
     return CandidateReview(
         candidate_id=evidence.candidate_id,
         jingting_done=jingting_done,
-        release_ready=release_ready,
-        review_required_findings=review_required_findings,
+        verified_song_lrc_authority=verified_song_lrc_authority,
+        release_ready=True if verified_song_lrc_authority else release_ready,
+        review_required_findings=() if verified_song_lrc_authority else review_required_findings,
         foreground_song_overlap_seconds=evidence.foreground_song_overlap_seconds,
         song_complete=evidence.song_complete,
         lyrics_alignment_ready=evidence.lyrics_alignment_ready,
