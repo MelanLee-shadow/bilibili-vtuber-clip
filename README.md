@@ -46,6 +46,7 @@ container:/app/Videos                      # 原始录播输入
 - `docs/remote-first-autoslice-route.md`：当前整理后的远端优先路线、目录职责和下一步工程顺序。
 - `docs/lidousha-auto-review-architecture.md`：详细 gate、manifest、状态机、风险和分阶段设计。
 - `docs/workflows/lidousha-song-finished-package-workflow.md`：歌曲 no-upload review package 的当前权威流程。
+- `docs/workflows/huozi-luanshua.md`：从历史直播高置信语音重组句子、最小改句建议与双版本 no-upload 交付流程。
 - `.agent/skills/song-lyrics-timeline-aligner/SKILL.md`：外部同步歌词、当前音频证明、单一位移和尾部验收规则。
 - `docs/reviews/2026-07-09-mebukutoki-lrc-repair.md`：yonige《芽吹くとき》事故、修复和 live rerun 证据。
 - `reports/slice_monitor/README.md`：本地监控 free/bilive 的运行说明；`reports/` 下面其他内容视为生成输出，不是源代码。
@@ -69,6 +70,7 @@ container:/app/Videos                      # 原始录播输入
 - `scripts/lidousha_auto_review_shadow_daemon.py`：生产安全的 no-upload shadow daemon。
 - `scripts/lidousha_slice_monitor.py`：本地监控 `free` 上 bilive 运行状态。
 - `scripts/free_session_autoslice.py`：`free` 上 cron 每 10 分钟调用的 post-stream autoslice runner。
+- `scripts/huozi_luanshua.py`：活字乱刷的全历史发现、最长片段规划、建议句、双 ASR 证据和 no-upload 渲染入口。
 - `src/autoslice/song_repair.py`：canonical LRC 搜索、稀疏 ASR 音频证明与 fail-closed 校验。
 - `src/autoslice/agy_lrc_alignment.py`：当前 full window 音频对同步歌词逐行观察，并输出 AGY v4 以现场演唱为主体或背景播放的分类证据。
 - `src/autoslice/host_vocal_proof.py`：生成 `host-vocal-proof.v2`，CAM++ 七点只取明确演唱行；runner 复核歌词角色/hash 绑定、分数中位数和门槛，复核器不重跑 ML 推理。
