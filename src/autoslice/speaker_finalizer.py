@@ -61,6 +61,10 @@ CAMPP_EMBEDDING_DIMENSION = 192
 CAMPP_MIN_EMBEDDING_NORM = 1e-3
 CAMPP_COSINE_EPSILON = 1e-6
 CAMPP_SCORE_ROUNDING_TOLERANCE = 1e-5
+SINGLETON_CONTEXT_HOST_MIN_CONFIDENCE = 0.90
+SINGLETON_NONLEXICAL_RESIDUALS = {"", "我", "我这", "这", "那", "这个", "那个"}
+REVIEW_SHA256_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
+REVIEW_TIMESTAMP_RE = re.compile(r"\d{2}:\d{2}:\d{2},\d{3}\Z")
 
 
 DEFAULT_POLICY: dict[str, float | int] = {
@@ -74,6 +78,100 @@ DEFAULT_POLICY: dict[str, float | int] = {
     "short_cue_ms": 1_500,
     "single_host_median_seed_min": 0.55,
 }
+
+
+def _review_sha256(value: object, *, field: str) -> str:
+    matched = REVIEW_SHA256_RE.fullmatch(value) if isinstance(value, str) else None
+    if not matched:
+        raise SpeakerFinalizationError(f"{field} must be a SHA-256 digest")
+    return matched.group(1)
+
+
+def validate_speaker_review_manifest_document(
+    document: object,
+    *,
+    expected_media_sha256: str | None = None,
+    expected_text_sha256: str | None = None,
+    cues: Sequence[TextCue] | None = None,
+) -> list[dict[str, object]]:
+    """Validate that a terminal speaker-review state is self-contained and bound."""
+
+    if not isinstance(document, Mapping):
+        raise SpeakerFinalizationError("speaker review manifest must be an object")
+    if (
+        document.get("status") != "SPEAKER_REVIEW_REQUIRED"
+        or document.get("production_ready") is not False
+    ):
+        raise SpeakerFinalizationError("speaker review manifest status is invalid")
+    if not str(document.get("reason") or "").strip():
+        raise SpeakerFinalizationError("speaker review manifest reason is missing")
+    media_sha256 = _review_sha256(
+        document.get("source_media_sha256"), field="source_media_sha256"
+    )
+    text_sha256 = _review_sha256(
+        document.get("text_final_srt_sha256"), field="text_final_srt_sha256"
+    )
+    if expected_media_sha256 is not None and media_sha256 != _review_sha256(
+        expected_media_sha256, field="expected source_media_sha256"
+    ):
+        raise SpeakerFinalizationError("speaker review media hash mismatch")
+    if expected_text_sha256 is not None and text_sha256 != _review_sha256(
+        expected_text_sha256, field="expected text_final_srt_sha256"
+    ):
+        raise SpeakerFinalizationError("speaker review text hash mismatch")
+
+    unresolved_raw = document.get("context_unresolved_cues")
+    if not isinstance(unresolved_raw, list) or not unresolved_raw:
+        raise SpeakerFinalizationError("speaker review unresolved cues must be non-empty")
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in unresolved_raw):
+        raise SpeakerFinalizationError("speaker review unresolved cue numbers must be integers")
+    unresolved = list(unresolved_raw)
+    if len(set(unresolved)) != len(unresolved) or any(value < 1 for value in unresolved):
+        raise SpeakerFinalizationError("speaker review unresolved cue numbers are invalid")
+
+    rows_raw = document.get("review_required_cues")
+    if not isinstance(rows_raw, list) or not rows_raw:
+        raise SpeakerFinalizationError("speaker review evidence rows must be non-empty")
+    rows: list[dict[str, object]] = []
+    seen: set[int] = set()
+    for raw in rows_raw:
+        if not isinstance(raw, Mapping):
+            raise SpeakerFinalizationError("speaker review evidence row must be an object")
+        source_cue = raw.get("source_cue")
+        zero_based = raw.get("zero_based_index")
+        if (
+            isinstance(source_cue, bool)
+            or not isinstance(source_cue, int)
+            or isinstance(zero_based, bool)
+            or not isinstance(zero_based, int)
+            or zero_based != source_cue - 1
+            or source_cue in seen
+        ):
+            raise SpeakerFinalizationError("speaker review evidence cue indexes are invalid")
+        _review_sha256(raw.get("audio_sha256"), field=f"cue {source_cue} audio_sha256")
+        if not REVIEW_TIMESTAMP_RE.fullmatch(str(raw.get("start") or "")) or not REVIEW_TIMESTAMP_RE.fullmatch(
+            str(raw.get("end") or "")
+        ):
+            raise SpeakerFinalizationError(f"speaker review cue {source_cue} timestamps are invalid")
+        if not isinstance(raw.get("text"), str) or not str(raw.get("text")).strip():
+            raise SpeakerFinalizationError(f"speaker review cue {source_cue} text is invalid")
+        if cues is not None:
+            if source_cue > len(cues):
+                raise SpeakerFinalizationError("speaker review evidence cue is out of range")
+            cue = cues[source_cue - 1]
+            if (raw.get("start"), raw.get("end"), raw.get("text")) != (
+                cue.start,
+                cue.end,
+                cue.text,
+            ):
+                raise SpeakerFinalizationError(
+                    f"speaker review cue {source_cue} text/timeline binding mismatch"
+                )
+        seen.add(source_cue)
+        rows.append(dict(raw))
+    if seen != set(unresolved):
+        raise SpeakerFinalizationError("speaker review evidence does not exactly cover unresolved cues")
+    return rows
 
 
 def _require_sha256(value: object, *, field: str) -> str:
@@ -748,6 +846,166 @@ def _reviewed_context_votes(
     return votes
 
 
+_SINGLETON_PUNCT_RX = re.compile(r"[\s，。！？!?、,.…~～—\-]+")
+_SINGLETON_LAUGHTER_RX = re.compile(r"(?:哈{2,}|嘿{2,}|呵{2,}|嘻{2,}|(?:ha){2,}|笑死|笑)", re.IGNORECASE)
+_SINGLETON_INTERJECTION_RX = re.compile(r"(?:啊|呀|哎|唉|诶|欸|嗯|呃|额|哦|噢|哼|嘛|呢|吧)+")
+
+
+def _singleton_nonlexical_dominant(text: str) -> bool:
+    compact = _SINGLETON_PUNCT_RX.sub("", str(text)).lower()
+    without_laughter, laughter_count = _SINGLETON_LAUGHTER_RX.subn("", compact)
+    residual, interjection_count = _SINGLETON_INTERJECTION_RX.subn("", without_laughter)
+    return bool(laughter_count or interjection_count) and residual in SINGLETON_NONLEXICAL_RESIDUALS
+
+
+def _resolve_singleton_outlier(
+    *,
+    cues: Sequence[TextCue],
+    singleton_index: int,
+    seed_scores: Sequence[float],
+    host_bank_scores: Mapping[int, float],
+    clip_host_indices: Sequence[int],
+    policy: Mapping[str, float | int],
+    cue_audio_sha256: Sequence[str],
+    context_call: Callable[[str], str] | None,
+    reviewed_context_votes: Mapping[int, str] | None = None,
+) -> dict[str, object]:
+    """Resolve one low outlier through the existing whole-clip context judge."""
+
+    host_min = float(policy["single_host_median_seed_min"])
+    bank_min = float(policy["guest_session_similarity_max"])
+
+    def cue_evidence(index: int) -> dict[str, object]:
+        return {
+            "source_cue": index + 1,
+            "zero_based_index": index,
+            "start": cues[index].start,
+            "end": cues[index].end,
+            "text": cues[index].text,
+            "seed_score": round(float(seed_scores[index]), 8),
+            "host_bank_score": round(float(host_bank_scores[index]), 8),
+            "audio_sha256": cue_audio_sha256[index],
+        }
+
+    neighbours = [
+        {
+            **cue_evidence(index),
+            "host_supported": seed_scores[index] >= host_min
+            and host_bank_scores[index] >= bank_min,
+        }
+        for index in (singleton_index - 1, singleton_index + 1)
+        if 0 <= index < len(cues)
+    ]
+    gates = {
+        "nonlexical_dominant": _singleton_nonlexical_dominant(cues[singleton_index].text),
+        "strong_host_majority": statistics.median(seed_scores) >= host_min,
+        "strong_host_anchors": len(clip_host_indices)
+        >= int(policy["host_session_anchor_count"]),
+        "adjacent_host": len(neighbours) == 2
+        and all(bool(row["host_supported"]) for row in neighbours),
+    }
+    evidence = {
+        **cue_evidence(singleton_index),
+        "duration_ms": _ms(cues[singleton_index].end) - _ms(cues[singleton_index].start),
+        "nonlexical_dominant": gates["nonlexical_dominant"],
+        "clip_median_seed_score": round(float(statistics.median(seed_scores)), 8),
+        "strong_host_anchor_cues": [index + 1 for index in clip_host_indices],
+        "neighbours": neighbours,
+    }
+    reviewed = (reviewed_context_votes or {}).get(singleton_index)
+    labels: list[str | None] = ["李豆沙"] * len(cues)
+    labels[singleton_index] = None
+    context_votes, context_attempts, context_errors = _whole_clip_context_votes(
+        cues,
+        labels,
+        [singleton_index],
+        context_call,
+        initial_speakers=(
+            {singleton_index: str(reviewed)} if reviewed in {"李豆沙", "连线"} else None
+        ),
+        allow_review=True,
+        require_confidence=True,
+    )
+    context_decision = context_votes.get(singleton_index)
+
+    reviewed_ready = reviewed in {"李豆沙", "连线"}
+    automatic_host_ready = bool(
+        all(gates.values())
+        and context_decision
+        and context_decision.get("speaker") == "李豆沙"
+        and float(context_decision.get("confidence") or 0.0)
+        >= SINGLETON_CONTEXT_HOST_MIN_CONFIDENCE
+    )
+    gate_failures = {
+        "nonlexical_dominant": "SINGLETON_LEXICAL_CONTENT",
+        "strong_host_majority": "HOST_MAJORITY_INSUFFICIENT",
+        "strong_host_anchors": "HOST_ANCHORS_INSUFFICIENT",
+        "adjacent_host": "NEIGHBOR_HOST_EVIDENCE_INCOMPLETE",
+    }
+    reason_codes = [] if reviewed_ready else [
+        gate_failures[name] for name, passed in gates.items() if not passed
+    ]
+    if not reviewed_ready:
+        if context_decision is None:
+            reason_codes.append("CONTEXT_INCOMPLETE")
+        elif context_decision["speaker"] == "连线":
+            reason_codes.append("CONTEXT_GUEST")
+        elif context_decision["speaker"] == "REVIEW":
+            reason_codes.append("CONTEXT_REVIEW")
+        elif float(context_decision["confidence"]) < SINGLETON_CONTEXT_HOST_MIN_CONFIDENCE:
+            reason_codes.append("CONTEXT_HOST_CONFIDENCE_LOW")
+        if context_decision and context_decision["speaker"] == "李豆沙" and not all(gates.values()):
+            reason_codes.append("CONTEXT_ACOUSTIC_CONFLICT")
+    singleton_speaker = (
+        str(reviewed)
+        if reviewed_ready
+        else "李豆沙"
+        if automatic_host_ready
+        else str((context_decision or {}).get("speaker"))
+        if (context_decision or {}).get("speaker") in {"李豆沙", "连线"}
+        else "连线"
+    )
+    singleton_source = (
+        "accepted_context_baseline"
+        if reviewed_ready
+        else "whole_clip_context_singleton"
+        if automatic_host_ready
+        else "speaker_review_required_singleton"
+    )
+    review_required = not (reviewed_ready or automatic_host_ready)
+    evidence.update(
+        {
+            "gates": gates,
+            "context_decision": context_decision,
+            "context_errors": context_errors,
+            "review_reason_codes": reason_codes,
+        }
+    )
+    return {
+        "mode": "singleton_outlier",
+        "multi_speaker_detected": singleton_speaker == "连线" and not review_required,
+        "context_attempts": context_attempts,
+        "context_errors": context_errors,
+        "context_required_cues": [singleton_index + 1],
+        "context_unresolved_cues": [singleton_index + 1] if review_required else [],
+        "review_required": review_required,
+        "review_reason_codes": reason_codes,
+        "singleton_evidence": [evidence],
+        "decisions": [
+            {
+                "source_index": index + 1,
+                "speaker": singleton_speaker if index == singleton_index else "李豆沙",
+                "decision_source": singleton_source if index == singleton_index else "campp_single_host_majority",
+                "seed_score": round(float(seed_scores[index]), 8),
+                "host_score": round(float(host_bank_scores[index]), 8),
+                "guest_score": None,
+                "margin": None,
+            }
+            for index in range(len(cues))
+        ],
+    }
+
+
 def _context_prompt(cues: Sequence[TextCue], labels: Sequence[str | None], ambiguous: Sequence[int]) -> str:
     rows = [
         f"{index}. [{label or '待定'}] {cue.text}"
@@ -758,11 +1016,84 @@ def _context_prompt(cues: Sequence[TextCue], labels: Sequence[str | None], ambig
         "大部分行已经由声纹标为[李豆沙]/[连线]；只有[待定]行因太短或处于声纹分界带，需要根据整段问答、称呼方向和上下文判断。\n"
         "规则：别人评价李豆沙后，她的反问/自辩通常是李豆沙；对李豆沙使用第三人称评价的通常是连线；"
         "对话中作为名字出现的精确词 shadow 是李豆沙的自称之一，不是第四位说话人或连线嘉宾；"
-        "不要修改文字，不要把相邻两个人的连续短句合成同一说话人。\n"
+        "不要修改文字，不要把相邻两个人的连续短句合成同一说话人。"
+        "单个声纹离群点不能独立建立嘉宾簇；若上下文仍可能是真实嘉宾、证据冲突或无法确定，返回 REVIEW。\n"
         f"待定行号（1-based）：{[index + 1 for index in ambiguous]}\n\n"
         + "\n".join(rows)
-        + '\n\n只输出 JSON：{"labels":[{"n":1,"speaker":"李豆沙"}]}，且只列待定行。'
+        + '\n\n只输出 JSON：{"labels":[{"n":1,"speaker":"李豆沙","confidence":0.95,'
+        '"reason":"具体上下文依据"}]}，且只列待定行。speaker 只能是李豆沙、连线或 REVIEW；confidence 为 0..1。'
     )
+
+
+def _whole_clip_context_votes(
+    cues: Sequence[TextCue],
+    labels: Sequence[str | None],
+    ambiguous: Sequence[int],
+    context_call: Callable[[str], str] | None,
+    *,
+    initial_speakers: Mapping[int, str] | None = None,
+    allow_review: bool = False,
+    require_confidence: bool = False,
+) -> tuple[dict[int, dict[str, object]], int, list[str]]:
+    """Use the one whole-clip judge/retry/schema path for all ambiguous cues."""
+
+    votes = {
+        index: {
+            "n": index + 1,
+            "speaker": speaker,
+            "confidence": 1.0,
+            "reason": "hash-bound reviewed context vote",
+            "source": "hash_bound_reviewed_context",
+        }
+        for index, speaker in (initial_speakers or {}).items()
+        if index in ambiguous and speaker in {"李豆沙", "连线"}
+    }
+    attempts = 0
+    errors: list[str] = []
+    if context_call is None:
+        return votes, attempts, errors
+    allowed = {"李豆沙", "连线"} | ({"REVIEW"} if allow_review else set())
+    for _attempt in range(3):
+        pending = [index for index in ambiguous if index not in votes]
+        if not pending:
+            break
+        attempts += 1
+        try:
+            payload = extract_json_object(context_call(_context_prompt(cues, labels, pending)))
+            rows = payload.get("labels", [])
+            if not isinstance(rows, list):
+                raise ValueError("labels must be a list")
+            attempt_votes: dict[int, dict[str, object]] = {}
+            for row in rows:
+                cue_index = int(row["n"]) - 1
+                speaker = str(row["speaker"])
+                if cue_index not in pending or speaker not in allowed:
+                    continue
+                if cue_index in attempt_votes:
+                    raise ValueError(f"duplicate context label for cue {cue_index + 1}")
+                confidence: object = row.get("confidence")
+                reason = str(row.get("reason") or "").strip()
+                if require_confidence:
+                    if isinstance(confidence, bool) or not isinstance(
+                        confidence, (int, float)
+                    ):
+                        raise ValueError("context confidence must be a JSON number")
+                    confidence = float(confidence)
+                    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+                        raise ValueError("context confidence must be finite within 0..1")
+                    if not reason:
+                        raise ValueError("context reason must be non-empty")
+                attempt_votes[cue_index] = {
+                    "n": cue_index + 1,
+                    "speaker": speaker,
+                    "confidence": confidence,
+                    "reason": reason,
+                    "source": "whole_clip_context",
+                }
+            votes.update(attempt_votes)
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+    return votes, attempts, errors
 
 
 def _speaker_context_env() -> dict[str, str]:
@@ -1119,18 +1450,26 @@ def _run_campplus_analysis(
         host_prints = [cue_paths[index] for index in host_indices]
         host_anchor_scope = "clip"
 
+    host_bank_score_cache: dict[int, float] = {}
+
     def host_bank_similarity(index: int) -> float:
         # A trusted host bank contains complementary speaking styles.  A cue
         # that strongly matches any unchanged-high-gate host anchor is host-
         # explained; averaging would dilute the one matching style and create
         # false guest evidence (notably excited/farewell delivery).
+        if index in host_bank_score_cache:
+            return host_bank_score_cache[index]
         values = [similarity(host, cue_paths[index]) for host in host_prints]
         if host_anchor_scope == "source_session":
-            return float(max(values))
+            score = float(max(values))
+            host_bank_score_cache[index] = score
+            return score
         # Preserve the established clip-local classifier exactly.  The
         # any-anchor veto is authorized only by an explicit, hash-bound source
         # session bank; it must not silently relax every historical clip.
-        return float(statistics.mean(values))
+        score = float(statistics.mean(values))
+        host_bank_score_cache[index] = score
+        return score
 
     guest_candidates: list[int] = []
     for index in sorted(range(len(cues)), key=seed_scores.__getitem__):
@@ -1165,6 +1504,42 @@ def _run_campplus_analysis(
         unexplained_long_low = [
             index for index in raw_long_low if index not in host_explained_low
         ]
+        if len(guest_candidates) == 1 and unexplained_long_low == guest_candidates:
+            singleton_index = guest_candidates[0]
+            singleton = _resolve_singleton_outlier(
+                cues=cues,
+                singleton_index=singleton_index,
+                seed_scores=seed_scores,
+                host_bank_scores={
+                    index: host_bank_similarity(index) for index in range(len(cues))
+                },
+                clip_host_indices=clip_host_indices,
+                policy=policy,
+                cue_audio_sha256=[sha256_file(path) for path in cue_paths],
+                context_call=context_call,
+                reviewed_context_votes=reviewed_context_votes,
+            )
+            _assert_runtime_assets_stable(
+                model_dir=model_dir,
+                model_tree_sha256=model_hash,
+                references=references,
+            )
+            return {
+                **singleton,
+                "host_anchor_scope": host_anchor_scope,
+                "source_session_anchor": source_session_evidence,
+                "policy": policy,
+                "model_tree_sha256": model_hash,
+                "reference_hashes": {
+                    str(reference["id"]): str(reference["sha256"])
+                    for reference in references
+                },
+                "host_anchor_cues": [index + 1 for index in host_indices],
+                "clip_host_anchor_candidates": [index + 1 for index in clip_host_indices],
+                "host_explained_low_cues": [index + 1 for index in host_explained_low],
+                "guest_anchor_groups": [],
+                "threshold": None,
+            }
         if median_seed < float(policy["single_host_median_seed_min"]) or unexplained_long_low:
             raise SpeakerFinalizationError(
                 f"guest evidence exists but purified guest anchors are insufficient: {guest_candidates}"
@@ -1240,32 +1615,16 @@ def _run_campplus_analysis(
         for index, speaker in (reviewed_context_votes or {}).items()
         if index in ambiguous and speaker in {"李豆沙", "连线"}
     }
-    votes: dict[int, str] = dict(reviewed_votes)
-    context_errors: list[str] = []
-    context_attempts = 0
-    if any(index not in votes for index in ambiguous) and context_call is not None:
-        # Retry incomplete answers as well as transport failures. Production
-        # readiness still requires every ambiguous cue to have either a context
-        # vote or a hash-bound human override.
-        for _attempt in range(3):
-            context_attempts += 1
-            try:
-                pending = [index for index in ambiguous if index not in votes]
-                payload = extract_json_object(context_call(_context_prompt(cues, labels, pending)))
-                rows = payload.get("labels", [])
-                if not isinstance(rows, list):
-                    raise ValueError("labels must be a list")
-                for row in rows:
-                    cue_index = int(row["n"]) - 1
-                    speaker = str(row["speaker"])
-                    # A context reply may include rows that were not requested.
-                    # Never let it overwrite a frozen reviewed vote.
-                    if cue_index in pending and speaker in {"李豆沙", "连线"}:
-                        votes[cue_index] = speaker
-                if all(index in votes for index in ambiguous):
-                    break
-            except Exception as exc:
-                context_errors.append(f"{type(exc).__name__}: {exc}")
+    context_vote_rows, context_attempts, context_errors = _whole_clip_context_votes(
+        cues,
+        labels,
+        ambiguous,
+        context_call,
+        initial_speakers=reviewed_votes,
+    )
+    votes = {
+        index: str(row["speaker"]) for index, row in context_vote_rows.items()
+    }
     unresolved_context = [index for index in ambiguous if index not in votes]
     resolved, sources = resolve_ambiguous_labels(labels, margins, threshold, votes)
     for index in reviewed_votes:
@@ -1446,12 +1805,14 @@ def finalize_speaker_subtitles(
             )
         final_cues = apply_overrides(automatic, override_document)
     unresolved_raw = analysis.get("context_unresolved_cues") or []
-    try:
-        unresolved = {int(value) for value in unresolved_raw}
-    except (TypeError, ValueError) as exc:
+    if not isinstance(unresolved_raw, list) or any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in unresolved_raw
+    ):
         raise SpeakerFinalizationError(
             "speaker analyzer returned invalid unresolved-context evidence"
-        ) from exc
+        )
+    unresolved = set(unresolved_raw)
     override_sources = {
         int(item.get("source_cue", 0))
         for item in ((override_document or {}).get("overrides") or [])
@@ -1459,6 +1820,62 @@ def finalize_speaker_subtitles(
     }
     remaining_unresolved = sorted(unresolved - override_sources)
     if remaining_unresolved:
+        if analysis.get("review_required") is True:
+            output_srt_path.unlink(missing_ok=True)
+            output_ass_path.unlink(missing_ok=True)
+            reason_codes = [
+                str(value) for value in (analysis.get("review_reason_codes") or [])
+            ]
+            media_sha256 = sha256_file(media_path)
+            text_sha256 = sha256_file(text_srt_path)
+            review_manifest: dict[str, object] = {
+                "schema_version": "lidousha-speaker-finalization.v1",
+                "status": "SPEAKER_REVIEW_REQUIRED",
+                "production_ready": False,
+                "reason_code": "SPEAKER_REVIEW_REQUIRED",
+                "reason": (
+                    "singleton speaker evidence requires review: "
+                    + ",".join(reason_codes or ["UNRESOLVED_SINGLETON"])
+                ),
+                "stage_order": "text_final_then_speaker_then_ass_then_burn",
+                "source_media": str(media_path),
+                "source_media_sha256": media_sha256,
+                "text_final_srt": str(text_srt_path),
+                "text_final_srt_sha256": text_sha256,
+                "profile": str(profile_path.resolve()),
+                "profile_sha256": profile_sha256,
+                "automatic_labelled_srt": str(automatic_srt.resolve()),
+                "automatic_labelled_srt_sha256": sha256_file(automatic_srt),
+                "speaker_override": (
+                    str(override_path.resolve()) if override_path is not None else None
+                ),
+                "speaker_override_sha256": (
+                    sha256_file(override_path) if override_path is not None else None
+                ),
+                "source_session_anchor_manifest": (
+                    str(source_session_anchor_original)
+                    if source_session_anchor_original is not None
+                    else None
+                ),
+                "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
+                "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
+                "source_cue_count": len(cues),
+                "context_unresolved_cues": remaining_unresolved,
+                "review_reason_codes": reason_codes,
+                "review_required_cues": analysis.get("singleton_evidence") or [],
+                "analysis": analysis,
+            }
+            validate_speaker_review_manifest_document(
+                review_manifest,
+                expected_media_sha256=media_sha256,
+                expected_text_sha256=text_sha256,
+                cues=cues,
+            )
+            atomic_write_text(
+                output_manifest_path,
+                json.dumps(review_manifest, ensure_ascii=False, indent=2) + "\n",
+            )
+            return review_manifest
         raise SpeakerFinalizationError(
             "whole-clip context did not resolve ambiguous speaker cues: "
             + ",".join(str(value) for value in remaining_unresolved)
@@ -1561,6 +1978,9 @@ def main(argv: list[str] | None = None) -> int:
         atomic_write_text(args.output_manifest, json.dumps(blocked, ensure_ascii=False, indent=2) + "\n")
         print(json.dumps(blocked, ensure_ascii=False))
         return 3
+    if manifest.get("status") == "SPEAKER_REVIEW_REQUIRED":
+        print(json.dumps(manifest, ensure_ascii=False))
+        return 4
     print(json.dumps({"status": manifest["status"], "manifest": str(args.output_manifest)}, ensure_ascii=False))
     return 0
 

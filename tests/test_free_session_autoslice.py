@@ -3624,6 +3624,18 @@ def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, mo
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
     log_path = base / "logs" / f"{date}_auto_stale.log"
     log_path.write_text("BOUNDARY_UNREPAIRABLE: old attempt\n", encoding="utf-8")
+    stale_recuts = base / "out" / date / "auto_stale" / "replacement_recuts"
+    stale_recuts.mkdir(parents=True)
+    (stale_recuts / "auto_stale.speaker-final.json").write_text(
+        json.dumps(
+            {
+                "status": "SPEAKER_REVIEW_REQUIRED",
+                "production_ready": False,
+                "reason": "old attempt",
+            }
+        ),
+        encoding="utf-8",
+    )
     calls = []
 
     class Completed:
@@ -3651,6 +3663,7 @@ def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, mo
     assert len(calls) == 1
     assert result["status"] == "failed"
     assert result["boundary_context_retries"] == 0
+    assert "speaker_review_manifest" not in result
 
 
 def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkeypatch):
@@ -3782,6 +3795,221 @@ def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
     runner.prioritize(state)
 
     assert [item["cid"] for item in state["pending_talk"]] == ["repair"]
+
+
+def test_talk_fingerprint_scopes_speaker_override_and_withholds_truth(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    monkeypatch.delenv("AUTOSLICE_HUMAN_TRUTH_MODE", raising=False)
+    root = tmp_path / "assets/lidousha/speaker_overrides"
+    root.mkdir(parents=True)
+    baseline = runner.talk_pipeline_fingerprint("auto_singleton")
+    override = root / "auto_singleton.speaker.v1.json"
+    override.write_text('{"version":1}\n', encoding="utf-8")
+    added = runner.talk_pipeline_fingerprint("auto_singleton")
+    assert added != baseline
+    override.write_text('{"version":2}\n', encoding="utf-8")
+    assert runner.talk_pipeline_fingerprint("auto_singleton") != added
+    override.unlink()
+    assert runner.talk_pipeline_fingerprint("auto_singleton") == baseline
+
+    override.write_text('{"human_truth":"must not be read"}\n', encoding="utf-8")
+    monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
+    withheld = runner.talk_pipeline_fingerprint("auto_singleton")
+    override.write_text('{"human_truth":"changed but still unread"}\n', encoding="utf-8")
+    assert runner.candidate_speaker_override_path("auto_singleton") is None
+    assert runner.talk_pipeline_fingerprint("auto_singleton") == withheld
+
+
+def test_talk_speaker_review_is_structured_and_not_boundary_retried(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    cid = "auto_170019_580_757"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+    calls = []
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        recuts = base / "out" / date / cid / "replacement_recuts"
+        recuts.mkdir(parents=True)
+        (recuts / f"{cid}.speaker-final.json").write_text(
+            json.dumps(
+                {
+                    "status": "SPEAKER_REVIEW_REQUIRED",
+                    "production_ready": False,
+                    "reason": "singleton requires review",
+                    "source_media_sha256": "a" * 64,
+                    "text_final_srt_sha256": "b" * 64,
+                    "context_unresolved_cues": [75],
+                    "review_required_cues": [
+                        {
+                            "source_cue": 75,
+                            "zero_based_index": 74,
+                            "start": "00:02:28,000",
+                            "end": "00:02:30,030",
+                            "text": "我这，哈哈",
+                            "seed_score": 0.33793,
+                            "host_bank_score": 0.28934,
+                            "audio_sha256": "c" * 64,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        kwargs["stdout"].write("SPEAKER_REVIEW_REQUIRED: singleton requires review\n")
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": cid,
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 580_000,
+            "end_ms": 757_000,
+            "hook": "singleton fixture",
+        },
+    )
+
+    assert len(calls) == 1
+    assert result["status"] == "speaker_review_required"
+    assert result["boundary_context_retries"] == 0
+    assert result["speaker_review_required_cues"][0]["source_cue"] == 75
+    assert result["speaker_review_manifest_sha256"].startswith("sha256:")
+    assert result["speaker_review_source_media_sha256"] == "a" * 64
+
+
+@pytest.mark.parametrize(
+    "manifest_document",
+    [
+        None,
+        {
+            "status": "SPEAKER_REVIEW_REQUIRED",
+            "production_ready": False,
+            "reason": "minimal malformed manifest",
+        },
+    ],
+)
+def test_talk_speaker_review_marker_without_bound_manifest_stays_failed(
+    tmp_path, monkeypatch, manifest_document
+):
+    date = "2026-07-10"
+    cid = "auto_unbound_speaker_review"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(_command, **kwargs):
+        if manifest_document is not None:
+            recuts = base / "out" / date / cid / "replacement_recuts"
+            recuts.mkdir(parents=True)
+            (recuts / f"{cid}.speaker-final.json").write_text(
+                json.dumps(manifest_document), encoding="utf-8"
+            )
+        kwargs["stdout"].write("SPEAKER_REVIEW_REQUIRED: marker only\n")
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": cid,
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 200_000,
+            "hook": "fixture",
+        },
+    )
+
+    assert result["status"] == "failed"
+    assert "speaker_review_manifest_sha256" not in result
+
+
+def test_read_speaker_review_meta_rejects_unchanged_manifest(tmp_path):
+    recuts = tmp_path / "replacement_recuts"
+    recuts.mkdir()
+    manifest = recuts / "candidate.speaker-final.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "status": "SPEAKER_REVIEW_REQUIRED",
+                "production_ready": False,
+                "reason": "stale but otherwise valid",
+                "source_media_sha256": "a" * 64,
+                "text_final_srt_sha256": "b" * 64,
+                "context_unresolved_cues": [1],
+                "review_required_cues": [
+                    {
+                        "source_cue": 1,
+                        "zero_based_index": 0,
+                        "start": "00:00:00,000",
+                        "end": "00:00:01,000",
+                        "text": "fixture",
+                        "audio_sha256": "c" * 64,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    previous = runner._speaker_review_manifest_state(tmp_path)
+
+    assert runner.read_speaker_review_meta(tmp_path, previous_state=previous) == {}
+
+
+def test_speaker_review_requeues_only_after_fingerprint_change(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "segment.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    record = {
+        "candidate_id": "auto_singleton",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 200_000,
+        "status": "speaker_review_required",
+        "pipeline_fingerprint": "sha256:same",
+        "talk_repair_retry_count": 0,
+        "talk_transient_retry_count": 0,
+    }
+    state = {"pending_talk": [], "picks": [record]}
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["picks"] == [record]
+    monkeypatch.setattr(runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:new")
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["pending_talk"][0]["retry_reason"] == "pipeline_fingerprint_changed"
+    assert state["pending_talk"][0]["talk_transient_retry_count"] == 0
 
 
 def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatch):

@@ -103,6 +103,10 @@ from src.autoslice.song_repair import (
     live_performance_failure_reason_codes,
     validate_live_performance_observation,
 )
+from src.autoslice.speaker_finalizer import (
+    SpeakerFinalizationError,
+    validate_speaker_review_manifest_document,
+)
 from src.autoslice.visual_song_discovery import (
     VisualSongConfig,
     discover_visual_songs,
@@ -324,6 +328,24 @@ def candidate_subtitle_regression_path(candidate_id: str) -> Path | None:
     return path
 
 
+def candidate_speaker_override_path(candidate_id: str) -> Path | None:
+    """Return the candidate's hash-bound speaker truth, withheld during blind tests."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
+        raise ValueError("unsafe candidate id for speaker override")
+    if human_truth_mode() == "withheld":
+        return None
+    root = REPO_ROOT / "assets" / "lidousha" / "speaker_overrides"
+    path = root / f"{candidate_id}.speaker.v1.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("candidate speaker override must be a regular non-symlink file")
+    if path.resolve().parent != root.resolve():
+        raise ValueError("candidate speaker override escapes its canonical asset root")
+    return path
+
+
 def talk_pipeline_fingerprint(candidate_id: str) -> str:
     """Base code/config proof plus only this talk's optional truth assets."""
 
@@ -333,6 +355,7 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
         for path in (
             candidate_text_override_path(candidate_id),
             candidate_subtitle_regression_path(candidate_id),
+            candidate_speaker_override_path(candidate_id),
         )
         if path is not None
     ]
@@ -347,7 +370,7 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
             return "sha256:" + hasher.hexdigest()
         return base
     hasher = hashlib.sha256()
-    hasher.update(b"talk-pipeline-fingerprint.v3\0")
+    hasher.update(b"talk-pipeline-fingerprint.v5\0")
     hasher.update(base.encode("utf-8") + b"\0")
     hasher.update(str(candidate_id).encode("utf-8") + b"\0")
     for path in sorted(truth_assets, key=lambda item: item.relative_to(REPO_ROOT).as_posix()):
@@ -830,10 +853,69 @@ def read_publish_meta(work_dir: Path) -> dict:
     return {}
 
 
+def _speaker_review_manifest_state(work_dir: Path) -> dict[str, tuple[int, int, int, int]]:
+    state: dict[str, tuple[int, int, int, int]] = {}
+    for path in work_dir.glob("replacement_recuts/*.speaker-final.json"):
+        try:
+            metadata = path.stat()
+        except OSError:
+            continue
+        state[str(path)] = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mtime_ns,
+            metadata.st_size,
+        )
+    return state
+
+
+def read_speaker_review_meta(
+    work_dir: Path,
+    *,
+    previous_state: dict[str, tuple[int, int, int, int]],
+) -> dict:
+    for manifest_path in sorted(work_dir.glob("replacement_recuts/*.speaker-final.json")):
+        try:
+            metadata = manifest_path.stat()
+            current_state = (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_mtime_ns,
+                metadata.st_size,
+            )
+            if previous_state.get(str(manifest_path)) == current_state:
+                continue
+            payload = manifest_path.read_bytes()
+            after_read = manifest_path.stat()
+            if current_state != (
+                after_read.st_dev,
+                after_read.st_ino,
+                after_read.st_mtime_ns,
+                after_read.st_size,
+            ):
+                continue
+            document = json.loads(payload)
+            rows = validate_speaker_review_manifest_document(document)
+        except (OSError, ValueError, SpeakerFinalizationError):
+            continue
+        return {
+            "speaker_review_manifest": str(manifest_path),
+            "speaker_review_manifest_sha256": "sha256:"
+            + hashlib.sha256(payload).hexdigest(),
+            "speaker_review_source_media_sha256": document["source_media_sha256"],
+            "speaker_review_text_final_srt_sha256": document["text_final_srt_sha256"],
+            "speaker_review_context_unresolved_cues": document["context_unresolved_cues"],
+            "speaker_review_reason": document["reason"],
+            "speaker_review_required_cues": rows,
+        }
+    return {}
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
-    Returns the result record; status is one of ok / title_failed / failed.
+    Returns the result record; deterministic speaker uncertainty is preserved
+    as ``speaker_review_required`` instead of a generic retryable failure.
     A title_failed pick is cleaned up (no delivery with a cid title/cover) and
     retried on a later resume.  ``reuse_cover`` keeps the existing delivered
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
@@ -869,6 +951,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     candidate_subtitle_regression = candidate_subtitle_regression_path(cid)
     if candidate_subtitle_regression is not None:
         spec["subtitle_regression"] = str(candidate_subtitle_regression)
+    candidate_speaker_override = candidate_speaker_override_path(cid)
+    if candidate_speaker_override is not None:
+        spec["speaker_overrides"] = str(candidate_speaker_override)
     out_root.mkdir(parents=True, exist_ok=True)
     spec_path = out_root / f"spec_{cid}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -881,6 +966,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     boundary_context_retries = 0
 
     def run_producer():
+        speaker_review_state = _speaker_review_manifest_state(out_root / cid)
         attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
         with open(log_path, "a", encoding="utf-8") as sink:
             completed = subprocess.run(
@@ -890,9 +976,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         with open(log_path, "rb") as source:
             source.seek(attempt_offset)
             attempt_output = source.read().decode("utf-8", "replace")
-        return completed, attempt_output
+        return completed, attempt_output, speaker_review_state
 
-    completed, attempt_output = run_producer()
+    completed, attempt_output, previous_speaker_review_state = run_producer()
     first_tail = attempt_output[-4000:]
     if (
         completed.returncode != 0
@@ -917,7 +1003,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                     f"and absolute repair cap to {BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
                     f"(semantic end remains {item['end_ms']}ms)\n"
                 )
-            completed, attempt_output = run_producer()
+            completed, attempt_output, previous_speaker_review_state = run_producer()
     result = {
         "candidate_id": cid, "segment": Path(item["segment_path"]).name,
         "start_ms": item["start_ms"], "end_ms": item["end_ms"],
@@ -954,6 +1040,15 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                 shutil.rmtree(recuts, ignore_errors=True)
             result["status"] = "title_failed"
             return result
+        if "SPEAKER_REVIEW_REQUIRED" in attempt_output:
+            review_meta = read_speaker_review_meta(
+                out_root / cid,
+                previous_state=previous_speaker_review_state,
+            )
+            if review_meta:
+                result.update(review_meta)
+                result["status"] = "speaker_review_required"
+                return result
         # BOUNDARY_UNREPAIRABLE is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.
         result["status"] = (
@@ -5393,6 +5488,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
     for record in state.get("picks", []):
         if not isinstance(record, dict) or record.get("status") not in {
             "boundary_unrepairable",
+            "speaker_review_required",
             "failed",
         }:
             kept.append(record)
@@ -5634,7 +5730,8 @@ def process_date(date: str) -> None:
             failures = [
                 record
                 for record in state.get("picks", []) + state.get("songs", [])
-                if record.get("status") in ("failed", "boundary_unrepairable")
+                if record.get("status")
+                in ("failed", "boundary_unrepairable", "speaker_review_required")
             ]
             state["status"] = (
                 "review_ready_with_failures" if failures else "review_ready"
@@ -5717,7 +5814,12 @@ def process_date(date: str) -> None:
     repaired = [p for p in delivered_talk if p.get("boundary_repairs")]
     delivered_songs = [s for s in songs if s.get("delivered")]
     blocked_songs = [s for s in songs if s.get("status") == "blocked"]
-    failures = [r for r in picks + songs if r.get("status") in ("failed", "boundary_unrepairable")]
+    failures = [
+        record
+        for record in picks + songs
+        if record.get("status")
+        in ("failed", "boundary_unrepairable", "speaker_review_required")
+    ]
     # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
     # 0 failures').  A batch is review_ready only when something REACHED review.
     if delivered_talk or delivered_songs:

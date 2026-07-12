@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts.produce_slice_package import run_speaker_finalizer
+from scripts.apply_subtitle_text_overrides import TextCue
 
 from src.autoslice.speaker_finalizer import (
     CAMPP_EMBEDDING_CACHE_SCHEMA,
@@ -19,10 +20,14 @@ from src.autoslice.speaker_finalizer import (
     _context_prompt,
     _cosine_similarity,
     _load_source_session_anchor_samples,
+    _resolve_singleton_outlier,
+    _run_campplus_analysis,
+    _singleton_nonlexical_dominant,
     _speaker_context_env,
     _validate_source_session_anchor_document,
     finalize_speaker_subtitles,
     resolve_ambiguous_labels,
+    validate_speaker_review_manifest_document,
 )
 from src.autoslice.host_vocal_proof import _sha256_directory
 
@@ -688,6 +693,86 @@ def test_runner_surfaces_blocked_manifest_reason_before_runtime_warnings(
             speaker_python=tmp_path / "python",
         )
 
+
+def test_runner_surfaces_structured_speaker_review_status(tmp_path: Path, monkeypatch) -> None:
+    output_manifest = tmp_path / "speaker.json"
+    (tmp_path / "media.mp4").write_bytes(b"media")
+    (tmp_path / "text.srt").write_text("text", encoding="utf-8")
+
+    def fake_run(*_args, **_kwargs):
+        output_manifest.write_text(
+            json.dumps(
+                {
+                    "status": "SPEAKER_REVIEW_REQUIRED",
+                    "production_ready": False,
+                    "reason": "singleton speaker evidence requires review",
+                    "source_media_sha256": hashlib.sha256(b"media").hexdigest(),
+                    "text_final_srt_sha256": hashlib.sha256(b"text").hexdigest(),
+                    "context_unresolved_cues": [1],
+                    "review_required_cues": [
+                        {
+                            "source_cue": 1,
+                            "zero_based_index": 0,
+                            "start": "00:00:00,000",
+                            "end": "00:00:01,000",
+                            "text": "fixture",
+                            "audio_sha256": "a" * 64,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess([], 4, stdout="", stderr="warning noise")
+
+    monkeypatch.setattr("scripts.produce_slice_package.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="SPEAKER_REVIEW_REQUIRED: singleton"):
+        run_speaker_finalizer(
+            host="localhost",
+            candidate_id="candidate",
+            media_path=tmp_path / "media.mp4",
+            text_srt_path=tmp_path / "text.srt",
+            output_srt_path=tmp_path / "speaker.srt",
+            output_ass_path=tmp_path / "speaker.ass",
+            output_manifest_path=output_manifest,
+            work_dir=tmp_path / "work",
+            speaker_python=tmp_path / "python",
+        )
+
+
+def test_runner_rejects_malformed_speaker_review_manifest(tmp_path: Path, monkeypatch) -> None:
+    output_manifest = tmp_path / "speaker.json"
+    (tmp_path / "media.mp4").write_bytes(b"media")
+    (tmp_path / "text.srt").write_text("text", encoding="utf-8")
+
+    def fake_run(*_args, **_kwargs):
+        output_manifest.write_text(
+            json.dumps(
+                {
+                    "status": "SPEAKER_REVIEW_REQUIRED",
+                    "production_ready": False,
+                    "reason": "missing evidence",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess([], 4, stdout="", stderr="speaker exited 4")
+
+    monkeypatch.setattr("scripts.produce_slice_package.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="SPEAKER_FINALIZATION_FAILED") as raised:
+        run_speaker_finalizer(
+            host="localhost",
+            candidate_id="candidate",
+            media_path=tmp_path / "media.mp4",
+            text_srt_path=tmp_path / "text.srt",
+            output_srt_path=tmp_path / "speaker.srt",
+            output_ass_path=tmp_path / "speaker.ass",
+            output_manifest_path=output_manifest,
+            work_dir=tmp_path / "work",
+            speaker_python=tmp_path / "python",
+        )
+    assert "SPEAKER_REVIEW_REQUIRED" not in str(raised.value)
+
 def test_context_prompt_treats_exact_shadow_name_as_lidousha_not_fourth_speaker() -> None:
     prompt = _context_prompt([], [], [])
     assert "精确词 shadow 是李豆沙的自称之一" in prompt
@@ -1115,3 +1200,404 @@ def test_unanswered_ambiguous_context_blocks_production(tmp_path: Path) -> None:
             work_dir=tmp_path / "work",
             analyzer=incomplete_analyzer,
         )
+
+
+def _timestamp(milliseconds: int) -> str:
+    seconds, millis = divmod(milliseconds, 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _singleton_incident_fixture(text: str = "我这，哈哈"):
+    cues = []
+    cursor = 0
+    for index in range(78):
+        duration = 2030 if index == 74 else 2000
+        cues.append(
+            TextCue(index + 1, _timestamp(cursor), _timestamp(cursor + duration), text if index == 74 else f"主播句子{index + 1}")
+        )
+        cursor += duration
+    seed_scores = [0.67843] * 78
+    seed_scores[:4] = [0.85, 0.84, 0.83, 0.82]
+    seed_scores[74] = 0.33793
+    host_bank_scores = {index: 0.7 for index in range(78)}
+    host_bank_scores[74] = 0.28934
+    audio_hashes = [hashlib.sha256(f"cue-{index}".encode()).hexdigest() for index in range(78)]
+    return cues, seed_scores, host_bank_scores, audio_hashes
+
+
+def test_singleton_laughter_incident_uses_whole_clip_context_as_host() -> None:
+    cues, seed_scores, host_bank_scores, audio_hashes = _singleton_incident_fixture()
+
+    def context(prompt: str) -> str:
+        assert "75. [待定] 我这，哈哈" in prompt
+        return json.dumps(
+            {
+                "labels": [
+                    {
+                        "n": 75,
+                        "speaker": "李豆沙",
+                        "confidence": 0.98,
+                        "reason": "相邻两句延续主播自嘲，当前句是笑声回应",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    result = _resolve_singleton_outlier(
+        cues=cues,
+        singleton_index=74,
+        seed_scores=seed_scores,
+        host_bank_scores=host_bank_scores,
+        clip_host_indices=[0, 1, 2, 3],
+        policy={
+            "single_host_median_seed_min": 0.55,
+            "guest_session_similarity_max": 0.45,
+            "host_session_anchor_count": 4,
+        },
+        cue_audio_sha256=audio_hashes,
+        context_call=context,
+    )
+
+    assert result["review_required"] is False
+    assert result["context_unresolved_cues"] == []
+    assert result["decisions"][74]["speaker"] == "李豆沙"
+    assert result["decisions"][74]["decision_source"] == "whole_clip_context_singleton"
+    evidence = result["singleton_evidence"][0]
+    assert evidence["source_cue"] == 75
+    assert evidence["zero_based_index"] == 74
+    assert evidence["text"] == "我这，哈哈"
+    assert evidence["duration_ms"] == 2030
+    assert evidence["seed_score"] == 0.33793
+    assert evidence["host_bank_score"] == 0.28934
+    assert evidence["audio_sha256"] == audio_hashes[74]
+    assert [row["source_cue"] for row in evidence["neighbours"]] == [74, 76]
+
+
+@pytest.mark.parametrize(
+    "context_speaker,confidence,reason_code",
+    [
+        ("连线", 0.99, "CONTEXT_GUEST"),
+        ("REVIEW", 0.99, "CONTEXT_REVIEW"),
+        ("李豆沙", 0.80, "CONTEXT_HOST_CONFIDENCE_LOW"),
+    ],
+)
+def test_singleton_non_host_or_low_confidence_context_stays_review_required(
+    context_speaker: str, confidence: float, reason_code: str
+) -> None:
+    cues, seed_scores, host_bank_scores, audio_hashes = _singleton_incident_fixture()
+    result = _resolve_singleton_outlier(
+        cues=cues,
+        singleton_index=74,
+        seed_scores=seed_scores,
+        host_bank_scores=host_bank_scores,
+        clip_host_indices=[0, 1, 2, 3],
+        policy={
+            "single_host_median_seed_min": 0.55,
+            "guest_session_similarity_max": 0.45,
+            "host_session_anchor_count": 4,
+        },
+        cue_audio_sha256=audio_hashes,
+        context_call=lambda _prompt: json.dumps(
+            {
+                "labels": [
+                    {
+                        "n": 75,
+                        "speaker": context_speaker,
+                        "confidence": confidence,
+                        "reason": "fixture",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert result["review_required"] is True
+    assert result["context_unresolved_cues"] == [75]
+    assert reason_code in result["review_reason_codes"]
+
+
+def test_singleton_incomplete_context_retries_then_requires_review() -> None:
+    cues, seed_scores, host_bank_scores, audio_hashes = _singleton_incident_fixture()
+    calls = 0
+
+    def incomplete(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return '{"labels":[]}'
+
+    result = _resolve_singleton_outlier(
+        cues=cues,
+        singleton_index=74,
+        seed_scores=seed_scores,
+        host_bank_scores=host_bank_scores,
+        clip_host_indices=[0, 1, 2, 3],
+        policy={
+            "single_host_median_seed_min": 0.55,
+            "guest_session_similarity_max": 0.45,
+            "host_session_anchor_count": 4,
+        },
+        cue_audio_sha256=audio_hashes,
+        context_call=incomplete,
+    )
+
+    assert calls == 3
+    assert result["context_attempts"] == 3
+    assert result["context_unresolved_cues"] == [75]
+    assert "CONTEXT_INCOMPLETE" in result["review_reason_codes"]
+
+
+def test_singleton_boolean_confidence_cannot_auto_ready() -> None:
+    cues, seed_scores, host_bank_scores, audio_hashes = _singleton_incident_fixture()
+    result = _resolve_singleton_outlier(
+        cues=cues,
+        singleton_index=74,
+        seed_scores=seed_scores,
+        host_bank_scores=host_bank_scores,
+        clip_host_indices=[0, 1, 2, 3],
+        policy={
+            "single_host_median_seed_min": 0.55,
+            "guest_session_similarity_max": 0.45,
+            "host_session_anchor_count": 4,
+        },
+        cue_audio_sha256=audio_hashes,
+        context_call=lambda _prompt: json.dumps(
+            {
+                "labels": [
+                    {
+                        "n": 75,
+                        "speaker": "李豆沙",
+                        "confidence": True,
+                        "reason": "JSON bool is not a confidence score",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert result["review_required"] is True
+    assert result["context_unresolved_cues"] == [75]
+    assert result["context_attempts"] == 3
+    assert "CONTEXT_INCOMPLETE" in result["review_reason_codes"]
+    assert all("JSON number" in error for error in result["context_errors"])
+
+
+def test_single_real_guest_is_not_swallowed_by_host_majority() -> None:
+    cues, seed_scores, host_bank_scores, audio_hashes = _singleton_incident_fixture("我是连线主播")
+    result = _resolve_singleton_outlier(
+        cues=cues,
+        singleton_index=74,
+        seed_scores=seed_scores,
+        host_bank_scores=host_bank_scores,
+        clip_host_indices=[0, 1, 2, 3],
+        policy={
+            "single_host_median_seed_min": 0.55,
+            "guest_session_similarity_max": 0.45,
+            "host_session_anchor_count": 4,
+        },
+        cue_audio_sha256=audio_hashes,
+        context_call=lambda _prompt: json.dumps(
+            {"labels": [{"n": 75, "speaker": "李豆沙", "confidence": 0.99, "reason": "host-majority trap"}]},
+            ensure_ascii=False,
+        ),
+    )
+
+    assert _singleton_nonlexical_dominant("我这，哈哈") is True
+    assert _singleton_nonlexical_dominant("你好哈哈") is False
+    assert _singleton_nonlexical_dominant("我是连线主播") is False
+    assert result["review_required"] is True
+    assert result["context_unresolved_cues"] == [75]
+    assert "SINGLETON_LEXICAL_CONTENT" in result["review_reason_codes"]
+    assert "CONTEXT_ACOUSTIC_CONFLICT" in result["review_reason_codes"]
+
+
+def test_singleton_review_manifest_preserves_bound_evidence(tmp_path: Path) -> None:
+    media = tmp_path / "clean.mp4"
+    media.write_bytes(b"clean media")
+    text_srt = tmp_path / "text-final.srt"
+    text_srt.write_text("1\n00:00:00,000 --> 00:00:02,030\n我这，哈哈\n", encoding="utf-8")
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}", encoding="utf-8")
+    (tmp_path / "refs").mkdir()
+    (tmp_path / "model").mkdir()
+    evidence = {
+        "source_cue": 1,
+        "zero_based_index": 0,
+        "start": "00:00:00,000",
+        "end": "00:00:02,030",
+        "text": "我这，哈哈",
+        "seed_score": 0.33793,
+        "host_bank_score": 0.28934,
+        "audio_sha256": "a" * 64,
+        "neighbours": [],
+    }
+
+    def analyzer(**_kwargs):
+        return {
+            "review_required": True,
+            "review_reason_codes": ["CONTEXT_REVIEW"],
+            "context_unresolved_cues": [1],
+            "singleton_evidence": [evidence],
+            "decisions": [
+                {"speaker": "连线", "decision_source": "speaker_review_required_singleton"}
+            ],
+        }
+
+    output_srt = tmp_path / "speaker.srt"
+    output_ass = tmp_path / "speaker.ass"
+    output_manifest = tmp_path / "speaker.json"
+    returned = finalize_speaker_subtitles(
+        media_path=media,
+        text_srt_path=text_srt,
+        profile_path=profile,
+        reference_dir=tmp_path / "refs",
+        model_dir=tmp_path / "model",
+        output_srt_path=output_srt,
+        output_ass_path=output_ass,
+        output_manifest_path=output_manifest,
+        work_dir=tmp_path / "work",
+        analyzer=analyzer,
+    )
+
+    manifest = json.loads(output_manifest.read_text(encoding="utf-8"))
+    assert returned == manifest
+    assert manifest["status"] == "SPEAKER_REVIEW_REQUIRED"
+    assert manifest["production_ready"] is False
+    assert manifest["context_unresolved_cues"] == [1]
+    assert manifest["review_required_cues"] == [evidence]
+    assert manifest["source_media_sha256"] == hashlib.sha256(media.read_bytes()).hexdigest()
+    assert manifest["text_final_srt_sha256"] == hashlib.sha256(text_srt.read_bytes()).hexdigest()
+    assert not output_srt.exists()
+    assert not output_ass.exists()
+
+    def evidence_free_analyzer(**_kwargs):
+        return {
+            "review_required": True,
+            "context_unresolved_cues": [1],
+            "singleton_evidence": [],
+            "decisions": [
+                {"speaker": "连线", "decision_source": "speaker_review_required_singleton"}
+            ],
+        }
+
+    invalid_manifest = tmp_path / "invalid-speaker.json"
+    with pytest.raises(SpeakerFinalizationError, match="evidence rows must be non-empty"):
+        finalize_speaker_subtitles(
+            media_path=media,
+            text_srt_path=text_srt,
+            profile_path=profile,
+            reference_dir=tmp_path / "refs",
+            model_dir=tmp_path / "model",
+            output_srt_path=tmp_path / "invalid.srt",
+            output_ass_path=tmp_path / "invalid.ass",
+            output_manifest_path=invalid_manifest,
+            work_dir=tmp_path / "invalid-work",
+            analyzer=evidence_free_analyzer,
+        )
+    assert not invalid_manifest.exists()
+
+
+def test_speaker_review_manifest_validator_rejects_unbound_rows() -> None:
+    base = {
+        "status": "SPEAKER_REVIEW_REQUIRED",
+        "production_ready": False,
+        "reason": "review",
+        "source_media_sha256": "a" * 64,
+        "text_final_srt_sha256": "b" * 64,
+        "context_unresolved_cues": [1],
+        "review_required_cues": [
+            {
+                "source_cue": 1,
+                "zero_based_index": 0,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "fixture",
+                "audio_sha256": "sha256:" + "c" * 64,
+            }
+        ],
+    }
+    assert validate_speaker_review_manifest_document(base)[0]["source_cue"] == 1
+
+    invalid_documents = []
+    for mutate in ("audio", "index", "coverage", "source_hash"):
+        document = json.loads(json.dumps(base))
+        if mutate == "audio":
+            document["review_required_cues"][0]["audio_sha256"] = "not-a-hash"
+        elif mutate == "index":
+            document["review_required_cues"][0]["zero_based_index"] = 1
+        elif mutate == "coverage":
+            document["context_unresolved_cues"] = [2]
+        else:
+            document.pop("source_media_sha256")
+        invalid_documents.append(document)
+    for document in invalid_documents:
+        with pytest.raises(SpeakerFinalizationError):
+            validate_speaker_review_manifest_document(document)
+
+
+def test_two_guest_anchors_keep_existing_cluster_path(tmp_path: Path, monkeypatch) -> None:
+    import src.autoslice.speaker_finalizer as speaker_finalizer
+
+    cues = [
+        TextCue(index + 1, _timestamp(index * 2000), _timestamp((index + 1) * 2000), f"cue {index + 1}")
+        for index in range(6)
+    ]
+    cue_paths = [tmp_path / f"cue-{index}.wav" for index in range(6)]
+    references = [{"id": "r1", "sha256": "a" * 64, "path": tmp_path / "ref.wav"}]
+
+    def similarity(left: Path, right: Path) -> float:
+        def cue_index(path: Path):
+            return int(path.stem.split("-")[-1]) if path.stem.startswith("cue-") else None
+
+        left_index, right_index = cue_index(left), cue_index(right)
+        if left_index is None:
+            return 0.9 if right_index < 4 else 0.2
+        if right_index is None:
+            return 0.9 if left_index < 4 else 0.2
+        if left_index < 4 and right_index < 4:
+            return 0.9
+        if left_index >= 4 and right_index >= 4:
+            return 0.8
+        return 0.1
+
+    monkeypatch.setattr(
+        speaker_finalizer,
+        "_load_runtime",
+        lambda *_args: ({}, references, "model-hash", object()),
+    )
+    monkeypatch.setattr(
+        speaker_finalizer,
+        "_extract_cue_wavs",
+        lambda *_args: (None, 16000, cue_paths),
+    )
+    monkeypatch.setattr(
+        speaker_finalizer,
+        "_build_embedding_similarity",
+        lambda **_kwargs: similarity,
+    )
+    monkeypatch.setattr(speaker_finalizer, "_assert_runtime_assets_stable", lambda **_kwargs: None)
+
+    result = _run_campplus_analysis(
+        media_path=tmp_path / "media.mp4",
+        cues=cues,
+        profile_path=tmp_path / "profile.json",
+        reference_dir=tmp_path / "refs",
+        model_dir=tmp_path / "model",
+        work_dir=tmp_path / "work",
+        context_call=None,
+    )
+
+    assert result["mode"] == "multi_speaker"
+    assert result["guest_anchor_groups"] == [[5, 6]]
+    assert [row["speaker"] for row in result["decisions"]] == [
+        "李豆沙",
+        "李豆沙",
+        "李豆沙",
+        "李豆沙",
+        "连线",
+        "连线",
+    ]

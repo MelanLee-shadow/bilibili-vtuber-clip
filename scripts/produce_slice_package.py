@@ -80,6 +80,10 @@ from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.speaker_finalizer import (
+    SpeakerFinalizationError,
+    validate_speaker_review_manifest_document,
+)
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sanitize_cue_timing
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
 
@@ -555,6 +559,18 @@ def run_speaker_finalizer(
             else None
         ),
     }
+
+    def valid_review_manifest(document: object) -> bool:
+        try:
+            validate_speaker_review_manifest_document(
+                document,
+                expected_media_sha256=str(frozen_inputs["source_media_sha256"]),
+                expected_text_sha256=str(frozen_inputs["text_final_srt_sha256"]),
+            )
+        except SpeakerFinalizationError:
+            return False
+        return True
+
     output_srt_path.parent.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     # Never accept stale artifacts from a previous successful attempt if the
@@ -646,6 +662,14 @@ def run_speaker_finalizer(
                 blocked_manifest = json.loads(output_manifest_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 blocked_manifest = {}
+            if (
+                blocked_manifest.get("status") == "SPEAKER_REVIEW_REQUIRED"
+                and blocked_manifest.get("reason")
+                and valid_review_manifest(blocked_manifest)
+            ):
+                raise RuntimeError(
+                    f"SPEAKER_REVIEW_REQUIRED: {blocked_manifest['reason']}"
+                )
             if blocked_manifest.get("status") == "BLOCKED" and blocked_manifest.get("reason"):
                 raise RuntimeError(
                     f"SPEAKER_FINALIZATION_BLOCKED: {blocked_manifest['reason']}"
@@ -670,6 +694,10 @@ def run_speaker_finalizer(
         output_manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+    if manifest.get("status") == "SPEAKER_REVIEW_REQUIRED":
+        if valid_review_manifest(manifest):
+            raise RuntimeError(f"SPEAKER_REVIEW_REQUIRED: {manifest.get('reason')}")
+        raise RuntimeError("SPEAKER_FINALIZATION_BLOCKED: invalid speaker review evidence")
     if manifest.get("status") != "READY" or manifest.get("production_ready") is not True:
         raise RuntimeError(f"SPEAKER_FINALIZATION_BLOCKED: {manifest.get('reason')}")
     expected = {
