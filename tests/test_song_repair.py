@@ -27,6 +27,7 @@ from src.autoslice.song_repair import (
     fetch_lrclib_lrc,
     live_performance_failure_reason_codes,
     parse_lrc_text,
+    validate_audio_lrc_canonical_projection,
     validate_live_performance_observation,
 )
 
@@ -1278,6 +1279,43 @@ def test_audio_lrc_canonicalization_rejects_non_bijective_or_unordered_indices(t
 
     with pytest.raises(ValueError, match="exactly one row|duplicate|strict order|out of range"):
         canonicalize_audio_lrc_observation(provider_payload, lrc)
+
+
+def test_runtime_projection_rejects_canonical_text_not_in_bound_lrc(tmp_path):
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc)
+    provider_payload = json.loads(
+        Path(str(run.provider_raw_output_path)).read_text(encoding="utf-8")
+    )
+    canonical_payload = json.loads(Path(run.output_path).read_text(encoding="utf-8"))
+    canonical_payload["observations"][0]["text"] = "TAMPERED_NOT_IN_BOUND_LRC"
+
+    with pytest.raises(ValueError, match="deterministic exact-index projection"):
+        validate_audio_lrc_canonical_projection(
+            provider_payload=provider_payload,
+            canonical_payload=canonical_payload,
+            lrc_path=Path(run.lrc_path),
+        )
+
+
+def test_runtime_projection_rejects_provider_top_level_canonical_disagreement(tmp_path):
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc)
+    provider_payload = json.loads(
+        Path(str(run.provider_raw_output_path)).read_text(encoding="utf-8")
+    )
+    canonical_payload = json.loads(Path(run.output_path).read_text(encoding="utf-8"))
+    provider_payload["live_performance"]["mode"] = "AMBIGUOUS"
+    provider_payload["live_performance"][
+        "same_lidousha_live_performer_across_all_lyrics"
+    ] = False
+
+    with pytest.raises(ValueError, match="deterministic exact-index projection"):
+        validate_audio_lrc_canonical_projection(
+            provider_payload=provider_payload,
+            canonical_payload=canonical_payload,
+            lrc_path=Path(run.lrc_path),
+        )
 
 
 

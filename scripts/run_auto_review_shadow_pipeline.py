@@ -61,6 +61,7 @@ from src.autoslice.song_repair import (
     load_audio_lrc_json_artifact,
     live_performance_failure_reason_codes,
     normalize_lyric_text,
+    validate_audio_lrc_canonical_projection,
     validate_live_performance_observation,
 )
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
@@ -1616,7 +1617,6 @@ def _verify_live_performance_observation(
         if manifest_artifacts.get(manifest_key) != artifacts.get(report_key):
             return "live-performance AGY manifest/artifact binding mismatch"
 
-    provider_raw: object | None = None
     if manifest.get("schema_version") == "agy-audio-lrc-run.v2":
         provider_raw_path, error = bound_artifact(
             "provider_raw_output_path",
@@ -1650,8 +1650,13 @@ def _verify_live_performance_observation(
                 provider_raw_path,
                 "live-performance provider raw proof",
             )
+            validate_audio_lrc_canonical_projection(
+                provider_payload=provider_raw,
+                canonical_payload=raw,
+                lrc_path=artifact_paths["lrc_path"],
+            )
         except ValueError as exc:
-            return f"cannot read live-performance provider raw proof: {exc}"
+            return f"live-performance provider/canonical projection is invalid: {exc}"
 
     raw_record = raw.get("record") if isinstance(raw, Mapping) else None
     raw_rows = raw.get("observations") if isinstance(raw, Mapping) else None
@@ -1711,28 +1716,6 @@ def _verify_live_performance_observation(
         or len(raw_heard_rows) < 8
     ):
         return "live-performance raw/report lyric rows are incomplete"
-    if provider_raw is not None:
-        provider_rows = provider_raw.get("observations") if isinstance(provider_raw, Mapping) else None
-        if (
-            not isinstance(provider_raw, Mapping)
-            or provider_raw.get("schema_version") != AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION
-            or not isinstance(provider_rows, list)
-            or len(provider_rows) != len(raw_rows)
-        ):
-            return "live-performance provider raw AGY observation schema is invalid"
-        for index, (provider_row, canonical_row) in enumerate(zip(provider_rows, raw_rows, strict=True)):
-            if (
-                not isinstance(provider_row, Mapping)
-                or not isinstance(canonical_row, Mapping)
-                or provider_row.get("lrc_index") != index
-                or canonical_row.get("lrc_index") != index
-                or any(
-                    provider_row.get(key) != canonical_row.get(key)
-                    for key in canonical_row
-                    if key not in {"lrc_time_ms", "text"}
-                )
-            ):
-                return f"live-performance provider/canonical lyric row {index} mismatch"
     expected_raw_sha = str(artifacts.get("raw_output_sha256") or "").lower().removeprefix("sha256:")
     previous_start: int | None = None
     for report_index, (raw_row, report_row, lyric) in enumerate(

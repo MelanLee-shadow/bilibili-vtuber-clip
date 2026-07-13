@@ -103,6 +103,7 @@ from src.autoslice.song_repair import (
     derive_live_arrangement_completeness,
     load_audio_lrc_json_artifact,
     live_performance_failure_reason_codes,
+    validate_audio_lrc_canonical_projection,
     validate_live_performance_observation,
 )
 from src.autoslice.speaker_finalizer import (
@@ -2627,32 +2628,14 @@ def song_completion_evidence(record: dict) -> dict:
                                 Path(provider_raw_value),
                                 "provider raw audio alignment",
                             )
+                            validate_audio_lrc_canonical_projection(
+                                provider_payload=provider_raw_observation,
+                                canonical_payload=raw_observation,
+                                lrc_path=Path(str(audio_artifacts.get("lrc_path"))),
+                            )
                         except ValueError:
                             provider_raw_observation = None
-                        provider_rows = (
-                            provider_raw_observation.get("observations")
-                            if isinstance(provider_raw_observation, dict)
-                            else None
-                        )
-                        if (
-                            not isinstance(provider_rows, list)
-                            or not isinstance(raw_rows, list)
-                            or len(provider_rows) != len(raw_rows)
-                            or any(
-                                not isinstance(provider_row, dict)
-                                or not isinstance(canonical_row, dict)
-                                or provider_row.get("lrc_index") != index
-                                or canonical_row.get("lrc_index") != index
-                                or any(
-                                    provider_row.get(key) != canonical_row.get(key)
-                                    for key in canonical_row
-                                    if key not in {"lrc_time_ms", "text"}
-                                )
-                                for index, (provider_row, canonical_row) in enumerate(
-                                    zip(provider_rows, raw_rows, strict=True)
-                                )
-                            )
-                        ):
+                        if provider_raw_observation is None:
                             failures.append("SONG_AUDIO_LRC_PROVIDER_CANONICAL_MISMATCH")
             if isinstance(report_alignment, list) and isinstance(lyric_lines, list):
                 ids: list[str] = []

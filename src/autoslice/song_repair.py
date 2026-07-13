@@ -1420,6 +1420,42 @@ def parse_lrc_text(lrc_text: str) -> list[LrcLine]:
     return lines
 
 
+def validate_audio_lrc_canonical_projection(
+    *,
+    provider_payload: object,
+    canonical_payload: object,
+    lrc_path: Path,
+) -> dict[str, object]:
+    """Recompute and validate one v2 provider-raw -> canonical projection.
+
+    Callers must hash-bind ``lrc_path`` before entering this function.  Runtime
+    verifiers cannot trust a self-consistent manifest alone: they must parse
+    the bound LRC, restore text/timestamps by exact row index, and require the
+    entire canonical payload (including top-level observations) to equal that
+    deterministic result.
+    """
+
+    try:
+        parsed_lines = parse_lrc_text(Path(lrc_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"bound canonical LRC cannot be read: {exc}") from exc
+    if not parsed_lines:
+        raise ValueError("bound canonical LRC contains no timed lyric rows")
+    bound_lrc = LrcResult(
+        provider="bound_artifact",
+        song_title="",
+        artist=None,
+        source_ref=str(Path(lrc_path)),
+        lines=tuple(parsed_lines),
+    )
+    expected = canonicalize_audio_lrc_observation(provider_payload, bound_lrc)
+    if canonical_payload != expected:
+        raise ValueError(
+            "canonicalized audio alignment is not the deterministic exact-index projection"
+        )
+    return expected
+
+
 def _performance_window(
     cues: Sequence[SourceCue],
     anchor_start_ms: int,
