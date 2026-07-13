@@ -427,19 +427,21 @@ Ivan 四连指令：①封面字太小要调大，且**必须保留完整原标�
 
 ### 进行中（含后台进程）
 
-- **free `refix_loop.sh`**：3 条修正切片重传撞 B站"投稿过于频繁"（25 分钟后仍拦→疑似**日投稿上限**，当日已发 10 稿）。2 小时节奏自动重试（≤12 轮≈24h），成功即自动 审核等待→入集→公开验证→落 evidence json（`logs/refix_loop.log` 看进度，终态 REFIX_COMPLETE/REFIX_GAVE_UP）。本会话挂了持续监控。
-- free `DISABLED` 杀开关仍在位（另一会话的保护）；cron runner 不 tick。
+- 无本会话后台进程（换源收尾器已跑完退出）。free `DISABLED` 杀开关仍在位（另一会话的保护）；cron runner 不 tick。
 
 ### 阻塞
 
-- **旧稿删除只能 Ivan 手动**（删稿接口要验证码 340022）：待修正版重传成功后，删 3 个旧 BV——**01 BV1tXNE67EHs / 02 BV1tXNE6EE5g / 04 BV1uDNE6SEjh**（v1 证据已归档入库）。
+- 无。~~旧稿手删~~ 作废：Ivan 纠正"**编辑视频，不是新上传**"后，3 条已同 BV 就地换源。
+
+### 已完成（补：换源终局，2026-07-10 13:1x-13:3xZ）
+
+- 新投稿重试环（撞日投稿墙 3 轮）废弃杀掉；改走 **`biliup append --vid` 传修正版为新P（网页编辑接口，无投稿频率墙）→ `x/vu/web/edit` 只保留新P**。三条 **BV 不变** 就地换源：BV1tXNE67EHs(168s)/BV1tXNE6EE5g(170s)/BV1uDNE6SEjh(166s) 重审全回 state=0，时长指纹吻合修正版，**合集 episode 按 aid 存活（episodes/add 返 20080）无需重绑**，season 公开可见。manifest v2 逐条 verify 后才动手。工具收进 repo `scripts/swap_video_p.py`；publish SKILL 发布流程新增"换源（编辑视频）"小节；v2 证据（mode=video_replace_in_place）已拉回 commit。
 
 ### 下一步
 
-1. refix_loop 完成后：拉回 3 条新 evidence + 新 BV 入摘要 → 证据第二波 commit；Ivan 删 3 个旧 BV。
-2. 5.6 家族用量窗恢复后可选：再跑一次 luna judge 直连探针确认主路径绿灯（fallback 已实证，不阻塞）。
-3. 下一场直播前摘 `DISABLED`（归属另一会话验收流程）。
-4. 遗留 follow-up：边界自修复的语义收束档（嗯类收尾）、封面行首标点禁则。
+1. ~~luna judge 主路径探针~~ **已完成（2026-07-10 Ivan 点跑）**：用量窗恢复后，生产同款命令（luna 主 + 5.5 fallback）在真实 request artifact 上 rc=0，provider 记 `llm:gpt-5.6-luna`（主路径亲自接住，未走 fallback），契约字段齐全（release_ready/reason_codes/scores/viewer_context/request_sha256 绑定），且与此前 5.5 fallback 对同一 artifact 的裁决 reason codes 一致（跨模型一致性佐证）。judge lane 主备双路径均实证。
+2. 下一场直播前摘 `DISABLED`（归属另一会话验收流程）。
+3. 遗留 follow-up：边界自修复的语义收束档（嗯类收尾）、封面行首标点禁则。
 
 ## 2026-07-10（续二）：quarantine 裁决落地（边界自修复）+ luna 上线矩阵定稿 + 歌切淘汰 + 部署 0d7150a
 

@@ -104,6 +104,7 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
    - **biliup 上传只跑一次,绝不为取 bvid 重跑**：rc=0 即投稿成功,bvid 从 stderr 的 `ResponseData{...bvid: String("BV..")}` 抓,或查 `GET member.bilibili.com/x/web/archives?pn=1&ps=10&status=is_pubing,pubed,not_pubed`。重跑上传=重复稿件(2026-07-04 犯过,传了两条充电器)。
    - **稿件删除需验证码(340022),无法 headless 删**：`/x/web/archive/delete` 报"验证码错误"。重复稿件只能 Ivan 在创作中心手动删——所以务必一次投准。
 3. **元数据修正**（如需）：`GET member.bilibili.com/x/vupre/web/archive/view?bvid=` 取当前稿件 → `POST member.bilibili.com/x/vu/web/edit?csrf=` 全量提交（title/desc/tag/cover/videos 带 filename+cid）。
+   - **换源（编辑视频，Ivan 2026-07-10 实证）**：已发布稿件修正内容（如字幕修字）**必须编辑不是新投稿**——新投稿有频率墙（当日 10 稿实测触发"投稿过于频繁"，2h/25min 重试均不解），编辑通道没有。流程：`biliup append --vid <BV> <修正文件>`（把修正版传为新分P，"稿件修改成功"）→ `x/vu/web/edit` 全量提交 `videos=[新P的filename+cid]` 移除旧P → 触发重审(-30)几分钟回 state=0。**BV/aid 不变、合集 episode 按 aid 存活（episodes/add 返 20080 已在集）、标题封面不动**。工具 `scripts/swap_video_p.py`（动手前先 `authorized_upload.py verify` 校 manifest——审过的文件才许换上去）。
 4. **公开验证（完成判据）**：`GET api.bilibili.com/x/web-interface/view?bvid=` 确认 `state=0`、标题、desc、`ugc_season.title` 与 `is_season_display=true`；标签用 `x/tag/archive/tags?bvid=`。证据存 `<clip>.public_verify.json` + `<clip>.uploaded.json`（bvid/aid/时间/工具/授权来源）到切片的 replacement_recuts 目录。
 
 ## Pitfalls（历次真实踩坑）
