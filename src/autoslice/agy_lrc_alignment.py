@@ -292,11 +292,20 @@ def run_agy_audio_lrc_alignment(
     os.chmod(stdout_path, 0o600)
     os.chmod(stderr_path, 0o600)
     if completed.returncode != 0:
-        raise RuntimeError(f"AGY audio-LRC alignment failed rc={completed.returncode}; see {job_dir}")
+        diagnostic = f"{completed.stdout}\n{completed.stderr}".casefold()
+        if any(marker in diagnostic for marker in ("quota", "429", "rate limit", "too many requests")):
+            failure_code = "AGY_QUOTA_EXHAUSTED"
+        elif any(marker in diagnostic for marker in ("timeout", "timed out")):
+            failure_code = "AGY_TIMEOUT"
+        else:
+            failure_code = "AGY_FAILED_RC"
+        raise RuntimeError(
+            f"{failure_code}: AGY audio-LRC alignment failed rc={completed.returncode}; see {job_dir}"
+        )
 
     output_path = job_dir / "alignment.json"
     if not output_path.is_file():
-        raise RuntimeError(f"AGY returned rc=0 without alignment.json; see {job_dir}")
+        raise RuntimeError(f"AGY_EMPTY_OUTPUT: AGY returned rc=0 without alignment.json; see {job_dir}")
     raw = strip_markdown_fence(output_path.read_text(encoding="utf-8"))
     if len(raw.encode("utf-8")) > 2_000_000:
         raise RuntimeError("AGY alignment.json exceeds 2MB safety cap")

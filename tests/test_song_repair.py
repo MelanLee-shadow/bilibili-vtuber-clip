@@ -860,6 +860,57 @@ def test_fuzzy_family_selects_strongest_full_lrc_not_truncated_lrclib_subset():
     assert chosen.source_ref == full.source_ref
 
 
+def test_audio_identity_ranks_real_qunqing_shape_by_canonical_title_and_evidence_mass():
+    def lrc(title: str, source_ref: str, count: int, *, shift_ms: int = 0) -> LrcResult:
+        return LrcResult(
+            provider="netease",
+            song_title=title,
+            artist="YOASOBI",
+            source_ref=source_ref,
+            lines=tuple(
+                LrcLine(index * 3_500 + shift_ms, f"群青歌词第{index:02d}行")
+                for index in range(count)
+            ),
+        )
+
+    def alignment(total: int, matched: int) -> list[dict[str, object]]:
+        return [
+            {"matched_cue_id": f"cue-{index}" if index < matched else None}
+            for index in range(total)
+        ]
+
+    canonical = lrc("群青", "netease://song/1472480890", 76)
+    remix = lrc("群青 (Remix)", "netease://song/qunqing-remix", 75, shift_ms=25)
+    short_piano = lrc(
+        "群青 (RLC PIANO REMIX)",
+        "netease://song/qunqing-piano-remix",
+        18,
+        shift_ms=50,
+    )
+    ranked = [
+        (38 / 76, canonical, alignment(76, 38)),
+        (38 / 75, remix, alignment(75, 38)),
+        (13 / 18, short_piano, alignment(18, 13)),
+    ]
+
+    # The old ratio-only order picked the 18-line piano remix (72%).  Both the
+    # explicit visual title and the generic no-hint path must keep the complete
+    # 76-line canonical record ahead of that short denominator trick.
+    assert _choose_audio_lrc_candidate(
+        ranked,
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+        preferred_title_hints=("群青",),
+    ).source_ref == canonical.source_ref
+    assert _choose_audio_lrc_candidate(
+        ranked,
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    ).source_ref == canonical.source_ref
+
+
 @pytest.mark.parametrize("pinned_first", [True, False])
 def test_audio_identity_prefers_single_curated_identity_on_exact_recall_tie(pinned_first):
     pinned = _japanese_lrc()
@@ -959,6 +1010,159 @@ def test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof(tmp_p
     assert report["spot_checks"] == run.payload["spot_checks"]
     assert report["live_performance"] == run.payload["live_performance"]
     assert report["post_song_talk_start_ms"] == run.payload["post_song_talk_start_ms"]
+
+
+def test_audio_lrc_validator_failure_tries_next_deduped_variant_and_repairs(tmp_path, monkeypatch):
+    canonical = _japanese_lrc()
+    alternate = LrcResult(
+        provider="netease",
+        song_title=f"{canonical.song_title} (Live Ver.)",
+        artist=canonical.artist,
+        source_ref="netease://song/alternate-live",
+        lines=tuple(LrcLine(line.time_ms + 100, line.text) for line in canonical.lines),
+    )
+    run = _write_fake_audio_alignment_run(tmp_path, alternate)
+    run_payload = json.loads(json.dumps(run.payload))
+    run_payload["spot_checks"][0]["live_time_ms"] = run_payload["observations"][0]["live_start_ms"]
+    run = _rebind_fake_audio_alignment_run(run, run_payload)
+    calls: list[str] = []
+    real_validator = song_repair._validated_audio_lrc_selection
+
+    def aligner(_media, chosen_lrc, _candidate_id, _output_dir):
+        calls.append(chosen_lrc.source_ref)
+        return run
+
+    def validator(**kwargs):
+        if kwargs["lrc"].source_ref == canonical.source_ref:
+            raise ValueError("repeated_section time is outside the performed song")
+        return real_validator(**kwargs)
+
+    monkeypatch.setattr(song_repair, "_validated_audio_lrc_selection", validator)
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=[
+            SourceCue("jp-0", 10_000, 13_000, canonical.lines[0].text, kind="singing"),
+            SourceCue("jp-1", 17_000, 20_000, canonical.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: [canonical, alternate],
+        extra_queries=(canonical.song_title,),
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=aligner,
+    )
+
+    assert result.repaired is True
+    assert calls == [canonical.source_ref, alternate.source_ref]
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    assert [attempt["status"] for attempt in report["audio_lrc_variant_attempts"]] == [
+        "CONTENT_OR_ALIGNMENT_REJECTED",
+        "ACCEPTED",
+    ]
+    assert "repeated_section time is outside" in report["audio_lrc_variant_attempts"][0]["reason"]
+
+
+def test_audio_lrc_all_variants_fail_closed_at_hard_cost_cap(tmp_path, monkeypatch):
+    canonical = _japanese_lrc()
+    variants = [
+        LrcResult(
+            provider="netease",
+            song_title=(canonical.song_title if index == 0 else f"{canonical.song_title} (Remix {index})"),
+            artist=canonical.artist,
+            source_ref=f"netease://song/variant-{index}",
+            lines=tuple(LrcLine(line.time_ms + index * 100, line.text) for line in canonical.lines),
+        )
+        for index in range(4)
+    ]
+    calls: list[str] = []
+
+    def aligner(_media, chosen_lrc, _candidate_id, _output_dir):
+        calls.append(chosen_lrc.source_ref)
+        return object()
+
+    monkeypatch.setattr(
+        song_repair,
+        "_validated_audio_lrc_selection",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("canonical LRC content mismatch")),
+    )
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    result = attempt_song_repair(
+        candidate_id="jp-audio-cap",
+        cues=[
+            SourceCue("jp-0", 10_000, 13_000, canonical.lines[0].text, kind="singing"),
+            SourceCue("jp-1", 17_000, 20_000, canonical.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: variants,
+        extra_queries=(canonical.song_title,),
+        source_media_path=source,
+        audio_lrc_aligner=aligner,
+        max_audio_lrc_attempts=99,
+    )
+
+    assert result.repaired is False
+    assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
+    assert len(calls) == 3
+    assert any(
+        item.step == "agy_audio_lrc_variants_exhausted" and item.status == "FAILED"
+        for item in result.attempts
+    )
+
+
+@pytest.mark.parametrize(
+    ("runner_error", "expected_reason"),
+    [
+        (TimeoutError("AGY request timed out"), "AGY_TIMEOUT"),
+        (RuntimeError("AGY_QUOTA_EXHAUSTED: individual quota reached"), "AGY_QUOTA_EXHAUSTED"),
+    ],
+)
+def test_audio_lrc_infra_failure_stays_recoverable_and_does_not_spend_variant_budget(
+    tmp_path,
+    runner_error,
+    expected_reason,
+):
+    canonical = _japanese_lrc()
+    alternate = LrcResult(
+        provider="netease",
+        song_title=f"{canonical.song_title} (Remix)",
+        artist=canonical.artist,
+        source_ref="netease://song/timeout-alternate",
+        lines=tuple(LrcLine(line.time_ms + 100, line.text) for line in canonical.lines),
+    )
+    calls = 0
+
+    def aligner(*_args):
+        nonlocal calls
+        calls += 1
+        raise runner_error
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    result = attempt_song_repair(
+        candidate_id="jp-audio-timeout",
+        cues=[
+            SourceCue("jp-0", 10_000, 13_000, canonical.lines[0].text, kind="singing"),
+            SourceCue("jp-1", 17_000, 20_000, canonical.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: [canonical, alternate],
+        extra_queries=(canonical.song_title,),
+        source_media_path=source,
+        audio_lrc_aligner=aligner,
+    )
+
+    assert result.repaired is False
+    assert result.reason_codes == (expected_reason,)
+    assert calls == 1
 
 
 def test_instrumental_intro_spot_is_valid_before_first_lyric(tmp_path):
