@@ -1420,7 +1420,16 @@ def child_env() -> dict[str, str]:
     # is quota-limited.  Import only these named secrets from the recorder env;
     # do not leak unrelated credentials into child processes.
     bilive_env = load_env_file(BILIVE_ENV)
-    for key in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"):
+    # GEMINI_KEY_BACKUP is the PAID last-resort key (Ivan 2026-07-13); the
+    # gemini_backup_policy module gates every use (>= 3 free-chain failure
+    # rounds per item + daily cap), so importing it here only makes the
+    # fallback REACHABLE, never routine.
+    for key in (
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEY_2",
+        "GEMINI_API_KEY_3",
+        "GEMINI_KEY_BACKUP",
+    ):
         if bilive_env.get(key):
             env[key] = bilive_env[key]
     env.setdefault("HOME", "/root")

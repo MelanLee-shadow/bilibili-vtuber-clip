@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from scripts.gemini_slice_jingting import agy_subprocess_env, parse_timeout_seconds, strip_markdown_fence
+from src.autoslice import gemini_backup_policy
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
     AGY_AUDIO_LRC_MODEL,
@@ -611,6 +612,8 @@ def run_agy_audio_lrc_alignment(
     agy_rc: int | None = None
     configured_key_count: int | None = None
     accepted_key_ordinal: int | None = None
+    accepted_key_tier: str | None = None
+    paid_backup_policy_stamp: dict[str, object] | None = None
     api_audio_path: Path | None = None
     api_audio_sha: str | None = None
     api_audio_duration_ms: int | None = None
@@ -642,7 +645,12 @@ def run_agy_audio_lrc_alignment(
             print_timeout,
         ]
         agy_env = agy_subprocess_env()
-        for secret_name in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"):
+        for secret_name in (
+            "GEMINI_API_KEY",
+            "GEMINI_API_KEY_2",
+            "GEMINI_API_KEY_3",
+            "GEMINI_KEY_BACKUP",
+        ):
             agy_env.pop(secret_name, None)
         try:
             completed = subprocess.run(
@@ -746,19 +754,25 @@ def run_agy_audio_lrc_alignment(
                 })
             else:
                 api_prompt = prompt_path.read_text(encoding="utf-8")
-                for key_ordinal, key in enumerate(keys, start=1):
+                def _attempt_gemini_api_key(
+                    attempt_key: str, *, key_ordinal: int, key_tier: str
+                ) -> bool:
+                    nonlocal provider_payload, payload, accepted_key_ordinal
+                    nonlocal accepted_key_tier, provider_raw_output_path
                     try:
                         raw = _gemini_api_observe(
                             audio_path=api_audio_path,
                             prompt=api_prompt,
-                            key=key,
+                            key=attempt_key,
                         )
                         if not raw or len(raw.encode("utf-8")) > 2_000_000:
                             raise ValueError("Gemini API output is empty or exceeds 2MB")
-                        provider_payload = json.loads(raw)
-                        payload = canonicalize_audio_lrc_observation(provider_payload, lrc)
+                        candidate_payload = json.loads(raw)
+                        canonical_payload = canonicalize_audio_lrc_observation(
+                            candidate_payload, lrc
+                        )
                         _validate_strict_v5_shape(
-                            payload,
+                            canonical_payload,
                             candidate_id=candidate_id,
                             attempt_id=attempt_id,
                             source_sha256=source_sha,
@@ -766,18 +780,23 @@ def run_agy_audio_lrc_alignment(
                             source_duration_ms=duration_ms,
                             lrc_line_count=len(lrc.lines),
                         )
-                        _validate_gemini_ready_evidence_binding(payload)
-                        provider_raw_output_path = job_dir / "alignment.gemini-api.raw.json"
-                        provider_raw_output_path.write_text(
+                        _validate_gemini_ready_evidence_binding(canonical_payload)
+                        raw_output_path = job_dir / "alignment.gemini-api.raw.json"
+                        raw_output_path.write_text(
                             raw if raw.endswith("\n") else raw + "\n",
                             encoding="utf-8",
                         )
-                        os.chmod(provider_raw_output_path, 0o600)
+                        os.chmod(raw_output_path, 0o600)
+                        provider_raw_output_path = raw_output_path
+                        provider_payload = candidate_payload
+                        payload = canonical_payload
                         accepted_key_ordinal = key_ordinal
-                        break
+                        accepted_key_tier = key_tier
+                        return True
                     except Exception as exc:
                         diagnostic: dict[str, object] = {
                             "key_ordinal": key_ordinal,
+                            "key_tier": key_tier,
                             "category": _gemini_failure_category(exc),
                             "error_type": type(exc).__name__,
                         }
@@ -785,8 +804,46 @@ def run_agy_audio_lrc_alignment(
                         if isinstance(status, int):
                             diagnostic["http_status"] = status
                         api_errors.append(diagnostic)
+                        return False
+
+                for key_ordinal, key in enumerate(keys, start=1):
+                    if _attempt_gemini_api_key(
+                        key,
+                        key_ordinal=key_ordinal,
+                        key_tier=gemini_backup_policy.FREE_KEY_TIER,
+                    ):
+                        break
                 else:
                     accepted_key_ordinal = None
+                if accepted_key_ordinal is None and api_audio_sha:
+                    # Ivan 2026-07-13: the PAID backup key fires only after the
+                    # free chain failed >= 3 recorded rounds for this exact
+                    # audio and only under the daily cap; the strike is
+                    # recorded first so later rounds can prove the wait.
+                    prior_strikes = gemini_backup_policy.free_chain_strikes(api_audio_sha)
+                    gemini_backup_policy.record_free_chain_failure(api_audio_sha)
+                    allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
+                        api_audio_sha, prior_strikes=prior_strikes
+                    )
+                    if allowed and _attempt_gemini_api_key(
+                        str(gemini_backup_policy.paid_backup_key()),
+                        key_ordinal=len(keys) + 1,
+                        key_tier=gemini_backup_policy.PAID_KEY_TIER,
+                    ):
+                        paid_backup_policy_stamp = gemini_backup_policy.record_paid_use(
+                            api_audio_sha, purpose="song_audio_lrc_proof"
+                        )
+                    elif not allowed and gate_reason != "PAID_KEY_NOT_CONFIGURED":
+                        # Silent when the paid key simply is not configured
+                        # (pre-feature behavior); audible when a configured
+                        # paid key was withheld by the gate.
+                        api_errors.append(
+                            {
+                                "key_ordinal": len(keys) + 1,
+                                "key_tier": gemini_backup_policy.PAID_KEY_TIER,
+                                "category": f"PAID_BACKUP_SKIPPED:{gate_reason}",
+                            }
+                        )
         if accepted_key_ordinal is None:
             failure_path = job_dir / "provider-failures.json"
             failure_path.write_text(
@@ -837,6 +894,12 @@ def run_agy_audio_lrc_alignment(
         "direct_audio_input": provider == GEMINI_API_AUDIO_LRC_PROVIDER,
         "configured_key_count": configured_key_count,
         "accepted_key_ordinal": accepted_key_ordinal,
+        "accepted_key_tier": accepted_key_tier,
+        **(
+            {"paid_backup_policy": paid_backup_policy_stamp}
+            if paid_backup_policy_stamp is not None
+            else {}
+        ),
         "canonicalization": {
             "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
             "row_identity": "strict_zero_based_lrc_index",
@@ -898,6 +961,8 @@ def run_agy_audio_lrc_alignment(
         agy_failure_category=agy_failure_category,
         configured_key_count=configured_key_count,
         accepted_key_ordinal=accepted_key_ordinal,
+        accepted_key_tier=accepted_key_tier,
+        paid_backup_policy=paid_backup_policy_stamp,
         api_audio_path=str(api_audio_path) if api_audio_path is not None else None,
         api_audio_sha256=api_audio_sha,
         api_audio_duration_ms=api_audio_duration_ms,

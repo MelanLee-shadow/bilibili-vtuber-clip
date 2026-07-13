@@ -1184,6 +1184,51 @@ def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
                 diagnostic["http_status"] = status
             errors.append(diagnostic)
             corrected = ""
+    accepted_key_tier = "free"
+    paid_policy_stamp: dict[str, object] | None = None
+    if not corrected:
+        # Ivan 2026-07-13: the PAID backup key may fire only after the free
+        # chain has already failed >= 3 recorded rounds for this exact audio,
+        # and never past the daily cap. The strike is recorded regardless so
+        # later rounds can prove the wait actually happened.
+        from src.autoslice import gemini_backup_policy as backup_policy
+
+        item_key = sha256_file(audio)
+        prior_strikes = backup_policy.free_chain_strikes(item_key)
+        backup_policy.record_free_chain_failure(item_key)
+        allowed, gate_reason = backup_policy.paid_attempt_allowed(
+            item_key, prior_strikes=prior_strikes
+        )
+        if allowed:
+            paid_key = backup_policy.paid_backup_key()
+            try:
+                corrected = gemini_correct(
+                    str(audio),
+                    srt_text,
+                    paid_key,
+                    as_of_date=recording_date_from_path(slice_p),
+                )
+                if not looks_like_srt(corrected):
+                    raise RuntimeError("Gemini API produced no valid SRT")
+                corrected = restore_draft_timing(srt_text, corrected)
+                accepted_key_tier = backup_policy.PAID_KEY_TIER
+                paid_policy_stamp = backup_policy.record_paid_use(
+                    item_key, purpose="jingting_source_context"
+                )
+            except Exception as exc:  # the paid lane fails closed like any other
+                diagnostic = {
+                    "key_ordinal": "paid_backup",
+                    "error_type": type(exc).__name__,
+                }
+                status = getattr(exc, "code", None)
+                if isinstance(status, int):
+                    diagnostic["http_status"] = status
+                errors.append(diagnostic)
+                corrected = ""
+        elif gate_reason != "PAID_KEY_NOT_CONFIGURED":
+            # Silent when no paid key is configured (pre-feature behavior);
+            # audible when a configured paid key was withheld by the gate.
+            errors.append({"key_ordinal": "paid_backup", "skipped": gate_reason})
     if not corrected:
         (job_dir / "errors.json").write_text(
             json.dumps({"errors": errors}, ensure_ascii=False, indent=2) + "\n",
@@ -1207,6 +1252,8 @@ def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
         "provider_fallback_used": True,
         "configured_key_count": len(keys),
         "accepted_key_ordinal": len(errors) + 1,
+        "accepted_key_tier": accepted_key_tier,
+        **({"paid_backup_policy": paid_policy_stamp} if paid_policy_stamp else {}),
     }
     output.with_suffix(".manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

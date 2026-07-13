@@ -3444,3 +3444,136 @@ def test_llm_hint_failure_is_recorded_and_text_queries_still_tried(tmp_path):
     assert result.repaired is True  # text queries still found the song
     hint_attempts = [a for a in result.attempts if a.step == "llm_song_hint"]
     assert hint_attempts and hint_attempts[0].status == "FAILED"
+
+
+def test_audio_lrc_paid_backup_fires_only_after_three_free_chain_strikes(
+    tmp_path,
+    monkeypatch,
+):
+    """Ivan 2026-07-13: the PAID key is a gated last resort, never routine."""
+
+    import hashlib
+
+    import src.autoslice.gemini_backup_policy as backup_policy
+
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    secrets = ("gap-key-one", "gap-key-two", "gap-key-three")
+    paid_secret = "paid-backup-secret"
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", secrets[0])
+    monkeypatch.setenv("GEMINI_API_KEY_2", secrets[1])
+    monkeypatch.setenv("GEMINI_API_KEY_3", secrets[2])
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", paid_secret)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    item_key = hashlib.sha256(b"complete-derived-audio").hexdigest()
+    for _ in range(3):
+        backup_policy.record_free_chain_failure(item_key)
+
+    calls = []
+
+    def fake_observe(*, prompt, key, **_kwargs):
+        calls.append(key)
+        if key != paid_secret:
+            raise RuntimeError("simulated free-key outage")
+        return json.dumps(_valid_audio_lrc_api_payload(prompt, lrc), ensure_ascii=False)
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        "paid-backup-accepted",
+        tmp_path / "jobs",
+    )
+    assert calls == [*secrets, paid_secret]
+    assert run.accepted_key_tier == "paid_backup"
+    assert run.accepted_key_ordinal == 4
+    assert run.configured_key_count == 3
+    assert isinstance(run.paid_backup_policy, dict)
+    assert run.paid_backup_policy["free_chain_strikes"] >= 3
+    manifest_text = Path(run.manifest_path).read_text(encoding="utf-8")
+    assert paid_secret not in manifest_text
+    manifest = json.loads(manifest_text)
+    assert manifest["accepted_key_tier"] == "paid_backup"
+    assert manifest["paid_backup_policy"] == dict(run.paid_backup_policy)
+    ledger_lines = [
+        line
+        for path in (tmp_path / "base" / "state" / "gemini-paid-backup").glob("usage-*.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(ledger_lines) == 1
+
+
+def test_audio_lrc_paid_backup_withheld_below_three_strikes(
+    tmp_path,
+    monkeypatch,
+):
+    import hashlib
+
+    import src.autoslice.gemini_backup_policy as backup_policy
+
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    paid_secret = "paid-backup-secret"
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "gap-key-one")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "gap-key-two")
+    monkeypatch.setenv("GEMINI_API_KEY_3", "gap-key-three")
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", paid_secret)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    item_key = hashlib.sha256(b"complete-derived-audio").hexdigest()
+    for _ in range(2):
+        backup_policy.record_free_chain_failure(item_key)
+
+    calls = []
+
+    def fake_observe(*, prompt, key, **_kwargs):
+        calls.append(key)
+        raise RuntimeError("simulated free-key outage")
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
+        agy_lrc_alignment.run_agy_audio_lrc_alignment(
+            media,
+            lrc,
+            "paid-backup-withheld",
+            tmp_path / "jobs",
+        )
+    assert paid_secret not in calls
+    failure_path = next((tmp_path / "jobs").rglob("provider-failures.json"))
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    skip_rows = [
+        row
+        for row in failure["gemini_api_errors"]
+        if str(row.get("category", "")).startswith("PAID_BACKUP_SKIPPED:")
+    ]
+    assert skip_rows and "FREE_CHAIN_STRIKES_2_BELOW_3" in skip_rows[0]["category"]

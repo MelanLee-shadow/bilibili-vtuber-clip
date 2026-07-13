@@ -279,6 +279,8 @@ class AudioLrcAlignmentRun:
     agy_failure_category: str | None = None
     configured_key_count: int | None = None
     accepted_key_ordinal: int | None = None
+    accepted_key_tier: str | None = None
+    paid_backup_policy: Mapping[str, object] | None = None
     api_audio_path: str | None = None
     api_audio_sha256: str | None = None
     api_audio_duration_ms: int | None = None
@@ -2776,7 +2778,6 @@ def _validated_audio_lrc_selection(
             not _is_int(run.configured_key_count)
             or not 1 <= int(run.configured_key_count) <= 3
             or not _is_int(run.accepted_key_ordinal)
-            or not 1 <= int(run.accepted_key_ordinal) <= int(run.configured_key_count)
             or run_manifest.get("configured_key_count") != run.configured_key_count
             or run_manifest.get("accepted_key_ordinal") != run.accepted_key_ordinal
             or run_manifest.get("direct_audio_input") is not True
@@ -2785,6 +2786,37 @@ def _validated_audio_lrc_selection(
             or not _is_int(run.api_audio_duration_ms)
         ):
             raise ValueError("Gemini API audio failover metadata is incomplete")
+        key_tier = run.accepted_key_tier or "free"
+        if key_tier == "free":
+            # Legacy manifests predate accepted_key_tier; a free acceptance
+            # must stay inside the configured free-key range and must not
+            # carry any paid-policy stamp.
+            if (
+                not 1 <= int(run.accepted_key_ordinal) <= int(run.configured_key_count)
+                or run_manifest.get("accepted_key_tier") not in (None, "free")
+                or run.paid_backup_policy is not None
+                or run_manifest.get("paid_backup_policy") is not None
+            ):
+                raise ValueError("Gemini API audio failover metadata is incomplete")
+        elif key_tier == "paid_backup":
+            # Ivan 2026-07-13: a PAID acceptance is only deliverable when the
+            # manifest proves the gate held — >= 3 recorded free-chain failure
+            # rounds for this exact audio and the daily cap not exceeded.
+            policy = run.paid_backup_policy
+            if (
+                int(run.accepted_key_ordinal) != int(run.configured_key_count) + 1
+                or run_manifest.get("accepted_key_tier") != "paid_backup"
+                or not isinstance(policy, Mapping)
+                or run_manifest.get("paid_backup_policy") != dict(policy)
+                or not _is_int(policy.get("free_chain_strikes"))
+                or int(policy["free_chain_strikes"]) < 3
+                or not _is_int(policy.get("calls_today_before"))
+                or not _is_int(policy.get("daily_cap"))
+                or int(policy["calls_today_before"]) >= int(policy["daily_cap"])
+            ):
+                raise ValueError("paid Gemini backup acceptance violates the usage gate")
+        else:
+            raise ValueError("Gemini API audio failover key tier is unknown")
         api_audio_path = _require_bound_artifact(
             run.api_audio_path,
             run.api_audio_sha256,
@@ -2803,6 +2835,8 @@ def _validated_audio_lrc_selection(
         for value in (
             run.configured_key_count,
             run.accepted_key_ordinal,
+            run.accepted_key_tier,
+            run.paid_backup_policy,
             run.api_audio_path,
             run.api_audio_sha256,
             run.api_audio_duration_ms,
