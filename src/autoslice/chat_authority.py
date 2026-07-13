@@ -606,6 +606,35 @@ def reconcile_pending_text_overrides(
     return True
 
 
+def _validated_read_aloud_verdict(
+    verdict: Mapping[str, Any] | None,
+    *,
+    request: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """近失配念读仲裁 verdict：只接受绑定本 request、在两个候选文本之内、
+    高置信的 RESOLVED；其余一律当 UNCERTAIN（不改字幕）。"""
+    if not isinstance(verdict, Mapping):
+        return None
+    row = dict(verdict)
+    if row.get("schema_version") != "chat-entity-verdict.v1":
+        return None
+    if row.get("request_sha256") != request.get("request_sha256"):
+        return None
+    if row.get("status") != "RESOLVED":
+        return None
+    allowed = {
+        str(candidate.get("canonical") or "")
+        for candidate in request.get("candidate_entities", ())
+        if isinstance(candidate, Mapping)
+    }
+    if row.get("canonical_entity") not in allowed:
+        return None
+    confidence = row.get("confidence")
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or confidence < 0.80:
+        return None
+    return row
+
+
 def _validated_entity_verdict(
     verdict: Mapping[str, Any] | None,
     *,
@@ -894,6 +923,136 @@ def _best_text_split(authority: str, cue_texts: Sequence[str]) -> list[str]:
         return best
 
     return list(solve(0, 0)[1])
+
+
+def _norm_with_map(text: str) -> tuple[str, list[int]]:
+    """normalize_chat_text 的逐字版本：返回 (normalized, norm_index -> raw_index)。"""
+    norm_chars: list[str] = []
+    raw_indexes: list[int] = []
+    for raw_index, char in enumerate(text):
+        piece = normalize_chat_text(char)
+        for out_char in piece:
+            norm_chars.append(out_char)
+            raw_indexes.append(raw_index)
+    return "".join(norm_chars), raw_indexes
+
+
+def _shift_boundary_punct(parts: list[str]) -> list[str]:
+    """_best_text_split 只按相似度找断点，会切出「，我会打」这种闭标点开头的
+    cue；把行首闭/终结标点移回上一段（不动总文本）。"""
+    closing = "，,、。；;：:！!？?…”』」》）)"
+    out = list(parts)
+    for index in range(1, len(out)):
+        moved = ""
+        while out[index] and out[index][0] in closing:
+            moved += out[index][0]
+            out[index] = out[index][1:]
+        if moved and index >= 1:
+            out[index - 1] += moved
+    return out
+
+
+def _aligned_span_replacements(
+    authority: str,
+    before: Sequence[str],
+    *,
+    prev_context: str = "",
+    next_context: str = "",
+) -> tuple[list[str], dict] | None:
+    """Verbatim-splice the authority into the span WITHOUT destroying real
+    speech around it (2026-07-11 乐队番实案：整段覆盖把主播自己的「算什么」
+    吃掉、把她在上一条 cue 已说过的「好冷的笑话」重复注入)。
+
+    规则（对齐 = SequenceMatcher matching blocks on normalized text）：
+    - span 首 cue 的未对齐开头 / 末 cue 的未对齐结尾，只有当 authority 对应侧
+      已完全消耗时才是「念读之外的真实语音」，原样保留；否则属于听错替换区，
+      用 authority 对应侧覆盖。
+    - authority 的未对齐开头/结尾若已在相邻 cue 出现过（她刚说过/接着说），
+      不重复注入。
+    返回 (replacements, audit) 或 None（对齐太弱，调用方回退旧行为）。
+    """
+    auth_norm, auth_map = _norm_with_map(authority)
+    span_raw = "".join(before)
+    span_norm, span_map = _norm_with_map(span_raw)
+    if not auth_norm or not span_norm:
+        return None
+    blocks = [
+        block
+        for block in SequenceMatcher(None, auth_norm, span_norm).get_matching_blocks()
+        if block.size
+    ]
+    # 首尾锚块至少 2 字符：孤字块（「唱不了」里的「了」偶然对上 authority 尾部
+    # 的「了」）会把对齐边界拖到错误位置，吃掉真实回话。
+    while len(blocks) > 1 and blocks[0].size < 2:
+        blocks.pop(0)
+    while len(blocks) > 1 and blocks[-1].size < 2:
+        blocks.pop()
+    if not blocks or (len(blocks) == 1 and blocks[0].size < 2):
+        return None
+    common = sum(block.size for block in blocks)
+    if common / len(auth_norm) < 0.5:
+        return None
+    a_lo, a_hi = blocks[0].a, blocks[-1].a + blocks[-1].size
+    s_lo, s_hi = blocks[0].b, blocks[-1].b + blocks[-1].size
+
+    def _spoken_nearby(fragment: str, context: str) -> bool:
+        fragment_norm = normalize_chat_text(fragment)
+        if len(fragment_norm) < 2 or not context:
+            return False
+        _score, _ratio, coverage, _precision, _common = _match_metrics(fragment, context)
+        return coverage >= 0.8
+
+    audit: dict = {}
+    # raw 边界：对齐区两端顶到 raw 端点，normalize 后不可见的首尾字符
+    # （空格、箭头等 sanitizer 产物）跟随对齐区，不算「未对齐头尾」。
+    auth_raw_lo = 0 if a_lo == 0 else auth_map[a_lo]
+    auth_raw_hi = len(authority) if a_hi == len(auth_norm) else auth_map[a_hi - 1] + 1
+    span_raw_lo = 0 if s_lo == 0 else span_map[s_lo]
+    span_raw_hi = len(span_raw) if s_hi == len(span_norm) else span_map[s_hi - 1] + 1
+    auth_head_raw = authority[:auth_raw_lo]
+    auth_tail_raw = authority[auth_raw_hi:]
+    span_head_raw = span_raw[:span_raw_lo]
+    span_tail_raw = span_raw[span_raw_hi:]
+
+    head = ""
+    if s_lo and a_lo == 0 and len(normalize_chat_text(span_head_raw)) >= 2:
+        # authority 从头就对齐，span 开头是念读之外的真实语音（谢谢+sender 等）
+        head = span_head_raw
+        audit["preserved_span_head"] = span_head_raw
+    elif a_lo:
+        if _spoken_nearby(auth_head_raw, prev_context):
+            audit["dropped_duplicate_authority_head"] = auth_head_raw
+        else:
+            head = auth_head_raw
+    tail = ""
+    if s_hi < len(span_norm) and a_hi == len(auth_norm) and len(normalize_chat_text(span_tail_raw)) >= 2:
+        # authority 已全部消耗，span 结尾是主播自己的后续（「算什么」）
+        tail = span_tail_raw
+        audit["preserved_span_tail"] = span_tail_raw
+    elif a_hi < len(auth_norm):
+        substituted_tail = "" if _spoken_nearby(auth_tail_raw, next_context) else auth_tail_raw
+        if not substituted_tail:
+            audit["dropped_duplicate_authority_tail"] = auth_tail_raw
+        # 替换区尾部若有强标点边界，标点后的是 ASR 并进同 cue 的真实回话
+        # （「唱不|同的，我唱不了高音」）：只替换标点前的听错段，回话保留。
+        reply_match = re.search(r"[，。！？!?…]", span_tail_raw)
+        if reply_match is not None:
+            reply = span_tail_raw[reply_match.start() :].lstrip("，,。！？!? ")
+            if len(normalize_chat_text(reply)) >= 2:
+                tail = f"{substituted_tail}，{reply}" if substituted_tail else reply
+                audit["preserved_span_reply"] = reply
+            else:
+                tail = substituted_tail
+        else:
+            tail = substituted_tail
+    aligned_raw = authority[auth_raw_lo:auth_raw_hi]
+    desired = f"{head}{aligned_raw}{tail}"
+    if not normalize_chat_text(desired):
+        return None
+    replacements = _shift_boundary_punct(_best_text_split(desired, list(before)))
+    if len(replacements) != len(before):
+        return None
+    return replacements, audit
 
 
 def _partial_question_patch(authority: str, candidate: str) -> str | None:
@@ -1215,11 +1374,14 @@ def apply_authoritative_chat_evidence(
     entity_verdict_required: list[dict] = []
     pending_text_overrides: list[dict] = []
     superseded_chat_proposals: list[dict] = []
+    read_aloud_arbitrations: list[dict] = []
+    arbitration_attempts = 0
     for item in evidence:
         authority_norm = normalize_chat_text(item.text)
         if len(authority_norm) < 4:
             continue
         best: dict | None = None
+        best_near: dict | None = None
         for start in range(len(cues)):
             if item.kind == "danmaku":
                 if item.offset_ms >= 0:
@@ -1269,6 +1431,34 @@ def apply_authoritative_chat_evidence(
                     near = item.offset_ms < 0 or cues[start].start_ms - item.offset_ms <= 20_000
                     partial = _partial_question_patch(item.text, candidate) if near else None
                 if not full and partial is None:
+                    # 弹幕念读 near-miss（2026-07-11 实案：弹幕「乐队不是需要妈妈吗」
+                    # 被 ASR 写成「立希不是算妈妈吗」，score 0.582/coverage 0.556/
+                    # common 5 —— 三道门各差一点，而“独立转写支持”来自同一个听错
+                    # 的 ASR 家族，永远救不回）。文本不足以裁决时交给原始音频
+                    # 二选一，不放宽 exact_span 本身。
+                    if (
+                        item.kind == "danmaku"
+                        and count <= 2
+                        and len(authority_norm) >= 6
+                        and score >= 0.55
+                        and coverage >= 0.50
+                        and common >= 4
+                    ):
+                        near = {
+                            "evidence": item,
+                            "start": start,
+                            "count": count,
+                            "score": score,
+                            "ratio": ratio,
+                            "coverage": coverage,
+                            "precision": precision,
+                            "common_chars": common,
+                            "mode": "read_aloud_arbitration",
+                            "replacement": None,
+                            "preserved_suffix": None,
+                        }
+                        if best_near is None or (count, -score) < (best_near["count"], -best_near["score"]):
+                            best_near = near
                     continue
                 if (
                     full
@@ -1466,6 +1656,84 @@ def apply_authoritative_chat_evidence(
             # chat-conditioned ASR/AGY agreement can never self-authorize them.
             if support_scores:
                 proposals.append(best)
+        elif (
+            best_near is not None
+            and entity_verifier is not None
+            and arbitration_attempts < 3
+        ):
+            arbitration_attempts += 1
+            near_span = "".join(
+                texts[best_near["start"] : best_near["start"] + best_near["count"]]
+            )
+            request = {
+                "schema_version": "chat-read-aloud-verification-request.v1",
+                "evidence_id": item.evidence_id,
+                "kind": item.kind,
+                "source": item.source,
+                "source_sha256": item.source_sha256,
+                "source_event_id": item.source_event_id,
+                "source_offset_ms": item.offset_ms,
+                "exact_text": item.text,
+                "cue_indexes": [
+                    index + 1
+                    for index in range(best_near["start"], best_near["start"] + best_near["count"])
+                ],
+                "matched_start_ms": cues[best_near["start"]].start_ms,
+                "matched_end_ms": cues[best_near["start"] + best_near["count"] - 1].end_ms,
+                "matched_audio_text": near_span,
+                "candidate_entities": [
+                    {"canonical": item.text, "surfaces": [], "readings": []},
+                    {"canonical": near_span, "surfaces": [], "readings": []},
+                ],
+                "reason": "danmaku near-miss read-aloud arbitration",
+            }
+            request["request_sha256"] = _request_sha256(request)
+            try:
+                raw_verdict = entity_verifier(request)
+            except Exception as exc:  # verifier failure is evidence, never permission
+                raw_verdict = {
+                    "schema_version": "chat-entity-verdict.v1",
+                    "request_sha256": request["request_sha256"],
+                    "status": "UNCERTAIN",
+                    "reason_code": "READ_ALOUD_VERIFIER_ERROR",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            verdict = _validated_read_aloud_verdict(raw_verdict, request=request)
+            arbitration_row = {
+                "evidence_id": item.evidence_id,
+                "kind": item.kind,
+                "exact_text": item.text,
+                "matched_audio_text": near_span,
+                "cue_indexes": request["cue_indexes"],
+                "matched_start_ms": request["matched_start_ms"],
+                "matched_end_ms": request["matched_end_ms"],
+                "score": round(best_near["score"], 4),
+                "coverage": round(best_near["coverage"], 4),
+                "request_sha256": request["request_sha256"],
+                "verdict": verdict if verdict is not None else raw_verdict,
+            }
+            if verdict is not None and verdict.get("canonical_entity") == item.text:
+                arbitration_row["outcome"] = "authority_confirmed_by_audio"
+                best_near["mode"] = "exact_span"
+                best_near["read_aloud_verdict"] = verdict
+                best_near["support_scores"] = []
+                proposals.append(best_near)
+            elif verdict is not None:
+                arbitration_row["outcome"] = "acoustic_span_confirmed_by_audio"
+                superseded_chat_proposals.append(
+                    {
+                        "evidence_id": item.evidence_id,
+                        "kind": item.kind,
+                        "exact_text": item.text,
+                        "cue_indexes": request["cue_indexes"],
+                        "matched_start_ms": request["matched_start_ms"],
+                        "matched_end_ms": request["matched_end_ms"],
+                        "reason_code": "EXACT_CHAT_REJECTED_BY_READ_ALOUD_AUDIO",
+                    }
+                )
+            else:
+                arbitration_row["outcome"] = "uncertain_no_change"
+            read_aloud_arbitrations.append(arbitration_row)
 
     proposals.sort(key=lambda row: (row["score"], -row["count"]), reverse=True)
     occupied: set[int] = set()
@@ -1577,9 +1845,23 @@ def apply_authoritative_chat_evidence(
         if proposal["mode"] == "question_particle_patch":
             replacements = [proposal["replacement"]]
         else:
-            replacements = _best_text_split(item.text, before)
-            if proposal.get("preserved_suffix") is not None:
-                replacements[-1] = replacements[-1].rstrip("，,。！？!? ") + "，" + proposal["preserved_suffix"][1]
+            # 2026-07-11 乐队番实案：整段覆盖会重复注入她已说过的 authority 开头、
+            # 吃掉 span 尾部她自己的后续语音。优先做对齐拼接，仅覆盖对齐区。
+            span_end = proposal["start"] + proposal["count"]
+            aligned = _aligned_span_replacements(
+                item.text,
+                before,
+                prev_context="".join(texts[max(0, proposal["start"] - 2) : proposal["start"]]),
+                next_context="".join(texts[span_end : span_end + 2]),
+            )
+            if aligned is not None:
+                replacements, span_alignment = aligned
+                proposal["span_alignment"] = span_alignment
+            else:
+                replacements = _best_text_split(item.text, before)
+                if proposal.get("preserved_suffix") is not None:
+                    replacements[-1] = replacements[-1].rstrip("，,。！？!? ") + "，" + proposal["preserved_suffix"][1]
+                replacements = _shift_boundary_punct(replacements)
         texts[proposal["start"] : proposal["start"] + proposal["count"]] = replacements
         occupied.update(indexes)
         applied_proposals.append(proposal)
@@ -1617,9 +1899,12 @@ def apply_authoritative_chat_evidence(
                 "alignment_basis": (
                     "raw-audio-forced-choice.v1"
                     if proposal.get("entity_verdict") is not None
+                    or proposal.get("read_aloud_verdict") is not None
                     else "audio-derived-transcript-proxy.v1"
                 ),
                 "entity_verdict": proposal.get("entity_verdict"),
+                "read_aloud_verdict": proposal.get("read_aloud_verdict"),
+                "span_alignment": proposal.get("span_alignment"),
                 "before": before,
                 "after": replacements,
             }
@@ -1797,6 +2082,7 @@ def apply_authoritative_chat_evidence(
         "entity_verdict_required": entity_verdict_required,
         "pending_text_overrides": pending_text_overrides,
         "superseded_chat_proposals": superseded_chat_proposals,
+        "read_aloud_arbitrations": read_aloud_arbitrations,
         "entity_repairs": entity_repairs,
         "sender_repairs": sender_repairs,
         "sender_verdict_required": sender_verdict_required,

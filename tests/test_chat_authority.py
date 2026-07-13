@@ -366,6 +366,100 @@ def test_partial_read_does_not_inject_unspoken_message_tail():
     assert audit["status"] == "NO_MATCH"
 
 
+def test_sc_read_does_not_duplicate_spoken_prefix_or_eat_followup():
+    """2026-07-11 乐队番实案：SC=「好冷的笑话，另外姐姐姐姐组乐队吗，我会打退堂鼓」。
+    整段覆盖曾把上一条 cue 已说过的「好冷的笑话」重复注入 span 头、把 span 尾
+    cue 主播自己的「退堂鼓算什么」覆盖成「退堂鼓」、还切出「，我会打」这种
+    闭标点开头的 cue。对齐拼接三个都必须修掉。"""
+    exact = "好冷的笑话，另外姐姐姐姐组乐队吗，我会打退堂鼓"
+    source = _srt(
+        "谢谢谢谢寒-歌的钢镚，好冷的笑话",
+        "另外姐姐姐姐组乐队吗",
+        "我会打退堂鼓",
+        "退堂鼓算什么",
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", -101_240, exact, "寒-歌")],
+        support_srt_texts=[source],
+    )
+
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    joined = "".join(texts)
+    assert joined.count("好冷的笑话") == 1, texts
+    assert "退堂鼓算什么" in joined, texts
+    assert "另外姐姐姐姐组乐队吗" in joined, texts
+    assert not any(t.startswith(("，", ",")) for t in texts), texts
+    assert audit["applied"], audit["status"]
+    assert audit["applied"][0]["span_alignment"] is not None
+
+
+def test_danmaku_near_miss_is_arbitrated_by_audio_and_restored():
+    """2026-07-11 实案：弹幕「乐队不是需要妈妈吗」被 ASR 写成「立希不是算妈妈吗」
+    （score 0.582 / coverage 0.556 / common 5 —— 三道 exact_span 门各差一点，而
+    "独立转写支持"来自同一个听错的 ASR 家族）。音频二选一 RESOLVED=弹幕原文
+    时逐字修复。"""
+    danmaku = "乐队不是需要妈妈吗"
+    source = _srt("立希不是算妈妈吗", "当然也算妈妈")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, danmaku)],
+        support_srt_texts=[source],
+        entity_verifier=_audio_entity_verifier(danmaku),
+    )
+
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert texts[0] == "乐队不是需要妈妈吗", texts
+    assert texts[1] == "当然也算妈妈"
+    assert audit["read_aloud_arbitrations"][0]["outcome"] == "authority_confirmed_by_audio"
+    assert audit["applied"][0]["alignment_basis"] == "raw-audio-forced-choice.v1"
+
+
+def test_danmaku_near_miss_rejected_by_audio_keeps_asr_text():
+    danmaku = "乐队不是需要妈妈吗"
+    source = _srt("立希不是算妈妈吗")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, danmaku)],
+        entity_verifier=_audio_entity_verifier("立希不是算妈妈吗"),
+    )
+
+    assert parse_srt_cues(output)[0].text == "立希不是算妈妈吗"
+    assert audit["read_aloud_arbitrations"][0]["outcome"] == "acoustic_span_confirmed_by_audio"
+    assert any(
+        row.get("reason_code") == "EXACT_CHAT_REJECTED_BY_READ_ALOUD_AUDIO"
+        for row in audit["superseded_chat_proposals"]
+    )
+
+
+def test_danmaku_near_miss_without_verifier_or_uncertain_never_changes_text():
+    danmaku = "乐队不是需要妈妈吗"
+    source = _srt("立希不是算妈妈吗")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source, [ChatEvidence("danmaku", 0, danmaku)]
+    )
+    assert parse_srt_cues(output)[0].text == "立希不是算妈妈吗"
+    assert audit["read_aloud_arbitrations"] == []
+
+    def uncertain(request):
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "UNCERTAIN",
+            "reason_code": "ENTITY_AUDIO_UNCERTAIN",
+        }
+
+    output, audit = apply_authoritative_chat_evidence(
+        source, [ChatEvidence("danmaku", 0, danmaku)], entity_verifier=uncertain
+    )
+    assert parse_srt_cues(output)[0].text == "立希不是算妈妈吗"
+    assert audit["read_aloud_arbitrations"][0]["outcome"] == "uncertain_no_change"
+
+
 def test_matched_sc_repairs_only_the_explicit_thank_name_slot():
     source = _srt(
         "谢谢苏马奶送的",
