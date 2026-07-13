@@ -82,6 +82,7 @@ from src.autoslice.chat_authority import (
 from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
+from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
@@ -1650,6 +1651,11 @@ def main(argv: list[str] | None = None) -> int:
     merged.sort(key=lambda item: item.offset_ms)
 
     # 3. Fresh transcription of the padded window.
+    song_name_candidates = [
+        str(title).strip()
+        for title in (spec.get("song_name_candidates") or [])
+        if isinstance(title, str) and str(title).strip()
+    ]
     if args.substrate == "aggregate_asr":
         transcriber = _build_aggregate_asr_transcriber(
             host,
@@ -1660,6 +1666,7 @@ def main(argv: list[str] | None = None) -> int:
             screen_text=args.screen_text,
             recording_date=str(spec.get("date") or ""),
             topic_hint=str(spec.get("selection_hook") or ""),
+            song_name_candidates=song_name_candidates,
         )
     else:
         transcriber = _build_ssh_agy_transcribe_runner(host, danmaku_items=merged or None, window_start_ms=0)
@@ -1792,6 +1799,26 @@ def main(argv: list[str] | None = None) -> int:
         or transcript_entity_audit["status"] == "ENTITY_VERDICT_REQUIRED"
     ):
         raise SystemExit(f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}")
+    # Deterministic song-name pin (Ivan 2026-07-13): belt over the LLM prompt
+    # context above.  A talk cue that signals a song mention (下一首/点歌/想唱/…)
+    # gets its trailing mention span fuzzy-matched against machine-evidence
+    # candidates (screen songlist + 点歌 + known-songs) and, on a strong match,
+    # rewritten to 《title》.  A cue with no intent phrase or a weak match is
+    # never touched — see src/autoslice/song_name_pin.py.
+    if song_name_candidates:
+        srt_text, song_name_pin_audit = pin_song_names_in_srt(
+            srt_text, candidates=song_name_candidates
+        )
+        song_name_pin_path = out_root / f"{cid}.song-name-pin.json"
+        song_name_pin_path.write_text(
+            json.dumps(song_name_pin_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if song_name_pin_audit.get("replacements"):
+            print(
+                f"{cid}: pinned {len(song_name_pin_audit['replacements'])} "
+                "song name(s) from screen-songlist/点歌 evidence"
+            )
     (out_root / "padded.fresh.srt").write_text(srt_text, encoding="utf-8")
     cues = [c for c in parse_srt_cues(srt_text) if c.text.strip()]
     if len(cues) < 3:

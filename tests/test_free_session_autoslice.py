@@ -613,6 +613,201 @@ def test_discover_segments_unions_visual_songs_and_attaches_title_hint(tmp_path,
     assert state["visual_song_seen_entries"] == ["list:10:晴る", "list:15:太阳系disco"]
 
 
+# --- song_name_candidates (Ivan 2026-07-13, talk-lane pinning) --------------
+
+
+def test_visual_song_titles_reads_inventory_and_both_seen_entry_forms():
+    """Source A: the numbered songlist panel's inventory entries plus the
+    cross-segment dedup identities (``list:<n>:<title>`` / ``media:<stem>:<start_ms>:<title>``)."""
+
+    state = {
+        "visual_song_inventory": {
+            "seg_a": {
+                "candidates": [
+                    {"song_title": "爱啦啦", "start_ms": 0, "end_ms": 1000},
+                    "not-a-dict-must-be-skipped",
+                    {"start_ms": 0, "end_ms": 1000},  # missing song_title, skipped
+                ]
+            },
+            "seg_b_not_dict": "ignored",
+        },
+        "visual_song_seen_entries": [
+            "list:10:晴る",
+            "media:22966160_20260710-19-00-17:400000:太阳系disco",
+            "list:10:晴る",  # duplicate identity — must not double-add
+            "malformed-entry-without-colon-form",
+        ],
+    }
+    titles = runner.visual_song_titles(state)
+    assert titles == ["爱啦啦", "晴る", "太阳系disco"]
+
+
+def test_dian_ge_song_titles_reuses_chat_authority_parser(tmp_path, monkeypatch):
+    """Reuses ``src.autoslice.chat_authority.load_chat_jsonl`` — the same
+    authoritative structured danmaku/SC parser — instead of a second bilibili
+    DANMU_MSG decoder."""
+
+    segment = tmp_path / "22966160_20260710-19-00-17.mp4"
+    segment.write_bytes(b"seg")
+    jsonl = segment.with_suffix(".jsonl")
+    base = 1_752_150_000
+    rows = [
+        {"cmd": "DANMU_MSG", "info": [[0, 0, 0, 0, base], "点歌 爱啦啦"]},
+        {"cmd": "DANMU_MSG", "info": [[0, 0, 0, 0, base + 1], "点歌   屑屑！！"]},
+        {"cmd": "DANMU_MSG", "info": [[0, 0, 0, 0, base + 2], "点歌爱啦啦"]},  # dup identity, folded
+        {"cmd": "DANMU_MSG", "info": [[0, 0, 0, 0, base + 3], "随便聊聊天"]},  # no 点歌 prefix
+        {
+            "cmd": "SUPER_CHAT_MESSAGE",
+            "send_time": (base + 4) * 1000,
+            "data": {"id": 1, "ts": base + 4, "message": "点歌 屑屑", "user_info": {"uname": "x"}},
+        },  # superchat is NOT part of the 点歌 danmaku pool
+        {
+            "cmd": "DANMU_MSG",
+            "info": [[0, 0, 0, 0, base + 5], "点歌 " + "长" * 25],
+        },  # over length-20 cap, dropped
+    ]
+    jsonl.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [segment])
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: jsonl)
+
+    titles = runner.dian_ge_song_titles("2026-07-10")
+
+    assert titles == ["爱啦啦", "屑屑"]
+
+
+def test_dian_ge_song_titles_caps_pool(tmp_path, monkeypatch):
+    segment = tmp_path / "22966160_20260710-19-00-17.mp4"
+    segment.write_bytes(b"seg")
+    jsonl = segment.with_suffix(".jsonl")
+    base = 1_752_150_000
+    rows = [
+        {"cmd": "DANMU_MSG", "info": [[0, 0, 0, 0, base + i], f"点歌 歌曲{i}"]}
+        for i in range(60)
+    ]
+    jsonl.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [segment])
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: jsonl)
+
+    titles = runner.dian_ge_song_titles("2026-07-10", cap=40)
+
+    assert len(titles) == 40
+    assert titles[0] == "歌曲0"
+
+
+def test_known_song_titles_reads_repo_asset(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    known = repo / "assets" / "lidousha"
+    known.mkdir(parents=True)
+    (known / "known_songs.json").write_text(
+        json.dumps({"songs": [{"title": "屑屑"}, {"title": "芽吹くとき"}, {"not_a_title": "x"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+
+    assert runner.known_song_titles() == ["屑屑", "芽吹くとき"]
+
+
+def test_known_song_titles_fails_open_on_missing_asset(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path / "no-such-repo")
+    assert runner.known_song_titles() == []
+
+
+def test_collect_song_name_candidates_combines_and_dedupes_all_sources(monkeypatch):
+    monkeypatch.setattr(runner, "visual_song_titles", lambda _state: ["爱啦啦", "晴る"])
+    monkeypatch.setattr(runner, "dian_ge_song_titles", lambda _date, **_kwargs: ["屑屑", "爱拉拉"])  # ASR-fold dup of 爱啦啦
+    monkeypatch.setattr(runner, "known_song_titles", lambda: ["屑屑", "芽吹くとき"])
+
+    titles = runner.collect_song_name_candidates("2026-07-10", {})
+
+    # 爱拉拉 folds to the same identity as 爱啦啦 (normalize_visual_title only
+    # strips separators/case, so this is testing exact-string dedup here);
+    # 屑屑 from known_songs must not duplicate the one already added from 点歌.
+    assert titles == ["爱啦啦", "晴る", "屑屑", "爱拉拉", "芽吹くとき"]
+
+
+def test_collect_song_name_candidates_respects_cap(monkeypatch):
+    monkeypatch.setattr(runner, "visual_song_titles", lambda _state: [f"曲{i}" for i in range(80)])
+    monkeypatch.setattr(runner, "dian_ge_song_titles", lambda _date, **_kwargs: [])
+    monkeypatch.setattr(runner, "known_song_titles", lambda: [])
+
+    titles = runner.collect_song_name_candidates("2026-07-10", {}, cap=60)
+
+    assert len(titles) == 60
+
+
+def test_produce_talk_threads_song_name_candidates_into_spec(tmp_path, monkeypatch):
+    date = "2026-07-11"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(_command, **kwargs):
+        kwargs["stdout"].write("CPA temporarily unavailable\n")
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    runner.produce_talk(
+        date,
+        {
+            "cid": "auto_songname_100_150",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 150_000,
+            "hook": "test",
+            "song_name_candidates": ["爱啦啦", "屑屑"],
+        },
+    )
+
+    spec = json.loads((base / "out" / date / "spec_auto_songname_100_150.json").read_text())
+    assert spec["song_name_candidates"] == ["爱啦啦", "屑屑"]
+
+
+def test_produce_talk_omits_song_name_candidates_when_absent(tmp_path, monkeypatch):
+    date = "2026-07-11"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(_command, **kwargs):
+        kwargs["stdout"].write("CPA temporarily unavailable\n")
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    runner.produce_talk(
+        date,
+        {
+            "cid": "auto_nosongname_100_150",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 150_000,
+            "hook": "test",
+        },
+    )
+
+    spec = json.loads((base / "out" / date / "spec_auto_nosongname_100_150.json").read_text())
+    assert "song_name_candidates" not in spec
+
+
 def test_prioritize_caps_talk_and_songs_with_reasons():
     state = {
         "picks": [], "songs": [],

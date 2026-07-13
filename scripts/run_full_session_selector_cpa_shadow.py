@@ -1056,6 +1056,7 @@ def _cpa_correct_draft_cues(
     cpa_llm_call,
     screen_text_lines=None,
     topic_entity_context: str = "",
+    song_name_candidates=(),
 ):
     """Text-only proper-noun/meme correction via CPA (Ivan 2026-07-04).
 
@@ -1069,6 +1070,7 @@ def _cpa_correct_draft_cues(
     from src.autoslice.jingting_chunker import parse_srt_cues
     from src.autoslice.llm_client import LlmCallError, extract_json_object
     from scripts.gemini_slice_jingting import glossary
+    from src.autoslice.song_name_pin import song_name_candidates_prompt_block
 
     # glossary() = term canon + authoritative subtitle_correction_principles.md,
     # so the full rule set is injected from one source (no inline duplication).
@@ -1077,6 +1079,7 @@ def _cpa_correct_draft_cues(
     if not cues:
         return draft_srt
     numbered = "\n".join(f"[{_asr_ts(cue.start_ms)[:8]}] {index}. {cue.text}" for index, cue in enumerate(cues, start=1))
+    song_name_block = song_name_candidates_prompt_block(song_name_candidates)
     danmaku_block = ""
     if danmaku_lines:
         danmaku_block = (
@@ -1101,6 +1104,7 @@ def _cpa_correct_draft_cues(
         f"{topic_entity_context}\n"
         f"{screen_block}"
         f"{danmaku_block}"
+        f"{song_name_block}"
         f"\n字幕草稿(每行:[时间] 编号. 文本):\n{numbered}\n"
         '\n只输出一个 JSON 对象,条数必须和草稿完全一致(要删的幻听条 text 给空串),只改必要的字:'
         '{"cues": [{"n": 1, "text": "修正后文本或空串"}, ...]}'
@@ -1132,6 +1136,7 @@ def _cpa_reconcile_draft_cues(
     danmaku_lines,
     cpa_llm_call,
     topic_entity_context: str = "",
+    song_name_candidates=(),
 ):
     """Reconcile BCUT (timeline authority) vs AGY (heard the audio) per cue —
     CPA is the judge (Ivan 2026-07-04 architecture).
@@ -1149,6 +1154,7 @@ def _cpa_reconcile_draft_cues(
     from src.autoslice.jingting_chunker import parse_srt_cues
     from src.autoslice.llm_client import LlmCallError, extract_json_object
     from scripts.gemini_slice_jingting import glossary
+    from src.autoslice.song_name_pin import song_name_candidates_prompt_block
 
     # glossary() = term canon + subtitle_correction_principles.md (single source).
     glossary_text = glossary().strip()
@@ -1161,6 +1167,7 @@ def _cpa_reconcile_draft_cues(
         f"[{_asr_ts(c.start_ms)[:8]}] {i}. BCUT: {c.text} | AGY: {agy_by_index.get(i, '(无)')}"
         for i, c in enumerate(bcut_cues, start=1)
     )
+    song_name_block = song_name_candidates_prompt_block(song_name_candidates)
     danmaku_block = ""
     if danmaku_lines:
         danmaku_block = "\n同时段弹幕(可佐证人名/梗):\n" + "\n".join(danmaku_lines[:60]) + "\n"
@@ -1183,6 +1190,7 @@ def _cpa_reconcile_draft_cues(
         f"\n{glossary_text}\n"
         f"{topic_entity_context}\n"
         f"{danmaku_block}"
+        f"{song_name_block}"
         f"\n字幕(每行:[时间] 编号. BCUT: ... | AGY: ...):\n{numbered}\n"
         '\n只输出一个 JSON 对象,cues 数量和上面完全一致(要删的条 text 给空串):'
         '{"cues": [{"n": 1, "text": "最终文本或空串"}, ...]}'
@@ -1390,6 +1398,7 @@ def _build_aggregate_asr_transcriber(
     screen_text: bool = False,
     recording_date: str = "",
     topic_hint: str = "",
+    song_name_candidates=(),
 ):
     """Finished-clip subtitle substrate = BCUT aggregate ASR + AGY refine + CPA
     reconcile (Ivan 2026-07-04 3-way architecture).
@@ -1443,6 +1452,7 @@ def _build_aggregate_asr_transcriber(
             danmaku_items=danmaku_items,
             context_start_ms=window_start_ms,
             topic_entity_context_provider=lambda: topic_context_state["value"],
+            song_name_candidates=song_name_candidates,
         )
         if correct in ("agy", "bcut_agy_cpa")
         else None
@@ -1524,6 +1534,7 @@ def _build_aggregate_asr_transcriber(
                     danmaku_lines=danmaku_lines,
                     cpa_llm_call=cpa_llm_call,
                     topic_entity_context=topic_context_state["value"],
+                    song_name_candidates=song_name_candidates,
                 )
             else:
                 corrected = _cpa_reconcile_draft_cues(
@@ -1532,6 +1543,7 @@ def _build_aggregate_asr_transcriber(
                     danmaku_lines=danmaku_lines,
                     cpa_llm_call=cpa_llm_call,
                     topic_entity_context=topic_context_state["value"],
+                    song_name_candidates=song_name_candidates,
                 )
         else:
             # correct == "cpa": text-only, enriched with agy screen text when asked.
@@ -1546,6 +1558,7 @@ def _build_aggregate_asr_transcriber(
                 cpa_llm_call=cpa_llm_call,
                 screen_text_lines=screen_text_lines,
                 topic_entity_context=topic_context_state["value"],
+                song_name_candidates=song_name_candidates,
             )
         # Dedicated whole-clip final pronoun pass (TA/他/她/它 in either
         # direction); a discourse task the general correction cannot reliably
@@ -1566,6 +1579,7 @@ def _build_ssh_agy_runner(
     danmaku_items=None,
     context_start_ms: int = 0,
     topic_entity_context_provider=None,
+    song_name_candidates=(),
 ):
     """Chunked jingting second-listen over ssh: agy lives on the remote host.
 
@@ -1665,6 +1679,7 @@ def _build_ssh_agy_runner(
             chunk_srt_text,
             danmaku_lines=chunk_danmaku_lines,
             topic_entity_context=topic_entity_context,
+            song_name_candidates=song_name_candidates,
         )
         run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
         with tempfile.TemporaryDirectory(prefix="ssh_agy_chunk_") as tmp:
