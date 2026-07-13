@@ -2144,6 +2144,7 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
                 "first_lyric_start_ms": 1_500,
                 "last_lyric_end_ms": 32_500,
                 "clip_end_ms": 33_500,
+                "completion_basis": "FULL_STUDIO_SEQUENCE",
             },
             "lyrics_alignment": {
                 "status": "READY",
@@ -2158,6 +2159,7 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
                 "alignment_report_sha256": report_sha,
                 "source_media_path": source_path,
                 "source_media_sha256": source_sha,
+                "completion_basis": "FULL_STUDIO_SEQUENCE",
             },
             "host_vocal_proof": host_vocal_claim,
         },

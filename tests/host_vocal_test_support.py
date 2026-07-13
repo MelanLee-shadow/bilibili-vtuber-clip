@@ -12,6 +12,7 @@ from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
     AudioLrcAlignmentRun,
     LrcResult,
+    derive_live_arrangement_completeness,
 )
 
 
@@ -64,7 +65,7 @@ def _ensure_alignment_rows(alignment: dict[str, object]) -> None:
 def bind_ready_live_performance_report(
     report_path: Path, *, source_media: Path, candidate_id: str
 ) -> None:
-    """Upgrade a synthetic alignment report to the bound AGY-v4 contract."""
+    """Upgrade a synthetic alignment report to the bound AGY-v5 contract."""
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     _ensure_alignment_rows(report)
@@ -95,7 +96,7 @@ def bind_ready_live_performance_report(
     lyric_lines = report["lyric_lines"]
     lrc_path.write_text("\n".join(str(row["text"]) for row in lyric_lines) + "\n", encoding="utf-8")
     prompt_path = artifact_dir / "prompt.md"
-    prompt_path.write_text("strict AGY v4 test prompt\n", encoding="utf-8")
+    prompt_path.write_text("strict AGY v5 test prompt\n", encoding="utf-8")
     source_sha = _sha(bound_source)
     lrc_sha = _sha(lrc_path)
     raw_rows = []
@@ -120,6 +121,14 @@ def bind_ready_live_performance_report(
         {"name": "tail", "live_time_ms": report["alignment"][-1]["cue_start_ms"], "result": "OK", "notes": "fixture"},
     ]
     raw_output = artifact_dir / "alignment.json"
+    live_arrangement = {
+        "classification": "FULL_STUDIO_SEQUENCE",
+        "observed_live_song_opening": True,
+        "observed_live_song_ending": True,
+        "post_song_transition_kind": "HOST_TALK",
+        "post_song_transition_ms": last_ms + 1_000,
+        "notes": "synthetic full studio sequence fixture",
+    }
     raw_payload = {
         "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
         "record": {
@@ -132,12 +141,14 @@ def bind_ready_live_performance_report(
         "observations": raw_rows,
         "spot_checks": spots,
         "live_performance": live_performance,
+        "live_arrangement": live_arrangement,
         "post_song_talk_start_ms": last_ms + 1_000,
     }
     _write_json(raw_output, raw_payload)
     raw_sha = _sha(raw_output)
     for index, row in enumerate(report["alignment"]):
         row["matched_cue_id"] = f"agy-audio:{raw_sha[:12]}:line-{index}"
+        row["canonical_lrc_index"] = index
         row["evidence_source"] = "agy_audio_lrc"
         row["match_ratio"] = 0.95
         row.update(READY_LYRIC_VOCAL_ASSERTIONS)
@@ -174,6 +185,22 @@ def bind_ready_live_performance_report(
             "audio_alignment_model": "Gemini 3.5 Flash (High)",
             "spot_checks": spots,
             "live_performance": live_performance,
+            "live_arrangement_observation": live_arrangement,
+            "arrangement_completeness": derive_live_arrangement_completeness(
+                observations=raw_rows,
+                live_arrangement=live_arrangement,
+                post_song_talk_start_ms=last_ms + 1_000,
+                source_duration_ms=last_ms + 10_000,
+            ),
+            "canonical_line_count": len(raw_rows),
+            "canonical_lyric_lines": [
+                {
+                    "lrc_index": index,
+                    "lrc_time_ms": lyric["lrc_time_ms"],
+                    "text": lyric["text"],
+                }
+                for index, lyric in enumerate(lyric_lines)
+            ],
             "post_song_talk_start_ms": last_ms + 1_000,
             "source_media_path": str(source_media.resolve()),
             "source_media_sha256": source_sha,
@@ -201,7 +228,7 @@ def make_ready_audio_alignment_run(
     output_dir: Path,
     offset_ms: int = 50_000,
 ) -> AudioLrcAlignmentRun:
-    """Build a strict, hash-bound AGY-v2 fixture for song-repair tests."""
+    """Build a strict, hash-bound AGY-v5 fixture for song-repair tests."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     source_sha = _sha(source_media)
@@ -260,6 +287,14 @@ def make_ready_audio_alignment_run(
         }
         for name, index in zip(spot_names, spot_indexes, strict=True)
     ]
+    live_arrangement = {
+        "classification": "FULL_STUDIO_SEQUENCE",
+        "observed_live_song_opening": True,
+        "observed_live_song_ending": True,
+        "post_song_transition_kind": "HOST_TALK",
+        "post_song_transition_ms": last_ms + 2_000,
+        "notes": "strict synthetic full studio sequence fixture",
+    }
     payload = {
         "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
         "record": {
@@ -272,10 +307,11 @@ def make_ready_audio_alignment_run(
         "observations": observations,
         "spot_checks": spots,
         "live_performance": live_performance,
+        "live_arrangement": live_arrangement,
         "post_song_talk_start_ms": last_ms + 2_000,
     }
     prompt_path = output_dir / "prompt.md"
-    prompt_path.write_text("strict AGY v4 test prompt\n", encoding="utf-8")
+    prompt_path.write_text("strict AGY v5 test prompt\n", encoding="utf-8")
     provider_raw_output = output_dir / "alignment.provider-raw.json"
     _write_json(provider_raw_output, payload)
     provider_raw_sha = _sha(provider_raw_output)

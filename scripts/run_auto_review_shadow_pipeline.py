@@ -55,6 +55,7 @@ from src.autoslice.song_repair import (
     build_kugou_lrc_provider,
     build_lrclib_lrc_provider,
     build_netease_lrc_provider,
+    derive_live_arrangement_completeness,
     fetch_lrclib_lrc,
     fetch_netease_lrc,
     load_audio_lrc_json_artifact,
@@ -1633,12 +1634,12 @@ def _verify_live_performance_observation(
         ):
             return "live-performance AGY raw/canonical artifact binding mismatch"
         canonicalization = manifest.get("canonicalization")
-        lyric_lines_for_binding = report.get("lyric_lines")
+        canonical_lines_for_binding = report.get("canonical_lyric_lines")
         if canonicalization != {
             "strategy": "canonical-lrc-by-exact-index.v1",
             "row_identity": "strict_zero_based_lrc_index",
             "restored_fields": ["lrc_time_ms", "text"],
-            "row_count": len(lyric_lines_for_binding) if isinstance(lyric_lines_for_binding, list) else -1,
+            "row_count": len(canonical_lines_for_binding) if isinstance(canonical_lines_for_binding, list) else -1,
             "canonical_lrc_sha256": artifacts.get("lrc_sha256"),
             "provider_raw_output_sha256": artifacts.get("provider_raw_output_sha256"),
             "canonicalized_output_sha256": artifacts.get("canonicalized_output_sha256"),
@@ -1667,13 +1668,47 @@ def _verify_live_performance_observation(
         return "live-performance raw AGY observation schema is invalid"
     if raw.get("live_performance") != report.get("live_performance"):
         return "live-performance raw/report observation mismatch"
+    if raw.get("live_arrangement") != report.get("live_arrangement_observation"):
+        return "live-arrangement raw/report observation mismatch"
+    try:
+        arrangement_completeness = derive_live_arrangement_completeness(
+            observations=raw_rows,
+            live_arrangement=raw.get("live_arrangement"),
+            post_song_talk_start_ms=raw.get("post_song_talk_start_ms"),
+            source_duration_ms=int(artifacts.get("source_duration_ms")),
+        )
+    except (TypeError, ValueError) as exc:
+        return f"live-arrangement structure is invalid: {exc}"
+    if report.get("arrangement_completeness") != arrangement_completeness:
+        return "live-arrangement code-derived report mismatch"
+    if lyrics_alignment.get("completion_basis") != arrangement_completeness.get("classification"):
+        return "live-arrangement completion basis mismatch"
+    canonical_lyrics = report.get("canonical_lyric_lines")
+    if (
+        report.get("canonical_line_count") != len(raw_rows)
+        or not isinstance(canonical_lyrics, list)
+        or len(canonical_lyrics) != len(raw_rows)
+        or any(
+            not isinstance(raw_row, Mapping)
+            or not isinstance(lyric, Mapping)
+            or lyric.get("lrc_index") != raw_row.get("lrc_index")
+            or lyric.get("lrc_time_ms") != raw_row.get("lrc_time_ms")
+            or lyric.get("text") != raw_row.get("text")
+            for raw_row, lyric in zip(raw_rows, canonical_lyrics, strict=True)
+        )
+    ):
+        return "live-arrangement canonical raw/report rows mismatch"
     lyric_lines = report.get("lyric_lines")
+    raw_heard_rows = [
+        row for row in raw_rows
+        if isinstance(row, Mapping) and row.get("heard") is True
+    ]
     if (
         not isinstance(report_rows, list)
         or not isinstance(lyric_lines, list)
-        or len(raw_rows) != len(report_rows)
+        or len(raw_heard_rows) != len(report_rows)
         or len(report_rows) != len(lyric_lines)
-        or len(raw_rows) < 8
+        or len(raw_heard_rows) < 8
     ):
         return "live-performance raw/report lyric rows are incomplete"
     if provider_raw is not None:
@@ -1700,9 +1735,12 @@ def _verify_live_performance_observation(
                 return f"live-performance provider/canonical lyric row {index} mismatch"
     expected_raw_sha = str(artifacts.get("raw_output_sha256") or "").lower().removeprefix("sha256:")
     previous_start: int | None = None
-    for index, (raw_row, report_row, lyric) in enumerate(zip(raw_rows, report_rows, lyric_lines, strict=True)):
+    for report_index, (raw_row, report_row, lyric) in enumerate(
+        zip(raw_heard_rows, report_rows, lyric_lines, strict=True)
+    ):
         if not isinstance(raw_row, Mapping) or not isinstance(report_row, Mapping) or not isinstance(lyric, Mapping):
-            return f"live-performance raw/report lyric row {index} is invalid"
+            return f"live-performance raw/report lyric row {report_index} is invalid"
+        canonical_index = raw_row.get("lrc_index")
         start_ms = raw_row.get("live_start_ms")
         end_ms = raw_row.get("live_end_ms")
         confidence = raw_row.get("confidence")
@@ -1718,7 +1756,10 @@ def _verify_live_performance_observation(
                 *LYRIC_VOCAL_ASSERTION_KEYS,
             }
             or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(report_row)
-            or raw_row.get("lrc_index") != index
+            or not isinstance(canonical_index, int)
+            or isinstance(canonical_index, bool)
+            or report_row.get("canonical_lrc_index") != canonical_index
+            or ("lrc_index" in lyric and lyric.get("lrc_index") != canonical_index)
             or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
             or raw_row.get("text") != lyric.get("text")
             or raw_row.get("heard") is not True
@@ -1737,10 +1778,10 @@ def _verify_live_performance_observation(
             or report_row.get("cue_end_ms") != end_ms
             or report_row.get("match_ratio") != round(float(confidence), 4)
             or report_row.get("evidence_source") != "agy_audio_lrc"
-            or report_row.get("matched_cue_id") != f"agy-audio:{expected_raw_sha[:12]}:line-{index}"
+            or report_row.get("matched_cue_id") != f"agy-audio:{expected_raw_sha[:12]}:line-{canonical_index}"
             or any(report_row.get(key) != raw_row.get(key) for key in LYRIC_VOCAL_ASSERTION_KEYS)
         ):
-            return f"live-performance raw/report lyric row {index} mismatch"
+            return f"live-performance raw/report lyric row {canonical_index} mismatch"
         previous_start = start_ms
     if (
         report_rows[0].get("cue_start_ms") != first_ms

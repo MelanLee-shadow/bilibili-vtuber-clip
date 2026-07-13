@@ -154,11 +154,12 @@ def _bind_ready_alignment_claim(
     )
     claim["provider"] = "agy"
     claim["model"] = "lrclib-agy-audio-lrc-global-shift-v1"
+    claim["completion_basis"] = "FULL_STUDIO_SEQUENCE"
     claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
 
 
 def _rebind_background_playback_observation(claim: dict[str, object]) -> None:
-    """Turn a bound AGY-v4 fixture into the speech-over-BGM hard negative."""
+    """Turn a bound AGY-v5 fixture into the speech-over-BGM hard negative."""
 
     report_path = Path(str(claim["alignment_report_path"]))
     report = json.loads(report_path.read_text(encoding="utf-8"))

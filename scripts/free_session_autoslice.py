@@ -100,6 +100,7 @@ from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
     LYRIC_VOCAL_ASSERTION_KEYS,
+    derive_live_arrangement_completeness,
     load_audio_lrc_json_artifact,
     live_performance_failure_reason_codes,
     validate_live_performance_observation,
@@ -2557,6 +2558,39 @@ def song_completion_evidence(record: dict) -> dict:
                     failures.append("SONG_AUDIO_LRC_RAW_OBSERVATION_INVALID")
                 elif raw_observation.get("live_performance") != report.get("live_performance"):
                     failures.append("SONG_LIVE_PERFORMANCE_BINDING_INVALID")
+                elif raw_observation.get("live_arrangement") != report.get("live_arrangement_observation"):
+                    failures.append("SONG_LIVE_ARRANGEMENT_BINDING_INVALID")
+                else:
+                    try:
+                        derived_arrangement = derive_live_arrangement_completeness(
+                            observations=raw_rows,
+                            live_arrangement=raw_observation.get("live_arrangement"),
+                            post_song_talk_start_ms=raw_observation.get("post_song_talk_start_ms"),
+                            source_duration_ms=int(audio_artifacts.get("source_duration_ms")),
+                        )
+                    except (TypeError, ValueError):
+                        failures.append("SONG_LIVE_ARRANGEMENT_INVALID")
+                    else:
+                        if (
+                            report.get("arrangement_completeness") != derived_arrangement
+                            or alignment.get("completion_basis") != derived_arrangement.get("classification")
+                        ):
+                            failures.append("SONG_LIVE_ARRANGEMENT_BINDING_INVALID")
+                        canonical_lyrics = report.get("canonical_lyric_lines")
+                        if (
+                            report.get("canonical_line_count") != len(raw_rows)
+                            or not isinstance(canonical_lyrics, list)
+                            or len(canonical_lyrics) != len(raw_rows)
+                            or any(
+                                not isinstance(raw_row, dict)
+                                or not isinstance(lyric, dict)
+                                or lyric.get("lrc_index") != raw_row.get("lrc_index")
+                                or lyric.get("lrc_time_ms") != raw_row.get("lrc_time_ms")
+                                or lyric.get("text") != raw_row.get("text")
+                                for raw_row, lyric in zip(raw_rows, canonical_lyrics)
+                            )
+                        ):
+                            failures.append("SONG_LIVE_ARRANGEMENT_BINDING_INVALID")
                 if isinstance(audio_manifest, dict) and audio_manifest.get("schema_version") == "agy-audio-lrc-run.v2":
                     provider_raw_value = audio_artifacts.get("provider_raw_output_path")
                     provider_raw_sha = audio_artifacts.get("provider_raw_output_sha256")
@@ -2576,7 +2610,11 @@ def song_completion_evidence(record: dict) -> dict:
                             "strategy": "canonical-lrc-by-exact-index.v1",
                             "row_identity": "strict_zero_based_lrc_index",
                             "restored_fields": ["lrc_time_ms", "text"],
-                            "row_count": len(lyric_lines) if isinstance(lyric_lines, list) else -1,
+                            "row_count": (
+                                int(report.get("canonical_line_count"))
+                                if is_int(report.get("canonical_line_count"))
+                                else -1
+                            ),
                             "canonical_lrc_sha256": audio_artifacts.get("lrc_sha256"),
                             "provider_raw_output_sha256": provider_raw_sha,
                             "canonicalized_output_sha256": audio_artifacts.get("canonicalized_output_sha256"),
@@ -2620,15 +2658,20 @@ def song_completion_evidence(record: dict) -> dict:
                 ids: list[str] = []
                 starts: list[int] = []
                 residuals: list[int] = []
+                raw_heard_rows = (
+                    [row for row in raw_rows if isinstance(row, dict) and row.get("heard") is True]
+                    if isinstance(raw_rows, list)
+                    else []
+                )
                 audio_rows_ok = (
                     isinstance(raw_rows, list)
-                    and len(raw_rows) == len(report_alignment) == len(lyric_lines) == matched_count == line_count
+                    and len(raw_heard_rows) == len(report_alignment) == len(lyric_lines) == matched_count == line_count
                 )
                 expected_raw_sha = str(
                     audio_artifacts.get("raw_output_sha256") if isinstance(audio_artifacts, dict) else ""
                 ).lower().removeprefix("sha256:")
                 for index, (row, lyric) in enumerate(zip(report_alignment, lyric_lines)):
-                    raw_row = raw_rows[index] if isinstance(raw_rows, list) and index < len(raw_rows) else None
+                    raw_row = raw_heard_rows[index] if index < len(raw_heard_rows) else None
                     if not isinstance(row, dict) or not isinstance(lyric, dict) or not isinstance(raw_row, dict):
                         audio_rows_ok = False
                         break
@@ -2647,7 +2690,9 @@ def song_completion_evidence(record: dict) -> dict:
                             *LYRIC_VOCAL_ASSERTION_KEYS,
                         }
                         or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(row)
-                        or raw_row.get("lrc_index") != index
+                        or not is_int(raw_row.get("lrc_index"))
+                        or row.get("canonical_lrc_index") != raw_row.get("lrc_index")
+                        or ("lrc_index" in lyric and lyric.get("lrc_index") != raw_row.get("lrc_index"))
                         or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
                         or raw_row.get("text") != lyric.get("text")
                         or raw_row.get("heard") is not True
@@ -2659,7 +2704,7 @@ def song_completion_evidence(record: dict) -> dict:
                         or any(row.get(key) != raw_row.get(key) for key in LYRIC_VOCAL_ASSERTION_KEYS)
                         or row.get("evidence_source") != "agy_audio_lrc"
                         or not isinstance(cue_id, str)
-                        or cue_id != f"agy-audio:{expected_raw_sha[:12]}:line-{index}"
+                        or cue_id != f"agy-audio:{expected_raw_sha[:12]}:line-{raw_row.get('lrc_index')}"
                         or not is_int(cue_start)
                         or not is_int(cue_end)
                         or not 0 <= cue_start < cue_end
@@ -2686,14 +2731,16 @@ def song_completion_evidence(record: dict) -> dict:
                 ):
                     failures.append("SONG_AUDIO_LRC_OBSERVATION_INVALID")
                 if isinstance(audio_artifacts, dict) and isinstance(raw_rows, list):
-                    raw_rows_match = len(raw_rows) == len(report_alignment) == len(lyric_lines)
+                    raw_rows_match = len(raw_heard_rows) == len(report_alignment) == len(lyric_lines)
                     if raw_rows_match:
-                        for index, (raw_row, proof_row, lyric) in enumerate(zip(raw_rows, report_alignment, lyric_lines)):
+                        for index, (raw_row, proof_row, lyric) in enumerate(zip(raw_heard_rows, report_alignment, lyric_lines)):
                             if (
                                 not isinstance(raw_row, dict)
                                 or not isinstance(proof_row, dict)
                                 or not isinstance(lyric, dict)
-                                or raw_row.get("lrc_index") != index
+                                or not is_int(raw_row.get("lrc_index"))
+                                or proof_row.get("canonical_lrc_index") != raw_row.get("lrc_index")
+                                or ("lrc_index" in lyric and lyric.get("lrc_index") != raw_row.get("lrc_index"))
                                 or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
                                 or raw_row.get("text") != lyric.get("text")
                                 or raw_row.get("heard") is not True
@@ -2709,7 +2756,7 @@ def song_completion_evidence(record: dict) -> dict:
                         failures.append("SONG_AUDIO_LRC_RAW_REPORT_MISMATCH")
 
             # A schema-valid dict is not a READY proof until every bound AGY
-            # artifact, manifest, raw-v2 row, and report projection above has
+            # artifact, manifest, raw-v5 row, and report projection above has
             # survived validation.  Keep state evidence non-contradictory.
             if live_performance_semantic_ready and not failures and isinstance(live_performance, dict):
                 live_performance_status = "READY"

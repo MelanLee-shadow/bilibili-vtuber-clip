@@ -59,7 +59,7 @@ def test_live_performance_failure_reason_codes_are_specific(mode, expected):
     assert live_performance_failure_reason_codes({"mode": mode}) == expected
 
 
-def test_agy_audio_lrc_v4_prompt_marks_media_enum_instructions_untrusted():
+def test_agy_audio_lrc_v5_prompt_marks_media_enum_instructions_untrusted():
     prompt = build_agy_audio_lrc_prompt(
         candidate_id="prompt-injection-fixture",
         attempt_id="attempt-1",
@@ -74,8 +74,11 @@ def test_agy_audio_lrc_v4_prompt_marks_media_enum_instructions_untrusted():
     assert "guest/duet/offscreen/chorus/harmony" in prompt
     assert "replay, ending-card, static-screen" in prompt
     assert "PERFORMING_THIS_LYRIC_SPOKEN" in prompt
-    assert "80% of canonical rows" in prompt
+    assert "80% of the heard/performed rows" in prompt
     assert "six consecutive rows" in prompt
+    assert "COMPLETE_LIVE_ARRANGEMENT" in prompt
+    assert "at least 70% canonical" in prompt
+    assert "studio-repeat omission alone must" in prompt
     assert "live_start_ms <= tail < live_end_ms" in prompt
     assert "voiceprint gate; that speaker-similarity gate is not a singing classifier" in prompt
     assert "`lrc_index` is the only row identity" in prompt
@@ -142,7 +145,14 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
     assert manifest["artifacts"]["output_sha256"] == run.output_sha256
 
 
-def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate_id: str = "jp-audio") -> AudioLrcAlignmentRun:
+def _write_fake_audio_alignment_run(
+    tmp_path: Path,
+    lrc: LrcResult,
+    *,
+    candidate_id: str = "jp-audio",
+    source_duration_ms: int = 100_000,
+    offset_ms: int = 10_000,
+) -> AudioLrcAlignmentRun:
     source = tmp_path / "current-full-window.mp4"
     source.write_bytes(b"current-audio-bound-media")
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -157,7 +167,7 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
     lrc_sha = hashlib.sha256(lrc_path.read_bytes()).hexdigest()
     observations = []
     for index, line in enumerate(lrc.lines):
-        start = line.time_ms + 10_000
+        start = line.time_ms + offset_ms
         observations.append(
             {
                 "lrc_index": index,
@@ -172,6 +182,14 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
         )
     first_live_ms = observations[0]["live_start_ms"]
     last_live_ms = observations[-1]["live_end_ms"]
+    repeated_index = next(
+        (
+            index
+            for index, row in enumerate(observations)
+            if index > 0 and row["text"] in {previous["text"] for previous in observations[:index]}
+        ),
+        min(len(observations) - 1, 2),
+    )
     payload = {
         "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
         "record": {
@@ -179,19 +197,29 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
             "candidate_id": candidate_id,
             "source_sha256": source_sha,
             "lrc_sha256": lrc_sha,
-            "source_duration_ms": 100_000,
+            "source_duration_ms": source_duration_ms,
         },
         "observations": observations,
         "spot_checks": [
-            {"name": "first_line", "live_time_ms": 10_000, "result": "OK", "notes": "heard"},
-            {"name": "chorus", "live_time_ms": 24_000, "result": "OK", "notes": "heard"},
+            {"name": "first_line", "live_time_ms": first_live_ms, "result": "OK", "notes": "heard"},
+            {
+                "name": "chorus",
+                "live_time_ms": observations[len(observations) // 3]["live_start_ms"],
+                "result": "OK",
+                "notes": "heard",
+            },
             {
                 "name": "repeated_section",
-                "live_time_ms": observations[8]["live_start_ms"],
+                "live_time_ms": observations[repeated_index]["live_start_ms"],
                 "result": "OK",
                 "notes": "heard later recurrence",
             },
-            {"name": "longest_instrumental_gap", "live_time_ms": 52_000, "result": "OK", "notes": "heard"},
+            {
+                "name": "longest_instrumental_gap",
+                "live_time_ms": observations[len(observations) // 2]["live_start_ms"],
+                "result": "OK",
+                "notes": "heard",
+            },
             {
                 "name": "tail",
                 "live_time_ms": observations[-1]["live_end_ms"] - 1,
@@ -207,10 +235,21 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
             **READY_LIVE_PERFORMANCE_ASSERTIONS,
             "evidence": [
                 {"time_ms": observations[1]["live_start_ms"], "observation": "live vocal at head"},
-                {"time_ms": observations[6]["live_start_ms"], "observation": "live vocal at middle"},
-                {"time_ms": observations[8]["live_start_ms"], "observation": "live vocal at tail"},
+                {
+                    "time_ms": observations[min(len(observations) - 2, (len(observations) * 2) // 3)]["live_start_ms"],
+                    "observation": "live vocal at middle",
+                },
+                {"time_ms": observations[-2]["live_start_ms"], "observation": "live vocal at tail"},
             ],
             "notes": "continuous live streamer vocal",
+        },
+        "live_arrangement": {
+            "classification": "FULL_STUDIO_SEQUENCE",
+            "observed_live_song_opening": True,
+            "observed_live_song_ending": True,
+            "post_song_transition_kind": "HOST_TALK",
+            "post_song_transition_ms": observations[-1]["live_end_ms"] + 2_000,
+            "notes": "all canonical rows are present in the complete live arrangement",
         },
         "post_song_talk_start_ms": observations[-1]["live_end_ms"] + 2_000,
     }
@@ -247,7 +286,7 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
                     "source_origin_path": str(source.resolve()),
                     "source_path": str(source),
                     "source_sha256": source_sha,
-                    "source_duration_ms": 100_000,
+                    "source_duration_ms": source_duration_ms,
                     "lrc_path": str(lrc_path),
                     "lrc_sha256": lrc_sha,
                     "prompt_path": str(prompt),
@@ -276,7 +315,7 @@ def _write_fake_audio_alignment_run(tmp_path: Path, lrc: LrcResult, *, candidate
         source_origin_path=str(source.resolve()),
         source_path=str(source),
         source_sha256=source_sha,
-        source_duration_ms=100_000,
+        source_duration_ms=source_duration_ms,
         lrc_path=str(lrc_path),
         lrc_sha256=lrc_sha,
         prompt_path=str(prompt),
@@ -338,6 +377,61 @@ def _japanese_lrc() -> LrcResult:
         source_ref="https://lrclib.net/api/get/33542202",
         lines=tuple(LrcLine(index * 7_000, text) for index, text in enumerate(texts)),
     )
+
+
+def _gudan_beibanqiu_studio_lrc() -> LrcResult:
+    first_section = [
+        "用你的早安陪我吃晚餐",
+        "记得把想念存进扑满",
+        "我 望着满天星在闪",
+        "听牛郎对织女说要勇敢",
+        "不怕我们在地球的两端",
+        "看你的问候骑着魔毯",
+        "飞 用光速飞到我面前",
+        "你让我看到北极星有十字星作伴",
+        "少了你的手臂当枕头 我还不习惯",
+        "你的望远镜望不到我北半球的孤单",
+        "太平洋的潮水跟着地球来回旋转",
+        "我会耐心地等 等你有一天靠岸",
+        "少了你的怀抱当暖炉 我还不习惯",
+        "给你照片看不到我北半球的孤单",
+        "世界再大两颗真心就能互相取暖",
+        "想念不会偷懒 我的梦通通给你保管",
+    ]
+    texts = [
+        *first_section,
+        *first_section[4:16],
+        *first_section[8:16],
+    ]
+    times = [
+        21_770, 26_700, 31_770, 36_640, 41_800, 47_670, 51_750, 56_920,
+        62_310, 66_760, 72_220, 76_980, 82_420, 87_660, 92_590, 97_490,
+        115_570, 119_910, 125_040, 130_210, 134_910, 139_680, 144_500,
+        149_960, 155_150, 160_060, 165_050, 170_290, 196_030, 201_020,
+        206_030, 210_980, 216_140, 221_100, 226_330, 231_030,
+    ]
+    return LrcResult(
+        provider="lrclib",
+        song_title="孤单北半球",
+        artist="欧得洋",
+        source_ref="https://lrclib.net/api/get/11714816",
+        lines=tuple(LrcLine(time_ms, text) for time_ms, text in zip(times, texts, strict=True)),
+    )
+
+
+def _omit_live_arrangement_rows(payload: dict[str, object], indices: range | tuple[int, ...]) -> None:
+    for index in indices:
+        payload["observations"][index].update(
+            heard=False,
+            live_start_ms=None,
+            live_end_ms=None,
+            confidence=0.95,
+            lyric_vocal_subject="NO_AUDIBLE_LYRIC_VOCAL",
+            lidousha_role="SILENT_OR_NOT_AUDIBLE",
+            same_live_vocal_source_as_lidousha=False,
+            other_singer_or_harmony_audible=False,
+            recorded_or_playback_vocal_audible=False,
+        )
 
 
 def _anlian_lrc_with_real_bilingual_credits() -> LrcResult:
@@ -421,7 +515,7 @@ def test_real_bilingual_timed_credits_are_excluded_before_audio_validation(tmp_p
     report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
     assert report["line_count"] == report["matched_line_count"] == 10
     assert report["matched_line_ratio"] == 1.0
-    assert report["matched_line_denominator"] == "singable_lrc_lines"
+    assert report["matched_line_denominator"] == "performed_live_arrangement_lines"
     assert report["lyric_lines"][0]["text"] == "你大概是个盲人"
     assert all("Engineer" not in row["text"] for row in report["lyric_lines"])
 
@@ -1184,6 +1278,207 @@ def test_audio_lrc_canonicalization_rejects_non_bijective_or_unordered_indices(t
 
     with pytest.raises(ValueError, match="exactly one row|duplicate|strict order|out of range"):
         canonicalize_audio_lrc_observation(provider_payload, lrc)
+
+
+
+
+def test_complete_live_arrangement_accepts_real_gudan_tail_repeat_omission(tmp_path):
+    lrc = _gudan_beibanqiu_studio_lrc()
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        lrc,
+        candidate_id="gudan-live-short",
+        source_duration_ms=297_850,
+        offset_ms=56_000,
+    )
+    payload = json.loads(json.dumps(run.payload))
+    _omit_live_arrangement_rows(payload, range(28, 36))
+    payload["live_arrangement"].update(
+        classification="COMPLETE_LIVE_ARRANGEMENT",
+        observed_live_song_opening=True,
+        observed_live_song_ending=True,
+        post_song_transition_kind="HOST_TALK",
+        post_song_transition_ms=251_000,
+        notes="live performance deliberately ends after the second chorus and omits the studio-only third chorus repeat",
+    )
+    payload["post_song_talk_start_ms"] = 251_000
+    payload["spot_checks"] = [
+        {
+            "name": "first_line",
+            "live_time_ms": payload["observations"][0]["live_start_ms"],
+            "result": "OK",
+            "notes": "actual live opening",
+        },
+        {
+            "name": "chorus",
+            "live_time_ms": payload["observations"][8]["live_start_ms"],
+            "result": "OK",
+            "notes": "first chorus",
+        },
+        {
+            "name": "repeated_section",
+            "live_time_ms": payload["observations"][16]["live_start_ms"],
+            "result": "OK",
+            "notes": "later audible recurrence",
+        },
+        {
+            "name": "longest_instrumental_gap",
+            "live_time_ms": 165_000,
+            "result": "OK",
+            "notes": "instrumental bridge",
+        },
+        {
+            "name": "tail",
+            "live_time_ms": payload["observations"][27]["live_end_ms"] - 1,
+            "result": "OK",
+            "notes": "inside actual final performed lyric",
+        },
+    ]
+    payload["live_performance"].update(
+        mode="LIVE_STREAMER_SINGING",
+        continuous_live_song_performance=True,
+        same_lidousha_live_performer_across_all_lyrics=True,
+        other_singer_or_harmony_present=False,
+        recorded_or_playback_vocal_present=False,
+        evidence=[
+            {
+                "time_ms": payload["observations"][2]["live_start_ms"],
+                "observation": "Li Dousha singing at the live head",
+            },
+            {
+                "time_ms": payload["observations"][14]["live_start_ms"],
+                "observation": "same Li Dousha vocal in the live middle",
+            },
+            {
+                "time_ms": payload["observations"][22]["live_start_ms"],
+                "observation": "same Li Dousha vocal in the live tail",
+            },
+        ],
+        notes="one continuous Li Dousha live performance with a deliberate shortened arrangement",
+    )
+    run = _rebind_fake_audio_alignment_run(run, payload)
+    cues = [
+        SourceCue(
+            f"gudan-{index}",
+            int(payload["observations"][index]["live_start_ms"]),
+            int(payload["observations"][index]["live_end_ms"]),
+            lrc.lines[index].text,
+            kind="singing",
+        )
+        for index in range(8)
+    ]
+
+    result = attempt_song_repair(
+        candidate_id="gudan-live-short",
+        cues=cues,
+        anchor_start_ms=cues[0].source_start_ms,
+        anchor_end_ms=cues[-1].source_end_ms,
+        source_duration_ms=297_850,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        extra_queries=("孤单北半球",),
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+    )
+
+    assert result.repaired is True
+    assert result.song_boundary["completion_basis"] == "COMPLETE_LIVE_ARRANGEMENT"
+    assert result.song_boundary["clip_end_ms"] == 251_000
+    assert result.lyrics_alignment["completion_basis"] == "COMPLETE_LIVE_ARRANGEMENT"
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    assert report["line_count"] == report["matched_line_count"] == 28
+    assert report["canonical_line_count"] == 36
+    assert report["arrangement_completeness"] == {
+        "classification": "COMPLETE_LIVE_ARRANGEMENT",
+        "canonical_line_count": 36,
+        "heard_line_count": 28,
+        "heard_line_ratio": 0.7778,
+        "performed_duration_ms": payload["observations"][27]["live_end_ms"] - payload["observations"][0]["live_start_ms"],
+        "first_heard_lrc_index": 0,
+        "last_heard_lrc_index": 27,
+        "max_interline_gap_ms": report["arrangement_completeness"]["max_interline_gap_ms"],
+        "omitted_ranges": [
+            {
+                "start_lrc_index": 28,
+                "end_lrc_index": 35,
+                "line_count": 8,
+                "kind": "TRAILING_REPEATED_SECTION",
+            }
+        ],
+        "observed_live_song_opening": True,
+        "observed_live_song_ending": True,
+        "post_song_transition_kind": "HOST_TALK",
+        "post_song_transition_ms": 251_000,
+    }
+    assert [row["lrc_index"] for row in report["lyric_lines"]] == list(range(28))
+    assert [row["canonical_lrc_index"] for row in report["alignment"]] == list(range(28))
+    from scripts.run_auto_review_shadow_pipeline import (
+        _load_lyric_timeline,
+        _verify_live_performance_observation,
+    )
+
+    assert _verify_live_performance_observation(
+        result.lyrics_alignment,
+        output_dir=tmp_path / "repair",
+    ) is None
+    timeline = _load_lyric_timeline(
+        {"lyrics_alignment": result.lyrics_alignment},
+        output_dir=tmp_path / "repair",
+    )
+    assert timeline is not None
+    assert timeline[1] == 56_000
+    assert [text for _time_ms, text in timeline[0]] == [line.text for line in lrc.lines[:28]]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("few_lines", "too little canonical lyric evidence"),
+        ("random_holes", "multiple omitted canonical blocks"),
+        ("single_repeated_line", "not a repeated canonical section"),
+        ("nonrepeat_middle_break", "not a repeated canonical section"),
+        ("no_actual_tail", "opening or actual live ending was not observed"),
+        ("no_post_song_transition", "no proven post-song transition"),
+    ],
+)
+def test_complete_live_arrangement_negative_shapes_fail_closed(tmp_path, mutation, expected_error):
+    lrc = _gudan_beibanqiu_studio_lrc()
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        lrc,
+        source_duration_ms=297_850,
+        offset_ms=56_000,
+    )
+    payload = json.loads(json.dumps(run.payload))
+    payload["live_arrangement"]["classification"] = "COMPLETE_LIVE_ARRANGEMENT"
+    if mutation == "few_lines":
+        _omit_live_arrangement_rows(payload, range(7, 36))
+    elif mutation == "random_holes":
+        _omit_live_arrangement_rows(payload, (10, 18))
+    elif mutation == "single_repeated_line":
+        _omit_live_arrangement_rows(payload, (10,))
+    elif mutation == "nonrepeat_middle_break":
+        _omit_live_arrangement_rows(payload, (2,))
+    elif mutation == "no_actual_tail":
+        _omit_live_arrangement_rows(payload, range(28, 36))
+        payload["live_arrangement"]["observed_live_song_ending"] = False
+    else:
+        _omit_live_arrangement_rows(payload, range(28, 36))
+        payload["live_arrangement"].update(
+            post_song_transition_kind="NONE_OR_UNKNOWN",
+            post_song_transition_ms=None,
+        )
+        payload["post_song_talk_start_ms"] = None
+
+    with pytest.raises(ValueError, match=expected_error):
+        song_repair.derive_live_arrangement_completeness(
+            observations=payload["observations"],
+            live_arrangement=payload["live_arrangement"],
+            post_song_talk_start_ms=payload["post_song_talk_start_ms"],
+            source_duration_ms=297_850,
+        )
+
+
 
 
 def test_audio_lrc_validator_failure_tries_next_deduped_variant_and_repairs(tmp_path, monkeypatch):
