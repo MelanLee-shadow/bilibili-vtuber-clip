@@ -239,10 +239,35 @@ def validate_topic_entity_graph(payload: object) -> dict[str, Any]:
     topics: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_topics):
         label = f"topics[{index}]"
-        if not isinstance(raw, dict) or set(raw) != {
-            "topic_id", "canonical", "aliases", "work_ids", "active_from", "active_until", "sources"
+        topic_fields = {
+            "topic_id",
+            "canonical",
+            "aliases",
+            "work_ids",
+            "active_from",
+            "active_until",
+            "sources",
+        }
+        refresh_fields = {"refreshed_at", "refresh_expires_at"}
+        if not isinstance(raw, dict) or set(raw) not in {
+            frozenset(topic_fields),
+            frozenset(topic_fields | refresh_fields),
         }:
             raise TopicEntityGraphError(f"{label} has unknown or missing fields")
+        refreshed_at = _timestamp(
+            raw.get("refreshed_at", generated_at),
+            label=f"{label}.refreshed_at",
+        )
+        refresh_expires_at = _timestamp(
+            raw.get("refresh_expires_at", expires_at),
+            label=f"{label}.refresh_expires_at",
+        )
+        if (
+            dt.datetime.fromisoformat(refreshed_at) > dt.datetime.fromisoformat(generated_at)
+            or dt.datetime.fromisoformat(refreshed_at)
+            >= dt.datetime.fromisoformat(refresh_expires_at)
+        ):
+            raise TopicEntityGraphError(f"{label} has an invalid refresh window")
         topics.append(
             {
                 "topic_id": _identifier(raw["topic_id"], label=f"{label}.topic_id"),
@@ -252,6 +277,8 @@ def validate_topic_entity_graph(payload: object) -> dict[str, Any]:
                 "active_from": _date(raw["active_from"], label=f"{label}.active_from"),
                 "active_until": _date(raw["active_until"], label=f"{label}.active_until"),
                 "sources": _sources(raw["sources"], label=f"{label}.sources"),
+                "refreshed_at": refreshed_at,
+                "refresh_expires_at": refresh_expires_at,
             }
         )
 
