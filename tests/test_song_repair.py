@@ -1,6 +1,9 @@
 import base64
+import io
 import json
 import hashlib
+import re
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -97,21 +100,6 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
         source_ref="netease://song/gudanbeibanqiu",
         lines=(LrcLine(base.lines[0].time_ms, canonical_text), *base.lines[1:]),
     )
-    provider_payload = {
-        "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
-        "record": {},
-        "observations": [
-            {
-                "lrc_index": index,
-                "lrc_time_ms": line.time_ms,
-                "text": simplified_echo if index == 0 else line.text,
-            }
-            for index, line in enumerate(lrc.lines)
-        ],
-        "spot_checks": [],
-        "live_performance": {},
-        "post_song_talk_start_ms": None,
-    }
     media = tmp_path / "source.mp4"
     media.write_bytes(b"fake-media")
     fake_agy = tmp_path / "agy"
@@ -120,6 +108,11 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
     monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
 
     def fake_run(_command, *, cwd, **_kwargs):
+        provider_payload = _valid_audio_lrc_api_payload(
+            Path(cwd, "prompt.md").read_text(encoding="utf-8"),
+            lrc,
+        )
+        provider_payload["observations"][0]["text"] = simplified_echo
         Path(cwd, "alignment.json").write_text(
             json.dumps(provider_payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -144,6 +137,272 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
     assert manifest["canonicalization"]["strategy"] == AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY
     assert manifest["artifacts"]["provider_raw_output_sha256"] == run.provider_raw_output_sha256
     assert manifest["artifacts"]["output_sha256"] == run.output_sha256
+
+
+def _valid_audio_lrc_api_payload(prompt: str, lrc: LrcResult) -> dict[str, object]:
+    def prompt_value(name: str) -> object:
+        match = re.search(rf'"{re.escape(name)}":\s*("(?:[^"\\]|\\.)*"|\d+)', prompt)
+        assert match is not None, name
+        return json.loads(match.group(1))
+
+    observations = []
+    for index, line in enumerate(lrc.lines):
+        start_ms = line.time_ms + 10_000
+        observations.append(
+            {
+                "lrc_index": index,
+                "lrc_time_ms": line.time_ms,
+                "text": line.text,
+                "heard": True,
+                "live_start_ms": start_ms,
+                "live_end_ms": start_ms + 3_000,
+                "confidence": 0.98,
+                **READY_LYRIC_VOCAL_ASSERTIONS,
+            }
+        )
+    final_end_ms = observations[-1]["live_end_ms"]
+    return {
+        "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+        "record": {
+            "attempt_id": prompt_value("attempt_id"),
+            "candidate_id": prompt_value("candidate_id"),
+            "source_sha256": prompt_value("source_sha256"),
+            "lrc_sha256": prompt_value("lrc_sha256"),
+            "source_duration_ms": prompt_value("source_duration_ms"),
+        },
+        "observations": observations,
+        "spot_checks": [
+            {"name": "first_line", "live_time_ms": observations[0]["live_start_ms"], "result": "OK", "notes": "heard"},
+            {"name": "chorus", "live_time_ms": observations[4]["live_start_ms"], "result": "OK", "notes": "heard"},
+            {"name": "repeated_section", "live_time_ms": observations[8]["live_start_ms"], "result": "OK", "notes": "later repeat"},
+            {"name": "longest_instrumental_gap", "live_time_ms": observations[5]["live_start_ms"], "result": "OK", "notes": "heard"},
+            {"name": "tail", "live_time_ms": final_end_ms - 1, "result": "OK", "notes": "heard"},
+        ],
+        "live_performance": {
+            "mode": "LIVE_STREAMER_SINGING",
+            "confidence": 0.96,
+            "continuous_live_song_performance": True,
+            "background_recording_likelihood": 0.03,
+            **READY_LIVE_PERFORMANCE_ASSERTIONS,
+            "evidence": [
+                {"time_ms": observations[1]["live_start_ms"], "observation": "head"},
+                {"time_ms": observations[5]["live_start_ms"], "observation": "middle"},
+                {"time_ms": observations[8]["live_start_ms"], "observation": "tail"},
+            ],
+            "notes": "continuous live streamer vocal",
+        },
+        "live_arrangement": {
+            "classification": "FULL_STUDIO_SEQUENCE",
+            "observed_live_song_opening": True,
+            "observed_live_song_ending": True,
+            "post_song_transition_kind": "HOST_TALK",
+            "post_song_transition_ms": final_end_ms + 2_000,
+            "notes": "complete",
+        },
+        "post_song_talk_start_ms": final_end_ms + 2_000,
+    }
+
+
+def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_accepts(tmp_path, monkeypatch):
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-key-one")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "secret-key-two")
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+
+    def fake_extract(_source, target):
+        target.write_bytes(b"complete-derived-audio")
+        return 100_000
+
+    calls = []
+
+    def fake_observe(*, audio_path, prompt, key):
+        calls.append((audio_path, key))
+        if key == "secret-key-one":
+            raise RuntimeError("first key quota")
+        return json.dumps(_valid_audio_lrc_api_payload(prompt, lrc), ensure_ascii=False)
+
+    monkeypatch.setattr(agy_lrc_alignment, "_extract_complete_audio", fake_extract)
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "api-fallback", tmp_path / "jobs")
+
+    assert [key for _path, key in calls] == ["secret-key-one", "secret-key-two"]
+    assert run.provider == "gemini_api"
+    assert run.provider_fallback_used is True
+    assert run.agy_failure_category == "AGY_QUOTA_EXHAUSTED"
+    assert run.accepted_key_ordinal == 2
+    manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "agy-audio-lrc-run.v3"
+    assert manifest["provider"] == "gemini_api"
+    assert manifest["direct_audio_input"] is True
+    assert "secret-key" not in json.dumps(manifest)
+    selected = song_repair._validated_audio_lrc_selection(
+        run=run,
+        lrc=lrc,
+        candidate_id="api-fallback",
+        source_media_path=media,
+        source_duration_ms=100_000,
+        min_matched_ratio=0.55,
+    )
+    assert selected[0] == 1.0
+
+    Path(str(run.api_audio_path)).write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="complete current audio|sha256 mismatch"):
+        song_repair._validated_audio_lrc_selection(
+            run=run,
+            lrc=lrc,
+            candidate_id="api-fallback",
+            source_media_path=media,
+            source_duration_ms=100_000,
+            min_matched_ratio=0.55,
+        )
+
+
+@pytest.mark.parametrize(
+    ("agy_failure_mode", "expected_category"),
+    [
+        ("missing", "AGY_UNAVAILABLE"),
+        ("timeout", "AGY_TIMEOUT"),
+        ("invalid_json", "AGY_INVALID_OUTPUT"),
+        ("bad_index", "AGY_LRC_INDEX_INVALID"),
+    ],
+)
+def test_audio_lrc_recoverable_agy_failures_enter_gemini_fallback(
+    tmp_path,
+    monkeypatch,
+    agy_failure_mode,
+    expected_category,
+):
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    if agy_failure_mode != "missing":
+        fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "configured-key")
+    monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_gemini_api_observe",
+        lambda *, prompt, **_kwargs: json.dumps(
+            _valid_audio_lrc_api_payload(prompt, lrc), ensure_ascii=False
+        ),
+    )
+
+    def fake_run(_command, *, cwd, **_kwargs):
+        if agy_failure_mode == "timeout":
+            raise subprocess.TimeoutExpired(cmd="agy", timeout=1)
+        if agy_failure_mode == "invalid_json":
+            Path(cwd, "alignment.json").write_text("not json", encoding="utf-8")
+        elif agy_failure_mode == "bad_index":
+            Path(cwd, "alignment.json").write_text(
+                json.dumps(
+                    {
+                        "observations": [
+                            {"lrc_index": len(lrc.lines) - 1 - index}
+                            for index in range(len(lrc.lines))
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        f"recoverable-{agy_failure_mode}",
+        tmp_path / "jobs",
+    )
+    assert run.provider == "gemini_api"
+    assert run.agy_failure_category == expected_category
+
+
+def test_audio_lrc_both_providers_fail_without_persisting_keys(tmp_path, monkeypatch):
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    secrets = ("never-persist-one", "never-persist-two")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", secrets[0])
+    monkeypatch.setenv("GEMINI_API_KEY_2", secrets[1])
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_gemini_api_observe",
+        lambda *, key, **_kwargs: (_ for _ in ()).throw(RuntimeError(f"request?key={key}")),
+    )
+
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
+        agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "both-fail", tmp_path / "jobs")
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in (tmp_path / "jobs").rglob("*")
+        if path.is_file()
+    )
+    assert all(secret not in persisted for secret in secrets)
+    assert "AGY_AND_GEMINI_API_FAILED" in persisted
+
+
+def test_audio_lrc_gemini_request_uses_header_and_enforces_20mb_cap(tmp_path, monkeypatch):
+    audio = tmp_path / "audio.mp3"
+    audio.write_bytes(b"audio")
+    secret = "header-only-song-key"
+    captured = {}
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(request, *, timeout):
+        captured["request"] = request
+        return Response(json.dumps({"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}).encode())
+
+    monkeypatch.setattr(agy_lrc_alignment.urllib.request, "urlopen", fake_urlopen)
+    assert agy_lrc_alignment._gemini_api_observe(audio_path=audio, prompt="strict", key=secret) == "{}"
+    request = captured["request"]
+    assert secret not in request.full_url
+    assert secret not in request.data.decode("utf-8")
+    assert request.get_header("X-goog-api-key") == secret
+
+    monkeypatch.setattr(agy_lrc_alignment, "GEMINI_API_REQUEST_MAX_BYTES", 1)
+    with pytest.raises(RuntimeError, match="GEMINI_API_REQUEST_TOO_LARGE"):
+        agy_lrc_alignment._gemini_api_observe(audio_path=audio, prompt="strict", key=secret)
 
 
 def _write_fake_audio_alignment_run(

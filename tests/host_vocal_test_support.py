@@ -63,7 +63,7 @@ def _ensure_alignment_rows(alignment: dict[str, object]) -> None:
 
 
 def bind_ready_live_performance_report(
-    report_path: Path, *, source_media: Path, candidate_id: str
+    report_path: Path, *, source_media: Path, candidate_id: str, provider: str = "agy"
 ) -> None:
     """Upgrade a synthetic alignment report to the bound AGY-v5 contract."""
 
@@ -94,7 +94,17 @@ def bind_ready_live_performance_report(
     shutil.copy2(source_media, bound_source)
     lrc_path = artifact_dir / "source.lrc"
     lyric_lines = report["lyric_lines"]
-    lrc_path.write_text("\n".join(str(row["text"]) for row in lyric_lines) + "\n", encoding="utf-8")
+    is_gemini_api = provider == "gemini_api"
+    if is_gemini_api:
+        lrc_path.write_text(
+            "".join(
+                f"[{int(row['lrc_time_ms']) // 60_000:02d}:{(int(row['lrc_time_ms']) % 60_000) // 1_000:02d}.{int(row['lrc_time_ms']) % 1_000:03d}]{row['text']}\n"
+                for row in lyric_lines
+            ),
+            encoding="utf-8",
+        )
+    else:
+        lrc_path.write_text("\n".join(str(row["text"]) for row in lyric_lines) + "\n", encoding="utf-8")
     prompt_path = artifact_dir / "prompt.md"
     prompt_path.write_text("strict AGY v5 test prompt\n", encoding="utf-8")
     source_sha = _sha(bound_source)
@@ -120,7 +130,7 @@ def bind_ready_live_performance_report(
         {"name": "longest_instrumental_gap", "live_time_ms": first_ms + span * 2 // 3, "result": "OK", "notes": "fixture"},
         {"name": "tail", "live_time_ms": report["alignment"][-1]["cue_start_ms"], "result": "OK", "notes": "fixture"},
     ]
-    raw_output = artifact_dir / "alignment.json"
+    provider_raw_output = artifact_dir / "alignment.provider-raw.json"
     live_arrangement = {
         "classification": "FULL_STUDIO_SEQUENCE",
         "observed_live_song_opening": True,
@@ -144,8 +154,11 @@ def bind_ready_live_performance_report(
         "live_arrangement": live_arrangement,
         "post_song_talk_start_ms": last_ms + 1_000,
     }
-    _write_json(raw_output, raw_payload)
-    raw_sha = _sha(raw_output)
+    _write_json(provider_raw_output, raw_payload)
+    provider_raw_sha = _sha(provider_raw_output)
+    canonical_output = artifact_dir / "alignment.canonical.json"
+    _write_json(canonical_output, raw_payload)
+    raw_sha = _sha(canonical_output)
     for index, row in enumerate(report["alignment"]):
         row["matched_cue_id"] = f"agy-audio:{raw_sha[:12]}:line-{index}"
         row["canonical_lrc_index"] = index
@@ -162,27 +175,62 @@ def bind_ready_live_performance_report(
         "lrc_sha256": lrc_sha,
         "prompt_path": str(prompt_path),
         "prompt_sha256": _sha(prompt_path),
-        "output_path": str(raw_output),
+        "output_path": str(canonical_output),
         "output_sha256": raw_sha,
     }
+    if is_gemini_api:
+        api_audio_path = artifact_dir / "input.complete-audio.mp3"
+        api_audio_path.write_bytes(source_media.read_bytes())
+        artifacts.update(
+            {
+                "provider_raw_output_path": str(provider_raw_output),
+                "provider_raw_output_sha256": provider_raw_sha,
+                "api_audio_path": str(api_audio_path),
+                "api_audio_sha256": _sha(api_audio_path),
+                "api_audio_duration_ms": last_ms + 10_000,
+            }
+        )
+    model = "gemini-3.5-flash" if is_gemini_api else "Gemini 3.5 Flash (High)"
     _write_json(
         manifest,
         {
-            "schema_version": "agy-audio-lrc-run.v1",
+            "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION if is_gemini_api else "agy-audio-lrc-run.v1",
             "candidate_id": candidate_id,
-            "provider": "agy",
-            "model": "Gemini 3.5 Flash (High)",
-            "agy_rc": 0,
-            "provider_fallback_used": False,
-            "sandbox": True,
+            "provider": provider,
+            "model": model,
+            "agy_rc": 1 if is_gemini_api else 0,
+            "provider_fallback_used": is_gemini_api,
+            "agy_failure_category": "AGY_QUOTA_EXHAUSTED" if is_gemini_api else None,
+            "sandbox": not is_gemini_api,
+            "direct_audio_input": is_gemini_api,
+            "configured_key_count": 2 if is_gemini_api else None,
+            "accepted_key_ordinal": 2 if is_gemini_api else None,
+            **(
+                {
+                    "canonicalization": {
+                        "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
+                        "row_identity": "strict_zero_based_lrc_index",
+                        "restored_fields": ["lrc_time_ms", "text"],
+                        "row_count": len(lyric_lines),
+                        "canonical_lrc_sha256": lrc_sha,
+                        "provider_raw_output_sha256": provider_raw_sha,
+                        "canonicalized_output_sha256": raw_sha,
+                    }
+                }
+                if is_gemini_api
+                else {}
+            ),
             "artifacts": artifacts,
         },
     )
     report.update(
         {
             "evidence_source": "agy_audio_lrc",
-            "audio_alignment_provider": "agy",
-            "audio_alignment_model": "Gemini 3.5 Flash (High)",
+            "audio_alignment_provider": provider,
+            "audio_alignment_model": model,
+            "audio_alignment_agy_rc": 1 if is_gemini_api else 0,
+            "audio_alignment_provider_fallback_used": is_gemini_api,
+            "audio_alignment_agy_failure_category": "AGY_QUOTA_EXHAUSTED" if is_gemini_api else None,
             "spot_checks": spots,
             "live_performance": live_performance,
             "live_arrangement_observation": live_arrangement,
@@ -210,6 +258,19 @@ def bind_ready_live_performance_report(
                 "raw_output_sha256": artifacts["output_sha256"],
                 "run_manifest_path": str(manifest),
                 "run_manifest_sha256": _sha(manifest),
+                **(
+                    {
+                        "provider_raw_output_path": artifacts["provider_raw_output_path"],
+                        "provider_raw_output_sha256": artifacts["provider_raw_output_sha256"],
+                        "canonicalized_output_path": artifacts["output_path"],
+                        "canonicalized_output_sha256": artifacts["output_sha256"],
+                        "api_audio_path": artifacts["api_audio_path"],
+                        "api_audio_sha256": artifacts["api_audio_sha256"],
+                        "api_audio_duration_ms": artifacts["api_audio_duration_ms"],
+                    }
+                    if is_gemini_api
+                    else {}
+                ),
             },
         }
     )
@@ -227,6 +288,7 @@ def make_ready_audio_alignment_run(
     candidate_id: str,
     output_dir: Path,
     offset_ms: int = 50_000,
+    provider: str = "agy",
 ) -> AudioLrcAlignmentRun:
     """Build a strict, hash-bound AGY-v5 fixture for song-repair tests."""
 
@@ -333,16 +395,34 @@ def make_ready_audio_alignment_run(
         "output_path": str(canonicalized_output),
         "output_sha256": canonicalized_sha,
     }
+    is_gemini_api = provider == "gemini_api"
+    api_audio_path = output_dir / "input.complete-audio.mp3"
+    if is_gemini_api:
+        api_audio_path.write_bytes(source_media.read_bytes())
+        artifacts.update(
+            {
+                "api_audio_path": str(api_audio_path),
+                "api_audio_sha256": _sha(api_audio_path),
+                "api_audio_duration_ms": source_duration_ms,
+            }
+        )
+    model = "gemini-3.5-flash" if is_gemini_api else "Gemini 3.5 Flash (High)"
+    agy_rc = 1 if is_gemini_api else 0
+    agy_failure_category = "AGY_QUOTA_EXHAUSTED" if is_gemini_api else None
     _write_json(
         manifest,
         {
             "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
             "candidate_id": candidate_id,
-            "provider": "agy",
-            "model": "Gemini 3.5 Flash (High)",
-            "agy_rc": 0,
-            "provider_fallback_used": False,
-            "sandbox": True,
+            "provider": provider,
+            "model": model,
+            "agy_rc": agy_rc,
+            "provider_fallback_used": is_gemini_api,
+            "agy_failure_category": agy_failure_category,
+            "sandbox": not is_gemini_api,
+            "direct_audio_input": is_gemini_api,
+            "configured_key_count": 2 if is_gemini_api else None,
+            "accepted_key_ordinal": 2 if is_gemini_api else None,
             "canonicalization": {
                 "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
                 "row_identity": "strict_zero_based_lrc_index",
@@ -357,10 +437,10 @@ def make_ready_audio_alignment_run(
     )
     return AudioLrcAlignmentRun(
         payload=payload,
-        provider="agy",
-        model="Gemini 3.5 Flash (High)",
-        rc=0,
-        provider_fallback_used=False,
+        provider=provider,
+        model=model,
+        rc=agy_rc,
+        provider_fallback_used=is_gemini_api,
         source_origin_path=str(source_media.resolve()),
         source_path=str(source_media),
         source_sha256=source_sha,
@@ -375,6 +455,12 @@ def make_ready_audio_alignment_run(
         manifest_sha256=_sha(manifest),
         provider_raw_output_path=str(provider_raw_output),
         provider_raw_output_sha256=provider_raw_sha,
+        agy_failure_category=agy_failure_category,
+        configured_key_count=2 if is_gemini_api else None,
+        accepted_key_ordinal=2 if is_gemini_api else None,
+        api_audio_path=str(api_audio_path) if is_gemini_api else None,
+        api_audio_sha256=_sha(api_audio_path) if is_gemini_api else None,
+        api_audio_duration_ms=source_duration_ms if is_gemini_api else None,
     )
 
 

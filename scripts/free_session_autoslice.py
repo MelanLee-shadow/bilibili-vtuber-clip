@@ -104,6 +104,7 @@ from src.autoslice.song_repair import (
     load_audio_lrc_json_artifact,
     live_performance_failure_reason_codes,
     validate_audio_lrc_canonical_projection,
+    validate_audio_lrc_execution_metadata,
     validate_live_performance_observation,
 )
 from src.autoslice.speaker_finalizer import (
@@ -2481,9 +2482,20 @@ def song_completion_evidence(record: dict) -> dict:
                 failures.extend(live_performance_failure_reason_codes(live_performance))
             else:
                 live_performance_semantic_ready = True
+            report_provider = report.get("audio_alignment_provider")
+            report_execution_error = validate_audio_lrc_execution_metadata(
+                provider=report_provider,
+                model=report.get("audio_alignment_model"),
+                agy_rc=report.get("audio_alignment_agy_rc", 0 if report_provider == "agy" else None),
+                provider_fallback_used=report.get(
+                    "audio_alignment_provider_fallback_used",
+                    False if report_provider == "agy" else None,
+                ),
+                agy_failure_category=report.get("audio_alignment_agy_failure_category"),
+                sandbox=True if report_provider == "agy" else False,
+            )
             if (
-                report.get("audio_alignment_provider") != "agy"
-                or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
+                report_execution_error is not None
                 or not str(alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
             ):
                 failures.append("SONG_AUDIO_LRC_PROVIDER_INVALID")
@@ -2513,14 +2525,41 @@ def song_completion_evidence(record: dict) -> dict:
                     audio_manifest = json.loads(Path(str(manifest_value)).read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     audio_manifest = None
+                manifest_execution_error = (
+                    validate_audio_lrc_execution_metadata(
+                        provider=audio_manifest.get("provider"),
+                        model=audio_manifest.get("model"),
+                        agy_rc=audio_manifest.get("agy_rc"),
+                        provider_fallback_used=audio_manifest.get("provider_fallback_used"),
+                        agy_failure_category=audio_manifest.get("agy_failure_category"),
+                        sandbox=audio_manifest.get("sandbox"),
+                    )
+                    if isinstance(audio_manifest, dict)
+                    else "manifest is not a mapping"
+                )
                 if not isinstance(audio_manifest, dict) or (
-                    audio_manifest.get("schema_version") not in {"agy-audio-lrc-run.v1", "agy-audio-lrc-run.v2"}
+                    audio_manifest.get("schema_version") not in {
+                        "agy-audio-lrc-run.v1",
+                        "agy-audio-lrc-run.v2",
+                        "agy-audio-lrc-run.v3",
+                    }
                     or audio_manifest.get("candidate_id") != record.get("candidate_id")
-                    or audio_manifest.get("provider") != "agy"
-                    or audio_manifest.get("model") != "Gemini 3.5 Flash (High)"
-                    or audio_manifest.get("agy_rc") != 0
-                    or audio_manifest.get("provider_fallback_used") is not False
-                    or audio_manifest.get("sandbox") is not True
+                    or (
+                        audio_manifest.get("provider") == "gemini_api"
+                        and audio_manifest.get("schema_version") != "agy-audio-lrc-run.v3"
+                    )
+                    or audio_manifest.get("provider") != report_provider
+                    or audio_manifest.get("model") != report.get("audio_alignment_model")
+                    or audio_manifest.get("agy_rc")
+                    != report.get("audio_alignment_agy_rc", 0 if report_provider == "agy" else None)
+                    or audio_manifest.get("provider_fallback_used")
+                    is not report.get(
+                        "audio_alignment_provider_fallback_used",
+                        False if report_provider == "agy" else None,
+                    )
+                    or audio_manifest.get("agy_failure_category")
+                    != report.get("audio_alignment_agy_failure_category")
+                    or manifest_execution_error is not None
                 ):
                     failures.append("SONG_AUDIO_LRC_MANIFEST_INVALID")
                 elif not isinstance(audio_manifest.get("artifacts"), dict) or any(
@@ -2539,6 +2578,32 @@ def song_completion_evidence(record: dict) -> dict:
                     )
                 ):
                     failures.append("SONG_AUDIO_LRC_MANIFEST_BINDING_INVALID")
+                if isinstance(audio_manifest, dict) and audio_manifest.get("provider") == "gemini_api":
+                    manifest_artifacts = audio_manifest.get("artifacts")
+                    api_audio_path = audio_artifacts.get("api_audio_path")
+                    api_audio_sha = audio_artifacts.get("api_audio_sha256")
+                    api_audio_duration_ms = audio_artifacts.get("api_audio_duration_ms")
+                    source_duration_for_api = audio_artifacts.get("source_duration_ms")
+                    configured_key_count = audio_manifest.get("configured_key_count")
+                    accepted_key_ordinal = audio_manifest.get("accepted_key_ordinal")
+                    if (
+                        audio_manifest.get("direct_audio_input") is not True
+                        or not isinstance(api_audio_path, str)
+                        or not isinstance(api_audio_sha, str)
+                        or not _matches_sha256(Path(api_audio_path), api_audio_sha)
+                        or not is_int(api_audio_duration_ms)
+                        or not is_int(source_duration_for_api)
+                        or abs(api_audio_duration_ms - source_duration_for_api) > 1_000
+                        or not isinstance(manifest_artifacts, dict)
+                        or manifest_artifacts.get("api_audio_path") != api_audio_path
+                        or manifest_artifacts.get("api_audio_sha256") != api_audio_sha
+                        or manifest_artifacts.get("api_audio_duration_ms") != api_audio_duration_ms
+                        or not is_int(configured_key_count)
+                        or not 1 <= configured_key_count <= 3
+                        or not is_int(accepted_key_ordinal)
+                        or not 1 <= accepted_key_ordinal <= configured_key_count
+                    ):
+                        failures.append("SONG_AUDIO_LRC_API_AUDIO_BINDING_INVALID")
                 raw_value = audio_artifacts.get("raw_output_path")
                 try:
                     raw_observation = json.loads(Path(str(raw_value)).read_text(encoding="utf-8"))
@@ -2592,7 +2657,10 @@ def song_completion_evidence(record: dict) -> dict:
                             )
                         ):
                             failures.append("SONG_LIVE_ARRANGEMENT_BINDING_INVALID")
-                if isinstance(audio_manifest, dict) and audio_manifest.get("schema_version") == "agy-audio-lrc-run.v2":
+                if isinstance(audio_manifest, dict) and audio_manifest.get("schema_version") in {
+                    "agy-audio-lrc-run.v2",
+                    "agy-audio-lrc-run.v3",
+                }:
                     provider_raw_value = audio_artifacts.get("provider_raw_output_path")
                     provider_raw_sha = audio_artifacts.get("provider_raw_output_sha256")
                     manifest_artifacts = audio_manifest.get("artifacts")

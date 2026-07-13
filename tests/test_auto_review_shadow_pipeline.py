@@ -37,11 +37,12 @@ def _ready_host_vocal_prover(source_media, candidate_id, boundary, alignment, ou
         }
     )
     alignment_path.write_text(json.dumps(alignment_payload, ensure_ascii=False) + "\n", encoding="utf-8")
-    bind_ready_live_performance_report(
-        alignment_path,
-        source_media=Path(source_media),
-        candidate_id=candidate_id,
-    )
+    if "audio_alignment_provider" not in alignment_payload:
+        bind_ready_live_performance_report(
+            alignment_path,
+            source_media=Path(source_media),
+            candidate_id=candidate_id,
+        )
     claim, _profile = make_ready_host_vocal_claim(
         output_dir,
         source_media=Path(source_media),
@@ -3029,7 +3030,8 @@ def test_shadow_pipeline_fails_closed_when_preexisting_marker_exists(tmp_path, m
 
 
 
-def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
+@pytest.mark.parametrize("audio_provider", ["agy", "gemini_api"])
+def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path, audio_provider):
     from src.autoslice.song_repair import LrcLine, LrcResult
 
     lyric_lines = [
@@ -3111,6 +3113,7 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
             lrc=selected_lrc,
             candidate_id=candidate,
             output_dir=artifact_dir,
+            provider=audio_provider,
         ),
         host_vocal_prover=_ready_host_vocal_prover,
     )
@@ -3171,6 +3174,17 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
     }
     assert recut_manifest["verified_output_binding"] == recut["verified_output_binding"]
     assert recut["manifest_sha256"] == "sha256:" + hashlib.sha256(recut_manifest_path.read_bytes()).hexdigest()
+
+    if audio_provider == "gemini_api":
+        tampered_report = dict(alignment_report)
+        tampered_report["audio_alignment_provider"] = "agy"
+        report_path.write_text(json.dumps(tampered_report, ensure_ascii=False) + "\n", encoding="utf-8")
+        tampered_claim = dict(alignment_claim)
+        tampered_claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        assert shadow_pipeline._verify_live_performance_observation(
+            tampered_claim,
+            output_dir=report_path.parent,
+        ) == "live-performance proof is not an approved production audio alignment"
 
 
 def test_live_source_song_repair_failure_records_attempts_then_blocks(tmp_path):

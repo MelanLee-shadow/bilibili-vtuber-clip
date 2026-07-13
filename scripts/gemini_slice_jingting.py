@@ -45,7 +45,7 @@ VIDEOS = os.environ.get("BILIVE_VIDEOS_ROOT") or (
 )
 
 GEMINI_MODEL = os.environ.get("JINGTING_GEMINI_MODEL", "gemini-3.5-flash")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 AGY_BIN = os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
 AGY_MODEL = os.environ.get("AGY_MODEL", "Gemini 3.5 Flash (Low)")
@@ -803,9 +803,9 @@ def gemini_correct(
         },
     }
     req = urllib.request.Request(
-        GEMINI_URL.format(model=GEMINI_MODEL, key=key),
+        GEMINI_URL.format(model=GEMINI_MODEL),
         data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json", "x-goog-api-key": key},
     )
     with urllib.request.urlopen(req, timeout=180) as r:
         d = json.load(r)

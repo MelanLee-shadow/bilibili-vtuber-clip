@@ -62,6 +62,7 @@ from src.autoslice.song_repair import (
     live_performance_failure_reason_codes,
     normalize_lyric_text,
     validate_audio_lrc_canonical_projection,
+    validate_audio_lrc_execution_metadata,
     validate_live_performance_observation,
 )
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
@@ -1540,13 +1541,26 @@ def _verify_live_performance_observation(
     )
     if performance_error is not None:
         return performance_error
+    report_provider = report.get("audio_alignment_provider")
+    report_agy_rc = report.get("audio_alignment_agy_rc", 0 if report_provider == "agy" else None)
+    report_fallback_used = report.get(
+        "audio_alignment_provider_fallback_used",
+        False if report_provider == "agy" else None,
+    )
+    report_execution_error = validate_audio_lrc_execution_metadata(
+        provider=report_provider,
+        model=report.get("audio_alignment_model"),
+        agy_rc=report_agy_rc,
+        provider_fallback_used=report_fallback_used,
+        agy_failure_category=report.get("audio_alignment_agy_failure_category"),
+        sandbox=True if report_provider == "agy" else False,
+    )
     if (
         report.get("evidence_source") != "agy_audio_lrc"
-        or report.get("audio_alignment_provider") != "agy"
-        or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
+        or report_execution_error is not None
         or not str(lyrics_alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
     ):
-        return "live-performance proof is not a production AGY audio alignment"
+        return "live-performance proof is not an approved production audio alignment"
 
     artifacts = report.get("audio_alignment_artifacts")
     if not isinstance(artifacts, Mapping):
@@ -1590,18 +1604,36 @@ def _verify_live_performance_observation(
         return f"cannot read live-performance raw proof: {exc}"
     candidate_id = report.get("candidate_id")
     manifest_artifacts = manifest.get("artifacts") if isinstance(manifest, Mapping) else None
+    manifest_execution_error = (
+        validate_audio_lrc_execution_metadata(
+            provider=manifest.get("provider"),
+            model=manifest.get("model"),
+            agy_rc=manifest.get("agy_rc"),
+            provider_fallback_used=manifest.get("provider_fallback_used"),
+            agy_failure_category=manifest.get("agy_failure_category"),
+            sandbox=manifest.get("sandbox"),
+        )
+        if isinstance(manifest, Mapping)
+        else "manifest is not a mapping"
+    )
     if (
         not isinstance(manifest, Mapping)
-        or manifest.get("schema_version") not in {"agy-audio-lrc-run.v1", "agy-audio-lrc-run.v2"}
+        or manifest.get("schema_version") not in {
+            "agy-audio-lrc-run.v1",
+            "agy-audio-lrc-run.v2",
+            "agy-audio-lrc-run.v3",
+        }
         or manifest.get("candidate_id") != candidate_id
-        or manifest.get("provider") != "agy"
-        or manifest.get("model") != "Gemini 3.5 Flash (High)"
-        or manifest.get("agy_rc") != 0
-        or manifest.get("provider_fallback_used") is not False
-        or manifest.get("sandbox") is not True
+        or (manifest.get("provider") == "gemini_api" and manifest.get("schema_version") != "agy-audio-lrc-run.v3")
+        or manifest.get("provider") != report_provider
+        or manifest.get("model") != report.get("audio_alignment_model")
+        or manifest.get("agy_rc") != report_agy_rc
+        or manifest.get("provider_fallback_used") is not report_fallback_used
+        or manifest.get("agy_failure_category") != report.get("audio_alignment_agy_failure_category")
+        or manifest_execution_error is not None
         or not isinstance(manifest_artifacts, Mapping)
     ):
-        return "live-performance AGY run manifest is invalid"
+        return "live-performance audio run manifest is invalid"
     for manifest_key, report_key in (
         ("source_origin_path", "source_origin_path"),
         ("source_path", "source_path"),
@@ -1615,9 +1647,36 @@ def _verify_live_performance_observation(
         ("output_sha256", "raw_output_sha256"),
     ):
         if manifest_artifacts.get(manifest_key) != artifacts.get(report_key):
-            return "live-performance AGY manifest/artifact binding mismatch"
+            return "live-performance audio manifest/artifact binding mismatch"
 
-    if manifest.get("schema_version") == "agy-audio-lrc-run.v2":
+    if manifest.get("provider") == "gemini_api":
+        api_audio_path, error = bound_artifact("api_audio_path", "api_audio_sha256")
+        if error is not None or api_audio_path is None:
+            return error or "live-performance Gemini API audio is invalid"
+        api_audio_duration_ms = artifacts.get("api_audio_duration_ms")
+        source_duration_ms = artifacts.get("source_duration_ms")
+        configured_key_count = manifest.get("configured_key_count")
+        accepted_key_ordinal = manifest.get("accepted_key_ordinal")
+        if (
+            manifest.get("direct_audio_input") is not True
+            or not isinstance(api_audio_duration_ms, int)
+            or isinstance(api_audio_duration_ms, bool)
+            or not isinstance(source_duration_ms, int)
+            or isinstance(source_duration_ms, bool)
+            or abs(api_audio_duration_ms - source_duration_ms) > 1_000
+            or manifest_artifacts.get("api_audio_path") != artifacts.get("api_audio_path")
+            or manifest_artifacts.get("api_audio_sha256") != artifacts.get("api_audio_sha256")
+            or manifest_artifacts.get("api_audio_duration_ms") != api_audio_duration_ms
+            or not isinstance(configured_key_count, int)
+            or isinstance(configured_key_count, bool)
+            or not 1 <= configured_key_count <= 3
+            or not isinstance(accepted_key_ordinal, int)
+            or isinstance(accepted_key_ordinal, bool)
+            or not 1 <= accepted_key_ordinal <= configured_key_count
+        ):
+            return "live-performance Gemini API complete-audio binding is invalid"
+
+    if manifest.get("schema_version") in {"agy-audio-lrc-run.v2", "agy-audio-lrc-run.v3"}:
         provider_raw_path, error = bound_artifact(
             "provider_raw_output_path",
             "provider_raw_output_sha256",

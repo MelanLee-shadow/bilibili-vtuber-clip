@@ -1993,7 +1993,8 @@ def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, m
     assert "delivered" not in result
 
 
-def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path, monkeypatch):
+@pytest.mark.parametrize("audio_provider", ["agy", "gemini_api"])
+def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path, monkeypatch, audio_provider):
     report = tmp_path / "song.lyrics-alignment-report.json"
     report_payload = {
         "schema_version": "lyrics-alignment-report.v1",
@@ -2015,7 +2016,12 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
     source = tmp_path / "song.source.mp4"
     source.write_bytes(b"source-video")
-    bind_ready_live_performance_report(report, source_media=source, candidate_id="song-proof")
+    bind_ready_live_performance_report(
+        report,
+        source_media=source,
+        candidate_id="song-proof",
+        provider=audio_provider,
+    )
     host_vocal_claim, host_vocal_profile = make_ready_host_vocal_claim(
         tmp_path / "host-vocal",
         source_media=source,
@@ -2201,6 +2207,22 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     evidence = runner.song_completion_evidence(record)
     assert evidence["ready"] is True
     assert evidence["reason_codes"] == []
+
+    if audio_provider == "gemini_api":
+        provider_bound_report = json.loads(report.read_text(encoding="utf-8"))
+        mismatched_provider_report = dict(provider_bound_report)
+        mismatched_provider_report["audio_alignment_provider"] = "agy"
+        report.write_text(json.dumps(mismatched_provider_report, ensure_ascii=False) + "\n", encoding="utf-8")
+        record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(
+            report.read_bytes()
+        ).hexdigest()
+        evidence = runner.song_completion_evidence(record)
+        assert evidence["ready"] is False
+        assert "SONG_AUDIO_LRC_PROVIDER_INVALID" in evidence["reason_codes"]
+        report.write_text(json.dumps(provider_bound_report, ensure_ascii=False) + "\n", encoding="utf-8")
+        record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(
+            report.read_bytes()
+        ).hexdigest()
 
     original_source_bytes = source.read_bytes()
     source.write_bytes(b"tampered-source-video")

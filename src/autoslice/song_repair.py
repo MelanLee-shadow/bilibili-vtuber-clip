@@ -58,8 +58,23 @@ LIVE_PERFORMANCE_MODES = {
 }
 
 AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v5"
-AGY_AUDIO_LRC_RUN_SCHEMA_VERSION = "agy-audio-lrc-run.v2"
+AGY_AUDIO_LRC_RUN_SCHEMA_VERSION = "agy-audio-lrc-run.v3"
 AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY = "canonical-lrc-by-exact-index.v1"
+AGY_AUDIO_LRC_PROVIDER = "agy"
+AGY_AUDIO_LRC_MODEL = "Gemini 3.5 Flash (High)"
+GEMINI_API_AUDIO_LRC_PROVIDER = "gemini_api"
+GEMINI_API_AUDIO_LRC_MODEL = "gemini-3.5-flash"
+AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES = frozenset(
+    {
+        "AGY_UNAVAILABLE",
+        "AGY_QUOTA_EXHAUSTED",
+        "AGY_TIMEOUT",
+        "AGY_FAILED_RC",
+        "AGY_EMPTY_OUTPUT",
+        "AGY_INVALID_OUTPUT",
+        "AGY_LRC_INDEX_INVALID",
+    }
+)
 LYRIC_VOCAL_SUBJECTS = {
     "LIDOUSHA",
     "OTHER_OR_MIXED_SINGER",
@@ -245,7 +260,7 @@ class AudioLrcAlignmentRun:
     payload: Mapping[str, object]
     provider: str
     model: str
-    rc: int
+    rc: int | None
     provider_fallback_used: bool
     source_origin_path: str
     source_path: str
@@ -261,6 +276,56 @@ class AudioLrcAlignmentRun:
     manifest_sha256: str
     provider_raw_output_path: str | None = None
     provider_raw_output_sha256: str | None = None
+    agy_failure_category: str | None = None
+    configured_key_count: int | None = None
+    accepted_key_ordinal: int | None = None
+    api_audio_path: str | None = None
+    api_audio_sha256: str | None = None
+    api_audio_duration_ms: int | None = None
+
+
+def validate_audio_lrc_execution_metadata(
+    *,
+    provider: object,
+    model: object,
+    agy_rc: object,
+    provider_fallback_used: object,
+    agy_failure_category: object,
+    sandbox: object,
+) -> str | None:
+    """Validate the provider lane without weakening the shared v5 proof.
+
+    ``gemini_api`` is accepted only as an explicit AGY failover.  It does not
+    inherit AGY's sandbox claim, and it must preserve a bounded, machine-known
+    AGY failure category.  This helper intentionally validates execution
+    provenance only; audio/LRC hashes, v5 rows, live performance and live
+    arrangement are all recomputed by the existing proof validators.
+    """
+
+    if provider == AGY_AUDIO_LRC_PROVIDER:
+        if (
+            model != AGY_AUDIO_LRC_MODEL
+            or agy_rc != 0
+            or provider_fallback_used is not False
+            or agy_failure_category is not None
+            or sandbox is not True
+        ):
+            return "audio aligner AGY execution metadata is invalid"
+        return None
+    if provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        if (
+            model != GEMINI_API_AUDIO_LRC_MODEL
+            or provider_fallback_used is not True
+            or agy_failure_category not in AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES
+            or sandbox is not False
+            or (
+                agy_rc is not None
+                and (isinstance(agy_rc, bool) or not isinstance(agy_rc, int) or agy_rc < 0)
+            )
+        ):
+            return "audio aligner Gemini API failover metadata is invalid"
+        return None
+    return f"audio aligner provider/model is not approved: {provider} {model}"
 
 
 def canonicalize_audio_lrc_observation(
@@ -985,6 +1050,9 @@ def attempt_song_repair(
                 "evidence_source": "agy_audio_lrc",
                 "audio_alignment_provider": audio_alignment_run.provider,
                 "audio_alignment_model": audio_alignment_run.model,
+                "audio_alignment_agy_rc": audio_alignment_run.rc,
+                "audio_alignment_provider_fallback_used": audio_alignment_run.provider_fallback_used,
+                "audio_alignment_agy_failure_category": audio_alignment_run.agy_failure_category,
                 "audio_lrc_variant_attempts": audio_lrc_variant_attempts,
                 "spot_checks": audio_alignment_run.payload["spot_checks"],
                 "live_performance": audio_alignment_run.payload["live_performance"],
@@ -1022,6 +1090,15 @@ def attempt_song_repair(
                     "raw_output_sha256": audio_alignment_run.output_sha256,
                     "run_manifest_path": audio_alignment_run.manifest_path,
                     "run_manifest_sha256": audio_alignment_run.manifest_sha256,
+                    **(
+                        {
+                            "api_audio_path": audio_alignment_run.api_audio_path,
+                            "api_audio_sha256": audio_alignment_run.api_audio_sha256,
+                            "api_audio_duration_ms": audio_alignment_run.api_audio_duration_ms,
+                        }
+                        if audio_alignment_run.provider == GEMINI_API_AUDIO_LRC_PROVIDER
+                        else {}
+                    ),
                 },
             }
         )
@@ -2001,6 +2078,8 @@ def _audio_lrc_infrastructure_reason(exc: Exception) -> str | None:
     """Keep provider outages recoverable instead of spending variant budget."""
 
     detail = f"{type(exc).__name__}: {exc}".casefold()
+    if "agy_and_gemini_api_failed" in detail:
+        return "AGY_AND_GEMINI_API_FAILED"
     if "agy_quota_exhausted" in detail or "quota" in detail or "429" in detail or "rate limit" in detail:
         return "AGY_QUOTA_EXHAUSTED"
     if "timeout" in detail or "timed out" in detail:
@@ -2602,10 +2681,22 @@ def _validated_audio_lrc_selection(
     live arrangement and a single global shift over the lines actually heard.
     """
 
-    if run.provider != "agy" or run.model != "Gemini 3.5 Flash (High)":
-        raise ValueError(f"audio aligner must be agy Gemini 3.5 Flash (High), got {run.provider} {run.model}")
-    if run.rc != 0 or run.provider_fallback_used:
-        raise ValueError(f"audio aligner was not a clean no-fallback run (rc={run.rc})")
+    if run.provider == AGY_AUDIO_LRC_PROVIDER:
+        preliminary_sandbox = True
+    elif run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        preliminary_sandbox = False
+    else:
+        preliminary_sandbox = None
+    execution_error = validate_audio_lrc_execution_metadata(
+        provider=run.provider,
+        model=run.model,
+        agy_rc=run.rc,
+        provider_fallback_used=run.provider_fallback_used,
+        agy_failure_category=run.agy_failure_category,
+        sandbox=preliminary_sandbox,
+    )
+    if execution_error is not None:
+        raise ValueError(execution_error)
     if not source_media_path.is_file():
         raise ValueError(f"current source media is missing: {source_media_path}")
     try:
@@ -2638,6 +2729,18 @@ def _validated_audio_lrc_selection(
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"audio run manifest is invalid JSON: {exc}") from exc
     manifest_artifacts = run_manifest.get("artifacts") if isinstance(run_manifest, Mapping) else None
+    manifest_execution_error = (
+        validate_audio_lrc_execution_metadata(
+            provider=run_manifest.get("provider"),
+            model=run_manifest.get("model"),
+            agy_rc=run_manifest.get("agy_rc"),
+            provider_fallback_used=run_manifest.get("provider_fallback_used"),
+            agy_failure_category=run_manifest.get("agy_failure_category"),
+            sandbox=run_manifest.get("sandbox"),
+        )
+        if isinstance(run_manifest, Mapping)
+        else "audio run manifest is not a JSON object"
+    )
     if (
         not isinstance(run_manifest, Mapping)
         or run_manifest.get("schema_version") != AGY_AUDIO_LRC_RUN_SCHEMA_VERSION
@@ -2646,7 +2749,8 @@ def _validated_audio_lrc_selection(
         or run_manifest.get("model") != run.model
         or run_manifest.get("agy_rc") != run.rc
         or run_manifest.get("provider_fallback_used") is not run.provider_fallback_used
-        or run_manifest.get("sandbox") is not True
+        or run_manifest.get("agy_failure_category") != run.agy_failure_category
+        or manifest_execution_error is not None
         or not isinstance(manifest_artifacts, Mapping)
         or any(
             manifest_artifacts.get(key) != value
@@ -2667,6 +2771,44 @@ def _validated_audio_lrc_selection(
         )
     ):
         raise ValueError("audio run manifest is not bound to the current run artifacts")
+    if run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        if (
+            not _is_int(run.configured_key_count)
+            or not 1 <= int(run.configured_key_count) <= 3
+            or not _is_int(run.accepted_key_ordinal)
+            or not 1 <= int(run.accepted_key_ordinal) <= int(run.configured_key_count)
+            or run_manifest.get("configured_key_count") != run.configured_key_count
+            or run_manifest.get("accepted_key_ordinal") != run.accepted_key_ordinal
+            or run_manifest.get("direct_audio_input") is not True
+            or not run.api_audio_path
+            or not run.api_audio_sha256
+            or not _is_int(run.api_audio_duration_ms)
+        ):
+            raise ValueError("Gemini API audio failover metadata is incomplete")
+        api_audio_path = _require_bound_artifact(
+            run.api_audio_path,
+            run.api_audio_sha256,
+            "Gemini API complete audio",
+        )
+        if (
+            abs(int(run.api_audio_duration_ms) - run.source_duration_ms) > 1_000
+            or manifest_artifacts.get("api_audio_path") != run.api_audio_path
+            or manifest_artifacts.get("api_audio_sha256") != run.api_audio_sha256
+            or manifest_artifacts.get("api_audio_duration_ms") != run.api_audio_duration_ms
+            or _sha256_file(api_audio_path) != run.api_audio_sha256
+        ):
+            raise ValueError("Gemini API audio failover is not bound to the complete current audio")
+    elif any(
+        value is not None
+        for value in (
+            run.configured_key_count,
+            run.accepted_key_ordinal,
+            run.api_audio_path,
+            run.api_audio_sha256,
+            run.api_audio_duration_ms,
+        )
+    ):
+        raise ValueError("clean AGY run unexpectedly contains Gemini API fallback metadata")
     canonicalization = run_manifest.get("canonicalization")
     expected_canonicalization = {
         "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
@@ -2692,15 +2834,17 @@ def _validated_audio_lrc_selection(
         provider_raw_path,
         "provider raw audio alignment",
     )
-    if not isinstance(provider_payload, Mapping):
-        raise ValueError("provider raw audio alignment is not a JSON object")
-    expected_payload = canonicalize_audio_lrc_observation(provider_payload, lrc)
     canonical_artifact_payload = load_audio_lrc_json_artifact(
         canonical_output_path,
         "canonicalized audio alignment",
     )
-    if canonical_artifact_payload != expected_payload or run.payload != expected_payload:
-        raise ValueError("canonicalized audio alignment is not the deterministic exact-index projection")
+    expected_payload = validate_audio_lrc_canonical_projection(
+        provider_payload=provider_payload,
+        canonical_payload=canonical_artifact_payload,
+        lrc_path=lrc_path,
+    )
+    if run.payload != expected_payload:
+        raise ValueError("in-memory audio alignment differs from the bound canonical projection")
 
     payload = run.payload
     required_top = {

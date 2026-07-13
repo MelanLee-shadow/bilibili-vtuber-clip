@@ -1,3 +1,4 @@
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -14,6 +15,36 @@ def _write(path: Path, content: str | bytes) -> Path:
     else:
         path.write_text(content, encoding="utf-8")
     return path
+
+
+def test_gemini_correct_uses_api_key_header_not_url_or_body(tmp_path, monkeypatch):
+    audio = _write(tmp_path / "audio.mp3", b"audio")
+    secret = "header-only-secret"
+    captured = {}
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(request, *, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response(
+            json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "corrected"}]}}]}
+            ).encode("utf-8")
+        )
+
+    monkeypatch.setattr(jingting.urllib.request, "urlopen", fake_urlopen)
+    assert jingting.gemini_correct(str(audio), "draft", secret) == "corrected"
+
+    request = captured["request"]
+    assert secret not in request.full_url
+    assert secret not in request.data.decode("utf-8")
+    assert request.get_header("X-goog-api-key") == secret
 
 
 def test_agy_subprocess_env_sets_home_when_daemon_environment_omits_it(monkeypatch):
