@@ -2799,20 +2799,25 @@ def _validated_audio_lrc_selection(
             ):
                 raise ValueError("Gemini API audio failover metadata is incomplete")
         elif key_tier == "paid_backup":
-            # Ivan 2026-07-13: a PAID acceptance is only deliverable when the
-            # manifest proves the gate held — >= 3 recorded free-chain failure
-            # rounds for this exact audio and the daily cap not exceeded.
+            # Ivan 2026-07-13: a PAID acceptance is deliverable when the
+            # manifest proves the gate held — either the supervised dev
+            # exception was explicitly active, or >= 3 recorded free-chain
+            # failure rounds for this exact audio. Free keys always ran
+            # first (ordinal == free count + 1). No hard cap by policy.
             policy = run.paid_backup_policy
+            gate_ok = isinstance(policy, Mapping) and (
+                policy.get("mode") == "dev_exception"
+                or (
+                    _is_int(policy.get("free_chain_strikes"))
+                    and int(policy["free_chain_strikes"]) >= 3
+                )
+            )
             if (
                 int(run.accepted_key_ordinal) != int(run.configured_key_count) + 1
                 or run_manifest.get("accepted_key_tier") != "paid_backup"
                 or not isinstance(policy, Mapping)
                 or run_manifest.get("paid_backup_policy") != dict(policy)
-                or not _is_int(policy.get("free_chain_strikes"))
-                or int(policy["free_chain_strikes"]) < 3
-                or not _is_int(policy.get("calls_today_before"))
-                or not _is_int(policy.get("daily_cap"))
-                or int(policy["calls_today_before"]) >= int(policy["daily_cap"])
+                or not gate_ok
             ):
                 raise ValueError("paid Gemini backup acceptance violates the usage gate")
         else:

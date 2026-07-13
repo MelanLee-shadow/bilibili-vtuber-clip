@@ -6138,7 +6138,8 @@ def write_reports(date: str, state: dict) -> None:
                 f"弹幕x{b.get('danmaku', 0)}: {b.get('hook') or b.get('preview', '')[:40]}"
             )
         lines += ["", "## 歌切候选备份（按弹幕排序；门拦截后自动回填的来源）", ""] + [f"- {fmt_backlog(b)}" for b in backlog]
-    not_selected = state.get("not_selected", [])
+    # 保序去重：历史 state 可能带有逐 tick 重复 append 的旧条目
+    not_selected = list(dict.fromkeys(state.get("not_selected", [])))
     if not_selected:
         lines += ["", "## 落选谈话候选（供复核选片是否漏才）", ""] + [f"- {n}" for n in not_selected]
     dead = state.get("segments_dead", {})
@@ -6399,6 +6400,13 @@ def _remember_song_quarantine_interval(state: dict, item: dict) -> None:
     intervals.append(interval)
 
 
+def _note_not_selected(state: dict, entry: str) -> None:
+    """Record a not-selected line once; selection reruns every tick and must stay idempotent."""
+    notes = state.setdefault("not_selected", [])
+    if entry not in notes:
+        notes.append(entry)
+
+
 def quarantine_overlapping_talk_candidates(state: dict) -> None:
     """Remove every talk candidate overlapping a known song-like interval.
 
@@ -6455,9 +6463,10 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
         }
         if tombstone not in blocked:
             blocked.append(tombstone)
-        state.setdefault("not_selected", []).append(
+        _note_not_selected(
+            state,
             f"{talk_segment} {int(talk_start or 0) // 1000}-{int(talk_end or 0) // 1000}s "
-            "(门拦:与未验证/已阻断歌切区间重叠,不得走 talk 旁路)"
+            "(门拦:与未验证/已阻断歌切区间重叠,不得走 talk 旁路)",
         )
     state["pending_talk"] = kept
 
@@ -7059,10 +7068,11 @@ def prioritize(state: dict) -> None:
     state["pending_talk"] = selected_repairs + keep
     state["talk_backlog"] = deferred
     for item in deferred:
-        state.setdefault("not_selected", []).append(
+        _note_not_selected(
+            state,
             f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
             f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
-            f"(候补:全场按信心分全局排序取{MAX_TALK_PICKS}席,同段软上限{TALK_PER_SEGMENT_CAP})"
+            f"(候补:全场按信心分全局排序取{MAX_TALK_PICKS}席,同段软上限{TALK_PER_SEGMENT_CAP})",
         )
     refill_songs(state)
 

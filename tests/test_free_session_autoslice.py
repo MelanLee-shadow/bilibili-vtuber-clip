@@ -1954,6 +1954,26 @@ def test_prioritize_global_confidence_ranking_beats_arrival_order():
     assert "全局排序" in state["not_selected"][0]
 
 
+def test_not_selected_stays_deduped_across_rerun_ticks():
+    """7/11 real failure: 边界自修复后的重选 tick 把同一批候补重复 append，
+    AUTOSLICE_SUMMARY 落选一节整段重复。重跑必须幂等。"""
+    state = {
+        "picks": [], "songs": [], "pending_song": [],
+        "pending_talk": [
+            {"segment_path": f"/rec/talkseg{i % 2}.mp4", "start_ms": i * 1000, "end_ms": i * 1000 + 30_000,
+             "hook": f"hook{i}", "confidence": 0.9, "cid": f"auto_{i}"}
+            for i in range(MAX_TALK_PICKS + 3)
+        ],
+    }
+    prioritize(state)
+    first = list(state["not_selected"])
+    assert len(first) == 3
+    # 模拟下一个 tick：落选候补重新参与全局重选
+    state["pending_talk"] = state["pending_talk"] + state["talk_backlog"]
+    prioritize(state)
+    assert state["not_selected"] == first
+
+
 def test_prioritize_diversity_cap_is_soft():
     """One segment with 6 candidates and nothing else: the per-segment cap must
     yield rather than deliver fewer than the quota."""

@@ -3,16 +3,19 @@
 The three free keys (``GEMINI_API_KEY``/``_2``/``_3``) are the primary
 slicing keys. ``GEMINI_KEY_BACKUP`` is a PAID key and must stay rare:
 
-* A work item (identified by its content hash) becomes eligible only after
-  the complete free-key chain has already failed **>= 3 separate rounds**
-  for that same item — i.e. waiting and retrying did not bring the free
-  keys back. The strike count is persisted per item, so the gate holds
-  across ticks and process restarts.
-* A hard daily usage cap backstops the "非常克制" requirement
-  (default 12 calls/day, override ``GEMINI_PAID_BACKUP_DAILY_CAP``).
-* Development use: only when the free keys are genuinely unusable AND the
-  work is needed the same day — never as the routine dev key. That part is
-  operator discipline; this module enforces the production gate.
+* Unattended production: a work item (identified by its content hash)
+  becomes eligible only after the complete free-key chain has already
+  failed **>= 3 separate rounds** for that same item — i.e. waiting and
+  retrying did not bring the free keys back. The strike count is persisted
+  per item, so the gate holds across ticks and process restarts.
+* Development phase (Ivan 2026-07-13 update): setting
+  ``GEMINI_PAID_BACKUP_DEV_EXCEPTION=1`` on a run lets the paid key fire in
+  the same round the free chain fails — free keys are still always tried
+  first; the paid key is never *preferred*. Set this only on supervised
+  dev/rerun/eval units, never in the unattended production cron env.
+* No hard cap by default (Ivan 2026-07-13: it is the last resort and must
+  stay usable). ``GEMINI_PAID_BACKUP_DAILY_CAP`` remains available as an
+  optional brake; unset means uncapped. Every use is still ledgered.
 
 The key value never enters logs, manifests, or ledgers. Ledgers record only
 counts, timestamps, item hashes and bounded purpose strings, so a delivery
@@ -28,8 +31,8 @@ import re
 from pathlib import Path
 
 PAID_KEY_ENV = "GEMINI_KEY_BACKUP"
+DEV_EXCEPTION_ENV = "GEMINI_PAID_BACKUP_DEV_EXCEPTION"
 MIN_FREE_CHAIN_STRIKES = 3
-DEFAULT_DAILY_CAP = 12
 PAID_KEY_TIER = "paid_backup"
 FREE_KEY_TIER = "free"
 
@@ -44,11 +47,17 @@ def paid_backup_key() -> str | None:
     return value or None
 
 
-def daily_cap() -> int:
+def daily_cap() -> int | None:
+    """Optional daily brake; None (the default) means uncapped."""
+
     raw = os.environ.get("GEMINI_PAID_BACKUP_DAILY_CAP", "").strip()
     if re.fullmatch(r"[0-9]{1,4}", raw or ""):
         return int(raw)
-    return DEFAULT_DAILY_CAP
+    return None
+
+
+def dev_exception_active() -> bool:
+    return os.environ.get(DEV_EXCEPTION_ENV, "").strip() == "1"
 
 
 def _safe_item_name(item_key: str) -> str:
@@ -133,18 +142,22 @@ def paid_attempt_allowed(
 
     if paid_backup_key() is None:
         return False, "PAID_KEY_NOT_CONFIGURED"
+    dev_exception = dev_exception_active()
     strikes = free_chain_strikes(item_key) if prior_strikes is None else int(prior_strikes)
-    if strikes < MIN_FREE_CHAIN_STRIKES:
+    if not dev_exception and strikes < MIN_FREE_CHAIN_STRIKES:
         return False, f"FREE_CHAIN_STRIKES_{strikes}_BELOW_{MIN_FREE_CHAIN_STRIKES}"
     try:
         _ledger_root().mkdir(parents=True, exist_ok=True)
     except OSError:
         # No auditable ledger -> no paid use, ever.
         return False, "PAID_LEDGER_UNAVAILABLE"
-    used = paid_calls_today()
     cap = daily_cap()
-    if used >= cap:
-        return False, f"PAID_DAILY_CAP_REACHED_{used}_OF_{cap}"
+    if cap is not None:
+        used = paid_calls_today()
+        if used >= cap:
+            return False, f"PAID_DAILY_CAP_REACHED_{used}_OF_{cap}"
+    if dev_exception:
+        return True, "DEV_EXCEPTION"
     return True, f"FREE_CHAIN_STRIKES_{strikes}"
 
 
@@ -160,6 +173,7 @@ def record_paid_use(item_key: str, *, purpose: str) -> dict[str, object]:
     used_before = paid_calls_today()
     stamp: dict[str, object] = {
         "key_tier": PAID_KEY_TIER,
+        "mode": "dev_exception" if dev_exception_active() else "strict",
         "item_key": _safe_item_name(item_key),
         "free_chain_strikes": free_chain_strikes(item_key),
         "calls_today_before": used_before,
