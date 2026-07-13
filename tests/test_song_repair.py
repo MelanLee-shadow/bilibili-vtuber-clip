@@ -250,6 +250,130 @@ def _japanese_lrc() -> LrcResult:
     )
 
 
+def _anlian_lrc_with_real_bilingual_credits() -> LrcResult:
+    credits = [
+        "录音师 Recording  Engineer：刘昊霖 吴佳敏 陈彬彬",
+        "混音师 Mixing Engineer：刘三斤",
+        "母带后期混音师 Mastering Engineer：刘三斤",
+        "木吉他 Acoustic Guitar：张琪琳",
+        "电吉他 Electric guitar：田鹏",
+        "钢琴 Piano：池哲浩",
+        "摄影 Photography：十三",
+        "平面设计 Art cover：梦瑶",
+        "录音室 Recording room：好乐无荒 摩登天空",
+        "特别鸣谢 Special thanks：刘昊霖  谭侃侃",
+    ]
+    lyrics = [
+        "你大概是个盲人",
+        "看不到我嬉笑里的诚恳",
+        "只听见我越到后来越沉默",
+        "才知道我大概有多认真",
+        "我并不是个盲人",
+        "却看不到你的心有多冷",
+        "只听见你在耳边说着等等",
+        "这段旋律还在心里反复",
+        "你大概是个盲人",
+        "看不到我最后的眼神",
+    ]
+    # The provider row order is the failure shape: ten timed credit rows then
+    # the first real lyric.  Credit timestamps are irrelevant once excluded;
+    # equal zero timestamps preserve their source order in the test artifact.
+    return LrcResult(
+        provider="lrclib",
+        song_title="暗恋是一个人的事",
+        artist="宿羽阳",
+        source_ref="lrclib://fixture/anlian-real-credit-shape",
+        lines=tuple(
+            [*(LrcLine(0, text) for text in credits)]
+            + [LrcLine(index * 7_000, text) for index, text in enumerate(lyrics)]
+        ),
+    )
+
+
+def _anlian_singable_lrc() -> LrcResult:
+    source = _anlian_lrc_with_real_bilingual_credits()
+    return LrcResult(
+        provider=source.provider,
+        song_title=source.song_title,
+        artist=source.artist,
+        source_ref=source.source_ref,
+        lines=source.lines[10:],
+    )
+
+
+def test_real_bilingual_timed_credits_are_excluded_before_audio_validation(tmp_path):
+    canonical = _anlian_lrc_with_real_bilingual_credits()
+    singable = _anlian_singable_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, singable, candidate_id="anlian-credit-fixture")
+    received: list[LrcResult] = []
+
+    def aligner(_media, selected_lrc, _candidate_id, _output_dir):
+        received.append(selected_lrc)
+        return run
+
+    result = attempt_song_repair(
+        candidate_id="anlian-credit-fixture",
+        cues=[
+            SourceCue("anlian-0", 10_000, 13_000, singable.lines[0].text, kind="singing"),
+            SourceCue("anlian-1", 17_000, 20_000, singable.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: canonical,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=aligner,
+    )
+
+    assert result.repaired is True
+    assert received == [singable]
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    assert report["line_count"] == report["matched_line_count"] == 10
+    assert report["matched_line_ratio"] == 1.0
+    assert report["matched_line_denominator"] == "singable_lrc_lines"
+    assert report["lyric_lines"][0]["text"] == "你大概是个盲人"
+    assert all("Engineer" not in row["text"] for row in report["lyric_lines"])
+
+
+@pytest.mark.parametrize("missing_index", [0, 4, 9], ids=["first-real-lyric", "middle-real-lyric", "tail-real-lyric"])
+def test_credit_filter_does_not_weaken_real_lyric_heard_gate(tmp_path, missing_index):
+    canonical = _anlian_lrc_with_real_bilingual_credits()
+    singable = _anlian_singable_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, singable, candidate_id="anlian-credit-fixture")
+    payload = json.loads(json.dumps(run.payload))
+    payload["observations"][missing_index].update(
+        heard=False,
+        live_start_ms=None,
+        live_end_ms=None,
+        confidence=0.99,
+        lyric_vocal_subject="NO_AUDIBLE_LYRIC_VOCAL",
+        lidousha_role="SILENT_OR_NOT_AUDIBLE",
+        same_live_vocal_source_as_lidousha=False,
+    )
+    run = _rebind_fake_audio_alignment_run(run, payload)
+
+    result = attempt_song_repair(
+        candidate_id="anlian-credit-fixture",
+        cues=[
+            SourceCue("anlian-0", 10_000, 13_000, singable.lines[0].text, kind="singing"),
+            SourceCue("anlian-1", 17_000, 20_000, singable.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: canonical,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+    )
+
+    assert result.repaired is False
+    assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
+    failure = next(item for item in result.attempts if item.step == "agy_audio_lrc_alignment")
+    assert f"canonical LRC line {missing_index} was not affirmatively heard" in failure.detail
+
+
 def test_audio_identity_collapses_same_song_provider_variants_and_prefers_lrclib():
     canonical = _japanese_lrc()
     netease_variant = LrcResult(
@@ -1570,6 +1694,25 @@ def test_parse_lrc_text_skips_metadata_and_sorts():
     assert [line.text for line in lines] == ["第一句", "第二句"]
     assert lines[0].time_ms == 2_000
     assert lines[1].time_ms == 12_500
+
+
+def test_parse_lrc_text_filters_real_bilingual_credits_without_keyword_overreach():
+    source = _anlian_lrc_with_real_bilingual_credits()
+    ordinary_lyrics = [
+        "I play the piano when I am lonely",
+        "Electric guitar keeps crying in my room",
+        "Special thanks for breaking my heart",
+        "你为我作词作曲，我却唱不出结局",
+        "演唱会散场以后还在等你",
+    ]
+    rows = [
+        *(f"[00:{index:02d}.000]{line.text}" for index, line in enumerate(source.lines[:10])),
+        *(f"[01:{index:02d}.000]{text}" for index, text in enumerate(ordinary_lyrics)),
+    ]
+
+    parsed = parse_lrc_text("\n".join(rows))
+
+    assert [line.text for line in parsed] == ordinary_lyrics
 
 
 def test_rerank_picks_correct_song_among_candidates_ignoring_search_order(tmp_path):

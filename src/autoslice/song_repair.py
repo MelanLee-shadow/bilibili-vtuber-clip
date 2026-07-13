@@ -24,6 +24,7 @@ import binascii
 import hashlib
 import json
 import re
+import unicodedata
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -104,14 +105,86 @@ def live_performance_failure_reason_codes(performance: object) -> tuple[str, ...
         return ("SONG_NOT_LIDOUSHA_SINGING",)
     return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
 
-# Credit/production-role terms netease puts in "role : name" metadata lines.
-# Matched as a substring of a short pre-colon head (so 音乐制作/贝斯演奏/混音、母带
-# are all caught, not just exact prefixes), to keep them out of burned lyrics.
-_LRC_CREDIT_KEYWORDS = (
-    "作词", "作曲", "编曲", "制作", "监制", "出品", "发行", "混音", "母带", "录音",
-    "演唱", "演奏", "和声", "合声", "吉他", "贝斯", "鼓", "键盘", "弦乐", "配唱",
-    "统筹", "企划", "策划", "后期", "版权",
+# Timed LRC providers sometimes put a production-credit card in the same timed
+# row stream as lyrics.  Keep the classifier intentionally structural: a role
+# must occupy the complete short head before a colon (or a conventional
+# English ``... by ...`` credit).  Merely mentioning "piano", "作词", or
+# "special thanks" inside a sentence is still a lyric.
+_LRC_CHINESE_CREDIT_HEADS = {
+    "作词", "填词", "词", "歌词", "作曲", "曲", "编曲", "制作", "制作人", "音乐制作", "制作统筹",
+    "监制", "演唱", "原唱", "主唱", "歌手", "艺术家", "表演者", "录音", "录音师", "录音工程", "录音室",
+    "混音", "混音师", "母带", "母带工程", "配唱", "和声", "合声", "吉他", "吉他演奏", "贝斯", "贝斯演奏",
+    "鼓", "鼓手", "键盘", "钢琴", "木吉他", "电吉他", "弦乐", "小提琴", "大提琴", "摄影", "封面", "封面设计", "平面设计", "美术", "插画", "设计",
+    "出品", "发行", "版权", "统筹", "企划", "策划", "后期", "特别鸣谢", "鸣谢",
+}
+_LRC_ENGLISH_CREDIT_HEADS = {
+    "lyrics", "lyric", "lyricist", "lyricists", "songwriter", "songwriters",
+    "composer", "composers", "composition", "music", "arranger", "arrangers", "arrangement",
+    "producer", "producers", "production", "music production", "executive producer",
+    "vocal", "vocals", "singer", "artist", "performer",
+    "recording", "recorded", "recording engineer", "recording engineers", "recording room",
+    "recording studio", "studio", "mixing", "mix", "mixing engineer", "mixing engineers",
+    "mastering", "master", "mastering engineer", "mastering engineers",
+    "guitar", "guitars", "acoustic guitar", "electric guitar", "piano", "keyboard", "keyboards", "bass", "drum", "drums",
+    "strings", "violin", "cello", "photography", "photographer", "cover art", "art cover",
+    "artwork", "illustration", "illustrator", "design", "designer", "special thanks",
+    "acknowledgements", "acknowledgments",
+}
+_LRC_ENGLISH_BY_CREDIT = re.compile(
+    r"^(?:lyrics?|written|songwritten|composed|composition|arranged|produced|performed|recorded|"
+    r"mixed|mastered|vocals?|sung|photography|illustration|artwork|cover\s+art)\s+by\s+\S",
+    re.IGNORECASE,
 )
+
+
+def _normalized_credit_head(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).strip().casefold()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _is_chinese_credit_head(head: str) -> bool:
+    compact = re.sub(r"\s+", "", head)
+    if compact in _LRC_CHINESE_CREDIT_HEADS:
+        return True
+    # Multi-role heads such as ``混音、母带`` remain metadata only when
+    # every complete component is a known production role.
+    parts = [part for part in re.split(r"[/&+、，,]", compact) if part]
+    if len(parts) > 1 and all(part in _LRC_CHINESE_CREDIT_HEADS for part in parts):
+        return True
+    return bool(re.fullmatch(r"母带(?:后期)?混音师", compact))
+
+
+def is_lrc_credit_metadata(text: str) -> bool:
+    """Return true only for a structurally explicit timed production credit.
+
+    The real ``暗恋是一个人的事`` LRC uses bilingual heads such as
+    ``录音师 Recording Engineer：...`` and ``钢琴 Piano：...``.  The
+    colon/credit-head requirement is the over-filter guard: ordinary lyric
+    sentences that merely contain ``guitar``, ``piano``, ``作词``, or ``鸣谢``
+    are not classified as metadata.
+    """
+
+    normalized = _normalized_credit_head(text)
+    if _LRC_ENGLISH_BY_CREDIT.match(normalized):
+        return True
+    colon_split = re.split(r"[:：]", normalized, maxsplit=1)
+    if len(colon_split) != 2 or not colon_split[1].strip():
+        return False
+    head = colon_split[0].strip()
+    if not head or len(head) > 64:
+        return False
+
+    chinese = re.sub(r"[^\u3400-\u9fff、，,/&+]+", "", head)
+    english = re.sub(r"[^a-z\s]+", " ", head)
+    english = re.sub(r"\s+", " ", english).strip()
+    chinese_credit = bool(chinese) and _is_chinese_credit_head(chinese)
+    english_credit = bool(english) and english in _LRC_ENGLISH_CREDIT_HEADS
+    if chinese and english:
+        # Bilingual rows are accepted only when both halves independently name
+        # a credit role; this avoids filtering a lyric that happens to mix one
+        # role word with otherwise unrelated prose.
+        return chinese_credit and english_credit
+    return chinese_credit or english_credit
 
 
 @dataclass(frozen=True)
@@ -200,6 +273,28 @@ def normalize_lyric_text(text: str) -> str:
     return _NON_LYRIC_CHARS.sub("", text).lower()
 
 
+def _singable_lrc_result(lrc: LrcResult) -> tuple[LrcResult, int]:
+    """Remove explicit timed credits before recall, AGY, proof, and rendering.
+
+    This is deliberately applied to caller-supplied/pinned ``LrcResult`` values
+    too, not only to provider text parsed in this process.  Cached or injected
+    canonical records must not reintroduce credit rows into the all-lines-heard
+    gate or its matched-ratio denominator.
+    """
+
+    singable = tuple(line for line in lrc.lines if not is_lrc_credit_metadata(line.text))
+    return (
+        LrcResult(
+            provider=lrc.provider,
+            song_title=lrc.song_title,
+            artist=lrc.artist,
+            source_ref=lrc.source_ref,
+            lines=singable,
+        ),
+        len(lrc.lines) - len(singable),
+    )
+
+
 def attempt_song_repair(
     *,
     candidate_id: str,
@@ -278,15 +373,22 @@ def attempt_song_repair(
 
     candidates: list[LrcResult] = []
     seen_refs: set[str] = set()
+    prepared_pinned_lrc_results: list[LrcResult] = []
     for pinned in pinned_lrc_results:
-        if isinstance(pinned, LrcResult) and pinned.lines and pinned.source_ref not in seen_refs:
-            seen_refs.add(pinned.source_ref)
-            candidates.append(pinned)
+        if not isinstance(pinned, LrcResult):
+            continue
+        prepared, excluded_metadata = _singable_lrc_result(pinned)
+        if prepared.lines and prepared.source_ref not in seen_refs:
+            seen_refs.add(prepared.source_ref)
+            candidates.append(prepared)
+            prepared_pinned_lrc_results.append(prepared)
             attempts.append(
                 SongRepairAttempt(
                     "pinned_lrc",
                     "SUCCESS",
-                    f"{pinned.song_title!r} ({pinned.source_ref}) pinned ({len(pinned.lines)} LRC lines) — deterministic, ranked against search",
+                    f"{prepared.song_title!r} ({prepared.source_ref}) pinned "
+                    f"({len(prepared.lines)} singable LRC lines, {excluded_metadata} timed credit rows excluded) "
+                    "— deterministic, ranked against search",
                 )
             )
     provider_errors: list[str] = []
@@ -301,9 +403,10 @@ def attempt_song_repair(
                 continue
             found_list = _coerce_lrc_results(found)
             for item in found_list:
-                if item.lines and item.source_ref not in seen_refs:
-                    seen_refs.add(item.source_ref)
-                    candidates.append(item)
+                prepared, _excluded_metadata = _singable_lrc_result(item)
+                if prepared.lines and prepared.source_ref not in seen_refs:
+                    seen_refs.add(prepared.source_ref)
+                    candidates.append(prepared)
     if not candidates:
         detail = f"no LRC found for {len(deduped_queries)} queries {deduped_queries!r}"
         if provider_errors:
@@ -344,7 +447,7 @@ def attempt_song_repair(
         try:
             lrc = _choose_audio_lrc_candidate(
                 ranked,
-                pinned_lrc_results=pinned_lrc_results,
+                pinned_lrc_results=prepared_pinned_lrc_results,
                 min_recall_ratio=0.20,
                 min_margin=0.08,
             )
@@ -597,6 +700,7 @@ def attempt_song_repair(
         "artist": lrc.artist,
         "source_ref": lrc.source_ref,
         "matched_line_ratio": round(matched_ratio, 4),
+        "matched_line_denominator": "singable_lrc_lines",
         "line_count": len(alignment),
         "matched_line_count": len(matched),
         "offset_ms": offset_ms,
@@ -1013,19 +1117,12 @@ def parse_lrc_text(lrc_text: str) -> list[LrcLine]:
         text = re.sub(r"\[[^\]]*\]", "", raw_line).strip()
         if not matches or not text:
             continue
-        # Metadata/credit lines are not sung lyrics. netease appends them with
-        # their own timestamps (some late, inside the outro) in a "role : name"
-        # shape — sung lyrics never use a spaced colon.  The old prefix-only rule
-        # missed 音乐制作/贝斯演奏/混音、母带 (they don't START with a listed keyword),
-        # so credits got burned as subtitles over the 后奏 (Ivan 2026-07-07 《屑屑》).
-        # Match the credit keyword anywhere in a short pre-colon head instead.
-        if re.match(r"^(作词|作曲|编曲|制作|混音|母带|录音|监制|出品|词|曲|演唱)\s*[:：]", text):
+        # Metadata/credit lines are not sung lyrics or proof checkpoints.  The
+        # structural bilingual classifier covers both the historical Chinese
+        # outro credits and English/bilingual rows such as
+        # ``录音师 Recording Engineer：...`` without deleting ordinary lyrics.
+        if is_lrc_credit_metadata(text):
             continue
-        colon_split = re.split(r"[:：]", text, maxsplit=1)
-        if len(colon_split) == 2:
-            head = colon_split[0].strip()
-            if len(head) <= 12 and any(kw in head for kw in _LRC_CREDIT_KEYWORDS):
-                continue
         for minute, second, fraction in matches:
             fraction_ms = int((fraction or "0").ljust(3, "0")[:3])
             lines.append(LrcLine(time_ms=(int(minute) * 60 + int(second)) * 1000 + fraction_ms, text=text))
