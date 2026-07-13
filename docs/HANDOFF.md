@@ -24,8 +24,8 @@ Ivan 审查 7/11 隔离产物（旧 BASE `failure-selfheal-6f9da78`，commit 早
 
 ### 进行中（含后台进程）
 
-- 养熊猫游戏成品（7/11 落选候补 18-00-11.mp4 1636-1782s conf0.91）：计划用集成后 HEAD 建 commit-exact 隔离 BASE 产出（no-upload），见下一步。
-- 其余后台面（final-117e853 盲测、rerun-20260710、生产 DISABLED）沿用上一节，不由本节重复管理。
+- **养熊猫游戏成品已交付**：BASE `free:/opt/bilive/autoslice/evals/produce-panda-658242e`（commit-exact main@658242e、只读复用 6f9da78 recordings + BCUT 缓存导入），`auto_180011_1636_1782` 一次产出 `review_ready` rc=0 零红旗零边界修复。验收：片头 PREPENDED(4288ms)+总时长 150.93s 吻合、uniform_host、标题「【李豆沙】本来担心不擅长游戏，一看能养熊猫：我必须养！」（无机器味词）、AI_COVER_READY（新 fitter 右栏 6 行大字、熊猫黄强调、无标点悬挂）、游戏名被修正为《杖剑传说》、song_name_candidates=13 注入、read_aloud 仲裁 1 次（弹幕「小李自己先玩过了吗」为转述，音频裁定非逐字念读→字幕保持原声，行为正确）。已拉回本地 `lidousha/eval-658242e-panda/2026-07-11/`。BASE 无 timer、无上传，保留作证据至 Ivan 审毕。
+- 其余后台面（final-117e853 盲测、rerun-20260710、生产 DISABLED、权宜上传批）由各自小节管理。
 
 ### 阻塞
 
@@ -33,7 +33,7 @@ Ivan 审查 7/11 隔离产物（旧 BASE `failure-selfheal-6f9da78`，commit 早
 
 ### 下一步
 
-1. 养熊猫游戏成品产出并拉回本地给 Ivan。
+1. Ivan 审养熊猫成品（`lidousha/eval-658242e-panda/2026-07-11/`）；审毕可删 free 上 produce-panda BASE。7/11 权宜上传那 5 条若要按新流水线重产替换，走 B 站编辑替换流程（见 pending-provisional-uploads 清单）。
 2. 下次真实歌切产出后核对 `offset_basis=asr_anchor` 与耳感同步；talk 成品抽查 `song-name-pin.json` 与 `read_aloud_arbitrations` 审计。
 3. 生产部署仍按原门（7/10 重跑验收 + Ivan 授权）；部署后 7/11、7/12 由生产自动回填时这些修复即生效。
 
