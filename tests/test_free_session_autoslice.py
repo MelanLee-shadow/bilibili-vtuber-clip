@@ -2002,8 +2002,9 @@ def test_rejected_talk_candidate_automatically_backfills_next_ranked_reserve():
     assert state["talk_backlog"] == []
 
 
-def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypatch):
+def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypatch, tmp_path):
     date = "2026-07-11"
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
     first = {
         "segment_path": "/rec/session.mp4",
         "seg_dur_ms": 2_000_000,
