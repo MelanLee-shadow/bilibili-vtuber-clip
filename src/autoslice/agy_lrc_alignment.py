@@ -343,8 +343,9 @@ def _extract_complete_audio(source_path: Path, output_path: Path) -> int:
 def _gemini_api_observe(*, audio_path: Path, prompt: str, key: str) -> str:
     """Send the complete derived audio and strict v5 prompt to Gemini.
 
-    The key exists only in the in-memory request URL.  Callers must never
-    persist exception text because urllib exceptions may echo that URL.
+    The key exists only in the in-memory ``x-goog-api-key`` header.  Callers
+    still persist only bounded structural error categories, never exception
+    text or request objects.
     """
 
     audio_b64 = base64.b64encode(audio_path.read_bytes()).decode("ascii")
