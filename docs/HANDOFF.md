@@ -3,7 +3,37 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
-## 2026-07-13：7/11 候选审查 → 六类流水线修复（当前）
+## 2026-07-13：生产部署 main@df00581 + 摘 DISABLED + 三日重跑（当前）
+
+### 目标
+
+Ivan 13:3x UTC 明确指令：自愈能力已测够（1096 回归 + 6f9da78 两日自治 + 7/10 重跑含付费兜底救歌 + 养熊猫全链），直接部署并开始运行；随后要求按最新能力立刻重跑 7/10-7/12。上传面继续关闭。
+
+### 已完成
+
+- **部署**：`scripts/deploy_free_autoslice.sh free` 从干净 main（部署前现顶全量 1096 passed 复验）；`DEPLOYED_COMMIT = df0058185d…f2a9 @ 2026-07-13T13:37:05Z` 回读一致，branding intro / speaker runtime assets / runner md5 校验全过。
+- **摘 DISABLED**：13:37Z 删除（13:36 的时间戳是部署脚本自身的冻结 touch，非并行会话操作）。cron `*/10` runner 恢复 tick。
+- **生产回填已启动**：13:40:05Z 首 tick `processing 2026-07-11: new=True`，state/2026-07-11.json 新建、17-00-15 死桩记死；7/12 随后由同一日期窗（REC_ROOT 最后 3 个日期目录=7/10-7/12）自然进入。7/10 在生产被 `NOT_BEFORE=2026-07-11` 冻结（保护已上传绑定交付，设计如此）。
+- **7/10 按最新代码隔离重跑**：BASE `free:/opt/bilive/autoslice/evals/rerun-20260710-df00581`（commit-exact df00581、只挂 7/10 录像软链、导入生产+旧 rerun 缓存、voiceprints 在位、`GEMINI_PAID_BACKUP_DEV_EXCEPTION=1` 受监督授权）；transient timer 10 分钟一 tick，13:42Z 首 tick 已认领日期。
+- **停掉三个旧 eval timer**（释放 AGY 配额给真实重跑；transient unit 已消失，如需重建见各自小节的 unit 参数）：`autoslice-failure-selfheal-6f9da78`、`autoslice-failure-selfheal-final-117e853`（盲测已无部署意义：其快照是 main 祖先，两日已由生产用更新代码真跑）、`autoslice-rerun-20260710-03b717f`（被 df00581 重跑取代；其 6 条成品已拉回本地 `lidousha/rerun-20260710-03b717f/2026-07-10/` 留作对照，其中《宝贝》带旧 0.5s 偏晚，正好是修复对照组）。
+
+### 进行中（含后台进程）
+
+- 生产 cron runner：7/11 处理中、7/12 排队（无人值守自治，含歌切 failover+付费兜底 ≥3 轮门+0.5s 修复+全部 7/13 修复）。
+- `autoslice-rerun-20260710-df00581.timer`：7/10 全日重产中。
+- 观察器（本会话）：生产首个 `tick done` 行的 log watcher 已挂。
+
+### 阻塞
+
+- 无。上传面保持关闭（AUTO_UPLOAD manifest 门不变）；权宜上传批的替换等三日新成品出来后走 B 站编辑替换。
+
+### 下一步
+
+1. 三日收敛后：拉回 7/10（rerun BASE）与 7/11、7/12（生产 lidousha/ 交付）给 Ivan 审；歌切重点核对 `offset_basis=asr_anchor` 与耳感同步。
+2. 审毕决定权宜上传 10 条的替换批次；付费 key 用量审计看 `state/gemini-paid-backup/usage-*.jsonl`。
+3. 已停的 final 盲测如果将来还想要"withheld 自愈演示"，需按其小节 env 重建（非必需）。
+
+## 2026-07-13：7/11 候选审查 → 六类流水线修复（已并入 main 并部署）
 
 ### 目标
 
