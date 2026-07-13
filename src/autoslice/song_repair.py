@@ -24,6 +24,7 @@ import binascii
 import copy
 import hashlib
 import json
+import math
 import re
 import unicodedata
 import urllib.parse
@@ -503,8 +504,17 @@ def attempt_song_repair(
     source_media_path: Path | None = None,
     audio_lrc_aligner: AudioLrcAligner | None = None,
     max_audio_lrc_attempts: int = MAX_AUDIO_LRC_VARIANT_ATTEMPTS,
+    asr_anchor_cues: Sequence[SourceCue] = (),
+    asr_anchor_srt_path: Path | None = None,
 ) -> SongRepairResult:
     """Try to repair a song candidate into a fully-proven full-song boundary.
+
+    ``asr_anchor_cues`` are a fresh (non-AGY) ASR transcript of the same
+    source media, used only to anchor the AGY-audio path's global lyric shift
+    (see ``match_lrc_to_fresh_asr_anchor``); pass already-parsed cues when the
+    caller has them (e.g. the shadow pipeline's ``source_srt``).  When empty,
+    ``asr_anchor_srt_path`` (or a sibling-file lookup next to
+    ``source_media_path``) is tried as a fallback.
 
     ``pinned_lrc_results`` are caller-supplied LRCs (e.g. a known recurring song
     matched by fingerprint) that are added to the candidate pool BEFORE flaky
@@ -657,6 +667,7 @@ def attempt_song_repair(
         int,
         int,
         Mapping[str, object] | None,
+        Mapping[str, object] | None,
     ] | None = None
     audio_alignment_run: AudioLrcAlignmentRun | None = None
     audio_lrc_variant_attempts: list[dict[str, object]] = []
@@ -664,6 +675,13 @@ def attempt_song_repair(
         if source_media_path is None:
             attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", "source media is required"))
             return _finish(candidate_id, attempts, output_dir)
+        resolved_asr_anchor_cues: Sequence[SourceCue] = asr_anchor_cues
+        if not resolved_asr_anchor_cues:
+            anchor_srt_candidate = asr_anchor_srt_path
+            if anchor_srt_candidate is None:
+                anchor_srt_candidate = _sibling_asr_anchor_srt_path(Path(source_media_path))
+            if anchor_srt_candidate is not None and anchor_srt_candidate.is_file():
+                resolved_asr_anchor_cues = _parse_asr_anchor_srt(anchor_srt_candidate)
         try:
             primary_lrc = _choose_audio_lrc_candidate(
                 ranked,
@@ -747,6 +765,7 @@ def attempt_song_repair(
                     source_media_path=Path(source_media_path),
                     source_duration_ms=source_duration_ms,
                     min_matched_ratio=min_matched_ratio,
+                    asr_anchor_cues=resolved_asr_anchor_cues,
                 )
             except LivePerformanceRejected as exc:
                 detail = f"{rank_detail}; {type(exc).__name__}: {exc}"
@@ -991,6 +1010,7 @@ def attempt_song_repair(
             clip_end_ms,
             offset_ms,
             None,
+            None,
         )
         break
 
@@ -1008,6 +1028,7 @@ def attempt_song_repair(
         clip_end_ms,
         offset_ms,
         arrangement_completeness,
+        offset_provenance,
     ) = selected
 
     provider_label = provider_name or lrc.provider
@@ -1047,9 +1068,19 @@ def attempt_song_repair(
     }
     if audio_alignment_run is not None:
         canonical_rows = audio_alignment_run.payload["observations"]
+        provenance = dict(offset_provenance or {})
         report_payload.update(
             {
                 "evidence_source": "agy_audio_lrc",
+                # Offset provenance (2026-07-11 fix): a fresh-ASR anchor,
+                # when it earns enough matches with a tight residual spread
+                # and agrees with the AGY median within 1500ms, replaces the
+                # AGY-only offset as ``offset_ms``/``nominal_lrc_zero_ms``
+                # above.  These fields keep both readings auditable.
+                "offset_basis": provenance.get("offset_basis", "agy_median"),
+                "agy_offset_ms": provenance.get("agy_offset_ms"),
+                "asr_offset_ms": provenance.get("asr_offset_ms"),
+                "asr_matched_line_count": provenance.get("asr_matched_line_count", 0),
                 "audio_alignment_provider": audio_alignment_run.provider,
                 "audio_alignment_model": audio_alignment_run.model,
                 "audio_alignment_agy_rc": audio_alignment_run.rc,
@@ -1838,6 +1869,149 @@ def enforce_global_shift_alignment(
                 "single performance of this song; the capture likely covers only a fragment"
             )
     return filtered, offset_ms, None
+
+
+# ASR-anchor global shift (2026-07-11 fix): the AGY audio-observation median
+# residual can carry a uniform onset-lateness bias (verified: 《恋爱告急》 AGY
+# was +860ms late on every line vs the same source's BCUT ASR).  A fresh ASR
+# transcript of the SAME source media is an independent, non-AGY timeline —
+# the talk lane already burns straight from it — so it anchors the final
+# shift when it agrees closely enough with AGY and matches enough lines.
+ASR_ANCHOR_MATCH_THRESHOLD = 0.55
+ASR_ANCHOR_MIN_MATCH_RATIO = 0.20
+ASR_ANCHOR_MIN_MATCHES = 5
+ASR_ANCHOR_MAX_RESIDUAL_IQR_MS = 900.0
+ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS = 1_500
+
+_SRT_TIMESTAMP_RE = re.compile(
+    r"(\d{2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{1,3})"
+)
+
+
+def _residual_iqr_ms(residuals: Sequence[int]) -> float:
+    """Interquartile spread of a residual sample (linear-interpolation percentile).
+
+    Matching residual counts here are small (tens of lines at most), so a
+    tiny dependency-free percentile helper is sufficient.
+    """
+
+    values = sorted(residuals)
+    n = len(values)
+    if n < 2:
+        return 0.0
+
+    def _percentile(p: float) -> float:
+        idx = p * (n - 1)
+        lo = int(idx)
+        hi = min(lo + 1, n - 1)
+        frac = idx - lo
+        return values[lo] + (values[hi] - values[lo]) * frac
+
+    return _percentile(0.75) - _percentile(0.25)
+
+
+def match_lrc_to_fresh_asr_anchor(
+    lrc_lines: Sequence[LrcLine],
+    asr_cues: Sequence[SourceCue],
+    *,
+    match_threshold: float = ASR_ANCHOR_MATCH_THRESHOLD,
+    min_match_ratio: float = ASR_ANCHOR_MIN_MATCH_RATIO,
+    min_matches: int = ASR_ANCHOR_MIN_MATCHES,
+    max_residual_iqr_ms: float = ASR_ANCHOR_MAX_RESIDUAL_IQR_MS,
+) -> tuple[int | None, int, str | None]:
+    """Anchor the LRC global shift on a fresh (non-AGY) ASR transcript.
+
+    Reuses the existing monotonic DP matcher (``_align_lrc_to_cues``) so ASR
+    cues are consumed at most once and matched order stays monotonic, exactly
+    like the ordinary LRC-to-ASR alignment path — this is not a separate
+    greedy per-line matcher.
+
+    Returns ``(asr_offset_ms, matched_line_count, rejection_reason)``.  The
+    offset is ``None`` (with a reason) whenever there are too few matches or
+    the matched residuals disagree too much to trust a single fresh-ASR
+    shift; callers must then keep the AGY-derived offset rather than force
+    this one.
+    """
+
+    if not lrc_lines or not asr_cues:
+        return None, 0, "no fresh ASR cues available for anchor matching"
+    alignment = _align_lrc_to_cues(lrc_lines, asr_cues, match_threshold=match_threshold)
+    residuals = [
+        int(entry["cue_start_ms"]) - int(entry["lrc_time_ms"])
+        for entry in alignment
+        if entry["matched_cue_id"] is not None
+    ]
+    matched_line_count = len(residuals)
+    required = max(min_matches, math.ceil(min_match_ratio * len(lrc_lines)))
+    if matched_line_count < required:
+        return None, matched_line_count, (
+            f"only {matched_line_count} fresh-ASR line match(es); need >= {required}"
+        )
+    spread_ms = _residual_iqr_ms(residuals)
+    if spread_ms > max_residual_iqr_ms:
+        return None, matched_line_count, (
+            f"fresh-ASR residual IQR {spread_ms:.0f}ms exceeds {max_residual_iqr_ms:.0f}ms"
+        )
+    offset_ms = sorted(residuals)[matched_line_count // 2]
+    return offset_ms, matched_line_count, None
+
+
+def _parse_srt_timestamp_ms(hours: str, minutes: str, seconds: str, millis: str) -> int:
+    return ((int(hours) * 60 + int(minutes)) * 60 + int(seconds)) * 1000 + int(millis.ljust(3, "0")[:3])
+
+
+def _parse_asr_anchor_srt(path: Path) -> list[SourceCue]:
+    """Minimal standalone SRT reader for the fresh-ASR anchor fallback lookup.
+
+    Deliberately self-contained (``src`` must not import from ``scripts``) and
+    only extracts cue timing/text; ``match_lrc_to_fresh_asr_anchor`` already
+    normalizes both sides before fuzzy comparison, so this does not replicate
+    the shadow pipeline's term-lexicon text normalization of the same file.
+    """
+
+    try:
+        raw = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+    except OSError:
+        return []
+    cues: list[SourceCue] = []
+    for index, block in enumerate(raw.split("\n\n"), start=1):
+        lines = [line for line in block.splitlines() if line.strip()]
+        if len(lines) < 2:
+            continue
+        timing_line = next((line for line in lines[:2] if "-->" in line), None)
+        if timing_line is None:
+            continue
+        match = _SRT_TIMESTAMP_RE.search(timing_line)
+        if match is None:
+            continue
+        text = "\n".join(line for line in lines if line is not timing_line and "-->" not in line).strip()
+        cues.append(
+            SourceCue(
+                cue_id=f"asr_anchor_{index:06d}",
+                source_start_ms=_parse_srt_timestamp_ms(*match.group(1, 2, 3, 4)),
+                source_end_ms=_parse_srt_timestamp_ms(*match.group(5, 6, 7, 8)),
+                text=text,
+                kind="speech",
+            )
+        )
+    return cues
+
+
+def _sibling_asr_anchor_srt_path(source_media_path: Path) -> Path | None:
+    """Best-effort sibling lookup for the fresh full-source ASR SRT.
+
+    The song selector lane writes ``<stem>_full_source.srt`` or
+    ``<stem>_source.srt`` next to the source media it analyzed.  Used only
+    when a caller has not already threaded parsed cues or an explicit path —
+    production callers should prefer passing already-parsed cues.
+    """
+
+    stem = source_media_path.stem
+    for suffix in ("_full_source.srt", "_source.srt", ".bcut.srt", ".srt"):
+        candidate = source_media_path.with_name(f"{stem}{suffix}")
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _lrc_fingerprint(lrc: LrcResult) -> str:
@@ -2663,6 +2837,7 @@ def _validated_audio_lrc_selection(
     source_media_path: Path,
     source_duration_ms: int,
     min_matched_ratio: float,
+    asr_anchor_cues: Sequence[SourceCue] = (),
 ) -> tuple[
     float,
     LrcResult,
@@ -2673,6 +2848,7 @@ def _validated_audio_lrc_selection(
     int,
     int,
     int,
+    Mapping[str, object],
     Mapping[str, object],
 ]:
     """Validate an AGY audio observation and convert it into standard proof.
@@ -3009,6 +3185,36 @@ def _validated_audio_lrc_selection(
     if not 0 <= offset_ms < effective_duration_ms:
         raise ValueError(f"nominal LRC zero {offset_ms}ms is outside the current source")
 
+    # 2026-07-11 fix: AGY (Gemini audio listening) onset times can carry a
+    # uniform lateness bias that every consistency-only gate above lets
+    # through (verified: 《恋爱告急》 AGY was +860ms late on every line vs the
+    # same source's BCUT ASR).  When a fresh ASR transcript of the SAME
+    # source media fuzzy-matches enough canonical LRC lines with a tight
+    # residual spread, anchor the final shift on it instead — but never
+    # silently pick either reading when they disagree by more than the
+    # existing ±1500ms AGY self-consistency tolerance.
+    agy_offset_ms = offset_ms
+    asr_offset_ms, asr_matched_line_count, _asr_anchor_rejected_reason = match_lrc_to_fresh_asr_anchor(
+        lrc.lines, asr_anchor_cues
+    )
+    offset_basis = "agy_median"
+    if asr_offset_ms is not None:
+        if abs(asr_offset_ms - agy_offset_ms) > ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS:
+            raise ValueError(
+                f"fresh-ASR anchor offset {asr_offset_ms}ms disagrees with the AGY median "
+                f"offset {agy_offset_ms}ms by more than {ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS}ms"
+            )
+        offset_ms = asr_offset_ms
+        offset_basis = "asr_anchor"
+        if not 0 <= offset_ms < effective_duration_ms:
+            raise ValueError(f"nominal LRC zero {offset_ms}ms is outside the current source")
+    offset_provenance: dict[str, object] = {
+        "offset_basis": offset_basis,
+        "agy_offset_ms": agy_offset_ms,
+        "asr_offset_ms": asr_offset_ms,
+        "asr_matched_line_count": asr_matched_line_count,
+    }
+
     first_lyric_start_ms = int(alignment[0]["cue_start_ms"])
     last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
     live_performance = payload.get("live_performance")
@@ -3109,6 +3315,7 @@ def _validated_audio_lrc_selection(
         clip_end_ms,
         offset_ms,
         arrangement_completeness,
+        offset_provenance,
     )
 
 
