@@ -4190,6 +4190,9 @@ def _lidousha_cover_text(title: str) -> str:
         if text.startswith(prefix):
             text = text[len(prefix) :]
             break
+    # 歌名的括号限定（场次/晚会）只留在归档标题里；封面上《歌名》必须短而大
+    # （7/11 歌切封面被《恋爱告急 (2021浙江卫视跨年演唱会)》单原子压到 46px 保底）。
+    text = re.sub(r"《([^》（(]*?)\s*[（(][^()（）》]*[)）]\s*》", r"《\1》", text)
     text = re.sub(r"\s*[：:]\s*", "\n", text)
     text = "\n".join(line.strip(" ，,") for line in text.split("\n") if line.strip(" ，,"))
     return text or title.strip()
@@ -4609,6 +4612,15 @@ _COVER_LAYOUT_RENDER = {
 }
 _COVER_OUTLINE_NAVY_RATIO = 0.085   # outer stroke ≈ 8.5% of font size (chunky, scales up)
 _COVER_OUTLINE_WHITE_RATIO = 0.042
+# 最小可读强调字号（Ivan 2026-07-11 河粉封面案：整批 146-182px，唯独它 90px）。
+# 字号上限 ≈ zone宽/最宽不可拆原子宽 —— 一个超宽原子（LLM 把 “要交780吗”？
+# 整段当一个"词"，hook 又是其中的 780）会把强调行钉死，行数预算再大也救不回。
+# fitter 在打包前把任何在 _COVER_MIN_EMPH 下都放不进 zone 的原子按词内安全点
+# 再分（hook/《歌名》/ASCII 串不拆；开标点绑后、闭标点绑前，顺带满足
+# 行首禁闭标点/行末禁开标点）。
+_COVER_MIN_EMPH = 120
+_COVER_OPENING_PUNCT = "“‘《〈「『（(【[｛{"
+_COVER_CLOSING_PUNCT = "”’》〉」』）)】]｝}，,、；;：:！!？?。…"
 
 
 def _cover_outlines_for(size):
@@ -4789,6 +4801,71 @@ def _cover_segment_line(line, hook_word, base_fill, hook_rgb):
     return [(line, base_fill)]
 
 
+def _atom_em_width(atom: str) -> float:
+    """Approximate rendered width in em units: ASCII ≈ half-width, everything
+    else (CJK + full-width punctuation) ≈ one em in the cover fonts."""
+    return sum(0.5 if " " <= ch <= "~" else 1.0 for ch in atom)
+
+
+def _bind_punctuation_atoms(units):
+    """开标点绑到后一个原子、闭/终结标点绑到前一个原子 —— 任何按这些原子
+    断出来的行都天然满足 行首禁闭标点 / 行末禁开标点。"""
+    bound: list[str] = []
+    pending_open = ""
+    for unit in units:
+        if len(unit) == 1 and unit in _COVER_OPENING_PUNCT:
+            pending_open += unit
+            continue
+        if len(unit) == 1 and unit in _COVER_CLOSING_PUNCT and bound and not pending_open:
+            bound[-1] += unit
+            continue
+        bound.append(pending_open + unit)
+        pending_open = ""
+    if pending_open:
+        if bound:
+            bound[-1] += pending_open
+        else:
+            bound.append(pending_open)
+    return bound
+
+
+def _split_wide_atom(atom: str, max_em: float, protect: str = "") -> list[str]:
+    """Re-split ONE oversized wrap atom at word-safe points.
+
+    Ivan 的排版铁律是 词/hook/专名 不可拆、其余任意断行；但 LLM 偶尔把整个
+    引语从句当成一个"词"（“要交780吗”？≈7.6em），这种原子在最小可读字号下
+    都放不进 zone，必须按从句内部安全点再分：hook 不拆、《歌名》不拆、
+    ASCII/数字串不拆，标点按 _bind_punctuation_atoms 绑定。"""
+    if _atom_em_width(atom) <= max_em:
+        return [atom]
+    pieces = [p for p in (re.split(f"({re.escape(protect)})", atom) if protect else [atom]) if p]
+    units: list[str] = []
+    for piece in pieces:
+        if protect and piece == protect:
+            units.append(piece)
+        else:
+            units.extend(re.findall(r"《[^》]*》|[A-Za-z0-9]+|.", piece))
+    chunks: list[str] = []
+    cur = ""
+    for unit in _bind_punctuation_atoms(units):
+        if cur and _atom_em_width(cur + unit) > max_em:
+            chunks.append(cur)
+            cur = unit
+        else:
+            cur += unit
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _split_wide_atoms(atoms, max_em: float, protect: str = "") -> tuple[str, ...]:
+    out: list[str] = []
+    for atom in atoms:
+        if atom:
+            out.extend(_split_wide_atom(atom, max_em, protect))
+    return tuple(out)
+
+
 def _wrap_even(text, n, keep=()):
     """Wrap text into n balanced lines: prefer punctuation-delimited clauses when
     there are exactly n of them, else pack 'atoms' greedily into n length-balanced
@@ -4826,12 +4903,7 @@ def _wrap_even(text, n, keep=()):
     keeps = sorted((re.escape(k) for k in keep if k), key=len, reverse=True)
     pattern = "|".join([*keeps, r"《[^》]*》", r"[A-Za-z0-9]+", r"[^A-Za-z0-9]"])
     raw_atoms = re.findall(pattern, text)
-    atoms: list[str] = []
-    for atom in raw_atoms:
-        if atoms and atom in "，,、；;！!？?。":
-            atoms[-1] += atom
-        else:
-            atoms.append(atom)
+    atoms: list[str] = _bind_punctuation_atoms(raw_atoms)
     n = min(n, len(atoms))
     if n <= 1:
         return ["".join(atoms)]
@@ -4936,6 +5008,10 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
         fits = (max(widths) <= zone_w) and (total_h <= zone_h)
         return fits, sizes, seg_lines, gaps
 
+    if word_atoms:
+        # 超宽原子在最小可读字号下都放不进 zone —— 先按词内安全点再分，否则
+        # 强调行被单个原子钉死（7/11 河粉封面 90px 案），行数预算全被浪费。
+        word_atoms = _split_wide_atoms(word_atoms, max(3.0, zone_w / _COVER_MIN_EMPH), hook_word or "")
     keep = tuple(dict.fromkeys([*(w for w in word_atoms if w), *((hook_word,) if hook_word else ())]))
     # BIG TEXT (Ivan 2026-07-07 "字卡还是太小"): the font is capped by the longest
     # line's width, so a fixed 2-clause colon split leaves a narrow side zone's

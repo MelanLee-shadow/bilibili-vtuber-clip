@@ -59,8 +59,41 @@ def _prompt(
     candidates: list[dict[str, Any]],
     recording_date: str,
     timely_context: str,
+    sentence_mode: bool = False,
 ) -> str:
     neutral_candidates = sorted(candidates, key=lambda row: str(row.get("canonical") or "").lower())
+    if sentence_mode:
+        return f"""# Raw-audio spoken-sentence forced choice
+
+Use only `input.mp4` in this job directory. Its frames are deliberately black:
+there is no viewer chat, subtitle, title card, or other visual text to copy.
+Listen to the complete audio several times and decide which candidate sentence
+is actually spoken (the host may be reading viewer chat aloud). Do not infer
+the answer from which sentence would make more sense.
+
+Recording date: {recording_date}
+Candidate sentences (neutral list):
+{json.dumps(neutral_candidates, ensure_ascii=False, indent=2, sort_keys=True)}
+
+{timely_context or 'No active date-bounded timely-term snapshot.'}
+
+Judge ONLY by the syllables you hear; incompatible syllables always lose.
+Report the syllables you actually hear before the choice.
+
+Write `verdict.json` as JSON only:
+{{
+  "schema_version": "entity-audio-observation.v1",
+  "status": "RESOLVED" or "UNCERTAIN",
+  "canonical_entity": "one exact candidate sentence above, verbatim, or null",
+  "heard_syllables": "literal syllables/phonetic observation",
+  "confidence": 0.0,
+  "reason": "short acoustic explanation"
+}}
+
+Use RESOLVED only when one candidate is acoustically clear with confidence at
+least 0.80. Otherwise use UNCERTAIN. No markdown fences, no other files, no
+shell, terminal, browser, web, or search.
+"""
     return f"""# Raw-audio proper-name forced choice
 
 Use only `input.mp4` in this job directory. Its frames are deliberately black:
@@ -195,6 +228,9 @@ def build_local_audio_entity_verifier(
             candidates=[dict(row) for row in candidates if isinstance(row, dict)],
             recording_date=recording_date,
             timely_context=timely,
+            sentence_mode=(
+                request.get("schema_version") == "chat-read-aloud-verification-request.v1"
+            ),
         )
         prompt_path = job_dir / "prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
