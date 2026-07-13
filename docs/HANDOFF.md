@@ -3,6 +3,83 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-12（续三）：最新生产基线安全集成与联动证据采集已提交，仍禁止部署
+
+### 目标
+
+实现无人值守的李豆沙/非李豆沙字幕二配色：李豆沙用 sapphire、非李豆沙用白色；独播整场自动 `FAST_SOLO`，联动才运行完整二分离。开发期可做人耳审阅，最终生产不得依赖人工 override。当前仍未达到无人值守联动交付门。
+
+### 已完成
+
+- Ivan 已完成全新 54 条联动 holdout：A 30 + B 24；李豆沙 28、非李豆沙 24、mixed/overlap 2、unjudgeable 0。labels SHA `5c1ab7d5...76f`，manifest SHA `f746c9d5...72b9`，review ID 完整匹配。
+- direct-v2 已在冻结预测后评分：清晰 cue `42/52 = 80.77%`，`TP=22/FN=6/FP=4/TN=20`；零 guest false-sapphire 阈值下 Li recall 仅 `19/28 = 67.86%`，两条 mixed 又都被强制 READY，已淘汰。
+- WavLM Base Plus SV 15-cue 隔离 pilot 已按授权下载并在 `/tmp` torch 2.6 CPU overlay 中完成：高危 guest 只修 `2/4`，同时伤害 Li control `2/4`，rank gate 失败，未运行 full149，已淘汰。
+- grouped one-class 010 仅用旧开发集复用三模型 embedding：`110/146 = 75.34%`、guest FP `1/79`、Li recall `32/67 = 47.76%`，五个 outer fold 均无合格参数；未查看 holdout，已淘汰。
+- recovery v7 在 A/B 均因 `AMBIGUOUS_TARGET_SCORE` 整场 fail-closed：`TARGET=0/OTHER=0/REVIEW=54`。它安全但覆盖为 0，不能作为成品联动路线。
+- relative-cluster 011 只复用冻结缓存，发现 40 个身份采样 cue 仅 8 个有 exact cue/cluster embedding，按规则精确 `BLOCKED`，没有预测或评分。012 由无 labels 上下文的 worker补齐 31 个 exclusive WAV（27 个新 CAM++ embedding + 4 exact cache hit），prediction freeze SHA `4fc718c2...8a36`；A 映射、B 因 cue 13 对所有 cluster 零交集整场 BLOCK。独立开封评分后 5/7 主门失败：READY precision `91.67%`、clear coverage `23.08%`、Li recall `28.57%`、A strict `36.67%`、B strict `8.33%`；guest false-sapphire `0`、mixed REVIEW `2/2`。evaluation SHA `eed006fc...a127`，已淘汰。
+- 生产现为 `805a704198ca4d7f2843c30fc93938ec84810e5e`（2026-07-12T23:56:33Z，由另一工作线从 `42d0a345...` 直接继续）：只改 huozi 文档/脚本/模块/测试四个路径，不含 speaker router、capture、runner speaker 路径；仍没有本任务的 session router，也不是无人值守终局。
+- 已从当时 production `42d0a345...` 建立 `codex/speaker-binary-latest-20260712`，提交模型无关 fail-closed speaker 路由集成 `21ed85e0311872c8e29e278a0e2ae00d4fce2849`。production 漂移到 `805a704` 后，又把该提交无冲突 cherry-pick 为 `5bbaebb66641f4347faaaa71303d0caa8542792b`；stable patch-id 与四个 huozi 文件逐字节一致。branch tip 因而覆盖当前 production 内容，同时保持 allowlist 为空、`FAST_SOLO` 不可达，未把任何淘汰模型接入生产决定。
+- 已提交未来联动证据旁路 `b0adfe24d4f957af53979e3863d0fb845e9a86d6`：普通独播无触发时在任何文件系统/hash/model/process 前返回；只有已验证 provider 的 opaque trigger 或至少两类明确联动文本信号才在成品 state/report 落盘后排队独立 bounded worker。worker 只保存 hash-bound、未标注的真实 SRT cue PCM WAV；不保存 provider verdict/candidate ID/原文，不产生标签/预测，不授权训练或上传。
+- capture 每场最多 120 cue，排除 song interval，校验 source/SRT 前后 stat+hash、源时长、PCM16 mono 16 kHz WAV、cue interval、manifest/queue integrity；只计 2026-07-13 起的未来候选场次，累计 5 场时一次性告警，但 `confirmed_collab_session=false`、`training_ready=false`。
+- fresh reviewer 的两轮负向 canary 修掉任意 `text_signal_classes` 注入、原因码不一致、已有 request 复用、字符串 song interval 绕过等缺口；相关独立回归 `176 passed`，最终无材料性 finding。对齐 `805a704` 后稳定全仓回归 `933 passed`，`py_compile`、`git diff --check`、`git show --check HEAD` 全通过。详细证据与继续路径见 [第二阶段报告](reviews/2026-07-12-speaker-binary-v2-blocker.md)。
+
+### 进行中（含后台进程）
+
+- 从 production `34b9b265` 新建 clean worktree `/private/tmp/vtuber-slice-speaker-clean-20260712`，经过五轮 fresh adversarial review 修完 provider trust、recut provenance/rollback、mixed terminal gate、sticky inventory/anti-rollback、review WAV hash 与路径边界。最终分支 `codex/speaker-binary-clean-20260712`，commit `5d1310c46b2fc9fc2a7687cc0db61cfaa72ab7ab`；全套 `862 passed`，affected `207 passed`，最终 reviewer 无材料性 finding。
+- 最新基线 worktree `/private/tmp/vtuber-slice-speaker-latest-20260712` 已干净，分支上依次为 `21ed85e`（路由安全壳集成）、`b0adfe2`（未标注联动证据采集）与 `5bbaebb`（逐字节等价纳入 production `805a704` 的 huozi 变更）。它仍只是未部署基础设施，不得误称为分类器已完成。
+- 数据审计确认 Phase1、15/R1、holdout A/B 全部来自同一场 2026-07-09 联动、同一组礼墨Sumi/安晚Awa guest 条件。现有 cue 再多也不能验证跨 session 泛化。
+- ChatGPT Pro 咨询 prompt 与 durable record 已创建，但 Codex in-app browser 两次无法让 `chatgpt.com` 从空白页完成初始导航；record 仍为 `draft_not_submitted`，没有提交，也没有拿别的模式冒充 Pro。
+- `free:/opt/bilive/autoslice/DISABLED` 仍存在；deployment 受控清单 111 项与 `805a704` 完全匹配（missing/sha/mode drift 均为 0，额外仅 pycache/pyc）。当前相关进程全部位于隔离 `/opt/bilive/autoslice/evals/failure-selfheal-6f9da78`，没有 production BASE 的 runner/speaker/uploader。本阶段无部署、上传或 production state/out/ledger 写入。
+
+### 阻塞
+
+- 当前已评分的 direct-v2、WavLM、one-class、v7 与 relative-cluster 012 都不能同时达到 precision、coverage、Li recall 与 mixed REVIEW 门；现有数据/表征下没有已验证的联动二分类器。
+- 下一项真实缺口是跨直播 session 的联动训练/验证数据，而不是继续在同一场候选上后验调阈值。
+- production `805a704` 的 speaker 路径仍只能 fail-closed 等人工，不满足无人值守；新安全分支尚未获部署授权，且没有通过跨 session 门的 acoustic provider/model 可以 allowlist。
+- visible Pro 咨询受 in-app browser 初始导航阻塞，当前没有 Pro 结论。
+
+### 下一步
+
+1. 停止同场后验模型/阈值搜索。最低发布数据线为 6 场真实联动（现有 7/9 + 新 5 场）：3 train、1 dev、2 locked holdout，整场分组；约 120 cue/场，未来约 600 条需 Ivan 开发期盲听。
+2. 获得独立部署授权且 production 仍处于安全维护窗后，才可部署当前 branch tip `5bbaebb`；部署前再次读取实时 production HEAD，禁止覆盖更晚提交，也不得移除 `DISABLED`。部署 capture 只开始收集候选证据，不代表开放 `FAST_SOLO` 或无人值守联动烧录。
+3. 新 H1/H2 必须先冻结 session/media/cue/model/rule/prediction hashes，再开放无预测盲听；任何后验调参会使其失去 holdout 资格。
+4. 收到 5 场未来候选告警后，先由人耳确认真实联动并完成约 600 条开发/holdout 盲听；H1/H2 只能在模型、规则和预测冻结后审阅。当前没有新音频需要 Ivan 审。
+5. 只有跨 session acoustic provider/model 通过开发集和两场 locked holdout 后，才加入 `AUDITED_PROVIDER_BUNDLES`、做真实 7/9 联动 + 7/10 独播 shadow 与 fresh review；此前保持现有 fail-closed。
+6. 恢复可见 Pro 会话后只提交既有 durable prompt；不得重复提交或改用不可见 API 冒充 Pro。
+
+## 2026-07-12：人声二分离第一阶段真值评分 + binary-v4 v7 安全候选
+
+### 目标
+
+用历史联动素材建立盲听真值，评估当前生产与 binary-v4 的李豆沙/非李豆沙二分类；独播场次应先做整场低成本判断，确认独播后不再对每条 talk 重跑完整 finalizer。
+
+### 已完成
+
+- 用户确认 2026-07-10 是独播，5 个 `single_host` 输出正确，不进入失败样本。
+- Ivan 已完成 2026-07-09 联动的 120-cue 盲听；40 李豆沙、59 非李豆沙、20 mixed、1 unjudgeable，完整匹配 manifest：[详细诊断](reviews/2026-07-12-speaker-phase1-diagnostic.md)。
+- 找回此前遗漏的 `15-v6.review-edit.srt` 与 `R1-v4.review-edit.srt`（`stash@{0}^3`）；最新 labels 对重叠样本优先，R1 作为额外独立真值。
+- 当前生产无 speaker override 精确重跑：99 条清晰 cue accuracy `75.76%`、duration-weighted `81.70%`；CAM++ 92%，text-only context 59.18%，不能交付可靠错色成片。
+- 远端 binary-v4 v6 已正式双跑冻结但 post-freeze 评分失败：R1 有 12 条 false READY，核心事故是 session promotion 将连续 guest 错升 TARGET。
+- 打开 oracle 前已存在的 v7 安全改动禁掉传递身份并增加片段声学相容门；补齐下游契约后真机回归：15 最新 30 样本中清晰 READY `11/11` 全对，R1 清晰单说话人 false READY 为 0；仍有 2 条 mixed false READY，困难 eligible 覆盖仅 29%–44%。
+- v7 recovery 已固定在 `codex/binary-v4-recovery-v7 @ ef37e46`；全套 `1271 passed, 18 skipped, 0 failed`。它是 recovery ancestry，不可直接 merge/deploy。
+- 当前 production 每条 talk 无条件跑 speaker finalizer；建议新增保守的 session-level `speaker-routing.v1`，先 shadow，任何不确定都升级完整二分离。
+
+### 进行中（含后台进程）
+
+- 无后台模型进程；远端只保留 `/tmp/binary-v4-*` 诊断证据。`free:/opt/bilive/autoslice/DISABLED` 未改，无部署、上传或 cron 启用。
+
+### 阻塞
+
+- v7 仍会把 2 条真实 overlap 当 READY，且联动困难 cue 覆盖不足；不能接无人值守成品链。
+- `speaker-routing.v1` 尚未 shadow 验证，不能直接跳过二分离资源。
+
+### 下一步
+
+1. 从当前 deployed superset 的干净基线选择性移植 v7 acoustic/fail-closed 核心；禁止直接合并 stash recovery ancestry。
+2. 移除 text-only context 的身份决定权；mixed/overlap、local/session 冲突统一 REVIEW 或经可验证边界 split。
+3. 用现有 120+R1 作为开发回归；清晰 false READY 维持 0 后，再建立新的未参与调试 holdout。
+4. 用 2026-07-10 独播与 2026-07-09 联动 shadow 验证 session gate，联动误放行为零后才允许跳过完整 finalizer。
+
 ## 2026-07-10（续三）：封面全文排版修复 + 10 条全部发布 + 何意味/人称字幕修正重传 + judge /responses 落地
 
 ### 目标

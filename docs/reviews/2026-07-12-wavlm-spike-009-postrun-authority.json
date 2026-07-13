@@ -1,0 +1,84 @@
+{
+  "schema_version": "lidousha-wavlm-spike-postrun-authority.v1",
+  "recorded_at_utc": "2026-07-12T21:42:26Z",
+  "status": "INVALIDATED_STOP_AFTER_PILOT",
+  "remote_root": "/tmp/lidousha-wavlm-spike-009-20260712-prepared",
+  "prepared_package_manifest_sha256": "9207dec6c38789946ab1be91ee5b3ce513cb25d894769e084c2fd9aed762583d",
+  "authorization": {
+    "approved_by": "Ivan",
+    "approval_quote": "只要机器性能允许，你就可以下载模型。",
+    "approved_scope": "isolated WavLM model pilot on free",
+    "production_change_authorized": false
+  },
+  "initial_runtime_failure": {
+    "stage": "model_load_before_embedding",
+    "base_torch_version": "2.5.1+cpu",
+    "cause": "Transformers refused pytorch_model.bin because torch.load requires torch >= 2.6 for CVE-2025-32434",
+    "embedding_created": false,
+    "evaluation_started": false
+  },
+  "runtime_recovery": {
+    "method": "isolated PYTHONPATH overlay; production venv was not modified",
+    "base_python": "/opt/bilive/autoslice/venv-diar/bin/python",
+    "overlay_site_packages": "/tmp/lidousha-wavlm-spike-009-20260712-prepared/venv-torch26/lib/python3.11/site-packages",
+    "torch": {
+      "version": "2.6.0+cpu",
+      "official_wheel_bytes": 178655896,
+      "official_wheel_sha256": "5b6ae523bfb67088a17ca7734d131548a2e60346c622621e4248ed09dd0790cc",
+      "installed_tree_files": 13058,
+      "installed_tree_bytes": 717053897,
+      "installed_tree_sha256": "48ab03e09793bf5a77a32debc53ed0ae5311ee40aa5f0d35542ca194780f11d0"
+    },
+    "torchaudio": {
+      "version": "2.6.0+cpu",
+      "official_wheel_bytes": 1740929,
+      "official_wheel_sha256": "242e6655d54daf66e090726e5ae6e51955888480de36fc89cd4588c10eca6280",
+      "installed_tree_files": 256,
+      "installed_tree_bytes": 4196719,
+      "installed_tree_sha256": "341771db473dd1c6d9a00af6a41b0eb3a029db1689758c73818dcc7378454d4d"
+    },
+    "transformers_version": "5.13.0",
+    "trust_remote_code": false,
+    "address_space_guard_bytes": 6442450944,
+    "wall_guard_seconds": 900
+  },
+  "model": {
+    "id": "microsoft/wavlm-base-plus-sv",
+    "revision": "feb593a6c23c1cc3d9510425c29b0a14d2b07b1e",
+    "weight_sha256": "e906bce2fa42fb497a1d1a9ecf81548adb7e03b12a5644e32d2f42f0d6500fad"
+  },
+  "embedding_run": {
+    "status": "COMPLETE",
+    "count": 15,
+    "dimension": 512,
+    "wall_seconds": 18.477386944985483,
+    "peak_rss_kib": 1156024,
+    "truth_loaded": false,
+    "sealed_eval_manifest_opened": false
+  },
+  "artifacts": {
+    "pilot-embedding.log": "932405536201be926e2bc4d1d45d09b62b0e5455876cb8411e59a16758d6e7fe",
+    "pilot-evaluation.log": "b66343b53f5a4fe1916c0189ec6b969d04d91e9360080e3a8a89785ccc3ee88e",
+    "pilot-output/embedding-authority.json": "2f2db1df4d89effe6e90b2d82982a2c4918734798d973e2f58dc6d5f83856d2b",
+    "pilot-output/embedding-ids.json": "87c678dd66ac938bfceb2e88e2e38bc91d50915b3dc1ff1d010a0d74ae4e5afb",
+    "pilot-output/embeddings.npy": "cb180c538b0469d8cc28b9e0ed13469455570043f0bbdc26b432dcefc93f28e0",
+    "pilot-output/pilot-results.csv": "8b2182d64cd359ad6ed5f62d8fbaab4fac54a1eaffe860a5b4978ce12a1aa87e",
+    "pilot-output/pilot-verdict.json": "12aac366ca7936af4e75cf37c429a52e1a18e2d86db31ae3cf293aaea35f45e0"
+  },
+  "independent_gate_recompute": {
+    "phase1_control_threshold": 0.809047439661,
+    "rank_gate": false,
+    "max_high_target_guest_score": 0.899747493,
+    "min_li_control_score": 0.704268476,
+    "high_targets_fixed": 2,
+    "li_controls_harmed": 2,
+    "overall_pass": false
+  },
+  "stop_evidence": {
+    "full_149_allowed": false,
+    "full_149_started": false,
+    "holdout_labels_used": false,
+    "production_touched": false,
+    "disabled_present_after_run": true
+  }
+}
