@@ -20,7 +20,7 @@ Ivan 13:3x UTC 明确指令：自愈能力已测够（1096 回归 + 6f9da78 两�
 ### 进行中（含后台进程）
 
 - 生产 cron runner：7/11 处理中、7/12 排队（无人值守自治，含歌切 failover+付费兜底 ≥3 轮门+0.5s 修复+全部 7/13 修复）。
-- `autoslice-rerun-20260710-df00581.timer`：7/10 全日重产中。
+- `autoslice-rerun-20260710-df00581.timer`：7/10 全日重产中。**15:1x UTC 起直播豁免运行**：Ivan 要求直播期间临时放行；新增 `AUTOSLICE_IGNORE_LIVE_HOLD=1`（commit `af48b41`，自防护：BASE 能看到今天日期目录则拒绝豁免→生产误设也冻结；1097 tests），BASE repo 已热切至 af48b41（旧 repo 留在 repo.old-df00581，已交付成品已搬回）。unit 带 CPUWeight=30/IOWeight=30/Nice=10；会话级录播健康护栏（录制文件4分钟不增长/负载>12/mount新告警 → 自动 systemctl stop 本 unit）已挂。
 - 观察器（本会话）：生产首个 `tick done` 行的 log watcher 已挂。
 
 ### 阻塞
