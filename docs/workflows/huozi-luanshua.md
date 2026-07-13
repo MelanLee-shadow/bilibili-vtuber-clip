@@ -4,6 +4,15 @@
 
 当前能力是 **no-upload review workflow**，不接发布器，也不由 `free_session_autoslice.py` 的定时任务自动触发。
 
+## 触发与运行面
+
+- **平常不工作**：普通切片流水线（runner、producer、selector）不 import、不调用本工作流；仓库内除本文档、skill、测试外没有任何自动入口。只有 Ivan 明确提出要做活字乱刷（拼一句话、修某个来源、出对比候选）时才手动运行。
+- **Agent 入口**：`AGENTS.md` → `.agent/skills/huozi-luanshua/SKILL.md`。skill 描述了完整流程纪律；本文件是命令与门的权威。
+- **运行主机**：在 `free`（`/opt/bilive/autoslice/repo`）上跑，媒体与缓存都在那里；macOS 工作区只做代码、测试与试听 review。
+- **数据位置**：原录播在 free 宿主 `/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/`（FUSE 慢，先拷本地再剪）；历史粗字幕主要来自 `/opt/bilive/autoslice/cache/<date>/*.bcut.srt`，`history-scan` 前先把它们镜像到本地磁盘。
+- **逐字 ASR 生成**：`scripts/free_asr_client.py`（BCUT 主、剪映备）输出的 `{"utterances":[{"start_time","end_time","transcript","words":[...]}]}` 正是 `corpus` 所需的 `asr_json_path` 形状；两个独立 authority 就用它分别对同一段媒体产出两份 JSON。
+- **`suggest --suggestion-command` 示例**：`bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium`。
+
 ## 安全边界
 
 - 历史粗字幕只用于发现。`history-scan` 的结果固定为 `DISCOVERY_ONLY_NOT_RENDERABLE`。
@@ -116,6 +125,14 @@ python3 scripts/huozi_luanshua.py bundle \
   --select original \
   --output /tmp/huozi/comparison.manifest.json
 ```
+
+## 定版片头（2026-07-12）
+
+Ivan 选定候选 2「小李本来就是零，不对，我是为爱做零」为固定片头。绑定与出处都在
+`assets/lidousha/intro/branding_intro.v1.json`（含成片 SHA-256、逐 piece 来源、render manifest 副本）；
+媒体字节在 `free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.v1.mp4`（repo 树之外，部署不覆盖）。
+自动切片成品的强制前置拼接由 `src/autoslice/branding_intro.py` 在最终烧录处执行，属于主流水线的职责，
+不再经过本工作流。
 
 ## 首个片头验收目标
 
