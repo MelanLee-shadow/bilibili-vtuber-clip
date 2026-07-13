@@ -3,6 +3,40 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-13：7/11 候选审查 → 六类流水线修复（当前）
+
+### 目标
+
+Ivan 审查 7/11 隔离产物（旧 BASE `failure-selfheal-6f9da78`，commit 早于集成线）后点名的问题，全部按流水线机制修复、不做逐例修补：SC 念读破坏性覆盖、弹幕念读救不回、歌名纯听写、专名跨字幕条、歌切字幕整体晚 0.5s、封面标题过小、summary 落选段重复。另产出落选候补「养熊猫游戏」成品（no-upload）。侄女/直女类（盲测扣真值、非盲有语料）按 Ivan 指示暂不作为流水线问题处理。
+
+### 已完成（全部已并入本分支并随 e02c49a 线进 main；集成后全量 **1096 passed, 0 failed**）
+
+- **归因矩阵**：7/11 产物 = 旧隔离快照 `6f9da78`（无 Gemini failover、无 topic graph 文件）在 truth-withheld 下所产；main 当时被有意回退，所有 selfheal 修复只在集成分支。五首歌 BLOCK = AGY 配额级联 + 旧快照无 failover 的级联结果（原因码是整条证明链缺失，不是内容判定）；final-117e853 与生产部署（含付费 key 兜底）是既定自愈路径。
+- **summary 落选重复**（rerun 幂等，`_note_not_selected` + 渲染保序去重，已在 `03b717f` 载入）：根因是边界自修复后的重选 tick 无去重重复 append（7/11 state 里 7 条候补 ×3）。
+- **歌切字幕晚 0.5s**（merge `codex/fix-song-offset-asr-anchor`）：实测恋爱告急 AGY 听 onset 比 BCUT 晚 860ms（33850 vs 34710），而全局位移只取 AGY 中位残差、一致性门放过均匀偏置。现 LRC 全局位移锚定 fresh ASR cue（模糊匹配 ≥max(5,20%) 行、IQR≤900ms），AGY 只管行身份/覆盖/live 证明；双源分歧 >1500ms fail-closed；report 增 `offset_basis/agy_offset_ms/asr_offset_ms/asr_matched_line_count`（`alignment_model` 字符串是生产门，保持 v1）。
+- **SC 念读对齐拼接**（merge `codex/fix-cover-chat-evidence`，chat_authority）：7/11 乐队番 applied[1] 实证整段覆盖三重破坏（重复注入她已说过的 SC 开头「好冷的笑话」、把她自己的「退堂鼓算什么」覆盖成「退堂鼓」、切出「，我会打」）。替换改为对齐拼接：锚块≥2 字符、只覆盖对齐区、span 首尾未对齐真实语音在 authority 对应侧耗尽时保留、替换尾部强标点后的回话保留、相邻 cue 已说过的 authority 头尾不再注入、行首禁闭标点。
+- **弹幕念读 near-miss 音频仲裁**（同 merge）：「乐队不是需要妈妈吗」→ASR「立希不是算妈妈吗」score/coverage/common 三门各差一点且"独立转写支持"来自同一听错家族。现 danmaku near-miss（score≥0.55/coverage≥0.50/common≥4/len≥6/≤2 cue，每 clip 上限 3 次）走原始音频二选一（复用 entity verifier 通道 + 句子模式 prompt，`chat-read-aloud-verification-request.v1`）；仅 RESOLVED≥0.80 选弹幕原文才改，选 ASR 记 superseded，UNCERTAIN 不动。audit 增 `read_aloud_arbitrations`。
+- **专名不跨字幕条**（merge `codex/fix-term-cue-boundary`）：梦限大在一个成品里被切开 3 次且下游 1:1 cue 锁结构性不可修。新 `src/autoslice/term_boundary.py` 在草稿+surface 归一后、AGY 前做边界统一（6+6 字符窗、最长词优先、少数段并入多数侧、不空 cue、幂等、审计入 `term_boundary_audit`）；词源=已门控的 timely terms + topic graph 别名（盲测安全）。
+- **talk 歌名钉定**（merge `codex/fix-talk-songname-pinning`）：「下一首歌是爱拉拉爱」应为《爱啦啦》（画面歌单第2 + 「点歌 爱啦啦」弹幕在录制里，talk 修正链此前拿不到任何歌名上下文）。现 runner 每 tick 汇集 `song_name_candidates`（歌单 OCR 库存+seen entries、点歌弹幕池（复用 chat_authority 解析器）、known_songs，去重帽 60）→ spec → CPA/AGY prompt 「当场歌单/点歌候选」块 + 确定性钉定后手（歌意图 regex + 折叠字符相似度 ≥0.75，跳过已有《》，「下一首歌还没想好」类有防误替换测试）。
+- **封面 fitter 超宽原子**（merge `codex/fix-cover-chat-evidence`）：河粉封面 90px 根因=LLM 把 `“要交780吗”？` 当单词且 hook=780 在其中，强调行被 7.6em 原子钉死（行数预算无效）；歌切封面 46px 保底=《恋爱告急 (2021浙江卫视跨年演唱会)》 21 字单原子。现超过 `zone_w/_COVER_MIN_EMPH(120)` 的原子按词内安全点再分（hook/《歌名》/ASCII 不拆、开闭标点绑定=行首行尾标点禁则进所有 balancer 路径）；歌名封面文案去括号限定。实案 90→145px、歌切文案变「直播间唱《恋爱告急》」。
+- **词表/规则**（reviewed 面，生产加载）：glossary 增 河粉/塞纳河=SNH48（Ivan 人工专名）+ SNH48 成员名话题先验（如 左婧媛）；correction principles 增 弹幕回声词（同好→捧哏 案）与歌名钉定规则。
+- 过程记录：并行会话在同一工作树期间，我先行的 not_selected 去重被其顺手收进 `03b717f`（内容正确、归属混入）；随后四条 fix 全部改在预建 worktree 分支上实现（vtb-songtime/termbound/songnames/mine），零冲突合入。
+
+### 进行中（含后台进程）
+
+- 养熊猫游戏成品（7/11 落选候补 18-00-11.mp4 1636-1782s conf0.91）：计划用集成后 HEAD 建 commit-exact 隔离 BASE 产出（no-upload），见下一步。
+- 其余后台面（final-117e853 盲测、rerun-20260710、生产 DISABLED）沿用上一节，不由本节重复管理。
+
+### 阻塞
+
+- 无代码 blocker。歌切 0.5s 修复的真机验证依赖下一次歌切实产（rerun/盲测快照早于本修复，不含它）。
+
+### 下一步
+
+1. 养熊猫游戏成品产出并拉回本地给 Ivan。
+2. 下次真实歌切产出后核对 `offset_basis=asr_anchor` 与耳感同步；talk 成品抽查 `song-name-pin.json` 与 `read_aloud_arbitrations` 审计。
+3. 生产部署仍按原门（7/10 重跑验收 + Ivan 授权）；部署后 7/11、7/12 由生产自动回填时这些修复即生效。
+
 ## 2026-07-13：付费 Gemini 兜底 key + 统一主播色 + 集成分支合并 + 7/10 隔离重跑（当前）
 
 > **06:0x UTC 更新**：`codex/integration-selfheal-intro` 已并入 **main（merge `e02c49a`，1051 passed）**——依据：7/11 盲测通过、7/10 重跑在集成代码上实际出片（片头 PREPENDED/uniform_host/sapphire72 已在成品 record.json 验证）、另一 agent 的 4 条 fix 分支已全部以集成线为底座。生产部署与 `DISABLED` 摘除仍按原门（重跑验收 + Ivan 授权）。付费 key 政策更新：无默认硬帽、`GEMINI_PAID_BACKUP_DEV_EXCEPTION=1` 已用于重跑 unit；生产 cron 保持严格 ≥3 轮门。重跑 BASE 快照已热切至 `03b717f`。
