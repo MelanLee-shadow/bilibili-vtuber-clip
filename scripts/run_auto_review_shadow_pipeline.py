@@ -5678,7 +5678,7 @@ def _run_source_context_agy(media_path: Path, draft_srt_path: Path, output_srt_p
     # environment mutation and audio/LRC proof remains unchanged.
     # Formal blind runs completed healthy source-context AGY work in
     # 6m06s-6m32s.  Eight minutes keeps observed-good work alive while still
-    # bounding a hung first provider far below the inherited 30m song budget.
+    # bounding a hung first provider below the independent 15m song-proof budget.
     print_timeout = os.environ.get("SOURCE_CONTEXT_AGY_PRINT_TIMEOUT", "8m").strip()
     if not re.fullmatch(r"[1-9]\d*[smh]?", print_timeout):
         print_timeout = "8m"
