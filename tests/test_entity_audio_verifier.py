@@ -1,3 +1,4 @@
+import io
 import json
 from pathlib import Path
 
@@ -112,3 +113,167 @@ def test_audio_verifier_low_confidence_is_uncertain(tmp_path, monkeypatch):
     )
 
     assert verify(_request())["status"] == "UNCERTAIN"
+
+
+def _agy_quota_run(command, **kwargs):
+    if command[0] == "ffmpeg":
+        Path(command[-1]).write_bytes(b"fake media payload")
+        return _Completed()
+    return _Completed(returncode=1, stderr="Error: Individual quota reached. Resets in 1h.")
+
+
+class _FakeApiResponse:
+    def __init__(self, observation):
+        body = json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": json.dumps(observation, ensure_ascii=False)}]}}]}
+        )
+        self._stream = io.StringIO(body)
+
+    def read(self, *args, **kwargs):
+        return self._stream.read(*args, **kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _resolved_observation():
+    return {
+        "schema_version": "entity-audio-observation.v1",
+        "status": "RESOLVED",
+        "canonical_entity": "梦限大",
+        "heard_syllables": "meng xian da",
+        "confidence": 0.97,
+        "reason": "three clear syllables",
+    }
+
+
+def _isolate_policy_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "policy-base"))
+    for name in (
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEY_2",
+        "GEMINI_API_KEY_3",
+        "GEMINI_KEY_BACKUP",
+        "GEMINI_PAID_BACKUP_DEV_EXCEPTION",
+        "GEMINI_PAID_BACKUP_DAILY_CAP",
+        "ENTITY_AUDIO_GEMINI_API_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_agy_quota_falls_back_to_gemini_api_free_key(tmp_path, monkeypatch):
+    """Ivan 2026-07-14：付费/免费 API key 都能裁决音频——AGY 配额断供必须
+    自动切到 Gemini API 直连，验收逻辑与 AGY 通道完全一致。"""
+    _isolate_policy_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    seen_requests = []
+
+    def fake_urlopen(request, timeout=0):
+        seen_requests.append(request)
+        return _FakeApiResponse(_resolved_observation())
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    monkeypatch.setattr(verifier_module.urllib.request, "urlopen", fake_urlopen)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-10",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["status"] == "RESOLVED"
+    assert verdict["canonical_entity"] == "梦限大"
+    assert verdict["provider"] == "gemini_api"
+    assert verdict["model"] == "gemini-3.5-flash"
+    assert verdict["key_tier"] == "free"
+    assert seen_requests[0].headers.get("X-goog-api-key") == "free-key-1"
+    job_dir = tmp_path / "out/entity_verdicts" / ("a" * 20)
+    api_prompt = (job_dir / "prompt.gemini-api.md").read_text(encoding="utf-8")
+    assert "attached audio clip" in api_prompt
+    assert "还没看" not in api_prompt
+    manifest = json.loads((job_dir / "verdict.manifest.json").read_text(encoding="utf-8"))
+    assert manifest["provider"] == "gemini_api"
+    assert any(
+        row["category"] == "AGY_QUOTA_EXHAUSTED" for row in manifest["provider_failures"]
+    )
+
+
+def test_api_paid_gate_blocks_without_dev_exception(tmp_path, monkeypatch):
+    """免费 key 未配置且无 DEV_EXCEPTION：付费 key 在 3 strike 前必须被门拦，
+    整体退 UNCERTAIN(PROVIDER_FAILED)，不允许任何未入帐付费调用。"""
+    _isolate_policy_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", "paid-key")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    api_calls = []
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    monkeypatch.setattr(
+        verifier_module.urllib.request,
+        "urlopen",
+        lambda *a, **k: api_calls.append(1) or (_ for _ in ()).throw(AssertionError("no api call allowed")),
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-10",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["status"] == "UNCERTAIN"
+    assert verdict["reason_code"] == "ENTITY_AUDIO_PROVIDER_FAILED"
+    assert api_calls == []
+    job_dir = tmp_path / "out/entity_verdicts" / ("a" * 20)
+    failures = json.loads((job_dir / "provider-failures.json").read_text(encoding="utf-8"))
+    assert any(
+        str(row.get("category", "")).startswith("PAID_BACKUP_SKIPPED:FREE_CHAIN_STRIKES_0")
+        for row in failures["failures"]
+    )
+    ledger_root = tmp_path / "policy-base/state/gemini-paid-backup"
+    assert list(ledger_root.glob("strikes/*.json"))
+    assert not list(ledger_root.glob("usage-*.jsonl"))
+
+
+def test_api_paid_used_under_dev_exception_and_ledgered(tmp_path, monkeypatch):
+    _isolate_policy_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", "paid-key")
+    monkeypatch.setenv("GEMINI_PAID_BACKUP_DEV_EXCEPTION", "1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    monkeypatch.setattr(
+        verifier_module.urllib.request,
+        "urlopen",
+        lambda request, timeout=0: _FakeApiResponse(_resolved_observation()),
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-10",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["status"] == "RESOLVED"
+    assert verdict["key_tier"] == "paid_backup"
+    ledger_root = tmp_path / "policy-base/state/gemini-paid-backup"
+    usage_files = list(ledger_root.glob("usage-*.jsonl"))
+    assert len(usage_files) == 1
+    rows = [json.loads(line) for line in usage_files[0].read_text(encoding="utf-8").splitlines()]
+    assert rows and rows[0]["purpose"] == "entity_audio_verdict"
+    assert "paid-key" not in usage_files[0].read_text(encoding="utf-8")
+    job_dir = tmp_path / "out/entity_verdicts" / ("a" * 20)
+    manifest = json.loads((job_dir / "verdict.manifest.json").read_text(encoding="utf-8"))
+    assert manifest["paid_backup_policy"]
