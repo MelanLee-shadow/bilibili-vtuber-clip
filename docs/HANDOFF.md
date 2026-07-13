@@ -3,11 +3,11 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
-## 2026-07-12（续三）：最新生产基线安全集成与联动证据采集已提交，仍禁止部署
+## 2026-07-12（续三）：安全基础设施已合并 main；仅积累数据，暂不启用人声分离
 
 ### 目标
 
-实现无人值守的李豆沙/非李豆沙字幕二配色：李豆沙用 sapphire、非李豆沙用白色；独播整场自动 `FAST_SOLO`，联动才运行完整二分离。开发期可做人耳审阅，最终生产不得依赖人工 override。当前仍未达到无人值守联动交付门。
+长期目标仍是无人值守的李豆沙/非李豆沙字幕二配色：李豆沙用 sapphire、非李豆沙用白色；独播整场自动 `FAST_SOLO`，联动才运行完整二分离。当前用户决策是进入跨直播数据积累阶段，暂不启用人声分离、provider 或 `FAST_SOLO`；开发期未来可集中做人耳审阅，最终生产不得依赖人工 override。
 
 ### 已完成
 
@@ -22,11 +22,12 @@
 - 已提交未来联动证据旁路 `b0adfe24d4f957af53979e3863d0fb845e9a86d6`：普通独播无触发时在任何文件系统/hash/model/process 前返回；只有已验证 provider 的 opaque trigger 或至少两类明确联动文本信号才在成品 state/report 落盘后排队独立 bounded worker。worker 只保存 hash-bound、未标注的真实 SRT cue PCM WAV；不保存 provider verdict/candidate ID/原文，不产生标签/预测，不授权训练或上传。
 - capture 每场最多 120 cue，排除 song interval，校验 source/SRT 前后 stat+hash、源时长、PCM16 mono 16 kHz WAV、cue interval、manifest/queue integrity；只计 2026-07-13 起的未来候选场次，累计 5 场时一次性告警，但 `confirmed_collab_session=false`、`training_ready=false`。
 - fresh reviewer 的两轮负向 canary 修掉任意 `text_signal_classes` 注入、原因码不一致、已有 request 复用、字符串 song interval 绕过等缺口；相关独立回归 `176 passed`，最终无材料性 finding。对齐 `805a704` 后稳定全仓回归 `933 passed`，`py_compile`、`git diff --check`、`git show --check HEAD` 全通过。详细证据与继续路径见 [第二阶段报告](reviews/2026-07-12-speaker-binary-v2-blocker.md)。
+- 诊断/盲听工具先以 `2ebaa3e6dd40f44ab8883150a86058b25ccb4800` 固化；随后 production lineage、speaker 安全壳和 capture 分支以 merge commit `dd9e0d5431d4ceec38133f4deffd9466a8f1a17a` 汇入 `main`。冲突保留 main 的 v10 人工修正、video-replace、Luna handoff 和 report ignore，同时采用分支上经过后续安全增强的 override/runner/finalizer/router/capture。merge 前定向 `248 passed`，fresh 全仓 `936 passed`，10 个关键文件编译、tracked/cached diff-check 全通过。
 
 ### 进行中（含后台进程）
 
 - 从 production `34b9b265` 新建 clean worktree `/private/tmp/vtuber-slice-speaker-clean-20260712`，经过五轮 fresh adversarial review 修完 provider trust、recut provenance/rollback、mixed terminal gate、sticky inventory/anti-rollback、review WAV hash 与路径边界。最终分支 `codex/speaker-binary-clean-20260712`，commit `5d1310c46b2fc9fc2a7687cc0db61cfaa72ab7ab`；全套 `862 passed`，affected `207 passed`，最终 reviewer 无材料性 finding。
-- 最新基线 worktree `/private/tmp/vtuber-slice-speaker-latest-20260712` 已干净，分支上依次为 `21ed85e`（路由安全壳集成）、`b0adfe2`（未标注联动证据采集）与 `5bbaebb`（逐字节等价纳入 production `805a704` 的 huozi 变更）。它仍只是未部署基础设施，不得误称为分类器已完成。
+- `main @ dd9e0d5` 已包含 `21ed85e`（路由安全壳）、`b0adfe2`（未标注联动证据采集）与 production `805a704` 的等价 huozi 变更。代码已合并但未部署，allowlist 仍为空，不能误称为分类器已完成或正在运行。
 - 数据审计确认 Phase1、15/R1、holdout A/B 全部来自同一场 2026-07-09 联动、同一组礼墨Sumi/安晚Awa guest 条件。现有 cue 再多也不能验证跨 session 泛化。
 - ChatGPT Pro 咨询 prompt 与 durable record 已创建，但 Codex in-app browser 两次无法让 `chatgpt.com` 从空白页完成初始导航；record 仍为 `draft_not_submitted`，没有提交，也没有拿别的模式冒充 Pro。
 - `free:/opt/bilive/autoslice/DISABLED` 仍存在；deployment 受控清单 111 项与 `805a704` 完全匹配（missing/sha/mode drift 均为 0，额外仅 pycache/pyc）。当前相关进程全部位于隔离 `/opt/bilive/autoslice/evals/failure-selfheal-6f9da78`，没有 production BASE 的 runner/speaker/uploader。本阶段无部署、上传或 production state/out/ledger 写入。
@@ -35,13 +36,13 @@
 
 - 当前已评分的 direct-v2、WavLM、one-class、v7 与 relative-cluster 012 都不能同时达到 precision、coverage、Li recall 与 mixed REVIEW 门；现有数据/表征下没有已验证的联动二分类器。
 - 下一项真实缺口是跨直播 session 的联动训练/验证数据，而不是继续在同一场候选上后验调阈值。
-- production `805a704` 的 speaker 路径仍只能 fail-closed 等人工，不满足无人值守；新安全分支尚未获部署授权，且没有通过跨 session 门的 acoustic provider/model 可以 allowlist。
+- production `805a704` 仍未包含本次 main merge；没有通过跨 session 门的 acoustic provider/model 可以 allowlist，因此当前按用户决定不启用人声分离。
 - visible Pro 咨询受 in-app browser 初始导航阻塞，当前没有 Pro 结论。
 
 ### 下一步
 
 1. 停止同场后验模型/阈值搜索。最低发布数据线为 6 场真实联动（现有 7/9 + 新 5 场）：3 train、1 dev、2 locked holdout，整场分组；约 120 cue/场，未来约 600 条需 Ivan 开发期盲听。
-2. 获得独立部署授权且 production 仍处于安全维护窗后，才可部署当前 branch tip `5bbaebb`；部署前再次读取实时 production HEAD，禁止覆盖更晚提交，也不得移除 `DISABLED`。部署 capture 只开始收集候选证据，不代表开放 `FAST_SOLO` 或无人值守联动烧录。
+2. 当前只完成本地 `main` 合并，不部署、不移除 `DISABLED`、不启用 speaker provider/`FAST_SOLO`。未来若单独授权部署数据采集，必须再次读取实时 production HEAD，并保持 provider allowlist 为空；capture 只能收集未标注证据，不能改变字幕或发布。
 3. 新 H1/H2 必须先冻结 session/media/cue/model/rule/prediction hashes，再开放无预测盲听；任何后验调参会使其失去 holdout 资格。
 4. 收到 5 场未来候选告警后，先由人耳确认真实联动并完成约 600 条开发/holdout 盲听；H1/H2 只能在模型、规则和预测冻结后审阅。当前没有新音频需要 Ivan 审。
 5. 只有跨 session acoustic provider/model 通过开发集和两场 locked holdout 后，才加入 `AUDITED_PROVIDER_BUNDLES`、做真实 7/9 联动 + 7/10 独播 shadow 与 fresh review；此前保持现有 fail-closed。
