@@ -2149,6 +2149,43 @@ def test_prioritize_global_confidence_ranking_beats_arrival_order():
     assert "全局排序" in state["not_selected"][0]
 
 
+def test_recoverable_failed_pick_reserves_its_seat_from_backfill():
+    """Ivan 2026-07-13 对账铁律：可恢复失败的原选手先复活，候补不许趁基础设施
+    故障上位（7/11 实况：2 条 failed 席被当空席→候补顶上→复活后一天超发 7 条）。
+    重试额度耗尽的不再占席。"""
+    def pick(status, recoverable=None, retries=0):
+        row = {"status": status, "candidate_id": f"p{status}{retries}"}
+        if recoverable is not None:
+            row["failure_recoverable"] = recoverable
+            row["talk_transient_retry_count"] = retries
+        return row
+
+    base_pending = [
+        {"segment_path": f"/rec/s{i}.mp4", "start_ms": i * 1000, "end_ms": i * 1000 + 9000,
+         "hook": f"h{i}", "confidence": 0.9 - i * 0.01, "cid": f"c{i}"}
+        for i in range(6)
+    ]
+    state = {
+        "picks": [pick("review_ready"), pick("review_ready"),
+                  pick("failed", recoverable=True, retries=0)],
+        "songs": [], "pending_song": [],
+        "pending_talk": list(base_pending),
+    }
+    prioritize(state)
+    # 5 席 - 2 已交付 - 1 复活保留 = 2 个候补名额
+    assert len(state["pending_talk"]) == 2, [p["cid"] for p in state["pending_talk"]]
+
+    exhausted = {
+        "picks": [pick("review_ready"), pick("review_ready"),
+                  pick("failed", recoverable=True, retries=99)],
+        "songs": [], "pending_song": [],
+        "pending_talk": list(base_pending),
+    }
+    prioritize(exhausted)
+    # 重试耗尽 → 席位释放 → 3 个候补名额
+    assert len(exhausted["pending_talk"]) == 3
+
+
 def test_not_selected_stays_deduped_across_rerun_ticks():
     """7/11 real failure: 边界自修复后的重选 tick 把同一批候补重复 append，
     AUTOSLICE_SUMMARY 落选一节整段重复。重跑必须幂等。"""

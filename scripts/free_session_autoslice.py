@@ -7213,8 +7213,20 @@ def prioritize(state: dict) -> None:
     selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
     pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
     produced = sum(1 for p in state.get("picks", []) if p.get("status") in DELIVERED_TALK_STATUSES)
+    # 对账铁律（Ivan 2026-07-13）：可恢复失败的原选手优先复活，其席位保留——
+    # 候补不许趁基础设施故障上位（此前 failed 席被当空席，复活后一天超发 7 条）。
+    # 重试额度耗尽的不再占席（否则永久卡死一席，整日欠交付）。
+    reserved_for_revival = sum(
+        1
+        for p in state.get("picks", [])
+        if p.get("status") == "failed"
+        and p.get("failure_recoverable") is True
+        and int(p.get("talk_transient_retry_count") or 0)
+        + int(p.get("talk_repair_retry_count") or 0)
+        < TALK_REPAIR_LIFETIME_RETRY_CAP
+    )
     attempts_left = max(0, TALK_ATTEMPT_CAP - len(state.get("picks", [])))
-    slots = min(max(0, MAX_TALK_PICKS - produced), attempts_left)
+    slots = min(max(0, MAX_TALK_PICKS - produced - reserved_for_revival), attempts_left)
     ranked = sorted(pending_talk, key=lambda x: -(x.get("confidence") or 0.0))
     keep: list[dict] = []
     deferred: list[dict] = []
