@@ -1,0 +1,39 @@
+{
+  "schema": "local-cleanup-manifest.v1",
+  "created_at": "2026-07-13T03:59:42Z",
+  "reason": "Ivan 2026-07-13: 活字乱刷开发 worktree 可以清理，未选中的片头候选不用保留。分支 codex/huozi-luanshua@76b449e 已完全并入 main（merge 9f51a3e），worktree 工作树干净、无未合并内容。选中的候选2已三处持久化并在删除前逐处 sha256 复核（见 preserved）。",
+  "deleted": [
+    {
+      "path": "/Users/ivan/Project/vtuber-slice-huozi-luanshua",
+      "kind": "git worktree (branch codex/huozi-luanshua @ 76b449e, merged into main via 9f51a3e)",
+      "size": "88M",
+      "notable_media_sha256": {
+        "lidousha/2026-07-12/活字乱刷片头-候选1-小李是零-我是为爱做零.mp4": "9227d2610a3da376aea79443ab4b6edd15000e6d619c1b20b6e9baec7c3f97a9",
+        "lidousha/2026-07-12/活字乱刷片头-候选2-小李本来就是零-我是为爱做零.mp4": "04dd12343e7ee34b419cfccfde903fad729a6b0574e99f05493048cbd239cb53",
+        "lidousha/2026-07-12/活字乱刷片头-候选3-豆沙是零-我是为爱做零.mp4": "f4cbd9e17e5b45c607e8792b7eb20a62e8ee75d5c357e19425d457656a48b972",
+        "lidousha/2026-07-12/活字乱刷片头-原句.mp4": "9725da9c0df0f518c0cdd3c8bcfebf0d8cdfdc673eb5ceab86f5364b0787c76b",
+        "lidousha/2026-07-12/活字乱刷片头-建议句.mp4": "4f699cd4d711e869bda878dbd27231c9e712282ea1dcca01370ffd12ccb4855c",
+        "lidousha/2026-07-12/活字乱刷片头-候选C-小李是零.mp4": "2de3b34d69e866a86f57257f51d033260a683982d90a3f526334c78dfa902af3",
+        "lidousha/2026-07-12/活字乱刷片头-候选D-本来就是零.mp4": "40f21f48e19bd36e83d807283aed1f8e92336281109bff73c7a0ca1fb3f89208",
+        "lidousha/2026-07-12/活字乱刷片头-候选E-整句小李是零.mp4": "aac0d64085f5a3a8948dcabb30aedaee878f1e4b2e3658b0ea1b22d8e67b222e",
+        "lidousha/2026-07-12/活字乱刷片头-候选F-我也喜欢女生.mp4": "d13086dd28cda056c68a3e07a0e1dd3450fd3515c2a6033c7d86c6447660c4fc",
+        "lidousha/2026-07-12/活字乱刷片头-候选G-本人只是喜欢看女生而已.mp4": "a9a36381e800cd12b8e8e502687993915d6ae89bb29d02220363aef6fb49fa55"
+      },
+      "inventory_note": "lidousha/2026-07-12/ 共 79 个文件：12 个候选/对比 mp4（候选A=原句、候选B=建议句 字节相同，见哈希）、配套 srt/ass、以及 42 个文件的 活字乱刷片头-v4-证据/（plans、verifications、render manifests、双 ASR QA、声纹打分、专名校正、prod-* 三成片）。候选2 的 prod 成片与其 render manifest 已入库 assets/lidousha/intro/；其余候选按 Ivan 决定不保留。未选候选如需重建：docs/workflows/huozi-luanshua.md + 原录播（123云盘）+ scripts/huozi_luanshua.py 可全链路复现。"
+    },
+    {
+      "path": "refs/heads/codex/huozi-luanshua",
+      "kind": "git branch (tip 76b449e, fully contained in main)",
+      "size_bytes": 0
+    }
+  ],
+  "preserved": {
+    "selected_intro": "活字乱刷片头-候选2-小李本来就是零-我是为爱做零",
+    "sha256": "04dd12343e7ee34b419cfccfde903fad729a6b0574e99f05493048cbd239cb53",
+    "verified_before_deletion": [
+      "free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.v1.mp4 (2026-07-13T03:59Z sha 一致)",
+      "/Users/ivan/Project/vtuber-slice/lidousha/branding/lidousha-branding-intro.v1.mp4 (2026-07-13T03:59Z sha 一致)",
+      "assets/lidousha/intro/branding_intro.v1.json + lidousha-branding-intro.v1.render-manifest.json (committed 出处与哈希绑定)"
+    ]
+  }
+}
