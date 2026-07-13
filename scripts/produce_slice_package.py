@@ -63,6 +63,7 @@ from scripts.run_full_session_selector_cpa_shadow import (
 )
 from scripts.apply_subtitle_text_overrides import apply_document as apply_text_override_document
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
+from scripts.gemini_slice_jingting import approved_timely_terms
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
 from src.autoslice.chat_authority import (
     ChatEvidence,
@@ -97,6 +98,7 @@ from src.autoslice.speaker_session_router import (
 )
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider, sanitize_cue_timing
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
+from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
     TopicEvidence,
     dynamic_referent_groups,
@@ -714,6 +716,56 @@ def _format_srt_timestamp(ms: int) -> str:
     minutes, remainder = divmod(remainder, 60_000)
     seconds, millis = divmod(remainder, 1_000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _render_cues_to_srt(cues) -> str:
+    """Render parsed cues back to SRT text, preserving index/timestamps."""
+
+    blocks = [
+        f"{cue.index}\n{_format_srt_timestamp(cue.start_ms)} --> {_format_srt_timestamp(cue.end_ms)}\n{cue.text}"
+        for cue in cues
+    ]
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def _load_term_boundary_surfaces(spec: dict) -> list[str]:
+    """Known-proper-noun surfaces for cross-cue boundary unification.
+
+    Reuses only already-gated loader outputs — the timely-terms snapshot and
+    topic_entity_graph paths free_session_autoslice.py substitutes per
+    AUTOSLICE_BLIND_TIMELY_TERMS / AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH before
+    invoking this script — the same env vars ``approved_timely_terms`` and
+    the topic-resolution block below already trust.  No reviewed asset path
+    is read directly here.
+    """
+
+    surfaces: list[str] = []
+    for record in approved_timely_terms():
+        surfaces.append(str(record.get("canonical") or ""))
+        surfaces.extend(str(value) for value in record.get("readings") or [])
+        surfaces.extend(str(value) for value in record.get("aliases") or [])
+    if os.environ.get("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH") != "1":
+        graph_path = Path(
+            os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH")
+            or ROOT / "assets" / "lidousha" / "topic_entity_graph.json"
+        )
+        if graph_path.is_file() and not graph_path.is_symlink():
+            try:
+                graph, _graph_sha = load_topic_entity_graph(
+                    graph_path,
+                    expected_sha256=os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", ""),
+                )
+                if dt.datetime.now(dt.timezone.utc) <= dt.datetime.fromisoformat(graph["expires_at"]):
+                    # Full graph, not topic-resolved: resolution below scopes
+                    # entities using this very transcript as evidence, so it
+                    # cannot run before the boundary fix that repairs it.
+                    for entity in graph.get("entities") or []:
+                        surfaces.append(str(entity.get("canonical_zh") or ""))
+                        surfaces.extend(str(value) for value in entity.get("native_names") or [])
+                        surfaces.extend(str(value) for value in entity.get("aliases") or [])
+            except (OSError, ValueError):
+                pass
+    return surfaces
 
 
 def _write_route_mixed_overlap_evidence(
@@ -1667,6 +1719,19 @@ def main(argv: list[str] | None = None) -> int:
     spans = vad(padded, 0, padded_dur)
     srt_text = transcriber(padded, [(s.start_ms, s.end_ms) for s in spans])
     srt_text, code_switch_audit = normalize_code_switch_surfaces(srt_text)
+    # A known proper noun (e.g. 梦限大) straddled across two ASR cues can
+    # never be repaired downstream: every later stage locks cue count and
+    # indices 1:1, so no single cue ever contains the full surface again.
+    # Fix it once, right here, before anything downstream depends on the
+    # cue shape.
+    term_boundary_surfaces = _load_term_boundary_surfaces(spec)
+    term_boundary_moves: list[dict] = []
+    if term_boundary_surfaces:
+        unified_cues, term_boundary_moves = unify_terms_across_cues(
+            parse_srt_cues(srt_text), term_boundary_surfaces
+        )
+        if term_boundary_moves:
+            srt_text = _render_cues_to_srt(unified_cues)
     support_srts = _load_independent_chat_support_srts(padded)
     human_entity_verifier = (
         build_human_text_entity_verifier(text_override_path, candidate_id=cid)
@@ -1775,6 +1840,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     chat_authority_audit["transcript_entity_audit"] = transcript_entity_audit
     chat_authority_audit["code_switch_surface_audit"] = code_switch_audit
+    chat_authority_audit["term_boundary_audit"] = {
+        "schema_version": "term-boundary-audit.v1",
+        "status": "APPLIED" if term_boundary_moves else "NO_CHANGE",
+        "moves": term_boundary_moves,
+    }
     chat_authority_audit.setdefault("entity_repairs", []).extend(
         transcript_entity_audit.get("repairs") or []
     )
