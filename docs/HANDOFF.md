@@ -5,6 +5,8 @@
 
 ## 2026-07-13：生产部署 main@df00581 + 摘 DISABLED + 三日重跑（当前）
 
+> **18:4x UTC 增补（付费兜底提速，Ivan 口头授权）**：回填期间歌切被"生产 ≥3 完整失败轮才许付费"的门卡成龟速（每轮都在等 AGY 重置窗，生产付费 ledger 零点火）。按 Ivan「这几天密集开发可以用」授权，生产 cron runner 已加 `GEMINI_PAID_BACKUP_DEV_EXCEPTION=1`（免费链每轮仍先试、每笔付费入 `state/gemini-paid-backup/usage-*.jsonl`）。**回填（7/10-7/13）收敛后须从 crontab 移除该 env，恢复严格 ≥3 轮门。**
+
 > **18:0x UTC 增补（对齐拼接双墙修复）**：首小时生产/重跑共 5 条 talk 因 `CHAT_AUTHORITY_FINALIZATION_FAILED` 失败——同一设计冲突的两堵墙：①外层 `verify_chat_authority_final_surfaces` 要求 authority 全文进跨度窗口（`d2602d8` 修）；②真正先撞上的是 `apply_authoritative_chat_evidence` **内部自检**（chat_authority.py `survived` 判定，同样要求全文进跨度）——`902d936` 修：弃置头/尾从期望中扣除，且每个弃置声明用同一把尺 `_fragment_spoken_in` 在相邻 ±2 cue 复证，撒谎仍 fail-closed；测试补上曾缺失的 status 断言。生产已再部署 **`902d936 @18:02:19Z`**（DISABLED 保持摘除）；两个隔离 BASE 同步热切。真机验证：7/10 重跑两条老失败位（BW见面前夜/台风天点歌）复活交付，冷笑话成片（4 条 SC 修复含 2 条弃置头）全绿交付。备忘：deploy 脚本客户端被 SIGKILL 时其开场 touch 的 DISABLED 可能残留（两次实况，均已手工恢复）——脚本加固待做。
 
 ### 目标
