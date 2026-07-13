@@ -3,6 +3,33 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-12（续四）：固定片头上线（活字乱刷候选2 强制前置）
+
+### 目标
+
+Ivan 选定活字乱刷候选 2「小李本来就是零，不对，我是为爱做零」为固定片头；此后所有自动切片成品（talk、song、frozen-resume、字幕修正重投）必须前置该片头，缺片头 fail-closed 不交付。活字乱刷工作流本身保持按需手动使用，不进普通流水线。
+
+### 已完成
+
+- 片头字节持久化三处：`free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.v1.mp4`（运行时权威，repo 树外、部署不覆盖）、本地 `lidousha/branding/`（已 gitignore）、原 worktree 交付目录。成片 SHA `04dd1234...cb53`，出处（verified plan/render manifest/逐 piece 来源）整体入库 `assets/lidousha/intro/`。
+- `src/autoslice/branding_intro.py` + `_burn_preview_subtitles(branding_intro=...)`：在最终烧录处、任何 sha256 绑定之前拼接，按成品实测流参数逐 clip 重编码片头后无损 concat（fallback 全重编码），强制 stream contract / 时长和 / full-decode 三重验证。五个交付入口全部接线（producer、runner→selector→shadow、resume、subtitle-correction；batch review 预览有意不接）。`AUTOSLICE_BRANDING_INTRO=off` 仅限测试/应急。
+- 部署校验新增 enabled 策略必须在目标主机可解析；intro manifest 计入 pipeline fingerprint（旧 BLOCK 获得代际重试资格）。
+- 本地全量 `952 passed`（新增 11）；`bba8af7`+`53c8c36` 已由 deploy 脚本上线 free（DEPLOYED_COMMIT `53c8c36`，"branding intro verified" 出现在部署校验输出）。生产 smoke：对 2026-07-10 真实 1080p60 成品在 free 上实拼，走 matched-intro-concat-copy，full decode 干净、时长差 21ms、流参数保持。
+- 活字乱刷指导文档补齐触发面（按需手动、skill 入口、free 数据路径、free_asr_client 逐字 ASR、suggest 命令示例）。
+
+### 进行中（含后台进程）
+
+- 无新增后台进程；`free:/opt/bilive/autoslice/DISABLED` 仍在（人声分离数据积累阶段延续，见续三）。
+
+### 阻塞
+
+- 无。交付 `.srt`/`.ass` sidecar 保持内容时间轴（不含片头位移），偏移记录在 `burned_preview.branding_intro.intro_offset_ms`——若未来上传要带 CC 字幕需先做位移变换。
+
+### 下一步
+
+- 下次真实下播 runner 跑通后，抽查交付 mp4 前 4.3s 确为片头且 `.record.json` 带 `branding_intro` 绑定。
+- 若 Ivan 想换片头：重跑活字乱刷出新候选 → 更新 `assets/lidousha/intro/branding_intro.v1.json` 绑定 + 安装新媒体到 free → deploy（校验会强制两者一致）。
+
 ## 2026-07-12（续三）：安全基础设施已合并 main；仅积累数据，暂不启用人声分离
 
 ### 目标
