@@ -3742,20 +3742,41 @@ def _stage_lidousha_ai_cover(
         directory.mkdir(parents=True, exist_ok=True)
 
     reference_path = cover_refs_dir / f"{candidate_id}.cover-ref.png"
-    ref_command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(media_path),
-        "-vf",
-        "thumbnail=120,scale=1920:-2",
-        "-frames:v",
-        "1",
-        str(reference_path),
-    ]
+    # 受监督重产时可指定封面参考帧（内容时间轴毫秒，Ivan 点名画面用）；
+    # 未设置则维持 thumbnail 自动代表帧。
+    cover_ref_override = os.environ.get("AUTOSLICE_COVER_REF_MS", "").strip()
+    if cover_ref_override.isdigit():
+        ref_command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{int(cover_ref_override) / 1000:.3f}",
+            "-i",
+            str(media_path),
+            "-vf",
+            "scale=1920:-2",
+            "-frames:v",
+            "1",
+            str(reference_path),
+        ]
+    else:
+        ref_command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(media_path),
+            "-vf",
+            "thumbnail=120,scale=1920:-2",
+            "-frames:v",
+            "1",
+            str(reference_path),
+        ]
     completed = subprocess.run(ref_command, check=False, capture_output=True, text=True)
     if completed.returncode != 0 or not reference_path.is_file():
         cover_generation["reference_command"] = ref_command

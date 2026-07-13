@@ -1285,6 +1285,18 @@ _THANK_NAME = re.compile(
 )
 
 
+def _mask_compatible_sender(full_sender: str, masked_sender: str) -> bool:
+    """平台把弹幕发送者打码成「首字+***」；与 SC 的完整发送者名做兼容匹配。"""
+    if not full_sender or not masked_sender:
+        return False
+    if full_sender == masked_sender:
+        return True
+    if masked_sender.endswith("***"):
+        prefix = masked_sender[:-3]
+        return bool(prefix) and full_sender.startswith(prefix)
+    return False
+
+
 def _sender_thank_anchor(text: str, sender: str) -> bool:
     """该字幕行是否在答谢这位 SC 发送者（听岔的名字也算，发送者名是强键）。"""
     alias = _spoken_sender_alias(sender)
@@ -1519,6 +1531,19 @@ def apply_authoritative_chat_evidence(
             if item.kind == "superchat" and item.sender
             else set()
         )
+        # SC 线程延续（2026-07-13 利安/无马懿 实案）：观众先用 SC 提问，随后
+        # 同一人用普通弹幕接龙（弹幕名被打码，只能掩码兼容+时间窗联结）。
+        # 这类弹幕是高先验念读对象——她会直接念出来。
+        thread_anchor = bool(
+            item.kind == "danmaku"
+            and item.sender
+            and any(
+                other.kind == "superchat"
+                and _mask_compatible_sender(other.sender, item.sender)
+                and 0 <= item.offset_ms - other.offset_ms <= 600_000
+                for other in evidence
+            )
+        )
         for start in range(len(cues)):
             if item.kind == "danmaku":
                 if item.offset_ms >= 0:
@@ -1557,6 +1582,25 @@ def apply_authoritative_chat_evidence(
                     and extent >= 0.82
                     and common >= min(6, len(authority_norm))
                 )
+                # SC 线程弹幕按念读处理（Ivan：这是她念的弹幕，不需要听出来）。
+                # 谐音梗让字符相似度结构性失效（无马懿无马懿 vs 吾马已无马矣
+                # difflib common 仅 2），音频二选一对同音候选也无力——判据是
+                # 线程（同人 SC→弹幕接龙）+紧邻时间窗+长度相容，字符重叠只留
+                # 极弱护栏防完全无关句；全程入 applied 审计（thread_anchored）。
+                thread_delay_ms = (
+                    cues[start].start_ms - item.offset_ms if item.offset_ms >= 0 else None
+                )
+                thread_full = (
+                    thread_anchor
+                    and count <= 2
+                    and len(authority_norm) >= 4
+                    and thread_delay_ms is not None
+                    and -2_000 <= thread_delay_ms <= 45_000
+                    and 0.7 <= extent <= 1.4
+                    and common >= 2
+                )
+                if thread_full and not full:
+                    full = True
                 if (
                     full
                     and len(normalize_chat_text(candidate)) > len(authority_norm) + 1
@@ -1636,6 +1680,7 @@ def apply_authoritative_chat_evidence(
                     "mode": "exact_span" if full else "question_particle_patch",
                     "replacement": partial,
                     "preserved_suffix": preserved_suffix,
+                    "thread_anchored": thread_full,
                 }
                 # The first viable cue span is safest: adding a later cue can
                 # improve fuzzy score merely by consuming the beginning of an
@@ -1808,7 +1853,9 @@ def apply_authoritative_chat_evidence(
             # audio-derived transcript must support the read.  Confusable
             # entities instead require the direct verifier path above; a
             # chat-conditioned ASR/AGY agreement can never self-authorize them.
-            if support_scores:
+            # SC 线程接龙弹幕例外：线程+时间窗就是支持（谐音梗时任何转写家族
+            # 都会一致听错，transcript support 结构性缺席）。
+            if support_scores or best.get("thread_anchored"):
                 proposals.append(best)
         elif (
             best_near is not None
@@ -2060,6 +2107,7 @@ def apply_authoritative_chat_evidence(
                 "entity_verdict": proposal.get("entity_verdict"),
                 "read_aloud_verdict": proposal.get("read_aloud_verdict"),
                 "span_alignment": proposal.get("span_alignment"),
+                "thread_anchored": bool(proposal.get("thread_anchored")),
                 "before": before,
                 "after": replacements,
             }

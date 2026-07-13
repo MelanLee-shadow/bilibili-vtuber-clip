@@ -6,13 +6,23 @@
       "entities": [
         {
           "canonical": "恋青",
-          "surfaces": ["恋青"],
-          "readings": ["lian qing", "lianqing"]
+          "surfaces": [
+            "恋青"
+          ],
+          "readings": [
+            "lian qing",
+            "lianqing"
+          ]
         },
         {
           "canonical": "恋死",
-          "surfaces": ["恋死"],
-          "readings": ["lian si", "liansi"]
+          "surfaces": [
+            "恋死"
+          ],
+          "readings": [
+            "lian si",
+            "liansi"
+          ]
         }
       ],
       "reason": "Distinct works. Exact chat establishes spelling only after raw audio independently proves which title the streamer actually said; an immediate reply then inherits that resolved entity."
@@ -22,13 +32,29 @@
       "entities": [
         {
           "canonical": "梦限大",
-          "surfaces": ["梦限大", "梦现代"],
-          "readings": ["meng xian da", "mengxianda", "夢限大みゅーたいぷ"]
+          "surfaces": [
+            "梦限大",
+            "梦现代"
+          ],
+          "readings": [
+            "meng xian da",
+            "mengxianda",
+            "夢限大みゅーたいぷ"
+          ]
         },
         {
           "canonical": "Ave Mujica",
-          "surfaces": ["Ave Mujica", "Mujica", "母鸡卡", "木子卡"],
-          "readings": ["ave mujica", "mujica", "mu ji ka"]
+          "surfaces": [
+            "Ave Mujica",
+            "Mujica",
+            "母鸡卡",
+            "木子卡"
+          ],
+          "readings": [
+            "ave mujica",
+            "mujica",
+            "mu ji ka"
+          ]
         }
       ],
       "reason": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables."
@@ -38,16 +64,57 @@
       "entities": [
         {
           "canonical": "立希",
-          "surfaces": ["立希", "椎名立希"],
-          "readings": ["li xi", "lixi", "taki"]
+          "surfaces": [
+            "立希",
+            "椎名立希"
+          ],
+          "readings": [
+            "li xi",
+            "lixi",
+            "taki"
+          ]
         },
         {
           "canonical": "祥子",
-          "surfaces": ["祥子", "丰川祥子", "Saki", "saki"],
-          "readings": ["xiang zi", "xiangzi", "saki"]
+          "surfaces": [
+            "祥子",
+            "丰川祥子",
+            "Saki",
+            "saki"
+          ],
+          "readings": [
+            "xiang zi",
+            "xiangzi",
+            "saki"
+          ]
         }
       ],
       "reason": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone."
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "kmx",
+          "surfaces": [
+            "kmx"
+          ],
+          "readings": [
+            "kei em eks",
+            "k m x"
+          ]
+        },
+        {
+          "canonical": "乒乓球",
+          "surfaces": [
+            "乒乓球"
+          ],
+          "readings": [
+            "ping pang qiu"
+          ]
+        }
+      ],
+      "reason": "Ivan 2026-07-13: ASR 反复把 kmx（常客人名，突击/称呼语境）听成「乒乓球」（2026-07-10 两个成品实案）。真实乒乓球话题也存在，必须由原始音频强制选择裁决，不得盲替。"
     }
   ]
 }

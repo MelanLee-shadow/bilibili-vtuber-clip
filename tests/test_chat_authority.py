@@ -931,6 +931,54 @@ def test_sender_anchored_sc_near_miss_goes_to_audio_arbitration():
     assert row["outcome"] == "authority_confirmed_by_audio"
 
 
+def test_sc_thread_danmaku_reply_is_verbatim_authority():
+    """2026-07-13 利安/无马懿 实案：观众 SC 提问（诸葛亮谜题）后，同一人用
+    普通弹幕接龙谜底「无马懿，无马懿」（弹幕名被打码成 -***）。她念这条弹幕
+    时谐音梗必然听写错（吾马已无马矣）且任何转写家族都一致听错（support
+    结构性缺席）——线程+时间窗即逐字权威。"""
+    source = _srt("庆功宴上诸葛亮说了什么", "吾马已无马矣", "谁听得懂立语")
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("superchat", -60_000, "诸葛亮空城计之后庆功宴上说了什么", "-利安-"),
+            ChatEvidence("danmaku", 2_000, "无马懿，无马懿", "-***"),
+        ],
+    )
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert texts[1] == "无马懿，无马懿", texts
+    row = next(r for r in audit["applied"] if r["exact_text"] == "无马懿，无马懿")
+    assert row["thread_anchored"] is True
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit["status"]
+
+
+def test_unrelated_masked_danmaku_gets_no_thread_privilege():
+    """掩码首字不匹配（或无 SC 前情）的弹幕不享受线程豁免：不改字幕。"""
+    source = _srt("吾马已无马矣")
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("superchat", -60_000, "诸葛亮空城计之后庆功宴上说了什么", "-利安-"),
+            ChatEvidence("danmaku", 2_000, "无马懿，无马懿", "K***"),
+        ],
+    )
+    assert parse_srt_cues(output)[0].text == "吾马已无马矣"
+    assert audit["applied"] == []
+
+
+def test_spoken_repeat_after_read_survives():
+    """2026-07-10 戴上眼罩 实案：念完弹幕后她复读片段再回应——复读 cue 绝不能
+    被念读替换吞掉。"""
+    source = _srt("李豆沙戴上眼罩挑战", "戴上眼罩", "是的")
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, "李豆沙戴上眼罩挑战")],
+        support_srt_texts=[source],
+    )
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert texts[1] == "戴上眼罩", texts
+    assert texts[2] == "是的"
+
+
 def test_hard_meme_rule_applies_to_quoted_danmaku_evidence_too():
     """Ivan 铁律覆盖证据入口：观众弹幕原文写「直女」时，逐字注入前先回正，
     不允许 verbatim 权威把已规范化的字幕改回直女。"""
