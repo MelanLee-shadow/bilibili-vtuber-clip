@@ -5666,12 +5666,39 @@ def _run_source_context_agy(media_path: Path, draft_srt_path: Path, output_srt_p
     from scripts.gemini_slice_jingting import (
         AGY_MODEL,
         GEMINI_MODEL,
+        parse_timeout_seconds,
         run_agy,
         run_gemini_api,
     )
 
+    # The song selector intentionally gives long-form song proof a much larger
+    # AGY budget.  Source-context text refinement is only the preferred first
+    # lane before Gemini API and must not inherit that process-global budget.
+    # Pass this budget explicitly so concurrent callers cannot race through
+    # environment mutation and audio/LRC proof remains unchanged.
+    # Formal blind runs completed healthy source-context AGY work in
+    # 6m06s-6m32s.  Eight minutes keeps observed-good work alive while still
+    # bounding a hung first provider far below the inherited 30m song budget.
+    print_timeout = os.environ.get("SOURCE_CONTEXT_AGY_PRINT_TIMEOUT", "8m").strip()
+    if not re.fullmatch(r"[1-9]\d*[smh]?", print_timeout):
+        print_timeout = "8m"
     try:
-        job_dir = run_agy(str(media_path), str(draft_srt_path), str(output_srt_path))
+        timeout_grace_seconds = int(
+            os.environ.get("SOURCE_CONTEXT_AGY_TIMEOUT_GRACE_SECONDS", "60")
+        )
+    except ValueError:
+        timeout_grace_seconds = 60
+    timeout_grace_seconds = min(300, max(0, timeout_grace_seconds))
+    process_timeout_seconds = parse_timeout_seconds(print_timeout) + timeout_grace_seconds
+
+    try:
+        job_dir = run_agy(
+            str(media_path),
+            str(draft_srt_path),
+            str(output_srt_path),
+            print_timeout=print_timeout,
+            process_timeout_seconds=process_timeout_seconds,
+        )
     except Exception as agy_exc:
         try:
             job_dir = run_gemini_api(

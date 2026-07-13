@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -179,6 +180,78 @@ def test_run_agy_classifies_quota_and_preserves_retry_after(tmp_path, monkeypatc
     assert caught.value.retry_after_seconds == 40 * 60 + 58
 
 
+def test_run_agy_classifies_explicit_process_timeout(tmp_path, monkeypatch):
+    from src.autoslice.source_context_executor import AgyRunnerError
+
+    agy = _write(tmp_path / "agy", b"binary")
+    source = _write(tmp_path / "source.mp4", b"source")
+    draft = _write(tmp_path / "draft.srt", "1\n00:00:00,000 --> 00:00:01,000\n旧字\n")
+    monkeypatch.setattr(jingting, "AGY_BIN", str(agy))
+    monkeypatch.setattr(jingting, "JINGTING_JOB_ROOT", str(tmp_path / "jobs"))
+    monkeypatch.setattr(
+        jingting,
+        "remux_for_agy",
+        lambda _source, job_dir: _write(job_dir / "input.mp4", b"prepared"),
+    )
+    captured = {}
+
+    def fake_run(command, *, cwd, timeout, **_kwargs):
+        captured["command"] = command
+        captured["cwd"] = Path(cwd)
+        captured["timeout"] = timeout
+        raise subprocess.TimeoutExpired(command, timeout, output="partial", stderr="hung")
+
+    monkeypatch.setattr(jingting.subprocess, "run", fake_run)
+    with pytest.raises(AgyRunnerError) as caught:
+        jingting.run_agy(
+            str(source),
+            str(draft),
+            str(tmp_path / "refined.srt"),
+            print_timeout="4m",
+            process_timeout_seconds=270,
+        )
+
+    assert caught.value.reason_code == "AGY_TIMEOUT"
+    assert caught.value.retry_after_seconds is None
+    assert captured["command"][captured["command"].index("--print-timeout") + 1] == "4m"
+    assert captured["timeout"] == 270
+    assert captured["cwd"].joinpath("agy.stdout").read_text(encoding="utf-8") == "partial"
+    assert captured["cwd"].joinpath("agy.stderr").read_text(encoding="utf-8") == "hung"
+
+
+def test_run_agy_default_budget_remains_unchanged_for_non_source_context_callers(tmp_path, monkeypatch):
+    agy = _write(tmp_path / "agy", b"binary")
+    source = _write(tmp_path / "source.mp4", b"source")
+    draft_text = "1\n00:00:00,000 --> 00:00:01,000\n旧字\n"
+    draft = _write(tmp_path / "draft.srt", draft_text)
+    output = tmp_path / "refined.srt"
+    monkeypatch.setattr(jingting, "AGY_BIN", str(agy))
+    monkeypatch.setattr(jingting, "AGY_TIMEOUT", "15m")
+    monkeypatch.setattr(jingting, "JINGTING_JOB_ROOT", str(tmp_path / "jobs"))
+    monkeypatch.setattr(
+        jingting,
+        "remux_for_agy",
+        lambda _source, job_dir: _write(job_dir / "input.mp4", b"prepared"),
+    )
+    captured = {}
+
+    class Completed:
+        returncode = 0
+        stdout = draft_text
+        stderr = ""
+
+    def fake_run(command, *, timeout, **_kwargs):
+        captured["command"] = command
+        captured["timeout"] = timeout
+        return Completed()
+
+    monkeypatch.setattr(jingting.subprocess, "run", fake_run)
+    jingting.run_agy(str(source), str(draft), str(output))
+
+    assert captured["command"][captured["command"].index("--print-timeout") + 1] == "15m"
+    assert captured["timeout"] == 15 * 60 + 120
+
+
 def test_gemini_api_fallback_rotates_keys_and_restores_draft_timing(tmp_path, monkeypatch):
     source = _write(tmp_path / "source.mp4", b"source")
     draft = _write(tmp_path / "draft.srt", "1\n00:00:00,000 --> 00:00:01,000\n旧字\n")
@@ -207,3 +280,30 @@ def test_gemini_api_fallback_rotates_keys_and_restores_draft_timing(tmp_path, mo
     assert manifest["accepted_key_ordinal"] == 2
     assert "key-2" not in json.dumps(manifest)
     assert job_dir.is_dir()
+
+
+def test_gemini_api_failure_diagnostics_never_persist_configured_keys(tmp_path, monkeypatch):
+    source = _write(tmp_path / "source.mp4", b"source")
+    draft = _write(tmp_path / "draft.srt", "1\n00:00:00,000 --> 00:00:01,000\n旧字\n")
+    job_root = tmp_path / "jobs"
+    secret = "super-secret-gemini-key"
+    monkeypatch.setattr(jingting, "JINGTING_JOB_ROOT", str(job_root))
+    monkeypatch.setattr(jingting, "extract_audio", lambda _source, target: bool(_write(Path(target), b"mp3")))
+    monkeypatch.setattr(jingting, "gemini_keys", lambda: [secret])
+    monkeypatch.setattr(
+        jingting,
+        "gemini_correct",
+        lambda _audio, _srt, key, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(f"request failed at https://example.invalid?key={key}")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="exhausted 1 configured key"):
+        jingting.run_gemini_api(str(source), str(draft), str(tmp_path / "refined.srt"))
+
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in job_root.rglob("*")
+        if path.is_file()
+    )
+    assert secret not in persisted

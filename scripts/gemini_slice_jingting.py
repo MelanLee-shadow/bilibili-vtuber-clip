@@ -976,10 +976,41 @@ Current draft.srt content:
 """
 
 
-def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
+def _subprocess_output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def run_agy(
+    slice_path: str,
+    srt_path: str,
+    out_path: str,
+    *,
+    print_timeout: str | None = None,
+    process_timeout_seconds: int | None = None,
+) -> str:
+    """Run AGY with an optional caller-scoped budget.
+
+    Most callers retain the established ``AGY_PRINT_TIMEOUT`` budget.  A
+    latency-sensitive caller such as source-context refinement can pass a
+    shorter print/process timeout without mutating process-global environment
+    state or shortening the independent song audio/LRC proof budget.
+    """
+
     agy_bin = shutil.which(AGY_BIN) or AGY_BIN
     if not os.path.exists(agy_bin):
         raise FileNotFoundError(f"agy binary not found: {AGY_BIN}")
+    effective_print_timeout = print_timeout or AGY_TIMEOUT
+    effective_process_timeout = (
+        process_timeout_seconds
+        if process_timeout_seconds is not None
+        else parse_timeout_seconds(effective_print_timeout) + 120
+    )
+    if effective_process_timeout <= 0:
+        raise ValueError("process_timeout_seconds must be positive")
 
     slice_p = Path(slice_path)
     stem = slice_p.stem
@@ -1022,17 +1053,31 @@ def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
         "-p",
         short_prompt,
         "--print-timeout",
-        AGY_TIMEOUT,
+        effective_print_timeout,
     ]
     started = utc_now()
-    proc = subprocess.run(
-        cmd,
-        cwd=job_dir,
-        env=agy_subprocess_env(),
-        capture_output=True,
-        text=True,
-        timeout=parse_timeout_seconds(AGY_TIMEOUT) + 120,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=job_dir,
+            env=agy_subprocess_env(),
+            capture_output=True,
+            text=True,
+            timeout=effective_process_timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        (job_dir / "agy.stdout").write_text(
+            _subprocess_output_text(exc.stdout), encoding="utf-8"
+        )
+        (job_dir / "agy.stderr").write_text(
+            _subprocess_output_text(exc.stderr), encoding="utf-8"
+        )
+        from src.autoslice.source_context_executor import AgyRunnerError
+
+        raise AgyRunnerError(
+            "AGY_TIMEOUT",
+            f"agy exceeded the {effective_process_timeout}s process timeout; see {job_dir}",
+        ) from exc
     (job_dir / "agy.stdout").write_text(proc.stdout, encoding="utf-8")
     (job_dir / "agy.stderr").write_text(proc.stderr, encoding="utf-8")
 
@@ -1112,7 +1157,7 @@ def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
     if not extract_audio(str(slice_p), str(audio)):
         raise RuntimeError(f"Gemini API fallback audio extraction failed; see {job_dir}")
     srt_text = Path(srt_path).read_text(encoding="utf-8")
-    errors: list[str] = []
+    errors: list[dict[str, object]] = []
     corrected = ""
     for index, key in enumerate(keys, start=1):
         try:
@@ -1127,7 +1172,17 @@ def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
             corrected = restore_draft_timing(srt_text, corrected)
             break
         except Exception as exc:  # each configured key is an independent failover lane
-            errors.append(f"key#{index}:{type(exc).__name__}:{str(exc)[:200]}")
+            # Exception text from an HTTP client may contain its request URL,
+            # including the Gemini key query parameter.  Persist only bounded,
+            # non-secret structural diagnostics.
+            diagnostic: dict[str, object] = {
+                "key_ordinal": index,
+                "error_type": type(exc).__name__,
+            }
+            status = getattr(exc, "code", None)
+            if isinstance(status, int):
+                diagnostic["http_status"] = status
+            errors.append(diagnostic)
             corrected = ""
     if not corrected:
         (job_dir / "errors.json").write_text(

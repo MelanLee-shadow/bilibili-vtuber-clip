@@ -1526,7 +1526,7 @@ def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_pat
     monkeypatch.setattr(
         jingting,
         "run_agy",
-        lambda *_args: (_ for _ in ()).throw(
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AgyRunnerError("AGY_QUOTA_EXHAUSTED", "quota", retry_after_seconds=120)
         ),
     )
@@ -1541,6 +1541,56 @@ def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_pat
     assert result.provider == "gemini_api"
     assert result.provider_fallback_used is True
     assert result.agy_rc is None
+    assert output.is_file()
+
+
+@pytest.mark.parametrize(
+    ("print_timeout", "grace_seconds", "expected"),
+    [
+        (None, None, {"print_timeout": "8m", "process_timeout_seconds": 540}),
+        ("4m", "30", {"print_timeout": "4m", "process_timeout_seconds": 270}),
+    ],
+)
+def test_default_source_context_runner_bounds_hung_agy_before_gemini_fallback(
+    tmp_path, monkeypatch, print_timeout, grace_seconds, expected
+):
+    from scripts import gemini_slice_jingting as jingting
+    from src.autoslice.source_context_executor import AgyRunnerError
+
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"media")
+    draft = tmp_path / "draft.srt"
+    draft.write_text("1\n00:00:00,000 --> 00:00:01,000\n旧字\n", encoding="utf-8")
+    output = tmp_path / "output.srt"
+    if print_timeout is None:
+        monkeypatch.delenv("SOURCE_CONTEXT_AGY_PRINT_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("SOURCE_CONTEXT_AGY_PRINT_TIMEOUT", print_timeout)
+    if grace_seconds is None:
+        monkeypatch.delenv("SOURCE_CONTEXT_AGY_TIMEOUT_GRACE_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("SOURCE_CONTEXT_AGY_TIMEOUT_GRACE_SECONDS", grace_seconds)
+    captured = {}
+
+    def fake_agy(*_args, **kwargs):
+        captured.update(kwargs)
+        raise AgyRunnerError("AGY_TIMEOUT", "hung")
+
+    gemini_calls = []
+
+    def fake_gemini(_media, _draft, out):
+        gemini_calls.append((_media, _draft, out))
+        Path(out).write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
+        return "gemini-job"
+
+    monkeypatch.setattr(jingting, "run_agy", fake_agy)
+    monkeypatch.setattr(jingting, "run_gemini_api", fake_gemini)
+    result = shadow_pipeline._run_source_context_agy(media, draft, output)
+
+    assert captured == expected
+    assert len(gemini_calls) == 1
+    assert result.provider == "gemini_api"
+    assert result.provider_fallback_used is True
     assert output.is_file()
 
 
