@@ -1975,6 +1975,158 @@ def test_llm_song_hint_queries_reach_provider_first(tmp_path):
     assert hint_attempts and hint_attempts[0].status == "SUCCESS"
 
 
+def test_lrc_discovery_round_robins_wrong_visual_results_with_llm_identity(tmp_path):
+    """A wrong screen-title query must not monopolize the global LRC pool.
+
+    The real failure returned eight unrelated ``孤单北半球`` rows for the
+    first visual query, exhausting ``max_lrc_candidates=8`` before the LLM's
+    correct ``小幸运`` query was ever sent to the provider.
+    """
+
+    lyrics = [
+        "我听见雨滴落在青青草地",
+        "我听见远方下课钟声响起",
+        "可是我没有听见你的声音",
+        "认真呼唤我姓名",
+        "爱上你的时候还不懂感情",
+        "离别了才觉得刻骨铭心",
+        "为什么没有发现遇见了你",
+        "是生命最好的事情",
+        "原来你是我最想留住的幸运",
+        "原来我们和爱情曾经靠得那么近",
+    ]
+    cues = [
+        SourceCue(
+            cue_id=f"lucky-{index}",
+            source_start_ms=10_000 + index * 7_000,
+            source_end_ms=16_000 + index * 7_000,
+            text=text,
+            kind="singing",
+        )
+        for index, text in enumerate(lyrics)
+    ]
+    wrong_visual_results = [
+        LrcResult(
+            provider="fake",
+            song_title=f"孤单北半球错误版本{index}",
+            artist=None,
+            source_ref=f"fake://wrong-visual/{index}",
+            lines=tuple(
+                LrcLine(time_ms=line * 7_000, text=f"完全不相关的错误歌词{index}-{line}")
+                for line in range(10)
+            ),
+        )
+        for index in range(8)
+    ]
+    right = LrcResult(
+        provider="fake",
+        song_title="小幸运",
+        artist="田馥甄",
+        source_ref="fake://right/xiao-xing-yun",
+        lines=tuple(LrcLine(time_ms=index * 7_000, text=text) for index, text in enumerate(lyrics)),
+    )
+    queries_seen: list[str] = []
+
+    def provider(query: str):
+        queries_seen.append(query)
+        if query == "孤单北半球":
+            return wrong_visual_results
+        if query in {"小幸运 田馥甄", "小幸运"}:
+            return [right]
+        return []
+
+    source_media = tmp_path / "current-full-window.mp4"
+
+    def audio_lrc_aligner(_source_media, selected_lrc, candidate_id, _output_dir):
+        assert selected_lrc.source_ref == right.source_ref
+        return _write_fake_audio_alignment_run(tmp_path, selected_lrc, candidate_id=candidate_id)
+
+    result = attempt_song_repair(
+        candidate_id="wrong-visual-right-llm",
+        cues=cues,
+        anchor_start_ms=20_000,
+        anchor_end_ms=50_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path,
+        lrc_provider=provider,
+        hint_llm_call=lambda _prompt: '{"guesses": [{"title": "小幸运", "artist": "田馥甄"}]}',
+        extra_queries=("孤单北半球",),
+        max_lrc_candidates=8,
+        source_media_path=source_media,
+        audio_lrc_aligner=audio_lrc_aligner,
+    )
+
+    assert result.repaired is True
+    assert result.song_boundary["song_title"] == "小幸运"
+    assert queries_seen[:2] == ["孤单北半球", "小幸运 田馥甄"]
+    identity = next(attempt for attempt in result.attempts if attempt.step == "agy_audio_lrc_identity")
+    assert "primary='小幸运'" in identity.detail
+    aligned = [attempt.detail for attempt in result.attempts if attempt.step == "candidate_alignment"]
+    assert any("小幸运" in detail and "100%" in detail for detail in aligned)
+    # Breadth-first admission keeps one result from the wrong visual query;
+    # it cannot consume all eight global slots again.
+    assert sum("孤单北半球错误版本" in detail for detail in aligned) < 8
+
+
+def test_lrc_discovery_keeps_correct_visual_query_first(tmp_path):
+    queries_seen: list[str] = []
+
+    def provider(query: str):
+        queries_seen.append(query)
+        if query == "侠客行":
+            return [_matching_lrc()]
+        return []
+
+    result = attempt_song_repair(
+        candidate_id="correct-visual-stays-first",
+        cues=_song_cues(),
+        anchor_start_ms=60_000,
+        anchor_end_ms=80_000,
+        source_duration_ms=300_000,
+        output_dir=tmp_path,
+        lrc_provider=provider,
+        hint_llm_call=lambda _prompt: '{"guesses": [{"title": "错误猜测", "artist": ""}]}',
+        extra_queries=("侠客行",),
+    )
+
+    assert result.repaired is True
+    assert result.song_boundary["song_title"] == "侠客行"
+    assert queries_seen[0] == "侠客行"
+    first_alignment = next(attempt for attempt in result.attempts if attempt.step == "candidate_alignment")
+    assert "侠客行" in first_alignment.detail
+
+
+def test_lrc_discovery_provider_errors_are_bounded_and_each_query_source_gets_a_turn(tmp_path):
+    calls: list[str] = []
+    expected_lyric_query = _build_lyric_queries(_song_cues(), 60_000, 80_000)[0]
+
+    def broken(query: str):
+        calls.append(query)
+        raise RuntimeError("provider unavailable")
+
+    result = attempt_song_repair(
+        candidate_id="bounded-provider-errors",
+        cues=_song_cues(),
+        anchor_start_ms=60_000,
+        anchor_end_ms=80_000,
+        source_duration_ms=300_000,
+        output_dir=tmp_path,
+        lrc_provider=broken,
+        hint_llm_call=lambda _prompt: '{"guesses": [{"title": "小幸运", "artist": "田馥甄"}]}',
+        extra_queries=("孤单北半球", "另一个视觉提示"),
+        max_queries=3,
+    )
+
+    assert result.repaired is False
+    assert calls == ["孤单北半球", "小幸运 田馥甄", expected_lyric_query]
+    assert len(calls) == 3
+    failure = next(
+        attempt for attempt in result.attempts
+        if attempt.step == "lrc_discovery" and attempt.status == "FAILED"
+    )
+    assert "provider unavailable" in failure.detail
+
+
 def test_pinned_lrc_repairs_when_search_finds_nothing(tmp_path):
     # Reproduces the real 《屑屑》 failure: LLM hint guessed wrong songs and text
     # search found nothing that aligned, so the song was never identified and the

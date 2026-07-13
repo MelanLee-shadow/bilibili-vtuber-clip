@@ -301,6 +301,48 @@ def _singable_lrc_result(lrc: LrcResult) -> tuple[LrcResult, int]:
     )
 
 
+def _round_robin_unique_queries(
+    query_groups: Sequence[Sequence[str]],
+    *,
+    max_queries: int,
+) -> list[str]:
+    """Schedule distinct discovery queries breadth-first across evidence lanes.
+
+    Screen/visual hints are intentionally the first lane, but they are only a
+    hint: one wrong title must not consume the whole query budget before the
+    LLM-recognized title or audio-ASR lyric lines get a provider turn.  The
+    global provider-call budget remains ``max_queries``.
+    """
+
+    limit = max(0, int(max_queries))
+    if not limit:
+        return []
+    groups = [
+        [query.strip() for query in group if isinstance(query, str) and query.strip()]
+        for group in query_groups
+    ]
+    positions = [0] * len(groups)
+    seen: set[str] = set()
+    scheduled: list[str] = []
+    while len(scheduled) < limit:
+        progressed = False
+        for group_index, group in enumerate(groups):
+            while positions[group_index] < len(group):
+                query = group[positions[group_index]]
+                positions[group_index] += 1
+                if query in seen:
+                    continue
+                seen.add(query)
+                scheduled.append(query)
+                progressed = True
+                break
+            if len(scheduled) >= limit:
+                break
+        if not progressed:
+            break
+    return scheduled
+
+
 def attempt_song_repair(
     *,
     candidate_id: str,
@@ -360,7 +402,8 @@ def attempt_song_repair(
         )
         return _finish(candidate_id, attempts, output_dir)
 
-    queries: list[str] = [q.strip() for q in extra_queries if isinstance(q, str) and q.strip()]
+    explicit_queries = [q.strip() for q in extra_queries if isinstance(q, str) and q.strip()]
+    llm_queries: list[str] = []
     if hint_llm_call is not None:
         # Semantic repair: garbled ASR defeats text search, but an LLM can often
         # still recognize the song from misheard lyrics and give clean queries.
@@ -374,9 +417,12 @@ def attempt_song_repair(
                 attempts.append(SongRepairAttempt("llm_song_hint", "SUCCESS", f"guessed queries: {hints}"))
             else:
                 attempts.append(SongRepairAttempt("llm_song_hint", "FAILED", "LLM returned no usable song guesses"))
-        queries.extend(hints)
-    queries.extend(_build_lyric_queries(window, anchor_start_ms, anchor_end_ms))
-    deduped_queries = list(dict.fromkeys(q for q in queries if q))[:max_queries]
+        llm_queries.extend(hints)
+    lyric_queries = _build_lyric_queries(window, anchor_start_ms, anchor_end_ms)
+    deduped_queries = _round_robin_unique_queries(
+        (explicit_queries, llm_queries, lyric_queries),
+        max_queries=max_queries,
+    )
 
     candidates: list[LrcResult] = []
     seen_refs: set[str] = set()
@@ -399,21 +445,41 @@ def attempt_song_repair(
                 )
             )
     provider_errors: list[str] = []
-    if lrc_provider is not None:
+    provider_results: list[tuple[str, list[LrcResult]]] = []
+    provider_candidate_cap = max(0, int(max_lrc_candidates))
+    if lrc_provider is not None and len(candidates) < provider_candidate_cap:
         for query in deduped_queries:
-            if len(candidates) >= max_lrc_candidates:
-                break
             try:
                 found = lrc_provider(query)
             except Exception as exc:  # provider failures must not crash review; they are recorded
                 provider_errors.append(f"{query!r}: {type(exc).__name__}: {exc}")
                 continue
-            found_list = _coerce_lrc_results(found)
-            for item in found_list:
+            # A provider may return many near-identical search rows.  Retain at
+            # most the existing global candidate budget from any one call;
+            # admission below is breadth-first across calls.
+            provider_results.append((query, _coerce_lrc_results(found)[:provider_candidate_cap]))
+
+        # Round-robin the provider result rank too.  Previously the first query
+        # could append all eight rows and prevent a later correct title from
+        # entering the pool at all.  Query order still makes the visual result
+        # first when it is right, while actual ASR/audio proof may overturn it.
+        result_rank = 0
+        while len(candidates) < provider_candidate_cap:
+            progressed = False
+            for _query, found_list in provider_results:
+                if result_rank >= len(found_list):
+                    continue
+                progressed = True
+                item = found_list[result_rank]
                 prepared, _excluded_metadata = _singable_lrc_result(item)
                 if prepared.lines and prepared.source_ref not in seen_refs:
                     seen_refs.add(prepared.source_ref)
                     candidates.append(prepared)
+                    if len(candidates) >= provider_candidate_cap:
+                        break
+            if not progressed:
+                break
+            result_rank += 1
     if not candidates:
         detail = f"no LRC found for {len(deduped_queries)} queries {deduped_queries!r}"
         if provider_errors:
