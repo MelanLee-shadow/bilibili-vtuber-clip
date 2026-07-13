@@ -18,9 +18,12 @@ from pathlib import Path
 
 from scripts.gemini_slice_jingting import agy_subprocess_env, parse_timeout_seconds, strip_markdown_fence
 from src.autoslice.song_repair import (
+    AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+    AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
     AudioLrcAlignmentRun,
     LrcResult,
+    canonicalize_audio_lrc_observation,
 )
 
 AGY_AUDIO_LRC_MODEL = "Gemini 3.5 Flash (High)"
@@ -138,7 +141,10 @@ Write relative `alignment.json` as JSON only, with exactly these keys:
 
 Requirements:
 1. `observations` must contain exactly one row for every `source.lrc` line, in
-   the same zero-based order. Echo each LRC timestamp and text exactly.
+   the same zero-based order. `lrc_index` is the only row identity: never skip,
+   duplicate, reorder, or guess an index from text similarity. Echoing
+   `lrc_time_ms` and `text` is diagnostic only; code restores both fields from
+   immutable `source.lrc` by the validated exact index before proof validation.
 2. Use integer, clip-relative milliseconds. Heard rows need
    `0 <= live_start_ms < live_end_ms <= {duration_ms}` and confidence 0..1.
    Unheard rows use null times.
@@ -162,6 +168,8 @@ Requirements:
      false; set the corresponding other/recorded/ambiguous fields honestly.
 4. Use exactly the five spot-check names shown. Each time must point to the
    named audible event; use `result: "OK"` only after checking that point.
+   Do not restate or normalize lyric text in spot-check notes; the observation
+   index plus its performed time binds the check to the canonical LRC row.
    If the LRC contains an exact repeated lyric, `repeated_section` must point
    to a later audible recurrence, not the first occurrence.
    The `tail` time must be inside the final heard lyric interval using the
@@ -303,23 +311,30 @@ def run_agy_audio_lrc_alignment(
             f"{failure_code}: AGY audio-LRC alignment failed rc={completed.returncode}; see {job_dir}"
         )
 
-    output_path = job_dir / "alignment.json"
-    if not output_path.is_file():
+    provider_raw_output_path = job_dir / "alignment.json"
+    if not provider_raw_output_path.is_file():
         raise RuntimeError(f"AGY_EMPTY_OUTPUT: AGY returned rc=0 without alignment.json; see {job_dir}")
-    raw = strip_markdown_fence(output_path.read_text(encoding="utf-8"))
+    provider_raw_bytes = provider_raw_output_path.read_bytes()
+    provider_raw_sha = hashlib.sha256(provider_raw_bytes).hexdigest()
+    raw = strip_markdown_fence(provider_raw_bytes.decode("utf-8"))
     if len(raw.encode("utf-8")) > 2_000_000:
         raise RuntimeError("AGY alignment.json exceeds 2MB safety cap")
     try:
-        payload = json.loads(raw)
+        provider_payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"AGY alignment.json is invalid JSON: {exc}") from exc
+    try:
+        payload = canonicalize_audio_lrc_observation(provider_payload, lrc)
+    except ValueError as exc:
+        raise RuntimeError(f"AGY_LRC_INDEX_INVALID: {exc}; see {job_dir}") from exc
+    output_path = job_dir / "alignment.canonical.json"
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(output_path, 0o600)
     output_sha = _sha256(output_path)
 
     manifest_path = job_dir / "run.manifest.json"
     manifest = {
-        "schema_version": "agy-audio-lrc-run.v1",
+        "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
         "attempt_id": attempt_id,
         "candidate_id": candidate_id,
         "provider": "agy",
@@ -327,6 +342,15 @@ def run_agy_audio_lrc_alignment(
         "provider_fallback_used": False,
         "agy_rc": completed.returncode,
         "sandbox": True,
+        "canonicalization": {
+            "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
+            "row_identity": "strict_zero_based_lrc_index",
+            "restored_fields": ["lrc_time_ms", "text"],
+            "row_count": len(lrc.lines),
+            "canonical_lrc_sha256": lrc_sha,
+            "provider_raw_output_sha256": provider_raw_sha,
+            "canonicalized_output_sha256": output_sha,
+        },
         "started_at": started_at,
         "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "artifacts": {
@@ -338,6 +362,8 @@ def run_agy_audio_lrc_alignment(
             "lrc_sha256": lrc_sha,
             "prompt_path": str(prompt_path),
             "prompt_sha256": prompt_sha,
+            "provider_raw_output_path": str(provider_raw_output_path),
+            "provider_raw_output_sha256": provider_raw_sha,
             "output_path": str(output_path),
             "output_sha256": output_sha,
         },
@@ -363,4 +389,6 @@ def run_agy_audio_lrc_alignment(
         output_sha256=output_sha,
         manifest_path=str(manifest_path),
         manifest_sha256=manifest_sha,
+        provider_raw_output_path=str(provider_raw_output_path),
+        provider_raw_output_sha256=provider_raw_sha,
     )

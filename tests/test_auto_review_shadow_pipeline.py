@@ -1192,23 +1192,33 @@ def test_background_mode_from_real_song_repair_cannot_fall_back_to_talk_or_mater
                 other_singer_or_harmony_audible=False,
                 recorded_or_playback_vocal_audible=True,
             )
-        raw_path = Path(run.output_path)
-        raw_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        raw_sha = hashlib.sha256(raw_path.read_bytes()).hexdigest()
-        manifest_path = Path(run.manifest_path)
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["artifacts"]["output_sha256"] = raw_sha
+            canonicalized_path = Path(run.output_path)
+            canonicalized_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            canonicalized_sha = hashlib.sha256(canonicalized_path.read_bytes()).hexdigest()
+            provider_raw_path = Path(str(run.provider_raw_output_path))
+            provider_raw_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            provider_raw_sha = hashlib.sha256(provider_raw_path.read_bytes()).hexdigest()
+            manifest_path = Path(run.manifest_path)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["artifacts"]["provider_raw_output_sha256"] = provider_raw_sha
+            manifest["artifacts"]["output_sha256"] = canonicalized_sha
+            manifest["canonicalization"]["provider_raw_output_sha256"] = provider_raw_sha
+            manifest["canonicalization"]["canonicalized_output_sha256"] = canonicalized_sha
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return dataclasses.replace(
-            run,
-            payload=payload,
-            output_sha256=raw_sha,
+                run,
+                payload=payload,
+                output_sha256=canonicalized_sha,
+                provider_raw_output_sha256=provider_raw_sha,
             manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         )
 

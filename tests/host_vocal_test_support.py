@@ -7,7 +7,9 @@ from pathlib import Path
 
 from src.autoslice import host_vocal_proof as hv
 from src.autoslice.song_repair import (
+    AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+    AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
     AudioLrcAlignmentRun,
     LrcResult,
 )
@@ -274,9 +276,12 @@ def make_ready_audio_alignment_run(
     }
     prompt_path = output_dir / "prompt.md"
     prompt_path.write_text("strict AGY v4 test prompt\n", encoding="utf-8")
-    raw_output = output_dir / "alignment.json"
-    _write_json(raw_output, payload)
-    raw_sha = _sha(raw_output)
+    provider_raw_output = output_dir / "alignment.provider-raw.json"
+    _write_json(provider_raw_output, payload)
+    provider_raw_sha = _sha(provider_raw_output)
+    canonicalized_output = output_dir / "alignment.canonical.json"
+    _write_json(canonicalized_output, payload)
+    canonicalized_sha = _sha(canonicalized_output)
     manifest = output_dir / "run.manifest.json"
     artifacts = {
         "source_origin_path": str(source_media.resolve()),
@@ -287,19 +292,30 @@ def make_ready_audio_alignment_run(
         "lrc_sha256": lrc_sha,
         "prompt_path": str(prompt_path),
         "prompt_sha256": _sha(prompt_path),
-        "output_path": str(raw_output),
-        "output_sha256": raw_sha,
+        "provider_raw_output_path": str(provider_raw_output),
+        "provider_raw_output_sha256": provider_raw_sha,
+        "output_path": str(canonicalized_output),
+        "output_sha256": canonicalized_sha,
     }
     _write_json(
         manifest,
         {
-            "schema_version": "agy-audio-lrc-run.v1",
+            "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
             "candidate_id": candidate_id,
             "provider": "agy",
             "model": "Gemini 3.5 Flash (High)",
             "agy_rc": 0,
             "provider_fallback_used": False,
             "sandbox": True,
+            "canonicalization": {
+                "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
+                "row_identity": "strict_zero_based_lrc_index",
+                "restored_fields": ["lrc_time_ms", "text"],
+                "row_count": len(lrc.lines),
+                "canonical_lrc_sha256": lrc_sha,
+                "provider_raw_output_sha256": provider_raw_sha,
+                "canonicalized_output_sha256": canonicalized_sha,
+            },
             "artifacts": artifacts,
         },
     )
@@ -317,10 +333,12 @@ def make_ready_audio_alignment_run(
         lrc_sha256=lrc_sha,
         prompt_path=str(prompt_path),
         prompt_sha256=_sha(prompt_path),
-        output_path=str(raw_output),
-        output_sha256=raw_sha,
+        output_path=str(canonicalized_output),
+        output_sha256=canonicalized_sha,
         manifest_path=str(manifest),
         manifest_sha256=_sha(manifest),
+        provider_raw_output_path=str(provider_raw_output),
+        provider_raw_output_sha256=provider_raw_sha,
     )
 
 

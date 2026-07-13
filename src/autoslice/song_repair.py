@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import hashlib
 import json
 import re
@@ -57,6 +58,8 @@ LIVE_PERFORMANCE_MODES = {
 }
 
 AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v4"
+AGY_AUDIO_LRC_RUN_SCHEMA_VERSION = "agy-audio-lrc-run.v2"
+AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY = "canonical-lrc-by-exact-index.v1"
 LYRIC_VOCAL_SUBJECTS = {
     "LIDOUSHA",
     "OTHER_OR_MIXED_SINGER",
@@ -237,6 +240,53 @@ class AudioLrcAlignmentRun:
     output_sha256: str
     manifest_path: str
     manifest_sha256: str
+    provider_raw_output_path: str | None = None
+    provider_raw_output_sha256: str | None = None
+
+
+def canonicalize_audio_lrc_observation(
+    payload: Mapping[str, object],
+    lrc: LrcResult,
+) -> dict[str, object]:
+    """Restore immutable LRC text/timestamps using only exact row indices.
+
+    AGY is an audio-observation provider, not a lyric-text authority.  A model
+    may echo Traditional Chinese as Simplified Chinese (or normalize other
+    glyphs) while correctly reporting the audio evidence.  That must not
+    rewrite the externally sourced LRC or reject an otherwise well-indexed
+    observation.  Conversely, text similarity must never be used to guess a
+    row: count, uniqueness and strict zero-based order are validated before
+    the two canonical display fields are restored.
+    """
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("provider audio observation is not a JSON object")
+    observations = payload.get("observations")
+    if not isinstance(observations, list) or len(observations) != len(lrc.lines):
+        raise ValueError("provider audio observation must contain exactly one row per canonical LRC line")
+
+    indices: list[int] = []
+    for position, row in enumerate(observations):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"provider audio observation row {position} is not an object")
+        index = row.get("lrc_index")
+        if not _is_int(index) or not 0 <= int(index) < len(lrc.lines):
+            raise ValueError(f"provider audio observation row {position} lrc_index is out of range")
+        indices.append(int(index))
+    if len(set(indices)) != len(indices):
+        raise ValueError("provider audio observation contains duplicate lrc_index values")
+    expected_indices = list(range(len(lrc.lines)))
+    if indices != expected_indices:
+        raise ValueError("provider audio observation lrc_index values are missing or out of strict order")
+
+    canonical = copy.deepcopy(dict(payload))
+    canonical_rows = [copy.deepcopy(dict(row)) for row in observations]
+    canonical["observations"] = canonical_rows
+    for index, row in enumerate(canonical_rows):
+        line = lrc.lines[index]
+        row["lrc_time_ms"] = line.time_ms
+        row["text"] = line.text
+    return canonical
 
 
 AudioLrcAligner = Callable[[Path, LrcResult, str, Path], AudioLrcAlignmentRun]
@@ -883,6 +933,13 @@ def attempt_song_repair(
                     "lrc_sha256": audio_alignment_run.lrc_sha256,
                     "prompt_path": audio_alignment_run.prompt_path,
                     "prompt_sha256": audio_alignment_run.prompt_sha256,
+                    "provider_raw_output_path": audio_alignment_run.provider_raw_output_path,
+                    "provider_raw_output_sha256": audio_alignment_run.provider_raw_output_sha256,
+                    "canonicalized_output_path": audio_alignment_run.output_path,
+                    "canonicalized_output_sha256": audio_alignment_run.output_sha256,
+                    # Compatibility aliases consumed by existing report
+                    # verifiers.  These now name the exact-index canonicalized
+                    # observation; the untouched provider bytes are above.
                     "raw_output_path": audio_alignment_run.output_path,
                     "raw_output_sha256": audio_alignment_run.output_sha256,
                     "run_manifest_path": audio_alignment_run.manifest_path,
@@ -2161,6 +2218,24 @@ def _require_bound_artifact(path_value: str, expected_sha256: str, label: str) -
     return path
 
 
+def load_audio_lrc_json_artifact(path: Path, label: str) -> object:
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(f"{label} cannot be read: {exc}") from exc
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().casefold() in {"```", "```json"}:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is invalid JSON: {exc}") from exc
+
+
 def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -2199,7 +2274,18 @@ def _validated_audio_lrc_selection(
         raise ValueError("audio observation is not bound to the current source media")
     lrc_path = _require_bound_artifact(run.lrc_path, run.lrc_sha256, "canonical LRC")
     _require_bound_artifact(run.prompt_path, run.prompt_sha256, "audio prompt")
-    _require_bound_artifact(run.output_path, run.output_sha256, "raw audio alignment")
+    if not run.provider_raw_output_path or not run.provider_raw_output_sha256:
+        raise ValueError("provider raw audio alignment binding is missing")
+    provider_raw_path = _require_bound_artifact(
+        run.provider_raw_output_path,
+        run.provider_raw_output_sha256,
+        "provider raw audio alignment",
+    )
+    canonical_output_path = _require_bound_artifact(
+        run.output_path,
+        run.output_sha256,
+        "canonicalized audio alignment",
+    )
     manifest_path = _require_bound_artifact(run.manifest_path, run.manifest_sha256, "audio run manifest")
     try:
         run_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2208,7 +2294,7 @@ def _validated_audio_lrc_selection(
     manifest_artifacts = run_manifest.get("artifacts") if isinstance(run_manifest, Mapping) else None
     if (
         not isinstance(run_manifest, Mapping)
-        or run_manifest.get("schema_version") != "agy-audio-lrc-run.v1"
+        or run_manifest.get("schema_version") != AGY_AUDIO_LRC_RUN_SCHEMA_VERSION
         or run_manifest.get("candidate_id") != candidate_id
         or run_manifest.get("provider") != run.provider
         or run_manifest.get("model") != run.model
@@ -2227,12 +2313,26 @@ def _validated_audio_lrc_selection(
                 ("lrc_sha256", run.lrc_sha256),
                 ("prompt_path", run.prompt_path),
                 ("prompt_sha256", run.prompt_sha256),
+                ("provider_raw_output_path", run.provider_raw_output_path),
+                ("provider_raw_output_sha256", run.provider_raw_output_sha256),
                 ("output_path", run.output_path),
                 ("output_sha256", run.output_sha256),
             )
         )
     ):
         raise ValueError("audio run manifest is not bound to the current run artifacts")
+    canonicalization = run_manifest.get("canonicalization")
+    expected_canonicalization = {
+        "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
+        "row_identity": "strict_zero_based_lrc_index",
+        "restored_fields": ["lrc_time_ms", "text"],
+        "row_count": len(lrc.lines),
+        "canonical_lrc_sha256": run.lrc_sha256,
+        "provider_raw_output_sha256": run.provider_raw_output_sha256,
+        "canonicalized_output_sha256": run.output_sha256,
+    }
+    if canonicalization != expected_canonicalization:
+        raise ValueError("audio run canonicalization manifest is invalid")
     parsed_lrc = parse_lrc_text(lrc_path.read_text(encoding="utf-8"))
     if [(line.time_ms, line.text) for line in parsed_lrc] != [(line.time_ms, line.text) for line in lrc.lines]:
         raise ValueError("bound LRC artifact does not equal the selected canonical LRC")
@@ -2241,6 +2341,20 @@ def _validated_audio_lrc_selection(
             f"audio source duration {run.source_duration_ms}ms does not match job duration {source_duration_ms}ms"
         )
     effective_duration_ms = min(run.source_duration_ms, source_duration_ms)
+
+    provider_payload = load_audio_lrc_json_artifact(
+        provider_raw_path,
+        "provider raw audio alignment",
+    )
+    if not isinstance(provider_payload, Mapping):
+        raise ValueError("provider raw audio alignment is not a JSON object")
+    expected_payload = canonicalize_audio_lrc_observation(provider_payload, lrc)
+    canonical_artifact_payload = load_audio_lrc_json_artifact(
+        canonical_output_path,
+        "canonicalized audio alignment",
+    )
+    if canonical_artifact_payload != expected_payload or run.payload != expected_payload:
+        raise ValueError("canonicalized audio alignment is not the deterministic exact-index projection")
 
     payload = run.payload
     required_top = {
