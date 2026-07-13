@@ -1,0 +1,10 @@
+[
+ {
+  "n": 11,
+  "title": "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的",
+  "stage": "upload_failed",
+  "ok": false,
+  "rc": 1,
+  "detail": "n\":\"2.11.0\"}\n\u001b[2m2026-07-13 13:12:06\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader\u001b[0m\u001b[2m:\u001b[0m Upload completed: 歌切_【李豆沙】豆沙歌，《想和你迎着__song_212005_1444.mp4 => cost 4.44s, 14.39 MB/s.\n\u001b[2m2026-07-13 13:12:06\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m ResponseData { code: 21566, data: None, message: \"投稿过于频繁，建议将APP升级至最新版本后再试\", ttl: Some(1) }\nError: ResponseData { code: 21566, data: None, message: \"投稿过于频繁，建议将APP升级至最新版本后再试\", ttl: Some(1) }\nrc=1\nledger += artifact 424a3ec9b5f3 rc=1 bvid=?"
+ }
+]
