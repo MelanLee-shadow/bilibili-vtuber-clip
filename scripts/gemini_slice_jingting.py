@@ -528,30 +528,37 @@ def subtitle_principles() -> str:
     return _read_first(PRINCIPLES_PATHS)
 
 
-def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
-    """Render only approved term fields from a validated, date-bounded snapshot."""
+def approved_timely_terms(*, as_of: dt.datetime | None = None) -> list[dict[str, object]]:
+    """Structured, date-bounded, source-verified timely terms.
+
+    This is the same gated read/validate/expiry/active-window filter
+    ``timely_terms_context`` renders into a prompt string, exposed as data so
+    other deterministic (non-LLM) consumers, e.g. term-boundary unification,
+    can reuse the exact same blind-mode-safe loader instead of re-parsing
+    ``TIMELY_TERMS_PATHS`` themselves.
+    """
 
     if os.environ.get("LIDOUSHA_DISABLE_TIMELY_TERMS") == "1":
-        return ""
+        return []
     raw = _read_first(TIMELY_TERMS_PATHS)
     if not raw:
-        return ""
+        return []
     expected_sha256 = os.environ.get("LIDOUSHA_TIMELY_TERMS_SHA256", "").removeprefix("sha256:").lower()
     if expected_sha256:
         if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
-            return ""
+            return []
         if hashlib.sha256(raw.encode("utf-8")).hexdigest() != expected_sha256:
-            return ""
+            return []
     try:
         payload = validate_timely_terms_json(raw)
     except TimelyTermsValidationError:
-        return ""
+        return []
     if as_of is None and os.environ.get("LIDOUSHA_TERM_AS_OF"):
         try:
             as_of_date = dt.date.fromisoformat(os.environ["LIDOUSHA_TERM_AS_OF"])
             as_of = dt.datetime.combine(as_of_date, dt.time(12), tzinfo=dt.timezone.utc)
         except ValueError:
-            return ""
+            return []
     now = as_of or dt.datetime.now(dt.timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=dt.timezone.utc)
@@ -561,7 +568,7 @@ def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
     now_utc = now.astimezone(dt.timezone.utc)
     expiry = _require_timestamp(payload["expires_at"], label="expires_at")
     if now_utc > expiry.astimezone(dt.timezone.utc):
-        return ""
+        return []
 
     approved_records: list[dict[str, object]] = []
     for term in payload["terms"]:
@@ -596,6 +603,13 @@ def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
         # the final entity choice.
         if len(approved_records) >= TIMELY_TERMS_PROMPT_MAX_COUNT:
             break
+    return approved_records
+
+
+def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
+    """Render only approved term fields from a validated, date-bounded snapshot."""
+
+    approved_records = approved_timely_terms(as_of=as_of)
     if not approved_records:
         return ""
     lines = [
