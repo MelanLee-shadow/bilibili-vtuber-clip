@@ -118,8 +118,8 @@ def test_snap_start_opens_on_a_sentence():
     assert snap_start_to_sentence([9_000], 3_000) is None
 
 
-def _cue(start_ms, end_ms):
-    return SrtCue(index="1", start_ms=start_ms, end_ms=end_ms, text="x")
+def _cue(start_ms, end_ms, text="x"):
+    return SrtCue(index="1", start_ms=start_ms, end_ms=end_ms, text=text)
 
 
 def test_runon_cue_straddling_target_triggers_refinement():
@@ -246,6 +246,33 @@ def test_tail_pad_clamps_before_distinct_next_speech_island():
         end_snapped=True,
     )
     assert audit["end_island_continues_ms"] == 0
+
+
+def test_tail_pad_clamps_before_next_subtitle_even_when_vad_starts_later():
+    """7/12 auto_154845_1140_1254: the next cue began 22ms before the
+    VAD-derived cut.  The cue timeline is the stronger subtitle-flash
+    authority, so keep the closure and trim only its disposable tail air."""
+    cues = [_cue(120_630, 123_310, "收束句"), _cue(123_470, 124_750, "我要找一下")]
+    decision = adaptive_tail_cut(
+        [SpeechSpan(123_592, 124_800)],
+        cues=cues,
+        snapped_end_ms=123_310,
+        padded_dur_ms=160_000,
+    )
+
+    assert decision["nominal_end_ms"] == 123_710
+    assert decision["final_end_ms"] == 123_370
+    assert decision["next_subtitle_start_ms"] == 123_470
+    assert decision["reason"] == "tail_clamped_before_next_subtitle"
+    assert boundary_red_flags(
+        audit={"end_island_continues_ms": 0},
+        cues=cues,
+        sanitized=[_Txt("收束句")],
+        final_start_ms=100_000,
+        final_end_ms=decision["final_end_ms"],
+        snapped_end_ms=123_310,
+        closure_text="收束句",
+    ) == []
 
 
 def test_tail_pad_does_not_clamp_ambiguous_narrow_gap_or_distant_island():

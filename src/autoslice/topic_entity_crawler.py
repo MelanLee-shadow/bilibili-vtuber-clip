@@ -7,6 +7,7 @@ subject/character data, never from arbitrary news or community prose.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import datetime as dt
 from difflib import SequenceMatcher
@@ -22,6 +23,7 @@ import urllib.parse
 
 from scripts.gemini_slice_jingting import validate_timely_terms_payload
 from src.autoslice.timely_term_crawler import BoundedHttpClient, CrawlError
+from src.autoslice.topic_entity_graph import MAX_TOPICS as MAX_GRAPH_TOPICS
 from src.autoslice.topic_entity_graph import validate_topic_entity_graph
 
 
@@ -57,14 +59,27 @@ _TITLE_STOP_WORDS = frozenset(
         "the",
     }
 )
-_INSTALLMENT = re.compile(
-    r"(?i)(?:"
-    r"(?:season|cour|part|stage)\s*[-:]?\s*(?:\d+|[ivx]+)|"
-    r"\d+(?:st|nd|rd|th)\s*(?:season|cour|part|stage)|"
-    r"第\s*[一二三四五六七八九十0-9]+\s*[季期部]|"
-    r"(?<![A-Za-z])[IVX]{2,4}(?![A-Za-z])"
-    r")"
+_INSTALLMENT_AFTER_KIND = re.compile(
+    r"(?i)\b(season|cour|part|stage)\s*[-:]?\s*(\d+|[ivx]+)\b"
 )
+_INSTALLMENT_BEFORE_KIND = re.compile(
+    r"(?i)\b(\d+|[ivx]+)(?:st|nd|rd|th)?\s*(season|cour|part|stage)\b"
+)
+_CJK_INSTALLMENT = re.compile(r"第\s*([一二三四五六七八九十0-9]+)\s*(季|期|部|クール)")
+_JAPANESE_COUR = re.compile(r"(?:第\s*)?([0-9]+)\s*クール")
+_ROMAN_INSTALLMENT = re.compile(r"(?<![A-Za-z])([IVX]{2,4})(?![A-Za-z])")
+_CHINESE_ORDINALS = {
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
 
 
 @dataclass(frozen=True)
@@ -104,6 +119,86 @@ def _unique(values: Iterable[object], *, limit: int = 32) -> list[str]:
     return result
 
 
+def _ordinal(value: str) -> int | None:
+    normalized = value.strip().upper()
+    if normalized.isdigit():
+        number = int(normalized)
+        return number if 0 < number <= 99 else None
+    if normalized in _CHINESE_ORDINALS:
+        return _CHINESE_ORDINALS[normalized]
+    if re.fullmatch(r"[IVX]+", normalized):
+        total = 0
+        prior = 0
+        for char in reversed(normalized):
+            current = {"I": 1, "V": 5, "X": 10}[char]
+            total += -current if current < prior else current
+            prior = max(prior, current)
+        return total if 0 < total <= 99 else None
+    return None
+
+
+def _installment_signature(value: object) -> tuple[tuple[str, int], ...]:
+    """Normalize Season/Cour/Part spellings so adjacent installments cannot mix."""
+
+    text = unicodedata.normalize("NFKC", str(value))
+    result: set[tuple[str, int]] = set()
+    kind_map = {
+        "season": "season",
+        "stage": "season",
+        "季": "season",
+        "期": "season",
+        "cour": "cour",
+        "クール": "cour",
+        "part": "part",
+        "部": "part",
+    }
+    occupied: list[tuple[int, int]] = []
+    for pattern, kind_index, ordinal_index in (
+        (_INSTALLMENT_AFTER_KIND, 1, 2),
+        (_INSTALLMENT_BEFORE_KIND, 2, 1),
+    ):
+        for match in pattern.finditer(text):
+            number = _ordinal(match.group(ordinal_index))
+            if number is not None:
+                result.add((kind_map[match.group(kind_index).casefold()], number))
+                occupied.append(match.span())
+    for match in _CJK_INSTALLMENT.finditer(text):
+        number = _ordinal(match.group(1))
+        if number is not None:
+            result.add((kind_map[match.group(2)], number))
+            occupied.append(match.span())
+    for match in _JAPANESE_COUR.finditer(text):
+        number = _ordinal(match.group(1))
+        if number is not None:
+            result.add(("cour", number))
+            occupied.append(match.span())
+    for match in _ROMAN_INSTALLMENT.finditer(text):
+        if any(start <= match.start() and match.end() <= end for start, end in occupied):
+            continue
+        number = _ordinal(match.group(1))
+        if number is not None:
+            result.add(("season", number))
+    return tuple(sorted(result))
+
+
+def _installment_free_identity(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value))
+    for pattern in (
+        _INSTALLMENT_AFTER_KIND,
+        _INSTALLMENT_BEFORE_KIND,
+        _CJK_INSTALLMENT,
+        _JAPANESE_COUR,
+        _ROMAN_INSTALLMENT,
+    ):
+        text = pattern.sub(" ", text)
+    return _identity(text)
+
+
+def _topic_id(canonical: object) -> str:
+    topic_key = hashlib.sha256(str(canonical).encode("utf-8")).hexdigest()[:20]
+    return f"timely:{topic_key}"
+
+
 def _query_candidates(term: Mapping[str, Any]) -> list[str]:
     # Discovery searches the exact current work before parent franchises.  The
     # timely crawler's readings are structured AniList/Bangumi titles; sort
@@ -113,10 +208,7 @@ def _query_candidates(term: Mapping[str, Any]) -> list[str]:
     aliases = _unique(term.get("aliases") or [], limit=16)
 
     def specificity(value: str) -> tuple[int, int, str]:
-        marker = bool(
-            re.search(r"(?i)(?:season|cour|part|stage|\b[ivx]{2,4}\b|\d(?:st|nd|rd|th))", value)
-            or re.search(r"第\s*\d+\s*[季期部]", value)
-        )
+        marker = bool(_installment_signature(value))
         return (int(marker), len(_identity(value)), value.casefold())
 
     readings.sort(key=specificity, reverse=True)
@@ -158,6 +250,8 @@ def _source_subject_rows(term: Mapping[str, Any]) -> dict[int, dict[str, Any]]:
 
     rows: dict[int, dict[str, Any]] = {}
     for source in term.get("sources") or []:
+        if not str(source.get("publisher") or "").casefold().startswith("bangumi structured"):
+            continue
         parsed = urllib.parse.urlsplit(str(source.get("url") or ""))
         if (parsed.hostname or "").lower() not in {"bgm.tv", "www.bgm.tv"}:
             continue
@@ -181,7 +275,16 @@ def _is_anime_term(term: Mapping[str, Any]) -> bool:
     entities = {_identity(value) for value in term.get("topic_entities") or []}
     if entities & {"acgevent", "动漫展", "漫展"}:
         return False
-    return "anime" in entities
+    if "anime" in entities:
+        return True
+    # Reviewed seed assets predate the machine crawler's generic ``Anime``
+    # topic marker.  Preserve a narrowly source-backed compatibility path for
+    # explicit TV-anime records without admitting manga/news-only terms.
+    reason = str(term.get("reason") or "").casefold()
+    publishers = [
+        str(source.get("publisher") or "").casefold() for source in term.get("sources") or []
+    ]
+    return reason.startswith("tv anime ") and any("anime" in value for value in publishers)
 
 
 def _is_community_term(term: Mapping[str, Any]) -> bool:
@@ -197,6 +300,8 @@ def _ordered_terms_for_crawl(
     as_of: dt.date,
     max_topics: int,
     future_horizon: dt.timedelta,
+    generated_at: dt.datetime | None = None,
+    previous_topics: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[Mapping[str, Any]]:
     """Choose a current-heavy frontier while reserving space for new seasons.
 
@@ -206,10 +311,10 @@ def _ordered_terms_for_crawl(
     a reviewed dictionary or a code change.
     """
 
-    current: list[Mapping[str, Any]] = []
-    upcoming: list[Mapping[str, Any]] = []
+    current: list[tuple[int, Mapping[str, Any]]] = []
+    upcoming: list[tuple[int, Mapping[str, Any]]] = []
     future_limit = as_of + future_horizon
-    for term in terms:
+    for index, term in enumerate(terms):
         if not _is_anime_term(term) or not _query_candidates(term):
             continue
         active_from = dt.date.fromisoformat(str(term["active_from"]))
@@ -218,27 +323,46 @@ def _ordered_terms_for_crawl(
             continue
         if not any(dt.date.fromisoformat(source["published_at"]) <= as_of for source in term["sources"]):
             continue
-        (current if active_from <= as_of else upcoming).append(term)
+        (current if active_from <= as_of else upcoming).append((index, term))
+
+    prior = previous_topics or {}
+    now = generated_at
+
+    def refresh_order(item: tuple[int, Mapping[str, Any]]) -> tuple[int, dt.datetime, int]:
+        index, term = item
+        topic = prior.get(_topic_id(term["canonical"]))
+        if topic is None or now is None:
+            return (0, dt.datetime.min.replace(tzinfo=dt.timezone.utc), index)
+        refreshed_at = dt.datetime.fromisoformat(str(topic["refreshed_at"]))
+        refresh_expires_at = dt.datetime.fromisoformat(str(topic["refresh_expires_at"]))
+        # Missing/expired nodes come first.  Once the graph is filled, the
+        # oldest still-fresh nodes rotate to the front deterministically.
+        due = refresh_expires_at <= now
+        return (0 if due else 1, refreshed_at, index)
+
+    current.sort(key=refresh_order)
+    upcoming.sort(key=refresh_order)
 
     upcoming_quota = min(len(upcoming), max_topics // 4) if upcoming else 0
     current_quota = max_topics - upcoming_quota
     primary = [*current[:current_quota], *upcoming[:upcoming_quota]]
     if len(primary) < max_topics:
-        selected = {id(term) for term in primary}
-        for term in [*current, *upcoming]:
-            if id(term) in selected:
+        selected = {index for index, _term in primary}
+        for item in [*current, *upcoming]:
+            if item[0] in selected:
                 continue
-            primary.append(term)
-            selected.add(id(term))
+            primary.append(item)
+            selected.add(item[0])
             if len(primary) >= max_topics:
                 break
-    selected = {id(term) for term in primary}
-    return [*primary, *(term for term in [*current, *upcoming] if id(term) not in selected)]
+    selected = {index for index, _term in primary}
+    ordered = [*primary, *(item for item in [*current, *upcoming] if item[0] not in selected)]
+    return [term for _index, term in ordered]
 
 
 def _search_score(query: str, row: Mapping[str, Any]) -> float:
     query_key = _identity(query)
-    query_has_installment = bool(_INSTALLMENT.search(query))
+    query_installment = _installment_signature(query)
     names = _unique([row.get("name_cn"), row.get("name")], limit=2)
     best = 0.0
     for name in names:
@@ -248,8 +372,32 @@ def _search_score(query: str, row: Mapping[str, Any]) -> float:
         # A Season/Cour/Part query may not silently collapse to the franchise
         # base work.  If no current installment has a cast yet, the caller has
         # an explicit same-franchise fallback path after materialization.
-        if query_has_installment and not _INSTALLMENT.search(name):
-            continue
+        if query_installment:
+            name_installment = _installment_signature(name)
+            if not name_installment:
+                continue
+            if any(
+                not any(
+                    query_number == name_number and query_kind == name_kind
+                    for name_kind, name_number in name_installment
+                )
+                for query_kind, query_number in query_installment
+            ):
+                continue
+            if key == query_key:
+                best = max(best, 1.0)
+                continue
+            query_base = _installment_free_identity(query)
+            name_base = _installment_free_identity(name)
+            if query_base and query_base == name_base:
+                best = max(best, 0.99)
+                continue
+            if (
+                min(len(query_base), len(name_base)) >= 4
+                and (query_base in name_base or name_base in query_base)
+            ):
+                best = max(best, 0.9)
+                continue
         if key == query_key:
             best = max(best, 1.0)
         elif len(query_key) >= 4 and (query_key in key or key in query_key):
@@ -418,6 +566,122 @@ def _character_node(raw: Mapping[str, Any], *, work_id: str, aired_from: str) ->
     }
 
 
+def _merge_retained_topics(
+    *,
+    topics: list[dict[str, Any]],
+    works_by_id: dict[str, dict[str, Any]],
+    entities_by_id: dict[str, dict[str, Any]],
+    previous_graph: Mapping[str, Any] | None,
+    eligible_terms: Iterable[Mapping[str, Any]],
+    generated_at: dt.datetime,
+) -> None:
+    """Carry forward source-backed nodes until their per-topic refresh TTL.
+
+    The current timely snapshot still controls topic aliases, sources, and
+    active windows.  Only the structured work/character subgraph is retained,
+    and all reciprocal edges are rebuilt after the merge.
+    """
+
+    if previous_graph is None:
+        return
+    eligible_terms = list(eligible_terms)
+    fresh_topic_ids = {topic["topic_id"] for topic in topics}
+    previous_topics = {row["topic_id"]: row for row in previous_graph["topics"]}
+    previous_works = {row["work_id"]: row for row in previous_graph["works"]}
+    previous_entities = {row["entity_id"]: row for row in previous_graph["entities"]}
+    for term in eligible_terms:
+        if len(topics) >= MAX_GRAPH_TOPICS:
+            break
+        topic_id = _topic_id(term["canonical"])
+        previous_topic = previous_topics.get(topic_id)
+        if (
+            previous_topic is None
+            or topic_id in fresh_topic_ids
+            or dt.datetime.fromisoformat(previous_topic["refresh_expires_at"]) <= generated_at
+        ):
+            continue
+        retained_work_ids = [
+            work_id for work_id in previous_topic["work_ids"] if work_id in previous_works
+        ]
+        if not retained_work_ids:
+            continue
+        aliases = _unique(
+            [
+                term["canonical"],
+                term.get("display_name"),
+                *term["aliases"],
+                *term["topic_entities"],
+            ],
+            limit=32,
+        )
+        topics.append(
+            {
+                "topic_id": topic_id,
+                "canonical": term["canonical"],
+                "aliases": [
+                    value
+                    for value in aliases
+                    if _identity(value) != _identity(term["canonical"])
+                ],
+                "work_ids": retained_work_ids,
+                "active_from": term["active_from"],
+                "active_until": term["active_until"],
+                "sources": term["sources"],
+                "refreshed_at": previous_topic["refreshed_at"],
+                "refresh_expires_at": previous_topic["refresh_expires_at"],
+            }
+        )
+        for work_id in retained_work_ids:
+            prior_work = previous_works[work_id]
+            works_by_id.setdefault(work_id, copy.deepcopy(prior_work))
+            for entity_id in prior_work["entity_ids"]:
+                if entity_id in previous_entities:
+                    entities_by_id.setdefault(entity_id, copy.deepcopy(previous_entities[entity_id]))
+
+    # Rebuild edges from topic -> work -> entity.  This removes stale sibling
+    # references when only part of an older graph remains eligible.
+    valid_topics: list[dict[str, Any]] = []
+    for topic in topics:
+        valid_work_ids: list[str] = []
+        for work_id in topic["work_ids"]:
+            work = works_by_id.get(work_id)
+            if work is None:
+                continue
+            work["entity_ids"] = [
+                entity_id for entity_id in work["entity_ids"] if entity_id in entities_by_id
+            ]
+            if work["entity_ids"]:
+                valid_work_ids.append(work_id)
+        if valid_work_ids:
+            topic["work_ids"] = sorted(set(valid_work_ids))
+            valid_topics.append(topic)
+    topics[:] = valid_topics
+
+    topic_refs_by_work: dict[str, set[str]] = {}
+    for topic in topics:
+        for work_id in topic["work_ids"]:
+            topic_refs_by_work.setdefault(work_id, set()).add(topic["topic_id"])
+    retained_works: dict[str, dict[str, Any]] = {}
+    for work_id, topic_ids in topic_refs_by_work.items():
+        work = works_by_id[work_id]
+        work["topic_ids"] = sorted(topic_ids)
+        retained_works[work_id] = work
+    works_by_id.clear()
+    works_by_id.update(retained_works)
+
+    work_refs_by_entity: dict[str, set[str]] = {}
+    for work in works_by_id.values():
+        for entity_id in work["entity_ids"]:
+            work_refs_by_entity.setdefault(entity_id, set()).add(work["work_id"])
+    retained_entities: dict[str, dict[str, Any]] = {}
+    for entity_id, work_ids in work_refs_by_entity.items():
+        entity = entities_by_id[entity_id]
+        entity["work_ids"] = sorted(work_ids)
+        retained_entities[entity_id] = entity
+    entities_by_id.clear()
+    entities_by_id.update(retained_entities)
+
+
 def crawl_topic_entity_graph(
     *,
     client: BoundedHttpClient,
@@ -427,11 +691,13 @@ def crawl_topic_entity_graph(
     search_endpoint: str = "https://api.bgm.tv/v0/search/subjects",
     subject_endpoint_template: str = "https://api.bgm.tv/subject/{subject_id}?responseGroup=large",
     max_topics: int = 16,
-    max_queries: int = 32,
+    max_queries: int = 40,
     max_works_per_topic: int = 3,
     max_entities_per_work: int = 16,
     ttl: dt.timedelta = dt.timedelta(days=7),
     future_horizon: dt.timedelta = dt.timedelta(days=183),
+    previous_graph: object | None = None,
+    node_ttl: dt.timedelta = dt.timedelta(days=30),
 ) -> GraphCrawlResult:
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
         raise ValueError("generated_at must include a timezone")
@@ -439,7 +705,12 @@ def crawl_topic_entity_graph(
         raise ValueError("invalid topic/entity crawl budget")
     if future_horizon < dt.timedelta(0) or future_horizon > dt.timedelta(days=366):
         raise ValueError("future_horizon must be between zero and 366 days")
+    if node_ttl <= dt.timedelta(0) or node_ttl > dt.timedelta(days=366):
+        raise ValueError("node_ttl must be between zero and 366 days")
     snapshot = validate_timely_terms_payload(timely_snapshot)
+    previous = validate_topic_entity_graph(previous_graph) if previous_graph is not None else None
+    if previous is not None and dt.datetime.fromisoformat(previous["generated_at"]) > generated_at:
+        raise ValueError("previous_graph cannot come from the future")
     if not re.fullmatch(r"[0-9a-f]{64}", input_timely_terms_sha256):
         raise ValueError("input_timely_terms_sha256 must bind the exact source snapshot")
     as_of = generated_at.date()
@@ -448,6 +719,8 @@ def crawl_topic_entity_graph(
         as_of=as_of,
         max_topics=max_topics,
         future_horizon=future_horizon,
+        generated_at=generated_at,
+        previous_topics={row["topic_id"]: row for row in previous["topics"]} if previous else None,
     )
 
     # Every successful search can require one structured subject fetch.  When
@@ -523,6 +796,8 @@ def crawl_topic_entity_graph(
 
     def query_once(state: dict[str, Any]) -> bool:
         while state["next_query"] < len(state["queries"]):
+            if query_count >= query_limit:
+                return False
             query = state["queries"][state["next_query"]]
             state["next_query"] += 1
             if query_value(state, query):
@@ -531,6 +806,8 @@ def crawl_topic_entity_graph(
 
     def query_franchise_once(state: dict[str, Any]) -> bool:
         while state["next_franchise_query"] < len(state["franchise_queries"]):
+            if query_count >= query_limit:
+                return False
             query = state["franchise_queries"][state["next_franchise_query"]]
             state["next_franchise_query"] += 1
             if query_value(state, query):
@@ -539,6 +816,8 @@ def crawl_topic_entity_graph(
 
     def query_fallback_once(state: dict[str, Any]) -> bool:
         while state["next_fallback_query"] < len(state["fallback_queries"]):
+            if query_count >= query_limit:
+                return False
             query = state["fallback_queries"][state["next_fallback_query"]]
             state["next_fallback_query"] += 1
             if query_value(state, query):
@@ -584,15 +863,23 @@ def crawl_topic_entity_graph(
             if not query_once(state) and query_count >= effective_max_queries:
                 break
 
-    selected_states = [state for state in states[:cursor] if state["found_subjects"]][:max_topics]
     query_limit = effective_max_queries
-
-    # Community terms are the one intentional bounded expansion: after broad
-    # discovery succeeds, search their structured franchise/work anchors so a
-    # fan nickname can route to sibling work-specific character subgraphs.
-    for state in selected_states:
-        if not _is_community_term(state["term"]):
+    # The discovery reserve must first finish unresolved states already inside
+    # the chosen frontier.  Otherwise a successful run can skip the last
+    # primary term and jump to the next ranked term merely because one request
+    # was held for fallback/expansion.
+    for state in states[:cursor]:
+        if state["found_subjects"]:
             continue
+        if not query_once(state):
+            break
+    selected_states = [state for state in states[:cursor] if state["found_subjects"]][:max_topics]
+
+    def expand_community(state: dict[str, Any]) -> None:
+        """Bound sibling discovery after the current specific work resolves."""
+
+        if not _is_community_term(state["term"]):
+            return
         expansion_attempts = 0
         while (
             len(state["found_subjects"]) < max_works_per_topic
@@ -602,15 +889,21 @@ def crawl_topic_entity_graph(
         ):
             expansion_attempts += 1
 
-    subject_cache: dict[int, dict[str, Any]] = {}
+    # Community terms are the one intentional bounded expansion: after broad
+    # discovery succeeds, search their structured franchise/work anchors so a
+    # fan nickname can route to sibling work-specific character subgraphs.
     for state in selected_states:
+        expand_community(state)
+
+    subject_cache: dict[int, dict[str, Any]] = {}
+
+    def materialize_state(state: dict[str, Any]) -> dict[str, Any] | None:
         term = state["term"]
         found_subjects = state["found_subjects"]
         matched_queries_by_subject = state["matched_queries_by_subject"]
         if not found_subjects:
-            continue
-        topic_key = hashlib.sha256(str(term["canonical"]).encode("utf-8")).hexdigest()[:20]
-        topic_id = f"timely:{topic_key}"
+            return None
+        topic_id = _topic_id(term["canonical"])
         topic_work_ids: list[str] = []
 
         processed_subjects: set[int] = set()
@@ -705,24 +998,70 @@ def crawl_topic_entity_graph(
             fallback_attempts += 1
             materialize_new_subjects()
         if not topic_work_ids:
-            continue
+            return None
         aliases = _unique(
             [term["canonical"], term.get("display_name"), *term["aliases"], *term["topic_entities"]],
             limit=32,
         )
         aliases = [value for value in aliases if _identity(value) != _identity(term["canonical"])]
-        topics.append(
-            {
-                "topic_id": topic_id,
-                "canonical": term["canonical"],
-                "aliases": aliases,
-                "work_ids": sorted(set(topic_work_ids)),
-                "active_from": term["active_from"],
-                "active_until": term["active_until"],
-                "sources": term["sources"],
-            }
-        )
+        return {
+            "topic_id": topic_id,
+            "canonical": term["canonical"],
+            "aliases": aliases,
+            "work_ids": sorted(set(topic_work_ids)),
+            "active_from": term["active_from"],
+            "active_until": term["active_until"],
+            "sources": term["sources"],
+            "refreshed_at": generated_at.isoformat(timespec="seconds"),
+            "refresh_expires_at": (generated_at + node_ttl).isoformat(timespec="seconds"),
+        }
 
+    materialized_state_ids: set[int] = set()
+
+    def materialize_candidates(candidates: Iterable[dict[str, Any]]) -> None:
+        for state in candidates:
+            if len(topics) >= max_topics or id(state) in materialized_state_ids:
+                continue
+            materialized_state_ids.add(id(state))
+            topic = materialize_state(state)
+            if topic is not None:
+                topics.append(topic)
+
+    materialize_candidates(selected_states)
+    # A subject search hit is not a usable topic until structured character
+    # nodes materialize.  Consume already-discovered alternates first, then
+    # discover later terms in breadth-first batches until the actual topic
+    # count reaches the requested frontier.
+    materialize_candidates(
+        state for state in states[:cursor] if state["found_subjects"]
+    )
+    while len(topics) < max_topics and cursor < len(states) and query_count < effective_max_queries:
+        batch_size = min(max_topics - len(topics), len(states) - cursor)
+        batch = states[cursor : cursor + batch_size]
+        cursor += batch_size
+        for state in batch:
+            if state["found_subjects"]:
+                continue
+            if not query_once(state):
+                break
+        for state in batch:
+            if state["found_subjects"]:
+                continue
+            if not query_once(state) and query_count >= effective_max_queries:
+                break
+        for state in batch:
+            if state["found_subjects"]:
+                expand_community(state)
+        materialize_candidates(state for state in batch if state["found_subjects"])
+
+    _merge_retained_topics(
+        topics=topics,
+        works_by_id=works_by_id,
+        entities_by_id=entities_by_id,
+        previous_graph=previous,
+        eligible_terms=ordered_terms,
+        generated_at=generated_at,
+    )
     if not topics or not works_by_id or not entities_by_id:
         raise CrawlError("no source-backed topic/entity subgraph could be built")
     graph = {

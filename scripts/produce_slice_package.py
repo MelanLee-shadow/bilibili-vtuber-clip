@@ -286,7 +286,7 @@ BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS = 60_000
 MAX_BOUNDARY_REPAIRS = 3
 
 
-def adaptive_tail_cut(spans, *, snapped_end_ms: int, padded_dur_ms: int) -> dict:
+def adaptive_tail_cut(spans, *, snapped_end_ms: int, padded_dur_ms: int, cues=()) -> dict:
     """Keep normal tail air unless it would enter a distinct next VAD island.
 
     A sentence-end snap is already semantic closure evidence.  If VAD then
@@ -303,10 +303,25 @@ def adaptive_tail_cut(spans, *, snapped_end_ms: int, padded_dur_ms: int) -> dict
         key=lambda span: span.start_ms,
         default=None,
     )
+    next_cue = min(
+        (cue for cue in cues if cue.start_ms >= snapped_end_ms),
+        key=lambda cue: cue.start_ms,
+        default=None,
+    )
     gap_ms = next_span.start_ms - snapped_end_ms if next_span is not None else None
     final_end_ms = nominal_end_ms
     reason = None
-    if (
+    # Subtitle timing is the direct authority for whether text from the next
+    # turn will flash in the disposable tail pad.  VAD can begin slightly
+    # later than the ASR cue (7/12: cue=123470, island=123592), so a VAD-only
+    # clamp still included 22ms of the next subtitle and failed its own audit.
+    if next_cue is not None and next_cue.start_ms < nominal_end_ms:
+        final_end_ms = max(
+            snapped_end_ms,
+            next_cue.start_ms - NEXT_SPEECH_ISLAND_GUARD_MS,
+        )
+        reason = "tail_clamped_before_next_subtitle"
+    elif (
         next_span is not None
         and next_span.start_ms < nominal_end_ms
         and gap_ms is not None
@@ -321,6 +336,7 @@ def adaptive_tail_cut(spans, *, snapped_end_ms: int, padded_dur_ms: int) -> dict
         "next_speech_island_start_ms": next_span.start_ms if next_span is not None else None,
         "next_speech_island_gap_ms": gap_ms,
         "next_speech_island_guard_ms": NEXT_SPEECH_ISLAND_GUARD_MS,
+        "next_subtitle_start_ms": next_cue.start_ms if next_cue is not None else None,
         "reason": reason,
     }
 
@@ -358,7 +374,12 @@ def next_clean_closure(cues, spans, *, after_ms: int, padded_dur_ms: int,
     max_end_ms = min(padded_dur_ms, origin_ms + cap_ms)
     ends = sorted({c.end_ms for c in cues if after_ms < c.end_ms <= max_end_ms})
     for end in ends:
-        cut = adaptive_tail_cut(spans, snapped_end_ms=end, padded_dur_ms=padded_dur_ms)["final_end_ms"]
+        cut = adaptive_tail_cut(
+            spans,
+            cues=cues,
+            snapped_end_ms=end,
+            padded_dur_ms=padded_dur_ms,
+        )["final_end_ms"]
         if any(end <= c.start_ms < cut for c in cues):
             continue
         crossing = next((s for s in spans if s.start_ms < cut < s.end_ms), None)
@@ -947,6 +968,13 @@ def run_speaker_finalizer(
     safe_cid = re.sub(r"[^A-Za-z0-9_.-]+", "_", candidate_id)[:80]
     local_host = host in {"localhost", "127.0.0.1", "::1"}
     profile = ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+    output_srt_path.parent.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    # Clear stale results before reading any runtime prerequisite.  A missing
+    # profile used to raise above this cleanup and leave an old speaker-final
+    # sidecar that looked newer than the current text attempt.
+    for stale in (output_srt_path, output_ass_path, output_manifest_path):
+        stale.unlink(missing_ok=True)
     frozen_inputs = {
         "source_media_sha256": _sha256(media_path),
         "text_final_srt_sha256": _sha256(text_srt_path),
@@ -975,12 +1003,6 @@ def run_speaker_finalizer(
             return False
         return True
 
-    output_srt_path.parent.mkdir(parents=True, exist_ok=True)
-    work_dir.mkdir(parents=True, exist_ok=True)
-    # Never accept stale artifacts from a previous successful attempt if the
-    # current runtime exits without replacing one of them.
-    for stale in (output_srt_path, output_ass_path, output_manifest_path):
-        stale.unlink(missing_ok=True)
     if local_host:
         command = [
             str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
@@ -1802,7 +1824,12 @@ def main(argv: list[str] | None = None) -> int:
     boundary_repairs: list[dict] = []
     recorded_tail_clamps: set[tuple[int, int]] = set()
     while True:
-        tail_adjustment = adaptive_tail_cut(spans, snapped_end_ms=snapped, padded_dur_ms=padded_dur)
+        tail_adjustment = adaptive_tail_cut(
+            spans,
+            cues=cues,
+            snapped_end_ms=snapped,
+            padded_dur_ms=padded_dur,
+        )
         final_end = tail_adjustment["final_end_ms"]
         clamp_key = (snapped, final_end)
         if tail_adjustment["reason"] and clamp_key not in recorded_tail_clamps:

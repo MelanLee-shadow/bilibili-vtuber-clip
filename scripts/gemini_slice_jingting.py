@@ -45,7 +45,7 @@ VIDEOS = os.environ.get("BILIVE_VIDEOS_ROOT") or (
 )
 
 GEMINI_MODEL = os.environ.get("JINGTING_GEMINI_MODEL", "gemini-3.5-flash")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 AGY_BIN = os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
 AGY_MODEL = os.environ.get("AGY_MODEL", "Gemini 3.5 Flash (Low)")
@@ -150,6 +150,16 @@ def sha256_file(path: str | Path) -> str:
 
 def gemini_key() -> str:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY_2") or ""
+
+
+def gemini_keys() -> list[str]:
+    return list(
+        dict.fromkeys(
+            value
+            for name in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")
+            if (value := os.environ.get(name))
+        )
+    )
 
 
 def _read_first(paths) -> str:
@@ -659,6 +669,57 @@ def validate_same_timing(draft_text: str, corrected_text: str) -> None:
         )
 
 
+def restore_draft_timing(draft_text: str, corrected_text: str) -> str:
+    """Attach one-for-one corrected cue text to the immutable draft timeline.
+
+    AGY is a text corrector here, not a timing authority.  It occasionally
+    rewrites timestamps while preserving every cue index (7/11 had 48/48 and
+    96/96 outputs).  That is safely self-healable only when the ordered cue
+    indexes are identical; missing, duplicated, or reordered cues still fail
+    closed.
+    """
+
+    draft_sig = srt_signature(draft_text)
+    corrected_sig = srt_signature(corrected_text)
+    if not draft_sig:
+        raise RuntimeError("draft SRT has no parseable cue timings")
+    if [index for index, _ in draft_sig] != [index for index, _ in corrected_sig]:
+        raise RuntimeError(
+            f"output SRT cue/timing mismatch: draft={len(draft_sig)} output={len(corrected_sig)}"
+        )
+    draft_times = {index: timing for index, timing in draft_sig}
+    lines = corrected_text.splitlines()
+    for i, line in enumerate(lines):
+        index = line.strip()
+        if index not in draft_times:
+            continue
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j < len(lines) and SRT_TIME_RX.search(lines[j]):
+            lines[j] = SRT_TIME_RX.sub(draft_times[index], lines[j], count=1)
+    restored = "\n".join(lines)
+    if corrected_text.endswith("\n"):
+        restored += "\n"
+    validate_same_timing(draft_text, restored)
+    return restored
+
+
+def agy_quota_retry_after_seconds(text: str) -> int | None:
+    """Parse AGY's stable `Resets in 40m58s` quota diagnostic."""
+
+    match = re.search(
+        r"individual quota reached.*?resets in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    hours, minutes, seconds = (int(value or 0) for value in match.groups())
+    parsed = hours * 3600 + minutes * 60 + seconds
+    return parsed or None
+
+
 def subtitle_review_findings(text: str) -> list[str]:
     """Return reasons this refined SRT still needs human/lyrics review."""
     findings: list[str] = []
@@ -736,12 +797,15 @@ def gemini_correct(
                 ]
             }
         ],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 8192},
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "32768")),
+        },
     }
     req = urllib.request.Request(
-        GEMINI_URL.format(model=GEMINI_MODEL, key=key),
+        GEMINI_URL.format(model=GEMINI_MODEL),
         data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json", "x-goog-api-key": key},
     )
     with urllib.request.urlopen(req, timeout=180) as r:
         d = json.load(r)
@@ -912,10 +976,41 @@ Current draft.srt content:
 """
 
 
-def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
+def _subprocess_output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def run_agy(
+    slice_path: str,
+    srt_path: str,
+    out_path: str,
+    *,
+    print_timeout: str | None = None,
+    process_timeout_seconds: int | None = None,
+) -> str:
+    """Run AGY with an optional caller-scoped budget.
+
+    Most callers retain the established ``AGY_PRINT_TIMEOUT`` budget.  A
+    latency-sensitive caller such as source-context refinement can pass a
+    shorter print/process timeout without mutating process-global environment
+    state or shortening the independent song audio/LRC proof budget.
+    """
+
     agy_bin = shutil.which(AGY_BIN) or AGY_BIN
     if not os.path.exists(agy_bin):
         raise FileNotFoundError(f"agy binary not found: {AGY_BIN}")
+    effective_print_timeout = print_timeout or AGY_TIMEOUT
+    effective_process_timeout = (
+        process_timeout_seconds
+        if process_timeout_seconds is not None
+        else parse_timeout_seconds(effective_print_timeout) + 120
+    )
+    if effective_process_timeout <= 0:
+        raise ValueError("process_timeout_seconds must be positive")
 
     slice_p = Path(slice_path)
     stem = slice_p.stem
@@ -958,17 +1053,31 @@ def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
         "-p",
         short_prompt,
         "--print-timeout",
-        AGY_TIMEOUT,
+        effective_print_timeout,
     ]
     started = utc_now()
-    proc = subprocess.run(
-        cmd,
-        cwd=job_dir,
-        env=agy_subprocess_env(),
-        capture_output=True,
-        text=True,
-        timeout=parse_timeout_seconds(AGY_TIMEOUT) + 120,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=job_dir,
+            env=agy_subprocess_env(),
+            capture_output=True,
+            text=True,
+            timeout=effective_process_timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        (job_dir / "agy.stdout").write_text(
+            _subprocess_output_text(exc.stdout), encoding="utf-8"
+        )
+        (job_dir / "agy.stderr").write_text(
+            _subprocess_output_text(exc.stderr), encoding="utf-8"
+        )
+        from src.autoslice.source_context_executor import AgyRunnerError
+
+        raise AgyRunnerError(
+            "AGY_TIMEOUT",
+            f"agy exceeded the {effective_process_timeout}s process timeout; see {job_dir}",
+        ) from exc
     (job_dir / "agy.stdout").write_text(proc.stdout, encoding="utf-8")
     (job_dir / "agy.stderr").write_text(proc.stderr, encoding="utf-8")
 
@@ -979,14 +1088,28 @@ def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
     if not looks_like_srt(corrected):
         corrected = strip_markdown_fence(proc.stdout)
     if not looks_like_srt(corrected):
+        from src.autoslice.source_context_executor import AgyRunnerError
+
+        diagnostic = "\n".join((proc.stdout, proc.stderr))
+        retry_after_seconds = agy_quota_retry_after_seconds(diagnostic)
+        if retry_after_seconds is not None:
+            raise AgyRunnerError(
+                "AGY_QUOTA_EXHAUSTED",
+                f"agy individual quota exhausted; see {job_dir}",
+                retry_after_seconds=retry_after_seconds,
+            )
+        reason_code = "AGY_FAILED_RC" if proc.returncode != 0 else "AGY_EMPTY_OUTPUT"
         detail = f"agy failed rc={proc.returncode}; " if proc.returncode != 0 else ""
-        raise RuntimeError(f"{detail}agy did not produce valid SRT; see {job_dir}")
+        raise AgyRunnerError(
+            reason_code,
+            f"{detail}agy did not produce valid SRT; see {job_dir}",
+        )
     # AGY occasionally writes the complete output.srt and then terminates with
     # its generic "Agent execution terminated due to error" while finalizing.
     # Treat the file, not the wrapper epilogue, as the result authority only
     # after the strict full cue-count/index/timestamp check succeeds.  A
     # partial/truncated file still fails closed above or in this validator.
-    validate_same_timing(srt_text, corrected)
+    corrected = restore_draft_timing(srt_text, corrected)
 
     Path(out_path).write_text(corrected if corrected.endswith("\n") else corrected + "\n", encoding="utf-8")
     manifest = {
@@ -1008,6 +1131,84 @@ def run_agy(slice_path: str, srt_path: str, out_path: str) -> str:
         "prepared_media_size": media.stat().st_size,
     }
     Path(out_path).with_suffix(".manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return str(job_dir)
+
+
+def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
+    """Strict Gemini API failover for an AGY source-context failure.
+
+    The API may correct text, but the draft cue indexes/timestamps remain
+    immutable.  Multiple configured keys are tried without ever recording a
+    key in the manifest or diagnostic.
+    """
+
+    keys = gemini_keys()
+    if not keys:
+        raise RuntimeError("Gemini API fallback unavailable: no configured key")
+    slice_p = Path(slice_path)
+    stem = slice_p.stem
+    job_root = Path(JINGTING_JOB_ROOT) / "gemini-api-fallback"
+    job_dir = job_root / f"{stem}-{dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
+    job_dir.mkdir(parents=True, exist_ok=False)
+    audio = job_dir / "input.mp3"
+    if not extract_audio(str(slice_p), str(audio)):
+        raise RuntimeError(f"Gemini API fallback audio extraction failed; see {job_dir}")
+    srt_text = Path(srt_path).read_text(encoding="utf-8")
+    errors: list[dict[str, object]] = []
+    corrected = ""
+    for index, key in enumerate(keys, start=1):
+        try:
+            corrected = gemini_correct(
+                str(audio),
+                srt_text,
+                key,
+                as_of_date=recording_date_from_path(slice_p),
+            )
+            if not looks_like_srt(corrected):
+                raise RuntimeError("Gemini API produced no valid SRT")
+            corrected = restore_draft_timing(srt_text, corrected)
+            break
+        except Exception as exc:  # each configured key is an independent failover lane
+            # Exception text from an HTTP client may contain its request URL,
+            # including the Gemini key query parameter.  Persist only bounded,
+            # non-secret structural diagnostics.
+            diagnostic: dict[str, object] = {
+                "key_ordinal": index,
+                "error_type": type(exc).__name__,
+            }
+            status = getattr(exc, "code", None)
+            if isinstance(status, int):
+                diagnostic["http_status"] = status
+            errors.append(diagnostic)
+            corrected = ""
+    if not corrected:
+        (job_dir / "errors.json").write_text(
+            json.dumps({"errors": errors}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        raise RuntimeError(f"Gemini API fallback exhausted {len(keys)} configured key(s); see {job_dir}")
+    output = Path(out_path)
+    output.write_text(corrected if corrected.endswith("\n") else corrected + "\n", encoding="utf-8")
+    manifest = {
+        "provider": "gemini_api",
+        "model": GEMINI_MODEL,
+        "started_at": None,
+        "finished_at": utc_now(),
+        "slice_path": str(slice_p),
+        "slice_sha256": sha256_file(slice_p),
+        "draft_srt": str(srt_path),
+        "draft_srt_sha256": sha256_file(srt_path),
+        "output_srt": str(output),
+        "output_srt_sha256": sha256_file(output),
+        "job_dir": str(job_dir),
+        "provider_fallback_used": True,
+        "configured_key_count": len(keys),
+        "accepted_key_ordinal": len(errors) + 1,
+    }
+    output.with_suffix(".manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )

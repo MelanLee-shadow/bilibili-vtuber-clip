@@ -37,11 +37,12 @@ def _ready_host_vocal_prover(source_media, candidate_id, boundary, alignment, ou
         }
     )
     alignment_path.write_text(json.dumps(alignment_payload, ensure_ascii=False) + "\n", encoding="utf-8")
-    bind_ready_live_performance_report(
-        alignment_path,
-        source_media=Path(source_media),
-        candidate_id=candidate_id,
-    )
+    if "audio_alignment_provider" not in alignment_payload:
+        bind_ready_live_performance_report(
+            alignment_path,
+            source_media=Path(source_media),
+            candidate_id=candidate_id,
+        )
     claim, _profile = make_ready_host_vocal_claim(
         output_dir,
         source_media=Path(source_media),
@@ -154,11 +155,12 @@ def _bind_ready_alignment_claim(
     )
     claim["provider"] = "agy"
     claim["model"] = "lrclib-agy-audio-lrc-global-shift-v1"
+    claim["completion_basis"] = "FULL_STUDIO_SEQUENCE"
     claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
 
 
 def _rebind_background_playback_observation(claim: dict[str, object]) -> None:
-    """Turn a bound AGY-v4 fixture into the speech-over-BGM hard negative."""
+    """Turn a bound AGY-v5 fixture into the speech-over-BGM hard negative."""
 
     report_path = Path(str(claim["alignment_report_path"]))
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1030,6 +1032,71 @@ def test_complete_lrc_without_lidousha_vocal_proof_stays_blocked(tmp_path):
     assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
 
 
+def test_song_agy_infrastructure_failure_continues_independent_lrc_and_vocal_proof(
+    tmp_path, monkeypatch
+):
+    """AGY corrects talk text, but a song's final subtitles come from the
+    verified LRC timeline.  Provider quota must not prevent boundary/audio/
+    host-vocal proof from running, while the failure remains in audit metadata."""
+
+    def quota_executor(
+        job_manifest,
+        *,
+        source_video_path,
+        output_dir,
+        full_source_srt_path,
+        **_kwargs,
+    ):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        marker = output_dir / "quota.jingting.review-required.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "schema_version": "jingting-review-required.v1",
+                    "release_ready": False,
+                    "findings": ["AGY_SOURCE_CONTEXT_RUNNER_FAILED", "AGY_QUOTA_EXHAUSTED"],
+                    "metadata": {"retry_after_seconds": 2458},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return shadow_pipeline.SourceContextExecutionResult(
+            decision="RETRY_INFRA",
+            reason_codes=("AGY_SOURCE_CONTEXT_RUNNER_FAILED", "AGY_QUOTA_EXHAUSTED"),
+            context_media_path=str(source_video_path),
+            context_draft_srt_path=str(full_source_srt_path),
+            context_refined_srt_path=None,
+            jingting_manifest_path=None,
+            review_required_path=str(marker),
+            source_cues_path=None,
+            jingting_done=False,
+        )
+
+    monkeypatch.setattr(shadow_pipeline, "execute_source_context_job", quota_executor)
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_load_lyric_timeline",
+        lambda *_args, **_kwargs: (
+            [(25_000, "你看过了许多美景"), (87_100, "你累积了许多飞行"), (210_300, "就是旅行的意义")],
+            0,
+        ),
+    )
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+    )
+
+    assert record["decision_action"] != "RETRY"
+    assert record["source_context_job"]["song_context_subtitle_fallback"]["status"] == (
+        "USED_FOR_PROOF_CONTEXT_ONLY"
+    )
+    assert record["subtitle_source"] == "verified_external_lrc"
+    assert record["materialized_recut"]["subtitle_source"] == "external_lrc_global_shift"
+    assert evidence["metrics"]["song_complete"] is True
+    assert "JINGTING_PENDING" not in record["reason_codes"]
+    assert "JINGTING_REVIEW_REQUIRED" not in record["reason_codes"]
+
+
 def test_ready_host_identity_plus_speech_over_background_music_stays_blocked(tmp_path):
     record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
         tmp_path,
@@ -1127,23 +1194,33 @@ def test_background_mode_from_real_song_repair_cannot_fall_back_to_talk_or_mater
                 other_singer_or_harmony_audible=False,
                 recorded_or_playback_vocal_audible=True,
             )
-        raw_path = Path(run.output_path)
-        raw_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        raw_sha = hashlib.sha256(raw_path.read_bytes()).hexdigest()
-        manifest_path = Path(run.manifest_path)
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["artifacts"]["output_sha256"] = raw_sha
+            canonicalized_path = Path(run.output_path)
+            canonicalized_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            canonicalized_sha = hashlib.sha256(canonicalized_path.read_bytes()).hexdigest()
+            provider_raw_path = Path(str(run.provider_raw_output_path))
+            provider_raw_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            provider_raw_sha = hashlib.sha256(provider_raw_path.read_bytes()).hexdigest()
+            manifest_path = Path(run.manifest_path)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["artifacts"]["provider_raw_output_sha256"] = provider_raw_sha
+            manifest["artifacts"]["output_sha256"] = canonicalized_sha
+            manifest["canonicalization"]["provider_raw_output_sha256"] = provider_raw_sha
+            manifest["canonicalization"]["canonicalized_output_sha256"] = canonicalized_sha
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return dataclasses.replace(
-            run,
-            payload=payload,
-            output_sha256=raw_sha,
+                run,
+                payload=payload,
+                output_sha256=canonicalized_sha,
+                provider_raw_output_sha256=provider_raw_sha,
             manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         )
 
@@ -1447,6 +1524,86 @@ def test_live_source_runs_agy_runner_when_refined_srt_is_absent(tmp_path, monkey
     assert record["source_context"]["review_required_path"] is None
     assert "REFINED_SRT_MISSING" not in record["reason_codes"]
     assert "JINGTING_REVIEW_REQUIRED" not in record["reason_codes"]
+
+
+def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_path, monkeypatch):
+    from scripts import gemini_slice_jingting as jingting
+    from src.autoslice.source_context_executor import AgyRunnerError
+
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"media")
+    draft = tmp_path / "draft.srt"
+    draft.write_text("1\n00:00:00,000 --> 00:00:01,000\n旧字\n", encoding="utf-8")
+    output = tmp_path / "output.srt"
+    monkeypatch.setattr(
+        jingting,
+        "run_agy",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AgyRunnerError("AGY_QUOTA_EXHAUSTED", "quota", retry_after_seconds=120)
+        ),
+    )
+
+    def fake_gemini(_media, _draft, out):
+        Path(out).write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
+        return "gemini-job"
+
+    monkeypatch.setattr(jingting, "run_gemini_api", fake_gemini)
+    result = shadow_pipeline._run_source_context_agy(media, draft, output)
+
+    assert result.provider == "gemini_api"
+    assert result.provider_fallback_used is True
+    assert result.agy_rc is None
+    assert output.is_file()
+
+
+@pytest.mark.parametrize(
+    ("print_timeout", "grace_seconds", "expected"),
+    [
+        (None, None, {"print_timeout": "10m", "process_timeout_seconds": 660}),
+        ("4m", "30", {"print_timeout": "4m", "process_timeout_seconds": 270}),
+    ],
+)
+def test_default_source_context_runner_bounds_hung_agy_before_gemini_fallback(
+    tmp_path, monkeypatch, print_timeout, grace_seconds, expected
+):
+    from scripts import gemini_slice_jingting as jingting
+    from src.autoslice.source_context_executor import AgyRunnerError
+
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"media")
+    draft = tmp_path / "draft.srt"
+    draft.write_text("1\n00:00:00,000 --> 00:00:01,000\n旧字\n", encoding="utf-8")
+    output = tmp_path / "output.srt"
+    if print_timeout is None:
+        monkeypatch.delenv("SOURCE_CONTEXT_AGY_PRINT_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("SOURCE_CONTEXT_AGY_PRINT_TIMEOUT", print_timeout)
+    if grace_seconds is None:
+        monkeypatch.delenv("SOURCE_CONTEXT_AGY_TIMEOUT_GRACE_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("SOURCE_CONTEXT_AGY_TIMEOUT_GRACE_SECONDS", grace_seconds)
+    captured = {}
+
+    def fake_agy(*_args, **kwargs):
+        captured.update(kwargs)
+        raise AgyRunnerError("AGY_TIMEOUT", "hung")
+
+    gemini_calls = []
+
+    def fake_gemini(_media, _draft, out):
+        gemini_calls.append((_media, _draft, out))
+        Path(out).write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
+        return "gemini-job"
+
+    monkeypatch.setattr(jingting, "run_agy", fake_agy)
+    monkeypatch.setattr(jingting, "run_gemini_api", fake_gemini)
+    result = shadow_pipeline._run_source_context_agy(media, draft, output)
+
+    assert captured == expected
+    assert len(gemini_calls) == 1
+    assert result.provider == "gemini_api"
+    assert result.provider_fallback_used is True
+    assert output.is_file()
 
 
 def test_live_source_backfills_duplicate_and_subtitle_alignment_machine_evidence(tmp_path, monkeypatch):
@@ -2873,7 +3030,8 @@ def test_shadow_pipeline_fails_closed_when_preexisting_marker_exists(tmp_path, m
 
 
 
-def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
+@pytest.mark.parametrize("audio_provider", ["agy", "gemini_api"])
+def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path, audio_provider):
     from src.autoslice.song_repair import LrcLine, LrcResult
 
     lyric_lines = [
@@ -2955,6 +3113,7 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
             lrc=selected_lrc,
             candidate_id=candidate,
             output_dir=artifact_dir,
+            provider=audio_provider,
         ),
         host_vocal_prover=_ready_host_vocal_prover,
     )
@@ -3015,6 +3174,17 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
     }
     assert recut_manifest["verified_output_binding"] == recut["verified_output_binding"]
     assert recut["manifest_sha256"] == "sha256:" + hashlib.sha256(recut_manifest_path.read_bytes()).hexdigest()
+
+    if audio_provider == "gemini_api":
+        tampered_report = dict(alignment_report)
+        tampered_report["audio_alignment_provider"] = "agy"
+        report_path.write_text(json.dumps(tampered_report, ensure_ascii=False) + "\n", encoding="utf-8")
+        tampered_claim = dict(alignment_claim)
+        tampered_claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        assert shadow_pipeline._verify_live_performance_observation(
+            tampered_claim,
+            output_dir=report_path.parent,
+        ) == "live-performance proof is not an approved production audio alignment"
 
 
 def test_live_source_song_repair_failure_records_attempts_then_blocks(tmp_path):
