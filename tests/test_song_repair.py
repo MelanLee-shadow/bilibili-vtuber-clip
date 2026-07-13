@@ -3577,3 +3577,298 @@ def test_audio_lrc_paid_backup_withheld_below_three_strikes(
         if str(row.get("category", "")).startswith("PAID_BACKUP_SKIPPED:")
     ]
     assert skip_rows and "FREE_CHAIN_STRIKES_2_BELOW_3" in skip_rows[0]["category"]
+
+
+# ---------------------------------------------------------------------------
+# Fresh-ASR global-shift anchor (2026-07-11 fix)
+#
+# Root cause: AGY (Gemini audio listening) onset times can carry a uniform
+# lateness bias that every existing AGY-only consistency gate (±1500ms
+# spread) lets through.  A fresh, independent ASR transcript of the SAME
+# source media — the same timeline the talk lane already burns straight
+# from — is used to anchor the final global shift instead, but only when it
+# earns enough fuzzy-matched lines with a tight residual spread and does not
+# disagree with the AGY median by more than the existing ±1500ms tolerance.
+# ---------------------------------------------------------------------------
+
+
+def _lianai_gaoji_lrc_for_asr_anchor_regression() -> LrcResult:
+    """Synthetic 10-line 《恋爱告急》-shaped LRC using the real verified
+    2026-07-11 delivered-clip numbers for line 0: kugou LRC time 16710ms;
+    AGY placed it at 34710ms (+18000ms); the same source's BCUT ASR placed
+    its (textually slightly different) first cue at 33850ms (+17140ms)."""
+
+    texts = [
+        "忽然之间的换季",
+        "你的暖意还没褪去",
+        "我们之间的距离",
+        "却越来越像陌生的城市",
+        "我一直没能说出口",
+        "那些藏在心里的话",
+        "如果时间能倒回去",
+        "我想重新牵你的手",
+        "可惜世界没有如果",
+        "只剩回忆在原地打转",
+    ]
+    return LrcResult(
+        provider="kugou",
+        song_title="恋爱告急",
+        artist="炎明熹",
+        source_ref="kugou://song/lianaigaoji-fixture",
+        lines=tuple(LrcLine(16_710 + index * 7_000, text) for index, text in enumerate(texts)),
+    )
+
+
+def _fresh_asr_cues_for_regression_lrc(lrc: LrcResult, *, asr_offset_ms: int) -> list[SourceCue]:
+    cues = []
+    for index, line in enumerate(lrc.lines):
+        start_ms = line.time_ms + asr_offset_ms
+        # BCUT's real first-line text differs slightly from the kugou LRC
+        # ("忽然之间的痕迹" vs "忽然之间的换季") — keep that mismatch on line 0
+        # to prove the matcher is fuzzy, not an exact-text lookup.
+        text = "忽然之间的痕迹" if index == 0 else line.text
+        cues.append(
+            SourceCue(f"bcut-{index:02d}", start_ms, start_ms + 2_500, text, kind="speech")
+        )
+    return cues
+
+
+def test_match_lrc_to_fresh_asr_anchor_accepts_fuzzy_text_and_returns_median_offset():
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=17_140)
+
+    offset_ms, matched_line_count, reason = song_repair.match_lrc_to_fresh_asr_anchor(lrc.lines, cues)
+
+    assert offset_ms == 17_140
+    assert matched_line_count == 10
+    assert reason is None
+
+
+def test_match_lrc_to_fresh_asr_anchor_rejects_too_few_matches():
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    # Only two of ten lines have a corresponding fresh-ASR cue at all.
+    cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=17_140)[:2]
+
+    offset_ms, matched_line_count, reason = song_repair.match_lrc_to_fresh_asr_anchor(lrc.lines, cues)
+
+    assert offset_ms is None
+    assert matched_line_count == 2
+    assert reason is not None and "need >=" in reason
+
+
+def test_match_lrc_to_fresh_asr_anchor_rejects_scattered_residuals():
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=17_140)
+    # Scatter the residuals far apart (alternating +/- 2000ms) so the IQR
+    # gate rejects a noisy fresh-ASR reading rather than average it away.
+    scattered = []
+    for index, cue in enumerate(cues):
+        jitter = 2_000 if index % 2 == 0 else -2_000
+        scattered.append(
+            SourceCue(
+                cue.cue_id,
+                cue.source_start_ms + jitter,
+                cue.source_end_ms + jitter,
+                cue.text,
+                kind=cue.kind,
+            )
+        )
+
+    offset_ms, matched_line_count, reason = song_repair.match_lrc_to_fresh_asr_anchor(lrc.lines, scattered)
+
+    assert offset_ms is None
+    assert matched_line_count == 10
+    assert reason is not None and "IQR" in reason
+
+
+def test_match_lrc_to_fresh_asr_anchor_uses_each_asr_cue_once_in_monotonic_order():
+    # The anchor matcher must reuse the shared monotonic DP matcher
+    # (``_align_lrc_to_cues``), not an independent greedy per-line lookup —
+    # every matched ASR cue serves exactly one LRC line and matched cue
+    # starts never go backwards.
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=17_140)
+
+    alignment = song_repair._align_lrc_to_cues(
+        lrc.lines, cues, match_threshold=song_repair.ASR_ANCHOR_MATCH_THRESHOLD
+    )
+    matched_cue_ids = [entry["matched_cue_id"] for entry in alignment if entry["matched_cue_id"] is not None]
+    matched_starts = [entry["cue_start_ms"] for entry in alignment if entry["matched_cue_id"] is not None]
+
+    assert len(matched_cue_ids) == len(set(matched_cue_ids)) == 10
+    assert matched_starts == sorted(matched_starts)
+
+
+def test_validated_audio_lrc_selection_anchors_on_real_2026_07_11_regression_numbers(tmp_path):
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    # AGY offset 18000ms reproduces the delivered clip's exact observation:
+    # line 0 (16710ms) placed at 34710ms.
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        lrc,
+        candidate_id="lianai-gaoji-regression",
+        source_duration_ms=120_000,
+        offset_ms=18_000,
+    )
+    asr_cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=17_140)
+
+    selected = song_repair._validated_audio_lrc_selection(
+        run=run,
+        lrc=lrc,
+        candidate_id="lianai-gaoji-regression",
+        source_media_path=Path(run.source_path),
+        source_duration_ms=120_000,
+        min_matched_ratio=0.55,
+        asr_anchor_cues=asr_cues,
+    )
+
+    offset_ms = selected[8]
+    offset_provenance = selected[10]
+    assert offset_ms == 17_140
+    assert offset_provenance["offset_basis"] == "asr_anchor"
+    assert offset_provenance["agy_offset_ms"] == 18_000
+    assert offset_provenance["asr_offset_ms"] == 17_140
+    assert offset_provenance["asr_matched_line_count"] == 10
+    # clip_start_ms is the nominal LRC-zero boundary and must follow the
+    # corrected (earlier, more accurate) anchor too.
+    clip_start_ms = selected[6]
+    assert clip_start_ms == 17_140
+
+
+def test_validated_audio_lrc_selection_falls_back_to_agy_median_without_asr_cues(tmp_path):
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc, candidate_id="no-asr-anchor", offset_ms=10_000)
+
+    selected = song_repair._validated_audio_lrc_selection(
+        run=run,
+        lrc=lrc,
+        candidate_id="no-asr-anchor",
+        source_media_path=Path(run.source_path),
+        source_duration_ms=100_000,
+        min_matched_ratio=0.55,
+    )
+
+    offset_ms = selected[8]
+    offset_provenance = selected[10]
+    assert offset_ms == 10_000
+    assert offset_provenance["offset_basis"] == "agy_median"
+    assert offset_provenance["agy_offset_ms"] == 10_000
+    assert offset_provenance["asr_offset_ms"] is None
+
+
+def test_validated_audio_lrc_selection_fails_closed_when_asr_anchor_disagrees_with_agy(tmp_path):
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        lrc,
+        candidate_id="lianai-gaoji-disagree",
+        source_duration_ms=120_000,
+        offset_ms=18_000,
+    )
+    # A fresh-ASR anchor with an offset >1500ms away from the AGY median must
+    # never be silently accepted OR silently ignored in favor of AGY; code
+    # must fail closed instead of guessing which reading is right.
+    far_asr_cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=10_000)
+
+    with pytest.raises(ValueError, match="disagrees with the AGY median offset"):
+        song_repair._validated_audio_lrc_selection(
+            run=run,
+            lrc=lrc,
+            candidate_id="lianai-gaoji-disagree",
+            source_media_path=Path(run.source_path),
+            source_duration_ms=120_000,
+            min_matched_ratio=0.55,
+            asr_anchor_cues=far_asr_cues,
+        )
+
+
+def test_attempt_song_repair_report_carries_asr_anchor_offset_provenance_fields(tmp_path):
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        lrc,
+        candidate_id="lianai-gaoji-report",
+        source_duration_ms=120_000,
+        offset_ms=18_000,
+    )
+    asr_cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=17_140)
+    seed_cues = [
+        SourceCue("seed-0", 16_710, 19_710, lrc.lines[0].text, kind="singing"),
+        SourceCue("seed-1", 23_710, 26_710, lrc.lines[1].text, kind="singing"),
+    ]
+
+    result = attempt_song_repair(
+        candidate_id="lianai-gaoji-report",
+        cues=seed_cues,
+        anchor_start_ms=16_710,
+        anchor_end_ms=26_710,
+        source_duration_ms=120_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+        asr_anchor_cues=asr_cues,
+    )
+
+    assert result.repaired is True
+    assert result.song_boundary["nominal_lrc_zero_ms"] == 17_140
+    assert result.lyrics_alignment["offset_ms"] == 17_140
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    # Load-bearing string asserted by scripts/free_session_autoslice.py's
+    # SONG_ALIGNMENT_REPORT_MODEL_INVALID gate — must not be bumped.
+    assert report["alignment_model"] == "external_lrc_global_shift.v1"
+    assert report["offset_ms"] == 17_140
+    assert report["offset_basis"] == "asr_anchor"
+    assert report["agy_offset_ms"] == 18_000
+    assert report["asr_offset_ms"] == 17_140
+    assert report["asr_matched_line_count"] == 10
+
+
+def test_attempt_song_repair_sibling_srt_fallback_anchors_when_cues_not_threaded(tmp_path):
+    """When a caller has no already-parsed ASR cues, a sibling
+    ``<stem>_source.srt`` next to the source media is used as a fallback."""
+
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        lrc,
+        candidate_id="lianai-gaoji-sibling",
+        source_duration_ms=120_000,
+        offset_ms=18_000,
+    )
+    source_media_path = Path(run.source_path)
+    sibling_srt = source_media_path.with_name(f"{source_media_path.stem}_source.srt")
+
+    def _srt_ts(ms: int) -> str:
+        return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+    blocks = []
+    for index, line in enumerate(lrc.lines):
+        start_ms = line.time_ms + 17_140
+        end_ms = start_ms + 2_500
+        text = "忽然之间的痕迹" if index == 0 else line.text
+        blocks.append(f"{index + 1}\n{_srt_ts(start_ms)} --> {_srt_ts(end_ms)}\n{text}")
+    sibling_srt.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+
+    seed_cues = [
+        SourceCue("seed-0", 16_710, 19_710, lrc.lines[0].text, kind="singing"),
+        SourceCue("seed-1", 23_710, 26_710, lrc.lines[1].text, kind="singing"),
+    ]
+    result = attempt_song_repair(
+        candidate_id="lianai-gaoji-sibling",
+        cues=seed_cues,
+        anchor_start_ms=16_710,
+        anchor_end_ms=26_710,
+        source_duration_ms=120_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=source_media_path,
+        audio_lrc_aligner=lambda *_args: run,
+        # No asr_anchor_cues/asr_anchor_srt_path — must fall back to the
+        # sibling-file lookup relative to source_media_path.
+    )
+
+    assert result.repaired is True
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    assert report["offset_basis"] == "asr_anchor"
+    assert report["offset_ms"] == 17_140

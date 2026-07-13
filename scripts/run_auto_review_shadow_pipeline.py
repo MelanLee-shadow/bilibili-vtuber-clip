@@ -393,6 +393,14 @@ def _run_live_source(
     context_start_ms = _int(_mapping(job_manifest.get("timeline")).get("context_start_ms"), 0)
     context_duration_ms = _int(_mapping(job_manifest.get("timeline")).get("context_duration_ms"), 0)
     cues = _parse_srt(Path(source_context_subtitle_path), source_offset_ms=context_start_ms)
+    # ``source_srt`` is the fresh full-source ASR transcript (e.g. BCUT),
+    # already source_video-relative and untouched by AGY subtitle refinement
+    # — unlike ``cues`` above, which can be AGY-refined text/timing and is
+    # rebased by ``context_start_ms``.  Song lyric global-shift anchoring
+    # needs the former: AGY's own audio-listening offset can carry a uniform
+    # lateness bias (2026-07-11 fix) that a fresh independent ASR timeline
+    # does not share.
+    song_asr_anchor_cues = _parse_srt(source_srt) if source_srt is not None else ()
     job_manifest, song_repair_result = _attempt_song_repair_stage(
         job_manifest,
         cues,
@@ -406,6 +414,7 @@ def _run_live_source(
         # from ``source_video`` left no exact verified-to-output path binding.
         source_media_path=source_video,
         audio_lrc_aligner=audio_lrc_aligner,
+        asr_anchor_cues=song_asr_anchor_cues,
     )
     job_manifest = _attempt_host_vocal_proof_stage(
         job_manifest,
@@ -2711,12 +2720,18 @@ def _attempt_song_repair_stage(
     extra_queries: Sequence[str] = (),
     source_media_path: Path | None = None,
     audio_lrc_aligner: AudioLrcAligner | None = None,
+    asr_anchor_cues: Sequence[SourceCue] = (),
 ) -> tuple[Mapping[str, object], SongRepairResult | None]:
     """Repair-first: try to earn the full-song proof before review can BLOCK.
 
     Returns the (possibly repaired) job manifest plus the repair result for
     evidence.  A repaired manifest carries a song_boundary/lyrics_alignment
     pair that passes the hash-bound proof gate on its own merits.
+
+    ``asr_anchor_cues`` is the fresh (non-AGY) full-source ASR transcript of
+    the same source media — see ``attempt_song_repair``'s docstring for why
+    the AGY-audio path needs it as an independent anchor for the lyric global
+    shift.
     """
 
     if not _job_is_song_candidate(job_manifest):
@@ -2745,6 +2760,7 @@ def _attempt_song_repair_stage(
         pinned_lrc_results=_pinned_lrc_for_song(cues),
         source_media_path=source_media_path,
         audio_lrc_aligner=audio_lrc_aligner,
+        asr_anchor_cues=asr_anchor_cues,
     )
     if result.repaired and result.song_boundary and result.lyrics_alignment:
         repaired_job = {
