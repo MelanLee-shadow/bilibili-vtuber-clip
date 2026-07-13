@@ -20,6 +20,7 @@ from src.autoslice.timely_term_crawler import CrawlError
 from src.autoslice.topic_entity_crawler import (
     GraphCrawlResult,
     _search_score,
+    _search_subjects,
     crawl_topic_entity_graph,
 )
 from src.autoslice.topic_entity_graph import (
@@ -391,6 +392,29 @@ def test_crawler_builds_chinese_name_and_short_reading_from_structured_subject()
     assert "Current Work" in work["aliases"]
 
 
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://www.animenewsnetwork.com/news/2026-07-11/current-anime/.1",
+        "https://anime.bang-dream.com/avemujica/",
+        "https://bushiroad.com/events/current-anime",
+        "https://www.tv-tokyo.co.jp/anime/current/",
+    ],
+)
+def test_crawler_graph_accepts_every_machine_timely_source_family(source_url):
+    result = crawl_topic_entity_graph(
+        client=_BreadthFakeClient({"Current Work": 42}),
+        timely_snapshot=_snapshot(_term("Current Work", source_url=source_url)),
+        input_timely_terms_sha256="a" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+        max_works_per_topic=1,
+    )
+
+    assert result.graph["topics"][0]["sources"][0]["url"] == source_url
+
+
 def _term(
     canonical: str,
     *,
@@ -400,6 +424,8 @@ def _term(
     source_url: str = "https://anilist.co/anime/1",
 ) -> dict:
     source = _source(source_url)
+    if source_url.startswith("https://bgm.tv/subject/"):
+        source["publisher"] = "Bangumi structured fixture"
     if community:
         source["publisher"] = "Bilibili community fixture"
     return {
@@ -525,10 +551,66 @@ def test_crawler_reserves_quarter_of_primary_frontier_for_upcoming_anime():
     assert "Current 3" not in canonicals
 
 
+def test_discovery_reserve_does_not_skip_the_last_primary_topic():
+    terms = [_term(f"Work {index:02d}") for index in range(17)]
+    client = _BreadthFakeClient(
+        {term["canonical"]: index + 1 for index, term in enumerate(terms)}
+    )
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(*terms),
+        input_timely_terms_sha256="f" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=16,
+        max_queries=16,
+    )
+
+    assert client.search_queries == [f"Work {index:02d}" for index in range(16)]
+    assert len(result.graph["topics"]) == 16
+
+
 def test_search_score_rejects_same_prefix_from_different_franchise():
     assert _search_score("Black Clover Season 2", {"name": "BLACK LAGOON"}) == 0.0
     assert _search_score("Black Clover Season 2", {"name": "Black Clover"}) == 0.0
     assert _search_score("Black Clover Season 2", {"name": "Black Clover Season 2"}) == 1.0
+
+
+def test_search_score_hard_rejects_adjacent_season_and_cour_numbers():
+    assert _search_score("Example Season 4", {"name": "Example Season 3"}) == 0.0
+    assert _search_score("Example Cour 3", {"name": "Example Cour 2"}) == 0.0
+    assert _search_score("Example 3クール", {"name": "Example 第2クール"}) == 0.0
+    assert _search_score("Example Season 4", {"name": "Example 4th Season"}) > 0.68
+    assert _search_score("Example Cour 3", {"name": "Example 第3クール"}) > 0.68
+
+
+def test_search_subjects_reranks_correct_season_before_popular_old_season():
+    class SearchRowsClient:
+        def fetch(self, *_args, **_kwargs):
+            rows = [
+                {
+                    "id": 3,
+                    "type": 2,
+                    "name": "Example Season 3",
+                    "name_cn": "",
+                    "collection": {"collect": 100000},
+                },
+                {
+                    "id": 4,
+                    "type": 2,
+                    "name": "Example 4th Season",
+                    "name_cn": "",
+                    "collection": {"collect": 1},
+                },
+            ]
+            return SimpleNamespace(body=json.dumps({"data": rows}).encode())
+
+    rows = _search_subjects(
+        SearchRowsClient(),
+        "https://api.bgm.tv/v0/search/subjects",
+        "Example Season 4",
+        max_results=1,
+    )
+    assert [row["id"] for row in rows] == [4]
 
 
 def test_direct_bangumi_subject_with_empty_cast_falls_back_within_franchise():
@@ -551,6 +633,56 @@ def test_direct_bangumi_subject_with_empty_cast_falls_back_within_franchise():
     assert result.graph["works"][0]["work_id"] == "bgm:subject:42"
 
 
+def test_direct_bangumi_subject_is_materialized_without_a_search_request():
+    current = _term("Direct Work", source_url="https://bgm.tv/subject/77")
+    client = _BreadthFakeClient({"Direct Work": 999})
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(current),
+        input_timely_terms_sha256="8" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+    )
+
+    assert client.search_queries == []
+    assert result.graph["works"][0]["work_id"] == "bgm:subject:77"
+
+
+def test_untrusted_bangumi_link_is_not_accepted_as_a_direct_subject_authority():
+    current = _term("Search Me", source_url="https://bgm.tv/subject/77")
+    current["sources"][0]["publisher"] = "community fixture"
+    client = _BreadthFakeClient({"Search Me": 12})
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(current),
+        input_timely_terms_sha256="1" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+    )
+
+    assert client.search_queries == ["Search Me"]
+    assert result.graph["works"][0]["work_id"] == "bgm:subject:12"
+
+
+def test_empty_cast_subject_does_not_occupy_slot_and_later_term_backfills():
+    empty = _term("Empty Work", source_url="https://bgm.tv/subject/99")
+    usable = _term("Usable Work")
+    client = _BreadthFakeClient({"Usable Work": 2}, empty_cast_ids={99})
+    result = crawl_topic_entity_graph(
+        client=client,
+        timely_snapshot=_snapshot(empty, usable),
+        input_timely_terms_sha256="7" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=2,
+    )
+
+    assert [row["canonical"] for row in result.graph["topics"]] == ["Usable Work"]
+    assert client.search_queries == ["Usable Work"]
+
+
 def test_community_current_work_precedes_sibling_expansion_and_parent_franchise():
     dream = _term(
         "梦限大",
@@ -562,10 +694,10 @@ def test_community_current_work_precedes_sibling_expansion_and_parent_franchise(
     client = _BreadthFakeClient(
         {
             "梦限大": None,
-            "BanG Dream YUME MITA": 10,
-            "MyGO!!!!!": 11,
-            "Ave Mujica": 12,
-            "BanG Dream!": 13,
+            "BanG Dream YUME MITA": 583729,
+            "MyGO!!!!!": 428735,
+            "Ave Mujica": 454684,
+            "BanG Dream!": 186515,
         }
     )
     result = crawl_topic_entity_graph(
@@ -581,20 +713,129 @@ def test_community_current_work_precedes_sibling_expansion_and_parent_franchise(
     assert client.search_queries[:4] == ["梦限大", "BanG Dream YUME MITA", "MyGO!!!!!", "Ave Mujica"]
     assert "BanG Dream!" not in client.search_queries
     assert set(result.graph["topics"][0]["work_ids"]) == {
-        "bgm:subject:10",
-        "bgm:subject:11",
-        "bgm:subject:12",
+        "bgm:subject:583729",
+        "bgm:subject:428735",
+        "bgm:subject:454684",
     }
+
+
+def test_reviewed_tv_anime_seed_without_generic_anime_marker_remains_eligible():
+    dream = _term("梦限大", topic_entities=["BanG Dream!", "MyGO!!!!!"])
+    dream["topic_entities"].remove("Anime")
+    dream["reason"] = "TV anime BanG Dream! YUME MITA began broadcasting."
+    dream["sources"] = [
+        {
+            "url": "https://anime.bang-dream.com/yumemita/news/post-5",
+            "published_at": "2026-07-01",
+            "publisher": "BanG Dream! official anime site",
+        }
+    ]
+    result = crawl_topic_entity_graph(
+        client=_BreadthFakeClient({"梦限大": 10}),
+        timely_snapshot=_snapshot(dream),
+        input_timely_terms_sha256="9" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+    )
+
+    assert result.graph["topics"][0]["canonical"] == "梦限大"
 
 
 def test_cli_defaults_match_daily_breadth_budget():
     args = graph_crawler_parser().parse_args([])
-    assert (args.max_requests, args.max_topics, args.max_queries, args.max_works_per_topic) == (
+    assert (
+        args.max_requests,
+        args.max_topics,
+        args.max_queries,
+        args.max_works_per_topic,
+        args.node_ttl_days,
+    ) == (
         80,
         16,
         40,
         3,
+        30.0,
     )
+
+
+def test_incremental_refresh_accumulates_missing_topics_and_keeps_refresh_lineage():
+    terms = [_term(f"Work {index}") for index in range(4)]
+    first = crawl_topic_entity_graph(
+        client=_BreadthFakeClient({term["canonical"]: index + 1 for index, term in enumerate(terms)}),
+        timely_snapshot=_snapshot(*terms),
+        input_timely_terms_sha256="6" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=2,
+        max_queries=2,
+    )
+    second_client = _BreadthFakeClient(
+        {term["canonical"]: index + 1 for index, term in enumerate(terms)}
+    )
+    second = crawl_topic_entity_graph(
+        client=second_client,
+        timely_snapshot=_snapshot(*terms),
+        input_timely_terms_sha256="5" * 64,
+        generated_at=dt.datetime(2026, 7, 13, 12, tzinfo=dt.timezone.utc),
+        max_topics=2,
+        max_queries=2,
+        previous_graph=first.graph,
+    )
+
+    assert second_client.search_queries == ["Work 2", "Work 3"]
+    assert {row["canonical"] for row in second.graph["topics"]} == {
+        "Work 0",
+        "Work 1",
+        "Work 2",
+        "Work 3",
+    }
+    refreshed = {row["canonical"]: row["refreshed_at"] for row in second.graph["topics"]}
+    assert refreshed["Work 0"] == "2026-07-12T12:00:00+00:00"
+    assert refreshed["Work 2"] == "2026-07-13T12:00:00+00:00"
+
+
+def test_incremental_refresh_prunes_expired_nodes_from_current_snapshot():
+    first = crawl_topic_entity_graph(
+        client=_BreadthFakeClient({"Old Work": 1}),
+        timely_snapshot=_snapshot(_term("Old Work")),
+        input_timely_terms_sha256="4" * 64,
+        generated_at=dt.datetime(2026, 7, 10, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+        node_ttl=dt.timedelta(days=1),
+    )
+    second = crawl_topic_entity_graph(
+        client=_BreadthFakeClient({"New Work": 2}),
+        timely_snapshot=_snapshot(_term("Old Work"), _term("New Work")),
+        input_timely_terms_sha256="3" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+        previous_graph=first.graph,
+    )
+
+    assert [row["canonical"] for row in second.graph["topics"]] == ["New Work"]
+
+
+def test_incremental_refresh_rejects_a_previous_graph_from_the_future():
+    first = crawl_topic_entity_graph(
+        client=_BreadthFakeClient({"Work": 1}),
+        timely_snapshot=_snapshot(_term("Work")),
+        input_timely_terms_sha256="2" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+    )
+    with pytest.raises(ValueError, match="from the future"):
+        crawl_topic_entity_graph(
+            client=_BreadthFakeClient({"Work": 1}),
+            timely_snapshot=_snapshot(_term("Work")),
+            input_timely_terms_sha256="0" * 64,
+            generated_at=dt.datetime(2026, 7, 11, 12, tzinfo=dt.timezone.utc),
+            max_topics=1,
+            max_queries=1,
+            previous_graph=first.graph,
+        )
 
 
 def test_partial_crawl_refuses_to_replace_last_good_graph(tmp_path):
@@ -606,6 +847,13 @@ def test_partial_crawl_refuses_to_replace_last_good_graph(tmp_path):
         write_complete_graph(result, destination)
 
     assert destination.read_text(encoding="utf-8") == "last-good\n"
+
+
+def test_legacy_graph_gets_a_bounded_refresh_window_on_validation():
+    graph = validate_topic_entity_graph(_graph())
+    topic = graph["topics"][0]
+    assert topic["refreshed_at"] == graph["generated_at"]
+    assert topic["refresh_expires_at"] == graph["expires_at"]
 
 
 def test_instruction_like_graph_atom_is_rejected():

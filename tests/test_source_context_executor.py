@@ -165,6 +165,64 @@ def test_agy_runner_error_reason_code_is_distinguishable(tmp_path):
     assert "AGY_EMPTY_OUTPUT" in review_required["findings"]
 
 
+def test_agy_retry_after_is_persisted_for_autonomous_resume(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    def quota_runner(*_args) -> AgyExecutionResult:
+        raise AgyRunnerError(
+            "AGY_QUOTA_EXHAUSTED",
+            "individual quota exhausted",
+            retry_after_seconds=2458,
+        )
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=quota_runner,
+        run_ffmpeg=False,
+    )
+
+    review_required = json.loads(Path(result.review_required_path).read_text(encoding="utf-8"))
+    assert "AGY_QUOTA_EXHAUSTED" in result.reason_codes
+    assert review_required["metadata"]["retry_after_seconds"] == 2458
+
+
+def test_strict_gemini_api_fallback_is_accepted_source_context_provider(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    def gemini_fallback_runner(_media, draft, output) -> AgyExecutionResult:
+        output.write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
+        return AgyExecutionResult(
+            provider="gemini_api",
+            model="gemini-3.5-flash",
+            agy_rc=None,
+            provider_fallback_used=True,
+            provider_request_id="fallback-job",
+        )
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=gemini_fallback_runner,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "READY"
+    manifest = json.loads(Path(result.jingting_manifest_path).read_text(encoding="utf-8"))
+    assert manifest["provider"] == "gemini_api"
+    assert manifest["provider_fallback_used"] is True
+
+
 def test_agy_failure_or_fallback_unknown_is_not_release_ready(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source bytes")

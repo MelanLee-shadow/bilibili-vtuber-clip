@@ -519,6 +519,22 @@ def test_child_env_pins_timely_snapshot_path_and_hash(tmp_path, monkeypatch):
     assert env["LIDOUSHA_TERM_AS_OF"] == "2026-07-10"
 
 
+def test_child_env_imports_only_named_gemini_fallback_keys(tmp_path, monkeypatch):
+    bilive_env = tmp_path / "bilive.env"
+    bilive_env.write_text(
+        "GEMINI_API_KEY=primary\nGEMINI_API_KEY_2=secondary\nRECORD_KEY=must-not-leak\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "BILIVE_ENV", bilive_env)
+    monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing-cpa.env")
+
+    env = runner.child_env()
+
+    assert env["GEMINI_API_KEY"] == "primary"
+    assert env["GEMINI_API_KEY_2"] == "secondary"
+    assert env.get("RECORD_KEY") != "must-not-leak"
+
+
 def test_child_env_prefers_runtime_crawler_snapshot_without_dirtying_repo(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     base = tmp_path / "runtime"
@@ -614,6 +630,7 @@ def test_prioritize_caps_talk_and_songs_with_reasons():
     prioritize(state)
     assert len(state["pending_talk"]) == MAX_TALK_PICKS
     assert len(state["not_selected"]) == 3
+    assert len(state["talk_backlog"]) == 3
     assert len(state["pending_song"]) == MAX_SONGS_PER_DATE
     # 弹幕最高的两个被保留（降序）
     assert [s["danmaku"] for s in state["pending_song"]] == [30, 20]
@@ -1937,6 +1954,26 @@ def test_prioritize_global_confidence_ranking_beats_arrival_order():
     assert "全局排序" in state["not_selected"][0]
 
 
+def test_not_selected_stays_deduped_across_rerun_ticks():
+    """7/11 real failure: 边界自修复后的重选 tick 把同一批候补重复 append，
+    AUTOSLICE_SUMMARY 落选一节整段重复。重跑必须幂等。"""
+    state = {
+        "picks": [], "songs": [], "pending_song": [],
+        "pending_talk": [
+            {"segment_path": f"/rec/talkseg{i % 2}.mp4", "start_ms": i * 1000, "end_ms": i * 1000 + 30_000,
+             "hook": f"hook{i}", "confidence": 0.9, "cid": f"auto_{i}"}
+            for i in range(MAX_TALK_PICKS + 3)
+        ],
+    }
+    prioritize(state)
+    first = list(state["not_selected"])
+    assert len(first) == 3
+    # 模拟下一个 tick：落选候补重新参与全局重选
+    state["pending_talk"] = state["pending_talk"] + state["talk_backlog"]
+    prioritize(state)
+    assert state["not_selected"] == first
+
+
 def test_prioritize_diversity_cap_is_soft():
     """One segment with 6 candidates and nothing else: the per-segment cap must
     yield rather than deliver fewer than the quota."""
@@ -1950,6 +1987,122 @@ def test_prioritize_diversity_cap_is_soft():
     }
     prioritize(state)
     assert len(state["pending_talk"]) == MAX_TALK_PICKS
+
+
+def test_rejected_talk_candidate_automatically_backfills_next_ranked_reserve():
+    candidates = [
+        {
+            "segment_path": f"/rec/seg{i}.mp4",
+            "start_ms": i * 10_000,
+            "end_ms": i * 10_000 + 9_000,
+            "hook": f"hook-{i}",
+            "confidence": 0.99 - i * 0.01,
+            "cid": f"talk-{i}",
+        }
+        for i in range(6)
+    ]
+    state = {"picks": [], "songs": [], "pending_song": [], "pending_talk": candidates}
+    prioritize(state)
+    assert [item["cid"] for item in state["talk_backlog"]] == ["talk-5"]
+
+    state["pending_talk"] = []
+    state["picks"] = [
+        {"candidate_id": f"talk-{i}", "status": "review_ready"}
+        for i in range(4)
+    ] + [
+        {
+            "candidate_id": "talk-4",
+            "status": "candidate_rejected",
+            "rejection_reason": "unsafe_boundary_backfilled",
+        }
+    ]
+    prioritize(state)
+
+    assert [item["cid"] for item in state["pending_talk"]] == ["talk-5"]
+    assert state["talk_backlog"] == []
+
+
+def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypatch, tmp_path):
+    date = "2026-07-11"
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    first = {
+        "segment_path": "/rec/session.mp4",
+        "seg_dur_ms": 2_000_000,
+        "start_ms": 1_367_000,
+        "end_ms": 1_407_000,
+        "hook": "speaker anchor shortage",
+        "confidence": 0.99,
+        "cid": "auto_154845_1367_1407",
+    }
+    reserve = {
+        "segment_path": "/rec/session.mp4",
+        "seg_dur_ms": 2_000_000,
+        "start_ms": 1_450_000,
+        "end_ms": 1_490_000,
+        "hook": "safe reserve",
+        "confidence": 0.98,
+        "cid": "auto_reserve",
+    }
+    state = {
+        "status": "processing",
+        "segments_done": ["session"],
+        "segments_dead": {},
+        "pending_talk": [first, reserve],
+        "pending_song": [],
+        "picks": [],
+        "songs": [],
+    }
+    monkeypatch.setattr(runner, "MAX_TALK_PICKS", 1)
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", date)
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_talks", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(runner, "cover_repair_needed", lambda _date, _row: False)
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
+    monkeypatch.setattr(runner, "discover_segments", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "session_sealed", lambda _date, _state: True)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    monkeypatch.setattr(runner, "repair_covers", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_reports", lambda _date, _state: None)
+    attempted: list[str] = []
+
+    def fake_produce_batch(_date, items, _producer):
+        cid = items[0]["cid"]
+        attempted.append(cid)
+        if cid == first["cid"]:
+            return [
+                {
+                    "candidate_id": cid,
+                    "status": "speaker_evidence_insufficient",
+                    "failure_kind": "speaker_evidence",
+                    "failure_stage": "speaker_finalization",
+                    "failure_recoverable": False,
+                }
+            ]
+        return [{"candidate_id": cid, "status": "review_ready"}]
+
+    monkeypatch.setattr(runner, "produce_batch", fake_produce_batch)
+
+    runner.process_date(date)
+
+    assert attempted == [first["cid"], reserve["cid"]]
+    assert state["picks"] == [
+        {
+            "candidate_id": first["cid"],
+            "status": "candidate_rejected",
+            "failure_kind": "speaker_evidence",
+            "failure_stage": "speaker_finalization",
+            "failure_recoverable": False,
+            "rejected_status": "speaker_evidence_insufficient",
+            "rejection_reason": "speaker_identity_unresolved_backfilled",
+        },
+        {"candidate_id": reserve["cid"], "status": "review_ready"},
+    ]
+    assert state["pending_talk"] == []
 
 
 def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
@@ -2403,7 +2556,8 @@ def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, m
     assert "delivered" not in result
 
 
-def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path, monkeypatch):
+@pytest.mark.parametrize("audio_provider", ["agy", "gemini_api"])
+def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path, monkeypatch, audio_provider):
     report = tmp_path / "song.lyrics-alignment-report.json"
     report_payload = {
         "schema_version": "lyrics-alignment-report.v1",
@@ -2425,7 +2579,12 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     report.write_text(json.dumps(report_payload, ensure_ascii=False) + "\n", encoding="utf-8")
     source = tmp_path / "song.source.mp4"
     source.write_bytes(b"source-video")
-    bind_ready_live_performance_report(report, source_media=source, candidate_id="song-proof")
+    bind_ready_live_performance_report(
+        report,
+        source_media=source,
+        candidate_id="song-proof",
+        provider=audio_provider,
+    )
     host_vocal_claim, host_vocal_profile = make_ready_host_vocal_claim(
         tmp_path / "host-vocal",
         source_media=source,
@@ -2554,6 +2713,7 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
                 "first_lyric_start_ms": 1_500,
                 "last_lyric_end_ms": 32_500,
                 "clip_end_ms": 33_500,
+                "completion_basis": "FULL_STUDIO_SEQUENCE",
             },
             "lyrics_alignment": {
                 "status": "READY",
@@ -2568,6 +2728,7 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
                 "alignment_report_sha256": report_sha,
                 "source_media_path": source_path,
                 "source_media_sha256": source_sha,
+                "completion_basis": "FULL_STUDIO_SEQUENCE",
             },
             "host_vocal_proof": host_vocal_claim,
         },
@@ -2609,6 +2770,22 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     evidence = runner.song_completion_evidence(record)
     assert evidence["ready"] is True
     assert evidence["reason_codes"] == []
+
+    if audio_provider == "gemini_api":
+        provider_bound_report = json.loads(report.read_text(encoding="utf-8"))
+        mismatched_provider_report = dict(provider_bound_report)
+        mismatched_provider_report["audio_alignment_provider"] = "agy"
+        report.write_text(json.dumps(mismatched_provider_report, ensure_ascii=False) + "\n", encoding="utf-8")
+        record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(
+            report.read_bytes()
+        ).hexdigest()
+        evidence = runner.song_completion_evidence(record)
+        assert evidence["ready"] is False
+        assert "SONG_AUDIO_LRC_PROVIDER_INVALID" in evidence["reason_codes"]
+        report.write_text(json.dumps(provider_bound_report, ensure_ascii=False) + "\n", encoding="utf-8")
+        record["source_context_job"]["lyrics_alignment"]["alignment_report_sha256"] = hashlib.sha256(
+            report.read_bytes()
+        ).hexdigest()
 
     original_source_bytes = source.read_bytes()
     source.write_bytes(b"tampered-source-video")
@@ -3843,7 +4020,123 @@ def test_rate_limited_song_retry_cap_is_terminal_for_same_pipeline(tmp_path, mon
     }
     state = {"pending_song": [], "songs": [record]}
 
-    assert runner.requeue_recoverable_songs(date, state) == 0
+    # Recoverable provider outages do not become content failures merely
+    # because a historical retry counter crossed an alerting threshold.
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["transient_retry_count"] == runner.SONG_INFRA_RETRY_CAP + 1
+
+
+def test_date_lifetime_cap_does_not_discard_selected_infrastructure_retry(tmp_path, monkeypatch):
+    date = "2026-07-12"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260712-19-00-17.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    monkeypatch.setattr(runner.time, "time", lambda: 10_000)
+    record = {
+        "candidate_id": "song_quota",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "blocked",
+        "reason_codes": ["AGY_QUOTA_EXHAUSTED"],
+        "pipeline_fingerprint": "sha256:same",
+        "next_retry_at_epoch": 9_999,
+    }
+    state = {
+        "pending_song": [],
+        "songs": [record] + [{"candidate_id": f"old-{i}"} for i in range(5)],
+        "song_superseded_attempts": [{"candidate_id": f"sup-{i}"} for i in range(12)],
+        "song_backlog": [],
+    }
+
+    assert len(state["songs"]) + len(state["song_superseded_attempts"]) == 18
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    runner.refill_songs(state)
+    assert [item["cid"] for item in state["pending_song"]] == ["song_quota"]
+
+
+def test_scheduled_song_retry_keeps_date_nonterminal():
+    state = {
+        "songs": [
+            {
+                "status": "blocked",
+                "reason_codes": ["AGY_QUOTA_EXHAUSTED"],
+                "next_retry_at_epoch": 12_345,
+            }
+        ]
+    }
+    assert runner.scheduled_song_retry_epoch(state) == 12_345
+
+
+def test_talk_failure_persists_runtime_stage_and_stable_fingerprint():
+    output = (
+        "Traceback (most recent call last):\n"
+        "FileNotFoundError: [Errno 2] No such file or directory: "
+        "'/tmp/repo/assets/lidousha/voiceprint_profile.v1.json'\n"
+    )
+    first = runner.classify_talk_failure(output)
+    second = runner.classify_talk_failure(output.replace("/tmp/repo", "/different/repo"))
+
+    assert first["failure_kind"] == "runtime_prerequisite"
+    assert first["failure_stage"] == "speaker_preflight"
+    assert first["failure_recoverable"] is True
+    assert first["failure_fingerprint"] == second["failure_fingerprint"]
+
+
+def test_talk_failure_classifies_real_clip_anchor_shortage_as_speaker_evidence():
+    output = (
+        "Traceback (most recent call last):\n"
+        "RuntimeError: SPEAKER_FINALIZATION_BLOCKED: SpeakerFinalizationError: "
+        "not enough Li Dousha clip anchors: [6]\n"
+    )
+
+    classified = runner.classify_talk_failure(output)
+
+    assert classified["failure_kind"] == "speaker_evidence"
+    assert classified["failure_stage"] == "speaker_finalization"
+    assert classified["failure_recoverable"] is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "SPEAKER_FINALIZATION_BLOCKED: SpeakerFinalizationError: "
+        "CAM++ model tree drifted during speaker analysis",
+        "SPEAKER_FINALIZATION_FAILED: remote worker exited before writing a manifest",
+    ],
+)
+def test_talk_failure_does_not_launder_speaker_infrastructure_errors_as_evidence(message):
+    classified = runner.classify_talk_failure(message)
+
+    assert classified["failure_kind"] == "producer_error"
+    assert classified["failure_stage"] == "unknown"
+    assert classified["failure_recoverable"] is True
+
+
+def test_runtime_health_rejects_missing_tracked_speaker_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "HOST_VOCAL_PROFILE",
+        tmp_path / "assets/lidousha/voiceprint_profile.v1.json",
+    )
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / "scripts/produce_slice_package.py").write_text("# producer\n", encoding="utf-8")
+    (tmp_path / "src/autoslice").mkdir(parents=True)
+    (tmp_path / "src/autoslice/source_context_executor.py").write_text("# executor\n", encoding="utf-8")
+
+    assert "speaker_profile" in runner.runtime_health_error()
+
+    runner.HOST_VOCAL_PROFILE.parent.mkdir(parents=True)
+    runner.HOST_VOCAL_PROFILE.write_text("{}\n", encoding="utf-8")
+    assert runner.runtime_health_error() is None
 
 
 def test_invalid_audio_lrc_observation_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):
@@ -4213,7 +4506,7 @@ def test_selected_talk_transient_failure_gets_one_same_fingerprint_retry(tmp_pat
     assert runner.requeue_recoverable_talks(date, state) == 0
 
 
-def test_selected_talk_retry_respects_lifetime_cap_after_pipeline_change(tmp_path, monkeypatch):
+def test_selected_talk_relevant_fix_bypasses_exhausted_legacy_lifetime_cap(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"
     date_dir = rec_root / date
@@ -4238,8 +4531,31 @@ def test_selected_talk_retry_respects_lifetime_cap_after_pipeline_change(tmp_pat
         ],
     }
 
-    assert runner.requeue_recoverable_talks(date, state) == 0
-    assert state["pending_talk"] == []
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["picks"] == []
+    assert state["pending_talk"][0]["talk_repair_retry_count"] == 4
+
+
+def test_failure_scoped_talk_fingerprint_ignores_unrelated_graph_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    for relative in (
+        "scripts/produce_slice_package.py",
+        "src/autoslice/jingting_chunker.py",
+        "src/autoslice/subtitle_timing_qa.py",
+        "assets/lidousha/topic_entity_graph.json",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative, encoding="utf-8")
+    baseline = runner.talk_failure_recovery_fingerprint("content_boundary", "candidate")
+
+    graph = tmp_path / "assets/lidousha/topic_entity_graph.json"
+    graph.write_text("unrelated graph update", encoding="utf-8")
+    assert runner.talk_failure_recovery_fingerprint("content_boundary", "candidate") == baseline
+
+    producer = tmp_path / "scripts/produce_slice_package.py"
+    producer.write_text("boundary fix", encoding="utf-8")
+    assert runner.talk_failure_recovery_fingerprint("content_boundary", "candidate") != baseline
 
 
 def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
@@ -4364,6 +4680,51 @@ def test_talk_speaker_review_is_structured_and_not_boundary_retried(tmp_path, mo
     assert result["speaker_review_required_cues"][0]["source_cue"] == 75
     assert result["speaker_review_manifest_sha256"].startswith("sha256:")
     assert result["speaker_review_source_media_sha256"] == "a" * 64
+
+
+def test_talk_clip_anchor_shortage_becomes_nonretryable_speaker_evidence(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-11"
+    cid = "auto_154845_1367_1407"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(_command, **kwargs):
+        kwargs["stdout"].write(
+            "RuntimeError: SPEAKER_FINALIZATION_BLOCKED: SpeakerFinalizationError: "
+            "not enough Li Dousha clip anchors: [6]\n"
+        )
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": cid,
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 2_000_000,
+            "start_ms": 1_367_000,
+            "end_ms": 1_407_000,
+            "hook": "real blind-eval shape",
+        },
+    )
+
+    assert result["status"] == "speaker_evidence_insufficient"
+    assert result["failure_kind"] == "speaker_evidence"
+    assert result["failure_stage"] == "speaker_finalization"
+    assert result["failure_recoverable"] is False
+    assert "next_retry_at_epoch" not in result
 
 
 @pytest.mark.parametrize(

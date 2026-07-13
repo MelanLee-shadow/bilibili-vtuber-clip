@@ -60,10 +60,14 @@ from src.autoslice.song_repair import (
     build_kugou_lrc_provider,
     build_lrclib_lrc_provider,
     build_netease_lrc_provider,
+    derive_live_arrangement_completeness,
     fetch_lrclib_lrc,
     fetch_netease_lrc,
+    load_audio_lrc_json_artifact,
     live_performance_failure_reason_codes,
     normalize_lyric_text,
+    validate_audio_lrc_canonical_projection,
+    validate_audio_lrc_execution_metadata,
     validate_live_performance_observation,
 )
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
@@ -336,7 +340,37 @@ def _run_live_source(
         run_ffmpeg=source_context_run_ffmpeg,
     )
 
-    if source_context.decision != "READY" or not source_context.context_refined_srt_path:
+    source_context_subtitle_path = source_context.context_refined_srt_path
+    song_agy_context_fallback = bool(
+        _job_is_song_candidate(job_manifest)
+        and source_context.decision == "RETRY_INFRA"
+        and source_context.context_draft_srt_path
+        and Path(source_context.context_draft_srt_path).is_file()
+        and set(source_context.reason_codes)
+        & {
+            "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
+            "AGY_QUOTA_EXHAUSTED",
+            "AGY_EMPTY_OUTPUT",
+            "AGY_FAILED_RC",
+            "AGY_TIMEOUT",
+            "AGY_AND_GEMINI_API_FAILED",
+        }
+    )
+    if song_agy_context_fallback:
+        source_context_subtitle_path = source_context.context_draft_srt_path
+        job_manifest = {
+            **dict(job_manifest),
+            "song_context_subtitle_fallback": {
+                "status": "USED_FOR_PROOF_CONTEXT_ONLY",
+                "subtitle_path": source_context_subtitle_path,
+                "reason_codes": list(source_context.reason_codes),
+                "final_subtitle_authority": "verified_external_lrc_required",
+            },
+        }
+
+    if (
+        source_context.decision != "READY" and not song_agy_context_fallback
+    ) or not source_context_subtitle_path:
         record = _write_live_source_gap_record(
             output_dir=output_dir,
             candidate_id=candidate_id,
@@ -358,7 +392,7 @@ def _run_live_source(
 
     context_start_ms = _int(_mapping(job_manifest.get("timeline")).get("context_start_ms"), 0)
     context_duration_ms = _int(_mapping(job_manifest.get("timeline")).get("context_duration_ms"), 0)
-    cues = _parse_srt(Path(source_context.context_refined_srt_path), source_offset_ms=context_start_ms)
+    cues = _parse_srt(Path(source_context_subtitle_path), source_offset_ms=context_start_ms)
     job_manifest, song_repair_result = _attempt_song_repair_stage(
         job_manifest,
         cues,
@@ -438,12 +472,19 @@ def _run_live_source(
     live_review_required = _read_review_required_marker(
         Path(source_context.review_required_path) if source_context.review_required_path else None
     )
+    verified_song_lrc_authority = bool(
+        song_agy_context_fallback
+        and lyric_timeline_loaded is not None
+        and evidence.song_complete is True
+        and evidence.lyrics_alignment_ready is True
+    )
     decision = review_candidate(
         to_candidate_review(
             evidence,
             provenance,
             jingting_done=source_context.jingting_done,
             review_required=live_review_required,
+            verified_song_lrc_authority=verified_song_lrc_authority,
         )
     )
     decision = _merge_cpa_semantic_review_into_decision(decision, evidence)
@@ -475,8 +516,14 @@ def _run_live_source(
         "reason_codes": list(decision.reason_codes),
         "score": decision.score,
         "evidence_path": str(evidence_path),
-        "subtitle_source": "source_context_refined_srt",
-        "subtitle_path": source_context.context_refined_srt_path,
+        "subtitle_source": (
+            "verified_external_lrc"
+            if verified_song_lrc_authority
+            else "source_context_refined_srt"
+            if source_context.context_refined_srt_path
+            else "source_context_draft_for_song_proof"
+        ),
+        "subtitle_path": source_context_subtitle_path,
         "source_context_job": _source_context_job_record(job_manifest),
         "source_context": _source_context_record(source_context),
         "boundary_resolution": _boundary_resolution_record(boundary_resolution),
@@ -1506,13 +1553,26 @@ def _verify_live_performance_observation(
     )
     if performance_error is not None:
         return performance_error
+    report_provider = report.get("audio_alignment_provider")
+    report_agy_rc = report.get("audio_alignment_agy_rc", 0 if report_provider == "agy" else None)
+    report_fallback_used = report.get(
+        "audio_alignment_provider_fallback_used",
+        False if report_provider == "agy" else None,
+    )
+    report_execution_error = validate_audio_lrc_execution_metadata(
+        provider=report_provider,
+        model=report.get("audio_alignment_model"),
+        agy_rc=report_agy_rc,
+        provider_fallback_used=report_fallback_used,
+        agy_failure_category=report.get("audio_alignment_agy_failure_category"),
+        sandbox=True if report_provider == "agy" else False,
+    )
     if (
         report.get("evidence_source") != "agy_audio_lrc"
-        or report.get("audio_alignment_provider") != "agy"
-        or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
+        or report_execution_error is not None
         or not str(lyrics_alignment.get("model") or "").endswith("-agy-audio-lrc-global-shift-v1")
     ):
-        return "live-performance proof is not a production AGY audio alignment"
+        return "live-performance proof is not an approved production audio alignment"
 
     artifacts = report.get("audio_alignment_artifacts")
     if not isinstance(artifacts, Mapping):
@@ -1556,18 +1616,36 @@ def _verify_live_performance_observation(
         return f"cannot read live-performance raw proof: {exc}"
     candidate_id = report.get("candidate_id")
     manifest_artifacts = manifest.get("artifacts") if isinstance(manifest, Mapping) else None
+    manifest_execution_error = (
+        validate_audio_lrc_execution_metadata(
+            provider=manifest.get("provider"),
+            model=manifest.get("model"),
+            agy_rc=manifest.get("agy_rc"),
+            provider_fallback_used=manifest.get("provider_fallback_used"),
+            agy_failure_category=manifest.get("agy_failure_category"),
+            sandbox=manifest.get("sandbox"),
+        )
+        if isinstance(manifest, Mapping)
+        else "manifest is not a mapping"
+    )
     if (
         not isinstance(manifest, Mapping)
-        or manifest.get("schema_version") != "agy-audio-lrc-run.v1"
+        or manifest.get("schema_version") not in {
+            "agy-audio-lrc-run.v1",
+            "agy-audio-lrc-run.v2",
+            "agy-audio-lrc-run.v3",
+        }
         or manifest.get("candidate_id") != candidate_id
-        or manifest.get("provider") != "agy"
-        or manifest.get("model") != "Gemini 3.5 Flash (High)"
-        or manifest.get("agy_rc") != 0
-        or manifest.get("provider_fallback_used") is not False
-        or manifest.get("sandbox") is not True
+        or (manifest.get("provider") == "gemini_api" and manifest.get("schema_version") != "agy-audio-lrc-run.v3")
+        or manifest.get("provider") != report_provider
+        or manifest.get("model") != report.get("audio_alignment_model")
+        or manifest.get("agy_rc") != report_agy_rc
+        or manifest.get("provider_fallback_used") is not report_fallback_used
+        or manifest.get("agy_failure_category") != report.get("audio_alignment_agy_failure_category")
+        or manifest_execution_error is not None
         or not isinstance(manifest_artifacts, Mapping)
     ):
-        return "live-performance AGY run manifest is invalid"
+        return "live-performance audio run manifest is invalid"
     for manifest_key, report_key in (
         ("source_origin_path", "source_origin_path"),
         ("source_path", "source_path"),
@@ -1581,7 +1659,75 @@ def _verify_live_performance_observation(
         ("output_sha256", "raw_output_sha256"),
     ):
         if manifest_artifacts.get(manifest_key) != artifacts.get(report_key):
-            return "live-performance AGY manifest/artifact binding mismatch"
+            return "live-performance audio manifest/artifact binding mismatch"
+
+    if manifest.get("provider") == "gemini_api":
+        api_audio_path, error = bound_artifact("api_audio_path", "api_audio_sha256")
+        if error is not None or api_audio_path is None:
+            return error or "live-performance Gemini API audio is invalid"
+        api_audio_duration_ms = artifacts.get("api_audio_duration_ms")
+        source_duration_ms = artifacts.get("source_duration_ms")
+        configured_key_count = manifest.get("configured_key_count")
+        accepted_key_ordinal = manifest.get("accepted_key_ordinal")
+        if (
+            manifest.get("direct_audio_input") is not True
+            or not isinstance(api_audio_duration_ms, int)
+            or isinstance(api_audio_duration_ms, bool)
+            or not isinstance(source_duration_ms, int)
+            or isinstance(source_duration_ms, bool)
+            or abs(api_audio_duration_ms - source_duration_ms) > 1_000
+            or manifest_artifacts.get("api_audio_path") != artifacts.get("api_audio_path")
+            or manifest_artifacts.get("api_audio_sha256") != artifacts.get("api_audio_sha256")
+            or manifest_artifacts.get("api_audio_duration_ms") != api_audio_duration_ms
+            or not isinstance(configured_key_count, int)
+            or isinstance(configured_key_count, bool)
+            or not 1 <= configured_key_count <= 3
+            or not isinstance(accepted_key_ordinal, int)
+            or isinstance(accepted_key_ordinal, bool)
+            or not 1 <= accepted_key_ordinal <= configured_key_count
+        ):
+            return "live-performance Gemini API complete-audio binding is invalid"
+
+    if manifest.get("schema_version") in {"agy-audio-lrc-run.v2", "agy-audio-lrc-run.v3"}:
+        provider_raw_path, error = bound_artifact(
+            "provider_raw_output_path",
+            "provider_raw_output_sha256",
+        )
+        if error is not None or provider_raw_path is None:
+            return error or "live-performance provider raw output is invalid"
+        if (
+            artifacts.get("canonicalized_output_path") != artifacts.get("raw_output_path")
+            or artifacts.get("canonicalized_output_sha256") != artifacts.get("raw_output_sha256")
+            or manifest_artifacts.get("provider_raw_output_path")
+            != artifacts.get("provider_raw_output_path")
+            or manifest_artifacts.get("provider_raw_output_sha256")
+            != artifacts.get("provider_raw_output_sha256")
+        ):
+            return "live-performance AGY raw/canonical artifact binding mismatch"
+        canonicalization = manifest.get("canonicalization")
+        canonical_lines_for_binding = report.get("canonical_lyric_lines")
+        if canonicalization != {
+            "strategy": "canonical-lrc-by-exact-index.v1",
+            "row_identity": "strict_zero_based_lrc_index",
+            "restored_fields": ["lrc_time_ms", "text"],
+            "row_count": len(canonical_lines_for_binding) if isinstance(canonical_lines_for_binding, list) else -1,
+            "canonical_lrc_sha256": artifacts.get("lrc_sha256"),
+            "provider_raw_output_sha256": artifacts.get("provider_raw_output_sha256"),
+            "canonicalized_output_sha256": artifacts.get("canonicalized_output_sha256"),
+        }:
+            return "live-performance AGY canonicalization manifest is invalid"
+        try:
+            provider_raw = load_audio_lrc_json_artifact(
+                provider_raw_path,
+                "live-performance provider raw proof",
+            )
+            validate_audio_lrc_canonical_projection(
+                provider_payload=provider_raw,
+                canonical_payload=raw,
+                lrc_path=artifact_paths["lrc_path"],
+            )
+        except ValueError as exc:
+            return f"live-performance provider/canonical projection is invalid: {exc}"
 
     raw_record = raw.get("record") if isinstance(raw, Mapping) else None
     raw_rows = raw.get("observations") if isinstance(raw, Mapping) else None
@@ -1598,20 +1744,57 @@ def _verify_live_performance_observation(
         return "live-performance raw AGY observation schema is invalid"
     if raw.get("live_performance") != report.get("live_performance"):
         return "live-performance raw/report observation mismatch"
+    if raw.get("live_arrangement") != report.get("live_arrangement_observation"):
+        return "live-arrangement raw/report observation mismatch"
+    try:
+        arrangement_completeness = derive_live_arrangement_completeness(
+            observations=raw_rows,
+            live_arrangement=raw.get("live_arrangement"),
+            post_song_talk_start_ms=raw.get("post_song_talk_start_ms"),
+            source_duration_ms=int(artifacts.get("source_duration_ms")),
+        )
+    except (TypeError, ValueError) as exc:
+        return f"live-arrangement structure is invalid: {exc}"
+    if report.get("arrangement_completeness") != arrangement_completeness:
+        return "live-arrangement code-derived report mismatch"
+    if lyrics_alignment.get("completion_basis") != arrangement_completeness.get("classification"):
+        return "live-arrangement completion basis mismatch"
+    canonical_lyrics = report.get("canonical_lyric_lines")
+    if (
+        report.get("canonical_line_count") != len(raw_rows)
+        or not isinstance(canonical_lyrics, list)
+        or len(canonical_lyrics) != len(raw_rows)
+        or any(
+            not isinstance(raw_row, Mapping)
+            or not isinstance(lyric, Mapping)
+            or lyric.get("lrc_index") != raw_row.get("lrc_index")
+            or lyric.get("lrc_time_ms") != raw_row.get("lrc_time_ms")
+            or lyric.get("text") != raw_row.get("text")
+            for raw_row, lyric in zip(raw_rows, canonical_lyrics, strict=True)
+        )
+    ):
+        return "live-arrangement canonical raw/report rows mismatch"
     lyric_lines = report.get("lyric_lines")
+    raw_heard_rows = [
+        row for row in raw_rows
+        if isinstance(row, Mapping) and row.get("heard") is True
+    ]
     if (
         not isinstance(report_rows, list)
         or not isinstance(lyric_lines, list)
-        or len(raw_rows) != len(report_rows)
+        or len(raw_heard_rows) != len(report_rows)
         or len(report_rows) != len(lyric_lines)
-        or len(raw_rows) < 8
+        or len(raw_heard_rows) < 8
     ):
         return "live-performance raw/report lyric rows are incomplete"
     expected_raw_sha = str(artifacts.get("raw_output_sha256") or "").lower().removeprefix("sha256:")
     previous_start: int | None = None
-    for index, (raw_row, report_row, lyric) in enumerate(zip(raw_rows, report_rows, lyric_lines, strict=True)):
+    for report_index, (raw_row, report_row, lyric) in enumerate(
+        zip(raw_heard_rows, report_rows, lyric_lines, strict=True)
+    ):
         if not isinstance(raw_row, Mapping) or not isinstance(report_row, Mapping) or not isinstance(lyric, Mapping):
-            return f"live-performance raw/report lyric row {index} is invalid"
+            return f"live-performance raw/report lyric row {report_index} is invalid"
+        canonical_index = raw_row.get("lrc_index")
         start_ms = raw_row.get("live_start_ms")
         end_ms = raw_row.get("live_end_ms")
         confidence = raw_row.get("confidence")
@@ -1627,7 +1810,10 @@ def _verify_live_performance_observation(
                 *LYRIC_VOCAL_ASSERTION_KEYS,
             }
             or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(report_row)
-            or raw_row.get("lrc_index") != index
+            or not isinstance(canonical_index, int)
+            or isinstance(canonical_index, bool)
+            or report_row.get("canonical_lrc_index") != canonical_index
+            or ("lrc_index" in lyric and lyric.get("lrc_index") != canonical_index)
             or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
             or raw_row.get("text") != lyric.get("text")
             or raw_row.get("heard") is not True
@@ -1646,10 +1832,10 @@ def _verify_live_performance_observation(
             or report_row.get("cue_end_ms") != end_ms
             or report_row.get("match_ratio") != round(float(confidence), 4)
             or report_row.get("evidence_source") != "agy_audio_lrc"
-            or report_row.get("matched_cue_id") != f"agy-audio:{expected_raw_sha[:12]}:line-{index}"
+            or report_row.get("matched_cue_id") != f"agy-audio:{expected_raw_sha[:12]}:line-{canonical_index}"
             or any(report_row.get(key) != raw_row.get(key) for key in LYRIC_VOCAL_ASSERTION_KEYS)
         ):
-            return f"live-performance raw/report lyric row {index} mismatch"
+            return f"live-performance raw/report lyric row {canonical_index} mismatch"
         previous_start = start_ms
     if (
         report_rows[0].get("cue_start_ms") != first_ms
@@ -2380,6 +2566,10 @@ def _source_context_job_record(job_manifest: Mapping[str, object]) -> dict[str, 
         "selector_stage": job_manifest.get("selector_stage"),
         "boundary_authority": job_manifest.get("boundary_authority"),
         "viewer_context_expansion": dict(_mapping(job_manifest.get("viewer_context_expansion"))) or None,
+        "song_context_subtitle_fallback": dict(
+            _mapping(job_manifest.get("song_context_subtitle_fallback"))
+        )
+        or None,
     }
 
 
@@ -5673,9 +5863,64 @@ def _format_srt_time(ms: int) -> str:
 
 
 def _run_source_context_agy(media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:
-    from scripts.gemini_slice_jingting import AGY_MODEL, run_agy
+    from scripts.gemini_slice_jingting import (
+        AGY_MODEL,
+        GEMINI_MODEL,
+        parse_timeout_seconds,
+        run_agy,
+        run_gemini_api,
+    )
 
-    job_dir = run_agy(str(media_path), str(draft_srt_path), str(output_srt_path))
+    # The song selector intentionally gives long-form song proof a much larger
+    # AGY budget.  Source-context text refinement is only the preferred first
+    # lane before Gemini API and must not inherit that process-global budget.
+    # Pass this budget explicitly so concurrent callers cannot race through
+    # environment mutation and audio/LRC proof remains unchanged.
+    # Formal blind runs completed healthy source-context AGY work in
+    # 6m06s-8m06s.  Ten minutes keeps observed-good work alive while still
+    # bounding a hung first provider below the independent 30m audio/LRC proof budget.
+    print_timeout = os.environ.get("SOURCE_CONTEXT_AGY_PRINT_TIMEOUT", "10m").strip()
+    if not re.fullmatch(r"[1-9]\d*[smh]?", print_timeout):
+        print_timeout = "10m"
+    try:
+        timeout_grace_seconds = int(
+            os.environ.get("SOURCE_CONTEXT_AGY_TIMEOUT_GRACE_SECONDS", "60")
+        )
+    except ValueError:
+        timeout_grace_seconds = 60
+    timeout_grace_seconds = min(300, max(0, timeout_grace_seconds))
+    process_timeout_seconds = parse_timeout_seconds(print_timeout) + timeout_grace_seconds
+
+    try:
+        job_dir = run_agy(
+            str(media_path),
+            str(draft_srt_path),
+            str(output_srt_path),
+            print_timeout=print_timeout,
+            process_timeout_seconds=process_timeout_seconds,
+        )
+    except Exception as agy_exc:
+        try:
+            job_dir = run_gemini_api(
+                str(media_path), str(draft_srt_path), str(output_srt_path)
+            )
+        except Exception as gemini_exc:
+            from src.autoslice.source_context_executor import AgyRunnerError
+
+            retry_after = getattr(agy_exc, "retry_after_seconds", None)
+            raise AgyRunnerError(
+                "AGY_AND_GEMINI_API_FAILED",
+                "AGY failed and Gemini API fallback also failed: "
+                f"agy={type(agy_exc).__name__}; gemini={type(gemini_exc).__name__}: {gemini_exc}",
+                retry_after_seconds=retry_after,
+            ) from gemini_exc
+        return AgyExecutionResult(
+            provider="gemini_api",
+            model=GEMINI_MODEL,
+            agy_rc=None,
+            provider_fallback_used=True,
+            provider_request_id=job_dir,
+        )
     return AgyExecutionResult(
         provider="agy",
         model=AGY_MODEL,

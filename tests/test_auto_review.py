@@ -82,6 +82,23 @@ def test_jingting_done_does_not_override_review_required_block():
     assert "JINGTING_REVIEW_REQUIRED" in decision.reason_codes
 
 
+def test_verified_song_lrc_authority_bypasses_only_jingting_provider_gate():
+    decision = review_candidate(
+        base_candidate(
+            candidate_id="lrc-authoritative-song",
+            jingting_done=False,
+            jingting_provenance=None,
+            release_ready=False,
+            review_required_findings=("AGY_QUOTA_EXHAUSTED",),
+            verified_song_lrc_authority=True,
+        )
+    )
+
+    assert "JINGTING_PENDING" not in decision.reason_codes
+    assert "JINGTING_PROVENANCE_MISSING" not in decision.reason_codes
+    assert "JINGTING_REVIEW_REQUIRED" not in decision.reason_codes
+
+
 def test_incomplete_foreground_song_blocks_instead_of_fixed_window_clip():
     decision = review_candidate(
         base_candidate(
@@ -168,6 +185,24 @@ def test_non_agy_provider_blocks_auto_upload():
 
     assert decision.action == DecisionAction.BLOCK
     assert "JINGTING_PROVIDER_NOT_AGY" in decision.reason_codes
+
+
+def test_strict_gemini_api_fallback_provenance_is_accepted():
+    decision = review_candidate(
+        base_candidate(
+            candidate_id="gemini-api-fallback",
+            jingting_provenance=good_jingting_provenance(
+                provider="gemini_api",
+                agy_rc=None,
+                provider_fallback_used=True,
+                model="gemini-3.5-flash",
+            ),
+        )
+    )
+
+    assert "JINGTING_PROVIDER_NOT_AGY" not in decision.reason_codes
+    assert "JINGTING_AGY_FAILED" not in decision.reason_codes
+    assert "JINGTING_PROVIDER_FALLBACK_USED" not in decision.reason_codes
 
 
 def test_provider_fallback_used_or_unknown_blocks_auto_upload():

@@ -3,6 +3,38 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-13：付费 Gemini 兜底 key + 统一主播色 + 集成分支合并 + 7/10 隔离重跑（当前）
+
+### 目标
+
+按 Ivan 2026-07-13 指令：(1) 接入付费 `GEMINI_KEY_BACKUP` 作为受严格门控的最后手段（免费三 key 永远主力）；(2) 澄清并落地说话人策略——数据积累期一切成品统一李豆沙色、说话人不确定绝不拒发（BW 案是错误行为）；(3) 把自愈分支内容与 main 的片头/安全设施合流；(4) 用最新流水线隔离重跑 2026-07-10。生产 `DISABLED` 与 no-upload 全程不变。
+
+### 已完成
+
+- **Git 拓扑（尊重"验证成功才动 main"）**：合并落在 `codex/integration-selfheal-intro`（merge `2439af3` = codex/july10-song-selfheal 21 commit × main`c1390fd`，加 `a00624d` 测试修、`ee29e08` uniform_host、`90a29c3` 付费 key 层）；**main 被有意退回 `c1390fd`**，等 final 盲测+重跑验收后再并。全量回归 **1049 passed**。
+- **uniform_host 说话人模式（`ee29e08`，新默认）**：producer `--speaker-mode` 增 `uniform_host`（env `AUTOSLICE_SPEAKER_MODE`，非法值回退 uniform_host），runner 透传；该模式完全不跑声学 finalizer、不产 speaker 边车，烧录走经典 sapphire72 全主播色；`SPEAKER_REVIEW_REQUIRED` 在交付链不可达；`required`/`auto` 保留给未来重启。声纹 preflight 保留（歌切人声证明仍需要）。record.json 记 `speaker_mode` 出处。
+- **付费 key 最后手段层（`90a29c3`）**：新模块 `src/autoslice/gemini_backup_policy.py`——按工作项（音频内容哈希）记 strike，**此前完整失败轮 ≥3 才许出场**；每日硬帽（默认 12，env `GEMINI_PAID_BACKUP_DAILY_CAP`）；帐本在 `BASE/state/gemini-paid-backup/`（不可写=不许用，绝不炸适配器）。两个适配器接线：`agy_lrc_alignment`（歌证明）+ `gemini_slice_jingting`（source-context 精听）。`song_repair` 交付校验器强制付费 acceptance 的 manifest 自证门槛（strikes≥3 且未破帽），否则拒交付。AGY 子进程 env 剥离付费 key；runner `child_env` 从 `/opt/bilive/.env` 导入。**key 已装 free `/opt/bilive/.env`（600）**；本地在仓库根 `.env`（已 gitignore，绝不入库）。开发用途纪律：免费 key 实在不可用且当天必须开发才可用，绝不当主力开发 key。
+- **evals 清理（Ivan 授权"该删就删"）**：删 `community-latest-20260712`（13G，证据打包 `forensics/community-latest-20260712-evidence-20260713T0330Z.tar.gz`）、`final-214849b`、`final-541ff0c`；停旧 `autoslice-blind-...-34b9b26.timer`。盘 21G→33G 空闲。
+- **7/10 隔离重跑已启动**：BASE `free:/opt/bilive/autoslice/evals/rerun-20260710-90a29c3`（快照 manifest 绑定 `90a29c3`、108 文件、声纹在位；录像软链 7/10；导入生产 BCUT 缓存；片头媒体走生产绝对路径免安装）。BASE 内实网生成 16 topics/16 works/162 characters、0 diagnostics 角色图。timer `autoslice-rerun-20260710-90a29c3` 每 10 分钟，首 tick 已认领日期并把 19-00-12 残桩（2904B）记死。交付将出现在 `BASE/repo/lidousha/2026-07-10/`（launchd 只拉生产面，需手动 rsync 回本地）。
+
+### 进行中（含后台进程）
+
+- `failure-selfheal-6f9da78` timer：7/11 已 `review_ready`（5 talk 含 2 边界自修复 + 1 歌切@kugou LRC）；7/12 processing——四首歌尝试全 blocked（花之塔/群青/Amanogawa/爱笑的小孩；provider 全灭类 + 群青跨段截断），pending 还有 2（含《泪の物语》），到 6 帽封场。该快照**早于**付费 key 与 uniform 模式，行为差异属预期。
+- `final-117e853` timer：每 5 分钟门检，等 6f9da78 的 7/12 终态后自动开考两日盲测。
+- `rerun-20260710-90a29c3` timer：active，自治推进。
+- 生产：`DISABLED` 仍在（摘除需 Ivan 明确授权）、`DEPLOYED_COMMIT` 仍 `53c8c36`、无上传。
+
+### 阻塞
+
+- integration → main 合并等三件事：final-117e853 两日收敛、7/10 重跑验收、Ivan 点头。
+- 跨录像分段的歌（群青案）当前无拼接能力——已确认的能力缺口，本轮未做。
+
+### 下一步
+
+1. 只读盯 final 盲测与 7/10 重跑收敛；重跑出货后 rsync 回本地给 Ivan 审（重点：成品前 4.3s 片头 + `record.json` branding 绑定 + 非 BanG Dream 话题的专名中文名 + 全片统一主播色）。
+2. 验收通过后：integration 分支并回 main → `deploy_free_autoslice.sh free` 部署 → Ivan 授权后摘 `DISABLED`，生产自动回填 7/11+7/12（届时花之塔类 provider 故障有付费 key 兜底）。
+3. 付费 key 用量审计入口：`BASE/state/gemini-paid-backup/usage-*.jsonl` 与 manifest `paid_backup_policy` 戳。
+
 ## 2026-07-12（续四）：固定片头上线（活字乱刷候选2 强制前置）
 
 ### 目标
@@ -107,6 +139,101 @@ Ivan 选定活字乱刷候选 2「小李本来就是零，不对，我是为爱�
 2. 移除 text-only context 的身份决定权；mixed/overlap、local/session 冲突统一 REVIEW 或经可验证边界 split。
 3. 用现有 120+R1 作为开发回归；清晰 false READY 维持 0 后，再建立新的未参与调试 holdout。
 4. 用 2026-07-10 独播与 2026-07-09 联动 shadow 验证 session gate，联动误放行为零后才允许跳过完整 finalizer。
+## 2026-07-12：失败自治恢复与 AGY -> Gemini API 故障转移（当前）
+
+### 目标
+
+消除 7/11、7/12 暴露的伪终态失败：运行环境缺件不能消耗候选重试，
+provider 配额/网络故障必须自治恢复，明确下一话题只进入尾气时应缩短尾气，
+不安全的内容候选要自动淘汰并由下一名补位。保持人工真值 withheld、
+生产 `DISABLED` 和 no-upload。
+
+### 已完成
+
+- 取证确认两类主根因：隔离 `repo-34b9b26` 漏掉 tracked
+  `voiceprint_profile.v1.json`，使 6 个 talk 在 speaker preflight 重复失败；
+  两日歌曲均先遇到 `AGY_SOURCE_CONTEXT_RUNNER_FAILED`，随后整日
+  `6 current + 12 superseded = 18` 的总上限压过单曲基础设施重试。
+  AGY job 的稳定 stderr 进一步确认当时为 `Individual quota reached`，并
+  自带 17–41 分钟 reset 时间。下游 LRC/边界/人声/hash 缺失主要是同一
+  上游失败的级联结果，不是十二个独立内容错误。
+- 新增 runtime preflight 和 commit-exact eval builder：候选执行前验证
+  tracked speaker profile、talk producer、source-context executor；缺件时
+  日期进入 `paused_runtime_invalid`，pending 与重试计数不动。builder 只从
+  `git archive <commit> scripts src assets` 生成快照，写逐文件 SHA manifest，
+  缺 profile 直接拒绝构建。
+- 歌曲基础设施重试改为 per-candidate 优先：不再被整日 18 次 tombstone
+  提前掐死；等待 retry-after 的日期保持 `retry_wait` /
+  `review_ready_retry_wait` 非终态。AGY quota reset 被解析并加安全余量，
+  429/5xx/timeout/quota 等可恢复故障不因历史计数变成内容失败。
+- 按 Ivan 指示接入远端 Gemini API failover：正式顺序为
+  **AGY -> GEMINI_API_KEY / _2 / _3 ->（仅歌切）draft 继续独立 LRC/边界/
+  host-vocal 证明**。Gemini API 只能改文本；cue index 必须一一对应，最终
+  时间轴强制恢复为 draft。远端现有 `gemini-3.5-flash` + key#1 实际音频
+  smoke 成功，provider=`gemini_api`、输出非空、timing signature 完全一致；
+  key 值未输出/落 manifest。
+- 7/12 `auto_154845_1140_1254` 的真实事故已修：closure=123310ms、下一 cue
+  `我要找一下`=123470ms、VAD=123592ms；旧 VAD-only clamp 仍让下一字幕进入
+  22ms。现在 cue timeline 优先，把 final tail 缩到 123370ms，不再误报
+  `next_sentence_enters_tail_pad / closure_not_final_subtitle`。
+- AGY 保留全部 cue index 但擅改 timestamp（真实 48/48、96/96）时，文本会
+  确定性重新挂回 draft 时间轴；漏 cue、重复或重排仍 fail closed。talk
+  failure 现在持久化 stage/kind/message/fingerprint/recoverable，不再只有
+  generic `failed`。speaker stale sidecar 在读取 profile 前清理。
+- 结构化 talk reserve backlog 已加入：`boundary_unrepairable` 或
+  `speaker_review_required` 不再让整日少一席，而会记为
+  `candidate_rejected` 并按置信度补下一候选；基础设施等待不会用补位掩盖
+  outage。全套回归 **879 passed**，代码提交
+  `6f9da78606dc764cfedb549fe248bf7e85897727`。
+- 歌曲音频证明现同样执行 **AGY -> Gemini API key #1/#2/#3**：Gemini
+  直接听完整派生音频，provider/model、原音频/LRC/raw/canonical hash 和
+  key ordinal 都进入 v3 manifest，但 key 值不落盘。远端强制
+  `AGY_UNAVAILABLE` 的 219 秒真实 smoke 使用 `gemini-3.5-flash`，42/42 行、
+  matched ratio 1.0，并通过完整严格验证器。Gemini 把中段 evidence 放进
+  两句之间伴奏空隙的真实坏返回，现会在 adapter 内被拒绝并自动换下一 key，
+  不再等到下游才变成失败；所有 key 都坏时仍 fail closed/recoverable，合法
+  playback/guest 负例不会被重试成正例。代码提交 `541ff0c`。
+- 机器 202-term snapshot 的实际 graph crawl 又暴露 source allowlist 漂移：
+  timely validator 允许 ANN/Bushiroad/TV Tokyo，但角色图 validator 少这三类，
+  会在复制第 5 个 topic source 时自撞安全门。`117e853` 已统一合法机器来源族；
+  exact snapshot 实网生成 **16 topics / 16 works / 162 characters**、0 diagnostics，
+  lineage 精确绑定 timely SHA。完整回归现为 **945 passed**。
+
+### 进行中（含后台进程）
+
+- 旧隔离 BASE `failure-selfheal-6f9da78` 仍由自己的 5 分钟 timer 自治运行。
+  最新只读产物状态：7/11 已 `review_ready`、pending 0、5 talk + 1 song；7/12
+  仍 `processing`、pending song=2、summary 尚未生成，因此旧 timer 不能停。
+- 最终隔离 BASE：
+  `free:/opt/bilive/autoslice/evals/failure-selfheal-final-117e853`。repo 是
+  commit-exact `117e8538153d336d691d5e9e74ea2e0ea5fd0a15`、99 tracked files、
+  profile 存在；只挂 7/11、7/12 录像，truth withheld，并显式使用机器 timely
+  snapshot 和上述 16-topic graph。
+- `autoslice-failure-selfheal-final-117e853.timer` 每 5 分钟执行确定性 gate：
+  仅当旧 7/12 已是终态、pending 清空且 summary 存在时，才一次性导入稳定
+  ASR cache，然后只通过正式 `free_session_autoslice.py --once` 自治推进。
+  没有手工调用 `process_date` 或任何候选阶段，也不读取阶段日志/进程。
+- 生产 `/opt/bilive/autoslice/DISABLED` 仍存在；本轮未上传，正式生产
+  `DEPLOYED_COMMIT` 仍不是最终修复 HEAD。
+
+### 阻塞
+
+- 无需 Ivan 决策的代码 blocker。当前只等待旧 7/12 自治收敛，再由 gated
+  final timer 自动启动最终 exact-snapshot 盲测；在两日 state/summary/媒体
+  没有收敛前，不把 945 项单测、真实 Gemini smoke 或 graph crawl 冒充完整
+  直播验收。
+
+### 下一步
+
+1. 后续只读检查旧/最终两日 state、`AUTOSLICE_SUMMARY.md` 和媒体/SRT/封面；
+   不读取进程、阶段日志或手工推进。要求等待 provider 的条目保持非终态，
+   明确内容拒绝有 reserve 补位，最终 package 全部 no-upload。
+2. 最终两日收敛后做字幕/歌切/证明/无上传验收，停止并移除旧与最终 timer，
+   更新本节最终结果。
+3. 再用正式 `scripts/deploy_free_autoslice.sh free` 部署干净 HEAD，回读
+   `DEPLOYED_COMMIT`、runtime assets 和 Gemini key 可见性；继续保留生产
+   `DISABLED`，不得上传。
+
 ## 2026-07-12：多新番角色图广度调度与最新直播产物（当前）
 
 ### 目标

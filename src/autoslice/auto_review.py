@@ -81,6 +81,10 @@ class ProvenanceCheck:
 class CandidateReview:
     candidate_id: str
     jingting_done: bool = False
+    # A complete hash-bound LRC timeline is the final subtitle authority for
+    # songs.  AGY text polishing remains mandatory for talk, but its provider
+    # outage must not block the independent song proof chain.
+    verified_song_lrc_authority: bool = False
     release_ready: bool | None = None
     review_required_findings: Sequence[str] | None = None
     foreground_song_overlap_seconds: float | None = None
@@ -187,13 +191,19 @@ def review_candidate(candidate: CandidateReview) -> ReviewDecision:
     reasons: list[str] = []
     score = _decision_score(candidate)
 
-    if not candidate.jingting_done:
+    if not candidate.jingting_done and not candidate.verified_song_lrc_authority:
         return ReviewDecision(DecisionAction.RETRY, ("JINGTING_PENDING",), score)
 
-    reasons.extend(_provenance_reason_codes(evaluate_jingting_provenance(candidate.jingting_provenance)))
+    if not candidate.verified_song_lrc_authority:
+        reasons.extend(
+            _provenance_reason_codes(evaluate_jingting_provenance(candidate.jingting_provenance))
+        )
     reasons.extend(_provenance_reason_codes(evaluate_required_evidence(candidate)))
 
-    if candidate.review_required_findings or candidate.release_ready is False:
+    if (
+        not candidate.verified_song_lrc_authority
+        and (candidate.review_required_findings or candidate.release_ready is False)
+    ):
         reasons.append("JINGTING_REVIEW_REQUIRED")
 
     if candidate.foreground_song_overlap_seconds is not None and candidate.foreground_song_overlap_seconds > 5.0:
@@ -395,6 +405,14 @@ def evaluate_jingting_provenance(provenance: JingtingProvenance | None) -> tuple
     if provenance is None:
         provenance = JingtingProvenance(manifest_present=False)
 
+    accepted_gemini_fallback = (
+        provenance.provider == "gemini_api"
+        and provenance.agy_rc is None
+        and provenance.provider_fallback_used is True
+    )
+    provider_accepted = provenance.provider in {"agy", "gemini_api"}
+    execution_succeeded = provenance.agy_rc == 0 or accepted_gemini_fallback
+    fallback_accepted = provenance.provider_fallback_used is False or accepted_gemini_fallback
     return (
         ProvenanceCheck(
             code="JINGTING_MANIFEST_PRESENT",
@@ -405,16 +423,16 @@ def evaluate_jingting_provenance(provenance: JingtingProvenance | None) -> tuple
         ),
         ProvenanceCheck(
             code="JINGTING_PROVIDER_AGY",
-            passed=provenance.provider == "agy",
+            passed=provider_accepted,
             severity="BLOCK",
-            reason_code=None if provenance.provider == "agy" else "JINGTING_PROVIDER_NOT_AGY",
+            reason_code=None if provider_accepted else "JINGTING_PROVIDER_NOT_AGY",
             evidence={"provider": provenance.provider},
         ),
         ProvenanceCheck(
             code="JINGTING_AGY_SUCCESS",
-            passed=provenance.agy_rc == 0,
+            passed=execution_succeeded,
             severity="BLOCK",
-            reason_code=None if provenance.agy_rc == 0 else "JINGTING_AGY_FAILED",
+            reason_code=None if execution_succeeded else "JINGTING_AGY_FAILED",
             evidence={"agy_rc": provenance.agy_rc},
         ),
         ProvenanceCheck(
@@ -426,9 +444,9 @@ def evaluate_jingting_provenance(provenance: JingtingProvenance | None) -> tuple
         ),
         ProvenanceCheck(
             code="JINGTING_PROVIDER_FALLBACK_NOT_USED",
-            passed=provenance.provider_fallback_used is False,
+            passed=fallback_accepted,
             severity="BLOCK",
-            reason_code=_fallback_reason_code(provenance.provider_fallback_used),
+            reason_code=None if fallback_accepted else _fallback_reason_code(provenance.provider_fallback_used),
             evidence={"provider_fallback_used": provenance.provider_fallback_used},
         ),
     )

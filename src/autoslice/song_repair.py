@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import hashlib
 import json
 import re
+import unicodedata
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -37,8 +39,14 @@ from src.autoslice.review_evidence import SourceCue
 SONG_REPAIR_SCHEMA_VERSION = "song-repair-report.v1"
 
 SHIFT_TOLERANCE_MS = 6_000
+MAX_AUDIO_LRC_VARIANT_ATTEMPTS = 3
 
 _NON_LYRIC_CHARS = re.compile(r"[\s，。！？、,.!?…~〜\-—:：;；\"'“”‘’()（）\[\]【】]")
+_LRC_VARIANT_MARKERS = re.compile(
+    r"(?i)(?:\bremix\b|\bmix\b|\bdj\b|\bpiano\b|\bacoustic\b|"
+    r"\binstrumental\b|\bkaraoke\b|\blive\b|\bcover\b|\bver(?:sion)?\b|"
+    r"\bsped\s*up\b|\bslowed\b|\bnightcore\b|伴奏|现场|翻唱|钢琴)"
+)
 
 LIVE_PERFORMANCE_READY_MODE = "LIVE_STREAMER_SINGING"
 LIVE_PERFORMANCE_MODES = {
@@ -49,7 +57,24 @@ LIVE_PERFORMANCE_MODES = {
     "AMBIGUOUS",
 }
 
-AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v4"
+AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v5"
+AGY_AUDIO_LRC_RUN_SCHEMA_VERSION = "agy-audio-lrc-run.v3"
+AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY = "canonical-lrc-by-exact-index.v1"
+AGY_AUDIO_LRC_PROVIDER = "agy"
+AGY_AUDIO_LRC_MODEL = "Gemini 3.5 Flash (High)"
+GEMINI_API_AUDIO_LRC_PROVIDER = "gemini_api"
+GEMINI_API_AUDIO_LRC_MODEL = "gemini-3.5-flash"
+AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES = frozenset(
+    {
+        "AGY_UNAVAILABLE",
+        "AGY_QUOTA_EXHAUSTED",
+        "AGY_TIMEOUT",
+        "AGY_FAILED_RC",
+        "AGY_EMPTY_OUTPUT",
+        "AGY_INVALID_OUTPUT",
+        "AGY_LRC_INDEX_INVALID",
+    }
+)
 LYRIC_VOCAL_SUBJECTS = {
     "LIDOUSHA",
     "OTHER_OR_MIXED_SINGER",
@@ -78,6 +103,25 @@ LYRIC_VOCAL_ASSERTION_KEYS = {
     "recorded_or_playback_vocal_audible",
 }
 
+LIVE_ARRANGEMENT_CLASSIFICATIONS = {
+    "FULL_STUDIO_SEQUENCE",
+    "COMPLETE_LIVE_ARRANGEMENT",
+    "INCOMPLETE_OR_FRAGMENT",
+}
+LIVE_ARRANGEMENT_TRANSITIONS = {
+    "HOST_TALK",
+    "INSTRUMENTAL_OUTRO_END",
+    "NONE_OR_UNKNOWN",
+}
+MIN_LIVE_ARRANGEMENT_HEARD_ROWS = 8
+MIN_LIVE_ARRANGEMENT_HEARD_RATIO = 0.70
+MIN_LIVE_ARRANGEMENT_DURATION_MS = 30_000
+MAX_LIVE_ARRANGEMENT_OMITTED_ROWS = 12
+MAX_LIVE_ARRANGEMENT_OMITTED_RATIO = 0.30
+MAX_LIVE_ARRANGEMENT_OMITTED_BLOCKS = 1
+MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS = 45_000
+MAX_LIVE_ARRANGEMENT_OUTRO_MS = 45_000
+
 
 class LivePerformanceRejected(ValueError):
     """A structurally valid AGY observation that proves this is not a live song.
@@ -104,14 +148,86 @@ def live_performance_failure_reason_codes(performance: object) -> tuple[str, ...
         return ("SONG_NOT_LIDOUSHA_SINGING",)
     return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
 
-# Credit/production-role terms netease puts in "role : name" metadata lines.
-# Matched as a substring of a short pre-colon head (so 音乐制作/贝斯演奏/混音、母带
-# are all caught, not just exact prefixes), to keep them out of burned lyrics.
-_LRC_CREDIT_KEYWORDS = (
-    "作词", "作曲", "编曲", "制作", "监制", "出品", "发行", "混音", "母带", "录音",
-    "演唱", "演奏", "和声", "合声", "吉他", "贝斯", "鼓", "键盘", "弦乐", "配唱",
-    "统筹", "企划", "策划", "后期", "版权",
+# Timed LRC providers sometimes put a production-credit card in the same timed
+# row stream as lyrics.  Keep the classifier intentionally structural: a role
+# must occupy the complete short head before a colon (or a conventional
+# English ``... by ...`` credit).  Merely mentioning "piano", "作词", or
+# "special thanks" inside a sentence is still a lyric.
+_LRC_CHINESE_CREDIT_HEADS = {
+    "作词", "填词", "词", "歌词", "作曲", "曲", "编曲", "制作", "制作人", "音乐制作", "制作统筹",
+    "监制", "演唱", "原唱", "主唱", "歌手", "艺术家", "表演者", "录音", "录音师", "录音工程", "录音室",
+    "混音", "混音师", "母带", "母带工程", "配唱", "和声", "合声", "吉他", "吉他演奏", "贝斯", "贝斯演奏",
+    "鼓", "鼓手", "键盘", "钢琴", "木吉他", "电吉他", "弦乐", "小提琴", "大提琴", "摄影", "封面", "封面设计", "平面设计", "美术", "插画", "设计",
+    "出品", "发行", "版权", "统筹", "企划", "策划", "后期", "特别鸣谢", "鸣谢",
+}
+_LRC_ENGLISH_CREDIT_HEADS = {
+    "lyrics", "lyric", "lyricist", "lyricists", "songwriter", "songwriters",
+    "composer", "composers", "composition", "music", "arranger", "arrangers", "arrangement",
+    "producer", "producers", "production", "music production", "executive producer",
+    "vocal", "vocals", "singer", "artist", "performer",
+    "recording", "recorded", "recording engineer", "recording engineers", "recording room",
+    "recording studio", "studio", "mixing", "mix", "mixing engineer", "mixing engineers",
+    "mastering", "master", "mastering engineer", "mastering engineers",
+    "guitar", "guitars", "acoustic guitar", "electric guitar", "piano", "keyboard", "keyboards", "bass", "drum", "drums",
+    "strings", "violin", "cello", "photography", "photographer", "cover art", "art cover",
+    "artwork", "illustration", "illustrator", "design", "designer", "special thanks",
+    "acknowledgements", "acknowledgments",
+}
+_LRC_ENGLISH_BY_CREDIT = re.compile(
+    r"^(?:lyrics?|written|songwritten|composed|composition|arranged|produced|performed|recorded|"
+    r"mixed|mastered|vocals?|sung|photography|illustration|artwork|cover\s+art)\s+by\s+\S",
+    re.IGNORECASE,
 )
+
+
+def _normalized_credit_head(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).strip().casefold()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _is_chinese_credit_head(head: str) -> bool:
+    compact = re.sub(r"\s+", "", head)
+    if compact in _LRC_CHINESE_CREDIT_HEADS:
+        return True
+    # Multi-role heads such as ``混音、母带`` remain metadata only when
+    # every complete component is a known production role.
+    parts = [part for part in re.split(r"[/&+、，,]", compact) if part]
+    if len(parts) > 1 and all(part in _LRC_CHINESE_CREDIT_HEADS for part in parts):
+        return True
+    return bool(re.fullmatch(r"母带(?:后期)?混音师", compact))
+
+
+def is_lrc_credit_metadata(text: str) -> bool:
+    """Return true only for a structurally explicit timed production credit.
+
+    The real ``暗恋是一个人的事`` LRC uses bilingual heads such as
+    ``录音师 Recording Engineer：...`` and ``钢琴 Piano：...``.  The
+    colon/credit-head requirement is the over-filter guard: ordinary lyric
+    sentences that merely contain ``guitar``, ``piano``, ``作词``, or ``鸣谢``
+    are not classified as metadata.
+    """
+
+    normalized = _normalized_credit_head(text)
+    if _LRC_ENGLISH_BY_CREDIT.match(normalized):
+        return True
+    colon_split = re.split(r"[:：]", normalized, maxsplit=1)
+    if len(colon_split) != 2 or not colon_split[1].strip():
+        return False
+    head = colon_split[0].strip()
+    if not head or len(head) > 64:
+        return False
+
+    chinese = re.sub(r"[^\u3400-\u9fff、，,/&+]+", "", head)
+    english = re.sub(r"[^a-z\s]+", " ", head)
+    english = re.sub(r"\s+", " ", english).strip()
+    chinese_credit = bool(chinese) and _is_chinese_credit_head(chinese)
+    english_credit = bool(english) and english in _LRC_ENGLISH_CREDIT_HEADS
+    if chinese and english:
+        # Bilingual rows are accepted only when both halves independently name
+        # a credit role; this avoids filtering a lyric that happens to mix one
+        # role word with otherwise unrelated prose.
+        return chinese_credit and english_credit
+    return chinese_credit or english_credit
 
 
 @dataclass(frozen=True)
@@ -144,7 +260,7 @@ class AudioLrcAlignmentRun:
     payload: Mapping[str, object]
     provider: str
     model: str
-    rc: int
+    rc: int | None
     provider_fallback_used: bool
     source_origin_path: str
     source_path: str
@@ -158,6 +274,105 @@ class AudioLrcAlignmentRun:
     output_sha256: str
     manifest_path: str
     manifest_sha256: str
+    provider_raw_output_path: str | None = None
+    provider_raw_output_sha256: str | None = None
+    agy_failure_category: str | None = None
+    configured_key_count: int | None = None
+    accepted_key_ordinal: int | None = None
+    accepted_key_tier: str | None = None
+    paid_backup_policy: Mapping[str, object] | None = None
+    api_audio_path: str | None = None
+    api_audio_sha256: str | None = None
+    api_audio_duration_ms: int | None = None
+
+
+def validate_audio_lrc_execution_metadata(
+    *,
+    provider: object,
+    model: object,
+    agy_rc: object,
+    provider_fallback_used: object,
+    agy_failure_category: object,
+    sandbox: object,
+) -> str | None:
+    """Validate the provider lane without weakening the shared v5 proof.
+
+    ``gemini_api`` is accepted only as an explicit AGY failover.  It does not
+    inherit AGY's sandbox claim, and it must preserve a bounded, machine-known
+    AGY failure category.  This helper intentionally validates execution
+    provenance only; audio/LRC hashes, v5 rows, live performance and live
+    arrangement are all recomputed by the existing proof validators.
+    """
+
+    if provider == AGY_AUDIO_LRC_PROVIDER:
+        if (
+            model != AGY_AUDIO_LRC_MODEL
+            or agy_rc != 0
+            or provider_fallback_used is not False
+            or agy_failure_category is not None
+            or sandbox is not True
+        ):
+            return "audio aligner AGY execution metadata is invalid"
+        return None
+    if provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        if (
+            model != GEMINI_API_AUDIO_LRC_MODEL
+            or provider_fallback_used is not True
+            or agy_failure_category not in AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES
+            or sandbox is not False
+            or (
+                agy_rc is not None
+                and (isinstance(agy_rc, bool) or not isinstance(agy_rc, int) or agy_rc < 0)
+            )
+        ):
+            return "audio aligner Gemini API failover metadata is invalid"
+        return None
+    return f"audio aligner provider/model is not approved: {provider} {model}"
+
+
+def canonicalize_audio_lrc_observation(
+    payload: Mapping[str, object],
+    lrc: LrcResult,
+) -> dict[str, object]:
+    """Restore immutable LRC text/timestamps using only exact row indices.
+
+    AGY is an audio-observation provider, not a lyric-text authority.  A model
+    may echo Traditional Chinese as Simplified Chinese (or normalize other
+    glyphs) while correctly reporting the audio evidence.  That must not
+    rewrite the externally sourced LRC or reject an otherwise well-indexed
+    observation.  Conversely, text similarity must never be used to guess a
+    row: count, uniqueness and strict zero-based order are validated before
+    the two canonical display fields are restored.
+    """
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("provider audio observation is not a JSON object")
+    observations = payload.get("observations")
+    if not isinstance(observations, list) or len(observations) != len(lrc.lines):
+        raise ValueError("provider audio observation must contain exactly one row per canonical LRC line")
+
+    indices: list[int] = []
+    for position, row in enumerate(observations):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"provider audio observation row {position} is not an object")
+        index = row.get("lrc_index")
+        if not _is_int(index) or not 0 <= int(index) < len(lrc.lines):
+            raise ValueError(f"provider audio observation row {position} lrc_index is out of range")
+        indices.append(int(index))
+    if len(set(indices)) != len(indices):
+        raise ValueError("provider audio observation contains duplicate lrc_index values")
+    expected_indices = list(range(len(lrc.lines)))
+    if indices != expected_indices:
+        raise ValueError("provider audio observation lrc_index values are missing or out of strict order")
+
+    canonical = copy.deepcopy(dict(payload))
+    canonical_rows = [copy.deepcopy(dict(row)) for row in observations]
+    canonical["observations"] = canonical_rows
+    for index, row in enumerate(canonical_rows):
+        line = lrc.lines[index]
+        row["lrc_time_ms"] = line.time_ms
+        row["text"] = line.text
+    return canonical
 
 
 AudioLrcAligner = Callable[[Path, LrcResult, str, Path], AudioLrcAlignmentRun]
@@ -200,6 +415,70 @@ def normalize_lyric_text(text: str) -> str:
     return _NON_LYRIC_CHARS.sub("", text).lower()
 
 
+def _singable_lrc_result(lrc: LrcResult) -> tuple[LrcResult, int]:
+    """Remove explicit timed credits before recall, AGY, proof, and rendering.
+
+    This is deliberately applied to caller-supplied/pinned ``LrcResult`` values
+    too, not only to provider text parsed in this process.  Cached or injected
+    canonical records must not reintroduce credit rows into the studio/live
+    arrangement gate or its coverage denominator.
+    """
+
+    singable = tuple(line for line in lrc.lines if not is_lrc_credit_metadata(line.text))
+    return (
+        LrcResult(
+            provider=lrc.provider,
+            song_title=lrc.song_title,
+            artist=lrc.artist,
+            source_ref=lrc.source_ref,
+            lines=singable,
+        ),
+        len(lrc.lines) - len(singable),
+    )
+
+
+def _round_robin_unique_queries(
+    query_groups: Sequence[Sequence[str]],
+    *,
+    max_queries: int,
+) -> list[str]:
+    """Schedule distinct discovery queries breadth-first across evidence lanes.
+
+    Screen/visual hints are intentionally the first lane, but they are only a
+    hint: one wrong title must not consume the whole query budget before the
+    LLM-recognized title or audio-ASR lyric lines get a provider turn.  The
+    global provider-call budget remains ``max_queries``.
+    """
+
+    limit = max(0, int(max_queries))
+    if not limit:
+        return []
+    groups = [
+        [query.strip() for query in group if isinstance(query, str) and query.strip()]
+        for group in query_groups
+    ]
+    positions = [0] * len(groups)
+    seen: set[str] = set()
+    scheduled: list[str] = []
+    while len(scheduled) < limit:
+        progressed = False
+        for group_index, group in enumerate(groups):
+            while positions[group_index] < len(group):
+                query = group[positions[group_index]]
+                positions[group_index] += 1
+                if query in seen:
+                    continue
+                seen.add(query)
+                scheduled.append(query)
+                progressed = True
+                break
+            if len(scheduled) >= limit:
+                break
+        if not progressed:
+            break
+    return scheduled
+
+
 def attempt_song_repair(
     *,
     candidate_id: str,
@@ -223,6 +502,7 @@ def attempt_song_repair(
     pinned_lrc_results: Sequence[LrcResult] = (),
     source_media_path: Path | None = None,
     audio_lrc_aligner: AudioLrcAligner | None = None,
+    max_audio_lrc_attempts: int = MAX_AUDIO_LRC_VARIANT_ATTEMPTS,
 ) -> SongRepairResult:
     """Try to repair a song candidate into a fully-proven full-song boundary.
 
@@ -258,7 +538,8 @@ def attempt_song_repair(
         )
         return _finish(candidate_id, attempts, output_dir)
 
-    queries: list[str] = [q.strip() for q in extra_queries if isinstance(q, str) and q.strip()]
+    explicit_queries = [q.strip() for q in extra_queries if isinstance(q, str) and q.strip()]
+    llm_queries: list[str] = []
     if hint_llm_call is not None:
         # Semantic repair: garbled ASR defeats text search, but an LLM can often
         # still recognize the song from misheard lyrics and give clean queries.
@@ -272,38 +553,69 @@ def attempt_song_repair(
                 attempts.append(SongRepairAttempt("llm_song_hint", "SUCCESS", f"guessed queries: {hints}"))
             else:
                 attempts.append(SongRepairAttempt("llm_song_hint", "FAILED", "LLM returned no usable song guesses"))
-        queries.extend(hints)
-    queries.extend(_build_lyric_queries(window, anchor_start_ms, anchor_end_ms))
-    deduped_queries = list(dict.fromkeys(q for q in queries if q))[:max_queries]
+        llm_queries.extend(hints)
+    lyric_queries = _build_lyric_queries(window, anchor_start_ms, anchor_end_ms)
+    deduped_queries = _round_robin_unique_queries(
+        (explicit_queries, llm_queries, lyric_queries),
+        max_queries=max_queries,
+    )
 
     candidates: list[LrcResult] = []
     seen_refs: set[str] = set()
+    prepared_pinned_lrc_results: list[LrcResult] = []
     for pinned in pinned_lrc_results:
-        if isinstance(pinned, LrcResult) and pinned.lines and pinned.source_ref not in seen_refs:
-            seen_refs.add(pinned.source_ref)
-            candidates.append(pinned)
+        if not isinstance(pinned, LrcResult):
+            continue
+        prepared, excluded_metadata = _singable_lrc_result(pinned)
+        if prepared.lines and prepared.source_ref not in seen_refs:
+            seen_refs.add(prepared.source_ref)
+            candidates.append(prepared)
+            prepared_pinned_lrc_results.append(prepared)
             attempts.append(
                 SongRepairAttempt(
                     "pinned_lrc",
                     "SUCCESS",
-                    f"{pinned.song_title!r} ({pinned.source_ref}) pinned ({len(pinned.lines)} LRC lines) — deterministic, ranked against search",
+                    f"{prepared.song_title!r} ({prepared.source_ref}) pinned "
+                    f"({len(prepared.lines)} singable LRC lines, {excluded_metadata} timed credit rows excluded) "
+                    "— deterministic, ranked against search",
                 )
             )
     provider_errors: list[str] = []
-    if lrc_provider is not None:
+    provider_results: list[tuple[str, list[LrcResult]]] = []
+    provider_candidate_cap = max(0, int(max_lrc_candidates))
+    if lrc_provider is not None and len(candidates) < provider_candidate_cap:
         for query in deduped_queries:
-            if len(candidates) >= max_lrc_candidates:
-                break
             try:
                 found = lrc_provider(query)
             except Exception as exc:  # provider failures must not crash review; they are recorded
                 provider_errors.append(f"{query!r}: {type(exc).__name__}: {exc}")
                 continue
-            found_list = _coerce_lrc_results(found)
-            for item in found_list:
-                if item.lines and item.source_ref not in seen_refs:
-                    seen_refs.add(item.source_ref)
-                    candidates.append(item)
+            # A provider may return many near-identical search rows.  Retain at
+            # most the existing global candidate budget from any one call;
+            # admission below is breadth-first across calls.
+            provider_results.append((query, _coerce_lrc_results(found)[:provider_candidate_cap]))
+
+        # Round-robin the provider result rank too.  Previously the first query
+        # could append all eight rows and prevent a later correct title from
+        # entering the pool at all.  Query order still makes the visual result
+        # first when it is right, while actual ASR/audio proof may overturn it.
+        result_rank = 0
+        while len(candidates) < provider_candidate_cap:
+            progressed = False
+            for _query, found_list in provider_results:
+                if result_rank >= len(found_list):
+                    continue
+                progressed = True
+                item = found_list[result_rank]
+                prepared, _excluded_metadata = _singable_lrc_result(item)
+                if prepared.lines and prepared.source_ref not in seen_refs:
+                    seen_refs.add(prepared.source_ref)
+                    candidates.append(prepared)
+                    if len(candidates) >= provider_candidate_cap:
+                        break
+            if not progressed:
+                break
+            result_rank += 1
     if not candidates:
         detail = f"no LRC found for {len(deduped_queries)} queries {deduped_queries!r}"
         if provider_errors:
@@ -334,19 +646,31 @@ def attempt_song_repair(
             )
         )
     ranked.sort(key=lambda item: item[0], reverse=True)
-    selected: tuple[float, LrcResult, list[dict[str, object]], list[dict[str, object]], int, int, int, int, int] | None = None
+    selected: tuple[
+        float,
+        LrcResult,
+        list[dict[str, object]],
+        list[dict[str, object]],
+        int,
+        int,
+        int,
+        int,
+        int,
+        Mapping[str, object] | None,
+    ] | None = None
     audio_alignment_run: AudioLrcAlignmentRun | None = None
+    audio_lrc_variant_attempts: list[dict[str, object]] = []
     if audio_lrc_aligner is not None:
-        matched_ratio, lrc, _alignment = ranked[0]
         if source_media_path is None:
             attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", "source media is required"))
             return _finish(candidate_id, attempts, output_dir)
         try:
-            lrc = _choose_audio_lrc_candidate(
+            primary_lrc = _choose_audio_lrc_candidate(
                 ranked,
-                pinned_lrc_results=pinned_lrc_results,
+                pinned_lrc_results=prepared_pinned_lrc_results,
                 min_recall_ratio=0.20,
                 min_margin=0.08,
+                preferred_title_hints=extra_queries,
             )
         except ValueError as exc:
             attempts.append(SongRepairAttempt("agy_audio_lrc_identity", "FAILED", str(exc)))
@@ -356,50 +680,135 @@ def attempt_song_repair(
                 output_dir,
                 reason_codes=("SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",),
             )
+        verification_candidates = _audio_lrc_retry_candidates(
+            ranked,
+            primary=primary_lrc,
+            preferred_title_hints=extra_queries,
+            max_attempts=max_audio_lrc_attempts,
+        )
         attempts.append(
             SongRepairAttempt(
                 "agy_audio_lrc_identity",
                 "SUCCESS",
-                f"unique LRC identity {lrc.song_title!r} ({lrc.source_ref}); "
-                "verifying current full-window audio and live-performance mode",
+                f"ranked {len(verification_candidates)} deduped LRC variant(s) for bounded audio proof "
+                f"(hard cap {MAX_AUDIO_LRC_VARIANT_ATTEMPTS}); primary={primary_lrc.song_title!r} "
+                f"({primary_lrc.source_ref})",
             )
         )
-        try:
-            audio_alignment_run = audio_lrc_aligner(
-                Path(source_media_path),
-                lrc,
-                candidate_id,
-                output_dir / "agy_audio_lrc",
+        for ordinal, lrc in enumerate(verification_candidates, start=1):
+            ranked_entry = next(
+                (entry for entry in ranked if entry[1].source_ref == lrc.source_ref),
+                (0.0, lrc, []),
             )
-            selected = _validated_audio_lrc_selection(
-                run=audio_alignment_run,
-                lrc=lrc,
-                candidate_id=candidate_id,
-                source_media_path=Path(source_media_path),
-                source_duration_ms=source_duration_ms,
-                min_matched_ratio=min_matched_ratio,
+            recall_ratio = float(ranked_entry[0])
+            matched_cues = len(_matched_cue_ids(ranked_entry[2]))
+            rank_detail = (
+                f"variant {ordinal}/{len(verification_candidates)} title={lrc.song_title!r} "
+                f"source={lrc.source_ref}; exact_title={_lrc_title_is_exact_hint(lrc, extra_queries)}; "
+                f"variant_penalty={_lrc_variant_penalty(lrc)}; "
+                f"ASR_support={matched_cues}/{len(lrc.lines)} distinct cues/lines "
+                f"({recall_ratio:.0%} row recall)"
             )
-        except LivePerformanceRejected as exc:
+            attempts.append(SongRepairAttempt("agy_audio_lrc_variant", "SUCCESS", rank_detail))
+            try:
+                current_run = audio_lrc_aligner(
+                    Path(source_media_path),
+                    lrc,
+                    candidate_id,
+                    output_dir / "agy_audio_lrc" / f"variant-{ordinal:02d}",
+                )
+            except Exception as exc:
+                infrastructure_reason = _audio_lrc_infrastructure_reason(exc)
+                detail = f"{rank_detail}; runner failed: {type(exc).__name__}: {exc}"
+                attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
+                audio_lrc_variant_attempts.append(
+                    {
+                        "ordinal": ordinal,
+                        "song_title": lrc.song_title,
+                        "source_ref": lrc.source_ref,
+                        "status": "INFRA_FAILED" if infrastructure_reason else "FAILED",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                # A provider timeout/quota/nonzero exit affects every variant.
+                # Do not burn the remaining expensive attempts; preserve the
+                # runner's cross-tick recoverable reason code.
+                return _finish(
+                    candidate_id,
+                    attempts,
+                    output_dir,
+                    reason_codes=(infrastructure_reason or "SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
+                )
+            try:
+                current_selected = _validated_audio_lrc_selection(
+                    run=current_run,
+                    lrc=lrc,
+                    candidate_id=candidate_id,
+                    source_media_path=Path(source_media_path),
+                    source_duration_ms=source_duration_ms,
+                    min_matched_ratio=min_matched_ratio,
+                )
+            except LivePerformanceRejected as exc:
+                detail = f"{rank_detail}; {type(exc).__name__}: {exc}"
+                attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
+                audio_lrc_variant_attempts.append(
+                    {
+                        "ordinal": ordinal,
+                        "song_title": lrc.song_title,
+                        "source_ref": lrc.source_ref,
+                        "status": "PERFORMER_REJECTED",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                # A structurally valid same-audio performer veto is not an LRC
+                # variant problem and must never be bypassed by another lyric.
+                return _finish(
+                    candidate_id,
+                    attempts,
+                    output_dir,
+                    reason_codes=exc.reason_codes,
+                    live_performance=exc.performance,
+                )
+            except Exception as exc:
+                detail = f"{rank_detail}; validator rejected this variant: {type(exc).__name__}: {exc}"
+                attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
+                audio_lrc_variant_attempts.append(
+                    {
+                        "ordinal": ordinal,
+                        "song_title": lrc.song_title,
+                        "source_ref": lrc.source_ref,
+                        "status": "CONTENT_OR_ALIGNMENT_REJECTED",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                continue
+            selected = current_selected
+            audio_alignment_run = current_run
+            audio_lrc_variant_attempts.append(
+                {
+                    "ordinal": ordinal,
+                    "song_title": lrc.song_title,
+                    "source_ref": lrc.source_ref,
+                    "status": "ACCEPTED",
+                    "reason": "strict audio/LRC, live-performance, and global-shift proof passed",
+                }
+            )
             attempts.append(
                 SongRepairAttempt(
                     "agy_audio_lrc_alignment",
-                    "FAILED",
-                    f"{type(exc).__name__}: {exc}",
+                    "SUCCESS",
+                    f"{rank_detail}; current audio proves {selected[0]:.0%} of performed live-arrangement lines, "
+                    f"{selected[9]['classification']}, one global shift, and "
+                    "LIVE_STREAMER_SINGING performance mode",
                 )
             )
-            return _finish(
-                candidate_id,
-                attempts,
-                output_dir,
-                reason_codes=exc.reason_codes,
-                live_performance=exc.performance,
-            )
-        except Exception as exc:
+            break
+        if selected is None:
             attempts.append(
                 SongRepairAttempt(
-                    "agy_audio_lrc_alignment",
+                    "agy_audio_lrc_variants_exhausted",
                     "FAILED",
-                    f"{type(exc).__name__}: {exc}",
+                    f"all {len(verification_candidates)} bounded, deduped LRC variant(s) failed strict audio proof",
                 )
             )
             return _finish(
@@ -408,14 +817,6 @@ def attempt_song_repair(
                 output_dir,
                 reason_codes=("SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
             )
-        attempts.append(
-            SongRepairAttempt(
-                "agy_audio_lrc_alignment",
-                "SUCCESS",
-                f"{lrc.song_title!r}: current audio proves {selected[0]:.0%} of canonical LRC lines, "
-                "one global shift, and LIVE_STREAMER_SINGING performance mode",
-            )
-        )
     elif ranked[0][0] < min_matched_ratio:
         matched_ratio, lrc, _alignment = ranked[0]
         if source_media_path is None or audio_lrc_aligner is None:
@@ -579,13 +980,35 @@ def attempt_song_repair(
                 f"{lrc.song_title!r}: {matched_ratio:.0%} of LRC lines matched; head and tail covered",
             )
         )
-        selected = (matched_ratio, lrc, alignment, matched, first_lyric_start_ms, last_lyric_end_ms, clip_start_ms, clip_end_ms, offset_ms)
+        selected = (
+            matched_ratio,
+            lrc,
+            alignment,
+            matched,
+            first_lyric_start_ms,
+            last_lyric_end_ms,
+            clip_start_ms,
+            clip_end_ms,
+            offset_ms,
+            None,
+        )
         break
 
     if selected is None:
         return _finish(candidate_id, attempts, output_dir)
 
-    matched_ratio, lrc, alignment, matched, first_lyric_start_ms, last_lyric_end_ms, clip_start_ms, clip_end_ms, offset_ms = selected
+    (
+        matched_ratio,
+        lrc,
+        alignment,
+        matched,
+        first_lyric_start_ms,
+        last_lyric_end_ms,
+        clip_start_ms,
+        clip_end_ms,
+        offset_ms,
+        arrangement_completeness,
+    ) = selected
 
     provider_label = provider_name or lrc.provider
     report_payload = {
@@ -597,25 +1020,55 @@ def attempt_song_repair(
         "artist": lrc.artist,
         "source_ref": lrc.source_ref,
         "matched_line_ratio": round(matched_ratio, 4),
+        "matched_line_denominator": (
+            "performed_live_arrangement_lines"
+            if audio_alignment_run is not None
+            else "singable_lrc_lines"
+        ),
         "line_count": len(alignment),
         "matched_line_count": len(matched),
         "offset_ms": offset_ms,
         "nominal_lrc_zero_ms": offset_ms,
         "lyric_lines": [
-            {"lrc_time_ms": line.time_ms, "text": line.text} for line in lrc.lines
+            {
+                **(
+                    {"lrc_index": alignment[index].get("canonical_lrc_index")}
+                    if audio_alignment_run is not None
+                    else {}
+                ),
+                "lrc_time_ms": line.time_ms,
+                "text": line.text,
+            }
+            for index, line in enumerate(lrc.lines)
         ],
         "first_lyric_start_ms": first_lyric_start_ms,
         "last_lyric_end_ms": last_lyric_end_ms,
         "alignment": alignment,
     }
     if audio_alignment_run is not None:
+        canonical_rows = audio_alignment_run.payload["observations"]
         report_payload.update(
             {
                 "evidence_source": "agy_audio_lrc",
                 "audio_alignment_provider": audio_alignment_run.provider,
                 "audio_alignment_model": audio_alignment_run.model,
+                "audio_alignment_agy_rc": audio_alignment_run.rc,
+                "audio_alignment_provider_fallback_used": audio_alignment_run.provider_fallback_used,
+                "audio_alignment_agy_failure_category": audio_alignment_run.agy_failure_category,
+                "audio_lrc_variant_attempts": audio_lrc_variant_attempts,
                 "spot_checks": audio_alignment_run.payload["spot_checks"],
                 "live_performance": audio_alignment_run.payload["live_performance"],
+                "live_arrangement_observation": audio_alignment_run.payload["live_arrangement"],
+                "arrangement_completeness": dict(arrangement_completeness or {}),
+                "canonical_line_count": len(canonical_rows),
+                "canonical_lyric_lines": [
+                    {
+                        "lrc_index": row["lrc_index"],
+                        "lrc_time_ms": row["lrc_time_ms"],
+                        "text": row["text"],
+                    }
+                    for row in canonical_rows
+                ],
                 "post_song_talk_start_ms": audio_alignment_run.payload["post_song_talk_start_ms"],
                 "source_media_path": audio_alignment_run.source_origin_path,
                 "source_media_sha256": audio_alignment_run.source_sha256,
@@ -628,10 +1081,26 @@ def attempt_song_repair(
                     "lrc_sha256": audio_alignment_run.lrc_sha256,
                     "prompt_path": audio_alignment_run.prompt_path,
                     "prompt_sha256": audio_alignment_run.prompt_sha256,
+                    "provider_raw_output_path": audio_alignment_run.provider_raw_output_path,
+                    "provider_raw_output_sha256": audio_alignment_run.provider_raw_output_sha256,
+                    "canonicalized_output_path": audio_alignment_run.output_path,
+                    "canonicalized_output_sha256": audio_alignment_run.output_sha256,
+                    # Compatibility aliases consumed by existing report
+                    # verifiers.  These now name the exact-index canonicalized
+                    # observation; the untouched provider bytes are above.
                     "raw_output_path": audio_alignment_run.output_path,
                     "raw_output_sha256": audio_alignment_run.output_sha256,
                     "run_manifest_path": audio_alignment_run.manifest_path,
                     "run_manifest_sha256": audio_alignment_run.manifest_sha256,
+                    **(
+                        {
+                            "api_audio_path": audio_alignment_run.api_audio_path,
+                            "api_audio_sha256": audio_alignment_run.api_audio_sha256,
+                            "api_audio_duration_ms": audio_alignment_run.api_audio_duration_ms,
+                        }
+                        if audio_alignment_run.provider == GEMINI_API_AUDIO_LRC_PROVIDER
+                        else {}
+                    ),
                 },
             }
         )
@@ -651,6 +1120,8 @@ def attempt_song_repair(
         "clip_start_ms": clip_start_ms,
         "clip_end_ms": clip_end_ms,
     }
+    if arrangement_completeness is not None:
+        song_boundary["completion_basis"] = arrangement_completeness["classification"]
     lyrics_alignment = {
         "status": "READY",
         "provider": provider_label,
@@ -669,6 +1140,8 @@ def attempt_song_repair(
         "source_media_path": audio_alignment_run.source_origin_path if audio_alignment_run is not None else None,
         "source_media_sha256": audio_alignment_run.source_sha256 if audio_alignment_run is not None else None,
     }
+    if arrangement_completeness is not None:
+        lyrics_alignment["completion_basis"] = arrangement_completeness["classification"]
     return _finish(
         candidate_id,
         attempts,
@@ -1013,24 +1486,53 @@ def parse_lrc_text(lrc_text: str) -> list[LrcLine]:
         text = re.sub(r"\[[^\]]*\]", "", raw_line).strip()
         if not matches or not text:
             continue
-        # Metadata/credit lines are not sung lyrics. netease appends them with
-        # their own timestamps (some late, inside the outro) in a "role : name"
-        # shape — sung lyrics never use a spaced colon.  The old prefix-only rule
-        # missed 音乐制作/贝斯演奏/混音、母带 (they don't START with a listed keyword),
-        # so credits got burned as subtitles over the 后奏 (Ivan 2026-07-07 《屑屑》).
-        # Match the credit keyword anywhere in a short pre-colon head instead.
-        if re.match(r"^(作词|作曲|编曲|制作|混音|母带|录音|监制|出品|词|曲|演唱)\s*[:：]", text):
+        # Metadata/credit lines are not sung lyrics or proof checkpoints.  The
+        # structural bilingual classifier covers both the historical Chinese
+        # outro credits and English/bilingual rows such as
+        # ``录音师 Recording Engineer：...`` without deleting ordinary lyrics.
+        if is_lrc_credit_metadata(text):
             continue
-        colon_split = re.split(r"[:：]", text, maxsplit=1)
-        if len(colon_split) == 2:
-            head = colon_split[0].strip()
-            if len(head) <= 12 and any(kw in head for kw in _LRC_CREDIT_KEYWORDS):
-                continue
         for minute, second, fraction in matches:
             fraction_ms = int((fraction or "0").ljust(3, "0")[:3])
             lines.append(LrcLine(time_ms=(int(minute) * 60 + int(second)) * 1000 + fraction_ms, text=text))
     lines.sort(key=lambda line: line.time_ms)
     return lines
+
+
+def validate_audio_lrc_canonical_projection(
+    *,
+    provider_payload: object,
+    canonical_payload: object,
+    lrc_path: Path,
+) -> dict[str, object]:
+    """Recompute and validate one v2 provider-raw -> canonical projection.
+
+    Callers must hash-bind ``lrc_path`` before entering this function.  Runtime
+    verifiers cannot trust a self-consistent manifest alone: they must parse
+    the bound LRC, restore text/timestamps by exact row index, and require the
+    entire canonical payload (including top-level observations) to equal that
+    deterministic result.
+    """
+
+    try:
+        parsed_lines = parse_lrc_text(Path(lrc_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"bound canonical LRC cannot be read: {exc}") from exc
+    if not parsed_lines:
+        raise ValueError("bound canonical LRC contains no timed lyric rows")
+    bound_lrc = LrcResult(
+        provider="bound_artifact",
+        song_title="",
+        artist=None,
+        source_ref=str(Path(lrc_path)),
+        lines=tuple(parsed_lines),
+    )
+    expected = canonicalize_audio_lrc_observation(provider_payload, bound_lrc)
+    if canonical_payload != expected:
+        raise ValueError(
+            "canonicalized audio alignment is not the deterministic exact-index projection"
+        )
+    return expected
 
 
 def _performance_window(
@@ -1420,12 +1922,184 @@ def _matched_cue_overlap(
     )
 
 
+def _preferred_title_keys(preferred_title_hints: Sequence[str]) -> set[str]:
+    """Normalize explicit title/search hints without stripping variant labels."""
+
+    return {
+        normalized
+        for hint in preferred_title_hints
+        if isinstance(hint, str) and (normalized := normalize_lyric_text(hint))
+    }
+
+
+def _lrc_title_is_exact_hint(lrc: LrcResult, preferred_title_hints: Sequence[str]) -> bool:
+    return normalize_lyric_text(lrc.song_title) in _preferred_title_keys(preferred_title_hints)
+
+
+def _lrc_variant_penalty(lrc: LrcResult) -> int:
+    """Count catalog decorations that usually denote a non-canonical timeline."""
+
+    return len(_LRC_VARIANT_MARKERS.findall(unicodedata.normalize("NFKC", str(lrc.song_title or ""))))
+
+
+def _lrc_span_ms(lrc: LrcResult) -> int:
+    if len(lrc.lines) < 2:
+        return 0
+    return max(0, int(lrc.lines[-1].time_ms) - int(lrc.lines[0].time_ms))
+
+
+def _audio_lrc_entry_sort_key(
+    entry: tuple[float, LrcResult, list[dict[str, object]]],
+    *,
+    preferred_title_hints: Sequence[str],
+    max_line_count: int,
+    max_span_ms: int,
+) -> tuple[object, ...]:
+    """Evidence-mass-first ordering for expensive audio verification.
+
+    A short remix can match a larger *ratio* simply because its denominator is
+    tiny.  Require a sufficiently complete timeline tier first, then use an
+    exact explicit title and canonical/non-remix display name when available.
+    Absolute distinct cue support and line/span completeness outrank the ratio.
+    """
+
+    ratio, lrc, alignment = entry
+    line_count = len(lrc.lines)
+    span_ms = _lrc_span_ms(lrc)
+    enough_lines = line_count >= max(8, (max_line_count * 3 + 4) // 5)
+    enough_span = max_span_ms <= 0 or span_ms >= (max_span_ms * 3) // 5
+    sufficiently_complete = enough_lines and enough_span
+    exact_hint = _lrc_title_is_exact_hint(lrc, preferred_title_hints)
+    variant_penalty = _lrc_variant_penalty(lrc)
+    matched_cues = len(_matched_cue_ids(alignment))
+    matched_rows = sum(
+        1 for row in alignment if isinstance(row, Mapping) and row.get("matched_cue_id") is not None
+    )
+    provider_penalty = 0 if lrc.provider == "lrclib" else 1
+    stable_tail = (provider_penalty, lrc.source_ref)
+    if _preferred_title_keys(preferred_title_hints):
+        return (
+            -int(sufficiently_complete),
+            -int(exact_hint),
+            variant_penalty,
+            -matched_cues,
+            -matched_rows,
+            -line_count,
+            -span_ms,
+            -float(ratio),
+            *stable_tail,
+        )
+    return (
+        -int(sufficiently_complete),
+        -matched_cues,
+        -matched_rows,
+        variant_penalty,
+        -line_count,
+        -span_ms,
+        -float(ratio),
+        *stable_tail,
+    )
+
+
+def _audio_lrc_retry_candidates(
+    ranked: Sequence[tuple[float, LrcResult, list[dict[str, object]]]],
+    *,
+    primary: LrcResult,
+    preferred_title_hints: Sequence[str],
+    max_attempts: int,
+) -> list[LrcResult]:
+    """Return a deduped, bounded list of independently timed same-song variants."""
+
+    hard_cap = min(MAX_AUDIO_LRC_VARIANT_ATTEMPTS, max(1, int(max_attempts)))
+    primary_family = _lrc_title_family(primary)
+    preferred_families = {
+        normalize_lyric_text(hint)
+        for hint in preferred_title_hints
+        if isinstance(hint, str) and normalize_lyric_text(hint)
+    }
+    primary_entry = next(
+        (entry for entry in ranked if entry[1].source_ref == primary.source_ref),
+        None,
+    )
+    if primary_entry is None:
+        primary_entry = (0.0, primary, [])
+    eligible: list[tuple[float, LrcResult, list[dict[str, object]]]] = [primary_entry]
+    for entry in ranked:
+        ratio, item, alignment = entry
+        if item.source_ref == primary.source_ref or len(item.lines) < 8 or ratio < 0.08:
+            continue
+        item_family = _lrc_title_family(item)
+        same_preferred_family = bool(
+            primary_family and primary_family in preferred_families and item_family == primary_family
+        )
+        cue_overlap, cue_coverage, shared_cues = _matched_cue_overlap(
+            primary_entry[2], alignment
+        )
+        independently_same_song = (
+            _lrc_identity_key(item) == _lrc_identity_key(primary)
+            or _lrc_fingerprint(item) == _lrc_fingerprint(primary)
+            or _lrc_content_similarity(item, primary) >= 0.62
+            or (
+                item_family == primary_family
+                and shared_cues >= 5
+                and cue_overlap >= 0.80
+                and cue_coverage >= 0.25
+            )
+        )
+        if same_preferred_family or independently_same_song:
+            eligible.append(entry)
+
+    max_lines = max((len(entry[1].lines) for entry in eligible), default=len(primary.lines))
+    max_span = max((_lrc_span_ms(entry[1]) for entry in eligible), default=_lrc_span_ms(primary))
+    ordered = [
+        primary_entry,
+        *sorted(
+            eligible[1:],
+            key=lambda entry: _audio_lrc_entry_sort_key(
+                entry,
+                preferred_title_hints=preferred_title_hints,
+                max_line_count=max_lines,
+                max_span_ms=max_span,
+            ),
+        ),
+    ]
+    deduped: list[LrcResult] = []
+    seen_fingerprints: set[str] = set()
+    for _ratio, item, _alignment in ordered:
+        fingerprint = _lrc_fingerprint(item)
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+        deduped.append(primary if item.source_ref == primary.source_ref else item)
+        if len(deduped) >= hard_cap:
+            break
+    return deduped
+
+
+def _audio_lrc_infrastructure_reason(exc: Exception) -> str | None:
+    """Keep provider outages recoverable instead of spending variant budget."""
+
+    detail = f"{type(exc).__name__}: {exc}".casefold()
+    if "agy_and_gemini_api_failed" in detail:
+        return "AGY_AND_GEMINI_API_FAILED"
+    if "agy_quota_exhausted" in detail or "quota" in detail or "429" in detail or "rate limit" in detail:
+        return "AGY_QUOTA_EXHAUSTED"
+    if "timeout" in detail or "timed out" in detail:
+        return "AGY_TIMEOUT"
+    if "agy_empty_output" in detail or "without alignment.json" in detail or "empty output" in detail:
+        return "AGY_EMPTY_OUTPUT"
+    if "agy_failed_rc" in detail or "failed rc=" in detail:
+        return "AGY_FAILED_RC"
+    return None
+
+
 def _choose_audio_lrc_candidate(
     ranked: Sequence[tuple[float, LrcResult, list[dict[str, object]]]],
     *,
     pinned_lrc_results: Sequence[LrcResult],
     min_recall_ratio: float,
     min_margin: float,
+    preferred_title_hints: Sequence[str] = (),
 ) -> LrcResult:
     """Choose one deterministic lyric identity before an expensive audio pass.
 
@@ -1505,6 +2179,17 @@ def _choose_audio_lrc_candidate(
     groups = [[entries[index] for index in members] for members in group_indices]
     if not groups:
         raise ValueError("no canonical LRC identity is available for audio alignment")
+    exact_title_groups = [
+        group
+        for group in groups
+        if max(item[0] for item in group) >= min_recall_ratio
+        and any(_lrc_title_is_exact_hint(item[1], preferred_title_hints) for item in group)
+    ]
+    if len(exact_title_groups) > 1:
+        raise ValueError(
+            "ambiguous exact-title LRC identity: multiple disconnected songs match the explicit title hint"
+        )
+    preferred_group = exact_title_groups[0] if exact_title_groups else None
     pinned_identities = {_lrc_identity_key(item) for item in pinned_lrc_results}
     pinned_fingerprints = {_lrc_fingerprint(item) for item in pinned_lrc_results}
     grouped = [
@@ -1525,6 +2210,57 @@ def _choose_audio_lrc_candidate(
     # 《屑屑》 pin could lose arbitrarily to a Studio Live/provider variant with
     # the same 41/52 ASR recall and the audio verifier was never reached.
     grouped.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    preferred_top = preferred_group is not None
+    variant_family_top = False
+    variant_family: str | None = None
+    if preferred_group is not None:
+        preferred_row = next(item for item in grouped if item[3] is preferred_group)
+        grouped.remove(preferred_row)
+        grouped.insert(0, preferred_row)
+    else:
+        # A truncated Remix/Live/Piano row can form its own strict clique and
+        # win on ratio alone.  If the natural top belongs to a decorated title
+        # family, compare every clique in that same base-title family using
+        # evidence mass/fullness; this does not merge unrelated plain-title
+        # homonyms and other song families still participate in the margin
+        # gate below.
+        natural_top_entries = grouped[0][3]
+        natural_top_entry = max(natural_top_entries, key=lambda item: item[0])
+        natural_family = _lrc_title_family(natural_top_entry[1])
+        family_rows = [
+            entry
+            for _ratio, _pinned, _key, group_entries in grouped
+            for entry in group_entries
+            if natural_family and _lrc_title_family(entry[1]) == natural_family
+        ]
+        if len(family_rows) > 1 and any(_lrc_variant_penalty(entry[1]) for entry in family_rows):
+            family_max_lines = max(len(entry[1].lines) for entry in family_rows)
+            family_max_span = max(_lrc_span_ms(entry[1]) for entry in family_rows)
+            family_grouped = [
+                row
+                for row in grouped
+                if any(
+                    _lrc_title_family(entry[1]) == natural_family
+                    for entry in row[3]
+                )
+            ]
+            preferred_family_row = min(
+                family_grouped,
+                key=lambda row: min(
+                    _audio_lrc_entry_sort_key(
+                        entry,
+                        preferred_title_hints=(),
+                        max_line_count=family_max_lines,
+                        max_span_ms=family_max_span,
+                    )
+                    for entry in row[3]
+                    if _lrc_title_family(entry[1]) == natural_family
+                ),
+            )
+            grouped.remove(preferred_family_row)
+            grouped.insert(0, preferred_family_row)
+            variant_family_top = True
+            variant_family = natural_family
     top_ratio, is_curated, _top_key, top_entries = grouped[0]
     top_indices_for_margin = {
         index
@@ -1534,6 +2270,11 @@ def _choose_audio_lrc_candidate(
     competing_groups = []
     for group in grouped[1:]:
         group_ratio, _pinned, _key, group_entries = group
+        if variant_family_top and any(
+            _lrc_title_family(entry[1]) == variant_family
+            for entry in group_entries
+        ):
+            continue
         # Equal-best disconnected cliques remain a hard ambiguity. A lower-
         # recall provider variant that directly matches any member of the top
         # core is the same song for margin purposes, even if complete-link
@@ -1557,7 +2298,7 @@ def _choose_audio_lrc_candidate(
     curated_top_ties = [
         group for group in grouped if group[0] == top_ratio and group[1]
     ]
-    if len(curated_top_ties) > 1:
+    if len(curated_top_ties) > 1 and not preferred_top:
         raise ValueError(
             "ambiguous curated LRC identity: multiple pinned songs share the best ASR recall; "
             "refusing to choose one before audio verification"
@@ -1567,7 +2308,9 @@ def _choose_audio_lrc_candidate(
             raise ValueError(
                 f"curated LRC identity has only {top_ratio:.0%} ASR recall; refusing to force it onto audio"
             )
-    elif top_ratio < min_recall_ratio or top_ratio - second_ratio < min_margin:
+    elif top_ratio < min_recall_ratio or (
+        not preferred_top and top_ratio - second_ratio < min_margin
+    ):
         raise ValueError(
             "ambiguous low-ASR LRC identity: "
             f"best={top_ratio:.0%}, runner-up={second_ratio:.0%}, "
@@ -1576,17 +2319,15 @@ def _choose_audio_lrc_candidate(
     # Always retain the strongest acoustic-discovery member of a fuzzy lyric
     # family.  LRCLIB is only a deterministic tie-break; preferring a weaker
     # truncated LRCLIB subset can move the canonical song boundary.
+    max_line_count = max(len(item[1].lines) for item in top_entries)
+    max_span_ms = max(_lrc_span_ms(item[1]) for item in top_entries)
     selected_lrc = sorted(
         top_entries,
-        key=lambda item: (
-            -item[0],
-            # Exact recall ties prefer the version explaining more distinct
-            # source cues, then the fuller timed lyric, before provider order.
-            -len(_matched_cue_ids(item[2])),
-            -(item[1].lines[-1].time_ms - item[1].lines[0].time_ms),
-            -len(item[1].lines),
-            item[1].provider != "lrclib",
-            item[1].source_ref,
+        key=lambda item: _audio_lrc_entry_sort_key(
+            item,
+            preferred_title_hints=preferred_title_hints,
+            max_line_count=max_line_count,
+            max_span_ms=max_span_ms,
         ),
     )[0][1]
 
@@ -1676,8 +2417,242 @@ def _require_bound_artifact(path_value: str, expected_sha256: str, label: str) -
     return path
 
 
+def load_audio_lrc_json_artifact(path: Path, label: str) -> object:
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(f"{label} cannot be read: {exc}") from exc
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().casefold() in {"```", "```json"}:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is invalid JSON: {exc}") from exc
+
+
 def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def derive_live_arrangement_completeness(
+    *,
+    observations: object,
+    live_arrangement: object,
+    post_song_talk_start_ms: object,
+    source_duration_ms: int,
+) -> dict[str, object]:
+    """Derive whether the *performed live arrangement* is complete.
+
+    A synchronized studio LRC is a canonical text/timing reference, not a
+    command to reproduce every studio repeat.  This gate accepts either the
+    full studio sequence or one complete live arrangement that deliberately
+    omits a bounded repeated section.  The model's classification is only an
+    observation: code recomputes coverage, omission shape, duration, ordering,
+    and the post-song boundary before returning a READY-shaped result.
+    """
+
+    if not _is_int(source_duration_ms) or source_duration_ms <= 0:
+        raise ValueError("live arrangement source duration is invalid")
+    if not isinstance(live_arrangement, Mapping) or set(live_arrangement) != {
+        "classification",
+        "observed_live_song_opening",
+        "observed_live_song_ending",
+        "post_song_transition_kind",
+        "post_song_transition_ms",
+        "notes",
+    }:
+        raise ValueError("live arrangement observation schema is invalid")
+    claimed_classification = live_arrangement.get("classification")
+    transition_kind = live_arrangement.get("post_song_transition_kind")
+    transition_ms = live_arrangement.get("post_song_transition_ms")
+    if (
+        claimed_classification not in LIVE_ARRANGEMENT_CLASSIFICATIONS
+        or transition_kind not in LIVE_ARRANGEMENT_TRANSITIONS
+        or not isinstance(live_arrangement.get("observed_live_song_opening"), bool)
+        or not isinstance(live_arrangement.get("observed_live_song_ending"), bool)
+        or not isinstance(live_arrangement.get("notes"), str)
+        or not str(live_arrangement.get("notes")).strip()
+    ):
+        raise ValueError("live arrangement observation values are invalid")
+    if (
+        not isinstance(observations, Sequence)
+        or isinstance(observations, (str, bytes, bytearray))
+        or len(observations) < MIN_LIVE_ARRANGEMENT_HEARD_ROWS
+    ):
+        raise ValueError("live arrangement canonical observations are missing")
+
+    canonical_count = len(observations)
+    heard_rows: list[tuple[int, Mapping[str, object], int, int]] = []
+    omitted_indices: list[int] = []
+    previous_start_ms: int | None = None
+    previous_end_ms: int | None = None
+    max_interline_gap_ms = 0
+    for index, row in enumerate(observations):
+        if not isinstance(row, Mapping) or row.get("lrc_index") != index:
+            raise ValueError(f"live arrangement canonical row {index} is invalid")
+        heard = row.get("heard")
+        confidence = row.get("confidence")
+        if (
+            not isinstance(heard, bool)
+            or isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0.8 <= float(confidence) <= 1.0
+        ):
+            raise ValueError(f"live arrangement canonical row {index} confidence/heard is invalid")
+        if not heard:
+            if (
+                row.get("live_start_ms") is not None
+                or row.get("live_end_ms") is not None
+                or row.get("lyric_vocal_subject") != "NO_AUDIBLE_LYRIC_VOCAL"
+                or row.get("lidousha_role") != "SILENT_OR_NOT_AUDIBLE"
+                or row.get("same_live_vocal_source_as_lidousha") is not False
+                or row.get("other_singer_or_harmony_audible") is not False
+                or row.get("recorded_or_playback_vocal_audible") is not False
+            ):
+                raise ValueError(f"live arrangement omitted row {index} is not an honest no-audible-lyric row")
+            omitted_indices.append(index)
+            continue
+        start_ms = row.get("live_start_ms")
+        end_ms = row.get("live_end_ms")
+        if not (
+            _is_int(start_ms)
+            and _is_int(end_ms)
+            and 0 <= start_ms < end_ms <= source_duration_ms
+        ):
+            raise ValueError(f"live arrangement heard row {index} timing is invalid")
+        if previous_start_ms is not None and start_ms <= previous_start_ms:
+            raise ValueError("live arrangement heard lyric starts are not strictly monotonic")
+        if previous_end_ms is not None and previous_end_ms - start_ms > 250:
+            raise ValueError("live arrangement adjacent heard lyrics overlap by more than 250ms")
+        if previous_end_ms is not None:
+            max_interline_gap_ms = max(max_interline_gap_ms, start_ms - previous_end_ms)
+        heard_rows.append((index, row, int(start_ms), int(end_ms)))
+        previous_start_ms = int(start_ms)
+        previous_end_ms = int(end_ms)
+
+    heard_count = len(heard_rows)
+    heard_ratio = heard_count / canonical_count
+    if heard_count < MIN_LIVE_ARRANGEMENT_HEARD_ROWS or heard_ratio < MIN_LIVE_ARRANGEMENT_HEARD_RATIO:
+        raise ValueError(
+            "live arrangement has too little canonical lyric evidence: "
+            f"{heard_count}/{canonical_count} rows"
+        )
+    first_index, _first_row, first_start_ms, _first_end_ms = heard_rows[0]
+    last_index, _last_row, _last_start_ms, last_end_ms = heard_rows[-1]
+    performed_duration_ms = last_end_ms - first_start_ms
+    if performed_duration_ms < MIN_LIVE_ARRANGEMENT_DURATION_MS:
+        raise ValueError(
+            f"live arrangement performed span is too short: {performed_duration_ms}ms"
+        )
+    if max_interline_gap_ms > MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS:
+        raise ValueError(
+            f"live arrangement contains an unexplained {max_interline_gap_ms}ms interruption"
+        )
+    middle_start = canonical_count // 3
+    tail_start = (canonical_count * 2) // 3
+    heard_indices = {index for index, _row, _start, _end in heard_rows}
+    if (
+        first_index != 0
+        or not any(middle_start <= index < tail_start for index in heard_indices)
+        or last_index < tail_start
+    ):
+        raise ValueError("live arrangement does not prove canonical head, middle, and performed tail coverage")
+    if (
+        live_arrangement.get("observed_live_song_opening") is not True
+        or live_arrangement.get("observed_live_song_ending") is not True
+    ):
+        raise ValueError("live arrangement opening or actual live ending was not observed")
+
+    omitted_ranges: list[tuple[int, int]] = []
+    for index in omitted_indices:
+        if not omitted_ranges or index != omitted_ranges[-1][1] + 1:
+            omitted_ranges.append((index, index))
+        else:
+            omitted_ranges[-1] = (omitted_ranges[-1][0], index)
+    if len(omitted_ranges) > MAX_LIVE_ARRANGEMENT_OMITTED_BLOCKS:
+        raise ValueError("live arrangement has multiple omitted canonical blocks")
+    if (
+        len(omitted_indices) > MAX_LIVE_ARRANGEMENT_OMITTED_ROWS
+        or len(omitted_indices) / canonical_count > MAX_LIVE_ARRANGEMENT_OMITTED_RATIO
+    ):
+        raise ValueError(
+            "live arrangement omitted canonical block is too large: "
+            f"{len(omitted_indices)}/{canonical_count} rows"
+        )
+
+    heard_text_sequence = [
+        normalize_lyric_text(str(row.get("text") or ""))
+        for _index, row, _start, _end in heard_rows
+    ]
+    derived_ranges: list[dict[str, object]] = []
+    for start_index, end_index in omitted_ranges:
+        omitted_texts = [
+            normalize_lyric_text(str(observations[index].get("text") or ""))
+            for index in range(start_index, end_index + 1)
+        ]
+        repeated_contiguously = any(
+            heard_text_sequence[start : start + len(omitted_texts)] == omitted_texts
+            for start in range(len(heard_text_sequence) - len(omitted_texts) + 1)
+        )
+        if len(omitted_texts) < 2 or any(not text for text in omitted_texts) or not repeated_contiguously:
+            raise ValueError("live arrangement omitted block is not a repeated canonical section")
+        derived_ranges.append(
+            {
+                "start_lrc_index": start_index,
+                "end_lrc_index": end_index,
+                "line_count": end_index - start_index + 1,
+                "kind": (
+                    "TRAILING_REPEATED_SECTION"
+                    if end_index == canonical_count - 1
+                    else "BOUNDED_REPEATED_SECTION"
+                ),
+            }
+        )
+
+    derived_classification = (
+        "FULL_STUDIO_SEQUENCE" if not omitted_ranges else "COMPLETE_LIVE_ARRANGEMENT"
+    )
+    if claimed_classification != derived_classification:
+        raise ValueError(
+            "live arrangement model classification disagrees with code-derived structure: "
+            f"claimed={claimed_classification} derived={derived_classification}"
+        )
+
+    if transition_kind == "HOST_TALK":
+        if not _is_int(post_song_talk_start_ms) or transition_ms != post_song_talk_start_ms:
+            raise ValueError("live arrangement host-talk transition is not bound to post_song_talk_start_ms")
+    elif transition_kind == "INSTRUMENTAL_OUTRO_END":
+        if post_song_talk_start_ms is not None or not _is_int(transition_ms):
+            raise ValueError("live arrangement instrumental-outro transition is invalid")
+    else:
+        raise ValueError("live arrangement has no proven post-song transition")
+    assert _is_int(transition_ms)
+    if (
+        not last_end_ms <= transition_ms <= source_duration_ms
+        or transition_ms - last_end_ms > MAX_LIVE_ARRANGEMENT_OUTRO_MS
+    ):
+        raise ValueError("live arrangement post-song transition is outside the actual ending boundary")
+
+    return {
+        "classification": derived_classification,
+        "canonical_line_count": canonical_count,
+        "heard_line_count": heard_count,
+        "heard_line_ratio": round(heard_ratio, 4),
+        "performed_duration_ms": performed_duration_ms,
+        "first_heard_lrc_index": first_index,
+        "last_heard_lrc_index": last_index,
+        "max_interline_gap_ms": max_interline_gap_ms,
+        "omitted_ranges": derived_ranges,
+        "observed_live_song_opening": True,
+        "observed_live_song_ending": True,
+        "post_song_transition_kind": transition_kind,
+        "post_song_transition_ms": transition_ms,
+    }
 
 
 def _validated_audio_lrc_selection(
@@ -1688,18 +2663,42 @@ def _validated_audio_lrc_selection(
     source_media_path: Path,
     source_duration_ms: int,
     min_matched_ratio: float,
-) -> tuple[float, LrcResult, list[dict[str, object]], list[dict[str, object]], int, int, int, int, int]:
+) -> tuple[
+    float,
+    LrcResult,
+    list[dict[str, object]],
+    list[dict[str, object]],
+    int,
+    int,
+    int,
+    int,
+    int,
+    Mapping[str, object],
+]:
     """Validate an AGY audio observation and convert it into standard proof.
 
     The validator ignores any model-supplied title, offset, boundary, verdict,
     or completeness claim.  It binds the current media/LRC bytes and derives
-    the single global shift from one exact observation per canonical LRC line.
+    one exact observation per canonical LRC line, then derives the performed
+    live arrangement and a single global shift over the lines actually heard.
     """
 
-    if run.provider != "agy" or run.model != "Gemini 3.5 Flash (High)":
-        raise ValueError(f"audio aligner must be agy Gemini 3.5 Flash (High), got {run.provider} {run.model}")
-    if run.rc != 0 or run.provider_fallback_used:
-        raise ValueError(f"audio aligner was not a clean no-fallback run (rc={run.rc})")
+    if run.provider == AGY_AUDIO_LRC_PROVIDER:
+        preliminary_sandbox = True
+    elif run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        preliminary_sandbox = False
+    else:
+        preliminary_sandbox = None
+    execution_error = validate_audio_lrc_execution_metadata(
+        provider=run.provider,
+        model=run.model,
+        agy_rc=run.rc,
+        provider_fallback_used=run.provider_fallback_used,
+        agy_failure_category=run.agy_failure_category,
+        sandbox=preliminary_sandbox,
+    )
+    if execution_error is not None:
+        raise ValueError(execution_error)
     if not source_media_path.is_file():
         raise ValueError(f"current source media is missing: {source_media_path}")
     try:
@@ -1714,22 +2713,46 @@ def _validated_audio_lrc_selection(
         raise ValueError("audio observation is not bound to the current source media")
     lrc_path = _require_bound_artifact(run.lrc_path, run.lrc_sha256, "canonical LRC")
     _require_bound_artifact(run.prompt_path, run.prompt_sha256, "audio prompt")
-    _require_bound_artifact(run.output_path, run.output_sha256, "raw audio alignment")
+    if not run.provider_raw_output_path or not run.provider_raw_output_sha256:
+        raise ValueError("provider raw audio alignment binding is missing")
+    provider_raw_path = _require_bound_artifact(
+        run.provider_raw_output_path,
+        run.provider_raw_output_sha256,
+        "provider raw audio alignment",
+    )
+    canonical_output_path = _require_bound_artifact(
+        run.output_path,
+        run.output_sha256,
+        "canonicalized audio alignment",
+    )
     manifest_path = _require_bound_artifact(run.manifest_path, run.manifest_sha256, "audio run manifest")
     try:
         run_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"audio run manifest is invalid JSON: {exc}") from exc
     manifest_artifacts = run_manifest.get("artifacts") if isinstance(run_manifest, Mapping) else None
+    manifest_execution_error = (
+        validate_audio_lrc_execution_metadata(
+            provider=run_manifest.get("provider"),
+            model=run_manifest.get("model"),
+            agy_rc=run_manifest.get("agy_rc"),
+            provider_fallback_used=run_manifest.get("provider_fallback_used"),
+            agy_failure_category=run_manifest.get("agy_failure_category"),
+            sandbox=run_manifest.get("sandbox"),
+        )
+        if isinstance(run_manifest, Mapping)
+        else "audio run manifest is not a JSON object"
+    )
     if (
         not isinstance(run_manifest, Mapping)
-        or run_manifest.get("schema_version") != "agy-audio-lrc-run.v1"
+        or run_manifest.get("schema_version") != AGY_AUDIO_LRC_RUN_SCHEMA_VERSION
         or run_manifest.get("candidate_id") != candidate_id
         or run_manifest.get("provider") != run.provider
         or run_manifest.get("model") != run.model
         or run_manifest.get("agy_rc") != run.rc
         or run_manifest.get("provider_fallback_used") is not run.provider_fallback_used
-        or run_manifest.get("sandbox") is not True
+        or run_manifest.get("agy_failure_category") != run.agy_failure_category
+        or manifest_execution_error is not None
         or not isinstance(manifest_artifacts, Mapping)
         or any(
             manifest_artifacts.get(key) != value
@@ -1742,12 +2765,101 @@ def _validated_audio_lrc_selection(
                 ("lrc_sha256", run.lrc_sha256),
                 ("prompt_path", run.prompt_path),
                 ("prompt_sha256", run.prompt_sha256),
+                ("provider_raw_output_path", run.provider_raw_output_path),
+                ("provider_raw_output_sha256", run.provider_raw_output_sha256),
                 ("output_path", run.output_path),
                 ("output_sha256", run.output_sha256),
             )
         )
     ):
         raise ValueError("audio run manifest is not bound to the current run artifacts")
+    if run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        if (
+            not _is_int(run.configured_key_count)
+            or not 1 <= int(run.configured_key_count) <= 3
+            or not _is_int(run.accepted_key_ordinal)
+            or run_manifest.get("configured_key_count") != run.configured_key_count
+            or run_manifest.get("accepted_key_ordinal") != run.accepted_key_ordinal
+            or run_manifest.get("direct_audio_input") is not True
+            or not run.api_audio_path
+            or not run.api_audio_sha256
+            or not _is_int(run.api_audio_duration_ms)
+        ):
+            raise ValueError("Gemini API audio failover metadata is incomplete")
+        key_tier = run.accepted_key_tier or "free"
+        if key_tier == "free":
+            # Legacy manifests predate accepted_key_tier; a free acceptance
+            # must stay inside the configured free-key range and must not
+            # carry any paid-policy stamp.
+            if (
+                not 1 <= int(run.accepted_key_ordinal) <= int(run.configured_key_count)
+                or run_manifest.get("accepted_key_tier") not in (None, "free")
+                or run.paid_backup_policy is not None
+                or run_manifest.get("paid_backup_policy") is not None
+            ):
+                raise ValueError("Gemini API audio failover metadata is incomplete")
+        elif key_tier == "paid_backup":
+            # Ivan 2026-07-13: a PAID acceptance is deliverable when the
+            # manifest proves the gate held — either the supervised dev
+            # exception was explicitly active, or >= 3 recorded free-chain
+            # failure rounds for this exact audio. Free keys always ran
+            # first (ordinal == free count + 1). No hard cap by policy.
+            policy = run.paid_backup_policy
+            gate_ok = isinstance(policy, Mapping) and (
+                policy.get("mode") == "dev_exception"
+                or (
+                    _is_int(policy.get("free_chain_strikes"))
+                    and int(policy["free_chain_strikes"]) >= 3
+                )
+            )
+            if (
+                int(run.accepted_key_ordinal) != int(run.configured_key_count) + 1
+                or run_manifest.get("accepted_key_tier") != "paid_backup"
+                or not isinstance(policy, Mapping)
+                or run_manifest.get("paid_backup_policy") != dict(policy)
+                or not gate_ok
+            ):
+                raise ValueError("paid Gemini backup acceptance violates the usage gate")
+        else:
+            raise ValueError("Gemini API audio failover key tier is unknown")
+        api_audio_path = _require_bound_artifact(
+            run.api_audio_path,
+            run.api_audio_sha256,
+            "Gemini API complete audio",
+        )
+        if (
+            abs(int(run.api_audio_duration_ms) - run.source_duration_ms) > 1_000
+            or manifest_artifacts.get("api_audio_path") != run.api_audio_path
+            or manifest_artifacts.get("api_audio_sha256") != run.api_audio_sha256
+            or manifest_artifacts.get("api_audio_duration_ms") != run.api_audio_duration_ms
+            or _sha256_file(api_audio_path) != run.api_audio_sha256
+        ):
+            raise ValueError("Gemini API audio failover is not bound to the complete current audio")
+    elif any(
+        value is not None
+        for value in (
+            run.configured_key_count,
+            run.accepted_key_ordinal,
+            run.accepted_key_tier,
+            run.paid_backup_policy,
+            run.api_audio_path,
+            run.api_audio_sha256,
+            run.api_audio_duration_ms,
+        )
+    ):
+        raise ValueError("clean AGY run unexpectedly contains Gemini API fallback metadata")
+    canonicalization = run_manifest.get("canonicalization")
+    expected_canonicalization = {
+        "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
+        "row_identity": "strict_zero_based_lrc_index",
+        "restored_fields": ["lrc_time_ms", "text"],
+        "row_count": len(lrc.lines),
+        "canonical_lrc_sha256": run.lrc_sha256,
+        "provider_raw_output_sha256": run.provider_raw_output_sha256,
+        "canonicalized_output_sha256": run.output_sha256,
+    }
+    if canonicalization != expected_canonicalization:
+        raise ValueError("audio run canonicalization manifest is invalid")
     parsed_lrc = parse_lrc_text(lrc_path.read_text(encoding="utf-8"))
     if [(line.time_ms, line.text) for line in parsed_lrc] != [(line.time_ms, line.text) for line in lrc.lines]:
         raise ValueError("bound LRC artifact does not equal the selected canonical LRC")
@@ -1757,6 +2869,22 @@ def _validated_audio_lrc_selection(
         )
     effective_duration_ms = min(run.source_duration_ms, source_duration_ms)
 
+    provider_payload = load_audio_lrc_json_artifact(
+        provider_raw_path,
+        "provider raw audio alignment",
+    )
+    canonical_artifact_payload = load_audio_lrc_json_artifact(
+        canonical_output_path,
+        "canonicalized audio alignment",
+    )
+    expected_payload = validate_audio_lrc_canonical_projection(
+        provider_payload=provider_payload,
+        canonical_payload=canonical_artifact_payload,
+        lrc_path=lrc_path,
+    )
+    if run.payload != expected_payload:
+        raise ValueError("in-memory audio alignment differs from the bound canonical projection")
+
     payload = run.payload
     required_top = {
         "schema_version",
@@ -1764,6 +2892,7 @@ def _validated_audio_lrc_selection(
         "observations",
         "spot_checks",
         "live_performance",
+        "live_arrangement",
         "post_song_talk_start_ms",
     }
     if not isinstance(payload, Mapping) or set(payload) != required_top:
@@ -1793,6 +2922,8 @@ def _validated_audio_lrc_selection(
     if not isinstance(observations, list) or len(observations) != len(lrc.lines) or len(observations) < 8:
         raise ValueError("audio observation must contain exactly one row per canonical LRC line")
     alignment: list[dict[str, object]] = []
+    performed_lines: list[LrcLine] = []
+    performed_observations: list[Mapping[str, object]] = []
     residuals: list[int] = []
     previous_start: int | None = None
     previous_end: int | None = None
@@ -1810,11 +2941,16 @@ def _validated_audio_lrc_selection(
             raise ValueError(f"audio observation row {index} has invalid keys")
         if row.get("lrc_index") != index or row.get("lrc_time_ms") != line.time_ms or row.get("text") != line.text:
             raise ValueError(f"audio observation row {index} does not exactly echo the canonical LRC")
-        # v1 burns every canonical lyric line.  Until the materializer supports
-        # a performed-only sequence, skipped/repeated/changed arrangements must
-        # block instead of silently burning studio lyrics that were not sung.
+        if not isinstance(row.get("heard"), bool):
+            raise ValueError(f"audio observation row {index} heard value is invalid")
         if row.get("heard") is not True:
-            raise ValueError(f"canonical LRC line {index} was not affirmatively heard")
+            live_arrangement = payload.get("live_arrangement")
+            if (
+                not isinstance(live_arrangement, Mapping)
+                or live_arrangement.get("classification") != "COMPLETE_LIVE_ARRANGEMENT"
+            ):
+                raise ValueError(f"canonical LRC line {index} was not affirmatively heard")
+            continue
         start_ms = row.get("live_start_ms")
         end_ms = row.get("live_end_ms")
         confidence = row.get("confidence")
@@ -1831,6 +2967,7 @@ def _validated_audio_lrc_selection(
             {
                 "lrc_time_ms": line.time_ms,
                 "lrc_text": line.text,
+                "canonical_lrc_index": index,
                 "matched_cue_id": f"agy-audio:{run.output_sha256[:12]}:line-{index}",
                 "cue_start_ms": start_ms,
                 "cue_end_ms": end_ms,
@@ -1849,13 +2986,23 @@ def _validated_audio_lrc_selection(
                 ),
             }
         )
+        performed_lines.append(line)
+        performed_observations.append(row)
         previous_start = start_ms
         previous_end = end_ms
 
+    arrangement_completeness = derive_live_arrangement_completeness(
+        observations=observations,
+        live_arrangement=payload.get("live_arrangement"),
+        post_song_talk_start_ms=payload.get("post_song_talk_start_ms"),
+        source_duration_ms=effective_duration_ms,
+    )
+    if not alignment:
+        raise ValueError("live arrangement has no heard canonical lyrics")
     offset_ms = sorted(residuals)[len(residuals) // 2]
     if any(abs(residual - offset_ms) > 1_500 for residual in residuals):
         raise ValueError("audio observations do not fit one global shift within ±1500ms")
-    lrc_span = lrc.lines[-1].time_ms - lrc.lines[0].time_ms
+    lrc_span = performed_lines[-1].time_ms - performed_lines[0].time_ms
     live_span = int(alignment[-1]["cue_start_ms"]) - int(alignment[0]["cue_start_ms"])
     if lrc_span < 20_000 or not 0.95 <= live_span / lrc_span <= 1.05:
         raise ValueError("audio observations imply tempo drift; explicit stretch proof is required")
@@ -1869,7 +3016,7 @@ def _validated_audio_lrc_selection(
         live_performance,
         first_lyric_start_ms=first_lyric_start_ms,
         last_lyric_end_ms=last_lyric_end_ms,
-        observations=observations,
+        observations=performed_observations,
         require_ready=False,
     )
     if performance_schema_error is not None:
@@ -1878,22 +3025,15 @@ def _validated_audio_lrc_selection(
         live_performance,
         first_lyric_start_ms=first_lyric_start_ms,
         last_lyric_end_ms=last_lyric_end_ms,
-        observations=observations,
+        observations=performed_observations,
         require_ready=True,
     )
     if performance_error is not None:
         assert isinstance(live_performance, Mapping)
         raise LivePerformanceRejected(performance_error, live_performance)
 
-    post_song_talk_start_ms = payload.get("post_song_talk_start_ms")
-    if post_song_talk_start_ms is None:
-        clip_end_ms = effective_duration_ms
-        instrumental_spot_end_ms = last_lyric_end_ms
-    elif _is_int(post_song_talk_start_ms) and last_lyric_end_ms <= post_song_talk_start_ms <= effective_duration_ms:
-        clip_end_ms = post_song_talk_start_ms
-        instrumental_spot_end_ms = post_song_talk_start_ms
-    else:
-        raise ValueError("post-song talk boundary is invalid or precedes the last lyric")
+    clip_end_ms = int(arrangement_completeness["post_song_transition_ms"])
+    instrumental_spot_end_ms = clip_end_ms
 
     spot_checks = payload.get("spot_checks")
     required_spots = {"first_line", "chorus", "repeated_section", "longest_instrumental_gap", "tail"}
@@ -1931,7 +3071,7 @@ def _validated_audio_lrc_selection(
 
     first_index_by_text: dict[str, int] = {}
     later_repeat_starts: list[int] = []
-    for index, line in enumerate(lrc.lines):
+    for index, line in enumerate(performed_lines):
         normalized = normalize_lyric_text(line.text)
         if not normalized:
             continue
@@ -1947,13 +3087,20 @@ def _validated_audio_lrc_selection(
     clip_start_ms = offset_ms
     if not 0 <= clip_start_ms <= offset_ms <= first_lyric_start_ms <= last_lyric_end_ms <= clip_end_ms <= effective_duration_ms:
         raise ValueError("derived full-song boundary ordering is invalid")
-    matched_ratio = len(alignment) / len(lrc.lines)
+    matched_ratio = len(alignment) / len(performed_lines)
     if matched_ratio < min_matched_ratio:
         raise ValueError(f"audio alignment ratio {matched_ratio:.0%} is below {min_matched_ratio:.0%}")
     matched = [dict(entry) for entry in alignment]
+    performed_lrc = LrcResult(
+        provider=lrc.provider,
+        song_title=lrc.song_title,
+        artist=lrc.artist,
+        source_ref=lrc.source_ref,
+        lines=tuple(performed_lines),
+    )
     return (
         matched_ratio,
-        lrc,
+        performed_lrc,
         alignment,
         matched,
         first_lyric_start_ms,
@@ -1961,6 +3108,7 @@ def _validated_audio_lrc_selection(
         clip_start_ms,
         clip_end_ms,
         offset_ms,
+        arrangement_completeness,
     )
 
 
