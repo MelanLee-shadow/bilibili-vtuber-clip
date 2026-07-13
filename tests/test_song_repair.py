@@ -268,6 +268,187 @@ def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_a
         )
 
 
+def test_audio_lrc_adapter_rotates_gemini_key_when_ready_evidence_lands_in_gap(
+    tmp_path,
+    monkeypatch,
+):
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "bad-evidence-key")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "valid-evidence-key")
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    calls = []
+
+    def fake_observe(*, prompt, key, **_kwargs):
+        calls.append(key)
+        payload = _valid_audio_lrc_api_payload(prompt, lrc)
+        if key == "bad-evidence-key":
+            before = payload["observations"][4]
+            after = payload["observations"][5]
+            assert before["live_end_ms"] < after["live_start_ms"]
+            payload["live_performance"]["evidence"][1]["time_ms"] = (
+                before["live_end_ms"] + after["live_start_ms"]
+            ) // 2
+        return json.dumps(payload, ensure_ascii=False)
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        "api-evidence-retry",
+        tmp_path / "jobs",
+    )
+
+    assert calls == ["bad-evidence-key", "valid-evidence-key"]
+    assert run.provider == "gemini_api"
+    assert run.accepted_key_ordinal == 2
+    assert song_repair._validated_audio_lrc_selection(
+        run=run,
+        lrc=lrc,
+        candidate_id="api-evidence-retry",
+        source_media_path=media,
+        source_duration_ms=100_000,
+        min_matched_ratio=0.55,
+    )[0] == 1.0
+
+
+def test_audio_lrc_adapter_exhausts_keys_when_every_ready_evidence_lands_in_gap(
+    tmp_path,
+    monkeypatch,
+):
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    secrets = ("gap-key-one", "gap-key-two", "gap-key-three")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", secrets[0])
+    monkeypatch.setenv("GEMINI_API_KEY_2", secrets[1])
+    monkeypatch.setenv("GEMINI_API_KEY_3", secrets[2])
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    calls = []
+
+    def fake_observe(*, prompt, key, **_kwargs):
+        calls.append(key)
+        payload = _valid_audio_lrc_api_payload(prompt, lrc)
+        before = payload["observations"][4]
+        after = payload["observations"][5]
+        payload["live_performance"]["evidence"][1]["time_ms"] = (
+            before["live_end_ms"] + after["live_start_ms"]
+        ) // 2
+        return json.dumps(payload, ensure_ascii=False)
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
+        agy_lrc_alignment.run_agy_audio_lrc_alignment(
+            media,
+            lrc,
+            "api-evidence-exhausted",
+            tmp_path / "jobs",
+        )
+
+    assert calls == list(secrets)
+    failure_path = next((tmp_path / "jobs").rglob("provider-failures.json"))
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert [row["category"] for row in failure["gemini_api_errors"]] == [
+        "GEMINI_API_INVALID_OUTPUT",
+        "GEMINI_API_INVALID_OUTPUT",
+        "GEMINI_API_INVALID_OUTPUT",
+    ]
+    assert all(secret not in failure_path.read_text(encoding="utf-8") for secret in secrets)
+
+
+def test_audio_lrc_adapter_keeps_valid_playback_negative_without_key_rotation(
+    tmp_path,
+    monkeypatch,
+):
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "negative-key-one")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "unused-key-two")
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    calls = []
+
+    def fake_observe(*, prompt, key, **_kwargs):
+        calls.append(key)
+        payload = _valid_audio_lrc_api_payload(prompt, lrc)
+        for row in payload["observations"]:
+            row.update(
+                lyric_vocal_subject="RECORDED_OR_PLAYBACK_SINGER",
+                lidousha_role="SILENT_OR_NOT_AUDIBLE",
+                same_live_vocal_source_as_lidousha=False,
+                other_singer_or_harmony_audible=False,
+                recorded_or_playback_vocal_audible=True,
+            )
+        payload["live_performance"].update(
+            mode="ORIGINAL_OR_BACKGROUND_PLAYBACK",
+            continuous_live_song_performance=False,
+            same_lidousha_live_performer_across_all_lyrics=False,
+            other_singer_or_harmony_present=False,
+            recorded_or_playback_vocal_present=True,
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        "api-playback-negative",
+        tmp_path / "jobs",
+    )
+
+    assert calls == ["negative-key-one"]
+    assert run.accepted_key_ordinal == 1
+    assert validate_live_performance_observation(
+        run.payload["live_performance"],
+        first_lyric_start_ms=run.payload["observations"][0]["live_start_ms"],
+        last_lyric_end_ms=run.payload["observations"][-1]["live_end_ms"],
+        observations=run.payload["observations"],
+        require_ready=False,
+    ) is None
+
+
 @pytest.mark.parametrize(
     ("agy_failure_mode", "expected_category"),
     [

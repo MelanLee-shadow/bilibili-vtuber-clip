@@ -33,6 +33,7 @@ from src.autoslice.song_repair import (
     GEMINI_API_AUDIO_LRC_PROVIDER,
     LrcResult,
     canonicalize_audio_lrc_observation,
+    validate_live_performance_observation,
 )
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -267,7 +268,13 @@ Requirements:
    `OTHER_SINGER`; any active-singer ambiguity is `AMBIGUOUS`; any recorded
    vocal is `ORIGINAL_OR_BACKGROUND_PLAYBACK`.
    Provide exactly three evidence timestamps, one in each third of the observed
-   lyric span. Code also combines this with a separate pinned Li-Dousha
+   lyric span. Before returning JSON, mechanically recheck each timestamp
+   against one exact observation row satisfying `heard: true`,
+   `lidousha_role: "SINGING_THIS_LYRIC"`, and
+   `live_start_ms <= time_ms < live_end_ms`. If the nominal point in a third is
+   an instrumental gap, select a sung row inside that third; never place an
+   evidence timestamp in the gap. Code also combines this with a separate
+   pinned Li-Dousha
    voiceprint gate; that speaker-similarity gate is not a singing classifier.
 7. `live_arrangement` describes what was actually performed; code, not this
    claim, decides whether it is complete. Use `FULL_STUDIO_SEQUENCE` only when
@@ -505,6 +512,52 @@ def _validate_strict_v5_shape(
         raise ValueError("audio observation live-arrangement v5 schema is invalid")
 
 
+def _validate_gemini_ready_evidence_binding(payload: Mapping[str, object]) -> None:
+    """Reject a malformed ready proof early so the next Gemini key can retry.
+
+    Content-negative observations (guest, playback, fragment, or ambiguity)
+    remain valid provider output and are left for the downstream content gate.
+    Only a payload claiming a continuous ready Li-Dousha performance is checked
+    here, using the same strict validator that ultimately gates the song.
+    """
+
+    performance = payload.get("live_performance")
+    if (
+        not isinstance(performance, Mapping)
+        or performance.get("mode") != "LIVE_STREAMER_SINGING"
+        or performance.get("continuous_live_song_performance") is not True
+    ):
+        return
+    observations = payload.get("observations")
+    if not isinstance(observations, list):
+        raise ValueError("Gemini API ready proof observations are invalid")
+    performed = [
+        row
+        for row in observations
+        if isinstance(row, Mapping) and row.get("heard") is True
+    ]
+    if not performed:
+        raise ValueError("Gemini API ready proof has no performed lyric rows")
+    first_start_ms = performed[0].get("live_start_ms")
+    last_end_ms = performed[-1].get("live_end_ms")
+    if (
+        isinstance(first_start_ms, bool)
+        or not isinstance(first_start_ms, int)
+        or isinstance(last_end_ms, bool)
+        or not isinstance(last_end_ms, int)
+    ):
+        raise ValueError("Gemini API ready proof lyric span is invalid")
+    error = validate_live_performance_observation(
+        performance,
+        first_lyric_start_ms=first_start_ms,
+        last_lyric_end_ms=last_end_ms,
+        observations=performed,
+        require_ready=True,
+    )
+    if error is not None:
+        raise ValueError(f"Gemini API ready proof is invalid: {error}")
+
+
 def run_agy_audio_lrc_alignment(
     source_media_path: Path,
     lrc: LrcResult,
@@ -713,6 +766,7 @@ def run_agy_audio_lrc_alignment(
                             source_duration_ms=duration_ms,
                             lrc_line_count=len(lrc.lines),
                         )
+                        _validate_gemini_ready_evidence_binding(payload)
                         provider_raw_output_path = job_dir / "alignment.gemini-api.raw.json"
                         provider_raw_output_path.write_text(
                             raw if raw.endswith("\n") else raw + "\n",
