@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "b7b7cec8fcf1",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260713/04/弹幕让李豆沙表演上下摇，她先把自己摇.mp4",
+    "sha256": "b7b7cec8fcf15fc076d66e363fef08d512cad88b67b860e14560a8a80d1fa0e3",
+    "bytes": 47596262
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.cover.png",
+    "sha256": "a1de68fc21ae7a69972cff625aebc0edcbbfde4b39c26b7f70c689920cfc77d8",
+    "bytes": 2898965
+  },
+  "title": "【李豆沙】上下摇把自己摇晕，转头给熊熊一记熊猫头锤",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "现在能把这些已经出成品但是我还没有进行人工放行的成品先上传到bilibili上了……注意上传前加我们最新的片头。如果限制10个，可以暂缓歌切的上传。也就是说是7月10的5个和7.11的5个切片先发出去。",
+    "at": "2026-07-13T05:26:48+0000"
+  },
+  "created_at": "2026-07-13T05:26:48+0000"
+}

@@ -1,0 +1,92 @@
+[
+ {
+  "n": 1,
+  "stem": "聊到邦多利新登场的“神秘坏女人”，她",
+  "title": "【李豆沙】《梦限大》坏女人怎么洗白？小李只认双重人格",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "64), \"bvid\": String(\"BV1JXNk6vEeV\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:25:28\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1JXNk6vEeV\nledger += artifact aee37caf061b rc=0 bvid=BV1JXNk6vEeV"
+ },
+ {
+  "n": 2,
+  "stem": "临时被叫去彩排，她连声问观众“结束后",
+  "title": "【李豆沙】去彩排前连问三遍：你们还要来找我玩，好不好？",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "70), \"bvid\": String(\"BV1JXNk6vECx\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:26:10\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1JXNk6vECx\nledger += artifact e71f3a916db8 rc=0 bvid=BV1JXNk6vECx"
+ },
+ {
+  "n": 3,
+  "stem": "小李嘴硬否认被坏女人欺负，却自爆主动",
+  "title": "【李豆沙】我没被欺负，只是被两个坏女人夹在中间！",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "88), \"bvid\": String(\"BV16QNk6KE9W\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:26:41\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV16QNk6KE9W\nledger += artifact 5ec8094b1306 rc=0 bvid=BV16QNk6KE9W"
+ },
+ {
+  "n": 4,
+  "stem": "弹幕让李豆沙表演上下摇，她先把自己摇",
+  "title": "【李豆沙】上下摇把自己摇晕，转头给熊熊一记熊猫头锤",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "89), \"bvid\": String(\"BV1JQNk6KEGp\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:27:13\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1JQNk6KEGp\nledger += artifact b7b7cec8fcf1 rc=0 bvid=BV1JQNk6KEGp"
+ },
+ {
+  "n": 5,
+  "stem": "李豆沙宣布将第一次以3D形态在线下见",
+  "title": "【李豆沙】小李第一次3D线下见面：请务必来找我们玩",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "09), \"bvid\": String(\"BV1zQNk6KEUS\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:27:33\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1zQNk6KEUS\nledger += artifact e222160448dd rc=0 bvid=BV1zQNk6KEUS"
+ },
+ {
+  "n": 6,
+  "stem": "李豆沙回忆自己在大舞台高喊“我是直女",
+  "title": "【李豆沙】回忆大舞台高喊“我是侄女”：全场鼓掌还坚持不是嘴硬",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "31), \"bvid\": String(\"BV1JQNk6KEkh\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:27:59\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1JQNk6KEkh\nledger += artifact 62daef3a1b99 rc=0 bvid=BV1JQNk6KEkh"
+ },
+ {
+  "n": 7,
+  "stem": "被问为什么要和几十个女同事结婚，李豆",
+  "title": "【李豆沙】被问为何要和几十个女同事结婚：女朋友就是女性朋友",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "97), \"bvid\": String(\"BV16QNk6KEZE\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:28:22\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV16QNk6KEZE\nledger += artifact 5bd43a173281 rc=0 bvid=BV16QNk6KEZE"
+ },
+ {
+  "n": 8,
+  "stem": "听说粉毛花臂抢过对方三部手机，她当场",
+  "title": "【李豆沙】听说粉毛花臂抢过对方三部手机，她就磕起宿敌恋人",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "22), \"bvid\": String(\"BV1JQNk6KENJ\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:28:42\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1JQNk6KENJ\nledger += artifact 3057fcbecac6 rc=0 bvid=BV1JQNk6KENJ"
+ },
+ {
+  "n": 9,
+  "stem": "河粉小姐姐合照前先问“要交780吗”",
+  "title": "【李豆沙】河粉小姐姐合照问“要交780吗”？说完免费她后悔了",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "21), \"bvid\": String(\"BV1rQNk6KELM\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:29:10\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1rQNk6KELM\nledger += artifact bf19c20c3a25 rc=0 bvid=BV1rQNk6KELM"
+ },
+ {
+  "n": 10,
+  "stem": "李豆沙断言乐队番想火必须有坏女人，还",
+  "title": "【李豆沙】乐队番想火必须有坏女人？豆沙总结出企划公式",
+  "stage": "done",
+  "ok": true,
+  "rc": 0,
+  "detail": "45), \"bvid\": String(\"BV1EQNk6KErE\"), \"push_intro\": Object {\"show\": Number(0), \"text\": String(\"\")}, \"submitact_banner\": Object {\"hotact_text\": String(\"\"), \"hotact_url\": String(\"\"), \"list\": Null}}), message: \"0\", ttl: Some(1) }\n\u001b[2m2026-07-13 05:29:38\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mbiliup::uploader::bilibili\u001b[0m\u001b[2m:\u001b[0m APP接口投稿成功\nrc=0\nBVID=BV1EQNk6KErE\nledger += artifact 9ef522cc8270 rc=0 bvid=BV1EQNk6KErE"
+ }
+]

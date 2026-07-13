@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "3057fcbecac6",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260713/08/听说粉毛花臂抢过对方三部手机，她当场.mp4",
+    "sha256": "3057fcbecac69566290c760058683c08d218bb96afe360fea21548628d3f565a",
+    "bytes": 13279633
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/evals/failure-selfheal-6f9da78/repo/lidousha/2026-07-11/听说粉毛花臂抢过对方三部手机，她当场.cover.png",
+    "sha256": "f30ee6c558a962750e214daf6bb838bbe63125540527549018c188d81951636e",
+    "bytes": 2555108
+  },
+  "title": "【李豆沙】听说粉毛花臂抢过对方三部手机，她就磕起宿敌恋人",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "现在能把这些已经出成品但是我还没有进行人工放行的成品先上传到bilibili上了……注意上传前加我们最新的片头。如果限制10个，可以暂缓歌切的上传。也就是说是7月10的5个和7.11的5个切片先发出去。",
+    "at": "2026-07-13T05:28:26+0000"
+  },
+  "created_at": "2026-07-13T05:28:26+0000"
+}

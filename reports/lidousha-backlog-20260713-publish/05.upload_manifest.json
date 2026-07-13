@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "e222160448dd",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260713/05/李豆沙宣布将第一次以3D形态在线下见.mp4",
+    "sha256": "e222160448ddaee4ec3f509484d52fba2d2ffc7cbcc4e2b13a25217a5a3bf41b",
+    "bytes": 18221965
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/李豆沙宣布将第一次以3D形态在线下见.cover.png",
+    "sha256": "c5c05dcfbc69b42c1d185628de662310c27f474a3545a283856325796eeb2727",
+    "bytes": 2228027
+  },
+  "title": "【李豆沙】小李第一次3D线下见面：请务必来找我们玩",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "现在能把这些已经出成品但是我还没有进行人工放行的成品先上传到bilibili上了……注意上传前加我们最新的片头。如果限制10个，可以暂缓歌切的上传。也就是说是7月10的5个和7.11的5个切片先发出去。",
+    "at": "2026-07-13T05:27:17+0000"
+  },
+  "created_at": "2026-07-13T05:27:17+0000"
+}

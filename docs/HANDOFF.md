@@ -39,6 +39,7 @@ Ivan 审查 7/11 隔离产物（旧 BASE `failure-selfheal-6f9da78`，commit 早
 
 ## 2026-07-13：付费 Gemini 兜底 key + 统一主播色 + 集成分支合并 + 7/10 隔离重跑（当前）
 
+> **05:3x UTC 更新（权宜上传批）**：Ivan 授权的 10 条积压谈话（7/10×5 + 7/11×5）已全部前置最新片头并上传 B 站（`10/10 ok`，BV 见 `reports/lidousha-backlog-20260713-publish/upload_ledger.jsonl`），歌切全部暂缓。**这些是半成品权宜上传，待修清单=`docs/pending-provisional-uploads-20260713.md`，清零前不算终审**；修复后走 B 站编辑替换（不限次数）。合集添加：2 条即时成功，其余转码中 -404，已挂 30/90 分钟幂等重试 timer。PSPLive 名单 v1.1（别名优先，Ivan 修正版）已入 roster 资产 + glossary + 术语表；成员+别名 crawler 自动化按 Ivan 指示排给专名流水线工作线。
 > **06:0x UTC 更新**：`codex/integration-selfheal-intro` 已并入 **main（merge `e02c49a`，1051 passed）**——依据：7/11 盲测通过、7/10 重跑在集成代码上实际出片（片头 PREPENDED/uniform_host/sapphire72 已在成品 record.json 验证）、另一 agent 的 4 条 fix 分支已全部以集成线为底座。生产部署与 `DISABLED` 摘除仍按原门（重跑验收 + Ivan 授权）。付费 key 政策更新：无默认硬帽、`GEMINI_PAID_BACKUP_DEV_EXCEPTION=1` 已用于重跑 unit；生产 cron 保持严格 ≥3 轮门。重跑 BASE 快照已热切至 `03b717f`。
 
 ### 目标

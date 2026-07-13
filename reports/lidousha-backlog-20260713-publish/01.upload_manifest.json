@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "aee37caf061b",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260713/01/聊到邦多利新登场的“神秘坏女人”，她.mp4",
+    "sha256": "aee37caf061b2723284ca56eca043cc1190a1a2a2f94faa0037d7b4e9a939cfc",
+    "bytes": 54608472
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.cover.png",
+    "sha256": "1e0cc83d71aea89977ef510cfe6050e00fdd66bb22333e4925e1a569aec326b5",
+    "bytes": 2435536
+  },
+  "title": "【李豆沙】《梦限大》坏女人怎么洗白？小李只认双重人格",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "现在能把这些已经出成品但是我还没有进行人工放行的成品先上传到bilibili上了……注意上传前加我们最新的片头。如果限制10个，可以暂缓歌切的上传。也就是说是7月10的5个和7.11的5个切片先发出去。",
+    "at": "2026-07-13T05:24:58+0000"
+  },
+  "created_at": "2026-07-13T05:24:58+0000"
+}

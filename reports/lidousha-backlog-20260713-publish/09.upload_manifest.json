@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "bf19c20c3a25",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260713/09/河粉小姐姐合照前先问“要交780吗”.mp4",
+    "sha256": "bf19c20c3a25acbf3d2d56e2bfc8025362a3f1d81dca81c6fd375f8ec8cace90",
+    "bytes": 35299921
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/evals/failure-selfheal-6f9da78/repo/lidousha/2026-07-11/河粉小姐姐合照前先问“要交780吗”.cover.png",
+    "sha256": "2e5a404be90b0b6d831306bf8bfaaf7aedd525f8625f2f346da6ac41ed546559",
+    "bytes": 2707318
+  },
+  "title": "【李豆沙】河粉小姐姐合照问“要交780吗”？说完免费她后悔了",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "现在能把这些已经出成品但是我还没有进行人工放行的成品先上传到bilibili上了……注意上传前加我们最新的片头。如果限制10个，可以暂缓歌切的上传。也就是说是7月10的5个和7.11的5个切片先发出去。",
+    "at": "2026-07-13T05:28:51+0000"
+  },
+  "created_at": "2026-07-13T05:28:51+0000"
+}

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "5bd43a173281",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260713/07/被问为什么要和几十个女同事结婚，李豆.mp4",
+    "sha256": "5bd43a1732811047df0090190a3be3e70aa19f6ee63895f7fa1237d2617e7c44",
+    "bytes": 15322168
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/evals/failure-selfheal-6f9da78/repo/lidousha/2026-07-11/被问为什么要和几十个女同事结婚，李豆.cover.png",
+    "sha256": "f5879784d08031423cba670c75dbaf33681be4f3a57cc6fa3b1b119ef5fe4b2b",
+    "bytes": 2516730
+  },
+  "title": "【李豆沙】被问为何要和几十个女同事结婚：女朋友就是女性朋友",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "现在能把这些已经出成品但是我还没有进行人工放行的成品先上传到bilibili上了……注意上传前加我们最新的片头。如果限制10个，可以暂缓歌切的上传。也就是说是7月10的5个和7.11的5个切片先发出去。",
+    "at": "2026-07-13T05:28:04+0000"
+  },
+  "created_at": "2026-07-13T05:28:04+0000"
+}

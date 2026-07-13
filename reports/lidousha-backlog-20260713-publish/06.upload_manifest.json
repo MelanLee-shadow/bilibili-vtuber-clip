@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "62daef3a1b99",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260713/06/李豆沙回忆自己在大舞台高喊“我是直女.mp4",
+    "sha256": "62daef3a1b9920b1b67dbb1b158500fc2c5fee58c9354d36b087fa5dd00408c6",
+    "bytes": 43075644
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/evals/failure-selfheal-6f9da78/repo/lidousha/2026-07-11/李豆沙回忆自己在大舞台高喊“我是直女.cover.png",
+    "sha256": "6f084aa80ffa37a3c02de43b6c1330f1796d810d8e9f6beae8002e67837be5f7",
+    "bytes": 2690277
+  },
+  "title": "【李豆沙】回忆大舞台高喊“我是侄女”：全场鼓掌还坚持不是嘴硬",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "现在能把这些已经出成品但是我还没有进行人工放行的成品先上传到bilibili上了……注意上传前加我们最新的片头。如果限制10个，可以暂缓歌切的上传。也就是说是7月10的5个和7.11的5个切片先发出去。",
+    "at": "2026-07-13T05:27:41+0000"
+  },
+  "created_at": "2026-07-13T05:27:41+0000"
+}
