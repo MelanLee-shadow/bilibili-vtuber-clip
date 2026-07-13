@@ -21,6 +21,7 @@ Ivan 逐帧二审 7/10 重制版与 7/11 生产版，点名一批新错误类；
 
 ### 进行中
 
+- **本机 launchd 镜像 `com.ivan.lidousha-autoslice-pull` 已临时 bootout**（2026-07-13 深夜）：它每 30 分钟从生产 lidousha/<date> 增量拉取、无 --delete，反复把已被重出取代的旧代文件（无片头 7/10 原版、直女版、旧冷笑话）复活到本地，与 Ivan 的"最新覆盖、旧的不留"规则冲突。重出集替换生产目录后**必须 `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.ivan.lidousha-autoslice-pull.plist` 恢复**；期间本地同步由会话在每日收敛时手动执行。
 - redo-20260710 自治产出中；收敛后拉回覆盖 `lidousha/2026-07-10/`。
 - 7/11 全天重出：待 7/10 谈话面出货后同模式起 BASE（Ivan 点名错误多在 7/11）；7/12、7/13 随后（7/13 两条直女枚举标题按 A 改写）。
 - 生产 7/12 歌切重试（带付费兜底）继续。
