@@ -847,6 +847,71 @@ def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
     )
 
 
+def test_final_surface_verifier_understands_aligned_splice_dropped_head():
+    """2026-07-13 生产实况回归：对齐拼接声明「authority 头她已在上一句说过，
+    不重复注入」后，终验器必须在跨度窗口验剩余部分 + 在相邻上下文验被弃置
+    的头；此前它坚持全文进跨度窗口，导致 4 条成品 CHAT_AUTHORITY_FINALIZATION_FAILED。"""
+    final = _srt(
+        "谢谢谢谢寒-歌的钢镚，好冷的笑话",
+        "另外姐姐姐姐组乐队吗",
+        "我会打退堂鼓",
+        "退堂鼓算什么",
+    )
+    def make_audit():
+        return {
+            "applied": [
+                {
+                    "exact_text": "好冷的笑话，另外姐姐姐姐组乐队吗，我会打退堂鼓",
+                    "matched_start_ms": 10_000,
+                    "matched_end_ms": 24_000,
+                    "span_alignment": {
+                        "dropped_duplicate_authority_head": "好冷的笑话，",
+                        "preserved_span_tail": "退堂鼓算什么",
+                    },
+                }
+            ]
+        }
+
+    assert verify_chat_authority_final_surfaces(
+        make_audit(),
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=30_000,
+    )
+    # 被弃置的头在上下文里不存在 → 弃置声明不成立 → 行判失败（fail-closed）
+    head_missing = _srt(
+        "完全无关的开场白",
+        "另外姐姐姐姐组乐队吗",
+        "我会打退堂鼓",
+        "退堂鼓算什么",
+    )
+    assert not verify_chat_authority_final_surfaces(
+        make_audit(),
+        final_text_srt=head_missing,
+        final_speaker_srt=head_missing,
+        delivery_start_ms=0,
+        delivery_end_ms=30_000,
+    )
+    # 无对齐声明的旧式 applied 行维持全文进窗口的严格语义
+    strict_audit = {
+        "applied": [
+            {
+                "exact_text": "好冷的笑话，另外姐姐姐姐组乐队吗，我会打退堂鼓",
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 24_000,
+            }
+        ]
+    }
+    assert not verify_chat_authority_final_surfaces(
+        strict_audit,
+        final_text_srt=head_missing,
+        final_speaker_srt=head_missing,
+        delivery_start_ms=0,
+        delivery_end_ms=30_000,
+    )
+
+
 def test_nearby_unrelated_chat_is_not_treated_as_subtitle_authority():
     source = _srt("今天确实很想跟大家看新番")
     output, audit = apply_authoritative_chat_evidence(
