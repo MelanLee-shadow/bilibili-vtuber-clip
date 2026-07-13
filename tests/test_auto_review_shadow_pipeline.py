@@ -1547,7 +1547,7 @@ def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_pat
 @pytest.mark.parametrize(
     ("print_timeout", "grace_seconds", "expected"),
     [
-        (None, None, {"print_timeout": "8m", "process_timeout_seconds": 540}),
+        (None, None, {"print_timeout": "10m", "process_timeout_seconds": 660}),
         ("4m", "30", {"print_timeout": "4m", "process_timeout_seconds": 270}),
     ],
 )
