@@ -1183,6 +1183,18 @@ def run_speaker_finalizer(
     return manifest
 
 
+def _default_speaker_mode() -> str:
+    """Resolve the effective default speaker mode from the environment.
+
+    argparse does not validate defaults against ``choices``, so an unknown
+    env value must fail toward the standing uniform_host policy instead of
+    silently reaching the finalizer dispatch.
+    """
+
+    mode = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
+    return mode if mode in ("uniform_host", "required", "auto") else "uniform_host"
+
+
 def run_producer_speaker_finalization(
     *,
     speaker_mode: str,
@@ -1211,6 +1223,11 @@ def run_producer_speaker_finalization(
     authority or a review gate.
     """
 
+    if speaker_mode == "uniform_host":
+        raise ValueError(
+            "uniform_host mode must never dispatch speaker finalization; "
+            "the caller skips this step entirely"
+        )
     fallback_reason = "SPEAKER_MODE_REQUIRED"
     if speaker_mode == "auto":
         fallback_reason = "ROUTING_CLAIM_MISSING"
@@ -1416,9 +1433,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--speaker-mode",
-        choices=("required", "auto"),
-        default="required",
-        help="required = always run binary; auto = verified FAST_SOLO else binary fallback",
+        choices=("uniform_host", "required", "auto"),
+        default=_default_speaker_mode(),
+        help=(
+            "uniform_host = no speaker separation: every cue keeps the single host "
+            "(李豆沙) style and speaker uncertainty can never reject a delivery "
+            "(Ivan 2026-07-13 data-accumulation policy; evidence capture stays passive); "
+            "required = always run binary finalizer; auto = verified FAST_SOLO else binary fallback"
+        ),
     )
     parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
     parser.add_argument(
@@ -2124,6 +2146,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "subtitle_regression": subtitle_regression_audit,
         "text_finalization_manifest_path": str(text_manifest_path) if text_manifest_path is not None else None,
+        "speaker_mode": args.speaker_mode,
         "speaker_review_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
         "subtitle_ass_path": str(speaker_ass) if speaker_ass is not None else None,
         "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID if speaker_ass is not None else "lidousha-final-sapphire72",

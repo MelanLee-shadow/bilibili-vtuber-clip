@@ -140,6 +140,13 @@ from src.autoslice.visual_song_discovery import (
 )
 
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
+# Ivan 2026-07-13: during the speaker data-accumulation phase every delivered
+# clip keeps the single host (李豆沙) subtitle style and speaker uncertainty
+# must never reject a delivery. "required"/"auto" stay available for the
+# future re-enable decision.
+SPEAKER_MODE = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
+if SPEAKER_MODE not in {"uniform_host", "required", "auto"}:
+    SPEAKER_MODE = "uniform_host"
 ROOM = os.environ.get("AUTOSLICE_ROOM", "22966160")
 REC_ROOT = Path(
     os.environ.get(
@@ -2076,7 +2083,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     log_path = BASE / "logs" / f"{date}_{cid}.log"
     log(f"producing {cid} ({(item['end_ms'] - item['start_ms']) // 1000}s) from {Path(item['segment_path']).name}")
     cmd = [sys.executable, str(REPO_ROOT / "scripts" / "produce_slice_package.py"),
-           "--spec", str(spec_path), "--ssh-host", "localhost", "--speaker-mode", "auto"]
+           "--spec", str(spec_path), "--ssh-host", "localhost", "--speaker-mode", SPEAKER_MODE]
     if reuse_cover:
         cmd.append("--reuse-cover")
     boundary_context_retries = 0
