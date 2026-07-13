@@ -49,32 +49,51 @@ provider 配额/网络故障必须自治恢复，明确下一话题只进入尾�
   `candidate_rejected` 并按置信度补下一候选；基础设施等待不会用补位掩盖
   outage。全套回归 **879 passed**，代码提交
   `6f9da78606dc764cfedb549fe248bf7e85897727`。
+- 歌曲音频证明现同样执行 **AGY -> Gemini API key #1/#2/#3**：Gemini
+  直接听完整派生音频，provider/model、原音频/LRC/raw/canonical hash 和
+  key ordinal 都进入 v3 manifest，但 key 值不落盘。远端强制
+  `AGY_UNAVAILABLE` 的 219 秒真实 smoke 使用 `gemini-3.5-flash`，42/42 行、
+  matched ratio 1.0，并通过完整严格验证器。Gemini 把中段 evidence 放进
+  两句之间伴奏空隙的真实坏返回，现会在 adapter 内被拒绝并自动换下一 key，
+  不再等到下游才变成失败；所有 key 都坏时仍 fail closed/recoverable，合法
+  playback/guest 负例不会被重试成正例。代码提交 `541ff0c`。
+- 机器 202-term snapshot 的实际 graph crawl 又暴露 source allowlist 漂移：
+  timely validator 允许 ANN/Bushiroad/TV Tokyo，但角色图 validator 少这三类，
+  会在复制第 5 个 topic source 时自撞安全门。`117e853` 已统一合法机器来源族；
+  exact snapshot 实网生成 **16 topics / 16 works / 162 characters**、0 diagnostics，
+  lineage 精确绑定 timely SHA。完整回归现为 **945 passed**。
 
 ### 进行中（含后台进程）
 
-- 新隔离 BASE：`free:/opt/bilive/autoslice/evals/failure-selfheal-6f9da78`；
-  repo 由新 builder 从上述 commit 生成，manifest 98 个 tracked 文件且 profile
-  存在。只挂 7/11、7/12 录像，复用机器 ASR cache，
-  `AUTOSLICE_HUMAN_TRUTH_MODE=withheld`，显式使用 machine timely snapshot
-  与机器角色图。
-- transient systemd timer `autoslice-failure-selfheal-6f9da78.timer` 每 5 分钟
-  调正式 `free_session_autoslice.py --once`，flock 单飞；没有手工调用
-  `process_date` 或候选阶段。首次只读状态为 7/11 `processing`、7/12 尚未建
-  state，尚不能声称两日成片收敛。
-- 生产 `/opt/bilive/autoslice/DISABLED` 仍存在；本轮未上传，也尚未把
-  `6f9da78` 正式部署为生产 `DEPLOYED_COMMIT`。
+- 旧隔离 BASE `failure-selfheal-6f9da78` 仍由自己的 5 分钟 timer 自治运行。
+  最新只读产物状态：7/11 已 `review_ready`、pending 0、5 talk + 1 song；7/12
+  仍 `processing`、pending song=2、summary 尚未生成，因此旧 timer 不能停。
+- 最终隔离 BASE：
+  `free:/opt/bilive/autoslice/evals/failure-selfheal-final-117e853`。repo 是
+  commit-exact `117e8538153d336d691d5e9e74ea2e0ea5fd0a15`、99 tracked files、
+  profile 存在；只挂 7/11、7/12 录像，truth withheld，并显式使用机器 timely
+  snapshot 和上述 16-topic graph。
+- `autoslice-failure-selfheal-final-117e853.timer` 每 5 分钟执行确定性 gate：
+  仅当旧 7/12 已是终态、pending 清空且 summary 存在时，才一次性导入稳定
+  ASR cache，然后只通过正式 `free_session_autoslice.py --once` 自治推进。
+  没有手工调用 `process_date` 或任何候选阶段，也不读取阶段日志/进程。
+- 生产 `/opt/bilive/autoslice/DISABLED` 仍存在；本轮未上传，正式生产
+  `DEPLOYED_COMMIT` 仍不是最终修复 HEAD。
 
 ### 阻塞
 
-- 无需 Ivan 决策的代码 blocker。当前只等待隔离正式入口自治完成；在两日
-  state/summary/媒体没有收敛前，不把单测与 Gemini smoke 冒充完整直播验收。
+- 无需 Ivan 决策的代码 blocker。当前只等待旧 7/12 自治收敛，再由 gated
+  final timer 自动启动最终 exact-snapshot 盲测；在两日 state/summary/媒体
+  没有收敛前，不把 945 项单测、真实 Gemini smoke 或 graph crawl 冒充完整
+  直播验收。
 
 ### 下一步
 
-1. 只读检查两日 state、`AUTOSLICE_SUMMARY.md` 和媒体/SRT/封面；不读取进程、
-   阶段日志或手工推进。要求等待 provider 的条目保持非终态，明确内容拒绝有
-   reserve 补位，最终 package 全部 no-upload。
-2. 收敛后停止并移除隔离 timer，更新本节最终结果。
+1. 后续只读检查旧/最终两日 state、`AUTOSLICE_SUMMARY.md` 和媒体/SRT/封面；
+   不读取进程、阶段日志或手工推进。要求等待 provider 的条目保持非终态，
+   明确内容拒绝有 reserve 补位，最终 package 全部 no-upload。
+2. 最终两日收敛后做字幕/歌切/证明/无上传验收，停止并移除旧与最终 timer，
+   更新本节最终结果。
 3. 再用正式 `scripts/deploy_free_autoslice.sh free` 部署干净 HEAD，回读
    `DEPLOYED_COMMIT`、runtime assets 和 Gemini key 可见性；继续保留生产
    `DISABLED`，不得上传。
