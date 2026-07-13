@@ -89,6 +89,10 @@ class ReferentGroup:
     # "默认可信方"——文本已是它、音频又 UNCERTAIN 时保留原文不阻塞；
     # 未列出的（如真实词「乒乓球」）UNCERTAIN 仍阻塞待裁。
     uncertain_keep_canonicals: tuple[str, ...] = ()
+    # 位置门控（2026-07-13 彩排「大家/但是」案）：非空时该组只在全文本审计的
+    # 指定位置生效（"clip_initial"=片首 cue 且必须在句首），并且完全不进入
+    # chat 证据路径——组内是普通高频词，全局匹配会引发裁决风暴。
+    positions: tuple[str, ...] = ()
 
 
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
@@ -243,12 +247,21 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     )
                 )
             )
+            raw_positions = row.get("positions") or []
+            positions = tuple(
+                dict.fromkeys(
+                    str(value)
+                    for value in (raw_positions if isinstance(raw_positions, list) else [])
+                    if str(value) in {"clip_initial"}
+                )
+            )
             groups.append(
                 ReferentGroup(
                     tuple(parsed),
                     sanitize_chat_display_text(row.get("reason", ""), max_chars=500),
                     row.get("audio_verify_all_surfaces") is True,
                     keep,
+                    positions,
                 )
             )
     return groups
@@ -1525,6 +1538,11 @@ def apply_audio_entity_verification(
         matches: list[tuple[ReferentGroup, list[dict[str, Any]]]] = []
         for group in groups:
             occurrences = _entity_occurrences(texts[cue_offset], group)
+            if group.positions:
+                # 目前唯一支持的位置语义：片首 cue 的句首槽位（开场称呼）。
+                if "clip_initial" not in group.positions or cue_offset != 0:
+                    continue
+                occurrences = [row for row in occurrences if row["start"] == 0]
             if not occurrences:
                 continue
             suspicious = group.audio_verify_all_surfaces or any(
@@ -1721,7 +1739,10 @@ def apply_authoritative_chat_evidence(
     ]
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     texts = [cue.text for cue in cues]
-    entity_groups = _coerce_referent_groups(referent_groups)
+    # 位置门控组只属于全文本审计；chat 证据里这些高频普通词不构成实体槽位。
+    entity_groups = [
+        group for group in _coerce_referent_groups(referent_groups) if not group.positions
+    ]
     proposals: list[dict] = []
     entity_verdicts: list[dict] = []
     entity_verdict_required: list[dict] = []

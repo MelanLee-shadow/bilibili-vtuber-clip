@@ -172,6 +172,110 @@ def test_canonical_surface_kept_when_audio_uncertain_but_mishear_still_blocks():
     assert audit2["status"] == "ENTITY_VERDICT_REQUIRED"
 
 
+OPENING_ADDRESS_GROUP = ReferentGroup(
+    (
+        ReferentEntity("大家", ("大家",), ("da jia",)),
+        ReferentEntity("但是", ("但是",), ("dan shi",)),
+    ),
+    audio_verify_all_surfaces=True,
+    uncertain_keep_canonicals=("大家",),
+    positions=("clip_initial",),
+)
+
+
+def _uncertain_verifier(request):
+    return {
+        "schema_version": "chat-entity-verdict.v1",
+        "request_sha256": request["request_sha256"],
+        "status": "UNCERTAIN",
+        "reason_code": "ENTITY_AUDIO_UNCERTAIN",
+    }
+
+
+def test_clip_initial_address_mishear_repaired_by_audio_forced_choice():
+    """2026-07-10 彩排实案：片首「但是她们要提前去彩排了」实为开场称呼「大家」。
+    软性原则曾漏修一次 → 位置门控组 + 音频强制二选一是确定性升级。"""
+    source = _srt("但是她们要提前去彩排了", "但是我先挂一下")
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[OPENING_ADDRESS_GROUP],
+        entity_verifier=_audio_entity_verifier("大家"),
+    )
+
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit
+    assert "大家她们要提前去彩排了" in output
+    assert "但是我先挂一下" in output  # 位置门控组不管辖非片首 cue
+    assert len(audit["repairs"]) == 1
+
+
+def test_clip_initial_group_ignores_mid_cue_and_later_cues():
+    """位置门 = 片首 cue 且句首槽位：句中「但是」与后续 cue 一律不触发裁决。"""
+    calls: list[dict] = []
+
+    def counting(request):
+        calls.append(dict(request))
+        return None
+
+    source = _srt("我觉得但是话说回来", "但是大家听我说")
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[OPENING_ADDRESS_GROUP], entity_verifier=counting
+    )
+
+    assert output == source
+    assert audit["status"] == "NO_ENTITY", audit
+    assert calls == []
+
+
+def test_clip_initial_uncertain_keeps_dajia_but_blocks_danshi():
+    kept_src = _srt("大家早上好")
+    output, audit = apply_audio_entity_verification(
+        kept_src, referent_groups=[OPENING_ADDRESS_GROUP], entity_verifier=_uncertain_verifier
+    )
+    assert output == kept_src
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert audit["confirmed"][0]["reason_code"] == "ENTITY_CANONICAL_KEPT_ON_UNCERTAIN"
+
+    blocked_src = _srt("但是她们要提前去彩排了")
+    output2, audit2 = apply_audio_entity_verification(
+        blocked_src, referent_groups=[OPENING_ADDRESS_GROUP], entity_verifier=_uncertain_verifier
+    )
+    assert output2 == blocked_src
+    assert audit2["status"] == "ENTITY_VERDICT_REQUIRED"
+
+
+def test_positioned_groups_never_enter_chat_evidence_path():
+    """弹幕/SC 里「但是/大家」是高频普通词——位置门控组不得在 chat 证据
+    路径制造实体槽位或裁决要求。"""
+    source = _srt("但是大家都在等她回来")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, "但是大家都在等她回来")],
+        referent_groups=[OPENING_ADDRESS_GROUP],
+        entity_verifier=_uncertain_verifier,
+    )
+
+    assert audit.get("entity_verdict_required") in ([], None)
+    assert "但是大家都在等她回来" in output
+
+
+def test_loader_parses_clip_initial_positions_from_asset():
+    groups = load_referent_groups(
+        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+    )
+    address_group = next(
+        group
+        for group in groups
+        if {entity.canonical for entity in group.entities} == {"大家", "但是"}
+    )
+
+    assert address_group.positions == ("clip_initial",)
+    assert address_group.uncertain_keep_canonicals == ("大家",)
+    assert address_group.audio_verify_all_surfaces is True
+
+
 def test_exact_chat_owned_cue_is_excluded_from_second_entity_verdict():
     source = _srt("等小李什么时候来看恋青呢")
     group = ReferentGroup(
