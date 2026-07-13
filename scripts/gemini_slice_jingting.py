@@ -905,12 +905,16 @@ def agy_prompt(
     danmaku_lines: list[str] | None = None,
     as_of_date: str | None = None,
     topic_entity_context: str = "",
+    song_name_candidates: list[str] | tuple[str, ...] = (),
 ) -> str:
+    from src.autoslice.song_name_pin import song_name_candidates_prompt_block
+
     glossary_text = glossary(as_of=_as_of_datetime(as_of_date)).strip()
     glossary_block = f"\nGlossary and style rules:\n{glossary_text}\n" if glossary_text else ""
     scoped_entity_block = topic_entity_context.strip()
     if scoped_entity_block:
         scoped_entity_block = f"\nTopic-scoped entity graph:\n{scoped_entity_block}\n"
+    song_name_block = song_name_candidates_prompt_block(song_name_candidates)
     danmaku_block = ""
     if danmaku_lines:
         joined = "\n".join(danmaku_lines)
@@ -984,7 +988,7 @@ Output requirement:
 - output.srt must contain SRT only.
 - Same cue count, same cue indices, and same timestamps as draft.srt.
 - No Markdown fences, no explanations.
-{glossary_block}{scoped_entity_block}
+{glossary_block}{scoped_entity_block}{song_name_block}
 Current draft.srt content:
 {srt_text}
 """

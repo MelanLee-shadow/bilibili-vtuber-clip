@@ -1758,6 +1758,172 @@ def find_chat_jsonl(segment: Path) -> Path | None:
     return None
 
 
+_DIAN_GE_RX = re.compile(r"^点歌\s*(.+)$")
+_TRAILING_PUNCT_RX = re.compile(r"[\s,.!?~～，。！？、·…\-_]+$")
+
+
+def date_chat_jsonl_files(date: str) -> list[Path]:
+    """All structured live-event sidecars for a date's recordings, deduped.
+
+    Reuses the same segment→sidecar lookup as segment discovery (``find_chat_jsonl``)
+    instead of re-globbing the recordings root, so it stays consistent with
+    whatever a test's ``list_segments``/``REC_ROOT`` monkeypatch already covers.
+    """
+
+    seen: dict[str, Path] = {}
+    for segment in list_segments(date):
+        jsonl = find_chat_jsonl(segment)
+        if jsonl is not None:
+            seen.setdefault(str(jsonl.resolve()), jsonl)
+    return list(seen.values())
+
+
+def _clean_dian_ge_title(raw: str) -> str | None:
+    title = _TRAILING_PUNCT_RX.sub("", str(raw or "").strip())
+    if not title or not (1 <= len(title) <= 20):
+        return None
+    return title
+
+
+def dian_ge_song_titles(date: str, *, cap: int = 40) -> list[str]:
+    """点歌 danmaku pool: titles a viewer explicitly requested by name.
+
+    REUSES ``src.autoslice.chat_authority.load_chat_jsonl`` (the same
+    authoritative structured danmaku/SC parser the finalization lane uses,
+    including its recording-epoch handling) instead of a second bilibili
+    DANMU_MSG decoder.
+    """
+
+    from src.autoslice.chat_authority import load_chat_jsonl
+
+    titles: list[str] = []
+    seen_norm: set[str] = set()
+    for jsonl_path in date_chat_jsonl_files(date):
+        try:
+            evidence = load_chat_jsonl(jsonl_path)
+        except (OSError, ValueError):
+            continue
+        for item in evidence:
+            if item.kind != "danmaku":
+                continue
+            match = _DIAN_GE_RX.match(item.text.strip())
+            if not match:
+                continue
+            title = _clean_dian_ge_title(match.group(1))
+            if title is None:
+                continue
+            norm = title.lower()
+            if norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            titles.append(title)
+            if len(titles) >= cap:
+                return titles
+    return titles
+
+
+def visual_song_titles(state: dict) -> list[str]:
+    """Screen-songlist titles seen anywhere in the date so far.
+
+    The numbered songlist overlay (right-top panel) persists on screen across
+    recording segments, so every segment's inventory entry — plus the
+    cross-segment dedup identities already tracked in
+    ``visual_song_seen_entries`` (``list:<n>:<title>`` / ``media:<stem>:<start_ms>:<title>``) —
+    is in scope, not just the current segment's.
+    """
+
+    titles: list[str] = []
+    seen_norm: set[str] = set()
+
+    def _add(raw_title) -> None:
+        title = str(raw_title or "").strip()
+        if not title:
+            return
+        norm = normalize_visual_title(title)
+        if not norm or norm in seen_norm:
+            return
+        seen_norm.add(norm)
+        titles.append(title)
+
+    inventory = state.get("visual_song_inventory")
+    if isinstance(inventory, dict):
+        for entry in inventory.values():
+            if not isinstance(entry, dict):
+                continue
+            for candidate in entry.get("candidates") or []:
+                if isinstance(candidate, dict):
+                    _add(candidate.get("song_title"))
+    for entry in state.get("visual_song_seen_entries") or []:
+        if not isinstance(entry, str):
+            continue
+        if entry.startswith("list:"):
+            parts = entry.split(":", 2)
+            if len(parts) == 3:
+                _add(parts[2])
+        elif entry.startswith("media:"):
+            parts = entry.split(":", 3)
+            if len(parts) == 4:
+                _add(parts[3])
+    return titles
+
+
+def known_song_titles() -> list[str]:
+    """Curated recurring-song titles (assets/lidousha/known_songs.json).
+
+    This is a code-owned static asset, not a per-candidate human-truth file —
+    unlike ``candidate_text_override_path``/``candidate_subtitle_regression_path``/
+    ``candidate_speaker_override_path`` it has no ``human_truth_mode() ==
+    "withheld"`` gate anywhere in this codebase (it is already used
+    unconditionally for song-lane fingerprint pinning in
+    ``run_auto_review_shadow_pipeline._load_known_songs``), so it is safe to
+    include in both delivery and withheld runs.
+    """
+
+    path = REPO_ROOT / "assets" / "lidousha" / "known_songs.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    songs = payload.get("songs") if isinstance(payload, dict) else None
+    if not isinstance(songs, list):
+        return []
+    titles: list[str] = []
+    for song in songs:
+        if isinstance(song, dict):
+            title = str(song.get("title") or "").strip()
+            if title:
+                titles.append(title)
+    return titles
+
+
+def collect_song_name_candidates(date: str, state: dict, *, cap: int = 60) -> list[str]:
+    """Machine-evidence song-name pool for the talk lane's deterministic pin
+    (Ivan 2026-07-13 — 7/11 delivery bug: ``下一首歌是爱拉拉爱`` instead of
+    《爱啦啦》 with zero song-name context available to the correction lanes).
+
+    Sources, in priority order: the screen songlist panel, 点歌 danmaku, then
+    the curated known-songs table.  Every source here is machine evidence (or
+    a code-owned asset) — never Ivan human-truth review, so this is safe in
+    both delivery and withheld/blind runs.
+    """
+
+    titles: list[str] = []
+    seen_norm: set[str] = set()
+
+    def _extend(source: list[str]) -> None:
+        for title in source:
+            norm = normalize_visual_title(title)
+            if not norm or norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            titles.append(title)
+
+    _extend(visual_song_titles(state))
+    _extend(dian_ge_song_titles(date))
+    _extend(known_song_titles())
+    return titles[:cap]
+
+
 def danmaku_hints(xml_path: Path | None) -> str | None:
     if xml_path is None:
         return None
@@ -2070,6 +2236,11 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             }
         ],
     }
+    song_name_candidates = item.get("song_name_candidates")
+    if song_name_candidates:
+        # Machine-evidence song-name pool (screen songlist + 点歌 + known-songs)
+        # for the deterministic pin — see src/autoslice/song_name_pin.py.
+        spec["song_name_candidates"] = list(song_name_candidates)
     candidate_text_override = candidate_text_override_path(cid)
     if candidate_text_override is not None:
         spec["subtitle_text_overrides"] = str(candidate_text_override)
@@ -7254,6 +7425,14 @@ def process_date(date: str) -> None:
     routing_claim = prepare_speaker_routing(
         date, state["pending_talk"], state=state
     )
+    # Machine-evidence song-name pool for the talk lane's deterministic pin
+    # (Ivan 2026-07-13): the screen songlist keeps accruing across the whole
+    # date, so this is recomputed fresh every tick, not just once at discovery.
+    song_name_candidates = collect_song_name_candidates(date, state)
+    if song_name_candidates:
+        for item in state["pending_talk"]:
+            if isinstance(item, dict):
+                item["song_name_candidates"] = song_name_candidates
     write_state(date, state)
 
     # Phase C: produce talk picks CONCURRENTLY (they're independent; each is
