@@ -531,7 +531,22 @@ def render_plan(plan: Mapping[str, object], output: Path, *, work_dir: Path) -> 
                 "piece_id": piece["piece_id"],
                 "text": piece["text"],
                 "source_id": piece["source_id"],
+                "source_date": piece.get("source_date"),
+                "utterance_id": piece.get("utterance_id"),
+                "source_utterance_text": piece.get("source_utterance_text"),
+                "source_media_path": media_path,
+                "source_media_sha256": media_hashes[media_path],
+                "source_core_interval_ms": [piece["core_start_ms"], piece["core_end_ms"]],
                 "source_interval_ms": [piece["cut_start_ms"], piece["cut_end_ms"]],
+                "transcript_authorities": list(piece.get("transcript_authorities") or []),
+                "speaker_authority": piece.get("speaker_authority"),
+                "speaker_confidence": piece.get("speaker_confidence"),
+                "speaker_evidence": [
+                    dict(row)
+                    for row in piece.get("speaker_evidence", [])
+                    if isinstance(row, Mapping)
+                ],
+                "verification_evidence": dict(piece.get("verification_evidence") or {}),
                 "rendered_path": str(destination),
                 "rendered_sha256": sha256_file(destination),
                 "rendered_duration_ms": duration_ms,

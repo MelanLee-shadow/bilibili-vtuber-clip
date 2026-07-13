@@ -15,6 +15,7 @@ from src.autoslice.huozi_luanshua import (
     apply_verification,
     build_corpus,
     build_verification,
+    canonical_json_bytes,
     normalize_text,
     plan_text,
     rank_suggestions,
@@ -154,6 +155,11 @@ def test_corpus_excludes_non_talk_ranges(tmp_path):
 
 
 def test_collab_source_only_promotes_fully_contained_trusted_ranges(tmp_path):
+    acoustic = tmp_path / "range-bound-acoustic.json"
+    acoustic.write_text(
+        json.dumps({"verified_range_ms": [2_900, 3_800]}),
+        encoding="utf-8",
+    )
     manifest = _source_manifest(
         tmp_path,
         [
@@ -165,6 +171,10 @@ def test_collab_source_only_promotes_fully_contained_trusted_ranges(tmp_path):
         speaker="mixed",
         speaker_confidence=0.0,
         speaker_authority="unreviewed_collab_session",
+        speaker_evidence=[
+            {"authority": "campp", "path": str(acoustic)},
+            {"authority": "speaker_decision", "path": str(acoustic)},
+        ],
         trusted_ranges_ms=[
             {
                 "start_ms": 2_900,
@@ -179,6 +189,77 @@ def test_collab_source_only_promotes_fully_contained_trusted_ranges(tmp_path):
 
     assert [row["text"] for row in corpus["utterances"]] == ["我要为爱做零"]
     assert corpus["utterances"][0]["speaker_authority"] == "verified_lidousha_voiceprint"
+
+
+def test_phrase_confirmation_cannot_promote_context_beyond_confirmed_fragment(tmp_path):
+    confirmation = tmp_path / "ivan-confirmation.json"
+    confirmation.write_text(
+        json.dumps(
+            {
+                "source_range_ms": [2_800, 3_900],
+                "applies_to": {"previous_source_fragment_ms": [3_000, 3_360]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = _source_manifest(
+        tmp_path,
+        [_utterance("小李是零", 3_000)],
+        source_id="collab-human-review",
+        speaker="mixed",
+        speaker_confidence=0.0,
+        speaker_authority="unreviewed_collab_session",
+        speaker_evidence=[
+            {"authority": "ivan_confirmation", "path": str(confirmation)},
+        ],
+        trusted_ranges_ms=[
+            {
+                "start_ms": 2_800,
+                "end_ms": 3_900,
+                "speaker_authority": "ivan_confirmed_phrase",
+                "speaker_confidence": 1.0,
+            }
+        ],
+    )
+
+    with pytest.raises(CorpusValidationError, match="no exact word-timed utterances"):
+        build_corpus(manifest, manifest_dir=tmp_path)
+
+
+def test_phrase_confirmation_accepts_exactly_confirmed_fragment(tmp_path):
+    confirmation = tmp_path / "ivan-confirmation.json"
+    confirmation.write_text(
+        json.dumps(
+            {"applies_to": {"previous_source_fragment_ms": [3_000, 3_360]}}
+        ),
+        encoding="utf-8",
+    )
+    manifest = _source_manifest(
+        tmp_path,
+        [_utterance("小李是", 3_000)],
+        source_id="collab-human-review",
+        speaker="mixed",
+        speaker_confidence=0.0,
+        speaker_authority="unreviewed_collab_session",
+        speaker_evidence=[
+            {"authority": "ivan_confirmation", "path": str(confirmation)},
+        ],
+        trusted_ranges_ms=[
+            {
+                "start_ms": 2_800,
+                "end_ms": 3_900,
+                "speaker_authority": "ivan_confirmed_phrase",
+                "speaker_confidence": 1.0,
+            }
+        ],
+    )
+
+    corpus = build_corpus(manifest, manifest_dir=tmp_path)
+
+    assert [row["text"] for row in corpus["utterances"]] == ["小李是"]
+    assert corpus["utterances"][0]["speaker_evidence"][0]["coverage_ranges_ms"] == [
+        [3_000, 3_360]
+    ]
 
 
 def test_planner_prefers_few_long_natural_segments_and_reuses_verified_zero(tmp_path):
@@ -281,6 +362,29 @@ def test_match_must_align_to_asr_token_boundaries(tmp_path):
     assert plan_text("我本来", corpus)["quality"]["piece_count"] == 1
 
 
+def test_corpus_ignores_zero_duration_punctuation_tokens(tmp_path):
+    utterance = {
+        "start_time": 1_000,
+        "end_time": 1_720,
+        "transcript": "小李。可是",
+        "words": [
+            {"label": "小", "start_time": 1_000, "end_time": 1_160},
+            {"label": "李", "start_time": 1_160, "end_time": 1_320},
+            {"label": "。", "start_time": 1_320, "end_time": 1_320},
+            {"label": "可", "start_time": 1_400, "end_time": 1_560},
+            {"label": "是", "start_time": 1_560, "end_time": 1_720},
+        ],
+    }
+
+    corpus = build_corpus(
+        _source_manifest(tmp_path, [utterance]),
+        manifest_dir=tmp_path,
+    )
+
+    assert [row["text"] for row in corpus["utterances"]] == ["小李。可是"]
+    assert [piece["text"] for piece in plan_text("小李", corpus)["pieces"]] == ["小李"]
+
+
 def test_suggestion_ranking_only_keeps_small_edits_that_reduce_fragmentation(tmp_path):
     corpus = _corpus(
         tmp_path,
@@ -345,6 +449,44 @@ def test_build_verification_binds_two_timed_asr_files_and_zero_orthography(tmp_p
     validate_renderable_plan(verified)
 
 
+def test_proper_name_homophone_needs_separate_timed_human_review(tmp_path):
+    manifest = _source_manifest(tmp_path, [_utterance("豆沙是零", 1_000)])
+    source = manifest["sources"][0]
+    jianying = tmp_path / "jianying-homophone.json"
+    jianying.write_text(
+        json.dumps({"utterances": [_utterance("杜莎是0", 1_000)]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    human_review = tmp_path / "proper-name-review.json"
+    human_review.write_text(
+        json.dumps({"utterances": [_utterance("豆沙是零", 1_000)]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    source["transcript_authorities"] = [
+        "bcut",
+        "jianying",
+        "human_proper_name_review",
+    ]
+    source["transcript_evidence"] = [
+        {"authority": "bcut", "path": source["asr_json_path"], "confidence": 0.99},
+        {"authority": "jianying", "path": str(jianying), "confidence": 0.99},
+        {
+            "authority": "human_proper_name_review",
+            "path": str(human_review),
+            "confidence": 0.99,
+        },
+    ]
+
+    plan = plan_text("豆沙是零", build_corpus(manifest, manifest_dir=tmp_path))
+    verification = build_verification(plan, timing_tolerance_ms=200)
+
+    assert verification["pieces"]["p001"]["transcript_authorities"] == [
+        "bcut",
+        "human_proper_name_review",
+    ]
+    validate_renderable_plan(apply_verification(plan, verification))
+
+
 def test_planner_rejects_text_found_by_second_asr_at_the_wrong_time(tmp_path):
     manifest = _source_manifest(tmp_path, [_utterance("不对", 1_000)])
     source = manifest["sources"][0]
@@ -392,6 +534,23 @@ def test_render_gate_rechecks_verified_plan_and_transcript_evidence_hashes(tmp_p
     with open(evidence_path, "a", encoding="utf-8") as handle:
         handle.write("\n")
     with pytest.raises(VerificationError, match="transcript evidence hash drift"):
+        validate_renderable_plan(verified)
+
+
+def test_render_gate_rejects_phrase_evidence_that_does_not_cover_piece(tmp_path):
+    plan = plan_text("不对", _corpus(tmp_path, ["不对"]))
+    verified = apply_verification(plan, _verification_for(plan))
+    piece = verified["pieces"][0]
+    piece["speaker_authority"] = "ivan_confirmed_phrase"
+    piece["speaker_evidence"][0]["authority"] = "ivan_confirmation"
+    piece["speaker_evidence"][0]["coverage_ranges_ms"] = [[0, 120]]
+    unsigned = dict(verified)
+    unsigned.pop("verified_plan_sha256")
+    verified["verified_plan_sha256"] = hashlib.sha256(
+        canonical_json_bytes(unsigned)
+    ).hexdigest()
+
+    with pytest.raises(VerificationError, match="does not cover piece range"):
         validate_renderable_plan(verified)
 
 

@@ -10,6 +10,7 @@
 
 ## Project-local skills
 
+- For 李豆沙 “活字乱刷” historical-speech reconstruction, source repair, guest-speaker exclusion, suggestion variants, and no-upload试听交付, use `.agent/skills/huozi-luanshua/SKILL.md`.
 - For song lyric subtitle timing in this repository, use the project-local skill at `.agent/skills/song-lyrics-timeline-aligner/SKILL.md`.
 - Do not rely on a personal/global copy of that skill. The intended workflow is project-specific: external timed lyric source, clip-local first/last lyric anchors, global shift first, tail verification, and only explicit evidence-based stretch.
 - For 李豆沙 song uploads, keep the `【李豆沙】豆沙歌，...` prefix but prefer hook-style titles that fold in the song name and live context, instead of plain catalog titles like `【李豆沙】豆沙歌，《歌名》`.
