@@ -1376,11 +1376,14 @@ def apply_authoritative_chat_evidence(
     # Normalize every caller, not only JSONL ingestion: XML, fixtures, and
     # future adapters must not be able to inject SRT blocks/control sequences
     # into the output even when their spoken words genuinely match the audio.
+    # 梗词硬规范同样作用于证据文本（Ivan 2026-07-13：观众弹幕原文写「直女」
+    # 也是同一个梗，逐字注入前先回正为「侄女」——否则 verbatim 权威会把草稿里
+    # 已规范化的写法改回去）。
     evidence = [
         ChatEvidence(
             item.kind,
             item.offset_ms,
-            sanitize_chat_display_text(item.text),
+            canonicalize_hard_surfaces(sanitize_chat_display_text(item.text)),
             sanitize_chat_display_text(item.sender, max_chars=100),
             item.source,
             item.source_sha256,

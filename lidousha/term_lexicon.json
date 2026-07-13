@@ -11,28 +11,14 @@
     {
       "canonical": "kmx, kmx，",
       "display": "kmx, kmx，",
-      "aliases": [
-        "给我小给我小"
-      ],
+      "aliases": ["给我小给我小"],
       "notes": "Phrase-level ASR alias observed in 2026-06-19 official source; Ivan-edited subtitle is 'kmx, kmx，你看有花'."
     },
     {
       "canonical": "kmx",
       "display": "kmx",
-      "aliases": [
-        "天不熊",
-        "kimo熊",
-        "给我小"
-      ],
+      "aliases": ["天不熊", "kimo熊", "给我小"],
       "notes": "Ivan correction: final subtitles/output use kmx only; kimo熊 is a developer alias/pronunciation hint."
-    },
-    {
-      "canonical": "侄女",
-      "display": "侄女",
-      "aliases": [
-        "直女"
-      ],
-      "notes": "Ivan 2026-07-13 铁律：这是梗，所有直女一律写成侄女（无例外）。"
     }
   ]
 }

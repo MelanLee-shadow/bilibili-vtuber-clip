@@ -869,6 +869,20 @@ def test_hard_meme_surface_zhinv_is_always_canonicalized():
     )
 
 
+def test_hard_meme_rule_applies_to_quoted_danmaku_evidence_too():
+    """Ivan 铁律覆盖证据入口：观众弹幕原文写「直女」时，逐字注入前先回正，
+    不允许 verbatim 权威把已规范化的字幕改回直女。"""
+    source = _srt("弹幕说以前不是零是侄女")
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, "以前不是零，是直女")],
+        support_srt_texts=[source],
+    )
+    joined = "".join(cue.text for cue in parse_srt_cues(output))
+    assert "直女" not in joined, joined
+    assert "侄女" in joined
+
+
 def test_sc_read_with_address_prefix_already_spoken_survives_self_check():
     """2026-07-13 冷笑话成片实况：SC=「妈妈可以帮我宣传一下…」，称呼「妈妈」
     她在上一句已带出，拼接弃置后内部自检必须仍判 APPLIED_AND_VERIFIED。"""
