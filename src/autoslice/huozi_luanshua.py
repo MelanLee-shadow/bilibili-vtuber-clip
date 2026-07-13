@@ -37,6 +37,21 @@ ALLOWED_SPEAKER_AUTHORITIES = {
     "human_reviewed_lidousha",
     "verified_lidousha_voiceprint",
 }
+PHRASE_SCOPED_SPEAKER_AUTHORITIES = {
+    "ivan_confirmed_phrase",
+    "human_reviewed_lidousha",
+    "verified_lidousha_voiceprint",
+}
+HUMAN_SPEAKER_AUTHORITIES = {
+    "ivan_confirmed_phrase",
+    "human_reviewed_lidousha",
+}
+HUMAN_EVIDENCE_AUTHORITIES = {
+    "human",
+    "human_review",
+    "ivan_confirmation",
+    "ivan_confirmed_phrase",
+}
 
 _TEXT_CHAR_RX = re.compile(r"[0-9A-Za-z\u3400-\u9fff]")
 _CLAUSE_RX = re.compile(r"([^，,。！？!?；;：:\n]+)([，,。！？!?；;：:]*)")
@@ -276,12 +291,118 @@ def _bind_evidence_rows(
             raise CorpusValidationError(f"{label} evidence hash mismatch: {path}")
         row = dict(raw)
         row.update({"authority": authority, "path": str(path), "sha256": actual_sha})
+        raw_coverage = row.get("coverage_ranges_ms")
+        if raw_coverage is None:
+            raw_coverage = _speaker_evidence_coverage_from_file(path)
+        coverage = _normalize_coverage_ranges(raw_coverage, label=f"{label} evidence coverage")
+        if coverage:
+            row["coverage_ranges_ms"] = [list(item) for item in coverage]
         if "timeline_offset_ms" in row:
             row["timeline_offset_ms"] = int(row["timeline_offset_ms"])
         if "confidence" in row:
             row["confidence"] = float(row["confidence"])
         bound.append(row)
     return tuple(bound)
+
+
+def _normalize_coverage_ranges(
+    raw_ranges: object,
+    *,
+    label: str,
+) -> tuple[tuple[int, int], ...]:
+    if raw_ranges is None:
+        return ()
+    if not isinstance(raw_ranges, list):
+        raise CorpusValidationError(f"{label} must be a list")
+    normalized: list[tuple[int, int]] = []
+    for raw_range in raw_ranges:
+        if (
+            not isinstance(raw_range, Sequence)
+            or isinstance(raw_range, (str, bytes))
+            or len(raw_range) != 2
+        ):
+            raise CorpusValidationError(f"{label} has malformed range: {raw_range!r}")
+        start_ms, end_ms = int(raw_range[0]), int(raw_range[1])
+        if start_ms < 0 or end_ms <= start_ms:
+            raise CorpusValidationError(f"{label} has invalid range: {raw_range!r}")
+        normalized.append((start_ms, end_ms))
+    return tuple(normalized)
+
+
+def _speaker_evidence_coverage_from_file(path: Path) -> list[list[int]]:
+    """Read exact cue coverage from known human/acoustic evidence documents.
+
+    A broad source/session range is deliberately not accepted.  In particular,
+    ``source_range_ms`` may describe the context that a reviewer heard while a
+    nested ``previous_source_fragment_ms`` is the only phrase they confirmed.
+    Promoting that context to the whole utterance caused a real mixed-source
+    phrase to be mislabeled as one continuous take.
+    """
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+
+    candidates: list[object] = []
+    applies_to = payload.get("applies_to")
+    if isinstance(applies_to, Mapping):
+        candidates.append(applies_to.get("previous_source_fragment_ms"))
+        candidates.append(applies_to.get("confirmed_range_ms"))
+    lidousha_accept = payload.get("lidousha_accept")
+    if isinstance(lidousha_accept, Mapping):
+        candidates.append(lidousha_accept.get("range_ms"))
+    candidate = payload.get("candidate")
+    if isinstance(candidate, Mapping):
+        candidates.append(candidate.get("range_ms"))
+    candidates.extend(
+        [
+            payload.get("confirmed_range_ms"),
+            payload.get("verified_range_ms"),
+            payload.get("range_ms"),
+        ]
+    )
+    for candidate_range in candidates:
+        if (
+            isinstance(candidate_range, Sequence)
+            and not isinstance(candidate_range, (str, bytes))
+            and len(candidate_range) == 2
+        ):
+            try:
+                start_ms, end_ms = int(candidate_range[0]), int(candidate_range[1])
+            except (TypeError, ValueError):
+                continue
+            if start_ms >= 0 and end_ms > start_ms:
+                return [[start_ms, end_ms]]
+    return []
+
+
+def _speaker_evidence_covers_range(
+    evidence: Sequence[Mapping[str, object]],
+    *,
+    start_ms: int,
+    end_ms: int,
+    human_only: bool,
+) -> bool:
+    for row in evidence:
+        authority = str(row.get("authority") or "")
+        if human_only and authority not in HUMAN_EVIDENCE_AUTHORITIES:
+            continue
+        raw_ranges = row.get("coverage_ranges_ms")
+        if not isinstance(raw_ranges, list):
+            continue
+        for raw_range in raw_ranges:
+            if (
+                isinstance(raw_range, Sequence)
+                and not isinstance(raw_range, (str, bytes))
+                and len(raw_range) == 2
+                and int(raw_range[0]) <= start_ms
+                and end_ms <= int(raw_range[1])
+            ):
+                return True
+    return False
 
 
 def _validate_speaker_evidence(
@@ -323,6 +444,13 @@ def _speaker_authority_for_range(
                 confidence = float(row.get("speaker_confidence", 0.0))
                 evidence = row.get("speaker_evidence") or source.get("speaker_evidence") or []
                 assert isinstance(evidence, tuple)
+                if authority in PHRASE_SCOPED_SPEAKER_AUTHORITIES and not _speaker_evidence_covers_range(
+                    evidence,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    human_only=authority in HUMAN_SPEAKER_AUTHORITIES,
+                ):
+                    continue
                 return authority, confidence, evidence
         return None
     return (
@@ -446,7 +574,12 @@ def build_corpus(
             if not normalized or not isinstance(raw_words, list) or not raw_words:
                 continue
             try:
-                tokens = tuple(TimedToken.from_mapping(word) for word in raw_words if isinstance(word, Mapping))
+                tokens = tuple(
+                    TimedToken.from_mapping(word)
+                    for word in raw_words
+                    if isinstance(word, Mapping)
+                    and normalize_text(str(word.get("label") or word.get("text") or ""))
+                )
             except CorpusValidationError:
                 continue
             if not tokens or "".join(token.normalized for token in tokens) != normalized:
@@ -1255,6 +1388,14 @@ def validate_renderable_plan(plan: Mapping[str, object]) -> None:
             and len(speaker_evidence_authorities) < 2
         ):
             raise VerificationError("voiceprint speaker evidence is not independent")
+        speaker_authority = str(piece.get("speaker_authority") or "")
+        if speaker_authority in PHRASE_SCOPED_SPEAKER_AUTHORITIES and not _speaker_evidence_covers_range(
+            [row for row in speaker_evidence if isinstance(row, Mapping)],
+            start_ms=int(piece.get("core_start_ms", -1)),
+            end_ms=int(piece.get("core_end_ms", -1)),
+            human_only=speaker_authority in HUMAN_SPEAKER_AUTHORITIES,
+        ):
+            raise VerificationError("speaker evidence does not cover piece range")
         reconstructed += normalize_text(str(piece.get("text") or ""))
     if reconstructed != str(plan.get("normalized_target") or ""):
         raise VerificationError("verified pieces no longer exactly reconstruct the target")
