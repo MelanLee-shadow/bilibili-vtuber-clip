@@ -869,6 +869,68 @@ def test_hard_meme_surface_zhinv_is_always_canonicalized():
     )
 
 
+def test_sc_read_with_mid_read_interjection_is_preserved():
+    """2026-07-10 伊依 SC 实案：她念半句 SC → 回应「谢谢你」→ 继续念完。
+    对齐拼接必须保留中途插话，不得因整段覆盖而删掉。"""
+    exact = "李姐动车被取消了，被困在别的城市我想回家"
+    source = _srt(
+        "李姐动车被取消了",
+        "谢谢你",
+        "被困在别的城市我想回家",
+    )
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", -30_000, exact, "小猪状态")],
+        support_srt_texts=[source],
+    )
+    joined = "".join(cue.text for cue in parse_srt_cues(output))
+    assert "谢谢你" in joined, joined
+    assert "被困在别的城市我想回家" in joined
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit["status"]
+
+
+def test_sc_emote_placeholders_are_stripped_from_subtitle_splice():
+    """SC 原文的表情占位（；；串）和生僻区颜文字不进字幕。"""
+    from src.autoslice.chat_authority import _strip_unrenderable_for_subtitle
+
+    assert _strip_unrenderable_for_subtitle("李姐；；动车被取消了；；我想回家；；") == (
+        "李姐，动车被取消了，我想回家"
+    )
+    assert _strip_unrenderable_for_subtitle("把你关在房间里ᗜ𖥦ᗜ") == "把你关在房间里"
+
+    exact = "妈妈；；今天也要加油哦；；"
+    source = _srt("妈妈今天也要加油哦")
+    output, _audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact, "十麻乃orient")],
+        support_srt_texts=[source],
+    )
+    joined = "".join(cue.text for cue in parse_srt_cues(output))
+    assert "；；" not in joined, joined
+
+
+def test_sender_anchored_sc_near_miss_goes_to_audio_arbitration():
+    """2026-07-10 十麻乃两案：字幕已有「谢谢十麻乃…」答谢锚点时，后面严重
+    听岔的 SC 念读（文本相似度低于弹幕门槛）也送音频二选一；RESOLVED=SC 原文
+    则逐字修复。"""
+    exact = "李李被突击了"
+    source = _srt(
+        "谢谢十麻乃的醒目留言",
+        "里里被吐击了吗",
+    )
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact, "十麻乃orient")],
+        support_srt_texts=[source],
+        entity_verifier=_audio_entity_verifier(exact),
+    )
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert texts[1] == "李李被突击了", texts
+    row = audit["read_aloud_arbitrations"][0]
+    assert row["sender_anchored"] is True
+    assert row["outcome"] == "authority_confirmed_by_audio"
+
+
 def test_hard_meme_rule_applies_to_quoted_danmaku_evidence_too():
     """Ivan 铁律覆盖证据入口：观众弹幕原文写「直女」时，逐字注入前先回正，
     不允许 verbatim 权威把已规范化的字幕改回直女。"""

@@ -971,6 +971,74 @@ def _shift_boundary_punct(parts: list[str]) -> list[str]:
     return out
 
 
+_EMOTE_PLACEHOLDER_RUN = re.compile(r"[；;]{2,}")
+
+
+def _strip_unrenderable_for_subtitle(text: str) -> str:
+    """SC/弹幕原文里的表情符号在字幕字体下渲染成乱码（2026-07-10 伊依 SC 实案：
+    平台把 emote 记成「；；」占位、颜文字用生僻区字符）。拼进字幕前剥离：
+    ①两个以上连续分号的 emote 占位串→顿号化为一个停顿；②Symbol/emoji/私有区
+    及 BMP 外非 CJK 字符丢弃。证据匹配仍用原文（本函数只作用于写入字幕的文本）。"""
+    import unicodedata
+
+    cleaned = _EMOTE_PLACEHOLDER_RUN.sub("，", text)
+    out_chars: list[str] = []
+    for char in cleaned:
+        code = ord(char)
+        if code > 0xFFFF and not (0x20000 <= code <= 0x2FA1F):  # 保留 CJK 扩展
+            continue
+        if 0x1400 <= code <= 0x167F:  # UCAS 颜文字（ᗜ 类）
+            continue
+        category = unicodedata.category(char)
+        if category in {"So", "Sk", "Cs", "Co"}:
+            continue
+        out_chars.append(char)
+    result = "".join(out_chars)
+    result = re.sub(r"，{2,}", "，", result)
+    return result.strip("，, ") or text
+
+
+def _excess_is_mid_read_interjection(authority: str, candidate: str) -> bool:
+    """span 比 authority 长时，多出的部分是否全部是念读**中途**的插话。
+
+    头/尾悬出仍然算吞邻句（长度守卫继续拦）；只有 authority 覆盖率高、且
+    多出的字都落在 authority 两个匹配块之间零缺字的间隙里（她停下来回应
+    「谢谢你」再继续念）才放行。"""
+    auth_norm = normalize_chat_text(authority)
+    span_norm = normalize_chat_text(candidate)
+    if not auth_norm or not span_norm:
+        return False
+    blocks = [
+        block
+        for block in SequenceMatcher(None, auth_norm, span_norm).get_matching_blocks()
+        if block.size
+    ]
+    while len(blocks) > 1 and blocks[0].size < 2:
+        blocks.pop(0)
+    while len(blocks) > 1 and blocks[-1].size < 2:
+        blocks.pop()
+    if not blocks:
+        return False
+    common = sum(block.size for block in blocks)
+    if common / len(auth_norm) < 0.82:
+        return False
+    head_overhang = blocks[0].b
+    tail_overhang = len(span_norm) - (blocks[-1].b + blocks[-1].size)
+    if head_overhang > 1 or tail_overhang > 1:
+        return False
+    return True
+
+
+def _strip_interjections_once(span_norm: str, interjections) -> str:
+    """把已声明的插话从（normalize 后的）跨度文本里各剥离一次，用于
+    「authority 全文连续在场」类校验。"""
+    for fragment in interjections or ():
+        fragment_norm = normalize_chat_text(str(fragment))
+        if fragment_norm and fragment_norm in span_norm:
+            span_norm = span_norm.replace(fragment_norm, "", 1)
+    return span_norm
+
+
 def _fragment_spoken_in(fragment: str, context: str) -> bool:
     """「这个片段她已在相邻字幕说过」的统一判定（apply 与自检必须同一把尺）。"""
     fragment_norm = normalize_chat_text(fragment)
@@ -1068,8 +1136,27 @@ def _aligned_span_replacements(
                 tail = substituted_tail
         else:
             tail = substituted_tail
-    aligned_raw = authority[auth_raw_lo:auth_raw_hi]
-    desired = f"{head}{aligned_raw}{tail}"
+    # 对齐区内部按块交错重建：authority 两块之间若无缺字（a_gap==0）而 span
+    # 多出 ≥2 字，那是她念读中途的插话（「谢谢你」等，2026-07-10 伊依 SC 实案）
+    # ——原样保留；authority 有缺字的间隙是听错替换区，用 authority 原文覆盖。
+    aligned_parts: list[str] = []
+    for index, block in enumerate(blocks):
+        block_a_lo = auth_raw_lo if index == 0 else auth_map[block.a]
+        block_a_hi = auth_raw_hi if index == len(blocks) - 1 else auth_map[block.a + block.size - 1] + 1
+        if index:
+            prev = blocks[index - 1]
+            prev_a_hi = auth_map[prev.a + prev.size - 1] + 1
+            prev_s_hi = span_map[prev.b + prev.size - 1] + 1
+            a_gap_norm = block.a - (prev.a + prev.size)
+            span_gap_raw = span_raw[prev_s_hi : span_map[block.b]]
+            if a_gap_norm == 0 and len(normalize_chat_text(span_gap_raw)) >= 2:
+                aligned_parts.append(span_gap_raw)
+                audit.setdefault("preserved_span_interjections", []).append(span_gap_raw)
+            else:
+                aligned_parts.append(authority[prev_a_hi : auth_map[block.a]])
+        aligned_parts.append(authority[block_a_lo:block_a_hi])
+    aligned_raw = "".join(aligned_parts)
+    desired = _strip_unrenderable_for_subtitle(f"{head}{aligned_raw}{tail}")
     if not normalize_chat_text(desired):
         return None
     replacements = _shift_boundary_punct(_best_text_split(desired, list(before)))
@@ -1196,6 +1283,21 @@ _THANK_NAME = re.compile(
     r"(?P<suffix>送的|的\s*SC|的醒目留言)",
     re.IGNORECASE,
 )
+
+
+def _sender_thank_anchor(text: str, sender: str) -> bool:
+    """该字幕行是否在答谢这位 SC 发送者（听岔的名字也算，发送者名是强键）。"""
+    alias = _spoken_sender_alias(sender)
+    if not alias:
+        return False
+    match = _THANK_NAME.search(text)
+    if match is None:
+        return False
+    heard = match.group("name")
+    if alias.lower() == heard.lower():
+        return True
+    score, _ratio, coverage, _precision, _common = _match_metrics(alias, heard)
+    return score >= 0.5 or coverage >= 0.6
 
 
 def _repair_sc_sender(text: str, sender: str) -> str | None:
@@ -1408,6 +1510,15 @@ def apply_authoritative_chat_evidence(
             continue
         best: dict | None = None
         best_near: dict | None = None
+        sender_anchor_indexes: set[int] = (
+            {
+                index
+                for index, text in enumerate(texts)
+                if _sender_thank_anchor(text, item.sender)
+            }
+            if item.kind == "superchat" and item.sender
+            else set()
+        )
         for start in range(len(cues)):
             if item.kind == "danmaku":
                 if item.offset_ms >= 0:
@@ -1450,6 +1561,7 @@ def apply_authoritative_chat_evidence(
                     full
                     and len(normalize_chat_text(candidate)) > len(authority_norm) + 1
                     and preserved_suffix is None
+                    and not _excess_is_mid_read_interjection(item.text, candidate)
                 ):
                     full = False
                 partial = None
@@ -1462,6 +1574,14 @@ def apply_authoritative_chat_evidence(
                     # common 5 —— 三道门各差一点，而“独立转写支持”来自同一个听错
                     # 的 ASR 家族，永远救不回）。文本不足以裁决时交给原始音频
                     # 二选一，不放宽 exact_span 本身。
+                    # SC 锚定放宽（2026-07-10 十麻乃两案）：字幕里已出现
+                    # 谢谢+该 SC 发送者 的答谢锚点时，紧随其后的跨度即使文本
+                    # 相似度更低也值得送音频仲裁——发送者名就是强键。
+                    sender_anchored = bool(
+                        item.kind == "superchat"
+                        and sender_anchor_indexes
+                        and any(0 <= start - k <= 4 for k in sender_anchor_indexes)
+                    )
                     if (
                         item.kind == "danmaku"
                         and count <= 2
@@ -1469,6 +1589,13 @@ def apply_authoritative_chat_evidence(
                         and score >= 0.55
                         and coverage >= 0.50
                         and common >= 4
+                    ) or (
+                        sender_anchored
+                        and count <= 4
+                        and len(authority_norm) >= 4
+                        and score >= 0.40
+                        and coverage >= 0.35
+                        and common >= 3
                     ):
                         near = {
                             "evidence": item,
@@ -1482,6 +1609,7 @@ def apply_authoritative_chat_evidence(
                             "mode": "read_aloud_arbitration",
                             "replacement": None,
                             "preserved_suffix": None,
+                            "sender_anchored": sender_anchored,
                         }
                         if best_near is None or (count, -score) < (best_near["count"], -best_near["score"]):
                             best_near = near
@@ -1735,6 +1863,7 @@ def apply_authoritative_chat_evidence(
                 "matched_end_ms": request["matched_end_ms"],
                 "score": round(best_near["score"], 4),
                 "coverage": round(best_near["coverage"], 4),
+                "sender_anchored": bool(best_near.get("sender_anchored")),
                 "request_sha256": request["request_sha256"],
                 "verdict": verdict if verdict is not None else raw_verdict,
             }
@@ -1884,7 +2013,7 @@ def apply_authoritative_chat_evidence(
                 replacements, span_alignment = aligned
                 proposal["span_alignment"] = span_alignment
             else:
-                replacements = _best_text_split(item.text, before)
+                replacements = _best_text_split(_strip_unrenderable_for_subtitle(item.text), before)
                 if proposal.get("preserved_suffix") is not None:
                     replacements[-1] = replacements[-1].rstrip("，,。！？!? ") + "，" + proposal["preserved_suffix"][1]
                 replacements = _shift_boundary_punct(replacements)
@@ -2103,7 +2232,11 @@ def apply_authoritative_chat_evidence(
             dropped_ok = dropped_ok and _fragment_spoken_in(
                 str((row.get("span_alignment") or {}).get("dropped_duplicate_authority_tail")), next_context
             )
-        row["survived"] = bool(expected) and expected in normalize_chat_text(span_text) and dropped_ok
+        # 已声明的念读插话使 authority 在跨度里不连续——剥离后再验连续在场。
+        span_check = _strip_interjections_once(
+            normalize_chat_text(span_text), alignment.get("preserved_span_interjections")
+        )
+        row["survived"] = bool(expected) and expected in span_check and dropped_ok
     for row in entity_repairs:
         span_text = "".join(texts[index - 1] for index in row["cue_indexes"])
         row["survived"] = normalize_chat_text(row["expected_entity"]) in normalize_chat_text(span_text)

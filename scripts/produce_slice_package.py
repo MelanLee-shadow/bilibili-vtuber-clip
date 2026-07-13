@@ -67,6 +67,7 @@ from scripts.gemini_slice_jingting import approved_timely_terms
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
 from src.autoslice.chat_authority import (
     ChatEvidence,
+    _strip_interjections_once,
     apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
     build_human_text_entity_verifier,
@@ -969,8 +970,11 @@ def verify_chat_authority_final_surfaces(
             row["dropped_duplicate_context_verified"] = dropped_ok
         row["final_relative_start_ms"] = relative_start
         row["final_relative_end_ms"] = relative_end
-        row["survived_final_text_srt"] = bool(span_expected and span_expected in text_window) and dropped_ok
-        row["survived_final_speaker_srt"] = bool(span_expected and span_expected in speaker_window) and dropped_ok
+        interjections = alignment.get("preserved_span_interjections") or ()
+        text_check = _strip_interjections_once(text_window, interjections)
+        speaker_check = _strip_interjections_once(speaker_window, interjections)
+        row["survived_final_text_srt"] = bool(span_expected and span_expected in text_check) and dropped_ok
+        row["survived_final_speaker_srt"] = bool(span_expected and span_expected in speaker_check) and dropped_ok
         required_rows.append(row)
     audit["final_required_decision_count"] = len(required_rows)
     audit["final_outside_delivery_count"] = len(decision_rows) - len(required_rows)
