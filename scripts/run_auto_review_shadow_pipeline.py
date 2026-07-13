@@ -32,6 +32,7 @@ from src.autoslice.auto_review import (
     review_candidate,
 )
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution, TalkCue, resolve_talk_boundary
+from src.autoslice.chat_authority import canonicalize_hard_surfaces
 from src.autoslice.branding_intro import (
     BrandingIntroError,
     prepend_branding_intro,
@@ -3612,6 +3613,9 @@ def _stage_publish_draft(
             title_source = f"job_title(llm_failed: {llm_error})"
             title_authority_error = llm_error
 
+    # Ivan 2026-07-13 梗词铁律的标题/封面确定性兜底（字幕面在
+    # normalize_code_switch_surfaces；LLM 标题若仍写出「直女」这里回正）。
+    staged_title = canonicalize_hard_surfaces(staged_title)
     cover_text = _lidousha_cover_text(staged_title)
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail

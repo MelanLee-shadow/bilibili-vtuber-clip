@@ -851,6 +851,24 @@ def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
     )
 
 
+def test_hard_meme_surface_zhinv_is_always_canonicalized():
+    """Ivan 2026-07-13 铁律：这是梗，所有「直女」一律写成「侄女」（无例外），
+    与 code-switch 同机制、authority 分表可审计。"""
+    from src.autoslice.chat_authority import canonicalize_hard_surfaces
+
+    source = _srt("我是直女", "全场都在鼓掌")
+    output, audit = normalize_code_switch_surfaces(source)
+    cues = parse_srt_cues(output)
+    assert cues[0].text == "我是侄女"
+    assert cues[1].text == "全场都在鼓掌"
+    repair = audit["repairs"][0]
+    assert repair["replacements"][0]["authority"] == "lidousha-hard-meme-canon.v1"
+    # 标题/封面兜底走同一张表
+    assert canonicalize_hard_surfaces("李豆沙坚称自己是直女，回忆大舞台") == (
+        "李豆沙坚称自己是侄女，回忆大舞台"
+    )
+
+
 def test_sc_read_with_address_prefix_already_spoken_survives_self_check():
     """2026-07-13 冷笑话成片实况：SC=「妈妈可以帮我宣传一下…」，称呼「妈妈」
     她在上一句已带出，拼接弃置后内部自检必须仍判 APPLIED_AND_VERIFIED。"""

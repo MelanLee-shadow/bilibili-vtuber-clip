@@ -31,6 +31,22 @@ _CODE_SWITCH_CANONICAL_SURFACES = (
     ("哇库哇库", "wakuwaku"),
 )
 
+# Ivan 定死的梗词硬规范（2026-07-13）：李豆沙语境下这些表面写法无条件回正，
+# 与 code-switch 表同机制、分表便于审计。「直女」永远是「侄女」梗的误听——
+# Ivan：「由于这是梗，所有直女都要写成侄女」，不存在"真直女"例外。
+_HARD_MEME_CANONICAL_SURFACES = (
+    ("直女", "侄女"),
+)
+
+
+def canonicalize_hard_surfaces(text: str) -> str:
+    """对普通字符串（标题/封面文案/hook）应用同一套无条件表面规范。"""
+    normalized = text
+    for surface, canonical in (*_CODE_SWITCH_CANONICAL_SURFACES, *_HARD_MEME_CANONICAL_SURFACES):
+        if surface in normalized:
+            normalized = normalized.replace(surface, canonical)
+    return normalized
+
 
 @dataclass(frozen=True)
 class ChatEvidence:
@@ -122,11 +138,14 @@ def normalize_code_switch_surfaces(srt_text: str) -> tuple[str, dict[str, Any]]:
     for offset, before in enumerate(list(texts)):
         after = before
         replaced: list[dict[str, str]] = []
-        for surface, canonical in _CODE_SWITCH_CANONICAL_SURFACES:
+        for surface, canonical, authority in (
+            *((s, c, "lidousha-code-switch-canon.v1") for s, c in _CODE_SWITCH_CANONICAL_SURFACES),
+            *((s, c, "lidousha-hard-meme-canon.v1") for s, c in _HARD_MEME_CANONICAL_SURFACES),
+        ):
             if surface not in after:
                 continue
             after = after.replace(surface, canonical)
-            replaced.append({"surface": surface, "canonical": canonical})
+            replaced.append({"surface": surface, "canonical": canonical, "authority": authority})
         if after == before:
             continue
         texts[offset] = after
