@@ -50,7 +50,7 @@ def canonicalize_hard_surfaces(text: str) -> str:
 
 @dataclass(frozen=True)
 class ChatEvidence:
-    kind: str  # danmaku | superchat
+    kind: str  # danmaku | superchat | gift
     offset_ms: int
     text: str
     sender: str = ""
@@ -796,7 +796,8 @@ def load_chat_jsonl(
     *,
     recording_start_ms: int | None = None,
 ) -> list[ChatEvidence]:
-    """Load exact DANMU_MSG and SUPER_CHAT text from a blrec JSONL sidecar."""
+    """Load exact DANMU_MSG, SUPER_CHAT, and SEND_GIFT/COMBO_SEND (gift name
+    only) evidence from a blrec JSONL sidecar."""
 
     source = Path(path)
     if not source.is_file():
@@ -841,6 +842,16 @@ def load_chat_jsonl(
                         precise,
                     )
                 )
+        elif command in ("SEND_GIFT", "COMBO_SEND"):
+            # SEND_GIFT/COMBO_SEND masks the sender uname (e.g. "有***", uid 0)
+            # so the sender cannot be reconstructed, but giftName is carried in
+            # the clear.  Ivan's rule: gift-thanks repair must copy giftName
+            # from this structured event, never rely on ASR for the gift name.
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            gift_name = data.get("giftName")
+            sender = data.get("uname") or ""
+            if isinstance(gift_name, str) and gift_name.strip():
+                parsed.append((event_ms, "gift", str(sender).strip(), gift_name.strip(), "", False))
     base = recording_start_ms if recording_start_ms is not None else earliest
     if base is None:
         return []
@@ -1322,6 +1333,152 @@ def _repair_sc_sender(text: str, sender: str) -> str | None:
     return text[: match.start("name")] + alias + text[match.end("name") :]
 
 
+# Gift-thanks grammar is looser than the SC thank-name grammar above: there is
+# no fixed suffix keyword (「送的」/「的SC」), just "谢(谢)?...的<TAIL>" where
+# TAIL is whatever ASR heard as the gift name, up to the end of the cue (minus
+# trailing punctuation).  ``name`` is only the text between the thanks marker
+# and the last 「的」 — it is never a gift name candidate, only used for the
+# informational sender-first-char check (the platform masks gift senders, so
+# the name itself cannot be repaired).
+_GIFT_THANK_CUE = re.compile(
+    r"(?:谢谢|感谢|谢)(?P<name>.+)的(?P<tail>[^，。！？!?\s]+)[，。！？!?\s]*$"
+)
+
+GIFT_ARBITRATION_WINDOW_BEFORE_MS = 5_000
+GIFT_ARBITRATION_WINDOW_AFTER_MS = 120_000
+GIFT_ARBITRATION_CAP_PER_CLIP = 2
+
+
+def _gift_thank_cue_match(text: str) -> tuple[str, str] | None:
+    match = _GIFT_THANK_CUE.search(text)
+    if match is None:
+        return None
+    return match.group("name"), match.group("tail")
+
+
+def _apply_gift_name_repairs(
+    evidence: Sequence[ChatEvidence],
+    cues: Sequence[Any],
+    texts: list[str],
+    *,
+    entity_verifier: EntityVerifier | None,
+) -> list[dict[str, Any]]:
+    """礼物答谢的礼物名必须来自结构化 SEND_GIFT/COMBO_SEND 事件，不许靠听——
+    平台把赠送者昵称脱敏成"某***"（uid 也是 0），礼物名字段本身不脱敏。真实
+    2026-07-10 案例：她念读被 ASR 听成「谢谢有人看到你的人鱼」，结构化事件里
+    giftName 是「流星雨」。只对念读 cue 里「谢(谢)?…的<TAIL>」语法抓到的
+    TAIL，且 TAIL 既不等于 giftName、也不是别处 SC/弹幕的真实原文（避免误伤
+    真实朗读）时，才把两者交给原始音频做二选一仲裁；只有 RESOLVED 且置信度
+    ≥0.80 才落地这一处最小文本替换。每个切片最多仲裁
+    ``GIFT_ARBITRATION_CAP_PER_CLIP`` 次，用本函数自己的计数器（不与近失配
+    弹幕仲裁的计数器共用）。赠送者名字首字核对纯记录，不驱动任何文本改动。
+    """
+
+    gift_events = [item for item in evidence if item.kind == "gift" and item.text.strip()]
+    if not gift_events:
+        return []
+    other_texts = [
+        normalize_chat_text(item.text)
+        for item in evidence
+        if item.kind in ("superchat", "danmaku") and item.text.strip()
+    ]
+    rows: list[dict[str, Any]] = []
+    attempts = 0
+    for item in gift_events:
+        gift_name = item.text.strip()
+        window_lo = item.offset_ms - GIFT_ARBITRATION_WINDOW_BEFORE_MS
+        window_hi = item.offset_ms + GIFT_ARBITRATION_WINDOW_AFTER_MS
+        for index, cue in enumerate(cues):
+            if not (window_lo <= cue.start_ms <= window_hi):
+                continue
+            match = _gift_thank_cue_match(texts[index])
+            if match is None:
+                continue
+            name_slot, tail = match
+            tail_norm = normalize_chat_text(tail)
+            if not tail_norm or tail_norm == normalize_chat_text(gift_name):
+                continue  # ASR already got the gift name right; nothing to repair.
+            if any(tail_norm in other_norm for other_norm in other_texts):
+                continue  # matches a genuine SC/danmaku read, not this gift's name.
+            spoken_alias = _spoken_sender_alias(item.sender)
+            sender_first_char_match = bool(spoken_alias) and bool(name_slot) and (
+                name_slot[0] == spoken_alias[0]
+            )
+            row: dict[str, Any] = {
+                "evidence_id": item.evidence_id,
+                "source_event_id": item.source_event_id,
+                "gift_name": gift_name,
+                "sender": item.sender,
+                "cue_index": index + 1,
+                "matched_start_ms": cue.start_ms,
+                "matched_end_ms": cue.end_ms,
+                "before": texts[index],
+                "asr_tail": tail,
+                "sender_first_char_match": sender_first_char_match,
+            }
+            if entity_verifier is None:
+                row["after"] = texts[index]
+                row["outcome"] = "no_verifier_no_change"
+                rows.append(row)
+                break
+            if attempts >= GIFT_ARBITRATION_CAP_PER_CLIP:
+                row["after"] = texts[index]
+                row["outcome"] = "gift_arbitration_cap_exceeded_no_change"
+                rows.append(row)
+                break
+            attempts += 1
+            evidence_id = hashlib.sha256(
+                (
+                    f"gift-name\0{item.evidence_id}\0{index}\0{cue.start_ms}\0{cue.end_ms}\0{tail}"
+                ).encode("utf-8")
+            ).hexdigest()
+            request: dict[str, Any] = {
+                "schema_version": "chat-read-aloud-verification-request.v1",
+                "evidence_id": evidence_id,
+                "kind": "gift",
+                "source": item.source,
+                "source_sha256": item.source_sha256,
+                "source_event_id": item.source_event_id,
+                "source_offset_ms": item.offset_ms,
+                "exact_text": gift_name,
+                "cue_indexes": [index + 1],
+                "matched_start_ms": cue.start_ms,
+                "matched_end_ms": cue.end_ms,
+                "matched_audio_text": texts[index],
+                "candidate_entities": [
+                    {"canonical": gift_name, "surfaces": [], "readings": []},
+                    {"canonical": tail, "surfaces": [], "readings": []},
+                ],
+                "reason": "gift-name read-aloud arbitration",
+            }
+            request["request_sha256"] = _request_sha256(request)
+            try:
+                raw_verdict = entity_verifier(request)
+            except Exception as exc:  # verifier failure is evidence, never permission
+                raw_verdict = {
+                    "schema_version": "chat-entity-verdict.v1",
+                    "request_sha256": request["request_sha256"],
+                    "status": "UNCERTAIN",
+                    "reason_code": "GIFT_NAME_VERIFIER_ERROR",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            verdict = _validated_read_aloud_verdict(raw_verdict, request=request)
+            row["request_sha256"] = request["request_sha256"]
+            row["verdict"] = verdict if verdict is not None else raw_verdict
+            tail_start = texts[index].rfind(tail)
+            if verdict is not None and verdict.get("canonical_entity") == gift_name and tail_start != -1:
+                after_text = texts[index][:tail_start] + gift_name + texts[index][tail_start + len(tail) :]
+                texts[index] = after_text
+                row["after"] = after_text
+                row["outcome"] = "gift_name_repaired"
+            else:
+                row["after"] = texts[index]
+                row["outcome"] = "uncertain_no_change" if verdict is None else "asr_win_no_change"
+            rows.append(row)
+            break
+    return rows
+
+
 def apply_audio_entity_verification(
     srt_text: str,
     *,
@@ -1517,6 +1674,11 @@ def apply_authoritative_chat_evidence(
     read_aloud_arbitrations: list[dict] = []
     arbitration_attempts = 0
     for item in evidence:
+        if item.kind == "gift":
+            # Gift-name repair is a dedicated, narrower path (see
+            # ``_apply_gift_name_repairs`` below): giftName must never be
+            # matched into an exact-span/danmaku-style cue replacement here.
+            continue
         authority_norm = normalize_chat_text(item.text)
         if len(authority_norm) < 4:
             continue
@@ -2193,6 +2355,8 @@ def apply_authoritative_chat_evidence(
             }
         )
 
+    gift_repairs = _apply_gift_name_repairs(evidence, cues, texts, entity_verifier=entity_verifier)
+
     # Immediate replies inherit the entity slot of the exact message unless
     # the speaker explicitly contrasts/switches entities.  Confusable groups
     # are data, not hard-coded model guesses.
@@ -2249,9 +2413,10 @@ def apply_authoritative_chat_evidence(
             )
             break
 
+    gift_text_changed = any(row.get("outcome") == "gift_name_repaired" for row in gift_repairs)
     output = (
         _render_srt(cues, texts)
-        if applied or entity_repairs or sender_repairs or coreference_repairs
+        if applied or entity_repairs or sender_repairs or coreference_repairs or gift_text_changed
         else srt_text
     )
     for row in applied:
@@ -2318,5 +2483,6 @@ def apply_authoritative_chat_evidence(
         "sender_repairs": sender_repairs,
         "sender_verdict_required": sender_verdict_required,
         "coreference_repairs": coreference_repairs,
+        "gift_repairs": gift_repairs,
     }
     return output, audit

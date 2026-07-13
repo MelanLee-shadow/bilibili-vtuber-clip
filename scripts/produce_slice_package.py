@@ -117,6 +117,10 @@ SC_PRE_CONTEXT_MS = 900_000  # include SCs up to 15min before the clip: she CLEA
                              # appeared (《想要成为真正的拉拉》SC was read ~4min later),
                              # so "recent" is not enough — content-match picks the right
                              # one out of the backlog, irrelevant ones are ignored.
+GIFT_PRE_CONTEXT_MS = 120_000  # thanks for a gift usually follow within a couple
+                               # minutes; giftName is unmasked structured evidence
+                               # (see chat_authority._apply_gift_name_repairs), the
+                               # masked sender name is not repaired here.
 
 
 def _load_superchats(jsonl_path: Path) -> list[tuple[int, str, str]]:
@@ -167,6 +171,7 @@ def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
     else:
         evidence.extend(item for item in jsonl_items if item.kind == "danmaku")
     evidence.extend(item for item in jsonl_items if item.kind == "superchat")
+    evidence.extend(item for item in jsonl_items if item.kind == "gift")
     return evidence
 
 
@@ -894,6 +899,10 @@ def verify_chat_authority_final_surfaces(
     decision_rows.extend(
         ("sc_sender", row, str(row.get("after") or ""))
         for row in audit.get("sender_repairs") or []
+    )
+    decision_rows.extend(
+        ("gift_name", row, str(row.get("after") or ""))
+        for row in audit.get("gift_repairs") or []
     )
     decision_rows.extend(
         ("reply_coreference", row, str(row.get("after") or ""))
@@ -1715,12 +1724,19 @@ def main(argv: list[str] | None = None) -> int:
     for piece, dur in zip(spec["pieces"], durations):
         for item in _piece_chat_evidence(piece):
             rel = item.offset_ms - piece["start_ms"]
-            pre_context = SC_PRE_CONTEXT_MS if item.kind == "superchat" else DANMAKU_PRE_CONTEXT_MS
+            if item.kind == "superchat":
+                pre_context = SC_PRE_CONTEXT_MS
+            elif item.kind == "gift":
+                pre_context = GIFT_PRE_CONTEXT_MS
+            else:
+                pre_context = DANMAKU_PRE_CONTEXT_MS
             if not (-pre_context <= rel <= dur + 1_000):
                 continue
             marker = f"·{item.sender}" if item.sender else ""
             if item.kind == "superchat":
                 prefix = "【SC此前" if rel < 0 else "【SC"
+            elif item.kind == "gift":
+                prefix = "【礼物此前" if rel < 0 else "【礼物"
             else:
                 prefix = "【弹幕此前" if rel < 0 else "【弹幕"
             label = f"{prefix}{marker}】{sanitize_chat_display_text(item.text)}"

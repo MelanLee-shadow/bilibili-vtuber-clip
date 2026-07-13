@@ -551,6 +551,139 @@ def test_duplicate_sc_body_without_thank_name_does_not_create_sender_block():
     assert audit["status"] == "APPLIED_AND_VERIFIED"
 
 
+def test_jsonl_yields_gift_events_with_masked_sender_and_unmasked_gift_name(tmp_path):
+    """真实 2026-07-10 案例：SEND_GIFT 把赠送者昵称脱敏成"有***"(uid 0)，
+    但 giftName 字段本身不脱敏——加载时必须把 giftName 当结构化证据文本，
+    赠送者名原样保留（不可复原，交给 gift_repairs 只做首字核对）。"""
+    segment = tmp_path / "22966160_20260710-19-00-17.mp4"
+    start_ms = int(
+        datetime(2026, 7, 10, 19, 0, 17, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp() * 1000
+    )
+    jsonl = segment.with_suffix(".jsonl")
+    rows = [
+        {
+            "cmd": "SEND_GIFT",
+            "send_time": (start_ms + 60_000) / 1000,
+            "data": {
+                "uname": "有***",
+                "uid": 0,
+                "giftName": "流星雨",
+                "num": 1,
+                "action": "投喂",
+            },
+        },
+        {
+            "cmd": "COMBO_SEND",
+            "send_time": (start_ms + 65_000) / 1000,
+            "data": {
+                "uname": "有***",
+                "uid": 0,
+                "giftName": "流星雨",
+                "combo_num": 3,
+            },
+        },
+    ]
+    jsonl.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+
+    items = load_chat_jsonl(jsonl, recording_start_ms=start_ms)
+
+    assert [(item.kind, item.offset_ms, item.text, item.sender) for item in items] == [
+        ("gift", 60_000, "流星雨", "有***"),
+        ("gift", 65_000, "流星雨", "有***"),
+    ]
+
+
+def test_gift_repair_replaces_asr_garbled_tail_on_resolved_verdict():
+    """真实案例：她念读被 ASR 听成「谢谢有人看到你的人鱼」，结构化 SEND_GIFT
+    的 giftName 是「流星雨」。RESOLVED>=0.80 的音频二选一才把 TAIL 换成
+    giftName，且是这一处最小文本替换。"""
+    source = _srt("谢谢有人看到你的人鱼")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("gift", 0, "流星雨", sender="有***")],
+        entity_verifier=_audio_entity_verifier("流星雨"),
+    )
+
+    assert parse_srt_cues(output)[0].text == "谢谢有人看到你的流星雨"
+    row = audit["gift_repairs"][0]
+    assert row["outcome"] == "gift_name_repaired"
+    assert row["gift_name"] == "流星雨"
+    assert row["asr_tail"] == "人鱼"
+    assert row["after"] == "谢谢有人看到你的流星雨"
+    assert row["sender_first_char_match"] is True
+
+
+def test_gift_repair_uncertain_verdict_never_changes_text():
+    source = _srt("谢谢有人看到你的人鱼")
+
+    def uncertain(request):
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "UNCERTAIN",
+            "reason_code": "GIFT_NAME_AUDIO_UNCERTAIN",
+        }
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("gift", 0, "流星雨", sender="有***")],
+        entity_verifier=uncertain,
+    )
+
+    assert output == source
+    assert audit["gift_repairs"][0]["outcome"] == "uncertain_no_change"
+
+
+def test_gift_repair_skips_tail_that_matches_a_genuine_sc_or_danmaku_read():
+    """TAIL 若真实出现在别的 SC 正文/弹幕原文里，说明那是一次真实朗读，不是
+    ASR 听错礼物名——绝不能被礼物名覆盖掉。"""
+    source = _srt("谢谢有人看到你的人鱼")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("gift", 0, "流星雨", sender="有***"),
+            ChatEvidence("superchat", 1_000, "我也喜欢那条人鱼", "路人甲"),
+        ],
+        entity_verifier=_audio_entity_verifier("流星雨"),
+    )
+
+    assert output == source
+    assert audit["gift_repairs"] == []
+
+
+def test_gift_repair_respects_pre_context_window_gating():
+    """谢意 cue 必须落在 [gift_time-5s, gift_time+120s] 之内才会被考虑；太晚
+    出现的"谢谢...的X" cue 与这次礼物无关，不应被仲裁触碰。"""
+    source = _srt("谢谢有人看到你的人鱼")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("gift", 200_000, "流星雨", sender="有***")],
+        entity_verifier=_audio_entity_verifier("流星雨"),
+    )
+
+    assert output == source
+    assert audit["gift_repairs"] == []
+
+
+def test_gift_kind_never_triggers_exact_span_replacement_of_whole_cues():
+    """kind="gift" 绝不能进入弹幕/SC 的 exact-read 精确跨度替换通路——即便
+    giftName 恰好逐字等于某条 cue，也必须只走 gift_repairs 这条窄路径。"""
+    source = _srt("好高兴收到超多的流星雨呀")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("gift", -1_000, "好高兴收到超多的流星雨呀", sender="有***")],
+        entity_verifier=_audio_entity_verifier("好高兴收到超多的流星雨呀"),
+    )
+
+    assert output == source
+    assert audit["applied"] == []
+    assert audit["gift_repairs"] == []
+
+
 def test_chat_read_support_excludes_chat_conditioned_agy_refinement(tmp_path):
     media = tmp_path / "padded.mp4"
     media.write_bytes(b"media")
