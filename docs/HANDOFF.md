@@ -1173,3 +1173,36 @@ AUTO_CHAIN 仍含已下线的 kuaishou（与文档/对用户报告不符）→ �
 
 - 按 Ivan 2026-07-10 的决定停止逐人分离实验；`v12_逐人分离实验/` 已标记作废，盲听样本、四簇身份和颜色均不得进入生产或成品判断。
 - 任何上传仍需 Ivan 对具体成品单独明确授权；本轮产物全部保持 no-upload。
+
+## 2026-07-13 深夜：彩排真值修正、误听怀疑通用化、生产 81e6d27、redo-0712 启动
+
+### 目标
+
+Ivan 终句两案：①「删错了吧…字幕里的但是没有改成大家」；②「只是一个劲在principle里举例，没有真正抽象化通用化」。外加继续三日重跑与替换产收敛。
+
+### 已完成
+
+- **彩排 clip 修正**：留下的确是最新代（她们/好不好已对，没删错），缺陷只剩首句「但是」。经 `apply_subtitle_correction.py` 人工真值通道改为「大家，她们要提前去彩排了」→ 重跑说话人 → 重烧（片头无损，46.44s 不变）→ 生产+本地已刷新。
+- **通用化重构（81e6d27）**：撤销例子型 大家/但是 静态组（26548a1），建立"文本只产生怀疑、改写只来自音频确证"架构——怀疑编译器 `clip_opening_address_group`（配置 `clip_opening_address.json`：任意连词开场×称呼语集，UNCERTAIN 永不阻塞）+ `repetition_divergence_groups`（邻近复读单点分歧，无词表，UNCERTAIN 双向保留）+ `positions=transcript_only/clip_initial` 把这类组挡在 chat 证据路径外。principles「常见语境误听」改写为类规则+机制指针。全量 1128 passed。
+- **生产部署 81e6d27**（DEPLOYED 2026-07-13T23:41:13Z，DISABLED absent，runner md5 verified）。
+- **redo-0712-81e6d27** BASE 建立并开跑（timer \*:0/10，录播 19GB 硬链自 panda 副本，首 tick 正确跳过 2940B 死桩段）。
+- **redo-0711(9a4f4b2) 收敛**：4 条 review_ready 按 cid 对账全部为同时刻重选（宿敌 393_432 同窗、生日结婚 302_35x、几十个结婚 88x_915 边界差 1-3s、养熊猫 1561_1782 为 1636_1782 的超集窗口）→ 生产旧版删除、新版入库；panda 的河粉780 替换版一并归位。生产 7/11 现 = 9 谈话 + 2 歌（seededsong 两条属 BW2026 VOD 线，另一会话所有）。本地 lidousha/2026-07-11 已同步（11 mp4）。
+- **AGY 配额耗尽确诊**（agy.stderr「Individual quota reached… Resets in 1h11m」，~00:28 重置）：乐队番三连败、redo-0710 两复活失败同因。redo-0710 timer 已暂停防烧重试帽；systemd one-shot `resume-redo0710-after-quota`（00:36 恢复 timer）+ `retry-yuedui-after-quota`（00:40 重试乐队番）已挂。Ivan 授权付费 key 先用，但实体音频裁决走 AGY 订阅 CLI，非 API key 可替，等重置即愈。
+- **爬虫立项修正**：`timely_term_crawler` 已在生产（cron 06:17，state 202 词条含 confusables/readings）；专名梗类通用化 = 给它扩源加"直播圈梗"种类（XXX是?/做0.4/立语 类），不是新建爬虫。
+
+### 进行中（含后台进程）
+
+- panda：3D线下见面 `auto_200009_76_110` one-off（logs/produce_3d.log）。
+- redo-0712 全天流水线自主运行；redo-0710 等 00:36 恢复；redo-0711 songs 仍 blocked（song-gate 政策未决）。
+- 本机 Monitor 持续盯生产交付目录；launchd 镜像每 30min 拉取。
+- `vod-bw2026-0711` BASE 属另一会话（345e8aa），勿动。
+
+### 阻塞
+
+- 无新增。旧三问仍等 Ivan：segment 软帽（纯分数 vs 多样性）、song-overlap talk-gate 释放、恋爱告急 02:00 staged timer 处置。
+
+### 下一步
+
+- 7/13 全天 redo：等下播+过午夜建 BASE（23:02 段仍在录）；7/13 直女枚举标题必须按 A 规则出 侄女。
+- 3D/乐队番/两复活收敛后归位生产 canonical 面+本地；新衣服 clip 在 81e6d27 下带 `AUTOSLICE_COVER_REF_MS=82000` 重出（睡衣/素颜与戴眼罩复读现有机制可自动覆盖）。
+- timely_term_crawler 扩源（直播圈梗）排入专名工作线；付费例外回填收敛后从生产 crontab 移除义务不变。
