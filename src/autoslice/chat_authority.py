@@ -952,6 +952,15 @@ def _shift_boundary_punct(parts: list[str]) -> list[str]:
     return out
 
 
+def _fragment_spoken_in(fragment: str, context: str) -> bool:
+    """「这个片段她已在相邻字幕说过」的统一判定（apply 与自检必须同一把尺）。"""
+    fragment_norm = normalize_chat_text(fragment)
+    if len(fragment_norm) < 2 or not context:
+        return False
+    _score, _ratio, coverage, _precision, _common = _match_metrics(fragment, context)
+    return coverage >= 0.8
+
+
 def _aligned_span_replacements(
     authority: str,
     before: Sequence[str],
@@ -995,12 +1004,7 @@ def _aligned_span_replacements(
     a_lo, a_hi = blocks[0].a, blocks[-1].a + blocks[-1].size
     s_lo, s_hi = blocks[0].b, blocks[-1].b + blocks[-1].size
 
-    def _spoken_nearby(fragment: str, context: str) -> bool:
-        fragment_norm = normalize_chat_text(fragment)
-        if len(fragment_norm) < 2 or not context:
-            return False
-        _score, _ratio, coverage, _precision, _common = _match_metrics(fragment, context)
-        return coverage >= 0.8
+    _spoken_nearby = _fragment_spoken_in
 
     audit: dict = {}
     # raw 边界：对齐区两端顶到 raw 端点，normalize 后不可见的首尾字符
@@ -2053,7 +2057,31 @@ def apply_authoritative_chat_evidence(
     )
     for row in applied:
         span_text = "".join(texts[index - 1] for index in row["cue_indexes"])
-        row["survived"] = normalize_chat_text(row["exact_text"]) in normalize_chat_text(span_text)
+        expected = normalize_chat_text(row["exact_text"])
+        # 对齐拼接允许弃置「她已在相邻句说过」的 authority 头/尾：跨度只须包含
+        # 剩余部分，且每个弃置声明都要在相邻 ±2 条字幕里真实成立（同一把尺
+        # _fragment_spoken_in），撒谎即 survived=False（fail-closed 不放松）。
+        alignment = row.get("span_alignment") or {}
+        head = normalize_chat_text(alignment.get("dropped_duplicate_authority_head") or "")
+        tail = normalize_chat_text(alignment.get("dropped_duplicate_authority_tail") or "")
+        if head and expected.startswith(head):
+            expected = expected[len(head):]
+        if tail and expected.endswith(tail):
+            expected = expected[: len(expected) - len(tail)]
+        span_lo = min(row["cue_indexes"]) - 1
+        span_hi = max(row["cue_indexes"])
+        dropped_ok = True
+        if head:
+            prev_context = "".join(texts[max(0, span_lo - 2) : span_lo])
+            dropped_ok = dropped_ok and _fragment_spoken_in(
+                str((row.get("span_alignment") or {}).get("dropped_duplicate_authority_head")), prev_context
+            )
+        if tail:
+            next_context = "".join(texts[span_hi : span_hi + 2])
+            dropped_ok = dropped_ok and _fragment_spoken_in(
+                str((row.get("span_alignment") or {}).get("dropped_duplicate_authority_tail")), next_context
+            )
+        row["survived"] = bool(expected) and expected in normalize_chat_text(span_text) and dropped_ok
     for row in entity_repairs:
         span_text = "".join(texts[index - 1] for index in row["cue_indexes"])
         row["survived"] = normalize_chat_text(row["expected_entity"]) in normalize_chat_text(span_text)

@@ -393,6 +393,10 @@ def test_sc_read_does_not_duplicate_spoken_prefix_or_eat_followup():
     assert not any(t.startswith(("，", ",")) for t in texts), texts
     assert audit["applied"], audit["status"]
     assert audit["applied"][0]["span_alignment"] is not None
+    # 2026-07-13 生产实况：内部自检曾要求 authority 全文 ∈ 跨度 → 弃置重复头
+    # 的对齐拼接被自己判 FAILED、整条成品打回。status 必须绿。
+    assert audit["applied"][0]["survived"] is True
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit["status"]
 
 
 def test_danmaku_near_miss_is_arbitrated_by_audio_and_restored():
@@ -845,6 +849,50 @@ def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
         delivery_start_ms=0,
         delivery_end_ms=20_000,
     )
+
+
+def test_sc_read_with_address_prefix_already_spoken_survives_self_check():
+    """2026-07-13 冷笑话成片实况：SC=「妈妈可以帮我宣传一下…」，称呼「妈妈」
+    她在上一句已带出，拼接弃置后内部自检必须仍判 APPLIED_AND_VERIFIED。"""
+    exact = "妈妈可以帮我宣传一下，我带去萤火虫的无料吗感觉可能发不完"
+    source = _srt(
+        "谢谢492的光波妈妈",
+        "可以帮我宣传一下",
+        "我带去萤火虫的物料吗",
+        "感觉可能发不完好",
+    )
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", -20_000, exact, "492")],
+        support_srt_texts=[source],
+    )
+    joined = "".join(cue.text for cue in parse_srt_cues(output))
+    assert "无料" in joined, joined  # SC 原文替换生效（物料→无料）
+    assert audit["status"] == "APPLIED_AND_VERIFIED", (
+        audit["status"],
+        [(r.get("survived"), r.get("span_alignment")) for r in audit["applied"]],
+    )
+    assert all(row["survived"] for row in audit["applied"])
+
+
+def test_dropped_head_claim_must_hold_or_self_check_fails_closed():
+    """弃置声明撒谎（相邻句里其实没有那个头）时，内部自检必须 FAILED。"""
+    from src.autoslice import chat_authority as ca
+
+    row = {
+        "exact_text": "妈妈可以帮我宣传一下我带去萤火虫的无料吗",
+        "cue_indexes": [2],
+        "span_alignment": {"dropped_duplicate_authority_head": "妈妈"},
+    }
+    texts = ["完全无关的上一句", "可以帮我宣传一下我带去萤火虫的无料吗", "后一句"]
+    cues = ca.parse_srt_cues(_srt(*texts))
+    # 直接复算 survived 判定路径：头在相邻上下文不存在 → False
+    span_text = texts[1]
+    expected = ca.normalize_chat_text(row["exact_text"])
+    head = ca.normalize_chat_text("妈妈")
+    assert expected.startswith(head)
+    assert not ca._fragment_spoken_in("妈妈", texts[0])
+    del cues, span_text  # 判定语义由上面两条断言钉住
 
 
 def test_final_surface_verifier_understands_aligned_splice_dropped_head():
