@@ -41,9 +41,12 @@ _ALLOWED_SOURCE_HOSTS = frozenset(
     {
         "anilist.co",
         "api.bgm.tv",
+        "animenewsnetwork.com",
         "bgm.tv",
         "bilibili.com",
         "bang-dream.com",
+        "bushiroad.com",
+        "tv-tokyo.co.jp",
     }
 )
 _EVIDENCE_WEIGHTS = {

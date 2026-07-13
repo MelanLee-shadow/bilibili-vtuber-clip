@@ -392,6 +392,29 @@ def test_crawler_builds_chinese_name_and_short_reading_from_structured_subject()
     assert "Current Work" in work["aliases"]
 
 
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://www.animenewsnetwork.com/news/2026-07-11/current-anime/.1",
+        "https://anime.bang-dream.com/avemujica/",
+        "https://bushiroad.com/events/current-anime",
+        "https://www.tv-tokyo.co.jp/anime/current/",
+    ],
+)
+def test_crawler_graph_accepts_every_machine_timely_source_family(source_url):
+    result = crawl_topic_entity_graph(
+        client=_BreadthFakeClient({"Current Work": 42}),
+        timely_snapshot=_snapshot(_term("Current Work", source_url=source_url)),
+        input_timely_terms_sha256="a" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=1,
+        max_works_per_topic=1,
+    )
+
+    assert result.graph["topics"][0]["sources"][0]["url"] == source_url
+
+
 def _term(
     canonical: str,
     *,
