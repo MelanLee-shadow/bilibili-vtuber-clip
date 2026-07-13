@@ -33,6 +33,15 @@ lidousha/branding/**
 *.ts
 *.mov
 
+# Secrets — never commit. Paid GEMINI_KEY_BACKUP lives in root .env locally;
+# runtime authority is the 600-perm env on free. Key values must never enter git.
+.env
+.env.*
+
+# Local pulls of isolated eval/rerun deliverables from free (disposable mirrors)
+lidousha/eval-*/**
+lidousha/rerun-*/**
+
 # Agent/session-local state
 .hermes/**
 
