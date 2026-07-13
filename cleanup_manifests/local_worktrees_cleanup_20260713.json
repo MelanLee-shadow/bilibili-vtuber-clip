@@ -1,0 +1,37 @@
+{
+  "schema_version": "local-worktree-cleanup.v1",
+  "date": "2026-07-13",
+  "operator": "claude-fable-5 (Ivan 口头指令: 清理本地各种 worktree)",
+  "note": "仅移除 worktree 检出目录；所有分支引用保留在主仓，历史零丢失。唯一有未提交改动的 worktree 先以 parking commit 落盘（b5eaee1），再移除。今晨的四个 vtb-* 修复 worktree 已在合并后先行移除。",
+  "removed_worktrees": [
+    {"path": "/private/tmp/vtuber-slice-agy-failover-timeout", "branch": "codex/agy-failover-timeout", "head": "757348f", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-agy-lrc-canonical-restore", "branch": "codex/agy-lrc-canonical-restore", "head": "844ef4f", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-binary-v4-eval", "branch": "codex/binary-v4-recovery-v7", "head": "ef37e46", "in_main": false, "note": "recovery ancestry, 分支保留勿合并 (HANDOFF 2026-07-12)"},
+    {"path": "/private/tmp/vtuber-slice-host-vocal", "branch": "codex/host-vocal-gate", "head": "eed3d0e", "in_main": true},
+    {"path": "/private/tmp/vtuber-slice-lrc-metadata-validator", "branch": "codex/lrc-metadata-validator", "head": "c326772", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-lrc-query-breadth", "branch": "codex/lrc-query-breadth", "head": "106bbcd", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-lrc-variant-ranking", "branch": "codex/lrc-variant-ranking", "head": "00ec328", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-shortened-live-song", "branch": "codex/canonical-runtime-reverify", "head": "bb26788", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-song-gemini-api-fallback", "branch": "codex/song-gemini-api-fallback", "head": "fcfeb2f", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-speaker-anchor-backfill", "branch": "codex/speaker-anchor-backfill", "head": "29d08f0", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-speaker-clean-20260712", "branch": "codex/speaker-binary-clean-20260712", "head": "5d1310c", "in_main": false},
+    {"path": "/private/tmp/vtuber-slice-speaker-latest-20260712", "branch": "codex/speaker-binary-latest-20260712", "head": "5bbaebb", "in_main": true},
+    {"path": "/private/tmp/vtuber-slice-speaker-v7-integration", "branch": "codex/speaker-binary-v7-integration", "head": "b5eaee1", "in_main": false, "note": "唯一脏 worktree：11 个未提交文件(949 行 session-router WIP，内容已以其他 commit 形态进 main)先 parking commit b5eaee1 再移除"},
+    {"path": "/private/tmp/vtuber-slice-topic-graph-breadth-fix", "branch": "codex/topic-graph-breadth-fix", "head": "6e9209e", "in_main": false},
+    {"path": "/Users/ivan/Project/vtuber-slice-campp-fix", "branch": "codex/campp-perf-fix", "head": "3ad0f9b", "in_main": true, "note": "HANDOFF 2026-07-10 已标记可删"},
+    {"path": "/Users/ivan/Project/vtuber-slice-crawler", "branch": "codex/timely-term-crawler", "head": "a2cc7f0", "in_main": false, "note": "crawler 功能已以其他 commit 形态在 main 并部署"},
+    {"path": "/Users/ivan/Project/vtuber-slice-deploy-superset", "branch": "codex/deploy-superset", "head": "1d20036", "in_main": true},
+    {"path": "/Users/ivan/Project/vtuber-slice-july10-authority", "branch": "codex/july10-subtitle-authority", "head": "3ad0f9b", "in_main": true},
+    {"path": "/Users/ivan/Project/vtuber-slice-song-selfheal", "branch": "codex/july10-song-selfheal", "head": "e113224", "in_main": true},
+    {"path": "/Users/ivan/Project/vtuber-slice-speaker-corrections", "branch": "codex/speaker-review-corrections", "head": "4a00a93", "in_main": false},
+    {"path": "/Users/ivan/Project/vtuber-slice-speaker-final", "branch": "codex/speaker-final-pipeline", "head": "68f562b", "in_main": false},
+    {"path": "/Users/ivan/Project/vtuber-slice-visual-song", "branch": "codex/visual-song-inventory", "head": "426f262", "in_main": false}
+  ],
+  "removed_earlier_same_day": [
+    {"path": "/private/tmp/vtb-songtime", "branch": "codex/fix-song-offset-asr-anchor", "in_main": true},
+    {"path": "/private/tmp/vtb-termbound", "branch": "codex/fix-term-cue-boundary", "in_main": true},
+    {"path": "/private/tmp/vtb-songnames", "branch": "codex/fix-talk-songname-pinning", "in_main": true},
+    {"path": "/private/tmp/vtb-mine", "branch": "codex/fix-cover-chat-evidence", "in_main": true}
+  ],
+  "branches_deleted": []
+}
