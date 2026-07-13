@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult, _parse_srt, run_shadow_pipeline
+from src.autoslice.branding_intro import require_branding_intro
 from src.autoslice.auto_review import DecisionAction
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
 from src.autoslice.full_session_candidate_selector import (
@@ -271,6 +272,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host-vocal-reference-dir", type=Path, help="Private runtime directory containing 李豆沙 enrollment WAVs.")
     parser.add_argument("--host-vocal-model-dir", type=Path, help="Pinned local CAM++ model directory.")
     parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
+    parser.add_argument(
+        "--branding-intro-manifest",
+        type=Path,
+        help="Committed branding intro manifest; when enabled every burned delivery render must carry the mandatory intro (fail closed).",
+    )
     parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing.")
     parser.add_argument(
         "--song-lrc-query",
@@ -294,6 +300,14 @@ def main(argv: list[str] | None = None) -> int:
         help="blrec raw danmaku XML for this recording segment (sources/*.xml); enables burst hints for recall, danmaku context for CPA, and on-screen hint lines for jingting.",
     )
     args = parser.parse_args(argv)
+
+    # Resolve the mandatory delivery intro before any expensive work: an
+    # enabled policy with unavailable media must fail the whole attempt.
+    branding_intro = (
+        require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest)
+        if args.branding_intro_manifest is not None
+        else None
+    )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cues = _parse_srt(args.source_srt)
@@ -574,6 +588,7 @@ def main(argv: list[str] | None = None) -> int:
             audio_lrc_aligner=audio_lrc_aligner,
             host_vocal_prover=host_vocal_prover,
             burn_preview=args.burn_preview,
+            branding_intro=branding_intro,
             publish_staging=args.publish_staging,
             title_llm_call=build_llm_call(
                 LlmConfig(transport="command", command_template=args.title_llm_command, timeout_seconds=180.0)

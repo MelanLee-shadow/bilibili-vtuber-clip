@@ -32,6 +32,11 @@ from src.autoslice.auto_review import (
     review_candidate,
 )
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution, TalkCue, resolve_talk_boundary
+from src.autoslice.branding_intro import (
+    BrandingIntroError,
+    prepend_branding_intro,
+    require_branding_intro,
+)
 # _editorial_score is deliberately shared with the analyzer so the semantic
 # authority override cannot drift from the canonical editorial formula.
 from src.autoslice.content_evidence import _editorial_score, analyze_content_evidence
@@ -96,6 +101,7 @@ def run_shadow_pipeline(
     audio_lrc_aligner: AudioLrcAligner | None = None,
     host_vocal_prover: HostVocalProver | None = None,
     burn_preview: bool = False,
+    branding_intro: Mapping[str, object] | None = None,
     publish_staging: bool = False,
     title_llm_call: LlmCall | None = None,
     art_direction_llm_call: LlmCall | None = None,
@@ -126,6 +132,7 @@ def run_shadow_pipeline(
             audio_lrc_aligner=audio_lrc_aligner,
             host_vocal_prover=host_vocal_prover,
             burn_preview=burn_preview,
+            branding_intro=branding_intro,
             publish_staging=publish_staging,
             title_llm_call=title_llm_call,
             art_direction_llm_call=art_direction_llm_call,
@@ -279,6 +286,7 @@ def _run_live_source(
     audio_lrc_aligner: AudioLrcAligner | None = None,
     host_vocal_prover: HostVocalProver | None = None,
     burn_preview: bool = False,
+    branding_intro: Mapping[str, object] | None = None,
     publish_staging: bool = False,
     title_llm_call: LlmCall | None = None,
     art_direction_llm_call: LlmCall | None = None,
@@ -418,7 +426,11 @@ def _run_live_source(
         fresh_talk_transcriber=fresh_talk_transcriber,
     )
     if burn_preview:
-        materialized_recut = _burn_preview_subtitles(materialized_recut, run_ffmpeg=source_context_run_ffmpeg)
+        materialized_recut = _burn_preview_subtitles(
+            materialized_recut,
+            run_ffmpeg=source_context_run_ffmpeg,
+            branding_intro=branding_intro,
+        )
     evidence = _apply_materialized_recut_render_qa(evidence, materialized_recut)
     evidence = _apply_cpa_semantic_review_from_job(evidence, job_manifest, output_dir=output_dir)
     evidence = _apply_semantic_authority_evidence(evidence, job_manifest)
@@ -2679,8 +2691,20 @@ def _video_dimensions(path: Path) -> tuple[int | None, int | None]:
         return None, None
 
 
-def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run_ffmpeg: bool) -> dict[str, object] | None:
-    """Burn the recut subtitles into a preview render (shadow artifact, never published)."""
+def _burn_preview_subtitles(
+    materialized_recut: dict[str, object] | None,
+    *,
+    run_ffmpeg: bool,
+    branding_intro: Mapping[str, object] | None = None,
+) -> dict[str, object] | None:
+    """Burn the recut subtitles into a preview render (shadow artifact, never published).
+
+    ``branding_intro`` is the resolved delivery-time intro context from
+    ``src.autoslice.branding_intro.require_branding_intro``.  Delivery entry
+    points must pass it so the burned artifact — the exact bytes every later
+    hash binding and upload manifest freezes — already carries the mandatory
+    opening.  Preview/shadow callers leave it None.
+    """
 
     if not materialized_recut or materialized_recut.get("status") != "MATERIALIZED":
         return materialized_recut
@@ -2716,6 +2740,11 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
     if not run_ffmpeg:
         burned_path.write_bytes(b"dry-run burned preview placeholder\n")
         record["burned_preview"] = {"status": "DRY_RUN", "path": str(burned_path), "ass_path": str(ass_path)}
+        if branding_intro is not None:
+            record["burned_preview"]["branding_intro"] = {
+                "status": "DRY_RUN_SKIPPED",
+                "intro_id": str(branding_intro.get("intro_id") or ""),
+            }
         return record
     escaped_subtitle = _escape_ffmpeg_filter_path(ass_path)
     fontsdir = _lidousha_fontsdir(media_path)
@@ -2774,6 +2803,26 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
             "stderr_tail": completed.stderr[-500:],
         }
         return record
+    branding_intro_binding: dict[str, object] | None = None
+    if branding_intro is not None:
+        # Mandatory delivery intro (Ivan 2026-07-12): splice before hashing so
+        # every downstream sha256 binding freezes the with-intro bytes.  Any
+        # intro problem fails the burn instead of shipping without the intro.
+        try:
+            branding_intro_binding = prepend_branding_intro(
+                context=branding_intro,
+                main_path=burned_path,
+                work_dir=burned_path.parent / (burned_path.name + ".intro-work"),
+            )
+        except (BrandingIntroError, subprocess.TimeoutExpired) as exc:
+            record["burned_preview"] = {
+                "status": "FAILED",
+                "path": str(burned_path),
+                "ass_path": str(ass_path),
+                "reason_code": "BRANDING_INTRO_FAILED",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            return record
     burned_sha = "sha256:" + _sha256(burned_path)
     record["burned_preview"] = {
         "status": "BURNED",
@@ -2784,6 +2833,7 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
         "pillarbox_16_9": bool(vertical),
         "command": command,
         "stream_contract": _song_stream_contract() if strict_song_output else None,
+        "branding_intro": branding_intro_binding,
     }
     hashes = dict(record.get("artifact_hashes") or {})
     hashes["burned_video_sha256"] = burned_sha
@@ -2822,6 +2872,13 @@ def _burn_preview_subtitles(materialized_recut: dict[str, object] | None, *, run
             "subtitle_style": subtitle_style,
             "pillarbox_16_9": bool(vertical),
         }
+        if branding_intro_binding is not None:
+            binding["branding_intro"] = {
+                "intro_id": branding_intro_binding["intro_id"],
+                "intro_media_sha256": branding_intro_binding["intro_media_sha256"],
+                "intro_offset_ms": branding_intro_binding["intro_offset_ms"],
+                "method": branding_intro_binding["method"],
+            }
         record["verified_output_binding"] = binding
         manifest["artifact_hashes"] = hashes
         manifest["burned_preview"] = dict(record["burned_preview"])
@@ -5761,6 +5818,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--allow-upload", action="store_true", help="Reserved; default shadow mode never uploads.")
     parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "kugou", "auto"), default="none", help="External LRC discovery provider for repair-first song completeness.")
     parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
+    parser.add_argument(
+        "--branding-intro-manifest",
+        type=Path,
+        help="Committed branding intro manifest; when it is enabled the burned render must carry the mandatory delivery intro (fail closed).",
+    )
     parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing from garbled ASR.")
     parser.add_argument("--publish-staging", action="store_true", help="Stage AI title + cover + publish.json draft (upload_enabled always false).")
     parser.add_argument("--title-llm-command", help="LLM command template for title generation; falls back to the job title.")
@@ -5790,6 +5852,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             build_lrclib_lrc_provider(),
             build_kugou_lrc_provider(),
         )
+    branding_intro = (
+        require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest)
+        if args.branding_intro_manifest is not None
+        else None
+    )
     summary = run_shadow_pipeline(
         review_package=args.review_package,
         source_video=args.source_video,
@@ -5807,6 +5874,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.song_hint_llm_command
         else None,
         burn_preview=args.burn_preview,
+        branding_intro=branding_intro,
         publish_staging=args.publish_staging,
         title_llm_call=build_llm_call(LlmConfig(transport="command", command_template=args.title_llm_command))
         if args.title_llm_command

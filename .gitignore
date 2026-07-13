@@ -23,6 +23,9 @@ cleanup_manifests/*.tmp
 lidousha/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/**
 # runner smoke deliveries (pulled back from free by launchd; disposable)
 lidousha/smoke*/**
+# local safekeeping mirror of the fixed branding intro; the committed authority
+# is assets/lidousha/intro/ and the runtime bytes live on free:/opt/bilive/autoslice/assets/intro/
+lidousha/branding/**
 *.mp4
 *.flv
 *.m4s

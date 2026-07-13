@@ -29,6 +29,7 @@ from scripts.run_auto_review_shadow_pipeline import _burn_preview_subtitles  # n
 from scripts.run_auto_review_shadow_pipeline import _sha256  # noqa: E402
 from scripts.produce_slice_package import run_speaker_finalizer  # noqa: E402
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
+from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro  # noqa: E402
 
 BASE = Path("/opt/bilive/autoslice")
 
@@ -75,6 +76,11 @@ def main(argv=None) -> int:
         print("NO_CHANGE: nothing matched the correction — check --replace/--set-line", file=sys.stderr)
         return 2
     before_hash = hashlib.sha256(before.encode("utf-8")).hexdigest()
+    try:
+        branding_intro = require_branding_intro(ROOT)
+    except BrandingIntroError as exc:
+        print(f"BRANDING_INTRO_UNAVAILABLE: {exc}", file=sys.stderr)
+        return 1
     srt_path.write_text(srt, encoding="utf-8")
     print(f"corrected {srt_path.name}; rerunning speaker finalization")
 
@@ -104,6 +110,7 @@ def main(argv=None) -> int:
                 "artifact_hashes": {"ass_sha256": "sha256:" + _sha256(speaker_ass)},
             },
             run_ffmpeg=True,
+            branding_intro=branding_intro,
         )
     except Exception:
         srt_path.write_text(before, encoding="utf-8")

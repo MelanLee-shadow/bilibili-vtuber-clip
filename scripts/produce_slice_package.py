@@ -63,6 +63,7 @@ from scripts.run_full_session_selector_cpa_shadow import (
 )
 from scripts.apply_subtitle_text_overrides import apply_document as apply_text_override_document
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
+from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
 from src.autoslice.chat_authority import (
     ChatEvidence,
     apply_audio_entity_verification,
@@ -1436,6 +1437,12 @@ def main(argv: list[str] | None = None) -> int:
         help="subtitle-only re-run: keep the EXISTING delivered cover, skip the AI cover (art-direction LLM + gpt-image-2 ~90s/clip). Title still regenerates. Use when re-correcting subtitles on an already-covered clip.",
     )
     args = parser.parse_args(argv)
+    # Mandatory delivery intro (Ivan 2026-07-12): resolve before any expensive
+    # stage so an unavailable intro fails the run instead of a late delivery.
+    try:
+        branding_intro = require_branding_intro(ROOT)
+    except BrandingIntroError as exc:
+        raise SystemExit(f"BRANDING_INTRO_UNAVAILABLE: {exc}")
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
     repair_cap_raw = spec.get("boundary_repair_extend_cap_ms", BOUNDARY_REPAIR_EXTEND_CAP_MS)
     if isinstance(repair_cap_raw, bool) or not isinstance(repair_cap_raw, int):
@@ -2099,7 +2106,7 @@ def main(argv: list[str] | None = None) -> int:
         "subtitle_timing_qa": timing_qa,
         "boundary_audit": audit,
     }
-    record = _burn_preview_subtitles(record, run_ffmpeg=True)
+    record = _burn_preview_subtitles(record, run_ffmpeg=True, branding_intro=branding_intro)
     if not isinstance(record.get("burned_preview"), dict) or record["burned_preview"].get("status") != "BURNED":
         raise SystemExit(f"FINAL_SUBTITLE_BURN_FAILED: {record.get('burned_preview')}")
     burned = _validated_burned_artifact(record)

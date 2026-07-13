@@ -410,6 +410,14 @@ for entry in batch_plan["entries"]:
                 expected_source_media_sha256=entry["source_media_sha256"],
                 expected_text_final_srt_sha256=entry["text_final_srt_sha256"],
             )
+from src.autoslice.branding_intro import load_branding_intro_policy, resolve_intro_media
+
+intro_policy = load_branding_intro_policy(Path("assets/lidousha/intro/branding_intro.v1.json"))
+if intro_policy is None:
+    print("branding intro disabled/absent")
+else:
+    intro_media = resolve_intro_media(intro_policy, Path.cwd())
+    print("branding intro verified", intro_media)
 print("speaker runtime assets verified", actual_model, len(references))
 PY
 REMOTE_VALIDATE

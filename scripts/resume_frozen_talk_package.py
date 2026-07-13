@@ -64,6 +64,7 @@ from scripts.produce_slice_package import (  # noqa: E402
     verify_chat_authority_final_surfaces,
 )
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
+from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro  # noqa: E402
 from src.autoslice.chat_authority import reconcile_pending_text_overrides  # noqa: E402
 from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
 from src.autoslice.review_evidence import SourceCue  # noqa: E402
@@ -653,7 +654,13 @@ def resume(plan_path: Path, *, speaker_python: Path) -> dict[str, Any]:
                 "upload_enabled": False,
             },
         }
-        burned_record = _burn_preview_subtitles(preliminary_record, run_ffmpeg=True)
+        try:
+            branding_intro = require_branding_intro(ROOT)
+        except BrandingIntroError as exc:
+            raise FrozenTalkResumeError(f"branding intro unavailable: {exc}") from exc
+        burned_record = _burn_preview_subtitles(
+            preliminary_record, run_ffmpeg=True, branding_intro=branding_intro
+        )
         if not isinstance(burned_record, dict):
             raise FrozenTalkResumeError("speaker burn did not return a record")
         burned_media = _validated_burned_artifact(burned_record)
