@@ -5,6 +5,8 @@
 
 ## 2026-07-13：付费 Gemini 兜底 key + 统一主播色 + 集成分支合并 + 7/10 隔离重跑（当前）
 
+> **06:0x UTC 更新**：`codex/integration-selfheal-intro` 已并入 **main（merge `e02c49a`，1051 passed）**——依据：7/11 盲测通过、7/10 重跑在集成代码上实际出片（片头 PREPENDED/uniform_host/sapphire72 已在成品 record.json 验证）、另一 agent 的 4 条 fix 分支已全部以集成线为底座。生产部署与 `DISABLED` 摘除仍按原门（重跑验收 + Ivan 授权）。付费 key 政策更新：无默认硬帽、`GEMINI_PAID_BACKUP_DEV_EXCEPTION=1` 已用于重跑 unit；生产 cron 保持严格 ≥3 轮门。重跑 BASE 快照已热切至 `03b717f`。
+
 ### 目标
 
 按 Ivan 2026-07-13 指令：(1) 接入付费 `GEMINI_KEY_BACKUP` 作为受严格门控的最后手段（免费三 key 永远主力）；(2) 澄清并落地说话人策略——数据积累期一切成品统一李豆沙色、说话人不确定绝不拒发（BW 案是错误行为）；(3) 把自愈分支内容与 main 的片头/安全设施合流；(4) 用最新流水线隔离重跑 2026-07-10。生产 `DISABLED` 与 no-upload 全程不变。
