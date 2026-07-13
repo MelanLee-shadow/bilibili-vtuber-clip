@@ -121,6 +121,57 @@ def test_ordinary_speech_entity_verification_fails_closed_when_uncertain():
     assert audit["entity_verdict_required"][0]["cue_index"] == 1
 
 
+KMX_GROUP = ReferentGroup(
+    (
+        ReferentEntity("kmx", ("kmx",), ("k m x",)),
+        ReferentEntity("乒乓球", ("乒乓球",), ("ping pang qiu",)),
+    ),
+    audio_verify_all_surfaces=True,
+    uncertain_keep_canonicals=("kmx",),
+)
+
+
+def test_double_canonical_occurrences_pass_without_slot_ambiguity():
+    """2026-07-13 MUA 实案：「除了社恐kmx之外有社牛kmx」两处都是规范形 kmx，
+    多槽位不构成歧义，不得 fail-closed 整条打回。"""
+    source = _srt("除了社恐kmx之外有社牛kmx")
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[KMX_GROUP],
+        entity_verifier=None,
+    )
+    assert output == source
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert audit["confirmed"][0]["reason_code"] == "ENTITY_ALREADY_CANONICAL_EVERYWHERE"
+
+
+def test_canonical_surface_kept_when_audio_uncertain_but_mishear_still_blocks():
+    """方向性 fail-closed：文本已是 kmx 时 UNCERTAIN → 保留不阻塞；文本是
+    疑似误听形「乒乓球」时 UNCERTAIN → 仍然阻塞待裁。"""
+    def uncertain(request):
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "UNCERTAIN",
+            "reason_code": "ENTITY_AUDIO_UNCERTAIN",
+        }
+
+    canonical_src = _srt("kmx今天也来了")
+    output, audit = apply_audio_entity_verification(
+        canonical_src, referent_groups=[KMX_GROUP], entity_verifier=uncertain
+    )
+    assert output == canonical_src
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert audit["confirmed"][0]["reason_code"] == "ENTITY_CANONICAL_KEPT_ON_UNCERTAIN"
+
+    mishear_src = _srt("突击一下乒乓球")
+    output2, audit2 = apply_audio_entity_verification(
+        mishear_src, referent_groups=[KMX_GROUP], entity_verifier=uncertain
+    )
+    assert output2 == mishear_src  # 不确定绝不改写
+    assert audit2["status"] == "ENTITY_VERDICT_REQUIRED"
+
+
 def test_exact_chat_owned_cue_is_excluded_from_second_entity_verdict():
     source = _srt("等小李什么时候来看恋青呢")
     group = ReferentGroup(

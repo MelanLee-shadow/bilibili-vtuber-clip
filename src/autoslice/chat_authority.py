@@ -85,6 +85,10 @@ class ReferentGroup:
     entities: tuple[ReferentEntity, ...]
     reason: str = ""
     audio_verify_all_surfaces: bool = False
+    # 方向性 fail-closed（2026-07-13 kmx 案）：列在此处的 canonical 是组内
+    # "默认可信方"——文本已是它、音频又 UNCERTAIN 时保留原文不阻塞；
+    # 未列出的（如真实词「乒乓球」）UNCERTAIN 仍阻塞待裁。
+    uncertain_keep_canonicals: tuple[str, ...] = ()
 
 
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
@@ -226,11 +230,25 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
             parsed.append(ReferentEntity(canonical, tuple(surfaces), readings))
         canonicals = {entity.canonical.lower() for entity in parsed}
         if len(parsed) >= 2 and len(canonicals) == len(parsed):
+            raw_keep = row.get("uncertain_keep_canonicals") or []
+            keep = tuple(
+                dict.fromkeys(
+                    sanitize_chat_display_text(value, max_chars=80)
+                    for value in (raw_keep if isinstance(raw_keep, list) else [])
+                    if sanitize_chat_display_text(value, max_chars=80)
+                    and any(
+                        entity.canonical.lower()
+                        == sanitize_chat_display_text(value, max_chars=80).lower()
+                        for entity in parsed
+                    )
+                )
+            )
             groups.append(
                 ReferentGroup(
                     tuple(parsed),
                     sanitize_chat_display_text(row.get("reason", ""), max_chars=500),
                     row.get("audio_verify_all_surfaces") is True,
+                    keep,
                 )
             )
     return groups
@@ -1518,6 +1536,26 @@ def apply_audio_entity_verification(
         if not matches:
             continue
         if len(matches) != 1 or len(matches[0][1]) != 1:
+            # 全部出现处都是"默认可信方"的规范形（「社恐kmx…社牛kmx」案）：文本
+            # 无可修改，多槽位不构成歧义，直接放行（fail-closed 只保护改写方向）。
+            if all(
+                str(row["surface"]).lower() == str(row["canonical"]).lower()
+                and any(
+                    str(row["canonical"]).lower() == keep.lower()
+                    for keep in match_group.uncertain_keep_canonicals
+                )
+                for match_group, rows in matches
+                for row in rows
+            ):
+                confirmed.append(
+                    {
+                        "cue_index": cue_index,
+                        "matched_start_ms": cue.start_ms,
+                        "matched_end_ms": cue.end_ms,
+                        "reason_code": "ENTITY_ALREADY_CANONICAL_EVERYWHERE",
+                    }
+                )
+                continue
             required.append(
                 {
                     "cue_index": cue_index,
@@ -1568,6 +1606,24 @@ def apply_audio_entity_verification(
             }
         verdict = _validated_entity_verdict(raw_verdict, request=request, group=group)
         if verdict is None or verdict.get("status") != "RESOLVED":
+            # 方向性 fail-closed（2026-07-13 kmx 案）：文本已是组内"默认可信方"
+            # 的规范形而音频拿不准（3 字母含混音常 UNCERTAIN）→ 保留原文、留痕
+            # 不阻塞；其余（真实词「乒乓球」、误听形「梦现代」…）UNCERTAIN 仍阻塞。
+            if str(occurrence["surface"]).lower() == str(occurrence["canonical"]).lower() and any(
+                str(occurrence["canonical"]).lower() == keep.lower()
+                for keep in group.uncertain_keep_canonicals
+            ):
+                confirmed.append(
+                    {
+                        "cue_index": cue_index,
+                        "matched_start_ms": cue.start_ms,
+                        "matched_end_ms": cue.end_ms,
+                        "transcript_canonical": occurrence["canonical"],
+                        "reason_code": "ENTITY_CANONICAL_KEPT_ON_UNCERTAIN",
+                        "verdict": verdict or raw_verdict,
+                    }
+                )
+                continue
             required.append(
                 {
                     "cue_index": cue_index,
@@ -2116,6 +2172,22 @@ def apply_authoritative_chat_evidence(
             expected_canonical = str(proposal["entity_verdict"]["canonical_entity"])
             source_occurrences = _entity_occurrences("".join(before), group)
             if len(source_occurrences) != 1:
+                # 多次出现但每一处本来就是裁决出的规范形（「社恐kmx…社牛kmx」
+                # 案，2026-07-13）：无需修复＝确认通过，不算槽位歧义。
+                if source_occurrences and all(
+                    row.get("canonical") == expected_canonical
+                    and row.get("surface") == expected_canonical
+                    for row in source_occurrences
+                ):
+                    entity_verdicts.append(
+                        {
+                            "evidence_id": item.evidence_id,
+                            "cue_indexes": [index + 1 for index in sorted(indexes)],
+                            "reason_code": "ENTITY_ALREADY_CANONICAL_EVERYWHERE",
+                            "verdict": proposal["entity_verdict"],
+                        }
+                    )
+                    continue
                 entity_verdict_required.append(
                     {
                         "evidence_id": item.evidence_id,
