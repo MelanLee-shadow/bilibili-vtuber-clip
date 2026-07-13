@@ -3,6 +3,38 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-13：付费 Gemini 兜底 key + 统一主播色 + 集成分支合并 + 7/10 隔离重跑（当前）
+
+### 目标
+
+按 Ivan 2026-07-13 指令：(1) 接入付费 `GEMINI_KEY_BACKUP` 作为受严格门控的最后手段（免费三 key 永远主力）；(2) 澄清并落地说话人策略——数据积累期一切成品统一李豆沙色、说话人不确定绝不拒发（BW 案是错误行为）；(3) 把自愈分支内容与 main 的片头/安全设施合流；(4) 用最新流水线隔离重跑 2026-07-10。生产 `DISABLED` 与 no-upload 全程不变。
+
+### 已完成
+
+- **Git 拓扑（尊重"验证成功才动 main"）**：合并落在 `codex/integration-selfheal-intro`（merge `2439af3` = codex/july10-song-selfheal 21 commit × main`c1390fd`，加 `a00624d` 测试修、`ee29e08` uniform_host、`90a29c3` 付费 key 层）；**main 被有意退回 `c1390fd`**，等 final 盲测+重跑验收后再并。全量回归 **1049 passed**。
+- **uniform_host 说话人模式（`ee29e08`，新默认）**：producer `--speaker-mode` 增 `uniform_host`（env `AUTOSLICE_SPEAKER_MODE`，非法值回退 uniform_host），runner 透传；该模式完全不跑声学 finalizer、不产 speaker 边车，烧录走经典 sapphire72 全主播色；`SPEAKER_REVIEW_REQUIRED` 在交付链不可达；`required`/`auto` 保留给未来重启。声纹 preflight 保留（歌切人声证明仍需要）。record.json 记 `speaker_mode` 出处。
+- **付费 key 最后手段层（`90a29c3`）**：新模块 `src/autoslice/gemini_backup_policy.py`——按工作项（音频内容哈希）记 strike，**此前完整失败轮 ≥3 才许出场**；每日硬帽（默认 12，env `GEMINI_PAID_BACKUP_DAILY_CAP`）；帐本在 `BASE/state/gemini-paid-backup/`（不可写=不许用，绝不炸适配器）。两个适配器接线：`agy_lrc_alignment`（歌证明）+ `gemini_slice_jingting`（source-context 精听）。`song_repair` 交付校验器强制付费 acceptance 的 manifest 自证门槛（strikes≥3 且未破帽），否则拒交付。AGY 子进程 env 剥离付费 key；runner `child_env` 从 `/opt/bilive/.env` 导入。**key 已装 free `/opt/bilive/.env`（600）**；本地在仓库根 `.env`（已 gitignore，绝不入库）。开发用途纪律：免费 key 实在不可用且当天必须开发才可用，绝不当主力开发 key。
+- **evals 清理（Ivan 授权"该删就删"）**：删 `community-latest-20260712`（13G，证据打包 `forensics/community-latest-20260712-evidence-20260713T0330Z.tar.gz`）、`final-214849b`、`final-541ff0c`；停旧 `autoslice-blind-...-34b9b26.timer`。盘 21G→33G 空闲。
+- **7/10 隔离重跑已启动**：BASE `free:/opt/bilive/autoslice/evals/rerun-20260710-90a29c3`（快照 manifest 绑定 `90a29c3`、108 文件、声纹在位；录像软链 7/10；导入生产 BCUT 缓存；片头媒体走生产绝对路径免安装）。BASE 内实网生成 16 topics/16 works/162 characters、0 diagnostics 角色图。timer `autoslice-rerun-20260710-90a29c3` 每 10 分钟，首 tick 已认领日期并把 19-00-12 残桩（2904B）记死。交付将出现在 `BASE/repo/lidousha/2026-07-10/`（launchd 只拉生产面，需手动 rsync 回本地）。
+
+### 进行中（含后台进程）
+
+- `failure-selfheal-6f9da78` timer：7/11 已 `review_ready`（5 talk 含 2 边界自修复 + 1 歌切@kugou LRC）；7/12 processing——四首歌尝试全 blocked（花之塔/群青/Amanogawa/爱笑的小孩；provider 全灭类 + 群青跨段截断），pending 还有 2（含《泪の物语》），到 6 帽封场。该快照**早于**付费 key 与 uniform 模式，行为差异属预期。
+- `final-117e853` timer：每 5 分钟门检，等 6f9da78 的 7/12 终态后自动开考两日盲测。
+- `rerun-20260710-90a29c3` timer：active，自治推进。
+- 生产：`DISABLED` 仍在（摘除需 Ivan 明确授权）、`DEPLOYED_COMMIT` 仍 `53c8c36`、无上传。
+
+### 阻塞
+
+- integration → main 合并等三件事：final-117e853 两日收敛、7/10 重跑验收、Ivan 点头。
+- 跨录像分段的歌（群青案）当前无拼接能力——已确认的能力缺口，本轮未做。
+
+### 下一步
+
+1. 只读盯 final 盲测与 7/10 重跑收敛；重跑出货后 rsync 回本地给 Ivan 审（重点：成品前 4.3s 片头 + `record.json` branding 绑定 + 非 BanG Dream 话题的专名中文名 + 全片统一主播色）。
+2. 验收通过后：integration 分支并回 main → `deploy_free_autoslice.sh free` 部署 → Ivan 授权后摘 `DISABLED`，生产自动回填 7/11+7/12（届时花之塔类 provider 故障有付费 key 兜底）。
+3. 付费 key 用量审计入口：`BASE/state/gemini-paid-backup/usage-*.jsonl` 与 manifest `paid_backup_policy` 戳。
+
 ## 2026-07-12（续四）：固定片头上线（活字乱刷候选2 强制前置）
 
 ### 目标
