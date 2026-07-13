@@ -3500,6 +3500,26 @@ def test_tick_source_unavailable_is_loud_and_fail_closed(tmp_path, monkeypatch):
     assert not touched, "源不可用时什么都不该跑（fail-closed）"
 
 
+def test_live_hold_ignored_only_for_closed_date_isolated_base(tmp_path, monkeypatch):
+    """Ivan 2026-07-13：直播中临时放行 7/10 隔离回填。豁免开关只对
+    只挂历史日期的 BASE 生效；能看到今天目录的（=生产形态）即使误设也冻结。"""
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path)
+    (tmp_path / "2026-07-10").mkdir()
+    # 未设开关：live=True / None 都冻结
+    assert runner._live_hold_active(True) is True
+    assert runner._live_hold_active(None) is True
+    assert runner._live_hold_active(False) is False
+    # 设开关 + 只有历史日期：放行
+    monkeypatch.setenv("AUTOSLICE_IGNORE_LIVE_HOLD", "1")
+    assert runner._live_hold_active(True) is False
+    assert runner._live_hold_active(None) is False
+    # 能看到今天（UTC 或北京日）→ 拒绝豁免
+    import time as _t
+    today_cst = _t.strftime("%Y-%m-%d", _t.gmtime(_t.time() + 8 * 3600))
+    (tmp_path / today_cst).mkdir()
+    assert runner._live_hold_active(True) is True
+
+
 def test_session_sealed_requires_stable_inventory(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REC_ROOT", tmp_path)
     date_dir = tmp_path / "2026-07-09"

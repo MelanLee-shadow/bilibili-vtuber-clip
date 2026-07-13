@@ -7559,6 +7559,36 @@ def write_heartbeat(body: str) -> None:
     heartbeat.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {body}\n", encoding="utf-8")
 
 
+def _live_hold_active(live: bool | None) -> bool:
+    """直播期间冻结处理（True/未知都冻结，fail-safe）。
+
+    例外（Ivan 2026-07-13）：隔离回填 BASE 处理的是几天前的已关闭文件，
+    直播期间跑它们数据上安全，只有资源争抢风险（由外部护栏管）。设
+    `AUTOSLICE_IGNORE_LIVE_HOLD=1` 可豁免——但带自我防护：**只要本 BASE 的
+    录像根里能看到今天（UTC 或北京日）的日期目录，豁免拒绝生效**，因此
+    生产面即使误设该 env 也依然冻结；能豁免的只有只挂历史日期的隔离面。
+    """
+    if live is False:
+        return False
+    if os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") != "1":
+        return True
+    now = time.time()
+    today_utc = time.strftime("%Y-%m-%d", time.gmtime(now))
+    today_cst = time.strftime("%Y-%m-%d", time.gmtime(now + 8 * 3600))
+    visible = set(list_dates())
+    if visible & {today_utc, today_cst}:
+        log(
+            "AUTOSLICE_IGNORE_LIVE_HOLD=1 REFUSED: today's recordings are visible "
+            f"in {REC_ROOT} — live hold stays (production-shape base)"
+        )
+        return True
+    log(
+        f"live={live} but hold IGNORED (AUTOSLICE_IGNORE_LIVE_HOLD=1, isolated backfill "
+        f"base over closed dates {sorted(visible)})"
+    )
+    return False
+
+
 def tick() -> int:
     if (BASE / "DISABLED").exists():
         log("DISABLED flag present — runner paused")
@@ -7576,13 +7606,13 @@ def tick() -> int:
         log(f"recordings source UNAVAILABLE: {source_err} — tick aborted, alert written")
         return 0
     live = blrec_live_status()
-    if live is None:
-        write_heartbeat("live=? source=ok (blrec API unavailable — fail-safe skip)")
-        log("live status unknown — fail-safe skip this tick")
-        return 0
-    if live:
-        write_heartbeat("live=True source=ok (waiting for stream end)")
-        log("room is LIVE — waiting for stream end")
+    if _live_hold_active(live):
+        if live is None:
+            write_heartbeat("live=? source=ok (blrec API unavailable — fail-safe skip)")
+            log("live status unknown — fail-safe skip this tick")
+        else:
+            write_heartbeat("live=True source=ok (waiting for stream end)")
+            log("room is LIVE — waiting for stream end")
         return 0
     checked = []
     for date in list_dates():
