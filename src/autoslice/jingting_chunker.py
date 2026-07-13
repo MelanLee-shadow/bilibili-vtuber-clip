@@ -180,6 +180,69 @@ def merge_refined_chunks(
     return "\n\n".join(blocks) + "\n"
 
 
+def repair_sparse_refined_chunk(
+    draft_srt_text: str,
+    refined_srt_text: str,
+    *,
+    max_missing_cues: int = 2,
+    max_missing_fraction: float = 0.03,
+) -> tuple[str, dict[str, object]]:
+    """Fill a tiny number of AGY-omitted cues from the timing-authority draft.
+
+    AGY occasionally returns 98 of 99 cues while leaving every returned cue on
+    an exact draft timestamp.  Retrying the same model does not make that a
+    semantic rejection.  This bounded repair aligns by exact timestamp (not by
+    model-renumbered indices), transplants only returned text, and preserves the
+    omitted draft cue verbatim.  Any extra/duplicate/drifted timing still fails.
+    """
+
+    draft = parse_srt_cues(draft_srt_text)
+    refined = parse_srt_cues(refined_srt_text)
+    if not draft or not refined:
+        raise ValueError("draft/refined chunk must contain parseable cues")
+    draft_by_timing = {(cue.start_ms, cue.end_ms): cue for cue in draft}
+    if len(draft_by_timing) != len(draft):
+        raise ValueError("draft chunk contains duplicate cue timings")
+    refined_by_timing: dict[tuple[int, int], SrtCue] = {}
+    for cue in refined:
+        timing = (cue.start_ms, cue.end_ms)
+        if timing not in draft_by_timing:
+            raise ValueError("refined chunk contains a timing outside the draft")
+        if timing in refined_by_timing:
+            raise ValueError("refined chunk contains duplicate cue timings")
+        refined_by_timing[timing] = cue
+    missing = [timing for timing in draft_by_timing if timing not in refined_by_timing]
+    missing_fraction = len(missing) / len(draft)
+    if (
+        not missing
+        or len(missing) > max_missing_cues
+        or missing_fraction > max_missing_fraction
+    ):
+        raise ValueError(
+            f"refined chunk omission count {len(missing)} exceeds bounded allowance "
+            f"{max_missing_cues} cues/{max_missing_fraction:.1%}"
+        )
+    blocks: list[str] = []
+    missing_indexes: list[str] = []
+    for cue in draft:
+        refined_cue = refined_by_timing.get((cue.start_ms, cue.end_ms))
+        if refined_cue is None:
+            text = cue.text
+            missing_indexes.append(cue.index)
+        else:
+            text = refined_cue.text.strip() or cue.text
+        blocks.append(
+            f"{cue.index}\n{_format_srt_time(cue.start_ms)} --> {_format_srt_time(cue.end_ms)}\n{text}"
+        )
+    return "\n\n".join(blocks) + "\n", {
+        "status": "SPARSE_REFINED_CUES_FILLED_FROM_DRAFT",
+        "draft_cue_count": len(draft),
+        "refined_cue_count": len(refined),
+        "missing_fraction": missing_fraction,
+        "missing_cue_indexes": missing_indexes,
+    }
+
+
 def _parse_srt_time_ms(value: str) -> int | None:
     match = _SRT_TIME_RX.search(value)
     if not match:

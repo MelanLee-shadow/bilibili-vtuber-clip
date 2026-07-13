@@ -40,6 +40,8 @@ def test_prompt_is_viewer_perspective_and_lists_all_cues():
     assert "观众视角" in prompt
     assert "弹幕" in prompt
     assert "context_trigger_cue" in prompt
+    assert "只播放原唱" in prompt
+    assert "背景音乐都不是歌切" in prompt
     assert "#1 " in prompt and "#5 " in prompt
     assert "第5句话" in prompt
 
@@ -104,6 +106,23 @@ def test_song_candidate_gets_full_source_boundary_redo():
     job = candidate.to_source_context_job(source_duration_ms=cues[-1].source_end_ms)
     assert job["timeline"]["context_start_ms"] == 0
     assert job["timeline"]["context_end_ms"] == cues[-1].source_end_ms
+
+
+def test_distinct_adjacent_semantic_songs_are_not_deduped_by_gap_alone():
+    cues = _cues(count=80)
+
+    def llm(prompt: str) -> str:
+        return _completion(
+            [
+                {"start_cue": 5, "end_cue": 30, "kind": "song", "hook": "画面歌名《第一首》", "confidence": 0.95},
+                {"start_cue": 31, "end_cue": 55, "kind": "song", "hook": "画面歌名《第二首》", "confidence": 0.94},
+            ]
+        )
+
+    selected, _ = select_semantic_session_candidates(cues, llm_call=llm, max_candidates=4)
+
+    assert len(selected) == 2
+    assert [candidate.content_type_hint for candidate in selected] == ["song", "song"]
 
 
 def test_out_of_range_and_too_short_candidates_are_skipped():

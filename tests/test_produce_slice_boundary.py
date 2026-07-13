@@ -4,9 +4,14 @@ run-on cues near the closure trigger a fine micro-pass instead of a bad cut."""
 
 import json
 
+import pytest
+
 from scripts.produce_slice_package import (
     ISLAND_CONTINUES_FLAG_MS,
     _load_superchats,
+    _rebase_remote_speaker_manifest,
+    _validated_burned_artifact,
+    adaptive_tail_cut,
     boundary_audit,
     boundary_red_flags,
     needs_tail_refinement,
@@ -14,6 +19,7 @@ from scripts.produce_slice_package import (
     repair_start_for_straddler,
     snap_end_to_sentence,
     snap_start_to_sentence,
+    tail_requires_forward_extension,
 )
 from src.autoslice.jingting_chunker import SrtCue
 from src.autoslice.subtitle_timing_qa import SpeechSpan
@@ -38,6 +44,62 @@ def test_load_superchats_video_relative_and_deduped(tmp_path):
     # video-relative ms, full sender uname carried, JPN twin deduped by message
     assert scs == [(30_000, "小凑るう子", "想看她唱地球大爆炸"), (90_000, "十麻乃orient", "可以跟lmsm学谢礼物")]
     assert _load_superchats(tmp_path / "missing.jsonl") == []
+
+
+def test_delivery_burn_binding_ignores_coexisting_old_render(tmp_path):
+    import hashlib
+
+    old = tmp_path / "clip.recut.burned-final-sapphire72.mp4"
+    old.write_bytes(b"old single-colour render")
+    speaker = tmp_path / "clip.recut.burned-final-speaker.mp4"
+    speaker.write_bytes(b"new speaker-colour render")
+    digest = "sha256:" + hashlib.sha256(speaker.read_bytes()).hexdigest()
+    record = {
+        "burned_preview": {"status": "BURNED", "path": str(speaker), "burned_sha256": digest},
+        "artifact_hashes": {"burned_video_sha256": digest},
+    }
+    assert _validated_burned_artifact(record) == speaker
+
+
+def test_delivery_burn_binding_rejects_hash_drift(tmp_path):
+    burned = tmp_path / "clip.recut.burned-final-speaker.mp4"
+    burned.write_bytes(b"current")
+    record = {
+        "burned_preview": {"status": "BURNED", "path": str(burned), "burned_sha256": "sha256:stale"},
+        "artifact_hashes": {"burned_video_sha256": "sha256:stale"},
+    }
+    with pytest.raises(RuntimeError, match="BURN_HASH_MISMATCH"):
+        _validated_burned_artifact(record)
+
+
+def test_remote_speaker_manifest_keeps_provenance_but_rebases_deleted_tmp_paths(tmp_path):
+    media = tmp_path / "clip.mp4"
+    text_srt = tmp_path / "text.srt"
+    override = tmp_path / "override.json"
+    output_srt = tmp_path / "speaker.srt"
+    output_ass = tmp_path / "speaker.ass"
+    manifest = {
+        "source_media": "/tmp/run/media.mp4",
+        "text_final_srt": "/tmp/run/text.srt",
+        "speaker_override": "/tmp/run/overrides.json",
+        "output_review_srt": "/tmp/run/speaker.srt",
+        "output_ass": "/tmp/run/speaker.ass",
+        "output_ass_sha256": "unchanged",
+    }
+    rebased = _rebase_remote_speaker_manifest(
+        manifest,
+        host="free",
+        media_path=media,
+        text_srt_path=text_srt,
+        override_path=override,
+        output_srt_path=output_srt,
+        output_ass_path=output_ass,
+    )
+    assert rebased["runtime_host"] == "free"
+    assert rebased["ephemeral_runtime_paths"]["source_media"] == "/tmp/run/media.mp4"
+    assert rebased["source_media"] == str(media.resolve())
+    assert rebased["output_ass"] == str(output_ass.resolve())
+    assert rebased["output_ass_sha256"] == "unchanged"
 
 
 def test_snap_end_picks_nearest_sentence_end():
@@ -164,6 +226,64 @@ def test_repair_extends_past_continuing_speech_to_clean_pause():
     assert next_clean_closure(cues, spans, after_ms=90_000, padded_dur_ms=120_000) == 93_000
 
 
+def test_tail_pad_clamps_before_distinct_next_speech_island():
+    # 7/11 auto_170019_305_355: closure 60.270s; the fixed 400ms tail entered
+    # a new 60.520-80.432s VAD island and falsely reported ~19.7s continuing
+    # speech.  Keep 150ms of closure air and stop 100ms before the next island.
+    decision = adaptive_tail_cut(
+        [SpeechSpan(58_000, 60_270), SpeechSpan(60_520, 80_432)],
+        snapped_end_ms=60_270,
+        padded_dur_ms=100_000,
+    )
+    assert decision["nominal_end_ms"] == 60_670
+    assert decision["final_end_ms"] == 60_420
+    assert decision["reason"] == "tail_clamped_before_next_speech_island"
+    audit = boundary_audit(
+        [SpeechSpan(58_000, 60_270), SpeechSpan(60_520, 80_432)],
+        start_ms=0,
+        cut_ms=decision["final_end_ms"],
+        start_snapped=True,
+        end_snapped=True,
+    )
+    assert audit["end_island_continues_ms"] == 0
+
+
+def test_tail_pad_does_not_clamp_ambiguous_narrow_gap_or_distant_island():
+    narrow = adaptive_tail_cut(
+        [SpeechSpan(60_420, 80_000)],
+        snapped_end_ms=60_270,
+        padded_dur_ms=100_000,
+    )
+    assert narrow["final_end_ms"] == 60_670
+    assert narrow["reason"] is None
+
+    distant = adaptive_tail_cut(
+        [SpeechSpan(60_800, 80_000)],
+        snapped_end_ms=60_270,
+        padded_dur_ms=100_000,
+    )
+    assert distant["final_end_ms"] == 60_670
+    assert distant["reason"] is None
+
+
+def test_only_existing_continuation_or_crossing_cue_can_extend_forward():
+    assert tail_requires_forward_extension(
+        [], [SpeechSpan(59_000, 80_000)], snapped_end_ms=60_270, cut_ms=60_670
+    )
+    assert tail_requires_forward_extension(
+        [_cue(59_500, 80_000)], [], snapped_end_ms=60_270, cut_ms=60_670
+    )
+    # A cue/island that starts only AFTER the snapped closure is a new turn or
+    # topic signal, even if the fixed tail cut would enter it.  It must not
+    # grant forward-repair or source-context retry authority.
+    assert not tail_requires_forward_extension(
+        [_cue(60_300, 80_000)], [], snapped_end_ms=60_270, cut_ms=60_670
+    )
+    assert not tail_requires_forward_extension(
+        [], [SpeechSpan(60_520, 80_000)], snapped_end_ms=60_270, cut_ms=60_670
+    )
+
+
 def test_repair_skips_candidates_whose_island_keeps_running():
     # 93s ends a cue but the VAD island runs to 96.2s (≥1.5s past its pad) →
     # skip to 96s, where the island has genuinely stopped.
@@ -180,6 +300,37 @@ def test_repair_fails_closed_beyond_extend_cap():
     ]
     spans = [SpeechSpan(80_000, 140_000)]
     assert next_clean_closure(cues, spans, after_ms=90_000, padded_dur_ms=200_000) is None
+
+
+def test_retry_cap_expands_search_beyond_30s_but_stays_absolute_from_target():
+    cues = [_cue(80_000, 90_000), _cue(90_200, 130_000), _cue(130_200, 151_000)]
+    spans = [SpeechSpan(80_000, 130_100), SpeechSpan(130_200, 151_100)]
+    assert next_clean_closure(
+        cues,
+        spans,
+        after_ms=90_000,
+        padded_dur_ms=180_000,
+        cap_ms=30_000,
+        search_origin_ms=90_000,
+    ) is None
+    assert next_clean_closure(
+        cues,
+        spans,
+        after_ms=90_000,
+        padded_dur_ms=180_000,
+        cap_ms=60_000,
+        search_origin_ms=90_000,
+    ) == 130_000
+    # A later repair cannot ratchet another +60s from the previous closure:
+    # 151s is outside the absolute 90s+60s ceiling.
+    assert next_clean_closure(
+        cues,
+        spans,
+        after_ms=130_000,
+        padded_dur_ms=180_000,
+        cap_ms=60_000,
+        search_origin_ms=90_000,
+    ) is None
 
 
 def test_repair_start_opens_on_straddled_sentence_start():

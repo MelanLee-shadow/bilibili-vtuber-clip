@@ -1,12 +1,17 @@
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from scripts.apply_speaker_turn_overrides import (
+    GUEST_WHITE_STYLE,
+    LDS_SAPPHIRE_STYLE,
     apply_overrides,
     parse_labelled_srt,
+    validate_bound_speaker_override_document,
     write_ass,
     write_srt,
 )
@@ -77,6 +82,58 @@ def test_override_can_split_one_asr_cue_into_two_speaker_turns(tmp_path: Path) -
     assert "Style: GUEST" in output_ass.read_text(encoding="utf-8")
 
 
+def test_speaker_decision_asset_binds_candidate_media_and_final_text(tmp_path: Path) -> None:
+    document = _document()
+    document.update(
+        candidate_id="promo_test",
+        source_media_sha256="a" * 64,
+        text_final_srt_sha256="b" * 64,
+        source_srt_sha256="c" * 64,
+    )
+    decision = tmp_path / "speaker.json"
+    decision.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    validate_bound_speaker_override_document(
+        decision,
+        candidate_id="promo_test",
+        expected_source_media_sha256="a" * 64,
+        expected_text_final_srt_sha256="b" * 64,
+    )
+
+    mutations = (
+        ("candidate_id", "wrong_candidate", "candidate_id mismatch"),
+        ("source_media_sha256", "d" * 64, "does not match the batch plan"),
+        ("text_final_srt_sha256", "e" * 64, "does not match the batch plan"),
+    )
+    for field, value, message in mutations:
+        wrong = dict(document)
+        wrong[field] = value
+        decision.write_text(json.dumps(wrong, ensure_ascii=False), encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            validate_bound_speaker_override_document(
+                decision,
+                candidate_id="promo_test",
+                expected_source_media_sha256="a" * 64,
+                expected_text_final_srt_sha256="b" * 64,
+            )
+
+
+def test_ass_uses_exact_sapphire_for_lidousha_and_v11_white_for_all_guests(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE_TEXT, encoding="utf-8")
+    output_ass = tmp_path / "output.ass"
+    write_ass(apply_overrides(parse_labelled_srt(source), _document()), output_ass)
+    ass = output_ass.read_text(encoding="utf-8")
+
+    assert f"Style: LDS,{LDS_SAPPHIRE_STYLE}" in ass
+    assert f"Style: GUEST,{GUEST_WHITE_STYLE}" in ass
+    assert "Style: LDS_OVERLAP" not in ass
+    assert "Style: GUEST_OVERLAP" not in ass
+    assert "&H0000FFFF" not in ass  # the old yellow guest colour is retired
+    assert "Microsoft YaHei,58" not in ass  # overlap must keep the approved typography
+
+
 def test_override_can_drop_non_content_source_cue(tmp_path: Path) -> None:
     source = tmp_path / "source.srt"
     source.write_text(SOURCE_TEXT, encoding="utf-8")
@@ -129,8 +186,23 @@ def test_override_can_render_reliable_overlap_on_second_ass_layer(tmp_path: Path
     write_ass(cues, output_ass)
     assert "[连线] 暂时" in output_srt.read_text(encoding="utf-8")
     ass_text = output_ass.read_text(encoding="utf-8")
-    assert "Style: GUEST_OVERLAP" in ass_text
-    assert "Dialogue: 1,0:00:01.50,0:00:02.10,GUEST_OVERLAP" in ass_text
+    assert "Style: GUEST_OVERLAP" not in ass_text
+    assert "Dialogue: 1,0:00:01.50,0:00:02.10,GUEST,,0,0,142" in ass_text
+    assert "[连线]" not in ass_text  # production ASS uses colour, not debug prefixes
+
+
+def test_ass_layout_preserves_libass_line_break_marker(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n"
+        "[李豆沙] 这是一个需要在标点附近换行，才能保持两行以内的很长字幕文本\n",
+        encoding="utf-8",
+    )
+    output_ass = tmp_path / "output.ass"
+    write_ass(parse_labelled_srt(source), output_ass)
+    ass_text = output_ass.read_text(encoding="utf-8")
+    assert r"\N" in ass_text
+    assert r"\\N" not in ass_text
 
 
 def test_override_rejects_overlay_outside_source_interval(tmp_path: Path) -> None:
@@ -246,6 +318,44 @@ def test_successful_cli_writes_self_consistent_bundle(
     assert manifest["dropped_source_cues"] == []
     assert manifest["fully_reviewed"] is False
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_script_entrypoint_runs_from_repo_without_pythonpath(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE_TEXT, encoding="utf-8")
+    document = _document()
+    document["source_srt_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    output_srt = tmp_path / "output.srt"
+    output_ass = tmp_path / "output.ass"
+    manifest = tmp_path / "manifest.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/apply_speaker_turn_overrides.py",
+            "--source",
+            str(source),
+            "--overrides",
+            str(overrides),
+            "--output-srt",
+            str(output_srt),
+            "--output-ass",
+            str(output_ass),
+            "--manifest",
+            str(manifest),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert output_srt.is_file()
+    assert output_ass.is_file()
+    assert json.loads(manifest.read_text(encoding="utf-8"))["output_cue_count"] == 3
 
 
 def test_cli_manifest_records_drop_and_reliable_overlap(

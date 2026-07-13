@@ -99,7 +99,7 @@ python3 scripts/run_full_session_selector_cpa_shadow.py \
   --title-llm-command "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}"
 ```
 
-- Search the clean title first; `auto` queries NetEase and LRCLIB. The seed preserves recall only. It does not create `FULL_SONG_READY` or `lyrics_alignment=READY`.
+- Search the clean title first; `auto` queries NetEase, LRCLIB, and Kugou. Google/public-web results are for manual discovery only; preserve the direct timed-LRC source. The seed preserves recall only. It does not create `FULL_SONG_READY` or `lyrics_alignment=READY`.
 - Low-ASR audio escalation requires one sufficiently supported canonical LRC identity. An ambiguous title/version, unrelated LRC, malformed observation, wrong provider/model, hash mismatch, incomplete canonical sequence, non-single-shift timing, or failed five-point/tail check remains blocked. For an exact repeated lyric, the repeated-section point must be a later recurrence rather than the first occurrence.
 - For a direct production incident rerun through `free_session_autoslice.py`, pause cron with `/opt/bilive/autoslice/DISABLED`, own `/opt/bilive/autoslice/runner.lock`, use a fresh run id, and write an explicit report with `manual_no_upload=true` and `state_write=false`. Do not mutate the normal state ledger or remove the kill switch until the new package has passed acceptance.
 

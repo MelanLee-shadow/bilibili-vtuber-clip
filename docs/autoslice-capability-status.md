@@ -1,20 +1,38 @@
 # Auto-slice capability status
 
-Updated: 2026-07-10 (seeded Japanese sparse-ASR song recall + hash-bound current-audio/LRC proof)
+Updated: 2026-07-10 (talk text-final → speaker-colour production stage added; song AGY v4 + host-vocal-proof.v2 gate retained; no upload)
 
 Scope: no-upload selector/shadow/review automation. Public upload remains fail-closed and still requires an explicit `AUTO_UPLOAD` decision manifest plus artifact-hash gate.
 
-## Subtitle substrate = free aggregate ASR + CPA correction (2026-07-04, Ivan decision)
+## Talk final subtitles = text-final first, speaker colour second (2026-07-10)
 
-Status: `aggregate_asr_timeline_plus_cpa_text_correction`
+Status: `talk_text_final_then_required_speaker_colour`
 
-The subtitle timeline+draft no longer comes from an LLM listening to audio. The free aggregate ASR (`scripts/free_asr_client.py`: bcut 必剪 primary, jianying 剪映 backup; kuaishou removed — B站 AI-subtitle-同源引擎, no login) returns **sentence-level millisecond boundaries in seconds** (30 min → ~17s). That owns the timeline and the draft text. Correction is then a pure TEXT task, so it goes to **CPA**, not agy:
+The production talk path now has an explicit final boundary between wording and speaker identity:
 
-- `_build_aggregate_asr_transcriber` (`run_full_session_selector_cpa_shadow.py`): aggregate ASR draft → `_cpa_correct_draft_cues` (CPA gpt-5.4-mini corrects proper nouns / memes / homophones from `assets/lidousha/glossary.txt` + time-paired danmaku). The LLM only sees/returns numbered cue **texts**; corrected texts are spliced back onto the ASR timestamps, so **timeline preservation is structural**, not a validation afterthought.
-- **agy's former job (listen to audio, invent a 1–2s-grid transcript) is gone.** agy is available only as a legacy `--correct agy` multimodal refine (also reads on-screen frames; slower) or the `agy_fresh` fallback substrate for a total ASR outage.
+1. aggregate ASR timeline/draft → optional AGY audio refinement → CPA reconcile/glossary/danmaku/SC corrections;
+2. whole-clip singular-pronoun finalizer (`TA|他|她|它`) with occurrence-scoped edits only; known female streamers use `她`, unknown-gender people alone use `TA`;
+3. optional source-hash-bound human text decisions; the clean SRT is now text-final;
+4. CAM++ host voiceprints + purified session anchors + whole-conversation context for short/threshold-band cues;
+5. optional text/media-hash-bound reviewed turn, split, drop, and reliable-overlap decisions;
+6. a labelled review SRT plus a white-Li-Dousha/yellow-guest ASS with no visible speaker prefixes;
+7. burn from that exact ASS only, with hash verification. A missing/drifted ASS or blocked speaker manifest stops delivery.
+
+Flat delivery also carries `<name>.record.json`; its `burned_preview.path`, `burned_sha256`, and `artifact_hashes.burned_video_sha256` bind the exact MP4 copied to the review surface. Delivery never selects `*.burned-final-*` by glob, so a stale single-colour render cannot win by directory order.
+
+`scripts/produce_slice_package.py` requires `--speaker-mode required`; there is no production off path. Every short/threshold-band cue must receive a whole-clip context vote or a hash-bound human decision. `scripts/apply_subtitle_correction.py` also reruns speaker finalization before re-burn, so a late wording fix cannot leave stale colours. Song/LRC rendering remains a separate path and is unchanged.
+
+## Subtitle substrate = free aggregate ASR + audio/text correction (2026-07-04; updated 2026-07-10)
+
+Status: `aggregate_asr_timeline_plus_agy_cpa_text_correction`
+
+The free aggregate ASR (`scripts/free_asr_client.py`: bcut 必剪 primary, jianying 剪映 backup; kuaishou removed) returns **sentence-level millisecond boundaries** and owns both the timeline and rough draft. The current default correction chain is `bcut_agy_cpa`: AGY listens to refine wording while keeping the same cue grid, then CPA reconciles BCUT vs AGY against the glossary/context. If AGY is unavailable, CPA works from BCUT alone:
+
+- `_build_aggregate_asr_transcriber` (`run_full_session_selector_cpa_shadow.py`): aggregate draft → AGY refine on the existing grid → `_cpa_reconcile_draft_cues`; all model outputs are reattached to original ASR timestamps, so **timeline preservation is structural**.
+- AGY does not own or invent the final timeline. `agy_fresh` remains only a fallback substrate for total aggregate-ASR outage.
 - Fail-open: a correction outage ships the accurate raw ASR draft (proper nouns uncorrected) rather than failing the clip; a total ASR outage raises so the caller can fall back.
 - **Song clips unchanged**: aggregate ASR is sparse/error-prone on singing (B站 also special-cases music rows); song subtitles keep the LRC global-shift flow, aggregate ASR only a reference track.
-- Driver: `scripts/produce_slice_package.py --substrate aggregate_asr --correct cpa` (default). Why CPA over agy: correction is text; CPA is the pipeline's existing judge, one fast call vs chunked-agy-on-free, and splice-back guarantees the timeline. agy's only unique value (reading pixels) narrows to optional on-screen-text extraction, later replaceable by OCR.
+- Driver default: `scripts/produce_slice_package.py --substrate aggregate_asr --correct bcut_agy_cpa --speaker-mode required`.
 
 ## Semantic recall + viewer-context QA (primary discovery lane, 2026-07-03)
 
@@ -133,15 +151,16 @@ Whole-session contexts (30 min / 1.2GB) deterministically return empty output fr
 - runs one agy call per chunk under a pseudo-TTY (`script -qec`), validates per-chunk timing, merges texts back onto the untouched draft timeline, re-validates,
 - retries each chunk at most once, and classifies failures as `AGY_EMPTY_OUTPUT` / `AGY_TIMEOUT` / `AGY_FAILED_RC` (`AgyRunnerError`) so the review evidence names the real failure.
 
-## Auto song slicing: seeded sparse-ASR audio/LRC proof accepted for no-upload
+## Auto song slicing: LRC completion + joint live-performance/host-vocal gate
 
-Status: `selector_shadow_and_seeded_sparse_asr_audio_lrc_proof_no_upload`
+Status: `joint_live_performance_plus_lidousha_vocal_gate_deployed_guarded_acceptance_no_upload`
 
 Song candidates remain source-context anchors, not final clip boundaries. When `free_session_autoslice.py` has already put a window in the song lane, tight/core/full attempts now retain that upstream seed instead of asking a second nondeterministic semantic-recall pass to identify a song from sparse or garbled Japanese singing ASR. Only the expanded full retry may invoke current-audio + canonical-LRC proof.
 
 Implemented front door:
 
-- `--lrc-provider auto` searches NetEase and LRCLIB; clean quoted song titles and Japanese kana are valid queries.
+- `--lrc-provider auto` searches NetEase, LRCLIB, and Kugou; clean quoted song titles and Japanese kana are valid queries. Google/public-web search remains a manual discovery route, not an unattended provider or proof source.
+- Manual recovery may use Google/public-web search for a credible timed LRC. Japanese language and sparse/garbled singing ASR are discovery inputs, not terminal failure reasons.
 - Same-song provider variants are grouped by normalized title+artist or identical full-LRC fingerprint. Audio escalation requires one sufficiently supported identity; different-song ambiguity blocks.
 - Tight/core/full attempts receive `--seed-song-candidate-id` and clip-local seed bounds. A seed preserves recall only; it never mints completeness evidence.
 - The expanded full retry can use sandboxed `agy` `Gemini 3.5 Flash (High)` against the current media and selected canonical LRC.
@@ -152,17 +171,19 @@ Required machine evidence before a song can be treated as complete:
 - Current media, canonical LRC, prompt, raw observation and run manifest are SHA-256 bound.
 - Every canonical LRC line is affirmatively heard at confidence `>=0.8`; starts are monotonic, adjacent overlap is bounded, and one global shift explains the whole performance without unproved stretch.
 - First line, chorus, repeated section, longest instrumental gap and tail are explicitly checked, with the first post-song talk boundary recorded.
+- AGY v4 is a hard same-subject live-performance veto, separate from lyric alignment. It requires `mode=LIVE_STREAMER_SINGING`, confidence `>=0.85`, `continuous_live_song_performance=true`, `same_lidousha_live_performer_across_all_lyrics=true`, background-recording likelihood `<=0.20`, and exactly three evidence timestamps in lyric head/middle/tail; all three timestamps must fall inside canonical rows classified as `LIDOUSHA + SINGING_THIS_LYRIC`. The first and final canonical rows must be sung, at least seven rows and at least 80% of all rows must be sung, and any same-performer theatrical dialogue inside the song is allowed only as one contiguous `PERFORMING_THIS_LYRIC_SPOKEN` block of at most six rows, 12 seconds summed voiced duration, 20% of total canonical voiced duration, and 15 seconds wall-clock span. Every row still requires the same live Li Dousha vocal source and forbids another singer/harmony or recorded/playback vocal. Guest/duet/harmony, original/background playback, offscreen/static replay, another singer, ordinary speech over music, ambiguity, multiple/oversized spoken blocks, missing fields, or raw/report disagreement blocks.
+- CAM++ then makes the narrower `LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS` subclaim in `host-vocal-proof.v2`. A 4–8s post-song speech anchor must first match the three pinned Li Dousha enrollments at median `>=0.60`. Seven distinct actual aligned **singing** cues of duration `>=2.5s` are sampled for 2.5–4s; spoken-theatrical rows are never eligible checkpoints. Each pass requires both the three-enrollment median `>=0.31` and same-session-anchor score `>=0.31`; at least 5/7 and head/middle/tail coverage are required.
+- Only the AGY-live AND CAM++-identity result is named `VERIFIED_LIDOUSHA_SINGING`. A CAM++ match alone is not a singing classifier and cannot override AGY's background/speech-over-music veto.
+- The runner verifies source/alignment/profile/model/reference/session-anchor/checkpoint hashes, rejects reused decoded PCM across checkpoints, recomputes recorded medians/thresholds/bucket coverage, and compares the AGY v4 raw/report row-level subject, role, same-source, other-singer and recorded/playback assertions. `host-vocal-proof.v2` binds the required `SINGING_THIS_LYRIC` role plus all five assertions to every checkpoint, so a spoken row or assertion drift cannot satisfy CAM++. The verifier does not rerun CAM++ inference; this is fail-closed artifact verification, not a second ML opinion or a formal identity proof.
 - The materialized recut uses `subtitle_source=external_lrc_global_shift`, accurate re-rendering, passing render QA and current SRT/burned-video hashes.
 
-Live acceptance (2026-07-10):
+Corrected negative acceptance (2026-07-10):
 
-- Run `song_223019_166_mebukutoki_rerun_v4`, deployed commit `1e8818c1ed457273c38697b54d4cc6dd4e79e4a0`.
-- yonige《芽吹くとき》, LRCLIB `33542202`; 25/25 canonical lines heard at confidence `0.95`, matched ratio `1.0`, one `+17000ms` shift. First/chorus/longest-gap/tail and post-song talk `227000ms` are observed; the exact repeated lyric's later recurrence is supplementally bound at full-window `152910ms` (LRC index 17), and the hardened validator now rejects a repeated-section point that only hits the first occurrence.
-- Accurate cut error `16ms <= 100ms`; result `review_ready`, decision `AUTO_RECUT` / `SONG_FULL_BOUNDARY_READY`, selector `cover_release_gate_satisfied=false`, `manual_no_upload=true`, rerun `state_write=false`.
-- Final acceptance `ACCEPTED_NO_UPLOAD`; report `free:/opt/bilive/autoslice/reports/manual_rerun_2026-07-09_mebukutoki_v4.json`, SHA-256 `bcf0500829d6802bc4d6397ea7b48c8ab79edc2d00656d766ecf314a63241e85`. State was repaired only after acceptance; `/opt/bilive/autoslice/DISABLED` was still present at acceptance readback, so the scheduled runner remained paused.
-- v4 itself ran on `1e8818c`; the later-recurrence validator/prompt and report-field hardening were subsequently deployed in `c847325ce43e7e3914e8921c3f27c1254a6beffa`. Deployment verification: focused `70 passed`, full suite `382 passed`; this documentation pass independently reran the narrow sparse-Japanese/audio-LRC mutation subset (`6 passed`).
+- `song_223019_166_mebukutoki_rerun_v4` / yonige《芽吹くとき》 is **superseded and rejected**, not an accepted Li Dousha song clip. Its 25/25 LRC alignment proved only that the studio recording played; the video is a static goodbye/end card and Ivan confirmed Li Dousha was not singing.
+- This false positive is the negative golden case. In the historical pre-deploy calibration probe, it scored `0/7` above the pinned CAM++ threshold (`0.31`), while a confirmed live Li Dousha sample scored `7/7` against enrollments and `5/7` against its same-session host anchor. Those calibration counts are not the current v5 acceptance result, which is the separately recorded `6/7`. A synthetic loud Li-Dousha-speech-over-BGM mix could still make CAM++ pass `6/7`, which is why the independent AGY live-performance veto is mandatory.
+- Its active delivery files are quarantined under `_superseded`; the six-file incident repair is `COMMITTED` and records `blocked` / `SONG_BACKGROUND_PLAYBACK_ONLY`. No upload occurred.
 
-This acceptance proves the seeded sparse-ASR recovery path on one real 李豆沙 Japanese song rerun. It does **not** claim every Japanese song succeeds: missing synchronized lyrics, an ambiguous or mismatching song/version, malformed/hash-unbound audio observations, incomplete lines, non-single-shift timing, or failed render proof remains fail-closed. It also does not enable upload.
+The old run still proves only the Japanese sparse-ASR **LRC recovery** path. It does not prove a live performer. The current joint gate is deployed from `f64cd29494fdc0d2b37d249e659897514fd701dc` and has completed guarded no-upload acceptance. The real-singing《屑屑》v5 run reached `READY` / `MATERIALIZED` (52/52 heard; 48 sung plus one four-row bounded theatrical-spoken block; host-vocal proof 6/7 with all checkpoints bound to sung rows). The same decoded audio under a static replay picture was blocked by AGY's playback mode. The fresh current《芽吹くとき》run automatically recovered the correct LRCLIB Japanese LRC and 25/25 timing, but its AGY observation overcalled the playback as live; the independent host-vocal proof scored 0/7 and the final joint gate correctly returned `BLOCK / SONG_NOT_LIDOUSHA_SINGING`, with no recut. This observed single-model error is why neither AGY nor CAM++ is sufficient alone. At `2026-07-10 10:50:29Z` the exact cron entrypoint smoke returned 0 with state, summaries, and the 32,015-byte upload ledger unchanged; the runner lock was free and `DISABLED` was removed. The real `*/10` scheduler then ran naturally at `11:00:02Z` and logged `tick done` with `live=False` and `2026-07-09:review_ready`. A future song becomes deliverable only when both independent gates pass. Missing synchronized lyrics, ambiguous identity/version, malformed/hash-unbound evidence, CAM++ runtime/reference drift, no/short post-song host anchor, no Li Dousha vocal, or failed render proof remains fail closed. Guest/other-singer ROC coverage is still incomplete. Nothing here enables upload.
 
 Code paths:
 
@@ -170,6 +191,8 @@ Code paths:
 - `scripts/run_full_session_selector_cpa_shadow.py::_seeded_song_candidate`
 - `src/autoslice/song_repair.py::attempt_song_repair`
 - `src/autoslice/agy_lrc_alignment.py::run_agy_audio_lrc_alignment`
+- `src/autoslice/host_vocal_proof.py::generate_host_vocal_proof`
+- `src/autoslice/host_vocal_proof.py::verify_host_vocal_proof_claim`
 - `scripts/run_auto_review_shadow_pipeline.py::_resolve_song_boundary`
 - `scripts/run_auto_review_shadow_pipeline.py::_apply_live_source_machine_evidence`
 
@@ -185,6 +208,8 @@ Regression tests:
 Still not claimed complete:
 
 - automatic success for Japanese songs without a reliable unique synchronized-LRC identity
+- exhaustive real-media guest/duet/other-singer ROC calibration or a formal performer proof
+- exhaustive repeated-run variance calibration for AGY video/audio live-vs-playback classification; the observed《芽吹くとき》AGY false positive is contained by the mandatory CAM++ AND, not erased from the evidence
 - automatic waveform/spectrogram artifact generation for song redo jobs
 - review-package audit expansion for spectrogram/waveform/probe/approved-cover-style finished gates
 

@@ -1,0 +1,31 @@
+{
+  "schema_version": "lidousha-timely-terms.v1",
+  "generated_at": "2026-07-10T00:00:00-04:00",
+  "expires_at": "2026-08-10T00:00:00-04:00",
+  "status": "fresh",
+  "terms": [
+    {
+      "canonical": "梦限大",
+      "display_name": "梦限大MewType",
+      "readings": ["meng xianda", "mengxianda", "夢限大みゅーたいぷ"],
+      "aliases": ["夢限大みゅーたいぷ", "梦限大MewType", "ゆめみた"],
+      "confusables": ["Mujica", "Ave Mujica", "梦现代"],
+      "topic_entities": ["BanG Dream!", "邦多利", "MyGO!!!!!", "Ave Mujica"],
+      "active_from": "2026-06-01",
+      "active_until": "2026-09-30",
+      "reason": "TV anime BanG Dream! ゆめ∞みた began broadcasting on 2026-07-02; current July 2026 franchise topic.",
+      "sources": [
+        {
+          "url": "https://anime.bang-dream.com/yumemita/news/post-5",
+          "published_at": "2026-06-01",
+          "publisher": "BanG Dream! official anime site"
+        },
+        {
+          "url": "https://bang-dream.com/news/2357/",
+          "published_at": "2026-06-01",
+          "publisher": "BanG Dream! official site"
+        }
+      ]
+    }
+  ]
+}

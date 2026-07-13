@@ -1,0 +1,73 @@
+{
+  "schema_version": "frozen-talk-resume-plan.v1",
+  "candidate_id": "auto_190017_1068_1217",
+  "date": "2026-07-10",
+  "title": "【李豆沙】《梦限大》坏女人怎么洗白？小李只认双重人格",
+  "selection_hook": "聊到邦多利新登场的‘神秘坏女人’，她细数角色集百家之长，还断言除非是双重人格否则绝对洗不白。",
+  "delivery_name": "聊到邦多利新登场的“神秘坏女人”，她",
+  "delivery_start_ms": 9750,
+  "delivery_end_ms": 159310,
+  "expected_final_text_srt_sha256": "10e1b6e0d2ca3e70454e08fefa5792d3eee6431dfcd581261d89618a50c9e041",
+  "expected_state_sha256": "d2a834a0a34218a617c42386e1f10fb32fd6c310dbd831a60cbb5d14cd37572b",
+  "upload_enabled": false,
+  "inputs": {
+    "media": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/replacement_recuts/auto_190017_1068_1217.recut.mp4",
+      "sha256": "4673b05d5243f473615e0739b1c80dbdb756bdf94e3e53e5b11b27a1dc68cf53"
+    },
+    "frozen_text_srt": {
+      "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.srt",
+      "archive_path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/frozen_resume/sources/delivered-reviewed.5f3901b6.srt",
+      "sha256": "5f3901b687fbc6f62fcb792d53406a48d0d45fa8da735cfd4e40093e892298a6"
+    },
+    "chat_authority_audit": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/auto_190017_1068_1217.chat-authority.json",
+      "archive_path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/frozen_resume/sources/chat-authority.d2ac1f8d.json",
+      "sha256": "d2ac1f8d3698ea90353b6e69f73a35ae8d26fe315769d09a6607f62e01e28beb"
+    },
+    "boundary_audit": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/auto_190017_1068_1217.boundary_audit.json",
+      "sha256": "fd656f5c5278c2df767c548ff30171c2870e2799c180630eca8d6f8dc3e09165"
+    },
+    "timing_qa": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/replacement_recuts/auto_190017_1068_1217.recut.timing_qa.json",
+      "sha256": "e928168dbfa314c9887b732715ca9f3279553f879ae78e7365ed73082212bb29"
+    },
+    "producer_spec": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/spec_auto_190017_1068_1217.july11-truth-repair.json",
+      "sha256": "45ccebf3306c997f276b6e02bd31fce5f4fc63172de1af620291ef97c3fa59e2"
+    },
+    "text_override": {
+      "path": "assets/lidousha/subtitle_text_overrides/auto_190017_1068_1217.text.v1.json",
+      "sha256": "11bcb5820b4db999706ac0ef76f4a9c762791d29ded0b8f63ed7d65fa0a185e6"
+    },
+    "subtitle_regression": {
+      "path": "assets/lidousha/subtitle_regressions/auto_190017_1068_1217.subtitle-regression.v1.json",
+      "sha256": "ba898b8ed1d84e207d515953d79eb3874555d91172b5d407d60dba27b7c642d1"
+    },
+    "speaker_profile": {
+      "path": "assets/lidousha/voiceprint_profile.v1.json",
+      "sha256": "83fbe36e0063b88838755ec01cb0a15f255daa03fd5f014ef5c382e81a9ef56b"
+    },
+    "existing_cover": {
+      "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.cover.png",
+      "sha256": "1e0cc83d71aea89977ef510cfe6050e00fdd66bb22333e4925e1a569aec326b5"
+    },
+    "cover_generation_cover": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/cover_repair/generations/e66e863e8acf-01-1783750797675947591/final.cover.png",
+      "sha256": "1e0cc83d71aea89977ef510cfe6050e00fdd66bb22333e4925e1a569aec326b5"
+    },
+    "cover_generation_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/cover_repair/generations/e66e863e8acf-01-1783750797675947591/final.cover.cover_generation.json",
+      "sha256": "bfe8a0f8ab150ef16c08cbd37c2b37987d073e627926cf92979db5d4a061c037"
+    },
+    "cover_binding": {
+      "path": "/opt/bilive/autoslice/out/2026-07-10/auto_190017_1068_1217/cover_repair/generations/e66e863e8acf-01-1783750797675947591/final.cover.cover-binding.json",
+      "sha256": "559ac11b7941514f592d4b7d5696777e5d72fefde7043ab9a0d134dc271a734a"
+    },
+    "upload_ledger": {
+      "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+      "sha256": "6ae151b2ef6a83e7c7f372661113a375b20635bf78a22115b3f59605a9705f09"
+    }
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "schema_version": "lidousha-speaker-source-session-anchors.v1",
+  "status": "READY",
+  "subject": "李豆沙",
+  "source_session_id": "22966160_20260709-22-00-21",
+  "source_recording": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-09/22966160_2026-07-09-22-00-21-.mp4",
+  "authority": "CAM++ static enrollment gate >= 0.68 on hash-bound donor and target specs naming the same source recording",
+  "profile_sha256": "663eee9820d7b0df9021c148ebe21c39f10d782f73cba22bfeeee0ff1a85ad1d",
+  "model_tree_sha256": "f01588f1ceacd25fb3853e765846e3e34befddcff5c61bc14ddaf529745ed0c3",
+  "reference_hashes": {
+    "lidousha-1": "d54a637d520df906a4a17728f2112ca3819b6afe43e2e038e8d6db52c094105f",
+    "lidousha-2": "8fc095fe8558d218fadea7f6273ee5296f85662164aa125aae68eb9381ce7ef3",
+    "lidousha-3": "d257b7aef63f022772fbacc61d35954a65b4727b29f062edb0b398531b95c5a2"
+  },
+  "allowed_targets": [
+    {
+      "candidate_id": "promo_220021_125_232",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.recut.mp4",
+      "media_sha256": "05425367920136fc5e91896e6547d728cddf347673426df99fb0cb4084ce38ef",
+      "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_220021_125_232.json",
+      "provenance_sha256": "b175c55d117ad5fb876aa201ddf93d4361d037afd9e3a6d99c65803c04873ad7"
+    }
+  ],
+  "donor": {
+    "candidate_id": "promo_220021_1091_1257",
+    "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.recut.mp4",
+    "media_sha256": "59563b942af7f1e1a534d8e84df1c5990396fc1f2fc9872655d9d70475882933",
+    "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.recut.srt",
+    "text_srt_sha256": "5cf52c08c2bdcebc4566f0eef2831da2063bbf74c3f51ceacdb65e42385b2448",
+    "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_220021_1091_1257.json",
+    "provenance_sha256": "a70b9164a471f0c5ba814b2a47258bda5e217d9bc2fa9d230eb329eb7190ee8c"
+  },
+  "anchors": [
+    {
+      "source_cue": 55,
+      "start": "00:01:47,410",
+      "end": "00:01:52,170",
+      "text": "演唱在我们的这个新春联欢晚会，",
+      "sample_sha256": "6de887abc5fed3aa28f4466d2058c9dca76b2508c5624e01decdce6156f86a9b",
+      "reference_scores": {
+        "lidousha-1": 0.81675,
+        "lidousha-2": 0.74289,
+        "lidousha-3": 0.80597
+      },
+      "enroll_median_score": 0.80597
+    },
+    {
+      "source_cue": 56,
+      "start": "00:01:52,170",
+      "end": "00:01:56,010",
+      "text": "就在《难忘今宵》的歌声中度过啊，",
+      "sample_sha256": "2ea1b0098f0e8fafa2cece17b87014abad66487a808fcabff86003b48f837225",
+      "reference_scores": {
+        "lidousha-1": 0.76556,
+        "lidousha-2": 0.72698,
+        "lidousha-3": 0.81272
+      },
+      "enroll_median_score": 0.76556
+    },
+    {
+      "source_cue": 9,
+      "start": "00:00:12,850",
+      "end": "00:00:16,450",
+      "text": "之前我看到她们那些有旗袍衣服的，",
+      "sample_sha256": "ab6d249b0b302d3cb56f0258779a1102e0b6e9eb0f24f222f2d9760557033576",
+      "reference_scores": {
+        "lidousha-1": 0.78633,
+        "lidousha-2": 0.72105,
+        "lidousha-3": 0.75021
+      },
+      "enroll_median_score": 0.75021
+    },
+    {
+      "source_cue": 11,
+      "start": "00:00:18,450",
+      "end": "00:00:19,970",
+      "text": "哦，不是，玩、玩麻将。",
+      "sample_sha256": "32b72fdc1343804d43d1b8755e7bed5506eb1ead6e952e19ac7f3ff7553a069f",
+      "reference_scores": {
+        "lidousha-1": 0.74265,
+        "lidousha-2": 0.67927,
+        "lidousha-3": 0.72797
+      },
+      "enroll_median_score": 0.72797
+    }
+  ]
+}

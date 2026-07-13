@@ -42,6 +42,7 @@ __pycache__/
 
 # OS/editor noise
 .DS_Store
+.cache/timely-term-crawler/
 *.swp
 *.swo
 

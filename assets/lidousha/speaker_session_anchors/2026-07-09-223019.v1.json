@@ -1,0 +1,52 @@
+{
+  "schema_version": "lidousha-speaker-source-session-anchors.v1",
+  "status": "READY",
+  "subject": "李豆沙",
+  "source_session_id": "22966160_20260709-22-30-19",
+  "source_recording": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-09/22966160_2026-07-09-22-30-19-.mp4",
+  "authority": "CAM++ static enrollment gate >= 0.68 on exact hash-bound segments extracted from the source recording named by the target spec",
+  "profile_sha256": "663eee9820d7b0df9021c148ebe21c39f10d782f73cba22bfeeee0ff1a85ad1d",
+  "model_tree_sha256": "f01588f1ceacd25fb3853e765846e3e34befddcff5c61bc14ddaf529745ed0c3",
+  "reference_hashes": {
+    "lidousha-1": "d54a637d520df906a4a17728f2112ca3819b6afe43e2e038e8d6db52c094105f",
+    "lidousha-2": "8fc095fe8558d218fadea7f6273ee5296f85662164aa125aae68eb9381ce7ef3",
+    "lidousha-3": "d257b7aef63f022772fbacc61d35954a65b4727b29f062edb0b398531b95c5a2"
+  },
+  "allowed_targets": [
+    {
+      "candidate_id": "promo_223019_374_480",
+      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.recut.mp4",
+      "media_sha256": "c3fa5252b36763514d6d5151daabe5157a527f7f33708cf5ae4981dda5673ca4",
+      "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_223019_374_480.json",
+      "provenance_sha256": "8a346b7aa273a8eb47545a7d8c1264f3e75a46e166131959dfa51438051da54e"
+    }
+  ],
+  "anchors": [
+    {
+      "anchor_type": "source_recording_segment",
+      "source_start_ms": 7240,
+      "source_end_ms": 15240,
+      "text": "原来如此啊",
+      "sample_sha256": "b464e1d9f4b55dc51d2e55b432f5c2c75decb7191c1664a034b93faf46774ac8",
+      "reference_scores": {
+        "lidousha-1": 0.75674,
+        "lidousha-2": 0.76434,
+        "lidousha-3": 0.72369
+      },
+      "enroll_median_score": 0.75674
+    },
+    {
+      "anchor_type": "source_recording_segment",
+      "source_start_ms": 348220,
+      "source_end_ms": 356220,
+      "text": "谢谢艾森的送分跳，晚安晚安，谢谢四连的说唱，晚安喵",
+      "sample_sha256": "3ac1f329db1226703ce4a04ea0575209d1c95080e28c8f8e0a62defe37c3c967",
+      "reference_scores": {
+        "lidousha-1": 0.71457,
+        "lidousha-2": 0.68574,
+        "lidousha-3": 0.68704
+      },
+      "enroll_median_score": 0.68704
+    }
+  ]
+}

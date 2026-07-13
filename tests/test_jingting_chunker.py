@@ -5,6 +5,7 @@ from src.autoslice.jingting_chunker import (
     merge_refined_chunks,
     parse_srt_cues,
     plan_jingting_chunks,
+    repair_sparse_refined_chunk,
 )
 
 
@@ -101,3 +102,52 @@ def test_merge_rejects_uncovered_draft_cues():
 
 def test_empty_draft_produces_no_chunks():
     assert plan_jingting_chunks("") == []
+
+
+def test_sparse_refined_chunk_fills_one_of_99_missing_cues_by_exact_timing():
+    draft = _srt(
+        [(index, index * 2000, index * 2000 + 1200, f"草稿{index}") for index in range(1, 100)]
+    )
+    # AGY dropped cue 50 and renumbered every returned block.  Timestamp, not
+    # the model's index, is the only safe alignment authority.
+    refined_rows = []
+    output_index = 1
+    for index in range(1, 100):
+        if index == 50:
+            continue
+        refined_rows.append((output_index, index * 2000, index * 2000 + 1200, f"精修{index}"))
+        output_index += 1
+    repaired, audit = repair_sparse_refined_chunk(draft, _srt(refined_rows))
+
+    validate_same_timing(draft, repaired)
+    cues = parse_srt_cues(repaired)
+    assert cues[49].text == "草稿50"
+    assert cues[48].text == "精修49"
+    assert cues[50].text == "精修51"
+    assert audit["missing_cue_indexes"] == ["50"]
+
+
+def test_sparse_refined_chunk_rejects_timing_drift_and_large_omission():
+    draft = _srt(
+        [(index, index * 2000, index * 2000 + 1200, f"草稿{index}") for index in range(1, 100)]
+    )
+    drifted = _srt(
+        [(index, index * 2000 + (1 if index == 20 else 0), index * 2000 + 1200, f"精修{index}") for index in range(1, 100)]
+    )
+    with pytest.raises(ValueError, match="outside the draft"):
+        repair_sparse_refined_chunk(draft, drifted)
+
+    missing_three = _srt(
+        [(index, index * 2000, index * 2000 + 1200, f"精修{index}") for index in range(1, 97)]
+    )
+    with pytest.raises(ValueError, match="exceeds bounded allowance"):
+        repair_sparse_refined_chunk(draft, missing_three)
+
+    short_draft = _srt(
+        [(index, index * 2000, index * 2000 + 1200, f"草稿{index}") for index in range(1, 11)]
+    )
+    short_missing_one = _srt(
+        [(index, index * 2000, index * 2000 + 1200, f"精修{index}") for index in range(1, 10)]
+    )
+    with pytest.raises(ValueError, match="exceeds bounded allowance"):
+        repair_sparse_refined_chunk(short_draft, short_missing_one)

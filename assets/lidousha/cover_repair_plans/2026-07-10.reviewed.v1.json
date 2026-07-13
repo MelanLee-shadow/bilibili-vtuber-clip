@@ -1,0 +1,84 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "date": "2026-07-10",
+  "authority": "Ivan 2026-07-11 review: correct the 上下摇 title/topic, preserve the 彩排 question mark and exact wording, and finish the verified recovered song cover without rerunning its selector",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "6ae151b2ef6a83e7c7f372661113a375b20635bf78a22115b3f59605a9705f09"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_193009_1539_1637",
+      "expected_state_record_sha256": "1a43c97f7fab705ae14097ce6e5f285c14992cb78bad70c68cf726e7f24888aa"
+    },
+    {
+      "candidate_id": "auto_200009_524_545",
+      "expected_state_record_sha256": "8382e8ef63743c18e925d823cdfdbd17e89d3123804eec848d1934a4f9d33531"
+    },
+    {
+      "candidate_id": "song_212005_1444",
+      "expected_state_record_sha256": "c5a129212173765d58d1dfbeb6a96e90bec897b0e55809edc1e7669a08c0f0ec"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_193009_1539_1637",
+      "expected_title": "【李豆沙】熊猫头槌解决kmx，暴力女还要唱温柔歌",
+      "title": "【李豆沙】上下摇把自己摇晕，转头给熊熊一记熊猫头锤",
+      "expected_cover_text": "上下摇把自己摇晕，转头给熊熊一记熊猫头锤",
+      "require_rendered_text_exact": true,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.mp4",
+        "sha256": "6b9c797f3063a671bcb9d36b0bda1f22532e1abdd5ba51fb49f7a6ce3f75753e"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.cover.png",
+        "sha256": "9a459a75876004838f3d09c0516b35dbea32d8f7782ed242aa85f068f275b168"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.record.json",
+          "sha256": "443ced454bf6b1a861310b194e7dde58c13abeee9b22156c681bcc0de11d696b"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-10/auto_193009_1539_1637/replacement_recuts/auto_193009_1539_1637.record.json",
+          "sha256": "443ced454bf6b1a861310b194e7dde58c13abeee9b22156c681bcc0de11d696b"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-10/auto_193009_1539_1637/replacement_recuts/auto_193009_1539_1637.recut.publish.json",
+          "sha256": "39a5689c6214f9c9d75c89a6a1df274b96d1ec2b1be2bf77fb9167ea93178c46"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_200009_524_545",
+      "expected_title": "【李豆沙】去彩排前连问三遍：你们还要来找我玩，好不好？",
+      "title": "【李豆沙】去彩排前连问三遍：你们还要来找我玩，好不好？",
+      "expected_cover_text": "去彩排前连问三遍\n你们还要来找我玩，好不好？",
+      "require_rendered_text_exact": true,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.mp4",
+        "sha256": "8ae5d404c00995223212c8118c3f8d76f4f27d2331d1a2d3749a631b645b4eed"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.cover.png",
+        "sha256": "e8a95a6ec0271e2568d44ab7ba1e662f48ee0644500f3137e2ec902368e8cddd"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.record.json",
+          "sha256": "e80015764ca4d662d3116accb455e808ab1323d082ea15c246f9f56db2a91e8d"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-10/auto_200009_524_545/replacement_recuts/auto_200009_524_545.record.json",
+          "sha256": "e80015764ca4d662d3116accb455e808ab1323d082ea15c246f9f56db2a91e8d"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-10/auto_200009_524_545/replacement_recuts/auto_200009_524_545.recut.publish.json",
+          "sha256": "f54c5ea6199c68e9e97ef190c8dc9b6d3dae825a56e9631a499dbf939cad4be9"
+        }
+      ]
+    }
+  ]
+}

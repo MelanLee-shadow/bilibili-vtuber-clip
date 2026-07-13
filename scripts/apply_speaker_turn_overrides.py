@@ -14,10 +14,16 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 SRT_BLOCK_RE = re.compile(
@@ -28,6 +34,24 @@ SRT_BLOCK_RE = re.compile(
 )
 LABEL_RE = re.compile(r"^\[(李豆沙|连线)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)$", re.S)
 SPEAKERS = {"李豆沙", "连线"}
+SPEAKER_SUBTITLE_STYLE_ID = "lidousha-speaker-sapphire-host-white-guest-v2"
+SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+
+# Ivan-approved production contract (2026-07-10):
+# - every Li Dousha cue must byte-for-byte reuse the established sapphire72
+#   typography/colour metrics;
+# - every non-Li-Dousha cue uses the white style accepted in the v11 review,
+#   not a newly invented colour;
+# - overlap cues move only through an event-level MarginV override; they reuse
+#   the exact same two styles and cannot drift in typography or colours.
+LDS_SAPPHIRE_STYLE = (
+    "Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,"
+    "0,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1"
+)
+GUEST_WHITE_STYLE = (
+    "Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00203050,&H70000000,"
+    "-1,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1"
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +75,41 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def validate_bound_speaker_override_document(
+    document_path: Path,
+    *,
+    candidate_id: str,
+    expected_source_media_sha256: str,
+    expected_text_final_srt_sha256: str,
+) -> dict[str, Any]:
+    """Bind a reviewed speaker decision to one candidate, media, and text."""
+
+    document = json.loads(document_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        raise ValueError("speaker override schema_version must be 1")
+    if document.get("candidate_id") != candidate_id:
+        raise ValueError(
+            "speaker override candidate_id mismatch: "
+            f"expected {candidate_id!r}, got {document.get('candidate_id')!r}"
+        )
+    if document.get("source_media_sha256") != expected_source_media_sha256:
+        raise ValueError("speaker override source_media_sha256 does not match the batch plan")
+    if document.get("text_final_srt_sha256") != expected_text_final_srt_sha256:
+        raise ValueError("speaker override text_final_srt_sha256 does not match the batch plan")
+    if not SHA256_RE.fullmatch(str(document.get("source_srt_sha256") or "")):
+        raise ValueError("speaker override source_srt_sha256 must be a SHA-256 digest")
+    overrides = document.get("overrides")
+    if not isinstance(overrides, list):
+        raise ValueError("speaker overrides must be a list")
+    if not all(isinstance(item, Mapping) for item in overrides):
+        raise ValueError("speaker override decisions must be objects")
+    reviewed_votes = document.get("reviewed_context_votes")
+    labels = reviewed_votes.get("labels") if isinstance(reviewed_votes, Mapping) else None
+    if not overrides and not isinstance(labels, Mapping):
+        raise ValueError("reviewed speaker authority requires overrides or context votes")
+    return document
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -286,12 +345,31 @@ def _ass_timestamp(value: str) -> str:
     return f"{int(hours)}:{minutes}:{seconds}.{millis[:2]}"
 
 
+def _ass_timestamp_ms(value: int) -> str:
+    centiseconds = max(0, (int(value) + 5) // 10)
+    hours, remainder = divmod(centiseconds, 360_000)
+    minutes, remainder = divmod(remainder, 6_000)
+    seconds, centis = divmod(remainder, 100)
+    return f"{hours}:{minutes:02d}:{seconds:02d}.{centis:02d}"
+
+
 def _ass_escape(value: str) -> str:
-    return value.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
+    # ``_layout_cue_for_display`` already uses ASS's literal ``\N`` line-break
+    # marker. Preserve that marker while escaping arbitrary user backslashes;
+    # turning it into ``\\N`` makes libass render characters instead of a break.
+    line_break = "\u0000ASS_LINE_BREAK\u0000"
+    return (
+        value.replace(r"\N", line_break)
+        .replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\n", line_break)
+        .replace(line_break, r"\N")
+    )
 
 
-def write_ass(cues: list[Cue], path: Path) -> None:
-    header = """[Script Info]
+def write_ass(cues: list[Cue], path: Path, *, show_speaker_labels: bool = False) -> None:
+    header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -300,24 +378,29 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: LDS,Noto Sans CJK SC,62,&H00FFFFFF,&H000000FF,&H00203050,&H78000000,-1,0,0,0,100,100,0,0,1,4,1,2,80,80,50,1
-Style: GUEST,Noto Sans CJK SC,62,&H0000FFFF,&H000000FF,&H00203050,&H78000000,-1,0,0,0,100,100,0,0,1,4,1,2,80,80,50,1
-Style: LDS_OVERLAP,Noto Sans CJK SC,54,&H00FFFFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,100,100,145,1
-Style: GUEST_OVERLAP,Noto Sans CJK SC,54,&H0000FFFF,&H000000FF,&H00203050,&H50000000,-1,0,0,0,100,100,0,0,3,2,0,2,100,100,145,1
+Style: LDS,{LDS_SAPPHIRE_STYLE}
+Style: GUEST,{GUEST_WHITE_STYLE}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
+    # Reuse the approved production line-layout policy: <=28 display chars per
+    # line, <=2 lines, and sequential sub-cues for genuinely long text.
+    from scripts.run_auto_review_shadow_pipeline import _layout_cue_for_display
+
     for cue in cues:
         style = "LDS" if cue.speaker == "李豆沙" else "GUEST"
-        if cue.placement == "above":
-            style += "_OVERLAP"
-        text = _ass_escape(f"[{cue.speaker}] {cue.text}")
-        events.append(
-            f"Dialogue: {cue.layer},{_ass_timestamp(cue.start)},{_ass_timestamp(cue.end)},"
-            f"{style},,0,0,0,,{text}"
-        )
+        margin_v = 142 if cue.placement == "above" else 0
+        visible = f"[{cue.speaker}] {cue.text}" if show_speaker_labels else cue.text
+        for start_ms, end_ms, display_text in _layout_cue_for_display(
+            timestamp_ms(cue.start), timestamp_ms(cue.end), visible
+        ):
+            text = _ass_escape(display_text)
+            events.append(
+                f"Dialogue: {cue.layer},{_ass_timestamp_ms(start_ms)},{_ass_timestamp_ms(end_ms)},"
+                f"{style},,0,0,{margin_v},,{text}"
+            )
     atomic_write_text(path, header + "\n".join(events) + "\n")
 
 

@@ -1,7 +1,10 @@
+import base64
 import dataclasses
 import hashlib
+import io
 import json
 import subprocess
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -15,7 +18,38 @@ from src.autoslice.cpa_semantic_qa import (
     write_cpa_semantic_response_artifact,
 )
 from src.autoslice.review_evidence import ReviewEvidence
-from src.autoslice.song_repair import LrcLine
+from src.autoslice.song_repair import LrcLine, LrcResult
+from tests.host_vocal_test_support import (
+    bind_ready_live_performance_report,
+    make_ready_audio_alignment_run,
+    make_ready_host_vocal_claim,
+)
+
+
+def _ready_host_vocal_prover(source_media, candidate_id, boundary, alignment, output_dir):
+    alignment_path = Path(str(alignment["alignment_report_path"]))
+    alignment_payload = json.loads(alignment_path.read_text(encoding="utf-8"))
+    alignment_payload.update(
+        {
+            "candidate_id": candidate_id,
+            "first_lyric_start_ms": int(boundary["first_lyric_start_ms"]),
+            "last_lyric_end_ms": int(boundary["last_lyric_end_ms"]),
+        }
+    )
+    alignment_path.write_text(json.dumps(alignment_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    bind_ready_live_performance_report(
+        alignment_path,
+        source_media=Path(source_media),
+        candidate_id=candidate_id,
+    )
+    claim, _profile = make_ready_host_vocal_claim(
+        output_dir,
+        source_media=Path(source_media),
+        alignment_report=alignment_path,
+        candidate_id=candidate_id,
+    )
+    alignment["alignment_report_sha256"] = hashlib.sha256(alignment_path.read_bytes()).hexdigest()
+    return claim
 
 
 def _complete_evidence(candidate_id: str, **overrides) -> ReviewEvidence:
@@ -75,6 +109,142 @@ def _write_lyrics_alignment_proof(root: Path, *, stem: str = "travel-meaning") -
         "alignment_report_path": str(report_path),
         "alignment_report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
     }
+
+
+def _bind_ready_alignment_claim(
+    claim: dict[str, object],
+    *,
+    source_media: Path,
+    candidate_id: str,
+    first_ms: int,
+    last_ms: int,
+) -> None:
+    report_path = Path(str(claim["alignment_report_path"]))
+    span = last_ms - first_ms
+    rows = []
+    lyrics = []
+    for index in range(8):
+        start_ms = first_ms + round((span - 3_000) * index / 7)
+        text = f"测试歌词{index}"
+        lyrics.append({"lrc_time_ms": index * 10_000, "text": text})
+        rows.append(
+            {
+                "lrc_time_ms": index * 10_000,
+                "lrc_text": text,
+                "cue_start_ms": start_ms,
+                "cue_end_ms": start_ms + 3_000,
+                "matched_cue_id": f"fixture-cue-{index}",
+            }
+        )
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "candidate_id": candidate_id,
+            "first_lyric_start_ms": first_ms,
+            "last_lyric_end_ms": last_ms,
+            "lyric_lines": lyrics,
+            "alignment": rows,
+        }
+    )
+    report_path.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    bind_ready_live_performance_report(
+        report_path,
+        source_media=source_media,
+        candidate_id=candidate_id,
+    )
+    claim["provider"] = "agy"
+    claim["model"] = "lrclib-agy-audio-lrc-global-shift-v1"
+    claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+def _rebind_background_playback_observation(claim: dict[str, object]) -> None:
+    """Turn a bound AGY-v4 fixture into the speech-over-BGM hard negative."""
+
+    report_path = Path(str(claim["alignment_report_path"]))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    first_ms = int(report["first_lyric_start_ms"])
+    last_ms = int(report["last_lyric_end_ms"])
+    span = last_ms - first_ms
+    observation = {
+        "mode": "STREAMER_TALKING_OVER_MUSIC",
+        "confidence": 0.98,
+        "continuous_live_song_performance": False,
+        "background_recording_likelihood": 0.97,
+        "same_lidousha_live_performer_across_all_lyrics": False,
+        "other_singer_or_harmony_present": False,
+        "recorded_or_playback_vocal_present": True,
+        "evidence": [
+            {"time_ms": first_ms + span // 6, "observation": "host speech over recorded song at head"},
+            {"time_ms": first_ms + span // 2, "observation": "recorded singer continues under host speech"},
+            {"time_ms": first_ms + span * 5 // 6, "observation": "background recording continues at tail"},
+        ],
+        "notes": "hard-negative fixture: host identity is present but is not singing",
+    }
+    artifacts = report["audio_alignment_artifacts"]
+    raw_path = Path(str(artifacts["raw_output_path"]))
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    for raw_row in raw["observations"]:
+        raw_row.update(
+            lyric_vocal_subject="RECORDED_OR_PLAYBACK_SINGER",
+            lidousha_role="SPEAKING_NOT_SINGING",
+            same_live_vocal_source_as_lidousha=False,
+            other_singer_or_harmony_audible=False,
+            recorded_or_playback_vocal_audible=True,
+        )
+    for report_row in report["alignment"]:
+        report_row.update(
+            lyric_vocal_subject="RECORDED_OR_PLAYBACK_SINGER",
+            lidousha_role="SPEAKING_NOT_SINGING",
+            same_live_vocal_source_as_lidousha=False,
+            other_singer_or_harmony_audible=False,
+            recorded_or_playback_vocal_audible=True,
+        )
+    raw["live_performance"] = observation
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    artifacts["raw_output_sha256"] = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+    manifest_path = Path(str(artifacts["run_manifest_path"]))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["output_sha256"] = artifacts["raw_output_sha256"]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    artifacts["run_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    report["live_performance"] = observation
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+def _rebind_raw_report_timing_mismatch(claim: dict[str, object]) -> None:
+    report_path = Path(str(claim["alignment_report_path"]))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["alignment"][3]["cue_start_ms"] += 10_000
+    report["alignment"][3]["cue_end_ms"] += 10_000
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+def _rebind_raw_vocal_role_mismatch(claim: dict[str, object]) -> None:
+    """Tamper the bound raw row while leaving the projected report READY."""
+
+    report_path = Path(str(claim["alignment_report_path"]))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    artifacts = report["audio_alignment_artifacts"]
+    raw_path = Path(str(artifacts["raw_output_path"]))
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["observations"][3]["lidousha_role"] = "SPEAKING_NOT_SINGING"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    artifacts["raw_output_sha256"] = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+    for index, row in enumerate(report["alignment"]):
+        row["matched_cue_id"] = f"agy-audio:{artifacts['raw_output_sha256'][:12]}:line-{index}"
+    manifest_path = Path(str(artifacts["run_manifest_path"]))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["output_sha256"] = artifacts["raw_output_sha256"]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    artifacts["run_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    claim["alignment_report_sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
 
 
 def _write_review_package(
@@ -223,6 +393,43 @@ def _write_valid_source_video(path: Path, *, duration_seconds: float = 8.0) -> P
             "60",
             "-sc_threshold",
             "0",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return path
+
+
+def _write_valid_av_source_video(path: Path, *, duration_seconds: float = 8.0) -> Path:
+    """Create a deterministic source with exactly one video and one audio stream."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=128x128:rate=30",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000",
+            "-t",
+            f"{duration_seconds:.3f}",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
             str(path),
         ],
         check=True,
@@ -479,6 +686,72 @@ def test_live_source_anchor_job_is_planned_and_recorded(tmp_path, monkeypatch):
     assert planned_job["provenance"]["planner_version"] == "source-context-planner.v1"
 
 
+def test_planned_upstream_song_keeps_guard_and_never_materializes_as_talk(tmp_path):
+    """A job that still needs context planning must retain its upstream song lane.
+
+    The old planner replacement dropped all three song guard fields, resolved
+    this exact transcript through the talk fallback as AUTO_UPLOAD, and created
+    replacement recut/burn artifacts before the later review decision blocked.
+    """
+
+    transcript = (
+        "1\n00:00:01,000 --> 00:00:05,000\n我跟你们说一个事\n\n"
+        "2\n00:00:06,000 --> 00:00:10,000\n结果大家都笑了\n"
+    )
+    source_video, source_srt, refined_srt = _write_live_source_inputs(
+        tmp_path,
+        source_srt=transcript,
+        refined_srt=transcript,
+    )
+    output_dir = tmp_path / "output"
+
+    summary = shadow_pipeline.run_shadow_pipeline(
+        source_video=source_video,
+        source_srt=source_srt,
+        refined_srt=refined_srt,
+        source_context_job={
+            "candidate_id": "upstream-song-needs-planning",
+            "content_type_hint": "song",
+            "song_candidate": True,
+            "requires_full_source_song_boundary_redo": True,
+            "selector_stage": "seeded_song_anchor",
+            "timeline": {
+                "anchor_start_ms": 1_000,
+                "anchor_end_ms": 10_000,
+            },
+            "provenance": {"code_commit": "test-song-guard"},
+        },
+        agy_result=shadow_pipeline.AgyExecutionResult(
+            provider="agy",
+            model="Gemini 3.5 Flash (High)",
+            agy_rc=0,
+            provider_fallback_used=False,
+        ),
+        output_dir=output_dir,
+        no_upload=True,
+        source_context_run_ffmpeg=False,
+        burn_preview=True,
+        publish_staging=True,
+    )
+
+    record = summary["records"][0]
+    planned_job = record["source_context_job"]
+    assert planned_job["content_type_hint"] == "song"
+    assert planned_job["song_candidate"] is True
+    assert planned_job["requires_full_source_song_boundary_redo"] is True
+    assert planned_job["selector_stage"] == "seeded_song_anchor"
+    assert planned_job["timeline"]["context_start_ms"] == 0
+    assert planned_job["timeline"]["context_duration_ms"] == 10_000
+    assert planned_job["provenance"]["code_commit"] == "test-song-guard"
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_LIVE_PERFORMANCE_UNPROVEN" in record["reason_codes"]
+    assert record["boundary_resolution"]["action"] == "BLOCK"
+    assert record["materialized_recut"] is None
+    assert not (output_dir / "replacement_recuts").exists()
+    assert not list(output_dir.glob("**/*.publish.json"))
+    assert not list(output_dir.glob("**/*.cover.png"))
+
+
 def test_live_source_song_window_blocks_without_full_song_proof(tmp_path, monkeypatch):
     monkeypatch.setattr(shadow_pipeline, "apply_style_profile", lambda evidence, profile, **kwargs: evidence)
     source_video, source_srt, refined_srt = _write_live_source_inputs(
@@ -557,6 +830,14 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
         end_ms=280_000,
         text="唱完旅行的意义以后伴奏卡住，最后大家都笑了",
     )
+    lyrics_alignment = _write_lyrics_alignment_proof(tmp_path)
+    _bind_ready_alignment_claim(
+        lyrics_alignment,
+        source_media=source_video,
+        candidate_id="travel-meaning-anchor",
+        first_ms=25_000,
+        last_ms=214_800,
+    )
 
     summary = shadow_pipeline.run_shadow_pipeline(
         source_video=source_video,
@@ -583,7 +864,7 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
                 "clip_end_ms": 280_000,
                 "old_anchor_problem": "anchor starts mid-song and cuts off first/second verse",
             },
-            "lyrics_alignment": _write_lyrics_alignment_proof(tmp_path),
+            "lyrics_alignment": lyrics_alignment,
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
@@ -594,6 +875,7 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
         output_dir=tmp_path / "output",
         no_upload=True,
         source_context_run_ffmpeg=False,
+        host_vocal_prover=_ready_host_vocal_prover,
     )
 
     record = summary["records"][0]
@@ -605,7 +887,10 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
     assert "SONG_FULL_BOUNDARY_READY" in record["reason_codes"]
     assert record["decision_action"] == "AUTO_RECUT"
     assert record["recut_plan"]["start_ms"] == 0
-    assert record["recut_plan"]["end_ms"] == 280_000
+    # The old 280s boundary included the verified post-song host speech used
+    # as the CAM++ session anchor.  Proof input must not leak into song output.
+    assert record["recut_plan"]["end_ms"] == 215_800
+    assert record["materialized_recut"]["end_ms"] == 215_800
     assert "DUPLICATE_SIMILARITY_MISSING" not in record["reason_codes"]
     assert "ACTUAL_CUT_ERROR_MISSING" not in record["reason_codes"]
     assert "EDITORIAL_SCORE_LOW" not in record["reason_codes"]
@@ -623,6 +908,12 @@ def _run_song_ready_shadow_with_lyrics_alignment(
     tmp_path,
     lyrics_alignment: dict[str, object],
     response_overrides: dict | None = None,
+    *,
+    include_host_vocal: bool = True,
+    bind_live_proof: bool = True,
+    background_playback_with_ready_host: bool = False,
+    raw_report_mismatch_with_ready_host: bool = False,
+    raw_vocal_role_mismatch_with_ready_host: bool = False,
 ):
     source_video, source_srt, refined_srt = _write_live_source_inputs(
         tmp_path,
@@ -649,6 +940,41 @@ def _run_song_ready_shadow_with_lyrics_alignment(
         text="唱完旅行的意义以后伴奏卡住，最后大家都笑了",
         response_overrides=response_overrides,
     )
+    if bind_live_proof:
+        _bind_ready_alignment_claim(
+            lyrics_alignment,
+            source_media=source_video,
+            candidate_id="travel-meaning-anchor",
+            first_ms=25_000,
+            last_ms=214_800,
+        )
+    preexisting_host_claim: dict[str, object] = {}
+    if background_playback_with_ready_host:
+        # Mint identity evidence while the alignment still affirms singing.
+        # Applying the hard-negative AGY result afterward proves a speaker hit
+        # cannot override background/playback classification; proof generation
+        # itself must never use recorded or spoken rows as singing checkpoints.
+        preexisting_host_claim, _profile = make_ready_host_vocal_claim(
+            tmp_path / "preexisting-host-proof",
+            source_media=source_video,
+            alignment_report=Path(str(lyrics_alignment["alignment_report_path"])),
+            candidate_id="travel-meaning-anchor",
+        )
+        _rebind_background_playback_observation(lyrics_alignment)
+    if raw_report_mismatch_with_ready_host:
+        _rebind_raw_report_timing_mismatch(lyrics_alignment)
+    if raw_vocal_role_mismatch_with_ready_host:
+        _rebind_raw_vocal_role_mismatch(lyrics_alignment)
+    if raw_report_mismatch_with_ready_host or raw_vocal_role_mismatch_with_ready_host:
+        preexisting_host_claim, _profile = make_ready_host_vocal_claim(
+            tmp_path / "preexisting-host-proof",
+            source_media=source_video,
+            alignment_report=Path(str(lyrics_alignment["alignment_report_path"])),
+            candidate_id="travel-meaning-anchor",
+        )
+        lyrics_alignment["alignment_report_sha256"] = hashlib.sha256(
+            Path(str(lyrics_alignment["alignment_report_path"])).read_bytes()
+        ).hexdigest()
     summary = shadow_pipeline.run_shadow_pipeline(
         source_video=source_video,
         source_srt=source_srt,
@@ -673,6 +999,7 @@ def _run_song_ready_shadow_with_lyrics_alignment(
                 "clip_end_ms": 280_000,
             },
             "lyrics_alignment": lyrics_alignment,
+            "host_vocal_proof": preexisting_host_claim,
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
@@ -683,10 +1010,228 @@ def _run_song_ready_shadow_with_lyrics_alignment(
         output_dir=tmp_path / "output",
         no_upload=True,
         source_context_run_ffmpeg=False,
+        host_vocal_prover=_ready_host_vocal_prover if include_host_vocal else None,
     )
     record = summary["records"][0]
     evidence = _load_json(Path(record["evidence_path"]))
     return record, evidence
+
+
+def test_complete_lrc_without_lidousha_vocal_proof_stays_blocked(tmp_path):
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+        include_host_vocal=False,
+    )
+
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_HOST_VOCAL_UNPROVEN" in record["reason_codes"]
+    assert evidence["metrics"]["song_complete"] is False
+    assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
+
+
+def test_ready_host_identity_plus_speech_over_background_music_stays_blocked(tmp_path):
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+        background_playback_with_ready_host=True,
+    )
+
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_BACKGROUND_PLAYBACK_ONLY" in record["reason_codes"]
+    assert "SONG_NOT_LIDOUSHA_SINGING" in record["reason_codes"]
+    assert record.get("materialized_recut") is None
+    assert record.get("cover_path") is None
+    assert evidence["metrics"]["song_complete"] is False
+    assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
+    assert evidence["metadata"]["source_context_job"]["host_vocal_proof"] == {}
+    preexisting_proof = json.loads(
+        next((tmp_path / "preexisting-host-proof").glob("*.host-vocal-proof.json")).read_text(encoding="utf-8")
+    )
+    assert preexisting_proof["status"] == "READY"
+
+
+def test_background_mode_from_real_song_repair_cannot_fall_back_to_talk_or_materialize(tmp_path):
+    """Exercise the production full-retry path, not a pre-bound report fixture.
+
+    Before this regression, the valid negative AGY observation made song repair
+    return ``repaired=False``; orchestration forgot the mode, resolved the
+    seeded song as talk, and produced an AUTO_UPLOAD/MATERIALIZED recut.
+    """
+
+    candidate_id = "seededsong_50000_86000"
+    lyric_texts = (
+        "春风吹过山野",
+        "我们看见花开",
+        "音乐还在播放",
+        "窗外落下星光",
+        "故事慢慢展开",
+        "人群经过夜晚",
+        "回声留在远方",
+        "最后大家都笑了",
+    )
+    lrc = LrcResult(
+        provider="lrclib",
+        song_title="背景歌",
+        artist="original",
+        source_ref="https://example.invalid/background.lrc",
+        lines=tuple(LrcLine(index * 5_000, text) for index, text in enumerate(lyric_texts)),
+    )
+    def srt_time(total_seconds: int) -> str:
+        return f"00:{total_seconds // 60:02d}:{total_seconds % 60:02d},000"
+
+    srt = "\n\n".join(
+        f"{index + 1}\n{srt_time(50 + index * 5)} --> {srt_time(53 + index * 5)}\n{text}"
+        for index, text in enumerate(lyric_texts)
+    ) + "\n"
+    source_video, source_srt, refined_srt = _write_live_source_inputs(
+        tmp_path,
+        source_srt=srt,
+        refined_srt=srt,
+    )
+    cpa_fields = _write_passing_cpa_job_fields(
+        tmp_path,
+        candidate_id=candidate_id,
+        source_video=source_video,
+        source_srt=source_srt,
+        start_ms=50_000,
+        end_ms=86_000,
+        text="最后大家都笑了",
+    )
+
+    def background_audio_aligner(source_media, selected_lrc, selected_candidate_id, output_dir):
+        run = make_ready_audio_alignment_run(
+            source_media=Path(source_media),
+            source_duration_ms=100_000,
+            lrc=selected_lrc,
+            candidate_id=selected_candidate_id,
+            output_dir=output_dir,
+            offset_ms=50_000,
+        )
+        payload = json.loads(json.dumps(run.payload))
+        payload["live_performance"].update(
+            mode="ORIGINAL_OR_BACKGROUND_PLAYBACK",
+            confidence=0.99,
+            continuous_live_song_performance=False,
+            background_recording_likelihood=0.99,
+            same_lidousha_live_performer_across_all_lyrics=False,
+            other_singer_or_harmony_present=False,
+            recorded_or_playback_vocal_present=True,
+            notes="bound hard negative: original recording playback",
+        )
+        for row in payload["observations"]:
+            row.update(
+                lyric_vocal_subject="RECORDED_OR_PLAYBACK_SINGER",
+                lidousha_role="SILENT_OR_NOT_AUDIBLE",
+                same_live_vocal_source_as_lidousha=False,
+                other_singer_or_harmony_audible=False,
+                recorded_or_playback_vocal_audible=True,
+            )
+        raw_path = Path(run.output_path)
+        raw_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        raw_sha = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+        manifest_path = Path(run.manifest_path)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifacts"]["output_sha256"] = raw_sha
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return dataclasses.replace(
+            run,
+            payload=payload,
+            output_sha256=raw_sha,
+            manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        )
+
+    summary = shadow_pipeline.run_shadow_pipeline(
+        source_video=source_video,
+        source_srt=source_srt,
+        refined_srt=refined_srt,
+        source_context_job={
+            "candidate_id": candidate_id,
+            "content_type_hint": "song",
+            "song_candidate": True,
+            "requires_full_source_song_boundary_redo": True,
+            "timeline": {
+                "source_duration_ms": 100_000,
+                "anchor_start_ms": 50_000,
+                "anchor_end_ms": 86_000,
+                "context_start_ms": 0,
+                "context_end_ms": 100_000,
+                "context_duration_ms": 100_000,
+            },
+            **cpa_fields,
+        },
+        agy_result=shadow_pipeline.AgyExecutionResult(
+            provider="agy",
+            model="Gemini 3.5 Flash (High)",
+            agy_rc=0,
+            provider_fallback_used=False,
+        ),
+        output_dir=tmp_path / "output",
+        no_upload=True,
+        source_context_run_ffmpeg=False,
+        lrc_provider=lambda _query: lrc,
+        song_lrc_queries=("背景歌",),
+        audio_lrc_aligner=background_audio_aligner,
+        host_vocal_prover=_ready_host_vocal_prover,
+        burn_preview=True,
+        publish_staging=True,
+    )
+
+    record = summary["records"][0]
+    evidence = _load_json(Path(record["evidence_path"]))
+    repair_gate = record["source_context_job"]["song_repair_gate"]
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_BACKGROUND_PLAYBACK_ONLY" in record["reason_codes"]
+    assert "SONG_NOT_LIDOUSHA_SINGING" in record["reason_codes"]
+    assert record["boundary_resolution"]["action"] == "BLOCK"
+    assert record.get("materialized_recut") is None
+    assert record.get("cover_path") is None
+    assert not (tmp_path / "output" / "replacement_recuts").exists()
+    assert repair_gate["status"] == "BLOCKED"
+    assert repair_gate["live_performance"]["mode"] == "ORIGINAL_OR_BACKGROUND_PLAYBACK"
+    assert repair_gate["reason_codes"] == [
+        "SONG_BACKGROUND_PLAYBACK_ONLY",
+        "SONG_NOT_LIDOUSHA_SINGING",
+    ]
+    assert evidence["metrics"]["song_complete"] is False
+    assert evidence["metrics"]["foreground_song_overlap_seconds"] in {None, 0.0}
+
+
+def test_raw_agy_timing_cannot_be_reprojected_in_report_before_materialization(tmp_path):
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+        raw_report_mismatch_with_ready_host=True,
+    )
+
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_LIVE_PERFORMANCE_UNPROVEN" in record["reason_codes"]
+    assert record.get("materialized_recut") is None
+    assert record.get("cover_path") is None
+    assert evidence["metrics"]["song_complete"] is False
+    live_check = next(check for check in evidence["checks"] if check.get("code") == "SONG_LIVE_PERFORMANCE_PROOF")
+    assert "raw/report lyric row 3 mismatch" in live_check["evidence"]["error"]
+
+
+def test_raw_agy_vocal_role_cannot_disagree_with_ready_report(tmp_path):
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path,
+        _write_lyrics_alignment_proof(tmp_path),
+        raw_vocal_role_mismatch_with_ready_host=True,
+    )
+
+    assert record["decision_action"] == "BLOCK"
+    assert "SONG_LIVE_PERFORMANCE_UNPROVEN" in record["reason_codes"]
+    assert record.get("materialized_recut") is None
+    assert evidence["metrics"]["song_complete"] is False
+    live_check = next(check for check in evidence["checks"] if check.get("code") == "SONG_LIVE_PERFORMANCE_PROOF")
+    assert "raw/report lyric row 3 mismatch" in live_check["evidence"]["error"]
 
 
 def test_live_source_complete_song_waives_boring_context_cpa_blocks(tmp_path):
@@ -724,7 +1269,9 @@ def test_live_source_song_ready_without_alignment_report_fails_closed(tmp_path):
     lyrics_alignment.pop("alignment_report_path")
     lyrics_alignment.pop("alignment_report_sha256")
 
-    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -740,7 +1287,9 @@ def test_live_source_song_ready_with_alignment_report_hash_mismatch_fails_closed
     lyrics_alignment = _write_lyrics_alignment_proof(tmp_path)
     lyrics_alignment["alignment_report_sha256"] = "0" * 64
 
-    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -754,7 +1303,9 @@ def test_live_source_song_ready_without_provider_model_source_fails_closed(tmp_p
     lyrics_alignment.pop("provider")
     lyrics_alignment.pop("model")
 
-    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -767,7 +1318,9 @@ def test_live_source_song_ready_with_missing_report_file_fails_closed(tmp_path):
     lyrics_alignment = _write_lyrics_alignment_proof(tmp_path)
     Path(str(lyrics_alignment["alignment_report_path"])).unlink()
 
-    record, _evidence = _run_song_ready_shadow_with_lyrics_alignment(tmp_path, lyrics_alignment)
+    record, _evidence = _run_song_ready_shadow_with_lyrics_alignment(
+        tmp_path, lyrics_alignment, bind_live_proof=False
+    )
 
     assert record["decision_action"] == "BLOCK"
     assert "SONG_PROOF_UNVERIFIED" in record["reason_codes"]
@@ -1618,6 +2171,88 @@ def test_burn_preview_uses_lidousha_sapphire_ass_style_not_default_srt_force_sty
     assert "force_style=" not in ffmpeg_filter
 
 
+def test_burn_preview_uses_hash_bound_prebuilt_speaker_ass_without_rebuilding(tmp_path, monkeypatch):
+    media_path = _write(tmp_path / "recuts" / "talk.mp4", b"fake media bytes\n")
+    subtitle_path = _write(
+        tmp_path / "recuts" / "talk.srt",
+        "1\n00:00:00,000 --> 00:00:02,000\n她想问是三个位置哦\n",
+    )
+    ass_path = _write(
+        tmp_path / "recuts" / "talk.speaker-final.ass",
+        "[Script Info]\n[V4+ Styles]\nStyle: LDS\nStyle: GUEST\n[Events]\n",
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(command, check=False, capture_output=True, text=True, timeout=None):
+        calls.append(command)
+        if command and command[0] == "ffprobe":
+            return subprocess.CompletedProcess(command, 0, "1920,1080\n", "")
+        Path(command[-1]).write_bytes(b"speaker burned\n")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(shadow_pipeline.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_write_lidousha_sapphire_ass_from_srt",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not rebuild speaker ASS")),
+    )
+    ass_sha = "sha256:" + shadow_pipeline._sha256(ass_path)
+    record = shadow_pipeline._burn_preview_subtitles(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media_path),
+            "subtitle_path": str(subtitle_path),
+            "subtitle_ass_path": str(ass_path),
+            "subtitle_style": "lidousha-speaker-colour-v1",
+            "artifact_hashes": {"ass_sha256": ass_sha},
+        },
+        run_ffmpeg=True,
+    )
+
+    assert record["burned_preview"]["status"] == "BURNED"
+    assert record["burned_preview"]["ass_path"] == str(ass_path)
+    assert record["burned_preview"]["subtitle_style"] == "lidousha-speaker-colour-v1"
+    assert record["burned_preview"]["path"].endswith(".burned-final-speaker.mp4")
+    ffmpeg = next(command for command in calls if command and command[0] == "ffmpeg")
+    assert "speaker-final.ass" in ffmpeg[ffmpeg.index("-vf") + 1]
+
+
+def test_burn_preview_rejects_prebuilt_speaker_ass_hash_drift(tmp_path):
+    media_path = _write(tmp_path / "talk.mp4", b"media")
+    subtitle_path = _write(tmp_path / "talk.srt", "1\n00:00:00,000 --> 00:00:01,000\n文本\n")
+    ass_path = _write(tmp_path / "talk.ass", "ass")
+    record = shadow_pipeline._burn_preview_subtitles(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media_path),
+            "subtitle_path": str(subtitle_path),
+            "subtitle_ass_path": str(ass_path),
+            "artifact_hashes": {"ass_sha256": "sha256:" + "0" * 64},
+        },
+        run_ffmpeg=False,
+    )
+    assert record["burned_preview"]["status"] == "FAILED"
+    assert record["burned_preview"]["reason_code"] == "PREBUILT_ASS_MISSING_OR_HASH_MISMATCH"
+
+
+def test_burn_preview_rejects_prebuilt_speaker_ass_without_expected_hash(tmp_path):
+    media_path = _write(tmp_path / "talk.mp4", b"media")
+    subtitle_path = _write(tmp_path / "talk.srt", "1\n00:00:00,000 --> 00:00:01,000\n文本\n")
+    ass_path = _write(tmp_path / "talk.ass", "ass")
+    record = shadow_pipeline._burn_preview_subtitles(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media_path),
+            "subtitle_path": str(subtitle_path),
+            "subtitle_ass_path": str(ass_path),
+            "artifact_hashes": {},
+        },
+        run_ffmpeg=False,
+    )
+    assert record["burned_preview"]["status"] == "FAILED"
+    assert record["burned_preview"]["reason_code"] == "PREBUILT_ASS_MISSING_OR_HASH_MISMATCH"
+
+
 def test_ass_layout_never_exceeds_two_lines_of_28_chars(tmp_path):
     # Viewability spec from the LLM Multimodal ASR project (polish_srt_for_viewing
     # --max-chars 28) tightened by Ivan 2026-07-03: <=28 chars per visual line,
@@ -1659,7 +2294,7 @@ def test_ass_time_rounds_to_nearest_centisecond_not_floor():
 
 
 def test_song_recut_burns_lyrics_from_lrc_global_shift_and_forces_accurate_rerender(tmp_path):
-    source_video = _write_valid_source_video(tmp_path / "source.mp4", duration_seconds=8.0)
+    source_video = _write_valid_av_source_video(tmp_path / "source.mp4", duration_seconds=8.0)
     boundary = shadow_pipeline.BoundaryResolution(
         candidate_id="song-lrc",
         action=shadow_pipeline.DecisionAction.AUTO_RECUT,
@@ -1682,6 +2317,7 @@ def test_song_recut_burns_lyrics_from_lrc_global_shift_and_forces_accurate_reren
         run_ffmpeg=True,
         lyric_timeline=[(10_000, "第一句真实歌词"), (13_000, "第二句真实歌词"), (16_000, "第三句真实歌词")],
         lyric_offset_ms=-8_500,
+        song_output_proof_binding={"post_song_anchor_start_ms": 8_000},
     )
 
     assert materialized["status"] == "MATERIALIZED"
@@ -1697,6 +2333,89 @@ def test_song_recut_burns_lyrics_from_lrc_global_shift_and_forces_accurate_reren
     assert "00:00:00,500 --> 00:00:03,500" in srt_text
     manifest = _load_json(Path(materialized["manifest_path"]))
     assert manifest["subtitle_source"] == "external_lrc_global_shift"
+
+
+def test_song_recut_and_burn_bind_exact_source_interval_streams_and_final_hashes(tmp_path):
+    from scripts import free_session_autoslice as free_runner
+
+    source_video = _write_valid_av_source_video(tmp_path / "source-av.mp4", duration_seconds=8.0)
+    proof_files = {}
+    for key, filename in (
+        ("lyrics_alignment_report", "alignment.json"),
+        ("host_vocal_proof", "host-proof.json"),
+        ("agy_run_manifest", "agy-run.json"),
+    ):
+        path = _write(tmp_path / filename, json.dumps({"fixture": key}) + "\n")
+        proof_files[f"{key}_path"] = str(path.resolve())
+        proof_files[f"{key}_sha256"] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    proof_binding = {
+        **proof_files,
+        "post_song_anchor_start_ms": 6_000,
+    }
+    boundary = shadow_pipeline.BoundaryResolution(
+        candidate_id="bound-song",
+        action=shadow_pipeline.DecisionAction.AUTO_RECUT,
+        resolved_start_ms=1_000,
+        resolved_end_ms=6_000,
+        start_boundary_score=0.98,
+        end_boundary_score=0.98,
+        reason_codes=("SONG_FULL_BOUNDARY_READY",),
+        next_start_ms=1_000,
+        next_end_ms=6_000,
+    )
+
+    materialized = shadow_pipeline._materialize_recut_record(
+        source_video=source_video,
+        candidate_id="bound-song",
+        boundary_resolution=boundary,
+        output_dir=tmp_path / "out",
+        cues=[shadow_pipeline.SourceCue("asr", 1_000, 2_000, "错误 ASR", kind="singing")],
+        run_ffmpeg=True,
+        lyric_timeline=[(0, "第一句"), (2_000, "第二句"), (4_000, "第三句")],
+        lyric_offset_ms=1_000,
+        song_output_proof_binding=proof_binding,
+    )
+    assert materialized["status"] == "MATERIALIZED"
+    burned = shadow_pipeline._burn_preview_subtitles(materialized, run_ffmpeg=True)
+    assert burned["status"] == "MATERIALIZED"
+    assert burned["burned_preview"]["status"] == "BURNED"
+
+    source_sha = "sha256:" + hashlib.sha256(source_video.read_bytes()).hexdigest()
+    manifest_path = Path(burned["manifest_path"])
+    manifest = _load_json(manifest_path)
+    binding = manifest["verified_output_binding"]
+    assert burned["manifest_sha256"] == "sha256:" + hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    assert manifest["schema_version"] == shadow_pipeline.MATERIALIZED_RECUT_SCHEMA_VERSION
+    assert binding["candidate_id"] == "bound-song"
+    assert binding["source"] == {"canonical_path": str(source_video.resolve()), "sha256": source_sha}
+    assert binding["interval"] == {"start_ms": 1_000, "end_ms": 6_000, "duration_ms": 5_000}
+    assert binding["post_song_anchor_start_ms"] == 6_000
+    assert binding["proofs"] == proof_binding
+    assert binding["stream_contract"] == shadow_pipeline._song_stream_contract()
+
+    recut_command = binding["recut_transform"]["command"]
+    recut_maps = [recut_command[index + 1] for index, token in enumerate(recut_command[:-1]) if token == "-map"]
+    assert recut_maps == ["0:v:0", "0:a:0"]
+    for exclusion in ("-sn", "-dn", "-map_metadata", "-map_chapters"):
+        assert exclusion in recut_command
+    burn_command = binding["burn_transform"]["command"]
+    burn_maps = [burn_command[index + 1] for index, token in enumerate(burn_command[:-1]) if token == "-map"]
+    assert burn_maps == ["0:v:0", "0:a:0"]
+    for exclusion in ("-sn", "-dn", "-map_metadata", "-map_chapters"):
+        assert exclusion in burn_command
+
+    artifacts = binding["artifacts"]
+    for path_key, hash_key in (
+        ("recut_media_path", "recut_media_sha256"),
+        ("subtitle_path", "subtitle_sha256"),
+        ("burned_media_path", "burned_media_sha256"),
+        ("ass_path", "ass_sha256"),
+    ):
+        artifact_path = Path(artifacts[path_key])
+        assert artifact_path == artifact_path.resolve()
+        assert artifacts[hash_key] == "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    assert free_runner._has_exact_av_streams(Path(artifacts["recut_media_path"])) is True
+    assert free_runner._has_exact_av_streams(Path(artifacts["burned_media_path"])) is True
 
 
 def test_song_recut_accurate_rerender_failure_is_retry_infra(tmp_path, monkeypatch):
@@ -1743,6 +2462,7 @@ def test_song_recut_accurate_rerender_failure_is_retry_infra(tmp_path, monkeypat
         run_ffmpeg=True,
         lyric_timeline=[(1_000, "真实歌词第一句"), (4_000, "真实歌词第二句")],
         lyric_offset_ms=0,
+        song_output_proof_binding={"post_song_anchor_start_ms": 8_000},
     )
 
     assert materialized["status"] == "RETRY_INFRA"
@@ -1966,6 +2686,115 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
     assert "cover_sha256" in publish["artifact_hashes"]
 
 
+def test_cpa_image_edit_falls_back_only_on_explicit_model_unavailable(
+    tmp_path, monkeypatch
+):
+    reference = tmp_path / "ref.png"
+    reference.write_bytes(b"reference")
+    calls = []
+    unavailable = json.dumps(
+        {"error": {"code": "client_model_unavailable", "message": "unsupported"}}
+    ).encode()
+    image_payload = json.dumps(
+        {"data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+    ).encode()
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return image_payload
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                400,
+                "bad request",
+                hdrs=None,
+                fp=io.BytesIO(unavailable),
+            )
+        return Response()
+
+    monkeypatch.setattr(shadow_pipeline.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(shadow_pipeline, "_normalize_cover_canvas", lambda _path: (1920, 1080))
+    output = tmp_path / "out.png"
+    request_path = tmp_path / "request.json"
+    response_path = tmp_path / "response.json"
+    result = shadow_pipeline._call_cpa_image_edit(
+        base_url="https://cpa.example/v1",
+        api_key="secret",
+        reference_path=reference,
+        output_path=output,
+        prompt="prompt",
+        request_path=request_path,
+        response_path=response_path,
+        model_candidates=("gpt-image-2", "gpt-image-1.5"),
+    )
+
+    assert result["status"] == "AI_BACKGROUND_READY"
+    assert result["selected_model"] == "gpt-image-1.5"
+    assert result["attempted_models"] == ["gpt-image-2", "gpt-image-1.5"]
+    assert result["model_fallback_used"] is True
+    assert len(calls) == 2
+    assert b'gpt-image-2' in calls[0].data
+    assert b'gpt-image-1.5' in calls[1].data
+    request_evidence = json.loads(request_path.read_text(encoding="utf-8"))
+    response_evidence = json.loads(response_path.read_text(encoding="utf-8"))
+    assert request_evidence["api_key"] == "<redacted>"
+    assert [row["model"] for row in response_evidence["attempts"]] == [
+        "gpt-image-2",
+        "gpt-image-1.5",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_code"),
+    [(400, "model_price_error"), (403, "safety_rejection"), (500, "upstream_error")],
+)
+def test_cpa_image_edit_does_not_fallback_for_other_failures(
+    tmp_path, monkeypatch, status_code, error_code
+):
+    reference = tmp_path / "ref.png"
+    reference.write_bytes(b"reference")
+    calls = []
+    body = json.dumps({"error": {"code": error_code}}).encode()
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        raise urllib.error.HTTPError(
+            request.full_url,
+            status_code,
+            "failed",
+            hdrs=None,
+            fp=io.BytesIO(body),
+        )
+
+    monkeypatch.setattr(shadow_pipeline.urllib.request, "urlopen", fake_urlopen)
+    result = shadow_pipeline._call_cpa_image_edit(
+        base_url="https://cpa.example/v1",
+        api_key="secret",
+        reference_path=reference,
+        output_path=tmp_path / "out.png",
+        prompt="prompt",
+        request_path=tmp_path / "request.json",
+        response_path=tmp_path / "response.json",
+        model_candidates=("gpt-image-2", "gpt-image-1.5"),
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["attempted_models"] == ["gpt-image-2"]
+    assert result["model_fallback_used"] is False
+    assert len(calls) == 1
+
+
 def test_live_source_missing_srt_records_source_integrity_and_replay_plan(tmp_path):
     source_video = _write(tmp_path / "tiny.m4s", b"tiny")
     output_dir = tmp_path / "output"
@@ -2054,6 +2883,8 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
         "沧桑了谁人的眼眸",
         "还有多少痛 埋藏在心中",
         "只为一人从容 无求孤身闯万重",
+        "一壶浊酒笑看风云动",
+        "回首江湖仍是少年梦",
     ]
     srt_blocks = []
     cursor_ms = 50_000
@@ -2118,6 +2949,14 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
         no_upload=True,
         source_context_run_ffmpeg=False,
         lrc_provider=lambda query: lrc,
+        audio_lrc_aligner=lambda source, selected_lrc, candidate, artifact_dir: make_ready_audio_alignment_run(
+            source_media=source,
+            source_duration_ms=120_000,
+            lrc=selected_lrc,
+            candidate_id=candidate,
+            output_dir=artifact_dir,
+        ),
+        host_vocal_prover=_ready_host_vocal_prover,
     )
 
     record = summary["records"][0]
@@ -2133,6 +2972,49 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path):
     repair = evidence["metadata"]["song_repair"]
     assert repair["repaired"] is True
     assert any(a["step"] == "lrc_discovery" and a["status"] == "SUCCESS" for a in repair["attempts"])
+
+    # Positive-chain regression: AGY, the projected report, CAM++ and the
+    # materialized manifest must all name the exact source bytes and interval.
+    job = record["source_context_job"]
+    alignment_claim = job["lyrics_alignment"]
+    report_path = Path(alignment_claim["alignment_report_path"])
+    alignment_report = _load_json(report_path)
+    agy_manifest = _load_json(Path(alignment_report["audio_alignment_artifacts"]["run_manifest_path"]))
+    host_proof = _load_json(Path(job["host_vocal_proof"]["proof_path"]))
+    recut = record["materialized_recut"]
+    recut_manifest_path = Path(recut["manifest_path"])
+    recut_manifest = _load_json(recut_manifest_path)
+    source_path = str(source_video.resolve())
+    source_sha = hashlib.sha256(source_video.read_bytes()).hexdigest()
+    assert {
+        recut["source_binding"]["canonical_path"],
+        alignment_claim["source_media_path"],
+        alignment_report["source_media_path"],
+        alignment_report["audio_alignment_artifacts"]["source_origin_path"],
+        agy_manifest["artifacts"]["source_origin_path"],
+        host_proof["source_media"]["path"],
+    } == {source_path}
+    assert {
+        str(value).removeprefix("sha256:")
+        for value in (
+            recut["source_binding"]["sha256"],
+            alignment_claim["source_media_sha256"],
+            alignment_report["source_media_sha256"],
+            alignment_report["audio_alignment_artifacts"]["source_sha256"],
+            agy_manifest["artifacts"]["source_sha256"],
+            host_proof["source_media"]["sha256"],
+        )
+    } == {source_sha}
+    assert recut["end_ms"] == alignment_report["post_song_talk_start_ms"]
+    assert recut["end_ms"] == host_proof["session_host_anchor"]["start_ms"]
+    assert recut["end_ms"] == job["song_boundary"]["clip_end_ms"]
+    assert recut_manifest["requested_range"] == {
+        "start_ms": recut["start_ms"],
+        "end_ms": recut["end_ms"],
+        "duration_ms": recut["duration_ms"],
+    }
+    assert recut_manifest["verified_output_binding"] == recut["verified_output_binding"]
+    assert recut["manifest_sha256"] == "sha256:" + hashlib.sha256(recut_manifest_path.read_bytes()).hexdigest()
 
 
 def test_live_source_song_repair_failure_records_attempts_then_blocks(tmp_path):
@@ -2262,7 +3144,7 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     assert draft["cover_generation"]["fallback_used"] is False
 
 
-def test_publish_staging_falls_back_to_job_title_when_llm_fails(tmp_path):
+def test_publish_staging_fails_before_cover_when_title_llm_fails(tmp_path, monkeypatch):
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
     srt = tmp_path / "clip.srt"
@@ -2271,6 +3153,16 @@ def test_publish_staging_falls_back_to_job_title_when_llm_fails(tmp_path):
 
     def broken_llm(prompt: str) -> str:
         raise RuntimeError("bridge down")
+
+    cover_calls = []
+
+    def forbidden_cover_call(*args, **kwargs):
+        cover_calls.append((args, kwargs))
+        raise AssertionError("cover stage must not run before title authority")
+
+    monkeypatch.setattr(
+        shadow_pipeline, "_stage_lidousha_ai_cover", forbidden_cover_call
+    )
 
     staged = shadow_pipeline._stage_publish_draft(
         record,
@@ -2283,7 +3175,13 @@ def test_publish_staging_falls_back_to_job_title_when_llm_fails(tmp_path):
 
     staging = staged["publish_staging"]
     assert staging["title"] == "原始job标题"
-    assert staging["title_source"].startswith("job_title")
+    assert staging["title_source"].startswith("job_title(llm_failed")
+    assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["title_authority_status"] == "UNRESOLVED_AUTO"
+    assert staging["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["cover_generation"]["status"] == "NOT_ATTEMPTED"
+    assert staging["reason_codes"] == ["TITLE_AUTHORITY_UNRESOLVED"]
+    assert cover_calls == []
     assert staging["upload_enabled"] is False
 
 
@@ -2339,7 +3237,54 @@ def test_publish_staging_retries_banned_hype_word_then_accepts_clean_rewrite(tmp
     assert "已被否决" not in calls[0]
 
 
-def test_publish_staging_flags_title_policy_violation_when_retries_exhausted(tmp_path):
+def test_publish_staging_binds_title_to_selected_main_hook_and_self_heals_mismatch(tmp_path):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"placeholder video")
+    srt = tmp_path / "clip.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n上下摇以后又聊到熊猫头锤和温柔歌\n",
+        encoding="utf-8",
+    )
+    record = {
+        "status": "MATERIALIZED",
+        "media_path": str(media),
+        "subtitle_path": str(srt),
+        "artifact_hashes": {},
+    }
+    hook = "弹幕让李豆沙表演上下摇，她先把自己摇晕，又叫熊熊靠近后突然发动熊猫头锤。"
+    calls = []
+
+    def wrong_topic_llm(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps(
+            {
+                "title": "熊猫头槌解决kmx，温柔歌后再表演上下摇",
+                "selection_hook_anchor": "上下摇",
+            },
+            ensure_ascii=False,
+        )
+
+    staged = shadow_pipeline._stage_publish_draft(
+        record,
+        candidate_id="talk-hook-drift",
+        title="原始job标题",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=wrong_topic_llm,
+        selection_hook=hook,
+    )
+
+    staging = staged["publish_staging"]
+    assert len(calls) == 3
+    assert hook in calls[0]
+    assert "第一分句" in calls[0]
+    assert staging["title"] == "【李豆沙】弹幕让小李表演上下摇，结果先把自己摇晕"
+    assert staging["title_source"] == "selection_hook_fallback_after_llm_mismatch"
+    assert staging["title_policy_violations"] == []
+    assert "熊猫头槌解决" not in staging["title"]
+
+
+def test_publish_staging_blocks_title_policy_violation_before_cover(tmp_path, monkeypatch):
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
     srt = tmp_path / "clip.srt"
@@ -2352,6 +3297,13 @@ def test_publish_staging_flags_title_policy_violation_when_retries_exhausted(tmp
         calls.append(prompt)
         return '{"title": "虫儿飞温柔哄睡到犯规了"}'
 
+    cover_calls = []
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_stage_lidousha_ai_cover",
+        lambda *args, **kwargs: cover_calls.append((args, kwargs)),
+    )
+
     staged = shadow_pipeline._stage_publish_draft(
         record,
         candidate_id="song-stubborn",
@@ -2363,16 +3315,19 @@ def test_publish_staging_flags_title_policy_violation_when_retries_exhausted(tmp
 
     staging = staged["publish_staging"]
     assert len(calls) == 3  # 1 initial + 2 bounded retries
-    # Kept (length-valid, prefix forced) but flagged so a human can catch it.
+    # Retained only as audit text; it has no title authority and cannot spend on a cover.
     assert staging["title"] == "【李豆沙】虫儿飞温柔哄睡到犯规了"
     assert staging["title_source"] == "llm+lidousha_style_asset(title_policy_violation)"
     assert "banned_hype_word" in staging["title_policy_violations"]
     assert "banned_universal_suffix" in staging["title_policy_violations"]
+    assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert cover_calls == []
     draft = _load_json(Path(staging["publish_json_path"]))
     assert draft["title_policy_violations"] == staging["title_policy_violations"]
 
 
-def test_publish_staging_length_gate_rejects_short_auto_title_and_keeps_job_title(tmp_path):
+def test_publish_staging_length_gate_blocks_before_cover(tmp_path, monkeypatch):
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
     srt = tmp_path / "clip.srt"
@@ -2381,6 +3336,13 @@ def test_publish_staging_length_gate_rejects_short_auto_title_and_keeps_job_titl
 
     def short_llm(prompt: str) -> str:
         return '{"title": "好听"}'  # prefixed 【李豆沙】好听 = 7 chars < 12 lower bound
+
+    cover_calls = []
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_stage_lidousha_ai_cover",
+        lambda *args, **kwargs: cover_calls.append((args, kwargs)),
+    )
 
     staged = shadow_pipeline._stage_publish_draft(
         record,
@@ -2396,6 +3358,63 @@ def test_publish_staging_length_gate_rejects_short_auto_title_and_keeps_job_titl
     assert staging["title"] == "原始job标题"
     assert staging["title_source"].startswith("job_title(llm_length_out_of_bounds")
     assert staging["title_policy_violations"] == []
+    assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staging["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert cover_calls == []
+
+
+def test_invalid_first_title_then_retry_error_still_blocks_before_cover(tmp_path, monkeypatch):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"placeholder video")
+    srt = tmp_path / "clip.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:02,000\n测试\n", encoding="utf-8")
+    record = {"status": "MATERIALIZED", "media_path": str(media), "subtitle_path": str(srt), "artifact_hashes": {}}
+    calls = 0
+
+    def invalid_then_error(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return '{"title":"测试现场炸裂到犯规"}'
+        raise RuntimeError("retry bridge failed")
+
+    cover_calls = []
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_stage_lidousha_ai_cover",
+        lambda *args, **kwargs: cover_calls.append((args, kwargs)),
+    )
+    staged = shadow_pipeline._stage_publish_draft(
+        record,
+        candidate_id="talk-retry-error",
+        title="原始job标题",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=invalid_then_error,
+    )
+
+    assert calls == 2
+    assert staged["publish_staging"]["status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert staged["publish_staging"]["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
+    assert cover_calls == []
+
+
+def test_selection_hook_anchor_rejects_ascii_late_clause_and_generic_fragment():
+    assert not shadow_pipeline._selection_hook_anchor_valid(
+        anchor="熊猫头槌",
+        selection_hook="弹幕让小李表演上下摇, 后来突然发动熊猫头槌",
+        title="熊猫头槌终于来了",
+    )
+    assert not shadow_pipeline._selection_hook_anchor_valid(
+        anchor="弹幕让",
+        selection_hook="弹幕让李豆沙表演上下摇…后来发动熊猫头槌",
+        title="弹幕让熊猫头槌抢戏",
+    )
+
+
+def test_selection_hook_fallback_preserves_terminal_question_mark():
+    title = shadow_pipeline._selection_hook_fallback_title("你们还要来找我玩，好不好？")
+    assert title == "【李豆沙】你们还要来找我玩，好不好？"
 
 
 def test_publish_staging_manual_title_bypasses_prefix_and_policy_enforcement(tmp_path):
@@ -2581,6 +3600,8 @@ def test_validated_cover_lines_rejects_lossy_or_unrenderable():
     assert v(["小", "皇", "帝", "拒", "绝", "新"], ct, hook_word="", max_lines=5) == ()  # 6 lines > max
     assert v("小皇帝拒绝更新", ct, hook_word="", max_lines=5) == ()           # not a list
     assert v([], ct, hook_word="", max_lines=5) == ()                        # empty
+    assert v(["你们还要来找我玩", "好不好"], "你们还要来找我玩，好不好？", hook_word="好不好", max_lines=5) == ()
+    assert v(["你们还要来找我玩", "，好不好？"], "你们还要来找我玩，好不好？", hook_word="好不好", max_lines=5) == ()
     long_line = "一二三四五六七八九十甲乙丙"  # 13 chars — over the single-line budget
     assert v([long_line], long_line, hook_word="", max_lines=5) == ()
 
@@ -2612,6 +3633,8 @@ def test_validated_cover_words_rejects_lossy_or_hook_splitting():
     assert v(["沙豆李", "完全", "听不", "到礼墨的声音"], text, hook_word="听不到") == ()  # hook split
     assert v("not a list", text, hook_word="") == ()
     assert v([], text, hook_word="") == ()
+    punctuation_text = "你们还要来找我玩，好不好？"
+    assert v(["你们还要来找我玩", "，好不好？"], punctuation_text, hook_word="好不好") == ()
 
 
 def test_wrap_even_packs_word_atoms_without_splitting():
@@ -2624,6 +3647,15 @@ def test_wrap_even_packs_word_atoms_without_splitting():
     assert "".join(lines) == "沙豆李沉浸在疯狂摇头之中完全听不到礼墨的声音"
     for atom in ("沙豆李", "疯狂摇头", "听不到", "礼墨"):
         assert any(atom in line for line in lines), (atom, lines)  # atom never split across lines
+
+
+def test_wrap_even_preserves_visible_punctuation_and_never_strands_it():
+    text = "去彩排前连问三遍你们还要来找我玩，好不好？"
+    lines = shadow_pipeline._wrap_even(text, 5, keep=("好不好",))
+    assert "".join(lines) == text
+    assert all(not line.startswith(tuple("，,、；;！!？?。")) for line in lines)
+    assert lines[-1].endswith("？")
+    assert any(line.endswith("，") for line in lines)
 
 
 def test_fit_cover_lines_full_title_grows_with_raised_line_budget():

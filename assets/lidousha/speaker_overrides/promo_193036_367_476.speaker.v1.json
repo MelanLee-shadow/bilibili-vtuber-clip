@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "source_media_sha256": "a327a0d0cde1ee26f5a9f2e11c5b7f708ddb0345f11124e4f8641f7735c76598",
+  "text_final_srt_sha256": "66df43bb0478ba0106617ad1ae77f425cb3dac359e85a6d1d36db95e44debd15",
+  "source_srt_sha256": "3ea4c326bbaf9131e6ebde05a64565bb8948f00d9002384291de12e7ff94829d",
+  "candidate_id": "promo_193036_367_476",
+  "status": "ivan_reviewed_turns_on_production_text",
+  "reviewed_at": "2026-07-11",
+  "overlap_policy": "保留主说话人；只有词和时间都可靠时才增加抢话层。",
+  "overrides": [
+    {
+      "source_cue": 27,
+      "expect": {
+        "start": "00:00:57,450",
+        "end": "00:01:01,200",
+        "text": "这个学生是个很好的小朋友"
+      },
+      "authority": "Ivan direct speaker and text-boundary correction, 2026-07-11",
+      "note": "Ivan confirmed 李豆沙 says 这个学生 and 安晚/Awa replies 是个很好的小朋友. The 59.440s seam is the guest speech onset after the stable 58.785-59.446s acoustic gap.",
+      "segments": [
+        {
+          "start": "00:00:57,450",
+          "end": "00:00:59,440",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "这个学生"
+        },
+        {
+          "start": "00:00:59,440",
+          "end": "00:01:01,200",
+          "speaker": "连线",
+          "speaker_detail": "安晚/Awa",
+          "text": "是个很好的小朋友"
+        }
+      ]
+    }
+  ]
+}

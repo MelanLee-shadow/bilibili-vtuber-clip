@@ -79,7 +79,337 @@
 2. 移除 text-only context 的身份决定权；mixed/overlap、local/session 冲突统一 REVIEW 或经可验证边界 split。
 3. 用现有 120+R1 作为开发回归；清晰 false READY 维持 0 后，再建立新的未参与调试 holdout。
 4. 用 2026-07-10 独播与 2026-07-09 联动 shadow 验证 session gate，联动误放行为零后才允许跳过完整 finalizer。
+## 2026-07-12：多新番角色图广度调度与最新直播产物（当前）
 
+### 目标
+
+修复角色知识图只有 BanG Dream 的实际调度缺陷，使每日 crawler
+从机器时效快照中广度优先生成「话题 -> 当前作品 -> 角色中文名/读音」
+子图，并为未来 183 天新番保留固定配额。同时只读回答 7/11、7/12
+最新直播是否已有切片；保持生产 `DISABLED` 和 no-upload。
+
+### 已完成
+
+- 根因不是“设计上只做 BangDream”：旧 crawler 按一个 term 连续最多
+  6 次搜索，`max_queries=12` 可被前两个 term 吃完；且 committed
+  fallback timely asset 本身只有一个人工审阅的「梦限大」term。生产机器
+  timely snapshot 实为 202 terms，其中符合当前/未来动漫图条件的有
+  96 个。
+- crawler 改为 breadth-first：默认 16 topics / 40 searches / 80 HTTP requests，
+  首轮每个动漫只查一次，未解析者才进入第二轮；当前 term 占
+  12 个槽位，未来 183 天新番占 4 个槽位。漫画、新闻与漫展不进
+  角色图；它们仍保留在 timely-term crawler 层。
+- 当前作品优先使用 timely snapshot 里的 Bangumi subject 稳定 ID，
+  否则依次用 canonical 和带季号/当前标题的 structured readings/aliases。
+  Season/Cour/Part 查询不再默默退化为旧本篇，`Black Clover Season 2`
+  也不会因为模糊前缀匹配被错接到 `BLACK LAGOON`。当前作 subject
+  尚无角色时，才从同 franchise 已有季/本篇回退取候选角色。
+- 社区昵称特例改为「梦限大 -> BanG Dream! YUME∞MITA -> MyGO!!!!! /
+  Ave Mujica」：先解析当前作，再在广度发现结束后有界扩展兄弟
+  作品，不再让父 franchise 提前占满 work 槽位。Bangumi 合并别名中
+  的「、，,;/」也已分成独立可语音匹配的 alias。
+- 用生产 202-term 机器快照做了无人工真值的临时实网重放：
+  **12 topics / 14 works / 127 characters**，38 次搜索、52 次网络请求、
+  diagnostics 为空。图包含梦限大当前作/MyGO/Ave、无职转生第三季、
+  实教第四季、超市后门吸烟、幼女战记第二季、婚姻剧毒、死神千年血战、
+  胆大党第三季、影之实力者残响篇、艾莉同学第二季等。例如
+  `Takakura Ken` 可在胆大党子图中对应规范中文「高仓健」，
+  `Ayanokouji Kiyotaka` 对应「绫小路清隆」。
+- 新增了 breadth/current-work/source-ID/empty-cast fallback/跨 franchise 误匹配/
+  current-before-sibling/CLI 默认值回归；完整测试为 **861 passed**，
+  compileall 与 `git diff --check` 通过。
+- 代码 commit `f5385e85f2635f0b3e02a232b517763ed347fa01` 已用正式
+  `scripts/deploy_free_autoslice.sh free` 部署；远程 `DEPLOYED_COMMIT`、runner
+  md5 和 crawler CLI 默认值回读一致。每日 06:37 graph cron 恰好一条，
+  `/opt/bilive/autoslice/DISABLED` 仍存在，未上传。
+- 最新直播产物只读核对：7/11 隔离自治验收为
+  `review_ready_with_failures`，已有 3 个 talk MP4+SRT+cover，另有 2 talk failed，
+  6 song 全部 blocked；7/12 仍是 `processing`，当时 2 song pending，交付目录
+  只有已过时 summary，没有 MP4/SRT/cover。正式生产 state/out 仍只到
+  7/10，7/11、7/12 都是隔离验收面。
+
+### 进行中（含后台进程）
+
+- 生产 runtime `state/topic_entity_graph.json` 在本次部署后尚未生成；它由
+  已安装的每日 06:37 cron 自动从最新 machine timely snapshot 构建，不由
+  agent 手工启动。生产在该文件出现前仍回退到 committed 1-topic graph。
+- 7/12 隔离验收读取时仍在自治变化；本轮没有看进程/阶段日志，
+  没有手工调用任何切片阶段。
+
+### 阻塞
+
+- 无需 Ivan 决策的代码 blocker。尚未有新 runtime graph 的自治 cron 产物，
+  因此不能宣称 12-topic 临时重放已经在生产新直播中端到端命中。
+- 7/11 的 6 个 song blocked 和 7/12 无成片仍是真实验收失败/等待状态，
+  不能因为本次 crawler 修复而改写成成功。
+
+### 下一步
+
+1. 只读检查下一次 06:37 cron 之后的 `state/topic_entity_graph.json`：要求
+   lineage 绑定当次 `timely_terms.json`，diagnostics 为空，且 topics/works/entities
+   不再是 1/3/23。不手工触发 crawler 或切片候选阶段。
+2. 后续新直播字幕验收时，选取一个非 BanG Dream 话题，核对话题路由、
+   原始音频 forced-choice 与最终中文角色名三者；不能只用 crawler JSON
+   存在代替端到端字幕真值。
+3. 7/12 只在状态自治收敛后重读 state/summary/媒体产物；不恢复对话
+   heartbeat，不手工促进 runner。
+
+## 2026-07-12：失败归因与话题子专名图（历史基线）
+
+### 目标
+
+说明最新自治盲测为什么失败，并把字幕专名链改成「先识别话题/作品，
+再进入该话题的角色子图，最后由原始音频确认角色身份并写回规范中文名」。
+同时修复已确认的 99→98 AGY 漏 cue 和歌曲重试丢失画面歌名证据；保持
+truth withheld、生产 `DISABLED` 和 no-upload。
+
+### 已完成
+
+- 已删除 Codex thread automation `vtuber-slice-latest-blind-artifact-check`；
+  不再由本对话定时检查。远端隔离 systemd timer 是流水线自身的自治运行面，
+  本次没有停止、轮询或手动驱动任何候选阶段。
+- 最新 7/11 state 真实为 2 个 talk failed、0 个当前 song blocked、2 个 song
+  pending。`auto_170019_305_355` 的旧边界失败已经自愈，当前失败是隔离 repo
+  缺 `voiceprint_profile.v1.json`；`auto_170019_580_757` 当前先失败于 AGY
+  `expected 99, got 98`，即使越过也会遇到同一缺资产问题。隔离 repo 的
+  `assets/` 为空，而相同 commit 的生产 repo 有声纹资产，因此该 eval 副本
+  不能视为生产等价部署。7/12 仍在 sealing、尚无最终产物，不能把等待态写成
+  内容失败。
+- 新增 `lidousha-topic-entity-graph.v1`、有界 Bangumi 结构化 enrichment 和
+  `scripts/crawl_topic_entity_graph.py`。运行时从 BCUT 草稿、selection hook、
+  结构化 SC/弹幕及可用 screen text 解析 topic/work；显式作品只加载该作品角色，
+  仅命中家族话题时加载其有界子作品并集，无匹配/无关歧义则不注入。图只提供
+  `canonical_zh`、别名和读音；动态 referent group 仍调用原始音频 forced-choice
+  决定身份。
+- 当前机器生成快照包含 1 个 BanG Dream 相关话题、3 个结构化作品、23 个角色，
+  可提供高松灯、要乐奈、椎名立希、丰川祥子、三角初华等中文规范名及日文/
+  假名/罗马字读音。`梦限大` 等 Bilibili 社区别名只负责把字幕路由进该话题，
+  不能直接充当角色名真值。当前图 SHA-256 为
+  `72ab92748f8defcfa8fc70a90de3bd0ce3b35534645fbf12d519c00cf740cc2b`；
+  `MyGO` 可窄路由到其 11 个角色，只有家族话题时才使用 3 个子作品/23 角色并集。
+- `withheld` 模式默认禁用 committed/reviewed 角色图，只接受显式
+  `AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH` 机器快照，并要求图内 generator/
+  `input_timely_terms_sha256` 与当次 blind timely snapshot 精确匹配；图文件另有
+  严格 schema、双向 edge、来源 allowlist、大小/数量上限、过期和 SHA-256 绑定。
+- 结构化弹幕只在没有 transcript/selection hook/screen 的明确作品命中时用于
+  work routing；弹幕中的 sibling work 名不能覆盖主播明确说出的 MyGO/Ave。
+  crawler 任一 enrichment diagnostics 都拒绝覆盖 last-good runtime graph。
+- AGY 仅在输出时间戳全部精确属于草稿、且最多漏 2 条/3% 时，按 timestamp
+  补回原 BCUT cue；多漏、重复或时间漂移继续 fail closed。歌曲 recoverable
+  requeue 现保留 `lane/title_hint/visual_song_evidence`，不会在重试时丢掉画面歌名。
+- 当前完整回归 `python3 -m pytest -q` 为 **835 passed**；部署脚本语法、
+  `git diff --check` 和相关编译检查通过。
+- Fresh 只读对抗审查的所有材料性反例均已接受并修复：包括 sibling chat 覆盖
+  主播明确作品、静态/动态图 surface 重叠、非双向 edge、partial crawl 覆盖好图、
+  blind lineage 不绑定、短 chunk 超过 3% 仍补 cue、异常 song wrapper 丢画面证据。
+  最终审查未发现剩余材料性代码风险。
+- 代码承重 commit `03ac31efea735eda82884a9d66b367ac7b2b5d1c` 已通过正式
+  `scripts/deploy_free_autoslice.sh free` 部署。远端 runner md5、声纹 runtime
+  assets、graph schema/lineage 均验证通过；`DEPLOYED_COMMIT` readback 一致，
+  committed graph SHA 为 `72ab9274...`、1/3/23，06:37 graph cron 恰好一条，
+  `/opt/bilive/autoslice/DISABLED` 仍存在。没有上传。
+
+### 进行中（含后台进程）
+
+- 代码位于 `/Users/ivan/Project/vtuber-slice-song-selfheal`、分支
+  `codex/july10-song-selfheal`。本节代码与部署已完成；本次 HANDOFF 同步是后续
+  docs-only 收尾，远端 exact authority 始终以 `DEPLOYED_COMMIT` 为准。
+- 远端旧隔离 timer 仍可自治运行旧 `repo-34b9b26`；没有本对话 heartbeat 继续
+  追踪它。生产 `/opt/bilive/autoslice/DISABLED` 仍须保留。
+
+### 阻塞
+
+- 旧 eval repo 的部署资产不完整，导致边界修好后仍在 speaker finalizer 确定性
+  失败；这不是重试预算耗尽，也不能靠重复同指纹重试自救。
+- 7/12 尚无终态产物。不能在没有新 immutable eval/deploy 证据时声称新图已在
+  最新全部直播上端到端通过。
+
+### 下一步
+
+1. 后续盲测必须从完整 committed archive 创建等价 repo，并显式传入由机器
+   timely snapshot 生成的 blind graph；不得再用空 `assets/` 的 repo 归因生产能力。
+2. 若继续旧 7/11/12 自治验收，应新建 immutable 完整部署快照，让 runner 自己
+   运行并只在终态读产物；不要恢复本对话 heartbeat 或手工逐阶段推进。
+
+## 2026-07-12：社区专名、边界/声纹自愈与最新直播自治盲测（历史快照）
+
+### 目标
+
+不再由 agent 逐阶段驱动候选片：修复社区时效专名、下一话题边界误判和单个声纹离群点误杀后，由正式 `--once -> tick()` 入口在隔离目录自行处理 2026-07-11/12；主线只按里程碑检查 state/report/artifact。人工真值必须 withheld，不上传。
+
+### 已完成
+
+- 社区 crawler 集成为 `4044433 -> 2d53963`：在官方/ACG 时间窗口外加入有界 Bilibili 社区证据，修复假别名、跨实体桥接、非确定性、部分 HTTP 失败隐藏和 consumer 冲突。排除 reviewed seed 的 live 机器盲测得到唯一 `BanG Dream! YUME∞MITA`，自动别名含「梦限大」，证据来自 2026-07-10..12 的 8 个 Bilibili 社区视频，不依赖 Ivan 给的答案表。生产快照 `/opt/bilive/autoslice/state/timely_terms.json` 为 202 terms，SHA-256 `20245740472d1e5e9739908cdfc9749122822d4f9e207e363170f084258ef8e9`；隔离盲测固定在 `evals/community-latest-20260712/timely_terms.machine-blind.json`。
+- 边界修复 `31bc17c`：默认 400ms tail 如果跨入独立的下一话题 VAD island，在证据空白后自适应截断；只有真正穿过语义切点的说话/收束 cue 才能延长。事故 fixture `auto_170019_305_355` 的预期切点为 60.420s，不再被后面的新话题拖延 19.7s。
+- 单例声纹修复 `34b9b26`：单个笑声/语气词离群点只在强主播多数、两侧主播、非词汇内容和 whole-clip judge >=0.90 全部成立时自动判李豆沙；其余进入 hash-bound `SPEAKER_REVIEW_REQUIRED`，不烧字/不交付。`confidence:true`、marker-only、缺 media/text/cue-audio hash、stale manifest 均已负向验证为普通失败，不会永久卡死。独立复核无剩余 P0/P1；全量 `818 passed`、compileall 和 diff-check 通过。
+- 正式部署脚本已将 `34b9b265d538484348df74a145bde63b60c37dbe` 部署到 `free:/opt/bilive/autoslice/repo`；远端 `DEPLOYED_COMMIT`、runner md5、speaker runtime assets 均验证通过。生产 `/opt/bilive/autoslice/DISABLED` 保留，无上传路径。
+
+### 进行中（含后台进程）
+
+- 隔离 BASE 为 `/opt/bilive/autoslice/evals/community-latest-20260712`，最终代码快照为 `repo-34b9b26`。systemd transient timer `autoslice-blind-20260711-12-34b9b26.timer` 处于 active/waiting，每次完整 tick 结束 10 分钟后再调用正式 `free_session_autoslice.py --once`；使用 `runner.lock` 单飞、`AUTOSLICE_HUMAN_TRUTH_MODE=withheld`、固定机器专名快照，仅可见 7/11 与 7/12 录像目录。
+- 旧的一次性 7/11 driver PID 1696379 尚在自然收尾时，timer 只做 PID guard 后立即跳过；它退出后，timer 自动把旧隔离 repo 的已成功交付复制到新 repo，然后由 tick 自行重排旧指纹的边界/声纹失败并处理 7/12。agent 不再轮询子阶段或日志。
+- Codex thread heartbeat `vtuber-slice-latest-blind-artifact-check` 已删除；其历史检查规则由上方当前节取代。
+
+### 阻塞
+
+- 无需 Ivan 决策的代码 blocker。当前只等待旧 driver 自然退出及自治 tick 生成最终产物；CPA/AGY 限流会按已持久化的 backoff 跨 tick 重试，不由 agent 手动促进。
+- 生产 `DISABLED` 不在本次隔离验收范围内；它何时移除仍需 Ivan 另行授权。
+
+### 下一步
+
+1. 只定时读取 `state/2026-07-11.json` 和 `state/2026-07-12.json`，不看阶段进程。每日期必须达到 `review_ready | review_ready_with_failures | no_delivery`、pending talk/song 为空、segment snapshot 稳定、无同指纹可重试项，且生成对应 `AUTOSLICE_SUMMARY.md`，才称为收敛。
+2. 收敛后停止隔离 timer，核对新专名、边界、说话人、歌切、每个媒体/SRT/封面和 no-upload 证据；对 fail-closed 项如实记录，不把 `review_ready_with_failures` 写成全成功。
+3. 用最终运行结果更新本节并再跑正式部署脚本，使生产 `DEPLOYED_COMMIT` 与最终干净 HEAD 一致；仍不上传。
+
+## 2026-07-12：7/10 歌切自愈、16 首视觉歌单与时效专名 crawler 集成
+
+### 目标
+
+修复 2026-07-10 歌曲只发现/交付极少数的问题：把主播画面右上角的 15 首歌单作为独立发现与歌名提示来源，并保留歌单结束后李豆沙演唱的《宝贝》为第 16 首；修复《怎么办》重试后复用旧媒体窗口导致完整边界生成失败、host-vocal 验证器误杀、CPA 429 不跨 tick 重试、人工真值污染盲测等通病。同时接入以运行日为中心回溯 9 个月、前瞻 6 个月的 ACG 时效专名候选 crawler。本轮始终 no-upload。
+
+### 已完成
+
+- 集成分支 `/Users/ivan/Project/vtuber-slice-song-selfheal` / `codex/july10-song-selfheal` 已形成可复现提交链：`4e04ffb`（bounded timely-term crawler）、`6078fdf`（歌切缓存/验证器/429/盲测隔离）、`26f8877`（画面歌单发现）、`8a2e0f8`（voiceprint profile/session-anchor 资产重绑定）、`e97b737`（歌曲 AGY 长窗口与跨 tick 重试）、`db6ec5c`（full-source 断点恢复）、`e8720d9`（严格结构校验后恢复 AGY 非零收尾输出）、`0a79c6b`（已验证 AUTO_RECUT 歌曲的 no-upload 包装）。最终全量回归为 **774 passed**，`git diff --check` 通过。
+- **16 首事实与发现根因**：真实画面最终歌单为年轮、可愛くなりたい、园游会、猜不透、怎么办、你的微笑、下课铃声、龙卷风、想和你迎着台风去看海、晴る、快乐星猫、MORE! JUMP! MORE!、小城夏天、行星环、太阳系disco，共 15 首；尾声《宝贝》是李豆沙演唱的第 16 首。旧流水线误把 talk setup/payoff/closure selector 当作 song fallback、共享 4 个语义候选上限，并以 180 秒邻近规则吞并相邻歌曲，所以几乎每个 30 分钟文件只留下一个候选。
+- **视觉歌单 lane 已经真实回填验收**：固定右上 ROI、每 10 秒抽帧、timestamp contact sheet、一次有界 AGY High 严格 JSON、内容+配置缓存和 fail-open；按日期累计编号歌单去重，与 ASR/语义候选取并集。远端六个有效录制段逐段 live AGY（非 mock）机器恢复编号 1–15 全部歌名和候选区间，随后六段 cache-hit 原子写入 7/10 state 的 `visual_song_inventory` / `visual_song_backfill`；`visual_song_count=15`。OCR 的 `可爱くなりたい`、`more jump more` 只作为 LRC 查询提示，不直接成为最终标题；《宝贝》由独立音频/ASR lane 保留为第 16 首。
+- **《怎么办》已真实恢复交付**：根因是重试改变窗口后仍使用固定文件名，旧 tight/full source 分别比新 job 多 42.6 秒，AGY 报 source duration mismatch。修复后 tight `214.250s`、full `269.250s` 均与 job 精确一致；full-source 得到网易云 ID `1862114887`、63 行、匹配率 `1.0`、`FULL_SONG_READY`、AGY `LIVE_STREAMER_SINGING` 0.95、host-vocal READY 和烧字视频。期间继续修复 AGY 慢任务预算、跨 tick backoff/full 断点恢复、完整 SRT 写完后 AGY epilogue 非零、AUTO_RECUT 与 runner 包装契约冲突。最终用 hash-bound summary 零计算恢复为 `review_ready`，reason 只剩 `SONG_FULL_BOUNDARY_READY`，delivery manifest 为 `DELIVERED_NO_UPLOAD / upload_enabled=false`。
+- **host-vocal 验证器修复**：不再要求每个演唱 checkpoint 都直接达到过高 enrollment 分数；仍要求 AGY 明确李豆沙现场演唱且无他人/和声/回放，并允许“直接 enrollment 或已验证同场说话桥”通过。远端隔离实证：《宝贝》READY（anchor median `0.56622`，6/7，头中尾齐）、《园游会》READY（实际 post-song speech 3450ms，median `0.50196`，7/7）。没有按歌名白名单放行。最终部署后又用当前代码、完整源片和既有 LRC 报告 fresh 重算《宝贝》，proof 位于 `/opt/bilive/autoslice/out/acceptance/baobei-host-vocal-current-20260712/seededsong_45000_168840.host-vocal-proof.json`，SHA-256 `29e1ac355027141bb1af251bc5ff20c06351e835eff5dac0fdc2d30d923bdd23`，仍为 READY 6/7；7/10 `songs[]` 中的旧 blocked/`SONG_NOT_LIDOUSHA_SINGING` 条目是修复前历史 selector 结果，尚未重跑完整边界/LRC/烧字包装，不得再作为当前演唱身份结论。
+- **429 跨 tick 自愈**：从日志尾部区分 `CPA_RATE_LIMITED / CPA_MODEL_DOWN / CPA_UPSTREAM_5XX / CPA_UPSTREAM_TIMEOUT`，状态持久化 `next_retry_at`；15 分钟起指数退避、最长 6 小时、最多 6 次基础设施重试，同时保留总生命周期上限。《行星环》《年轮》不会再把一次 429 当永久内容失败。
+- **人工真值隔离**：新增 `AUTOSLICE_HUMAN_TRUTH_MODE=delivery|withheld`。`withheld` 模式屏蔽候选文本 override、字幕回归 gate、人工 reviewed timely terms，并由生产器 fail-closed 防止真值字段泄漏；另有 `scripts/score_blind_subtitle.py` 在生成后单独对真值评分。crawler 支持 `--exclude-reviewed-seed` 生成机器盲测快照。
+- **时效专名 crawler 已部署并 live smoke**：AniList/Bangumi/ANN/TV Tokyo RSS/受控活动源，默认 `2025-10-12..2027-01-12`，有界 HTTP/cache、失败隔离、严格 schema、原子写入。远端实网本轮 7 次请求、231 词、adapter error 为 0，已写 `/opt/bilive/autoslice/state/timely_terms.json`；每日 06:17 cron 已安装。排除人工 seed 的机器盲测快照仍为 230 词，SHA-256 `663efd2a0982fdeaef3127c7852b5365cbe817d43113a66102170d65fe826148`。
+
+### 进行中（含后台进程）
+
+- 无本轮遗留 AGY、selector、ffmpeg、CAM++ 或上传进程。生产承重代码为 `0a79c6b`，其后只有本节交接文档提交；最终部署版本以远端 `DEPLOYED_COMMIT` readback 为准。`/opt/bilive/autoslice/DISABLED` 仍在；cron 存在但 runner 保持暂停。7/10 当前歌曲交付为原有《想和你迎着台风去看海》+ 新恢复《怎么办》共 2 条，符合项目原定 `MAX_SONGS_PER_DATE=2`；15+《宝贝》的完整演唱库存与最多交付 2 条的策略已分离。
+
+### 阻塞
+
+- **机器盲测还不能声称自动得到中文“梦限大”**：完整快照里的“梦限大”目前来自有官方来源支撑的 reviewed seed；排除 seed 后能发现当季 `BanG Dream! YUME∞MITA / ゆめ∞みた` 相关实体，但当前结构化源不会自动推导中文粉丝简称“梦限大”。在增加可靠中文别名证据链前必须如实区分。
+- 无视觉 backfill、《怎么办》边界或包装 blocker。`DISABLED` 是否在下一场前移除仍需 Ivan 明确决定；本轮没有恢复无人值守 runner，也没有上传授权。
+
+### 下一步
+
+1. Ivan 审听本地《宝贝》源片；当前流水线 fresh 隔离 proof 已给出 READY，但该候选尚未重跑完整边界/LRC/烧字包装，也未占用/突破 `MAX_SONGS_PER_DATE=2`。若后续要求把它形成第三个 review package，需要先明确是否临时突破现有每场最多 2 个歌切的产品策略。
+2. 后续补一个有来源约束的中文别名/新闻实体解析层，使“梦限大”在 `--exclude-reviewed-seed` 盲测也能由当季新闻证据导出；在此之前不把 reviewed seed 命中冒充 crawler 自发现。
+3. 若接受本生产基线，下一场前由 Ivan 明确授权移除 `DISABLED`，再观察一次自然直播的 15+1 视觉/音频并集和跨 tick 基础设施重试；仍保持任何发布必须另行授权。
+
+## 2026-07-11（续六）：偏航 worktree 隔离 + 当前生产真相复核
+
+### 目标
+
+接管上一 agent 留下的多 worktree 现场，先恢复干净、可逆的 Git 状态，再从 `free` 真实运行面确认当前部署、7/10 批次终态和下一条主线；本轮不上传、不重新部署、不摘 `DISABLED`。
+
+### 已完成
+
+- **8 个 worktree 已全部恢复 clean**。已验证但被后续超集取代的 `codex/campp-perf-fix` 两文件 WIP 隔离在 stash `42e848c9a9e907f529b8738fffe086c7624e858c`；明显偏航的 `codex/speaker-review-corrections` 大型实验（124 文件、约 112k 新增行）及其生成残留分别隔离在 stashes `6419723eb3e3615ec7db38c0c83716c64c0a6be9`、`43ead04413139ba171d2f3aa72629f4ab66fd37f`。三份均可恢复，但不属于当前生产主线。
+- **主 worktree 污染根因已修**：Mac launchd 每 30 分钟拉取的 `reports/slice_monitor/autoslice_free/` 是 disposable mirror，却被上传审计证据的全局反忽略规则重新暴露。已删除本地 146MB 镜像，并在 main commit `14cdaf0` 只对该 mirror 重新忽略；canonical 上传证据目录不受影响。
+- **生产真相已更新**：`free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` 当前为 `0f31119f3d1f1d56fc77639fceaac8969792084d`（2026-07-11T09:35:50Z），是 `2246f5c` CAM++ / speaker-final 超集之后的后续 authority、frozen resume、song self-heal 和 cover repair 集成，不再是下节记载的旧部署点。
+- **当前代码确定性验绿**：在干净的 `codex/july10-song-selfheal @ 0f31119` 运行 `python3 -m pytest -q`，结果 **728 passed in 18.59s**；旧 `.pytest_cache` 中两个 `lastfailed` nodeid 在当前测试文件已不存在，属于陈旧缓存，不是当前失败。
+- **7/10 真实交付终态**：远端 `review_ready_with_failures`；talk 为 5 条 `review_ready` + 1 条真实 `boundary_unrepairable`，song 为 1 条 `review_ready` + 3 条 blocked + 2 条 failed。6 条交付物均有 MP4、SRT 和 `REPAIRED_AI_COVER / VALID_BOUND` 封面，早先 CPA `gpt-image-2` blocker 已解除。无上传进程或本会话后台进程。
+
+### 进行中（含后台进程）
+
+- 无 agent 遗留进程。free cron 仍每 10 分钟触发，但 `/opt/bilive/autoslice/DISABLED` 自 09:35Z 在位，runner 每轮只记录 paused；上传面仍关闭。
+
+### 阻塞
+
+- **恢复无人值守前的唯一运行面 blocker 是 `DISABLED`**。本轮没有授权移除；应在接受当前生产基线、下一场直播前由验收流程明确摘除。
+- **Git 集成仍未收口**：生产 `0f31119` 与 main 已明显分叉；不能把隔离的 112k 行实验 stash 当成待合并内容，也不能从旧 `2246f5c` 文档状态推断当前生产。
+- 6 条 review package 是否接受、是否逐条上传仍由 Ivan 决定；本轮没有上传授权。
+
+### 下一步
+
+1. 以 **`0f31119` 为当前生产基线**审 7/10 的 5 条谈话 + 1 条歌切；发现具体字幕/说话人/封面问题时走窄修复，不恢复 binary-v4 大型实验 stash。
+2. 新建干净集成面，审慎把 main 独有提交与 `0f31119` 汇合；先做 diff/冲突审查和全量测试，再决定是否形成下一部署 commit。
+3. 集成基线被接受后、下一场直播前移除 `free:/opt/bilive/autoslice/DISABLED`，随后观察一次自然 cron end-to-end；这一步需要明确运行面授权。
+4. 保持 no-upload；任何发布继续要求逐条授权和 hash-bound `AUTO_UPLOAD` manifest。
+## 2026-07-12：自动新闻/专名 crawler（独立分支，未部署）
+
+### 目标
+
+把人工 `timely_terms.json` 扩展成可重复运行的候选先验生成器：以运行日期为中心默认回溯 9 个月、前瞻 6 个月，覆盖动画、漫画/轻小说 ACG 企划、新闻和已配置漫展名称；不允许新闻或专名先验覆盖原音与结构化 SC/弹幕。
+
+### 已完成
+
+- 独立工作树 `/Users/ivan/Project/vtuber-slice-crawler`、分支 `codex/timely-term-crawler`，基线为生产 `0f31119`。
+- 新增 bounded HTTP/cache、AniList 动画与 manga 结构化范围查询、Bangumi 当前番剧中文名精确匹配、ANN/TV Tokyo RSS 新闻证据、受控漫展 watch、严格配置/schema、失败隔离、离线 cache replay、原子幂等写入和 CLI dry-run/write。
+- 实网 pinned smoke（`2026-07-12T12:00:00-04:00`）覆盖 `2025-10-12..2027-01-12`：231 个有效词条（150 动画、50 manga/light-novel 输入、29 个 Bangumi 中文名匹配、11 个 ANN 新闻命中；合并去重后 231），严格 consumer 校验通过；快照 251,655 bytes，SHA-256 `9d253cb03c27c8ae554d5cdf9d66058e5666b08003dbbb93c5f12ff3e39b3a57`。
+- 全量回归 `python3 -m pytest -q`：`740 passed in 13.53s`；`py_compile` 和 `git diff --check` 通过。
+
+### 进行中（含后台进程）
+
+- 无后台进程。代码仅在独立分支/工作树，尚未部署、未改生产快照、未上传。
+
+### 阻塞
+
+- 无代码 blocker。数据覆盖仍有诚实边界：历史 RSS 不是归档；Bangumi 中文规范名目前只补当前周表；新创漫展仍需将稳定名称加入受控 watch；自动生成同音 confusable 的误伤成本过高，因此继续由音频回归/人工真值增补。
+
+### 下一步
+
+1. root 集成该分支提交后，在生产候选基线做一次禁用人工 override 的字幕盲测；crawler 只供候选，不作为正确答案。
+2. 经集成验收后再决定是否部署，并把 CLI 接入每日有界定时刷新；本分支没有执行部署。
+3. 后续可增加有权威中文本地化和稳定发布日期的结构化源，逐步降低 seed 依赖。
+## 2026-07-11（续五）：CAM++ speaker_finalizer O(N²) 挂死修复 + speaker-final 超集部署（2246f5c）+ 2026-07-10 批次全 5 条谈话恢复
+
+### 目标
+
+接手另一会话中途的 `3ad0f9b`（结构化字幕权威）工作面：诊断 2026-07-10 无人值守批次里 4 条谈话 rc=1 失败根因、修复、按 Ivan 决定把 speaker-final 超集 + 修复一次性部署上线、把该批次恢复成一致的 review_ready。git 并回 main（#3）本轮按 Ivan 指令押后；无上传授权。
+
+### 已完成
+
+- **根因定位（4 条失败）**：3 条（`auto_190017_1068_1217` 邦多利 / `auto_200009_524_545` 21s / `auto_212005_163_311`）= `speaker_finalizer._run_campplus_analysis` 每对 wav 重嵌入 + 每对重写增长的 `pair-cache.json` → O(句×锚) CAM++ 推理 + O(对²) 磁盘写，1800s 超时把已成片切片 rc=1 崩掉（21s/19 句片也中招=挂死非片长，机器 load 才 1.35/8核）。1 条（`auto_190017_902_950` BW见面会）= 真实 `BOUNDARY_UNREPAIRABLE`（切点后 23s 连续说话、新扩源逻辑已按设计跑过），非 bug。
+- **CAM++ 修复（embed-once，保分）**：改为每句 embedding 只算一次（`verifier([wav], output_emb=True)['embs']`）再对缓存向量算 cosine。CAM++ 成对分数本就是这两向量的 cosine，按 pipeline 5 位小数取整 → 说话人裁决逐条不变，推理从 O(句×锚) 塌到 O(句)。真机实测（19 句片）：**8.2s vs 1800s 挂死**，10 对真实 wav old/new 分数 `max|diff|=0.0` 逐位相同，输出 `single_host` 合理。新增 embed-once 调用计数 / 保分 / 缓存持久化三条回归。
+- **超集部署（`2246f5c` → free；Ivan 选“并入 speaker-final 超集”）**：新建 `codex/deploy-superset`（off `942f737` = speaker-final committed tip）= 超集 + 那 8 个 parked WIP（batch speaker review + 字幕文本 override + 部署期资产断言，从 speaker-final 工作树 patch 而来，单独一 commit）+ CAM++ fix（port 到其 1294 行 finalizer）。全量 **599 passed**；`deploy_free_autoslice.sh` 自带 staged-tree 校验（含 WIP 资产断言：profile/model hash、references、session anchors、entity_confusables、timely_terms、batch plan + hash-bound overrides）全过——先校验后原子切换。`DEPLOYED_COMMIT` = `2246f5c`（2026-07-11T02:33:38Z）。`DISABLED` 保留（cron 仍暂停）。
+- **2026-07-10 批次恢复（全 5 条谈话统一到新流水线）**：复用 runner 自身 `requeue_recoverable_talks → produce_batch(produce_talk) → write_reports`（tick 的谈话路径），跳过 recall + 整个歌切 lane。先补 3 条 CAM++ 挂死片，再按 Ivan“整批统一”补 2 条早上 pre-authority 旧片（弹幕上下摇 / 3D线下见）。终态 `review_ready_with_failures` = **5 交付 / 1 真实边界(BW见面会) / 6 歌切按设计 fail-closed**。5 条全有 `speaker-final.json` + `chat-authority.json`；邦多利终字幕 恋青/梦限大/wakuwaku/立希 正确、零 小室/Mujica/Saki。5 条 mp4+封面已拉回本地 `lidousha/2026-07-10/`。
+
+### 进行中（含后台进程）
+
+- 无遗留后台进程（三个 detached 恢复/验证 driver 均已退出；free 上 scratch 目录与 `recover_*.py/.sh` 已清）。cron `*/10` runner 因 `DISABLED` 暂停不 tick；上传面独立关闭。
+
+### 阻塞
+
+- **封面被 CPA 拦（外部，非本次部署）**：5 条谈话 AI 封面全 `BLOCKED_AI_COVER_REQUIRED`——CPA 当前分组 `Codex-Plus` 不支持 `gpt-image-2`（HTTP 400 `client_model_unavailable`，02:47Z 三条实证一致，redacted 证据在各 clip 的 `evidence/*.cover-cpa-response.redacted.json`）。封面代码未动、23:57 pre-authority run 出图正常 → 是 CPA 账号分组权限变化，不是部署引入。需 Ivan 把 CPA 账号切到支持 gpt-image-2 的分组（我不动 CPA 服务），再重跑 `repair_covers`。盘上：2 条早片留着 12:36 旧封面(标题可能已变)，3 条恢复片无封面。**mp4 内容（说话人标签 + 字幕权威修正）已全部正确**。
+- 无代码/部署/恢复 blocker。批次内容 review_ready，等 Ivan 逐条审片 + 逐条上传授权（本轮无授权）。
+
+### 下一步
+
+1. **封面补齐**：Ivan 修好 CPA 分组（放开 gpt-image-2）后，重跑 `repair_covers(2026-07-10)`（顺序补 5 条封面）即可；无需改代码。
+2. **#3 git 并回 main（本轮押后，Ivan 明确“先别管”）**：生产在 `codex/deploy-superset @2246f5c`，**不在 main**；main 另有 3 个独有提交（换源 / luna-handoff / speaker-v10-overrides）。**分叉注意**：那 8 个 WIP 现已 commit 在 `codex/deploy-superset` 并上线，但在 parked 的 `codex/speaker-final-pipeline` 工作树仍是未提交改动（需去重/对齐，勿重复落地）。唯一真代码冲突面 = `scripts/apply_speaker_turn_overrides.py`（main v10 overrides vs codex finalizer 依赖）。`codex/campp-perf-fix`（off 3ad0f9b 的最小 fix）已被超集部署取代，可删。
+3. 下一场直播前摘 `free:/opt/bilive/autoslice/DISABLED`（cron 恢复无人值守）——归属验收流程 / Ivan 定。
+4. 遗留 follow-up（承 3ad0f9b Pro 复核）：边界语义收束、封面行首标点禁则。
+
+## 2026-07-10（续四）：歌切“必须是李豆沙现场演唱”联合门上线 +《芽吹くとき》背景原曲阻断 + cron 恢复
+
+### 目标
+
+纠正“找到同步 LRC/整首歌 = 可以歌切”的产品漏门：只有李豆沙本人在直播现场以演唱为主体的歌曲才允许切；原唱/背景音乐、下播卡音乐、静态或离屏回放、其他歌手、和声/合唱、李豆沙只在音乐上说话均必须 fail closed。同时保留日语/稀疏乱码 ASR 的自动 LRC 恢复能力，fresh 重跑用户指出的 yonige《芽吹くとき》，更新全部当前文档；本轮没有上传授权。
+
+### 已完成
+
+- **生产联合门已部署**：代码承重 commit `f64cd29494fdc0d2b37d249e659897514fd701dc` 已从干净工作树通过 `scripts/deploy_free_autoslice.sh free` 部署，远端 `DEPLOYED_COMMIT`、runner 字节、CAM++ 模型树和三份私有 enrollment 均读回一致。生产 AGY 契约为 `agy-audio-lrc-observation.v4`；`host-vocal-proof.v2` 的七个 CAM++ checkpoint 只从 `SINGING_THIS_LYRIC` 行抽样并重新绑定逐行断言。
+- **v4 的窄歌曲对白例外已收口**：首尾必须演唱，至少 7 行且至少 80% canonical 行演唱；最多一个 exact canonical 戏剧对白块，且同时受 6 行、12 秒 voiced、20% lyric-vocal duration、15 秒 wall-clock span 限制；三段 live evidence 必须落演唱行。普通说话/ad-lib/BGM、其他歌手/和声、录制/回放人声仍硬 BLOCK。历史 AGY v3 只由 7/9 事故修复适配器读取，不能进入生产正例。
+- **测试与对抗复核**：`python3 -m pytest tests -q` 为 `506 passed`，`compileall`、capability JSON、`git diff --check` 全通过；两名独立 reviewer 对代码和输出绑定均无剩余 P0/P1。可见 ChatGPT Pro challenge 会话为 `https://chatgpt.com/c/6a508d95-7634-83ea-b65a-32033082f810`，复核文本 SHA-256 `41082ecfe2d18bbf6049f049634e86a97639122fa49ef110cecf32cbb5aa5df6`。
+- **事故状态已修复**：事务 `/opt/bilive/autoslice/forensics/false-green-20260709-20260710T090025Z-3ad69d0263` 为 `COMMITTED`；7/9 六个 state/report/summary/delivery 权威面均已清除假绿，旧《芽吹くとき》交付保持 superseded/quarantined。
+- **真唱正例通过**：fresh《屑屑》v5 在 `/opt/bilive/autoslice/out/acceptance/host-vocal-positive-20260710T101624Z` 完成 52/52 heard、48 行演唱 + 一个 4 行受限戏剧对白块；host-vocal proof 6/7 且头/中/尾覆盖，联合门 READY。仅物料化 241.000 秒、1V+1A 的 no-upload 验收切片，MP4 SHA-256 `fa130beb209bbc8cafa3d7c6556baa39f7a42930d35e1f2b3ed61c7e9da5fbc8`。
+- **同音轨静态回放负例通过**：`/opt/bilive/autoslice/out/acceptance/host-vocal-static-replay-20260710T103213Z` 的音轨与正例 decoded PCM 相同，但画面为静态回放；AGY raw 给出 `ORIGINAL_OR_BACKGROUND_PLAYBACK` / `recorded_or_playback_vocal_present=true`，最终 BLOCK，无 host proof、recut、cover、delivery 或 upload。
+- **用户指出的《芽吹くとき》fresh 重跑已正确不切**：`/opt/bilive/autoslice/out/acceptance/host-vocal-negative-20260710T103814Z` 自动从 NetEase/LRCLIB/Kugou 路径找出 LRCLIB `33542202`，25/25 日文 canonical 行、一个 global shift 和完整歌曲边界均 READY；因此日语/乱码 ASR 没有让 LRC 阶段失败。本轮 AGY v4 把背景原曲误报成 live，但独立 `host-vocal-proof.v2` 七点 **0/7**，最终 `BLOCK / SONG_NOT_LIDOUSHA_SINGING`、`materialized_recut=null`。这份反例保留了单模型方差，而联合 AND 门成功阻止假绿；wrapper summary SHA-256 `57d139cf584cefc7788856978419385c64fd7d06784d0303dd6ad1e3d7ba31d9`。
+- **no-upload 与 cron 恢复均验真**：三次 fresh run 前均冻结 upload-ledger prefix；运行后 ledger 仍为 SHA-256 `c95ee0690a5755b1971bd3dd5165b4bbccefdf4326ddd3736294f43dcc1adfb5`、32,015 bytes，未出现 publish/delivery/uploader。`2026-07-10 10:50:29Z` 在 runner lock 下移除 `DISABLED` 并执行 crontab 的同一 `--once` 入口，rc=0、`live=False`；active state digest `062234c7166df9b8e5724efc9030c0aab0fadba6fe005fd620e8ca7f19b7c23b`、review summary digest `f2e4a34c035435e3586f1e9db2f1c653264111f6730b1d2cf6acbcbbbb670425`、ledger 均前后不变，lock 已释放。随后 `11:00:02Z` 的真实 `*/10` cron tick 自然执行并记录 `tick done: live=False ... 2026-07-09:review_ready`；scheduled runner 现已启用。
+- **文档已同步**：README、项目歌词 skill、song-finished workflow、capability MD/JSON、host-vocal 设计审查、7/9 事故审查、remote-first route 与 architecture banner 均改为 AGY v4 / proof v2 / 已部署验收态；下方 LRC-only acceptance 已明确标为 historical/superseded。
+
+### 进行中（含后台进程）
+
+- 无本会话遗留 selector、AGY、CAM++、上传或监控进程。既有 cron `*/10` + flock 已恢复；上传路径仍独立关闭并要求逐条授权。
+
+### 阻塞
+
+- 无代码、部署、状态修复或 no-upload 验收 blocker。
+- 边界声明：不能承诺“任意日语歌必成功”；无唯一可靠同步 LRC、版本不符、当前现场改编无法用单一位移解释、缺 post-song 主播锚点或任一联合门/渲染证明失败时仍会 BLOCK。fresh《芽吹くとき》也实证 AGY 单次分类会有方差，所以禁止移除 CAM++ AND 或把 AGY 单层写成充分条件。
+
+### 下一步
+
+1. 下一场真实直播后观察一次自然 cron run 的新 session 结果，确认同一 v4/v2 门在无人值守入口继续保持 fail closed；这不是当前上线 blocker。
+2. 若要进一步校准，可对 live/background/static/说话+BGM 小集做重复 AGY 方差统计；不得以此降低现有门槛。
+3. 任何具体成片发布仍须 Ivan 另行逐条授权，再冻结 video/cover/title hash 并生成 `AUTO_UPLOAD` manifest；本轮完成本身不构成上传授权。
 ## 2026-07-10（续三）：封面全文排版修复 + 10 条全部发布 + 何意味/人称字幕修正重传 + judge /responses 落地
 
 ### 目标
@@ -143,7 +473,7 @@ Ivan 三连指令：①luna 已可用，独立重判模型分配矩阵；②歌�
 
 ## 2026-07-10（续）：《芽吹くとき》生产重跑验收 + 日语稀疏 ASR/LRC 路线上线
 
-> 本节是 7/9 歌切事故与当前 runner 运行态的最新权威；下方“尚未部署”、旧 probe 时间和《ただそばにいて》相关段落只保留为历史记录。
+> **SUPERSEDED / HISTORICAL LRC-ONLY ACCEPTANCE**：本节只证明日语稀疏 ASR 下的 LRC/边界恢复，遗漏“李豆沙本人现场演唱”前提，已被本文件最上方“续四”联合门验收取代。旧 hash、probe 时间、成片与当时 runner 状态仅保留为事故证据，不得作为当前歌切正例。
 
 ### 目标
 
@@ -552,3 +882,33 @@ AUTO_CHAIN 仍含已下线的 kuaishou（与文档/对用户报告不符）→ �
 ### 下一步
 
 - 下一次真实直播歌切时检查对应 `*.cover-release-gate.json`、summary 中 artifact hashes 与交付文件 hash；如 gate BLOCK，应看到 `SKIPPED_RELEASE_GATE` 且没有新的 AI cover 调用。
+
+## 2026-07-10 成品二分离流水线与逐人分离实验
+
+> **更正／已被后续全量任务取代**：`shadow` 是李豆沙的自称，不是第四位说话人。7 月 9 日实际参与者只有李豆沙、礼墨 Sumi、安晚 Awa。oracle=4 实验的参与人数前提错误，全部逐人身份与颜色结论已撤回，不再继续该实验。
+
+### 目标
+
+把 `promo_210025_643_801` 的人工说话人真值修进正式流水线，严格按“文本/专名/代词/人工终稿 → 说话人 → 分色 ASS → 烧录”生产成品；随后曾尝试逐人实验，但其把 `shadow` 错当第四位说话人，实验结论已撤回。全程 no-upload。
+
+### 已完成
+
+- 工作分支 `codex/speaker-final-pipeline` 已到 `f8f7a55ce4855b0c3177bbd326125384cd7b0c13`，事务化部署在 `free:/opt/bilive/autoslice/repo`；live frozen tree/stamp/cron/locks/external scripts 均经独立核验。全量 `535 passed`。
+- `speaker_finalizer.py` 现支持 CAM++ 二分类、hash-bound 文本/媒体/自动标签、accepted context baseline、显式 split/drop/overlap override、分色 ASS 与 fail-closed manifest。已验收片的 43 个模糊上下文判断被冻结为 pre-override baseline；自动标签任一漂移都会在应用人工 override 前阻断。新片无 override 时仍走原自动上下文流程。
+- 生产重跑 `free:/opt/bilive/autoslice/out/acceptance/speaker-final-20260710-f8f7a55`：context call `0`，43/43 baseline 命中，unresolved `[]`；text `63438b34…`、automatic `c13e178f…`、final SRT `41b2ea5f…`、ASS `cd2bfce…`。显式人工输出 25、accepted-context 输出 31、overlap 1。
+- 最终烧录 MP4 `f9c02879…`，1920×1080/60fps/165.066667s，完整解码通过，烧录前后 decoded PCM MD5 同为 `eb2e38b…`。12 个关键点视觉 QA 通过，包括“她”、礼墨→李豆沙换色、礼墨笑→李豆沙、安晚“暂时”上层抢话、礼墨“最难的还是聋人啊”和结尾安晚→李豆沙。
+- 本地成品包：`/Users/ivan/Project/vtuber-slice/lidousha/2026-07-09/说话人分离实验/v11_成品说话人分离/`；`final-package.record.json` SHA `79935f5b…`，本地/远端逐文件哈希一致。没有 AUTO_UPLOAD/publish marker、没有 uploader 进程、没有上传。
+- 逐人实验包：`/Users/ivan/Project/vtuber-slice/lidousha/2026-07-09/说话人分离实验/v12_逐人分离实验/`。包含：只使用 Ivan direct identity 的“已确认版”；oracle=4 的“四簇候选版（非成品）”；以及 10 个无身份提示的短盲听样本。两视频完整解码、音频 PCM 与源一致。
+
+### 进行中（含后台进程）
+
+- 无本轮后台进程。生产 autoslice 只保留原 cron；逐人模型及其下载缓存没有接入生产代码、profile 或 runner。
+
+### 阻塞
+
+- 逐人身份不生产化：除样本不足与错误分簇外，更根本的问题是 oracle=4 把李豆沙自称 `shadow` 误当第四人。四簇对照会把李豆沙“啥意思啊”的开头归入礼墨簇，并拆错“我真的分不清”。production 固定为“李豆沙 vs 其他”。
+
+### 下一步
+
+- 按 Ivan 2026-07-10 的决定停止逐人分离实验；`v12_逐人分离实验/` 已标记作废，盲听样本、四簇身份和颜色均不得进入生产或成品判断。
+- 任何上传仍需 Ivan 对具体成品单独明确授权；本轮产物全部保持 no-upload。

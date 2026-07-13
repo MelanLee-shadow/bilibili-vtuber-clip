@@ -10,9 +10,10 @@ canonical pipeline by itself — no human kick-off:
         curated slice-selection metric; deterministic fallback lanes if the
         LLM is down — zero-output is loud, never silent)
       → top-N talk candidates + up to 2 songs (highest danmaku)
-      → produce_slice_package per candidate (BCUT+AGY+CPA subtitles, sentence
-        boundaries, pillarbox, sapphire72 burn, REAL CPA cover, 李豆沙-style
-        title) / song LRC lane with the strict completeness gate
+      → produce_slice_package per candidate (BCUT+AGY+CPA text, final pronouns,
+        sentence boundaries, CAM+++context speaker finalization, colour ASS
+        burn, REAL CPA cover, 李豆沙-style title) / song LRC lane with the strict
+        completeness gate
       → delivery under <repo>/lidousha/<date>/ + AUTOSLICE_SUMMARY.md with the
         selection reason (hook) and confidence per clip for human review
       → status report file (no chat/email; Mac pulls via launchd)
@@ -53,7 +54,8 @@ RUNNER v4 (2026-07-09 external audit — "the control plane was lying"):
   `review_ready` — clean by construction: deterministic boundary red flags are
   SELF-REPAIRED inside produce_slice_package (Ivan 2026-07-10: unattended means
   fix-or-refuse, no deliver-and-ask-a-human quarantine), and an unrepairable
-  boundary is `boundary_unrepairable` (terminal, no delivery, never retried).
+  boundary is `boundary_unrepairable` (no delivery; retried only after a
+  relevant pipeline change, with a lifetime cap).
 - **Budget = deliveries**: gate-blocked songs no longer consume the per-date
   song budget; the danmaku-sorted backlog backfills (bounded SONG_ATTEMPT_CAP).
 - **Global selection + sealing**: talk picks are ranked globally by recall
@@ -70,15 +72,19 @@ Deployment (free):
     state  /opt/bilive/autoslice/state/<date>.json
     cron   */10 min: flock -n lock python3 scripts/free_session_autoslice.py --once
     kill   touch /opt/bilive/autoslice/DISABLED to pause everything
-    deps   fonts-noto-cjk (subtitle rendering), ffmpeg, PIL, self-ssh key
+    deps   fonts-noto-cjk (subtitle rendering), ffmpeg, PIL, self-ssh key,
+           /opt/bilive/autoslice/venv-diar + pinned CAM++ model/voiceprints
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -89,6 +95,45 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
+from src.autoslice.song_repair import (
+    AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+    LYRIC_VOCAL_ASSERTION_KEYS,
+    live_performance_failure_reason_codes,
+    validate_live_performance_observation,
+)
+from src.autoslice.collab_evidence_capture import (
+    CollabEvidenceCaptureError,
+    WORKER_REQUEST_SCHEMA_VERSION,
+    evaluate_trigger as evaluate_collab_capture_trigger,
+    validate_worker_request_document,
+)
+from src.autoslice.speaker_finalizer import (
+    SpeakerFinalizationError,
+    validate_speaker_review_manifest_document,
+)
+from src.autoslice.speaker_session_router import (
+    FAST_SOLO,
+    PROVIDER_SANITIZED_ENVIRONMENT,
+    REQUEST_SCHEMA_VERSION as SPEAKER_ROUTING_REQUEST_SCHEMA,
+    ROUTER_POLICY_VERSION as SPEAKER_ROUTING_POLICY_VERSION,
+    RUN_BINARY_FINALIZER,
+    SpeakerRoutingError,
+    build_provider_authority,
+    generate_speaker_routing,
+    routing_runtime_fingerprint,
+    routing_policy_fingerprint,
+    segment_binding_sha256,
+    segment_stat_signature,
+    validate_provider_authority,
+)
+from src.autoslice.visual_song_discovery import (
+    VisualSongConfig,
+    discover_visual_songs,
+    normalize_visual_title,
+    union_visual_song_candidates,
+)
 
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 ROOM = os.environ.get("AUTOSLICE_ROOM", "22966160")
@@ -101,28 +146,75 @@ REC_ROOT = Path(
 BLREC_PORT = int(os.environ.get("AUTOSLICE_BLREC_PORT", "22333"))
 BILIVE_ENV = Path("/opt/bilive/.env")
 CPA_ENV = BASE / "cpa.env"
+HOST_VOCAL_PYTHON = Path(os.environ.get("AUTOSLICE_HOST_VOCAL_PYTHON", str(BASE / "venv-diar/bin/python")))
+HOST_VOCAL_PROFILE = Path(
+    os.environ.get(
+        "AUTOSLICE_HOST_VOCAL_PROFILE",
+        str(REPO_ROOT / "assets/lidousha/voiceprint_profile.v1.json"),
+    )
+)
+HOST_VOCAL_REFERENCE_DIR = Path(
+    os.environ.get("AUTOSLICE_HOST_VOCAL_REFERENCE_DIR", str(BASE / "voiceprints/lidousha"))
+)
+HOST_VOCAL_MODEL_DIR = Path(
+    os.environ.get(
+        "AUTOSLICE_HOST_VOCAL_MODEL_DIR",
+        str(BASE / "models/campp"),
+    )
+)
 MAX_TALK_PICKS = 5
 MAX_SONGS_PER_DATE = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
-SONG_ATTEMPT_CAP = 6  # total song-lane attempts per date (delivered + blocked + failed);
-                      # gate-blocked songs do NOT consume the delivery budget — the
-                      # backlog backfills — so an unlucky date needs a hard attempt cap
+SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one date
+SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute date cap including superseded attempts;
+                                # permits two self-healing generations after the initial run
+SONG_INFRA_RETRY_CAP = 6
+SONG_INFRA_RETRY_BASE_SECONDS = 15 * 60
+SONG_INFRA_RETRY_MAX_SECONDS = 6 * 60 * 60
+TALK_REPAIR_LIFETIME_RETRY_CAP = 3  # all retries of one already-selected talk
+# A deployment fingerprint is provenance, not blanket authorization to replay
+# every historical failure.  Ordinary cron maintenance begins at this horizon;
+# older dates remain available to explicit/manual recovery code paths without
+# being woken by a routine --once tick after unrelated pipeline changes.
+AUTOMATIC_MAINTENANCE_NOT_BEFORE = os.environ.get(
+    "AUTOSLICE_AUTOMATIC_MAINTENANCE_NOT_BEFORE", "2026-07-11"
+)
+SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
+    {
+        "SONG_BACKGROUND_PLAYBACK_ONLY",
+        "SONG_NOT_LIDOUSHA_SINGING",
+    }
+)
+SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
+    {
+        "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
+        "CPA_RATE_LIMITED",
+        "CPA_MODEL_DOWN",
+        "CPA_UPSTREAM_5XX",
+        "CPA_UPSTREAM_TIMEOUT",
+    }
+)
 # Delivered-to-review talk statuses.  "ok" (pre-2026-07-09) and "quarantine"
 # (pre-2026-07-10 delivered-with-flags) are kept ONLY so old state files still
 # count as delivered; new records are always review_ready — boundary red flags
 # are self-repaired in produce_slice_package, and an unrepairable boundary is
-# boundary_unrepairable (no delivery, terminal).
+# boundary_unrepairable (no delivery; fingerprint-gated bounded self-heal).
 DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
 PER_SEGMENT_CANDIDATES = 4
 MIN_SEGMENT_BYTES = 5_000_000  # blrec restart stubs are a few KB — dead on sight
 BCUT_MAX_ATTEMPTS = 2
 TITLE_MAX_ATTEMPTS = 3
 COVER_REPAIR_MAX_ATTEMPTS = 3  # one attempt per tick → retries spread ~10min apart
+COVER_REPAIR_LIFETIME_ATTEMPT_CAP = 9  # three bounded repair generations; never loop forever
 MAX_PARALLEL_PRODUCE = 3  # slices are independent; produce them concurrently (each is
                           # network-bound on AGY/CPA/gpt-image-2, so a few in flight
                           # cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
 PIECE_PRE_MS = 10_000
 PIECE_POST_MS = 32_000
+BOUNDARY_CONTEXT_RETRY_POST_MS = 90_000
+BOUNDARY_REPAIR_INITIAL_CAP_MS = 30_000
+BOUNDARY_REPAIR_RETRY_CAP_MS = 60_000
+SPEAKER_ROUTING_FINAL_TAIL_GUARD_MS = 1_000
 SONG_WINDOW_PRE_MS = 15_000   # window must stay SONG-dominated or the in-window
 SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
                               # ±60/45s and ±180/150s); 15/20s matches the
@@ -161,6 +253,1069 @@ CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file
 # max-tokens 16000 keeps headroom for reasoning burn; --retries 3 absorbs the
 # upstream empty-completion quirk.  Judge failure stays fail-closed (BLOCK,
 # advisory-only for delivery since the 2026-07-10 song contract).
+
+
+def pipeline_fingerprint() -> str:
+    """Proof-closure fingerprint used to retry old recoverable BLOCKs.
+
+    Hash every deployed code/config surface that can affect recall, boundary,
+    lyrics, voice identity, packaging, or evidence authority.  The voiceprint
+    profile contains the expected external model/reference digests; deployment
+    refuses a runtime whose private assets disagree with that profile.
+    """
+
+    hasher = hashlib.sha256()
+    explicit = {
+        "scripts/free_session_autoslice.py",
+        "scripts/free_asr_client.py",
+        "scripts/apply_subtitle_text_overrides.py",
+        "scripts/cpa_semantic_qa_llm.py",
+        "scripts/gemini_slice_jingting.py",
+        "scripts/llm_via_cpa.sh",
+        "scripts/produce_slice_package.py",
+        "scripts/regenerate_lidousha_cover.py",
+        "scripts/repair_reviewed_covers.py",
+        "scripts/resume_frozen_talk_package.py",
+        "scripts/run_auto_review_shadow_pipeline.py",
+        "scripts/run_full_session_selector_cpa_shadow.py",
+        "assets/lidousha/entity_confusables.json",
+        "assets/lidousha/glossary.txt",
+        "assets/lidousha/known_songs.json",
+        "assets/lidousha/persona.md",
+        "assets/lidousha/slice_selection_metric.md",
+        "assets/lidousha/subtitle_correction_principles.md",
+        "assets/lidousha/timely_terms.json",
+        "assets/lidousha/topic_entity_graph.json",
+        "assets/lidousha/title_style.md",
+        "assets/lidousha/voiceprint_profile.v1.json",
+    }
+    paths = [REPO_ROOT / relative for relative in explicit]
+    autoslice_src = REPO_ROOT / "src" / "autoslice"
+    paths.extend(autoslice_src.rglob("*.py") if autoslice_src.is_dir() else [])
+    cover_fonts = REPO_ROOT / "assets" / "lidousha" / "fonts"
+    paths.extend(path for path in cover_fonts.rglob("*") if path.is_file())
+    missing = [path for path in paths if not path.is_file()]
+    for path in missing:
+        hasher.update(path.relative_to(REPO_ROOT).as_posix().encode("utf-8") + b"\0MISSING\0")
+    paths = [path for path in paths if path.is_file()]
+    for path in sorted(paths, key=lambda value: value.relative_to(REPO_ROOT).as_posix()):
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        hasher.update(relative.encode("utf-8") + b"\0")
+        hasher.update(path.read_bytes())
+        hasher.update(b"\0")
+    for key in (
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON",
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME",
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID",
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON",
+    ):
+        hasher.update(b"runtime-config\0" + key.encode("utf-8") + b"\0")
+        hasher.update(os.environ.get(key, "").encode("utf-8") + b"\0")
+    # Wake recoverable work when configured provider bytes change at the same
+    # path.  Invalid/missing authority is hashed as an explicit unavailable
+    # state and remains fail-closed in prepare_speaker_routing.
+    try:
+        authority = _speaker_routing_provider_authority()
+    except (OSError, TypeError, ValueError, SpeakerRoutingError) as exc:
+        hasher.update(f"provider-authority-unavailable:{type(exc).__name__}".encode())
+    else:
+        if authority is not None:
+            hasher.update(
+                json.dumps(authority, sort_keys=True, separators=(",", ":")).encode()
+            )
+    return "sha256:" + hasher.hexdigest()
+
+
+def human_truth_mode() -> str:
+    """Select whether reviewed candidate truth may enter generation inputs."""
+
+    mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
+    if mode not in {"delivery", "withheld"}:
+        raise ValueError("AUTOSLICE_HUMAN_TRUTH_MODE must be delivery or withheld")
+    return mode
+
+
+def candidate_text_override_path(candidate_id: str) -> Path | None:
+    """Return the one canonical candidate override, rejecting path indirection."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
+        raise ValueError("unsafe candidate id for subtitle text override")
+    if human_truth_mode() == "withheld":
+        return None
+    root = REPO_ROOT / "assets" / "lidousha" / "subtitle_text_overrides"
+    path = root / f"{candidate_id}.text.v1.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("candidate subtitle text override must be a regular non-symlink file")
+    if path.resolve().parent != root.resolve():
+        raise ValueError("candidate subtitle text override escapes its canonical asset root")
+    return path
+
+
+def candidate_subtitle_regression_path(candidate_id: str) -> Path | None:
+    """Return the one canonical candidate regression gate, without indirection."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
+        raise ValueError("unsafe candidate id for subtitle regression")
+    if human_truth_mode() == "withheld":
+        return None
+    root = REPO_ROOT / "assets" / "lidousha" / "subtitle_regressions"
+    path = root / f"{candidate_id}.subtitle-regression.v1.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("candidate subtitle regression must be a regular non-symlink file")
+    if path.resolve().parent != root.resolve():
+        raise ValueError("candidate subtitle regression escapes its canonical asset root")
+    return path
+
+
+def candidate_speaker_override_path(candidate_id: str) -> Path | None:
+    """Return the candidate's hash-bound speaker truth, withheld during blind tests."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
+        raise ValueError("unsafe candidate id for speaker override")
+    if human_truth_mode() == "withheld":
+        return None
+    root = REPO_ROOT / "assets" / "lidousha" / "speaker_overrides"
+    path = root / f"{candidate_id}.speaker.v1.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("candidate speaker override must be a regular non-symlink file")
+    if path.resolve().parent != root.resolve():
+        raise ValueError("candidate speaker override escapes its canonical asset root")
+    return path
+
+
+def talk_pipeline_fingerprint(candidate_id: str) -> str:
+    """Base code/config proof plus only this talk's optional truth assets."""
+
+    base = pipeline_fingerprint()
+    truth_assets = [
+        path
+        for path in (
+            candidate_text_override_path(candidate_id),
+            candidate_subtitle_regression_path(candidate_id),
+            candidate_speaker_override_path(candidate_id),
+        )
+        if path is not None
+    ]
+    # Preserve the historical base fingerprint for the overwhelmingly common
+    # no-override case.  Adding/removing this candidate's truth asset still
+    # changes/reverts its fingerprint without waking every legacy talk once.
+    if not truth_assets:
+        if human_truth_mode() == "withheld":
+            hasher = hashlib.sha256()
+            hasher.update(b"talk-pipeline-fingerprint.v4\0")
+            hasher.update(base.encode("utf-8") + b"\0human_truth=withheld\0")
+            return "sha256:" + hasher.hexdigest()
+        return base
+    hasher = hashlib.sha256()
+    hasher.update(b"talk-pipeline-fingerprint.v5\0")
+    hasher.update(base.encode("utf-8") + b"\0")
+    hasher.update(str(candidate_id).encode("utf-8") + b"\0")
+    for path in sorted(truth_assets, key=lambda item: item.relative_to(REPO_ROOT).as_posix()):
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        hasher.update(relative.encode("utf-8") + b"\0")
+        hasher.update(path.read_bytes())
+        hasher.update(b"\0")
+    return "sha256:" + hasher.hexdigest()
+
+
+def _clear_speaker_routing_fields(items: list[dict]) -> None:
+    for item in items:
+        for key in (
+            "speaker_routing_claim",
+            "speaker_routing_claim_sha256",
+            "speaker_routing_candidate",
+        ):
+            item.pop(key, None)
+
+
+def _speaker_routing_provider_command(
+    *, request_path: Path, output_path: Path
+) -> list[str] | None:
+    """Parse a shell-free provider argv template from the environment."""
+
+    raw = os.environ.get("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", "").strip()
+    if not raw:
+        return None
+    try:
+        template = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"speaker routing provider command JSON is invalid: {exc}") from exc
+    if (
+        not isinstance(template, list)
+        or len(template) != 4
+        or any(not isinstance(value, str) or not value for value in template)
+        or template[2:] != ["{request}", "{output}"]
+    ):
+        raise ValueError(
+            "speaker routing provider argv must be exactly executable, script, "
+            "{request}, {output}; inline code and extra/path args are forbidden"
+        )
+    executable = Path(template[0]).absolute()
+    script = Path(template[1]).absolute()
+    for label, path in (("executable", executable), ("script", script)):
+        if path.is_symlink() or path.resolve(strict=True) != path or not path.is_file():
+            raise ValueError(f"speaker routing provider {label} must be a regular non-symlink path")
+    return [str(executable), str(script), str(request_path), str(output_path)]
+
+
+def _speaker_routing_provider_authority(
+    command: list[str] | None = None,
+    *,
+    require_audited: bool = True,
+) -> dict[str, object] | None:
+    """Resolve and hash the exact provider executable and inference assets."""
+
+    raw_command = os.environ.get(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", ""
+    ).strip()
+    if not raw_command:
+        return None
+    if command is None:
+        try:
+            template = json.loads(raw_command)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"speaker routing provider command JSON is invalid: {exc}") from exc
+        if (
+            not isinstance(template, list)
+            or len(template) != 4
+            or template[2:] != ["{request}", "{output}"]
+            or any(not isinstance(value, str) or not value for value in template)
+        ):
+            raise ValueError("speaker routing provider command is not canonical")
+        executable = str(Path(template[0]).absolute())
+        executed_script = str(Path(template[1]).absolute())
+    else:
+        executable = command[0]
+        if len(command) != 4:
+            raise ValueError("speaker routing provider command is not canonical")
+        executed_script = command[1]
+    raw_artifacts = os.environ.get(
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON", ""
+    ).strip()
+    try:
+        artifacts = json.loads(raw_artifacts)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"speaker routing provider artifacts JSON is invalid: {exc}") from exc
+    if not isinstance(artifacts, dict):
+        raise ValueError("speaker routing provider artifacts must be a JSON object")
+    artifacts = {str(key): str(value) for key, value in artifacts.items()}
+    configured_executable = artifacts.get("executable")
+    executable_path = Path(executable).absolute()
+    configured_executable_path = Path(str(configured_executable)).absolute()
+    if (
+        executable_path.is_symlink()
+        or executable_path.resolve(strict=True) != executable_path
+        or configured_executable_path.is_symlink()
+        or configured_executable_path.resolve(strict=True) != configured_executable_path
+    ):
+        raise ValueError("speaker routing executable authority contains a symlink")
+    resolved_executable = str(executable_path)
+    if configured_executable and str(configured_executable_path) != resolved_executable:
+        raise ValueError("speaker routing command executable disagrees with artifact authority")
+    artifacts["executable"] = resolved_executable
+    configured_script = artifacts.get("script")
+    executed_script_path = Path(executed_script).absolute()
+    configured_script_path = Path(str(configured_script)).absolute()
+    if (
+        executed_script_path.is_symlink()
+        or executed_script_path.resolve(strict=True) != executed_script_path
+        or configured_script_path.is_symlink()
+        or configured_script_path.resolve(strict=True) != configured_script_path
+    ):
+        raise ValueError("speaker routing script authority contains a symlink")
+    resolved_script = str(executed_script_path)
+    if not configured_script or str(configured_script_path) != resolved_script:
+        raise ValueError("speaker routing executed script disagrees with artifact authority")
+    artifacts["script"] = resolved_script
+    authority = build_provider_authority(
+        name=os.environ.get("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME", ""),
+        algorithm_id=os.environ.get(
+            "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID", ""
+        ),
+        artifact_paths=artifacts,
+        executed_argv_template=[
+            resolved_executable,
+            resolved_script,
+            "{request}",
+            "{output}",
+        ],
+        sanitized_environment=PROVIDER_SANITIZED_ENVIRONMENT,
+    )
+    return validate_provider_authority(
+        authority, require_audited=require_audited
+    )
+
+
+def _sealed_speaker_inventory(items: list[dict]) -> list[dict]:
+    keys = (
+        "cid",
+        "segment_path",
+        "bcut_srt_path",
+        "seg_dur_ms",
+        "start_ms",
+        "end_ms",
+    )
+    return [
+        {key: item[key] for key in keys if key in item}
+        for item in items
+    ]
+
+
+def _attach_speaker_routing_claim(
+    *,
+    items: list[dict],
+    claim_path: Path,
+    claim_sha256: str,
+    candidates: list[dict[str, object]],
+    pipeline: str,
+) -> None:
+    by_candidate = {str(candidate["candidate_id"]): candidate for candidate in candidates}
+    for item in items:
+        candidate = by_candidate.get(str(item.get("cid") or ""))
+        if candidate is None:
+            # A late/unmatched candidate was never classified with the sealed
+            # session.  Leaving it unbound forces the binary finalizer.
+            continue
+        item["speaker_routing_claim"] = str(claim_path)
+        item["speaker_routing_claim_sha256"] = claim_sha256
+        item["speaker_routing_candidate"] = {
+            **candidate,
+            "pipeline_fingerprint": pipeline,
+        }
+
+
+SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA = (
+    "lidousha-speaker-routing-session-authority.v1"
+)
+SPEAKER_ROUTING_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+
+
+def _speaker_inventory_sha256(inventory: list[dict]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            inventory,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _speaker_session_authority_integrity(document: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                key: value
+                for key, value in document.items()
+                if key != "authority_integrity_sha256"
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _speaker_date_root(date: str) -> Path:
+    if not SPEAKER_ROUTING_DATE_RE.fullmatch(str(date)):
+        raise ValueError("speaker routing date must be strict YYYY-MM-DD")
+    root = (BASE / "state" / "speaker-routing").resolve()
+    date_root = (root / date).resolve()
+    try:
+        date_root.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("speaker routing date path escapes its root") from exc
+    return date_root
+
+
+def _speaker_generation_root(date: str, pipeline: str) -> Path:
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", pipeline):
+        raise ValueError("speaker routing generation pipeline fingerprint is invalid")
+    date_root = _speaker_date_root(date)
+    generation_root = (
+        date_root / "generations" / pipeline.removeprefix("sha256:")
+    ).resolve()
+    try:
+        generation_root.relative_to(date_root)
+    except ValueError as exc:
+        raise ValueError("speaker routing generation path escapes its date root") from exc
+    return generation_root
+
+
+def _write_speaker_session_authority(path: Path, document: dict) -> str:
+    expected_root = _speaker_date_root(str(document.get("date") or ""))
+    resolved_path = path.resolve()
+    try:
+        resolved_path.relative_to(expected_root)
+    except ValueError as exc:
+        raise ValueError("speaker routing authority write escapes its date root") from exc
+    payload = dict(document)
+    payload["authority_integrity_sha256"] = _speaker_session_authority_integrity(
+        payload
+    )
+    _atomic_write_json_file(resolved_path, payload)
+    return hashlib.sha256(resolved_path.read_bytes()).hexdigest()
+
+
+def _load_speaker_session_authority(
+    path: Path, *, expected_sha256: str | None = None
+) -> dict:
+    absolute = path.absolute()
+    if absolute.is_symlink() or absolute.resolve(strict=True) != absolute:
+        raise ValueError("speaker routing session authority path is not canonical")
+    actual_sha = hashlib.sha256(absolute.read_bytes()).hexdigest()
+    if expected_sha256 is not None and actual_sha != expected_sha256:
+        raise ValueError("speaker routing session authority file hash mismatch")
+    document = json.loads(absolute.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError("speaker routing session authority must be an object")
+    if document.get("schema_version") != SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA:
+        raise ValueError("speaker routing session authority schema is invalid")
+    if document.get("authority_integrity_sha256") != _speaker_session_authority_integrity(
+        document
+    ):
+        raise ValueError("speaker routing session authority integrity mismatch")
+    inventory = document.get("sealed_inventory")
+    if not isinstance(inventory, list) or document.get(
+        "sealed_inventory_sha256"
+    ) != _speaker_inventory_sha256(inventory):
+        raise ValueError("speaker routing session authority inventory is invalid")
+    return document
+
+
+def _speaker_session_state_from_authority(
+    authority_path: Path, authority_sha256: str, authority: dict
+) -> dict:
+    return {
+        "schema_version": "lidousha-speaker-routing-session.v2",
+        "date": authority["date"],
+        "generation_pipeline_fingerprint": authority[
+            "generation_pipeline_fingerprint"
+        ],
+        "sealed_inventory": authority["sealed_inventory"],
+        "sealed_inventory_sha256": authority["sealed_inventory_sha256"],
+        "decision": authority.get("decision"),
+        "claim_path": authority.get("claim_path"),
+        "claim_sha256": authority.get("claim_sha256"),
+        "pipeline_fingerprint": authority.get("claim_pipeline_fingerprint"),
+        "provider_classification_sealed": authority.get(
+            "provider_classification_sealed"
+        )
+        is True,
+        "authority_path": str(authority_path),
+        "authority_sha256": authority_sha256,
+    }
+
+
+def _speaker_session_state_matches_authority(state_value: dict, authority: dict) -> bool:
+    expected = _speaker_session_state_from_authority(
+        Path(str(state_value.get("authority_path") or "")),
+        str(state_value.get("authority_sha256") or ""),
+        authority,
+    )
+    return state_value == expected
+
+
+def prepare_speaker_routing(
+    date: str, items: list[dict], *, state: dict | None = None
+) -> dict | None:
+    """Prepare one session claim, only when an explicit provider is configured.
+
+    No provider means no segment hashing and no extra model lane; the producer's
+    ``auto`` mode falls back to the full binary finalizer.  When configured,
+    one content hash is reused for all selected candidates on the same sealed
+    segment.  Provider failure still emits a RUN_BINARY_FINALIZER claim.
+    """
+
+    _clear_speaker_routing_fields(items)
+    try:
+        date_routing_root = _speaker_date_root(date)
+    except ValueError as exc:
+        log(f"speaker routing forced binary: {exc}")
+        return None
+    routing_session: dict | None = None
+    session_authority: dict | None = None
+    session_authority_path: Path | None = None
+    inventory_items = items
+    if state is not None:
+        current_generation = pipeline_fingerprint()
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", current_generation):
+            log(
+                f"speaker routing forced binary for {date}: pipeline fingerprint is invalid"
+            )
+            return None
+        history_exists = any(
+            path.is_file() for path in date_routing_root.rglob("*")
+        ) if date_routing_root.is_dir() else False
+        routing_session = state.get("speaker_routing_session")
+        if not isinstance(routing_session, dict):
+            if history_exists:
+                state["speaker_routing_authority_status"] = (
+                    "ROLLBACK_STATE_AUTHORITY_MISSING"
+                )
+                log(
+                    f"speaker routing forced binary for {date}: routing history exists "
+                    "but state authority is missing"
+                )
+                return None
+            inventory = _sealed_speaker_inventory(items)
+            session_authority_path = (
+                _speaker_generation_root(date, current_generation)
+                / "session-authority.json"
+            )
+            session_authority = {
+                "schema_version": SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA,
+                "date": date,
+                "generation_pipeline_fingerprint": current_generation,
+                "previous_authority_path": None,
+                "sealed_inventory": inventory,
+                "sealed_inventory_sha256": _speaker_inventory_sha256(inventory),
+                "decision": None,
+                "claim_path": None,
+                "claim_sha256": None,
+                "claim_pipeline_fingerprint": None,
+                "provider_classification_sealed": False,
+            }
+            authority_sha = _write_speaker_session_authority(
+                session_authority_path, session_authority
+            )
+            session_authority = _load_speaker_session_authority(
+                session_authority_path, expected_sha256=authority_sha
+            )
+            routing_session = _speaker_session_state_from_authority(
+                session_authority_path, authority_sha, session_authority
+            )
+            state["speaker_routing_session"] = routing_session
+        else:
+            try:
+                authority_value = routing_session.get("authority_path")
+                authority_sha = str(routing_session.get("authority_sha256") or "")
+                if not authority_value or not re.fullmatch(r"[0-9a-f]{64}", authority_sha):
+                    if history_exists:
+                        raise ValueError(
+                            "routing history exists but mutable state lacks external authority"
+                        )
+                    # Safe one-time migration is possible only when there are
+                    # no prior routing artifacts at all.
+                    sealed_inventory = routing_session.get("sealed_inventory")
+                    if not isinstance(sealed_inventory, list):
+                        raise ValueError("legacy sealed inventory is invalid")
+                    session_authority_path = (
+                        _speaker_generation_root(date, current_generation)
+                        / "session-authority.json"
+                    )
+                    session_authority = {
+                        "schema_version": SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA,
+                        "date": date,
+                        "generation_pipeline_fingerprint": current_generation,
+                        "previous_authority_path": None,
+                        "sealed_inventory": sealed_inventory,
+                        "sealed_inventory_sha256": _speaker_inventory_sha256(
+                            sealed_inventory
+                        ),
+                        "decision": None,
+                        "claim_path": None,
+                        "claim_sha256": None,
+                        "claim_pipeline_fingerprint": None,
+                        "provider_classification_sealed": False,
+                    }
+                    authority_sha = _write_speaker_session_authority(
+                        session_authority_path, session_authority
+                    )
+                    session_authority = _load_speaker_session_authority(
+                        session_authority_path, expected_sha256=authority_sha
+                    )
+                    routing_session = _speaker_session_state_from_authority(
+                        session_authority_path, authority_sha, session_authority
+                    )
+                    state["speaker_routing_session"] = routing_session
+                else:
+                    session_authority_path = Path(str(authority_value)).absolute()
+                    session_authority = _load_speaker_session_authority(
+                        session_authority_path, expected_sha256=authority_sha
+                    )
+                    if (
+                        session_authority.get("date") != date
+                        or not _speaker_session_state_matches_authority(
+                            routing_session, session_authority
+                        )
+                    ):
+                        raise ValueError(
+                            "mutable state does not match external session authority"
+                        )
+                    previous_generation = str(
+                        session_authority["generation_pipeline_fingerprint"]
+                    )
+                    if previous_generation != current_generation:
+                        new_authority_path = (
+                            _speaker_generation_root(date, current_generation)
+                            / "session-authority.json"
+                        )
+                        if new_authority_path.exists():
+                            raise ValueError(
+                                "new pipeline authority already exists without matching state"
+                            )
+                        # Explicit new generation, always from the prior full
+                        # authority inventory and never from this retry subset.
+                        new_authority = {
+                            "schema_version": SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA,
+                            "date": date,
+                            "generation_pipeline_fingerprint": current_generation,
+                            "previous_authority_path": str(session_authority_path),
+                            "sealed_inventory": session_authority[
+                                "sealed_inventory"
+                            ],
+                            "sealed_inventory_sha256": session_authority[
+                                "sealed_inventory_sha256"
+                            ],
+                            "decision": None,
+                            "claim_path": None,
+                            "claim_sha256": None,
+                            "claim_pipeline_fingerprint": None,
+                            "provider_classification_sealed": False,
+                        }
+                        new_sha = _write_speaker_session_authority(
+                            new_authority_path, new_authority
+                        )
+                        session_authority_path = new_authority_path
+                        session_authority = _load_speaker_session_authority(
+                            new_authority_path, expected_sha256=new_sha
+                        )
+                        routing_session = _speaker_session_state_from_authority(
+                            new_authority_path, new_sha, session_authority
+                        )
+                        state["speaker_routing_session"] = routing_session
+            except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                state["speaker_routing_authority_status"] = (
+                    "ROLLBACK_OR_TAMPER_DETECTED"
+                )
+                log(f"speaker routing forced binary for {date}: {exc}")
+                return None
+        if session_authority is None or session_authority_path is None:
+            log(f"speaker routing forced binary for {date}: external authority unavailable")
+            return None
+        inventory_items = session_authority["sealed_inventory"]
+    if not inventory_items:
+        return None
+    routing_root = (
+        _speaker_generation_root(
+            date,
+            str(
+                session_authority["generation_pipeline_fingerprint"]
+                if session_authority is not None
+                else pipeline_fingerprint()
+            ),
+        )
+        if state is not None
+        else date_routing_root
+    )
+    request_path = routing_root / "request.json"
+    provider_path = routing_root / "provider-evidence.json"
+    claim_path = routing_root / "claim.json"
+    if session_authority is not None and (
+        session_authority.get("provider_classification_sealed") is True
+        or (
+            session_authority.get("decision") == FAST_SOLO
+            and session_authority.get("claim_pipeline_fingerprint")
+            == pipeline_fingerprint()
+        )
+    ):
+        prior_path_value = session_authority.get("claim_path")
+        prior_sha = str(session_authority.get("claim_sha256") or "")
+        try:
+            prior_path = Path(str(prior_path_value)).resolve(strict=True)
+            if hashlib.sha256(prior_path.read_bytes()).hexdigest() != prior_sha:
+                raise ValueError("sealed claim hash mismatch")
+            prior_claim = json.loads(prior_path.read_text(encoding="utf-8"))
+            prior_request = json.loads(
+                Path(str(prior_claim["request_path"])).read_text(encoding="utf-8")
+            )
+            prior_candidates = prior_request["candidates"]
+            if not isinstance(prior_candidates, list):
+                raise ValueError("sealed claim candidate inventory is invalid")
+            _attach_speaker_routing_claim(
+                items=items,
+                claim_path=prior_path,
+                claim_sha256=prior_sha,
+                candidates=prior_candidates,
+                pipeline=str(prior_request["pipeline_fingerprint"]),
+            )
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            log(f"speaker routing sealed claim failed safe for {date}: {exc}")
+            return None
+        return prior_claim
+    try:
+        command = _speaker_routing_provider_command(
+            request_path=request_path,
+            output_path=provider_path,
+        )
+    except ValueError as exc:
+        log(f"speaker routing disabled for {date}: {exc}")
+        return None
+    if command is None:
+        return None
+    try:
+        provider_authority = _speaker_routing_provider_authority(command)
+    except (OSError, TypeError, ValueError, SpeakerRoutingError) as exc:
+        log(f"speaker routing disabled for {date}: provider authority invalid: {exc}")
+        return None
+    if provider_authority is None:
+        log(f"speaker routing disabled for {date}: provider authority is missing")
+        return None
+
+    routing_root.mkdir(parents=True, exist_ok=True)
+    segment_hashes: dict[Path, str] = {}
+    candidates: list[dict[str, object]] = []
+    try:
+        for item in inventory_items:
+            segment = Path(str(item["segment_path"])).resolve(strict=True)
+            if segment not in segment_hashes:
+                segment_hashes[segment] = segment_binding_sha256(segment)
+            bcut_value = item.get("bcut_srt_path")
+            bcut_srt = (
+                Path(str(bcut_value)).resolve(strict=True)
+                if bcut_value
+                else (BASE / "cache" / date / f"{segment.stem}.bcut.srt").resolve(
+                    strict=True
+                )
+            )
+            bcut_sha256 = hashlib.sha256(bcut_srt.read_bytes()).hexdigest()
+            coverage_start = max(0, int(item["start_ms"]) - PIECE_PRE_MS)
+            coverage_end = (
+                int(item["end_ms"])
+                + BOUNDARY_REPAIR_RETRY_CAP_MS
+                + SPEAKER_ROUTING_FINAL_TAIL_GUARD_MS
+            )
+            segment_duration = int(item.get("seg_dur_ms") or 0)
+            if segment_duration > 0:
+                coverage_end = min(segment_duration, coverage_end)
+            if coverage_end <= coverage_start:
+                raise ValueError("speaker routing candidate coverage is empty")
+            candidates.append(
+                {
+                    "candidate_id": str(item["cid"]),
+                    "segment_path": str(segment),
+                    "segment_binding_sha256": segment_hashes[segment],
+                    "segment_content_sha256": segment_hashes[segment],
+                    "segment_stat_signature": segment_stat_signature(segment),
+                    "bcut_srt_path": str(bcut_srt),
+                    "bcut_srt_sha256": bcut_sha256,
+                    "start_ms": coverage_start,
+                    "end_ms": coverage_end,
+                }
+            )
+        request = {
+            "schema_version": SPEAKER_ROUTING_REQUEST_SCHEMA,
+            "date": date,
+            "room": ROOM,
+            "pipeline_fingerprint": pipeline_fingerprint(),
+            "routing_runtime_fingerprint": routing_runtime_fingerprint(
+                provider_authority, repo_root=REPO_ROOT
+            ),
+            "router_policy_version": SPEAKER_ROUTING_POLICY_VERSION,
+            "router_policy_fingerprint": routing_policy_fingerprint(),
+            "provider_authority": provider_authority,
+            "candidates": candidates,
+        }
+        _atomic_write_json_file(request_path, request)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        log(f"speaker routing request failed safe for {date}: {type(exc).__name__}: {exc}")
+        return None
+
+    provider_path.unlink(missing_ok=True)
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=int(os.environ.get("AUTOSLICE_SPEAKER_ROUTING_PROVIDER_TIMEOUT", "1800")),
+            cwd=str(REPO_ROOT),
+            env=dict(PROVIDER_SANITIZED_ENVIRONMENT),
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        completed = None
+        log(f"speaker routing provider failed safe for {date}: {type(exc).__name__}: {exc}")
+    provider_evidence = provider_path if completed is not None and completed.returncode == 0 and provider_path.is_file() else None
+    if completed is not None and completed.returncode != 0:
+        log(
+            f"speaker routing provider rc={completed.returncode} for {date}; "
+            "falling back to binary finalization"
+        )
+    try:
+        claim = generate_speaker_routing(
+            request_path=request_path,
+            output_path=claim_path,
+            provider_evidence_path=provider_evidence,
+        )
+        claim_sha256 = hashlib.sha256(claim_path.read_bytes()).hexdigest()
+        _attach_speaker_routing_claim(
+            items=items,
+            claim_path=claim_path,
+            claim_sha256=claim_sha256,
+            candidates=candidates,
+            pipeline=str(request["pipeline_fingerprint"]),
+        )
+        if (
+            routing_session is not None
+            and session_authority is not None
+            and session_authority_path is not None
+        ):
+            session_authority.update(
+                {
+                    "decision": claim["decision"],
+                    "claim_path": str(claim_path),
+                    "claim_sha256": claim_sha256,
+                    "claim_pipeline_fingerprint": request["pipeline_fingerprint"],
+                    # A complete provider classification that found any
+                    # collab/uncertainty is sticky in the external authority.
+                    "provider_classification_sealed": (
+                        claim["decision"] == RUN_BINARY_FINALIZER
+                        and len(claim.get("candidate_results") or []) == len(candidates)
+                    ),
+                }
+            )
+            authority_sha = _write_speaker_session_authority(
+                session_authority_path, session_authority
+            )
+            session_authority = _load_speaker_session_authority(
+                session_authority_path, expected_sha256=authority_sha
+            )
+            routing_session.clear()
+            routing_session.update(
+                _speaker_session_state_from_authority(
+                    session_authority_path, authority_sha, session_authority
+                )
+            )
+            state.pop("speaker_routing_authority_status", None)
+    except (KeyError, OSError, TypeError, ValueError, SpeakerRoutingError) as exc:
+        _clear_speaker_routing_fields(items)
+        log(f"speaker routing claim failed safe for {date}: {type(exc).__name__}: {exc}")
+        return None
+    log(
+        f"speaker routing {date}: {claim['decision']} "
+        f"({','.join(str(value) for value in claim.get('reason_codes', [])) or 'verified solo'})"
+    )
+    return claim
+
+
+def _capture_state_from_result(result: dict) -> dict[str, object]:
+    queue = result.get("queue") if isinstance(result.get("queue"), dict) else {}
+    summary: dict[str, object] = {
+        "schema_version": "collab-evidence-capture-state.v1",
+        "status": str(result.get("status") or "UNKNOWN"),
+        "reason_codes": list(
+            (result.get("trigger") or {}).get("reason_codes") or []
+        )
+        if isinstance(result.get("trigger"), dict)
+        else [],
+        "labels_present": False,
+        "predictions_present": False,
+        "training_ready": False,
+        "upload_authorized": False,
+    }
+    for field in ("capture_id", "manifest_path", "cue_count", "error"):
+        if result.get(field) is not None:
+            summary[field] = result[field]
+    if queue:
+        summary.update(
+            {
+                "queue_path": str(
+                    BASE / "state" / "collab-evidence" / "queue" / "queue.v1.json"
+                ),
+                "candidate_session_count": int(
+                    queue.get("candidate_session_count") or 0
+                ),
+                "candidate_session_quota": int(
+                    queue.get("candidate_session_quota") or 0
+                ),
+                "candidate_session_quota_reached": bool(
+                    queue.get("candidate_session_quota_reached")
+                ),
+            }
+        )
+    return summary
+
+
+def queue_collab_evidence_capture(
+    date: str,
+    state: dict,
+    candidates: list[dict],
+    *,
+    routing_claim: dict | None,
+) -> dict[str, object]:
+    """Queue a bounded worker only after production is durably finalized.
+
+    The common no-trigger path is pure and touches no filesystem.  A triggered
+    worker receives only source/SRT paths plus an opaque session trigger; no
+    provider verdict, candidate identity, subtitle text, label, or prediction
+    is persisted in the request.
+    """
+
+    trigger = evaluate_collab_capture_trigger(routing_claim, candidates)
+    if not trigger.triggered:
+        summary = _capture_state_from_result(
+            {
+                "status": "NO_TRIGGER",
+                "trigger": {"reason_codes": []},
+            }
+        )
+        state["collab_evidence_capture"] = summary
+        return summary
+    if (BASE / "DISABLED").exists():
+        summary = _capture_state_from_result(
+            {
+                "status": "SKIPPED_DISABLED",
+                "trigger": {"reason_codes": list(trigger.reason_codes)},
+            }
+        )
+        state["collab_evidence_capture"] = summary
+        return summary
+    try:
+        if not DATE_RX.fullmatch(date):
+            raise CollabEvidenceCaptureError("capture date is invalid")
+        unique_sources: dict[tuple[str, str], dict[str, str]] = {}
+        for candidate in candidates:
+            source = str(candidate.get("segment_path") or "")
+            srt = str(candidate.get("bcut_srt_path") or "")
+            if source and srt:
+                unique_sources[(source, srt)] = {
+                    "segment_path": source,
+                    "bcut_srt_path": srt,
+                }
+        if not unique_sources:
+            raise CollabEvidenceCaptureError("capture has no source/SRT inventory")
+        intervals = []
+        for row in state.get("song_quarantine_intervals", []):
+            if not isinstance(row, dict):
+                continue
+            source = str(row.get("segment_path") or "")
+            start_ms = row.get("start_ms")
+            end_ms = row.get("end_ms")
+            if (
+                source
+                and isinstance(start_ms, int)
+                and not isinstance(start_ms, bool)
+                and isinstance(end_ms, int)
+                and not isinstance(end_ms, bool)
+            ):
+                intervals.append(
+                    {
+                        "segment_path": source,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                    }
+                )
+        request = {
+            "schema_version": WORKER_REQUEST_SCHEMA_VERSION,
+            "date": date,
+            "candidates": [
+                unique_sources[key] for key in sorted(unique_sources)
+            ],
+            "song_intervals": sorted(
+                intervals,
+                key=lambda row: (
+                    row["segment_path"], row["start_ms"], row["end_ms"]
+                ),
+            ),
+            "trigger": {
+                "reason_codes": list(trigger.reason_codes),
+                "text_signal_classes": list(trigger.text_signal_classes),
+            },
+        }
+        validate_worker_request_document(request)
+        capture_root = BASE / "state" / "collab-evidence"
+        request_path = capture_root / "requests" / f"{date}.json"
+        result_path = request_path.with_suffix(".result.json")
+        if request_path.is_file():
+            existing = json.loads(request_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(existing, dict)
+                or existing.get("schema_version") != WORKER_REQUEST_SCHEMA_VERSION
+                or existing.get("date") != date
+            ):
+                raise CollabEvidenceCaptureError(
+                    "existing capture request authority is invalid"
+                )
+            validate_worker_request_document(existing)
+            # The first sealed full-session request remains authority across
+            # title retries whose mutable pending set may be only a subset.
+            request = existing
+        else:
+            _atomic_write_json_file(request_path, request)
+        if result_path.is_file():
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            if not isinstance(result, dict):
+                raise CollabEvidenceCaptureError("capture worker result is invalid")
+            summary = _capture_state_from_result(result)
+        else:
+            log_path = BASE / "logs" / f"collab-evidence-{date}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("ab") as sink:
+                process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "src.autoslice.collab_evidence_capture",
+                        "--request",
+                        str(request_path),
+                        "--base-dir",
+                        str(capture_root),
+                        "--alert-dir",
+                        str(BASE / "reports"),
+                    ],
+                    cwd=str(REPO_ROOT),
+                    env=child_env(),
+                    stdin=subprocess.DEVNULL,
+                    stdout=sink,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            summary = _capture_state_from_result(
+                {
+                    "status": "CAPTURE_QUEUED",
+                    "trigger": {"reason_codes": list(trigger.reason_codes)},
+                }
+            )
+            summary.update(
+                {
+                    "worker_pid": process.pid,
+                    "request_path": str(request_path),
+                    "result_path": str(result_path),
+                    "log_path": str(log_path),
+                }
+            )
+    except Exception as exc:  # noqa: BLE001 - capture cannot undo finalized production
+        summary = _capture_state_from_result(
+            {
+                "status": "CAPTURE_QUEUE_FAILED",
+                "error": f"{type(exc).__name__}: {exc}"[:500],
+                "trigger": {"reason_codes": list(trigger.reason_codes)},
+            }
+        )
+        log(f"collab evidence capture failed open for {date}: {summary['error']}")
+    state["collab_evidence_capture"] = summary
+    return summary
+
+
+def song_selector_env(date: str) -> dict[str, str]:
+    env = child_env_for_date(date)
+    env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
+    # Full-song source-context inspection is materially heavier than ordinary
+    # talk windows.  A 269 s real 《怎么办》 run wrote its valid output.srt only
+    # near the generic 15 minute deadline and was killed while finalizing.
+    # Keep the retry bounded, but use the same 30 minute budget as the
+    # established live-song AGY workflow instead of treating slow completion
+    # as content failure.
+    env["AGY_PRINT_TIMEOUT"] = os.environ.get("SONG_AGY_PRINT_TIMEOUT", "30m")
+    env["LIDOUSHA_TERM_AS_OF"] = date
+    return env
 
 
 def cpa_qa_cmd() -> str:
@@ -204,6 +1359,81 @@ def child_env() -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_env_file(CPA_ENV))
     env.setdefault("HOME", "/root")
+    truth_mode = human_truth_mode()
+    blind_timely_terms = os.environ.get("AUTOSLICE_BLIND_TIMELY_TERMS")
+    configured_timely_terms = os.environ.get("AUTOSLICE_TIMELY_TERMS")
+    runtime_timely_terms = BASE / "state" / "timely_terms.json"
+    committed_timely_terms = REPO_ROOT / "assets" / "lidousha" / "timely_terms.json"
+    if truth_mode == "withheld":
+        timely_terms = Path(blind_timely_terms) if blind_timely_terms else None
+    elif configured_timely_terms:
+        timely_terms = Path(configured_timely_terms)
+    elif runtime_timely_terms.is_file() and not runtime_timely_terms.is_symlink():
+        timely_terms = runtime_timely_terms
+    else:
+        timely_terms = committed_timely_terms
+    if timely_terms is not None and timely_terms.is_file() and not timely_terms.is_symlink():
+        env["LIDOUSHA_TIMELY_TERMS"] = str(timely_terms.resolve())
+        env["LIDOUSHA_TIMELY_TERMS_SHA256"] = (
+            "sha256:" + _sha256_regular_file(timely_terms)
+        )
+        env.pop("LIDOUSHA_DISABLE_TIMELY_TERMS", None)
+    elif truth_mode == "withheld":
+        env["LIDOUSHA_DISABLE_TIMELY_TERMS"] = "1"
+        env.pop("LIDOUSHA_TIMELY_TERMS", None)
+        env.pop("LIDOUSHA_TIMELY_TERMS_SHA256", None)
+
+    blind_topic_graph = os.environ.get("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH")
+    configured_topic_graph = os.environ.get("AUTOSLICE_TOPIC_ENTITY_GRAPH")
+    runtime_topic_graph = BASE / "state" / "topic_entity_graph.json"
+    committed_topic_graph = REPO_ROOT / "assets" / "lidousha" / "topic_entity_graph.json"
+    if truth_mode == "withheld":
+        topic_graph = Path(blind_topic_graph) if blind_topic_graph else None
+    elif configured_topic_graph:
+        topic_graph = Path(configured_topic_graph)
+    elif runtime_topic_graph.is_file() and not runtime_topic_graph.is_symlink():
+        topic_graph = runtime_topic_graph
+    else:
+        topic_graph = committed_topic_graph
+    if (
+        truth_mode == "withheld"
+        and topic_graph is not None
+        and topic_graph.is_file()
+        and not topic_graph.is_symlink()
+    ):
+        # A blind graph must be generated from the exact blind timely snapshot
+        # selected above.  This prevents a reviewed/committed graph from being
+        # relabeled by path alone and makes the lineage auditable in the graph.
+        try:
+            graph_payload = json.loads(topic_graph.read_text(encoding="utf-8"))
+            graph_matches_blind_snapshot = (
+                timely_terms is not None
+                and timely_terms.is_file()
+                and not timely_terms.is_symlink()
+                and graph_payload.get("generator") == "scripts/crawl_topic_entity_graph.py"
+                and graph_payload.get("input_timely_terms_sha256")
+                == _sha256_regular_file(timely_terms)
+            )
+        except (OSError, ValueError, AttributeError):
+            graph_matches_blind_snapshot = False
+        if not graph_matches_blind_snapshot:
+            topic_graph = None
+    if topic_graph is not None and topic_graph.is_file() and not topic_graph.is_symlink():
+        env["LIDOUSHA_TOPIC_ENTITY_GRAPH"] = str(topic_graph.resolve())
+        env["LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256"] = (
+            "sha256:" + _sha256_regular_file(topic_graph)
+        )
+        env.pop("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH", None)
+    elif truth_mode == "withheld":
+        env["LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH"] = "1"
+        env.pop("LIDOUSHA_TOPIC_ENTITY_GRAPH", None)
+        env.pop("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", None)
+    return env
+
+
+def child_env_for_date(recording_date: str) -> dict[str, str]:
+    env = child_env()
+    env["LIDOUSHA_TERM_AS_OF"] = recording_date
     return env
 
 
@@ -409,6 +1639,20 @@ def find_danmaku_xml(segment: Path) -> Path | None:
     return None
 
 
+def find_chat_jsonl(segment: Path) -> Path | None:
+    """Find the structured live-event sidecar independently from XML health."""
+
+    digits = re.sub(r"\D", "", segment.stem)
+    for folder in (segment.parent, segment.parent / "sources"):
+        try:
+            for jsonl in folder.glob("*.jsonl"):
+                if re.sub(r"\D", "", jsonl.stem) == digits and jsonl.stat().st_size > 0:
+                    return jsonl
+        except OSError:
+            continue
+    return None
+
+
 def danmaku_hints(xml_path: Path | None) -> str | None:
     if xml_path is None:
         return None
@@ -495,7 +1739,10 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
     review summary can show WHY each clip was picked (Ivan 2026-07-06).
     """
     from scripts.run_auto_review_shadow_pipeline import _parse_srt
-    from src.autoslice.full_session_candidate_selector import select_full_session_candidates
+    from src.autoslice.full_session_candidate_selector import (
+        select_fallback_session_candidates,
+        select_full_session_candidates,
+    )
     from src.autoslice.llm_client import LlmCallError, LlmConfig, build_llm_call
     from src.autoslice.semantic_candidate_selector import select_semantic_session_candidates
 
@@ -525,7 +1772,7 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
         # Deterministic song supplement: recall's candidate cap squeezes songs
         # out on song-heavy streams (first real run: 4+ songs sung, 1 caught).
         try:
-            supplement = select_full_session_candidates(cues, max_candidates=8)
+            supplement = select_fallback_session_candidates(cues, max_candidates=8)
         except Exception:  # noqa: BLE001
             supplement = []
         for cand in supplement:
@@ -542,28 +1789,103 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
         return candidates, "semantic_recall", extras
     except LlmCallError as exc:
         log(f"semantic recall failed ({exc}); falling back to deterministic lanes")
-        fallback = select_full_session_candidates(cues, max_candidates=PER_SEGMENT_CANDIDATES)
-        return fallback, "deterministic_fallback", {}
+        primary = select_full_session_candidates(cues, max_candidates=PER_SEGMENT_CANDIDATES)
+        fallback = select_fallback_session_candidates(cues, max_candidates=8)
+        for candidate in fallback:
+            if any(
+                min(candidate.anchor.anchor_end_ms, existing.anchor.anchor_end_ms)
+                > max(candidate.anchor.anchor_start_ms, existing.anchor.anchor_start_ms)
+                for existing in primary
+            ):
+                continue
+            primary.append(candidate)
+        return primary, "deterministic_fallback", {}
 
 
 def read_publish_meta(work_dir: Path) -> dict:
     for publish in sorted(work_dir.glob("replacement_recuts/*.publish.json")):
         try:
             d = json.loads(publish.read_text(encoding="utf-8"))
+            hashes = d.get("artifact_hashes") if isinstance(d.get("artifact_hashes"), dict) else {}
             return {
                 "title": d.get("title"),
                 "title_source": d.get("title_source"),
+                "title_authority_status": d.get("title_authority_status"),
+                "title_authority_error": d.get("title_authority_error"),
                 "cover_status": d.get("cover_status"),
+                "cover_path": d.get("cover_path"),
+                "cover_sha256": hashes.get("cover_sha256"),
+                "cover_generation": d.get("cover_generation"),
+                "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
             }
         except (OSError, ValueError):
             continue
     return {}
 
 
+def _speaker_review_manifest_state(work_dir: Path) -> dict[str, tuple[int, int, int, int]]:
+    state: dict[str, tuple[int, int, int, int]] = {}
+    for path in work_dir.glob("replacement_recuts/*.speaker-final.json"):
+        try:
+            metadata = path.stat()
+        except OSError:
+            continue
+        state[str(path)] = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mtime_ns,
+            metadata.st_size,
+        )
+    return state
+
+
+def read_speaker_review_meta(
+    work_dir: Path,
+    *,
+    previous_state: dict[str, tuple[int, int, int, int]],
+) -> dict:
+    for manifest_path in sorted(work_dir.glob("replacement_recuts/*.speaker-final.json")):
+        try:
+            metadata = manifest_path.stat()
+            current_state = (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_mtime_ns,
+                metadata.st_size,
+            )
+            if previous_state.get(str(manifest_path)) == current_state:
+                continue
+            payload = manifest_path.read_bytes()
+            after_read = manifest_path.stat()
+            if current_state != (
+                after_read.st_dev,
+                after_read.st_ino,
+                after_read.st_mtime_ns,
+                after_read.st_size,
+            ):
+                continue
+            document = json.loads(payload)
+            rows = validate_speaker_review_manifest_document(document)
+        except (OSError, ValueError, SpeakerFinalizationError):
+            continue
+        return {
+            "speaker_review_manifest": str(manifest_path),
+            "speaker_review_manifest_sha256": "sha256:"
+            + hashlib.sha256(payload).hexdigest(),
+            "speaker_review_source_media_sha256": document["source_media_sha256"],
+            "speaker_review_text_final_srt_sha256": document["text_final_srt_sha256"],
+            "speaker_review_context_unresolved_cues": document["context_unresolved_cues"],
+            "speaker_review_reason": document["reason"],
+            "speaker_review_required_cues": rows,
+        }
+    return {}
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
-    Returns the result record; status is one of ok / title_failed / failed.
+    Returns the result record; deterministic speaker uncertainty is preserved
+    as ``speaker_review_required`` instead of a generic retryable failure.
     A title_failed pick is cleaned up (no delivery with a cid title/cover) and
     retried on a later resume.  ``reuse_cover`` keeps the existing delivered
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
@@ -574,53 +1896,143 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     spec = {
         "candidate_id": cid,
         "date": date,
+        "human_truth_mode": human_truth_mode(),
         "output_root": str(out_root),
         "delivery_name": delivery_name,
+        "selection_hook": item.get("hook", ""),
         "given_title": None,
         "lead_pad_ms": 400,
         "semantic_start_ms": item["start_ms"],
         "semantic_end_ms": item["end_ms"],
+        "boundary_repair_extend_cap_ms": BOUNDARY_REPAIR_INITIAL_CAP_MS,
         "pieces": [
             {
                 "remote_media": item["segment_path"],
                 "start_ms": max(0, item["start_ms"] - PIECE_PRE_MS),
                 "end_ms": min(item["seg_dur_ms"], item["end_ms"] + PIECE_POST_MS) if item["seg_dur_ms"] else item["end_ms"] + PIECE_POST_MS,
                 **({"danmaku_xml_local": item["xml"]} if item.get("xml") else {}),
+                **({"chat_jsonl_local": item["chat_jsonl"]} if item.get("chat_jsonl") else {}),
             }
         ],
     }
+    candidate_text_override = candidate_text_override_path(cid)
+    if candidate_text_override is not None:
+        spec["subtitle_text_overrides"] = str(candidate_text_override)
+    candidate_subtitle_regression = candidate_subtitle_regression_path(cid)
+    if candidate_subtitle_regression is not None:
+        spec["subtitle_regression"] = str(candidate_subtitle_regression)
+    candidate_speaker_override = candidate_speaker_override_path(cid)
+    if candidate_speaker_override is not None:
+        spec["speaker_overrides"] = str(candidate_speaker_override)
+    for routing_key in (
+        "speaker_routing_claim",
+        "speaker_routing_claim_sha256",
+        "speaker_routing_candidate",
+    ):
+        if item.get(routing_key) is not None:
+            spec[routing_key] = item[routing_key]
     out_root.mkdir(parents=True, exist_ok=True)
     spec_path = out_root / f"spec_{cid}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     log_path = BASE / "logs" / f"{date}_{cid}.log"
     log(f"producing {cid} ({(item['end_ms'] - item['start_ms']) // 1000}s) from {Path(item['segment_path']).name}")
     cmd = [sys.executable, str(REPO_ROOT / "scripts" / "produce_slice_package.py"),
-           "--spec", str(spec_path), "--ssh-host", "localhost"]
+           "--spec", str(spec_path), "--ssh-host", "localhost", "--speaker-mode", "auto"]
     if reuse_cover:
         cmd.append("--reuse-cover")
-    with open(log_path, "a", encoding="utf-8") as sink:
-        completed = subprocess.run(
-            cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
-            cwd=str(REPO_ROOT), env=child_env(),
+    boundary_context_retries = 0
+
+    def run_producer():
+        speaker_review_state = _speaker_review_manifest_state(out_root / cid)
+        attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
+        with open(log_path, "a", encoding="utf-8") as sink:
+            completed = subprocess.run(
+                cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
+                cwd=str(REPO_ROOT), env=child_env_for_date(date),
+            )
+        with open(log_path, "rb") as source:
+            source.seek(attempt_offset)
+            attempt_output = source.read().decode("utf-8", "replace")
+        return completed, attempt_output, speaker_review_state
+
+    completed, attempt_output, previous_speaker_review_state = run_producer()
+    first_tail = attempt_output[-4000:]
+    if (
+        completed.returncode != 0
+        and "BOUNDARY_UNREPAIRABLE" in first_tail
+        and "retry_scope=same_topic_continues" in first_tail
+    ):
+        piece = spec["pieces"][0]
+        retry_end = (
+            min(item["seg_dur_ms"], item["end_ms"] + BOUNDARY_CONTEXT_RETRY_POST_MS)
+            if item["seg_dur_ms"]
+            else item["end_ms"] + BOUNDARY_CONTEXT_RETRY_POST_MS
         )
+        current_cap = int(spec["boundary_repair_extend_cap_ms"])
+        if retry_end > piece["end_ms"] and BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap:
+            boundary_context_retries = 1
+            piece["end_ms"] = retry_end
+            spec["boundary_repair_extend_cap_ms"] = BOUNDARY_REPAIR_RETRY_CAP_MS
+            spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+            with open(log_path, "a", encoding="utf-8") as sink:
+                sink.write(
+                    f"\nBOUNDARY_CONTEXT_RETRY: widening source post-context to {retry_end}ms "
+                    f"and absolute repair cap to {BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
+                    f"(semantic end remains {item['end_ms']}ms)\n"
+                )
+            completed, attempt_output, previous_speaker_review_state = run_producer()
     result = {
         "candidate_id": cid, "segment": Path(item["segment_path"]).name,
         "start_ms": item["start_ms"], "end_ms": item["end_ms"],
         "hook": item.get("hook", ""), "confidence": item.get("confidence"),
         "lane": item.get("lane", ""), "rc": completed.returncode, "log": str(log_path),
+        "boundary_context_retries": boundary_context_retries,
+        "talk_repair_retry_count": int(item.get("talk_repair_retry_count") or 0),
+        "talk_transient_retry_count": int(item.get("talk_transient_retry_count") or 0),
+        "selected_repair": bool(item.get("selected_repair")),
+        "retry_reason": item.get("retry_reason"),
+        "pipeline_fingerprint": talk_pipeline_fingerprint(cid),
     }
-    tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
+    # Classify only bytes written by this subprocess attempt.  The log is
+    # append-only; a stale boundary marker followed by a transient CPA error
+    # must not make the new attempt terminal again.
+    tail = attempt_output[-4000:]
     result["summary"] = last_json_block(tail)
     result.update(read_publish_meta(out_root / cid))
     if completed.returncode != 0:
-        # BOUNDARY_UNREPAIRABLE is deterministic (the self-repair loop ran out
-        # of clean closure candidates) — terminal, never retried.  Anything
-        # else is a plain failure.
+        if (
+            "TITLE_AUTHORITY_UNRESOLVED" in tail
+            and str(result.get("title_authority_status") or "").startswith("UNRESOLVED")
+        ):
+            # The producer now fails before delivery.  Keep cleanup for old
+            # partial/stale attempts, then classify this deterministic lane so
+            # the bounded title retry policy can act on it.
+            delivered = REPO_ROOT / "lidousha" / date
+            for f in delivered.glob(f"{delivery_name}.*"):
+                f.unlink(missing_ok=True)
+            recuts = out_root / cid / "replacement_recuts"
+            if recuts.is_dir():
+                import shutil
+
+                shutil.rmtree(recuts, ignore_errors=True)
+            result["status"] = "title_failed"
+            return result
+        if "SPEAKER_REVIEW_REQUIRED" in attempt_output:
+            review_meta = read_speaker_review_meta(
+                out_root / cid,
+                previous_state=previous_speaker_review_state,
+            )
+            if review_meta:
+                result.update(review_meta)
+                result["status"] = "speaker_review_required"
+                return result
+        # BOUNDARY_UNREPAIRABLE is deterministic for this pipeline generation;
+        # a later fingerprint change can earn a bounded retry.
         result["status"] = (
             "boundary_unrepairable" if "BOUNDARY_UNREPAIRABLE" in tail else "failed"
         )
         return result
-    if "llm_failed" in str(result.get("title_source") or ""):
+    if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
         # No delivery with a cid title / cid-text cover — clean and retry later.
         delivered = REPO_ROOT / "lidousha" / date
         for f in delivered.glob(f"{delivery_name}.*"):
@@ -724,15 +2136,37 @@ def song_delivery_ok(
     delivered.  Everything else the semantic judge flags (closure, viewer
     context, boundary style, AUTO_UPLOAD/BLOCK itself) is reviewer REFERENCE,
     not a delivery gate."""
+    # A bare bool was the pre-host-vocal compatibility shortcut.  It can carry
+    # no hash-bound performer identity and is therefore no longer acceptable.
+    reasons = {str(code) for code in (reason_codes or [])}
+    proof_path = completion_evidence.get("host_vocal_proof_path") if isinstance(completion_evidence, dict) else None
+    proof_sha256 = completion_evidence.get("host_vocal_proof_sha256") if isinstance(completion_evidence, dict) else None
     proof_ready = (
-        completion_evidence is True
-        or (isinstance(completion_evidence, dict) and completion_evidence.get("ready") is True)
+        isinstance(completion_evidence, dict)
+        and completion_evidence.get("ready") is True
+        and completion_evidence.get("host_vocal_status") == "READY"
+        and completion_evidence.get("host_vocal_decision") == "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
+        and completion_evidence.get("live_performance_status") == "READY"
+        and completion_evidence.get("live_performance_mode") == "LIVE_STREAMER_SINGING"
+        and completion_evidence.get("joint_singing_decision") == "VERIFIED_LIDOUSHA_SINGING"
+        and isinstance(proof_path, str)
+        and isinstance(proof_sha256, str)
+        and _matches_sha256(Path(proof_path), proof_sha256)
+    )
+    identity_failure = (
+        "SONG_NOT_LIDOUSHA_SINGING" in reasons
+        or "SONG_BACKGROUND_PLAYBACK_ONLY" in reasons
+        or "SONG_LIVE_PERFORMANCE_UNPROVEN" in reasons
+        or any(
+        code.startswith("SONG_HOST_VOCAL_") and code != "SONG_HOST_VOCAL_VERIFIED" for code in reasons
+        )
     )
     return (
         selector_rc == 0
         and bool(is_song)
         and proof_ready
-        and "SONG_PARTIAL" not in (reason_codes or [])
+        and "SONG_PARTIAL" not in reasons
+        and not identity_failure
     )
 
 
@@ -748,6 +2182,50 @@ def fresh_song_selector_dir(out_dir: Path, tag: str) -> Path:
     history_dir = out_dir / f"song_selector{tag}"
     history_dir.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix="attempt-", dir=history_dir))
+
+
+def song_window_media_path(
+    out_dir: Path,
+    candidate_id: str,
+    tag: str,
+    start_ms: int,
+    end_ms: int,
+) -> Path:
+    """Return an interval-bound path for a materialized song proof window.
+
+    The old fixed ``<candidate><tag>_source.mp4`` name let a later retry reuse
+    bytes cut for a different interval.  The SRT and declared duration then
+    described the new interval while AGY/CAM++ read the old media.  Bind the
+    exact source interval into the filename so stale windows remain available
+    for forensics but can never satisfy a different attempt.
+    """
+
+    lane = tag.removeprefix("_") or "tight"
+    return out_dir / f"{candidate_id}_{lane}_{start_ms}_{end_ms}_source.mp4"
+
+
+def classify_song_selector_transient(log_text: str) -> str | None:
+    """Turn selector/provider diagnostics into a stable retry reason code."""
+
+    upper = log_text.upper()
+    if "TOO MANY REQUESTS" in upper or re.search(
+        r"(?:HTTP(?: ERROR)?|STATUS(?: CODE)?|RESPONSE)\D{0,12}429\b", upper
+    ):
+        return "CPA_RATE_LIMITED"
+    if "CPA_LLM_JUDGE_MODEL_DOWN" in upper:
+        return "CPA_MODEL_DOWN"
+    if re.search(r"HTTP(?: ERROR)?\s*(?:5\d\d|ERROR 5\d\d)", upper):
+        return "CPA_UPSTREAM_5XX"
+    if "TIMEOUT" in upper or "TIMED OUT" in upper:
+        return "CPA_UPSTREAM_TIMEOUT"
+    return None
+
+
+def song_infra_retry_delay_seconds(completed_retry_count: int) -> int:
+    """Exponential cross-tick backoff, capped so a provider outage stays bounded."""
+
+    exponent = max(0, int(completed_retry_count))
+    return min(SONG_INFRA_RETRY_MAX_SECONDS, SONG_INFRA_RETRY_BASE_SECONDS * (2**exponent))
 
 
 def record_is_song(entry: dict) -> bool:
@@ -790,6 +2268,8 @@ def song_delivery_artifacts(record: dict) -> dict:
             out["subtitle_sha256"] = str(recut_hashes["subtitle_sha256"])
     if recut.get("manifest_path"):
         out["recut_manifest_path"] = str(recut["manifest_path"])
+        if recut.get("manifest_sha256"):
+            out["recut_manifest_sha256"] = str(recut["manifest_sha256"])
     gate = recut.get("cover_release_gate")
     if isinstance(gate, dict):
         out["cover_release_gate_satisfied"] = gate.get("satisfied")
@@ -809,6 +2289,356 @@ def song_delivery_artifacts(record: dict) -> dict:
     return out
 
 
+def _write_song_active_record(
+    summary_record: dict,
+    *,
+    delivery_candidate_id: str,
+    title: str,
+    video_sha256: str,
+    summary_authority_root: Path,
+) -> tuple[Path, str]:
+    """Persist the invocation-owned materialized song record next to its
+    publish draft so later cover repair has the same exact active-document
+    authority as talk delivery.  The delivery copy is included in the verified
+    song manifest; this source copy remains in the immutable selector attempt."""
+
+    if summary_authority_root.is_symlink():
+        raise SongDeliveryError("song summary authority root may not be a symlink")
+    try:
+        authority_root = summary_authority_root.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song summary authority root is missing: {exc}") from exc
+    if not authority_root.is_dir():
+        raise SongDeliveryError("song summary authority root is not a directory")
+
+    materialized = summary_record.get("materialized_recut")
+    if not isinstance(materialized, dict):
+        raise SongDeliveryError("song summary has no materialized_recut record")
+    record = copy.deepcopy(materialized)
+    staging = record.get("publish_staging")
+    if not isinstance(staging, dict):
+        raise SongDeliveryError("song materialized record has no publish_staging")
+    source_candidate_id = str(summary_record.get("candidate_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", source_candidate_id):
+        raise SongDeliveryError("song active record has an unsafe source candidate id")
+
+    # A verified song can legitimately reach the runner while the generic
+    # publish/cover release gate is still closed.  In particular,
+    # SONG_FULL_BOUNDARY_READY is a positive song proof, but the generic gate
+    # deliberately requires *zero* reason codes.  Do not weaken that gate or
+    # pretend a cover exists.  Instead materialize the minimum no-upload
+    # publish authority required by verified delivery and later cover repair.
+    # This branch is intentionally narrow: any semantic/content blocker still
+    # fails closed and cannot manufacture a publish draft.
+    publish_value = staging.get("publish_json_path")
+    if not isinstance(publish_value, str) or not publish_value:
+        gate = record.get("cover_release_gate")
+        gate_reasons = (
+            [str(code) for code in gate.get("reason_codes", [])]
+            if isinstance(gate, dict) and isinstance(gate.get("reason_codes"), list)
+            else []
+        )
+        deferred_decision = str(staging.get("decision_action") or "")
+        if (
+            staging.get("status") != "SKIPPED_RELEASE_GATE"
+            or deferred_decision not in {"AUTO_UPLOAD", "AUTO_RECUT"}
+            or staging.get("upload_enabled") is not False
+            or not isinstance(gate, dict)
+            or gate.get("schema_version") != "slice-cover-release-gate.v1"
+            or gate.get("candidate_id") != source_candidate_id
+            or gate.get("decision_action") != deferred_decision
+            or gate.get("satisfied") is not False
+            or gate_reasons != ["SONG_FULL_BOUNDARY_READY"]
+            or summary_record.get("decision_action") != deferred_decision
+            or [str(code) for code in summary_record.get("reason_codes", [])]
+            != ["SONG_FULL_BOUNDARY_READY"]
+        ):
+            raise SongDeliveryError(
+                "song active publish draft missing outside the verified deferred-cover case"
+            )
+        media_value = record.get("media_path")
+        manifest_value = record.get("manifest_path")
+        burned = record.get("burned_preview")
+        burned_value = burned.get("path") if isinstance(burned, dict) else None
+        if not all(isinstance(value, str) and value for value in (media_value, manifest_value, burned_value)):
+            raise SongDeliveryError("song deferred publish authority is missing materialized paths")
+        try:
+            media_path = Path(str(media_value)).resolve(strict=True)
+            manifest_path = Path(str(manifest_value)).resolve(strict=True)
+            burned_path = Path(str(burned_value)).resolve(strict=True)
+        except OSError as exc:
+            raise SongDeliveryError(f"song deferred publish materialized path is missing: {exc}") from exc
+        artifact_root = manifest_path.parent
+        if (
+            media_path.parent != artifact_root
+            or burned_path.parent != artifact_root
+            or not artifact_root.is_relative_to(authority_root)
+            or not manifest_path.name.endswith(".recut.manifest.json")
+            or not media_path.name.endswith(".recut.mp4")
+            or not burned_path.name.endswith(".mp4")
+            or not _matches_sha256(burned_path, video_sha256)
+        ):
+            raise SongDeliveryError("song deferred publish artifact-root/video binding mismatch")
+        publish_path = media_path.with_suffix(".publish.json")
+        if publish_path.parent != artifact_root or publish_path.is_symlink():
+            raise SongDeliveryError("song deferred publish path escapes the materialized artifact root")
+
+        cover_text = title.removeprefix("【李豆沙】豆沙歌，").strip() or title
+        cover_generation = {
+            "workflow": "verified-song-delivery-deferred-cover.v1",
+            "status": "BLOCKED",
+            "detail": (
+                "cover generation deferred until the hash-bound no-upload song "
+                "delivery authority exists"
+            ),
+            "attempted_models": [],
+        }
+        artifact_hashes = copy.deepcopy(record.get("artifact_hashes"))
+        if not isinstance(artifact_hashes, dict):
+            raise SongDeliveryError("song deferred publish artifact_hashes is not an object")
+        publish = {
+            "schema_version": "shadow-publish-draft.v1",
+            "candidate_id": source_candidate_id,
+            "upload_enabled": False,
+            "title": title,
+            "title_source": "runner_verified_song_fallback",
+            "title_policy_violations": [],
+            "video_path": str(media_path),
+            "cover_text": cover_text,
+            "cover_path": None,
+            "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+            "cover_generation": cover_generation,
+            "reason_codes": ["CPA_AI_COVER_REQUIRED"],
+            "artifact_hashes": artifact_hashes,
+            "delivery_authority": {
+                "schema_version": "verified-song-deferred-cover-authority.v1",
+                "release_gate_path": str(gate.get("path") or staging.get("release_gate_path") or ""),
+                "release_gate_satisfied": False,
+                "release_gate_reason_codes": gate_reasons,
+                "upload_enabled": False,
+            },
+        }
+        if publish_path.exists():
+            existing_publish = _read_json_object(
+                publish_path, label="existing deferred song publish draft"
+            )
+            if existing_publish != publish:
+                raise SongDeliveryError("conflicting deferred song publish draft already exists")
+        else:
+            _atomic_write_json_file(publish_path, publish)
+        record["publish_staging"] = {
+            "status": "STAGED",
+            "title": title,
+            "title_source": "runner_verified_song_fallback",
+            "title_policy_violations": [],
+            "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+            "cover_path": None,
+            "cover_text": cover_text,
+            "cover_generation": cover_generation,
+            "reason_codes": ["CPA_AI_COVER_REQUIRED"],
+            "publish_json_path": str(publish_path),
+            "release_gate_path": str(gate.get("path") or staging.get("release_gate_path") or ""),
+            "upload_enabled": False,
+        }
+        staging = record["publish_staging"]
+        publish_value = str(publish_path)
+
+    if (
+        staging.get("title") != title
+        or staging.get("upload_enabled") is not False
+        or not isinstance(publish_value, str)
+        or _document_video_hash(record) != video_sha256
+    ):
+        raise SongDeliveryError("song active record title/video/upload binding mismatch")
+    publish_path = Path(publish_value)
+    if publish_path.is_symlink():
+        raise SongDeliveryError("song active publish draft may not be a symlink")
+    try:
+        publish_path = publish_path.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song active publish draft is missing: {exc}") from exc
+    if not publish_path.is_relative_to(authority_root):
+        raise SongDeliveryError("song active publish draft escapes the bound summary attempt")
+    publish = _read_json_object(publish_path, label="song active publish draft")
+    if (
+        publish.get("schema_version") != "shadow-publish-draft.v1"
+        or publish.get("candidate_id") != source_candidate_id
+        or publish.get("title") != title
+        or publish.get("upload_enabled") is not False
+        or _document_video_hash(publish) != video_sha256
+    ):
+        raise SongDeliveryError("song active publish candidate/title/video/upload binding mismatch")
+    if publish_path.name.endswith(".recut.publish.json"):
+        record_path = publish_path.with_name(
+            publish_path.name[: -len(".recut.publish.json")] + ".record.json"
+        )
+    elif publish_path.name.endswith(".publish.json"):
+        record_path = publish_path.with_name(
+            publish_path.name[: -len(".publish.json")] + ".record.json"
+        )
+    else:
+        raise SongDeliveryError("song active publish draft has an unexpected filename")
+    if record_path.is_symlink() or not record_path.parent.resolve(strict=True).is_relative_to(
+        authority_root
+    ):
+        raise SongDeliveryError("song active record escapes the bound summary attempt")
+    record["delivery_candidate_id"] = delivery_candidate_id
+    record["source_candidate_id"] = source_candidate_id
+    _atomic_write_json_file(record_path, record)
+    return record_path, "sha256:" + _sha256_regular_file(record_path)
+
+
+def _commit_verified_song_package(
+    *,
+    date: str,
+    delivery_candidate_id: str,
+    summary_record: dict,
+    title: str,
+    selector_rc: int,
+    summary_authority_root: Path,
+) -> dict:
+    """Commit one already-proven song without rerunning ASR/LRC/AGY.
+
+    The same function is used by the fresh selector path and by bounded
+    crash/packaging recovery.  It re-verifies every positive song proof and
+    every artifact hash before exposing the manifest-last public package.
+    Covers remain optional and upload is always disabled.
+    """
+
+    if selector_rc != 0:
+        raise SongDeliveryError("song selector did not exit successfully")
+    if not isinstance(title, str) or not title.strip():
+        raise SongDeliveryError("verified song package has no title")
+    title = title.strip()
+    if summary_authority_root.is_symlink():
+        raise SongDeliveryError("song summary authority root may not be a symlink")
+    try:
+        authority_root = summary_authority_root.resolve(strict=True)
+        candidate_root = (BASE / "out" / date / delivery_candidate_id).resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song summary/candidate authority root is missing: {exc}") from exc
+    if not authority_root.is_relative_to(candidate_root):
+        raise SongDeliveryError("song summary authority root escapes the outer candidate")
+    reasons = [str(code) for code in summary_record.get("reason_codes", [])]
+    completion = song_completion_evidence(summary_record)
+    if not song_delivery_ok(
+        selector_rc,
+        record_is_song(summary_record),
+        reasons,
+        completion,
+    ):
+        raise SongDeliveryError("song proof chain is not currently delivery-ready")
+
+    artifacts = song_delivery_artifacts(summary_record)
+    video_value = artifacts.get("video_path")
+    video_sha256 = artifacts.get("video_sha256")
+    if not isinstance(video_value, str) or not isinstance(video_sha256, str):
+        raise SongDeliveryError("verified song has no hash-bound burned video")
+    burned = Path(video_value)
+    if not _matches_sha256(burned, video_sha256):
+        raise SongDeliveryError("verified song burned video hash mismatch")
+
+    required_sources = (
+        (
+            "subtitle",
+            artifacts.get("subtitle_path"),
+            artifacts.get("subtitle_sha256"),
+            ".srt",
+        ),
+        (
+            "lyrics_alignment_report",
+            completion.get("alignment_report_path"),
+            completion.get("alignment_report_sha256"),
+            ".lyrics-alignment-report.json",
+        ),
+        (
+            "host_vocal_proof",
+            completion.get("host_vocal_proof_path"),
+            completion.get("host_vocal_proof_sha256"),
+            ".host-vocal-proof.json",
+        ),
+        (
+            "recut_manifest",
+            artifacts.get("recut_manifest_path"),
+            artifacts.get("recut_manifest_sha256"),
+            ".recut.manifest.json",
+        ),
+    )
+    for role, source_value, sha_value, _suffix in required_sources:
+        if not isinstance(source_value, str) or not isinstance(sha_value, str):
+            raise SongDeliveryError(f"missing hash-bound delivery sidecar: {role}")
+        if not _matches_sha256(Path(source_value), sha_value):
+            raise SongDeliveryError(f"hash-bound delivery sidecar drifted: {role}")
+
+    name = _song_delivery_basename(title, delivery_candidate_id)
+    delivery = REPO_ROOT / "lidousha" / date
+    delivery.mkdir(parents=True, exist_ok=True)
+    specs: dict[str, tuple[Path, Path, str]] = {
+        "video": (burned, delivery / f"{name}.mp4", video_sha256),
+    }
+    for role, source_value, sha_value, suffix in required_sources:
+        specs[role] = (Path(str(source_value)), delivery / f"{name}{suffix}", str(sha_value))
+
+    active_record_path, active_record_sha256 = _write_song_active_record(
+        summary_record,
+        delivery_candidate_id=delivery_candidate_id,
+        title=title,
+        video_sha256=video_sha256,
+        summary_authority_root=authority_root,
+    )
+    specs["active_record"] = (
+        active_record_path,
+        delivery / f"{name}.record.json",
+        active_record_sha256,
+    )
+
+    cover_ok = False
+    cover: Path | None = None
+    cover_value = artifacts.get("cover_path")
+    cover_sha256 = artifacts.get("cover_sha256")
+    if isinstance(cover_value, str) and isinstance(cover_sha256, str):
+        cover = Path(cover_value)
+        cover_ok = _matches_sha256(cover, cover_sha256)
+        if cover_ok:
+            specs["cover"] = (cover, delivery / f"{name}.cover.png", cover_sha256)
+
+    receipt = _atomic_verified_song_delivery(
+        candidate_id=delivery_candidate_id,
+        manifest_path=delivery / f"{name}.delivery.manifest.json",
+        artifact_specs=specs,
+        absent_artifacts=(
+            {} if cover_ok else {"cover": delivery / f"{name}.cover.png"}
+        ),
+    )
+    delivered_artifacts = receipt["artifacts"]
+    sidecar_roles = [role for role in delivered_artifacts if role != "video"]
+    result = {
+        "delivered": delivered_artifacts["video"]["path"],
+        "delivered_sha256": delivered_artifacts["video"]["sha256"],
+        "video_sha256": delivered_artifacts["video"]["sha256"],
+        "delivered_sidecars": {
+            role: delivered_artifacts[role]["path"] for role in sidecar_roles
+        },
+        "delivered_sidecar_hashes": {
+            role: delivered_artifacts[role]["sha256"] for role in sidecar_roles
+        },
+        "delivery_manifest_path": receipt["manifest_path"],
+        "delivery_manifest_sha256": receipt["manifest_sha256"],
+        "delivery_upload_enabled": receipt["upload_enabled"],
+        "cover_status": "AI_COVER_READY" if "cover" in delivered_artifacts else "BLOCKED_AI_COVER_REQUIRED",
+    }
+    if "cover" in delivered_artifacts:
+        materialized = summary_record.get("materialized_recut")
+        staging = materialized.get("publish_staging") if isinstance(materialized, dict) else None
+        result["cover_path"] = delivered_artifacts["cover"]["path"]
+        result["cover_sha256"] = delivered_artifacts["cover"]["sha256"]
+        if isinstance(staging, dict):
+            result["cover_generation"] = staging.get("cover_generation")
+    if receipt["cleanup_warnings"]:
+        result["delivery_cleanup_warnings"] = receipt["cleanup_warnings"]
+    return result
+
+
 def _matches_sha256(path: Path, expected: str) -> bool:
     expected = expected.removeprefix("sha256:").lower()
     if path.is_symlink() or len(expected) != 64 or not re.fullmatch(r"[0-9a-f]{64}", expected):
@@ -823,6 +2653,418 @@ def _matches_sha256(path: Path, expected: str) -> bool:
     return digest.hexdigest() == expected
 
 
+MATERIALIZED_RECUT_SCHEMA_VERSION = "materialized-recut.v2"
+VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION = "verified-song-output-binding.v1"
+SONG_STREAM_CONTRACT_SCHEMA_VERSION = "song-av-stream-contract.v1"
+VERIFIED_SONG_DELIVERY_SCHEMA_VERSION = "verified-song-delivery.v1"
+
+
+class SongDeliveryError(RuntimeError):
+    """A verified song package could not be committed to the delivery root."""
+
+
+def _song_delivery_basename(title_or_hook: object, candidate_id: object) -> str:
+    """Readable basename with an injective, runner-owned candidate suffix.
+
+    The readable title prefix is deliberately short, so it cannot own
+    uniqueness.  Song candidates are generated from the safe ASCII id grammar;
+    retain that complete id in the public basename so concurrent songs with the
+    same title can never replace one another's verified package.
+    """
+
+    candidate = str(candidate_id or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate):
+        raise SongDeliveryError(f"unsafe song delivery candidate id: {candidate!r}")
+    readable = safe_name(f"歌切_{str(title_or_hook or '')}", "歌切")
+    return f"{readable}__{candidate}"
+
+
+def _canonical_existing_path(path_value: object) -> str | None:
+    if not isinstance(path_value, str) or not path_value:
+        return None
+    try:
+        return str(Path(path_value).resolve(strict=True))
+    except OSError:
+        return None
+
+
+def _normalized_sha256(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.lower().removeprefix("sha256:")
+    return normalized if re.fullmatch(r"[0-9a-f]{64}", normalized) else None
+
+
+def _sha256_regular_file(path: Path) -> str:
+    """Hash one regular file without following a final-component symlink."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise SongDeliveryError(f"cannot open verified delivery artifact {path}: {exc}") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SongDeliveryError(f"verified delivery artifact is not a regular file: {path}")
+        digest = hashlib.sha256()
+        with os.fdopen(descriptor, "rb") as source:
+            descriptor = -1
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _hidden_delivery_path(destination: Path, label: str) -> Path:
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.{label}-",
+        dir=destination.parent,
+    )
+    os.close(descriptor)
+    path = Path(name)
+    path.unlink()
+    return path
+
+
+def _stage_verified_copy(source: Path, destination: Path, expected_sha256: str) -> tuple[Path, str]:
+    """Copy to a same-directory hidden temp and fsync it before returning."""
+    normalized = _normalized_sha256(expected_sha256)
+    if normalized is None:
+        raise SongDeliveryError(f"invalid expected sha256 for {destination.name}")
+    if source.is_symlink():
+        raise SongDeliveryError(f"refusing symlink delivery source: {source}")
+
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.delivery-",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    staged = Path(name)
+    try:
+        source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        source_descriptor = os.open(source, source_flags)
+        try:
+            source_metadata = os.fstat(source_descriptor)
+            if not stat.S_ISREG(source_metadata.st_mode):
+                raise SongDeliveryError(f"delivery source is not a regular file: {source}")
+            with os.fdopen(source_descriptor, "rb") as source_file, os.fdopen(descriptor, "wb") as target_file:
+                source_descriptor = -1
+                descriptor = -1
+                shutil.copyfileobj(source_file, target_file, length=1024 * 1024)
+                os.fchmod(target_file.fileno(), stat.S_IMODE(source_metadata.st_mode))
+                target_file.flush()
+                os.fsync(target_file.fileno())
+        finally:
+            if source_descriptor >= 0:
+                os.close(source_descriptor)
+        copied_sha256 = _sha256_regular_file(staged)
+        if copied_sha256 != normalized:
+            raise SongDeliveryError(
+                f"copied hash mismatch for {destination.name}: expected {normalized}, got {copied_sha256}"
+            )
+        return staged, copied_sha256
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _stage_verified_bytes(payload: bytes, destination: Path) -> tuple[Path, str]:
+    expected = hashlib.sha256(payload).hexdigest()
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.delivery-",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    staged = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as target:
+            descriptor = -1
+            target.write(payload)
+            target.flush()
+            os.fsync(target.fileno())
+        actual = _sha256_regular_file(staged)
+        if actual != expected:
+            raise SongDeliveryError(
+                f"staged manifest hash mismatch for {destination.name}: expected {expected}, got {actual}"
+            )
+        return staged, actual
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_verified_song_delivery(
+    *,
+    candidate_id: str,
+    manifest_path: Path,
+    artifact_specs: dict[str, tuple[Path, Path, str]],
+    absent_artifacts: dict[str, Path] | None = None,
+) -> dict:
+    """Atomically expose a hash-bound song package, committing its manifest last.
+
+    All artifact bytes are copied and verified in hidden, same-directory files
+    before any public delivery name is touched.  Existing files are held under
+    hidden backup names during the short commit window so a caught replace or
+    post-copy verification failure can restore the previous complete package.
+    The manifest is installed last and is the durable commit marker; it is
+    explicitly no-upload and its own hash is returned for state binding.
+    """
+    if not candidate_id or "video" not in artifact_specs:
+        raise SongDeliveryError("verified song delivery requires candidate_id and video")
+    absent_artifacts = absent_artifacts or {}
+    parent = manifest_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    parent_real = parent.resolve(strict=True)
+    if manifest_path.parent.resolve(strict=True) != parent_real:
+        raise SongDeliveryError("delivery manifest escaped its parent")
+
+    staged: dict[str, tuple[Path, Path, str]] = {}
+    manifest_artifacts: dict[str, dict[str, str]] = {}
+    destinations: set[Path] = set()
+    try:
+        for role, spec in artifact_specs.items():
+            if not isinstance(role, str) or not role or not isinstance(spec, tuple) or len(spec) != 3:
+                raise SongDeliveryError("invalid verified delivery artifact specification")
+            source, destination, expected_value = spec
+            if not isinstance(source, Path) or not isinstance(destination, Path):
+                raise SongDeliveryError(f"invalid paths for verified delivery artifact {role}")
+            if destination.parent.resolve(strict=True) != parent_real or destination.name.startswith("."):
+                raise SongDeliveryError(f"delivery destination escaped or is hidden: {destination}")
+            if destination in destinations or destination == manifest_path:
+                raise SongDeliveryError(f"duplicate delivery destination: {destination}")
+            destinations.add(destination)
+            normalized = _normalized_sha256(expected_value)
+            if normalized is None:
+                raise SongDeliveryError(f"invalid expected sha256 for {role}")
+            source_real = source.resolve(strict=True)
+            temp_path, copied_sha = _stage_verified_copy(source, destination, normalized)
+            staged[role] = (temp_path, destination, copied_sha)
+            manifest_artifacts[role] = {
+                "path": str(destination.absolute()),
+                "sha256": f"sha256:{copied_sha}",
+                "source_path": str(source_real),
+                "source_sha256": f"sha256:{normalized}",
+            }
+
+        manifest_absent: dict[str, dict[str, str]] = {}
+        for role, destination in absent_artifacts.items():
+            if (
+                not isinstance(role, str)
+                or not role
+                or role in artifact_specs
+                or not isinstance(destination, Path)
+                or destination.parent.resolve(strict=True) != parent_real
+                or destination.name.startswith(".")
+                or destination in destinations
+                or destination == manifest_path
+            ):
+                raise SongDeliveryError(f"invalid absent delivery artifact specification: {role}")
+            destinations.add(destination)
+            manifest_absent[role] = {"path": str(destination.absolute()), "status": "ABSENT"}
+
+        manifest_payload = {
+            "schema_version": VERIFIED_SONG_DELIVERY_SCHEMA_VERSION,
+            "status": "DELIVERED_NO_UPLOAD",
+            "candidate_id": candidate_id,
+            "upload_enabled": False,
+            "artifacts": manifest_artifacts,
+            "absent_artifacts": manifest_absent,
+        }
+        manifest_bytes = (
+            json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+        manifest_temp, manifest_sha = _stage_verified_bytes(manifest_bytes, manifest_path)
+        staged["__manifest__"] = (manifest_temp, manifest_path, manifest_sha)
+    except BaseException:
+        for temp_path, _destination, _digest in staged.values():
+            temp_path.unlink(missing_ok=True)
+        raise
+
+    # Sidecars first, then the video, with the manifest last as the commit marker.
+    install_order = sorted(role for role in artifact_specs if role != "video") + ["video", "__manifest__"]
+    backup_order = [staged[role][1] for role in install_order] + list(absent_artifacts.values())
+    backups: dict[Path, Path] = {}
+    installed: set[Path] = set()
+    try:
+        for destination in backup_order:
+            if os.path.lexists(destination):
+                if destination.is_dir() and not destination.is_symlink():
+                    raise SongDeliveryError(f"delivery destination is a directory: {destination}")
+                backup = _hidden_delivery_path(destination, "previous")
+                backups[destination] = backup
+                os.replace(destination, backup)
+        if backups:
+            _fsync_directory(parent)
+
+        for role in install_order:
+            temp_path, destination, expected = staged[role]
+            if role == "__manifest__":
+                # Seal only after every public artifact still matches the
+                # selector/materialization hash at the commit boundary.
+                for artifact_role in artifact_specs:
+                    _artifact_temp, artifact_destination, artifact_expected = staged[artifact_role]
+                    actual = _sha256_regular_file(artifact_destination)
+                    if actual != artifact_expected:
+                        raise SongDeliveryError(
+                            f"pre-manifest delivery hash mismatch for {artifact_destination.name}: "
+                            f"expected {artifact_expected}, got {actual}"
+                        )
+            installed.add(destination)
+            os.replace(temp_path, destination)
+            _fsync_directory(parent)
+            actual = _sha256_regular_file(destination)
+            if actual != expected:
+                raise SongDeliveryError(
+                    f"final delivery hash mismatch for {destination.name}: expected {expected}, got {actual}"
+                )
+    except BaseException as exc:
+        rollback_errors: list[str] = []
+        for destination in reversed(backup_order):
+            if destination in installed:
+                try:
+                    destination.unlink(missing_ok=True)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"remove {destination}: {rollback_exc}")
+            backup = backups.get(destination)
+            if backup is not None and os.path.lexists(backup):
+                try:
+                    os.replace(backup, destination)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"restore {destination}: {rollback_exc}")
+        for temp_path, _destination, _digest in staged.values():
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError as rollback_exc:
+                rollback_errors.append(f"remove temp {temp_path}: {rollback_exc}")
+        try:
+            _fsync_directory(parent)
+        except OSError as rollback_exc:
+            rollback_errors.append(f"fsync {parent}: {rollback_exc}")
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        detail = f"; rollback errors: {'; '.join(rollback_errors)}" if rollback_errors else ""
+        raise SongDeliveryError(f"atomic verified delivery failed: {exc}{detail}") from exc
+
+    cleanup_warnings: list[str] = []
+    for backup in backups.values():
+        try:
+            backup.unlink(missing_ok=True)
+        except OSError as exc:
+            cleanup_warnings.append(f"remove superseded backup {backup}: {exc}")
+    if backups:
+        try:
+            _fsync_directory(parent)
+        except OSError as exc:
+            cleanup_warnings.append(f"fsync superseded backup cleanup: {exc}")
+    return {
+        "manifest_path": str(manifest_path.resolve(strict=True)),
+        "manifest_sha256": f"sha256:{manifest_sha}",
+        "artifacts": manifest_artifacts,
+        "upload_enabled": False,
+        "cleanup_warnings": cleanup_warnings,
+    }
+
+
+def _expected_song_stream_contract() -> dict[str, object]:
+    return {
+        "schema_version": SONG_STREAM_CONTRACT_SCHEMA_VERSION,
+        "input_video_stream_index": 0,
+        "input_audio_stream_index": 0,
+        "ffmpeg_maps": ["0:v:0", "0:a:0"],
+        "output_stream_types": ["video", "audio"],
+        "allow_additional_streams": False,
+        "allow_subtitle_streams": False,
+        "allow_data_streams": False,
+        "allow_attachment_streams": False,
+    }
+
+
+def _expected_song_recut_command(
+    source_path: str,
+    output_path: str,
+    start_ms: int,
+    duration_ms: int,
+    *,
+    coarse_preroll_ms: int = 10_000,
+) -> list[str]:
+    coarse_ms = max(0, start_ms - coarse_preroll_ms)
+    fine_ms = start_ms - coarse_ms
+    return [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-ss", f"{coarse_ms / 1000:.3f}", "-i", source_path,
+        "-ss", f"{fine_ms / 1000:.3f}", "-t", f"{duration_ms / 1000:.3f}",
+        "-map", "0:v:0", "-map", "0:a:0",
+        "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path,
+    ]
+
+
+def _burn_command_obeys_song_stream_contract(command: object, *, input_path: str, output_path: str) -> bool:
+    if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
+        return False
+    try:
+        input_index = command.index("-i")
+    except ValueError:
+        return False
+    maps = [command[index + 1] for index, part in enumerate(command[:-1]) if part == "-map"]
+    required_pairs = (("-map_metadata", "-1"), ("-map_chapters", "-1"))
+    return (
+        input_index + 1 < len(command)
+        and _canonical_existing_path(command[input_index + 1]) == input_path
+        and _canonical_existing_path(command[-1]) == output_path
+        and len(maps) == 2
+        and maps[0] in {"0:v:0", "[v]"}
+        and maps[1] == "0:a:0"
+        and not any("?" in item for item in maps)
+        and "-sn" in command
+        and "-dn" in command
+        and all(any(command[index:index + 2] == [flag, value] for index in range(len(command) - 1)) for flag, value in required_pairs)
+    )
+
+
+def _has_exact_av_streams(path: Path) -> bool:
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "stream=index,codec_type",
+                "-of", "json", str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if completed.returncode != 0:
+        return False
+    try:
+        payload = json.loads(completed.stdout)
+    except ValueError:
+        return False
+    streams = payload.get("streams") if isinstance(payload, dict) else None
+    if not isinstance(streams, list) or len(streams) != 2:
+        return False
+    types = [stream.get("codec_type") for stream in streams if isinstance(stream, dict)]
+    return sorted(types) == ["audio", "video"]
+
+
 def song_completion_evidence(record: dict) -> dict:
     """Verify the positive, hash-bound proof required to deliver a song.
 
@@ -831,6 +3073,13 @@ def song_completion_evidence(record: dict) -> dict:
     merely because an earlier selector process happened to leave it on disk.
     """
     failures: list[str] = []
+    live_performance_status: str | None = None
+    live_performance_mode: str | None = None
+    live_performance_confidence: float | None = None
+    live_performance_semantic_ready = False
+    audio_artifacts: dict = {}
+    audio_manifest: dict | None = None
+    host_proof: dict | None = None
 
     def is_int(value) -> bool:
         return isinstance(value, int) and not isinstance(value, bool)
@@ -956,7 +3205,22 @@ def song_completion_evidence(record: dict) -> dict:
         if is_audio_report != is_audio_model:
             failures.append("SONG_ALIGNMENT_EVIDENCE_TYPE_MISMATCH")
 
+        if not is_audio_report:
+            failures.append("SONG_LIVE_PERFORMANCE_UNPROVEN")
+
         if is_audio_report:
+            live_performance = report.get("live_performance")
+            performance_error = validate_live_performance_observation(
+                live_performance,
+                first_lyric_start_ms=report.get("first_lyric_start_ms") if is_int(report.get("first_lyric_start_ms")) else -1,
+                last_lyric_end_ms=report.get("last_lyric_end_ms") if is_int(report.get("last_lyric_end_ms")) else -1,
+                observations=report_alignment,
+                require_ready=True,
+            )
+            if performance_error is not None:
+                failures.extend(live_performance_failure_reason_codes(live_performance))
+            else:
+                live_performance_semantic_ready = True
             if (
                 report.get("audio_alignment_provider") != "agy"
                 or report.get("audio_alignment_model") != "Gemini 3.5 Flash (High)"
@@ -964,6 +3228,7 @@ def song_completion_evidence(record: dict) -> dict:
             ):
                 failures.append("SONG_AUDIO_LRC_PROVIDER_INVALID")
             audio_artifacts = report.get("audio_alignment_artifacts")
+            raw_rows: list | None = None
             artifact_pairs = (
                 ("source_path", "source_sha256"),
                 ("lrc_path", "lrc_sha256"),
@@ -1001,6 +3266,7 @@ def song_completion_evidence(record: dict) -> dict:
                 elif not isinstance(audio_manifest.get("artifacts"), dict) or any(
                     audio_manifest["artifacts"].get(manifest_key) != audio_artifacts.get(report_key)
                     for manifest_key, report_key in (
+                        ("source_origin_path", "source_origin_path"),
                         ("source_path", "source_path"),
                         ("source_sha256", "source_sha256"),
                         ("source_duration_ms", "source_duration_ms"),
@@ -1022,7 +3288,7 @@ def song_completion_evidence(record: dict) -> dict:
                 raw_rows = raw_observation.get("observations") if isinstance(raw_observation, dict) else None
                 if (
                     not isinstance(raw_observation, dict)
-                    or raw_observation.get("schema_version") != "agy-audio-lrc-observation.v1"
+                    or raw_observation.get("schema_version") != AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION
                     or not isinstance(raw_record, dict)
                     or raw_record.get("candidate_id") != record.get("candidate_id")
                     or raw_record.get("source_sha256") != audio_artifacts.get("source_sha256")
@@ -1031,22 +3297,52 @@ def song_completion_evidence(record: dict) -> dict:
                     or not isinstance(raw_rows, list)
                 ):
                     failures.append("SONG_AUDIO_LRC_RAW_OBSERVATION_INVALID")
+                elif raw_observation.get("live_performance") != report.get("live_performance"):
+                    failures.append("SONG_LIVE_PERFORMANCE_BINDING_INVALID")
             if isinstance(report_alignment, list) and isinstance(lyric_lines, list):
                 ids: list[str] = []
                 starts: list[int] = []
                 residuals: list[int] = []
-                audio_rows_ok = len(report_alignment) == len(lyric_lines) == matched_count == line_count
-                for row, lyric in zip(report_alignment, lyric_lines):
-                    if not isinstance(row, dict) or not isinstance(lyric, dict):
+                audio_rows_ok = (
+                    isinstance(raw_rows, list)
+                    and len(raw_rows) == len(report_alignment) == len(lyric_lines) == matched_count == line_count
+                )
+                expected_raw_sha = str(
+                    audio_artifacts.get("raw_output_sha256") if isinstance(audio_artifacts, dict) else ""
+                ).lower().removeprefix("sha256:")
+                for index, (row, lyric) in enumerate(zip(report_alignment, lyric_lines)):
+                    raw_row = raw_rows[index] if isinstance(raw_rows, list) and index < len(raw_rows) else None
+                    if not isinstance(row, dict) or not isinstance(lyric, dict) or not isinstance(raw_row, dict):
                         audio_rows_ok = False
                         break
                     cue_id = row.get("matched_cue_id")
                     cue_start = row.get("cue_start_ms")
                     cue_end = row.get("cue_end_ms")
                     if (
-                        row.get("evidence_source") != "agy_audio_lrc"
+                        set(raw_row) != {
+                            "lrc_index",
+                            "lrc_time_ms",
+                            "text",
+                            "heard",
+                            "live_start_ms",
+                            "live_end_ms",
+                            "confidence",
+                            *LYRIC_VOCAL_ASSERTION_KEYS,
+                        }
+                        or not LYRIC_VOCAL_ASSERTION_KEYS.issubset(row)
+                        or raw_row.get("lrc_index") != index
+                        or raw_row.get("lrc_time_ms") != lyric.get("lrc_time_ms")
+                        or raw_row.get("text") != lyric.get("text")
+                        or raw_row.get("heard") is not True
+                        or raw_row.get("live_start_ms") != cue_start
+                        or raw_row.get("live_end_ms") != cue_end
+                        or isinstance(raw_row.get("confidence"), bool)
+                        or not isinstance(raw_row.get("confidence"), (int, float))
+                        or row.get("match_ratio") != round(float(raw_row.get("confidence") or 0.0), 4)
+                        or any(row.get(key) != raw_row.get(key) for key in LYRIC_VOCAL_ASSERTION_KEYS)
+                        or row.get("evidence_source") != "agy_audio_lrc"
                         or not isinstance(cue_id, str)
-                        or not cue_id.startswith("agy-audio:")
+                        or cue_id != f"agy-audio:{expected_raw_sha[:12]}:line-{index}"
                         or not is_int(cue_start)
                         or not is_int(cue_end)
                         or not 0 <= cue_start < cue_end
@@ -1094,6 +3390,62 @@ def song_completion_evidence(record: dict) -> dict:
                                 break
                     if not raw_rows_match:
                         failures.append("SONG_AUDIO_LRC_RAW_REPORT_MISMATCH")
+
+            # A schema-valid dict is not a READY proof until every bound AGY
+            # artifact, manifest, raw-v2 row, and report projection above has
+            # survived validation.  Keep state evidence non-contradictory.
+            if live_performance_semantic_ready and not failures and isinstance(live_performance, dict):
+                live_performance_status = "READY"
+                live_performance_mode = str(live_performance.get("mode"))
+                live_performance_confidence = float(live_performance.get("confidence"))
+
+    host_vocal_claim = job.get("host_vocal_proof")
+    host_vocal_status = host_vocal_claim.get("status") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_decision = host_vocal_claim.get("decision") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_proof_path = host_vocal_claim.get("proof_path") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_proof_sha = host_vocal_claim.get("proof_sha256") if isinstance(host_vocal_claim, dict) else None
+    host_vocal_verified = False
+    if not isinstance(host_vocal_claim, dict):
+        failures.append("SONG_HOST_VOCAL_UNPROVEN")
+    elif not isinstance(host_vocal_proof_path, str) or not isinstance(host_vocal_proof_sha, str):
+        reason = host_vocal_claim.get("reason_code")
+        failures.append(
+            reason
+            if reason in {"SONG_HOST_VOCAL_VERIFIER_UNAVAILABLE", "SONG_HOST_VOCAL_UNPROVEN"}
+            else "SONG_HOST_VOCAL_UNPROVEN"
+        )
+    elif not _matches_sha256(Path(host_vocal_proof_path), host_vocal_proof_sha):
+        failures.append("SONG_HOST_VOCAL_PROOF_INVALID")
+    else:
+        try:
+            host_proof = json.loads(Path(host_vocal_proof_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            host_proof = None
+        source_binding = host_proof.get("source_media") if isinstance(host_proof, dict) else None
+        source_value = host_vocal_claim.get("source_media_path")
+        if not isinstance(source_value, str) and isinstance(source_binding, dict):
+            source_value = source_binding.get("path")
+        alignment_value = alignment.get("alignment_report_path") if alignment else None
+        if not isinstance(source_value, str) or not isinstance(alignment_value, str):
+            failures.append("SONG_HOST_VOCAL_PROOF_INVALID")
+        else:
+            host_error = verify_host_vocal_proof_claim(
+                host_vocal_claim,
+                str(record.get("candidate_id") or ""),
+                Path(source_value),
+                Path(alignment_value),
+                HOST_VOCAL_PROFILE,
+            )
+            if host_error is not None:
+                failures.append("SONG_HOST_VOCAL_PROOF_INVALID")
+            elif host_vocal_status != "READY" or host_vocal_decision != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS":
+                failures.append(
+                    "SONG_NOT_LIDOUSHA_SINGING"
+                    if host_vocal_status == "BLOCKED" and host_vocal_decision == "NO_LIDOUSHA_VOCAL_DETECTED"
+                    else "SONG_HOST_VOCAL_UNPROVEN"
+                )
+            else:
+                host_vocal_verified = True
 
     recut = record.get("materialized_recut")
     if not isinstance(recut, dict) or recut.get("status") != "MATERIALIZED":
@@ -1147,12 +3499,245 @@ def song_completion_evidence(record: dict) -> dict:
         if not isinstance(burned_sha, str) or not _matches_sha256(Path(str(burned["path"])), burned_sha):
             failures.append("SONG_BURNED_PREVIEW_HASH_INVALID")
 
+    # The proofs above establish what happened in one exact source.  This
+    # second edge establishes that the delivered bytes were produced from that
+    # same source/candidate/interval with the fixed A/V stream contract.
+    recut_manifest: dict | None = None
+    manifest_value = recut.get("manifest_path") if recut else None
+    manifest_sha = recut.get("manifest_sha256") if recut else None
+    if (
+        not isinstance(manifest_value, str)
+        or not isinstance(manifest_sha, str)
+        or not _matches_sha256(Path(manifest_value), manifest_sha)
+    ):
+        failures.append("SONG_RECUT_MANIFEST_HASH_INVALID")
+    else:
+        try:
+            loaded_manifest = json.loads(Path(manifest_value).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            loaded_manifest = None
+        if not isinstance(loaded_manifest, dict):
+            failures.append("SONG_RECUT_MANIFEST_CONTENT_INVALID")
+        else:
+            recut_manifest = loaded_manifest
+
+    output_binding = recut.get("verified_output_binding") if recut else None
+    manifest_binding = recut_manifest.get("verified_output_binding") if isinstance(recut_manifest, dict) else None
+    if (
+        not isinstance(output_binding, dict)
+        or output_binding.get("schema_version") != VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION
+        or manifest_binding != output_binding
+        or not isinstance(recut_manifest, dict)
+        or recut_manifest.get("schema_version") != MATERIALIZED_RECUT_SCHEMA_VERSION
+        or recut_manifest.get("status") != "MATERIALIZED"
+        or recut_manifest.get("candidate_id") != record.get("candidate_id")
+        or recut.get("candidate_id") != record.get("candidate_id")
+        or output_binding.get("candidate_id") != record.get("candidate_id")
+        or recut_manifest.get("source_video_path") != recut.get("source_video_path")
+        or recut_manifest.get("source_binding") != recut.get("source_binding")
+        or recut_manifest.get("requested_range") != {
+            "start_ms": recut.get("start_ms"),
+            "end_ms": recut.get("end_ms"),
+            "duration_ms": recut.get("duration_ms"),
+        }
+        or recut_manifest.get("media_path") != recut.get("media_path")
+        or recut_manifest.get("subtitle_path") != recut.get("subtitle_path")
+        or recut_manifest.get("subtitle_source") != recut.get("subtitle_source")
+        or recut_manifest.get("lyric_offset_ms") != recut.get("lyric_offset_ms")
+        or recut_manifest.get("accurate_command") != recut.get("accurate_command")
+        or recut_manifest.get("stream_contract") != recut.get("stream_contract")
+        or recut_manifest.get("recut_transform") != recut.get("recut_transform")
+        or recut_manifest.get("song_output_proof_binding") != recut.get("song_output_proof_binding")
+        or not isinstance(recut_manifest.get("artifact_hashes"), dict)
+        or not isinstance(recut.get("artifact_hashes"), dict)
+        or any(
+            recut_manifest["artifact_hashes"].get(key) != recut["artifact_hashes"].get(key)
+            for key in ("video_sha256", "subtitle_sha256", "burned_video_sha256", "ass_sha256")
+        )
+        or recut_manifest.get("burned_preview") != recut.get("burned_preview")
+    ):
+        failures.append("SONG_RECUT_MANIFEST_CONTENT_INVALID")
+
+    source_binding = output_binding.get("source") if isinstance(output_binding, dict) else None
+    source_path = source_binding.get("canonical_path") if isinstance(source_binding, dict) else None
+    source_sha = source_binding.get("sha256") if isinstance(source_binding, dict) else None
+    source_canonical = _canonical_existing_path(source_path)
+    host_source = host_proof.get("source_media") if isinstance(host_proof, dict) else None
+    manifest_artifacts = audio_manifest.get("artifacts") if isinstance(audio_manifest, dict) else None
+    source_path_claims = [
+        recut.get("source_video_path") if recut else None,
+        (recut.get("source_binding") or {}).get("canonical_path") if isinstance(recut.get("source_binding") if recut else None, dict) else None,
+        recut_manifest.get("source_video_path") if isinstance(recut_manifest, dict) else None,
+        (recut_manifest.get("source_binding") or {}).get("canonical_path") if isinstance(recut_manifest.get("source_binding") if isinstance(recut_manifest, dict) else None, dict) else None,
+        host_source.get("path") if isinstance(host_source, dict) else None,
+        alignment.get("source_media_path") if isinstance(alignment, dict) else None,
+        report.get("source_media_path") if isinstance(report, dict) else None,
+        audio_artifacts.get("source_origin_path") if isinstance(audio_artifacts, dict) else None,
+        manifest_artifacts.get("source_origin_path") if isinstance(manifest_artifacts, dict) else None,
+    ]
+    source_sha_claims = [
+        (recut.get("source_binding") or {}).get("sha256") if isinstance(recut.get("source_binding") if recut else None, dict) else None,
+        (recut_manifest.get("source_binding") or {}).get("sha256") if isinstance(recut_manifest.get("source_binding") if isinstance(recut_manifest, dict) else None, dict) else None,
+        host_source.get("sha256") if isinstance(host_source, dict) else None,
+        alignment.get("source_media_sha256") if isinstance(alignment, dict) else None,
+        report.get("source_media_sha256") if isinstance(report, dict) else None,
+        audio_artifacts.get("source_sha256") if isinstance(audio_artifacts, dict) else None,
+        manifest_artifacts.get("source_sha256") if isinstance(manifest_artifacts, dict) else None,
+    ]
+    if (
+        source_canonical is None
+        or _normalized_sha256(source_sha) is None
+        or not _matches_sha256(Path(source_canonical), str(source_sha))
+        or any(_canonical_existing_path(value) != source_canonical for value in source_path_claims)
+        or any(_normalized_sha256(value) != _normalized_sha256(source_sha) for value in source_sha_claims)
+    ):
+        failures.append("SONG_RECUT_SOURCE_BINDING_INVALID")
+
+    proofs = output_binding.get("proofs") if isinstance(output_binding, dict) else None
+    expected_proofs = (
+        (
+            "lyrics_alignment_report_path", "lyrics_alignment_report_sha256",
+            alignment.get("alignment_report_path") if isinstance(alignment, dict) else None,
+            alignment.get("alignment_report_sha256") if isinstance(alignment, dict) else None,
+        ),
+        (
+            "host_vocal_proof_path", "host_vocal_proof_sha256",
+            host_vocal_proof_path, host_vocal_proof_sha,
+        ),
+        (
+            "agy_run_manifest_path", "agy_run_manifest_sha256",
+            audio_artifacts.get("run_manifest_path") if isinstance(audio_artifacts, dict) else None,
+            audio_artifacts.get("run_manifest_sha256") if isinstance(audio_artifacts, dict) else None,
+        ),
+    )
+    proof_binding_ok = isinstance(proofs, dict)
+    if proof_binding_ok:
+        for path_key, sha_key, expected_path, expected_sha in expected_proofs:
+            if (
+                _canonical_existing_path(proofs.get(path_key)) != _canonical_existing_path(expected_path)
+                or _normalized_sha256(proofs.get(sha_key)) != _normalized_sha256(expected_sha)
+            ):
+                proof_binding_ok = False
+                break
+    if (
+        not proof_binding_ok
+        or recut.get("song_output_proof_binding") != proofs
+        or (recut_manifest.get("song_output_proof_binding") if isinstance(recut_manifest, dict) else None) != proofs
+    ):
+        failures.append("SONG_RECUT_PROOF_BINDING_INVALID")
+
+    start_ms = recut.get("start_ms") if recut else None
+    end_ms = recut.get("end_ms") if recut else None
+    duration_ms = recut.get("duration_ms") if recut else None
+    expected_interval = {"start_ms": start_ms, "end_ms": end_ms, "duration_ms": duration_ms}
+    report_post_anchor = report.get("post_song_talk_start_ms") if isinstance(report, dict) else None
+    host_anchor = host_proof.get("session_host_anchor") if isinstance(host_proof, dict) else None
+    host_anchor_start = host_anchor.get("start_ms") if isinstance(host_anchor, dict) else None
+    if (
+        not all(is_int(value) for value in (start_ms, end_ms, duration_ms))
+        or duration_ms != end_ms - start_ms
+        or (output_binding.get("interval") if isinstance(output_binding, dict) else None) != expected_interval
+        or (recut_manifest.get("requested_range") if isinstance(recut_manifest, dict) else None) != expected_interval
+        or not is_int(report_post_anchor)
+        or not is_int(host_anchor_start)
+        or report_post_anchor != host_anchor_start
+        or (output_binding.get("post_song_anchor_start_ms") if isinstance(output_binding, dict) else None) != report_post_anchor
+        or (proofs.get("post_song_anchor_start_ms") if isinstance(proofs, dict) else None) != report_post_anchor
+    ):
+        failures.append("SONG_RECUT_INTERVAL_BINDING_INVALID")
+    elif end_ms > report_post_anchor:
+        failures.append("SONG_OUTPUT_OVERLAPS_POST_SONG_HOST_ANCHOR")
+
+    expected_stream_contract = _expected_song_stream_contract()
+    recut_media_path = _canonical_existing_path(recut.get("media_path") if recut else None)
+    burned_path = _canonical_existing_path(burned.get("path") if isinstance(burned, dict) else None)
+    accurate_command = recut.get("accurate_command") if recut else None
+    expected_accurate_command = (
+        _expected_song_recut_command(source_canonical, recut_media_path, start_ms, duration_ms)
+        if source_canonical is not None
+        and recut_media_path is not None
+        and all(is_int(value) for value in (start_ms, duration_ms))
+        else None
+    )
+    burn_command = burned.get("command") if isinstance(burned, dict) else None
+    transform = output_binding.get("recut_transform") if isinstance(output_binding, dict) else None
+    burn_transform = output_binding.get("burn_transform") if isinstance(output_binding, dict) else None
+    if (
+        recut.get("stream_contract") != expected_stream_contract
+        or (recut_manifest.get("stream_contract") if isinstance(recut_manifest, dict) else None) != expected_stream_contract
+        or (output_binding.get("stream_contract") if isinstance(output_binding, dict) else None) != expected_stream_contract
+        or accurate_command != expected_accurate_command
+        or not isinstance(transform, dict)
+        or transform.get("schema_version") != "song-recut-transform.v1"
+        or transform.get("command") != expected_accurate_command
+        or not isinstance(burn_transform, dict)
+        or burn_transform.get("schema_version") != "song-subtitle-burn-transform.v1"
+        or burn_transform.get("command") != burn_command
+        or (burned.get("stream_contract") if isinstance(burned, dict) else None) != expected_stream_contract
+        or not _burn_command_obeys_song_stream_contract(
+            burn_command,
+            input_path=recut_media_path or "",
+            output_path=burned_path or "",
+        )
+        or recut_media_path is None
+        or burned_path is None
+        or not _has_exact_av_streams(Path(recut_media_path))
+        or not _has_exact_av_streams(Path(burned_path))
+    ):
+        failures.append("SONG_RECUT_STREAM_CONTRACT_INVALID")
+
+    binding_artifacts = output_binding.get("artifacts") if isinstance(output_binding, dict) else None
+    ass_path = burned.get("ass_path") if isinstance(burned, dict) else None
+    ass_sha = artifact_hashes.get("ass_sha256") if isinstance(artifact_hashes, dict) else None
+    video_sha = artifact_hashes.get("video_sha256") if isinstance(artifact_hashes, dict) else None
+    relevant_manifest_hashes = recut_manifest.get("artifact_hashes") if isinstance(recut_manifest, dict) else None
+    expected_artifacts = {
+        "recut_media_path": recut_media_path,
+        "recut_media_sha256": video_sha,
+        "subtitle_path": _canonical_existing_path(subtitle_path),
+        "subtitle_sha256": subtitle_sha,
+        "burned_media_path": burned_path,
+        "burned_media_sha256": burned_sha,
+        "ass_path": _canonical_existing_path(ass_path),
+        "ass_sha256": ass_sha,
+    }
+    if (
+        binding_artifacts != expected_artifacts
+        or not isinstance(video_sha, str)
+        or recut_media_path is None
+        or not _matches_sha256(Path(recut_media_path), video_sha)
+        or not isinstance(ass_sha, str)
+        or expected_artifacts["ass_path"] is None
+        or not _matches_sha256(Path(str(expected_artifacts["ass_path"])), ass_sha)
+        or not isinstance(relevant_manifest_hashes, dict)
+        or any(relevant_manifest_hashes.get(key) != artifact_hashes.get(key) for key in (
+            "video_sha256", "subtitle_sha256", "burned_video_sha256", "ass_sha256"
+        ))
+        or (recut_manifest.get("burned_preview") if isinstance(recut_manifest, dict) else None) != burned
+    ):
+        failures.append("SONG_RECUT_ARTIFACT_BINDING_INVALID")
+
+    joint_singing_decision = (
+        "VERIFIED_LIDOUSHA_SINGING"
+        if live_performance_status == "READY"
+        and live_performance_mode == "LIVE_STREAMER_SINGING"
+        and host_vocal_verified
+        else None
+    )
     failures = list(dict.fromkeys(failures))
     return {
         "ready": not failures,
         "reason_codes": failures,
         "song_boundary_status": boundary.get("status") if isinstance(boundary, dict) else None,
         "lyrics_alignment_status": alignment.get("status") if alignment else None,
+        "host_vocal_status": host_vocal_status,
+        "host_vocal_decision": host_vocal_decision,
+        "host_vocal_proof_path": host_vocal_proof_path,
+        "host_vocal_proof_sha256": host_vocal_proof_sha,
+        "live_performance_status": live_performance_status,
+        "live_performance_mode": live_performance_mode,
+        "live_performance_confidence": live_performance_confidence,
+        "joint_singing_decision": joint_singing_decision,
         "lyrics_provider": alignment.get("provider") if alignment else None,
         "external_lrc": (alignment.get("external_lrc") or alignment.get("source")) if alignment else None,
         "alignment_report_path": alignment.get("alignment_report_path") if alignment else None,
@@ -1160,6 +3745,10 @@ def song_completion_evidence(record: dict) -> dict:
         "subtitle_source": recut.get("subtitle_source") if recut else None,
         "burned_preview_path": burned.get("path") if isinstance(burned, dict) else None,
         "burned_preview_sha256": burned_sha,
+        "recut_manifest_path": manifest_value if isinstance(manifest_value, str) else None,
+        "recut_manifest_sha256": manifest_sha if isinstance(manifest_sha, str) else None,
+        "recut_source_path": source_canonical,
+        "recut_source_sha256": source_sha if isinstance(source_sha, str) else None,
         "matched_line_ratio": report.get("matched_line_ratio") if report is not None else None,
         "lyric_offset_ms": alignment.get("offset_ms") if alignment else None,
     }
@@ -1172,6 +3761,11 @@ def verified_song_fallback_title(song_title: str | None, hook: str | None) -> st
         return None
     hook = str(hook or "").strip()
     hook = re.split(r"[，。！？；]", hook, maxsplit=1)[0].strip()
+    # Recall hooks often repeat a slightly different ASR spelling of the song
+    # inside 《》.  Truncating that text at 16 characters produced broken titles
+    # such as "《和你迎着台风去看".  The LRC-verified canonical title already
+    # owns the name; keep only the hook phrase before a repeated quote.
+    hook = re.split(r"[《「『]", hook, maxsplit=1)[0].rstrip("：:｜|、 ")
     if hook and hook != "确定性歌检测补充(演唱段)":
         return f"【李豆沙】豆沙歌，《{song_title}》｜{hook[:16]}"
     return f"【李豆沙】豆沙歌，直播间唱《{song_title}》"
@@ -1203,8 +3797,14 @@ def produce_song(date: str, item: dict) -> dict:
     def attempt(start: int, end: int, tag: str) -> dict:
         log(f"song lane {cid}{tag}: window {start // 1000}-{end // 1000}s (danmaku x{item.get('danmaku', 0)}) from {segment.name}")
         result = {"candidate_id": cid, "segment": segment.name, "start_ms": start, "end_ms": end,
-                  "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1}
-        window_mp4 = out_dir / f"{cid}{tag}_source.mp4"
+                  "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1,
+                  "discovery_lane": item.get("lane"), "title_hint": item.get("title_hint"),
+                  "visual_song_evidence": item.get("visual_song_evidence"),
+                  "pipeline_fingerprint": pipeline_fingerprint(),
+                  "transient_retry_count": int(item.get("transient_retry_count") or 0),
+                  "anchor_start_ms": item.get("anchor_start_ms"),
+                  "anchor_end_ms": item.get("anchor_end_ms")}
+        window_mp4 = song_window_media_path(out_dir, cid, tag, start, end)
         if not window_mp4.is_file():
             cut = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -1230,9 +3830,12 @@ def produce_song(date: str, item: dict) -> dict:
         # the subtitle authority for songs anyway.
         selector_dir = fresh_song_selector_dir(out_dir, tag)
         log_path = BASE / "logs" / f"{date}_{cid}.log"
+        try:
+            log_offset = log_path.stat().st_size
+        except OSError:
+            log_offset = 0
         with open(log_path, "a", encoding="utf-8") as sink:
-            selector_env = child_env()
-            selector_env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
+            selector_env = song_selector_env(date)
             selector_command = [
                  sys.executable, str(REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
                  "--source-video", str(window_mp4), "--source-srt", str(window_srt),
@@ -1244,13 +3847,26 @@ def produce_song(date: str, item: dict) -> dict:
                  "--title-llm-command", CPA_CMD_TITLE,
                  "--cover-art-direction-llm-command", CPA_CMD_STRUCTURED,
                  "--lrc-provider", "auto", "--burn-preview", "--publish-staging",
+                 "--host-vocal-python", str(HOST_VOCAL_PYTHON),
+                 "--host-vocal-reference-profile", str(HOST_VOCAL_PROFILE),
+                 "--host-vocal-reference-dir", str(HOST_VOCAL_REFERENCE_DIR),
+                 "--host-vocal-model-dir", str(HOST_VOCAL_MODEL_DIR),
             ]
+            semantic_hook = str(item.get("hook") or "").strip()
             known_song_query = str(item.get("preview") or "").strip()
+            visual_title_hint = str(item.get("title_hint") or "").strip()
             # Search the quoted song title first.  Passing the entire prose
             # preview ("下播前演唱 yonige《芽吹くとき》") made LRCLIB return no
             # rows even though the exact title returns the canonical timed LRC.
-            quoted_titles = re.findall(r"[《「『]([^》」』]{1,80})[》」』]", known_song_query)
-            for query in [*quoted_titles[:1], known_song_query]:
+            quoted_titles = re.findall(
+                r"[《「『]([^》」』]{1,80})[》」』]",
+                "\n".join([semantic_hook, known_song_query]),
+            )
+            # The semantic selector already named many songs correctly even
+            # when singing ASR was unusable.  Query that title before the ASR
+            # preview; LRC/audio proof still decides whether it is truly the
+            # performed song, so this is recall improvement rather than trust.
+            for query in dict.fromkeys([visual_title_hint, *quoted_titles[:2], known_song_query]):
                 if query:
                     selector_command.extend(["--song-lrc-query", query])
             # Every invocation already came from the upstream song lane, which
@@ -1277,6 +3893,13 @@ def produce_song(date: str, item: dict) -> dict:
                 check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
                 cwd=str(REPO_ROOT), env=selector_env,
             )
+        try:
+            with log_path.open("r", encoding="utf-8", errors="replace") as source:
+                source.seek(log_offset)
+                invocation_log = source.read()
+        except OSError:
+            invocation_log = ""
+        transient_code = classify_song_selector_transient(invocation_log)
         result["rc"] = completed.returncode
         result["log"] = str(log_path)
         decision = None
@@ -1296,9 +3919,38 @@ def produce_song(date: str, item: dict) -> dict:
                     is_song = is_song or record_is_song(entry)
             except ValueError:
                 pass
+        if summary_record:
+            try:
+                result["selector_summary_path"] = str(summary_path.resolve(strict=True))
+                result["selector_summary_sha256"] = "sha256:" + _sha256_regular_file(summary_path)
+                result["selector_record_candidate_id"] = str(
+                    summary_record.get("candidate_id") or ""
+                )
+            except (OSError, SongDeliveryError):
+                # Missing summary authority only disables zero-compute
+                # packaging recovery.  The current invocation can still use
+                # its in-memory record and the independently hash-bound proof
+                # chain below.
+                pass
         result["decision"] = decision
         completion = song_completion_evidence(summary_record)
-        result["reason_codes"] = list(dict.fromkeys([*reasons, *completion["reason_codes"]]))
+        if transient_code is None and "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in {
+            str(code) for code in reasons
+        }:
+            transient_code = "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
+        result["reason_codes"] = list(
+            dict.fromkeys(
+                [*reasons, *completion["reason_codes"], *([transient_code] if transient_code else [])]
+            )
+        )
+        if transient_code:
+            retry_count = int(result.get("transient_retry_count") or 0)
+            next_retry_epoch = int(time.time()) + song_infra_retry_delay_seconds(retry_count)
+            result["transient_failure_code"] = transient_code
+            result["next_retry_at_epoch"] = next_retry_epoch
+            result["next_retry_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(next_retry_epoch)
+            )
         result["window_classified_song"] = is_song
         result["song_completion_evidence"] = completion
         artifacts = song_delivery_artifacts(summary_record)
@@ -1313,14 +3965,12 @@ def produce_song(date: str, item: dict) -> dict:
         # Burned video: only the summary-recorded, hash-bound artifact is
         # eligible.  Old selector debris must never inherit a newer proof.
         burned = Path(artifacts["video_path"]) if artifacts.get("video_path") else None
-        if burned is not None and artifacts.get("video_sha256") and not _matches_sha256(burned, artifacts["video_sha256"]):
-            log(f"song lane {cid}: burned video hash drift since materialization — refusing stale artifact")
+        if burned is not None and (
+            not isinstance(artifacts.get("video_sha256"), str)
+            or not _matches_sha256(burned, artifacts["video_sha256"])
+        ):
+            log(f"song lane {cid}: burned video hash missing/drifted since materialization — refusing stale artifact")
             burned = None
-        cover = Path(artifacts["cover_path"]) if artifacts.get("cover_path") else None
-        cover_ok = bool(cover is not None and cover.is_file() and (
-            not artifacts.get("cover_sha256") or _matches_sha256(cover, artifacts["cover_sha256"])))
-        if not cover_ok:
-            cover = None
         result["song_complete"] = completion["ready"] is True
         result["lyrics_alignment_ready"] = completion["lyrics_alignment_status"] == "READY"
         if result["song_complete"] and not result.get("title"):
@@ -1331,42 +3981,70 @@ def produce_song(date: str, item: dict) -> dict:
         if burned is not None and burned.is_file() and song_delivery_ok(
             completed.returncode, is_song, reasons, completion
         ):
-            delivery = REPO_ROOT / "lidousha" / date
-            delivery.mkdir(parents=True, exist_ok=True)
-            import shutil
-
-            name = safe_name("歌切_" + (result.get("title") or item.get("hook") or ""), f"歌切_{cid}")
-            shutil.copy2(burned, delivery / f"{name}.mp4")
-            if cover_ok and cover is not None:
-                shutil.copy2(cover, delivery / f"{name}.cover.png")
-            delivered_sidecars: dict[str, str] = {}
-            subtitle = Path(artifacts["subtitle_path"]) if artifacts.get("subtitle_path") else None
-            if subtitle is not None and subtitle.is_file() and artifacts.get("subtitle_sha256") and _matches_sha256(
-                subtitle, artifacts["subtitle_sha256"]
-            ):
-                delivered_srt = delivery / f"{name}.srt"
-                shutil.copy2(subtitle, delivered_srt)
-                delivered_sidecars["subtitle"] = str(delivered_srt)
-            alignment_report = completion.get("alignment_report_path")
-            alignment_sha = completion.get("alignment_report_sha256")
-            if isinstance(alignment_report, str) and isinstance(alignment_sha, str):
-                alignment_path = Path(alignment_report)
-                if _matches_sha256(alignment_path, alignment_sha):
-                    delivered_alignment = delivery / f"{name}.lyrics-alignment-report.json"
-                    shutil.copy2(alignment_path, delivered_alignment)
-                    delivered_sidecars["lyrics_alignment_report"] = str(delivered_alignment)
-            recut_manifest = Path(artifacts["recut_manifest_path"]) if artifacts.get("recut_manifest_path") else None
-            if recut_manifest is not None and recut_manifest.is_file():
-                delivered_manifest = delivery / f"{name}.recut.manifest.json"
-                shutil.copy2(recut_manifest, delivered_manifest)
-                delivered_sidecars["recut_manifest"] = str(delivered_manifest)
-            result["delivered"] = str(delivery / f"{name}.mp4")
-            result["delivered_sidecars"] = delivered_sidecars
+            try:
+                delivery_update = _commit_verified_song_package(
+                    date=date,
+                    delivery_candidate_id=cid,
+                    summary_record=summary_record,
+                    title=str(result.get("title") or item.get("hook") or ""),
+                    selector_rc=completed.returncode,
+                    summary_authority_root=summary_path.parent,
+                )
+            except (OSError, SongDeliveryError, ValueError) as exc:
+                log(
+                    f"song lane {cid}: atomic verified delivery refused: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                result["delivery_error"] = f"{type(exc).__name__}: {exc}"
+                result["reason_codes"] = list(
+                    dict.fromkeys([*(result.get("reason_codes") or []), "SONG_DELIVERY_ATOMIC_COPY_FAILED"])
+                )
+                # Positive song/host proof has already passed.  Reserve this
+                # delivery slot so later songs cannot fill the quota before
+                # the exact hash-bound package is deterministically recovered.
+                recovery_authority = _song_delivery_recovery_authority(
+                    date=date,
+                    outer_candidate_id=cid,
+                    summary_path=result.get("selector_summary_path"),
+                    summary_sha256=result.get("selector_summary_sha256"),
+                    source_candidate_id=result.get("selector_record_candidate_id"),
+                    title=result.get("title"),
+                )
+                if recovery_authority is not None:
+                    result["verified_delivery_pending_commit"] = True
+                    result["song_delivery_recovery_authority"] = recovery_authority
+                else:
+                    # A reservation without its complete state envelope can
+                    # neither recover nor requeue, permanently consuming a
+                    # delivery slot.  Keep capacity open and allow one bounded
+                    # fresh attempt to recapture the missing authority.
+                    result["reason_codes"] = list(
+                        dict.fromkeys(
+                            [
+                                *(result.get("reason_codes") or []),
+                                "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
+                            ]
+                        )
+                    )
+            else:
+                result.update(delivery_update)
         result["status"] = song_status(completed.returncode, bool(result.get("delivered")))
         return result
 
     anchor_start, anchor_end = item["anchor_start_ms"], item["anchor_end_ms"]
     src_srt = BASE / "cache" / date / f"{segment.stem}.bcut.srt"
+    # A previous authoritative full-source pass that failed only because its
+    # AGY runner timed out already proved that the tight window is a song but
+    # lacks complete boundary evidence.  Cross-tick infrastructure recovery
+    # should resume that expensive stage directly instead of spending another
+    # model call rediscovering the same incomplete tight result.
+    if item.get("resume_full_source") is True:
+        full_start, full_end = song_proof_retry_window(anchor_start, anchor_end, seg_dur_ms)
+        resumed = attempt(full_start, full_end, "_full")
+        resumed["retried_full_source"] = True
+        resumed["resumed_full_source_after_transient"] = True
+        return resumed
+
     result = attempt(*window_for(anchor_start, anchor_end), "")
     if result.get("window_classified_song") and not result.get("song_complete"):
         full_start, full_end = song_proof_retry_window(anchor_start, anchor_end, seg_dur_ms)
@@ -1390,8 +4068,40 @@ def produce_song(date: str, item: dict) -> dict:
                         "window_classified_song",
                         "song_complete",
                         "song_completion_evidence",
+                        "transient_failure_code",
+                        "next_retry_at_epoch",
+                        "next_retry_at",
                     )
                 }
+                for key in (
+                    "transient_failure_code",
+                    "next_retry_at_epoch",
+                    "next_retry_at",
+                ):
+                    if proof_retry.get(key) is not None:
+                        result[key] = proof_retry[key]
+                # The full-source AGY/CAM++ pass is authoritative.  A timeout,
+                # nonzero exit, malformed/missing artifact, unknown reason, or
+                # semantic rejection are all the same at this boundary: not a
+                # complete positive.  Keep the tight attempt only for timeline
+                # forensics; every nonpositive authoritative result revokes all
+                # top-level authorization rather than promoting a hand-picked
+                # subset of known performer reason codes.
+                proof_reasons = [str(code) for code in (proof_retry.get("reason_codes") or [])]
+                if not proof_reasons:
+                    proof_reasons = ["SONG_AUTHORITATIVE_RETRY_INCOMPLETE"]
+                result["decision"] = "BLOCK"
+                result["reason_codes"] = list(
+                    dict.fromkeys([*(result.get("reason_codes") or []), *proof_reasons])
+                )
+                result["song_completion_evidence"] = proof_retry.get("song_completion_evidence")
+                result["song_complete"] = False
+                result["lyrics_alignment_ready"] = bool(proof_retry.get("lyrics_alignment_ready"))
+                result["full_source_authoritative_block"] = True
+                result.pop("delivered", None)
+                result.pop("delivered_sidecars", None)
+                if proof_retry.get("rc") == 0 and SONG_TERMINAL_PERFORMER_REJECTION_CODES.intersection(proof_reasons):
+                    result["full_source_performer_rejection"] = True
     if not result.get("window_classified_song") and not result.get("delivered"):
         d0, d1 = _song_core_span(src_srt, anchor_start, anchor_end)
         if d0 >= anchor_start + SONG_ANCHOR_TRIM_MIN_MS or d1 <= anchor_end - SONG_ANCHOR_TRIM_MIN_MS:
@@ -1415,18 +4125,1284 @@ def delivered_paths(date: str, rec: dict) -> tuple[Path, Path] | None:
     return mp4, mp4.with_suffix(".cover.png")
 
 
-def image_lane_down(log_tail: str) -> bool:
-    """CPA image-lane outage signatures (channel unrouted / gateway 5xx).  These
-    are operator-side and self-resolve — they must NOT burn bounded repair
-    attempts, mirroring the chat lane's paused_cpa_down patience."""
-    return "可用渠道不存在" in log_tail or "HTTP 50" in log_tail
-
-
 def cover_ref_for(date: str, cid: str) -> Path | None:
     """The producer's CLEAN reference frame (pre-burn).  Preferred over frame
     grabs from the delivered mp4, whose burned subtitles would leak into the
     gpt-image-2 identity reference."""
     return next(iter(sorted((BASE / "out" / date / cid).glob("**/cover_refs/*.cover-ref.png"))), None)
+
+
+def _json_file_bytes(payload: dict) -> bytes:
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _atomic_write_bytes_file(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _atomic_write_json_file(path: Path, payload: dict) -> None:
+    _atomic_write_bytes_file(path, _json_file_bytes(payload))
+
+
+def _validate_repaired_cover_generation(
+    *, cover: Path, title: str, candidate_id: str
+) -> tuple[dict, Path]:
+    manifest_path = cover.with_suffix(".cover_generation.json")
+    try:
+        document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cover generation manifest is missing or invalid: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError("cover generation manifest must be an object")
+    if document.get("status") != "AI_COVER_READY":
+        raise ValueError("cover generation did not reach AI_COVER_READY")
+    if document.get("workflow") != "regenerate_lidousha_cover":
+        raise ValueError("unexpected cover generation workflow")
+    if document.get("method") != "images.edit" or document.get("fallback_used") is not False:
+        raise ValueError("cover generation must be a real images.edit result without frame fallback")
+    if document.get("candidate_id") != candidate_id or document.get("title") != title:
+        raise ValueError("cover generation candidate/title binding mismatch")
+    model = str(document.get("model") or "")
+    if model not in {"gpt-image-2", "gpt-image-1.5"}:
+        raise ValueError(f"unapproved cover image model: {model!r}")
+    attempted = [str(item) for item in document.get("attempted_models") or []]
+    fallback_used = bool(document.get("model_fallback_used"))
+    if not attempted or attempted[-1] != model or len(attempted) != len(set(attempted)):
+        raise ValueError("attempted_models must be a unique ordered chain ending in the selected model")
+    if fallback_used != (len(attempted) > 1):
+        raise ValueError("cover model fallback flag does not match attempted_models")
+    if fallback_used and attempted != ["gpt-image-2", "gpt-image-1.5"]:
+        raise ValueError("unapproved cover model fallback chain")
+    try:
+        if Path(str(document.get("final_cover") or "")).resolve(strict=True) != cover.resolve(strict=True):
+            raise ValueError("cover generation final_cover path mismatch")
+    except OSError as exc:
+        raise ValueError(f"cover generation final artifact is missing: {exc}") from exc
+    if not _matches_sha256(cover, str(document.get("final_cover_sha256") or "")):
+        raise ValueError("cover generation final_cover hash mismatch")
+    for path_key, hash_key in (
+        ("ai_background", "ai_background_sha256"),
+        ("reference_image", "reference_sha256"),
+        ("request_path", "request_sha256"),
+        ("response_path", "response_sha256"),
+    ):
+        path_value, hash_value = document.get(path_key), document.get(hash_key)
+        if not isinstance(path_value, str) or not isinstance(hash_value, str):
+            raise ValueError(f"cover generation missing {path_key}/{hash_key}")
+        if not _matches_sha256(Path(path_value), hash_value):
+            raise ValueError(f"cover generation {path_key} hash mismatch")
+    return document, manifest_path
+
+
+def _read_json_object(path: Path, *, label: str) -> dict:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{label} is missing or invalid ({path}): {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"{label} is not an object: {path}")
+    return document
+
+
+def _document_video_hash(document: dict) -> str | None:
+    hashes = document.get("artifact_hashes")
+    if not isinstance(hashes, dict):
+        return None
+    value = hashes.get("burned_video_sha256") or hashes.get("video_sha256")
+    return str(value) if isinstance(value, str) else None
+
+
+def _active_cover_documents(
+    *, date: str, candidate_id: str, title: str, mp4: Path, media_sha256: str
+) -> list[tuple[Path, dict]]:
+    """Load and validate only the delivery record plus its explicitly-bound
+    active source record/publish draft.  Never recursively glob a candidate
+    directory: old attempts and quarantines are immutable evidence."""
+
+    delivery_record = mp4.with_suffix(".record.json")
+    delivery_document = _read_json_object(delivery_record, label="delivery record")
+    delivery_staging = delivery_document.get("publish_staging")
+    if not isinstance(delivery_staging, dict):
+        raise ValueError("delivery record has no publish_staging object")
+    if delivery_staging.get("title") != title or delivery_staging.get("upload_enabled") is not False:
+        raise ValueError("delivery record title/upload binding mismatch")
+    if delivery_document.get("delivery_candidate_id") not in (None, candidate_id):
+        raise ValueError("delivery record candidate binding mismatch")
+    source_candidate_id = str(delivery_document.get("source_candidate_id") or candidate_id)
+    if _document_video_hash(delivery_document) != media_sha256:
+        raise ValueError("delivery record video hash does not match current delivery")
+
+    active_root = (BASE / "out" / date / candidate_id).resolve()
+    explicit_publish = delivery_staging.get("publish_json_path")
+    if isinstance(explicit_publish, str) and explicit_publish:
+        publish_path = Path(explicit_publish)
+    else:
+        publish_path = active_root / "replacement_recuts" / f"{candidate_id}.recut.publish.json"
+    try:
+        publish_resolved = publish_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"active publish draft is missing: {publish_path}") from exc
+    if not publish_resolved.is_relative_to(active_root):
+        raise ValueError("active publish draft escapes the current candidate root")
+
+    publish_document = _read_json_object(publish_resolved, label="active publish draft")
+    if (
+        publish_document.get("schema_version") != "shadow-publish-draft.v1"
+        or publish_document.get("candidate_id") != source_candidate_id
+        or publish_document.get("title") != title
+        or publish_document.get("upload_enabled") is not False
+        or _document_video_hash(publish_document) != media_sha256
+    ):
+        raise ValueError("active publish candidate/title/video/upload binding mismatch")
+
+    name = publish_resolved.name
+    if name.endswith(".recut.publish.json"):
+        source_record = publish_resolved.with_name(name[: -len(".recut.publish.json")] + ".record.json")
+    elif name.endswith(".publish.json"):
+        source_record = publish_resolved.with_name(name[: -len(".publish.json")] + ".record.json")
+    else:
+        raise ValueError(f"unrecognized active publish filename: {publish_resolved.name}")
+    source_document = _read_json_object(source_record, label="active source record")
+    source_staging = source_document.get("publish_staging")
+    if not isinstance(source_staging, dict):
+        raise ValueError("active source record has no publish_staging object")
+    if (
+        source_staging.get("title") != title
+        or source_staging.get("upload_enabled") is not False
+        or _document_video_hash(source_document) != media_sha256
+    ):
+        raise ValueError("active source record title/video/upload binding mismatch")
+    if source_document.get("delivery_candidate_id") not in (None, candidate_id):
+        raise ValueError("active source record candidate binding mismatch")
+    if str(source_document.get("source_candidate_id") or source_candidate_id) != source_candidate_id:
+        raise ValueError("active source record source-candidate binding mismatch")
+    explicit_source_publish = source_staging.get("publish_json_path")
+    if isinstance(explicit_source_publish, str) and Path(explicit_source_publish).resolve() != publish_resolved:
+        raise ValueError("active source record points at a different publish draft")
+
+    documents: list[tuple[Path, dict]] = [(delivery_record, delivery_document)]
+    if source_record.resolve() != delivery_record.resolve():
+        documents.append((source_record, source_document))
+    documents.append((publish_resolved, publish_document))
+    return documents
+
+
+def _active_song_delivery_manifest(
+    rec: dict,
+    *,
+    candidate_id: str,
+    mp4: Path,
+    documents: list[tuple[Path, dict]],
+) -> tuple[Path, dict] | None:
+    manifest_value = rec.get("delivery_manifest_path")
+    if manifest_value is None:
+        return None
+    manifest_sha256 = rec.get("delivery_manifest_sha256")
+    if not isinstance(manifest_value, str) or not isinstance(manifest_sha256, str):
+        raise ValueError("song delivery manifest state binding is incomplete")
+    manifest_path = Path(manifest_value)
+    try:
+        manifest_resolved = manifest_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("song delivery manifest is missing") from exc
+    if manifest_resolved.parent != mp4.parent.resolve() or not _matches_sha256(
+        manifest_resolved, manifest_sha256
+    ):
+        raise ValueError("song delivery manifest path/hash binding mismatch")
+    manifest = _read_json_object(manifest_resolved, label="song delivery manifest")
+    artifacts = manifest.get("artifacts")
+    if (
+        manifest.get("schema_version") != VERIFIED_SONG_DELIVERY_SCHEMA_VERSION
+        or manifest.get("status") != "DELIVERED_NO_UPLOAD"
+        or manifest.get("candidate_id") != candidate_id
+        or manifest.get("upload_enabled") is not False
+        or not isinstance(artifacts, dict)
+    ):
+        raise ValueError("song delivery manifest authority mismatch")
+    video = artifacts.get("video")
+    if not isinstance(video, dict):
+        raise ValueError("song delivery manifest has no video artifact")
+    try:
+        video_path = Path(str(video.get("path") or "")).resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("song delivery manifest video is missing") from exc
+    if video_path != mp4.resolve() or not _matches_sha256(mp4, str(video.get("sha256") or "")):
+        raise ValueError("song delivery manifest video binding mismatch")
+
+    delivery_record = mp4.with_suffix(".record.json").resolve(strict=True)
+    source_records = [path.resolve(strict=True) for path, _doc in documents if path.suffixes[-2:] == [".record", ".json"] and path.resolve() != delivery_record]
+    if len(source_records) != 1:
+        raise ValueError("song delivery manifest requires one active source record")
+    active_record = artifacts.get("active_record")
+    if not isinstance(active_record, dict):
+        raise ValueError("song delivery manifest has no active_record artifact")
+    try:
+        delivered_record_path = Path(str(active_record.get("path") or "")).resolve(strict=True)
+        source_record_path = Path(str(active_record.get("source_path") or "")).resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("song delivery manifest record artifact is missing") from exc
+    if (
+        delivered_record_path != delivery_record
+        or source_record_path != source_records[0]
+        or not _matches_sha256(delivery_record, str(active_record.get("sha256") or ""))
+        or not _matches_sha256(source_records[0], str(active_record.get("source_sha256") or ""))
+    ):
+        raise ValueError("song delivery manifest active_record binding mismatch")
+    delivered_sidecars = rec.get("delivered_sidecars")
+    delivered_sidecar_hashes = rec.get("delivered_sidecar_hashes")
+    if not isinstance(delivered_sidecars, dict) or not isinstance(
+        delivered_sidecar_hashes, dict
+    ):
+        raise ValueError("song delivery state has no sidecar authority maps")
+    if (
+        delivered_sidecars.get("active_record") != str(delivery_record)
+        or delivered_sidecar_hashes.get("active_record") != active_record.get("sha256")
+    ):
+        raise ValueError("song delivery state active_record binding mismatch")
+    cover_artifact = artifacts.get("cover")
+    if cover_artifact is not None:
+        if not isinstance(cover_artifact, dict) or (
+            delivered_sidecars.get("cover") != cover_artifact.get("path")
+            or delivered_sidecar_hashes.get("cover") != cover_artifact.get("sha256")
+        ):
+            raise ValueError("song delivery state cover binding mismatch")
+    return manifest_resolved, manifest
+
+
+def _updated_song_delivery_manifest(
+    manifest: dict,
+    *,
+    delivery_record_path: Path,
+    delivery_record: dict,
+    source_record_path: Path,
+    source_record: dict,
+    cover: Path,
+    generated_cover: Path,
+    cover_sha256: str,
+    binding_path: Path,
+    binding_sha256: str,
+) -> dict:
+    updated = copy.deepcopy(manifest)
+    artifacts = updated.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError("song delivery manifest artifacts is not an object")
+    delivery_record_sha = "sha256:" + hashlib.sha256(_json_file_bytes(delivery_record)).hexdigest()
+    source_record_sha = "sha256:" + hashlib.sha256(_json_file_bytes(source_record)).hexdigest()
+    artifacts["active_record"] = {
+        "path": str(delivery_record_path),
+        "sha256": delivery_record_sha,
+        "source_path": str(source_record_path),
+        "source_sha256": source_record_sha,
+    }
+    artifacts["cover"] = {
+        "path": str(cover),
+        "sha256": cover_sha256,
+        "source_path": str(generated_cover),
+        "source_sha256": cover_sha256,
+    }
+    absent = updated.get("absent_artifacts")
+    if isinstance(absent, dict):
+        absent.pop("cover", None)
+    updated["cover_repair_binding"] = {
+        "path": str(binding_path),
+        "sha256": binding_sha256,
+    }
+    return updated
+
+
+def _cover_reason_codes_without_transient_failure(value: object) -> list[str]:
+    prefixes = ("CPA_AI_COVER", "CPA_IMAGE_EDIT", "COVER_REFERENCE_EXTRACTION")
+    return [
+        str(code)
+        for code in (value if isinstance(value, list) else [])
+        if not str(code).startswith(prefixes)
+        and str(code) != "REVIEWED_COVER_REPLACEMENT_REQUIRED"
+    ]
+
+
+def _updated_cover_document(
+    document: dict,
+    *,
+    cover: Path,
+    cover_sha256: str,
+    generation: dict,
+    binding_path: Path,
+    binding_sha256: str,
+) -> dict:
+    updated = copy.deepcopy(document)
+    artifacts = updated.setdefault("artifact_hashes", {})
+    if not isinstance(artifacts, dict):
+        raise ValueError("artifact_hashes is not an object")
+    artifacts["cover_sha256"] = cover_sha256
+    updated["cover_repair_binding"] = {
+        "path": str(binding_path),
+        "sha256": binding_sha256,
+    }
+    if updated.get("schema_version") == "shadow-publish-draft.v1":
+        updated.update(
+            {
+                "cover_status": "AI_COVER_READY",
+                "cover_path": str(cover),
+                "cover_generation": generation,
+                "reason_codes": _cover_reason_codes_without_transient_failure(
+                    updated.get("reason_codes")
+                ),
+                "upload_enabled": False,
+            }
+        )
+    staging = updated.get("publish_staging")
+    if isinstance(staging, dict):
+        staging.update(
+            {
+                "cover_status": "AI_COVER_READY",
+                "cover_path": str(cover),
+                "cover_generation": generation,
+                "reason_codes": _cover_reason_codes_without_transient_failure(
+                    staging.get("reason_codes")
+                ),
+                "upload_enabled": False,
+            }
+        )
+    return updated
+
+
+def _restore_transaction_files(originals: dict[Path, bytes | None]) -> bool:
+    restored = True
+    for path, content in reversed(list(originals.items())):
+        try:
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                _atomic_write_bytes_file(path, content)
+        except OSError:
+            # Preserve the original exception.  The state remains uncommitted,
+            # and the next tick's binding validator will loudly reject any
+            # partial filesystem state left by an actual disk failure.
+            restored = False
+    for path, content in originals.items():
+        if content is None:
+            restored = restored and not path.exists()
+        else:
+            try:
+                restored = restored and path.read_bytes() == content
+            except OSError:
+                restored = False
+    return restored
+
+
+COVER_TRANSACTION_SCHEMA_VERSION = "lidousha-cover-transaction.v1"
+
+
+def _set_cover_transaction_status(journal_path: Path, journal: dict, status: str) -> None:
+    updated = copy.deepcopy(journal)
+    updated["status"] = status
+    updated["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _atomic_write_json_file(journal_path, updated)
+    journal.clear()
+    journal.update(updated)
+
+
+def _prepare_cover_transaction(
+    *,
+    generated_cover: Path,
+    candidate_id: str,
+    title: str,
+    mp4: Path,
+    target_payloads: list[tuple[Path, bytes]],
+) -> tuple[Path, dict, dict[Path, bytes | None]]:
+    transaction_root = generated_cover.parent / "transaction"
+    originals_root = transaction_root / "originals"
+    intended_root = transaction_root / "intended"
+    journal_path = generated_cover.parent / "cover-transaction.json"
+    if journal_path.exists():
+        raise ValueError(f"immutable cover transaction already exists: {journal_path}")
+    originals: dict[Path, bytes | None] = {}
+    entries: list[dict] = []
+    seen: set[Path] = set()
+    for index, (target, intended) in enumerate(target_payloads):
+        target = target.absolute()
+        if target in seen:
+            raise ValueError(f"duplicate cover transaction target: {target}")
+        seen.add(target)
+        original = target.read_bytes() if target.is_file() else None
+        originals[target] = original
+        intended_blob = intended_root / f"{index:03d}.bin"
+        _atomic_write_bytes_file(intended_blob, intended)
+        original_blob = None
+        original_sha256 = None
+        if original is not None:
+            original_blob = originals_root / f"{index:03d}.bin"
+            _atomic_write_bytes_file(original_blob, original)
+            original_sha256 = "sha256:" + hashlib.sha256(original).hexdigest()
+        entries.append(
+            {
+                "target": str(target),
+                "intended_blob": str(intended_blob),
+                "intended_sha256": "sha256:" + hashlib.sha256(intended).hexdigest(),
+                "original_exists": original is not None,
+                "original_blob": str(original_blob) if original_blob is not None else None,
+                "original_sha256": original_sha256,
+            }
+        )
+    journal = {
+        "schema_version": COVER_TRANSACTION_SCHEMA_VERSION,
+        "status": "PREPARED",
+        "candidate_id": candidate_id,
+        "title": title,
+        "media_path": str(mp4.resolve(strict=True)),
+        "media_sha256": "sha256:" + _sha256_regular_file(mp4),
+        "generation_dir": str(generated_cover.parent.resolve(strict=True)),
+        "entries": entries,
+        "upload_enabled": False,
+        "prepared_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    _atomic_write_json_file(journal_path, journal)
+    return journal_path, journal, originals
+
+
+def _roll_forward_prepared_cover_transactions(
+    date: str, rec: dict, mp4: Path, cover: Path
+) -> bool:
+    """Idempotently complete a PREPARED filesystem transaction after SIGKILL
+    or host loss.  Intended bytes are immutable, hash-checked blobs; target
+    paths are restricted to this candidate's active/delivery/generation roots."""
+
+    cid = str(rec.get("candidate_id") or "")
+    title = str(rec.get("title") or "")
+    root = BASE / "out" / date / cid / "cover_repair" / "generations"
+    recovered = False
+    for journal_path in sorted(root.glob("*/cover-transaction.json")):
+        try:
+            journal = _read_json_object(journal_path, label="cover transaction journal")
+        except ValueError:
+            continue
+        if journal.get("status") != "PREPARED":
+            continue
+        entries = journal.get("entries")
+        try:
+            generation_dir = Path(str(journal.get("generation_dir") or "")).resolve(strict=True)
+            media_path = Path(str(journal.get("media_path") or "")).resolve(strict=True)
+        except OSError:
+            continue
+        if (
+            journal.get("schema_version") != COVER_TRANSACTION_SCHEMA_VERSION
+            or journal.get("candidate_id") != cid
+            or journal.get("title") != title
+            or journal.get("upload_enabled") is not False
+            or generation_dir != journal_path.parent.resolve()
+            or media_path != mp4.resolve()
+            or not _matches_sha256(mp4, str(journal.get("media_sha256") or ""))
+            or not isinstance(entries, list)
+            or not entries
+        ):
+            continue
+        validated: list[tuple[Path, bytes]] = []
+        seen: set[Path] = set()
+        binding_payload: dict | None = None
+        valid = True
+        for entry in entries:
+            if not isinstance(entry, dict):
+                valid = False
+                break
+            target = Path(str(entry.get("target") or "")).absolute()
+            intended_blob = Path(str(entry.get("intended_blob") or ""))
+            try:
+                intended_allowed = intended_blob.resolve(strict=True).is_relative_to(
+                    journal_path.parent.resolve(strict=True)
+                )
+                intended_matches = _matches_sha256(
+                    intended_blob, str(entry.get("intended_sha256") or "")
+                )
+            except OSError:
+                valid = False
+                break
+            if target in seen or target.is_symlink() or not intended_allowed or not intended_matches:
+                valid = False
+                break
+            seen.add(target)
+            try:
+                payload = intended_blob.read_bytes()
+            except OSError:
+                valid = False
+                break
+            validated.append((target, payload))
+            if target.name.endswith(".cover-binding.json"):
+                try:
+                    candidate_binding = json.loads(payload.decode("utf-8"))
+                except (UnicodeError, ValueError):
+                    valid = False
+                    break
+                if isinstance(candidate_binding, dict):
+                    binding_payload = candidate_binding
+        if not valid or binding_payload is None:
+            continue
+        try:
+            generation_cover = Path(str(binding_payload.get("generation_cover_path") or "")).resolve(strict=True)
+            generation, generation_path = _validate_repaired_cover_generation(
+                cover=generation_cover,
+                title=title,
+                candidate_id=cid,
+            )
+        except (OSError, ValueError):
+            continue
+        if (
+            binding_payload.get("schema_version") != "lidousha-cover-repair-binding.v1"
+            or binding_payload.get("candidate_id") != cid
+            or binding_payload.get("title") != title
+            or binding_payload.get("upload_enabled") is not False
+            or binding_payload.get("media_path") != str(mp4.resolve())
+            or binding_payload.get("media_sha256") != journal.get("media_sha256")
+            or binding_payload.get("cover_path") != str(cover.resolve())
+            or binding_payload.get("cover_sha256")
+            != binding_payload.get("generation_cover_sha256")
+            or not _matches_sha256(
+                generation_cover,
+                str(binding_payload.get("generation_cover_sha256") or ""),
+            )
+            or binding_payload.get("generation_manifest_path") != str(generation_path.resolve())
+            or not _matches_sha256(
+                generation_path,
+                str(binding_payload.get("generation_manifest_sha256") or ""),
+            )
+            or binding_payload.get("selected_model") != generation.get("model")
+        ):
+            continue
+        binding_target = generation_cover.with_suffix(".cover-binding.json").absolute()
+        try:
+            active_documents = _active_cover_documents(
+                date=date,
+                candidate_id=cid,
+                title=title,
+                mp4=mp4,
+                media_sha256=str(journal.get("media_sha256") or ""),
+            )
+        except (OSError, ValueError):
+            continue
+        expected_targets = {
+            binding_target,
+            *(path.absolute() for path, _document in active_documents),
+        }
+        if generation_cover.resolve() != cover.resolve():
+            expected_targets.add(cover.absolute())
+        if rec.get("delivered"):
+            manifest_value = rec.get("delivery_manifest_path")
+            if (
+                binding_payload.get("authority_type") != "verified_song_delivery"
+                or not isinstance(manifest_value, str)
+                or binding_payload.get("delivery_manifest_path") != manifest_value
+            ):
+                continue
+            expected_targets.add(Path(manifest_value).absolute())
+        elif (
+            binding_payload.get("authority_type") != "talk_delivery_record"
+            or binding_payload.get("delivery_manifest_path") is not None
+        ):
+            continue
+        if seen != expected_targets or binding_target not in seen:
+            # Never accept a directory-wide capability.  The only writable
+            # paths are the exact active record/publish files derived above,
+            # the delivery artifacts, and this generation's binding.
+            continue
+
+        payloads = {target: payload for target, payload in validated}
+        binding_sha256 = "sha256:" + hashlib.sha256(payloads[binding_target]).hexdigest()
+        if generation_cover.resolve() != cover.resolve():
+            if (
+                "sha256:" + hashlib.sha256(payloads[cover.absolute()]).hexdigest()
+                != binding_payload.get("cover_sha256")
+            ):
+                continue
+        intended_documents: dict[Path, dict] = {}
+        for document_path, current_document in active_documents:
+            try:
+                intended_document = json.loads(
+                    payloads[document_path.absolute()].decode("utf-8")
+                )
+            except (KeyError, UnicodeError, ValueError):
+                valid = False
+                break
+            if not isinstance(intended_document, dict):
+                valid = False
+                break
+            hashes = intended_document.get("artifact_hashes")
+            pointer = intended_document.get("cover_repair_binding")
+            publish_view = (
+                intended_document
+                if intended_document.get("schema_version") == "shadow-publish-draft.v1"
+                else intended_document.get("publish_staging")
+            )
+            if (
+                not isinstance(hashes, dict)
+                or hashes.get("cover_sha256") != binding_payload.get("cover_sha256")
+                or not isinstance(pointer, dict)
+                or pointer.get("path") != str(binding_target)
+                or pointer.get("sha256") != binding_sha256
+                or not isinstance(publish_view, dict)
+                or publish_view.get("title") != title
+                or publish_view.get("cover_status") != "AI_COVER_READY"
+                or publish_view.get("cover_path") != str(cover)
+                or publish_view.get("cover_generation") != generation
+                or publish_view.get("upload_enabled") is not False
+                or _document_video_hash(intended_document)
+                != journal.get("media_sha256")
+                or intended_document.get("schema_version")
+                != current_document.get("schema_version")
+                or intended_document.get("candidate_id")
+                != current_document.get("candidate_id")
+                or intended_document.get("delivery_candidate_id")
+                != current_document.get("delivery_candidate_id")
+                or intended_document.get("source_candidate_id")
+                != current_document.get("source_candidate_id")
+            ):
+                valid = False
+                break
+            current_staging = current_document.get("publish_staging")
+            intended_staging = intended_document.get("publish_staging")
+            if isinstance(current_staging, dict) and (
+                not isinstance(intended_staging, dict)
+                or intended_staging.get("publish_json_path")
+                != current_staging.get("publish_json_path")
+            ):
+                valid = False
+                break
+            intended_documents[document_path.resolve()] = intended_document
+        if not valid:
+            continue
+        if rec.get("delivered"):
+            manifest_target = Path(str(rec["delivery_manifest_path"])).absolute()
+            try:
+                intended_manifest = json.loads(payloads[manifest_target].decode("utf-8"))
+            except (KeyError, UnicodeError, ValueError):
+                continue
+            if not isinstance(intended_manifest, dict):
+                continue
+            manifest_artifacts = (
+                intended_manifest.get("artifacts")
+                if isinstance(intended_manifest, dict)
+                else None
+            )
+            video_artifact = (
+                manifest_artifacts.get("video")
+                if isinstance(manifest_artifacts, dict)
+                else None
+            )
+            cover_artifact = (
+                manifest_artifacts.get("cover")
+                if isinstance(manifest_artifacts, dict)
+                else None
+            )
+            active_record = (
+                manifest_artifacts.get("active_record")
+                if isinstance(manifest_artifacts, dict)
+                else None
+            )
+            manifest_pointer = (
+                intended_manifest.get("cover_repair_binding")
+                if isinstance(intended_manifest, dict)
+                else None
+            )
+            delivery_record_path = mp4.with_suffix(".record.json").resolve()
+            source_record_paths = [
+                path
+                for path in intended_documents
+                if path.name.endswith(".record.json") and path != delivery_record_path
+            ]
+            if len(source_record_paths) != 1:
+                continue
+            source_record_path = source_record_paths[0]
+            if (
+                intended_manifest.get("schema_version")
+                != VERIFIED_SONG_DELIVERY_SCHEMA_VERSION
+                or intended_manifest.get("status") != "DELIVERED_NO_UPLOAD"
+                or intended_manifest.get("candidate_id") != cid
+                or intended_manifest.get("upload_enabled") is not False
+                or not isinstance(video_artifact, dict)
+                or video_artifact.get("path") != str(mp4)
+                or video_artifact.get("sha256") != journal.get("media_sha256")
+                or not isinstance(cover_artifact, dict)
+                or cover_artifact.get("path") != str(cover)
+                or cover_artifact.get("sha256")
+                != binding_payload.get("cover_sha256")
+                or cover_artifact.get("source_path") != str(generation_cover)
+                or cover_artifact.get("source_sha256")
+                != binding_payload.get("generation_cover_sha256")
+                or not isinstance(active_record, dict)
+                or active_record.get("path") != str(delivery_record_path)
+                or active_record.get("sha256")
+                != "sha256:"
+                + hashlib.sha256(payloads[delivery_record_path.absolute()]).hexdigest()
+                or active_record.get("source_path") != str(source_record_path)
+                or active_record.get("source_sha256")
+                != "sha256:"
+                + hashlib.sha256(payloads[source_record_path.absolute()]).hexdigest()
+                or not isinstance(manifest_pointer, dict)
+                or manifest_pointer.get("path") != str(binding_target)
+                or manifest_pointer.get("sha256") != binding_sha256
+            ):
+                continue
+        try:
+            for target, payload in validated:
+                _atomic_write_bytes_file(target, payload)
+            for entry in entries:
+                if not _matches_sha256(
+                    Path(str(entry["target"])), str(entry["intended_sha256"])
+                ):
+                    raise OSError("cover transaction roll-forward verification failed")
+            _set_cover_transaction_status(journal_path, journal, "COMMITTED")
+        except OSError:
+            continue
+        recovered = True
+    return recovered
+
+
+def _bind_repaired_cover(
+    date: str,
+    rec: dict,
+    mp4: Path,
+    cover: Path,
+    generated_cover: Path | None = None,
+) -> None:
+    cid = str(rec.get("candidate_id") or "")
+    title = str(rec.get("title") or "")
+    generated_cover = generated_cover or cover
+    generation, generation_path = _validate_repaired_cover_generation(
+        cover=generated_cover, title=title, candidate_id=cid
+    )
+    cover_sha256 = "sha256:" + _sha256_regular_file(generated_cover)
+    media_sha256 = "sha256:" + _sha256_regular_file(mp4)
+    generation_sha256 = "sha256:" + _sha256_regular_file(generation_path)
+    documents = _active_cover_documents(
+        date=date,
+        candidate_id=cid,
+        title=title,
+        mp4=mp4,
+        media_sha256=media_sha256,
+    )
+    song_manifest = _active_song_delivery_manifest(
+        rec,
+        candidate_id=cid,
+        mp4=mp4,
+        documents=documents,
+    )
+    binding_path = generated_cover.with_suffix(".cover-binding.json")
+    if binding_path.exists():
+        raise ValueError(f"immutable cover binding already exists: {binding_path}")
+    binding = {
+        "schema_version": "lidousha-cover-repair-binding.v1",
+        "candidate_id": cid,
+        "title": title,
+        "media_path": str(mp4.resolve(strict=True)),
+        "media_sha256": media_sha256,
+        "cover_path": str(cover.resolve()),
+        "cover_sha256": cover_sha256,
+        "generation_cover_path": str(generated_cover.resolve(strict=True)),
+        "generation_cover_sha256": cover_sha256,
+        "generation_manifest_path": str(generation_path.resolve(strict=True)),
+        "generation_manifest_sha256": generation_sha256,
+        "selected_model": generation["model"],
+        "attempted_models": generation.get("attempted_models") or [],
+        "model_fallback_used": bool(generation.get("model_fallback_used")),
+        "authority_type": "verified_song_delivery" if song_manifest is not None else "talk_delivery_record",
+        "delivery_manifest_path": str(song_manifest[0]) if song_manifest is not None else None,
+        "bound_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "upload_enabled": False,
+    }
+    binding_bytes = _json_file_bytes(binding)
+    binding_sha256 = "sha256:" + hashlib.sha256(binding_bytes).hexdigest()
+    updated_documents = [
+        (
+            path,
+            _updated_cover_document(
+                document,
+                cover=cover,
+                cover_sha256=cover_sha256,
+                generation=generation,
+                binding_path=binding_path,
+                binding_sha256=binding_sha256,
+            ),
+        )
+        for path, document in documents
+    ]
+    updated_song_manifest: tuple[Path, dict] | None = None
+    if song_manifest is not None:
+        updated_by_path = {path.resolve(): (path, document) for path, document in updated_documents}
+        delivery_record_path = mp4.with_suffix(".record.json").resolve(strict=True)
+        source_record_paths = [
+            path.resolve(strict=True)
+            for path, _document in updated_documents
+            if path.name.endswith(".record.json") and path.resolve() != delivery_record_path
+        ]
+        if len(source_record_paths) != 1:
+            raise ValueError("song cover binding requires one updated active source record")
+        source_record_path = source_record_paths[0]
+        updated_song_manifest = (
+            song_manifest[0],
+            _updated_song_delivery_manifest(
+                song_manifest[1],
+                delivery_record_path=delivery_record_path,
+                delivery_record=updated_by_path[delivery_record_path][1],
+                source_record_path=source_record_path,
+                source_record=updated_by_path[source_record_path][1],
+                cover=cover,
+                generated_cover=generated_cover,
+                cover_sha256=cover_sha256,
+                binding_path=binding_path,
+                binding_sha256=binding_sha256,
+            ),
+        )
+        # The verified song delivery manifest remains the commit marker and is
+        # therefore installed after its active records and publish draft.
+        updated_documents.append(updated_song_manifest)
+
+    target_payloads: list[tuple[Path, bytes]] = []
+    if generated_cover.resolve() != cover.resolve():
+        target_payloads.append((cover, generated_cover.read_bytes()))
+    target_payloads.append((binding_path, binding_bytes))
+    target_payloads.extend(
+        (document_path, _json_file_bytes(document))
+        for document_path, document in updated_documents
+    )
+    journal_path, journal, originals = _prepare_cover_transaction(
+        generated_cover=generated_cover,
+        candidate_id=cid,
+        title=title,
+        mp4=mp4,
+        target_payloads=target_payloads,
+    )
+    try:
+        for target, payload in target_payloads:
+            _atomic_write_bytes_file(target, payload)
+        for target, payload in target_payloads:
+            if target.read_bytes() != payload:
+                raise OSError(f"cover transaction verification failed: {target}")
+        _set_cover_transaction_status(journal_path, journal, "COMMITTED")
+    except BaseException:
+        restored = _restore_transaction_files(originals)
+        if restored:
+            try:
+                _set_cover_transaction_status(journal_path, journal, "ROLLED_BACK")
+            except OSError:
+                # Keep PREPARED if the journal status cannot be updated.  The
+                # next tick can safely roll the immutable intended bytes
+                # forward instead of spending on another image request.
+                pass
+        raise
+
+    repaired_record = copy.deepcopy(rec)
+    repaired_record.update(
+        {
+            "cover_status": "REPAIRED_AI_COVER",
+            "cover_path": str(cover),
+            "cover_sha256": cover_sha256,
+            "cover_generation": generation,
+            "cover_generation_path": str(generation_path),
+            "cover_generation_sha256": generation_sha256,
+            "cover_binding_path": str(binding_path),
+            "cover_binding_sha256": binding_sha256,
+        }
+    )
+    if updated_song_manifest is not None:
+        manifest_path, manifest_document = updated_song_manifest
+        repaired_record["delivery_manifest_path"] = str(manifest_path)
+        repaired_record["delivery_manifest_sha256"] = (
+            "sha256:" + hashlib.sha256(_json_file_bytes(manifest_document)).hexdigest()
+        )
+        delivered_sidecars = repaired_record.setdefault("delivered_sidecars", {})
+        delivered_sidecar_hashes = repaired_record.setdefault("delivered_sidecar_hashes", {})
+        manifest_artifacts = manifest_document.get("artifacts")
+        active_record = (
+            manifest_artifacts.get("active_record")
+            if isinstance(manifest_artifacts, dict)
+            else None
+        )
+        if not isinstance(active_record, dict):
+            raise ValueError("updated song manifest lost active_record authority")
+        if isinstance(delivered_sidecars, dict):
+            delivered_sidecars["cover"] = str(cover)
+            delivered_sidecars["active_record"] = str(active_record["path"])
+        if isinstance(delivered_sidecar_hashes, dict):
+            delivered_sidecar_hashes["cover"] = cover_sha256
+            delivered_sidecar_hashes["active_record"] = str(active_record["sha256"])
+    repaired_record["cover_transaction_path"] = str(journal_path)
+    repaired_record["cover_transaction_status"] = "COMMITTED"
+    if isinstance(repaired_record.get("summary"), dict):
+        repaired_record["summary"].update(
+            {
+                "cover_status": "REPAIRED_AI_COVER",
+                "cover_path": str(cover),
+                "cover_sha256": cover_sha256,
+                "cover_binding_path": str(binding_path),
+                "cover_binding_sha256": binding_sha256,
+            }
+        )
+    rec.clear()
+    rec.update(repaired_record)
+
+
+def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
+    binding_path_value = rec.get("cover_binding_path")
+    binding_sha256 = rec.get("cover_binding_sha256")
+    if not isinstance(binding_path_value, str) or not isinstance(binding_sha256, str):
+        return False
+    binding_path = Path(binding_path_value)
+    expected_root = (BASE / "out" / date / str(rec.get("candidate_id") or "") / "cover_repair" / "generations").resolve()
+    try:
+        binding_resolved = binding_path.resolve(strict=True)
+        state_cover_resolved = Path(str(rec.get("cover_path") or "")).resolve(
+            strict=True
+        )
+    except OSError:
+        return False
+    if (
+        state_cover_resolved != cover.resolve()
+        or not binding_resolved.is_relative_to(expected_root)
+        or not _matches_sha256(binding_resolved, binding_sha256)
+    ):
+        return False
+    try:
+        binding = _read_json_object(binding_resolved, label="cover repair binding")
+        media_path = Path(str(binding.get("media_path") or "")).resolve(strict=True)
+        cover_path = Path(str(binding.get("cover_path") or "")).resolve(strict=True)
+        generation_path = Path(str(binding.get("generation_manifest_path") or "")).resolve(strict=True)
+        generation_cover = Path(str(binding.get("generation_cover_path") or "")).resolve(strict=True)
+    except (OSError, ValueError):
+        return False
+    if (
+        binding.get("schema_version") != "lidousha-cover-repair-binding.v1"
+        or binding.get("candidate_id") != rec.get("candidate_id")
+        or binding.get("title") != rec.get("title")
+        or binding.get("upload_enabled") is not False
+        or media_path != mp4.resolve()
+        or cover_path != cover.resolve()
+        or not _matches_sha256(mp4, str(binding.get("media_sha256") or ""))
+        or not _matches_sha256(cover, str(binding.get("cover_sha256") or ""))
+        or not _matches_sha256(generation_cover, str(binding.get("generation_cover_sha256") or ""))
+        or not _matches_sha256(generation_path, str(binding.get("generation_manifest_sha256") or ""))
+        or rec.get("cover_sha256") != binding.get("cover_sha256")
+        or rec.get("cover_generation_path") != str(generation_path)
+        or rec.get("cover_generation_sha256") != binding.get("generation_manifest_sha256")
+    ):
+        return False
+    try:
+        generation, validated_path = _validate_repaired_cover_generation(
+            cover=generation_cover,
+            title=str(rec.get("title") or ""),
+            candidate_id=str(rec.get("candidate_id") or ""),
+        )
+    except (OSError, ValueError):
+        return False
+    if not (
+        validated_path.resolve() == generation_path
+        and binding.get("selected_model") == generation.get("model")
+        and str(binding.get("cover_sha256")) == str(binding.get("generation_cover_sha256"))
+        and rec.get("cover_generation") == generation
+    ):
+        return False
+    summary = rec.get("summary")
+    if isinstance(summary, dict) and summary and (
+        summary.get("cover_status") != "REPAIRED_AI_COVER"
+        or summary.get("cover_path") != str(cover)
+        or summary.get("cover_sha256") != binding.get("cover_sha256")
+        or summary.get("cover_binding_path") != str(binding_path)
+        or summary.get("cover_binding_sha256") != binding_sha256
+    ):
+        return False
+    try:
+        documents = _active_cover_documents(
+            date=date,
+            candidate_id=str(rec.get("candidate_id") or ""),
+            title=str(rec.get("title") or ""),
+            mp4=mp4,
+            media_sha256=str(binding.get("media_sha256") or ""),
+        )
+    except (OSError, ValueError):
+        return False
+    for _path, document in documents:
+        hashes = document.get("artifact_hashes")
+        pointer = document.get("cover_repair_binding")
+        if (
+            not isinstance(hashes, dict)
+            or hashes.get("cover_sha256") != binding.get("cover_sha256")
+            or not isinstance(pointer, dict)
+            or pointer.get("path") != str(binding_path)
+            or pointer.get("sha256") != binding_sha256
+        ):
+            return False
+        publish_view = (
+            document
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+            else document.get("publish_staging")
+        )
+        if not isinstance(publish_view, dict):
+            return False
+        try:
+            published_cover = Path(str(publish_view.get("cover_path") or "")).resolve(strict=True)
+        except OSError:
+            return False
+        if (
+            publish_view.get("cover_status") != "AI_COVER_READY"
+            or publish_view.get("upload_enabled") is not False
+            or published_cover != cover.resolve()
+            or publish_view.get("cover_generation") != generation
+        ):
+            return False
+    try:
+        song_manifest = _active_song_delivery_manifest(
+            rec,
+            candidate_id=str(rec.get("candidate_id") or ""),
+            mp4=mp4,
+            documents=documents,
+        )
+    except (OSError, ValueError):
+        return False
+    if song_manifest is None:
+        return binding.get("authority_type") == "talk_delivery_record" and binding.get("delivery_manifest_path") is None
+    manifest_path, manifest = song_manifest
+    artifacts = manifest.get("artifacts")
+    cover_artifact = artifacts.get("cover") if isinstance(artifacts, dict) else None
+    pointer = manifest.get("cover_repair_binding")
+    if not isinstance(cover_artifact, dict) or not isinstance(pointer, dict):
+        return False
+    try:
+        manifest_cover = Path(str(cover_artifact.get("path") or "")).resolve(strict=True)
+        manifest_source = Path(str(cover_artifact.get("source_path") or "")).resolve(strict=True)
+    except OSError:
+        return False
+    return (
+        binding.get("authority_type") == "verified_song_delivery"
+        and binding.get("delivery_manifest_path") == str(manifest_path)
+        and manifest_cover == cover.resolve()
+        and manifest_source == generation_cover.resolve()
+        and _matches_sha256(cover, str(cover_artifact.get("sha256") or ""))
+        and _matches_sha256(generation_cover, str(cover_artifact.get("source_sha256") or ""))
+        and pointer.get("path") == str(binding_path)
+        and pointer.get("sha256") == binding_sha256
+    )
+
+
+def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
+    """Recover state after a crash between the filesystem binding commit and
+    ``write_state``.  Immutable generations plus active-doc/manifest pointers
+    are sufficient to reconstruct state without another paid image request.
+    Partial bindings are ignored because the ordinary full validator must pass
+    before any state field is changed."""
+
+    if not cover.is_file():
+        return False
+    if str(rec.get("cover_status") or "").upper() == "REPAIRED_AI_COVER" and _cover_binding_valid(
+        date, rec, mp4, cover
+    ):
+        return False
+    cid = str(rec.get("candidate_id") or "")
+    title = str(rec.get("title") or "")
+    root = BASE / "out" / date / cid / "cover_repair" / "generations"
+    try:
+        candidates = sorted(
+            root.glob("*/*.cover-binding.json"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+    except OSError:
+        return False
+    for binding_path in candidates:
+        try:
+            binding = _read_json_object(binding_path, label="recoverable cover binding")
+            generation_path = Path(str(binding.get("generation_manifest_path") or "")).resolve(strict=True)
+            generation_cover = Path(str(binding.get("generation_cover_path") or "")).resolve(strict=True)
+            generation, validated_path = _validate_repaired_cover_generation(
+                cover=generation_cover,
+                title=title,
+                candidate_id=cid,
+            )
+            if validated_path.resolve() != generation_path:
+                continue
+            tentative = copy.deepcopy(rec)
+            tentative.update(
+                {
+                    "cover_status": "REPAIRED_AI_COVER",
+                    "cover_path": str(cover),
+                    "cover_sha256": str(binding.get("cover_sha256") or ""),
+                    "cover_generation": generation,
+                    "cover_generation_path": str(generation_path),
+                    "cover_generation_sha256": str(
+                        binding.get("generation_manifest_sha256") or ""
+                    ),
+                    "cover_binding_path": str(binding_path),
+                    "cover_binding_sha256": "sha256:" + _sha256_regular_file(binding_path),
+                    "cover_integrity_status": "VALID_BOUND_RECOVERED",
+                }
+            )
+            if binding.get("authority_type") == "verified_song_delivery":
+                manifest_path = Path(str(binding.get("delivery_manifest_path") or "")).resolve(strict=True)
+                tentative["delivery_manifest_path"] = str(manifest_path)
+                tentative["delivery_manifest_sha256"] = (
+                    "sha256:" + _sha256_regular_file(manifest_path)
+                )
+                manifest = _read_json_object(
+                    manifest_path, label="recoverable song delivery manifest"
+                )
+                artifacts = manifest.get("artifacts")
+                active_record = (
+                    artifacts.get("active_record") if isinstance(artifacts, dict) else None
+                )
+                if not isinstance(active_record, dict):
+                    continue
+                sidecars = tentative.setdefault("delivered_sidecars", {})
+                sidecar_hashes = tentative.setdefault("delivered_sidecar_hashes", {})
+                if isinstance(sidecars, dict):
+                    sidecars["cover"] = str(cover)
+                    sidecars["active_record"] = str(active_record.get("path") or "")
+                if isinstance(sidecar_hashes, dict):
+                    sidecar_hashes["cover"] = tentative["cover_sha256"]
+                    sidecar_hashes["active_record"] = str(
+                        active_record.get("sha256") or ""
+                    )
+            if not _cover_binding_valid(date, tentative, mp4, cover):
+                continue
+        except (OSError, ValueError, SongDeliveryError):
+            continue
+        tentative["cover_repair_recovered_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+        )
+        if isinstance(tentative.get("summary"), dict):
+            tentative["summary"].update(
+                {
+                    "cover_status": "REPAIRED_AI_COVER",
+                    "cover_path": str(cover),
+                    "cover_sha256": tentative["cover_sha256"],
+                    "cover_binding_path": tentative["cover_binding_path"],
+                    "cover_binding_sha256": tentative["cover_binding_sha256"],
+                }
+            )
+        rec.clear()
+        rec.update(tentative)
+        return True
+    return False
+
+
+def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
+    expected_cover = rec.get("cover_sha256")
+    expected_video = rec.get("video_sha256") or rec.get("delivered_sha256")
+    generation = rec.get("cover_generation")
+    if (
+        not isinstance(expected_cover, str)
+        or not isinstance(expected_video, str)
+        or not isinstance(generation, dict)
+        or not _matches_sha256(cover, expected_cover)
+        or not _matches_sha256(mp4, expected_video)
+        or generation.get("title") != rec.get("title")
+        or generation.get("method") != "images.edit"
+        or generation.get("fallback_used") is not False
+        or generation.get("final_cover_sha256") != expected_cover
+    ):
+        return False
+    try:
+        source_cover = Path(str(generation.get("final_cover") or "")).resolve(strict=True)
+    except OSError:
+        return False
+    if not _matches_sha256(source_cover, expected_cover):
+        return False
+    try:
+        documents = _active_cover_documents(
+            date=date,
+            candidate_id=str(rec.get("candidate_id") or ""),
+            title=str(rec.get("title") or ""),
+            mp4=mp4,
+            media_sha256=str(expected_video),
+        )
+    except (OSError, ValueError):
+        return False
+    for _path, document in documents:
+        hashes = document.get("artifact_hashes")
+        publish_view = (
+            document
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+            else document.get("publish_staging")
+        )
+        if not isinstance(hashes, dict) or not isinstance(publish_view, dict):
+            return False
+        try:
+            published_source_cover = Path(str(publish_view.get("cover_path") or "")).resolve(strict=True)
+        except OSError:
+            return False
+        if (
+            hashes.get("cover_sha256") != expected_cover
+            or publish_view.get("cover_status") != "AI_COVER_READY"
+            or publish_view.get("upload_enabled") is not False
+            or published_source_cover != source_cover
+            or publish_view.get("cover_generation") != generation
+        ):
+            return False
+    try:
+        song_manifest = _active_song_delivery_manifest(
+            rec,
+            candidate_id=str(rec.get("candidate_id") or ""),
+            mp4=mp4,
+            documents=documents,
+        )
+    except (OSError, ValueError):
+        return False
+    if song_manifest is not None:
+        artifacts = song_manifest[1].get("artifacts")
+        cover_artifact = artifacts.get("cover") if isinstance(artifacts, dict) else None
+        if not isinstance(cover_artifact, dict):
+            return False
+        try:
+            manifest_cover = Path(str(cover_artifact.get("path") or "")).resolve(strict=True)
+            manifest_source = Path(str(cover_artifact.get("source_path") or "")).resolve(strict=True)
+        except OSError:
+            return False
+        if (
+            manifest_cover != cover.resolve()
+            or manifest_source != source_cover
+            or not _matches_sha256(cover, str(cover_artifact.get("sha256") or ""))
+            or not _matches_sha256(source_cover, str(cover_artifact.get("source_sha256") or ""))
+        ):
+            return False
+    return True
+
+
+def _refresh_cover_repair_budget(rec: dict, fingerprint: str) -> bool:
+    if rec.get("cover_repair_generation") == fingerprint:
+        return False
+    old_attempts = max(0, int(rec.get("cover_repair_attempts") or 0))
+    lifetime = rec.get("cover_repair_lifetime_attempts")
+    if lifetime is None:
+        lifetime = old_attempts
+    history = rec.setdefault("cover_repair_attempt_history", [])
+    if not isinstance(history, list):
+        history = []
+        rec["cover_repair_attempt_history"] = history
+    if old_attempts or rec.get("cover_repair_generation"):
+        history.append(
+            {
+                "pipeline_fingerprint": rec.get("cover_repair_generation") or "legacy-unversioned",
+                "attempts": old_attempts,
+            }
+        )
+    rec["cover_repair_generation"] = fingerprint
+    rec["cover_repair_attempts"] = 0
+    rec["cover_repair_lifetime_attempts"] = max(0, int(lifetime))
+    return True
 
 
 def cover_repair_needed(date: str, rec: dict) -> bool:
@@ -1437,56 +5413,240 @@ def cover_repair_needed(date: str, rec: dict) -> bool:
     delivered = rec.get("status") in DELIVERED_TALK_STATUSES or bool(rec.get("delivered"))
     if not delivered or not rec.get("title"):
         return False
-    if rec.get("cover_repair_attempts", 0) >= COVER_REPAIR_MAX_ATTEMPTS:
-        return False
     paths = delivered_paths(date, rec)
-    return paths is not None and not paths[1].is_file()
+    if paths is None:
+        return False
+    mp4, cover = paths
+    if not cover.is_file():
+        return True
+    status = str(rec.get("cover_status") or "").upper()
+    if "BLOCKED_AI_COVER_REQUIRED" in status or "REPAIR_FAILED" in status:
+        return True
+    if status == "REPAIRED_AI_COVER":
+        return not _cover_binding_valid(date, rec, mp4, cover)
+    if status == "AI_COVER_READY":
+        return not _initial_cover_proof_valid(date, rec, mp4, cover)
+    # A bare PNG or an unknown status has no current title/video/hash authority.
+    return True
 
 
-def repair_covers(date: str, state: dict) -> None:
+def _cover_repair_eligible(rec: dict) -> bool:
+    """Budget limits paid generation attempts, never integrity detection.
+    ``cover_repair_needed`` must stay fail-closed even after exhaustion so a
+    later title/media/document drift remains loud in state and reports."""
+
+    return (
+        int(rec.get("cover_repair_attempts") or 0) < COVER_REPAIR_MAX_ATTEMPTS
+        and int(rec.get("cover_repair_lifetime_attempts") or 0)
+        < COVER_REPAIR_LIFETIME_ATTEMPT_CAP
+    )
+
+
+def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> None:
+    """Verify every mutable authority document before a paid image request.
+
+    Binding used to discover missing legacy song records only after generation,
+    which spent an image request on a package that could never commit.  Future
+    song deliveries carry a verified manifest plus active-record state maps;
+    older packages fail loudly and cost-free until an explicit migration is
+    performed from their original proof chain.
+    """
+
+    candidate_id = str(rec.get("candidate_id") or "")
+    documents = _active_cover_documents(
+        date=date,
+        candidate_id=candidate_id,
+        title=str(rec.get("title") or ""),
+        mp4=mp4,
+        media_sha256="sha256:" + _sha256_regular_file(mp4),
+    )
+    manifest = _active_song_delivery_manifest(
+        rec,
+        candidate_id=candidate_id,
+        mp4=mp4,
+        documents=documents,
+    )
+    # `delivered` is the runner's stable song-lane signal.  Candidate ids can
+    # be song_*, semanticsong_*, or a future anchor family, whereas delivered
+    # talk records intentionally do not set this field.
+    if rec.get("delivered") and manifest is None:
+        raise ValueError("legacy delivered song has no verified active-record manifest")
+
+
+def repair_covers(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: set[str] | frozenset[str] | None = None,
+    expected_cover_texts: dict[str, str] | None = None,
+) -> None:
     """Phase D: delivered clips whose REAL-AI cover was blocked (CPA image lane
     hiccups: gateway 400s, provider outages) get a bounded cover-only retry —
     the mp4 is already good, nothing is re-produced.  One attempt per record
     per tick; permanently blocked covers stay loud in the review summary."""
-    todo = [r for r in state.get("picks", []) + state.get("songs", []) if cover_repair_needed(date, r)]
+    records = state.get("picks", []) + state.get("songs", [])
+    expected_cover_texts = dict(expected_cover_texts or {})
+    if expected_cover_texts and (
+        candidate_ids is None
+        or any(
+            re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")) is None
+            or not isinstance(expected, str)
+            or not expected.strip()
+            for candidate_id, expected in expected_cover_texts.items()
+        )
+        or not set(expected_cover_texts).issubset(set(candidate_ids))
+    ):
+        raise ValueError("expected cover text authority must be scoped to selected candidates")
+    if candidate_ids is not None:
+        requested = set(candidate_ids)
+        if not requested or any(
+            re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(value or "")) is None
+            for value in requested
+        ):
+            raise ValueError("selected cover repair candidate ids are invalid or empty")
+        matches: dict[str, list[dict]] = {candidate_id: [] for candidate_id in requested}
+        for record in records:
+            if isinstance(record, dict) and record.get("candidate_id") in matches:
+                matches[str(record["candidate_id"])].append(record)
+        invalid = {
+            candidate_id: len(rows)
+            for candidate_id, rows in matches.items()
+            if len(rows) != 1
+        }
+        if invalid:
+            raise ValueError(
+                f"selected cover repair candidates are missing or duplicated: {invalid}"
+            )
+        # Scope recovery, budget refresh, exhaustion handling, and provider
+        # calls alike.  A selected repair must never mutate a neighboring
+        # candidate merely because that record also happens to need a cover.
+        records = [record for record in records if record.get("candidate_id") in requested]
+    recovered = False
+    for record in records:
+        paths = delivered_paths(date, record)
+        if paths is not None:
+            recovered = (
+                _roll_forward_prepared_cover_transactions(date, record, *paths)
+                or recovered
+            )
+            recovered = _recover_committed_cover_binding(date, record, *paths) or recovered
+    if recovered:
+        write_state(date, state)
+    fingerprint = pipeline_fingerprint()
+    for record in records:
+        if (record.get("status") in DELIVERED_TALK_STATUSES or record.get("delivered")) and record.get("title"):
+            _refresh_cover_repair_budget(record, fingerprint)
+    needed = [r for r in records if cover_repair_needed(date, r)]
+    exhausted = [r for r in needed if not _cover_repair_eligible(r)]
+    for record in exhausted:
+        record["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
+        record["cover_repair_exhausted"] = True
+        status = str(record.get("cover_status") or "BLOCKED_AI_COVER_REQUIRED")
+        if "repair_budget_exhausted" not in status:
+            record["cover_status"] = f"{status}(repair_budget_exhausted)"
+    if exhausted:
+        write_state(date, state)
+    todo = [r for r in needed if _cover_repair_eligible(r)]
     if not todo:
         return
     for rec in todo:
         mp4, cover = delivered_paths(date, rec)
+        try:
+            _cover_authority_preflight(date, rec, mp4)
+        except (OSError, ValueError) as exc:
+            rec["cover_integrity_status"] = "INVALID_AUTHORITY_PREFLIGHT"
+            rec["cover_status"] = "BLOCKED_COVER_AUTHORITY_PREFLIGHT"
+            rec["cover_authority_preflight_error"] = f"{type(exc).__name__}: {exc}"
+            log(
+                f"cover repair {rec.get('candidate_id', '?')}: authority preflight "
+                f"blocked before image request: {type(exc).__name__}: {exc}"
+            )
+            write_state(date, state)
+            continue
         rec["cover_repair_attempts"] = rec.get("cover_repair_attempts", 0) + 1
+        rec["cover_repair_lifetime_attempts"] = rec.get("cover_repair_lifetime_attempts", 0) + 1
         cid = rec.get("candidate_id", "?")
         log(f"cover repair {cid} (attempt {rec['cover_repair_attempts']}/{COVER_REPAIR_MAX_ATTEMPTS})")
         log_path = BASE / "logs" / f"{date}_{cid}_cover.log"
         ref = cover_ref_for(date, cid)
         src_args = ["--ref", str(ref)] if ref else ["--media", str(mp4)]
+        repair_root = BASE / "out" / date / str(cid) / "cover_repair"
+        attempt_id = (
+            f"{fingerprint.removeprefix('sha256:')[:12]}-"
+            f"{rec['cover_repair_attempts']:02d}-{time.time_ns()}"
+        )
+        generation_root = repair_root / "generations" / attempt_id
+        generated_cover = generation_root / "final.cover.png"
+        ai_background = generation_root / "ai-background.png"
+        rec["cover_repair_last_generation_dir"] = str(generation_root)
+        rec["cover_integrity_status"] = "REPAIR_ATTEMPT_IN_PROGRESS"
+        rec["cover_repair_exhausted"] = False
+        if cover.is_file():
+            stale_sha = _sha256_regular_file(cover)
+            stale_path = repair_root / "stale_covers" / f"{cover.name}.{stale_sha}.png"
+            if not stale_path.is_file():
+                stale_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cover, stale_path)
+        # Charge and persist the bounded attempt before the external image
+        # request.  A process/host crash after provider spend cannot evade the
+        # lifetime cap or replay the same budget slot forever.
+        write_state(date, state)
         try:
             with open(log_path, "a", encoding="utf-8") as sink:
                 completed = subprocess.run(
                     [sys.executable, str(REPO_ROOT / "scripts" / "regenerate_lidousha_cover.py"),
                      "--title", str(rec["title"]), *src_args,
-                     "--candidate-id", str(cid), "--out", str(cover)],
+                     "--candidate-id", str(cid), "--ai-bg", str(ai_background),
+                     "--out", str(generated_cover)],
                     check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=1200,
-                    cwd=str(REPO_ROOT), env=child_env(),
+                    cwd=str(REPO_ROOT), env=child_env_for_date(date),
                 )
             rc = completed.returncode
         except subprocess.TimeoutExpired:
             rc = -1
-        if rc == 0 and cover.is_file():
-            rec["cover_status"] = "REPAIRED_AI_COVER"
-            log(f"cover repaired → {cover.name}")
-        else:
+        bound = False
+        if rc == 0 and generated_cover.is_file():
             try:
-                tail = log_path.read_text(encoding="utf-8", errors="replace")[-800:]
-            except OSError:
-                tail = ""
-            if image_lane_down(tail):
-                rec["cover_repair_attempts"] -= 1  # lane outage, not this pick's failure
-                log("cover repair: CPA image lane down — deferring ALL repairs to a later tick")
-                write_state(date, state)
-                return
-            if rec["cover_repair_attempts"] >= COVER_REPAIR_MAX_ATTEMPTS:
+                expected_cover_text = expected_cover_texts.get(str(cid))
+                if expected_cover_text is not None:
+                    generation, _generation_path = _validate_repaired_cover_generation(
+                        cover=generated_cover,
+                        title=str(rec["title"]),
+                        candidate_id=str(cid),
+                    )
+                    rendered_lines = generation.get("rendered_lines")
+                    canonical = lambda value: re.sub(r"\s+", "", str(value))
+                    if (
+                        generation.get("cover_text") != expected_cover_text
+                        or not isinstance(rendered_lines, list)
+                        or not rendered_lines
+                        or any(not isinstance(value, str) for value in rendered_lines)
+                        or canonical("".join(rendered_lines))
+                        != canonical(expected_cover_text)
+                    ):
+                        raise ValueError(
+                            "generated cover did not preserve the reviewed text/punctuation"
+                        )
+                _bind_repaired_cover(date, rec, mp4, cover, generated_cover)
+            except (OSError, ValueError, SongDeliveryError) as exc:
+                with open(log_path, "a", encoding="utf-8") as sink:
+                    sink.write(f"\nCOVER_BINDING_FAILED: {type(exc).__name__}: {exc}\n")
+                rc = -2
+            else:
+                bound = True
+                rec["cover_integrity_status"] = "VALID_BOUND"
+                log(f"cover repaired and hash-bound → {cover.name}")
+        if not bound:
+            if (
+                rec["cover_repair_attempts"] >= COVER_REPAIR_MAX_ATTEMPTS
+                or rec["cover_repair_lifetime_attempts"] >= COVER_REPAIR_LIFETIME_ATTEMPT_CAP
+            ):
                 rec["cover_status"] = f"{rec.get('cover_status') or 'BLOCKED_AI_COVER_REQUIRED'}(repair_failed_x{rec['cover_repair_attempts']})"
+                rec["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
+                rec["cover_repair_exhausted"] = True
                 log(f"cover repair failed {rec['cover_repair_attempts']}x — left for human review (see {log_path.name})")
+            else:
+                rec["cover_integrity_status"] = "INVALID_REPAIR_PENDING"
         write_state(date, state)
 
 
@@ -1506,6 +5666,11 @@ def write_reports(date: str, state: dict) -> None:
     quarantined = sum(1 for p in picks if p.get("status") == "quarantine")  # legacy states only
     delivered_songs = sum(1 for s in songs if s.get("delivered"))
     blocked_songs = sum(1 for s in songs if s.get("status") == "blocked")
+    capture = (
+        state.get("collab_evidence_capture")
+        if isinstance(state.get("collab_evidence_capture"), dict)
+        else {}
+    )
     talk_notes = []
     if repaired:
         talk_notes.append(f"{repaired} 条边界自修复后交付")
@@ -1520,6 +5685,9 @@ def write_reports(date: str, state: dict) -> None:
         f"- 交付实况: 谈话 **{delivered_talk} 交付**{('（' + '，'.join(talk_notes) + '）') if talk_notes else ''} / "
         f"歌 **{delivered_songs} 交付** · {blocked_songs} 被完整性门拦截 · 共尝试 {len(songs)}",
         f"- 段: 完成 {len(state.get('segments_done', []))} / 死段 {len(state.get('segments_dead', {}))} / 待产出 talk {len(state.get('pending_talk', []))} + song {len(state.get('pending_song', []))}",
+        f"- 联动证据旁路: **{capture.get('status', 'NOT_RUN')}** · "
+        f"未来候选场 {capture.get('candidate_session_count', 0)}/"
+        f"{capture.get('candidate_session_quota', 5)}（仅未标注开发证据，不代表已确认联动或可训练）",
         "",
         "## 谈话成品（审查要点：标题、选片理由、边界收束）",
         "",
@@ -1547,7 +5715,7 @@ def write_reports(date: str, state: dict) -> None:
             f"| {s.get('boundary_verdict') or '?'} "
             f"| {pick.get('cover_status') or s.get('cover_status') or '?'} |"
         )
-    lines += ["", f"## 歌切（至多 {MAX_SONGS_PER_DATE} 个、按弹幕量排序；没唱完整的歌不切(SONG_PARTIAL 不交付)；语义判定仅作参考不拦交付；被拦不占配额、备份自动回填）", ""]
+    lines += ["", f"## 歌切（至多 {MAX_SONGS_PER_DATE} 个、按弹幕量排序；仅李豆沙本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）", ""]
     if songs:
         lines += ["| 歌 | 弹幕 | 门判定 | 原因码 | 标题 | 交付 |", "|---|---|---|---|---|---|"]
         for song in songs:
@@ -1593,6 +5761,20 @@ def write_reports(date: str, state: dict) -> None:
     )
 
 
+def visual_song_config_from_env() -> VisualSongConfig:
+    """Malformed optional tuning cannot disable the independent ASR lane."""
+
+    try:
+        sample_seconds = int(os.environ.get("AUTOSLICE_VISUAL_SONG_SAMPLE_SECONDS", "10"))
+        timeout_seconds = int(os.environ.get("AUTOSLICE_VISUAL_SONG_TIMEOUT_SECONDS", "900"))
+    except ValueError:
+        sample_seconds, timeout_seconds = 10, 900
+    return VisualSongConfig(
+        sample_every_seconds=max(5, sample_seconds),
+        timeout_seconds=max(60, timeout_seconds),
+    )
+
+
 def discover_segments(date: str, state: dict) -> None:
     """Phase A: transcribe + recall new segments into pending queues."""
     done = set(state.setdefault("segments_done", []))
@@ -1600,6 +5782,8 @@ def discover_segments(date: str, state: dict) -> None:
     attempts = state.setdefault("bcut_attempts", {})
     pending_talk = state.setdefault("pending_talk", [])
     pending_song = state.setdefault("pending_song", [])
+    visual_inventory = state.setdefault("visual_song_inventory", {})
+    visual_seen = set(state.setdefault("visual_song_seen_entries", []))
 
     for segment in list_segments(date):
         stem = segment.stem
@@ -1621,30 +5805,65 @@ def discover_segments(date: str, state: dict) -> None:
                 log(f"segment {segment.name}: BCUT failed {attempts[stem]}x → dead")
             continue
         xml = find_danmaku_xml(segment)
+        chat_jsonl = find_chat_jsonl(segment)
         candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
         seg_dur = ffprobe_ms(segment)
+        visual_result = discover_visual_songs(
+            segment,
+            BASE / "cache" / date / "visual-song-inventory",
+            duration_ms=seg_dur,
+            config=visual_song_config_from_env(),
+        )
+        visual_inventory[stem] = visual_result.to_manifest()
+        fresh_visual = []
+        for visual_candidate in visual_result.candidates:
+            # The numbered overlay is cumulative across recording segments.
+            # Deduplicate a stable numbered row across the date while still
+            # allowing an unnumbered/repeated performance at another interval.
+            list_index = visual_candidate.list_index
+            identity = (
+                f"list:{list_index}:{normalize_visual_title(visual_candidate.song_title)}"
+                if list_index is not None
+                else f"media:{stem}:{visual_candidate.start_ms}:{normalize_visual_title(visual_candidate.song_title)}"
+            )
+            if identity in visual_seen:
+                continue
+            visual_seen.add(identity)
+            fresh_visual.append(visual_candidate)
+        state["visual_song_seen_entries"] = sorted(visual_seen)
+        if visual_result.status == "FAILED":
+            log(f"{segment.name}: visual song inventory failed open ({visual_result.error})")
+        else:
+            log(
+                f"{segment.name}: visual song inventory {len(fresh_visual)} new / "
+                f"{len(visual_result.candidates)} visible ({'cache' if visual_result.cache_hit else 'AGY High'})"
+            )
         log(f"{segment.name}: {len(candidates)} candidate(s) via {lane}")
         seg_tag = re.sub(r"\D", "", stem)[-6:]
+        recalled_song_items: list[dict] = []
         for cand in candidates:
             meta = extras.get(cand.anchor.candidate_id, {})
             base_item = {
                 "segment_path": str(segment),
                 "seg_dur_ms": seg_dur,
                 "xml": str(xml) if xml else None,
+                "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
                 "hook": meta.get("hook", ""),
                 "confidence": meta.get("confidence"),
                 "lane": lane,
                 "preview": cand.text_preview[:80],
+                "bcut_srt_path": str(srt),
             }
             if getattr(cand, "content_type_hint", "talk") == "song":
                 a0, a1 = int(cand.anchor.anchor_start_ms), int(cand.anchor.anchor_end_ms)
-                pending_song.append({
+                song_item = {
                     **base_item,
                     "cid": f"song_{seg_tag}_{a0 // 1000}",
                     "anchor_start_ms": a0,
                     "anchor_end_ms": a1,
                     "danmaku": danmaku_count_in(str(xml) if xml else None, a0, a1),
-                })
+                }
+                recalled_song_items.append(song_item)
             else:
                 b = cand.boundary
                 s0 = max(0, int(b.resolved_start_ms))
@@ -1655,6 +5874,26 @@ def discover_segments(date: str, state: dict) -> None:
                     "start_ms": s0,
                     "end_ms": s1,
                 })
+        combined_song_items = union_visual_song_candidates(
+            recalled_song_items,
+            fresh_visual,
+            segment_tag=seg_tag,
+        )
+        for song_item in combined_song_items:
+            song_item.setdefault("segment_path", str(segment))
+            song_item.setdefault("seg_dur_ms", seg_dur)
+            song_item.setdefault("xml", str(xml) if xml else None)
+            song_item.setdefault("chat_jsonl", str(chat_jsonl) if chat_jsonl else None)
+            song_item.setdefault(
+                "danmaku",
+                danmaku_count_in(
+                    str(xml) if xml else None,
+                    int(song_item["anchor_start_ms"]),
+                    int(song_item["anchor_end_ms"]),
+                ),
+            )
+            pending_song.append(song_item)
+            _remember_song_quarantine_interval(state, song_item)
         done.add(stem)
     state["segments_done"] = sorted(done)
 
@@ -1678,11 +5917,644 @@ def session_sealed(date: str, state: dict) -> bool:
 
 
 def song_delivery_budget(state: dict) -> int:
-    """Remaining song DELIVERIES wanted.  Only delivered songs consume the
-    per-date budget — a gate-BLOCKED attempt must not eat a slot (2026-07-09
-    audit: two BLOCKs consumed both slots and the date still read 'done')."""
-    delivered = sum(1 for s in state.get("songs", []) if s.get("delivered"))
-    return max(0, MAX_SONGS_PER_DATE - delivered)
+    """Remaining song DELIVERY slots, including verified commit reservations.
+
+    An ordinary gate-BLOCKED attempt must not eat a slot (2026-07-09 audit:
+    two BLOCKs consumed both slots and the date still read ``done``).  Once a
+    song has passed the positive full-song/host proof and only its atomic
+    packaging failed, however, that exact hash-bound attempt owns a slot until
+    deterministic recovery either commits it or an operator revokes it.  This
+    prevents two later songs from filling the quota and a delayed recovery
+    silently exposing a third delivery.
+    """
+
+    consumed = sum(
+        1
+        for song in state.get("songs", [])
+        if isinstance(song, dict)
+        and (
+            bool(song.get("delivered"))
+            or song.get("verified_delivery_pending_commit") is True
+        )
+    )
+    return max(0, MAX_SONGS_PER_DATE - consumed)
+
+
+def _remember_song_quarantine_interval(state: dict, item: dict) -> None:
+    """Persist source intervals that may contain a song before any rendering.
+
+    Candidate-local BLOCK was insufficient: an overlapping semantic talk
+    candidate could otherwise be produced first and launder background music,
+    a guest song, or an unverified performance through the talk lane.  The
+    interval taint survives song backlog moves, retries, and later state ticks.
+    """
+
+    segment = str(item.get("segment_path") or item.get("segment") or "").strip()
+    anchor_start_ms = item.get("anchor_start_ms")
+    anchor_end_ms = item.get("anchor_end_ms")
+    if (
+        not segment
+        or isinstance(anchor_start_ms, bool)
+        or not isinstance(anchor_start_ms, int)
+        or isinstance(anchor_end_ms, bool)
+        or not isinstance(anchor_end_ms, int)
+        or not 0 <= anchor_start_ms < anchor_end_ms
+    ):
+        return
+    # Quarantining only the recall anchor still lets a talk sibling escape with
+    # the song's intro or tail.  Cover the same conservative source range that
+    # the authoritative full-proof retry is allowed to inspect.
+    start_ms = max(0, anchor_start_ms - SONG_PROOF_RETRY_PRE_MS)
+    end_ms = anchor_end_ms + SONG_PROOF_RETRY_POST_MS
+    segment_duration_ms = item.get("seg_dur_ms")
+    if (
+        isinstance(segment_duration_ms, int)
+        and not isinstance(segment_duration_ms, bool)
+        and segment_duration_ms > 0
+    ):
+        end_ms = min(segment_duration_ms, end_ms)
+    interval = {
+        "segment_path": segment,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "original_anchor_start_ms": anchor_start_ms,
+        "original_anchor_end_ms": anchor_end_ms,
+        "candidate_id": str(item.get("cid") or item.get("candidate_id") or ""),
+        "reason_code": "SONG_INTERVAL_REQUIRES_JOINT_SINGING_PROOF",
+    }
+    intervals = state.setdefault("song_quarantine_intervals", [])
+    identity = (Path(segment).name, anchor_start_ms, anchor_end_ms)
+    if any(
+        isinstance(existing, dict)
+        and (
+            Path(str(existing.get("segment_path") or "")).name,
+            existing.get("original_anchor_start_ms", existing.get("start_ms")),
+            existing.get("original_anchor_end_ms", existing.get("end_ms")),
+        )
+        == identity
+        for existing in intervals
+    ):
+        return
+    intervals.append(interval)
+
+
+def quarantine_overlapping_talk_candidates(state: dict) -> None:
+    """Remove every talk candidate overlapping a known song-like interval.
+
+    Songs have their own proof-bearing lane.  A talk-shaped sibling, parent,
+    child, merge, or retry may never materialize the same audio while the song
+    interval is unresolved or blocked.  We deliberately keep the quarantine
+    even after a valid song delivery: the same interval must not also escape as
+    an ordinary talk artifact that bypasses the song gate.
+    """
+
+    for source in (state.get("pending_song", []), state.get("song_backlog", [])):
+        for item in (source if isinstance(source, list) else []):
+            if isinstance(item, dict):
+                _remember_song_quarantine_interval(state, item)
+
+    intervals = [item for item in state.get("song_quarantine_intervals", []) if isinstance(item, dict)]
+    kept: list[dict] = []
+    blocked = state.setdefault("song_overlap_blocked_talk", [])
+    for talk in state.get("pending_talk", []):
+        talk_segment = Path(str(talk.get("segment_path") or talk.get("segment") or "")).name
+        talk_start = talk.get("start_ms")
+        talk_end = talk.get("end_ms")
+        overlap = next(
+            (
+                interval
+                for interval in intervals
+                if talk_segment
+                and talk_segment == Path(str(interval.get("segment_path") or "")).name
+                and isinstance(talk_start, int)
+                and not isinstance(talk_start, bool)
+                and isinstance(talk_end, int)
+                and not isinstance(talk_end, bool)
+                and isinstance(interval.get("start_ms"), int)
+                and not isinstance(interval.get("start_ms"), bool)
+                and isinstance(interval.get("end_ms"), int)
+                and not isinstance(interval.get("end_ms"), bool)
+                and max(talk_start, int(interval["start_ms"])) < min(talk_end, int(interval["end_ms"]))
+            ),
+            None,
+        )
+        if overlap is None:
+            kept.append(talk)
+            continue
+        tombstone = {
+            "candidate_id": str(talk.get("cid") or talk.get("candidate_id") or ""),
+            "segment_path": str(talk.get("segment_path") or talk.get("segment") or ""),
+            "start_ms": talk_start,
+            "end_ms": talk_end,
+            "status": "blocked",
+            "reason_code": "TALK_OVERLAPS_UNVERIFIED_SONG_INTERVAL",
+            "song_candidate_id": str(overlap.get("candidate_id") or ""),
+            "song_start_ms": overlap.get("start_ms"),
+            "song_end_ms": overlap.get("end_ms"),
+        }
+        if tombstone not in blocked:
+            blocked.append(tombstone)
+        state.setdefault("not_selected", []).append(
+            f"{talk_segment} {int(talk_start or 0) // 1000}-{int(talk_end or 0) // 1000}s "
+            "(门拦:与未验证/已阻断歌切区间重叠,不得走 talk 旁路)"
+        )
+    state["pending_talk"] = kept
+
+
+def requeue_recoverable_songs(date: str, state: dict) -> int:
+    """Retry non-terminal song BLOCKs when the pipeline changes.
+
+    `UNPROVEN`, missing proof, provider ambiguity, and runner failure mean the
+    proof path did not finish; they are not evidence that someone else sang.
+    A content fingerprint change earns one new attempt budget.  A transient
+    AGY source-context failure additionally gets one same-fingerprint retry.
+    Confirmed background playback / non-Li-Dousha singing remains terminal.
+    """
+
+    current = pipeline_fingerprint()
+    lifetime_attempts = len(state.get("songs", [])) + len(state.get("song_superseded_attempts", []))
+    if lifetime_attempts >= SONG_LIFETIME_ATTEMPT_CAP:
+        return 0
+    existing_pending = {
+        str(item.get("cid") or item.get("candidate_id") or "")
+        for item in state.get("pending_song", [])
+        if isinstance(item, dict)
+    }
+    kept: list[dict] = []
+    requeued: list[dict] = []
+    for record in state.get("songs", []):
+        if (
+            not isinstance(record, dict)
+            or record.get("delivered")
+            or record.get("verified_delivery_pending_commit") is True
+            or record.get("status") not in {"blocked", "failed"}
+        ):
+            kept.append(record)
+            continue
+        reasons = {str(code) for code in record.get("reason_codes") or []}
+        if reasons & SONG_TERMINAL_PERFORMER_REJECTION_CODES:
+            kept.append(record)
+            continue
+        changed = record.get("pipeline_fingerprint") != current
+        retry_count = int(record.get("transient_retry_count") or 0)
+        infra_transient = bool(reasons & SONG_INFRA_TRANSIENT_REASON_CODES)
+        next_retry_at = record.get("next_retry_at_epoch")
+        infra_retry_due = (
+            infra_transient
+            and retry_count < SONG_INFRA_RETRY_CAP
+            and (
+                not isinstance(next_retry_at, (int, float))
+                or isinstance(next_retry_at, bool)
+                or time.time() >= float(next_retry_at)
+            )
+        )
+        legacy_transient = (
+            bool(
+                reasons
+                & {
+                    "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
+                    "PRODUCE_UNEXPECTED_EXCEPTION",
+                    "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
+                    "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
+                }
+            )
+            and retry_count < 1
+        )
+        transient = infra_retry_due or legacy_transient
+        cid = str(record.get("candidate_id") or "")
+        if not cid or cid in existing_pending or not (changed or transient):
+            kept.append(record)
+            continue
+
+        segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
+        segment = REC_ROOT / date / segment_name
+        if not segment.is_file():
+            kept.append(record)
+            continue
+        start_ms, end_ms = record.get("start_ms"), record.get("end_ms")
+        if not isinstance(start_ms, int) or not isinstance(end_ms, int) or start_ms >= end_ms:
+            kept.append(record)
+            continue
+        anchor_start = int(record.get("anchor_start_ms") or max(0, start_ms + SONG_WINDOW_PRE_MS))
+        anchor_end = int(record.get("anchor_end_ms") or max(anchor_start + 1, end_ms - SONG_WINDOW_POST_MS))
+        seg_dur = ffprobe_ms(segment)
+        item = {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": seg_dur,
+            "anchor_start_ms": anchor_start,
+            "anchor_end_ms": min(seg_dur, anchor_end) if seg_dur else anchor_end,
+            "xml": str(xml) if (xml := find_danmaku_xml(segment)) else None,
+            "chat_jsonl": str(chat) if (chat := find_chat_jsonl(segment)) else None,
+            "hook": record.get("hook", ""),
+            "preview": record.get("preview", ""),
+            "danmaku": int(record.get("danmaku") or 0),
+            # Visual title evidence is a first-class song identity hint.  A
+            # retry that drops it is weaker than the failed attempt and can
+            # repeat the same LRC ambiguity forever (for example 群青 variants
+            # or a wide frame window that attached the next song title).
+            "lane": record.get("discovery_lane") or record.get("lane"),
+            "title_hint": record.get("title_hint"),
+            "visual_song_evidence": record.get("visual_song_evidence"),
+            "transient_retry_count": retry_count + (1 if transient else 0),
+            "retry_reason": (
+                "pipeline_fingerprint_changed"
+                if changed
+                else "transient_infrastructure_failure"
+                if infra_retry_due
+                else "transient_source_context_failure"
+            ),
+            "resume_full_source": bool(
+                "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in reasons
+                and isinstance(record.get("full_source_retry"), dict)
+            ),
+        }
+        requeued.append(item)
+        existing_pending.add(cid)
+        state.setdefault("song_superseded_attempts", []).append(
+            {
+                "candidate_id": cid,
+                "status": record.get("status"),
+                "reason_codes": list(record.get("reason_codes") or []),
+                "pipeline_fingerprint": record.get("pipeline_fingerprint"),
+                "superseded_by": current,
+                "retry_reason": item["retry_reason"],
+            }
+        )
+        _remember_song_quarantine_interval(state, item)
+    state["songs"] = kept
+    state.setdefault("pending_song", []).extend(requeued)
+    return len(requeued)
+
+
+def _song_delivery_recovery_authority(
+    *,
+    date: str,
+    outer_candidate_id: str,
+    summary_path: object,
+    summary_sha256: object,
+    source_candidate_id: object,
+    title: object,
+) -> dict | None:
+    """Build the exact state envelope consumed by packaging-only recovery."""
+
+    if not (
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date or ""))
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(outer_candidate_id or ""))
+        and isinstance(summary_path, str)
+        and isinstance(summary_sha256, str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", summary_sha256)
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(source_candidate_id or ""))
+        and isinstance(title, str)
+        and bool(title.strip())
+    ):
+        return None
+    return {
+        "schema_version": "song-delivery-recovery-authority.v1",
+        "date": date,
+        "outer_candidate_id": outer_candidate_id,
+        "selector_summary_path": summary_path,
+        "selector_summary_sha256": summary_sha256,
+        "source_candidate_id": str(source_candidate_id),
+        "title": title,
+        "upload_enabled": False,
+    }
+
+
+def recover_bound_song_deliveries(date: str, state: dict) -> int:
+    """Finish a verified song's packaging without recomputing its proof.
+
+    A selector attempt records the exact summary path, hash and inner
+    candidate id before delivery packaging begins.  If the process crashes or
+    a later packaging-only bug is fixed, the next maintenance tick can replay
+    only the deterministic manifest-last commit.  No directory glob or stale
+    attempt selection is allowed.
+    """
+
+    recovered = 0
+    delivered = sum(
+        1
+        for song in state.get("songs", [])
+        if isinstance(song, dict) and bool(song.get("delivered"))
+    )
+    if delivered >= MAX_SONGS_PER_DATE:
+        return 0
+    for record in state.get("songs", []):
+        if delivered >= MAX_SONGS_PER_DATE:
+            break
+        if (
+            not isinstance(record, dict)
+            or record.get("delivered")
+            or record.get("verified_delivery_pending_commit") is not True
+            or record.get("status") not in {"blocked", "failed"}
+            or "SONG_DELIVERY_ATOMIC_COPY_FAILED"
+            not in {str(code) for code in record.get("reason_codes", [])}
+        ):
+            continue
+        cid = str(record.get("candidate_id") or "")
+        summary_value = record.get("selector_summary_path")
+        summary_sha256 = record.get("selector_summary_sha256")
+        source_candidate_id = str(record.get("selector_record_candidate_id") or "")
+        title = record.get("title")
+        expected_authority = _song_delivery_recovery_authority(
+            date=date,
+            outer_candidate_id=cid,
+            summary_path=summary_value,
+            summary_sha256=summary_sha256,
+            source_candidate_id=source_candidate_id,
+            title=title,
+        )
+        if (
+            expected_authority is None
+            or record.get("song_delivery_recovery_authority") != expected_authority
+        ):
+            log(f"song delivery recovery {cid}: state authority envelope missing or drifted")
+            continue
+        if not (
+            re.fullmatch(r"[A-Za-z0-9_-]{1,96}", cid)
+            and isinstance(summary_value, str)
+            and isinstance(summary_sha256, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", source_candidate_id)
+            and isinstance(title, str)
+            and title.strip()
+            and record.get("rc") == 0
+        ):
+            continue
+        summary_path = Path(summary_value)
+        try:
+            candidate_root = (BASE / "out" / date / cid).resolve(strict=True)
+            summary_resolved = summary_path.resolve(strict=True)
+        except OSError:
+            continue
+        if (
+            summary_path.is_symlink()
+            or not summary_resolved.is_relative_to(candidate_root)
+            or summary_resolved.name != "summary.json"
+            or not _matches_sha256(summary_path, summary_sha256)
+        ):
+            log(f"song delivery recovery {cid}: selector summary authority drifted")
+            continue
+        try:
+            summary = _read_json_object(summary_resolved, label="bound selector summary")
+        except ValueError as exc:
+            log(f"song delivery recovery {cid}: {exc}")
+            continue
+        matches = [
+            entry
+            for entry in summary.get("records", [])
+            if isinstance(entry, dict)
+            and str(entry.get("candidate_id") or "") == source_candidate_id
+        ]
+        if len(matches) != 1:
+            log(
+                f"song delivery recovery {cid}: bound selector record is not unique "
+                f"({len(matches)} match(es))"
+            )
+            continue
+        try:
+            delivery_update = _commit_verified_song_package(
+                date=date,
+                delivery_candidate_id=cid,
+                summary_record=matches[0],
+                title=title,
+                selector_rc=0,
+                summary_authority_root=summary_resolved.parent,
+            )
+        except (OSError, SongDeliveryError, ValueError) as exc:
+            log(
+                f"song delivery recovery {cid}: deterministic packaging refused: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
+        record.update(delivery_update)
+        record["reason_codes"] = [
+            str(code)
+            for code in record.get("reason_codes", [])
+            if str(code) != "SONG_DELIVERY_ATOMIC_COPY_FAILED"
+        ]
+        record.pop("delivery_error", None)
+        record.pop("verified_delivery_pending_commit", None)
+        record["status"] = "review_ready"
+        record["delivery_recovered_without_selector_rerun"] = True
+        record["delivery_recovered_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+        )
+        recovered += 1
+        delivered += 1
+        log(f"song delivery recovery {cid}: committed verified package without selector rerun")
+    return recovered
+
+
+def bind_song_delivery_recovery_authority(
+    date: str,
+    state: dict,
+    *,
+    candidate_id: str,
+    summary_path: Path,
+) -> bool:
+    """Explicitly bind a pre-fix verified attempt for deterministic recovery.
+
+    Older runner versions did not persist selector-summary authority before
+    packaging.  This migration never searches attempt directories: an operator
+    must supply the exact summary path.  The path, bytes, unique inner record,
+    complete-song proof, host identity and canonical LRC title are all verified
+    before state gains the three fields consumed by
+    ``recover_bound_song_deliveries``.
+    """
+
+    matches = [
+        record
+        for record in state.get("songs", [])
+        if isinstance(record, dict)
+        and str(record.get("candidate_id") or "") == candidate_id
+    ]
+    if len(matches) != 1:
+        raise SongDeliveryError(
+            f"song recovery backfill requires one state record, found {len(matches)}"
+        )
+    state_record = matches[0]
+    if (
+        state_record.get("delivered")
+        or state_record.get("status") not in {"blocked", "failed"}
+        or state_record.get("rc") != 0
+        or "SONG_DELIVERY_ATOMIC_COPY_FAILED"
+        not in {str(code) for code in state_record.get("reason_codes", [])}
+    ):
+        raise SongDeliveryError("song recovery backfill state is not packaging-failure eligible")
+    if summary_path.is_symlink():
+        raise SongDeliveryError("song recovery backfill summary may not be a symlink")
+    try:
+        candidate_root = (BASE / "out" / date / candidate_id).resolve(strict=True)
+        summary_resolved = summary_path.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song recovery backfill path is missing: {exc}") from exc
+    if (
+        summary_resolved.name != "summary.json"
+        or not summary_resolved.is_relative_to(candidate_root)
+        or not summary_resolved.is_file()
+    ):
+        raise SongDeliveryError("song recovery backfill summary escapes the outer candidate")
+    summary_sha256 = "sha256:" + _sha256_regular_file(summary_resolved)
+    summary = _read_json_object(summary_resolved, label="song recovery backfill summary")
+    records = [entry for entry in summary.get("records", []) if isinstance(entry, dict)]
+    if len(records) != 1:
+        raise SongDeliveryError(
+            f"song recovery backfill requires one selector record, found {len(records)}"
+        )
+    summary_record = records[0]
+    completion = song_completion_evidence(summary_record)
+    if not song_delivery_ok(
+        0,
+        record_is_song(summary_record),
+        summary_record.get("reason_codes", []),
+        completion,
+    ):
+        raise SongDeliveryError("song recovery backfill proof chain is not delivery-ready")
+    job = summary_record.get("source_context_job")
+    boundary = job.get("song_boundary") if isinstance(job, dict) else None
+    canonical_song_title = boundary.get("song_title") if isinstance(boundary, dict) else None
+    title = verified_song_fallback_title(canonical_song_title, state_record.get("hook"))
+    if title is None:
+        raise SongDeliveryError("song recovery backfill has no canonical LRC-bound title")
+    source_candidate_id = str(summary_record.get("candidate_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", source_candidate_id):
+        raise SongDeliveryError("song recovery backfill inner candidate id is unsafe")
+
+    intended = {
+        "selector_summary_path": str(summary_resolved),
+        "selector_summary_sha256": summary_sha256,
+        "selector_record_candidate_id": source_candidate_id,
+    }
+    existing = {
+        key: state_record.get(key)
+        for key in intended
+        if state_record.get(key) is not None
+    }
+    if existing and existing != intended:
+        raise SongDeliveryError("song recovery backfill conflicts with existing state authority")
+    changed = (
+        any(state_record.get(key) != value for key, value in intended.items())
+        or state_record.get("verified_delivery_pending_commit") is not True
+    )
+    state_record.update(intended)
+    state_record["verified_delivery_pending_commit"] = True
+    state_record["title"] = title
+    recovery_authority = _song_delivery_recovery_authority(
+        date=date,
+        outer_candidate_id=candidate_id,
+        summary_path=str(summary_resolved),
+        summary_sha256=summary_sha256,
+        source_candidate_id=source_candidate_id,
+        title=title,
+    )
+    if recovery_authority is None:  # defensive: all fields were validated above
+        raise SongDeliveryError("song recovery backfill authority envelope is invalid")
+    state_record["song_delivery_recovery_authority"] = recovery_authority
+    state_record["selector_summary_authority_backfill"] = {
+        "schema_version": "song-selector-summary-authority-backfill.v1",
+        "path": str(summary_resolved),
+        "sha256": summary_sha256,
+        "source_candidate_id": source_candidate_id,
+        "title": title,
+        "upload_enabled": False,
+        "bound_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    return changed
+
+
+def requeue_recoverable_talks(date: str, state: dict) -> int:
+    """Retry undelivered selected talks with bounded generation semantics.
+
+    Boundary failures wake on a relevant pipeline change.  A generic producer
+    failure additionally gets one same-fingerprint retry so a transient CPA or
+    worker crash cannot permanently lose an already-selected candidate.  All
+    retries share one per-candidate lifetime cap.
+    """
+
+    existing_pending = {
+        str(item.get("cid") or item.get("candidate_id") or "")
+        for item in state.get("pending_talk", [])
+        if isinstance(item, dict)
+    }
+    kept: list[dict] = []
+    requeued: list[dict] = []
+    for record in state.get("picks", []):
+        if not isinstance(record, dict) or record.get("status") not in {
+            "boundary_unrepairable",
+            "speaker_review_required",
+            "failed",
+        }:
+            kept.append(record)
+            continue
+        cid = str(record.get("candidate_id") or record.get("cid") or "")
+        try:
+            current = talk_pipeline_fingerprint(cid)
+        except ValueError:
+            kept.append(record)
+            continue
+        retry_count = int(record.get("talk_repair_retry_count") or 0)
+        transient_count = int(record.get("talk_transient_retry_count") or 0)
+        changed = record.get("pipeline_fingerprint") != current
+        transient = record.get("status") == "failed" and transient_count < 1
+        if (
+            not cid
+            or cid in existing_pending
+            or not (changed or transient)
+            or retry_count >= TALK_REPAIR_LIFETIME_RETRY_CAP
+        ):
+            kept.append(record)
+            continue
+        segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
+        segment = REC_ROOT / date / segment_name
+        start_ms, end_ms = record.get("start_ms"), record.get("end_ms")
+        if (
+            not segment_name
+            or not segment.is_file()
+            or isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or start_ms >= end_ms
+        ):
+            kept.append(record)
+            continue
+        seg_dur = ffprobe_ms(segment)
+        item = {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": seg_dur,
+            "start_ms": start_ms,
+            "end_ms": min(seg_dur, end_ms) if seg_dur else end_ms,
+            "xml": str(xml) if (xml := find_danmaku_xml(segment)) else None,
+            "chat_jsonl": str(chat) if (chat := find_chat_jsonl(segment)) else None,
+            "hook": record.get("hook", ""),
+            "confidence": record.get("confidence"),
+            "lane": record.get("lane", ""),
+            "preview": record.get("preview", ""),
+            "selected_repair": True,
+            "talk_repair_retry_count": retry_count + 1,
+            "talk_transient_retry_count": transient_count + (1 if transient and not changed else 0),
+            "retry_reason": (
+                "pipeline_fingerprint_changed" if changed else "transient_produce_failure"
+            ),
+            "bcut_srt_path": str(BASE / "cache" / date / f"{segment.stem}.bcut.srt"),
+        }
+        requeued.append(item)
+        existing_pending.add(cid)
+        state.setdefault("talk_superseded_attempts", []).append(
+            {
+                "candidate_id": cid,
+                "status": record.get("status"),
+                "pipeline_fingerprint": record.get("pipeline_fingerprint"),
+                "superseded_by": current,
+                "talk_repair_retry_count": retry_count,
+                "talk_transient_retry_count": transient_count,
+                "retry_reason": item["retry_reason"],
+            }
+        )
+    state["picks"] = kept
+    state.setdefault("pending_talk", []).extend(requeued)
+    return len(requeued)
 
 
 def refill_songs(state: dict) -> None:
@@ -1693,8 +6565,10 @@ def refill_songs(state: dict) -> None:
     pool = state.get("pending_song", []) + [b for b in backlog if isinstance(b, dict)]
     legacy = [b for b in backlog if not isinstance(b, dict)]
     pool.sort(key=lambda x: (-(x.get("danmaku") or 0), -(x["anchor_end_ms"] - x["anchor_start_ms"])))
-    attempts_left = max(0, SONG_ATTEMPT_CAP - len(state.get("songs", [])))
-    allowed = min(song_delivery_budget(state), attempts_left)
+    attempts_left_generation = max(0, SONG_ATTEMPT_CAP - len(state.get("songs", [])))
+    lifetime_attempts = len(state.get("songs", [])) + len(state.get("song_superseded_attempts", []))
+    attempts_left_lifetime = max(0, SONG_LIFETIME_ATTEMPT_CAP - lifetime_attempts)
+    allowed = min(song_delivery_budget(state), attempts_left_generation, attempts_left_lifetime)
     state["pending_song"] = pool[:allowed]
     state["song_backlog"] = pool[allowed:] + legacy
 
@@ -1705,7 +6579,10 @@ def prioritize(state: dict) -> None:
     a soft per-segment diversity cap that yields when slots would go unfilled.
     Replaces the segment round-robin that let five early candidates claim the
     whole quota regardless of score.  Songs: top danmaku, budget = deliveries."""
+    quarantine_overlapping_talk_candidates(state)
     pending_talk = state.get("pending_talk", [])
+    selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
+    pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
     produced = sum(1 for p in state.get("picks", []) if p.get("status") in DELIVERED_TALK_STATUSES)
     slots = max(0, MAX_TALK_PICKS - produced)
     ranked = sorted(pending_talk, key=lambda x: -(x.get("confidence") or 0.0))
@@ -1726,7 +6603,10 @@ def prioritize(state: dict) -> None:
             break
         keep.append(item)
         deferred.remove(item)
-    state["pending_talk"] = keep
+    # These candidates already won selection in an earlier generation and
+    # failed without delivery.  Do not discard the retry merely because
+    # successful siblings now fill the ordinary delivery quota.
+    state["pending_talk"] = selected_repairs + keep
     for item in deferred:
         state.setdefault("not_selected", []).append(
             f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
@@ -1749,8 +6629,50 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
             return produce_fn(date, item)
         except Exception as exc:  # noqa: BLE001 — one bad slice must not kill the batch
             log(f"produce crashed for {item.get('cid')}: {exc}")
-            return {"candidate_id": item.get("cid"), "rc": -1, "status": "failed", "error": str(exc),
-                    **{k: item[k] for k in ("hook", "confidence", "danmaku") if k in item}}
+            result = {
+                "candidate_id": item.get("cid"),
+                "rc": -1,
+                "status": "failed",
+                "error": str(exc),
+                "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
+                "pipeline_fingerprint": (
+                    talk_pipeline_fingerprint(str(item.get("cid") or ""))
+                    if produce_fn is produce_talk
+                    else pipeline_fingerprint()
+                ),
+                **{
+                    key: item[key]
+                    for key in (
+                        "hook",
+                        "confidence",
+                        "danmaku",
+                        "preview",
+                        "segment_path",
+                        "seg_dur_ms",
+                        "start_ms",
+                        "end_ms",
+                        "lane",
+                        "title_hint",
+                        "visual_song_evidence",
+                        "selected_repair",
+                        "talk_repair_retry_count",
+                        "talk_transient_retry_count",
+                        "retry_reason",
+                        "anchor_start_ms",
+                        "anchor_end_ms",
+                        "transient_retry_count",
+                    )
+                    if key in item
+                },
+            }
+            if item.get("segment_path"):
+                result["segment"] = Path(str(item["segment_path"])).name
+            anchor_start = item.get("anchor_start_ms")
+            anchor_end = item.get("anchor_end_ms")
+            if isinstance(anchor_start, int) and isinstance(anchor_end, int):
+                result["start_ms"] = max(0, anchor_start - SONG_WINDOW_PRE_MS)
+                result["end_ms"] = anchor_end + SONG_WINDOW_POST_MS
+            return result
 
     if not items:
         return []
@@ -1766,13 +6688,56 @@ def process_date(date: str) -> None:
         write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
         return
+    automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
+    recovered_song_deliveries = (
+        recover_bound_song_deliveries(date, state) if automatic_maintenance else 0
+    )
+    if recovered_song_deliveries:
+        write_state(date, state)
+        log(
+            f"{date}: recovered {recovered_song_deliveries} verified song delivery "
+            "package(s) without selector/ASR/LRC rerun"
+        )
+    requeued_talks = requeue_recoverable_talks(date, state) if automatic_maintenance else 0
+    requeued_songs = requeue_recoverable_songs(date, state) if automatic_maintenance else 0
+    if requeued_talks or requeued_songs:
+        write_state(date, state)
+        log(
+            f"{date}: requeued {requeued_talks} boundary talk failure(s) and "
+            f"{requeued_songs} recoverable song BLOCK(s) for pipeline {pipeline_fingerprint()[:19]}…"
+        )
     has_new = any(
         s.stem not in set(state.get("segments_done", [])) and s.stem not in state.get("segments_dead", {})
         for s in list_segments(date)
     )
     has_pending = bool(state.get("pending_talk") or state.get("pending_song"))
-    needs_cover = any(cover_repair_needed(date, r) for r in state.get("picks", []) + state.get("songs", []))
+    needs_cover = automatic_maintenance and any(
+        cover_repair_needed(date, r)
+        for r in state.get("picks", []) + state.get("songs", [])
+    )
     if not has_new and not has_pending and not needs_cover:
+        if recovered_song_deliveries:
+            delivered_talk = [
+                pick
+                for pick in state.get("picks", [])
+                if pick.get("status") in DELIVERED_TALK_STATUSES
+            ]
+            delivered_songs = [song for song in state.get("songs", []) if song.get("delivered")]
+            failures = [
+                record
+                for record in state.get("picks", []) + state.get("songs", [])
+                if record.get("status")
+                in ("failed", "boundary_unrepairable", "speaker_review_required")
+            ]
+            state["status"] = (
+                "review_ready_with_failures" if failures else "review_ready"
+            ) if delivered_talk or delivered_songs else "no_delivery"
+            write_state(date, state)
+            write_reports(date, state)
+            log(
+                f"{date}: finalized {recovered_song_deliveries} recovered song "
+                "package(s) without requiring CPA"
+            )
         return
     # CPA gate: recall, reconcile, titles and covers all need the chat lane.
     # Recordings can wait — never produce garbage during a provider outage.
@@ -1797,7 +6762,15 @@ def process_date(date: str) -> None:
         write_state(date, state)
         log(f"{date}: segment inventory not stable yet — selection deferred to next tick (sealing)")
         return
+    # Keep a structured, session-wide snapshot for the unlabelled evidence
+    # sidecar before prioritize() reduces production to top-5 talk clips.
+    capture_candidates = [
+        dict(item) for item in state.get("pending_talk", []) if isinstance(item, dict)
+    ]
     prioritize(state)
+    routing_claim = prepare_speaker_routing(
+        date, state["pending_talk"], state=state
+    )
     write_state(date, state)
 
     # Phase C: produce talk picks CONCURRENTLY (they're independent; each is
@@ -1825,6 +6798,14 @@ def process_date(date: str) -> None:
             write_state(date, state)
             write_reports(date, state)
             log(f"{date}: {len(retry)} title(s) failed — will retry on a later tick")
+            queue_collab_evidence_capture(
+                date,
+                state,
+                capture_candidates,
+                routing_claim=routing_claim,
+            )
+            write_state(date, state)
+            write_reports(date, state)
             return
 
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
@@ -1837,14 +6818,20 @@ def process_date(date: str) -> None:
         refill_songs(state)
         write_state(date, state)
 
-    repair_covers(date, state)
+    if automatic_maintenance:
+        repair_covers(date, state)
 
     picks, songs = state["picks"], state["songs"]
     delivered_talk = [p for p in picks if p.get("status") in DELIVERED_TALK_STATUSES]
     repaired = [p for p in delivered_talk if p.get("boundary_repairs")]
     delivered_songs = [s for s in songs if s.get("delivered")]
     blocked_songs = [s for s in songs if s.get("status") == "blocked"]
-    failures = [r for r in picks + songs if r.get("status") in ("failed", "boundary_unrepairable")]
+    failures = [
+        record
+        for record in picks + songs
+        if record.get("status")
+        in ("failed", "boundary_unrepairable", "speaker_review_required")
+    ]
     # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
     # 0 failures').  A batch is review_ready only when something REACHED review.
     if delivered_talk or delivered_songs:
@@ -1858,6 +6845,16 @@ def process_date(date: str) -> None:
         f" ({len(repaired)} boundary-self-repaired), song {len(delivered_songs)} delivered"
         f" / {len(blocked_songs)} gate-blocked / {len(songs)} attempted, {len(failures)} failure(s)"
     )
+    # Production is already committed to state/reports above.  Only now may a
+    # rare collab trigger enqueue the separately bounded evidence worker.
+    queue_collab_evidence_capture(
+        date,
+        state,
+        capture_candidates,
+        routing_claim=routing_claim,
+    )
+    write_state(date, state)
+    write_reports(date, state)
 
 
 def write_heartbeat(body: str) -> None:
@@ -1927,6 +6924,7 @@ def main(argv: list[str] | None = None) -> int:
         if srt is None:
             return 1
         xml = find_danmaku_xml(segment)
+        chat_jsonl = find_chat_jsonl(segment)
         candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
         talk = [c for c in candidates if getattr(c, "content_type_hint", "talk") != "song"]
         log(f"smoke: {len(candidates)} candidates via {lane}; producing first talk candidate")
@@ -1943,6 +6941,7 @@ def main(argv: list[str] | None = None) -> int:
             "start_ms": max(0, int(cand.boundary.resolved_start_ms)),
             "end_ms": int(cand.boundary.resolved_end_ms),
             "xml": str(xml) if xml else None,
+            "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
             "hook": meta.get("hook", ""),
             "confidence": meta.get("confidence"),
             "lane": lane,
