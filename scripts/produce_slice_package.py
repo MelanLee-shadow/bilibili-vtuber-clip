@@ -1958,6 +1958,14 @@ def main(argv: list[str] | None = None) -> int:
     #     sentence gets its own boundary.
     last_piece = spec["pieces"][-1]
     target_rel = sum(durations[:-1]) + (spec["semantic_end_ms"] - last_piece["start_ms"])
+    # 受监督硬切（Ivan 2026-07-13 MUA 案：故事有语义落点但与下一话题零停顿
+    # 衔接，续讲红旗永远拦截）。spec.given_end_ms = Ivan 人工授权的绝对终点：
+    # 仍贴到最近的字幕句尾（±1.5s），仍走其余全部审计，仅豁免尾侧续讲红旗；
+    # 出处记入 boundary audit（boundary_authority=ivan_manual_end）。
+    manual_end_authority = False
+    if spec.get("given_end_ms") is not None:
+        manual_end_authority = True
+        target_rel = sum(durations[:-1]) + (int(spec["given_end_ms"]) - last_piece["start_ms"])
     snapped = snap_end_to_sentence([c.end_ms for c in cues], target_rel)
     refinement_used = False
     if needs_tail_refinement(cues, snapped_end=snapped, target_ms=target_rel):
@@ -2061,6 +2069,12 @@ def main(argv: list[str] | None = None) -> int:
             snapped_end_ms=snapped,
             closure_text=closure_cue.text,
         )
+        if manual_end_authority:
+            waived = [flag for flag in red_flags if flag.startswith("speech_continues_")]
+            if waived:
+                audit["manual_end_waived_flags"] = waived
+                audit["boundary_authority"] = "ivan_manual_end"
+                red_flags = [flag for flag in red_flags if not flag.startswith("speech_continues_")]
         if not red_flags:
             break
         forward_extension_eligible = tail_requires_forward_extension(
