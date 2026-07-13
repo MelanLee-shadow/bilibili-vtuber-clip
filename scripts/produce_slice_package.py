@@ -71,8 +71,11 @@ from src.autoslice.chat_authority import (
     apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
     build_human_text_entity_verifier,
+    clip_opening_address_group,
     load_chat_jsonl,
+    load_clip_opening_address_config,
     load_referent_groups,
+    repetition_divergence_groups,
     normalize_code_switch_surfaces,
     normalize_chat_text,
     normalize_srt_payload_text,
@@ -1892,9 +1895,24 @@ def main(argv: list[str] | None = None) -> int:
             or ([row.get("cue_index")] if row.get("cue_index") is not None else [])
         )
     }
+    # 怀疑编译器（通用机制，2026-07-13）：位置先验 + 重复一致性都在 chat
+    # 证据落定后的最终文本上编译成临时混淆组，与词典/话题图组共用同一个
+    # 音频仲裁引擎；positions 非空使它们天然进不了 chat 证据路径。
+    opening_group = clip_opening_address_group(
+        srt_text,
+        load_clip_opening_address_config(
+            ROOT / "assets" / "lidousha" / "clip_opening_address.json"
+        ),
+    )
+    repetition_groups = repetition_divergence_groups(srt_text)
+    transcript_groups = [
+        *referent_groups,
+        *([opening_group] if opening_group is not None else []),
+        *repetition_groups,
+    ]
     srt_text, transcript_entity_audit = apply_audio_entity_verification(
         srt_text,
-        referent_groups=referent_groups,
+        referent_groups=transcript_groups,
         entity_verifier=verify_confusable_entity,
         excluded_cue_indexes=handled_entity_cues,
     )

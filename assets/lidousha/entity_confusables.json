@@ -118,38 +118,6 @@
       "uncertain_keep_canonicals": [
         "kmx"
       ]
-    },
-    {
-      "audio_verify_all_surfaces": true,
-      "positions": [
-        "clip_initial"
-      ],
-      "uncertain_keep_canonicals": [
-        "大家"
-      ],
-      "entities": [
-        {
-          "canonical": "大家",
-          "surfaces": [
-            "大家"
-          ],
-          "readings": [
-            "da jia",
-            "dajia"
-          ]
-        },
-        {
-          "canonical": "但是",
-          "surfaces": [
-            "但是"
-          ],
-          "readings": [
-            "dan shi",
-            "danshi"
-          ]
-        }
-      ],
-      "reason": "开场称呼「大家」被 ASR 听成「但是」(2026-07-10 彩排案，软性原则曾漏修)。仅片首 cue 句首槽位审计，dàjiā/dànshì 声学可分由音频强制二选一；UNCERTAIN 时「大家」保留、「但是」阻塞待裁。"
     }
   ]
 }

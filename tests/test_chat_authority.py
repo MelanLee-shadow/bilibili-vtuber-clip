@@ -17,8 +17,10 @@ from src.autoslice.chat_authority import (
     apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
     build_human_text_entity_verifier,
+    clip_opening_address_group,
     load_chat_jsonl,
     load_referent_groups,
+    repetition_divergence_groups,
     normalize_code_switch_surfaces,
     recording_start_epoch_ms,
     reconcile_pending_text_overrides,
@@ -261,19 +263,132 @@ def test_positioned_groups_never_enter_chat_evidence_path():
     assert "但是大家都在等她回来" in output
 
 
-def test_loader_parses_clip_initial_positions_from_asset():
-    groups = load_referent_groups(
-        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
-    )
-    address_group = next(
-        group
-        for group in groups
-        if {entity.canonical for entity in group.entities} == {"大家", "但是"}
+def test_loader_parses_known_positions_and_drops_unknown(tmp_path):
+    doc = {
+        "schema_version": "lidousha-referent-groups.v2",
+        "groups": [
+            {
+                "audio_verify_all_surfaces": True,
+                "positions": ["clip_initial", "transcript_only", "made_up"],
+                "entities": [
+                    {"canonical": "甲", "surfaces": [], "readings": ["jia"]},
+                    {"canonical": "乙", "surfaces": [], "readings": ["yi"]},
+                ],
+            }
+        ],
+    }
+    path = tmp_path / "groups.json"
+    path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    groups = load_referent_groups(path)
+
+    assert groups[0].positions == ("clip_initial", "transcript_only")
+
+
+OPENING_CONFIG = {
+    "connectives": [
+        {"surface": "但是", "readings": ["dan shi"]},
+        {"surface": "就是", "readings": ["jiu shi"]},
+    ],
+    "addresses": [
+        {"canonical": "大家", "readings": ["da jia"]},
+        {"canonical": "各位", "readings": ["ge wei"]},
+    ],
+    "reason": "test",
+}
+
+
+def test_clip_opening_builder_compiles_connective_opening_into_group():
+    """位置先验编译器：任何连词开场都可疑，不再逐词对建表。"""
+    group = clip_opening_address_group(_srt("但是她们要提前去彩排了"), OPENING_CONFIG)
+
+    assert group is not None
+    assert {entity.canonical for entity in group.entities} == {"但是", "大家", "各位"}
+    assert group.positions == ("clip_initial",)
+    # UNCERTAIN（含供应商故障）保留连词原文、绝不阻塞：连词开场是合法高频口语。
+    assert group.uncertain_keep_canonicals == ("但是",)
+
+    assert clip_opening_address_group(_srt("大家早上好"), OPENING_CONFIG) is None
+    assert clip_opening_address_group(_srt("我觉得但是这个说法不对"), OPENING_CONFIG) is None
+    assert clip_opening_address_group(_srt("但是她们来了"), None) is None
+
+
+def test_clip_opening_group_uncertain_never_blocks_production():
+    """通用版与静态词对的关键差异：配额断供时 UNCERTAIN 不得阻塞整条产线。"""
+    source = _srt("然后她们要提前去彩排了")
+    config = {
+        "connectives": [{"surface": "然后", "readings": ["ran hou"]}],
+        "addresses": OPENING_CONFIG["addresses"],
+    }
+    group = clip_opening_address_group(source, config)
+    assert group is not None
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[group], entity_verifier=_uncertain_verifier
     )
 
-    assert address_group.positions == ("clip_initial",)
-    assert address_group.uncertain_keep_canonicals == ("大家",)
-    assert address_group.audio_verify_all_surfaces is True
+    assert output == source
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert audit["confirmed"][0]["reason_code"] == "ENTITY_CANONICAL_KEPT_ON_UNCERTAIN"
+
+
+def test_clip_opening_end_to_end_repairs_via_shared_engine():
+    source = _srt("但是她们要提前去彩排了", "但是我先挂一下")
+    group = clip_opening_address_group(source, OPENING_CONFIG)
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[group], entity_verifier=_audio_entity_verifier("大家")
+    )
+
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit
+    assert "大家她们要提前去彩排了" in output
+    assert "但是我先挂一下" in output
+
+
+def test_repetition_divergence_compiles_single_span_pairs_only():
+    """重复一致性编译器：无词表，自动覆盖未见过的实例（睡衣/素颜只是实例）。"""
+    source = _srt(
+        "今天穿的是睡衣哦",
+        "今天穿的是素颜哦",
+        "谢谢晚照",
+        "谢谢利安",
+        "完全不一样的一句话在这里",
+    )
+
+    groups = repetition_divergence_groups(source)
+
+    assert len(groups) == 1
+    assert {entity.canonical for entity in groups[0].entities} == {"睡衣", "素颜"}
+    assert groups[0].positions == ("transcript_only",)
+    # UNCERTAIN 双向保留：两个变体都在默认可信方列表。
+    assert set(groups[0].uncertain_keep_canonicals) == {"睡衣", "素颜"}
+    # 短句（谢谢A/谢谢B）低于最小长度不成组——真·答谢复读不受干扰。
+
+
+def test_repetition_divergence_end_to_end_audio_winner_takes_both():
+    source = _srt("今天穿的是睡衣哦", "今天穿的是素颜哦")
+    groups = repetition_divergence_groups(source)
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=groups, entity_verifier=_audio_entity_verifier("睡衣")
+    )
+
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit
+    assert output.count("睡衣") == 2
+    assert "素颜" not in output
+    assert len(audit["repairs"]) == 1
+
+
+def test_repetition_divergence_uncertain_keeps_both_without_blocking():
+    source = _srt("今天穿的是睡衣哦", "今天穿的是素颜哦")
+    groups = repetition_divergence_groups(source)
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=groups, entity_verifier=_uncertain_verifier
+    )
+
+    assert output == source
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
 
 
 def test_exact_chat_owned_cue_is_excluded_from_second_entity_verdict():

@@ -252,7 +252,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                 dict.fromkeys(
                     str(value)
                     for value in (raw_positions if isinstance(raw_positions, list) else [])
-                    if str(value) in {"clip_initial"}
+                    if str(value) in {"clip_initial", "transcript_only"}
                 )
             )
             groups.append(
@@ -283,6 +283,170 @@ def _coerce_referent_groups(
         if len(parsed) >= 2:
             out.append(ReferentGroup(parsed))
     return out
+
+
+def load_clip_opening_address_config(path: str | Path) -> dict[str, Any] | None:
+    """Load the clip-opening positional-prior config (connectives + addresses)."""
+
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != "lidousha-clip-opening-address.v1"
+    ):
+        return None
+    connectives = [
+        {
+            "surface": str(row.get("surface")),
+            "readings": [str(r) for r in (row.get("readings") or []) if str(r)],
+        }
+        for row in (payload.get("connectives") or [])
+        if isinstance(row, dict) and str(row.get("surface") or "").strip()
+    ]
+    addresses = [
+        {
+            "canonical": str(row.get("canonical")),
+            "readings": [str(r) for r in (row.get("readings") or []) if str(r)],
+        }
+        for row in (payload.get("addresses") or [])
+        if isinstance(row, dict) and str(row.get("canonical") or "").strip()
+    ]
+    if not connectives or not addresses:
+        return None
+    return {
+        "connectives": connectives,
+        "addresses": addresses,
+        "reason": str(payload.get("reason") or ""),
+    }
+
+
+def clip_opening_address_group(
+    srt_text: str, config: Mapping[str, Any] | None
+) -> ReferentGroup | None:
+    """位置先验怀疑编译器（2026-07-13，由「大家→但是」彩排实例抽象通用化）。
+
+    切片首句以转折/承接连词开头，这个位置本身就可疑——开场位置更可能是
+    称呼语；ASR 没有切片边界概念，只会写声学最近的常见词。任何命中的连词
+    都会编译成一个 clip_initial 混淆组交给音频仲裁引擎：候选=该连词+全部
+    称呼语。只有音频确证听到称呼语才改写；UNCERTAIN（含供应商故障）一律
+    保留原文、绝不阻塞——连词开场是合法高频口语，fail-closed 只约束改写。
+    """
+
+    if not config:
+        return None
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    if not cues:
+        return None
+    first = cues[0].text.strip()
+    hit: Mapping[str, Any] | None = None
+    for row in config.get("connectives") or []:
+        surface = str(row.get("surface") or "")
+        if surface and first.startswith(surface):
+            if hit is None or len(surface) > len(str(hit["surface"])):
+                hit = row
+    if hit is None:
+        return None
+    connective = str(hit["surface"])
+    entities = [
+        ReferentEntity(connective, (connective,), tuple(hit.get("readings") or ()))
+    ]
+    for row in config.get("addresses") or []:
+        canonical = str(row["canonical"])
+        if canonical.lower() == connective.lower():
+            continue
+        entities.append(
+            ReferentEntity(canonical, (canonical,), tuple(row.get("readings") or ()))
+        )
+    if len(entities) < 2:
+        return None
+    return ReferentGroup(
+        tuple(entities),
+        reason=str(config.get("reason") or "")
+        or "片首连词开场位置先验：开场更可能是称呼语；仅音频确证才改写。",
+        audio_verify_all_surfaces=True,
+        uncertain_keep_canonicals=(connective,),
+        positions=("clip_initial",),
+    )
+
+
+_CJK_ONLY = re.compile(r"^[一-鿿]+$")
+
+
+def repetition_divergence_groups(
+    srt_text: str,
+    *,
+    window: int = 3,
+    min_norm_len: int = 6,
+    min_ratio: float = 0.72,
+    span_min: int = 2,
+    span_max: int = 4,
+    max_groups: int = 3,
+) -> list[ReferentGroup]:
+    """重复一致性怀疑编译器（2026-07-13，由「睡衣/素颜」新衣服实例抽象通用化）。
+
+    邻近两句高相似、仅差一个 2-4 字连续 CJK 片段——复读/自我重复里同一
+    指称不应变词。每对分歧编译成一个 transcript_only 混淆组：两处 cue 各自
+    送音频裁决，谁的音频赢谁留下；UNCERTAIN 双向保留、绝不阻塞。真·不同
+    的复读（谢谢A/谢谢B 或刻意对比句）会被音频各自确认，零改写。完全无
+    词表，自动覆盖未见过的实例。
+    """
+
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    texts = [cue.text for cue in cues]
+    norms = [normalize_chat_text(text) for text in texts]
+    seen: set[frozenset[str]] = set()
+    groups: list[ReferentGroup] = []
+    for i in range(len(cues)):
+        if len(norms[i]) < min_norm_len:
+            continue
+        for j in range(i + 1, min(i + 1 + window, len(cues))):
+            if len(groups) >= max_groups:
+                return groups
+            a, b = norms[i], norms[j]
+            if len(b) < min_norm_len or a == b:
+                continue
+            matcher = SequenceMatcher(None, a, b, autojunk=False)
+            if matcher.ratio() < min_ratio:
+                continue
+            opcodes = matcher.get_opcodes()
+            replaces = [op for op in opcodes if op[0] == "replace"]
+            if len(replaces) != 1 or any(op[0] in ("insert", "delete") for op in opcodes):
+                continue
+            _, a1, a2, b1, b2 = replaces[0]
+            span_a, span_b = a[a1:a2], b[b1:b2]
+            if not (span_min <= len(span_a) <= span_max and span_min <= len(span_b) <= span_max):
+                continue
+            if not _CJK_ONLY.match(span_a) or not _CJK_ONLY.match(span_b):
+                continue
+            if span_a in span_b or span_b in span_a:
+                continue
+            # 变体必须能在各自原始 cue 里按面匹配，且不出现在对方句中——
+            # 否则槽位不唯一，放弃这一对（宁缺毋滥）。
+            if span_a not in texts[i].lower() and span_a not in texts[i]:
+                continue
+            if span_b not in texts[j].lower() and span_b not in texts[j]:
+                continue
+            if span_a in texts[j].lower() or span_b in texts[i].lower():
+                continue
+            key = frozenset((span_a, span_b))
+            if key in seen:
+                continue
+            seen.add(key)
+            groups.append(
+                ReferentGroup(
+                    (
+                        ReferentEntity(span_a, (span_a,)),
+                        ReferentEntity(span_b, (span_b,)),
+                    ),
+                    reason=f"重复一致性：邻近复读句仅差「{span_a}/{span_b}」，两处各自由音频裁决。",
+                    audio_verify_all_surfaces=True,
+                    uncertain_keep_canonicals=(span_a, span_b),
+                    positions=("transcript_only",),
+                )
+            )
+    return groups
 
 
 def _entity_occurrences(text: str, group: ReferentGroup) -> list[dict[str, Any]]:
@@ -1539,10 +1703,14 @@ def apply_audio_entity_verification(
         for group in groups:
             occurrences = _entity_occurrences(texts[cue_offset], group)
             if group.positions:
-                # 目前唯一支持的位置语义：片首 cue 的句首槽位（开场称呼）。
-                if "clip_initial" not in group.positions or cue_offset != 0:
+                # "clip_initial"=片首 cue 的句首槽位；"transcript_only" 不限
+                # 位置——positions 非空的共同作用是把组挡在 chat 证据路径之外。
+                if "clip_initial" in group.positions:
+                    if cue_offset != 0:
+                        continue
+                    occurrences = [row for row in occurrences if row["start"] == 0]
+                elif "transcript_only" not in group.positions:
                     continue
-                occurrences = [row for row in occurrences if row["start"] == 0]
             if not occurrences:
                 continue
             suspicious = group.audio_verify_all_surfaces or any(
