@@ -103,6 +103,12 @@ from src.autoslice.song_repair import (
     live_performance_failure_reason_codes,
     validate_live_performance_observation,
 )
+from src.autoslice.collab_evidence_capture import (
+    CollabEvidenceCaptureError,
+    WORKER_REQUEST_SCHEMA_VERSION,
+    evaluate_trigger as evaluate_collab_capture_trigger,
+    validate_worker_request_document,
+)
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
@@ -1097,6 +1103,205 @@ def prepare_speaker_routing(
         f"({','.join(str(value) for value in claim.get('reason_codes', [])) or 'verified solo'})"
     )
     return claim
+
+
+def _capture_state_from_result(result: dict) -> dict[str, object]:
+    queue = result.get("queue") if isinstance(result.get("queue"), dict) else {}
+    summary: dict[str, object] = {
+        "schema_version": "collab-evidence-capture-state.v1",
+        "status": str(result.get("status") or "UNKNOWN"),
+        "reason_codes": list(
+            (result.get("trigger") or {}).get("reason_codes") or []
+        )
+        if isinstance(result.get("trigger"), dict)
+        else [],
+        "labels_present": False,
+        "predictions_present": False,
+        "training_ready": False,
+        "upload_authorized": False,
+    }
+    for field in ("capture_id", "manifest_path", "cue_count", "error"):
+        if result.get(field) is not None:
+            summary[field] = result[field]
+    if queue:
+        summary.update(
+            {
+                "queue_path": str(
+                    BASE / "state" / "collab-evidence" / "queue" / "queue.v1.json"
+                ),
+                "candidate_session_count": int(
+                    queue.get("candidate_session_count") or 0
+                ),
+                "candidate_session_quota": int(
+                    queue.get("candidate_session_quota") or 0
+                ),
+                "candidate_session_quota_reached": bool(
+                    queue.get("candidate_session_quota_reached")
+                ),
+            }
+        )
+    return summary
+
+
+def queue_collab_evidence_capture(
+    date: str,
+    state: dict,
+    candidates: list[dict],
+    *,
+    routing_claim: dict | None,
+) -> dict[str, object]:
+    """Queue a bounded worker only after production is durably finalized.
+
+    The common no-trigger path is pure and touches no filesystem.  A triggered
+    worker receives only source/SRT paths plus an opaque session trigger; no
+    provider verdict, candidate identity, subtitle text, label, or prediction
+    is persisted in the request.
+    """
+
+    trigger = evaluate_collab_capture_trigger(routing_claim, candidates)
+    if not trigger.triggered:
+        summary = _capture_state_from_result(
+            {
+                "status": "NO_TRIGGER",
+                "trigger": {"reason_codes": []},
+            }
+        )
+        state["collab_evidence_capture"] = summary
+        return summary
+    if (BASE / "DISABLED").exists():
+        summary = _capture_state_from_result(
+            {
+                "status": "SKIPPED_DISABLED",
+                "trigger": {"reason_codes": list(trigger.reason_codes)},
+            }
+        )
+        state["collab_evidence_capture"] = summary
+        return summary
+    try:
+        if not DATE_RX.fullmatch(date):
+            raise CollabEvidenceCaptureError("capture date is invalid")
+        unique_sources: dict[tuple[str, str], dict[str, str]] = {}
+        for candidate in candidates:
+            source = str(candidate.get("segment_path") or "")
+            srt = str(candidate.get("bcut_srt_path") or "")
+            if source and srt:
+                unique_sources[(source, srt)] = {
+                    "segment_path": source,
+                    "bcut_srt_path": srt,
+                }
+        if not unique_sources:
+            raise CollabEvidenceCaptureError("capture has no source/SRT inventory")
+        intervals = []
+        for row in state.get("song_quarantine_intervals", []):
+            if not isinstance(row, dict):
+                continue
+            source = str(row.get("segment_path") or "")
+            start_ms = row.get("start_ms")
+            end_ms = row.get("end_ms")
+            if (
+                source
+                and isinstance(start_ms, int)
+                and not isinstance(start_ms, bool)
+                and isinstance(end_ms, int)
+                and not isinstance(end_ms, bool)
+            ):
+                intervals.append(
+                    {
+                        "segment_path": source,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                    }
+                )
+        request = {
+            "schema_version": WORKER_REQUEST_SCHEMA_VERSION,
+            "date": date,
+            "candidates": [
+                unique_sources[key] for key in sorted(unique_sources)
+            ],
+            "song_intervals": sorted(
+                intervals,
+                key=lambda row: (
+                    row["segment_path"], row["start_ms"], row["end_ms"]
+                ),
+            ),
+            "trigger": {
+                "reason_codes": list(trigger.reason_codes),
+                "text_signal_classes": list(trigger.text_signal_classes),
+            },
+        }
+        validate_worker_request_document(request)
+        capture_root = BASE / "state" / "collab-evidence"
+        request_path = capture_root / "requests" / f"{date}.json"
+        result_path = request_path.with_suffix(".result.json")
+        if request_path.is_file():
+            existing = json.loads(request_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(existing, dict)
+                or existing.get("schema_version") != WORKER_REQUEST_SCHEMA_VERSION
+                or existing.get("date") != date
+            ):
+                raise CollabEvidenceCaptureError(
+                    "existing capture request authority is invalid"
+                )
+            validate_worker_request_document(existing)
+            # The first sealed full-session request remains authority across
+            # title retries whose mutable pending set may be only a subset.
+            request = existing
+        else:
+            _atomic_write_json_file(request_path, request)
+        if result_path.is_file():
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            if not isinstance(result, dict):
+                raise CollabEvidenceCaptureError("capture worker result is invalid")
+            summary = _capture_state_from_result(result)
+        else:
+            log_path = BASE / "logs" / f"collab-evidence-{date}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("ab") as sink:
+                process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "src.autoslice.collab_evidence_capture",
+                        "--request",
+                        str(request_path),
+                        "--base-dir",
+                        str(capture_root),
+                        "--alert-dir",
+                        str(BASE / "reports"),
+                    ],
+                    cwd=str(REPO_ROOT),
+                    env=child_env(),
+                    stdin=subprocess.DEVNULL,
+                    stdout=sink,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            summary = _capture_state_from_result(
+                {
+                    "status": "CAPTURE_QUEUED",
+                    "trigger": {"reason_codes": list(trigger.reason_codes)},
+                }
+            )
+            summary.update(
+                {
+                    "worker_pid": process.pid,
+                    "request_path": str(request_path),
+                    "result_path": str(result_path),
+                    "log_path": str(log_path),
+                }
+            )
+    except Exception as exc:  # noqa: BLE001 - capture cannot undo finalized production
+        summary = _capture_state_from_result(
+            {
+                "status": "CAPTURE_QUEUE_FAILED",
+                "error": f"{type(exc).__name__}: {exc}"[:500],
+                "trigger": {"reason_codes": list(trigger.reason_codes)},
+            }
+        )
+        log(f"collab evidence capture failed open for {date}: {summary['error']}")
+    state["collab_evidence_capture"] = summary
+    return summary
 
 
 def song_selector_env(date: str) -> dict[str, str]:
@@ -5461,6 +5666,11 @@ def write_reports(date: str, state: dict) -> None:
     quarantined = sum(1 for p in picks if p.get("status") == "quarantine")  # legacy states only
     delivered_songs = sum(1 for s in songs if s.get("delivered"))
     blocked_songs = sum(1 for s in songs if s.get("status") == "blocked")
+    capture = (
+        state.get("collab_evidence_capture")
+        if isinstance(state.get("collab_evidence_capture"), dict)
+        else {}
+    )
     talk_notes = []
     if repaired:
         talk_notes.append(f"{repaired} 条边界自修复后交付")
@@ -5475,6 +5685,9 @@ def write_reports(date: str, state: dict) -> None:
         f"- 交付实况: 谈话 **{delivered_talk} 交付**{('（' + '，'.join(talk_notes) + '）') if talk_notes else ''} / "
         f"歌 **{delivered_songs} 交付** · {blocked_songs} 被完整性门拦截 · 共尝试 {len(songs)}",
         f"- 段: 完成 {len(state.get('segments_done', []))} / 死段 {len(state.get('segments_dead', {}))} / 待产出 talk {len(state.get('pending_talk', []))} + song {len(state.get('pending_song', []))}",
+        f"- 联动证据旁路: **{capture.get('status', 'NOT_RUN')}** · "
+        f"未来候选场 {capture.get('candidate_session_count', 0)}/"
+        f"{capture.get('candidate_session_quota', 5)}（仅未标注开发证据，不代表已确认联动或可训练）",
         "",
         "## 谈话成品（审查要点：标题、选片理由、边界收束）",
         "",
@@ -6549,8 +6762,15 @@ def process_date(date: str) -> None:
         write_state(date, state)
         log(f"{date}: segment inventory not stable yet — selection deferred to next tick (sealing)")
         return
+    # Keep a structured, session-wide snapshot for the unlabelled evidence
+    # sidecar before prioritize() reduces production to top-5 talk clips.
+    capture_candidates = [
+        dict(item) for item in state.get("pending_talk", []) if isinstance(item, dict)
+    ]
     prioritize(state)
-    prepare_speaker_routing(date, state["pending_talk"], state=state)
+    routing_claim = prepare_speaker_routing(
+        date, state["pending_talk"], state=state
+    )
     write_state(date, state)
 
     # Phase C: produce talk picks CONCURRENTLY (they're independent; each is
@@ -6578,6 +6798,14 @@ def process_date(date: str) -> None:
             write_state(date, state)
             write_reports(date, state)
             log(f"{date}: {len(retry)} title(s) failed — will retry on a later tick")
+            queue_collab_evidence_capture(
+                date,
+                state,
+                capture_candidates,
+                routing_claim=routing_claim,
+            )
+            write_state(date, state)
+            write_reports(date, state)
             return
 
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
@@ -6617,6 +6845,16 @@ def process_date(date: str) -> None:
         f" ({len(repaired)} boundary-self-repaired), song {len(delivered_songs)} delivered"
         f" / {len(blocked_songs)} gate-blocked / {len(songs)} attempted, {len(failures)} failure(s)"
     )
+    # Production is already committed to state/reports above.  Only now may a
+    # rare collab trigger enqueue the separately bounded evidence worker.
+    queue_collab_evidence_capture(
+        date,
+        state,
+        capture_candidates,
+        routing_claim=routing_claim,
+    )
+    write_state(date, state)
+    write_reports(date, state)
 
 
 def write_heartbeat(body: str) -> None:
