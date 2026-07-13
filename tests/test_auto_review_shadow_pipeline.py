@@ -3852,6 +3852,52 @@ def test_fit_cover_lines_full_title_grows_with_raised_line_budget():
     assert max_font(8) > max_font(5) * 1.15  # the raised budget buys real size
 
 
+def test_fit_cover_lines_resplits_wide_llm_atom_instead_of_pinning_small():
+    """7/11 河粉封面实案：LLM 把 “要交780吗”？ 整段当一个词、hook 又是其中的
+    780，强调行被 ~7.6em 原子钉在 90px（同批其他封面 146-182px）。fitter 必须
+    把超宽原子按词内安全点再分，字号回到可读档，且不丢一个字。"""
+    text = "河粉小姐姐合照问“要交780吗”？说完免费她后悔了"
+    atoms = ("河粉小姐姐", "合照", "问", "“要交780吗”？", "说完", "免费", "她", "后悔了")
+    font_path = shadow_pipeline._cover_font_for_text(text)
+    zone = shadow_pipeline._COVER_LAYOUT_RENDER["left-split"]["zone"]
+    lines = shadow_pipeline._fit_cover_lines(
+        text, hook_word="780", base_fill=shadow_pipeline._COVER_BASE_FILL,
+        hook_rgb=(255, 200, 60), zone=zone, font_path=font_path,
+        max_lines=8, max_size=360, word_atoms=atoms,
+    )
+    assert "".join("".join(seg[0] for seg in line["segs"]) for line in lines) == text
+    assert max(line["size"] for line in lines) >= shadow_pipeline._COVER_MIN_EMPH
+    for line in lines:
+        joined = "".join(seg[0] for seg in line["segs"])
+        assert joined[0] not in shadow_pipeline._COVER_CLOSING_PUNCT
+        assert joined[-1] not in shadow_pipeline._COVER_OPENING_PUNCT
+
+
+def test_split_wide_atom_binds_punctuation_and_keeps_hook():
+    parts = shadow_pipeline._split_wide_atom("“要交780吗”？", 4.6, protect="780")
+    assert "".join(parts) == "“要交780吗”？"
+    assert len(parts) >= 2
+    assert any("780" in p for p in parts)  # hook 不被拆
+    for p in parts:
+        assert p[0] not in shadow_pipeline._COVER_CLOSING_PUNCT
+        assert p[-1] not in shadow_pipeline._COVER_OPENING_PUNCT
+
+
+def test_split_wide_atom_noop_when_it_fits():
+    assert shadow_pipeline._split_wide_atom("宿敌恋人", 5.0) == ["宿敌恋人"]
+
+
+def test_cover_text_strips_song_parenthetical_qualifier():
+    got = shadow_pipeline._lidousha_cover_text(
+        "【李豆沙】豆沙歌，直播间唱《恋爱告急 (2021浙江卫视跨年演唱会)》"
+    )
+    assert "《恋爱告急》" in got
+    assert "2021" not in got
+    # 非歌名括号不受影响
+    plain = shadow_pipeline._lidousha_cover_text("【李豆沙】被问(超小声)为什么")
+    assert "(超小声)" in plain
+
+
 def test_normalize_cover_art_direction_fills_word_aware_line_breaks():
     title = "【李豆沙】电脑要造反？小皇帝拒绝更新"
     cover_text = "电脑要造反？小皇帝拒绝更新"
