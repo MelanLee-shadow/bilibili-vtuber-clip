@@ -106,6 +106,8 @@ Ivan 审查 7/11 隔离产物（旧 BASE `failure-selfheal-6f9da78`，commit 早
 
 ## 2026-07-13：付费 Gemini 兜底 key + 统一主播色 + 集成分支合并 + 7/10 隔离重跑（当前）
 
+> **23:5x UTC 更新（外部 VOD 场次：BW2026 主舞台）**：Ivan 指定 BV1qANw62EZG（PSPlive BW2026 0711 主舞台特别篇，89.3min）当作直播场次切李豆沙切片。隔离 BASE `evals/vod-bw2026-0711`（快照 main@`902d936`，AUTOSLICE_IGNORE_LIVE_HOLD=1 + 付费key开发例外），VOD 弹幕经 protobuf 分段接口转 blrec xml+jsonl，30min 三段化。**终态 `review_ready`：5/5 谈话交付（3 条边界自修复），标题词库锚定正确（0.6侄女），歌切 0 尝试（舞台无歌单，正确）**；已拉回本地 `lidousha/eval-vod-bw2026/2026-07-11/`。
+> **踩坑与定版流程（外部 VOD ingest 标准，务必沿用）**：free 机房从 upos-cosov 镜像经 yt-dlp/aria2 反复拿到坏字节（Invalid NAL/截断拼接，三条链全灭；TLS 下仍坏=服务端 range 语义问题）；Mac 下载干净但上行太慢被 Ivan 否决。**定版：BBDown（`bin-bbdown/`，已装）+ `--upos-host upos-sz-mirroraliov.bilivideo.com` 一轮通过（1.81GB 零损伤）**。完整性门修正版=体积门+时长门+**视频流独立解码（`-map 0:v:0 -f rawvideo`）损伤类报错必须为 0**（`-xerror -f null` 会被 dts 告警误杀）。aria2 1.37 也已装作备用。链脚本 `vod_chain4.sh`、装配器 `assemble_vod_bw2026.py` 在 free autoslice 根目录可复用。
 > **05:3x UTC 更新（权宜上传批）**：Ivan 授权的 10 条积压谈话（7/10×5 + 7/11×5）已全部前置最新片头并上传 B 站（`10/10 ok`，BV 见 `reports/lidousha-backlog-20260713-publish/upload_ledger.jsonl`），歌切全部暂缓。**这些是半成品权宜上传，待修清单=`docs/pending-provisional-uploads-20260713.md`，清零前不算终审**；修复后走 B 站编辑替换（不限次数）。合集添加：2 条即时成功，其余转码中 -404，已挂 30/90 分钟幂等重试 timer。PSPLive 名单 v1.1（别名优先，Ivan 修正版）已入 roster 资产 + glossary + 术语表；成员+别名 crawler 自动化按 Ivan 指示排给专名流水线工作线。
 > **06:0x UTC 更新**：`codex/integration-selfheal-intro` 已并入 **main（merge `e02c49a`，1051 passed）**——依据：7/11 盲测通过、7/10 重跑在集成代码上实际出片（片头 PREPENDED/uniform_host/sapphire72 已在成品 record.json 验证）、另一 agent 的 4 条 fix 分支已全部以集成线为底座。生产部署与 `DISABLED` 摘除仍按原门（重跑验收 + Ivan 授权）。付费 key 政策更新：无默认硬帽、`GEMINI_PAID_BACKUP_DEV_EXCEPTION=1` 已用于重跑 unit；生产 cron 保持严格 ≥3 轮门。重跑 BASE 快照已热切至 `03b717f`。
 
