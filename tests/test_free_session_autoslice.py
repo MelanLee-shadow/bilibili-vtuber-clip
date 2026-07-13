@@ -1542,6 +1542,88 @@ def test_rejected_talk_candidate_automatically_backfills_next_ranked_reserve():
     assert state["talk_backlog"] == []
 
 
+def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypatch):
+    date = "2026-07-11"
+    first = {
+        "segment_path": "/rec/session.mp4",
+        "seg_dur_ms": 2_000_000,
+        "start_ms": 1_367_000,
+        "end_ms": 1_407_000,
+        "hook": "speaker anchor shortage",
+        "confidence": 0.99,
+        "cid": "auto_154845_1367_1407",
+    }
+    reserve = {
+        "segment_path": "/rec/session.mp4",
+        "seg_dur_ms": 2_000_000,
+        "start_ms": 1_450_000,
+        "end_ms": 1_490_000,
+        "hook": "safe reserve",
+        "confidence": 0.98,
+        "cid": "auto_reserve",
+    }
+    state = {
+        "status": "processing",
+        "segments_done": ["session"],
+        "segments_dead": {},
+        "pending_talk": [first, reserve],
+        "pending_song": [],
+        "picks": [],
+        "songs": [],
+    }
+    monkeypatch.setattr(runner, "MAX_TALK_PICKS", 1)
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", date)
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_talks", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(runner, "cover_repair_needed", lambda _date, _row: False)
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
+    monkeypatch.setattr(runner, "discover_segments", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "session_sealed", lambda _date, _state: True)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    monkeypatch.setattr(runner, "repair_covers", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_reports", lambda _date, _state: None)
+    attempted: list[str] = []
+
+    def fake_produce_batch(_date, items, _producer):
+        cid = items[0]["cid"]
+        attempted.append(cid)
+        if cid == first["cid"]:
+            return [
+                {
+                    "candidate_id": cid,
+                    "status": "speaker_evidence_insufficient",
+                    "failure_kind": "speaker_evidence",
+                    "failure_stage": "speaker_finalization",
+                    "failure_recoverable": False,
+                }
+            ]
+        return [{"candidate_id": cid, "status": "review_ready"}]
+
+    monkeypatch.setattr(runner, "produce_batch", fake_produce_batch)
+
+    runner.process_date(date)
+
+    assert attempted == [first["cid"], reserve["cid"]]
+    assert state["picks"] == [
+        {
+            "candidate_id": first["cid"],
+            "status": "candidate_rejected",
+            "failure_kind": "speaker_evidence",
+            "failure_stage": "speaker_finalization",
+            "failure_recoverable": False,
+            "rejected_status": "speaker_evidence_insufficient",
+            "rejection_reason": "speaker_identity_unresolved_backfilled",
+        },
+        {"candidate_id": reserve["cid"], "status": "review_ready"},
+    ]
+    assert state["pending_talk"] == []
+
+
 def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
     """A blocked/background song cannot be laundered as a sibling talk cut."""
 
@@ -3527,6 +3609,36 @@ def test_talk_failure_persists_runtime_stage_and_stable_fingerprint():
     assert first["failure_fingerprint"] == second["failure_fingerprint"]
 
 
+def test_talk_failure_classifies_real_clip_anchor_shortage_as_speaker_evidence():
+    output = (
+        "Traceback (most recent call last):\n"
+        "RuntimeError: SPEAKER_FINALIZATION_BLOCKED: SpeakerFinalizationError: "
+        "not enough Li Dousha clip anchors: [6]\n"
+    )
+
+    classified = runner.classify_talk_failure(output)
+
+    assert classified["failure_kind"] == "speaker_evidence"
+    assert classified["failure_stage"] == "speaker_finalization"
+    assert classified["failure_recoverable"] is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "SPEAKER_FINALIZATION_BLOCKED: SpeakerFinalizationError: "
+        "CAM++ model tree drifted during speaker analysis",
+        "SPEAKER_FINALIZATION_FAILED: remote worker exited before writing a manifest",
+    ],
+)
+def test_talk_failure_does_not_launder_speaker_infrastructure_errors_as_evidence(message):
+    classified = runner.classify_talk_failure(message)
+
+    assert classified["failure_kind"] == "producer_error"
+    assert classified["failure_stage"] == "unknown"
+    assert classified["failure_recoverable"] is True
+
+
 def test_runtime_health_rejects_missing_tracked_speaker_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(
@@ -4087,6 +4199,51 @@ def test_talk_speaker_review_is_structured_and_not_boundary_retried(tmp_path, mo
     assert result["speaker_review_required_cues"][0]["source_cue"] == 75
     assert result["speaker_review_manifest_sha256"].startswith("sha256:")
     assert result["speaker_review_source_media_sha256"] == "a" * 64
+
+
+def test_talk_clip_anchor_shortage_becomes_nonretryable_speaker_evidence(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-11"
+    cid = "auto_154845_1367_1407"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(_command, **kwargs):
+        kwargs["stdout"].write(
+            "RuntimeError: SPEAKER_FINALIZATION_BLOCKED: SpeakerFinalizationError: "
+            "not enough Li Dousha clip anchors: [6]\n"
+        )
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": cid,
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 2_000_000,
+            "start_ms": 1_367_000,
+            "end_ms": 1_407_000,
+            "hook": "real blind-eval shape",
+        },
+    )
+
+    assert result["status"] == "speaker_evidence_insufficient"
+    assert result["failure_kind"] == "speaker_evidence"
+    assert result["failure_stage"] == "speaker_finalization"
+    assert result["failure_recoverable"] is False
+    assert "next_retry_at_epoch" not in result
 
 
 @pytest.mark.parametrize(

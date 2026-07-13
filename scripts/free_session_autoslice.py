@@ -1049,6 +1049,21 @@ def read_speaker_review_meta(
     return {}
 
 
+def _speaker_evidence_insufficient_failure(attempt_output: str) -> bool:
+    """Recognize only deterministic identity-evidence shortage from finalizer.
+
+    Other ``SPEAKER_FINALIZATION_BLOCKED`` errors include missing/drifted
+    runtime assets and malformed manifests.  Those must remain retryable
+    producer failures rather than being hidden as a rejected content pick.
+    """
+
+    return (
+        "SPEAKER_FINALIZATION_BLOCKED" in attempt_output
+        and "SpeakerFinalizationError: not enough Li Dousha clip anchors:"
+        in attempt_output
+    )
+
+
 def classify_talk_failure(attempt_output: str) -> dict:
     """Persist a stable failure identity instead of a bare generic status."""
 
@@ -1062,6 +1077,8 @@ def classify_talk_failure(attempt_output: str) -> dict:
     ):
         kind, stage, recoverable = "runtime_prerequisite", "speaker_preflight", True
     elif "SPEAKER_REVIEW_REQUIRED" in tail:
+        kind, stage, recoverable = "speaker_evidence", "speaker_finalization", False
+    elif _speaker_evidence_insufficient_failure(tail):
         kind, stage, recoverable = "speaker_evidence", "speaker_finalization", False
     elif any(
         marker in tail.upper()
@@ -1230,6 +1247,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                 result.update(review_meta)
                 result["status"] = "speaker_review_required"
                 return result
+        if _speaker_evidence_insufficient_failure(tail):
+            result["status"] = "speaker_evidence_insufficient"
+            return result
         # BOUNDARY_UNREPAIRABLE is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.
         result["status"] = (
@@ -6282,7 +6302,11 @@ def process_date(date: str) -> None:
                     continue
                 result["status"] = "failed"
                 result["error"] = "title generation failed 3x"
-            if result.get("status") in {"boundary_unrepairable", "speaker_review_required"}:
+            if result.get("status") in {
+                "boundary_unrepairable",
+                "speaker_review_required",
+                "speaker_evidence_insufficient",
+            }:
                 result["rejected_status"] = result["status"]
                 result["status"] = "candidate_rejected"
                 result["rejection_reason"] = (
