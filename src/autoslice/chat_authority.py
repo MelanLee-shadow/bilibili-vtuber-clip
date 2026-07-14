@@ -1758,142 +1758,151 @@ def apply_audio_entity_verification(
                 matches.append((group, occurrences))
         if not matches:
             continue
-        if len(matches) != 1 or len(matches[0][1]) != 1:
-            # 全部出现处都是"默认可信方"的规范形（「社恐kmx…社牛kmx」案）：文本
-            # 无可修改，多槽位不构成歧义，直接放行（fail-closed 只保护改写方向）。
-            if all(
-                str(row["surface"]).lower() == str(row["canonical"]).lower()
-                and any(
-                    str(row["canonical"]).lower() == keep.lower()
-                    for keep in match_group.uncertain_keep_canonicals
-                )
-                for match_group, rows in matches
-                for row in rows
-            ):
-                confirmed.append(
-                    {
-                        "cue_index": cue_index,
-                        "matched_start_ms": cue.start_ms,
-                        "matched_end_ms": cue.end_ms,
-                        "reason_code": "ENTITY_ALREADY_CANONICAL_EVERYWHERE",
-                    }
-                )
+        # 按组独立仲裁（2026-07-14 梦限大坏女人案）：一 cue 多组各自单槽正常
+        # 裁——高松灯与海铃各是一组，不构成歧义；同组多次出现且全为规范形
+        # = 文本无可改写，直接放行（kmx 案的 keep 表放行是其特例，不再要求
+        # 成员资格）；同组多次含误听形仍 fail-closed（裁决无法映射到槽位）。
+        # 已裁定的字符串不再被后续组重复仲裁。
+        claimed_strings: set[str] = set()
+        for group, occurrences in matches:
+            occurrences = [
+                row
+                for row in occurrences
+                if str(row["surface"]).lower() not in claimed_strings
+            ]
+            if not occurrences:
                 continue
-            required.append(
-                {
-                    "cue_index": cue_index,
-                    "matched_start_ms": cue.start_ms,
-                    "matched_end_ms": cue.end_ms,
-                    "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
-                }
-            )
-            continue
-        group, occurrences = matches[0]
-        occurrence = occurrences[0]
-        evidence_id = hashlib.sha256(
-            (
-                f"transcript-entity\0{hashlib.sha256(srt_text.encode()).hexdigest()}\0"
-                f"{cue_index}\0{cue.start_ms}\0{cue.end_ms}\0{occurrence['canonical']}"
-            ).encode("utf-8")
-        ).hexdigest()
-        request: dict[str, Any] = {
-            "schema_version": "transcript-entity-verification-request.v1",
-            "evidence_id": evidence_id,
-            "kind": "transcript_entity",
-            "cue_indexes": [cue_index],
-            "matched_start_ms": cue.start_ms,
-            "matched_end_ms": cue.end_ms,
-            "matched_audio_text": texts[cue_offset],
-            "transcript_canonical": occurrence["canonical"],
-            "transcript_surface": occurrence["surface"],
-            "candidate_entities": [
-                {
-                    "canonical": entity.canonical,
-                    "surfaces": list(entity.surfaces),
-                    "readings": list(entity.readings),
-                }
-                for entity in group.entities
-            ],
-            "reason": group.reason,
-        }
-        request["request_sha256"] = _request_sha256(request)
-        try:
-            raw_verdict = entity_verifier(request) if entity_verifier is not None else None
-        except Exception as exc:
-            raw_verdict = {
-                "schema_version": "chat-entity-verdict.v1",
-                "request_sha256": request["request_sha256"],
-                "status": "UNCERTAIN",
-                "reason_code": "ENTITY_VERIFIER_ERROR",
-                "error": f"{type(exc).__name__}: {exc}",
+            if len(occurrences) > 1:
+                if all(
+                    str(row["surface"]).lower() == str(row["canonical"]).lower()
+                    for row in occurrences
+                ):
+                    confirmed.append(
+                        {
+                            "cue_index": cue_index,
+                            "matched_start_ms": cue.start_ms,
+                            "matched_end_ms": cue.end_ms,
+                            "reason_code": "ENTITY_ALREADY_CANONICAL_EVERYWHERE",
+                        }
+                    )
+                else:
+                    required.append(
+                        {
+                            "cue_index": cue_index,
+                            "matched_start_ms": cue.start_ms,
+                            "matched_end_ms": cue.end_ms,
+                            "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
+                        }
+                    )
+                continue
+            occurrence = occurrences[0]
+            evidence_id = hashlib.sha256(
+                (
+                    f"transcript-entity\0{hashlib.sha256(srt_text.encode()).hexdigest()}\0"
+                    f"{cue_index}\0{cue.start_ms}\0{cue.end_ms}\0{occurrence['canonical']}"
+                ).encode("utf-8")
+            ).hexdigest()
+            request: dict[str, Any] = {
+                "schema_version": "transcript-entity-verification-request.v1",
+                "evidence_id": evidence_id,
+                "kind": "transcript_entity",
+                "cue_indexes": [cue_index],
+                "matched_start_ms": cue.start_ms,
+                "matched_end_ms": cue.end_ms,
+                "matched_audio_text": texts[cue_offset],
+                "transcript_canonical": occurrence["canonical"],
+                "transcript_surface": occurrence["surface"],
+                "candidate_entities": [
+                    {
+                        "canonical": entity.canonical,
+                        "surfaces": list(entity.surfaces),
+                        "readings": list(entity.readings),
+                    }
+                    for entity in group.entities
+                ],
+                "reason": group.reason,
             }
-        verdict = _validated_entity_verdict(raw_verdict, request=request, group=group)
-        if verdict is None or verdict.get("status") != "RESOLVED":
-            # 方向性 fail-closed（2026-07-13 kmx 案）：文本已是组内"默认可信方"
-            # 的规范形而音频拿不准（3 字母含混音常 UNCERTAIN）→ 保留原文、留痕
-            # 不阻塞；其余（真实词「乒乓球」、误听形「梦现代」…）UNCERTAIN 仍阻塞。
-            if str(occurrence["surface"]).lower() == str(occurrence["canonical"]).lower() and any(
-                str(occurrence["canonical"]).lower() == keep.lower()
-                for keep in group.uncertain_keep_canonicals
-            ):
-                confirmed.append(
+            request["request_sha256"] = _request_sha256(request)
+            try:
+                raw_verdict = entity_verifier(request) if entity_verifier is not None else None
+            except Exception as exc:
+                raw_verdict = {
+                    "schema_version": "chat-entity-verdict.v1",
+                    "request_sha256": request["request_sha256"],
+                    "status": "UNCERTAIN",
+                    "reason_code": "ENTITY_VERIFIER_ERROR",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            verdict = _validated_entity_verdict(raw_verdict, request=request, group=group)
+            if verdict is None or verdict.get("status") != "RESOLVED":
+                # 方向性 fail-closed（2026-07-13 kmx 案）：文本已是组内"默认可信方"
+                # 的规范形而音频拿不准（3 字母含混音常 UNCERTAIN）→ 保留原文、留痕
+                # 不阻塞；其余（真实词「乒乓球」、误听形「梦现代」…）UNCERTAIN 仍阻塞。
+                if str(occurrence["surface"]).lower() == str(occurrence["canonical"]).lower() and any(
+                    str(occurrence["canonical"]).lower() == keep.lower()
+                    for keep in group.uncertain_keep_canonicals
+                ):
+                    confirmed.append(
+                        {
+                            "cue_index": cue_index,
+                            "matched_start_ms": cue.start_ms,
+                            "matched_end_ms": cue.end_ms,
+                            "transcript_canonical": occurrence["canonical"],
+                            "reason_code": "ENTITY_CANONICAL_KEPT_ON_UNCERTAIN",
+                            "verdict": verdict or raw_verdict,
+                        }
+                    )
+                    claimed_strings.add(str(occurrence["surface"]).lower())
+                    continue
+                required.append(
                     {
                         "cue_index": cue_index,
                         "matched_start_ms": cue.start_ms,
                         "matched_end_ms": cue.end_ms,
-                        "transcript_canonical": occurrence["canonical"],
-                        "reason_code": "ENTITY_CANONICAL_KEPT_ON_UNCERTAIN",
+                        "request": request,
                         "verdict": verdict or raw_verdict,
+                        "reason_code": str((verdict or {}).get("reason_code") or "ENTITY_VERDICT_REQUIRED"),
                     }
                 )
                 continue
-            required.append(
+            resolved = str(verdict["canonical_entity"])
+            base_row = {
+                "evidence_id": evidence_id,
+                "cue_indexes": [cue_index],
+                "matched_start_ms": cue.start_ms,
+                "matched_end_ms": cue.end_ms,
+                "transcript_canonical": occurrence["canonical"],
+                "transcript_surface": occurrence["surface"],
+                "resolved_canonical": resolved,
+                "verdict": verdict,
+            }
+            claimed_strings.add(str(occurrence["surface"]).lower())
+            claimed_strings.add(resolved.lower())
+            if resolved == occurrence["canonical"]:
+                confirmed.append(base_row)
+                continue
+            before = texts[cue_offset]
+            after = re.sub(
+                re.escape(str(occurrence["surface"])),
+                resolved,
+                before,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            if before == after:
+                required.append({**base_row, "reason_code": "ENTITY_SLOT_NOT_FOUND_FOR_MINIMAL_REPAIR"})
+                continue
+            texts[cue_offset] = after
+            repairs.append(
                 {
-                    "cue_index": cue_index,
-                    "matched_start_ms": cue.start_ms,
-                    "matched_end_ms": cue.end_ms,
-                    "request": request,
-                    "verdict": verdict or raw_verdict,
-                    "reason_code": str((verdict or {}).get("reason_code") or "ENTITY_VERDICT_REQUIRED"),
+                    **base_row,
+                    "mode": "transcript_entity_only",
+                    "expected_entity": resolved,
+                    "before": [before],
+                    "after": [after],
+                    "survived": resolved.lower() in after.lower(),
                 }
             )
-            continue
-        resolved = str(verdict["canonical_entity"])
-        base_row = {
-            "evidence_id": evidence_id,
-            "cue_indexes": [cue_index],
-            "matched_start_ms": cue.start_ms,
-            "matched_end_ms": cue.end_ms,
-            "transcript_canonical": occurrence["canonical"],
-            "transcript_surface": occurrence["surface"],
-            "resolved_canonical": resolved,
-            "verdict": verdict,
-        }
-        if resolved == occurrence["canonical"]:
-            confirmed.append(base_row)
-            continue
-        before = texts[cue_offset]
-        after = re.sub(
-            re.escape(str(occurrence["surface"])),
-            resolved,
-            before,
-            count=1,
-            flags=re.IGNORECASE,
-        )
-        if before == after:
-            required.append({**base_row, "reason_code": "ENTITY_SLOT_NOT_FOUND_FOR_MINIMAL_REPAIR"})
-            continue
-        texts[cue_offset] = after
-        repairs.append(
-            {
-                **base_row,
-                "mode": "transcript_entity_only",
-                "expected_entity": resolved,
-                "before": [before],
-                "after": [after],
-                "survived": resolved.lower() in after.lower(),
-            }
-        )
     output = _render_srt(cues, texts) if repairs else srt_text
     return output, {
         "schema_version": "transcript-entity-audit.v1",

@@ -264,6 +264,81 @@ def test_positioned_groups_never_enter_chat_evidence_path():
     assert "但是大家都在等她回来" in output
 
 
+def test_multi_group_same_cue_arbitrated_independently():
+    """2026-07-14 梦限大坏女人案 cue31「海铃的假哭和那个にゃむち的」：一 cue
+    命中多个不同实体组不构成歧义，各组各自单槽正常裁。"""
+    hailing = ReferentGroup(
+        (
+            ReferentEntity("海铃", ("海铃", "海玲"), ("hai ling",)),
+            ReferentEntity("海底", ("海底",), ("hai di",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    nyamu = ReferentGroup(
+        (
+            ReferentEntity("にゃむ", ("にゃむ", "娘木"), ("nya mu",)),
+            ReferentEntity("尼亚", ("尼亚",), ("ni ya",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    calls: list[str] = []
+
+    def verifier(request):
+        canonical = request["candidate_entities"][0]["canonical"]
+        calls.append(canonical)
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "canonical_entity": request["transcript_canonical"],
+            "authority_kind": "audio_forced_choice",
+            "confidence": 0.95,
+            "heard_syllables": "clear",
+            "source_media_sha256": "a" * 64,
+            "audio_clip_sha256": "b" * 64,
+            "prompt_sha256": "c" * 64,
+            "response_sha256": "d" * 64,
+        }
+
+    source = _srt("海铃的假哭和那个にゃむ的")
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[hailing, nyamu], entity_verifier=verifier
+    )
+
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert output == source  # 双双确认为本组规范形，无改写
+    assert len(calls) == 2  # 两组各自独立裁决
+
+
+def test_same_group_double_canonical_passes_without_keep_membership():
+    """2026-07-14 乐队番案 cue28「限大，梦限大直接…」类：同组规范形复数出现
+    且无误听形 = 无可改写，直接放行——不再要求 uncertain_keep 成员资格。"""
+    group = ReferentGroup(
+        DREAM_MUJICA_GROUP.entities, audio_verify_all_surfaces=True
+    )
+    source = _srt("梦限大，梦限大直接给大家推出一个究极坏女人")
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[group], entity_verifier=None
+    )
+
+    assert output == source
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert audit["confirmed"][0]["reason_code"] == "ENTITY_ALREADY_CANONICAL_EVERYWHERE"
+
+
+def test_same_group_multi_occurrence_with_mishear_still_blocks():
+    source = _srt("母鸡卡还是梦限大我分不清")
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[DREAM_MUJICA_GROUP], entity_verifier=None
+    )
+
+    assert output == source
+    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    assert audit["entity_verdict_required"][0]["reason_code"] == "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS"
+
+
 WD_GROUP = ReferentGroup(
     (
         ReferentEntity("李豆沙", ("李豆沙",), ("li dou sha",)),
