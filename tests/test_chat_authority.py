@@ -25,6 +25,7 @@ from src.autoslice.chat_authority import (
     recording_start_epoch_ms,
     reconcile_pending_text_overrides,
     witness_disagreement_cues,
+    introduced_term_cues,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 
@@ -415,6 +416,25 @@ def test_auditor_pair_adjudication_semantics_via_engine():
     )
     assert output2 == source
     assert audit2["status"] != "ENTITY_VERDICT_REQUIRED", audit2
+
+
+def test_introduced_term_compiler_flags_injections_with_aligned_spans():
+    """2026-07-14 乐队番实案抽象：修正层把钦定词(Ave Mujica/睦睦)注入 draft
+    没有的位置——编译出 {注入词, draft 对齐片段} 仲裁对；单字对齐段向左扩。"""
+    draft = _srt("不需要会打鼓的梦", "月月不是算妈妈吗", "正常句子")
+    final = _srt("不需要会打鼓的，Ave Mujica", "睦睦不是算妈妈吗", "正常句子")
+
+    rows = introduced_term_cues(draft, final, {"Ave Mujica", "睦睦", "梦限大"})
+
+    by_term = {row["term"]: row for row in rows}
+    assert "Ave Mujica" in by_term
+    assert by_term["Ave Mujica"]["cue_index"] == 1
+    assert "梦" in by_term["Ave Mujica"]["draft_span"]
+    assert len(by_term["Ave Mujica"]["draft_span"]) >= 2  # 单字左扩
+    assert "睦睦" in by_term
+    assert by_term["睦睦"]["draft_span"] == "月月"
+    # draft 本来就有该词的不算注入
+    assert introduced_term_cues(final, final, {"Ave Mujica", "睦睦"}) == []
 
 
 def test_multi_group_same_cue_arbitrated_independently():

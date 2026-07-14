@@ -507,6 +507,67 @@ def witness_disagreement_cues(
     return out
 
 
+def introduced_term_cues(
+    draft_srt: str,
+    final_srt: str,
+    protected: Iterable[str],
+    *,
+    max_rows: int = 4,
+) -> list[dict[str, Any]]:
+    """引入词仲裁编译器（2026-07-14 乐队番 Ave Mujica/睦睦 案抽象）。
+
+    修正层（被弹幕语境带偏的同族二听是主嫌）会把钦定实体词注入 BCUT 逐字
+    证人没有的位置；忠实守卫因"AGY 证人在场"放行——同族证人污染。这是
+    witness_disagreement 自称组机制向**全部钦定词面**的泛化：凡终稿 cue
+    出现钦定词而同时轴 draft cue 没有，就对齐出 draft 对应片段，交黑帧
+    音频在 {注入词, draft 片段} 间二选一；UNCERTAIN 保留终稿并披露。
+    """
+
+    draft_by_span = {
+        (cue.start_ms, cue.end_ms): cue.text
+        for cue in parse_srt_cues(draft_srt)
+        if cue.text.strip()
+    }
+    final_cues = [cue for cue in parse_srt_cues(final_srt) if cue.text.strip()]
+    terms = sorted(
+        {t for t in protected if t and len(str(t)) >= 2}, key=len, reverse=True
+    )
+    rows: list[dict[str, Any]] = []
+    for index, cue in enumerate(final_cues, start=1):
+        draft_text = draft_by_span.get((cue.start_ms, cue.end_ms))
+        if draft_text is None:
+            continue
+        final_norm = normalize_chat_text(cue.text)
+        draft_norm = normalize_chat_text(draft_text)
+        for term in terms:
+            term_norm = normalize_chat_text(str(term))
+            if not term_norm or term_norm not in final_norm or term_norm in draft_norm:
+                continue
+            position = cue.text.find(str(term))
+            if position < 0:
+                continue
+            span = None
+            matcher = SequenceMatcher(None, draft_text, cue.text, autojunk=False)
+            for op, a1, a2, b1, b2 in matcher.get_opcodes():
+                if op in ("replace", "insert") and b1 <= position < b2:
+                    span = draft_text[a1:a2]
+                    # 单字对齐段向左扩一字（cue8 案：的梦→，Ave Mujica 的
+                    # draft 侧只剩「梦」，单字面成不了仲裁槽）。
+                    if len(span.strip()) == 1 and a1 > 0:
+                        span = draft_text[a1 - 1 : a2]
+                    break
+            span = (span or "").strip("，。！？,.!? ")
+            if len(span) < 2 or span == str(term):
+                continue
+            rows.append(
+                {"cue_index": index, "term": str(term), "draft_span": span[:10]}
+            )
+            break
+        if len(rows) >= max_rows:
+            break
+    return rows
+
+
 def _entity_occurrences(text: str, group: ReferentGroup) -> list[dict[str, Any]]:
     """Find longest non-overlapping surfaces and retain canonical identity."""
 
@@ -1704,6 +1765,8 @@ def _apply_gift_name_repairs(
                     {"canonical": gift_name, "surfaces": [], "readings": []},
                     {"canonical": tail, "surfaces": [], "readings": []},
                 ],
+                "context_before": texts[index - 1] if index > 0 else "",
+                "context_after": texts[index + 1] if index + 1 < len(texts) else "",
                 "reason": "gift-name read-aloud arbitration",
             }
             request["request_sha256"] = _request_sha256(request)
@@ -2409,6 +2472,15 @@ def apply_authoritative_chat_evidence(
                     {"canonical": item.text, "surfaces": [], "readings": []},
                     {"canonical": near_span, "surfaces": [], "readings": []},
                 ],
+                # 语篇框架（2026-07-14 乐队番「需要妈妈」案：盲听把同族模型
+                # 的污染变体当真声选了）：相邻口播随请求给裁决器——音节两可
+                # 时允许语篇合理性参与，音节明显不符仍必须判负。
+                "context_before": texts[best_near["start"] - 1]
+                if best_near["start"] > 0
+                else "",
+                "context_after": texts[best_near["start"] + best_near["count"]]
+                if best_near["start"] + best_near["count"] < len(texts)
+                else "",
                 "reason": "danmaku near-miss read-aloud arbitration",
             }
             request["request_sha256"] = _request_sha256(request)

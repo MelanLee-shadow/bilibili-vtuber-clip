@@ -71,6 +71,7 @@ from src.autoslice.chat_authority import (
     ChatEvidence,
     _fragment_spoken_in,
     _strip_interjections_once,
+    introduced_term_cues,
     witness_disagreement_cues,
     ReferentEntity,
     ReferentGroup,
@@ -1982,6 +1983,47 @@ def main(argv: list[str] | None = None) -> int:
                 wd_audit.get("repairs") or []
             )
     chat_authority_audit["witness_disagreement_audits"] = wd_audits
+    # 引入词仲裁（2026-07-14 乐队番案：修正层注入 Ave Mujica/睦睦 而 draft
+    # 无此词，守卫因同族证人放行）——wd 机制泛化到全部钦定词面：注入词 vs
+    # draft 对齐片段交黑帧二选一；UNCERTAIN 保留终稿并披露，绝不阻塞。
+    introduced_term_audits: list[dict] = []
+    if draft_witness_path.is_file():
+        from src.autoslice.term_authority import protected_terms as _protected_terms
+
+        draft_witness_text = draft_witness_path.read_text(encoding="utf-8", errors="replace")
+        for row in introduced_term_cues(
+            draft_witness_text, srt_text, _protected_terms()
+        ):
+            term = str(row["term"])
+            span = str(row["draft_span"])
+            pair_group = ReferentGroup(
+                (
+                    ReferentEntity(term, (term,)),
+                    ReferentEntity(span, (span,)),
+                ),
+                reason=f"引入词仲裁：终稿注入「{term}」而逐字证人为「{span}」",
+                audio_verify_all_surfaces=True,
+                uncertain_keep_canonicals=(term, span),
+                positions=("transcript_only",),
+            )
+            final_cue_total = len(
+                [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+            )
+            itc_excluded = (
+                set(range(1, final_cue_total + 1)) - {int(row["cue_index"])}
+            ) | set(handled_entity_cues)
+            srt_text, itc_audit = apply_audio_entity_verification(
+                srt_text,
+                referent_groups=[pair_group],
+                entity_verifier=verify_confusable_entity,
+                excluded_cue_indexes=itc_excluded,
+            )
+            itc_audit["introduced_term"] = row
+            introduced_term_audits.append(itc_audit)
+            chat_authority_audit.setdefault("entity_repairs", []).extend(
+                itc_audit.get("repairs") or []
+            )
+    chat_authority_audit["introduced_term_audits"] = introduced_term_audits
     # 成品自审员（Ivan 2026-07-14 通病级机制）：发现向量不再只是 Ivan 的
     # 眼睛。审片员只报不改；同音建议自动应用（声学保真），其余披露进
     # review-flags 工件；chat 证据拥有的 cue 一律保护；审片员故障绝不熔断。

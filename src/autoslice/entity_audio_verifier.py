@@ -75,6 +75,8 @@ def _prompt(
     timely_context: str,
     sentence_mode: bool = False,
     delivery_mode: str = "agy",
+    context_before: str = "",
+    context_after: str = "",
 ) -> str:
     neutral_candidates = sorted(candidates, key=lambda row: str(row.get("canonical") or "").lower())
     if delivery_mode == "gemini_api":
@@ -112,7 +114,13 @@ Candidate sentences (neutral list):
 
 {timely_context or 'No active date-bounded timely-term snapshot.'}
 
-Judge ONLY by the syllables you hear; incompatible syllables always lose.
+Adjacent spoken lines (discourse frame, transcribed from the same audio; they
+are context, not text authority):
+- before: {(context_before or "（无）")!s}
+- after: {(context_after or "（无）")!s}
+When the syllables are genuinely ambiguous between candidates, discourse fit
+with the adjacent lines MAY break the tie. Clearly incompatible syllables
+still always lose, regardless of discourse fit.
 Report the syllables you actually hear before the choice.
 
 {output_head}
@@ -384,6 +392,8 @@ def build_local_audio_entity_verifier(
             sentence_mode=(
                 request.get("schema_version") == "chat-read-aloud-verification-request.v1"
             ),
+            context_before=str(request.get("context_before") or ""),
+            context_after=str(request.get("context_after") or ""),
         )
         prompt_path = job_dir / "prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -496,6 +506,8 @@ def build_local_audio_entity_verifier(
                     sentence_mode=(
                         request.get("schema_version") == "chat-read-aloud-verification-request.v1"
                     ),
+                    context_before=str(request.get("context_before") or ""),
+                    context_after=str(request.get("context_after") or ""),
                     delivery_mode="gemini_api",
                 )
                 api_prompt_path.write_text(api_prompt, encoding="utf-8")
