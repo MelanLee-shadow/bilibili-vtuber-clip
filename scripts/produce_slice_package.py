@@ -67,6 +67,7 @@ from scripts.gemini_slice_jingting import approved_timely_terms
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
 from src.autoslice.chat_authority import (
     ChatEvidence,
+    _fragment_spoken_in,
     _strip_interjections_once,
     apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
@@ -975,8 +976,15 @@ def verify_chat_authority_final_surfaces(
                 end_ms=context_end,
                 strip_speaker_labels=True,
             )
+            # 同一把尺（2026-07-14 生日结婚案）：apply 侧用 _fragment_spoken_in
+            # coverage≥0.8 证明弃置头/尾已被说过（「抱抱李~」vs 口播「抱抱」），
+            # 外层复证必须用同一谓词——子串全包含会把合法 0.85 覆盖误杀。
             dropped_ok = all(
-                (not part) or (part in text_context and part in speaker_context)
+                (not part)
+                or (
+                    _fragment_spoken_in(part, text_context)
+                    and _fragment_spoken_in(part, speaker_context)
+                )
                 for part in dropped_parts
             )
             row["dropped_duplicate_context_verified"] = dropped_ok

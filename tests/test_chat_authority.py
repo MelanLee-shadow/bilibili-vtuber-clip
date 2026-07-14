@@ -1472,6 +1472,35 @@ def test_final_surface_verifier_understands_aligned_splice_dropped_head():
         delivery_start_ms=0,
         delivery_end_ms=30_000,
     )
+    # 同一把尺（2026-07-14 生日结婚案）：apply 侧用 coverage≥0.8 证明弃置头
+    # 已被说过（弹幕「小李小李，抱抱李~」vs 口播「小李小李，抱抱」），外层
+    # 复证不得要求全子串包含——否则同一决定 apply 通过、终验误杀。
+    partial_head = _srt(
+        "小李小李，抱抱",
+        "另外姐姐姐姐组乐队吗",
+        "我会打退堂鼓",
+        "退堂鼓算什么",
+    )
+    partial_audit = {
+        "applied": [
+            {
+                "exact_text": "小李小李，抱抱李~另外姐姐姐姐组乐队吗，我会打退堂鼓",
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 24_000,
+                "span_alignment": {
+                    "dropped_duplicate_authority_head": "小李小李，抱抱李~",
+                },
+            }
+        ]
+    }
+    assert verify_chat_authority_final_surfaces(
+        partial_audit,
+        final_text_srt=partial_head,
+        final_speaker_srt=partial_head,
+        delivery_start_ms=0,
+        delivery_end_ms=30_000,
+    )
+
     # 被弃置的头在上下文里不存在 → 弃置声明不成立 → 行判失败（fail-closed）
     head_missing = _srt(
         "完全无关的开场白",

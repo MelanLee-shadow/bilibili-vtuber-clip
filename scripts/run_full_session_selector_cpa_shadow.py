@@ -1788,6 +1788,7 @@ def _build_ssh_agy_runner(
             raise AgyRunnerError("AGY_NO_DRAFT_CUES", f"draft SRT has no parseable cues: {draft_srt_path}")
 
         refined_pairs: list[tuple[object, str]] = []
+        api_fallback_chunks = 0
         with tempfile.TemporaryDirectory(prefix="ssh_agy_clips_") as clips_tmp:
             for chunk in chunks:
                 chunk_clip = Path(clips_tmp) / f"chunk_{chunk.chunk_index:02d}.mp4"
@@ -1806,6 +1807,32 @@ def _build_ssh_agy_runner(
                     except (AgyRunnerError, RuntimeError) as exc:
                         last_error = exc
                 if last_error is not None:
+                    # AGY 双尝试尽头 → 同模型换 API 载体续命（run_gemini_api：
+                    # 免费 3 key → 付费门+入帐）。这是载体冗余不是二证人——背后
+                    # 同为 gemini-3.5-flash（Ivan 2026-07-14）；证人独立性由
+                    # BCUT 草稿与忠实性守卫承担。API 也失败才让整次 refine 失败
+                    # （上游据此退 CPA 纯文本，守卫会回退其无证改写）。
+                    try:
+                        from scripts.gemini_slice_jingting import run_gemini_api
+
+                        with tempfile.TemporaryDirectory(prefix="ssh_agy_api_fb_") as fb_tmp:
+                            fb_draft = Path(fb_tmp) / "draft.srt"
+                            fb_out = Path(fb_tmp) / "out.srt"
+                            fb_draft.write_text(
+                                chunk_srt_text if chunk_srt_text.endswith("\n") else chunk_srt_text + "\n",
+                                encoding="utf-8",
+                            )
+                            run_gemini_api(str(chunk_clip), str(fb_draft), str(fb_out))
+                            corrected = fb_out.read_text(encoding="utf-8")
+                            if not looks_like_srt(corrected):
+                                raise RuntimeError("GEMINI_API_FALLBACK_EMPTY")
+                            validate_same_timing(chunk_srt_text, corrected)
+                            refined_pairs.append((chunk, corrected))
+                            api_fallback_chunks += 1
+                            last_error = None
+                    except Exception:
+                        pass
+                if last_error is not None:
                     raise last_error
 
         merged = merge_refined_chunks(srt_text, refined_pairs)
@@ -1815,8 +1842,11 @@ def _build_ssh_agy_runner(
             provider="agy",
             model=AGY_MODEL,
             agy_rc=0,
-            provider_fallback_used=False,
-            provider_request_id=f"{host}:jingting-chunked:{stamp}:{len(chunks)}chunks",
+            provider_fallback_used=bool(api_fallback_chunks),
+            provider_request_id=(
+                f"{host}:jingting-chunked:{stamp}:{len(chunks)}chunks"
+                + (f":api_fb={api_fallback_chunks}" if api_fallback_chunks else "")
+            ),
         )
 
     return runner
