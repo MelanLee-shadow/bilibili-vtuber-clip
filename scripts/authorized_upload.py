@@ -358,7 +358,6 @@ def upload(args: argparse.Namespace) -> int:
             for p in problems:
                 print(f"REFUSE: {p}", file=sys.stderr)
             return 2
-        ledger = Path(args.ledger)
         video_sha = manifest["video"]["sha256"]
         guard_status, guard_row, ledger_problems = ledger_guard(ledger, video_sha)
         if ledger_problems:
