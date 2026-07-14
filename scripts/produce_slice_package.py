@@ -89,8 +89,13 @@ from src.autoslice.chat_authority import (
     sanitize_chat_display_text,
 )
 from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
+from src.autoslice.final_review_auditor import (
+    audit_final_subtitles,
+    persist_review_audit,
+    route_findings,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.llm_client import LlmConfig, build_llm_call
+from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
 from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.speaker_finalizer import (
@@ -1974,6 +1979,37 @@ def main(argv: list[str] | None = None) -> int:
                 wd_audit.get("repairs") or []
             )
     chat_authority_audit["witness_disagreement_audits"] = wd_audits
+    # 成品自审员（Ivan 2026-07-14 通病级机制）：发现向量不再只是 Ivan 的
+    # 眼睛。审片员只报不改；同音建议自动应用（声学保真），其余披露进
+    # review-flags 工件；chat 证据拥有的 cue 一律保护；审片员故障绝不熔断。
+    final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
+    if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
+        try:
+            review_llm_call = build_llm_call(
+                LlmConfig(
+                    transport="command",
+                    command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium",
+                    timeout_seconds=300.0,
+                )
+            )
+            review_findings = audit_final_subtitles(
+                srt_text, llm_call=review_llm_call, extract_json=extract_json_object
+            )
+            protected_review_cues = set(handled_entity_cues)
+            for row in chat_authority_audit.get("applied") or []:
+                for index in row.get("cue_indexes") or []:
+                    protected_review_cues.add(int(index))
+            srt_text, final_review_audit = route_findings(
+                srt_text, review_findings, protected_cue_indexes=protected_review_cues
+            )
+        except Exception as exc:
+            final_review_audit = {
+                "schema_version": "final-review-audit.v1",
+                "status": "AUDITOR_UNAVAILABLE",
+                "error_type": type(exc).__name__,
+            }
+    chat_authority_audit["final_review_audit"] = final_review_audit
+    persist_review_audit(out_root / f"{cid}.review-flags.json", final_review_audit)
     chat_authority_audit["post_transcript_entity_output_srt_sha256"] = hashlib.sha256(
         srt_text.encode("utf-8")
     ).hexdigest()
