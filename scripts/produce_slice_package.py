@@ -1992,8 +1992,13 @@ def main(argv: list[str] | None = None) -> int:
                     timeout_seconds=300.0,
                 )
             )
+            from scripts.gemini_slice_jingting import glossary as _review_glossary
+
             review_findings = audit_final_subtitles(
-                srt_text, llm_call=review_llm_call, extract_json=extract_json_object
+                srt_text,
+                llm_call=review_llm_call,
+                extract_json=extract_json_object,
+                glossary_text=_review_glossary(),
             )
             protected_review_cues = set(handled_entity_cues)
             for row in chat_authority_audit.get("applied") or []:

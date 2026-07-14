@@ -27,6 +27,57 @@ from src.autoslice.subtitle_fidelity import _homophone_equal
 
 MAX_FINDINGS = 12
 
+_GLOSSARY_TERM_RX = re.compile(r"^[-*]\s*(?:梗词：)?\*{0,2}([^：:（(＝=，,。\s*]{2,12})")
+
+
+def protected_terms() -> frozenset[str]:
+    """钦定词面集合：审片员的同音自动改写绝不允许碰这些（2026-07-14 抽查
+    实证：审片员想把梗词「立语」同音改成「俚语」——词典权威高于审片直觉）。
+
+    来源：硬梗表/代码切换表两侧、混淆组全部 canonical+surface、时效词
+    canonical/display/alias/confusable、glossary.txt 行首术语。加载失败只会
+    让集合变小（更少保护），绝不抛错。
+    """
+
+    terms: set[str] = set()
+    try:
+        from src.autoslice.chat_authority import (
+            _CODE_SWITCH_CANONICAL_SURFACES,
+            _HARD_MEME_CANONICAL_SURFACES,
+            load_referent_groups,
+        )
+
+        for pair in (*_CODE_SWITCH_CANONICAL_SURFACES, *_HARD_MEME_CANONICAL_SURFACES):
+            terms.update(pair)
+        asset = Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
+        for group in load_referent_groups(asset):
+            for entity in group.entities:
+                terms.add(entity.canonical)
+                terms.update(entity.surfaces)
+    except Exception:
+        pass
+    try:
+        from scripts.gemini_slice_jingting import approved_timely_terms
+
+        for record in approved_timely_terms():
+            for key in ("canonical", "display_name"):
+                if record.get(key):
+                    terms.add(str(record[key]))
+            for key in ("aliases", "confusables"):
+                terms.update(str(v) for v in record.get(key) or [])
+    except Exception:
+        pass
+    try:
+        from scripts.gemini_slice_jingting import subtitle_principles, glossary as _glossary
+
+        for line in _glossary().splitlines():
+            match = _GLOSSARY_TERM_RX.match(line.strip())
+            if match:
+                terms.add(match.group(1).strip("*"))
+    except Exception:
+        pass
+    return frozenset(t for t in terms if t and len(t) >= 2)
+
 _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成品切片的最终字幕（观众将看到的原文）。
 你的任务是**只挑出可疑处，绝不改写**。可疑类别：
 - nonword：读起来不是词的胡话/生造词（如「季下」「苏人」——多为语音误听残留）；
@@ -34,6 +85,9 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
 - self_ref：主播自称混乱可疑处（她的自称专名是「李豆沙」和「小李」，两者平等；
   出现疑似自称却写成别的词的地方报出来）；
 - entity：疑似专名/人名/作品名被写错的地方。
+
+已知梗词与专名表（钦定写法，一律不要报）：
+{glossary}
 
 规则：
 1. 宁缺毋滥：只报你有把握可疑的，正常口语、脏话、语气词、网络梗不要报。
@@ -54,6 +108,7 @@ def audit_final_subtitles(
     *,
     llm_call: Callable[[str], str],
     extract_json: Callable[[str], Any],
+    glossary_text: str = "",
 ) -> list[dict[str, Any]]:
     """One reviewer pass over the final SRT; returns validated findings only."""
 
@@ -61,7 +116,11 @@ def audit_final_subtitles(
     if not cues:
         return []
     numbered = "\n".join(f"{index}. {cue.text}" for index, cue in enumerate(cues, start=1))
-    prompt = _AUDIT_PROMPT.format(max_findings=MAX_FINDINGS, numbered=numbered)
+    prompt = _AUDIT_PROMPT.format(
+        max_findings=MAX_FINDINGS,
+        numbered=numbered,
+        glossary=(glossary_text.strip() or "（无）"),
+    )
     try:
         payload = extract_json(llm_call(prompt))
     except Exception:
@@ -104,12 +163,14 @@ def route_findings(
     findings: Iterable[dict[str, Any]],
     *,
     protected_cue_indexes: Iterable[int] = (),
+    protected_term_set: frozenset[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Apply only sound-faithful suggestions; disclose everything else."""
 
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     texts = [cue.text for cue in cues]
     protected = {int(v) for v in protected_cue_indexes}
+    guarded_terms = protected_terms() if protected_term_set is None else protected_term_set
     rows: list[dict[str, Any]] = []
     applied = 0
     for finding in findings:
@@ -117,6 +178,11 @@ def route_findings(
         cue_index = int(row["cue_index"])
         suspect = str(row["suspect"])
         suggestion = row.get("suggestion")
+        if any(term in suspect for term in guarded_terms):
+            # 词典权威高于审片直觉（立语/做0.4 案）：钦定词面永不自动改写。
+            row["routed"] = "disclosure_protected_term"
+            rows.append(row)
+            continue
         if (
             suggestion
             and cue_index not in protected
