@@ -118,6 +118,35 @@
       "uncertain_keep_canonicals": [
         "kmx"
       ]
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "positions": [
+        "witness_disagreement"
+      ],
+      "uncertain_keep_canonicals": [
+        "李豆沙",
+        "小李"
+      ],
+      "entities": [
+        {
+          "canonical": "李豆沙",
+          "surfaces": [],
+          "readings": [
+            "li dou sha",
+            "lidousha"
+          ]
+        },
+        {
+          "canonical": "小李",
+          "surfaces": [],
+          "readings": [
+            "xiao li",
+            "xiaoli"
+          ]
+        }
+      ],
+      "reason": "平等自称专名（Ivan 铁律：说哪个写哪个，绝不互换/统一风格）。仅当某形态是修正层引入（BCUT 逐字证人同时轴 cue 无此形态，如 2026-07-14 生日结婚案 留下→小李，AGY 被弹幕上下文带偏）时，该 cue 交无聊天上下文的黑帧裁决器强制二选一；UNCERTAIN 双向保留绝不阻塞；弹幕逐字 cue 不复审。"
     }
   ]
 }

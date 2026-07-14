@@ -252,7 +252,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                 dict.fromkeys(
                     str(value)
                     for value in (raw_positions if isinstance(raw_positions, list) else [])
-                    if str(value) in {"clip_initial", "transcript_only"}
+                    if str(value) in {"clip_initial", "transcript_only", "witness_disagreement"}
                 )
             )
             groups.append(
@@ -447,6 +447,43 @@ def repetition_divergence_groups(
                 )
             )
     return groups
+
+
+def witness_disagreement_cues(
+    draft_srt: str, final_srt: str, group: ReferentGroup
+) -> list[int]:
+    """证人引入仲裁的怀疑编译器（2026-07-14 生日结婚「小李」案抽象）。
+
+    修正层（AGY 带弹幕上下文二听时会被聊天带偏）可能引入 BCUT 逐字证人
+    里并不存在的组内形态——draft 该 cue 听成「留下」，终稿却写「小李」。
+    返回 final 中出现组内形态、而同时轴 draft cue 无该形态的 cue_index
+    （1-based，按 final 非空 cue 序）。这些 cue 应交给无聊天上下文的黑帧
+    裁决器强制多选一；两侧都在场的形态（她真说了）不打扰。时轴对不上的
+    cue 宁缺毋滥直接跳过。
+    """
+
+    draft_by_span = {
+        (cue.start_ms, cue.end_ms): normalize_chat_text(cue.text)
+        for cue in parse_srt_cues(draft_srt)
+        if cue.text.strip()
+    }
+    out: list[int] = []
+    final_cues = [cue for cue in parse_srt_cues(final_srt) if cue.text.strip()]
+    for index, cue in enumerate(final_cues, start=1):
+        draft_norm = draft_by_span.get((cue.start_ms, cue.end_ms))
+        if draft_norm is None:
+            continue
+        final_norm = normalize_chat_text(cue.text)
+        for entity in group.entities:
+            for surface in entity.surfaces:
+                normalized = normalize_chat_text(surface)
+                if normalized and normalized in final_norm and normalized not in draft_norm:
+                    out.append(index)
+                    break
+            else:
+                continue
+            break
+    return out
 
 
 def _entity_occurrences(text: str, group: ReferentGroup) -> list[dict[str, Any]]:

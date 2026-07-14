@@ -35,6 +35,7 @@ Spec JSON:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -1934,6 +1935,43 @@ def main(argv: list[str] | None = None) -> int:
     chat_authority_audit.setdefault("entity_repairs", []).extend(
         transcript_entity_audit.get("repairs") or []
     )
+    # 证人引入仲裁（2026-07-14 生日结婚「小李」案）：修正层引入了 BCUT
+    # 逐字证人里不存在的组内形态（留下→小李，AGY 被弹幕上下文带偏）——
+    # 仅这些 cue 交无聊天上下文的黑帧裁决器强制多选一；弹幕逐字 cue
+    # (handled) 不复审；UNCERTAIN 双向保留绝不阻塞。
+    wd_audits: list[dict] = []
+    wd_groups = [
+        group
+        for group in transcript_groups
+        if getattr(group, "positions", ()) and "witness_disagreement" in group.positions
+    ]
+    draft_witness_path = padded.with_suffix(".asr_draft.srt")
+    if wd_groups and draft_witness_path.is_file():
+        draft_witness = draft_witness_path.read_text(encoding="utf-8", errors="replace")
+        for wd_group in wd_groups:
+            suspicious = witness_disagreement_cues(draft_witness, srt_text, wd_group)
+            if not suspicious:
+                continue
+            final_cue_count = len(
+                [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+            )
+            excluded = (
+                set(range(1, final_cue_count + 1)) - set(suspicious)
+            ) | set(handled_entity_cues)
+            srt_text, wd_audit = apply_audio_entity_verification(
+                srt_text,
+                referent_groups=[
+                    dataclasses.replace(wd_group, positions=("transcript_only",))
+                ],
+                entity_verifier=verify_confusable_entity,
+                excluded_cue_indexes=excluded,
+            )
+            wd_audit["suspicious_cue_indexes"] = suspicious
+            wd_audits.append(wd_audit)
+            chat_authority_audit.setdefault("entity_repairs", []).extend(
+                wd_audit.get("repairs") or []
+            )
+    chat_authority_audit["witness_disagreement_audits"] = wd_audits
     chat_authority_audit["post_transcript_entity_output_srt_sha256"] = hashlib.sha256(
         srt_text.encode("utf-8")
     ).hexdigest()

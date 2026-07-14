@@ -24,6 +24,7 @@ from src.autoslice.chat_authority import (
     normalize_code_switch_surfaces,
     recording_start_epoch_ms,
     reconcile_pending_text_overrides,
+    witness_disagreement_cues,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 
@@ -261,6 +262,73 @@ def test_positioned_groups_never_enter_chat_evidence_path():
 
     assert audit.get("entity_verdict_required") in ([], None)
     assert "但是大家都在等她回来" in output
+
+
+WD_GROUP = ReferentGroup(
+    (
+        ReferentEntity("李豆沙", ("李豆沙",), ("li dou sha",)),
+        ReferentEntity("小李", ("小李",), ("xiao li",)),
+    ),
+    audio_verify_all_surfaces=True,
+    uncertain_keep_canonicals=("李豆沙", "小李"),
+    positions=("witness_disagreement",),
+)
+
+
+def test_witness_disagreement_compiler_flags_introduced_forms_only():
+    """2026-07-14 生日结婚实案：BCUT 逐字证人听成「留下」，带弹幕上下文的
+    二听把它写成「小李」——引入形态才可疑；两侧都在场的形态不打扰。"""
+    draft = _srt("所以你是想看留下跟别人亲亲", "小李小李抱抱李", "李豆沙又要直播了")
+    final = _srt("所以你是想看小李跟别人亲亲", "小李小李抱抱李", "李豆沙又要直播了")
+
+    assert witness_disagreement_cues(draft, final, WD_GROUP) == [1]
+    # 时轴对不上的 cue 宁缺毋滥
+    shifted = "1\n00:01:39,000 --> 00:01:43,000\n完全另一个时间轴的句子\n"
+    assert witness_disagreement_cues(shifted, final, WD_GROUP) == []
+
+
+def test_witness_disagreement_arbitration_rewrites_only_suspicious_cues():
+    import dataclasses as _dc
+
+    draft = _srt("所以你是想看留下跟别人亲亲", "还是想要留下直播", "小李小李抱抱李")
+    final = _srt("所以你是想看小李跟别人亲亲", "还是想要小李直播", "小李小李抱抱李")
+    suspicious = witness_disagreement_cues(draft, final, WD_GROUP)
+    assert suspicious == [1, 2]
+    excluded = ({1, 2, 3} - set(suspicious)) | {3}
+
+    output, audit = apply_audio_entity_verification(
+        final,
+        referent_groups=[_dc.replace(WD_GROUP, positions=("transcript_only",))],
+        entity_verifier=_audio_entity_verifier("李豆沙"),
+        excluded_cue_indexes=excluded,
+    )
+
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit
+    assert "所以你是想看李豆沙跟别人亲亲" in output
+    assert "还是想要李豆沙直播" in output
+    assert "小李小李抱抱李" in output  # 弹幕逐字 cue 被排除，不复审
+
+    # UNCERTAIN 双向保留：两个形态都在默认可信方列表，绝不阻塞。
+    output2, audit2 = apply_audio_entity_verification(
+        final,
+        referent_groups=[_dc.replace(WD_GROUP, positions=("transcript_only",))],
+        entity_verifier=_uncertain_verifier,
+        excluded_cue_indexes=excluded,
+    )
+    assert output2 == final
+    assert audit2["status"] != "ENTITY_VERDICT_REQUIRED", audit2
+
+
+def test_self_reference_wd_group_loads_from_asset():
+    groups = load_referent_groups(
+        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+    )
+    group = next(
+        g for g in groups if {e.canonical for e in g.entities} == {"李豆沙", "小李"}
+    )
+
+    assert group.positions == ("witness_disagreement",)
+    assert set(group.uncertain_keep_canonicals) == {"李豆沙", "小李"}
 
 
 def test_loader_parses_known_positions_and_drops_unknown(tmp_path):
