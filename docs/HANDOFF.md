@@ -3,7 +3,35 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
-## 2026-07-14：当日上传全量对抗式审计 + 修复 + 部署对齐（当前）
+## 2026-07-14 晚：梦限大重制排雷 + 权威保向纠偏 + API 收编（当前）
+
+### 目标
+
+清掉 7/13 权宜批最后一件（#1 梦限大 `BV1JXNk6vEeV`）；另一线停摆后全部待办归本线；Ivan 两条纠偏落地（Mujica 保向、代码防屎山）。
+
+### 已完成
+
+- **#10 乐队番已换源**（`BV1EQNk6KErE`，panda 线 06:04Z 重制件+新标题+当场蓝帽封面——帧比对证实帽子是当天真实穿搭；台账+证据 `4beb0ab`）。
+- **《再播五十年》排队**：v3 封面重排（v1"记下了"拆行/v2"五十年"数字拆行均废弃；全组手动断行+当场 90s 帧参考），tags 9 位人工过目，15:19Z 试传 21566 → timer `zaibo50-upload-retry` 7/15 06:10Z（`/opt/bilive/autoslice/upload_zaibo50.py`，全链 postpublish）。
+- **权威保向铁律**（Ivan：「X被误听成Y」≠「所有Y=X」）：一揽子 mujica→梦限大 裁定文档从 main 删除（`b975dc4`）、沙箱副本 .disputed 隔离；无文档时管线回落音频逐处仲裁——本轮实听裁定她真说 Mujica，弹幕「母鸡卡」正确保留 ✓。memory `lidousha-entity-authority-directional`。
+- **梦限大四层卡点全破**：cue31 多角色同句（另一线 alias_surfaces 修复经重跑验证生效）；坏裁定文档（上）；runner 例行维护地平线默认 2026-07-11 不唤醒 7/10（需 `AUTOSLICE_AUTOMATIC_MAINTENANCE_NOT_BEFORE` 放行）；**同槽矛盾裁定**（恋死→恋青→练死，两个"确信"听证互斥，后写者赢导致误听面上稿）→ 和解器 `reconcile_contradictory_entity_repairs` + 过期发现守卫（`a543178`，回退最早 before+披露+终稿门跳过；测试 3 项，全量 1184 passed）。
+- **API 收编重构**（`02be007`）：`src/autoslice/bilibili_member_api.py`（cookie 双形态/vupre 端点/cover-up 编码/edit 克隆字段/20080 幂等/21566 语义全部固化，可注入 transport 离线测试 6 项）+ CLI `scripts/bili_archive_tool.py`（view/edit/replace/season-add）+ `scripts/run_eval_base_once.sh`（eval 沙箱 env 咒语权威，REC_ROOT 变量名坑写死在脚本里）。
+
+### 进行中（含后台进程）
+
+- **redo-20260710 沙箱 runner 第五轮在跑**（19:28Z 起 producing auto_190017_1068_1217；和解器已同步进沙箱 repo）。本地看门狗盯交付。出货后：目检封面 → `bili_archive_tool.py replace BV1JXNk6vEeV` 零配额换源 → 台账清零。
+- `xinyi-upload-retry` 7/15 05:55Z、`zaibo50-upload-retry` 7/15 06:10Z；成功后各自补 tag/入集（zaibo50 脚本自带），证据拉回 commit。
+
+### 阻塞
+
+- （无新增；desc 多行 source URL 仍待 Ivan 裁定，见上一节。）
+
+### 下一步
+
+1. 梦限大出货 → 换源 → `docs/pending-provisional-uploads-20260713.md` #1 打钩（10/10 清零）。
+2. free 上一次性脚本群（edit_replace_20260714/cover_only_edit/bandfan_*…）弃用改点 `bili_archive_tool.py`；authorized_upload.py 的 view/season 代码迁移到新模块（等明早两单发完再动上传路径）。
+3. TODO(homophone)：同音候选对（练死/恋死）不可听裁 → 直接披露不仲裁（pypinyin 本地已有，free 待确认）。
+4. 下一个重构大目标：`free_session_autoslice.py`（7600 行）按 状态机/歌道/谈话道/维护 拆分——需在无在飞跑批的窗口做，全量测试护航。
 
 ### 目标
 
