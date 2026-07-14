@@ -33,7 +33,8 @@
 - 歌切《怎么办》(7/10)：**缺封面 png**,且同样需无片头重烧后再谈上传。
 - ~~养熊猫游戏~~：✅ 已产出并于 7/14 05:41Z 上传 BV1uGNR6HEyf(state=0,审计通过)。
 - **7/14 已上传歌切**:《暗恋是一个人的事》BV1TeN967EUp、《小幸运》BV18eN967ENy(Ivan 点名放行,前提「不要片头、封面标题放大」均满足;审计会话已把源规范化为 canonical 无片头字节并换源,state=0)。裸标题+小李歌唱合集 ✓。
-- **7/14 审计全量结论与事故复盘见 `docs/audit-uploads-20260714.md`**(临去彩排重复稿已删、nvxing 封面专名拆行已编辑修复、xinyi 09:15Z timer 补 tags+自动入集)。
+- **7/14 审计全量结论与事故复盘见 `docs/audit-uploads-20260714.md`**(临去彩排重复稿已删、nvxing 封面专名拆行已编辑修复)。
+- **xinyi「展示新衣服」待发**:09:15Z 触发吃 21566 配额拒 → timer 重挂 **7/15 05:55Z**(`xinyi-upload-retry`,脚本 `upload_staging/20260714/xinyi/upload_xinyi.py`,含 tags 10 位+自动入集小李切片+公开验证+证据);成功后把 staging 里 `xinyi_postpublish.json` 等证据拉回 `reports/lidousha-uploads-20260714/` 补 commit。
 
 ## 通用改进（不逐条列）
 

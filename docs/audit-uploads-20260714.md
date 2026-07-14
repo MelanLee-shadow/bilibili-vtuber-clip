@@ -50,6 +50,13 @@
 
 00:2x/05:59Z 的 manifest 授权原话显示:Ivan 在「歌切全线暂停」后**点名放行**了《暗恋是一个人的事》《小幸运》两首(带前提),压轴为 05:40 批漏传的补发——三条均有明确授权链;02:00Z 的旧歌切补传 timer 未触发且已消失 ✓。
 
+## 收口终态(09:4xZ 复核)
+
+- nvxing BV1SGNR6nEGF:封面编辑过审,**state=0**,线上封面=原子安全新版(d0dd7ee3…)✓。
+- 两歌切 BV1TeN967EUp/BV18eN967ENy:换源后稳定 **state=0** ✓。
+- xinyi 09:15Z timer 触发但再吃 **21566 配额拒**(rc=1,未消耗配额)。按当日实测滚动 ~24h 窗(10 帽,且今日 8 新稿+1 删稿+2 换源 append 疑似均占窗),已把 timer 重挂 **2026-07-15 05:55Z**(05:40 批出窗后),脚本挪至持久路径 `upload_staging/20260714/xinyi/upload_xinyi.py`(含 tags+postpublish 自动化)。发布成功后 postpublish 证据自动落 staging,下一个会话拉回补 commit 即可。
+- **配额计数疑点(记录待证)**:09:15Z 时按"仅新稿"口径 trailing 窗应只有 9 条仍被拒——换源 append 的分P上传可能也计入投稿频率窗。若 7/15 05:55Z 成功而中途无其他动作,即为佐证;编辑元数据(swap 提交/封面/tag)已证不占。
+
 ## 证据
 
 `reports/lidousha-uploads-20260714/`:18×`*.public_verify.json`(含换源后终态)、9×staging `*.upload_manifest.json`、2×swap manifest、nvxing 封面编辑结果、当日 ledger 切片、重烧/换源日志。xinyi 发布后其 postpublish 证据由 timer 脚本落 staging,下轮会话拉回补 commit。
