@@ -284,7 +284,22 @@ def build_local_audio_entity_verifier(
                     and cached.get("source_media_sha256") == source_sha256
                     and cached.get("audio_clip_sha256") == _sha256(audio_path)
                 ):
-                    return cached["verdict"]
+                    cached_verdict = cached["verdict"]
+                    # 供应商级失败绝不缓存复用（2026-07-14 配额期中毒实证：
+                    # 断供期的 PROVIDER_FAILED 判决被 manifest 固化，之后每次
+                    # 重试都命中缓存不再真听）。RESOLVED 与真·声学 UNCERTAIN
+                    # 可复用；供应商/校验类失败必须重听。
+                    if not (
+                        isinstance(cached_verdict, dict)
+                        and cached_verdict.get("reason_code")
+                        in {
+                            "ENTITY_AUDIO_PROVIDER_FAILED",
+                            "ENTITY_VERIFIER_ERROR",
+                            "ENTITY_AUDIO_RESPONSE_INVALID",
+                            "ENTITY_AUDIO_CROP_FAILED",
+                        }
+                    ):
+                        return cached_verdict
             except (OSError, ValueError, KeyError, TypeError):
                 pass
 

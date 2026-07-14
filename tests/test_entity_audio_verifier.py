@@ -164,6 +164,55 @@ def _isolate_policy_env(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
 
 
+def test_provider_failed_verdict_is_never_served_from_cache(tmp_path, monkeypatch):
+    """2026-07-14 配额期中毒实证：断供期的 PROVIDER_FAILED 判决被 manifest
+    固化后，重试必须重听而不是永远命中缓存。"""
+    _isolate_policy_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+
+    api_calls = []
+
+    def failing_urlopen(request, timeout=0):
+        api_calls.append(1)
+        raise TimeoutError("quota outage")
+
+    monkeypatch.setattr(verifier_module.urllib.request, "urlopen", failing_urlopen)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-10",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    first = verify(_request())
+    assert first["reason_code"] == "ENTITY_AUDIO_PROVIDER_FAILED"
+    assert api_calls  # 断供也确实尝试过
+
+    # 供应商恢复：同一请求必须重听并 RESOLVED，而不是回放缓存的失败判决
+    monkeypatch.setattr(
+        verifier_module.urllib.request,
+        "urlopen",
+        lambda request, timeout=0: _FakeApiResponse(_resolved_observation()),
+    )
+    second = verify(_request())
+    assert second["status"] == "RESOLVED", second
+    assert second["canonical_entity"] == "梦限大"
+
+    # RESOLVED 判决可以缓存复用：第三次不再发起任何新调用
+    calls_before = len(api_calls)
+    monkeypatch.setattr(
+        verifier_module.urllib.request,
+        "urlopen",
+        lambda request, timeout=0: (_ for _ in ()).throw(AssertionError("must hit cache")),
+    )
+    third = verify(_request())
+    assert third["status"] == "RESOLVED"
+    assert len(api_calls) == calls_before
+
+
 def test_agy_quota_falls_back_to_gemini_api_free_key(tmp_path, monkeypatch):
     """Ivan 2026-07-14：付费/免费 API key 都能裁决音频——AGY 配额断供必须
     自动切到 Gemini API 直连，验收逻辑与 AGY 通道完全一致。"""
