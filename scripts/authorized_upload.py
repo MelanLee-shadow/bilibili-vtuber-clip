@@ -62,6 +62,19 @@ MAX_TAGS = 12
 MAX_TAG_CHARS = 20
 
 
+def sidecar_record_path(video: Path) -> Path:
+    """Delivered clips ship a `<stem>.record.json` next to `<stem>.mp4`.
+
+    Stems may contain dots, so strip only a known media suffix instead of
+    Path.with_suffix (which would eat everything after the last dot).
+    """
+    name = video.name
+    for ext in (".mp4", ".flv", ".mkv"):
+        if name.endswith(ext):
+            return video.parent / (name[: -len(ext)] + ".record.json")
+    return video.parent / (name + ".record.json")
+
+
 def validate_tags(tags: list[str]) -> list[str]:
     """Return problems; empty list means the tag list is manifest-worthy."""
     problems: list[str] = []
@@ -96,12 +109,33 @@ def make_manifest(args: argparse.Namespace) -> int:
         print("REFUSE: --title and --quote (Ivan's authorization words) are required non-empty", file=sys.stderr)
         return 2
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    tags_source = "cli" if tags else None
+    if not tags and not args.no_tags:
+        # Auto-pickup (Ivan 2026-07-13): produce_slice_package freezes generated
+        # tags into the delivered <stem>.record.json; make-manifest reads them so
+        # the unattended chain needs no hand-typed tag line. CLI --tags overrides;
+        # --no-tags opts out; a video without a record sidecar just gets no tags
+        # (uploader falls back to base-4).
+        record_sidecar = sidecar_record_path(video)
+        if record_sidecar.is_file():
+            try:
+                sidecar = json.loads(record_sidecar.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                print(f"REFUSE: tag sidecar unreadable: {record_sidecar} ({exc}); pass --tags or --no-tags", file=sys.stderr)
+                return 2
+            upload_tags = sidecar.get("upload_tags") or {}
+            if str(upload_tags.get("status") or "").startswith("OK") and upload_tags.get("final_tags"):
+                tags = [str(t).strip() for t in upload_tags["final_tags"]]
+                tags_source = f"record.json:{upload_tags.get('engine') or '?'}"
     if tags:
         tag_problems = validate_tags(tags)
         if tag_problems:
             for problem in tag_problems:
                 print(f"REFUSE: {problem}", file=sys.stderr)
             return 2
+        print(f"tags: {len(tags)} from {tags_source}", file=sys.stderr)
+    else:
+        print("tags: none (uploader falls back to base tags)", file=sys.stderr)
     video_sha = sha256_file(video)
     manifest = {
         "manifest_version": 1,
@@ -114,6 +148,7 @@ def make_manifest(args: argparse.Namespace) -> int:
     }
     if tags:
         manifest["tags"] = tags
+        manifest["tags_source"] = tags_source
     out = Path(args.out) if args.out else video.with_suffix(".upload_manifest.json")
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"manifest": str(out), "artifact_id": manifest["artifact_id"]}, ensure_ascii=False))
@@ -423,8 +458,10 @@ def main(argv: list[str] | None = None) -> int:
         "--tags",
         default="",
         help="comma-joined FULL tag line (base tags included), e.g. from scripts/suggest_upload_tags.py; "
-        "optional — without it the uploader falls back to the base-4 line",
+        "omitted → auto-pickup from the video's sibling <stem>.record.json (upload_tags), "
+        "else no tags and the uploader falls back to the base-4 line",
     )
+    mk.add_argument("--no-tags", action="store_true", help="skip record.json tag auto-pickup")
     mk.add_argument("--out", default=None)
     mk.set_defaults(func=make_manifest)
 

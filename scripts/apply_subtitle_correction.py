@@ -29,6 +29,7 @@ from scripts.run_auto_review_shadow_pipeline import _burn_preview_subtitles  # n
 from scripts.run_auto_review_shadow_pipeline import _sha256  # noqa: E402
 from scripts.produce_slice_package import run_speaker_finalizer  # noqa: E402
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
+from scripts.suggest_upload_tags import generate_upload_tags  # noqa: E402
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro  # noqa: E402
 
 BASE = Path("/opt/bilive/autoslice")
@@ -189,6 +190,12 @@ def main(argv=None) -> int:
             "burned_preview": burned_value,
         }
     )
+    # 字幕文本变了 → tag 必须按修正后的成品字幕重算(Ivan 2026-07-13 铁律);
+    # fail-safe: 重算失败记 FAILED, 不阻塞修正交付。已发布稿件的 B 站侧 tag
+    # 同步走 bili_update_tags.py 编辑, 不在本脚本职责内。
+    staging_title = str(((record.get("publish_staging") or {}).get("title")) or "")
+    if staging_title:
+        updated["upload_tags"] = generate_upload_tags(staging_title, srt_path, timeout=180.0)
     record_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     shutil.copy2(burned, args.delivery)
     sidecars = [

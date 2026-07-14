@@ -65,6 +65,7 @@ from scripts.run_full_session_selector_cpa_shadow import (
 from scripts.apply_subtitle_text_overrides import apply_document as apply_text_override_document
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
 from scripts.gemini_slice_jingting import approved_timely_terms
+from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
 from src.autoslice.chat_authority import (
     ChatEvidence,
@@ -2440,6 +2441,15 @@ def main(argv: list[str] | None = None) -> int:
         selection_hook=str(spec.get("selection_hook") or ""),
     )
     staging = record.get("publish_staging") or {}
+    # 7. Upload tags (Ivan 2026-07-13): generated at package time against the
+    # FINAL title + FINAL delivered subtitles (tag 必须按成品字幕出), frozen
+    # into the record so make-manifest picks them up without re-running any
+    # model. Fail-safe by contract: generate_upload_tags never raises; a tag
+    # failure records status=FAILED and the uploader falls back to base tags.
+    if not str(staging.get("title_authority_status") or "").startswith("UNRESOLVED"):
+        record["upload_tags"] = generate_upload_tags(
+            str(staging.get("title") or given_title or cid), subtitle_path, timeout=180.0
+        )
     record_path = recut_dir / f"{cid}.record.json"
     with record_path.open("w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2, sort_keys=True)

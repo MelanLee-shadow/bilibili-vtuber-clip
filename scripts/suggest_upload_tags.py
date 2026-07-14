@@ -244,12 +244,16 @@ def _valid_tag(tag: str) -> bool:
     return not any(ch in tag for ch in ",，\n\t")
 
 
-def llm_content_tags(title: str, srt_text: str, existing: list[str], timeout: float) -> tuple[list[dict], list[str]]:
+def llm_content_tags(
+    title: str, srt_text: str, existing: list[str], timeout: float, llm_call=None
+) -> tuple[list[dict], list[str]]:
     """Returns (content_tags, warnings); LLM failure degrades to ([], [reason])."""
     if not srt_text.strip():
         srt_text = "（本条没有字幕存档，只有标题。只在标题本身能支撑时出词，出不了就给空列表。）"
     prompt = CONTENT_PROMPT.format(existing_tags="、".join(existing), title=title, srt_text=srt_text)
-    call = build_llm_call(LlmConfig(transport="command", command_template=CPA_COMMAND, timeout_seconds=timeout))
+    call = llm_call or build_llm_call(
+        LlmConfig(transport="command", command_template=CPA_COMMAND, timeout_seconds=timeout)
+    )
     try:
         completion = call(prompt)
         payload = extract_json_object(completion)
@@ -308,6 +312,7 @@ def suggest_for_slice(
     timeout: float = 240.0,
     suppress_tags: dict[str, str] | None = None,
     add_tags: dict[str, str] | None = None,
+    llm_call=None,
 ) -> dict:
     """suppress_tags/add_tags: 人工裁定通道 {tag: 理由}。
 
@@ -333,7 +338,7 @@ def suggest_for_slice(
     content: list[dict] = []
     warnings: list[str] = []
     if use_llm:
-        content, warnings = llm_content_tags(title, srt_text, existing, timeout)
+        content, warnings = llm_content_tags(title, srt_text, existing, timeout, llm_call=llm_call)
     for tag in overridden:
         warnings.append(f"人工裁定移除: {tag!r} — {suppress_tags[tag]}")
     final = merge_tags(BASE_TAGS, proper, content, max_tags)
@@ -362,6 +367,52 @@ def suggest_for_slice(
         "overflow_tags": [h.tag for h in proper if h.tag not in final]
         + [c["tag"] for c in content if c["tag"] not in final],
     }
+
+
+ENGINE_VERSION = "suggest-upload-tags.v1"
+
+
+def generate_upload_tags(
+    title: str,
+    srt_path: Path | None,
+    *,
+    use_llm: bool = True,
+    llm_call=None,
+    max_tags: int = MAX_TAGS_DEFAULT,
+    timeout: float = 240.0,
+) -> dict:
+    """流水线入口(produce_slice_package / apply_subtitle_correction 用)。
+
+    针对成品标题+成品字幕生成 record.json 可存的 tag 块。**fail-safe, 永不
+    raise**: tag 是增强项, 任何失败都不许阻塞交付 — 失败返回 status=FAILED
+    并带原因, 上传侧回退基础位。status:
+      OK        — 专名层+LLM 内容层齐全
+      OK_NO_LLM — LLM 内容层失败, 仅专名层(降级可用)
+      FAILED    — 引擎级失败, final_tags 为空
+    """
+    try:
+        result = suggest_for_slice(
+            "package", title, srt_path, use_llm=use_llm, max_tags=max_tags,
+            timeout=timeout, llm_call=llm_call,
+        )
+        degraded = any("LLM内容层失败" in w for w in result["warnings"])
+        return {
+            "engine": ENGINE_VERSION,
+            "status": "OK_NO_LLM" if (use_llm and degraded) else "OK",
+            "final_tags": result["final_tags"],
+            "final_tag_line": result["final_tag_line"],
+            "proper_noun_tags": result["proper_noun_tags"],
+            "content_tags": result["content_tags"],
+            "warnings": result["warnings"],
+        }
+    except Exception as exc:  # noqa: BLE001 — 交付路径上的兜底边界
+        return {
+            "engine": ENGINE_VERSION,
+            "status": "FAILED",
+            "error": f"{type(exc).__name__}: {exc}",
+            "final_tags": [],
+            "final_tag_line": "",
+        }
 
 
 def render_markdown(results: list[dict]) -> str:

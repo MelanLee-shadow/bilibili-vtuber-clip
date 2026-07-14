@@ -100,6 +100,59 @@ def test_verify_refuses_manifest_with_tampered_tags(tmp_path, capsys):
     assert au.main(["verify", "--manifest", str(manifest)]) == 2
 
 
+def _write_record_sidecar(video, tags, status="OK"):
+    record = video.parent / (video.name[: -len(".mp4")] + ".record.json")
+    record.write_text(json.dumps({
+        "upload_tags": {"engine": "suggest-upload-tags.v1", "status": status, "final_tags": tags},
+    }, ensure_ascii=False), encoding="utf-8")
+    return record
+
+
+def test_make_manifest_auto_picks_tags_from_record_sidecar(tmp_path):
+    video, cover = tmp_path / "clip.mp4", tmp_path / "c.png"
+    video.write_bytes(b"v")
+    cover.write_bytes(b"c")
+    _write_record_sidecar(video, ["李豆沙", "虚拟主播", "侄女", "百合"])
+    manifest = tmp_path / "m.json"
+    assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
+                    "--title", "t", "--quote", "q", "--out", str(manifest)]) == 0
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert data["tags"] == ["李豆沙", "虚拟主播", "侄女", "百合"]
+    assert data["tags_source"].startswith("record.json:")
+
+
+def test_make_manifest_cli_tags_override_record_and_no_tags_skips(tmp_path):
+    video, cover = tmp_path / "clip.mp4", tmp_path / "c.png"
+    video.write_bytes(b"v")
+    cover.write_bytes(b"c")
+    _write_record_sidecar(video, ["李豆沙", "记录里的"])
+    m1 = tmp_path / "m1.json"
+    assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
+                    "--title", "t", "--quote", "q", "--tags", "李豆沙,手给的", "--out", str(m1)]) == 0
+    assert json.loads(m1.read_text())["tags"] == ["李豆沙", "手给的"]
+    m2 = tmp_path / "m2.json"
+    assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
+                    "--title", "t", "--quote", "q", "--no-tags", "--out", str(m2)]) == 0
+    assert "tags" not in json.loads(m2.read_text())
+
+
+def test_make_manifest_ignores_failed_tag_record_and_refuses_unreadable(tmp_path, capsys):
+    video, cover = tmp_path / "clip.mp4", tmp_path / "c.png"
+    video.write_bytes(b"v")
+    cover.write_bytes(b"c")
+    record = _write_record_sidecar(video, [], status="FAILED")
+    m1 = tmp_path / "m1.json"
+    assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
+                    "--title", "t", "--quote", "q", "--out", str(m1)]) == 0
+    assert "tags" not in json.loads(m1.read_text())  # FAILED 记录 → 无tag, 基础位回退
+    record.write_text("{not-json", encoding="utf-8")
+    m2 = tmp_path / "m2.json"
+    rc = au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
+                  "--title", "t", "--quote", "q", "--out", str(m2)])
+    assert rc == 2  # 坏 sidecar 必须响, 不许静默无tag
+    assert "unreadable" in capsys.readouterr().err
+
+
 def test_upload_passes_manifest_tag_line_to_uploader(tmp_path, capsys):
     rc, manifest = _mk_with_tags(tmp_path, "李豆沙,虚拟主播,侄女")
     assert rc == 0
