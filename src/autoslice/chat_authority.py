@@ -97,6 +97,10 @@ class ReferentGroup:
     # 已知误听面本身可能是真话（「留下来」「理论上」），音频拿不准时保留
     # 原文、绝不阻塞；只有音频确证听到某 canonical 才改写。
     uncertain_keep_surfaces: tuple[str, ...] = ()
+    # 别名组标记（2026-07-14 梦限大 cue31 案）：话题图动态组的 surface 全是
+    # 正当别名（海铃/八幡海铃），不含误听面——多槽位命中=一句提了多个角色，
+    # 无可改写直接放行；静态组不打此标（母鸡卡类误听面多槽仍歧义熔断）。
+    alias_surfaces: bool = False
 
 
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
@@ -1792,7 +1796,7 @@ def apply_audio_entity_verification(
             if not occurrences:
                 continue
             if len(occurrences) > 1:
-                if all(
+                if group.alias_surfaces or all(
                     str(row["surface"]).lower() == str(row["canonical"]).lower()
                     for row in occurrences
                 ):
@@ -1811,6 +1815,9 @@ def apply_audio_entity_verification(
                             "matched_start_ms": cue.start_ms,
                             "matched_end_ms": cue.end_ms,
                             "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
+                            # 取证（2026-07-14）：无面无由的歧义行没法排障。
+                            "surfaces": [str(row["surface"]) for row in occurrences],
+                            "canonicals": [str(row["canonical"]) for row in occurrences],
                         }
                     )
                 continue

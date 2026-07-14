@@ -610,6 +610,9 @@ def dynamic_referent_groups(
                     "the graph only to repair a wrong/non-Chinese surface."
                 ),
                 audio_verify_all_surfaces=True,
+                # 图组的面全是正当别名(海铃/八幡海铃)不含误听面——多角色同句
+                # 无可改写直接放行(2026-07-14 梦限大 cue31 案)。
+                alias_surfaces=True,
             )
         )
     return groups

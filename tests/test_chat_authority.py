@@ -480,6 +480,35 @@ def test_same_group_double_canonical_passes_without_keep_membership():
     assert audit["confirmed"][0]["reason_code"] == "ENTITY_ALREADY_CANONICAL_EVERYWHERE"
 
 
+def test_alias_group_multi_character_cue_passes_without_arbitration():
+    """2026-07-14 梦限大 cue31 案：「海铃的假哭和那个祥子的」命中话题图组
+    两个角色别名（surface≠全名 canonical 是图组的构造常态）——别名组多槽位
+    =一句提多个角色，无可改写直接放行；静态误听面组不受此宽免。"""
+    graph_group = ReferentGroup(
+        (
+            ReferentEntity("八幡海铃", ("八幡海铃", "海铃"), ("yahata umiri",)),
+            ReferentEntity("丰川祥子", ("丰川祥子", "祥子"), ("togawa sakiko",)),
+        ),
+        audio_verify_all_surfaces=True,
+        alias_surfaces=True,
+    )
+    calls: list[int] = []
+
+    def counting(request):
+        calls.append(1)
+        return None
+
+    source = _srt("然后海铃的假哭和那个祥子的")
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[graph_group], entity_verifier=counting
+    )
+
+    assert output == source
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert audit["confirmed"][0]["reason_code"] == "ENTITY_ALREADY_CANONICAL_EVERYWHERE"
+    assert calls == []
+
+
 def test_same_group_multi_occurrence_with_mishear_still_blocks():
     source = _srt("母鸡卡还是梦限大我分不清")
 
