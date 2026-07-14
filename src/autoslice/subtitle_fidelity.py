@@ -141,41 +141,12 @@ def _sanctioned_cue_equal(
 
 
 def sanctioned_respell_pairs() -> frozenset[tuple[str, str]]:
-    """白名单规范表汇总（表本身即证据；加载失败即空集，守卫只会更严）。"""
+    """白名单规范表汇总——委托唯一加载源 term_authority（2026-07-14 屎山
+    整改：此前与审片员各自读表，两把尺漂移正是「立语→俚语」险案的病根）。"""
 
-    pairs: set[tuple[str, str]] = set()
-    try:
-        from src.autoslice.chat_authority import (
-            _CODE_SWITCH_CANONICAL_SURFACES,
-            _HARD_MEME_CANONICAL_SURFACES,
-            load_referent_groups,
-        )
+    from src.autoslice.term_authority import respell_pairs
 
-        pairs.update(_CODE_SWITCH_CANONICAL_SURFACES)
-        pairs.update(_HARD_MEME_CANONICAL_SURFACES)
-        asset = Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
-        for group in load_referent_groups(asset):
-            for entity in group.entities:
-                for surface in entity.surfaces:
-                    if surface != entity.canonical:
-                        pairs.add((surface, entity.canonical))
-    except Exception:
-        pass
-    try:
-        from scripts.gemini_slice_jingting import approved_timely_terms
-
-        for record in approved_timely_terms():
-            canonical = str(record.get("canonical") or "")
-            display = str(record.get("display_name") or "")
-            for source_key in ("aliases", "confusables"):
-                for raw in record.get(source_key) or []:
-                    surface = str(raw)
-                    for target in (canonical, display):
-                        if surface and target and surface != target:
-                            pairs.add((surface, target))
-    except Exception:
-        pass
-    return frozenset(pairs)
+    return respell_pairs()
 
 
 def _span_verdict(

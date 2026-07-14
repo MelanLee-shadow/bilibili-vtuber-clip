@@ -35,12 +35,13 @@ _ALREADY_TITLED_RX = re.compile(r"[《》]")
 _CLAUSE_BREAK_RX = re.compile(r"[。！？!?，,～~]")
 _FOLD_STRIP_RX = re.compile(r"[\s·・.]+")
 # Small confusable fold table for common ASR homophone slips on stylized
-# song-name syllables (啦/拉, etc).  pypinyin is NOT installed in this repo
-# (`python3 -c "import pypinyin"` → ModuleNotFoundError, 2026-07-13 check) and
-# there is no requirements/setup manifest to add it to, so pinyin-without-tones
-# similarity is not used here — this fold table plus char-level
-# SequenceMatcher is the whole similarity model, matching Ivan's
-# no-new-dependency constraint.
+# song-name syllables (啦/拉, etc).  2026-07-14 起 pypinyin 已装（守卫/审片员
+# 同用，可选依赖），作为副路：折叠表+字符 SequenceMatcher 不过阈时，去声调
+# 音节序列相等即接受；折叠表保持第一优先，旧回归行为不变。
+try:
+    from pypinyin import lazy_pinyin as _lazy_pinyin
+except Exception:  # pragma: no cover - 依赖缺失环境退回纯折叠表
+    _lazy_pinyin = None
 _CONFUSABLE_FOLD = {
     "啦": "拉",
     "咯": "喽",
@@ -79,9 +80,23 @@ def _best_suffix_match(clause: str, candidate_folded: str) -> tuple[int, float]:
         if not window.strip():
             continue
         ratio = SequenceMatcher(None, fold_for_similarity(window), candidate_folded).ratio()
+        if (
+            ratio < 1.0
+            and _lazy_pinyin is not None
+            and _toneless(fold_for_similarity(window)) == _toneless(candidate_folded)
+        ):
+            # 拼音副路（2026-07-14）：折叠表没覆盖的同音写法（如 爱啦啦 vs
+            # 爱辣辣）按去声调音节等价直接满分——同音即同名。
+            ratio = 1.0
         if ratio > best_ratio:
             best_start, best_ratio = start, ratio
     return best_start, best_ratio
+
+
+def _toneless(value: str) -> tuple[str, ...]:
+    if not value or _lazy_pinyin is None:
+        return ()
+    return tuple(s.lower() for s in _lazy_pinyin(value) if s)
 
 
 def _render_srt(cues: Sequence[SrtCue], texts: Sequence[str]) -> str:

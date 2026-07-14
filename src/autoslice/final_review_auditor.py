@@ -31,52 +31,12 @@ _GLOSSARY_TERM_RX = re.compile(r"^[-*]\s*(?:梗词：)?\*{0,2}([^：:（(＝=，
 
 
 def protected_terms() -> frozenset[str]:
-    """钦定词面集合：审片员的同音自动改写绝不允许碰这些（2026-07-14 抽查
-    实证：审片员想把梗词「立语」同音改成「俚语」——词典权威高于审片直觉）。
+    """钦定词面集合——委托唯一加载源 term_authority（见该模块 docstring）。"""
 
-    来源：硬梗表/代码切换表两侧、混淆组全部 canonical+surface、时效词
-    canonical/display/alias/confusable、glossary.txt 行首术语。加载失败只会
-    让集合变小（更少保护），绝不抛错。
-    """
+    from src.autoslice.term_authority import protected_terms as _load
 
-    terms: set[str] = set()
-    try:
-        from src.autoslice.chat_authority import (
-            _CODE_SWITCH_CANONICAL_SURFACES,
-            _HARD_MEME_CANONICAL_SURFACES,
-            load_referent_groups,
-        )
+    return _load()
 
-        for pair in (*_CODE_SWITCH_CANONICAL_SURFACES, *_HARD_MEME_CANONICAL_SURFACES):
-            terms.update(pair)
-        asset = Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
-        for group in load_referent_groups(asset):
-            for entity in group.entities:
-                terms.add(entity.canonical)
-                terms.update(entity.surfaces)
-    except Exception:
-        pass
-    try:
-        from scripts.gemini_slice_jingting import approved_timely_terms
-
-        for record in approved_timely_terms():
-            for key in ("canonical", "display_name"):
-                if record.get(key):
-                    terms.add(str(record[key]))
-            for key in ("aliases", "confusables"):
-                terms.update(str(v) for v in record.get(key) or [])
-    except Exception:
-        pass
-    try:
-        from scripts.gemini_slice_jingting import subtitle_principles, glossary as _glossary
-
-        for line in _glossary().splitlines():
-            match = _GLOSSARY_TERM_RX.match(line.strip())
-            if match:
-                terms.add(match.group(1).strip("*"))
-    except Exception:
-        pass
-    return frozenset(t for t in terms if t and len(t) >= 2)
 
 _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成品切片的最终字幕（观众将看到的原文）。
 你的任务是**只挑出可疑处，绝不改写**。可疑类别：

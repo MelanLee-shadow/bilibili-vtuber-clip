@@ -249,6 +249,7 @@ def boundary_audit(spans, *, start_ms: int, cut_ms: int, start_snapped: bool, en
     elif not end_snapped:
         verdict = "end_not_on_sentence_boundary"
     return {
+        "schema_version": "boundary-audit.v1",
         "start_on_sentence_boundary": start_snapped,
         "end_on_sentence_boundary": end_snapped,
         "end_cut_inside_speech_island": bool(crossing),
