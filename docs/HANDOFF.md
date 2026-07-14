@@ -1248,3 +1248,23 @@ Ivan 终句两案：①「删错了吧…字幕里的但是没有改成大家」
 ### 下一步
 
 - 树净后生产部署至 34a458a；审片员 review-flags 日报聚合并入 runner（现为工件级）；抽查发现 10 条给 Ivan 裁定（做0.4 flag 证明 7/12 新片文本正确且 glossary 注入后不再误报）。
+
+## 2026-07-14 晨：自审流程屎山盘点与整改（Ivan 点名）
+
+盘点（探查代理全库扫描）：**32 层自审/验证/门机制，5 类症状**——(a) 谓词复制：文本归一化 9 副本、sha256 样板 15 副本、同音/混淆判定 3 套不互通、词表加载器 2 份近乎复制；(b) 同一字幕最少被 5-6 个 LLM pass 扫（AGY refine/CPA reconcile/代词/审片员/语义QA+定向实体音频）；(c) 死代码：发布门 schema 名不符且无生产调用者、agy_fresh substrate 绕过忠实守卫、审片员可整层关闭；(d) schema_version 整数 vs 字符串、lidousha- 前缀随机、boundary_audit 无戳用 verdict、status 词汇表分裂 9 种、materialized-recut v1/v2 双常量(实为刻意分叉：歌v2/谈话v1，有测试钉)；(e) UNCERTAIN 落地 ≥4 种互不相同。
+
+**Tier-1 已当场整改（ef5eff0，生产已部署，五 BASE 已铺）**：
+- `term_authority.py` 词表权威唯一加载源（守卫 sanctioned_respell_pairs 与审片员 protected_terms 改薄壳委托——两把尺漂移是立语→俚语险案病根）；
+- song_name_pin「pypinyin 未安装」过时前提修正 + 去声调音节等价副路（折叠表优先，回归不变）；
+- boundary_audit 补 schema_version 戳。
+
+**Tier-2 白天执行清单（按险值排序，file:line 见盘点原文）**：
+1. agy_fresh substrate 绕守卫缺口：确认该 substrate 是否仍需保留（生产默认 aggregate）；保留则接守卫，废弃则删分支。
+2. 归一化 9 副本收敛至 chat_authority.normalize_chat_text / subtitle_fidelity._strip_non_text 两个语义（列表：huozi_luanshua:93,100 / term_lexicon:37 / song_repair:415 / subtitle_timing_qa:211 / run_auto:2242 / visual_song_discovery:456）。
+3. sha256 样板 15 副本 → 单 util（列表见盘点）。
+4. schema_version 整数→字符串统一（双读兼容过渡：chat_authority:562,671 / apply_subtitle_text_overrides:101,165 / apply_speaker_turn_overrides:90,304,428）。
+5. LLM pass 收敛评估：代词 TA pass 并入 reconcile prompt 的质量对照实验；审片员与 CPA 语义 QA 的职责边界（前者字幕面/后者语义+视频面，暂并存）。
+6. 发布门 auto_review.is_publish_gate_satisfied 与磁盘 schema 名对齐（上传线神圣，动前须 Ivan 点头）。
+7. 命名：materialized-recut 双常量改名（TALK_/SONG_ 前缀）；lidousha- 前缀规范。
+
+**其余现场态**：付费 key 已恢复(Ivan)，梦限大/乐队番提前手动触发续跑中；纹熊→kmx 修正重烧中；审片员对五年之约的 4 条新发现（罗莎=豆沙?/年轻=黏人?/拉弓=拉钩?/小李小嗯）等 Ivan 裁定后批量修。
