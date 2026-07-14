@@ -1206,3 +1206,9 @@ Ivan 终句两案：①「删错了吧…字幕里的但是没有改成大家」
 - 7/13 全天 redo：等下播+过午夜建 BASE（23:02 段仍在录）；7/13 直女枚举标题必须按 A 规则出 侄女。
 - 3D/乐队番/两复活收敛后归位生产 canonical 面+本地；新衣服 clip 在 81e6d27 下带 `AUTOSLICE_COVER_REF_MS=82000` 重出（睡衣/素颜与戴眼罩复读现有机制可自动覆盖）。
 - timely_term_crawler 扩源（直播圈梗）排入专名工作线；付费例外回填收敛后从生产 crontab 移除义务不变。
+
+### 2026-07-14 00:0x 增补：实体裁决 Gemini API 直连兜底（Ivan 纠正）
+
+- Ivan 纠正成立：付费/免费 Gemini API key 本来就能裁决音频（gemini-3.5-flash 多模态），AGY 订阅只是载体。`entity_audio_verifier` 现为双通道：AGY 失败(异常/rc!=0/坏输出)→裁剪片转 16k mono mp3 → API generateContent；免费 3 key 先试，付费走 gemini_backup_policy（strike≥3 或 DEV_EXCEPTION、日帽、无帐不付、逐笔入帐 purpose=entity_audio_verdict）。验收逻辑双通道同源；工件只落 provider/key_tier/失败类别。commit 2099fb7，生产已部署（DEPLOYED_COMMIT=2099fb7）。
+- 四个在跑 eval BASE（panda/redo-0710/0711/0712）已热补该单文件（与快照清单有偏差，属 Ivan 指示下的韧性优先；下个快照自然收敛）。00:36 redo-0710 恢复与 00:40 乐队番重试将同时具备 AGY(已重置)与 API 兜底两条路。
+- redo-0711 第 5 条「线下见面临走前粉丝像要放大招」已入生产+本地（7/11 现 10 谈话+2 歌）。
