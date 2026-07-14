@@ -305,13 +305,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Resolve the mandatory delivery intro before any expensive work: an
-    # enabled policy with unavailable media must fail the whole attempt.
-    branding_intro = (
-        require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest)
-        if args.branding_intro_manifest is not None
-        else None
-    )
+    # Ivan 2026-07-14: 歌切一律不加片头，直接进歌 —— the branding intro is a
+    # talk-lane mandate only. The manifest argument stays accepted for CLI
+    # compatibility but is intentionally ignored in this song lane.
+    branding_intro = None
+    if args.branding_intro_manifest is not None:
+        print("branding intro manifest ignored: songs ship without the intro (Ivan 2026-07-14)")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cues = _parse_srt(args.source_srt)
