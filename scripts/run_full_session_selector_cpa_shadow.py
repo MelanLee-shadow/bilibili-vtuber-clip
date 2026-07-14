@@ -17,6 +17,10 @@ if str(ROOT) not in sys.path:
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult, _parse_srt, run_shadow_pipeline
 from src.autoslice.branding_intro import require_branding_intro
+from src.autoslice.subtitle_fidelity import (
+    apply_subtitle_fidelity_guard,
+    persist_fidelity_audit,
+)
 from src.autoslice.auto_review import DecisionAction
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
 from src.autoslice.full_session_candidate_selector import (
@@ -1521,6 +1525,7 @@ def _build_aggregate_asr_transcriber(
         topic_context_state["value"] = _resolve_topic_entities(draft_srt)
         if correct == "none":
             return draft_srt
+        agy_srt = None
         if correct == "agy":
             corrected = _agy_refine(media_path, draft_srt) or draft_srt
         elif correct == "bcut_agy_cpa":
@@ -1559,6 +1564,17 @@ def _build_aggregate_asr_transcriber(
                 screen_text_lines=screen_text_lines,
                 topic_entity_context=topic_context_state["value"],
                 song_name_candidates=song_name_candidates,
+            )
+        # 忠实性守卫（Ivan 2026-07-14 一九零/小李案）：无证人不得改写——
+        # 违规跨度所在 cue 回退 BCUT 原文，只回退不阻塞，audit 落盘。
+        # agy 分支免检（corrected 即音频证人本身）；守卫后的代词终审属
+        # 同音白名单（他她它TA），不受影响。
+        if correct in ("bcut_agy_cpa", "cpa"):
+            corrected, fidelity_audit = apply_subtitle_fidelity_guard(
+                draft_srt, corrected, agy_srt=agy_srt
+            )
+            persist_fidelity_audit(
+                media_path.with_suffix(".fidelity-audit.json"), fidelity_audit
             )
         # Dedicated whole-clip final pronoun pass (TA/他/她/它 in either
         # direction); a discourse task the general correction cannot reliably
