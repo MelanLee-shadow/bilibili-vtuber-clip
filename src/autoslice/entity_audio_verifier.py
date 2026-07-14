@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Callable, Mapping
@@ -213,27 +214,46 @@ def _gemini_api_observe_entity(*, audio_path: Path, prompt: str, key: str, model
         ],
         "generationConfig": {
             "temperature": 0.1,
-            # 32768：gemini-3.5-flash 的思考 token 计入输出上限，多实体难句
-            # 的长思考在 8192 下会把正文挤成空(2026-07-14 梦限大 INVALID_OUTPUT 案)。
-            "maxOutputTokens": 32_768,
+            # 65536 = gemini-3.5-flash 文档上限(思考 token 计入输出上限，
+            # 2026-07-14 梦限大案：8192 被长思考吃光正文为空)。
+            "maxOutputTokens": 65_536,
             "responseMimeType": "application/json",
+            # 几个候选名的强制二选一不需要深思(Ivan 2026-07-14)；Gemini 3.x
+            # 用 thinking_level 控深度(minimal/low/medium/high)。
+            "thinkingConfig": {
+                "thinkingLevel": os.environ.get("ENTITY_GEMINI_THINKING_LEVEL", "low")
+            },
         },
     }
-    request_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    if len(request_bytes) > ENTITY_AUDIO_API_REQUEST_MAX_BYTES:
-        raise RuntimeError("GEMINI_API_REQUEST_TOO_LARGE")
-    request = urllib.request.Request(
-        GEMINI_API_URL.format(model=urllib.parse.quote(model, safe="")),
-        data=request_bytes,
-        headers={"content-type": "application/json", "x-goog-api-key": key},
-    )
+
+    def _post(request_body: dict) -> dict:
+        request_bytes = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
+        if len(request_bytes) > ENTITY_AUDIO_API_REQUEST_MAX_BYTES:
+            raise RuntimeError("GEMINI_API_REQUEST_TOO_LARGE")
+        request = urllib.request.Request(
+            GEMINI_API_URL.format(model=urllib.parse.quote(model, safe="")),
+            data=request_bytes,
+            headers={"content-type": "application/json", "x-goog-api-key": key},
+        )
+        try:
+            timeout_seconds = int(os.environ.get("ENTITY_GEMINI_API_TIMEOUT_SECONDS", "180"))
+        except ValueError:
+            timeout_seconds = 180
+        timeout_seconds = min(600, max(30, timeout_seconds))
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return json.load(response)
+
     try:
-        timeout_seconds = int(os.environ.get("ENTITY_GEMINI_API_TIMEOUT_SECONDS", "180"))
-    except ValueError:
-        timeout_seconds = 180
-    timeout_seconds = min(600, max(30, timeout_seconds))
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        payload = json.load(response)
+        payload = _post(body)
+    except urllib.error.HTTPError as exc:
+        # 字段兼容保险：thinkingConfig 若被该 API 版本拒绝(400)，去掉后同 key
+        # 重试一次——绝不让一个可选字段烧掉整条 key 链。
+        if exc.code == 400 and "thinkingConfig" in body.get("generationConfig", {}):
+            degraded = json.loads(json.dumps(body))
+            degraded["generationConfig"].pop("thinkingConfig", None)
+            payload = _post(degraded)
+        else:
+            raise
     candidates = payload.get("candidates") if isinstance(payload, dict) else None
     candidate = candidates[0] if isinstance(candidates, list) and candidates else None
     content = candidate.get("content") if isinstance(candidate, dict) else None
