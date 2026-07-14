@@ -82,12 +82,33 @@ def main(argv=None) -> int:
         print(f"BRANDING_INTRO_UNAVAILABLE: {exc}", file=sys.stderr)
         return 1
     srt_path.write_text(srt, encoding="utf-8")
-    print(f"corrected {srt_path.name}; rerunning speaker finalization")
+    speaker_mode = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
+    if speaker_mode not in ("uniform_host", "required", "auto"):
+        speaker_mode = "uniform_host"
+    print(f"corrected {srt_path.name}; speaker_mode={speaker_mode}")
 
     speaker_srt = srt_path.with_suffix(".speaker-final.srt")
     speaker_ass = srt_path.with_suffix(".speaker-final.ass")
     speaker_manifest_path = srt_path.with_suffix(".speaker-final.json")
-    try:
+    if speaker_mode == "uniform_host":
+        # Ivan 2026-07-13 policy: no speaker separation in any deliverable —
+        # burn the corrected text directly in the single host style.
+        try:
+            reburn = _burn_preview_subtitles(
+                {
+                    "status": "MATERIALIZED",
+                    "media_path": record["media_path"],
+                    "subtitle_path": str(srt_path),
+                },
+                run_ffmpeg=True,
+                branding_intro=branding_intro,
+            )
+        except Exception:
+            srt_path.write_text(before, encoding="utf-8")
+            raise
+        speaker_manifest = None
+    else:
+      try:
         speaker_manifest = run_speaker_finalizer(
             host="localhost",
             candidate_id=args.cid,
@@ -112,7 +133,7 @@ def main(argv=None) -> int:
             run_ffmpeg=True,
             branding_intro=branding_intro,
         )
-    except Exception:
+      except Exception:
         srt_path.write_text(before, encoding="utf-8")
         raise
     burned_value = (reburn or {}).get("burned_preview") if isinstance(reburn, dict) else None
@@ -131,8 +152,9 @@ def main(argv=None) -> int:
         "after_srt_sha256": _sha256(srt_path),
         "replace_operations": args.replace,
         "set_line_operations": args.set_line,
-        "speaker_manifest": str(speaker_manifest_path),
-        "speaker_manifest_sha256": _sha256(speaker_manifest_path),
+        "speaker_mode": speaker_mode,
+        "speaker_manifest": str(speaker_manifest_path) if speaker_manifest is not None else None,
+        "speaker_manifest_sha256": _sha256(speaker_manifest_path) if speaker_manifest is not None else None,
         "burned_media": str(burned),
         "burned_media_sha256": _sha256(burned),
         "upload_enabled": False,
@@ -143,22 +165,24 @@ def main(argv=None) -> int:
     )
     updated = dict(record)
     hashes = dict(updated.get("artifact_hashes") or {})
-    hashes.update(
-        {
-            "subtitle_sha256": "sha256:" + _sha256(srt_path),
-            "speaker_review_srt_sha256": "sha256:" + _sha256(speaker_srt),
-            "ass_sha256": "sha256:" + _sha256(speaker_ass),
-            "burned_video_sha256": "sha256:" + _sha256(burned),
-        }
-    )
+    hashes.update({"subtitle_sha256": "sha256:" + _sha256(srt_path),
+                   "burned_video_sha256": "sha256:" + _sha256(burned)})
+    if speaker_manifest is not None:
+        hashes.update(
+            {
+                "speaker_review_srt_sha256": "sha256:" + _sha256(speaker_srt),
+                "ass_sha256": "sha256:" + _sha256(speaker_ass),
+            }
+        )
     updated.update(
         {
             "artifact_hashes": hashes,
-            "speaker_review_srt_path": str(speaker_srt),
-            "subtitle_ass_path": str(speaker_ass),
-            "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
-            "speaker_finalization_manifest_path": str(speaker_manifest_path),
-            "speaker_finalization_manifest_sha256": "sha256:" + _sha256(speaker_manifest_path),
+            "speaker_mode": speaker_mode,
+            "speaker_review_srt_path": str(speaker_srt) if speaker_manifest is not None else None,
+            "subtitle_ass_path": str(speaker_ass) if speaker_manifest is not None else None,
+            "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID if speaker_manifest is not None else "lidousha-final-sapphire72",
+            "speaker_finalization_manifest_path": str(speaker_manifest_path) if speaker_manifest is not None else None,
+            "speaker_finalization_manifest_sha256": ("sha256:" + _sha256(speaker_manifest_path)) if speaker_manifest is not None else None,
             "speaker_finalization": speaker_manifest,
             "human_text_correction_manifest_path": str(correction_manifest_path),
             "human_text_correction_manifest_sha256": "sha256:" + _sha256(correction_manifest_path),
