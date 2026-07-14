@@ -59,6 +59,89 @@ def test_make_manifest_requires_authorization_quote(tmp_path):
     assert rc == 2
 
 
+def _mk_with_tags(tmp_path, tags: str):
+    video = tmp_path / "v.mp4"
+    cover = tmp_path / "c.png"
+    video.write_bytes(b"v")
+    cover.write_bytes(b"c")
+    manifest = tmp_path / "v.upload_manifest.json"
+    rc = au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
+                  "--title", "【李豆沙】标题", "--quote", "可以上传了",
+                  "--tags", tags, "--out", str(manifest)])
+    return rc, manifest
+
+
+def test_make_manifest_freezes_valid_tags(tmp_path):
+    rc, manifest = _mk_with_tags(tmp_path, "李豆沙,虚拟主播,虚拟UP主,直播切片,侄女,百合")
+    assert rc == 0
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert data["tags"] == ["李豆沙", "虚拟主播", "虚拟UP主", "直播切片", "侄女", "百合"]
+    assert au.main(["verify", "--manifest", str(manifest)]) == 0
+
+
+def test_make_manifest_refuses_bad_tag_lines(tmp_path, capsys):
+    # 超过实测上限 12 个
+    rc, _ = _mk_with_tags(tmp_path, ",".join(f"t{i}" for i in range(13)))
+    assert rc == 2
+    # 大小写视作重复
+    rc, _ = _mk_with_tags(tmp_path, "VUP,vup")
+    assert rc == 2
+    # 单 tag 超 20 字符
+    rc, _ = _mk_with_tags(tmp_path, "一" * 21)
+    assert rc == 2
+
+
+def test_verify_refuses_manifest_with_tampered_tags(tmp_path, capsys):
+    rc, manifest = _mk_with_tags(tmp_path, "李豆沙,虚拟主播")
+    assert rc == 0
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["tags"] = data["tags"] + [f"t{i}" for i in range(12)]  # 事后塞爆 tag 位
+    manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    assert au.main(["verify", "--manifest", str(manifest)]) == 2
+
+
+def test_upload_passes_manifest_tag_line_to_uploader(tmp_path, capsys):
+    rc, manifest = _mk_with_tags(tmp_path, "李豆沙,虚拟主播,侄女")
+    assert rc == 0
+    stub = tmp_path / "stub_upload.sh"
+    stub.write_text(
+        "#!/bin/bash\n"
+        '[ "${AUTHORIZED_UPLOAD:-}" = "1" ] || exit 4\n'
+        'echo "args=$#"\n'
+        'echo "tagline=${4:-<none>}"\n'
+        "echo rc=0\necho BVID=BV1TAG\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    ledger = tmp_path / "ledger.jsonl"
+    assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger),
+                    "--uploader", str(stub)]) == 0
+    out = capsys.readouterr().out
+    assert "args=4" in out
+    assert "tagline=李豆沙,虚拟主播,侄女" in out
+    finished = _ledger_rows(ledger)[-1]
+    assert finished["tags"] == "李豆沙,虚拟主播,侄女"
+
+
+def test_upload_without_tags_keeps_three_arg_uploader_contract(tmp_path, capsys):
+    _, _, manifest = _mk(tmp_path)
+    stub = tmp_path / "stub_upload.sh"
+    stub.write_text(
+        "#!/bin/bash\n"
+        '[ "${AUTHORIZED_UPLOAD:-}" = "1" ] || exit 4\n'
+        'echo "args=$#"\n'
+        "echo rc=0\necho BVID=BV1NOTAG\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    ledger = tmp_path / "ledger.jsonl"
+    assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger),
+                    "--uploader", str(stub)]) == 0
+    out = capsys.readouterr().out
+    assert "args=3" in out
+    assert "tags" not in _ledger_rows(ledger)[-1]
+
+
 def _stub_uploader(tmp_path):
     """Uploader stub that proves it got manifest args + the authorization env."""
     stub = tmp_path / "stub_upload.sh"

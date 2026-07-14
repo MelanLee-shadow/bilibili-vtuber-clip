@@ -15,6 +15,11 @@ reports/**
 !reports/**/*.upload_manifest*.json
 !reports/**/upload_ledger.jsonl
 !reports/**/ivan_*_results.json
+# 2026-07-13: tag edits are publish actions too — suggestion reports, applied
+# plans and verified results stay tracked (Ivan review record included).
+!reports/tag-suggestions-*/**
+!reports/**/tag_plan*.json
+!reports/**/tag_update_results*.json
 # launchd rsync mirror from free; canonical upload evidence lives elsewhere.
 reports/slice_monitor/autoslice_free/**
 cleanup_manifests/*.tmp

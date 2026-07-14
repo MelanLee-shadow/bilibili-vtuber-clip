@@ -55,6 +55,33 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Tag policy (Ivan 2026-07-13, see scripts/suggest_upload_tags.py + memory
+# lidousha-upload-tags-policy): per-archive cap 12 (empirically probed via a
+# 12-tag edit on BV1EQNk6KErE), per-tag <=20 chars, no separators, no dups.
+MAX_TAGS = 12
+MAX_TAG_CHARS = 20
+
+
+def validate_tags(tags: list[str]) -> list[str]:
+    """Return problems; empty list means the tag list is manifest-worthy."""
+    problems: list[str] = []
+    if not isinstance(tags, list) or any(not isinstance(t, str) for t in tags):
+        return ["tags must be a list of strings"]
+    cleaned = [t.strip() for t in tags]
+    if any(not t for t in cleaned):
+        problems.append("tags contain an empty item")
+    if len(cleaned) > MAX_TAGS:
+        problems.append(f"{len(cleaned)} tags exceed the cap of {MAX_TAGS}")
+    if len({t.casefold() for t in cleaned}) != len(cleaned):
+        problems.append("tags contain duplicates")
+    for tag in cleaned:
+        if len(tag) > MAX_TAG_CHARS:
+            problems.append(f"tag too long (>{MAX_TAG_CHARS} chars): {tag!r}")
+        if any(ch in tag for ch in ",，\n\t"):
+            problems.append(f"tag contains a separator character: {tag!r}")
+    return problems
+
+
 def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
@@ -68,6 +95,13 @@ def make_manifest(args: argparse.Namespace) -> int:
     if not args.title.strip() or not args.quote.strip():
         print("REFUSE: --title and --quote (Ivan's authorization words) are required non-empty", file=sys.stderr)
         return 2
+    tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    if tags:
+        tag_problems = validate_tags(tags)
+        if tag_problems:
+            for problem in tag_problems:
+                print(f"REFUSE: {problem}", file=sys.stderr)
+            return 2
     video_sha = sha256_file(video)
     manifest = {
         "manifest_version": 1,
@@ -78,6 +112,8 @@ def make_manifest(args: argparse.Namespace) -> int:
         "authorization": {"by": args.authorized_by, "quote": args.quote, "at": now()},
         "created_at": now(),
     }
+    if tags:
+        manifest["tags"] = tags
     out = Path(args.out) if args.out else video.with_suffix(".upload_manifest.json")
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"manifest": str(out), "artifact_id": manifest["artifact_id"]}, ensure_ascii=False))
@@ -96,6 +132,8 @@ def load_and_verify(manifest_path: Path) -> tuple[dict | None, list[str]]:
         problems.append("manifest carries no authorization (by+quote required)")
     if not str(manifest.get("title") or "").strip():
         problems.append("manifest has no title")
+    if "tags" in manifest:
+        problems.extend(validate_tags(manifest["tags"]))
     for kind in ("video", "cover"):
         entry = manifest.get(kind) or {}
         path = Path(entry.get("path") or "")
@@ -307,6 +345,11 @@ def upload(args: argparse.Namespace) -> int:
             )
             return 3
         cmd = [args.uploader, manifest["video"]["path"], manifest["cover"]["path"], manifest["title"]]
+        manifest_tags = manifest.get("tags") or []
+        if manifest_tags:
+            # The uploader receives ONLY manifest-bound args; the tag line is
+            # frozen at review time exactly like title/hashes.
+            cmd.append(",".join(manifest_tags))
         env = os.environ.copy()
         env["AUTHORIZED_UPLOAD"] = "1"
         attempt_id = uuid.uuid4().hex
@@ -324,6 +367,8 @@ def upload(args: argparse.Namespace) -> int:
             "manifest_sha256": manifest_sha,
             "uploader": args.uploader,
         }
+        if manifest_tags:
+            common_ledger_fields["tags"] = ",".join(manifest_tags)
         append_ledger(
             ledger,
             {
@@ -374,6 +419,12 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--title", required=True)
     mk.add_argument("--authorized-by", default="Ivan")
     mk.add_argument("--quote", required=True, help="the verbatim authorization words")
+    mk.add_argument(
+        "--tags",
+        default="",
+        help="comma-joined FULL tag line (base tags included), e.g. from scripts/suggest_upload_tags.py; "
+        "optional — without it the uploader falls back to the base-4 line",
+    )
     mk.add_argument("--out", default=None)
     mk.set_defaults(func=make_manifest)
 
