@@ -81,7 +81,7 @@
   李豆沙个人主页：https://space.bilibili.com/1703797642
   李豆沙直播间：https://live.bilibili.com/22966160
   ```
-- **标签**：`虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP`
+- **标签**：基础 4 位 `李豆沙,虚拟主播,虚拟UP主,直播切片` + 内容位（封顶 12；口径与生成链以 publish skill §标签为准，旧 6 位已废）
 - **合集（发布未入集=流程未完成）**：谈话 → `小李切片`（season 8383206 / 正片 section 9320779）；歌 → `小李歌唱`（season 8410735 / 正片 section 9364628）。ID 用前先从创作中心现查。
 - 分区 tid=21，copyright=2 转载，source=https://live.bilibili.com/。
 - **公开验证后才算完成**：`x/web-interface/view` 确认 state=0、标题、`ugc_season.title`、`is_season_display=true`，存 `*.public_verify.json`。

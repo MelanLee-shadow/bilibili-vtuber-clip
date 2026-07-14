@@ -3,9 +3,11 @@ name: bilive-autoslice-publish
 description: "李豆沙(房间22966160)切片从候选到 B 站发布的项目权威标准：候选管线、字幕权威、标题/封面/元数据规范、本地交付布局、投稿通道、入合集、公开验证。任何投稿/交付动作前必读。"
 ---
 
-# Bilive Autoslice Publish（项目权威版，2026-07-04 全面修订）
+# Bilive Autoslice Publish（项目权威版，2026-07-14 修订）
 
-本文件是**项目内唯一权威**（对 codex 和 Claude 会话同等生效）。`~/.codex/skills/bilive-autoslice-publish/SKILL.md` 是历史版本，其中 season/switch 等段已过时——以本文件为准。修订依据：2026-06-19~22 codex 实证 + 2026-07-03~04 Claude 实证（含真实投稿 BV1qxMc6XEM9）。
+本文件是**项目内唯一权威**（对 codex 和 Claude 会话同等生效）。`~/.codex/skills/bilive-autoslice-publish/SKILL.md` 是历史版本，其中 season/switch 等段已过时——以本文件为准。修订依据：2026-06-19~22 codex 实证 + 2026-07-03~04 Claude 实证（含真实投稿 BV1qxMc6XEM9）+ 2026-07-13~14 批量发布/换源实证（tag 新口径、歌切无片头、编辑修正总则、验收 checklist）。
+
+**快速导航（成片之后按此走，别再翻散落文档）**：标题→§标题/封面/元数据 + `.agent/skills/lidousha-title-style/SKILL.md`；封面→§封面样式表；tag→§标签；片头→§片头；投稿/入合集/验证→§发布流程；**已发稿件任何修正→§修正总则（编辑，绝不新传）**；每条发布完成与审计→§投稿后验收 checklist。
 
 ## 目标状态（半自动）
 
@@ -80,9 +82,15 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
   李豆沙个人主页：https://space.bilibili.com/1703797642
   李豆沙直播间：https://live.bilibili.com/22966160
   ```
-- **标签**：`虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP`
+- **标签（Ivan 2026-07-13 拍板口径，取代旧的固定 6 位）**：
+  - **基础位只有 4 个**：`李豆沙,虚拟主播,虚拟UP主,直播切片`（VUP 与虚拟UP主全重复、VTuber 与虚拟主播近重复，已砍）；其余名额给内容位，**每稿封顶 12 个**（BV1EQNk6KErE 12 tag 编辑提交+读回实测），单 tag ≤20 字符、不得含逗号。
+  - **生成链（已全自动，端到端 live）**：producer 把 `suggest_upload_tags` 结果冻结进成品 `<stem>.record.json` 的 `upload_tags`（status=OK 才算）→ `authorized_upload.py make-manifest` 自动读取（`--tags` 可覆盖、`--no-tags` 退出）→ `do_upload.sh` 以 manifest 的完整 tag 行投稿；无 tags 的旧 manifest 回退基础 4 位。
+  - **两层来源**：Layer A 确定性专名层（glossary + psplive_roster 规则表，专名绝不让 LLM 发明）；Layer B CPA 内容层（标题+字幕全文出 3~6 个通用内容词，过长度/去重/防幻觉专名校验）。合并优先级：基础位 > 人工裁定 > 专名（标题命中优先）> 内容。
+  - **口径红线**：专名 tag 只出可搜索**正主名**（南町/伊索尔/礼墨Sumi），梗形态（大N老师/142/lmsm/豆町）只作触发面不出 tag；内容词必须"贴内容 × 通用可搜"，过专没人搜的词硬毙（彩排/宠粉/玩梗/热情邀约/初次登场/脑补剧情/粉丝互动/线下合照类）；半梗半内容词（坏女人/宿敌恋人）放行。
+  - **tag 按最终成品字幕出（铁律）**：换源/字幕修复后必须 `scripts/suggest_upload_tags.py` 重算 + 人工过目，再用 `scripts/bili_update_tags.py`（plan-driven，inspect→apply，title_expect 前缀守卫，tag-only 编辑）落到线上；已知误听的临时裁定走 batch 条目 `suppress_tags/add_tags` 人工通道。
 - **分区/属性**：tid=21（日常），copyright=2（转载），source=`https://live.bilibili.com/`。
-- **合集（发布未入集 = 流程未完成）**：谈话 → `小李切片`（season 8383206 / 正片 section 9320779）；歌 → `小李歌唱`（season 8410735 / 正片 section 9364628）。ID 用前从创作中心现查（`GET member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30`）。
+- **片头（成片结构，投稿前最后一道结构门）**：**谈话/活字乱刷/重交付一律强制前置固定片头**（活字乱刷候选2，`assets/lidousha/intro/branding_intro.v1.json` hash 绑定，`src/autoslice/branding_intro.py` 在最终 burn 内拼接，fail-closed，成品 record.json 有 `branding_intro.status=PREPENDED` + `intro_offset_ms`；媒体字节在 `free:/opt/bilive/autoslice/assets/intro/`，deploy 不得删）；**歌切一律不带片头直接进歌（Ivan 2026-07-14，commit cf09597）**——歌选择器唯一入口按政策忽略 intro manifest。审计口径：talk 无片头=违规；歌切带片头=违规（需无片头重烧+换源）。`AUTOSLICE_BRANDING_INTRO=off` 仅测试/应急，生产禁用。
+- **合集（发布未入集 = 流程未完成）**：谈话 → `小李切片`（season 8383206 / 正片 section 9320779）；歌 → `小李歌唱`（season 8410735 / 正片 section 9364628）。ID 用前从创作中心现查（`GET member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30`）。刚投稿在转码中时 `episodes/add` 会 -404：等 state=0 再加，或按 2026-07-13 惯例挂 30/90 分钟幂等重试 timer（重复添加返回 20080=已在集，无害）。
 
 ## 发布流程（每步都有实证，2026-07-04）
 
@@ -103,9 +111,33 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
    - 重复添加返回 code 20080（已在合集中）；改标题后合集条目标题可能滞留旧值，用 `season/section/episode/edit` 修。
    - **biliup 上传只跑一次,绝不为取 bvid 重跑**：rc=0 即投稿成功,bvid 从 stderr 的 `ResponseData{...bvid: String("BV..")}` 抓,或查 `GET member.bilibili.com/x/web/archives?pn=1&ps=10&status=is_pubing,pubed,not_pubed`。重跑上传=重复稿件(2026-07-04 犯过,传了两条充电器)。
    - **稿件删除需验证码(340022),无法 headless 删**：`/x/web/archive/delete` 报"验证码错误"。重复稿件只能 Ivan 在创作中心手动删——所以务必一次投准。
-3. **元数据修正**（如需）：`GET member.bilibili.com/x/vupre/web/archive/view?bvid=` 取当前稿件 → `POST member.bilibili.com/x/vu/web/edit?csrf=` 全量提交（title/desc/tag/cover/videos 带 filename+cid）。
-   - **换源（编辑视频，Ivan 2026-07-10 实证）**：已发布稿件修正内容（如字幕修字）**必须编辑不是新投稿**——新投稿有频率墙（当日 10 稿实测触发"投稿过于频繁"，2h/25min 重试均不解），编辑通道没有。流程：`biliup append --vid <BV> <修正文件>`（把修正版传为新分P，"稿件修改成功"）→ `x/vu/web/edit` 全量提交 `videos=[新P的filename+cid]` 移除旧P → 触发重审(-30)几分钟回 state=0。**BV/aid 不变、合集 episode 按 aid 存活（episodes/add 返 20080 已在集）、标题封面不动**。工具 `scripts/swap_video_p.py`（动手前先 `authorized_upload.py verify` 校 manifest——审过的文件才许换上去）。
+3. **修正总则（Ivan 2026-07-14 重申：已发稿件任何修正 = 编辑原稿，绝不上传新视频，绝不删稿）**：
+   - **为什么**：新投稿吃**滚动 24h 配额**（当日 ~10 稿实测 code 21566"投稿过于频繁"，2h/25min 重试均不解）；**编辑不占配额、不限次数**；删稿有验证码墙（340022）headless 不可行，且 Ivan 定过"发布即快照"。Ivan 说"删除"时默认指**本地副本**，B 站旧稿不动（2026-07-14 澄清）。
+   - **按修正对象选通道**（都在 free 上跑，凭 `/opt/bilive/app/cookie.json`）：
+     | 修正对象 | 通道/工具 | 要点 |
+     |---|---|---|
+     | 视频内容（换源） | `biliup append --vid <BV> <修正文件>` → `scripts/swap_video_p.py <BV>` | 动手前 `authorized_upload.py verify` 校 manifest——审过的文件才许换上去；append 把修正版传为新分P → edit 全量提交 `videos=[新P]` 移除旧P → 重审(-30) 几分钟回 state=0；**BV/aid 不变、合集 episode 按 aid 存活、标题封面不动**；换源后 **tag 必须重算**（见§标签铁律） |
+     | 仅封面 | `scripts/bili_replace_covers.py`（inspect→apply 两阶段） | bfs 上传新图 + 全量 edit 只动 cover + 读回验证 |
+     | 仅 tag | `scripts/bili_update_tags.py`（plan-driven，inspect→apply） | plan 带完整替换 tag 行 + `title_expect` 防错稿守卫；≤12，被拒自动 10 个重试探测 |
+     | 标题/desc 等元数据 | `GET x/vupre/web/archive/view?bvid=` → `POST x/vu/web/edit?csrf=` 全量提交 | title/desc/tag/cover/videos（带 filename+cid）一起回填，漏字段=清空；改标题后合集条目标题可能滞留旧值，用 `season/section/episode/edit` 修 |
+   - 每次编辑后都要**公开验证**（§4）并更新证据文件；编辑返回 code 0 ≠ 生效。
 4. **公开验证（完成判据）**：`GET api.bilibili.com/x/web-interface/view?bvid=` 确认 `state=0`、标题、desc、`ugc_season.title` 与 `is_season_display=true`；标签用 `x/tag/archive/tags?bvid=`。证据存 `<clip>.public_verify.json` + `<clip>.uploaded.json`（bvid/aid/时间/工具/授权来源）到切片的 replacement_recuts 目录。
+5. **证据入库（Ivan 规矩：授权上传的内容必须 commit，发布即快照）**：上传/换源/改封面/改 tag 的证据（`*.uploaded.json`、`*.public_verify.json`、results/manifest 文件）随批 commit（gitignore 已给 `*.uploaded.json` 留例外；媒体不入库）。幂等账本在 `free:/opt/bilive/autoslice/reports/upload_ledger.jsonl`（同一 artifact hash 重传=硬错误），launchd 镜像会拉回本地 `reports/slice_monitor/autoslice_free/`。
+
+## 投稿后验收 checklist（每条发布/修正后过一遍；审计别人上传时逐项对抗式核对）
+
+以 B 站**公开面+创作中心读回**为真值（工具返回 code 0 不算数）：
+
+1. **稿件状态**：`state=0` 公开可见（-30=重审中可等；<0 其他值要查）；无同内容重复稿（同标题两个 BV=事故，报 Ivan 手动处理，headless 删不了）。
+2. **标题**：带【李豆沙】前缀（歌切="【李豆沙】豆沙歌，"完整前缀）；Ivan 手定标题一字不改；无机器味词（直接/当场/秒X）与空洞标题党词；作品讨论类带《作品名》。细则见 `.agent/skills/lidousha-title-style/SKILL.md`。
+3. **封面**：真 CPA 出图（非抽帧/模板）+ 本地叠字；样式表合规（奶油白字+深海军蓝描边、hook 词高亮、整张单字体、字号够大、feed 4:3 安全区 x∈[260,1660]）；表情不吐舌、不加当场没有的帽子/饰品/服装；多人场景主体=李豆沙；「自」字是否被 ZCOOL 渲成「白」形。
+4. **tag**：基础 4 位在位 + 内容位合口径（§标签），≤12；换源过的稿件 tag 已按新字幕重算。
+5. **简介**：两行逐字（主页+直播间）；tid=21、copyright=2、source。
+6. **合集**：谈话在`小李切片`、歌在`小李歌唱`，`is_season_display=true`；改过标题的稿件合集条目标题未滞留旧值。
+7. **片头**：talk 有固定片头（record.json `PREPENDED`）；**歌切无片头**（2026-07-14 起）。
+8. **修正方式**：所有修正走编辑通道（§修正总则），没有为修正新开 BV。
+9. **授权链**：manifest 里有 Ivan 授权原话；上传方式=authorized_upload 通道（非裸 do_upload/biliup）。
+10. **证据**：`uploaded.json`/`public_verify.json`/ledger 齐且已 commit。
 
 ## Pitfalls（历次真实踩坑）
 
