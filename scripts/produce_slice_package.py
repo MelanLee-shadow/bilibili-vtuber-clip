@@ -70,6 +70,7 @@ from src.autoslice.chat_authority import (
     ChatEvidence,
     _fragment_spoken_in,
     _strip_interjections_once,
+    witness_disagreement_cues,
     apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
     build_human_text_entity_verifier,
