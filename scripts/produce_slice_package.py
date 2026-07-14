@@ -90,6 +90,8 @@ from src.autoslice.chat_authority import (
     recording_start_epoch_ms,
     reconcile_contradictory_entity_repairs,
     reconcile_pending_text_overrides,
+    registered_entity_names,
+    revert_unregistered_entity_repairs,
     sanitize_chat_display_text,
 )
 from src.autoslice.danmaku_evidence import DanmakuItem, load_danmaku_xml
@@ -933,8 +935,8 @@ def verify_chat_authority_final_surfaces(
             or "".join(str(value) for value in row.get("after") or []),
         )
         for row in audit.get("entity_repairs") or []
-        # 被矛盾和解回退的行不再要求其（互斥的）结果存活于终稿。
-        if row.get("reconciliation") != "CONTRADICTORY_VERDICTS_REVERTED"
+        # 已被和解回退的行（矛盾裁定/未注册实体）不再要求其结果存活于终稿。
+        if not row.get("reconciliation")
     )
     if any(
         row.get("reconciliation_status") != "APPLIED_AND_HASH_VERIFIED"
@@ -2125,6 +2127,21 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "AUDITOR_UNAVAILABLE",
                 "error_type": type(exc).__name__,
             }
+    # 未注册实体守卫（2026-07-14 恋青→到时案）：重复一致性编译器可能把草稿
+    # 碎片（练死/到时）选成"胜出实体"改掉正牌注册实体——expected 不在
+    # 图谱/静态注册面里的改写一律回退+披露。
+    srt_text, unregistered_entity_reverts = revert_unregistered_entity_repairs(
+        srt_text,
+        chat_authority_audit.get("entity_repairs") or [],
+        registered_entity_names(referent_groups),
+    )
+    if unregistered_entity_reverts:
+        chat_authority_audit["unregistered_entity_reverts"] = unregistered_entity_reverts
+        print(
+            "[chat-authority] unregistered entity repairs reverted: "
+            + json.dumps(unregistered_entity_reverts, ensure_ascii=False),
+            flush=True,
+        )
     # 同槽矛盾裁定和解（2026-07-14 恋死/恋青/练死案）：多个 pass 对同一 cue
     # 给出互斥的 RESOLVED 实体 → 该处听证不可信，回退最早改写前的文本并披露；
     # 严禁后写者赢。

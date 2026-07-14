@@ -1232,6 +1232,69 @@ def _render_srt(cues: Sequence[object], texts: Sequence[str]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+def registered_entity_names(groups: Sequence[ReferentGroup | Sequence[str]]) -> set[str]:
+    """Lower-cased canonicals+surfaces of every registered (graph/static) entity."""
+
+    names: set[str] = set()
+    for group in _coerce_referent_groups(groups):
+        for entity in group.entities:
+            for value in (entity.canonical, *entity.surfaces):
+                text = str(value).strip().lower()
+                if text:
+                    names.add(text)
+    return names
+
+
+def revert_unregistered_entity_repairs(
+    srt_text: str,
+    entity_repairs: Sequence[Mapping[str, Any]],
+    registered_names: set[str],
+) -> tuple[str, list[dict[str, Any]]]:
+    """An entity repair may only land on a REGISTERED entity name.
+
+    The repetition/divergence compiler builds ad-hoc confusable groups out of
+    raw draft fragments, so a nondeterministic ASR roll can elect a mishearing
+    (练死) or a plain function word (到时) as the "winning canonical" and
+    rewrite a correct registered entity away (2026-07-14 恋青→到时 case).
+    Fail-safe: revert any repair whose expected entity is not a registered
+    graph/static entity name, mark the row, and disclose.
+    """
+
+    lowered = {name.lower() for name in registered_names}
+    disclosures: list[dict[str, Any]] = []
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    texts = [cue.text for cue in cues]
+    rewritten = False
+    for row in entity_repairs:
+        if not isinstance(row, dict) or row.get("reconciliation"):
+            continue
+        expected = str(row.get("expected_entity") or row.get("resolved_canonical") or "")
+        if not expected or expected.strip().lower() in lowered:
+            continue
+        row_indexes = list(row.get("cue_indexes") or [])
+        befores = list(row.get("before") or [])
+        afters = list(row.get("after") or [])
+        reverted_cues: list[int] = []
+        for position, index in enumerate(row_indexes):
+            if not (0 < int(index) <= len(texts) and position < len(befores)):
+                continue
+            if position < len(afters) and texts[int(index) - 1] == str(afters[position]):
+                texts[int(index) - 1] = str(befores[position])
+                reverted_cues.append(int(index))
+                rewritten = True
+        row["reconciliation"] = "UNREGISTERED_ENTITY_REVERTED"
+        disclosures.append(
+            {
+                "cue_indexes": row_indexes,
+                "expected_entity": expected,
+                "reverted_cues": reverted_cues,
+            }
+        )
+    if rewritten:
+        srt_text = _render_srt(cues, texts)
+    return srt_text, disclosures
+
+
 def reconcile_contradictory_entity_repairs(
     srt_text: str,
     entity_repairs: Sequence[Mapping[str, Any]],
@@ -1248,7 +1311,11 @@ def reconcile_contradictory_entity_repairs(
     requiring their (mutually exclusive) outcomes to survive.
     """
 
-    rows = [row for row in entity_repairs if isinstance(row, dict)]
+    rows = [
+        row
+        for row in entity_repairs
+        if isinstance(row, dict) and not row.get("reconciliation")
+    ]
     by_cue: dict[int, list[dict[str, Any]]] = {}
     for row in rows:
         for index in row.get("cue_indexes") or []:

@@ -1,6 +1,12 @@
 """同槽矛盾裁定和解（2026-07-14 恋死/恋青/练死案）：互斥 RESOLVED → 回退+披露，绝不后写者赢。"""
 
-from src.autoslice.chat_authority import reconcile_contradictory_entity_repairs
+from src.autoslice.chat_authority import (
+    ReferentEntity,
+    ReferentGroup,
+    reconcile_contradictory_entity_repairs,
+    registered_entity_names,
+    revert_unregistered_entity_repairs,
+)
 
 SRT = """1
 00:00:01,000 --> 00:00:02,000
@@ -69,3 +75,60 @@ def test_unexpected_current_text_discloses_without_rewrite():
     assert out == SRT
     assert disclosures[0]["reverted_to"] is None
     assert repairs[0]["reconciliation"] == "CONTRADICTORY_VERDICTS_REVERTED"
+
+
+REGISTERED = registered_entity_names(
+    [
+        ReferentGroup(
+            (
+                ReferentEntity("恋青", ("恋青",)),
+                ReferentEntity("恋死", ("恋死",)),
+            ),
+            reason="test",
+        )
+    ]
+)
+
+UNREG_SRT = """1
+00:00:01,000 --> 00:00:02,000
+等小李什么时候来看恋青呢
+
+2
+00:00:02,500 --> 00:00:04,000
+到时我自己有看
+"""
+
+
+def test_unregistered_entity_repair_is_reverted():
+    repairs = [
+        {
+            "cue_indexes": [2],
+            "before": ["恋青我自己有看"],
+            "after": ["到时我自己有看"],
+            "expected_entity": "到时",
+        }
+    ]
+    out, disclosures = revert_unregistered_entity_repairs(UNREG_SRT, repairs, REGISTERED)
+    assert "恋青我自己有看" in out
+    assert "到时我自己有看" not in out
+    assert repairs[0]["reconciliation"] == "UNREGISTERED_ENTITY_REVERTED"
+    assert disclosures == [
+        {"cue_indexes": [2], "expected_entity": "到时", "reverted_cues": [2]}
+    ]
+    # 已回退的行不再进入矛盾检测
+    out2, contradiction_disclosures = reconcile_contradictory_entity_repairs(out, repairs)
+    assert contradiction_disclosures == []
+
+
+def test_registered_entity_repair_untouched():
+    repairs = [
+        {
+            "cue_indexes": [2],
+            "before": ["恋死我自己有看"],
+            "after": ["恋青我自己有看"],
+            "expected_entity": "恋青",
+        }
+    ]
+    out, disclosures = revert_unregistered_entity_repairs(UNREG_SRT, repairs, REGISTERED)
+    assert out == UNREG_SRT and disclosures == []
+    assert "reconciliation" not in repairs[0]
