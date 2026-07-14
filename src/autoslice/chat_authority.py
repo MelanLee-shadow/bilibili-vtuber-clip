@@ -93,6 +93,10 @@ class ReferentGroup:
     # 指定位置生效（"clip_initial"=片首 cue 且必须在句首），并且完全不进入
     # chat 证据路径——组内是普通高频词，全局匹配会引发裁决风暴。
     positions: tuple[str, ...] = ()
+    # 面级 UNCERTAIN 保留（2026-07-14 理论上/留下→李豆沙、苏人→素惹案）：
+    # 已知误听面本身可能是真话（「留下来」「理论上」），音频拿不准时保留
+    # 原文、绝不阻塞；只有音频确证听到某 canonical 才改写。
+    uncertain_keep_surfaces: tuple[str, ...] = ()
 
 
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
@@ -255,6 +259,18 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     if str(value) in {"clip_initial", "transcript_only", "witness_disagreement"}
                 )
             )
+            all_surfaces = {
+                surface.lower() for entity in parsed for surface in entity.surfaces
+            }
+            raw_keep_surfaces = row.get("uncertain_keep_surfaces") or []
+            keep_surfaces = tuple(
+                dict.fromkeys(
+                    sanitize_chat_display_text(value, max_chars=80)
+                    for value in (raw_keep_surfaces if isinstance(raw_keep_surfaces, list) else [])
+                    if sanitize_chat_display_text(value, max_chars=80)
+                    and sanitize_chat_display_text(value, max_chars=80).lower() in all_surfaces
+                )
+            )
             groups.append(
                 ReferentGroup(
                     tuple(parsed),
@@ -262,6 +278,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     row.get("audio_verify_all_surfaces") is True,
                     keep,
                     positions,
+                    keep_surfaces,
                 )
             )
     return groups
@@ -1854,6 +1871,25 @@ def apply_audio_entity_verification(
                     )
                     claimed_strings.add(str(occurrence["surface"]).lower())
                     continue
+                # 面级保留（2026-07-14 理论上/留下、苏人案）：列入
+                # uncertain_keep_surfaces 的误听面本身可能是真话，UNCERTAIN
+                # 时保留原文不阻塞；改写只发生在音频确证 RESOLVED 时。
+                if any(
+                    str(occurrence["surface"]).lower() == keep.lower()
+                    for keep in group.uncertain_keep_surfaces
+                ):
+                    confirmed.append(
+                        {
+                            "cue_index": cue_index,
+                            "matched_start_ms": cue.start_ms,
+                            "matched_end_ms": cue.end_ms,
+                            "transcript_surface": occurrence["surface"],
+                            "reason_code": "ENTITY_SURFACE_KEPT_ON_UNCERTAIN",
+                            "verdict": verdict or raw_verdict,
+                        }
+                    )
+                    claimed_strings.add(str(occurrence["surface"]).lower())
+                    continue
                 required.append(
                     {
                         "cue_index": cue_index,
@@ -1879,6 +1915,31 @@ def apply_audio_entity_verification(
             claimed_strings.add(str(occurrence["surface"]).lower())
             claimed_strings.add(resolved.lower())
             if resolved == occurrence["canonical"]:
+                surface_value = str(occurrence["surface"])
+                if surface_value.lower() != resolved.lower() and any(
+                    surface_value.lower() == keep.lower()
+                    for keep in group.uncertain_keep_surfaces
+                ):
+                    # 软误听面（理论上/留下/苏人…）+ 音频确证其宿主实体 →
+                    # 规范化改写。合法别名（椎名立希）不在 keep_surfaces，
+                    # 维持原状只 confirm——别名不是误听。
+                    before = texts[cue_offset]
+                    after = re.sub(
+                        re.escape(surface_value), resolved, before, count=1, flags=re.IGNORECASE
+                    )
+                    if before != after:
+                        texts[cue_offset] = after
+                        repairs.append(
+                            {
+                                **base_row,
+                                "mode": "transcript_entity_only",
+                                "expected_entity": resolved,
+                                "before": [before],
+                                "after": [after],
+                                "survived": resolved.lower() in after.lower(),
+                            }
+                        )
+                        continue
                 confirmed.append(base_row)
                 continue
             before = texts[cue_offset]

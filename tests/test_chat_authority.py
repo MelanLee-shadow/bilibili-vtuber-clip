@@ -264,6 +264,72 @@ def test_positioned_groups_never_enter_chat_evidence_path():
     assert "但是大家都在等她回来" in output
 
 
+def test_mishear_surface_rescue_uncertain_keeps_resolved_rewrites():
+    """2026-07-14 理论上/留下→李豆沙、苏人→素惹类：已知误听面触发音频
+    二选一；真句（留下来/理论上）UNCERTAIN 保留绝不阻塞，音频确证才改写。"""
+    rescue = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "留下", "理论上"), ("li dou sha",)),
+            ReferentEntity("小李", ("小李",), ("xiao li",)),
+        ),
+        uncertain_keep_canonicals=("李豆沙", "小李"),
+        positions=("transcript_only",),
+        uncertain_keep_surfaces=("留下", "理论上"),
+    )
+    source = _srt("理论上会打个电话", "大家可以留下来看看")
+
+    # 音频拿不准 → 两个误听面都保留原文，绝不阻塞
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[rescue], entity_verifier=_uncertain_verifier
+    )
+    assert output == source
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+    assert all(
+        row["reason_code"] == "ENTITY_SURFACE_KEPT_ON_UNCERTAIN"
+        for row in audit["confirmed"]
+    )
+
+    # 音频确证听到「李豆沙」→ 改写
+    misheard = _srt("理论上要被关一辈子直播间")
+    output2, audit2 = apply_audio_entity_verification(
+        misheard, referent_groups=[rescue], entity_verifier=_audio_entity_verifier("李豆沙")
+    )
+    assert "李豆沙要被关一辈子直播间" in output2
+    assert audit2["status"] == "APPLIED_AND_VERIFIED", audit2
+
+    # 无误听面的普通句零成本：不触发任何裁决
+    calls: list[int] = []
+
+    def counting(request):
+        calls.append(1)
+        return None
+
+    plain = _srt("小李今天想吃火锅", "李豆沙说好")
+    output3, audit3 = apply_audio_entity_verification(
+        plain, referent_groups=[rescue], entity_verifier=counting
+    )
+    assert output3 == plain
+    assert calls == []
+    assert audit3["status"] == "NO_ENTITY"
+
+
+def test_loader_parses_uncertain_keep_surfaces_from_asset():
+    groups = load_referent_groups(
+        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+    )
+    rescue = next(
+        g for g in groups
+        if "留下" in {s for e in g.entities for s in e.surfaces}
+    )
+    sure = next(
+        g for g in groups if {e.canonical for e in g.entities} == {"素惹", "素人"}
+    )
+
+    assert set(rescue.uncertain_keep_surfaces) == {"留下", "理论上"}
+    assert rescue.positions == ("transcript_only",)
+    assert set(sure.uncertain_keep_surfaces) == {"苏人", "苏惹"}
+
+
 def test_multi_group_same_cue_arbitrated_independently():
     """2026-07-14 梦限大坏女人案 cue31「海铃的假哭和那个にゃむち的」：一 cue
     命中多个不同实体组不构成歧义，各组各自单槽正常裁。"""

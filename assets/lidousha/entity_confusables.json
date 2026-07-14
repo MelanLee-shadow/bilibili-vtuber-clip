@@ -147,6 +147,78 @@
         }
       ],
       "reason": "平等自称专名（Ivan 铁律：说哪个写哪个，绝不互换/统一风格）。仅当某形态是修正层引入（BCUT 逐字证人同时轴 cue 无此形态，如 2026-07-14 生日结婚案 留下→小李，AGY 被弹幕上下文带偏）时，该 cue 交无聊天上下文的黑帧裁决器强制二选一；UNCERTAIN 双向保留绝不阻塞；弹幕逐字 cue 不复审。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "素惹",
+        "素人"
+      ],
+      "uncertain_keep_surfaces": [
+        "苏人",
+        "苏惹"
+      ],
+      "entities": [
+        {
+          "canonical": "素惹",
+          "surfaces": [
+            "苏人",
+            "苏惹"
+          ],
+          "readings": [
+            "su re",
+            "sure"
+          ]
+        },
+        {
+          "canonical": "素人",
+          "surfaces": [],
+          "readings": [
+            "su ren",
+            "suren"
+          ]
+        }
+      ],
+      "reason": "素惹=男同性恋刻板印象梗词（Ivan 2026-07-14，0:51 案：语境可判）。ASR 常写 苏人/苏惹；su-re vs su-ren 音频可分。误听面触发二选一；UNCERTAIN 保留。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "李豆沙",
+        "小李"
+      ],
+      "uncertain_keep_surfaces": [
+        "留下",
+        "理论上"
+      ],
+      "entities": [
+        {
+          "canonical": "李豆沙",
+          "surfaces": [
+            "留下",
+            "理论上"
+          ],
+          "readings": [
+            "li dou sha",
+            "lidousha"
+          ]
+        },
+        {
+          "canonical": "小李",
+          "surfaces": [],
+          "readings": [
+            "xiao li",
+            "xiaoli"
+          ]
+        }
+      ],
+      "reason": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。"
     }
   ]
 }
