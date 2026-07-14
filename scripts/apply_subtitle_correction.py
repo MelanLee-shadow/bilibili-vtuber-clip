@@ -191,14 +191,23 @@ def main(argv=None) -> int:
     )
     record_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     shutil.copy2(burned, args.delivery)
-    for source, suffix in (
+    sidecars = [
         (srt_path, ".srt"),
-        (speaker_srt, ".speaker.srt"),
-        (speaker_ass, ".speaker.ass"),
-        (speaker_manifest_path, ".speaker.json"),
         (correction_manifest_path, ".human-text-correction.json"),
         (record_path, ".record.json"),
-    ):
+    ]
+    if speaker_manifest is not None:
+        sidecars[1:1] = [
+            (speaker_srt, ".speaker.srt"),
+            (speaker_ass, ".speaker.ass"),
+            (speaker_manifest_path, ".speaker.json"),
+        ]
+    else:
+        # uniform_host: stale speaker sidecars from an older run must not
+        # outlive the correction they no longer describe.
+        for suffix in (".speaker.srt", ".speaker.ass", ".speaker.json"):
+            args.delivery.with_suffix(suffix).unlink(missing_ok=True)
+    for source, suffix in sidecars:
         shutil.copy2(source, args.delivery.with_suffix(suffix))
     print(f"speaker-final re-burn + delivery refreshed → {args.delivery}")
     return 0
