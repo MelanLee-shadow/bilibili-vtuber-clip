@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "da14866001b5",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/歌切_【李豆沙】豆沙歌，《小幸运》｜__song_180011_861.mp4",
+    "sha256": "da14866001b5568c426e9e8d36eacd478dbe24b14fed562b789ac86dd588be91",
+    "bytes": 88610854
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/歌切_【李豆沙】豆沙歌，《小幸运》｜__song_180011_861.cover.png",
+    "sha256": "536f12648986cfd8941e624b6252bce5e56bcc6ae307df5012d7da194d1223d3",
+    "bytes": 2049785
+  },
+  "title": "【李豆沙】豆沙歌，《小幸运》｜温柔唱完",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "压轴提问那个可以上传了（05:40批漏传，manifest陈旧bug修正后补发）；歌切《暗恋是一个人的事》《小幸运》可以上传了，前提是不要片头，封面标题放大。",
+    "at": "2026-07-14T06:00:11+0000"
+  },
+  "created_at": "2026-07-14T06:00:11+0000"
+}

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "282ed787cc35",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/歌切_【李豆沙】豆沙歌，《暗恋是一个__song_183008_953.mp4",
+    "sha256": "282ed787cc35f2913dd6f8c7770a8b4627236a1f840a3a67c7cfcc0216d03542",
+    "bytes": 89739952
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/歌切_【李豆沙】豆沙歌，《暗恋是一个__song_183008_953.cover.png",
+    "sha256": "9853c69d389799bcab2241d90152c2bdff96343021dc8f53fff5e4b4c10a8715",
+    "bytes": 2286828
+  },
+  "title": "【李豆沙】豆沙歌，《暗恋是一个人的事》｜弹幕打call最密集的一首",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "压轴提问那个可以上传了（05:40批漏传，manifest陈旧bug修正后补发）；歌切《暗恋是一个人的事》《小幸运》可以上传了，前提是不要片头，封面标题放大。",
+    "at": "2026-07-14T05:59:53+0000"
+  },
+  "created_at": "2026-07-14T05:59:53+0000"
+}

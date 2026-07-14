@@ -3,6 +3,34 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
+## 2026-07-14：当日上传全量对抗式审计 + 修复 + 部署对齐（当前）
+
+### 目标
+
+Ivan 指令:审计北京 7/14 全部上传(8 换源+8 新稿+1 待发)是否符合最新流程,对成片之后每一步对抗式复核;修正一律编辑原视频;补部署缺口。
+
+### 已完成
+
+- **部署**:main `1ac9606`(docs+glossary/title_style 资产)已部署,校验全过;部署前全量 1175 passed。publish skill 整合为成片后唯一权威(b318dc1,含 tag 4+6 口径/歌切无片头/修正总则/验收 checklist)。
+- **审计**:18 稿逐条过 10 项 checklist,报告 `docs/audit-uploads-20260714.md`,证据 `reports/lidousha-uploads-20260714/`。
+- **修复(全部编辑通道)**:①两歌切换源为 canonical 无片头字节(与 main_sha256_before 逐字节一致,append→swap,已回 state=0);②nvxing 封面专名拆行→原子安全重叠+cover-only 编辑(code 0,-6 修改待审);③xinyi 待发件补 tags(管线 CPA+人工过目)+ 上传脚本扩展 postpublish(等审→入集→公开验证→证据)。
+- 临去彩排重复稿(05:40 陈旧 manifest 事故)确认已删(-100);压轴双 tag、0.6 侄女标题/封面、安晚 tag 等疑点全部有据核销。
+
+### 进行中（含后台进程）
+
+- `xinyi-upload-retry.timer` 09:15Z 触发 `/tmp/upload_xinyi.py`(已扩展版);审计会话挂了 wakeup 在 ~09:38Z 复核其发布+入集+证据并补 commit。
+- nvxing 封面 -6 修改待审(自动流转)。
+
+### 阻塞
+
+- 待 Ivan 裁定:desc 系统性多一行 source URL(biliup 层拼接,7/13 起全量一致)——接受为新常态或修 do_upload;不建议 17 稿逐条刷编辑。
+
+### 下一步
+
+1. 台风/恋爱告急/怎么办 staged 件=带片头旧烧录,任何补传前无片头重烧+重做 manifest(怎么办还缺封面)。
+2. 机制修复归位:重出成品必须再生 record.json(produce 线);换源 append 写 ledger 事件+do_upload 按 sha 全局拒重(upload 线);结果镜像文件标题必须回读 manifest。
+3. 撤生产 crontab `GEMINI_PAID_BACKUP_DEV_EXCEPTION=1`(回填收敛后,原约定)。
+
 ## 2026-07-13：Ivan 二审 → 批2/批3 证据链修复 + 7/10 重出（当前）
 
 ### 目标

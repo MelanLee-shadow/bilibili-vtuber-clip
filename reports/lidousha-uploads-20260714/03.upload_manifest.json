@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "622d834550ef",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/本来担心自己不擅长游戏，得知里面能养.mp4",
+    "sha256": "622d834550efaf627d0f533af6f644d44b6b2d8fb80071dbe0aa955d074e08a8",
+    "bytes": 69287439
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/本来担心自己不擅长游戏，得知里面能养.cover.png",
+    "sha256": "2cc3fc2e5329e225e1252116a91af97dbac89f7e76f505d7379b43fca1c0c83b",
+    "bytes": 2806020
+  },
+  "title": "【李豆沙】本来担心不擅长游戏，能养熊猫？我玩，我必须养！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "临去彩排这个可以重新上传了。没被坏女人欺负这个可以上传了……3D线下那个可以上传了。坚称自己是直女可以上传了。被问为什么可以上传了。粉毛花臂可以重新上传了。河粉可以上传了……粉丝压轴提问那个可以上传了……（标题为 Ivan 手定原话）",
+    "at": "2026-07-14T05:40:52+0000"
+  },
+  "created_at": "2026-07-14T05:40:52+0000"
+}

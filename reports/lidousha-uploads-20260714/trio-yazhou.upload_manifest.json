@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "0349a70e8505",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/粉丝把压轴提问全用来讲冷笑话：螺旋杆.mp4",
+    "sha256": "0349a70e85059ab5e31d6aae62db6c569460621a92828ca3ce2f5e8df357563a",
+    "bytes": 56512901
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/粉丝把压轴提问全用来讲冷笑话：螺旋杆.cover.png",
+    "sha256": "2804eafa3cdc482dd796e484d1a360288fd2891c444fcb3fff3fd55e861a2fd4",
+    "bytes": 2774896
+  },
+  "title": "【李豆沙】kmx的压轴提问是冷笑话，诸葛亮击退司马懿后说了什么？无马懿！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "压轴提问那个可以上传了（05:40批漏传，manifest陈旧bug修正后补发）；歌切《暗恋是一个人的事》《小幸运》可以上传了，前提是不要片头，封面标题放大。",
+    "at": "2026-07-14T05:59:28+0000"
+  },
+  "created_at": "2026-07-14T05:59:28+0000"
+}

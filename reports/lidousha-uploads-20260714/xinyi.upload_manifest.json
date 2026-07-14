@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "44fb17f8c46b",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/李豆沙现场展示新衣服的外套、帽子和眼.mp4",
+    "sha256": "44fb17f8c46b390422710b28d02938e3e66a532c3792dedbb14862007a72c7e4",
+    "bytes": 27473560
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/李豆沙现场展示新衣服的外套、帽子和眼.cover.png",
+    "sha256": "990d9cd473a023ccc42145d99eb8e0e6d3d399b5d66f03505a9e094e77868809",
+    "bytes": 2424261
+  },
+  "title": "【李豆沙】展示新衣服：外套帽子眼罩都能脱，熊猫耳是真的！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "这个也可以上传了，李豆沙现场展示新衣服的外套、帽子和眼，以1:23截图形象为参考出封面再上传。",
+    "at": "2026-07-14T06:13:33+0000"
+  },
+  "created_at": "2026-07-14T06:13:33+0000"
+}

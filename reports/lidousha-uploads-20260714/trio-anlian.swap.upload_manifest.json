@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "107654db5f8e",
+  "video": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260714/trio-anlian/fixed/anlian.nointro.mp4",
+    "sha256": "107654db5f8ea59ed960f9e72ce7aeed8b3024724acbf4e6ca2f4900ebc9dadf",
+    "bytes": 80984988
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/upload_staging/20260714/trio-anlian/fixed/cover_live.png",
+    "sha256": "eaa86c8b6d75b1deea06357eb3cf33f2967de925c91bc1e6e37917e42f78c70d",
+    "bytes": 2037736
+  },
+  "title": "【李豆沙】豆沙歌，《暗恋是一个人的事》",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "Ivan 2026-07-14 trio授权原话:歌切《暗恋是一个人的事》《小幸运》可以上传了，前提是不要片头。实际上传件带片头(PREPENDED 4288ms)违反前提；另按 Ivan 2026-07-14 审计指令(之前的agent可能出错要改正,改正是编辑原视频而不是上传新视频)，用原recut+原ass+原编码参数重烧的无片头件换源(时长精确=main_before, 解码零损伤)。",
+    "at": "2026-07-14T07:36:07+0000"
+  },
+  "created_at": "2026-07-14T07:36:07+0000"
+}
