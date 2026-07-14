@@ -32,6 +32,15 @@ from typing import Any, Iterable
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 
+try:  # 可选依赖（2026-07-14 季下/小丽冤杀案）：有 pypinyin 时同音判定是
+    # 真声学等价；缺失时退回下方手写封闭组保守运行，绝不因缺依赖崩产线。
+    from pypinyin import lazy_pinyin as _lazy_pinyin
+
+    _HAS_PYPINYIN = True
+except Exception:  # pragma: no cover - 依赖缺失环境
+    _lazy_pinyin = None
+    _HAS_PYPINYIN = False
+
 _HOMOPHONE_SETS: tuple[frozenset[str], ...] = (
     frozenset({"他", "她", "它", "TA", "ta"}),
     frozenset({"的", "得", "地"}),
@@ -65,14 +74,27 @@ def _homophone_representative(char: str) -> str:
     return char
 
 
+def _toneless_syllables(value: str) -> tuple[str, ...]:
+    """去声调音节序列（非汉字符号原样小写保留，如 TA/psp/数字）。"""
+
+    stripped = _strip_non_text(value)
+    if not stripped or _lazy_pinyin is None:
+        return ()
+    return tuple(s.lower() for s in _lazy_pinyin(stripped) if s)
+
+
 def _homophone_equal(left: str, right: str) -> bool:
     a, b = _strip_non_text(left), _strip_non_text(right)
-    if len(a) != len(b):
-        return False
-    return all(
+    if len(a) == len(b) and all(
         _homophone_representative(x) == _homophone_representative(y)
         for x, y in zip(a, b)
-    )
+    ):
+        # 手写封闭组优先：覆盖 pypinyin 多音字口径差（的/地、TA）。
+        return True
+    if _HAS_PYPINYIN and a and b:
+        sa, sb = _toneless_syllables(a), _toneless_syllables(b)
+        return bool(sa) and sa == sb
+    return False
 
 
 def digit_reading_equivalent(left: str, right: str) -> bool:

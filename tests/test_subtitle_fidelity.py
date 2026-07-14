@@ -81,6 +81,21 @@ def test_hallucination_drop_and_small_particle_trim_allowed():
     assert audit["status"] == "CLEAN"
 
 
+def test_pinyin_homophone_respell_passes_without_witness():
+    """2026-07-14 五年之约冤杀案回归：季下→记下(jì同音)、小丽→小李(lǐ同音)
+    是声学保真的合法重拼，AGY 缺席也必须放行；转述(一米九)与非同音实体换写
+    (留下→小李)仍回退。"""
+    draft = _srt("欢迎季下", "小丽只是恰好处在一个", "就是她被那个190粉毛抢了手机")
+    final = _srt("欢迎记下", "小李只是恰好处在一个", "就是她被那个一米九粉毛抢了手机")
+
+    guarded, audit = apply_subtitle_fidelity_guard(draft, final, agy_srt=None, sanctioned=())
+
+    assert "欢迎记下" in guarded
+    assert "小李只是恰好处在一个" in guarded
+    assert "一米九" not in guarded  # 转述仍被回退
+    assert audit["reverted_count"] == 1
+
+
 def test_cue_count_mismatch_skips_guard():
     draft = _srt("一句")
     final = _srt("一句", "多出来的")

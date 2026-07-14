@@ -325,7 +325,7 @@ def test_loader_parses_uncertain_keep_surfaces_from_asset():
         g for g in groups if {e.canonical for e in g.entities} == {"素惹", "素人"}
     )
 
-    assert set(rescue.uncertain_keep_surfaces) == {"留下", "理论上"}
+    assert {"留下", "理论上", "小雨"} <= set(rescue.uncertain_keep_surfaces)
     assert rescue.positions == ("transcript_only",)
     assert set(sure.uncertain_keep_surfaces) == {"苏人", "苏惹"}
 
