@@ -246,6 +246,8 @@ def _valid_tag(tag: str) -> bool:
 
 def llm_content_tags(title: str, srt_text: str, existing: list[str], timeout: float) -> tuple[list[dict], list[str]]:
     """Returns (content_tags, warnings); LLM failure degrades to ([], [reason])."""
+    if not srt_text.strip():
+        srt_text = "（本条没有字幕存档，只有标题。只在标题本身能支撑时出词，出不了就给空列表。）"
     prompt = CONTENT_PROMPT.format(existing_tags="、".join(existing), title=title, srt_text=srt_text)
     call = build_llm_call(LlmConfig(transport="command", command_template=CPA_COMMAND, timeout_seconds=timeout))
     try:
@@ -298,7 +300,7 @@ def merge_tags(base: tuple[str, ...], proper: list[ProperHit], content: list[dic
 def suggest_for_slice(
     slice_id: str,
     title: str,
-    srt_path: Path,
+    srt_path: Path | None,
     *,
     bvid: str = "",
     use_llm: bool = True,
@@ -315,7 +317,9 @@ def suggest_for_slice(
     """
     suppress_tags = suppress_tags or {}
     add_tags = add_tags or {}
-    srt_text = parse_srt_text(srt_path)
+    # 早期已发布切片可能没有字幕存档(成品字幕只烧在视频里) — title-only 模式:
+    # 专名层只扫标题, LLM 层被明确告知没有字幕、宁缺毋滥。
+    srt_text = parse_srt_text(srt_path) if srt_path else ""
     proper = scan_proper_nouns(title, srt_text)
     overridden = [h.tag for h in proper if h.tag in suppress_tags]
     proper = [h for h in proper if h.tag not in suppress_tags]
@@ -337,7 +341,7 @@ def suggest_for_slice(
         "id": slice_id,
         "bvid": bvid,
         "title": title,
-        "srt": str(srt_path),
+        "srt": str(srt_path) if srt_path else "",
         "base_tags": list(BASE_TAGS),
         "proper_noun_tags": [
             {
@@ -414,7 +418,7 @@ def main() -> int:
         result = suggest_for_slice(
             str(entry["id"]),
             entry["title"],
-            Path(entry["srt"]),
+            Path(entry["srt"]) if entry.get("srt") else None,
             bvid=entry.get("bvid", ""),
             use_llm=not args.no_llm,
             max_tags=args.max_tags,

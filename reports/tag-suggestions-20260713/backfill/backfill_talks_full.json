@@ -1,0 +1,1890 @@
+[
+ {
+  "id": "BV19CNE6WEGJ",
+  "bvid": "BV19CNE6WEGJ",
+  "title": "【李豆沙】沙豆李沉浸在指认上下左右和疯狂摇头之中，完全听不到礼墨的声音",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV19CNE6WEGJ.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "礼墨Sumi",
+    "rules": [
+     "limo"
+    ],
+    "hits": 3,
+    "title_hit": true,
+    "evidence": {
+     "礼墨": 3
+    },
+    "notes": [
+     "Ivan: lmsm→礼墨Sumi"
+    ]
+   },
+   {
+    "tag": "安晚awa",
+    "rules": [
+     "anwan"
+    ],
+    "hits": 2,
+    "title_hit": false,
+    "evidence": {
+     "awa": 2
+    },
+    "notes": []
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "反复指认“上下左右”却因站位方向相反闹出乌龙，过程笑点密集。"
+   },
+   {
+    "tag": "犯傻",
+    "why": "一本正经研究半天，最后才反应过来“原来要从你的方向来”。"
+   },
+   {
+    "tag": "话痨",
+    "why": "直到队友说已经报过数字，才承认“可能是我话太多了”。"
+   },
+   {
+    "tag": "鸡同鸭讲",
+    "why": "两边对方向和数字的理解不断错位，还出现“我报了呀”“我没有听到”的交流事故。"
+   },
+   {
+    "tag": "反差萌",
+    "why": "努力分析时十分认真，却一直被方向和站位绕晕，形成呆萌反差。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "礼墨Sumi",
+   "安晚awa",
+   "搞笑",
+   "犯傻",
+   "话痨",
+   "鸡同鸭讲",
+   "反差萌"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,礼墨Sumi,安晚awa,搞笑,犯傻,话痨,鸡同鸭讲,反差萌",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1XCNE6WEYr",
+  "bvid": "BV1XCNE6WEYr",
+  "title": "【李豆沙】最吵闹的黑白小猪成为了聋人，只能不知所措的大喊“我聋了”，进入游戏十分钟都没搞清状况",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1XCNE6WEYr.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "礼墨Sumi",
+    "rules": [
+     "limo"
+    ],
+    "hits": 8,
+    "title_hit": false,
+    "evidence": {
+     "礼墨": 4,
+     "Sumi": 4
+    },
+    "notes": [
+     "Ivan: lmsm→礼墨Sumi"
+    ]
+   },
+   {
+    "tag": "安晚awa",
+    "rules": [
+     "anwan"
+    ],
+    "hits": 1,
+    "title_hit": false,
+    "evidence": {
+     "awa": 1
+    },
+    "notes": []
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "进入游戏十分钟后才想起自己要做什么，整段状况百出，喜剧效果十足。"
+   },
+   {
+    "tag": "犯傻",
+    "why": "一边认真指挥剪线，一边突然发现自己的角色根本不能拆炸弹。"
+   },
+   {
+    "tag": "懵逼",
+    "why": "反复追问“发生什么事了”“我要干嘛”，全程没弄清游戏状况。"
+   },
+   {
+    "tag": "大喊大叫",
+    "why": "因为听不见队友，多次高声大喊“我聋了”，音量和情绪持续拉满。"
+   },
+   {
+    "tag": "手忙脚乱",
+    "why": "倒计时只剩二十多秒时还在确认线的颜色和顺序，剪线后又慌忙否认。"
+   },
+   {
+    "tag": "游戏实况",
+    "why": "内容围绕多人合作拆弹展开，包括身份限制、查看手册和剪线操作。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "礼墨Sumi",
+   "安晚awa",
+   "搞笑",
+   "犯傻",
+   "懵逼",
+   "大喊大叫",
+   "手忙脚乱",
+   "游戏实况"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,礼墨Sumi,安晚awa,搞笑,犯傻,懵逼,大喊大叫,手忙脚乱,游戏实况",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1YCNE6WExD",
+  "bvid": "BV1YCNE6WExD",
+  "title": "【李豆沙】原来说的是数字零啊，还以为在说李姐我呢",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1YCNE6WExD.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "安晚awa",
+    "rules": [
+     "anwan"
+    ],
+    "hits": 1,
+    "title_hit": false,
+    "evidence": {
+     "awa": 1
+    },
+    "notes": []
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "天然呆",
+    "why": "面对转圈手势反复猜“十”“五”“一”，最后才明白表示的是零。"
+   },
+   {
+    "tag": "误会",
+    "why": "把对方表示数字零的动作误解成在指自己，还疑惑“你指我是什么意思啊”。"
+   },
+   {
+    "tag": "搞笑",
+    "why": "全程认真分析手势却始终没参透，反应过来后直呼“我一直没懂”。"
+   },
+   {
+    "tag": "可爱",
+    "why": "后知后觉地道歉并确认“以后零就用这个转圈来表示”，显得呆萌又认真。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "安晚awa",
+   "天然呆",
+   "误会",
+   "搞笑",
+   "可爱"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,安晚awa,天然呆,误会,搞笑,可爱",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1gDNE6SENa",
+  "bvid": "BV1gDNE6SENa",
+  "title": "【李豆沙】熊猫头竟然不知道我去炸学校的完整歌词，只知道一句我去炸学校，谁是卧底不言而喻了！",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1gDNE6SENa.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "众人围绕“只会炸学校这一句”互相指认卧底，全程笑声不断。"
+   },
+   {
+    "tag": "童年回忆",
+    "why": "聊到“大家小时候应该都听过”的校园改编童谣，并接唱完整歌词。"
+   },
+   {
+    "tag": "一本正经",
+    "why": "认真解释“只想解决学校这个建筑，没有想要伤害人的意思”。"
+   },
+   {
+    "tag": "脑回路",
+    "why": "从提醒小鸟撤离推导出“动物之友”和“很好的小朋友”，逻辑十分清奇。"
+   },
+   {
+    "tag": "吐槽",
+    "why": "吐槽对方只记得一句，说明“炸的心思更深重、有预谋”。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "搞笑",
+   "童年回忆",
+   "一本正经",
+   "脑回路",
+   "吐槽"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,童年回忆,一本正经,脑回路,吐槽",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1UDNE6UEcy",
+  "bvid": "BV1UDNE6UEcy",
+  "title": "【李豆沙】竟敢无视灯！语言学里的经典问题，对“灯有没有关系”这个问题的回答是点头，究竟灯有没有关系呢？",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1UDNE6UEcy.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "礼墨Sumi",
+    "rules": [
+     "limo"
+    ],
+    "hits": 2,
+    "title_hit": false,
+    "evidence": {
+     "礼墨": 1,
+     "Sumi": 1
+    },
+    "notes": [
+     "Ivan: lmsm→礼墨Sumi"
+    ]
+   },
+   {
+    "tag": "安晚awa",
+    "rules": [
+     "anwan"
+    ],
+    "hits": 1,
+    "title_hit": false,
+    "evidence": {
+     "awawa": 1
+    },
+    "notes": []
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "因“跟灯有没有关系”和“跟灯没有关系”的点头摇头含义相反，现场连续爆笑。"
+   },
+   {
+    "tag": "语言歧义",
+    "why": "“我摇头就是不是，不是没有关系”体现了否定问句造成的典型理解歧义。"
+   },
+   {
+    "tag": "鸡同鸭讲",
+    "why": "一方反复问“点头或摇头”，另一方却因问题表述不同给出被误解的答案。"
+   },
+   {
+    "tag": "一本正经",
+    "why": "发现看不到灯后认真得出“盲人看不到灯”“能摸到线不错啦”的结论。"
+   },
+   {
+    "tag": "名场面",
+    "why": "从“原来还有灯啊”到“盲人看不到灯”，整段沟通失控并形成连续笑点。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "礼墨Sumi",
+   "安晚awa",
+   "搞笑",
+   "语言歧义",
+   "鸡同鸭讲",
+   "一本正经",
+   "名场面"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,礼墨Sumi,安晚awa,搞笑,语言歧义,鸡同鸭讲,一本正经,名场面",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV18DNE6UEFq",
+  "bvid": "BV18DNE6UEFq",
+  "title": "【李豆沙】温情李姐下播后说肺腑之言，跳舞时自己的一些小心思，想要努力把这份心情传递给大家，届不到总是一种遗憾",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV18DNE6UEFq.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "真情流露",
+    "why": "坦言“真的很想让大家看到这个节目，想把这种开心的感觉传递给大家”，表达了真实心声。"
+   },
+   {
+    "tag": "跳舞",
+    "why": "围绕“每天跳舞的时候”以及排练后的开心、疲惫和成就感展开。"
+   },
+   {
+    "tag": "温柔",
+    "why": "反复表示想把自己的开心分享给观众，语气真诚而温柔。"
+   },
+   {
+    "tag": "治愈",
+    "why": "提到累时会幻想“再跳给大家看”，想到观众便觉得没有那么累。"
+   },
+   {
+    "tag": "可爱",
+    "why": "收到礼物后连续喊“泡泡机”，又反复说自己每天都很激动，表现得兴奋可爱。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "真情流露",
+   "跳舞",
+   "温柔",
+   "治愈",
+   "可爱"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,真情流露,跳舞,温柔,治愈,可爱",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1uDNE6SEjh",
+  "bvid": "BV1uDNE6SEjh",
+  "title": "【李豆沙】队友认为李豆沙当哑人最难，因为这样就没办法吵闹了！",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1uDNE6SEjh.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "话痨",
+    "why": "自称“我只在一个劲地说话”“我就是自顾自地说话了”，队友也调侃当哑人难度高。"
+   },
+   {
+    "tag": "天然呆",
+    "why": "不仅左右不分，还表示一开始不知道盲人可以说话，也没理解队友之间如何传递信息。"
+   },
+   {
+    "tag": "吐槽",
+    "why": "队友连续吐槽她把“左上角”听成往右移动，以及分不清左右和东南西北。"
+   },
+   {
+    "tag": "搞笑",
+    "why": "认路方向和游戏机制的乌龙引发全员多次大笑，字幕中连续出现“哈哈哈哈”。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "话痨",
+   "天然呆",
+   "吐槽",
+   "搞笑"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,话痨,天然呆,吐槽,搞笑",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1tXNE67EHs",
+  "bvid": "BV1tXNE67EHs",
+  "title": "【李豆沙】已经7月了，不会打麻将的小李只好给大家拜个早年了",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1tXNE67EHs.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "安晚awa",
+    "rules": [
+     "anwan"
+    ],
+    "hits": 3,
+    "title_hit": false,
+    "evidence": {
+     "安晚": 3
+    },
+    "notes": []
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "明明“现在才7月”，却连续给大家拜年，还说要“梦里过年去了”"
+   },
+   {
+    "tag": "整活",
+    "why": "临时模拟新春晚会收尾，加入“爆竹声”“吃饺子”等过年场景"
+   },
+   {
+    "tag": "一本正经",
+    "why": "用主持人口吻宣布“就在《难忘今宵》的歌声中度过”，认真完成虚构的新春晚会"
+   },
+   {
+    "tag": "犯傻",
+    "why": "拜年时突然问“明年是什么年啊”，祝福语说到一半又“后面忘了”"
+   },
+   {
+    "tag": "反差萌",
+    "why": "一边认真送上“恭喜发财”“万事如意”，一边忘词并笑场，形成可爱反差"
+   },
+   {
+    "tag": "过年",
+    "why": "全程围绕斗地主、麻将、拜年、新年祝福和吃饺子展开"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "安晚awa",
+   "搞笑",
+   "整活",
+   "一本正经",
+   "犯傻",
+   "反差萌",
+   "过年"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,安晚awa,搞笑,整活,一本正经,犯傻,反差萌,过年",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1tXNE6EE5g",
+  "bvid": "BV1tXNE6EE5g",
+  "title": "【李豆沙】吵闹熊猫头成为哑巴后顿感被吵到，发出好吵的尖叫，可惜已经没人能听到了",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1tXNE6EE5g.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "随手比出数字后承认“我乱比的”，队友当场笑成一片。"
+   },
+   {
+    "tag": "吐槽",
+    "why": "换成无法说话的身份后吐槽“同时听到两个人说话，突然就觉得好吵”。"
+   },
+   {
+    "tag": "反差萌",
+    "why": "自己原本话很多，安静下来后却嫌其他人吵，形成鲜明反差。"
+   },
+   {
+    "tag": "多人游戏",
+    "why": "三人交换身份并靠看线、报数字和剪线配合通关。"
+   },
+   {
+    "tag": "沙雕",
+    "why": "队友把随手比的手势当成答案，出现“恶意报数”的混乱场面。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "搞笑",
+   "吐槽",
+   "反差萌",
+   "多人游戏",
+   "沙雕"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,吐槽,反差萌,多人游戏,沙雕",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1bDNE6UEb6",
+  "bvid": "BV1bDNE6UEb6",
+  "title": "【李豆沙】奶p的弱项，对着着火的厨房对于如何灭火没有任何头绪",
+  "srt": "/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/0b8a113e-a202-4407-97cb-4786bbcb8257/scratchpad/tag_proto/srt_backfill/BV1bDNE6UEb6.srt",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "面对大火慌张喊出“为什么越喷越多”“这火该怎么灭啊”，场面喜感十足。"
+   },
+   {
+    "tag": "手忙脚乱",
+    "why": "一边借灭火器、对准火源，一边抢救厨房里的食材，全程慌乱操作。"
+   },
+   {
+    "tag": "迷惑操作",
+    "why": "拿着灭火器却不会灭火，甚至出现“越喷越多”的反向效果。"
+   },
+   {
+    "tag": "厨房事故",
+    "why": "厨房起火后险些爆炸，还担心大量食材被烧掉。"
+   },
+   {
+    "tag": "模拟经营",
+    "why": "经营餐厅忙碌一天只送出一单，最后还因扣钱变得更穷。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "搞笑",
+   "手忙脚乱",
+   "迷惑操作",
+   "厨房事故",
+   "模拟经营"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,手忙脚乱,迷惑操作,厨房事故,模拟经营",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1jBMt68EqL",
+  "bvid": "BV1jBMt68EqL",
+  "title": "【李豆沙】电脑强制更新，直播间小皇帝透露原因是地球被熊猫人控制",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "标题将电脑强制更新归因于“地球被熊猫人控制”，理由荒诞搞笑。"
+   },
+   {
+    "tag": "沙雕",
+    "why": "用熊猫人控制地球解释系统更新，呈现无厘头的沙雕展开。"
+   },
+   {
+    "tag": "脑洞",
+    "why": "从电脑更新联想到熊猫人控制地球，脑洞十分跳脱。"
+   },
+   {
+    "tag": "阴谋论",
+    "why": "标题以幕后势力控制地球来解释日常事件，带有戏仿阴谋论的意味。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "搞笑",
+   "沙雕",
+   "脑洞",
+   "阴谋论"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,沙雕,脑洞,阴谋论",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1iBMt68EwS",
+  "bvid": "BV1iBMt68EwS",
+  "title": "【李豆沙】为棒棒糖喊妈妈：不要被女人骗了",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "标题中“为棒棒糖喊妈妈”呈现出明显的喜剧效果。"
+   },
+   {
+    "tag": "撒娇",
+    "why": "标题中的“喊妈妈”带有撒娇式表达。"
+   },
+   {
+    "tag": "吐槽",
+    "why": "标题中直言“不要被女人骗了”，带有吐槽意味。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "搞笑",
+   "撒娇",
+   "吐槽"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,撒娇,吐槽",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1RBMt6bEET",
+  "bvid": "BV1RBMt6bEET",
+  "title": "【李豆沙】熊猫头臆想自己是熊姐，还想被坏女人玩弄（奖励）",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "坏女人",
+    "why": "标题直接写到“还想被坏女人玩弄”。"
+   },
+   {
+    "tag": "抖M",
+    "why": "“想被坏女人玩弄（奖励）”表现出把被玩弄当奖励的倾向。"
+   },
+   {
+    "tag": "搞笑",
+    "why": "标题用“臆想自己是熊姐”和“玩弄（奖励）”制造诙谐效果。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "坏女人",
+   "抖M",
+   "搞笑"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,坏女人,抖M,搞笑",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1PHMt63Epi",
+  "bvid": "BV1PHMt63Epi",
+  "title": "【李豆沙】当拉拉还要本科文凭？主播细思极恐",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "百合",
+    "why": "标题以“当拉拉还要本科文凭”讨论同性恋相关话题。"
+   },
+   {
+    "tag": "学历",
+    "why": "标题直接提到“本科文凭”，核心话题涉及学历门槛。"
+   },
+   {
+    "tag": "细思极恐",
+    "why": "标题明确使用“细思极恐”描述主播的反应。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "百合",
+   "学历",
+   "细思极恐"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,百合,学历,细思极恐",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1PHMt63Ez7",
+  "bvid": "BV1PHMt63Ez7",
+  "title": "【李豆沙】被劝找礼墨学谢礼，主播看穿：你只想嗑CP",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "礼墨Sumi",
+    "rules": [
+     "limo"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "礼墨": 1
+    },
+    "notes": [
+     "Ivan: lmsm→礼墨Sumi"
+    ]
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "磕CP",
+    "why": "标题中主播直接点破对方“你只想嗑CP”。"
+   },
+   {
+    "tag": "吐槽",
+    "why": "标题里主播看穿劝学谢礼的真实意图，并当场吐槽。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "礼墨Sumi",
+   "磕CP",
+   "吐槽"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,礼墨Sumi,磕CP,吐槽",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1GmTd6PE9S",
+  "bvid": "BV1GmTd6PE9S",
+  "title": "【李豆沙】22966160是一个温和的侄女直播间，但是百合破坏不行！",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "百合",
+    "rules": [
+     "zhinv",
+     "yuri_signal"
+    ],
+    "hits": 2,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1,
+     "百合": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发",
+     "百合信号词; 女同事/女同学不触发"
+    ]
+   },
+   {
+    "tag": "女同",
+    "rules": [
+     "zhinv",
+     "yuri_signal"
+    ],
+    "hits": 2,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1,
+     "百合": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发",
+     "百合信号词; 女同事/女同学不触发"
+    ]
+   },
+   {
+    "tag": "侄女",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "温柔",
+    "why": "标题明确称这是一个“温和”的直播间，整体氛围偏温柔。"
+   },
+   {
+    "tag": "磕CP",
+    "why": "标题强调“百合破坏不行”，体现维护女性角色配对关系的态度。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "百合",
+   "女同",
+   "侄女",
+   "温柔",
+   "磕CP"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,百合,女同,侄女,温柔,磕CP",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1uCTS6kEuf",
+  "bvid": "BV1uCTS6kEuf",
+  "title": "【李豆沙】过期（？）女大终于迎来再次联动",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "联动",
+    "why": "标题明确写有“再次联动”，说明本条为多人联动内容。"
+   },
+   {
+    "tag": "女大",
+    "why": "标题以“过期（？）女大”作为核心描述和调侃点。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "联动",
+   "女大"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,联动,女大",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1QzTS65Enf",
+  "bvid": "BV1QzTS65Enf",
+  "title": "【李豆沙】cos比sin自私？小李共鸣了",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "数学梗",
+    "why": "标题用“cos比sin自私”调侃三角函数概念。"
+   },
+   {
+    "tag": "冷笑话",
+    "why": "标题以“cos比sin自私”的反常比较制造冷幽默。"
+   },
+   {
+    "tag": "搞笑",
+    "why": "标题把数学函数拟人化，并写到主播因此“共鸣了”。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "数学梗",
+   "冷笑话",
+   "搞笑"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,数学梗,冷笑话,搞笑",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1yWMT6EEWD",
+  "bvid": "BV1yWMT6EEWD",
+  "title": "【李豆沙】小李把直播腔带进三次元，当场被嫌弃",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "社死",
+    "why": "标题写到把直播腔带进现实后“当场被嫌弃”，属于典型社死场面。"
+   },
+   {
+    "tag": "搞笑",
+    "why": "标题以“直播腔带进三次元”并遭嫌弃为笑点，呈现明显的搞笑情境。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "社死",
+   "搞笑"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,社死,搞笑",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1yWMT6EEHF",
+  "bvid": "BV1yWMT6EEHF",
+  "title": "【李豆沙】下播被kmx叫妈妈，还要再玩一会儿",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "撒娇",
+    "why": "标题中的“还要再玩一会儿”带有请求延长玩耍时间的撒娇感。"
+   },
+   {
+    "tag": "搞笑",
+    "why": "标题描述下播时突然被叫“妈妈”的意外场面，形成搞笑效果。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "撒娇",
+   "搞笑"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,撒娇,搞笑",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1tdMT64E47",
+  "bvid": "BV1tdMT64E47",
+  "title": "【李豆沙】叛逆小李一定要喊kmx妈妈，kmx只好喊宝宝",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "撒娇",
+    "why": "标题中一方坚持“喊妈妈”，另一方回应“喊宝宝”，带有明显亲昵撒娇感。"
+   },
+   {
+    "tag": "磕糖",
+    "why": "“妈妈”与“宝宝”的亲密互称具有甜蜜互动氛围。"
+   },
+   {
+    "tag": "反差萌",
+    "why": "标题将“叛逆”表现与被喊“宝宝”并置，形成可爱反差。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "撒娇",
+   "磕糖",
+   "反差萌"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,撒娇,磕糖,反差萌",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1WZMA6zE2H",
+  "bvid": "BV1WZMA6zE2H",
+  "title": "【李豆沙】猴群与直立熊猫奇遇记",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "熊猫",
+    "why": "标题直接出现“直立熊猫”"
+   },
+   {
+    "tag": "猴子",
+    "why": "标题以“猴群”为主要内容元素"
+   },
+   {
+    "tag": "动物",
+    "why": "标题同时提到“猴群”和“熊猫”"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "熊猫",
+   "猴子",
+   "动物"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,熊猫,猴子,动物",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1WZMA6zEzE",
+  "bvid": "BV1WZMA6zEzE",
+  "title": "【李豆沙】主播大大方方承认买弹幕，甚至要吃回扣",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "标题称主播“大大方方承认买弹幕，甚至要吃回扣”，内容呈现出明显的荒诞喜剧效果。"
+   },
+   {
+    "tag": "自黑",
+    "why": "标题中主动“承认买弹幕”并调侃“要吃回扣”，属于拿自己开涮。"
+   },
+   {
+    "tag": "名场面",
+    "why": "“承认买弹幕”后还提出“吃回扣”，标题呈现出具有冲击力的戏剧性发言。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "搞笑",
+   "自黑",
+   "名场面"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,自黑,名场面",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1ceMF6bESE",
+  "bvid": "BV1ceMF6bESE",
+  "title": "【李豆沙】熊猫头提醒你用电安全",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "用电安全",
+    "why": "标题明确写有“提醒你用电安全”，主题直接指向安全用电。"
+   },
+   {
+    "tag": "安全科普",
+    "why": "标题以“提醒你”的形式传达用电安全知识，属于安全科普内容。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "用电安全",
+   "安全科普"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,用电安全,安全科普",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1qxMc6XEM9",
+  "bvid": "BV1qxMc6XEM9",
+  "title": "【李豆沙】反沙，不是反李豆沙！",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1gW7t6GERW",
+  "bvid": "BV1gW7t6GERW",
+  "title": "【李豆沙】两个人的年轮轮回，终究是梦一场吗？侄女轮回故事精选辑",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "侄女",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   },
+   {
+    "tag": "百合",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   },
+   {
+    "tag": "女同",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "轮回",
+    "why": "标题明确写有“两个人的年轮轮回”和“轮回故事精选辑”。"
+   },
+   {
+    "tag": "意难平",
+    "why": "标题以“终究是梦一场吗”发问，呈现出遗憾与怅然的情绪。"
+   },
+   {
+    "tag": "宿命感",
+    "why": "“年轮轮回”与“终究是梦一场”共同体现反复轮转、难逃结局的氛围。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "侄女",
+   "百合",
+   "女同",
+   "轮回",
+   "意难平",
+   "宿命感"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,侄女,百合,女同,轮回,意难平,宿命感",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV13W7t6GEjg",
+  "bvid": "BV13W7t6GEjg",
+  "title": "【李豆沙】两块钢镚从李姐那里买到人生哲理是什么呢？",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "人生哲理",
+    "why": "标题直接以“两块钢镚买到人生哲理”为核心悬念。"
+   },
+   {
+    "tag": "搞笑",
+    "why": "标题用“两块钢镚”与“人生哲理”的强烈反差制造喜剧效果。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "人生哲理",
+   "搞笑"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,人生哲理,搞笑",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1qVjy6FExr",
+  "bvid": "BV1qVjy6FExr",
+  "title": "【李豆沙】熊猫头哭诉毛被乌鸦叼走了！",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "搞笑",
+    "why": "标题用“毛被乌鸦叼走了”的荒诞说法制造笑点。"
+   },
+   {
+    "tag": "破防",
+    "why": "标题明确写到因毛被叼走而“哭诉”。"
+   },
+   {
+    "tag": "秃头",
+    "why": "标题围绕头上的毛被叼走展开，属于常见秃头梗。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "搞笑",
+   "破防",
+   "秃头"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,破防,秃头",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1qVjy6FEqH",
+  "bvid": "BV1qVjy6FEqH",
+  "title": "【李豆沙】吵闹小李新哭哭表情",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "哭哭",
+    "why": "标题明确写有“新哭哭表情”，核心内容与哭泣情绪相关。"
+   },
+   {
+    "tag": "表情包",
+    "why": "标题中的“新哭哭表情”表明切片围绕新表情展示。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "哭哭",
+   "表情包"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,哭哭,表情包",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV12rjq6oEWb",
+  "bvid": "BV12rjq6oEWb",
+  "title": "【李豆沙】长沙话瘾来了，向kmx推荐恋死，kmx反向熊猫头推荐lycoris",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "莉可丽丝",
+    "rules": [
+     "lycoris"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "lycoris": 1
+    },
+    "notes": []
+   },
+   {
+    "tag": "长沙话",
+    "rules": [
+     "changsha"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "长沙话": 1
+    },
+    "notes": []
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "方言",
+    "why": "标题直接写有“长沙话瘾来了”，明确围绕方言表达展开。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "莉可丽丝",
+   "长沙话",
+   "方言"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,莉可丽丝,长沙话,方言",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1CSjq6HEFW",
+  "bvid": "BV1CSjq6HEFW",
+  "title": "【李豆沙】万一是没有边界感的侄女呢？shadowlee的逆出道",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "侄女",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   },
+   {
+    "tag": "百合",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   },
+   {
+    "tag": "女同",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "边界感",
+    "why": "标题直接提出“没有边界感”的假设，核心话题与人际边界有关。"
+   },
+   {
+    "tag": "逆出道",
+    "why": "标题明确使用“逆出道”描述相关情境。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "侄女",
+   "百合",
+   "女同",
+   "边界感",
+   "逆出道"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,侄女,百合,女同,边界感,逆出道",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1mBjq6fEkt",
+  "bvid": "BV1mBjq6fEkt",
+  "title": "【李豆沙】吵闹熊猫头到底爱不爱kmx，kmx反击早就不在意了",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "嘴硬",
+    "why": "标题用“到底爱不爱”和“早就不在意了”形成口是心非的嘴硬感。"
+   },
+   {
+    "tag": "互怼",
+    "why": "标题明确写到一方吵闹、另一方反击，呈现双方斗嘴互怼。"
+   },
+   {
+    "tag": "磕CP",
+    "why": "标题围绕双方“爱不爱”的关系展开，带有明显的感情拉扯和嗑糖空间。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "嘴硬",
+   "互怼",
+   "磕CP"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,嘴硬,互怼,磕CP",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1aTjw6PEua",
+  "bvid": "BV1aTjw6PEua",
+  "title": "【李豆沙】主播是一面镜子，李豆沙喜欢女生，kmx也喜欢女生",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [],
+  "content_tags": [
+   {
+    "tag": "百合",
+    "why": "标题明确提到“喜欢女生”，属于常见百合向话题。"
+   },
+   {
+    "tag": "性取向",
+    "why": "标题围绕主播和观众“喜欢女生”展开，直接涉及性取向话题。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "百合",
+   "性取向"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,百合,性取向",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1aTjw6PEwp",
+  "bvid": "BV1aTjw6PEwp",
+  "title": "【李豆沙】李豆沙年龄歧视露蒂丝，小心被黑诊所摘手脚",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "莉可丽丝",
+    "rules": [
+     "lycoris"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "露蒂丝": 1
+    },
+    "notes": []
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "年龄歧视",
+    "why": "标题直接写明“年龄歧视”，核心话题明确。"
+   },
+   {
+    "tag": "黑色幽默",
+    "why": "标题用“黑诊所摘手脚”的夸张恐吓制造黑色笑点。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "莉可丽丝",
+   "年龄歧视",
+   "黑色幽默"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,莉可丽丝,年龄歧视,黑色幽默",
+  "overflow_tags": []
+ },
+ {
+  "id": "BV1k1jc6EEnS",
+  "bvid": "BV1k1jc6EEnS",
+  "title": "【李豆沙】侄女卖姬太舒适了，李豆沙直呼找到舒适区",
+  "srt": "",
+  "base_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片"
+  ],
+  "proper_noun_tags": [
+   {
+    "tag": "侄女",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   },
+   {
+    "tag": "百合",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   },
+   {
+    "tag": "女同",
+    "rules": [
+     "zhinv"
+    ],
+    "hits": 1,
+    "title_hit": true,
+    "evidence": {
+     "侄女": 1
+    },
+    "notes": [
+     "Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+    ]
+   }
+  ],
+  "content_tags": [
+   {
+    "tag": "卖姬",
+    "why": "标题直接写有“卖姬太舒适了”，明确点出相关互动内容。"
+   },
+   {
+    "tag": "磕糖",
+    "why": "标题中“直呼找到舒适区”体现了观看亲密互动时的愉悦磕糖氛围。"
+   }
+  ],
+  "warnings": [],
+  "overrides": {
+   "suppressed": {},
+   "added": {}
+  },
+  "final_tags": [
+   "李豆沙",
+   "虚拟主播",
+   "虚拟UP主",
+   "直播切片",
+   "侄女",
+   "百合",
+   "女同",
+   "卖姬",
+   "磕糖"
+  ],
+  "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,侄女,百合,女同,卖姬,磕糖",
+  "overflow_tags": []
+ }
+]
