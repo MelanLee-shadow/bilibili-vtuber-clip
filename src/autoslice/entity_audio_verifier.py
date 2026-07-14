@@ -213,7 +213,9 @@ def _gemini_api_observe_entity(*, audio_path: Path, prompt: str, key: str, model
         ],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 8_192,
+            # 32768：gemini-3.5-flash 的思考 token 计入输出上限，多实体难句
+            # 的长思考在 8192 下会把正文挤成空(2026-07-14 梦限大 INVALID_OUTPUT 案)。
+            "maxOutputTokens": 32_768,
             "responseMimeType": "application/json",
         },
     }
@@ -486,6 +488,11 @@ def build_local_audio_entity_verifier(
                             prompt=api_prompt,
                             key=attempt_key,
                             model=model_used,
+                        )
+                        # 无论成败先落盘原始响应（取证；失败尝试会被下一次覆盖）
+                        api_response_path.write_text(
+                            (raw or "") if (raw or "").endswith("\n") else (raw or "") + "\n",
+                            encoding="utf-8",
                         )
                         if not raw or len(raw.encode("utf-8")) > 2_000_000:
                             raise ValueError("empty or oversized Gemini API output")
