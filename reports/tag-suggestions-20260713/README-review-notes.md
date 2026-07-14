@@ -43,9 +43,13 @@
   （梦限大×3 含跨行截断连体匹配、Mujica、Popipa、MyGO、邦多利、武士道）。
 - **05** BV1zQNk6KEUS: 字幕「萤火虫的live」→ `萤火虫漫展`（新专名规则, 命名口径 Ivan 未点名反对, 暂用）。
 
-## 接入计划（下一步）
+## 接入状态（2026-07-13 全部完成）
 
-- `do_upload.sh` 的 `--tag` 从写死 6 位改为读 manifest 字段; `authorized_upload.py make-manifest` 增加 `tags` 字段
-  （本脚本产出+人工放行）; 账本与 `*.uploaded.json` 记录实际 tag。修字幕→换源编辑时同步重算补 tag。
-- 已传 10 条走 B 站编辑模式补 tag（与台账修复流程合并处理, 编辑不限次数; 顺带可实测 tag 上限 10 还是 12）。
-- 歌切另有词库面（歌名/原唱/翻唱/弹唱), 本批未含歌切, 后续单独扩。
+- 上传通道：`make-manifest --tags` 冻结 → `do_upload.sh $4`（无 tags 回退基础4位）。✔ 已部署
+- **全自动生成（Ivan 指示）**：`produce_slice_package` 产包时按成品标题+成品字幕生成 `upload_tags` 进 record.json
+  （fail-safe: OK/OK_NO_LLM/FAILED, 绝不阻塞交付）；`make-manifest` 无 --tags 自动拾取视频旁 `<stem>.record.json`
+  （--tags 覆盖、--no-tags 关闭、坏 sidecar 响亮拒绝, tags_source 入 manifest）。✔
+- `apply_subtitle_correction` 修字幕后自动重算 record 的 upload_tags；已发布稿件 B 站侧同步用 `bili_update_tags.py`。✔
+- 已传 10 条 + 历史 43 条全部补完（见上文执行结果/全量回填）。✔
+- 歌切自动词面目前=标题《》歌名+翻唱/歌回/唱歌（回填口径）；产包侧歌切走同一 generate_upload_tags（歌词字幕会让
+  LLM 层宁缺毋滥, 专名层照扫）——如需歌切专用词面再扩。
