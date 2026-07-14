@@ -330,6 +330,93 @@ def test_loader_parses_uncertain_keep_surfaces_from_asset():
     assert set(sure.uncertain_keep_surfaces) == {"苏人", "苏惹"}
 
 
+def test_single_char_surfaces_never_form_slots():
+    """2026-07-14 乐队番案：话题图组的单字面「灯」把「粉丝灯牌」命中成
+    高松灯候选并阻塞整条——实体面最短两字。"""
+    group = ReferentGroup(
+        (
+            ReferentEntity("高松灯", ("高松灯", "灯"), ("takamatsu tomori",)),
+            ReferentEntity("千早爱音", ("千早爱音",), ("anon",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    calls: list[int] = []
+
+    def counting(request):
+        calls.append(1)
+        return None
+
+    source = _srt("谢谢猴桃酷拉我的粉丝灯牌")
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[group], entity_verifier=counting
+    )
+
+    assert output == source
+    assert audit["status"] == "NO_ENTITY", audit
+    assert calls == []
+
+
+def test_static_group_canonicals_keep_on_uncertain_after_kmx_generalization():
+    """kmx 先例推广回归：文本已是「梦限大」「恋死」等规范形时，供应商断供
+    (UNCERTAIN) 不得阻塞；误听面（梦现代）UNCERTAIN 照旧阻塞。"""
+    groups = load_referent_groups(
+        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+    )
+    dream = next(
+        g for g in groups if {e.canonical for e in g.entities} == {"梦限大", "Ave Mujica"}
+    )
+
+    canonical_src = _srt("但是我确实很想跟大家看梦限大")
+    output, audit = apply_audio_entity_verification(
+        canonical_src, referent_groups=[dream], entity_verifier=_uncertain_verifier
+    )
+    assert output == canonical_src
+    assert audit["status"] != "ENTITY_VERDICT_REQUIRED", audit
+
+    mishear_src = _srt("怎么有人说有梦现代的风险")
+    output2, audit2 = apply_audio_entity_verification(
+        mishear_src, referent_groups=[dream], entity_verifier=_uncertain_verifier
+    )
+    assert output2 == mishear_src
+    assert audit2["status"] == "ENTITY_VERDICT_REQUIRED"
+
+
+def test_auditor_pair_adjudication_semantics_via_engine():
+    """审片员自定夺（Ivan 2026-07-14）：非同音建议交黑帧二选一——RESOLVED=
+    建议→改写目标 cue；UNCERTAIN→双向保留不阻塞；其他 cue 不受影响。"""
+    import dataclasses as _dc
+
+    pair = ReferentGroup(
+        (
+            ReferentEntity("罗莎", ("罗莎",), ()),
+            ReferentEntity("豆沙", ("豆沙",), ()),
+        ),
+        audio_verify_all_surfaces=True,
+        uncertain_keep_canonicals=("罗莎", "豆沙"),
+        positions=("transcript_only",),
+    )
+    source = _srt("让罗莎把kmx扛起来", "罗莎在别的句子里")
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[_dc.replace(pair, positions=("transcript_only",))],
+        entity_verifier=_audio_entity_verifier("豆沙"),
+        excluded_cue_indexes={2},
+    )
+    assert "让豆沙把kmx扛起来" in output
+    assert "罗莎在别的句子里" in output  # 只裁目标 cue
+    assert audit["status"] == "APPLIED_AND_VERIFIED", audit
+
+    output2, audit2 = apply_audio_entity_verification(
+        source,
+        referent_groups=[pair],
+        entity_verifier=_uncertain_verifier,
+        excluded_cue_indexes={2},
+    )
+    assert output2 == source
+    assert audit2["status"] != "ENTITY_VERDICT_REQUIRED", audit2
+
+
 def test_multi_group_same_cue_arbitrated_independently():
     """2026-07-14 梦限大坏女人案 cue31「海铃的假哭和那个にゃむち的」：一 cue
     命中多个不同实体组不构成歧义，各组各自单槽正常裁。"""

@@ -25,7 +25,11 @@
           ]
         }
       ],
-      "reason": "Distinct works. Exact chat establishes spelling only after raw audio independently proves which title the streamer actually said; an immediate reply then inherits that resolved entity."
+      "reason": "Distinct works. Exact chat establishes spelling only after raw audio independently proves which title the streamer actually said; an immediate reply then inherits that resolved entity. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。",
+      "uncertain_keep_canonicals": [
+        "恋青",
+        "恋死"
+      ]
     },
     {
       "audio_verify_all_surfaces": true,
@@ -57,7 +61,11 @@
           ]
         }
       ],
-      "reason": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables."
+      "reason": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。",
+      "uncertain_keep_canonicals": [
+        "梦限大",
+        "Ave Mujica"
+      ]
     },
     {
       "audio_verify_all_surfaces": true,
@@ -89,7 +97,11 @@
           ]
         }
       ],
-      "reason": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone."
+      "reason": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。",
+      "uncertain_keep_canonicals": [
+        "立希",
+        "祥子"
+      ]
     },
     {
       "audio_verify_all_surfaces": true,

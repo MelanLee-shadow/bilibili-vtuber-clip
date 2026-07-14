@@ -513,7 +513,9 @@ def _entity_occurrences(text: str, group: ReferentGroup) -> list[dict[str, Any]]
         (surface, entity.canonical)
         for entity in group.entities
         for surface in entity.surfaces
-        if surface
+        # 单字面禁止成槽（2026-07-14 乐队番案：话题图组的「灯」把「粉丝
+        # 灯牌」命中成高松灯候选并阻塞整条）——实体面最短两字。
+        if surface and len(surface) >= 2
     ]
     for surface, canonical in sorted(candidates, key=lambda pair: len(pair[0]), reverse=True):
         for match in re.finditer(re.escape(surface.lower()), lowered):

@@ -72,6 +72,8 @@ from src.autoslice.chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
     witness_disagreement_cues,
+    ReferentEntity,
+    ReferentGroup,
     apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
     build_human_text_entity_verifier,
@@ -2008,6 +2010,54 @@ def main(argv: list[str] | None = None) -> int:
             srt_text, final_review_audit = route_findings(
                 srt_text, review_findings, protected_cue_indexes=protected_review_cues
             )
+            # 无人值守自定夺（Ivan 2026-07-14：审片员不该只给建议积压人工）：
+            # 非同音建议就地交黑帧音频二选一——RESOLVED=建议→采纳改写，
+            # RESOLVED=原文/UNCERTAIN→保留并披露，永不阻塞。词典钦定面与
+            # chat 拥有 cue 已在 route 阶段被挡，不会进到这里。
+            adjudicable = [
+                row
+                for row in (final_review_audit.get("findings") or [])
+                if row.get("routed") == "disclosure"
+                and row.get("suggestion")
+                and str(row.get("suggestion")) != str(row.get("suspect"))
+            ][:6]
+            for row in adjudicable:
+                suspect = str(row["suspect"])
+                suggestion = str(row["suggestion"])
+                pair_group = ReferentGroup(
+                    (
+                        ReferentEntity(suspect, (suspect,)),
+                        ReferentEntity(suggestion, (suggestion,)),
+                    ),
+                    reason=f"审片员自定夺：{str(row.get('why') or '')[:80]}",
+                    audio_verify_all_surfaces=True,
+                    uncertain_keep_canonicals=(suspect, suggestion),
+                    positions=("transcript_only",),
+                )
+                final_cue_total = len(
+                    [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+                )
+                adj_excluded = (
+                    set(range(1, final_cue_total + 1)) - {int(row["cue_index"])}
+                ) | set(protected_review_cues)
+                srt_text, adj_audit = apply_audio_entity_verification(
+                    srt_text,
+                    referent_groups=[
+                        dataclasses.replace(pair_group, positions=("transcript_only",))
+                    ],
+                    entity_verifier=verify_confusable_entity,
+                    excluded_cue_indexes=adj_excluded,
+                )
+                repaired = bool(adj_audit.get("repairs"))
+                row["audio_adjudication"] = {
+                    "status": adj_audit.get("status"),
+                    "repaired": repaired,
+                }
+                if repaired:
+                    row["routed"] = "audio_adjudicated_fix"
+                    chat_authority_audit.setdefault("entity_repairs", []).extend(
+                        adj_audit.get("repairs") or []
+                    )
         except Exception as exc:
             final_review_audit = {
                 "schema_version": "final-review-audit.v1",
