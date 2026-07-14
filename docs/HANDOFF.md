@@ -1219,3 +1219,10 @@ Ivan 终句两案：①「删错了吧…字幕里的但是没有改成大家」
 - 机制 `src/autoslice/subtitle_fidelity.py`：修正链末端(代词终审前)逐 cue 比对 BCUT draft，编辑跨度必须有证人(内置同音组/数字逐字读法/白名单规范表/AGY 同 cue 原文/纯标点/幻听置空)，违者整 cue 回退 draft，audit 落 `.fidelity-audit.json`。AGY 缺席时语义改写全部回退。commit a1a4e15，生产已部署（DEPLOYED_COMMIT=a1a4e15），四个 eval BASE 已热补。
 - 处置：抢手机片(一九零)按 Ivan 指示不重做；生日结婚 auto_170019_302_354 在 panda 重做中(birthday_redo.log)，收敛后替换生产+本地。
 - 残余风险：AGY 自身若转述（证人污染）守卫无法识别——已在 principles 忠实铁律里对 AGY prompt 同步约束（软层），后续可加 API 二证人交叉。
+
+### 2026-07-14 01:0x 增补：AGY 四车道 API 兜底齐全 + 第三面同一把尺墙
+
+- Ivan 澄清：API 与 AGY 背后同为 gemini-3.5-flash，只是载体不同——**不构成二证人**（撤回上一节"API 二证人"设想）；证人独立性由 BCUT(另一家 ASR)+忠实性守卫承担，将来如需第三证人走剪映 ASR 备线。
+- 精听 refine 分块车道补上 per-chunk `run_gemini_api` 载体兜底（免费3key→付费门+入帐）。至此 AGY 四条车道全部有 API 兜底：实体裁决(2099fb7)、LRC 对齐(原有)、shadow 源上下文(原有)、精听 refine(ca3a109)。
+- 生日重做实测暴露第三面内外分歧墙：外层终验对弃置头要求全子串包含，而 apply 侧是 coverage≥0.8（「抱抱李~」vs 口播「抱抱」0.857）→ 误杀。外层改用同一谓词 `_fragment_spoken_in`；真实失败工件复验 True。commit ca3a109，生产已部署（DEPLOYED_COMMIT=ca3a109）。
+- BASE 热补方式升级：半文件补丁会造成旧快照符号缺失（panda 三 BASE import 失败实证）——改为整层 overlay（scripts/src/assets 按 ca3a109 rsync），四 BASE import 全过。生日结婚第三跑在飞（birthday_redo3.log）。
