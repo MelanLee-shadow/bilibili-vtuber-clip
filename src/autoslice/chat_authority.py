@@ -1232,6 +1232,83 @@ def _render_srt(cues: Sequence[object], texts: Sequence[str]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+def reconcile_contradictory_entity_repairs(
+    srt_text: str,
+    entity_repairs: Sequence[Mapping[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Same-slot contradictory RESOLVED verdicts are untrustworthy evidence.
+
+    Two entity repairs whose cue sets intersect but whose expected entities
+    differ mean the raw-audio ear returned confident opposite answers about
+    the same speech (2026-07-14 恋死/恋青/练死 case: "clearly lian qing twice"
+    and "clearly lian si twice" over one window).  Last-writer-wins is never
+    acceptable there: restore each disputed cue to the earliest repair's
+    pre-repair text (closest to the independent BCUT witness) and disclose.
+    Rows touching a disputed cue are marked so the final-surface gate stops
+    requiring their (mutually exclusive) outcomes to survive.
+    """
+
+    rows = [row for row in entity_repairs if isinstance(row, dict)]
+    by_cue: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        for index in row.get("cue_indexes") or []:
+            by_cue.setdefault(int(index), []).append(row)
+    disputed: dict[int, list[dict[str, Any]]] = {}
+    for index, cue_rows in by_cue.items():
+        expected = {
+            str(r.get("expected_entity") or r.get("resolved_canonical") or "")
+            for r in cue_rows
+        }
+        if len(expected - {""}) > 1:
+            disputed[index] = cue_rows
+    if not disputed:
+        return srt_text, []
+
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    texts = [cue.text for cue in cues]
+    disclosures: list[dict[str, Any]] = []
+    for index in sorted(disputed):
+        cue_rows = disputed[index]
+        earliest = cue_rows[0]
+        try:
+            before_text = str(
+                (earliest.get("before") or [])[list(earliest.get("cue_indexes") or []).index(index)]
+            )
+        except (ValueError, IndexError):
+            before_text = ""
+        reverted_to = None
+        if 0 < index <= len(texts):
+            known_afters = set()
+            for r in cue_rows:
+                row_indexes = list(r.get("cue_indexes") or [])
+                if index in row_indexes:
+                    afters = r.get("after") or []
+                    position = row_indexes.index(index)
+                    if position < len(afters):
+                        known_afters.add(str(afters[position]))
+            if before_text and texts[index - 1] in known_afters:
+                texts[index - 1] = before_text
+                reverted_to = before_text
+        for row in cue_rows:
+            row["reconciliation"] = "CONTRADICTORY_VERDICTS_REVERTED"
+        disclosures.append(
+            {
+                "cue_index": index,
+                "expected_entities": sorted(
+                    {
+                        str(r.get("expected_entity") or r.get("resolved_canonical") or "")
+                        for r in cue_rows
+                    }
+                    - {""}
+                ),
+                "reverted_to": reverted_to,
+            }
+        )
+    if any(row["reverted_to"] is not None for row in disclosures):
+        srt_text = _render_srt(cues, texts)
+    return srt_text, disclosures
+
+
 def _match_metrics(authority: str, candidate: str) -> tuple[float, float, float, float, int]:
     left, right = normalize_chat_text(authority), normalize_chat_text(candidate)
     if not left or not right:

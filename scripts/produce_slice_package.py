@@ -88,6 +88,7 @@ from src.autoslice.chat_authority import (
     normalize_srt_payload_text,
     normalize_srt_payload_window,
     recording_start_epoch_ms,
+    reconcile_contradictory_entity_repairs,
     reconcile_pending_text_overrides,
     sanitize_chat_display_text,
 )
@@ -932,6 +933,8 @@ def verify_chat_authority_final_surfaces(
             or "".join(str(value) for value in row.get("after") or []),
         )
         for row in audit.get("entity_repairs") or []
+        # 被矛盾和解回退的行不再要求其（互斥的）结果存活于终稿。
+        if row.get("reconciliation") != "CONTRADICTORY_VERDICTS_REVERTED"
     )
     if any(
         row.get("reconciliation_status") != "APPLIED_AND_HASH_VERIFIED"
@@ -2066,6 +2069,22 @@ def main(argv: list[str] | None = None) -> int:
             for row in adjudicable:
                 suspect = str(row["suspect"])
                 suggestion = str(row["suggestion"])
+                # 过期发现守卫（2026-07-14 恋青/练死案）：审片发现产自它当时
+                # 看到的文本快照；若后续 pass 已改写该 cue、suspect 不在当前
+                # 文本里，这条发现的前提已失效——只披露，绝不再持刀。
+                live_cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+                finding_cue = int(row.get("cue_index") or 0)
+                live_text = (
+                    live_cues[finding_cue - 1].text
+                    if 0 < finding_cue <= len(live_cues)
+                    else ""
+                )
+                if suspect not in live_text:
+                    row["audio_adjudication"] = {
+                        "status": "STALE_FINDING_SKIPPED",
+                        "repaired": False,
+                    }
+                    continue
                 pair_group = ReferentGroup(
                     (
                         ReferentEntity(suspect, (suspect,)),
@@ -2106,6 +2125,19 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "AUDITOR_UNAVAILABLE",
                 "error_type": type(exc).__name__,
             }
+    # 同槽矛盾裁定和解（2026-07-14 恋死/恋青/练死案）：多个 pass 对同一 cue
+    # 给出互斥的 RESOLVED 实体 → 该处听证不可信，回退最早改写前的文本并披露；
+    # 严禁后写者赢。
+    srt_text, entity_verdict_contradictions = reconcile_contradictory_entity_repairs(
+        srt_text, chat_authority_audit.get("entity_repairs") or []
+    )
+    if entity_verdict_contradictions:
+        chat_authority_audit["entity_verdict_contradictions"] = entity_verdict_contradictions
+        print(
+            "[chat-authority] contradictory entity verdicts reverted: "
+            + json.dumps(entity_verdict_contradictions, ensure_ascii=False),
+            flush=True,
+        )
     chat_authority_audit["final_review_audit"] = final_review_audit
     persist_review_audit(out_root / f"{cid}.review-flags.json", final_review_audit)
     chat_authority_audit["post_transcript_entity_output_srt_sha256"] = hashlib.sha256(
