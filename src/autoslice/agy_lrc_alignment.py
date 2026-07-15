@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.gemini_slice_jingting import agy_subprocess_env, parse_timeout_seconds, strip_markdown_fence
@@ -561,23 +562,43 @@ def _validate_gemini_ready_evidence_binding(payload: Mapping[str, object]) -> No
         raise ValueError(f"Gemini API ready proof is invalid: {error}")
 
 
-def run_agy_audio_lrc_alignment(
+@dataclass(frozen=True)
+class _PreparedAgyLrcJob:
+    source_origin_path: str
+    job_dir: Path
+    attempt_id: str
+    media_path: Path
+    source_sha: str
+    duration_ms: int
+    lrc_path: Path
+    lrc_sha: str
+    prompt_path: Path
+    prompt_sha: str
+    started_at: str
+    stdout_path: Path
+    stderr_path: Path
+    provider_raw_output_path: Path
+
+
+def _prepare_agy_lrc_job(
+    *,
     source_media_path: Path,
     lrc: LrcResult,
     candidate_id: str,
     output_dir: Path,
-) -> AudioLrcAlignmentRun:
+) -> _PreparedAgyLrcJob:
     source_media_path = Path(source_media_path)
     if not source_media_path.is_file():
         raise FileNotFoundError(source_media_path)
     source_origin_path = str(source_media_path.resolve(strict=True))
     output_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(output_dir, 0o700)
-    safe_candidate = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in candidate_id)[:80]
+    safe_candidate = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in candidate_id
+    )[:80]
     job_dir = Path(tempfile.mkdtemp(prefix=f"{safe_candidate}-", dir=output_dir))
     os.chmod(job_dir, 0o700)
-    attempt_id = job_dir.name
-
     media_path = job_dir / "input.mp4"
     shutil.copy2(source_media_path, media_path)
     os.chmod(media_path, 0o600)
@@ -585,7 +606,6 @@ def run_agy_audio_lrc_alignment(
     if source_sha != _sha256(source_media_path):
         raise RuntimeError("copied AGY media does not match the current source")
     duration_ms = _duration_ms(media_path)
-
     lrc_path = job_dir / "source.lrc"
     lrc_path.write_text(_lrc_text(lrc), encoding="utf-8")
     os.chmod(lrc_path, 0o600)
@@ -594,7 +614,7 @@ def run_agy_audio_lrc_alignment(
     prompt_path.write_text(
         _prompt(
             candidate_id=candidate_id,
-            attempt_id=attempt_id,
+            attempt_id=job_dir.name,
             source_sha256=source_sha,
             lrc_sha256=lrc_sha,
             duration_ms=duration_ms,
@@ -602,11 +622,275 @@ def run_agy_audio_lrc_alignment(
         encoding="utf-8",
     )
     os.chmod(prompt_path, 0o600)
-    prompt_sha = _sha256(prompt_path)
+    return _PreparedAgyLrcJob(
+        source_origin_path=source_origin_path,
+        job_dir=job_dir,
+        attempt_id=job_dir.name,
+        media_path=media_path,
+        source_sha=source_sha,
+        duration_ms=duration_ms,
+        lrc_path=lrc_path,
+        lrc_sha=lrc_sha,
+        prompt_path=prompt_path,
+        prompt_sha=_sha256(prompt_path),
+        started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+        stdout_path=job_dir / "agy.stdout",
+        stderr_path=job_dir / "agy.stderr",
+        provider_raw_output_path=job_dir / "alignment.json",
+    )
 
-    started_at = dt.datetime.now(dt.timezone.utc).isoformat()
-    stdout_path = job_dir / "agy.stdout"
-    stderr_path = job_dir / "agy.stderr"
+
+@dataclass(frozen=True)
+class _AgyLrcExecution:
+    payload: Mapping[str, object]
+    provider: str
+    model: str
+    provider_fallback_used: bool
+    agy_rc: int | None
+    agy_failure_category: str | None
+    configured_key_count: int | None
+    accepted_key_ordinal: int | None
+    accepted_key_tier: str | None
+    paid_backup_policy: dict[str, object] | None
+    api_audio_path: Path | None
+    api_audio_sha256: str | None
+    api_audio_duration_ms: int | None
+    provider_raw_output_path: Path
+    prompt_path: Path
+    prompt_sha256: str
+
+
+def _persist_agy_lrc_run(
+    *,
+    job: _PreparedAgyLrcJob,
+    lrc: LrcResult,
+    candidate_id: str,
+    execution: _AgyLrcExecution,
+) -> AudioLrcAlignmentRun:
+    for diagnostic_path in (job.stdout_path, job.stderr_path):
+        if not diagnostic_path.exists():
+            diagnostic_path.write_text("", encoding="utf-8")
+        os.chmod(diagnostic_path, 0o600)
+    provider_raw_bytes = execution.provider_raw_output_path.read_bytes()
+    provider_raw_sha = hashlib.sha256(provider_raw_bytes).hexdigest()
+    output_path = job.job_dir / "alignment.canonical.json"
+    output_path.write_text(
+        json.dumps(execution.payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(output_path, 0o600)
+    output_sha = _sha256(output_path)
+    manifest_path = job.job_dir / "run.manifest.json"
+    manifest = {
+        "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
+        "attempt_id": job.attempt_id,
+        "candidate_id": candidate_id,
+        "provider": execution.provider,
+        "model": execution.model,
+        "provider_fallback_used": execution.provider_fallback_used,
+        "agy_rc": execution.agy_rc,
+        "agy_failure_category": execution.agy_failure_category,
+        "sandbox": execution.provider == AGY_AUDIO_LRC_PROVIDER,
+        "direct_audio_input": execution.provider == GEMINI_API_AUDIO_LRC_PROVIDER,
+        "configured_key_count": execution.configured_key_count,
+        "accepted_key_ordinal": execution.accepted_key_ordinal,
+        "accepted_key_tier": execution.accepted_key_tier,
+        **(
+            {"paid_backup_policy": execution.paid_backup_policy}
+            if execution.paid_backup_policy is not None
+            else {}
+        ),
+        "canonicalization": {
+            "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
+            "row_identity": "strict_zero_based_lrc_index",
+            "restored_fields": ["lrc_time_ms", "text"],
+            "row_count": len(lrc.lines),
+            "canonical_lrc_sha256": job.lrc_sha,
+            "provider_raw_output_sha256": provider_raw_sha,
+            "canonicalized_output_sha256": output_sha,
+        },
+        "started_at": job.started_at,
+        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "artifacts": {
+            "source_origin_path": job.source_origin_path,
+            "source_path": str(job.media_path),
+            "source_sha256": job.source_sha,
+            "source_duration_ms": job.duration_ms,
+            "lrc_path": str(job.lrc_path),
+            "lrc_sha256": job.lrc_sha,
+            "prompt_path": str(execution.prompt_path),
+            "prompt_sha256": execution.prompt_sha256,
+            "provider_raw_output_path": str(execution.provider_raw_output_path),
+            "provider_raw_output_sha256": provider_raw_sha,
+            "output_path": str(output_path),
+            "output_sha256": output_sha,
+            **(
+                {
+                    "api_audio_path": str(execution.api_audio_path),
+                    "api_audio_sha256": execution.api_audio_sha256,
+                    "api_audio_duration_ms": execution.api_audio_duration_ms,
+                }
+                if execution.provider == GEMINI_API_AUDIO_LRC_PROVIDER
+                else {}
+            ),
+        },
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(manifest_path, 0o600)
+    return AudioLrcAlignmentRun(
+        payload=execution.payload,
+        provider=execution.provider,
+        model=execution.model,
+        rc=execution.agy_rc,
+        provider_fallback_used=execution.provider_fallback_used,
+        source_origin_path=job.source_origin_path,
+        source_path=str(job.media_path),
+        source_sha256=job.source_sha,
+        source_duration_ms=job.duration_ms,
+        lrc_path=str(job.lrc_path),
+        lrc_sha256=job.lrc_sha,
+        prompt_path=str(execution.prompt_path),
+        prompt_sha256=execution.prompt_sha256,
+        output_path=str(output_path),
+        output_sha256=output_sha,
+        manifest_path=str(manifest_path),
+        manifest_sha256=_sha256(manifest_path),
+        provider_raw_output_path=str(execution.provider_raw_output_path),
+        provider_raw_output_sha256=provider_raw_sha,
+        agy_failure_category=execution.agy_failure_category,
+        configured_key_count=execution.configured_key_count,
+        accepted_key_ordinal=execution.accepted_key_ordinal,
+        accepted_key_tier=execution.accepted_key_tier,
+        paid_backup_policy=execution.paid_backup_policy,
+        api_audio_path=(
+            str(execution.api_audio_path)
+            if execution.api_audio_path is not None
+            else None
+        ),
+        api_audio_sha256=execution.api_audio_sha256,
+        api_audio_duration_ms=execution.api_audio_duration_ms,
+    )
+
+
+def _run_primary_agy_alignment(
+    *,
+    job: _PreparedAgyLrcJob,
+    lrc: LrcResult,
+    candidate_id: str,
+) -> tuple[Mapping[str, object], int]:
+    """Run and validate the sandboxed primary AGY provider."""
+
+    agy_bin_requested = os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
+    agy_bin = shutil.which(agy_bin_requested) or agy_bin_requested
+    if not Path(agy_bin).is_file():
+        raise _AgyProviderFailure("AGY_UNAVAILABLE")
+    print_timeout = os.environ.get("AGY_LRC_PRINT_TIMEOUT", "30m")
+    short_prompt = (
+        f"Open {job.job_dir}/prompt.md with view_file and follow it exactly. "
+        f"Use only {job.job_dir}/prompt.md, {job.job_dir}/input.mp4, "
+        f"{job.job_dir}/source.lrc, and {job.job_dir}/alignment.json. "
+        "Do not inspect any other file or directory. Do not use shell, terminal, browser, or web."
+    )
+    command = [
+        str(agy_bin),
+        "--sandbox",
+        "--add-dir",
+        str(job.job_dir),
+        "--model",
+        AGY_AUDIO_LRC_MODEL,
+        "-p",
+        short_prompt,
+        "--print-timeout",
+        print_timeout,
+    ]
+    agy_env = agy_subprocess_env()
+    for secret_name in (
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEY_2",
+        "GEMINI_API_KEY_3",
+        "GEMINI_KEY_BACKUP",
+    ):
+        agy_env.pop(secret_name, None)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=job.job_dir,
+            env=agy_env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=parse_timeout_seconds(print_timeout) + 120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        job.stdout_path.write_text(str(exc.stdout or ""), encoding="utf-8")
+        job.stderr_path.write_text(str(exc.stderr or ""), encoding="utf-8")
+        raise _AgyProviderFailure("AGY_TIMEOUT") from exc
+    job.stdout_path.write_text(completed.stdout, encoding="utf-8")
+    job.stderr_path.write_text(completed.stderr, encoding="utf-8")
+    if completed.returncode != 0:
+        raise _AgyProviderFailure(
+            _classify_agy_nonzero(
+                returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+            ),
+            agy_rc=completed.returncode,
+        )
+    if not job.provider_raw_output_path.is_file():
+        raise _AgyProviderFailure("AGY_EMPTY_OUTPUT", agy_rc=0)
+    try:
+        raw = strip_markdown_fence(job.provider_raw_output_path.read_bytes().decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0) from exc
+    if not raw or len(raw.encode("utf-8")) > 2_000_000:
+        raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0)
+    try:
+        provider_payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0) from exc
+    try:
+        payload = canonicalize_audio_lrc_observation(provider_payload, lrc)
+    except ValueError as exc:
+        raise _AgyProviderFailure("AGY_LRC_INDEX_INVALID", agy_rc=0) from exc
+    try:
+        _validate_strict_v5_shape(
+            payload,
+            candidate_id=candidate_id,
+            attempt_id=job.attempt_id,
+            source_sha256=job.source_sha,
+            lrc_sha256=job.lrc_sha,
+            source_duration_ms=job.duration_ms,
+            lrc_line_count=len(lrc.lines),
+        )
+    except ValueError as exc:
+        raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0) from exc
+    return payload, completed.returncode
+
+
+def run_agy_audio_lrc_alignment(
+    source_media_path: Path,
+    lrc: LrcResult,
+    candidate_id: str,
+    output_dir: Path,
+) -> AudioLrcAlignmentRun:
+    job = _prepare_agy_lrc_job(
+        source_media_path=source_media_path,
+        lrc=lrc,
+        candidate_id=candidate_id,
+        output_dir=output_dir,
+    )
+    job_dir = job.job_dir
+    attempt_id = job.attempt_id
+    media_path = job.media_path
+    source_sha = job.source_sha
+    duration_ms = job.duration_ms
+    lrc_path = job.lrc_path
+    lrc_sha = job.lrc_sha
+    prompt_path = job.prompt_path
+    prompt_sha = job.prompt_sha
     provider = AGY_AUDIO_LRC_PROVIDER
     model = AGY_AUDIO_LRC_MODEL
     provider_fallback_used = False
@@ -619,96 +903,14 @@ def run_agy_audio_lrc_alignment(
     api_audio_path: Path | None = None
     api_audio_sha: str | None = None
     api_audio_duration_ms: int | None = None
-    provider_raw_output_path = job_dir / "alignment.json"
-    provider_payload: object
+    provider_raw_output_path = job.provider_raw_output_path
 
     try:
-        agy_bin_requested = os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
-        agy_bin = shutil.which(agy_bin_requested) or agy_bin_requested
-        if not Path(agy_bin).is_file():
-            raise _AgyProviderFailure("AGY_UNAVAILABLE")
-        print_timeout = os.environ.get("AGY_LRC_PRINT_TIMEOUT", "30m")
-        short_prompt = (
-            f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
-            f"Use only {job_dir}/prompt.md, {job_dir}/input.mp4, "
-            f"{job_dir}/source.lrc, and {job_dir}/alignment.json. "
-            "Do not inspect any other file or directory. Do not use shell, terminal, browser, or web."
+        payload, agy_rc = _run_primary_agy_alignment(
+            job=job,
+            lrc=lrc,
+            candidate_id=candidate_id,
         )
-        command = [
-            str(agy_bin),
-            "--sandbox",
-            "--add-dir",
-            str(job_dir),
-            "--model",
-            AGY_AUDIO_LRC_MODEL,
-            "-p",
-            short_prompt,
-            "--print-timeout",
-            print_timeout,
-        ]
-        agy_env = agy_subprocess_env()
-        for secret_name in (
-            "GEMINI_API_KEY",
-            "GEMINI_API_KEY_2",
-            "GEMINI_API_KEY_3",
-            "GEMINI_KEY_BACKUP",
-        ):
-            agy_env.pop(secret_name, None)
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=job_dir,
-                env=agy_env,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=parse_timeout_seconds(print_timeout) + 120,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout_path.write_text(str(exc.stdout or ""), encoding="utf-8")
-            stderr_path.write_text(str(exc.stderr or ""), encoding="utf-8")
-            raise _AgyProviderFailure("AGY_TIMEOUT") from exc
-        agy_rc = completed.returncode
-        stdout_path.write_text(completed.stdout, encoding="utf-8")
-        stderr_path.write_text(completed.stderr, encoding="utf-8")
-        if completed.returncode != 0:
-            raise _AgyProviderFailure(
-                _classify_agy_nonzero(
-                    returncode=completed.returncode,
-                    stdout=completed.stdout,
-                    stderr=completed.stderr,
-                ),
-                agy_rc=completed.returncode,
-            )
-        if not provider_raw_output_path.is_file():
-            raise _AgyProviderFailure("AGY_EMPTY_OUTPUT", agy_rc=0)
-        provider_raw_bytes = provider_raw_output_path.read_bytes()
-        try:
-            raw = strip_markdown_fence(provider_raw_bytes.decode("utf-8"))
-        except UnicodeDecodeError as exc:
-            raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0) from exc
-        if not raw or len(raw.encode("utf-8")) > 2_000_000:
-            raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0)
-        try:
-            provider_payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0) from exc
-        try:
-            payload = canonicalize_audio_lrc_observation(provider_payload, lrc)
-        except ValueError as exc:
-            raise _AgyProviderFailure("AGY_LRC_INDEX_INVALID", agy_rc=0) from exc
-        try:
-            _validate_strict_v5_shape(
-                payload,
-                candidate_id=candidate_id,
-                attempt_id=attempt_id,
-                source_sha256=source_sha,
-                lrc_sha256=lrc_sha,
-                source_duration_ms=duration_ms,
-                lrc_line_count=len(lrc.lines),
-            )
-        except ValueError as exc:
-            raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0) from exc
     except _AgyProviderFailure as agy_failure:
         agy_failure_category = agy_failure.category
         agy_rc = agy_failure.agy_rc
@@ -759,7 +961,7 @@ def run_agy_audio_lrc_alignment(
                 def _attempt_gemini_api_key(
                     attempt_key: str, *, key_ordinal: int, key_tier: str
                 ) -> bool:
-                    nonlocal provider_payload, payload, accepted_key_ordinal
+                    nonlocal payload, accepted_key_ordinal
                     nonlocal accepted_key_tier, provider_raw_output_path
                     try:
                         raw = _gemini_api_observe(
@@ -790,7 +992,6 @@ def run_agy_audio_lrc_alignment(
                         )
                         os.chmod(raw_output_path, 0o600)
                         provider_raw_output_path = raw_output_path
-                        provider_payload = candidate_payload
                         payload = canonical_payload
                         accepted_key_ordinal = key_ordinal
                         accepted_key_tier = key_tier
@@ -871,101 +1072,26 @@ def run_agy_audio_lrc_alignment(
                 f"agy={agy_failure_category}; gemini={final_api_category}; see {job_dir}"
             )
 
-    for diagnostic_path in (stdout_path, stderr_path):
-        if not diagnostic_path.exists():
-            diagnostic_path.write_text("", encoding="utf-8")
-        os.chmod(diagnostic_path, 0o600)
-    provider_raw_bytes = provider_raw_output_path.read_bytes()
-    provider_raw_sha = hashlib.sha256(provider_raw_bytes).hexdigest()
-    output_path = job_dir / "alignment.canonical.json"
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(output_path, 0o600)
-    output_sha = _sha256(output_path)
-
-    manifest_path = job_dir / "run.manifest.json"
-    manifest = {
-        "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
-        "attempt_id": attempt_id,
-        "candidate_id": candidate_id,
-        "provider": provider,
-        "model": model,
-        "provider_fallback_used": provider_fallback_used,
-        "agy_rc": agy_rc,
-        "agy_failure_category": agy_failure_category,
-        "sandbox": provider == AGY_AUDIO_LRC_PROVIDER,
-        "direct_audio_input": provider == GEMINI_API_AUDIO_LRC_PROVIDER,
-        "configured_key_count": configured_key_count,
-        "accepted_key_ordinal": accepted_key_ordinal,
-        "accepted_key_tier": accepted_key_tier,
-        **(
-            {"paid_backup_policy": paid_backup_policy_stamp}
-            if paid_backup_policy_stamp is not None
-            else {}
+    return _persist_agy_lrc_run(
+        job=job,
+        lrc=lrc,
+        candidate_id=candidate_id,
+        execution=_AgyLrcExecution(
+            payload=payload,
+            provider=provider,
+            model=model,
+            provider_fallback_used=provider_fallback_used,
+            agy_rc=agy_rc,
+            agy_failure_category=agy_failure_category,
+            configured_key_count=configured_key_count,
+            accepted_key_ordinal=accepted_key_ordinal,
+            accepted_key_tier=accepted_key_tier,
+            paid_backup_policy=paid_backup_policy_stamp,
+            api_audio_path=api_audio_path,
+            api_audio_sha256=api_audio_sha,
+            api_audio_duration_ms=api_audio_duration_ms,
+            provider_raw_output_path=provider_raw_output_path,
+            prompt_path=prompt_path,
+            prompt_sha256=prompt_sha,
         ),
-        "canonicalization": {
-            "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
-            "row_identity": "strict_zero_based_lrc_index",
-            "restored_fields": ["lrc_time_ms", "text"],
-            "row_count": len(lrc.lines),
-            "canonical_lrc_sha256": lrc_sha,
-            "provider_raw_output_sha256": provider_raw_sha,
-            "canonicalized_output_sha256": output_sha,
-        },
-        "started_at": started_at,
-        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "artifacts": {
-            "source_origin_path": source_origin_path,
-            "source_path": str(media_path),
-            "source_sha256": source_sha,
-            "source_duration_ms": duration_ms,
-            "lrc_path": str(lrc_path),
-            "lrc_sha256": lrc_sha,
-            "prompt_path": str(prompt_path),
-            "prompt_sha256": prompt_sha,
-            "provider_raw_output_path": str(provider_raw_output_path),
-            "provider_raw_output_sha256": provider_raw_sha,
-            "output_path": str(output_path),
-            "output_sha256": output_sha,
-            **(
-                {
-                    "api_audio_path": str(api_audio_path),
-                    "api_audio_sha256": api_audio_sha,
-                    "api_audio_duration_ms": api_audio_duration_ms,
-                }
-                if provider == GEMINI_API_AUDIO_LRC_PROVIDER
-                else {}
-            ),
-        },
-    }
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(manifest_path, 0o600)
-    manifest_sha = _sha256(manifest_path)
-    return AudioLrcAlignmentRun(
-        payload=payload,
-        provider=provider,
-        model=model,
-        rc=agy_rc,
-        provider_fallback_used=provider_fallback_used,
-        source_origin_path=source_origin_path,
-        source_path=str(media_path),
-        source_sha256=source_sha,
-        source_duration_ms=duration_ms,
-        lrc_path=str(lrc_path),
-        lrc_sha256=lrc_sha,
-        prompt_path=str(prompt_path),
-        prompt_sha256=prompt_sha,
-        output_path=str(output_path),
-        output_sha256=output_sha,
-        manifest_path=str(manifest_path),
-        manifest_sha256=manifest_sha,
-        provider_raw_output_path=str(provider_raw_output_path),
-        provider_raw_output_sha256=provider_raw_sha,
-        agy_failure_category=agy_failure_category,
-        configured_key_count=configured_key_count,
-        accepted_key_ordinal=accepted_key_ordinal,
-        accepted_key_tier=accepted_key_tier,
-        paid_backup_policy=paid_backup_policy_stamp,
-        api_audio_path=str(api_audio_path) if api_audio_path is not None else None,
-        api_audio_sha256=api_audio_sha,
-        api_audio_duration_ms=api_audio_duration_ms,
     )

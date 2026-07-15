@@ -10,7 +10,7 @@ import inspect
 import json
 import re
 import subprocess
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
@@ -280,6 +280,247 @@ def _burn_preview_subtitles(
         record["manifest_sha256"] = _write_bound_materialized_manifest(manifest_path, manifest)
     return record
 
+@dataclass(frozen=True)
+class _RecutSubtitleState:
+    subtitle_source: str
+    timing_qa_record: dict[str, object] | None
+    speech_spans: list | None
+
+
+def _write_initial_recut_subtitles(
+    *,
+    source_video: Path,
+    cues: Sequence[SourceCue],
+    start_ms: int,
+    end_ms: int,
+    subtitle_path: Path,
+    timing_qa_path: Path,
+    lyric_timeline: Sequence[tuple[int, str]] | None,
+    lyric_offset_ms: int | None,
+    speech_spans_provider: SpeechSpansProvider | None,
+) -> _RecutSubtitleState:
+    """Materialize the authoritative initial subtitle timeline for the recut."""
+
+    if lyric_timeline is not None and lyric_offset_ms is not None:
+        _write_lyric_timeline_srt(
+            lyric_timeline,
+            lyric_offset_ms,
+            start_ms,
+            end_ms,
+            subtitle_path,
+        )
+        return _RecutSubtitleState("external_lrc_global_shift", None, None)
+
+    timing_qa_record: dict[str, object] | None = None
+    speech_spans_cache: list | None = None
+    sanitized_cues = cues
+    if speech_spans_provider is not None:
+        try:
+            speech_spans_cache = list(
+                speech_spans_provider(source_video, start_ms, end_ms)
+            )
+            sanitized_cues, timing_qa_record = sanitize_cue_timing(
+                cues,
+                speech_spans_cache,
+                window_start_ms=start_ms,
+                window_end_ms=end_ms,
+            )
+            timing_qa_path.write_text(
+                json.dumps(
+                    timing_qa_record,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            timing_qa_record = {
+                "status": "SUBTITLE_TIMING_QA_UNAVAILABLE",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    _write_source_range_srt(sanitized_cues, start_ms, end_ms, subtitle_path)
+    return _RecutSubtitleState("asr_cues", timing_qa_record, speech_spans_cache)
+
+
+@dataclass(frozen=True)
+class _FreshTalkSubtitleState:
+    subtitle_source: str
+    timing_qa_record: dict[str, object] | None
+    fresh_transcription_record: dict[str, object] | None
+    subtitle_sha256: str | None
+
+
+def _refresh_talk_subtitles(
+    *,
+    media_path: Path,
+    subtitle_path: Path,
+    timing_qa_path: Path,
+    subtitle_source: str,
+    timing_qa_record: dict[str, object] | None,
+    speech_spans_cache: list | None,
+    start_ms: int,
+    end_ms: int,
+    duration_ms: int,
+    transcriber: Callable[[Path], str] | None,
+) -> _FreshTalkSubtitleState:
+    """Replace coarse talk subtitles with a fresh final-media transcription."""
+
+    if transcriber is None or subtitle_source != "asr_cues":
+        return _FreshTalkSubtitleState(subtitle_source, timing_qa_record, None, None)
+    try:
+        clip_speech_spans = (
+            [
+                (span.start_ms - start_ms, span.end_ms - start_ms)
+                for span in speech_spans_cache
+            ]
+            if speech_spans_cache
+            else None
+        )
+        if len(inspect.signature(transcriber).parameters) >= 2:
+            fresh_srt_text = transcriber(media_path, clip_speech_spans)
+        else:
+            fresh_srt_text = transcriber(media_path)
+        fresh_cues = _fresh_srt_to_source_cues(
+            fresh_srt_text,
+            window_start_ms=start_ms,
+            duration_ms=duration_ms,
+        )
+        sanitized_cues = fresh_cues
+        if speech_spans_cache is not None:
+            sanitized_cues, timing_qa_record = sanitize_cue_timing(
+                fresh_cues,
+                speech_spans_cache,
+                window_start_ms=start_ms,
+                window_end_ms=end_ms,
+            )
+            timing_qa_path.write_text(
+                json.dumps(
+                    timing_qa_record,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        _write_source_range_srt(sanitized_cues, start_ms, end_ms, subtitle_path)
+        return _FreshTalkSubtitleState(
+            "fresh_agy_transcription",
+            timing_qa_record,
+            {
+                "status": "USED",
+                "cue_count": len(fresh_cues),
+                "replaced_subtitle_source": "asr_cues",
+            },
+            "sha256:" + _sha256(subtitle_path),
+        )
+    except Exception as exc:
+        return _FreshTalkSubtitleState(
+            subtitle_source,
+            timing_qa_record,
+            {
+                "status": "FAILED_FALLBACK_ASR_CUES",
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+            None,
+        )
+
+
+@dataclass(frozen=True)
+class _AccurateRecutState:
+    render_qa: Mapping[str, object] | None
+    accurate_rerender_used: bool
+    accurate_command: list[str] | None
+
+
+def _ensure_accurate_recut(
+    *,
+    source_video: Path,
+    media_path: Path,
+    candidate_id: str,
+    render_qa_path: Path,
+    start_ms: int,
+    end_ms: int,
+    duration_ms: int,
+    strict_song_output: bool,
+    subtitle_source: str,
+    run_ffmpeg: bool,
+    source_binding: Mapping[str, object] | None,
+    render_qa: Mapping[str, object] | None,
+    artifact_hashes: dict[str, str],
+    reason_codes: list[str],
+    evaluate_recut_render_qa: Callable[..., dict[str, object]] | None,
+) -> _AccurateRecutState:
+    """Repair packet/keyframe cut drift with a sample-accurate re-encode."""
+
+    accurate_rerender_used = False
+    accurate_command: list[str] | None = None
+    cut_error_ms = _render_qa_actual_cut_error_ms(render_qa)
+    needs_rerender = (
+        cut_error_ms is not None and cut_error_ms > 100
+    ) or subtitle_source == "external_lrc_global_shift"
+    if not run_ffmpeg or not needs_rerender:
+        return _AccurateRecutState(render_qa, False, None)
+    accurate_command = _accurate_reencode_recut_command(
+        source_video=source_video,
+        output_media=media_path,
+        start_ms=start_ms,
+        duration_ms=duration_ms,
+        strict_song_streams=strict_song_output,
+    )
+    completed = subprocess.run(
+        accurate_command,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        reason_codes.append("FFMPEG_ACCURATE_RECUT_FAILED")
+        return _AccurateRecutState(render_qa, False, accurate_command)
+    accurate_rerender_used = True
+    artifact_hashes["video_sha256"] = "sha256:" + _sha256(media_path)
+    if strict_song_output and source_binding is not None:
+        try:
+            source_sha_after = _sha256_prefixed(source_video)
+        except OSError:
+            source_sha_after = None
+        if source_sha_after != source_binding.get("sha256"):
+            reason_codes.append("SONG_SOURCE_DRIFT_DURING_RECUT")
+    render_qa = (evaluate_recut_render_qa or _evaluate_materialized_recut_render_qa)(
+        candidate_id=candidate_id,
+        media_path=media_path,
+        render_qa_path=render_qa_path,
+        requested_start_ms=start_ms,
+        requested_end_ms=end_ms,
+        enabled=True,
+    )
+    return _AccurateRecutState(render_qa, accurate_rerender_used, accurate_command)
+
+
+def _song_materialized_status(
+    *,
+    run_ffmpeg: bool,
+    subtitle_source: str,
+    accurate_rerender_used: bool,
+    render_qa: Mapping[str, object] | None,
+    reason_codes: list[str],
+) -> str:
+    if not run_ffmpeg or subtitle_source != "external_lrc_global_shift":
+        return "MATERIALIZED"
+    ready = (
+        accurate_rerender_used is True
+        and isinstance(render_qa, Mapping)
+        and render_qa.get("pass") is True
+        and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes
+        and "SONG_SOURCE_DRIFT_DURING_RECUT" not in reason_codes
+    )
+    if not ready and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes:
+        reason_codes.append("SONG_ACCURATE_RENDER_QA_FAILED")
+    return "MATERIALIZED" if ready else "RETRY_INFRA"
+
+
 def _materialize_recut_record(
     *,
     source_video: Path,
@@ -364,33 +605,20 @@ def _materialize_recut_record(
     timing_qa_path = media_path.with_suffix(".timing_qa.json")
     media_path.parent.mkdir(parents=True, exist_ok=True)
 
-    timing_qa_record: dict[str, object] | None = None
-    speech_spans_cache: list | None = None
-    if lyric_timeline is not None and lyric_offset_ms is not None:
-        # Strict song process: burned lyric timing comes from the external LRC
-        # timeline shifted by the proven global offset, never from ASR cues.
-        subtitle_source = "external_lrc_global_shift"
-        _write_lyric_timeline_srt(lyric_timeline, lyric_offset_ms, start_ms, end_ms, subtitle_path)
-    else:
-        subtitle_source = "asr_cues"
-        # ASR cue timing is coarse and hallucination-prone over BGM; sanitize
-        # against real speech evidence before it becomes burned subtitles.
-        # Best-effort: a VAD outage is recorded, never silently ignored.
-        if speech_spans_provider is not None:
-            try:
-                speech_spans_cache = list(speech_spans_provider(source_video, start_ms, end_ms))
-                cues, timing_qa_record = sanitize_cue_timing(
-                    cues, speech_spans_cache, window_start_ms=start_ms, window_end_ms=end_ms
-                )
-                timing_qa_path.write_text(
-                    json.dumps(timing_qa_record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-                )
-            except Exception as exc:
-                timing_qa_record = {
-                    "status": "SUBTITLE_TIMING_QA_UNAVAILABLE",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-        _write_source_range_srt(cues, start_ms, end_ms, subtitle_path)
+    subtitle_state = _write_initial_recut_subtitles(
+        source_video=source_video,
+        cues=cues,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        subtitle_path=subtitle_path,
+        timing_qa_path=timing_qa_path,
+        lyric_timeline=lyric_timeline,
+        lyric_offset_ms=lyric_offset_ms,
+        speech_spans_provider=speech_spans_provider,
+    )
+    subtitle_source = subtitle_state.subtitle_source
+    timing_qa_record = subtitle_state.timing_qa_record
+    speech_spans_cache = subtitle_state.speech_spans
 
     reason_codes: list[str] = []
     if run_ffmpeg:
@@ -441,46 +669,26 @@ def _materialize_recut_record(
         requested_end_ms=end_ms,
         enabled=run_ffmpeg,
     )
-    accurate_rerender_used = False
-    accurate_command: list[str] | None = None
-    # Repair-first: a copy-cut that landed on a keyframe seconds away must be
-    # re-rendered precisely for ANY materialized recut, not only AUTO_UPLOAD —
-    # otherwise review blocks on ACTUAL_CUT_ERROR_HIGH that we know how to fix.
-    # Song clips ALWAYS re-render: copy-cut leaves audio/video stream starts
-    # quantized to packet/keyframe boundaries (measured 20-90ms skew), which is
-    # exactly the "lyrics show ~20ms early" class of bug — the LRC subtitle
-    # timeline is only valid against a sample-accurate audio start.
-    cut_error_ms = _render_qa_actual_cut_error_ms(render_qa)
-    needs_accurate_rerender = (cut_error_ms is not None and cut_error_ms > 100) or subtitle_source == "external_lrc_global_shift"
-    if run_ffmpeg and needs_accurate_rerender:
-        accurate_command = _accurate_reencode_recut_command(
-            source_video=source_video,
-            output_media=media_path,
-            start_ms=start_ms,
-            duration_ms=duration_ms,
-            strict_song_streams=strict_song_output,
-        )
-        completed = subprocess.run(accurate_command, check=False, capture_output=True, text=True)
-        if completed.returncode == 0:
-            accurate_rerender_used = True
-            artifact_hashes["video_sha256"] = "sha256:" + _sha256(media_path)
-            if strict_song_output and source_binding is not None:
-                try:
-                    source_sha_after = _sha256_prefixed(source_video)
-                except OSError:
-                    source_sha_after = None
-                if source_sha_after != source_binding.get("sha256"):
-                    reason_codes.append("SONG_SOURCE_DRIFT_DURING_RECUT")
-            render_qa = (evaluate_recut_render_qa or _evaluate_materialized_recut_render_qa)(
-                candidate_id=candidate_id,
-                media_path=media_path,
-                render_qa_path=render_qa_path,
-                requested_start_ms=start_ms,
-                requested_end_ms=end_ms,
-                enabled=True,
-            )
-        else:
-            reason_codes.append("FFMPEG_ACCURATE_RECUT_FAILED")
+    accurate_state = _ensure_accurate_recut(
+        source_video=source_video,
+        media_path=media_path,
+        candidate_id=candidate_id,
+        render_qa_path=render_qa_path,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        duration_ms=duration_ms,
+        strict_song_output=strict_song_output,
+        subtitle_source=subtitle_source,
+        run_ffmpeg=run_ffmpeg,
+        source_binding=source_binding,
+        render_qa=render_qa,
+        artifact_hashes=artifact_hashes,
+        reason_codes=reason_codes,
+        evaluate_recut_render_qa=evaluate_recut_render_qa,
+    )
+    render_qa = accurate_state.render_qa
+    accurate_rerender_used = accurate_state.accurate_rerender_used
+    accurate_command = accurate_state.accurate_command
 
     # External-LRC timing is only valid against the sample-accurate re-render.
     # Keeping the coarse packet/keyframe copy as MATERIALIZED after that render
@@ -488,18 +696,13 @@ def _materialize_recut_record(
     # Dry-run placeholders remain inspectable, but every real song render must
     # prove both that the accurate command ran and that its fresh render QA
     # passed before materialization can be considered successful.
-    song_render_ready = True
-    if run_ffmpeg and subtitle_source == "external_lrc_global_shift":
-        song_render_ready = (
-            accurate_rerender_used is True
-            and isinstance(render_qa, Mapping)
-            and render_qa.get("pass") is True
-            and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes
-            and "SONG_SOURCE_DRIFT_DURING_RECUT" not in reason_codes
-        )
-        if not song_render_ready and "FFMPEG_ACCURATE_RECUT_FAILED" not in reason_codes:
-            reason_codes.append("SONG_ACCURATE_RENDER_QA_FAILED")
-    materialized_status = "MATERIALIZED" if song_render_ready else "RETRY_INFRA"
+    materialized_status = _song_materialized_status(
+        run_ffmpeg=run_ffmpeg,
+        subtitle_source=subtitle_source,
+        accurate_rerender_used=accurate_rerender_used,
+        render_qa=render_qa,
+        reason_codes=reason_codes,
+    )
 
     # Fresh whole-window transcription (talk only): the coarse integer-second
     # production ASR is fine for recall but repeatedly shipped text/timing
@@ -508,42 +711,23 @@ def _materialize_recut_record(
     # the accurate re-render so the subtitle matches the final media exactly.
     # Fail-open with a recorded fallback: a transcriber outage must not kill
     # materialization, but it must be visible in the evidence.
-    fresh_transcription_record: dict[str, object] | None = None
-    if fresh_talk_transcriber is not None and subtitle_source == "asr_cues":
-        try:
-            import inspect
-
-            clip_speech_spans = (
-                [(span.start_ms - start_ms, span.end_ms - start_ms) for span in speech_spans_cache]
-                if speech_spans_cache
-                else None
-            )
-            if len(inspect.signature(fresh_talk_transcriber).parameters) >= 2:
-                fresh_srt_text = fresh_talk_transcriber(media_path, clip_speech_spans)
-            else:
-                fresh_srt_text = fresh_talk_transcriber(media_path)
-            fresh_cues = _fresh_srt_to_source_cues(fresh_srt_text, window_start_ms=start_ms, duration_ms=duration_ms)
-            sanitized_cues = fresh_cues
-            if speech_spans_cache is not None:
-                sanitized_cues, timing_qa_record = sanitize_cue_timing(
-                    fresh_cues, speech_spans_cache, window_start_ms=start_ms, window_end_ms=end_ms
-                )
-                timing_qa_path.write_text(
-                    json.dumps(timing_qa_record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-                )
-            _write_source_range_srt(sanitized_cues, start_ms, end_ms, subtitle_path)
-            subtitle_source = "fresh_agy_transcription"
-            artifact_hashes["subtitle_sha256"] = "sha256:" + _sha256(subtitle_path)
-            fresh_transcription_record = {
-                "status": "USED",
-                "cue_count": len(fresh_cues),
-                "replaced_subtitle_source": "asr_cues",
-            }
-        except Exception as exc:
-            fresh_transcription_record = {
-                "status": "FAILED_FALLBACK_ASR_CUES",
-                "error": f"{type(exc).__name__}: {exc}",
-            }
+    fresh_state = _refresh_talk_subtitles(
+        media_path=media_path,
+        subtitle_path=subtitle_path,
+        timing_qa_path=timing_qa_path,
+        subtitle_source=subtitle_source,
+        timing_qa_record=timing_qa_record,
+        speech_spans_cache=speech_spans_cache,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        duration_ms=duration_ms,
+        transcriber=fresh_talk_transcriber,
+    )
+    subtitle_source = fresh_state.subtitle_source
+    timing_qa_record = fresh_state.timing_qa_record
+    fresh_transcription_record = fresh_state.fresh_transcription_record
+    if fresh_state.subtitle_sha256 is not None:
+        artifact_hashes["subtitle_sha256"] = fresh_state.subtitle_sha256
     recut_transform = (
         {
             "schema_version": "song-recut-transform.v1",
