@@ -32,20 +32,23 @@
 2. free 上一次性脚本群（edit_replace_20260714/cover_only_edit/bandfan_*…）弃用改点 `bili_archive_tool.py`；authorized_upload.py 的 view/season 代码迁移到新模块（等两单发完再动上传路径）。
 3. TODO(homophone)：同音候选对（练死/恋死）不可听裁 → 直接披露不仲裁（pypinyin 本地已有，free 待确认）。
 
-### runner 屎山拆解（2026-07-15 进行中）
+### runner 屎山拆解（2026-07-15 完成）
 
-**已完成（main，全量 1186 passed，行为保真）：**
-- `1ac9606`→`e4ac8bc` 已部署生产（02:24Z），含 speaker-routing 抽取 + 全部安全守卫，生产平稳（02:50 tick 零失败，歌切正常）。
-- 抽取 #1 `speaker_routing_session.py`（说话人路由+collab evidence，~880 行）——已在生产。
-- 抽取 #2 `song_completion.py`（843 行纯证明函数 `song_completion_evidence`+AV流合约 helper）+ `verified_io.py`（hash/path 叶子工具）——commit `2367e0c`，**在 main 领先生产、已测未部署**（纯结构变更、无功能收益，不在无人盯窗口推 live；下个有人盯窗口随批部署）。
-- runner：7697 → 5955 行（-23%），3 个聚焦模块。
+**目标：** 把 7697 行 god file 收回到配置、runtime I/O 与顶层流程；各内容/恢复子系统独立成可测模块，同时保留 runner 级 monkeypatch/人工修复入口。
 
-**方法论（见 memory [[runner-god-file-decomposition]]）：** 抽到 src 模块 + 保留同名 wrapper + 被 test patch 且跨模块互调的符号用参数/RunnerContext 注入（这样 `patch runner.X` 仍够得到模块内互调，零测试改动）。纯函数簇最安全；耦合 runner state 的簇走 RunnerContext（如 speaker_routing）。
+**已完成：**
+- 抽取 `speaker_routing_session.py`、`song_completion.py`、`verified_io.py`、`cover_repair.py`、`song_delivery.py`、`song_lane.py`、`talk_lane.py`、`delivery_recovery.py`、`candidate_selection.py`、`session_discovery.py`、`cover_maintenance.py`、`reporting.py`。
+- 接手 Claude usage-limit 前的未提交 `song_lane.py` 时修复了一处真实兼容问题：模块内互调改经 runner patch seam，并补回归测试（`7061558`）；后续各刀为 `aae051f`、`25b37d0`、`e38f3db`、`bc5d391`、`0dea6e2`。
+- 9 份重复的 module/`__main__` 惰性桥收敛到 `runner_proxy.py`（`70e504c`），避免脚本入口修复再次漂移。
+- runner：7697 → 1553 行（约 -80%）；剩余函数仅配置/指纹、少量兼容 wrapper、环境与 state/source I/O、`process_date`/`tick`/`main` 顶层编排。不再为降行数继续拆。
+- 各抽取刀做 normalized-AST 行为对照；最终候选通过 package import、真实 `python3 scripts/free_session_autoslice.py --help`、聚焦 runner 测试与全量 **1188 passed**。
+- 生产已用官方事务式脚本部署 `70e504c4c9160708919f2f4a9c653121135f37b8`（04:56Z）：整树 manifest/runner hash/外部 speaker+branding 资产校验通过，`DISABLED`/deploy guard/残留 staging 均无；05:00Z 真实 cron tick 三天均 `review_ready`、`0 failure(s)`。
 
-**剩余大簇（未拆，各需"有人盯 + 独立审查"的窗口，勿在无人值守 3am 硬拆 live 生产）：**
-- 封面修复子系统（~1486 行，2996-4482）：**非连续**（夹共享的 `_active/_updated_song_delivery_manifest`）、~13 runner 全局依赖、3 个被 patch 又簇内互调的函数（cover_repair_needed/_cover_authority_preflight/_bind_repaired_cover 各需注入）、真实出图 subprocess → RunnerContext 级，高 blast radius。
-- 歌切交付编排（_atomic_verified_song_delivery patch×8 + _commit/_write_song_active_record）：patch 密集且内部互调，需注入。
-- produce_song(363)/produce_talk(196) 车道编排。
+**进行中：** 无。
+
+**阻塞：** 无。日志里 4 条旧交付 cover authority preflight 拒绝在部署前后相同，是 title/video hash 绑定漂移的 fail-closed 维护告警，不是 runner 重构失败；若要修，另开旧交付绑定修复任务。
+
+**下一步：** 新改动直接落到对应子系统模块；runner 只保留 runtime authority 与顶层编排。不要因为文件行数继续机械拆分。
 
 ### 目标
 
