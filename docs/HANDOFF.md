@@ -60,12 +60,17 @@
 - `23bde58`、`5f65243`、`bf4240f`、`1c41b6b` 依次把 unattended runner、standalone producer、selector/song/title/cover、speaker finalizer/session router、branding intro、chat normalization 和 batch speaker review 接到 profile。
 - 默认 profile 冻结 room `22966160`、`lidousha/` 交付目录、现有 asset/tool/voiceprint 路径、标题模板、speaker 标签、决策 token 与历史 `lidousha-...` evidence schema；另一主播的 room/output/name/prompt/title/speaker/schema/decision/text-normalization 已在全新 Python 进程中证明无需改代码即可切换。
 - 默认提示词做旧/新 SHA 合同：AGY 歌声身份、精听修正、语义召回、标题、封面、speaker context 均保持旧文本；本地全量 **1200 passed**，profile validator READY，package import 与真实 runner `--help` 通过。
+- `bab9429` 修复接手审计发现的真实退化：`term_authority.py` 仍导入已删除的旧常量且异常被保守 fallback 吞掉，导致侄女/直女、wakuwaku 与 entity-confusable 静态对消失；现统一从 profile canonical rules + `entity_confusables` 资产构造，并有专门回归。
+- `ff4b7c2` 把 profile 明确拆成 `profiles/<id>/profile.json`（身份/路由/清单）+ `assets/<id>/`（用户自建知识包）；新增严格但故意缺资产的 `profiles/_template/`，`--config-only` READY、完整运行 BLOCKED。默认专名入口覆盖 glossary、21 人 roster、confusables、timely/topic graph、known songs 以及 39 条上传 tag 专名规则；tag prompt SHA 保持迁移前 `717e3d2...`。
+- `6df1399`、`3f278cf` 把 shadow runner 的封面生成（1389 行）、SRT/ASS 渲染（213 行）和标题策略（200 行）拆成独立模块；主脚本 6274→4730 行，抽取函数 normalized-AST 无差异，旧 monkeypatch 符号继续 re-export。
+- `1472eaa` + `090f539` 接完 usage-limit Claude 留下的 CPA 念弹幕仲裁：仅处理 hash-bound danmaku/SC 候选，严格布尔 + `[0,1]` 置信度 + 候选集合门，human→CPA context→audio fallback；主播名来自所选 profile，verdict 记录 request/prompt/completion hash。无 CPA 时与旧 human→audio 路径一致，真实“外套→歪了”形态有端到端测试。
+- `7a01151` 修复 profile 拆分后的 commit-exact eval：快照现在打包/校验 `profiles/` + 全部 profile assets/tools，不再只硬编码李豆沙声纹；真 CLI smoke 又抓并修复 macOS `/var`→`/private/var` alias。当前 HEAD 快照 145 文件、profile missing=0、runner `--help` 通过。
 
-**进行中：** 无后台进程；生产仍固定在已验证的 `70e504c`，本轮 profile 提交没有部署。
+**进行中：** 无本轮后台进程；生产只读复核仍固定在已验证的 `70e504c`（runner 文件 SHA 与该 commit 匹配），`DISABLED` absent、cron 1 条，7/11~7/13 state 均 `review_ready`。本轮 profile/清理/CPA 念读提交均未部署、未上传。
 
-**阻塞：** 没有代码 blocker。结构回归与提示词合同已过，但尚未用同一场冻结直播分别跑旧/新 commit 做完整产物差分；另外 provenance/pipeline fingerprint 必然因代码与 manifest 改动而变化，不能要求所有 JSON 字节完全相同。
+**阻塞：** 没有代码 blocker。全仓 **1223 passed**、prompt/hash/AST 合同与 commit-exact snapshot smoke 已过；但尚未用同一场冻结直播分别跑旧/新 commit 做完整产物差分，CPA 念读也尚未在 no-upload 冻结实案上跑真 CPA canary。另外 provenance/pipeline fingerprint 必然因代码与 manifest 改动而变化，不能要求所有 JSON 字节完全相同。
 
-**下一步：** 部署前先做一场冻结 session 的旧/新双跑，比较候选、字幕、边界、标题、封面 prompt 与成片内容（排除 commit/fingerprint/timestamp provenance）；通过后再走事务部署并观察真实 cron tick。旧 v1 evidence 字段和 `LIDOUSHA_*` 环境别名暂保留为可读兼容层，若要清名应另起显式 schema-v2 迁移，不能静默破坏历史 hash 包。
+**下一步：** 部署前先做一场冻结 session 的旧/新双跑，比较候选、字幕、边界、标题、封面 prompt 与成片内容（排除 commit/fingerprint/timestamp provenance），并对一条念弹幕 near-miss 做真 CPA no-upload canary；通过后再走事务部署并观察真实 cron tick。旧 v1 evidence 字段和 `LIDOUSHA_*` 环境别名暂保留为可读兼容层，若要清名应另起显式 schema-v2 迁移，不能静默破坏历史 hash 包。
 
 ### 目标
 
