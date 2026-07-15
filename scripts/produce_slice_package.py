@@ -34,7 +34,6 @@ Spec JSON:
 
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import hashlib
 import json
@@ -66,7 +65,6 @@ from scripts.gemini_slice_jingting import (
     glossary as _review_glossary,
 )
 from scripts.suggest_upload_tags import generate_upload_tags
-from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.chat_authority import (
     reconcile_pending_text_overrides,
@@ -192,6 +190,11 @@ from src.autoslice.producer_media import (
     run,
     _derive_fresh_fast_media as _derive_fresh_fast_media_impl,
 )
+from src.autoslice.producer_request import (
+    load_producer_request,
+    parse_producer_args,
+)
+from src.autoslice.producer_source_media import prepare_source_media
 
 
 def _derive_fresh_fast_media(
@@ -295,207 +298,38 @@ def run_producer_speaker_finalization(**kwargs: object) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--spec", type=Path, required=True)
-    parser.add_argument("--ssh-host", default="free")
-    parser.add_argument(
-        "--substrate",
-        choices=("aggregate_asr", "agy_fresh"),
-        default="aggregate_asr",
-        help="subtitle substrate: aggregate_asr = free ASR (bcut/jianying, accurate ms timeline) + text-only correction (default); agy_fresh = legacy agy whole-window transcription.",
+    args = parse_producer_args(
+        argv,
+        description=__doc__ or "",
+        speaker_display_name=CHANNEL_PROFILE.display_name,
+        default_speaker_mode=_default_speaker_mode(),
     )
-    parser.add_argument(
-        "--speaker-mode",
-        choices=("uniform_host", "required", "auto"),
-        default=_default_speaker_mode(),
-        help=(
-            "uniform_host = no speaker separation: every cue keeps the single host "
-            f"({CHANNEL_PROFILE.display_name}) style and speaker uncertainty can never reject a delivery "
-            "(Ivan 2026-07-13 data-accumulation policy; evidence capture stays passive); "
-            "required = always run binary finalizer; auto = verified FAST_SOLO else binary fallback"
-        ),
+    request = load_producer_request(
+        args,
+        repo_root=ROOT,
+        profile_asset_file=profile_asset_file,
     )
-    parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
-    parser.add_argument(
-        "--subtitle-regression",
-        type=Path,
-        help="candidate-scoped final subtitle truth gate evaluated before burn/delivery",
-    )
-    parser.add_argument("--speaker-overrides", type=Path, help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference")
-    parser.add_argument(
-        "--speaker-source-session-anchors",
-        type=Path,
-        help=(
-            "hash-bound high-gate selected-host anchors from the same source recording"
-        ),
-    )
-    parser.add_argument(
-        "--speaker-mixed-overlap-evidence",
-        type=Path,
-        help="hash-bound provider evidence that mixed/overlap cues require review",
-    )
-    parser.add_argument(
-        "--speaker-python",
-        type=Path,
-        default=Path(os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")),
-    )
-    parser.add_argument(
-        "--correct",
-        choices=("bcut_agy_cpa", "cpa", "agy", "none"),
-        default="bcut_agy_cpa",
-        help="correction: bcut_agy_cpa = BCUT draft + AGY refine (hears audio) + CPA reconcile (default, best quality); cpa = CPA text-only (fast, blind to audio); agy = AGY refine only; none = raw BCUT.",
-    )
-    parser.add_argument(
-        "--screen-text",
-        action="store_true",
-        help="cpa correct only: also feed agy-extracted on-screen text (superchat cards/titles) to CPA. Off by default — the glossary is the reliable authority for known names; agy vision on stylized cards is unreliable and can override the glossary. Use only when a clip's meaning hinges on on-screen text NOT yet in the glossary.",
-    )
-    parser.add_argument(
-        "--reuse-cover",
-        action="store_true",
-        help="subtitle-only re-run: keep the EXISTING delivered cover, skip the AI cover (art-direction LLM + gpt-image-2 ~90s/clip). Title still regenerates. Use when re-correcting subtitles on an already-covered clip.",
-    )
-    args = parser.parse_args(argv)
-    # Mandatory delivery intro (Ivan 2026-07-12): resolve before any expensive
-    # stage so an unavailable intro fails the run instead of a late delivery.
-    try:
-        branding_intro = require_branding_intro(
-            ROOT,
-            manifest_path=profile_asset_file("branding_intro_manifest"),
-        )
-    except BrandingIntroError as exc:
-        raise SystemExit(f"BRANDING_INTRO_UNAVAILABLE: {exc}")
-    spec = json.loads(args.spec.read_text(encoding="utf-8"))
-    repair_cap_raw = spec.get("boundary_repair_extend_cap_ms", BOUNDARY_REPAIR_EXTEND_CAP_MS)
-    if isinstance(repair_cap_raw, bool) or not isinstance(repair_cap_raw, int):
-        raise ValueError("boundary_repair_extend_cap_ms must be an integer")
-    if not BOUNDARY_REPAIR_EXTEND_CAP_MS <= repair_cap_raw <= BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS:
-        raise ValueError(
-            "boundary_repair_extend_cap_ms must stay within "
-            f"{BOUNDARY_REPAIR_EXTEND_CAP_MS}..{BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS}"
-        )
-    boundary_repair_extend_cap_ms = repair_cap_raw
-    truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
-    if truth_mode not in {"delivery", "withheld"}:
-        raise ValueError("AUTOSLICE_HUMAN_TRUTH_MODE must be delivery or withheld")
-    spec_truth_mode = str(spec.get("human_truth_mode") or truth_mode).strip().lower()
-    if spec_truth_mode != truth_mode:
-        raise ValueError("spec human_truth_mode does not match the process truth-isolation mode")
-    if truth_mode == "withheld":
-        leaked_inputs = [
-            name
-            for name, value in (
-                ("--subtitle-text-overrides", args.subtitle_text_overrides),
-                ("--subtitle-regression", args.subtitle_regression),
-                ("--speaker-overrides", args.speaker_overrides),
-                ("spec.subtitle_text_overrides", spec.get("subtitle_text_overrides")),
-                ("spec.subtitle_regression", spec.get("subtitle_regression")),
-                ("spec.speaker_overrides", spec.get("speaker_overrides")),
-            )
-            if value is not None
-        ]
-        if leaked_inputs:
-            raise ValueError(
-                "blind subtitle generation refuses human-truth inputs: " + ", ".join(leaked_inputs)
-            )
-    # Time-sensitive terminology must be evaluated as of the recording date,
-    # never the processing date.  This prevents future-news leakage when an old
-    # stream is repaired later.
-    if isinstance(spec.get("date"), str):
-        os.environ["AUTOSLICE_TERM_AS_OF"] = spec["date"]
-        os.environ["LIDOUSHA_TERM_AS_OF"] = spec["date"]
-
-    cid = spec["candidate_id"]
-    out_root = Path(spec["output_root"]) / cid
-    out_root.mkdir(parents=True, exist_ok=True)
-    host = args.ssh_host
-    text_override_path = args.subtitle_text_overrides or _resolved_optional_path(
-        spec.get("subtitle_text_overrides"), relative_to=args.spec.parent
-    )
-    subtitle_regression_path = args.subtitle_regression or _resolved_optional_path(
-        spec.get("subtitle_regression"), relative_to=args.spec.parent
-    )
+    spec = request.spec
+    boundary_repair_extend_cap_ms = request.boundary_repair_extend_cap_ms
+    branding_intro = request.branding_intro
+    cid = request.cid
+    out_root = request.out_root
+    host = request.host
+    text_override_path = request.text_override_path
+    subtitle_regression_path = request.subtitle_regression_path
 
     # 1. Remote accurate piece cuts (production encode params), pull local.
-    piece_paths: list[Path] = []
-    piece_provenance_rows: list[dict] = []
-    for index, piece in enumerate(spec["pieces"]):
-        local = out_root / f"piece_{index}_{piece['start_ms']}_{piece['end_ms']}.mp4"
-        source_path, source_sha256 = _source_media_sha256(
-            host, Path(piece["remote_media"])
-        )
-        piece_provenance_path = local.with_suffix(".provenance.json")
-        expected_piece = {
-            "source_path": source_path,
-            "source_sha256": source_sha256,
-            "start_ms": int(piece["start_ms"]),
-            "end_ms": int(piece["end_ms"]),
-            "output_path": str(local.resolve()),
-        }
-        if not _valid_cached_provenance(
-            piece_provenance_path,
-            expected_without_output_hash=expected_piece,
-            output=local,
-        ):
-            local.unlink(missing_ok=True)
-            piece_provenance_path.unlink(missing_ok=True)
-            remote_tmp = f"/tmp/produce_{cid}_{index}.mp4"
-            cmd = _accurate_reencode_recut_command(
-                source_video=Path(piece["remote_media"]),
-                output_media=Path(remote_tmp),
-                start_ms=piece["start_ms"],
-                duration_ms=piece["end_ms"] - piece["start_ms"],
-            )
-            run(["ssh", host, " ".join(shlex.quote(str(part)) for part in cmd)], timeout=3600)
-            run(["scp", "-q", f"{host}:{remote_tmp}", str(local)], timeout=1800)
-            run(["ssh", host, f"rm -f {shlex.quote(remote_tmp)}"], timeout=60)
-            if _source_media_sha256(host, Path(piece["remote_media"])) != (
-                source_path,
-                source_sha256,
-            ):
-                local.unlink(missing_ok=True)
-                raise RuntimeError("SOURCE_MEDIA_DRIFT_DURING_PIECE_RECUT")
-            _write_json_atomic(
-                piece_provenance_path,
-                {**expected_piece, "output_sha256": _sha256(local)},
-            )
-        piece_paths.append(local)
-        piece_provenance_rows.append(
-            json.loads(piece_provenance_path.read_text(encoding="utf-8"))
-        )
-    durations = [ffprobe_duration_ms(p) for p in piece_paths]
-
-    padded = out_root / f"padded_{spec['pieces'][0]['start_ms']}_{spec['pieces'][-1]['end_ms']}.mp4"
-    padded_provenance_path = padded.with_suffix(".provenance.json")
-    expected_padded = {
-        "inputs": [
-            {"path": str(path.resolve()), "sha256": _sha256(path)}
-            for path in piece_paths
-        ],
-        "output_path": str(padded.resolve()),
-    }
-    padded_cache_valid = _valid_cached_provenance(
-        padded_provenance_path,
-        expected_without_output_hash=expected_padded,
-        output=padded,
+    source_media = prepare_source_media(
+        spec=spec,
+        cid=cid,
+        out_root=out_root,
+        host=host,
     )
-    if not padded_cache_valid:
-        padded.unlink(missing_ok=True)
-        padded_provenance_path.unlink(missing_ok=True)
-    if len(piece_paths) == 1:
-        if not padded.exists():
-            run(["cp", str(piece_paths[0]), str(padded)])
-    elif not padded.exists():
-        concat_list = out_root / "concat.txt"
-        concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in piece_paths), encoding="utf-8")
-        run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(concat_list), "-c", "copy", str(padded)])
-    if not padded_cache_valid:
-        _write_json_atomic(
-            padded_provenance_path,
-            {**expected_padded, "output_sha256": _sha256(padded)},
-        )
-    padded_dur = ffprobe_duration_ms(padded)
+    durations = source_media.durations
+    padded = source_media.padded
+    padded_dur = source_media.padded_duration_ms
+    padded_provenance_path = source_media.padded_provenance_path
+    piece_provenance_rows = source_media.piece_provenance_rows
 
     # 2. Danmaku + on-screen SUPER_CHATs merged onto the concat timeline.
     text_result = run_text_pipeline(
