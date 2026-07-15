@@ -78,7 +78,23 @@ from src.autoslice.source_context_executor import AgyExecutionResult, SourceCont
 from src.autoslice.source_context_planner import JingtingJobProvenance, plan_source_context_jingting_jobs
 from src.autoslice.subtitle_timing_qa import SpeechSpansProvider, sanitize_cue_timing
 from src.autoslice.style_profile import ManualStyleProfile, apply_style_profile
-from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
+from src.autoslice.subtitle_rendering import (
+    ASS_MAX_CHARS_PER_LINE,
+    ASS_MAX_VISUAL_LINES,
+    ASS_MIN_SUBCUE_MS,
+    _TEXT_BREAK_STRONG,
+    _TEXT_BREAK_WEAK,
+    _ass_escape_text,
+    _escape_ffmpeg_filter_path,
+    _format_ass_time,
+    _layout_cue_for_display,
+    _pack_segments,
+    _parse_srt,
+    _parse_time_ms,
+    _split_text_segments,
+    _wrap_ass_text,
+    _write_lidousha_sapphire_ass_from_srt,
+)
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
@@ -591,45 +607,6 @@ def _read_jingting_provenance(review_package: Path, item: Mapping[str, object]) 
     manifest_path = _package_path(review_package, item.get("jingting_manifest"))
     data = _read_json(manifest_path) if manifest_path and manifest_path.is_file() else None
     return JingtingProvenance.from_manifest(data if isinstance(data, Mapping) else None)
-
-
-def _parse_srt(path: Path, *, source_offset_ms: int = 0) -> list[SourceCue]:
-    raw = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
-    lexicon = load_discovered_term_lexicon(path)
-    cues: list[SourceCue] = []
-    for index, block in enumerate(raw.split("\n\n"), start=1):
-        lines = [line for line in block.splitlines() if line.strip()]
-        if len(lines) < 2:
-            continue
-        if "-->" in lines[0]:
-            timing = lines[0]
-            text_lines = lines[1:]
-        else:
-            timing = lines[1]
-            text_lines = lines[2:]
-        if "-->" not in timing:
-            continue
-        start, end = [part.strip() for part in timing.split("-->", 1)]
-        text = normalize_text("\n".join(text_lines).strip(), lexicon=lexicon)
-        kind = "singing" if any(marker in text for marker in ("《", "啦", "アイドル", "言って")) else "speech"
-        cues.append(
-            SourceCue(
-                cue_id=f"u_{index:06d}",
-                source_start_ms=source_offset_ms + _parse_time_ms(start),
-                source_end_ms=source_offset_ms + _parse_time_ms(end),
-                text=text,
-                language="zh",
-                kind=kind,
-                confidence=1.0,
-            )
-        )
-    return cues
-
-
-def _parse_time_ms(value: str) -> int:
-    hhmmss, millis = value.replace(",", ".").split(".", 1)
-    hours, minutes, seconds = [int(part) for part in hhmmss.split(":")]
-    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + int(millis[:3].ljust(3, "0"))
 
 
 def _package_path(root: Path, value: object) -> Path | None:
@@ -3121,312 +3098,29 @@ def _burn_preview_subtitles(
     return record
 
 
-def _write_lidousha_sapphire_ass_from_srt(srt_path: Path, ass_path: Path) -> None:
-    cues = _parse_srt(srt_path)
-    event_rows = []
-    for cue in cues:
-        for sub_start_ms, sub_end_ms, sub_text in _layout_cue_for_display(
-            cue.source_start_ms, cue.source_end_ms, cue.text
-        ):
-            text = _ass_escape_text(sub_text)
-            event_rows.append(
-                f"Dialogue: 0,{_format_ass_time(sub_start_ms)},{_format_ass_time(sub_end_ms)},Default,,0,0,0,,{text}"
-            )
-    ass_path.parent.mkdir(parents=True, exist_ok=True)
-    # header must byte-match the approved sapphire72 spec emitted by
-    # .agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py
-    # write_ass at --play-res 1920x1080: Fontsize 72 belongs to the 1080p
-    # PlayRes with margins 60,60,40, Shadow 2, BackColour &H70000000
-    ass_path.write_text(
-        "\n".join(
-            [
-                "[Script Info]",
-                "ScriptType: v4.00+",
-                "PlayResX: 1920",
-                "PlayResY: 1080",
-                "WrapStyle: 0",
-                "ScaledBorderAndShadow: yes",
-                "",
-                "[V4+ Styles]",
-                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-                "Style: Default,Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,0,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1",
-                "",
-                "[Events]",
-                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-                *event_rows,
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def _format_ass_time(ms: int) -> str:
-    # round (not floor) to centiseconds — flooring made every cue start up to
-    # 9ms early, which compounds with other sources of "subtitles feel early"
-    total_centiseconds = max(0, (int(ms) + 5) // 10)
-    centiseconds = total_centiseconds % 100
-    total_seconds = total_centiseconds // 100
-    seconds = total_seconds % 60
-    total_minutes = total_seconds // 60
-    minutes = total_minutes % 60
-    hours = total_minutes // 60
-    return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
-
-
-ASS_MAX_CHARS_PER_LINE = 28
-ASS_MAX_VISUAL_LINES = 2
-ASS_MIN_SUBCUE_MS = 700
-
-_TEXT_BREAK_STRONG = "。！？…；;!?"
-_TEXT_BREAK_WEAK = "，、,: ：~〜 "
-
-
-def _split_text_segments(text: str) -> list[str]:
-    """Split cue text into natural phrase segments at punctuation boundaries."""
-
-    normalized = " ".join(text.replace("\r", "\n").split())
-    segments: list[str] = []
-    current = ""
-    for char in normalized:
-        current += char
-        if char in _TEXT_BREAK_STRONG or char in _TEXT_BREAK_WEAK:
-            if current.strip():
-                segments.append(current.strip())
-            current = ""
-    if current.strip():
-        segments.append(current.strip())
-    # hard-split any single segment that alone exceeds the line limit
-    result: list[str] = []
-    for segment in segments:
-        while len(segment) > ASS_MAX_CHARS_PER_LINE:
-            result.append(segment[:ASS_MAX_CHARS_PER_LINE])
-            segment = segment[ASS_MAX_CHARS_PER_LINE:]
-        if segment:
-            result.append(segment)
-    return result or ([normalized] if normalized else [])
-
-
-def _pack_segments(segments: Sequence[str], max_chars: int) -> list[str]:
-    chunks: list[str] = []
-    current = ""
-    for segment in segments:
-        if current and len(current) + len(segment) > max_chars:
-            chunks.append(current)
-            current = segment
-        else:
-            current += segment
-    if current:
-        chunks.append(current)
-    return chunks
-
-
-def _layout_cue_for_display(
-    start_ms: int,
-    end_ms: int,
-    text: str,
-) -> list[tuple[int, int, str]]:
-    """Viewability contract (Ivan, 2026-07-03): at most 28 chars per visual
-    line, at most 2 lines per dialogue, single line preferred.  Over-long cue
-    text is split into sequential sub-cues (time allocated by text share)
-    instead of stacking 3-4 lines that cover half the screen."""
-
-    segments = _split_text_segments(text)
-    if not segments:
-        return []
-    duration_ms = max(0, end_ms - start_ms)
-    # prefer single-line chunks; fall back to 2-line chunks when the cue is too
-    # short to give each single-line sub-cue a readable minimum duration
-    chunks = _pack_segments(segments, ASS_MAX_CHARS_PER_LINE)
-    if len(chunks) > 1 and duration_ms // len(chunks) < ASS_MIN_SUBCUE_MS:
-        chunks = _pack_segments(segments, ASS_MAX_CHARS_PER_LINE * ASS_MAX_VISUAL_LINES)
-    total_chars = sum(len(chunk) for chunk in chunks) or 1
-    result: list[tuple[int, int, str]] = []
-    cursor_ms = start_ms
-    for index, chunk in enumerate(chunks):
-        if index == len(chunks) - 1:
-            chunk_end_ms = end_ms
-        else:
-            chunk_end_ms = min(end_ms, cursor_ms + max(1, (duration_ms * len(chunk)) // total_chars))
-        display = _wrap_ass_text(chunk)
-        if chunk_end_ms > cursor_ms and display:
-            result.append((cursor_ms, chunk_end_ms, display))
-        cursor_ms = chunk_end_ms
-    return result
-
-
-def _wrap_ass_text(text: str, *, max_chars: int = ASS_MAX_CHARS_PER_LINE) -> str:
-    """Wrap one display chunk to at most 2 visual lines of <= max_chars,
-    breaking at a punctuation boundary near the middle when possible."""
-
-    line = " ".join(text.replace("\r", "\n").split())
-    if len(line) <= max_chars:
-        return line
-    # choose the break closest to the middle, preferring natural boundaries
-    candidates = [
-        index + 1
-        for index, char in enumerate(line[:-1])
-        if char in _TEXT_BREAK_STRONG or char in _TEXT_BREAK_WEAK
-    ]
-    valid = [i for i in candidates if 0 < i <= max_chars and len(line) - i <= max_chars]
-    if valid:
-        break_at = min(valid, key=lambda i: abs(i - len(line) / 2))
-    else:
-        # no natural boundary: break at the middle, clamped so both halves fit
-        break_at = min(max_chars, max(len(line) - max_chars, (len(line) + 1) // 2))
-    first, second = line[:break_at].rstrip(), line[break_at:].lstrip()
-    return f"{first}\\N{second}" if second else first
-
-
-def _ass_escape_text(text: str) -> str:
-    return text.replace("{", "（").replace("}", "）")
-
-
-def _escape_ffmpeg_filter_path(path: Path | str) -> str:
-    return str(path).replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
-
-
-# Title policy (authority: the selected profile's title_style asset). These gates
-# apply ONLY to LLM-auto-generated titles — Ivan's manual titles pass through
-# untouched (title_llm_call=None; see the iron rule in _stage_publish_draft).
-_LIDOUSHA_TITLE_PREFIX = CHANNEL_PROFILE.talk_title_prefix
-# Empty hype/clickbait words Ivan bans as STANDALONE words (almost always empty hype).
-_TITLE_BANNED_HYPE_WORDS: tuple[str, ...] = ("炸裂", "震惊", "天花板", "绝了", "犯规", "太顶")
-# 离谱 is dual-use: descriptive "越看越离谱/越整越离谱" is an Ivan-APPROVED structure
-# (title-style §2/§5, real historical titles), so it is banned ONLY in the empty
-# "X到离谱" suffix form — never as a standalone word.
-_TITLE_SUFFIX_ONLY_HYPE_WORDS: tuple[str, ...] = ("离谱",)
-# "X到{banned}" universal hype suffix (哄睡到犯规 / 好听到炸裂 / 哄睡到离谱): the title
-# must say concretely what happened instead of slapping a catch-all hype tail on.
-_TITLE_BANNED_SUFFIX_RE = re.compile(
-    "到(?:" + "|".join(_TITLE_BANNED_HYPE_WORDS + _TITLE_SUFFIX_ONLY_HYPE_WORDS) + ")"
+# Title policy applies only to LLM-generated titles. Manual titles still pass
+# through untouched in ``_stage_publish_draft``.  Keep these imports explicit
+# because tests and older callers also import the compatibility names here.
+from src.autoslice.title_policy import (  # noqa: E402
+    _LIDOUSHA_TITLE_PREFIX,
+    _SELECTION_HOOK_GENERIC_ANCHORS,
+    _SELECTION_HOOK_GENERIC_WORDS,
+    _SELECTION_HOOK_MEANINGLESS_RE,
+    _TITLE_BANNED_FILLER_WORDS,
+    _TITLE_BANNED_HYPE_WORDS,
+    _TITLE_BANNED_MIAO_RE,
+    _TITLE_BANNED_REGEXES,
+    _TITLE_BANNED_SUFFIX_RE,
+    _TITLE_MAX_ATTEMPTS,
+    _TITLE_MAX_LEN,
+    _TITLE_MIN_LEN,
+    _TITLE_SUFFIX_ONLY_HYPE_WORDS,
+    _ensure_lidousha_prefix,
+    _selection_hook_anchor_valid,
+    _selection_hook_fallback_title,
+    _selection_hook_first_clause,
+    _title_policy_violations,
 )
-# Filler/machine-flavored words Ivan banned outright (2026-07-06): none of these
-# ever appear in his real historical titles.  直呼打咩 >> 直接打咩; 当场/秒X are
-# auto-title tics, not his voice.  The word bank in title_style.md may only
-# contain words verified against Ivan's own titles (machine-generated legacy
-# production titles are NOT corpus).
-_TITLE_BANNED_FILLER_WORDS: tuple[str, ...] = ("直接", "当场")
-_TITLE_BANNED_MIAO_RE = re.compile(r"秒[一-鿿]")  # 秒懂/秒回/秒怼… instant-X tic
-_TITLE_MIN_LEN = 12  # counted WITH the 【李豆沙】 prefix
-_TITLE_MAX_LEN = 30
-_TITLE_MAX_ATTEMPTS = 3  # 1 initial generation + up to 2 bounded retries
-_SELECTION_HOOK_GENERIC_WORDS = (
-    CHANNEL_PROFILE.display_name,
-    CHANNEL_PROFILE.short_name,
-    "主播",
-    "直播",
-    "弹幕",
-    "观众",
-    "自己",
-    "这个",
-    "那个",
-    "然后",
-    "时候",
-    "表演",
-)
-_SELECTION_HOOK_GENERIC_ANCHORS = set(_SELECTION_HOOK_GENERIC_WORDS)
-_SELECTION_HOOK_MEANINGLESS_RE = re.compile(
-    "(?:"
-    + "|".join(
-        re.escape(value)
-        for value in (*_SELECTION_HOOK_GENERIC_WORDS, "让", "叫", "她", "他", "的", "了", "在", "又")
-    )
-    + ")"
-)
-
-
-def _title_policy_violations(title: str) -> list[str]:
-    """Policy codes an auto-generated title trips (empty list == clean).
-
-    Applied only to LLM-auto-generated titles; Ivan's manual titles pass
-    through untouched per the iron rule in ``_stage_publish_draft``.
-    """
-
-    violations: list[str] = []
-    if _TITLE_BANNED_SUFFIX_RE.search(title):
-        violations.append("banned_universal_suffix")
-    if any(word in title for word in _TITLE_BANNED_HYPE_WORDS):
-        violations.append("banned_hype_word")
-    if any(word in title for word in _TITLE_BANNED_FILLER_WORDS):
-        violations.append("banned_filler_word")
-    if _TITLE_BANNED_MIAO_RE.search(title):
-        violations.append("banned_filler_word")
-    return violations
-
-
-def _ensure_lidousha_prefix(title: str) -> str:
-    """Guarantee the selected profile's publish prefix on an auto title.
-
-    Song titles already carry a fuller profile prefix, so the ``startswith``
-    check avoids double-prefixing.
-    """
-
-    stripped = title.strip()
-    return stripped if stripped.startswith(_LIDOUSHA_TITLE_PREFIX) else _LIDOUSHA_TITLE_PREFIX + stripped
-
-
-def _selection_hook_first_clause(selection_hook: str | None) -> str:
-    return re.split(r"[，,。.!！?？；;：:\n…]", str(selection_hook or "").strip(), maxsplit=1)[0].strip()
-
-
-def _selection_hook_anchor_valid(*, anchor: object, selection_hook: str, title: str) -> bool:
-    """Require an auto title to retain one concrete phrase from the main hook.
-
-    The first selection-hook clause names why the clip was selected.  Later
-    transcript material may be valid but incidental; without this binding the
-    title model can silently retitle an "上下摇" clip around a later 熊猫头槌
-    exchange.  The LLM must therefore name the exact phrase it copied, and the
-    deterministic validator checks both source and output.
-    """
-
-    if not isinstance(anchor, str):
-        return False
-    anchor = anchor.strip()
-    first_clause = _selection_hook_first_clause(selection_hook)
-    title_body = str(title).removeprefix(_LIDOUSHA_TITLE_PREFIX).strip()
-    title_lead_clause = re.split(r"[，,。.!！?？；;：:\n…]", title_body, maxsplit=1)[0].strip()
-    meaningful = _SELECTION_HOOK_MEANINGLESS_RE.sub("", anchor).strip()
-    return bool(
-        2 <= len(anchor) <= 12
-        and anchor not in _SELECTION_HOOK_GENERIC_ANCHORS
-        and len(meaningful) >= 2
-        and anchor in first_clause
-        # The selected event must lead the title.  Merely appending “上下摇”
-        # after a 熊猫头槌/温柔歌 headline still changes why the clip was picked.
-        and anchor in title_lead_clause
-        and title_lead_clause.find(anchor) <= 10
-    )
-
-
-def _selection_hook_fallback_title(selection_hook: str | None) -> str | None:
-    """Build a concrete, bounded title from the selected main event.
-
-    Used only after all title-LLM attempts fail the source-hook binding.  It is
-    deliberately conservative: first clause is authoritative, and a short
-    second consequence is included only when the 30-character title budget
-    remains intact.
-    """
-
-    raw = str(selection_hook or "").strip().rstrip("。；; ")
-    if not raw:
-        return None
-    clauses = [part.strip() for part in re.split(r"[，,。；;：:\n…]", raw) if part.strip()]
-    if not clauses:
-        return None
-    first = clauses[0].replace(CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name)
-    body = first
-    if len(clauses) > 1:
-        second = clauses[1].replace(CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name)
-        if second.startswith("她"):
-            second = "结果" + second[1:]
-        candidate = f"{first}，{second}"
-        if len(_ensure_lidousha_prefix(candidate)) <= _TITLE_MAX_LEN:
-            body = candidate
-    available = _TITLE_MAX_LEN - len(_LIDOUSHA_TITLE_PREFIX)
-    body = body[:available].rstrip("，,、；;：: ")
-    title = _ensure_lidousha_prefix(body)
-    return title if _TITLE_MIN_LEN <= len(title) <= _TITLE_MAX_LEN else None
 
 
 def _stage_publish_after_release_gate(
