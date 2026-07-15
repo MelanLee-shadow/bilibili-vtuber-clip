@@ -62,6 +62,8 @@ for component in scripts src assets profiles; do
             mv "$repo/$component" "$stage/$component"
         fi
         mv "$backup/$component" "$repo/$component"
+    elif [ -e "$backup/$component.absent" ]; then
+        rm -rf "$repo/$component"  # tree added by the deploy: rollback removes it
     fi
 done
 test -f "$backup/DEPLOYED_COMMIT.old"
@@ -109,6 +111,8 @@ expected = json.loads(Path(sys.argv[2]).read_text())
 actual = {}
 for component in ("scripts", "src", "assets", "profiles"):
     base = root / component
+    if not base.exists():
+        continue  # a tree added in this commit is absent from the prior deployment
     for path in (base, *base.rglob("*")):
         relative = path.relative_to(root).as_posix()
         info = path.lstat()
@@ -230,6 +234,8 @@ root = Path(sys.argv[1])
 manifest = {}
 for component in ("scripts", "src", "assets", "profiles"):
     base = root / component
+    if not base.exists():
+        continue  # a tree added in this commit is absent from the prior deployment
     for path in (base, *base.rglob("*")):
         relative = path.relative_to(root).as_posix()
         info = path.lstat()
@@ -273,6 +279,8 @@ root = Path(sys.argv[1])
 manifest = {}
 for component in ("scripts", "src", "assets", "profiles"):
     base = root / component
+    if not base.exists():
+        continue  # a tree added in this commit is absent from the prior deployment
     for path in (base, *base.rglob("*")):
         relative = path.relative_to(root).as_posix()
         info = path.lstat()
@@ -447,6 +455,8 @@ root = Path(sys.argv[1])
 manifest = {}
 for component in ("scripts", "src", "assets", "profiles"):
     base = root / component
+    if not base.exists():
+        continue  # a tree added in this commit is absent from the prior deployment
     for path in (base, *base.rglob("*")):
         relative = path.relative_to(root).as_posix()
         info = path.lstat()
@@ -508,6 +518,8 @@ rollback() {
                 mv "$repo/$component" "$stage/$component"
             fi
             mv "$backup/$component" "$repo/$component"
+        elif [ -e "$backup/$component.absent" ]; then
+            rm -rf "$repo/$component"  # tree added by the deploy: rollback removes it
         fi
     done
     cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
@@ -526,7 +538,11 @@ trap 'trap - ERR HUP INT TERM; rollback; exit 130' INT
 trap 'trap - ERR HUP INT TERM; rollback; exit 143' TERM
 trap 'trap - ERR HUP INT TERM; rollback; exit 129' HUP
 for component in scripts src assets profiles; do
-    mv "$repo/$component" "$backup/$component"
+    if [ -e "$repo/$component" ]; then
+        mv "$repo/$component" "$backup/$component"
+    else
+        touch "$backup/$component.absent"  # added tree: rollback removes it
+    fi
     mv "$stage/$component" "$repo/$component"
 done
 rmdir "$stage"
@@ -609,6 +625,8 @@ root = Path(sys.argv[1])
 manifest = {}
 for component in ("scripts", "src", "assets", "profiles"):
     base = root / component
+    if not base.exists():
+        continue  # a tree added in this commit is absent from the prior deployment
     for path in (base, *base.rglob("*")):
         relative = path.relative_to(root).as_posix()
         info = path.lstat()
