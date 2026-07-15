@@ -1905,14 +1905,38 @@ def main(argv: list[str] | None = None) -> int:
             source_duration_ms=padded_dur,
         )
 
+    # Read-aloud (danmaku/SC) arbitration is a pure-context judgment, so route it
+    # through a general LLM on CPA *before* the audio verifier: this keeps
+    # "she read this danmaku" corrections alive when AGY/Gemini is quota-exhausted
+    # (2026-07-14 regression: agy jingting AND the audio arbitration are both
+    # Gemini-family, so one quota wall reverted a slice to garble) and takes AGY
+    # off the hot path.  Audio stays the fallback for acoustic ambiguity and for
+    # non-danmaku entity confusions.  With no CPA configured the layer defers
+    # everything, identical to the prior human→audio chain.
+    from src.autoslice.read_aloud_llm_verifier import build_cpa_read_aloud_verifier
+
+    read_aloud_llm_call = None
+    if os.environ.get("CPA_BASE_URL") and os.environ.get("CPA_API_KEY"):
+        read_aloud_llm_call = build_llm_call(
+            LlmConfig(
+                transport="command",
+                command_template=(
+                    "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
+                    "'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+                ),
+                timeout_seconds=180.0,
+            )
+        )
+    cpa_read_aloud_verifier = build_cpa_read_aloud_verifier(
+        read_aloud_llm_call, next_verifier=audio_entity_verifier
+    )
+
     def verify_confusable_entity(request):
         if human_entity_verifier is not None:
             verdict = human_entity_verifier(request)
             if verdict is not None:
                 return verdict
-        if audio_entity_verifier is not None:
-            return audio_entity_verifier(request)
-        return None
+        return cpa_read_aloud_verifier(request)
 
     static_referent_groups = load_referent_groups(profile_asset_file("entity_confusables"))
     dynamic_groups = []
