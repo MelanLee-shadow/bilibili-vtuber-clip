@@ -66,13 +66,14 @@
 - `1472eaa` + `090f539` 接完 usage-limit Claude 留下的 CPA 念弹幕仲裁：仅处理 hash-bound danmaku/SC 候选，严格布尔 + `[0,1]` 置信度 + 候选集合门，human→CPA context→audio fallback；主播名来自所选 profile，verdict 记录 request/prompt/completion hash。无 CPA 时与旧 human→audio 路径一致，真实“外套→歪了”形态有端到端测试。
 - `7a01151` 修复 profile 拆分后的 commit-exact eval：快照现在打包/校验 `profiles/` + 全部 profile assets/tools，不再只硬编码李豆沙声纹；真 CLI smoke 又抓并修复 macOS `/var`→`/private/var` alias。当前 HEAD 快照 145 文件、profile missing=0、runner `--help` 通过。
 - **xinyi「展示新衣服」线上换源修正（Ivan 7/15 报「第一句念弹幕『外套能脱吗』字幕还是错」）**：`BV1puNv6QEXj` 7/15 06:00Z 被重试 timer 投出的是**旧 garble 烧录**——delivery-divergence 根因：7/13 prod 树 agy+cpa 精听已修对（`小豆歪了`→`小豆外套`、`眼镜`→`眼罩`、素颜/大概/我的耳朵），但 7/14 evals 重产撞 Gemini 配额回退 garble 并成了交付/上传件。`bili_archive_tool.py replace` 零配额换成 prod 正确烧录（old cid 39966081919→new **39967131174**，sha 673b1c3f，`edit code 0`，现「修改内容待审核」）；4 帧肉眼核对字幕+片头。证据 `reports/lidousha-uploads-20260714/xinyi.correction.uploaded.json`（+ postpublish）。pending-provisional 该件已闭。
-- **CPA 念读 verifier 层真 CPA canary（部分满足下一步）**：用模块自身 `_prompt` 打真实 CPA——正例真 cue#1(`小豆的外套是可以脱的吗？` vs ASR `小豆歪了可以脱吗`)→`is_read_aloud=true conf 0.99`；负例(无关问句弹幕`几点下播？`配无关 ASR)→`false conf 0.99`，证实「问句是强信号非决定性、靠重叠+语篇兜底」。另有整段 danmu-first 复现实验：纯文本+CPA 对念读句 cue#1 与 AGY 一字不差、零误伤（详见对话）。**全流程冻结 session 旧/新双跑 + full-pipeline no-upload canary 仍是部署门（见下一步）。**
+- **CPA 念读 verifier 层真 CPA canary（部分满足下一步）**：用模块自身 `_prompt` 打真实 CPA——正例真 cue#1(`小豆的外套是可以脱的吗？` vs ASR `小豆歪了可以脱吗`)→`is_read_aloud=true conf 0.99`；负例(无关问句弹幕`几点下播？`配无关 ASR)→`false conf 0.99`，证实「问句是强信号非决定性、靠重叠+语篇兜底」。另有整段 danmu-first 复现实验：纯文本+CPA 对念读句 cue#1 与 AGY 一字不差、零误伤（详见对话）。
+- **部署上线（`d2f1463`，2026-07-15T08:03:01Z，Ivan 指令「部署」）**：profile 重构把 `deploy_free_autoslice.sh` 卡住——它只 stream `scripts/src/assets` 漏了 `profiles/`（`e068214` 补齐 10 处 tree 列表），且旧部署 `70e504c` 无 `profiles/` 导致 switch/rollback 在「新增顶层树」上崩（`d2f1463`：manifest 缺失即跳过、备份缺失即打 `.absent` 标记、回滚遇标记则 `rm -rf` 删除新增树）。首次尝试被脚本 REMOTE_VALIDATE 正确拦下、生产回滚 `70e504c` 完好（runner md5 核对）；修好后事务部署成功、runner md5 verified、DISABLED/guard/残留全清。部署后 canary（**已部署模块**+真 CPA）：正例 cue#1→`RESOLVED=小豆的外套是可以脱的吗？`、负例→`DEFERRED`。
 
-**进行中：** 无本轮后台进程；生产只读复核仍固定在已验证的 `70e504c`（runner 文件 SHA 与该 commit 匹配），`DISABLED` absent、cron 1 条，7/11~7/13 state 均 `review_ready`。本轮 profile/清理/CPA 念读提交均未部署、未上传。`BV1puNv6QEXj` 换源后待 B 站复审恢复公开。
+**进行中：** 生产已部署 **`d2f1463`**（DEPLOYED_COMMIT 已盖、runner md5 verified、profiles/read_aloud/CPA wiring 就位、DISABLED absent、无 guard/残留）。runner cron `*/10` 将在下次 tick 用新码；uploads 仍 OFF + review-gated。`BV1puNv6QEXj` 换源后待 B 站复审恢复公开。
 
-**阻塞：** 没有代码 blocker。全仓 **1223 passed**、prompt/hash/AST 合同与 commit-exact snapshot smoke 已过；但尚未用同一场冻结直播分别跑旧/新 commit 做完整产物差分，CPA 念读也尚未在 no-upload 冻结实案上跑真 CPA canary。另外 provenance/pipeline fingerprint 必然因代码与 manifest 改动而变化，不能要求所有 JSON 字节完全相同。
+**阻塞：** 无代码 blocker。全仓 **1223 passed**；部署过脚本 REMOTE_VALIDATE（speaker context env/branding intro/speaker runtime assets/全 import/entity+timely+topic 资产校验）+ 部署后 verifier 层真 CPA canary（正/负例）。**未做**同场冻结 session 旧/新 full-pipeline 产物差分——依赖 SHA 合同（prompt 旧/新一致）+ 1223 测试 + review gate + 事务回滚兜底。
 
-**下一步：** 部署前先做一场冻结 session 的旧/新双跑，比较候选、字幕、边界、标题、封面 prompt 与成片内容（排除 commit/fingerprint/timestamp provenance），并对一条念弹幕 near-miss 做真 CPA no-upload canary；通过后再走事务部署并观察真实 cron tick。旧 v1 evidence 字段和 `LIDOUSHA_*` 环境别名暂保留为可读兼容层，若要清名应另起显式 schema-v2 迁移，不能静默破坏历史 hash 包。
+**下一步：** 观察首个真实 cron tick / 下一场 session 的候选·字幕·标题·封面与 review（uploads OFF，异常在 review 拦下）。念读 near-miss 会走 CPA。如需额外保险可补跑一场冻结 session 的旧/新 full-pipeline 差分；回滚用 `deploy_free_autoslice.sh` 部署上一 commit（脚本现已正确处理新增/移除顶层树）。旧 v1 evidence 字段和 `LIDOUSHA_*` 环境别名暂保留为可读兼容层。
 
 ### 目标
 
