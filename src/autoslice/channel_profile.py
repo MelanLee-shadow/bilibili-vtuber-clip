@@ -43,7 +43,9 @@ _REQUIRED_ASSET_FILES = frozenset(
         "timely_term_sources",
         "timely_terms",
         "topic_entity_graph",
+        "title_policy",
         "title_style",
+        "upload_tag_policy",
         "voiceprint_profile",
     }
 )

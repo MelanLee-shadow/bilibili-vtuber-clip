@@ -124,7 +124,7 @@ def visual_song_titles(state: dict) -> list[str]:
 
 
 def known_song_titles() -> list[str]:
-    """Curated recurring-song titles (assets/lidousha/known_songs.json).
+    """Curated recurring-song titles from the selected profile asset.
 
     This is a code-owned static asset, not a per-candidate human-truth file —
     unlike ``candidate_text_override_path``/``candidate_subtitle_regression_path``/

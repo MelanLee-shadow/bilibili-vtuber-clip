@@ -80,6 +80,12 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
     assert profile.asset_file("timely_term_sources") == (
         REPO_ROOT / "assets/lidousha/timely_term_sources.json"
     )
+    assert profile.asset_file("title_policy") == (
+        REPO_ROOT / "assets/lidousha/title_policy.json"
+    )
+    assert profile.asset_file("upload_tag_policy") == (
+        REPO_ROOT / "assets/lidousha/upload_tag_policy.json"
+    )
     assert profile.asset_directory("fonts") == REPO_ROOT / "assets/lidousha/fonts"
     assert profile.voiceprint_reference_subdirectory == "lidousha"
     assert profile.song_title_prefix == "【李豆沙】豆沙歌，"
@@ -161,6 +167,48 @@ def test_profile_validation_fails_closed(tmp_path, mutate, message):
 
 def test_profile_schema_constant_matches_default_manifest():
     assert _default_document()["schema_version"] == CHANNEL_PROFILE_SCHEMA_VERSION
+
+
+def test_neutral_profile_template_is_config_valid_but_runtime_incomplete():
+    manifest = REPO_ROOT / "profiles/_template/profile.json"
+
+    config_only = subprocess.run(
+        [
+            sys.executable,
+            "scripts/validate_channel_profile.py",
+            "--manifest",
+            str(manifest),
+            "--config-only",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    strict = subprocess.run(
+        [
+            sys.executable,
+            "scripts/validate_channel_profile.py",
+            "--manifest",
+            str(manifest),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert config_only.returncode == 0, config_only.stderr
+    assert json.loads(config_only.stdout)["status"] == "READY"
+    assert strict.returncode == 2
+    blocked = json.loads(strict.stdout)
+    assert blocked["status"] == "BLOCKED"
+    assert str(REPO_ROOT / "assets/replace_me/glossary.txt") in blocked[
+        "missing_runtime_paths"
+    ]
+    assert str(REPO_ROOT / "scripts/regenerate_channel_cover.py") in blocked[
+        "missing_runtime_paths"
+    ]
 
 
 def test_runner_applies_selected_profile_before_building_runtime_paths(tmp_path):

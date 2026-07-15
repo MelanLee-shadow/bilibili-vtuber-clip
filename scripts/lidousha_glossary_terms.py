@@ -7,8 +7,8 @@ term (``applied_terms=("kmx",)``), so the gate could never notice that a
 normalized subtitle still said 停放熊 / 沙特琳 / 一四二 / 苏丹 instead of the
 canonical kmx / 沙豆李 / 142 / 奶油苏打.
 
-This module reads ``assets/lidousha/glossary.txt`` (the authoritative source of
-truth, also synced to the free host) and extracts:
+This module reads the selected profile's ``glossary`` asset (for the default
+profile, ``assets/lidousha/glossary.txt``) and extracts:
 
 * ``canon``            — the approved proper-noun spellings the reviewer must
   keep (kmx, 142, 小室, Ado, 沙豆李, 掏兜, 倒反天罡, 奶油苏打, …).

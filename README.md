@@ -43,6 +43,8 @@ container:/app/Videos                      # 原始录播输入
 
 ## 文档入口
 
+- `profiles/README.md`：可复用频道 profile、独立 `assets/<profile-id>/`
+  知识包和新频道自建模板。
 - `docs/remote-first-autoslice-route.md`：当前整理后的远端优先路线、目录职责和下一步工程顺序。
 - `docs/lidousha-auto-review-architecture.md`：详细 gate、manifest、状态机、风险和分阶段设计。
 - `docs/workflows/lidousha-song-finished-package-workflow.md`：歌曲 no-upload review package 的当前权威流程。

@@ -5,8 +5,9 @@
     虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP
 本原型为每条切片自动补充内容相关 tag, 两层来源:
 
-* Layer A 确定性专名层 — 手工整理的「口播表面形式 → 可搜索 tag」规则表,
-  来源 assets/lidousha/glossary.txt + psplive_roster.v1.md + Ivan 点名映射
+* Layer A 确定性专名层 — 所选 profile 的 ``upload_tag_policy`` 资产中
+  手工整理的「口播表面形式 → 可搜索 tag」规则表（可由 glossary/roster
+  和频道编辑裁定构建）
   (侄女→侄女/百合/女同, 142→伊索尔, lmsm→礼墨Sumi, 大N老师→南町, 梦限大→
   梦限大/日文名/BanG Dream …)。专名只走这一层, 绝不让 LLM 发明专名。
 * Layer B LLM 内容层 — 经 CPA (llm_via_cpa.sh, 与标题/精听同一链路) 从标题+
@@ -48,95 +49,25 @@ from src.autoslice.llm_client import (  # noqa: E402
     extract_json_object,
 )
 
-# Ivan 2026-07-13 拍板: 砍掉 VUP(与虚拟UP主全重复)/VTuber(与虚拟主播近重复),
-# 4 个基础位, 其余内容位(上限实测12)。上传侧无 tags 时的回退在 free_do_upload.sh。
-BASE_TAGS = ("李豆沙", "虚拟主播", "虚拟UP主", "直播切片")
-MAX_TAGS_DEFAULT = 12  # 2026-07-13 实测: BV1EQNk6KErE 12 tag 编辑提交+读回全成功
-MAX_TAG_CHARS = 20  # B站单 tag 长度上限
+# Channel names, proper-noun mappings, and prompt policy are selected through
+# the active profile. Keep these compatibility constants so existing callers
+# do not need to know where the policy bytes live.
+from src.autoslice.upload_tag_policy import (  # noqa: E402
+    TermRule,
+    load_selected_upload_tag_policy,
+)
+
+_UPLOAD_TAG_POLICY = load_selected_upload_tag_policy()
+BASE_TAGS = _UPLOAD_TAG_POLICY.base_tags
+MAX_TAGS_DEFAULT = _UPLOAD_TAG_POLICY.max_tags_default
+MAX_TAG_CHARS = _UPLOAD_TAG_POLICY.max_tag_chars
+TERM_RULES = _UPLOAD_TAG_POLICY.term_rules
+_THEME_ALLOWED = set(_UPLOAD_TAG_POLICY.theme_allowed)
+_BANNED_CONTENT_TAGS = set(_UPLOAD_TAG_POLICY.banned_content_tags)
+CONTENT_PROMPT = _UPLOAD_TAG_POLICY.content_prompt_template
 
 CPA_COMMAND = f"bash {ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
 
-
-@dataclass(frozen=True)
-class TermRule:
-    """One deterministic mention→tags rule.
-
-    patterns are regexes matched over 标题+字幕全文 (IGNORECASE); the rule
-    fires when total hits >= min_hits.  Tags are the B站-searchable canonical
-    forms, NOT necessarily the subtitle canonical spelling (e.g. subtitle
-    writes 142 but the searchable tag is the vtuber's name 伊索尔).
-    """
-
-    name: str
-    patterns: tuple[str, ...]
-    tags: tuple[str, ...]
-    min_hits: int = 1
-    note: str = ""
-
-
-# 每条规则的 note 记录来源/口径, 审查表会展示证据 (命中表面形式 x 次数)。
-TERM_RULES: tuple[TermRule, ...] = (
-    # --- Ivan 点名的映射 ---
-    TermRule(
-        "zhinv",
-        ("侄女", "直女"),
-        ("侄女", "百合", "女同"),
-        note="Ivan: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发",
-    ),
-    TermRule(
-        "mengxianda",
-        ("梦限大", "夢限大", "みゅーたいぷ", "MewType"),
-        ("梦限大", "夢限大みゅーたいぷ", "BanG Dream", "邦多利"),
-        note="glossary: BanG Dream 企划 梦限大MewType",
-    ),
-    TermRule("bangdream", ("邦多利", r"BanG\s*Dream", "バンドリ"), ("BanG Dream", "邦多利")),
-    TermRule("mujica", (r"Mujica",), ("Ave Mujica", "BanG Dream", "邦多利"), note="glossary: Mujica 与梦限大是不同实体, tag 可并存"),
-    TermRule("popipa", (r"Popipa", "ポピパ"), ("Poppin'Party", "BanG Dream", "邦多利")),
-    TermRule("bushiroad", ("武士道",), ("武士道",), note="Bushiroad 公司, 邦多利语境"),
-    TermRule("mygo", (r"MyGO",), ("MyGO!!!!!", "BanG Dream", "邦多利")),
-    TermRule("takamatsu_tomori", ("高松灯",), ("高松灯", "MyGO!!!!!", "BanG Dream", "邦多利")),
-    TermRule("rana", ("要乐奈",), ("要乐奈", "MyGO!!!!!", "BanG Dream", "邦多利")),
-    TermRule("taki", ("椎名立希", "立希"), ("椎名立希", "MyGO!!!!!", "BanG Dream", "邦多利")),
-    TermRule("sakiko", ("祥子",), ("丰川祥子", "BanG Dream", "邦多利"), note="祥子=丰川祥子(待Ivan确认口径)"),
-    TermRule("142", (r"(?<!\d)142(?!\d)", "伊索尔", "一四二", "幺四二"), ("伊索尔",), note="Ivan: 142→伊索尔"),
-    TermRule("limo", ("礼墨", "lmsm", "Sumi"), ("礼墨Sumi",), note="Ivan: lmsm→礼墨Sumi"),
-    # Ivan 2026-07-13: 专名 tag 只出可搜索的正主名, 不出梗形态(大N老师/豆町只作触发面)。
-    TermRule("nanmachi", ("南町", "大N老师", "大N"), ("南町",), note="Ivan: 大N老师→南町, 只出正主名"),
-    TermRule("douting_cp", ("豆町",), ("南町", "百合"), note="CP名豆町只作触发面, 出南町+百合"),
-    # --- PSPLive roster (psplive_roster.v1.md) ---
-    TermRule("anwan", ("安晚", "awawa", r"(?<![A-Za-z])awa(?![A-Za-z])"), ("安晚awa",)),
-    TermRule("xingxi", ("星汐", "七宝", "小七", "邪哥", "香香烧烤", "山猪王", "小山猪", "xxsk"), ("星汐Seki",)),
-    TermRule("baishenyao", ("白神遥", "小海豹", "豹豹", "豹总", r"(?<!\d)5835(?!\d)", "五八三十五"), ("白神遥",)),
-    TermRule("dongaili", ("东爱璃", "狍子", "大璃"), ("东爱璃",)),
-    TermRule("wuqian", (r"(?<![毫从并绝])无前",), ("无前",), min_hits=2, note="短词易误命中, 要求≥2次"),
-    TermRule("byz_rei", ("病院坂",), ("病院坂Rei",)),
-    TermRule("qiulinzi", ("秋凛子",), ("秋凛子",)),
-    TermRule("ayana", ("绫奈奈奈",), ("绫奈奈奈",)),
-    TermRule("miya", ("星之谷米娅",), ("星之谷米娅",)),
-    TermRule("yizhi", ("亦枝YY", "亦枝"), ("亦枝YY",)),
-    TermRule("beiyouxiang", ("北柚香",), ("北柚香",)),
-    TermRule("shengge", ("笙歌",), ("笙歌",)),
-    TermRule("taomuq", ("桃姆Q",), ("桃姆Q",)),
-    TermRule("hongxiaoyin", ("红晓音",), ("红晓音",)),
-    TermRule("cantony", ("残Tony", "残托尼"), ("残Tony",)),
-    TermRule("psplive", ("psplive", "披萨盘", r"Project\s*SP", r"(?<![A-Za-z])P-SP(?![A-Za-z])"), ("PSPLive",)),
-    # --- 团体/活动/作品/场景 ---
-    TermRule("snh48", ("河粉", "塞纳河", "SNH48", "左婧媛"), ("SNH48",), note="Ivan: 河粉=SNH48粉丝"),
-    TermRule("bw", (r"(?<![A-Za-z])BW(?![A-Za-z0-9])", "BilibiliWorld", "哔哩哔哩世界"), ("BilibiliWorld",)),
-    TermRule("lycoris", ("露蒂丝", "lycoris", "莉可丽丝"), ("莉可丽丝",)),
-    TermRule("botan", ("上伊那牡丹",), ("上伊那牡丹", "百合"), note="glossary: 她聊的百合作品"),
-    TermRule(
-        "yuri_signal",
-        ("百合", "百破图", "百乃工", "宿敌恋人", r"女同(?!\s*[事学胞])"),
-        ("百合", "女同"),
-        note="百合信号词; 女同事/女同学不触发",
-    ),
-    TermRule("xiantong", ("仙童数学",), ("仙童数学",)),
-    TermRule("changsha", ("长沙话", "湖南话", "塑普"), ("长沙话",)),
-    TermRule("yinghuochong", ("萤火虫",), ("萤火虫漫展",), note="05实测: 3D线下见面=萤火虫live; tag命名口径待Ivan定"),
-)
-
-# LLM 内容层禁止产出专名 — 已知专名表面形式黑名单 (校验 LLM 输出用)。
 _KNOWN_PROPER_SURFACES: tuple[str, ...] = tuple(
     sorted(
         {
@@ -144,43 +75,11 @@ _KNOWN_PROPER_SURFACES: tuple[str, ...] = tuple(
             for rule in TERM_RULES
             for surface in rule.tags
         }
-        | {"kmx", "沙豆李", "shadowlee", "Ado", "小室", "奶油苏打", "恋青", "恋死", "十麻乃"},
+        | set(_UPLOAD_TAG_POLICY.known_proper_surfaces_extra),
         key=len,
         reverse=True,
     )
 )
-# 主题词白名单: 这些词形式上是"圈层词"但属于内容主题, LLM 允许产出。
-_THEME_ALLOWED = {"百合", "女同", "磕糖", "长沙话", "熊猫"}
-
-# Ivan 2026-07-13 硬毙词: 贴内容但"没人会搜"的过专一描述词。tag 必须既贴合
-# 内容又是观众真的会搜/点的通用入口词; 这类词即使 LLM 再产出也过滤。
-_BANNED_CONTENT_TAGS = {
-    "彩排", "宠粉", "玩梗", "热情邀约", "初次登场", "脑补剧情", "粉丝互动", "线下合照",
-    "暴力女",  # Ivan 2026-07-13 二轮点名
-}
-
-CONTENT_PROMPT = """你在为B站虚拟主播「李豆沙」的直播切片选投稿标签(tag)。
-李豆沙: B站虚拟主播, 虚拟熊猫少女(白发+熊猫耳), 湖南长沙人会飙长沙话; 温柔声线唱歌+高能杂谈双修, 容易破防、一本正经犯傻、嘴快爱吐槽、也有温柔哄睡面。
-
-下面是一条切片的标题和完整字幕。请提出 3~6 个「内容标签」: 描述这条切片的情绪/行为/场景/话题的词。
-
-最重要的一条(Ivan 口径): 标签必须**既贴合这条切片的内容, 又足够通用**——是B站观众真的会在搜索框里搜、或看到会点的现成入口词。太专一于本条内容的描述词没人会搜, 一律不要。
-- 好的例子: 可爱 撒娇 嘴硬 破防 吐槽 社死 名场面 搞笑 沙雕 反差萌 姨母笑 治愈 温柔 唱歌 跳舞 3D 漫展 百合 磕CP 磕糖 方言 长沙话 坏女人 宿敌恋人
-- 坏的例子(全部是"贴内容但没人搜"的过专一词, 不要出这类): 彩排 宠粉 玩梗 热情邀约 初次登场 脑补剧情 粉丝互动 线下合照 角色分析 催更续写 动漫杂谈
-
-其余硬性规则:
-- 禁止输出任何人名、角色名、作品名、企划名、团体名、活动名(专名由另一套确定性规则处理, 你绝对不要出)。
-- 每个标签2~6个字, 最长不超过10个字符, 不带标点。
-- 不要与这些已定标签重复: {existing_tags}
-- 每个标签配一句依据(引用切片里的具体内容)。宁缺毋滥, 达不到通用度就少出。
-
-只输出严格 JSON: {{"tags": [{{"tag": "...", "why": "..."}}]}}
-
-标题: {title}
-
-字幕全文:
-{srt_text}
-"""
 
 
 @dataclass

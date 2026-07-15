@@ -1,26 +1,25 @@
 {
   "schema_version": "vtuber-slice.channel-profile.v1",
-  "profile_id": "lidousha",
+  "profile_id": "replace_me",
   "identity": {
-    "display_name": "李豆沙",
-    "prompt_name": "Li Dousha",
-    "short_name": "小李",
+    "display_name": "替换为主播名",
+    "prompt_name": "Replace With Host Name",
+    "short_name": "主播",
     "self_reference_aliases": [
-      "李豆沙",
-      "小李",
-      "豆沙"
+      "替换为主播名",
+      "主播"
     ],
     "speaker_identity_aliases": [
-      "李豆沙",
-      "shadow"
+      "替换为主播名",
+      "replace_me"
     ],
-    "room_id": "22966160",
-    "output_directory": "lidousha",
-    "host_speaker_label": "李豆沙",
-    "guest_speaker_label": "连线"
+    "room_id": "000000",
+    "output_directory": "replace_me",
+    "host_speaker_label": "主播",
+    "guest_speaker_label": "嘉宾"
   },
   "assets": {
-    "root": "assets/lidousha",
+    "root": "assets/replace_me",
     "files": {
       "clip_opening_address": "clip_opening_address.json",
       "entity_confusables": "entity_confusables.json",
@@ -29,7 +28,7 @@
       "cover_identity_prompt": "cover_identity_prompt.txt",
       "known_songs": "known_songs.json",
       "persona": "persona.md",
-      "psplive_roster": "psplive_roster.v1.md",
+      "psplive_roster": "psplive_roster.md",
       "slice_selection_metric": "slice_selection_metric.md",
       "subtitle_correction_principles": "subtitle_correction_principles.md",
       "timely_term_seeds": "timely_term_seeds.json",
@@ -71,41 +70,25 @@
     ]
   },
   "runtime": {
-    "voiceprint_reference_subdirectory": "lidousha"
+    "voiceprint_reference_subdirectory": "replace_me"
   },
   "titles": {
-    "talk_prefix": "【李豆沙】",
-    "song_prefix": "【李豆沙】豆沙歌，",
-    "song_hook_template": "【李豆沙】豆沙歌，《{song_title}》｜{hook}",
-    "song_plain_template": "【李豆沙】豆沙歌，直播间唱《{song_title}》"
+    "talk_prefix": "【替换为主播名】",
+    "song_prefix": "【替换为主播名】歌切，",
+    "song_hook_template": "【替换为主播名】歌切，《{song_title}》｜{hook}",
+    "song_plain_template": "【替换为主播名】歌切，直播间唱《{song_title}》"
   },
   "text_normalization": {
-    "canonical_surfaces": [
-      {
-        "surface": "哇哭哇哭",
-        "canonical": "wakuwaku",
-        "authority": "lidousha-code-switch-canon.v1"
-      },
-      {
-        "surface": "哇库哇库",
-        "canonical": "wakuwaku",
-        "authority": "lidousha-code-switch-canon.v1"
-      },
-      {
-        "surface": "直女",
-        "canonical": "侄女",
-        "authority": "lidousha-hard-meme-canon.v1"
-      }
-    ]
+    "canonical_surfaces": []
   },
   "decisions": {
-    "host_vocal_present": "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
-    "host_vocal_absent": "NO_LIDOUSHA_VOCAL_DETECTED",
-    "verified_host_singing": "VERIFIED_LIDOUSHA_SINGING",
-    "host_not_singing_reason": "SONG_NOT_LIDOUSHA_SINGING",
-    "lyric_vocal_subject": "LIDOUSHA"
+    "host_vocal_present": "HOST_VOCAL_PRESENT",
+    "host_vocal_absent": "NO_HOST_VOCAL_DETECTED",
+    "verified_host_singing": "VERIFIED_HOST_SINGING",
+    "host_not_singing_reason": "SONG_NOT_HOST_SINGING",
+    "lyric_vocal_subject": "HOST"
   },
   "tools": {
-    "cover_regenerator": "scripts/regenerate_lidousha_cover.py"
+    "cover_regenerator": "scripts/regenerate_channel_cover.py"
   }
 }
