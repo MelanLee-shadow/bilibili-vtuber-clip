@@ -20,6 +20,7 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from scripts.gemini_slice_jingting import (
@@ -273,6 +274,219 @@ def _gemini_api_observe_entity(*, audio_path: Path, prompt: str, key: str, model
     )
 
 
+@dataclass(frozen=True)
+class _EntityProviderOutcome:
+    observed: Any
+    provider: str
+    model: str
+    prompt_path: Path
+    response_path: Path
+    accepted_key_tier: str | None
+    paid_policy_stamp: Mapping[str, Any] | None
+    provider_failures: list[dict[str, Any]]
+
+
+def _observe_entity_audio(
+    *,
+    request: Mapping[str, Any],
+    candidates: list[Any],
+    audio_path: Path,
+    job_dir: Path,
+    recording_date: str,
+    timely_context: str,
+    binary: str,
+    model: str,
+    timeout: str,
+) -> _EntityProviderOutcome:
+    """Run the AGY provider, then the policy-gated Gemini API fallback."""
+
+    candidate_rows = [dict(row) for row in candidates if isinstance(row, dict)]
+    sentence_mode = request.get("schema_version") == "chat-read-aloud-verification-request.v1"
+    prompt = _prompt(
+        candidates=candidate_rows,
+        recording_date=recording_date,
+        timely_context=timely_context,
+        sentence_mode=sentence_mode,
+        context_before=str(request.get("context_before") or ""),
+        context_after=str(request.get("context_after") or ""),
+    )
+    prompt_path = job_dir / "prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    short_prompt = (
+        "Open prompt.md with view_file and follow it exactly. Use only prompt.md and input.mp4. "
+        "Write verdict.json in this directory. Do not use shell, terminal, browser, or web."
+    )
+    observed: Any = None
+    provider = "agy"
+    model_used = model
+    accepted_key_tier: str | None = None
+    paid_policy_stamp: Mapping[str, Any] | None = None
+    provider_failures: list[dict[str, Any]] = []
+    response_path = job_dir / "verdict.raw.json"
+    try:
+        completed = subprocess.run(
+            [
+                binary,
+                "--sandbox",
+                "--add-dir",
+                str(job_dir),
+                "--model",
+                model,
+                "-p",
+                short_prompt,
+                "--print-timeout",
+                timeout,
+            ],
+            cwd=job_dir,
+            env=agy_subprocess_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=parse_timeout_seconds(timeout) + 120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        provider_failures.append(
+            {
+                "provider": "agy",
+                "category": "AGY_SUBPROCESS_ERROR",
+                "error_type": type(exc).__name__,
+            }
+        )
+    else:
+        (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
+        (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
+        verdict_path = job_dir / "verdict.json"
+        raw_response = (
+            verdict_path.read_text(encoding="utf-8", errors="replace")
+            if verdict_path.is_file()
+            else completed.stdout
+        )
+        response_path.write_text(raw_response, encoding="utf-8")
+        if completed.returncode != 0:
+            provider_failures.append(
+                {
+                    "provider": "agy",
+                    "category": _classify_agy_failure(
+                        completed.returncode, completed.stdout, completed.stderr
+                    ),
+                }
+            )
+        else:
+            try:
+                observed = json.loads(strip_markdown_fence(raw_response))
+            except (TypeError, ValueError) as exc:
+                provider_failures.append(
+                    {
+                        "provider": "agy",
+                        "category": "AGY_INVALID_OUTPUT",
+                        "error_type": type(exc).__name__,
+                    }
+                )
+
+    if observed is None:
+        provider = "gemini_api"
+        model_used = _entity_api_model()
+        api_audio_path = job_dir / "input.gemini-api.mp3"
+        api_prompt_path = job_dir / "prompt.gemini-api.md"
+        api_response_path = job_dir / "verdict.gemini-api.raw.json"
+        extract = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", str(audio_path), "-vn", "-ac", "1", "-ar", "16000",
+                "-b:a", "64k", str(api_audio_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if extract.returncode != 0 or not api_audio_path.is_file():
+            provider_failures.append(
+                {"provider": "gemini_api", "category": "GEMINI_API_AUDIO_EXTRACTION_FAILED"}
+            )
+        else:
+            api_prompt = _prompt(
+                candidates=candidate_rows,
+                recording_date=recording_date,
+                timely_context=timely_context,
+                sentence_mode=sentence_mode,
+                context_before=str(request.get("context_before") or ""),
+                context_after=str(request.get("context_after") or ""),
+                delivery_mode="gemini_api",
+            )
+            api_prompt_path.write_text(api_prompt, encoding="utf-8")
+
+            def attempt_api_key(attempt_key: str, *, key_tier: str) -> bool:
+                nonlocal observed, accepted_key_tier
+                try:
+                    raw = _gemini_api_observe_entity(
+                        audio_path=api_audio_path,
+                        prompt=api_prompt,
+                        key=attempt_key,
+                        model=model_used,
+                    )
+                    # Persist the raw provider response for bounded forensic evidence.
+                    api_response_path.write_text(
+                        (raw or "") if (raw or "").endswith("\n") else (raw or "") + "\n",
+                        encoding="utf-8",
+                    )
+                    if not raw or len(raw.encode("utf-8")) > 2_000_000:
+                        raise ValueError("empty or oversized Gemini API output")
+                    observed = json.loads(raw)
+                    accepted_key_tier = key_tier
+                    return True
+                except Exception as exc:
+                    provider_failures.append(
+                        {
+                            "provider": "gemini_api",
+                            "key_tier": key_tier,
+                            "category": _api_failure_category(exc),
+                            "error_type": type(exc).__name__,
+                        }
+                    )
+                    return False
+
+            for key in _configured_free_keys():
+                if attempt_api_key(key, key_tier=gemini_backup_policy.FREE_KEY_TIER):
+                    break
+            if observed is None:
+                item_key = _sha256(api_audio_path)
+                prior_strikes = gemini_backup_policy.free_chain_strikes(item_key)
+                gemini_backup_policy.record_free_chain_failure(item_key)
+                allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
+                    item_key, prior_strikes=prior_strikes
+                )
+                if allowed and attempt_api_key(
+                    str(gemini_backup_policy.paid_backup_key()),
+                    key_tier=gemini_backup_policy.PAID_KEY_TIER,
+                ):
+                    paid_policy_stamp = gemini_backup_policy.record_paid_use(
+                        item_key, purpose="entity_audio_verdict"
+                    )
+                elif not allowed and gate_reason != "PAID_KEY_NOT_CONFIGURED":
+                    provider_failures.append(
+                        {
+                            "provider": "gemini_api",
+                            "key_tier": gemini_backup_policy.PAID_KEY_TIER,
+                            "category": f"PAID_BACKUP_SKIPPED:{gate_reason}",
+                        }
+                    )
+        if observed is not None:
+            response_path = api_response_path
+            prompt_path = api_prompt_path
+
+    return _EntityProviderOutcome(
+        observed=observed,
+        provider=provider,
+        model=model_used,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier=accepted_key_tier,
+        paid_policy_stamp=paid_policy_stamp,
+        provider_failures=provider_failures,
+    )
+
+
 def build_local_audio_entity_verifier(
     *,
     source_media: Path,
@@ -385,195 +599,25 @@ def build_local_audio_entity_verifier(
         if ffmpeg.returncode != 0 or not audio_path.is_file():
             return _uncertain(request, "ENTITY_AUDIO_CROP_FAILED", ffmpeg.stderr)
 
-        prompt = _prompt(
-            candidates=[dict(row) for row in candidates if isinstance(row, dict)],
+        outcome = _observe_entity_audio(
+            request=request,
+            candidates=candidates,
+            audio_path=audio_path,
+            job_dir=job_dir,
             recording_date=recording_date,
             timely_context=timely,
-            sentence_mode=(
-                request.get("schema_version") == "chat-read-aloud-verification-request.v1"
-            ),
-            context_before=str(request.get("context_before") or ""),
-            context_after=str(request.get("context_after") or ""),
+            binary=binary,
+            model=model,
+            timeout=timeout,
         )
-        prompt_path = job_dir / "prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
-        short_prompt = (
-            "Open prompt.md with view_file and follow it exactly. Use only prompt.md and input.mp4. "
-            "Write verdict.json in this directory. Do not use shell, terminal, browser, or web."
-        )
-        observed: Any = None
-        provider = "agy"
-        model_used = model
-        accepted_key_tier: str | None = None
-        paid_policy_stamp: Mapping[str, Any] | None = None
-        provider_failures: list[dict[str, Any]] = []
-        response_path = job_dir / "verdict.raw.json"
-        try:
-            completed = subprocess.run(
-                [
-                    binary,
-                    "--sandbox",
-                    "--add-dir",
-                    str(job_dir),
-                    "--model",
-                    model,
-                    "-p",
-                    short_prompt,
-                    "--print-timeout",
-                    timeout,
-                ],
-                cwd=job_dir,
-                env=agy_subprocess_env(),
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=parse_timeout_seconds(timeout) + 120,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            provider_failures.append(
-                {"provider": "agy", "category": "AGY_SUBPROCESS_ERROR", "error_type": type(exc).__name__}
-            )
-        else:
-            (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
-            (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
-            verdict_path = job_dir / "verdict.json"
-            raw_response = (
-                verdict_path.read_text(encoding="utf-8", errors="replace")
-                if verdict_path.is_file()
-                else completed.stdout
-            )
-            response_path.write_text(raw_response, encoding="utf-8")
-            if completed.returncode != 0:
-                provider_failures.append(
-                    {
-                        "provider": "agy",
-                        "category": _classify_agy_failure(
-                            completed.returncode, completed.stdout, completed.stderr
-                        ),
-                    }
-                )
-            else:
-                try:
-                    observed = json.loads(strip_markdown_fence(raw_response))
-                except (TypeError, ValueError) as exc:
-                    provider_failures.append(
-                        {
-                            "provider": "agy",
-                            "category": "AGY_INVALID_OUTPUT",
-                            "error_type": type(exc).__name__,
-                        }
-                    )
-
-        if observed is None:
-            # Gemini API 直连兜底：免费 3 key 先试，付费按政策门+入帐。
-            provider = "gemini_api"
-            model_used = _entity_api_model()
-            api_audio_path = job_dir / "input.gemini-api.mp3"
-            api_prompt_path = job_dir / "prompt.gemini-api.md"
-            api_response_path = job_dir / "verdict.gemini-api.raw.json"
-            extract = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-y",
-                    "-i",
-                    str(audio_path),
-                    "-vn",
-                    "-ac",
-                    "1",
-                    "-ar",
-                    "16000",
-                    "-b:a",
-                    "64k",
-                    str(api_audio_path),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-            if extract.returncode != 0 or not api_audio_path.is_file():
-                provider_failures.append(
-                    {"provider": "gemini_api", "category": "GEMINI_API_AUDIO_EXTRACTION_FAILED"}
-                )
-            else:
-                api_prompt = _prompt(
-                    candidates=[dict(row) for row in candidates if isinstance(row, dict)],
-                    recording_date=recording_date,
-                    timely_context=timely,
-                    sentence_mode=(
-                        request.get("schema_version") == "chat-read-aloud-verification-request.v1"
-                    ),
-                    context_before=str(request.get("context_before") or ""),
-                    context_after=str(request.get("context_after") or ""),
-                    delivery_mode="gemini_api",
-                )
-                api_prompt_path.write_text(api_prompt, encoding="utf-8")
-
-                def _attempt_api_key(attempt_key: str, *, key_tier: str) -> bool:
-                    nonlocal observed, accepted_key_tier
-                    try:
-                        raw = _gemini_api_observe_entity(
-                            audio_path=api_audio_path,
-                            prompt=api_prompt,
-                            key=attempt_key,
-                            model=model_used,
-                        )
-                        # 无论成败先落盘原始响应（取证；失败尝试会被下一次覆盖）
-                        api_response_path.write_text(
-                            (raw or "") if (raw or "").endswith("\n") else (raw or "") + "\n",
-                            encoding="utf-8",
-                        )
-                        if not raw or len(raw.encode("utf-8")) > 2_000_000:
-                            raise ValueError("empty or oversized Gemini API output")
-                        candidate_observed = json.loads(raw)
-                        api_response_path.write_text(
-                            raw if raw.endswith("\n") else raw + "\n", encoding="utf-8"
-                        )
-                        observed = candidate_observed
-                        accepted_key_tier = key_tier
-                        return True
-                    except Exception as exc:
-                        provider_failures.append(
-                            {
-                                "provider": "gemini_api",
-                                "key_tier": key_tier,
-                                "category": _api_failure_category(exc),
-                                "error_type": type(exc).__name__,
-                            }
-                        )
-                        return False
-
-                for key in _configured_free_keys():
-                    if _attempt_api_key(key, key_tier=gemini_backup_policy.FREE_KEY_TIER):
-                        break
-                if observed is None:
-                    item_key = _sha256(api_audio_path)
-                    prior_strikes = gemini_backup_policy.free_chain_strikes(item_key)
-                    gemini_backup_policy.record_free_chain_failure(item_key)
-                    allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
-                        item_key, prior_strikes=prior_strikes
-                    )
-                    if allowed and _attempt_api_key(
-                        str(gemini_backup_policy.paid_backup_key()),
-                        key_tier=gemini_backup_policy.PAID_KEY_TIER,
-                    ):
-                        paid_policy_stamp = gemini_backup_policy.record_paid_use(
-                            item_key, purpose="entity_audio_verdict"
-                        )
-                    elif not allowed and gate_reason != "PAID_KEY_NOT_CONFIGURED":
-                        provider_failures.append(
-                            {
-                                "provider": "gemini_api",
-                                "key_tier": gemini_backup_policy.PAID_KEY_TIER,
-                                "category": f"PAID_BACKUP_SKIPPED:{gate_reason}",
-                            }
-                        )
-            if observed is not None:
-                response_path = api_response_path
-                prompt_path = api_prompt_path
+        observed = outcome.observed
+        provider = outcome.provider
+        model_used = outcome.model
+        prompt_path = outcome.prompt_path
+        response_path = outcome.response_path
+        accepted_key_tier = outcome.accepted_key_tier
+        paid_policy_stamp = outcome.paid_policy_stamp
+        provider_failures = outcome.provider_failures
 
         if observed is None:
             (job_dir / "provider-failures.json").write_text(

@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.song_delivery import SongDeliveryError
 from src.autoslice.verified_io import _matches_sha256
 
 
@@ -254,6 +255,107 @@ def scheduled_retry_epoch(state: dict) -> int | None:
     ) else None
 
 
+def _build_song_selector_command(
+    *,
+    item: dict,
+    window_mp4: Path,
+    window_srt: Path,
+    selector_dir: Path,
+    start: int,
+    end: int,
+    anchor_start: int,
+    anchor_end: int,
+    tag: str,
+) -> list[str]:
+    """Build one interval-bound selector invocation for the song lane."""
+
+    command = [
+        sys.executable,
+        str(_runner.REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
+        "--source-video", str(window_mp4),
+        "--source-srt", str(window_srt),
+        "--output-dir", str(selector_dir),
+        "--max-candidates", "1",
+        "--source-duration-ms", str(max(0, end - start)),
+        "--cpa-command", _runner.cpa_qa_cmd(),
+        "--semantic-recall-llm-command", _runner.CPA_CMD_DEEP,
+        "--song-hint-llm-command", _runner.CPA_CMD_STANDARD,
+        "--title-llm-command", _runner.CPA_CMD_TITLE,
+        "--cover-art-direction-llm-command", _runner.CPA_CMD_STRUCTURED,
+        "--lrc-provider", "auto",
+        "--burn-preview",
+        "--publish-staging",
+        "--branding-intro-manifest", str(_runner.profile_asset_file("branding_intro_manifest")),
+        "--host-vocal-python", str(_runner.HOST_VOCAL_PYTHON),
+        "--host-vocal-reference-profile", str(_runner.HOST_VOCAL_PROFILE),
+        "--host-vocal-reference-dir", str(_runner.HOST_VOCAL_REFERENCE_DIR),
+        "--host-vocal-model-dir", str(_runner.HOST_VOCAL_MODEL_DIR),
+    ]
+    semantic_hook = str(item.get("hook") or "").strip()
+    known_song_query = str(item.get("preview") or "").strip()
+    visual_title_hint = str(item.get("title_hint") or "").strip()
+    quoted_titles = re.findall(
+        r"[《「『]([^》」』]{1,80})[》」』]",
+        "\n".join([semantic_hook, known_song_query]),
+    )
+    # Prefer the visual/quoted title before noisy singing ASR.  LRC/audio proof,
+    # not this query order, still authorizes the performance.
+    for query in dict.fromkeys([visual_title_hint, *quoted_titles[:2], known_song_query]):
+        if query:
+            command.extend(["--song-lrc-query", query])
+    command.extend(
+        [
+            "--seed-song-candidate-id",
+            f"seededsong_{max(0, anchor_start - start)}_{min(end - start, anchor_end - start)}",
+            "--seed-song-anchor-start-ms",
+            str(max(0, anchor_start - start)),
+            "--seed-song-anchor-end-ms",
+            str(min(end - start, anchor_end - start)),
+        ]
+    )
+    if tag == "_full":
+        command.append("--agy-audio-lrc-align")
+    return command
+
+
+def _read_song_selector_summary(
+    *,
+    selector_dir: Path,
+    result: dict,
+) -> tuple[object, list, bool, dict, Path]:
+    """Read only the current attempt's summary and bind its authority into result."""
+
+    decision = None
+    reasons: list = []
+    is_song = False
+    summary_record: dict = {}
+    summary_path = selector_dir / "summary.json"
+    if summary_path.is_file():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            for entry in summary.get("records", []) if isinstance(summary, dict) else []:
+                if not isinstance(entry, dict):
+                    continue
+                summary_record = entry
+                decision = entry.get("decision_action") or decision
+                reasons = list(entry.get("reason_codes") or reasons)
+                is_song = is_song or _runner.record_is_song(entry)
+        except ValueError:
+            pass
+    if summary_record:
+        try:
+            result["selector_summary_path"] = str(summary_path.resolve(strict=True))
+            result["selector_summary_sha256"] = "sha256:" + _runner._sha256_regular_file(summary_path)
+            result["selector_record_candidate_id"] = str(
+                summary_record.get("candidate_id") or ""
+            )
+        except (OSError, SongDeliveryError):
+            # Missing authority disables zero-compute recovery, not evaluation
+            # of the current in-memory, independently hash-bound proof chain.
+            pass
+    return decision, reasons, is_song, summary_record, summary_path
+
+
 def produce_song(date: str, item: dict) -> dict:
     """Song lane (Ivan 2026-07-05): cut a tight window around the sung anchor,
     run the canonical song pipeline (NetEase/LRCLIB global-shift alignment + strict
@@ -319,59 +421,17 @@ def produce_song(date: str, item: dict) -> dict:
             log_offset = 0
         with open(log_path, "a", encoding="utf-8") as sink:
             selector_env = _runner.song_selector_env(date)
-            selector_command = [
-                 sys.executable, str(_runner.REPO_ROOT / "scripts" / "run_full_session_selector_cpa_shadow.py"),
-                 "--source-video", str(window_mp4), "--source-srt", str(window_srt),
-                 "--output-dir", str(selector_dir), "--max-candidates", "1",
-                 "--source-duration-ms", str(max(0, end - start)),
-                 "--cpa-command", _runner.cpa_qa_cmd(),
-                 "--semantic-recall-llm-command", _runner.CPA_CMD_DEEP,
-                 "--song-hint-llm-command", _runner.CPA_CMD_STANDARD,
-                 "--title-llm-command", _runner.CPA_CMD_TITLE,
-                 "--cover-art-direction-llm-command", _runner.CPA_CMD_STRUCTURED,
-                 "--lrc-provider", "auto", "--burn-preview", "--publish-staging",
-                 "--branding-intro-manifest", str(_runner.profile_asset_file("branding_intro_manifest")),
-                 "--host-vocal-python", str(_runner.HOST_VOCAL_PYTHON),
-                 "--host-vocal-reference-profile", str(_runner.HOST_VOCAL_PROFILE),
-                 "--host-vocal-reference-dir", str(_runner.HOST_VOCAL_REFERENCE_DIR),
-                 "--host-vocal-model-dir", str(_runner.HOST_VOCAL_MODEL_DIR),
-            ]
-            semantic_hook = str(item.get("hook") or "").strip()
-            known_song_query = str(item.get("preview") or "").strip()
-            visual_title_hint = str(item.get("title_hint") or "").strip()
-            # Search the quoted song title first.  Passing the entire prose
-            # preview ("下播前演唱 yonige《芽吹くとき》") made LRCLIB return no
-            # rows even though the exact title returns the canonical timed LRC.
-            quoted_titles = re.findall(
-                r"[《「『]([^》」』]{1,80})[》」』]",
-                "\n".join([semantic_hook, known_song_query]),
+            selector_command = _build_song_selector_command(
+                item=item,
+                window_mp4=window_mp4,
+                window_srt=window_srt,
+                selector_dir=selector_dir,
+                start=start,
+                end=end,
+                anchor_start=anchor_start,
+                anchor_end=anchor_end,
+                tag=tag,
             )
-            # The semantic selector already named many songs correctly even
-            # when singing ASR was unusable.  Query that title before the ASR
-            # preview; LRC/audio proof still decides whether it is truly the
-            # performed song, so this is recall improvement rather than trust.
-            for query in dict.fromkeys([visual_title_hint, *quoted_titles[:2], known_song_query]):
-                if query:
-                    selector_command.extend(["--song-lrc-query", query])
-            # Every invocation already came from the upstream song lane, which
-            # owns this anchor.  Re-asking a nondeterministic semantic LLM to
-            # decide whether the same window is a song made Japanese garbage
-            # ASR randomly produce NO_FULL_SESSION_CANDIDATES.  Keep the anchor
-            # for tight/core/full attempts; only the full attempt may escalate
-            # to expensive audio+LRC proof.  Delivery still requires the
-            # independent positive full-song proof below.
-            selector_command.extend(
-                [
-                    "--seed-song-candidate-id",
-                    f"seededsong_{max(0, anchor_start - start)}_{min(end - start, anchor_end - start)}",
-                    "--seed-song-anchor-start-ms",
-                    str(max(0, anchor_start - start)),
-                    "--seed-song-anchor-end-ms",
-                    str(min(end - start, anchor_end - start)),
-                ]
-            )
-            if tag == "_full":
-                selector_command.append("--agy-audio-lrc-align")
             completed = subprocess.run(
                 selector_command,
                 check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
@@ -386,36 +446,9 @@ def produce_song(date: str, item: dict) -> dict:
         transient_code = _runner.classify_song_selector_transient(invocation_log)
         result["rc"] = completed.returncode
         result["log"] = str(log_path)
-        decision = None
-        reasons: list = []
-        is_song = False
-        summary_record: dict = {}
-        summary_path = selector_dir / "summary.json"
-        if summary_path.is_file():
-            try:
-                summary = json.loads(summary_path.read_text(encoding="utf-8"))
-                for entry in summary.get("records", []) if isinstance(summary, dict) else []:
-                    if not isinstance(entry, dict):
-                        continue
-                    summary_record = entry
-                    decision = entry.get("decision_action") or decision
-                    reasons = list(entry.get("reason_codes") or reasons)
-                    is_song = is_song or _runner.record_is_song(entry)
-            except ValueError:
-                pass
-        if summary_record:
-            try:
-                result["selector_summary_path"] = str(summary_path.resolve(strict=True))
-                result["selector_summary_sha256"] = "sha256:" + _runner._sha256_regular_file(summary_path)
-                result["selector_record_candidate_id"] = str(
-                    summary_record.get("candidate_id") or ""
-                )
-            except (OSError, SongDeliveryError):
-                # Missing summary authority only disables zero-compute
-                # packaging recovery.  The current invocation can still use
-                # its in-memory record and the independently hash-bound proof
-                # chain below.
-                pass
+        decision, reasons, is_song, summary_record, summary_path = (
+            _read_song_selector_summary(selector_dir=selector_dir, result=result)
+        )
         result["decision"] = decision
         completion = _runner.song_completion_evidence(summary_record)
         reason_set = {str(code) for code in reasons}

@@ -279,8 +279,10 @@ def _write_danmaku_context(path: Path, danmaku_items, start_ms: int, end_ms: int
     return path
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Select full-session candidates, run CPA semantic QA, then no-upload shadow review.")
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Select full-session candidates, run CPA semantic QA, then no-upload shadow review."
+    )
     parser.add_argument("--source-video", type=Path, required=True)
     parser.add_argument("--source-srt", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -291,184 +293,90 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed-song-anchor-end-ms", type=int)
     parser.add_argument("--max-candidates", type=int, default=1)
     parser.add_argument("--cpa-command", required=True)
-    parser.add_argument("--copy-draft-context", action="store_true", help="Testing only: copy context draft SRT instead of calling agy.")
+    parser.add_argument(
+        "--copy-draft-context",
+        action="store_true",
+        help="Testing only: copy context draft SRT instead of calling agy.",
+    )
     parser.add_argument(
         "--agy-ssh-host",
         help="Run the jingting second-listen (agy refine) on this ssh host (e.g. 'free') instead of a local agy binary.",
     )
-    parser.add_argument("--no-ffmpeg", action="store_true", help="Testing only: skip ffmpeg materialization.")
-    parser.add_argument("--lrc-provider", choices=("none", "netease", "lrclib", "kugou", "auto"), default="none", help="External LRC discovery for repair-first song completeness.")
+    parser.add_argument(
+        "--no-ffmpeg", action="store_true", help="Testing only: skip ffmpeg materialization."
+    )
+    parser.add_argument(
+        "--lrc-provider",
+        choices=("none", "netease", "lrclib", "kugou", "auto"),
+        default="none",
+        help="External LRC discovery for repair-first song completeness.",
+    )
     parser.add_argument(
         "--agy-audio-lrc-align",
         action="store_true",
         help="Seeded full-song retry only: align current audio against a uniquely identified LRC when ASR is sparse.",
     )
-    parser.add_argument("--host-vocal-python", type=Path, help="Python executable for the pinned CAM++ host-vocal verifier.")
-    parser.add_argument("--host-vocal-reference-profile", type=Path, help="Versioned voiceprint threshold/hash profile.")
+    parser.add_argument(
+        "--host-vocal-python", type=Path, help="Python executable for the pinned CAM++ host-vocal verifier."
+    )
+    parser.add_argument(
+        "--host-vocal-reference-profile", type=Path, help="Versioned voiceprint threshold/hash profile."
+    )
     parser.add_argument(
         "--host-vocal-reference-dir",
         type=Path,
         help=f"Private runtime directory containing {CHANNEL_PROFILE.display_name} enrollment WAVs.",
     )
     parser.add_argument("--host-vocal-model-dir", type=Path, help="Pinned local CAM++ model directory.")
-    parser.add_argument("--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render.")
+    parser.add_argument(
+        "--burn-preview", action="store_true", help="Burn recut subtitles into a shadow preview render."
+    )
     parser.add_argument(
         "--branding-intro-manifest",
         type=Path,
-        help="Committed branding intro manifest; when enabled every burned delivery render must carry the mandatory intro (fail closed).",
+        help="Committed branding intro manifest; accepted for compatibility but ignored by the song lane.",
     )
-    parser.add_argument("--song-hint-llm-command", help="LLM command template ({prompt_file} {completion_file}) for song-name guessing.")
+    parser.add_argument(
+        "--song-hint-llm-command",
+        help="LLM command template ({prompt_file} {completion_file}) for song-name guessing.",
+    )
     parser.add_argument(
         "--song-lrc-query",
         action="append",
         default=[],
         help="Known title/artist/lyric query to try before ASR-derived LRC searches (repeatable).",
     )
-    parser.add_argument("--publish-staging", action="store_true", help="Stage AI title + cover + publish.json draft (upload_enabled always false).")
+    parser.add_argument(
+        "--publish-staging", action="store_true", help="Stage AI title + cover + publish.json draft (upload_enabled always false)."
+    )
     parser.add_argument("--title-llm-command", help="LLM command template for title generation.")
     parser.add_argument(
         "--cover-art-direction-llm-command",
-        help="LLM command template ({prompt_file} {completion_file}) picking cover art direction; falls back to deterministic persona baseline.",
+        help="LLM command template ({prompt_file} {completion_file}) picking cover art direction.",
     )
     parser.add_argument(
         "--semantic-recall-llm-command",
-        help="LLM command template ({prompt_file} {completion_file}) for viewer-perspective semantic recall; when set this lane runs before the keyword selectors.",
+        help="LLM command template ({prompt_file} {completion_file}) for viewer-perspective semantic recall.",
     )
     parser.add_argument(
         "--danmaku-xml",
         type=Path,
-        help="blrec raw danmaku XML for this recording segment (sources/*.xml); enables burst hints for recall, danmaku context for CPA, and on-screen hint lines for jingting.",
+        help="blrec raw danmaku XML for this recording segment; enables recall and review evidence.",
     )
-    args = parser.parse_args(argv)
+    return parser
 
-    # Ivan 2026-07-14: 歌切一律不加片头，直接进歌 —— the branding intro is a
-    # talk-lane mandate only. The manifest argument stays accepted for CLI
-    # compatibility but is intentionally ignored in this song lane.
-    branding_intro = None
-    if args.branding_intro_manifest is not None:
-        print("branding intro manifest ignored: songs ship without the intro (Ivan 2026-07-14)")
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    cues = _parse_srt(args.source_srt)
-    if not cues:
-        raise SystemExit("NO_SOURCE_CUES")
-    source_duration_ms = args.source_duration_ms or max(cue.source_end_ms for cue in cues)
-
-    seed_values = (
-        args.seed_song_candidate_id,
-        args.seed_song_anchor_start_ms,
-        args.seed_song_anchor_end_ms,
-    )
-    if any(value is not None for value in seed_values) and not all(value is not None for value in seed_values):
-        raise SystemExit("seeded song arguments must be supplied together")
-    if args.agy_audio_lrc_align and not all(value is not None for value in seed_values):
-        raise SystemExit("--agy-audio-lrc-align requires a seeded full-song anchor")
-    host_vocal_values = (
-        args.host_vocal_python,
-        args.host_vocal_reference_profile,
-        args.host_vocal_reference_dir,
-        args.host_vocal_model_dir,
-    )
-    if any(value is not None for value in host_vocal_values) and not all(value is not None for value in host_vocal_values):
-        raise SystemExit("host-vocal verifier arguments must be supplied together")
-    host_vocal_prover = (
-        _build_host_vocal_prover(
-            python_path=args.host_vocal_python,
-            reference_profile=args.host_vocal_reference_profile,
-            reference_dir=args.host_vocal_reference_dir,
-            model_dir=args.host_vocal_model_dir,
-        )
-        if all(value is not None for value in host_vocal_values)
-        else None
-    )
-
-    # Danmaku evidence (blrec raw XML): burst windows steer recall, window
-    # text feeds CPA viewer-context, and per-chunk lines feed jingting.
-    danmaku_items = []
-    danmaku_hints = None
-    if args.danmaku_xml and args.danmaku_xml.is_file():
-        danmaku_items = load_danmaku_xml(args.danmaku_xml)
-        bursts = find_danmaku_bursts(danmaku_items)
-        if bursts:
-            danmaku_hints = "\n".join(
-                f"{_mmss_hint(burst.start_ms)}-{_mmss_hint(burst.end_ms)} (弹幕x{burst.count}): "
-                + " / ".join(burst.sample_texts)
-                for burst in sorted(bursts, key=lambda b: b.start_ms)
-            )
-            (args.output_dir / "danmaku_bursts.json").write_text(
-                json.dumps(
-                    {
-                        "schema_version": "danmaku-evidence.v1",
-                        "danmaku_xml": str(args.danmaku_xml),
-                        "total_danmaku": len(danmaku_items),
-                        "bursts": [
-                            {
-                                "start_ms": burst.start_ms,
-                                "end_ms": burst.end_ms,
-                                "count": burst.count,
-                                "sample_texts": list(burst.sample_texts),
-                            }
-                            for burst in bursts
-                        ],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-
-    # Lane order: semantic recall (viewer-perspective LLM) is the primary way
-    # interesting moments are found — keyword lanes stay only as fallbacks so
-    # an LLM outage can never mean zero session output.
-    candidates: list[FullSessionCandidate] = []
-    selector_stage = None
-    semantic_diagnostics: dict[str, object] | None = None
-    if all(value is not None for value in seed_values):
-        try:
-            candidates = [
-                _seeded_song_candidate(
-                    cues,
-                    candidate_id=str(args.seed_song_candidate_id),
-                    anchor_start_ms=int(args.seed_song_anchor_start_ms),
-                    anchor_end_ms=int(args.seed_song_anchor_end_ms),
-                    source_duration_ms=source_duration_ms,
-                )
-            ]
-        except ValueError as exc:
-            raise SystemExit(f"INVALID_SEEDED_SONG_ANCHOR: {exc}") from exc
-        selector_stage = "seeded_song_anchor"
-    elif args.semantic_recall_llm_command:
-        try:
-            recall_llm = build_llm_call(
-                LlmConfig(transport="command", command_template=args.semantic_recall_llm_command, timeout_seconds=600.0)
-            )
-            candidates, semantic_diagnostics = select_semantic_session_candidates(
-                cues,
-                llm_call=recall_llm,
-                max_candidates=max(1, args.max_candidates),
-                danmaku_hints=danmaku_hints,
-            )
-            selector_stage = "semantic_recall"
-        except LlmCallError as exc:
-            semantic_diagnostics = {"stage": "semantic_recall", "error": str(exc)}
-            candidates = []
-    if semantic_diagnostics is not None:
-        (args.output_dir / "semantic_recall.json").write_text(
-            json.dumps(semantic_diagnostics, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-    if not candidates:
-        candidates = select_full_session_candidates(cues, max_candidates=max(1, args.max_candidates))
-        selector_stage = "primary"
-    if not candidates:
-        # Repair-first: zero candidates is itself a failure of the unattended
-        # goal; fall back to performance-run recall so review can decide.
-        candidates = select_fallback_session_candidates(cues, max_candidates=max(1, args.max_candidates))
-        selector_stage = "fallback_recall"
-    if not candidates:
-        raise SystemExit("NO_FULL_SESSION_CANDIDATES")
-
+def _review_selected_candidates(
+    *,
+    args: argparse.Namespace,
+    candidates: list[FullSessionCandidate],
+    cues,
+    source_duration_ms: int,
+    selector_stage: str | None,
+    danmaku_items,
+    host_vocal_prover,
+    branding_intro,
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     lexicon = load_discovered_term_lexicon(args.source_srt)
     duplicate_corpus = [candidate.anchor.candidate_id for candidate in candidates]
     records: list[dict[str, object]] = []
@@ -666,6 +574,149 @@ def main(argv: list[str] | None = None) -> int:
         selected_summary = summary
         if record.get("decision_action") == "AUTO_UPLOAD":
             break
+    return records, selected_summary
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+
+    # Ivan 2026-07-14: 歌切一律不加片头，直接进歌 —— the branding intro is a
+    # talk-lane mandate only. The manifest argument stays accepted for CLI
+    # compatibility but is intentionally ignored in this song lane.
+    branding_intro = None
+    if args.branding_intro_manifest is not None:
+        print("branding intro manifest ignored: songs ship without the intro (Ivan 2026-07-14)")
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    cues = _parse_srt(args.source_srt)
+    if not cues:
+        raise SystemExit("NO_SOURCE_CUES")
+    source_duration_ms = args.source_duration_ms or max(cue.source_end_ms for cue in cues)
+
+    seed_values = (
+        args.seed_song_candidate_id,
+        args.seed_song_anchor_start_ms,
+        args.seed_song_anchor_end_ms,
+    )
+    if any(value is not None for value in seed_values) and not all(value is not None for value in seed_values):
+        raise SystemExit("seeded song arguments must be supplied together")
+    if args.agy_audio_lrc_align and not all(value is not None for value in seed_values):
+        raise SystemExit("--agy-audio-lrc-align requires a seeded full-song anchor")
+    host_vocal_values = (
+        args.host_vocal_python,
+        args.host_vocal_reference_profile,
+        args.host_vocal_reference_dir,
+        args.host_vocal_model_dir,
+    )
+    if any(value is not None for value in host_vocal_values) and not all(value is not None for value in host_vocal_values):
+        raise SystemExit("host-vocal verifier arguments must be supplied together")
+    host_vocal_prover = (
+        _build_host_vocal_prover(
+            python_path=args.host_vocal_python,
+            reference_profile=args.host_vocal_reference_profile,
+            reference_dir=args.host_vocal_reference_dir,
+            model_dir=args.host_vocal_model_dir,
+        )
+        if all(value is not None for value in host_vocal_values)
+        else None
+    )
+
+    # Danmaku evidence (blrec raw XML): burst windows steer recall, window
+    # text feeds CPA viewer-context, and per-chunk lines feed jingting.
+    danmaku_items = []
+    danmaku_hints = None
+    if args.danmaku_xml and args.danmaku_xml.is_file():
+        danmaku_items = load_danmaku_xml(args.danmaku_xml)
+        bursts = find_danmaku_bursts(danmaku_items)
+        if bursts:
+            danmaku_hints = "\n".join(
+                f"{_mmss_hint(burst.start_ms)}-{_mmss_hint(burst.end_ms)} (弹幕x{burst.count}): "
+                + " / ".join(burst.sample_texts)
+                for burst in sorted(bursts, key=lambda b: b.start_ms)
+            )
+            (args.output_dir / "danmaku_bursts.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "danmaku-evidence.v1",
+                        "danmaku_xml": str(args.danmaku_xml),
+                        "total_danmaku": len(danmaku_items),
+                        "bursts": [
+                            {
+                                "start_ms": burst.start_ms,
+                                "end_ms": burst.end_ms,
+                                "count": burst.count,
+                                "sample_texts": list(burst.sample_texts),
+                            }
+                            for burst in bursts
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+    # Lane order: semantic recall (viewer-perspective LLM) is the primary way
+    # interesting moments are found — keyword lanes stay only as fallbacks so
+    # an LLM outage can never mean zero session output.
+    candidates: list[FullSessionCandidate] = []
+    selector_stage = None
+    semantic_diagnostics: dict[str, object] | None = None
+    if all(value is not None for value in seed_values):
+        try:
+            candidates = [
+                _seeded_song_candidate(
+                    cues,
+                    candidate_id=str(args.seed_song_candidate_id),
+                    anchor_start_ms=int(args.seed_song_anchor_start_ms),
+                    anchor_end_ms=int(args.seed_song_anchor_end_ms),
+                    source_duration_ms=source_duration_ms,
+                )
+            ]
+        except ValueError as exc:
+            raise SystemExit(f"INVALID_SEEDED_SONG_ANCHOR: {exc}") from exc
+        selector_stage = "seeded_song_anchor"
+    elif args.semantic_recall_llm_command:
+        try:
+            recall_llm = build_llm_call(
+                LlmConfig(transport="command", command_template=args.semantic_recall_llm_command, timeout_seconds=600.0)
+            )
+            candidates, semantic_diagnostics = select_semantic_session_candidates(
+                cues,
+                llm_call=recall_llm,
+                max_candidates=max(1, args.max_candidates),
+                danmaku_hints=danmaku_hints,
+            )
+            selector_stage = "semantic_recall"
+        except LlmCallError as exc:
+            semantic_diagnostics = {"stage": "semantic_recall", "error": str(exc)}
+            candidates = []
+    if semantic_diagnostics is not None:
+        (args.output_dir / "semantic_recall.json").write_text(
+            json.dumps(semantic_diagnostics, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    if not candidates:
+        candidates = select_full_session_candidates(cues, max_candidates=max(1, args.max_candidates))
+        selector_stage = "primary"
+    if not candidates:
+        # Repair-first: zero candidates is itself a failure of the unattended
+        # goal; fall back to performance-run recall so review can decide.
+        candidates = select_fallback_session_candidates(cues, max_candidates=max(1, args.max_candidates))
+        selector_stage = "fallback_recall"
+    if not candidates:
+        raise SystemExit("NO_FULL_SESSION_CANDIDATES")
+
+    records, selected_summary = _review_selected_candidates(
+        args=args,
+        candidates=candidates,
+        cues=cues,
+        source_duration_ms=source_duration_ms,
+        selector_stage=selector_stage,
+        danmaku_items=danmaku_items,
+        host_vocal_prover=host_vocal_prover,
+        branding_intro=branding_intro,
+    )
 
     final_summary = {
         "schema_version": "full-session-selector-cpa-shadow-run.v1",

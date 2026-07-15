@@ -682,23 +682,29 @@ def _merge_retained_topics(
     entities_by_id.update(retained_entities)
 
 
-def crawl_topic_entity_graph(
+@dataclass(frozen=True)
+class _TopicCrawlSetup:
+    previous: dict[str, Any] | None
+    ordered_terms: list[dict[str, Any]]
+    effective_max_queries: int
+    states: list[dict[str, Any]]
+
+
+def _prepare_topic_crawl(
     *,
     client: BoundedHttpClient,
     timely_snapshot: object,
-    input_timely_terms_sha256: str,
     generated_at: dt.datetime,
-    search_endpoint: str = "https://api.bgm.tv/v0/search/subjects",
-    subject_endpoint_template: str = "https://api.bgm.tv/subject/{subject_id}?responseGroup=large",
-    max_topics: int = 16,
-    max_queries: int = 40,
-    max_works_per_topic: int = 3,
-    max_entities_per_work: int = 16,
-    ttl: dt.timedelta = dt.timedelta(days=7),
-    future_horizon: dt.timedelta = dt.timedelta(days=183),
-    previous_graph: object | None = None,
-    node_ttl: dt.timedelta = dt.timedelta(days=30),
-) -> GraphCrawlResult:
+    input_timely_terms_sha256: str,
+    max_topics: int,
+    max_queries: int,
+    max_works_per_topic: int,
+    future_horizon: dt.timedelta,
+    previous_graph: object | None,
+    node_ttl: dt.timedelta,
+) -> _TopicCrawlSetup:
+    """Validate immutable inputs and prepare the breadth-first term frontier."""
+
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
         raise ValueError("generated_at must include a timezone")
     if not 1 <= max_topics <= 96 or max_queries < 1 or not 1 <= max_works_per_topic <= 24:
@@ -713,28 +719,21 @@ def crawl_topic_entity_graph(
         raise ValueError("previous_graph cannot come from the future")
     if not re.fullmatch(r"[0-9a-f]{64}", input_timely_terms_sha256):
         raise ValueError("input_timely_terms_sha256 must bind the exact source snapshot")
-    as_of = generated_at.date()
     ordered_terms = _ordered_terms_for_crawl(
         snapshot["terms"],
-        as_of=as_of,
+        as_of=generated_at.date(),
         max_topics=max_topics,
         future_horizon=future_horizon,
         generated_at=generated_at,
         previous_topics={row["topic_id"]: row for row in previous["topics"]} if previous else None,
     )
-
-    # Every successful search can require one structured subject fetch.  When
-    # the HTTP client exposes a hard request budget, reserve half of the
-    # remaining requests for those subject records instead of discovering more
-    # IDs than can be materialized into a complete graph.
     effective_max_queries = max_queries
     client_max_requests = getattr(client, "max_requests", None)
     if isinstance(client_max_requests, int):
-        remaining_requests = max(0, client_max_requests - int(getattr(client, "requests_made", 0)))
-        effective_max_queries = min(effective_max_queries, remaining_requests // 2)
+        remaining = max(0, client_max_requests - int(getattr(client, "requests_made", 0)))
+        effective_max_queries = min(effective_max_queries, remaining // 2)
     if effective_max_queries < 1:
         raise CrawlError("request budget cannot cover one search and one subject record")
-
     states: list[dict[str, Any]] = []
     for term in ordered_terms:
         source_rows = _source_subject_rows(term)
@@ -754,12 +753,148 @@ def crawl_topic_entity_graph(
                 },
             }
         )
+    return _TopicCrawlSetup(previous, ordered_terms, effective_max_queries, states)
+
+
+@dataclass
+class _TopicQueryScheduler:
+    client: BoundedHttpClient
+    search_endpoint: str
+    query_limit: int
+    diagnostics: list[str]
+    query_count: int = 0
+
+    def query_value(self, state: dict[str, Any], query: str) -> bool:
+        query_key = _identity(query)
+        if (
+            self.query_count >= self.query_limit
+            or not query_key
+            or query_key in state["attempted_queries"]
+        ):
+            return False
+        state["attempted_queries"].add(query_key)
+        self.query_count += 1
+        try:
+            for row in _search_subjects(
+                self.client,
+                self.search_endpoint,
+                query,
+                # Preserve breadth: a franchise spelling cannot consume every slot.
+                max_results=1,
+            ):
+                subject_id = int(row["id"])
+                state["found_subjects"].setdefault(subject_id, row)
+                state["matched_queries_by_subject"].setdefault(subject_id, []).append(query)
+        except Exception as exc:
+            self.diagnostics.append(f"query {query!r}: {type(exc).__name__}: {exc}")
+        return True
+
+    def _query_once(self, state: dict[str, Any], *, values: str, cursor: str) -> bool:
+        while state[cursor] < len(state[values]):
+            if self.query_count >= self.query_limit:
+                return False
+            query = state[values][state[cursor]]
+            state[cursor] += 1
+            if self.query_value(state, query):
+                return True
+        return False
+
+    def query_once(self, state: dict[str, Any]) -> bool:
+        return self._query_once(state, values="queries", cursor="next_query")
+
+    def query_franchise_once(self, state: dict[str, Any]) -> bool:
+        return self._query_once(
+            state, values="franchise_queries", cursor="next_franchise_query"
+        )
+
+    def query_fallback_once(self, state: dict[str, Any]) -> bool:
+        return self._query_once(
+            state, values="fallback_queries", cursor="next_fallback_query"
+        )
+
+
+def _finalize_crawled_graph(
+    *,
+    topics: list[dict[str, Any]],
+    works_by_id: dict[str, dict[str, Any]],
+    entities_by_id: dict[str, dict[str, Any]],
+    previous: dict[str, Any] | None,
+    ordered_terms: list[dict[str, Any]],
+    generated_at: dt.datetime,
+    input_timely_terms_sha256: str,
+    ttl: dt.timedelta,
+    query_count: int,
+    diagnostics: list[str],
+) -> GraphCrawlResult:
+    _merge_retained_topics(
+        topics=topics,
+        works_by_id=works_by_id,
+        entities_by_id=entities_by_id,
+        previous_graph=previous,
+        eligible_terms=ordered_terms,
+        generated_at=generated_at,
+    )
+    if not topics or not works_by_id or not entities_by_id:
+        raise CrawlError("no source-backed topic/entity subgraph could be built")
+    graph = {
+        "schema_version": "lidousha-topic-entity-graph.v1",
+        "generator": "scripts/crawl_topic_entity_graph.py",
+        "input_timely_terms_sha256": input_timely_terms_sha256,
+        "generated_at": generated_at.isoformat(timespec="seconds"),
+        "expires_at": (generated_at + ttl).isoformat(timespec="seconds"),
+        "status": "fresh",
+        "topics": sorted(topics, key=lambda row: row["topic_id"]),
+        "works": sorted(works_by_id.values(), key=lambda row: row["work_id"]),
+        "entities": sorted(entities_by_id.values(), key=lambda row: row["entity_id"]),
+    }
+    normalized = validate_topic_entity_graph(graph)
+    return GraphCrawlResult(
+        normalized,
+        query_count,
+        len(normalized["works"]),
+        len(normalized["entities"]),
+        tuple(diagnostics),
+    )
+
+
+def crawl_topic_entity_graph(
+    *,
+    client: BoundedHttpClient,
+    timely_snapshot: object,
+    input_timely_terms_sha256: str,
+    generated_at: dt.datetime,
+    search_endpoint: str = "https://api.bgm.tv/v0/search/subjects",
+    subject_endpoint_template: str = "https://api.bgm.tv/subject/{subject_id}?responseGroup=large",
+    max_topics: int = 16,
+    max_queries: int = 40,
+    max_works_per_topic: int = 3,
+    max_entities_per_work: int = 16,
+    ttl: dt.timedelta = dt.timedelta(days=7),
+    future_horizon: dt.timedelta = dt.timedelta(days=183),
+    previous_graph: object | None = None,
+    node_ttl: dt.timedelta = dt.timedelta(days=30),
+) -> GraphCrawlResult:
+    setup = _prepare_topic_crawl(
+        client=client,
+        timely_snapshot=timely_snapshot,
+        generated_at=generated_at,
+        input_timely_terms_sha256=input_timely_terms_sha256,
+        max_topics=max_topics,
+        max_queries=max_queries,
+        max_works_per_topic=max_works_per_topic,
+        future_horizon=future_horizon,
+        previous_graph=previous_graph,
+        node_ttl=node_ttl,
+    )
+    previous = setup.previous
+    ordered_terms = setup.ordered_terms
+    effective_max_queries = setup.effective_max_queries
+    states = setup.states
 
     topics: list[dict[str, Any]] = []
     works_by_id: dict[str, dict[str, Any]] = {}
     entities_by_id: dict[str, dict[str, Any]] = {}
     diagnostics: list[str] = []
-    query_count = 0
     community_expansion_queries = sum(
         max(0, max_works_per_topic - 1)
         for state in states[:max_topics]
@@ -770,59 +905,7 @@ def crawl_topic_entity_graph(
         min(2, community_expansion_queries) + min(2, effective_max_queries // 16),
     )
     query_limit = max(1, effective_max_queries - expansion_reserve)
-
-    def query_value(state: dict[str, Any], query: str) -> bool:
-        nonlocal query_count
-        query_key = _identity(query)
-        if query_count >= query_limit or not query_key or query_key in state["attempted_queries"]:
-            return False
-        state["attempted_queries"].add(query_key)
-        query_count += 1
-        try:
-            for row in _search_subjects(
-                client,
-                search_endpoint,
-                query,
-                # One best work per spelling/topic anchor preserves breadth:
-                # a franchise query must not fill every slot with old seasons.
-                max_results=1,
-            ):
-                subject_id = int(row["id"])
-                state["found_subjects"].setdefault(subject_id, row)
-                state["matched_queries_by_subject"].setdefault(subject_id, []).append(query)
-        except Exception as exc:
-            diagnostics.append(f"query {query!r}: {type(exc).__name__}: {exc}")
-        return True
-
-    def query_once(state: dict[str, Any]) -> bool:
-        while state["next_query"] < len(state["queries"]):
-            if query_count >= query_limit:
-                return False
-            query = state["queries"][state["next_query"]]
-            state["next_query"] += 1
-            if query_value(state, query):
-                return True
-        return False
-
-    def query_franchise_once(state: dict[str, Any]) -> bool:
-        while state["next_franchise_query"] < len(state["franchise_queries"]):
-            if query_count >= query_limit:
-                return False
-            query = state["franchise_queries"][state["next_franchise_query"]]
-            state["next_franchise_query"] += 1
-            if query_value(state, query):
-                return True
-        return False
-
-    def query_fallback_once(state: dict[str, Any]) -> bool:
-        while state["next_fallback_query"] < len(state["fallback_queries"]):
-            if query_count >= query_limit:
-                return False
-            query = state["fallback_queries"][state["next_fallback_query"]]
-            state["next_fallback_query"] += 1
-            if query_value(state, query):
-                return True
-        return False
+    scheduler = _TopicQueryScheduler(client, search_endpoint, query_limit, diagnostics)
 
     primary_states = states[:max_topics]
 
@@ -831,7 +914,7 @@ def crawl_topic_entity_graph(
     for state in primary_states:
         if state["found_subjects"]:
             continue
-        if not query_once(state):
+        if not scheduler.query_once(state):
             break
 
     # A single retry round lets machine/community spellings reach their first
@@ -840,14 +923,14 @@ def crawl_topic_entity_graph(
     for state in primary_states:
         if state["found_subjects"]:
             continue
-        if not query_once(state) and query_count >= effective_max_queries:
+        if not scheduler.query_once(state) and scheduler.query_count >= effective_max_queries:
             break
 
     # If some primary terms do not exist in Bangumi yet, fill their slots from
     # later snapshot terms in breadth-first batches, with at most two discovery
     # spellings per fallback term.
     cursor = max_topics
-    while query_count < query_limit:
+    while scheduler.query_count < query_limit:
         resolved = sum(bool(state["found_subjects"]) for state in states[:cursor])
         if resolved >= max_topics or cursor >= len(states):
             break
@@ -855,15 +938,15 @@ def crawl_topic_entity_graph(
         batch = states[cursor : cursor + batch_size]
         cursor += batch_size
         for state in batch:
-            if not query_once(state):
+            if not scheduler.query_once(state):
                 break
         for state in batch:
             if state["found_subjects"]:
                 continue
-            if not query_once(state) and query_count >= effective_max_queries:
+            if not scheduler.query_once(state) and scheduler.query_count >= effective_max_queries:
                 break
 
-    query_limit = effective_max_queries
+    scheduler.query_limit = effective_max_queries
     # The discovery reserve must first finish unresolved states already inside
     # the chosen frontier.  Otherwise a successful run can skip the last
     # primary term and jump to the next ranked term merely because one request
@@ -871,7 +954,7 @@ def crawl_topic_entity_graph(
     for state in states[:cursor]:
         if state["found_subjects"]:
             continue
-        if not query_once(state):
+        if not scheduler.query_once(state):
             break
     selected_states = [state for state in states[:cursor] if state["found_subjects"]][:max_topics]
 
@@ -883,9 +966,9 @@ def crawl_topic_entity_graph(
         expansion_attempts = 0
         while (
             len(state["found_subjects"]) < max_works_per_topic
-            and query_count < effective_max_queries
+            and scheduler.query_count < effective_max_queries
             and expansion_attempts < max_works_per_topic
-            and query_franchise_once(state)
+            and scheduler.query_franchise_once(state)
         ):
             expansion_attempts += 1
 
@@ -992,8 +1075,8 @@ def crawl_topic_entity_graph(
         while (
             not topic_work_ids
             and fallback_attempts < max_works_per_topic
-            and query_count < effective_max_queries
-            and query_fallback_once(state)
+            and scheduler.query_count < effective_max_queries
+            and scheduler.query_fallback_once(state)
         ):
             fallback_attempts += 1
             materialize_new_subjects()
@@ -1035,53 +1118,36 @@ def crawl_topic_entity_graph(
     materialize_candidates(
         state for state in states[:cursor] if state["found_subjects"]
     )
-    while len(topics) < max_topics and cursor < len(states) and query_count < effective_max_queries:
+    while len(topics) < max_topics and cursor < len(states) and scheduler.query_count < effective_max_queries:
         batch_size = min(max_topics - len(topics), len(states) - cursor)
         batch = states[cursor : cursor + batch_size]
         cursor += batch_size
         for state in batch:
             if state["found_subjects"]:
                 continue
-            if not query_once(state):
+            if not scheduler.query_once(state):
                 break
         for state in batch:
             if state["found_subjects"]:
                 continue
-            if not query_once(state) and query_count >= effective_max_queries:
+            if not scheduler.query_once(state) and scheduler.query_count >= effective_max_queries:
                 break
         for state in batch:
             if state["found_subjects"]:
                 expand_community(state)
         materialize_candidates(state for state in batch if state["found_subjects"])
 
-    _merge_retained_topics(
+    return _finalize_crawled_graph(
         topics=topics,
         works_by_id=works_by_id,
         entities_by_id=entities_by_id,
-        previous_graph=previous,
-        eligible_terms=ordered_terms,
+        previous=previous,
+        ordered_terms=ordered_terms,
         generated_at=generated_at,
-    )
-    if not topics or not works_by_id or not entities_by_id:
-        raise CrawlError("no source-backed topic/entity subgraph could be built")
-    graph = {
-        "schema_version": "lidousha-topic-entity-graph.v1",
-        "generator": "scripts/crawl_topic_entity_graph.py",
-        "input_timely_terms_sha256": input_timely_terms_sha256,
-        "generated_at": generated_at.isoformat(timespec="seconds"),
-        "expires_at": (generated_at + ttl).isoformat(timespec="seconds"),
-        "status": "fresh",
-        "topics": sorted(topics, key=lambda row: row["topic_id"]),
-        "works": sorted(works_by_id.values(), key=lambda row: row["work_id"]),
-        "entities": sorted(entities_by_id.values(), key=lambda row: row["entity_id"]),
-    }
-    normalized = validate_topic_entity_graph(graph)
-    return GraphCrawlResult(
-        normalized,
-        query_count,
-        len(normalized["works"]),
-        len(normalized["entities"]),
-        tuple(diagnostics),
+        input_timely_terms_sha256=input_timely_terms_sha256,
+        ttl=ttl,
+        query_count=scheduler.query_count,
+        diagnostics=diagnostics,
     )
 
 

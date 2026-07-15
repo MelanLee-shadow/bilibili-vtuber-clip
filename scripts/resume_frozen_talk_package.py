@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -82,6 +83,30 @@ DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 class FrozenTalkResumeError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _FrozenResumeContext:
+    plan_path: Path
+    plan: dict[str, Any]
+    plan_sha256: str
+    paths: dict[str, Path]
+    candidate_id: str
+    date: str
+    title: str
+    recovery_fingerprint: str
+    candidate_root: Path
+    recut_root: Path
+    delivery_root: Path
+    delivery_stem: Path
+    active_media: Path
+    boundary: dict[str, Any]
+    timing_qa: dict[str, Any]
+    start_ms: int
+    end_ms: int
+    expected_duration: int
+    generation_root: Path
+    transaction_path: Path
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -463,6 +488,347 @@ def _assert_upload_ledger_unchanged(
         raise FrozenTalkResumeError("upload ledger changed during no-upload resume")
 
 
+def _build_resume_transaction_entries(
+    ctx: _FrozenResumeContext,
+    *,
+    active_paths: Mapping[str, Path],
+    payloads: Mapping[str, bytes],
+) -> list[dict[str, Any]]:
+    """Freeze every active/delivery target into the roll-forward journal."""
+
+    delivery = ctx.delivery_stem
+    raw_entries: list[tuple[str, Path, bytes, bool]] = [
+        ("active-text.srt", active_paths["text"], payloads["text"], False),
+        ("active-text-finalization.json", active_paths["text_manifest"], payloads["text_manifest"], False),
+        ("active-speaker.srt", active_paths["speaker_srt"], payloads["speaker_srt"], False),
+        ("active-speaker.ass", active_paths["speaker_ass"], payloads["speaker_ass"], False),
+        ("active-speaker.json", active_paths["speaker_manifest"], payloads["speaker_manifest"], False),
+        ("active-regression.json", active_paths["regression"], payloads["regression"], False),
+        ("active-burned.mp4", active_paths["burned"], payloads["burned"], False),
+        ("active-chat-authority.json", active_paths["chat_audit"], payloads["chat_audit"], False),
+        ("active-record.json", active_paths["record"], payloads["record"], True),
+        ("active-publish.json", active_paths["publish"], payloads["publish"], True),
+        ("delivery.mp4", delivery.with_suffix(".mp4"), payloads["burned"], False),
+        ("delivery.srt", delivery.with_suffix(".srt"), payloads["text"], False),
+        ("delivery-speaker.srt", delivery.with_suffix(".speaker.srt"), payloads["speaker_srt"], False),
+        ("delivery-speaker.ass", delivery.with_suffix(".speaker.ass"), payloads["speaker_ass"], False),
+        ("delivery-speaker.json", delivery.with_suffix(".speaker.json"), payloads["speaker_manifest"], False),
+        ("delivery-chat-authority.json", delivery.with_suffix(".chat-authority.json"), payloads["chat_audit"], False),
+        ("delivery-regression.json", delivery.with_suffix(".subtitle-regression.json"), payloads["regression"], False),
+        ("delivery-text-finalization.json", delivery.with_suffix(".text-finalization.json"), payloads["text_manifest"], False),
+        ("delivery-record.json", delivery.with_suffix(".record.json"), payloads["record"], True),
+    ]
+    entries: list[dict[str, Any]] = []
+    for label, target, payload, mutable in raw_entries:
+        blob = _write_intended_blob(ctx.generation_root, label, payload)
+        entries.append(
+            {
+                "label": label,
+                "target": str(target),
+                "intended_blob": str(blob),
+                "intended_sha256": _sha256_bytes(payload),
+                "mutable_after_commit": mutable,
+            }
+        )
+    return entries
+
+
+def _materialize_resume_transaction(
+    ctx: _FrozenResumeContext, *, speaker_python: Path
+) -> list[dict[str, Any]]:
+    generation_media = ctx.generation_root / f"{ctx.candidate_id}.recut.mp4"
+    generation_source = ctx.generation_root / f"{ctx.candidate_id}.reviewed-source.srt"
+    _atomic_write_bytes_file(generation_media, ctx.paths["media"].read_bytes())
+    _atomic_write_bytes_file(
+        generation_source, ctx.paths["frozen_text_srt"].read_bytes()
+    )
+    if (
+        _sha256_file(generation_media) != _sha256_file(ctx.paths["media"])
+        or _sha256_file(generation_source)
+        != _sha256_file(ctx.paths["frozen_text_srt"])
+    ):
+        raise FrozenTalkResumeError("generation input copy drifted")
+
+    text_srt = ctx.generation_root / f"{ctx.candidate_id}.recut.srt"
+    text_manifest_path = ctx.generation_root / f"{ctx.candidate_id}.recut.text-finalization.json"
+    text_manifest = apply_text_override_document(
+        generation_source,
+        ctx.paths["text_override"],
+        text_srt,
+        text_manifest_path,
+    )
+    if _sha256_file(text_srt) != _normalized_sha256(
+        ctx.plan.get("expected_final_text_srt_sha256")
+    ):
+        raise FrozenTalkResumeError("derived final text hash drifted")
+
+    speaker_srt = ctx.generation_root / f"{ctx.candidate_id}.recut.speaker-final.srt"
+    speaker_ass = ctx.generation_root / f"{ctx.candidate_id}.recut.speaker-final.ass"
+    speaker_manifest_path = ctx.generation_root / f"{ctx.candidate_id}.recut.speaker-final.json"
+    speaker_manifest = run_speaker_finalizer(
+        host="localhost",
+        candidate_id=ctx.candidate_id,
+        media_path=generation_media,
+        text_srt_path=text_srt,
+        output_srt_path=speaker_srt,
+        output_ass_path=speaker_ass,
+        output_manifest_path=speaker_manifest_path,
+        work_dir=ctx.generation_root / f"{ctx.candidate_id}.speaker-work",
+        speaker_python=speaker_python,
+    )
+
+    final_text = text_srt.read_text(encoding="utf-8", errors="replace")
+    final_speaker = speaker_srt.read_text(encoding="utf-8", errors="replace")
+    chat_audit = _read_json(ctx.paths["chat_authority_audit"], label="chat audit")
+    if not reconcile_pending_text_overrides(
+        chat_audit, text_manifest, delivery_start_ms=ctx.start_ms
+    ):
+        raise FrozenTalkResumeError("pending human text authority did not reconcile")
+    if not verify_chat_authority_final_surfaces(
+        chat_audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_speaker,
+        delivery_start_ms=ctx.start_ms,
+        delivery_end_ms=ctx.end_ms,
+    ):
+        raise FrozenTalkResumeError("final speaker/text surfaces broke chat authority")
+
+    regression = verify_subtitle_regression_surfaces(
+        ctx.paths["subtitle_regression"],
+        candidate_id=ctx.candidate_id,
+        final_text_srt=final_text,
+        final_speaker_srt=final_speaker,
+    )
+    if regression.get("status") != "PASS":
+        raise FrozenTalkResumeError("subtitle regression failed")
+    regression_path = ctx.generation_root / f"{ctx.candidate_id}.recut.subtitle-regression.json"
+    _atomic_write_json_file(regression_path, regression)
+
+    preliminary_record: dict[str, Any] = {
+        "status": "MATERIALIZED",
+        "media_path": str(generation_media),
+        "subtitle_path": str(text_srt),
+        "subtitle_source": "frozen_reviewed_delivery+hash_bound_human_text",
+        "start_ms": 0,
+        "end_ms": ctx.expected_duration,
+        "duration_ms": ctx.expected_duration,
+        "artifact_hashes": {
+            "video_sha256": "sha256:" + _sha256(generation_media),
+            "subtitle_sha256": "sha256:" + _sha256(text_srt),
+            "ass_sha256": "sha256:" + _sha256(speaker_ass),
+            "speaker_review_srt_sha256": "sha256:" + _sha256(speaker_srt),
+            "subtitle_regression_audit_sha256": "sha256:"
+            + _sha256(regression_path),
+        },
+        "subtitle_regression_audit_path": str(regression_path),
+        "subtitle_regression": regression,
+        "text_finalization_manifest_path": str(text_manifest_path),
+        "speaker_review_srt_path": str(speaker_srt),
+        "subtitle_ass_path": str(speaker_ass),
+        "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
+        "speaker_finalization_manifest_path": str(speaker_manifest_path),
+        "speaker_finalization": speaker_manifest,
+        "subtitle_timing_qa": ctx.timing_qa,
+        "boundary_audit": ctx.boundary,
+        "frozen_talk_resume": {
+            "schema_version": PLAN_SCHEMA,
+            "plan_path": str(ctx.plan_path.resolve()),
+            "plan_sha256": ctx.plan_sha256,
+            "recovery_code_fingerprint": ctx.recovery_fingerprint,
+            "generation_root": str(ctx.generation_root),
+            "upload_enabled": False,
+        },
+    }
+    try:
+        branding_intro = require_branding_intro(ROOT)
+    except BrandingIntroError as exc:
+        raise FrozenTalkResumeError(f"branding intro unavailable: {exc}") from exc
+    burned_record = _burn_preview_subtitles(
+        preliminary_record, run_ffmpeg=True, branding_intro=branding_intro
+    )
+    if not isinstance(burned_record, dict):
+        raise FrozenTalkResumeError("speaker burn did not return a record")
+    burned_media = _validated_burned_artifact(burned_record)
+
+    active_text = ctx.recut_root / f"{ctx.candidate_id}.recut.srt"
+    active_text_manifest = ctx.recut_root / f"{ctx.candidate_id}.recut.text-finalization.json"
+    active_speaker_srt = ctx.recut_root / f"{ctx.candidate_id}.recut.speaker-final.srt"
+    active_speaker_ass = ctx.recut_root / f"{ctx.candidate_id}.recut.speaker-final.ass"
+    active_speaker_manifest = ctx.recut_root / f"{ctx.candidate_id}.recut.speaker-final.json"
+    active_regression = ctx.recut_root / f"{ctx.candidate_id}.recut.subtitle-regression.json"
+    active_burned = ctx.recut_root / f"{ctx.candidate_id}.recut.burned-final-speaker.mp4"
+    active_record_path = ctx.recut_root / f"{ctx.candidate_id}.record.json"
+    active_publish_path = ctx.recut_root / f"{ctx.candidate_id}.recut.publish.json"
+    active_chat_audit = ctx.candidate_root / f"{ctx.candidate_id}.chat-authority.json"
+
+    path_mapping = {
+        str(generation_media): str(ctx.active_media),
+        str(text_srt): str(active_text),
+        str(text_manifest_path): str(active_text_manifest),
+        str(speaker_srt): str(active_speaker_srt),
+        str(speaker_ass): str(active_speaker_ass),
+        str(speaker_manifest_path): str(active_speaker_manifest),
+        str(regression_path): str(active_regression),
+        str(burned_media): str(active_burned),
+    }
+    active_text_manifest_document = _recursive_path_rewrite(
+        text_manifest, path_mapping
+    )
+    active_speaker_manifest_document = _recursive_path_rewrite(
+        speaker_manifest, path_mapping
+    )
+    active_speaker_manifest_bytes = (
+        json.dumps(
+            active_speaker_manifest_document,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    chat_audit.update(
+        {
+            "final_status": "FINAL_ARTIFACTS_VERIFIED",
+            "final_text_srt_path": str(active_text),
+            "final_text_srt_sha256": _sha256(text_srt),
+            "final_speaker_srt_path": str(active_speaker_srt),
+            "final_speaker_srt_sha256": _sha256(speaker_srt),
+            "speaker_ass_path": str(active_speaker_ass),
+            "speaker_ass_sha256": _sha256(speaker_ass),
+            "speaker_manifest_sha256": _sha256_bytes(
+                active_speaker_manifest_bytes
+            ),
+            "burn_binding": {
+                "burned_media_path": str(ctx.delivery_stem.with_suffix(".mp4")),
+                "burned_media_sha256": _sha256(burned_media),
+                "ass_path": str(active_speaker_ass),
+                "ass_sha256": _sha256(speaker_ass),
+            },
+            "frozen_resume_binding": {
+                "schema_version": PLAN_SCHEMA,
+                "plan_path": str(ctx.plan_path.resolve()),
+                "plan_sha256": ctx.plan_sha256,
+                "source_text_sha256": _sha256(ctx.paths["frozen_text_srt"]),
+                "source_chat_audit_sha256": _sha256(
+                    ctx.paths["chat_authority_audit"]
+                ),
+                "upload_enabled": False,
+            },
+        }
+    )
+    chat_audit_bytes = (
+        json.dumps(chat_audit, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n"
+    ).encode("utf-8")
+    burned_record["artifact_hashes"]["chat_authority_audit_sha256"] = (
+        "sha256:" + _sha256_bytes(chat_audit_bytes)
+    )
+    burned_record["chat_authority_audit_path"] = str(active_chat_audit)
+    burned_record["speaker_finalization"] = active_speaker_manifest_document
+    burned_record["speaker_finalization_manifest_sha256"] = (
+        "sha256:" + _sha256_bytes(active_speaker_manifest_bytes)
+    )
+
+    final_cues = [
+        SourceCue(
+            f"text_final_{index:04d}",
+            cue.ctx.start_ms,
+            cue.ctx.end_ms,
+            cue.text.strip(),
+            "zh",
+            "speech",
+            1.0,
+        )
+        for index, cue in enumerate(parse_srt_cues(final_text), start=1)
+        if cue.text.strip()
+    ]
+    staged = _stage_publish_draft(
+        burned_record,
+        candidate_id=ctx.candidate_id,
+        title=ctx.title,
+        cues=final_cues,
+        run_ffmpeg=True,
+        title_llm_call=None,
+        art_direction_llm_call=None,
+        skip_cover=True,
+        selection_hook=str(ctx.plan.get("selection_hook") or ""),
+    )
+    if not isinstance(staged, dict):
+        raise FrozenTalkResumeError("manual publish staging failed")
+    staging = staged.get("publish_staging")
+    if (
+        not isinstance(staging, dict)
+        or staging.get("title_authority_status") != "RESOLVED_MANUAL"
+        or staging.get("upload_enabled") is not False
+    ):
+        raise FrozenTalkResumeError("manual title/no-upload staging drifted")
+    generation_publish = generation_media.with_suffix(".publish.json")
+    publish_document = _read_json(generation_publish, label="publish draft")
+
+    path_mapping.update(
+        {
+            str(generation_publish): str(active_publish_path),
+            str(ctx.generation_root / f"{ctx.candidate_id}.record.json"): str(
+                active_record_path
+            ),
+        }
+    )
+    active_record = _recursive_path_rewrite(staged, path_mapping)
+    active_record["delivery_candidate_id"] = ctx.candidate_id
+    active_record["source_candidate_id"] = ctx.candidate_id
+    active_record["publish_staging"]["publish_json_path"] = str(
+        active_publish_path
+    )
+    active_publish = _recursive_path_rewrite(publish_document, path_mapping)
+    active_publish["video_path"] = str(ctx.active_media)
+
+    active_record_bytes = (
+        json.dumps(active_record, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n"
+    ).encode("utf-8")
+    active_publish_bytes = (
+        json.dumps(active_publish, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n"
+    ).encode("utf-8")
+    active_text_manifest_bytes = (
+        json.dumps(
+            active_text_manifest_document,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    active_paths = {
+        "text": active_text,
+        "text_manifest": active_text_manifest,
+        "speaker_srt": active_speaker_srt,
+        "speaker_ass": active_speaker_ass,
+        "speaker_manifest": active_speaker_manifest,
+        "regression": active_regression,
+        "burned": active_burned,
+        "chat_audit": active_chat_audit,
+        "record": active_record_path,
+        "publish": active_publish_path,
+    }
+    payloads = {
+        "text": text_srt.read_bytes(),
+        "text_manifest": active_text_manifest_bytes,
+        "speaker_srt": speaker_srt.read_bytes(),
+        "speaker_ass": speaker_ass.read_bytes(),
+        "speaker_manifest": active_speaker_manifest_bytes,
+        "regression": regression_path.read_bytes(),
+        "burned": burned_media.read_bytes(),
+        "chat_audit": chat_audit_bytes,
+        "record": active_record_bytes,
+        "publish": active_publish_bytes,
+    }
+    return _build_resume_transaction_entries(
+        ctx, active_paths=active_paths, payloads=payloads
+    )
+
 def resume(plan_path: Path, *, speaker_python: Path) -> dict[str, Any]:
     plan, plan_sha256, paths = load_and_validate_plan(plan_path)
     candidate_id = str(plan["candidate_id"])
@@ -550,397 +916,43 @@ def resume(plan_path: Path, *, speaker_python: Path) -> dict[str, Any]:
     generation_root.mkdir(parents=True, exist_ok=True)
     transaction_path = generation_root / "resume-transaction.json"
 
-    if not transaction_path.is_file():
-        generation_media = generation_root / f"{candidate_id}.recut.mp4"
-        generation_source = generation_root / f"{candidate_id}.reviewed-source.srt"
-        _atomic_write_bytes_file(generation_media, paths["media"].read_bytes())
-        _atomic_write_bytes_file(
-            generation_source, paths["frozen_text_srt"].read_bytes()
-        )
-        if (
-            _sha256_file(generation_media) != _sha256_file(paths["media"])
-            or _sha256_file(generation_source)
-            != _sha256_file(paths["frozen_text_srt"])
-        ):
-            raise FrozenTalkResumeError("generation input copy drifted")
-
-        text_srt = generation_root / f"{candidate_id}.recut.srt"
-        text_manifest_path = generation_root / f"{candidate_id}.recut.text-finalization.json"
-        text_manifest = apply_text_override_document(
-            generation_source,
-            paths["text_override"],
-            text_srt,
-            text_manifest_path,
-        )
-        if _sha256_file(text_srt) != _normalized_sha256(
-            plan.get("expected_final_text_srt_sha256")
-        ):
-            raise FrozenTalkResumeError("derived final text hash drifted")
-
-        speaker_srt = generation_root / f"{candidate_id}.recut.speaker-final.srt"
-        speaker_ass = generation_root / f"{candidate_id}.recut.speaker-final.ass"
-        speaker_manifest_path = generation_root / f"{candidate_id}.recut.speaker-final.json"
-        speaker_manifest = run_speaker_finalizer(
-            host="localhost",
-            candidate_id=candidate_id,
-            media_path=generation_media,
-            text_srt_path=text_srt,
-            output_srt_path=speaker_srt,
-            output_ass_path=speaker_ass,
-            output_manifest_path=speaker_manifest_path,
-            work_dir=generation_root / f"{candidate_id}.speaker-work",
-            speaker_python=speaker_python,
-        )
-
-        final_text = text_srt.read_text(encoding="utf-8", errors="replace")
-        final_speaker = speaker_srt.read_text(encoding="utf-8", errors="replace")
-        chat_audit = _read_json(paths["chat_authority_audit"], label="chat audit")
-        if not reconcile_pending_text_overrides(
-            chat_audit, text_manifest, delivery_start_ms=start_ms
-        ):
-            raise FrozenTalkResumeError("pending human text authority did not reconcile")
-        if not verify_chat_authority_final_surfaces(
-            chat_audit,
-            final_text_srt=final_text,
-            final_speaker_srt=final_speaker,
-            delivery_start_ms=start_ms,
-            delivery_end_ms=end_ms,
-        ):
-            raise FrozenTalkResumeError("final speaker/text surfaces broke chat authority")
-
-        regression = verify_subtitle_regression_surfaces(
-            paths["subtitle_regression"],
-            candidate_id=candidate_id,
-            final_text_srt=final_text,
-            final_speaker_srt=final_speaker,
-        )
-        if regression.get("status") != "PASS":
-            raise FrozenTalkResumeError("subtitle regression failed")
-        regression_path = generation_root / f"{candidate_id}.recut.subtitle-regression.json"
-        _atomic_write_json_file(regression_path, regression)
-
-        preliminary_record: dict[str, Any] = {
-            "status": "MATERIALIZED",
-            "media_path": str(generation_media),
-            "subtitle_path": str(text_srt),
-            "subtitle_source": "frozen_reviewed_delivery+hash_bound_human_text",
-            "start_ms": 0,
-            "end_ms": expected_duration,
-            "duration_ms": expected_duration,
-            "artifact_hashes": {
-                "video_sha256": "sha256:" + _sha256(generation_media),
-                "subtitle_sha256": "sha256:" + _sha256(text_srt),
-                "ass_sha256": "sha256:" + _sha256(speaker_ass),
-                "speaker_review_srt_sha256": "sha256:" + _sha256(speaker_srt),
-                "subtitle_regression_audit_sha256": "sha256:"
-                + _sha256(regression_path),
-            },
-            "subtitle_regression_audit_path": str(regression_path),
-            "subtitle_regression": regression,
-            "text_finalization_manifest_path": str(text_manifest_path),
-            "speaker_review_srt_path": str(speaker_srt),
-            "subtitle_ass_path": str(speaker_ass),
-            "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
-            "speaker_finalization_manifest_path": str(speaker_manifest_path),
-            "speaker_finalization": speaker_manifest,
-            "subtitle_timing_qa": timing_qa,
-            "boundary_audit": boundary,
-            "frozen_talk_resume": {
-                "schema_version": PLAN_SCHEMA,
-                "plan_path": str(plan_path.resolve()),
-                "plan_sha256": plan_sha256,
-                "recovery_code_fingerprint": recovery_fingerprint,
-                "generation_root": str(generation_root),
-                "upload_enabled": False,
-            },
-        }
-        try:
-            branding_intro = require_branding_intro(ROOT)
-        except BrandingIntroError as exc:
-            raise FrozenTalkResumeError(f"branding intro unavailable: {exc}") from exc
-        burned_record = _burn_preview_subtitles(
-            preliminary_record, run_ffmpeg=True, branding_intro=branding_intro
-        )
-        if not isinstance(burned_record, dict):
-            raise FrozenTalkResumeError("speaker burn did not return a record")
-        burned_media = _validated_burned_artifact(burned_record)
-
-        active_text = recut_root / f"{candidate_id}.recut.srt"
-        active_text_manifest = recut_root / f"{candidate_id}.recut.text-finalization.json"
-        active_speaker_srt = recut_root / f"{candidate_id}.recut.speaker-final.srt"
-        active_speaker_ass = recut_root / f"{candidate_id}.recut.speaker-final.ass"
-        active_speaker_manifest = recut_root / f"{candidate_id}.recut.speaker-final.json"
-        active_regression = recut_root / f"{candidate_id}.recut.subtitle-regression.json"
-        active_burned = recut_root / f"{candidate_id}.recut.burned-final-speaker.mp4"
-        active_record_path = recut_root / f"{candidate_id}.record.json"
-        active_publish_path = recut_root / f"{candidate_id}.recut.publish.json"
-        active_chat_audit = candidate_root / f"{candidate_id}.chat-authority.json"
-
-        path_mapping = {
-            str(generation_media): str(active_media),
-            str(text_srt): str(active_text),
-            str(text_manifest_path): str(active_text_manifest),
-            str(speaker_srt): str(active_speaker_srt),
-            str(speaker_ass): str(active_speaker_ass),
-            str(speaker_manifest_path): str(active_speaker_manifest),
-            str(regression_path): str(active_regression),
-            str(burned_media): str(active_burned),
-        }
-        active_text_manifest_document = _recursive_path_rewrite(
-            text_manifest, path_mapping
-        )
-        active_speaker_manifest_document = _recursive_path_rewrite(
-            speaker_manifest, path_mapping
-        )
-        active_speaker_manifest_bytes = (
-            json.dumps(
-                active_speaker_manifest_document,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n"
-        ).encode("utf-8")
-
-        chat_audit.update(
-            {
-                "final_status": "FINAL_ARTIFACTS_VERIFIED",
-                "final_text_srt_path": str(active_text),
-                "final_text_srt_sha256": _sha256(text_srt),
-                "final_speaker_srt_path": str(active_speaker_srt),
-                "final_speaker_srt_sha256": _sha256(speaker_srt),
-                "speaker_ass_path": str(active_speaker_ass),
-                "speaker_ass_sha256": _sha256(speaker_ass),
-                "speaker_manifest_sha256": _sha256_bytes(
-                    active_speaker_manifest_bytes
-                ),
-                "burn_binding": {
-                    "burned_media_path": str(delivery_stem.with_suffix(".mp4")),
-                    "burned_media_sha256": _sha256(burned_media),
-                    "ass_path": str(active_speaker_ass),
-                    "ass_sha256": _sha256(speaker_ass),
-                },
-                "frozen_resume_binding": {
-                    "schema_version": PLAN_SCHEMA,
-                    "plan_path": str(plan_path.resolve()),
-                    "plan_sha256": plan_sha256,
-                    "source_text_sha256": _sha256(paths["frozen_text_srt"]),
-                    "source_chat_audit_sha256": _sha256(
-                        paths["chat_authority_audit"]
-                    ),
-                    "upload_enabled": False,
-                },
-            }
-        )
-        chat_audit_bytes = (
-            json.dumps(chat_audit, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n"
-        ).encode("utf-8")
-        burned_record["artifact_hashes"]["chat_authority_audit_sha256"] = (
-            "sha256:" + _sha256_bytes(chat_audit_bytes)
-        )
-        burned_record["chat_authority_audit_path"] = str(active_chat_audit)
-        burned_record["speaker_finalization"] = active_speaker_manifest_document
-        burned_record["speaker_finalization_manifest_sha256"] = (
-            "sha256:" + _sha256_bytes(active_speaker_manifest_bytes)
-        )
-
-        final_cues = [
-            SourceCue(
-                f"text_final_{index:04d}",
-                cue.start_ms,
-                cue.end_ms,
-                cue.text.strip(),
-                "zh",
-                "speech",
-                1.0,
-            )
-            for index, cue in enumerate(parse_srt_cues(final_text), start=1)
-            if cue.text.strip()
-        ]
-        staged = _stage_publish_draft(
-            burned_record,
-            candidate_id=candidate_id,
-            title=title,
-            cues=final_cues,
-            run_ffmpeg=True,
-            title_llm_call=None,
-            art_direction_llm_call=None,
-            skip_cover=True,
-            selection_hook=str(plan.get("selection_hook") or ""),
-        )
-        if not isinstance(staged, dict):
-            raise FrozenTalkResumeError("manual publish staging failed")
-        staging = staged.get("publish_staging")
-        if (
-            not isinstance(staging, dict)
-            or staging.get("title_authority_status") != "RESOLVED_MANUAL"
-            or staging.get("upload_enabled") is not False
-        ):
-            raise FrozenTalkResumeError("manual title/no-upload staging drifted")
-        generation_publish = generation_media.with_suffix(".publish.json")
-        publish_document = _read_json(generation_publish, label="publish draft")
-
-        path_mapping.update(
-            {
-                str(generation_publish): str(active_publish_path),
-                str(generation_root / f"{candidate_id}.record.json"): str(
-                    active_record_path
-                ),
-            }
-        )
-        active_record = _recursive_path_rewrite(staged, path_mapping)
-        active_record["delivery_candidate_id"] = candidate_id
-        active_record["source_candidate_id"] = candidate_id
-        active_record["publish_staging"]["publish_json_path"] = str(
-            active_publish_path
-        )
-        active_publish = _recursive_path_rewrite(publish_document, path_mapping)
-        active_publish["video_path"] = str(active_media)
-
-        active_record_bytes = (
-            json.dumps(active_record, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n"
-        ).encode("utf-8")
-        active_publish_bytes = (
-            json.dumps(active_publish, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n"
-        ).encode("utf-8")
-        active_text_manifest_bytes = (
-            json.dumps(
-                active_text_manifest_document,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n"
-        ).encode("utf-8")
-
-        intended_root = generation_root
-        raw_entries: list[tuple[str, Path, bytes, bool]] = [
-            ("active-text.srt", active_text, text_srt.read_bytes(), False),
-            (
-                "active-text-finalization.json",
-                active_text_manifest,
-                active_text_manifest_bytes,
-                False,
-            ),
-            (
-                "active-speaker.srt",
-                active_speaker_srt,
-                speaker_srt.read_bytes(),
-                False,
-            ),
-            (
-                "active-speaker.ass",
-                active_speaker_ass,
-                speaker_ass.read_bytes(),
-                False,
-            ),
-            (
-                "active-speaker.json",
-                active_speaker_manifest,
-                active_speaker_manifest_bytes,
-                False,
-            ),
-            (
-                "active-regression.json",
-                active_regression,
-                regression_path.read_bytes(),
-                False,
-            ),
-            (
-                "active-burned.mp4",
-                active_burned,
-                burned_media.read_bytes(),
-                False,
-            ),
-            (
-                "active-chat-authority.json",
-                active_chat_audit,
-                chat_audit_bytes,
-                False,
-            ),
-            ("active-record.json", active_record_path, active_record_bytes, True),
-            ("active-publish.json", active_publish_path, active_publish_bytes, True),
-            ("delivery.mp4", delivery_stem.with_suffix(".mp4"), burned_media.read_bytes(), False),
-            ("delivery.srt", delivery_stem.with_suffix(".srt"), text_srt.read_bytes(), False),
-            (
-                "delivery-speaker.srt",
-                delivery_stem.with_suffix(".speaker.srt"),
-                speaker_srt.read_bytes(),
-                False,
-            ),
-            (
-                "delivery-speaker.ass",
-                delivery_stem.with_suffix(".speaker.ass"),
-                speaker_ass.read_bytes(),
-                False,
-            ),
-            (
-                "delivery-speaker.json",
-                delivery_stem.with_suffix(".speaker.json"),
-                active_speaker_manifest_bytes,
-                False,
-            ),
-            (
-                "delivery-chat-authority.json",
-                delivery_stem.with_suffix(".chat-authority.json"),
-                chat_audit_bytes,
-                False,
-            ),
-            (
-                "delivery-regression.json",
-                delivery_stem.with_suffix(".subtitle-regression.json"),
-                regression_path.read_bytes(),
-                False,
-            ),
-            (
-                "delivery-text-finalization.json",
-                delivery_stem.with_suffix(".text-finalization.json"),
-                active_text_manifest_bytes,
-                False,
-            ),
-            (
-                "delivery-record.json",
-                delivery_stem.with_suffix(".record.json"),
-                active_record_bytes,
-                True,
-            ),
-        ]
-        entries: list[dict[str, Any]] = []
-        for label, target, payload, mutable in raw_entries:
-            blob = _write_intended_blob(intended_root, label, payload)
-            entries.append(
-                {
-                    "label": label,
-                    "target": str(target),
-                    "intended_blob": str(blob),
-                    "intended_sha256": _sha256_bytes(payload),
-                    "mutable_after_commit": mutable,
-                }
-            )
-        _assert_upload_ledger_unchanged(plan, paths["upload_ledger"])
-        _commit_transaction(
-            transaction_path=transaction_path,
-            plan_sha256=plan_sha256,
-            recovery_code_fingerprint=recovery_fingerprint,
-            candidate_id=candidate_id,
-            date=date,
-            entries=entries,
-            allowed_target_roots=(candidate_root, delivery_root),
-        )
-    else:
-        _assert_upload_ledger_unchanged(plan, paths["upload_ledger"])
-        _commit_transaction(
-            transaction_path=transaction_path,
-            plan_sha256=plan_sha256,
-            recovery_code_fingerprint=recovery_fingerprint,
-            candidate_id=candidate_id,
-            date=date,
-            entries=[],
-            allowed_target_roots=(candidate_root, delivery_root),
-        )
+    resume_context = _FrozenResumeContext(
+        plan_path=plan_path,
+        plan=plan,
+        plan_sha256=plan_sha256,
+        paths=paths,
+        candidate_id=candidate_id,
+        date=date,
+        title=title,
+        recovery_fingerprint=recovery_fingerprint,
+        candidate_root=candidate_root,
+        recut_root=recut_root,
+        delivery_root=delivery_root,
+        delivery_stem=delivery_stem,
+        active_media=active_media,
+        boundary=boundary,
+        timing_qa=timing_qa,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        expected_duration=expected_duration,
+        generation_root=generation_root,
+        transaction_path=transaction_path,
+    )
+    entries = (
+        _materialize_resume_transaction(resume_context, speaker_python=speaker_python)
+        if not transaction_path.is_file()
+        else []
+    )
+    _assert_upload_ledger_unchanged(plan, paths["upload_ledger"])
+    _commit_transaction(
+        transaction_path=transaction_path,
+        plan_sha256=plan_sha256,
+        recovery_code_fingerprint=recovery_fingerprint,
+        candidate_id=candidate_id,
+        date=date,
+        entries=entries,
+        allowed_target_roots=(candidate_root, delivery_root),
+    )
 
     state = read_state(date)
     record_state = _state_record(state, candidate_id)

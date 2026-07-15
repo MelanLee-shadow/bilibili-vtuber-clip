@@ -364,6 +364,174 @@ def _speaker_session_state_matches_authority(state_value: dict, authority: dict)
     return state_value == expected
 
 
+def _build_speaker_routing_request(
+    *,
+    date: str,
+    inventory_items: list[dict],
+    routing_root: Path,
+    request_path: Path,
+    provider_authority: dict[str, object],
+    ctx: RunnerContext,
+) -> tuple[dict, list[dict[str, object]]]:
+    """Seal candidate media/SRT bindings and persist one provider request."""
+
+    routing_root.mkdir(parents=True, exist_ok=True)
+    segment_hashes: dict[Path, str] = {}
+    candidates: list[dict[str, object]] = []
+    for item in inventory_items:
+        segment = Path(str(item["segment_path"])).resolve(strict=True)
+        if segment not in segment_hashes:
+            segment_hashes[segment] = segment_binding_sha256(segment)
+        bcut_value = item.get("bcut_srt_path")
+        bcut_srt = (
+            Path(str(bcut_value)).resolve(strict=True)
+            if bcut_value
+            else (ctx.base / "cache" / date / f"{segment.stem}.bcut.srt").resolve(
+                strict=True
+            )
+        )
+        bcut_sha256 = hashlib.sha256(bcut_srt.read_bytes()).hexdigest()
+        coverage_start = max(0, int(item["start_ms"]) - ctx.piece_pre_ms)
+        coverage_end = (
+            int(item["end_ms"])
+            + ctx.boundary_repair_retry_cap_ms
+            + ctx.final_tail_guard_ms
+        )
+        segment_duration = int(item.get("seg_dur_ms") or 0)
+        if segment_duration > 0:
+            coverage_end = min(segment_duration, coverage_end)
+        if coverage_end <= coverage_start:
+            raise ValueError("speaker routing candidate coverage is empty")
+        candidates.append(
+            {
+                "candidate_id": str(item["cid"]),
+                "segment_path": str(segment),
+                "segment_binding_sha256": segment_hashes[segment],
+                "segment_content_sha256": segment_hashes[segment],
+                "segment_stat_signature": segment_stat_signature(segment),
+                "bcut_srt_path": str(bcut_srt),
+                "bcut_srt_sha256": bcut_sha256,
+                "start_ms": coverage_start,
+                "end_ms": coverage_end,
+            }
+        )
+    request = {
+        "schema_version": SPEAKER_ROUTING_REQUEST_SCHEMA,
+        "date": date,
+        "room": ctx.room,
+        "pipeline_fingerprint": ctx.pipeline_fingerprint(),
+        "routing_runtime_fingerprint": routing_runtime_fingerprint(
+            provider_authority, repo_root=ctx.repo_root
+        ),
+        "router_policy_version": SPEAKER_ROUTING_POLICY_VERSION,
+        "router_policy_fingerprint": routing_policy_fingerprint(),
+        "provider_authority": provider_authority,
+        "candidates": candidates,
+    }
+    ctx.atomic_write_json(request_path, request)
+    return request, candidates
+
+
+def _finalize_speaker_routing_claim(
+    *,
+    request_path: Path,
+    claim_path: Path,
+    provider_evidence: Path | None,
+    items: list[dict],
+    candidates: list[dict[str, object]],
+    request: dict,
+    routing_session: dict | None,
+    session_authority: dict | None,
+    session_authority_path: Path | None,
+    state: dict | None,
+    ctx: RunnerContext,
+) -> dict:
+    """Generate, attach and durably advance the external session authority."""
+
+    claim = generate_speaker_routing(
+        request_path=request_path,
+        output_path=claim_path,
+        provider_evidence_path=provider_evidence,
+    )
+    claim_sha256 = hashlib.sha256(claim_path.read_bytes()).hexdigest()
+    _attach_speaker_routing_claim(
+        items=items,
+        claim_path=claim_path,
+        claim_sha256=claim_sha256,
+        candidates=candidates,
+        pipeline=str(request["pipeline_fingerprint"]),
+    )
+    if (
+        routing_session is not None
+        and session_authority is not None
+        and session_authority_path is not None
+    ):
+        session_authority.update(
+            {
+                "decision": claim["decision"],
+                "claim_path": str(claim_path),
+                "claim_sha256": claim_sha256,
+                "claim_pipeline_fingerprint": request["pipeline_fingerprint"],
+                # A complete provider classification that found any
+                # collab/uncertainty is sticky in the external authority.
+                "provider_classification_sealed": (
+                    claim["decision"] == RUN_BINARY_FINALIZER
+                    and len(claim.get("candidate_results") or []) == len(candidates)
+                ),
+            }
+        )
+        authority_sha = _write_speaker_session_authority(
+            session_authority_path, session_authority, ctx=ctx
+        )
+        reloaded_authority = _load_speaker_session_authority(
+            session_authority_path, expected_sha256=authority_sha
+        )
+        routing_session.clear()
+        routing_session.update(
+            _speaker_session_state_from_authority(
+                session_authority_path, authority_sha, reloaded_authority
+            )
+        )
+        if state is not None:
+            state.pop("speaker_routing_authority_status", None)
+    return claim
+
+
+def _reuse_sealed_speaker_claim(
+    *,
+    date: str,
+    items: list[dict],
+    session_authority: dict,
+    ctx: RunnerContext,
+) -> dict | None:
+    """Reattach a hash-verified sticky claim without rerunning its provider."""
+
+    prior_path_value = session_authority.get("claim_path")
+    prior_sha = str(session_authority.get("claim_sha256") or "")
+    try:
+        prior_path = Path(str(prior_path_value)).resolve(strict=True)
+        if hashlib.sha256(prior_path.read_bytes()).hexdigest() != prior_sha:
+            raise ValueError("sealed claim hash mismatch")
+        prior_claim = json.loads(prior_path.read_text(encoding="utf-8"))
+        prior_request = json.loads(
+            Path(str(prior_claim["request_path"])).read_text(encoding="utf-8")
+        )
+        prior_candidates = prior_request["candidates"]
+        if not isinstance(prior_candidates, list):
+            raise ValueError("sealed claim candidate inventory is invalid")
+        _attach_speaker_routing_claim(
+            items=items,
+            claim_path=prior_path,
+            claim_sha256=prior_sha,
+            candidates=prior_candidates,
+            pipeline=str(prior_request["pipeline_fingerprint"]),
+        )
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        ctx.log(f"speaker routing sealed claim failed safe for {date}: {exc}")
+        return None
+    return prior_claim
+
+
 def prepare_speaker_routing(
     date: str, items: list[dict], *, state: dict | None = None, ctx: RunnerContext
 ) -> dict | None:
@@ -569,30 +737,12 @@ def prepare_speaker_routing(
             == ctx.pipeline_fingerprint()
         )
     ):
-        prior_path_value = session_authority.get("claim_path")
-        prior_sha = str(session_authority.get("claim_sha256") or "")
-        try:
-            prior_path = Path(str(prior_path_value)).resolve(strict=True)
-            if hashlib.sha256(prior_path.read_bytes()).hexdigest() != prior_sha:
-                raise ValueError("sealed claim hash mismatch")
-            prior_claim = json.loads(prior_path.read_text(encoding="utf-8"))
-            prior_request = json.loads(
-                Path(str(prior_claim["request_path"])).read_text(encoding="utf-8")
-            )
-            prior_candidates = prior_request["candidates"]
-            if not isinstance(prior_candidates, list):
-                raise ValueError("sealed claim candidate inventory is invalid")
-            _attach_speaker_routing_claim(
-                items=items,
-                claim_path=prior_path,
-                claim_sha256=prior_sha,
-                candidates=prior_candidates,
-                pipeline=str(prior_request["pipeline_fingerprint"]),
-            )
-        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            ctx.log(f"speaker routing sealed claim failed safe for {date}: {exc}")
-            return None
-        return prior_claim
+        return _reuse_sealed_speaker_claim(
+            date=date,
+            items=items,
+            session_authority=session_authority,
+            ctx=ctx,
+        )
     try:
         command = _speaker_routing_provider_command(
             request_path=request_path,
@@ -612,61 +762,15 @@ def prepare_speaker_routing(
         ctx.log(f"speaker routing disabled for {date}: provider authority is missing")
         return None
 
-    routing_root.mkdir(parents=True, exist_ok=True)
-    segment_hashes: dict[Path, str] = {}
-    candidates: list[dict[str, object]] = []
     try:
-        for item in inventory_items:
-            segment = Path(str(item["segment_path"])).resolve(strict=True)
-            if segment not in segment_hashes:
-                segment_hashes[segment] = segment_binding_sha256(segment)
-            bcut_value = item.get("bcut_srt_path")
-            bcut_srt = (
-                Path(str(bcut_value)).resolve(strict=True)
-                if bcut_value
-                else (ctx.base / "cache" / date / f"{segment.stem}.bcut.srt").resolve(
-                    strict=True
-                )
-            )
-            bcut_sha256 = hashlib.sha256(bcut_srt.read_bytes()).hexdigest()
-            coverage_start = max(0, int(item["start_ms"]) - ctx.piece_pre_ms)
-            coverage_end = (
-                int(item["end_ms"])
-                + ctx.boundary_repair_retry_cap_ms
-                + ctx.final_tail_guard_ms
-            )
-            segment_duration = int(item.get("seg_dur_ms") or 0)
-            if segment_duration > 0:
-                coverage_end = min(segment_duration, coverage_end)
-            if coverage_end <= coverage_start:
-                raise ValueError("speaker routing candidate coverage is empty")
-            candidates.append(
-                {
-                    "candidate_id": str(item["cid"]),
-                    "segment_path": str(segment),
-                    "segment_binding_sha256": segment_hashes[segment],
-                    "segment_content_sha256": segment_hashes[segment],
-                    "segment_stat_signature": segment_stat_signature(segment),
-                    "bcut_srt_path": str(bcut_srt),
-                    "bcut_srt_sha256": bcut_sha256,
-                    "start_ms": coverage_start,
-                    "end_ms": coverage_end,
-                }
-            )
-        request = {
-            "schema_version": SPEAKER_ROUTING_REQUEST_SCHEMA,
-            "date": date,
-            "room": ctx.room,
-            "pipeline_fingerprint": ctx.pipeline_fingerprint(),
-            "routing_runtime_fingerprint": routing_runtime_fingerprint(
-                provider_authority, repo_root=ctx.repo_root
-            ),
-            "router_policy_version": SPEAKER_ROUTING_POLICY_VERSION,
-            "router_policy_fingerprint": routing_policy_fingerprint(),
-            "provider_authority": provider_authority,
-            "candidates": candidates,
-        }
-        ctx.atomic_write_json(request_path, request)
+        request, candidates = _build_speaker_routing_request(
+            date=date,
+            inventory_items=inventory_items,
+            routing_root=routing_root,
+            request_path=request_path,
+            provider_authority=provider_authority,
+            ctx=ctx,
+        )
     except (KeyError, OSError, TypeError, ValueError) as exc:
         ctx.log(f"speaker routing request failed safe for {date}: {type(exc).__name__}: {exc}")
         return None
@@ -692,51 +796,19 @@ def prepare_speaker_routing(
             "falling back to binary finalization"
         )
     try:
-        claim = generate_speaker_routing(
+        claim = _finalize_speaker_routing_claim(
             request_path=request_path,
-            output_path=claim_path,
-            provider_evidence_path=provider_evidence,
-        )
-        claim_sha256 = hashlib.sha256(claim_path.read_bytes()).hexdigest()
-        _attach_speaker_routing_claim(
-            items=items,
             claim_path=claim_path,
-            claim_sha256=claim_sha256,
+            provider_evidence=provider_evidence,
+            items=items,
             candidates=candidates,
-            pipeline=str(request["pipeline_fingerprint"]),
+            request=request,
+            routing_session=routing_session,
+            session_authority=session_authority,
+            session_authority_path=session_authority_path,
+            state=state,
+            ctx=ctx,
         )
-        if (
-            routing_session is not None
-            and session_authority is not None
-            and session_authority_path is not None
-        ):
-            session_authority.update(
-                {
-                    "decision": claim["decision"],
-                    "claim_path": str(claim_path),
-                    "claim_sha256": claim_sha256,
-                    "claim_pipeline_fingerprint": request["pipeline_fingerprint"],
-                    # A complete provider classification that found any
-                    # collab/uncertainty is sticky in the external authority.
-                    "provider_classification_sealed": (
-                        claim["decision"] == RUN_BINARY_FINALIZER
-                        and len(claim.get("candidate_results") or []) == len(candidates)
-                    ),
-                }
-            )
-            authority_sha = _write_speaker_session_authority(
-                session_authority_path, session_authority, ctx=ctx
-            )
-            session_authority = _load_speaker_session_authority(
-                session_authority_path, expected_sha256=authority_sha
-            )
-            routing_session.clear()
-            routing_session.update(
-                _speaker_session_state_from_authority(
-                    session_authority_path, authority_sha, session_authority
-                )
-            )
-            state.pop("speaker_routing_authority_status", None)
     except (KeyError, OSError, TypeError, ValueError, SpeakerRoutingError) as exc:
         _clear_speaker_routing_fields(items)
         ctx.log(f"speaker routing claim failed safe for {date}: {type(exc).__name__}: {exc}")
