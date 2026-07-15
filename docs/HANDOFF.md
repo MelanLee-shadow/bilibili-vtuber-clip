@@ -50,6 +50,23 @@
 
 **下一步：** 新改动直接落到对应子系统模块；runner 只保留 runtime authority 与顶层编排。不要因为文件行数继续机械拆分。
 
+### channel profile 公共化（2026-07-15，本地完成、未部署）
+
+**目标：** 把李豆沙从流水线代码里的隐含全局常量收进默认
+`profiles/lidousha/profile.json`；其他用户只需新增 profile 与对应资产即可切自己的直播间，默认 profile 的实际路径、协议 token、提示词和标题/封面结果保持旧行为。
+
+**已完成：**
+- `065e772` 建立严格 `ChannelProfile`、默认 manifest、路径逃逸/未知字段/缺失字段 fail-closed 校验及另一主播的合成 profile 测试；新增 `scripts/validate_channel_profile.py`。
+- `23bde58`、`5f65243`、`bf4240f`、`1c41b6b` 依次把 unattended runner、standalone producer、selector/song/title/cover、speaker finalizer/session router、branding intro、chat normalization 和 batch speaker review 接到 profile。
+- 默认 profile 冻结 room `22966160`、`lidousha/` 交付目录、现有 asset/tool/voiceprint 路径、标题模板、speaker 标签、决策 token 与历史 `lidousha-...` evidence schema；另一主播的 room/output/name/prompt/title/speaker/schema/decision/text-normalization 已在全新 Python 进程中证明无需改代码即可切换。
+- 默认提示词做旧/新 SHA 合同：AGY 歌声身份、精听修正、语义召回、标题、封面、speaker context 均保持旧文本；本地全量 **1200 passed**，profile validator READY，package import 与真实 runner `--help` 通过。
+
+**进行中：** 无后台进程；生产仍固定在已验证的 `70e504c`，本轮 profile 提交没有部署。
+
+**阻塞：** 没有代码 blocker。结构回归与提示词合同已过，但尚未用同一场冻结直播分别跑旧/新 commit 做完整产物差分；另外 provenance/pipeline fingerprint 必然因代码与 manifest 改动而变化，不能要求所有 JSON 字节完全相同。
+
+**下一步：** 部署前先做一场冻结 session 的旧/新双跑，比较候选、字幕、边界、标题、封面 prompt 与成片内容（排除 commit/fingerprint/timestamp provenance）；通过后再走事务部署并观察真实 cron tick。旧 v1 evidence 字段和 `LIDOUSHA_*` 环境别名暂保留为可读兼容层，若要清名应另起显式 schema-v2 迁移，不能静默破坏历史 hash 包。
+
 ### 目标
 
 Ivan 指令:审计北京 7/14 全部上传(8 换源+8 新稿+1 待发)是否符合最新流程,对成片之后每一步对抗式复核;修正一律编辑原视频;补部署缺口。
