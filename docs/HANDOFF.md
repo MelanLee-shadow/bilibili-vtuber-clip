@@ -65,8 +65,10 @@
 - `6df1399`、`3f278cf` 把 shadow runner 的封面生成（1389 行）、SRT/ASS 渲染（213 行）和标题策略（200 行）拆成独立模块；主脚本 6274→4730 行，抽取函数 normalized-AST 无差异，旧 monkeypatch 符号继续 re-export。
 - `1472eaa` + `090f539` 接完 usage-limit Claude 留下的 CPA 念弹幕仲裁：仅处理 hash-bound danmaku/SC 候选，严格布尔 + `[0,1]` 置信度 + 候选集合门，human→CPA context→audio fallback；主播名来自所选 profile，verdict 记录 request/prompt/completion hash。无 CPA 时与旧 human→audio 路径一致，真实“外套→歪了”形态有端到端测试。
 - `7a01151` 修复 profile 拆分后的 commit-exact eval：快照现在打包/校验 `profiles/` + 全部 profile assets/tools，不再只硬编码李豆沙声纹；真 CLI smoke 又抓并修复 macOS `/var`→`/private/var` alias。当前 HEAD 快照 145 文件、profile missing=0、runner `--help` 通过。
+- **xinyi「展示新衣服」线上换源修正（Ivan 7/15 报「第一句念弹幕『外套能脱吗』字幕还是错」）**：`BV1puNv6QEXj` 7/15 06:00Z 被重试 timer 投出的是**旧 garble 烧录**——delivery-divergence 根因：7/13 prod 树 agy+cpa 精听已修对（`小豆歪了`→`小豆外套`、`眼镜`→`眼罩`、素颜/大概/我的耳朵），但 7/14 evals 重产撞 Gemini 配额回退 garble 并成了交付/上传件。`bili_archive_tool.py replace` 零配额换成 prod 正确烧录（old cid 39966081919→new **39967131174**，sha 673b1c3f，`edit code 0`，现「修改内容待审核」）；4 帧肉眼核对字幕+片头。证据 `reports/lidousha-uploads-20260714/xinyi.correction.uploaded.json`（+ postpublish）。pending-provisional 该件已闭。
+- **CPA 念读 verifier 层真 CPA canary（部分满足下一步）**：用模块自身 `_prompt` 打真实 CPA——正例真 cue#1(`小豆的外套是可以脱的吗？` vs ASR `小豆歪了可以脱吗`)→`is_read_aloud=true conf 0.99`；负例(无关问句弹幕`几点下播？`配无关 ASR)→`false conf 0.99`，证实「问句是强信号非决定性、靠重叠+语篇兜底」。另有整段 danmu-first 复现实验：纯文本+CPA 对念读句 cue#1 与 AGY 一字不差、零误伤（详见对话）。**全流程冻结 session 旧/新双跑 + full-pipeline no-upload canary 仍是部署门（见下一步）。**
 
-**进行中：** 无本轮后台进程；生产只读复核仍固定在已验证的 `70e504c`（runner 文件 SHA 与该 commit 匹配），`DISABLED` absent、cron 1 条，7/11~7/13 state 均 `review_ready`。本轮 profile/清理/CPA 念读提交均未部署、未上传。
+**进行中：** 无本轮后台进程；生产只读复核仍固定在已验证的 `70e504c`（runner 文件 SHA 与该 commit 匹配），`DISABLED` absent、cron 1 条，7/11~7/13 state 均 `review_ready`。本轮 profile/清理/CPA 念读提交均未部署、未上传。`BV1puNv6QEXj` 换源后待 B 站复审恢复公开。
 
 **阻塞：** 没有代码 blocker。全仓 **1223 passed**、prompt/hash/AST 合同与 commit-exact snapshot smoke 已过；但尚未用同一场冻结直播分别跑旧/新 commit 做完整产物差分，CPA 念读也尚未在 no-upload 冻结实案上跑真 CPA canary。另外 provenance/pipeline fingerprint 必然因代码与 manifest 改动而变化，不能要求所有 JSON 字节完全相同。
 

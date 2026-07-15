@@ -1,0 +1,36 @@
+{
+  "action": "zero_quota_edit_replace",
+  "bvid": "BV1puNv6QEXj",
+  "aid": 116922431636685,
+  "reason": "The 2026-07-15 05:55Z retry timer uploaded the STALE garble burn: a 2026-07-14 evals re-produce (produce-panda-658242e) hit Gemini quota, so agy jingting AND the danmaku read-aloud arbitration both fell back and the slice reverted to structurally-deaf ASR garble; the 2026-07-13 prod tree already held the correct agy+cpa jingting subtitles but delivery/upload pulled the divergent garble artifact. Ivan flagged the first line (念弹幕『外套能脱吗』被写成『歪了』). Edit-replace swaps in the already-correct prod burn.",
+  "old_cid": 39966081919,
+  "old_video_sha256": "44fb17f8c46b390422710b28d02938e3e66a532c3792dedbb14862007a72c7e4",
+  "new_cid": 39967131174,
+  "new_video_sha256": "673b1c3f9585534bb5d1ab13e713ed8d5eceab94eeb024ac992bca2ef03c92a0",
+  "new_media_path": "/opt/bilive/autoslice/out/2026-07-11/auto_173012_1164_1252/replacement_recuts/auto_173012_1164_1252.recut.burned-final-sapphire72.mp4",
+  "new_media_verified": {
+    "duration_s": 92.925651,
+    "branding_intro": "huozi-xiaoli-benlai-shiling-v1 PREPENDED",
+    "full_decode": "clean",
+    "frames_read": ["intro@2.0s", "cue1@5.2s", "cue12@36s", "cue31@89.5s"]
+  },
+  "read_aloud_cues_fixed_vs_uploaded_garble": {
+    "1": {"garble": "小豆歪了可以脱吗", "correct": "小豆外套可以脱吗", "danmaku": "小豆的外套是可以脱的吗？"},
+    "31": {"garble": "戴上眼镜像的幕后黑手小孩戴上眼罩。是的", "correct": "戴上眼罩像是悬疑剧里幕后黑手小孩。是的", "danmaku": "戴上眼罩像是悬疑剧里幕后黑手小孩"}
+  },
+  "pure_audio_cues_also_fixed_in_prod": {
+    "4": "外套外套外套，先找一下外套哦",
+    "12": "就变成这样素颜的形态",
+    "22": "大概的感觉是这样",
+    "28": "你怎么知道我的耳朵会飞啊！哈哈哈"
+  },
+  "edit_archive_response": {"code": 0, "message": "0", "data": {"aid": 116922431636685, "bvid": "BV1puNv6QEXj"}},
+  "post_replace_state": "修改内容待审核…",
+  "title_unchanged": "【李豆沙】展示新衣服：外套帽子眼罩都能脱，熊猫耳是真的！",
+  "cover_unchanged": true,
+  "tags_unchanged": true,
+  "authorized_by": "Ivan",
+  "authorization_quote": "注意一下，李豆沙的最新切片，新衣服这个，第一句就是念的弹幕外套能脱吗，结果字幕还是错的 … 你重新烧做一遍这个新切片重新上传",
+  "tool": "scripts/bili_archive_tool.py replace (biliup append -> wait new cid -> edit keep_only_cid)",
+  "at": "2026-07-15T07:17:00Z"
+}

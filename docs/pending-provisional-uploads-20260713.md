@@ -34,7 +34,7 @@
 - ~~养熊猫游戏~~：✅ 已产出并于 7/14 05:41Z 上传 BV1uGNR6HEyf(state=0,审计通过)。
 - **7/14 已上传歌切**:《暗恋是一个人的事》BV1TeN967EUp、《小幸运》BV18eN967ENy(Ivan 点名放行,前提「不要片头、封面标题放大」均满足;审计会话已把源规范化为 canonical 无片头字节并换源,state=0)。裸标题+小李歌唱合集 ✓。
 - **7/14 审计全量结论与事故复盘见 `docs/audit-uploads-20260714.md`**(临去彩排重复稿已删、nvxing 封面专名拆行已编辑修复)。
-- **xinyi「展示新衣服」待发**:09:15Z 触发吃 21566 配额拒 → timer 重挂 **7/15 05:55Z**(`xinyi-upload-retry`,脚本 `upload_staging/20260714/xinyi/upload_xinyi.py`,含 tags 10 位+自动入集小李切片+公开验证+证据);成功后把 staging 里 `xinyi_postpublish.json` 等证据拉回 `reports/lidousha-uploads-20260714/` 补 commit。
+- ✅ **xinyi「展示新衣服」已闭**(7/15):05:55Z 重试 timer 投出成功 `BV1puNv6QEXj`(06:00Z,已入集小李切片)——但投的是**旧 garble 烧录**(delivery-divergence:prod 精听已修对却被 7/14 evals 配额回退件覆盖)。Ivan 报「第一句念弹幕『外套能脱吗』字幕还是错」→ `bili_archive_tool.py replace` 零配额换成 prod 正确烧录(new cid 39967131174,`edit code 0`,待复审)。证据 `reports/lidousha-uploads-20260714/xinyi.correction.uploaded.json` + `xinyi.postpublish.uploaded.json`。根因修复:念读仲裁改走 CPA(`1472eaa`)绕开 AGY/Gemini 配额,quota-proof。
 - **zaibo50「“再播五十年”先记下了：五年后找小李对账」待发**(Ivan 7/14「这个怎么没有上传？」):7/13 成品(kmx 修正版,intro PREPENDED)。封面 v3 已重排——v1「记下了」拆行、v2「五十年」数字拆行均废弃,v3 全组手动断行提示(“再播/五十年”/先记下了/五年后/找小李对账)+当场 90s 帧参考(基础皮双马尾,与该段直播一致);已装回 delivery stem。tags 9 位(立Flag/真情流露等,人工过目)。15:19Z 试传吃 21566 → timer **7/15 06:10Z**(`zaibo50-upload-retry`,脚本 `/opt/bilive/autoslice/upload_zaibo50.py`,同 xinyi 全链:manifest 冻结授权原话+转码等待+入集 9320779+公开验证+证据)。
 
 ## 通用改进（不逐条列）
