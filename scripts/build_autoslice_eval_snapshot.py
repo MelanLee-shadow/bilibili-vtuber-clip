@@ -62,7 +62,10 @@ def build_snapshot(
     ).stdout.strip()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="autoslice-eval-", dir=output.parent) as temp_raw:
-        temp = Path(temp_raw)
+        # macOS exposes the same temp tree through both /var and /private/var.
+        # ChannelProfile resolves its repo root, so canonicalize this side too
+        # before computing repository-relative manifest/asset paths.
+        temp = Path(temp_raw).resolve()
         archive = temp / "snapshot.tar"
         with archive.open("wb") as sink:
             completed = subprocess.run(

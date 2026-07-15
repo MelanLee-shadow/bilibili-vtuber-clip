@@ -69,3 +69,19 @@ def test_eval_snapshot_refuses_commit_missing_runtime_asset(tmp_path):
 
     with pytest.raises(RuntimeError, match="voiceprint_profile"):
         build_snapshot(repo=repo, commit="HEAD", output=tmp_path / "snapshot")
+
+
+def test_eval_snapshot_handles_an_alias_to_the_temp_parent(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _commit_fixture(repo, include_profile=True)
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    alias_parent = tmp_path / "alias-parent"
+    alias_parent.symlink_to(real_parent, target_is_directory=True)
+    output = alias_parent / "snapshot"
+
+    manifest = build_snapshot(repo=repo, commit="HEAD", output=output)
+
+    assert manifest["profile_id"] == "lidousha"
+    assert (output / "profiles/lidousha/profile.json").is_file()
