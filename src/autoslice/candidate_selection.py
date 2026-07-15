@@ -9,18 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import sys as _sys
+from src.autoslice.runner_proxy import RunnerProxy
 
 
-class _RunnerProxy:
-    """Resolve the live runner module without importing it recursively."""
-
-    def __getattr__(self, name):
-        module = _sys.modules.get("scripts.free_session_autoslice") or _sys.modules.get("__main__")
-        return getattr(module, name)
-
-
-_runner = _RunnerProxy()
+_runner = RunnerProxy()
 
 
 def session_sealed(date: str, state: dict) -> bool:

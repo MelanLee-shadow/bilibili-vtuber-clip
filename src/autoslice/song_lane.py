@@ -18,19 +18,11 @@ import tempfile
 import time
 from pathlib import Path
 
-import sys as _sys
-
-
-class _RunnerProxy:
-    """Resolve the runner module at attribute-access time (module OR __main__)."""
-
-    def __getattr__(self, name):
-        module = _sys.modules.get("scripts.free_session_autoslice") or _sys.modules.get("__main__")
-        return getattr(module, name)
-
-
-_runner = _RunnerProxy()
+from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.verified_io import _matches_sha256
+
+
+_runner = RunnerProxy()
 
 
 def _srt_cue_spans(srt_path: Path, lo_ms: int, hi_ms: int) -> list[tuple[int, int]]:

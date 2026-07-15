@@ -5,10 +5,11 @@ The atomic-delivery / staging / active-record-commit functions plus their
 tightly-coupled SongDeliveryError + _sha256_regular_file move here as one unit.
 Runner globals (BASE, REPO_ROOT, safe_name, the song_completion_evidence
 wrapper) resolve at CALL TIME through ``_runner`` so monkeypatching them on the
-runner steers this code; the import cycle is safe (reference stored at import
-time, dereferenced only inside function bodies). The runner re-imports every
-name, so its call sites — and cover_repair's ``_runner.SongDeliveryError`` /
-``_runner._sha256_regular_file`` — keep resolving unchanged.
+runner steers this code; the shared proxy resolves the already-live runner
+module lazily in both package and cron script execution modes. The runner
+re-imports every name, so its call sites — and cover_repair's
+``_runner.SongDeliveryError`` / ``_runner._sha256_regular_file`` — keep
+resolving unchanged.
 """
 
 from __future__ import annotations
@@ -23,32 +24,16 @@ import stat
 import tempfile
 from pathlib import Path
 
-import sys as _sys
-
-
-class _RunnerProxy:
-    """Resolve the runner module at attribute-access time.
-
-    The runner is imported as ``scripts.free_session_autoslice`` under pytest /
-    ``python3 -m`` but runs as ``__main__`` under the cron's
-    ``python3 scripts/free_session_autoslice.py --once``.  A plain
-    ``import scripts.free_session_autoslice`` re-executes the runner (and
-    re-triggers this circular import) in that script case, so resolve lazily
-    from whichever live sys.modules entry actually holds the runner.
-    """
-
-    def __getattr__(self, name):
-        module = _sys.modules.get("scripts.free_session_autoslice") or _sys.modules.get("__main__")
-        return getattr(module, name)
-
-
-_runner = _RunnerProxy()
+from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.verified_io import (
     _matches_sha256,
     _normalized_sha256,
     _read_json_object,
     _document_video_hash,
 )
+
+
+_runner = RunnerProxy()
 
 
 def record_is_song(entry: dict) -> bool:

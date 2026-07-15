@@ -9,10 +9,9 @@ moves here.
 
 Runner globals (paths, constants, delivery helpers) are resolved at CALL TIME
 through the ``_runner`` module reference, so a test that monkeypatches them on
-the runner steers this code with zero context threading. The
-``import scripts.free_session_autoslice`` cycle is safe: this module only
-stores the reference at import time and dereferences it inside function bodies,
-by which point the runner module is fully initialised.
+the runner steers this code with zero context threading. The shared proxy
+resolves the already-live runner module lazily, avoiding a circular import in
+both package and cron script execution modes.
 """
 
 from __future__ import annotations
@@ -23,31 +22,15 @@ import json
 import time
 from pathlib import Path
 
-import sys as _sys
-
-
-class _RunnerProxy:
-    """Resolve the runner module at attribute-access time.
-
-    The runner is imported as ``scripts.free_session_autoslice`` under pytest /
-    ``python3 -m`` but runs as ``__main__`` under the cron's
-    ``python3 scripts/free_session_autoslice.py --once``.  A plain
-    ``import scripts.free_session_autoslice`` re-executes the runner (and
-    re-triggers this circular import) in that script case, so resolve lazily
-    from whichever live sys.modules entry actually holds the runner.
-    """
-
-    def __getattr__(self, name):
-        module = _sys.modules.get("scripts.free_session_autoslice") or _sys.modules.get("__main__")
-        return getattr(module, name)
-
-
-_runner = _RunnerProxy()
+from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.verified_io import (
     _matches_sha256,
     _read_json_object,
     _document_video_hash,
 )
+
+
+_runner = RunnerProxy()
 
 
 def _validate_repaired_cover_generation(

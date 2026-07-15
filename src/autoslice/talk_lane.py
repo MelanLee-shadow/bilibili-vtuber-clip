@@ -16,23 +16,14 @@ import sys
 import time
 from pathlib import Path
 
-import sys as _sys
-
+from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
 )
 
 
-class _RunnerProxy:
-    """Resolve the live runner module without importing it recursively."""
-
-    def __getattr__(self, name):
-        module = _sys.modules.get("scripts.free_session_autoslice") or _sys.modules.get("__main__")
-        return getattr(module, name)
-
-
-_runner = _RunnerProxy()
+_runner = RunnerProxy()
 
 
 def danmaku_hints(xml_path: Path | None) -> str | None:
