@@ -19,7 +19,7 @@
 
 ### 进行中（含后台进程）
 
-- **redo-20260710 沙箱 runner 第五轮在跑**（19:28Z 起 producing auto_190017_1068_1217；和解器已同步进沙箱 repo）。本地看门狗盯交付。出货后：目检封面 → `bili_archive_tool.py replace BV1JXNk6vEeV` 零配额换源 → 台账清零。
+- ✅ **梦限大已收官**（7/15 01:2x）：十轮收敛交付（attempt 10 全清过回归门）→ `bili_archive_tool replace` code 0 → **7/13 权宜台账 10/10 清零**。三案耳审判例：我倒是(钉子反转)/集百家之长(钉子对)/但但是(钉子对,须逗号渲染)；两条耳证先验已进 glossary（01d5d4d）。付费 key 全程入帐 manual-ledger.jsonl（3 笔）。沙箱 retry 循环已杀、Monitor 已停。教训：交付 stem=钩子标题非候选 stem（watcher 曾因 grep 旧 stem 而失明）。
 - `xinyi-upload-retry` 7/15 05:55Z、`zaibo50-upload-retry` 7/15 06:10Z；成功后各自补 tag/入集（zaibo50 脚本自带），证据拉回 commit。
 
 ### 阻塞
