@@ -500,8 +500,6 @@ def _run_final_review(
                     timeout_seconds=300.0,
                 )
             )
-            from scripts.gemini_slice_jingting import glossary as _review_glossary
-
             review_findings = audit_final_subtitles(
                 srt_text,
                 llm_call=review_llm_call,

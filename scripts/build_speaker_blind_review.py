@@ -13,7 +13,7 @@ import html
 import json
 import random
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 

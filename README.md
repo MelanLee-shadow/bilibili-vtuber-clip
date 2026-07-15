@@ -81,6 +81,7 @@ container:/app/Videos                      # 原始录播输入
 ## 本地验证
 
 ```bash
+uvx --from ruff==0.15.21 ruff check src scripts
 python3 -m compileall -q src scripts tests
 python3 -m pytest tests -q
 ```

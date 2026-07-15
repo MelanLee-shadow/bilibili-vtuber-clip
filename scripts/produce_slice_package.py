@@ -365,12 +365,6 @@ def main(argv: list[str] | None = None) -> int:
             run_command=run,
         ),
     )
-    final_start = boundary.final_start
-    final_end = boundary.final_end
-    audit = boundary.audit
-    sanitized = boundary.sanitized_cues
-    timing_qa = boundary.timing_qa
-
     # 5. Final accurate cut + VAD-sanitized subtitles rebased to the cut.
     finalization_options = ProducerFinalizationOptions(
         spec=args.spec,

@@ -789,7 +789,7 @@ def validate_negative_result(
             "fresh negative live-performance mode is not a recorded-vocal incident rejection: "
             f"expected one of {sorted(BACKGROUND_REJECTION_MODES)}, observed {performance.get('mode')}"
         )
-    gate_reasons = _require_exact_incident_song_reasons(
+    _require_exact_incident_song_reasons(
         gate.get("reason_codes"), "fresh negative song repair gate"
     )
     candidate_dir = Path(str(record.get("candidate_dir") or ""))

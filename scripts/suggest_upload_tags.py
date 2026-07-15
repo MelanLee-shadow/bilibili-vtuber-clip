@@ -52,10 +52,7 @@ from src.autoslice.llm_client import (  # noqa: E402
 # Channel names, proper-noun mappings, and prompt policy are selected through
 # the active profile. Keep these compatibility constants so existing callers
 # do not need to know where the policy bytes live.
-from src.autoslice.upload_tag_policy import (  # noqa: E402
-    TermRule,
-    load_selected_upload_tag_policy,
-)
+from src.autoslice.upload_tag_policy import load_selected_upload_tag_policy  # noqa: E402
 
 _UPLOAD_TAG_POLICY = load_selected_upload_tag_policy()
 BASE_TAGS = _UPLOAD_TAG_POLICY.base_tags

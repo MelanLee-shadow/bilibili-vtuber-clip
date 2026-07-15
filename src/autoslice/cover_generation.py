@@ -1173,7 +1173,7 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
     atoms instead of single characters — every wrap candidate is then word-safe
     by construction (a break may fall anywhere EXCEPT inside a word / hook /
     proper noun), so the fitter simply takes the biggest font."""
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
     x0, y0, x1, y1 = zone
     zone_w = (x1 - x0) * 0.98
@@ -1181,7 +1181,7 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
     scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     explicit = [line.strip() for line in cover_text.splitlines() if line.strip()] if "\n" in cover_text else None
     if explicit is None and forced_lines:
-        explicit = [line for line in (l.strip() for l in forced_lines) if line]
+        explicit = [line for line in (raw_line.strip() for raw_line in forced_lines) if line]
 
     def evaluate(line_texts, emph):
         emph_idx = 0
@@ -1217,9 +1217,13 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
     # options (fewer lines fill wide zones) that never split a word.
     base: list[str] = []
     if forced_lines:
-        base = [line for line in (l.strip() for l in forced_lines) if line]
+        base = [line for line in (raw_line.strip() for raw_line in forced_lines) if line]
     if not base and "\n" in cover_text:
-        base = [line for line in (l.strip() for l in cover_text.splitlines()) if line]
+        base = [
+            line
+            for line in (raw_line.strip() for raw_line in cover_text.splitlines())
+            if line
+        ]
     wordsafe = [_regroup_lines(base, k) for k in range(1, len(base) + 1)] if base else []
     flat = cover_text.replace("\n", "")  # balancer wraps the flat text (colon \n is a clause hint only)
     # With validated word atoms the balancer itself is word-safe (atoms never
@@ -1275,7 +1279,7 @@ def _overlay_lidousha_cover_title(
     box look).  Font is fail-closed ZCOOLKuaiLe (whole-cover swap to 得意黑 only
     when ZCOOL lacks a glyph).
     """
-    from PIL import Image, ImageDraw, ImageFont, ImageOps
+    from PIL import Image, ImageDraw, ImageOps
 
     if art_direction is None:
         art_direction = _lidousha_cover_art_direction(candidate_id="", title=cover_text, cover_text=cover_text)
@@ -1385,5 +1389,4 @@ def _find_cover_font() -> Path:
     raise RuntimeError(
         "COVER_FONT_MISSING: ZCOOLKuaiLe-Regular.ttf not found in the selected profile fonts"
     )
-
 

@@ -216,7 +216,9 @@ def repair_covers(
                         candidate_id=str(cid),
                     )
                     rendered_lines = generation.get("rendered_lines")
-                    canonical = lambda value: re.sub(r"\s+", "", str(value))
+                    def canonical(value: object) -> str:
+                        return re.sub(r"\s+", "", str(value))
+
                     if (
                         generation.get("cover_text") != expected_cover_text
                         or not isinstance(rendered_lines, list)

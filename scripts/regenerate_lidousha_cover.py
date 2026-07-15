@@ -27,7 +27,6 @@ the original generation manifest and hashes it would falsely claim a new
 """
 from __future__ import annotations
 import argparse
-import hashlib
 import json
 import os
 import subprocess

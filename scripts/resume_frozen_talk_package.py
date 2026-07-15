@@ -998,7 +998,7 @@ def resume(plan_path: Path, *, speaker_python: Path) -> dict[str, Any]:
     _assert_upload_ledger_unchanged(plan, paths["upload_ledger"])
 
     active_record_path = recut_root / f"{candidate_id}.record.json"
-    active_record = _read_json(active_record_path, label="active resumed record")
+    _read_json(active_record_path, label="active resumed record")
     active_record_sha = "sha256:" + _sha256_file(active_record_path)
     summary = {
         "candidate_id": candidate_id,

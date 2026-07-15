@@ -6,7 +6,13 @@ covers. Runs ON the free host (needs the login cookie). Two phases:
   apply    = for each target: full-resubmit edit changing ONLY the cover, verify.
 Never prints cookie / csrf / token.
 """
-import base64, json, sys, time, urllib.parse, urllib.request, urllib.error
+import base64
+import json
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 COOKIE_JSON = "/opt/bilive/app/cookie.json"
@@ -107,7 +113,8 @@ def do_inspect():
     for bvid in TARGETS:
         png = COVER_DIR / f"{bvid}.png"
         if not png.is_file():
-            print(f"  {bvid}: MISSING cover file"); continue
+            print(f"  {bvid}: MISSING cover file")
+            continue
         url = upload_cover(png, jar, csrf)
         state["uploaded_url"][bvid] = url
         v = archive_view(bvid, jar)
@@ -132,8 +139,8 @@ def do_apply(only=None):
         arc = rec.get("archive") or {}
         vids = rec.get("videos") or []
         if not new_cover or not arc:
-            print(f"  {bvid}: SKIP (missing url/archive)"); continue
-        old_cover = arc.get("cover")
+            print(f"  {bvid}: SKIP (missing url/archive)")
+            continue
         old_title, old_tag = arc.get("title"), arc.get("tag")
         tag = ",".join(old_tag) if isinstance(old_tag, list) else (old_tag or "")
         # Curated cover-only edit: preserve exactly what biliup set; change ONLY cover.
@@ -157,7 +164,8 @@ def do_apply(only=None):
             d = req(f"https://member.bilibili.com/x/vu/web/edit?csrf={csrf}", jar,
                     data=payload, method="POST", as_json=True)
         except urllib.error.HTTPError as e:
-            print(f"  {bvid}: EDIT HTTP {e.code}: {e.read()[:200]}"); continue
+            print(f"  {bvid}: EDIT HTTP {e.code}: {e.read()[:200]}")
+            continue
         code = d.get("code")
         time.sleep(1.5)
         # Verify MEMBER-side (authoritative + immediate); the public API pic is CDN-cached.

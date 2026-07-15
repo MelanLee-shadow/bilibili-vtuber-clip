@@ -52,6 +52,9 @@ PROVIDER_SANITIZED_ENVIRONMENT = {
 AUDITED_PROVIDER_BUNDLES: dict[str, str] = {}
 RUNTIME_CODE_PATHS = (
     "src/autoslice/speaker_session_router.py",
+    "src/autoslice/speaker_common.py",
+    "src/autoslice/speaker_context.py",
+    "src/autoslice/speaker_evidence.py",
     "src/autoslice/speaker_finalizer.py",
     "scripts/produce_slice_package.py",
     "scripts/free_session_autoslice.py",

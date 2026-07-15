@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from .boundary_resolver import BoundaryResolution
 from .branding_intro import BrandingIntroError, prepend_branding_intro
 from .channel_profile import load_channel_profile
 from .cover_generation import _lidousha_fontsdir

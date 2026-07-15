@@ -168,6 +168,7 @@ full 前必须有历史样本证明：严重截断、严重字幕错、重复上
 本地纯逻辑验证：
 
 ```bash
+uvx --from ruff==0.15.21 ruff check src scripts
 python3 -m compileall -q src scripts tests
 python3 -m pytest tests -q
 ```

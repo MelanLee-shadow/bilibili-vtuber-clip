@@ -720,6 +720,9 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
     else:
         relatives = (
             "scripts/produce_slice_package.py",
+            "src/autoslice/speaker_common.py",
+            "src/autoslice/speaker_context.py",
+            "src/autoslice/speaker_evidence.py",
             "src/autoslice/speaker_finalizer.py",
             profile_asset_file("voiceprint_profile"),
         )
