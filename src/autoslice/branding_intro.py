@@ -1,4 +1,4 @@
-"""Mandatory branding intro prepended to every delivered autoslice video.
+"""Profile-selected branding intro prepended to delivered autoslice videos.
 
 Ivan (2026-07-12) selected the 活字乱刷 candidate-2 render
 （小李本来就是零，不对，我是为爱做零）as the fixed opening for all future
@@ -26,8 +26,15 @@ import subprocess
 from pathlib import Path
 from typing import Mapping
 
-BRANDING_INTRO_SCHEMA = "lidousha-branding-intro.v1"
-BRANDING_INTRO_MANIFEST_RELPATH = Path("assets/lidousha/intro/branding_intro.v1.json")
+from src.autoslice.channel_profile import load_channel_profile
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+BRANDING_INTRO_SCHEMA = f"{CHANNEL_PROFILE.profile_id}-branding-intro.v1"
+BRANDING_INTRO_MANIFEST_RELPATH = CHANNEL_PROFILE.asset_file(
+    "branding_intro_manifest"
+).relative_to(REPO_ROOT)
 BRANDING_INTRO_ENV_SWITCH = "AUTOSLICE_BRANDING_INTRO"
 _COPY_CONCAT_DURATION_TOLERANCE_MS = 150
 _REENCODE_DURATION_TOLERANCE_MS = 250

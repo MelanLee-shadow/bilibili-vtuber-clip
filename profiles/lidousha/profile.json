@@ -10,6 +10,10 @@
       "小李",
       "豆沙"
     ],
+    "speaker_identity_aliases": [
+      "李豆沙",
+      "shadow"
+    ],
     "room_id": "22966160",
     "output_directory": "lidousha",
     "host_speaker_label": "李豆沙",
@@ -64,6 +68,25 @@
     "song_prefix": "【李豆沙】豆沙歌，",
     "song_hook_template": "【李豆沙】豆沙歌，《{song_title}》｜{hook}",
     "song_plain_template": "【李豆沙】豆沙歌，直播间唱《{song_title}》"
+  },
+  "text_normalization": {
+    "canonical_surfaces": [
+      {
+        "surface": "哇哭哇哭",
+        "canonical": "wakuwaku",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "哇库哇库",
+        "canonical": "wakuwaku",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "直女",
+        "canonical": "侄女",
+        "authority": "lidousha-hard-meme-canon.v1"
+      }
+    ]
   },
   "decisions": {
     "host_vocal_present": "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",

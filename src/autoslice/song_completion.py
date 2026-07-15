@@ -15,6 +15,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.verified_io import (
     _matches_sha256,
     _canonical_existing_path,
@@ -35,6 +36,14 @@ from src.autoslice.song_repair import (
 MATERIALIZED_RECUT_SCHEMA_VERSION = "materialized-recut.v2"
 VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION = "verified-song-output-binding.v1"
 SONG_STREAM_CONTRACT_SCHEMA_VERSION = "song-av-stream-contract.v1"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+DEFAULT_HOST_VOCAL_PRESENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_present")
+DEFAULT_HOST_VOCAL_ABSENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_absent")
+DEFAULT_VERIFIED_HOST_SINGING_DECISION = CHANNEL_PROFILE.decision(
+    "verified_host_singing"
+)
+DEFAULT_HOST_NOT_SINGING_REASON = CHANNEL_PROFILE.decision("host_not_singing_reason")
 
 
 def _expected_song_stream_contract() -> dict[str, object]:
@@ -127,10 +136,10 @@ def song_completion_evidence(
     *,
     has_exact_av_streams=None,
     host_vocal_profile=None,
-    host_vocal_present_decision="LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
-    host_vocal_absent_decision="NO_LIDOUSHA_VOCAL_DETECTED",
-    verified_host_singing_decision="VERIFIED_LIDOUSHA_SINGING",
-    host_not_singing_reason="SONG_NOT_LIDOUSHA_SINGING",
+    host_vocal_present_decision=DEFAULT_HOST_VOCAL_PRESENT_DECISION,
+    host_vocal_absent_decision=DEFAULT_HOST_VOCAL_ABSENT_DECISION,
+    verified_host_singing_decision=DEFAULT_VERIFIED_HOST_SINGING_DECISION,
+    host_not_singing_reason=DEFAULT_HOST_NOT_SINGING_REASON,
 ) -> dict:
     """Verify the positive, hash-bound proof required to deliver a song.
 
@@ -984,8 +993,8 @@ def verified_song_fallback_title(
     song_title: str | None,
     hook: str | None,
     *,
-    song_hook_template: str = "【李豆沙】豆沙歌，《{song_title}》｜{hook}",
-    song_plain_template: str = "【李豆沙】豆沙歌，直播间唱《{song_title}》",
+    song_hook_template: str = CHANNEL_PROFILE.song_hook_template,
+    song_plain_template: str = CHANNEL_PROFILE.song_plain_template,
 ) -> str | None:
     """Build a hook-bearing fallback when semantic publish staging was advisory-blocked."""
     song_title = str(song_title or "").strip()

@@ -31,12 +31,15 @@ if str(ROOT) not in sys.path:
 
 from scripts.apply_speaker_turn_overrides import (  # noqa: E402
     GUEST_WHITE_STYLE,
+    GUEST_SPEAKER,
+    HOST_SPEAKER,
     LDS_SAPPHIRE_STYLE,
     SPEAKER_SUBTITLE_STYLE_ID,
     atomic_write_text,
     sha256_file,
     validate_bound_speaker_override_document,
 )
+from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
 from scripts.apply_subtitle_text_overrides import (  # noqa: E402
     apply_document as apply_text_override_document,
     validate_bound_override_document,
@@ -47,9 +50,10 @@ from scripts.run_auto_review_shadow_pipeline import (  # noqa: E402
 )
 
 
-PLAN_SCHEMA = "lidousha-speaker-review-batch-plan.v1"
-RESULT_SCHEMA = "lidousha-speaker-review-item.v1"
-BATCH_SCHEMA = "lidousha-speaker-review-batch.v1"
+CHANNEL_PROFILE = load_channel_profile(ROOT)
+PLAN_SCHEMA = f"{CHANNEL_PROFILE.profile_id}-speaker-review-batch-plan.v1"
+RESULT_SCHEMA = f"{CHANNEL_PROFILE.profile_id}-speaker-review-item.v1"
+BATCH_SCHEMA = f"{CHANNEL_PROFILE.profile_id}-speaker-review-batch.v1"
 PRODUCTION_SCOPE = "retrospective_speaker_rerender"
 SHA256_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 HISTORICAL_CHAT_AUTHORITY_STATUS = "NOT_EVALUATED_RETROSPECTIVE"
@@ -74,7 +78,8 @@ GENERATOR_FILES = (
     ROOT / "src" / "autoslice" / "speaker_finalizer.py",
     ROOT / "src" / "autoslice" / "host_vocal_proof.py",
     ROOT / "src" / "autoslice" / "llm_client.py",
-    ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json",
+    CHANNEL_PROFILE.manifest_path,
+    CHANNEL_PROFILE.asset_file("voiceprint_profile"),
 )
 
 
@@ -356,7 +361,7 @@ def _validate_speaker_manifest(
     if manifest.get("speaker_taxonomy") != "binary_visual_host_vs_guest":
         raise BatchSpeakerReviewError(f"speaker manifest taxonomy drift: {path}")
     if manifest.get("profile_sha256") != sha256_file(
-        ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+        CHANNEL_PROFILE.asset_file("voiceprint_profile")
     ):
         raise BatchSpeakerReviewError(f"speaker manifest voiceprint profile drift: {path}")
     if manifest.get("source_media_sha256") != entry["source_media_sha256"]:
@@ -373,7 +378,9 @@ def _validate_speaker_manifest(
     expected_scope = "source_session" if expected_session_anchor else "clip"
     if manifest.get("host_anchor_scope") != expected_scope:
         raise BatchSpeakerReviewError(f"speaker manifest host anchor scope drift: {path}")
-    if manifest.get("host_identity_aliases") != ["李豆沙", "shadow"]:
+    if manifest.get("host_identity_aliases") != list(
+        CHANNEL_PROFILE.speaker_identity_aliases
+    ):
         raise BatchSpeakerReviewError(f"speaker manifest host aliases drift: {path}")
     if manifest.get("output_review_srt_sha256") != artifacts["speaker_srt"]["sha256"]:
         raise BatchSpeakerReviewError(f"speaker manifest SRT output drift: {path}")
@@ -629,8 +636,8 @@ def build_review_item(
 
     decisions = speaker_manifest.get("final_decisions") or []
     speaker_counts = {
-        "李豆沙": sum(item.get("speaker") == "李豆沙" for item in decisions),
-        "连线": sum(item.get("speaker") == "连线" for item in decisions),
+        HOST_SPEAKER: sum(item.get("speaker") == HOST_SPEAKER for item in decisions),
+        GUEST_SPEAKER: sum(item.get("speaker") == GUEST_SPEAKER for item in decisions),
     }
     artifacts = {name: _artifact(path) for name, path in paths.items()}
     _validate_speaker_manifest(
@@ -680,9 +687,11 @@ def build_review_item(
 
 def _write_review_csv(path: Path, results: list[Mapping[str, object]]) -> None:
     buffer = io.StringIO()
+    host_cues_field = f"{HOST_SPEAKER}_cues"
+    guest_cues_field = f"{GUEST_SPEAKER}_cues"
     fields = [
-        "review_name", "candidate_id", "bvid", "title", "status", "李豆沙_cues",
-        "连线_cues", "video", "text_final_srt", "speaker_srt", "ass", "speaker_manifest",
+        "review_name", "candidate_id", "bvid", "title", "status", host_cues_field,
+        guest_cues_field, "video", "text_final_srt", "speaker_srt", "ass", "speaker_manifest",
     ]
     writer = csv.DictWriter(buffer, fieldnames=fields)
     writer.writeheader()
@@ -696,8 +705,8 @@ def _write_review_csv(path: Path, results: list[Mapping[str, object]]) -> None:
                 "bvid": result.get("bvid"),
                 "title": result.get("title"),
                 "status": result.get("status"),
-                "李豆沙_cues": counts.get("李豆沙"),
-                "连线_cues": counts.get("连线"),
+                host_cues_field: counts.get(HOST_SPEAKER),
+                guest_cues_field: counts.get(GUEST_SPEAKER),
                 "video": (artifacts.get("video") or {}).get("path"),
                 "text_final_srt": (artifacts.get("text_final_srt") or {}).get("path"),
                 "speaker_srt": (artifacts.get("speaker_srt") or {}).get("path"),
@@ -769,10 +778,10 @@ def main(argv: list[str] | None = None) -> int:
             "generator_sha256": generator_sha256,
             "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
             "style_contract": {
-                "李豆沙": LDS_SAPPHIRE_STYLE,
-                "连线": GUEST_WHITE_STYLE,
-                "shadow_identity": "李豆沙",
-                "production_labels": ["李豆沙", "连线"],
+                HOST_SPEAKER: LDS_SAPPHIRE_STYLE,
+                GUEST_SPEAKER: GUEST_WHITE_STYLE,
+                "shadow_identity": HOST_SPEAKER,
+                "production_labels": [HOST_SPEAKER, GUEST_SPEAKER],
             },
             "text_authority_contract": {
                 "scope": "retrospective speaker rerender of hash-bound historical published final SRTs",

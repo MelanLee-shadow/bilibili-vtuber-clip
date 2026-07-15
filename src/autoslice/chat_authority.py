@@ -20,31 +20,25 @@ import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+PROFILE_ID = CHANNEL_PROFILE.profile_id
 _NON_TEXT = re.compile(r"[^0-9a-z\u3040-\u30ff\u3400-\u9fff]+", re.IGNORECASE)
 _SEGMENT_TIME = re.compile(r"(?P<date>20\d{6})[-_](?P<hour>\d{2})[-_](?P<minute>\d{2})[-_](?P<second>\d{2})")
 _QUESTION_TAIL = frozenset("吗呢吧嘛呀啊？?")
-_CODE_SWITCH_CANONICAL_SURFACES = (
-    ("哇哭哇哭", "wakuwaku"),
-    ("哇库哇库", "wakuwaku"),
-)
-
-# Ivan 定死的梗词硬规范（2026-07-13）：李豆沙语境下这些表面写法无条件回正，
-# 与 code-switch 表同机制、分表便于审计。「直女」永远是「侄女」梗的误听——
-# Ivan：「由于这是梗，所有直女都要写成侄女」，不存在"真直女"例外。
-_HARD_MEME_CANONICAL_SURFACES = (
-    ("直女", "侄女"),
-)
+_CANONICAL_SURFACE_RULES = CHANNEL_PROFILE.canonical_surface_rules
 
 
 def canonicalize_hard_surfaces(text: str) -> str:
     """对普通字符串（标题/封面文案/hook）应用同一套无条件表面规范。"""
     normalized = text
-    for surface, canonical in (*_CODE_SWITCH_CANONICAL_SURFACES, *_HARD_MEME_CANONICAL_SURFACES):
-        if surface in normalized:
-            normalized = normalized.replace(surface, canonical)
+    for rule in _CANONICAL_SURFACE_RULES:
+        if rule.surface in normalized:
+            normalized = normalized.replace(rule.surface, rule.canonical)
     return normalized
 
 
@@ -110,7 +104,17 @@ def normalize_chat_text(text: str) -> str:
     return _NON_TEXT.sub("", str(text)).lower()
 
 
-_SPEAKER_LABEL = re.compile(r"^\[(?:李豆沙|连线)\]\s*")
+_SPEAKER_LABEL = re.compile(
+    r"^\[(?:"
+    + "|".join(
+        re.escape(value)
+        for value in (
+            CHANNEL_PROFILE.host_speaker_label,
+            CHANNEL_PROFILE.guest_speaker_label,
+        )
+    )
+    + r")\]\s*"
+)
 
 
 def normalize_srt_payload_text(srt_text: str, *, strip_speaker_labels: bool = False) -> str:
@@ -154,10 +158,10 @@ def normalize_code_switch_surfaces(srt_text: str) -> tuple[str, dict[str, Any]]:
     for offset, before in enumerate(list(texts)):
         after = before
         replaced: list[dict[str, str]] = []
-        for surface, canonical, authority in (
-            *((s, c, "lidousha-code-switch-canon.v1") for s, c in _CODE_SWITCH_CANONICAL_SURFACES),
-            *((s, c, "lidousha-hard-meme-canon.v1") for s, c in _HARD_MEME_CANONICAL_SURFACES),
-        ):
+        for rule in _CANONICAL_SURFACE_RULES:
+            surface = rule.surface
+            canonical = rule.canonical
+            authority = rule.authority
             if surface not in after:
                 continue
             after = after.replace(surface, canonical)
@@ -173,7 +177,7 @@ def normalize_code_switch_surfaces(srt_text: str) -> tuple[str, dict[str, Any]]:
                 "before": before,
                 "after": after,
                 "replacements": replaced,
-                "authority": "lidousha-code-switch-canon.v1",
+                "authority": f"{PROFILE_ID}-code-switch-canon.v1",
             }
         )
     output = _render_srt(cues, texts) if repairs else srt_text
@@ -203,8 +207,8 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
     except (OSError, ValueError):
         return []
     if not isinstance(payload, dict) or payload.get("schema_version") not in {
-        "lidousha-referent-groups.v1",
-        "lidousha-referent-groups.v2",
+        f"{PROFILE_ID}-referent-groups.v1",
+        f"{PROFILE_ID}-referent-groups.v2",
     }:
         return []
     groups: list[ReferentGroup] = []
@@ -315,7 +319,7 @@ def load_clip_opening_address_config(path: str | Path) -> dict[str, Any] | None:
         return None
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != "lidousha-clip-opening-address.v1"
+        or payload.get("schema_version") != f"{PROFILE_ID}-clip-opening-address.v1"
     ):
         return None
     connectives = [

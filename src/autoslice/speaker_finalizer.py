@@ -1,4 +1,4 @@
-"""Production Li-Dousha/guest speaker finalization for talk subtitles.
+"""Production host/guest speaker finalization for talk subtitles.
 
 Contract:
 
@@ -41,6 +41,7 @@ from scripts.apply_speaker_turn_overrides import (
     write_srt,
 )
 from scripts.apply_subtitle_text_overrides import TextCue, parse_srt
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.host_vocal_proof import (
     _extract_checkpoint,
     _load_campplus_pipeline,
@@ -49,15 +50,23 @@ from src.autoslice.host_vocal_proof import (
 )
 from src.autoslice.llm_client import extract_json_object
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+PROFILE_ID = CHANNEL_PROFILE.profile_id
+HOST_SPEAKER = CHANNEL_PROFILE.host_speaker_label
+GUEST_SPEAKER = CHANNEL_PROFILE.guest_speaker_label
+SPEAKERS = {HOST_SPEAKER, GUEST_SPEAKER}
+SPEAKER_FINALIZATION_SCHEMA = f"{PROFILE_ID}-speaker-finalization.v1"
+FAST_FRESH_DERIVATION_SCHEMA = f"{PROFILE_ID}-speaker-fast-fresh-derivation.v1"
 
 class SpeakerFinalizationError(RuntimeError):
     pass
 
 
-SOURCE_SESSION_ANCHOR_SCHEMA = "lidousha-speaker-source-session-anchors.v1"
-MIXED_OVERLAP_EVIDENCE_SCHEMA = "lidousha-speaker-mixed-overlap-evidence.v1"
+SOURCE_SESSION_ANCHOR_SCHEMA = f"{PROFILE_ID}-speaker-source-session-anchors.v1"
+MIXED_OVERLAP_EVIDENCE_SCHEMA = f"{PROFILE_ID}-speaker-mixed-overlap-evidence.v1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
-CAMPP_EMBEDDING_CACHE_SCHEMA = "lidousha-campp-embedding-cache.v3"
+CAMPP_EMBEDDING_CACHE_SCHEMA = f"{PROFILE_ID}-campp-embedding-cache.v3"
 CAMPP_EMBEDDING_DIMENSION = 192
 CAMPP_MIN_EMBEDDING_NORM = 1e-3
 CAMPP_COSINE_EPSILON = 1e-6
@@ -385,8 +394,13 @@ def _validate_source_session_anchor_document(
         raise SpeakerFinalizationError(
             f"source-session anchor schema must be {SOURCE_SESSION_ANCHOR_SCHEMA}"
         )
-    if document.get("status") != "READY" or document.get("subject") != "李豆沙":
-        raise SpeakerFinalizationError("source-session anchor manifest is not READY for 李豆沙")
+    if (
+        document.get("status") != "READY"
+        or document.get("subject") != CHANNEL_PROFILE.display_name
+    ):
+        raise SpeakerFinalizationError(
+            "source-session anchor manifest is not READY for the selected host"
+        )
     session_id = str(document.get("source_session_id") or "").strip()
     if not session_id:
         raise SpeakerFinalizationError("source-session anchor manifest is missing source_session_id")
@@ -950,7 +964,7 @@ def resolve_ambiguous_labels(
     sources = ["campp_audio" if label is not None else "unresolved" for label in labels]
     votes = context_votes or {}
     for index, vote in votes.items():
-        if 0 <= index < len(result) and result[index] is None and vote in {"李豆沙", "连线"}:
+        if 0 <= index < len(result) and result[index] is None and vote in SPEAKERS:
             result[index] = vote
             sources[index] = "whole_clip_context"
     for index, label in enumerate(result):
@@ -962,7 +976,7 @@ def resolve_ambiguous_labels(
             result[index] = previous
             sources[index] = "neighbour_context_fallback"
         else:
-            result[index] = "李豆沙" if margins[index] >= threshold else "连线"
+            result[index] = HOST_SPEAKER if margins[index] >= threshold else GUEST_SPEAKER
             sources[index] = "acoustic_threshold_fallback"
     return [str(label) for label in result], sources
 
@@ -1009,7 +1023,7 @@ def _reviewed_context_votes(
         speaker = str(speaker_raw)
         if not 1 <= cue_number <= cue_count:
             raise SpeakerFinalizationError(f"reviewed context cue is out of range: {cue_number}")
-        if speaker not in {"李豆沙", "连线"}:
+        if speaker not in SPEAKERS:
             raise SpeakerFinalizationError(
                 f"reviewed context speaker is invalid for cue {cue_number}: {speaker!r}"
             )
@@ -1084,7 +1098,7 @@ def _resolve_singleton_outlier(
         "neighbours": neighbours,
     }
     reviewed = (reviewed_context_votes or {}).get(singleton_index)
-    labels: list[str | None] = ["李豆沙"] * len(cues)
+    labels: list[str | None] = [HOST_SPEAKER] * len(cues)
     labels[singleton_index] = None
     context_votes, context_attempts, context_errors = _whole_clip_context_votes(
         cues,
@@ -1092,18 +1106,18 @@ def _resolve_singleton_outlier(
         [singleton_index],
         context_call,
         initial_speakers=(
-            {singleton_index: str(reviewed)} if reviewed in {"李豆沙", "连线"} else None
+            {singleton_index: str(reviewed)} if reviewed in SPEAKERS else None
         ),
         allow_review=True,
         require_confidence=True,
     )
     context_decision = context_votes.get(singleton_index)
 
-    reviewed_ready = reviewed in {"李豆沙", "连线"}
+    reviewed_ready = reviewed in SPEAKERS
     automatic_host_ready = bool(
         all(gates.values())
         and context_decision
-        and context_decision.get("speaker") == "李豆沙"
+        and context_decision.get("speaker") == HOST_SPEAKER
         and float(context_decision.get("confidence") or 0.0)
         >= SINGLETON_CONTEXT_HOST_MIN_CONFIDENCE
     )
@@ -1119,22 +1133,26 @@ def _resolve_singleton_outlier(
     if not reviewed_ready:
         if context_decision is None:
             reason_codes.append("CONTEXT_INCOMPLETE")
-        elif context_decision["speaker"] == "连线":
+        elif context_decision["speaker"] == GUEST_SPEAKER:
             reason_codes.append("CONTEXT_GUEST")
         elif context_decision["speaker"] == "REVIEW":
             reason_codes.append("CONTEXT_REVIEW")
         elif float(context_decision["confidence"]) < SINGLETON_CONTEXT_HOST_MIN_CONFIDENCE:
             reason_codes.append("CONTEXT_HOST_CONFIDENCE_LOW")
-        if context_decision and context_decision["speaker"] == "李豆沙" and not all(gates.values()):
+        if (
+            context_decision
+            and context_decision["speaker"] == HOST_SPEAKER
+            and not all(gates.values())
+        ):
             reason_codes.append("CONTEXT_ACOUSTIC_CONFLICT")
     singleton_speaker = (
         str(reviewed)
         if reviewed_ready
-        else "李豆沙"
+        else HOST_SPEAKER
         if automatic_host_ready
         else str((context_decision or {}).get("speaker"))
-        if (context_decision or {}).get("speaker") in {"李豆沙", "连线"}
-        else "连线"
+        if (context_decision or {}).get("speaker") in SPEAKERS
+        else GUEST_SPEAKER
     )
     singleton_source = (
         "accepted_context_baseline"
@@ -1154,7 +1172,7 @@ def _resolve_singleton_outlier(
     )
     return {
         "mode": "singleton_outlier",
-        "multi_speaker_detected": singleton_speaker == "连线" and not review_required,
+        "multi_speaker_detected": singleton_speaker == GUEST_SPEAKER and not review_required,
         "context_attempts": context_attempts,
         "context_errors": context_errors,
         "context_required_cues": [singleton_index + 1],
@@ -1165,7 +1183,7 @@ def _resolve_singleton_outlier(
         "decisions": [
             {
                 "source_index": index + 1,
-                "speaker": singleton_speaker if index == singleton_index else "李豆沙",
+                "speaker": singleton_speaker if index == singleton_index else HOST_SPEAKER,
                 "decision_source": singleton_source if index == singleton_index else "campp_single_host_majority",
                 "seed_score": round(float(seed_scores[index]), 8),
                 "host_score": round(float(host_bank_scores[index]), 8),
@@ -1183,16 +1201,16 @@ def _context_prompt(cues: Sequence[TextCue], labels: Sequence[str | None], ambig
         for index, (cue, label) in enumerate(zip(cues, labels, strict=True), start=1)
     ]
     return (
-        "这是李豆沙（直播间主人）与连线主播的完整切片字幕，文本、专名和代词已经最终定稿。"
-        "大部分行已经由声纹标为[李豆沙]/[连线]；只有[待定]行因太短或处于声纹分界带，需要根据整段问答、称呼方向和上下文判断。\n"
-        "规则：别人评价李豆沙后，她的反问/自辩通常是李豆沙；对李豆沙使用第三人称评价的通常是连线；"
-        "对话中作为名字出现的精确词 shadow 是李豆沙的自称之一，不是第四位说话人或连线嘉宾；"
+        f"这是{HOST_SPEAKER}（直播间主人）与{GUEST_SPEAKER}主播的完整切片字幕，文本、专名和代词已经最终定稿。"
+        f"大部分行已经由声纹标为[{HOST_SPEAKER}]/[{GUEST_SPEAKER}]；只有[待定]行因太短或处于声纹分界带，需要根据整段问答、称呼方向和上下文判断。\n"
+        f"规则：别人评价{HOST_SPEAKER}后，她的反问/自辩通常是{HOST_SPEAKER}；对{HOST_SPEAKER}使用第三人称评价的通常是{GUEST_SPEAKER}；"
+        f"对话中作为名字出现的精确词 {CHANNEL_PROFILE.speaker_identity_aliases[-1]} 是{HOST_SPEAKER}的自称之一，不是第四位说话人或{GUEST_SPEAKER}嘉宾；"
         "不要修改文字，不要把相邻两个人的连续短句合成同一说话人。"
         "单个声纹离群点不能独立建立嘉宾簇；若上下文仍可能是真实嘉宾、证据冲突或无法确定，返回 REVIEW。\n"
         f"待定行号（1-based）：{[index + 1 for index in ambiguous]}\n\n"
         + "\n".join(rows)
-        + '\n\n只输出 JSON：{"labels":[{"n":1,"speaker":"李豆沙","confidence":0.95,'
-        '"reason":"具体上下文依据"}]}，且只列待定行。speaker 只能是李豆沙、连线或 REVIEW；confidence 为 0..1。'
+        + f'\n\n只输出 JSON：{{"labels":[{{"n":1,"speaker":"{HOST_SPEAKER}","confidence":0.95,'
+        f'"reason":"具体上下文依据"}}]}}，且只列待定行。speaker 只能是{HOST_SPEAKER}、{GUEST_SPEAKER}或 REVIEW；confidence 为 0..1。'
     )
 
 
@@ -1217,13 +1235,13 @@ def _whole_clip_context_votes(
             "source": "hash_bound_reviewed_context",
         }
         for index, speaker in (initial_speakers or {}).items()
-        if index in ambiguous and speaker in {"李豆沙", "连线"}
+        if index in ambiguous and speaker in SPEAKERS
     }
     attempts = 0
     errors: list[str] = []
     if context_call is None:
         return votes, attempts, errors
-    allowed = {"李豆沙", "连线"} | ({"REVIEW"} if allow_review else set())
+    allowed = SPEAKERS | ({"REVIEW"} if allow_review else set())
     for _attempt in range(3):
         pending = [index for index in ambiguous if index not in votes]
         if not pending:
@@ -1617,7 +1635,9 @@ def _run_campplus_analysis(
     else:
         host_indices = clip_host_indices
         if len(host_indices) < 2:
-            raise SpeakerFinalizationError(f"not enough Li Dousha clip anchors: {host_indices}")
+            raise SpeakerFinalizationError(
+                f"not enough {CHANNEL_PROFILE.prompt_name} clip anchors: {host_indices}"
+            )
         host_prints = [cue_paths[index] for index in host_indices]
         host_anchor_scope = "clip"
 
@@ -1736,7 +1756,7 @@ def _run_campplus_analysis(
             "decisions": [
                 {
                     "source_index": index + 1,
-                    "speaker": "李豆沙",
+                    "speaker": HOST_SPEAKER,
                     "decision_source": "campp_single_host",
                     "seed_score": round(seed_scores[index], 8),
                     "margin": None,
@@ -1779,12 +1799,12 @@ def _run_campplus_analysis(
             labels.append(None)
             ambiguous.append(index)
         else:
-            labels.append("李豆沙" if margin >= threshold else "连线")
+            labels.append(HOST_SPEAKER if margin >= threshold else GUEST_SPEAKER)
 
     reviewed_votes = {
         index: speaker
         for index, speaker in (reviewed_context_votes or {}).items()
-        if index in ambiguous and speaker in {"李豆沙", "连线"}
+        if index in ambiguous and speaker in SPEAKERS
     }
     context_vote_rows, context_attempts, context_errors = _whole_clip_context_votes(
         cues,
@@ -1829,7 +1849,7 @@ def _run_campplus_analysis(
         "host_anchor_cues": [index + 1 for index in host_indices],
         "clip_host_anchor_candidates": [index + 1 for index in clip_host_indices],
         "guest_anchor_groups": [[index + 1 for index in group] for group in guest_groups],
-        "cluster_centers": {"guest": low_center, "lidousha": high_center},
+        "cluster_centers": {"guest": low_center, PROFILE_ID: high_center},
         "threshold": threshold,
         "context_attempts": context_attempts,
         "context_errors": context_errors,
@@ -1976,7 +1996,7 @@ def finalize_speaker_subtitles(
             )
             unresolved = [int(row["source_cue"]) for row in remaining_rows]
             review_manifest: dict[str, object] = {
-                "schema_version": "lidousha-speaker-finalization.v1",
+                "schema_version": SPEAKER_FINALIZATION_SCHEMA,
                 "status": "SPEAKER_REVIEW_REQUIRED",
                 "production_ready": False,
                 "reason_code": "SPEAKER_REVIEW_REQUIRED",
@@ -2060,7 +2080,7 @@ def finalize_speaker_subtitles(
         raise SpeakerFinalizationError("speaker analyzer returned incomplete decisions")
     automatic: list[Cue] = []
     for index, (text_cue, decision) in enumerate(zip(cues, decisions, strict=True), start=1):
-        if not isinstance(decision, Mapping) or decision.get("speaker") not in {"李豆沙", "连线"}:
+        if not isinstance(decision, Mapping) or decision.get("speaker") not in SPEAKERS:
             raise SpeakerFinalizationError(f"speaker decision {index} is invalid")
         automatic.append(
             Cue(
@@ -2114,7 +2134,7 @@ def finalize_speaker_subtitles(
             media_sha256 = sha256_file(media_path)
             text_sha256 = sha256_file(text_srt_path)
             review_manifest: dict[str, object] = {
-                "schema_version": "lidousha-speaker-finalization.v1",
+                "schema_version": SPEAKER_FINALIZATION_SCHEMA,
                 "status": "SPEAKER_REVIEW_REQUIRED",
                 "production_ready": False,
                 "reason_code": "SPEAKER_REVIEW_REQUIRED",
@@ -2172,7 +2192,7 @@ def finalize_speaker_subtitles(
     write_srt(final_cues, output_srt_path)
     write_ass(final_cues, output_ass_path, show_speaker_labels=False)
     manifest: dict[str, object] = {
-        "schema_version": "lidousha-speaker-finalization.v1",
+        "schema_version": SPEAKER_FINALIZATION_SCHEMA,
         "status": "READY",
         "production_ready": True,
         "stage_order": "text_final_then_speaker_then_ass_then_burn",
@@ -2210,7 +2230,7 @@ def finalize_speaker_subtitles(
         "visible_speaker_prefixes": False,
         "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
         "speaker_taxonomy": "binary_visual_host_vs_guest",
-        "host_identity_aliases": ["李豆沙", "shadow"],
+        "host_identity_aliases": list(CHANNEL_PROFILE.speaker_identity_aliases),
         "source_cue_count": len(cues),
         "output_cue_count": len(final_cues),
         "reviewed_output_cue_count": sum(cue.decision_source.startswith("reviewed_") for cue in final_cues),
@@ -2271,8 +2291,7 @@ def finalize_fast_solo_subtitles(
     if not isinstance(fresh_derivation, Mapping) or set(fresh_derivation) != expected_derivation_keys:
         raise SpeakerFinalizationError("FAST_SOLO fresh derivation schema is incomplete")
     if (
-        fresh_derivation.get("schema_version")
-        != "lidousha-speaker-fast-fresh-derivation.v1"
+        fresh_derivation.get("schema_version") != FAST_FRESH_DERIVATION_SCHEMA
         or fresh_derivation.get("method")
         != "canonical_accurate_recut_direct_from_claimed_segment"
         or fresh_derivation.get("cache_reused") is not False
@@ -2326,7 +2345,7 @@ def finalize_fast_solo_subtitles(
             source_index=index,
             start=cue.start,
             end=cue.end,
-            speaker="李豆沙",
+            speaker=HOST_SPEAKER,
             text=cue.text,
             decision_source="verified_session_fast_solo",
         )
@@ -2346,7 +2365,7 @@ def finalize_fast_solo_subtitles(
         output_ass_path.unlink(missing_ok=True)
         raise SpeakerFinalizationError("FAST_SOLO authority inputs drifted during render")
     manifest: dict[str, object] = {
-        "schema_version": "lidousha-speaker-finalization.v1",
+        "schema_version": SPEAKER_FINALIZATION_SCHEMA,
         "status": "READY",
         "production_ready": True,
         "stage_order": "text_final_then_speaker_then_ass_then_burn",
@@ -2369,7 +2388,7 @@ def finalize_fast_solo_subtitles(
         "visible_speaker_prefixes": False,
         "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
         "speaker_taxonomy": "binary_visual_host_vs_guest",
-        "host_identity_aliases": ["李豆沙", "shadow"],
+        "host_identity_aliases": list(CHANNEL_PROFILE.speaker_identity_aliases),
         "host_anchor_scope": "verified_session_fast_solo",
         "source_cue_count": len(cues),
         "output_cue_count": len(final_cues),
@@ -2430,7 +2449,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except Exception as exc:
         blocked = {
-            "schema_version": "lidousha-speaker-finalization.v1",
+            "schema_version": SPEAKER_FINALIZATION_SCHEMA,
             "status": "BLOCKED",
             "production_ready": False,
             "reason": f"{type(exc).__name__}: {exc}",

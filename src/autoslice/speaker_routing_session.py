@@ -28,6 +28,7 @@ from src.autoslice.collab_evidence_capture import (
     evaluate_trigger as evaluate_collab_capture_trigger,
     validate_worker_request_document,
 )
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.speaker_session_router import (
     FAST_SOLO,
     PROVIDER_SANITIZED_ENVIRONMENT,
@@ -44,9 +45,13 @@ from src.autoslice.speaker_session_router import (
     validate_provider_authority,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+PROFILE_ID = CHANNEL_PROFILE.profile_id
 SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA = (
-    "lidousha-speaker-routing-session-authority.v1"
+    f"{PROFILE_ID}-speaker-routing-session-authority.v1"
 )
+SPEAKER_ROUTING_SESSION_SCHEMA = f"{PROFILE_ID}-speaker-routing-session.v2"
 SPEAKER_ROUTING_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 
 
@@ -330,7 +335,7 @@ def _speaker_session_state_from_authority(
     authority_path: Path, authority_sha256: str, authority: dict
 ) -> dict:
     return {
-        "schema_version": "lidousha-speaker-routing-session.v2",
+        "schema_version": SPEAKER_ROUTING_SESSION_SCHEMA,
         "date": authority["date"],
         "generation_pipeline_fingerprint": authority[
             "generation_pipeline_fingerprint"

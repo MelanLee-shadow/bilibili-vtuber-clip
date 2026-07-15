@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Produce a finished Li Dousha talk-slice package from explicit window specs.
+"""Produce a finished channel talk-slice package from explicit window specs.
 
 This is the standard "圈中候选→出成品" driver (Ivan 2026-07-04). Its core
 contract is the TOPIC-CLOSURE boundary rule: a clip must end where the topic
@@ -13,7 +13,7 @@ SELF-REPAIR loop (Ivan 2026-07-10: flags move the cut to the next verifiably
 clean sentence end / pull the opening onto the straddled sentence; an
 unrepairable boundary fails closed — no quarantine state) → final accurate cut
 → VAD-sanitized text-final subtitles → speaker finalization → colour ASS burn
-→ title/cover staging → flat delivery copy to lidousha/<date>/.
+→ title/cover staging → flat delivery copy to the profile output directory.
 
 Spec JSON:
 {
@@ -524,7 +524,9 @@ def _resolved_optional_path(value: object, *, relative_to: Path) -> Path | None:
     return path if path.is_absolute() else (relative_to / path).resolve()
 
 
-RECUT_PROVENANCE_SCHEMA = "lidousha-speaker-recut-provenance.v1"
+RECUT_PROVENANCE_SCHEMA = (
+    f"{CHANNEL_PROFILE.profile_id}-speaker-recut-provenance.v1"
+)
 
 
 def _write_json_atomic(path: Path, document: dict) -> None:
@@ -572,7 +574,9 @@ def _valid_cached_provenance(
     return document == expected
 
 
-FAST_FRESH_DERIVATION_SCHEMA = "lidousha-speaker-fast-fresh-derivation.v1"
+FAST_FRESH_DERIVATION_SCHEMA = (
+    f"{CHANNEL_PROFILE.profile_id}-speaker-fast-fresh-derivation.v1"
+)
 
 
 class FastMediaRollbackError(RuntimeError):
@@ -930,7 +934,9 @@ def _write_route_mixed_overlap_evidence(
     _write_json_atomic(
         output,
         {
-            "schema_version": "lidousha-speaker-mixed-overlap-evidence.v1",
+            "schema_version": (
+                f"{CHANNEL_PROFILE.profile_id}-speaker-mixed-overlap-evidence.v1"
+            ),
             "status": "REVIEW_REQUIRED",
             "source_media_sha256": _sha256(media_path),
             "text_final_srt_sha256": _sha256(text_srt_path),
@@ -1635,7 +1641,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--speaker-source-session-anchors",
         type=Path,
-        help="hash-bound high-gate Li Dousha anchors from the same source recording",
+        help=(
+            "hash-bound high-gate selected-host anchors from the same source recording"
+        ),
     )
     parser.add_argument(
         "--speaker-mixed-overlap-evidence",
@@ -2617,7 +2625,11 @@ def main(argv: list[str] | None = None) -> int:
         "speaker_mode": args.speaker_mode,
         "speaker_review_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
         "subtitle_ass_path": str(speaker_ass) if speaker_ass is not None else None,
-        "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID if speaker_ass is not None else "lidousha-final-sapphire72",
+        "subtitle_style": (
+            SPEAKER_SUBTITLE_STYLE_ID
+            if speaker_ass is not None
+            else f"{CHANNEL_PROFILE.profile_id}-final-sapphire72"
+        ),
         "speaker_finalization_manifest_path": str(speaker_manifest_path) if speaker_manifest_path is not None else None,
         "speaker_finalization_manifest_sha256": ("sha256:" + _sha256(speaker_manifest_path)) if speaker_manifest_path is not None else None,
         "speaker_finalization": speaker_manifest,

@@ -60,12 +60,20 @@ class ChannelProfileError(ValueError):
 
 
 @dataclass(frozen=True)
+class CanonicalSurfaceRule:
+    surface: str
+    canonical: str
+    authority: str
+
+
+@dataclass(frozen=True)
 class ChannelProfile:
     profile_id: str
     display_name: str
     prompt_name: str
     short_name: str
     self_reference_aliases: tuple[str, ...]
+    speaker_identity_aliases: tuple[str, ...]
     room_id: str
     output_directory: str
     host_speaker_label: str
@@ -80,6 +88,7 @@ class ChannelProfile:
     talk_title_prefix: str
     song_hook_template: str
     song_plain_template: str
+    canonical_surface_rules: tuple[CanonicalSurfaceRule, ...]
     decisions: Mapping[str, str]
     tools: Mapping[str, Path]
     manifest_path: Path
@@ -289,6 +298,7 @@ def load_channel_profile(
         "assets",
         "runtime",
         "titles",
+        "text_normalization",
         "decisions",
         "tools",
     }
@@ -314,6 +324,7 @@ def load_channel_profile(
             "prompt_name",
             "short_name",
             "self_reference_aliases",
+            "speaker_identity_aliases",
             "room_id",
             "output_directory",
             "host_speaker_label",
@@ -431,6 +442,45 @@ def load_channel_profile(
     if "SONG" not in hook_probe or "HOOK" not in hook_probe or "SONG" not in plain_probe:
         raise ChannelProfileError("song title templates must preserve their declared fields")
 
+    text_normalization = _mapping(
+        root.get("text_normalization"), label="text_normalization"
+    )
+    _strict_keys(
+        text_normalization,
+        label="text_normalization",
+        required={"canonical_surfaces"},
+    )
+    raw_surface_rules = text_normalization.get("canonical_surfaces")
+    if not isinstance(raw_surface_rules, list):
+        raise ChannelProfileError(
+            "text_normalization.canonical_surfaces must be a list"
+        )
+    canonical_surface_rules: list[CanonicalSurfaceRule] = []
+    for index, raw_rule in enumerate(raw_surface_rules):
+        label = f"text_normalization.canonical_surfaces[{index}]"
+        rule = _mapping(raw_rule, label=label)
+        _strict_keys(
+            rule,
+            label=label,
+            required={"surface", "canonical", "authority"},
+        )
+        canonical_surface_rules.append(
+            CanonicalSurfaceRule(
+                surface=_string(rule.get("surface"), label=f"{label}.surface"),
+                canonical=_string(
+                    rule.get("canonical"), label=f"{label}.canonical"
+                ),
+                authority=_string(
+                    rule.get("authority"), label=f"{label}.authority"
+                ),
+            )
+        )
+    surfaces = [rule.surface for rule in canonical_surface_rules]
+    if len(surfaces) != len(set(surfaces)):
+        raise ChannelProfileError(
+            "text_normalization.canonical_surfaces must not repeat a surface"
+        )
+
     decisions = _string_map(root.get("decisions"), label="decisions")
     required_decisions = {
         "host_vocal_present",
@@ -464,6 +514,10 @@ def load_channel_profile(
             identity.get("self_reference_aliases"),
             label="identity.self_reference_aliases",
         ),
+        speaker_identity_aliases=_nonempty_string_list(
+            identity.get("speaker_identity_aliases"),
+            label="identity.speaker_identity_aliases",
+        ),
         room_id=room_id,
         output_directory=_safe_component(
             identity.get("output_directory"), label="identity.output_directory"
@@ -484,6 +538,7 @@ def load_channel_profile(
         talk_title_prefix=talk_title_prefix,
         song_hook_template=song_hook_template,
         song_plain_template=song_plain_template,
+        canonical_surface_rules=tuple(canonical_surface_rules),
         decisions=MappingProxyType(decisions),
         tools=MappingProxyType(tools),
         manifest_path=resolved_manifest,

@@ -777,6 +777,9 @@ def test_runner_rejects_malformed_speaker_review_manifest(tmp_path: Path, monkey
 
 def test_context_prompt_treats_exact_shadow_name_as_lidousha_not_fourth_speaker() -> None:
     prompt = _context_prompt([], [], [])
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == (
+        "505e5aef8a21689a4ca3e3d065a9e9ba5b61ab5a7e4fdc8fadecc169a53b0d4a"
+    )
     assert "精确词 shadow 是李豆沙的自称之一" in prompt
     assert "不是第四位说话人" in prompt
 

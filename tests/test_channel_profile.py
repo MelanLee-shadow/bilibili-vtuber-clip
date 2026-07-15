@@ -28,6 +28,7 @@ def _other_profile_document() -> dict:
         "prompt_name": "Another Host",
         "short_name": "小主",
         "self_reference_aliases": ["另一位主播", "小主"],
+        "speaker_identity_aliases": ["另一位主播", "another_host"],
         "room_id": "123456",
         "output_directory": "other_host",
         "host_speaker_label": "主播",
@@ -40,6 +41,7 @@ def _other_profile_document() -> dict:
         "song_hook_template": "【另一位主播】歌切，《{song_title}》｜{hook}",
         "song_plain_template": "【另一位主播】歌切，直播间唱《{song_title}》",
     }
+    document["text_normalization"] = {"canonical_surfaces": []}
     document["decisions"] = {
         "host_vocal_present": "HOST_VOCAL_PRESENT",
         "host_vocal_absent": "NO_HOST_VOCAL_DETECTED",
@@ -58,6 +60,7 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
     assert profile.prompt_name == "Li Dousha"
     assert profile.short_name == "小李"
     assert profile.self_reference_aliases == ("李豆沙", "小李", "豆沙")
+    assert profile.speaker_identity_aliases == ("李豆沙", "shadow")
     assert profile.room_id == "22966160"
     assert profile.delivery_root == REPO_ROOT / "lidousha"
     assert profile.asset_root == REPO_ROOT / "assets/lidousha"
@@ -72,6 +75,11 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
     assert profile.voiceprint_reference_subdirectory == "lidousha"
     assert profile.song_title_prefix == "【李豆沙】豆沙歌，"
     assert profile.talk_title_prefix == "【李豆沙】"
+    assert [(rule.surface, rule.canonical) for rule in profile.canonical_surface_rules] == [
+        ("哇哭哇哭", "wakuwaku"),
+        ("哇库哇库", "wakuwaku"),
+        ("直女", "侄女"),
+    ]
     assert profile.format_song_title("芽吹くとき", hook="下播前的温柔哄睡小歌") == (
         "【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌"
     )
@@ -117,6 +125,7 @@ def test_committed_profile_can_drive_a_different_channel_without_code_changes(tm
         "【另一位主播】歌切，《测试歌》｜测试钩子"
     )
     assert profile.decision("host_vocal_present") == "HOST_VOCAL_PRESENT"
+    assert profile.canonical_surface_rules == ()
     assert not profile.missing_runtime_paths()
 
 
@@ -253,6 +262,10 @@ def test_selected_profile_drives_song_identity_prompt_and_decisions(tmp_path):
                 "from src.autoslice.song_repair import live_performance_failure_reason_codes; "
                 "from src.autoslice.review_evidence import SourceCue; "
                 "from src.autoslice.semantic_candidate_selector import build_semantic_recall_prompt; "
+                "from src.autoslice.chat_authority import canonicalize_hard_surfaces; "
+                "from src.autoslice.speaker_session_router import REQUEST_SCHEMA_VERSION; "
+                "from src.autoslice.speaker_routing_session import SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA; "
+                "from scripts.apply_speaker_turn_overrides import HOST_SPEAKER, GUEST_SPEAKER; "
                 "from scripts.gemini_slice_jingting import agy_prompt; "
                 "from scripts.run_auto_review_shadow_pipeline import _ensure_lidousha_prefix, _lidousha_cover_text; "
                 "song_prompt = _prompt(candidate_id='c', attempt_id='a', "
@@ -265,6 +278,10 @@ def test_selected_profile_drives_song_identity_prompt_and_decisions(tmp_path):
                 "'jingting_has_name': 'Another Host' in jingting_prompt, "
                 "'talk_title': _ensure_lidousha_prefix('测试标题'), "
                 "'cover_text': _lidousha_cover_text('【另一位主播】歌切，《测试歌》｜钩子'), "
+                "'surface_text': canonicalize_hard_surfaces('直女哇库哇库'), "
+                "'speaker_labels': [HOST_SPEAKER, GUEST_SPEAKER], "
+                "'routing_schema': REQUEST_SCHEMA_VERSION, "
+                "'session_schema': SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA, "
                 "'ready': READY_DECISION, "
                 "'blocked': BLOCKED_DECISION, "
                 "'reason': live_performance_failure_reason_codes({'mode': 'OTHER_SINGER'})}, "
@@ -286,6 +303,10 @@ def test_selected_profile_drives_song_identity_prompt_and_decisions(tmp_path):
         "jingting_has_name": True,
         "talk_title": "【另一位主播】测试标题",
         "cover_text": "《测试歌》｜钩子",
+        "surface_text": "直女哇库哇库",
+        "speaker_labels": ["主播", "嘉宾"],
+        "routing_schema": "other_host-speaker-routing-request.v3",
+        "session_schema": "other_host-speaker-routing-session-authority.v1",
         "ready": "HOST_VOCAL_PRESENT",
         "blocked": "NO_HOST_VOCAL_DETECTED",
         "reason": ["SONG_NOT_HOST_SINGING"],

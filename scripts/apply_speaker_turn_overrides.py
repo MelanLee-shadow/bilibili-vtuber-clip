@@ -25,6 +25,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice.channel_profile import load_channel_profile
+
+CHANNEL_PROFILE = load_channel_profile(ROOT)
+HOST_SPEAKER = CHANNEL_PROFILE.host_speaker_label
+GUEST_SPEAKER = CHANNEL_PROFILE.guest_speaker_label
+SPEAKER_LABELS = (HOST_SPEAKER, GUEST_SPEAKER)
+SPEAKERS = set(SPEAKER_LABELS)
 
 SRT_BLOCK_RE = re.compile(
     r"(?ms)^\s*(\d+)\s*\n"
@@ -32,15 +39,19 @@ SRT_BLOCK_RE = re.compile(
     r"(\d{2}:\d{2}:\d{2},\d{3})\s*\n"
     r"(.*?)(?=\n{2,}|\Z)"
 )
-LABEL_RE = re.compile(r"^\[(李豆沙|连线)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)$", re.S)
-SPEAKERS = {"李豆沙", "连线"}
-SPEAKER_SUBTITLE_STYLE_ID = "lidousha-speaker-sapphire-host-white-guest-v2"
+LABEL_RE = re.compile(
+    r"^\[(" + "|".join(re.escape(value) for value in SPEAKER_LABELS) + r")(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)$",
+    re.S,
+)
+SPEAKER_SUBTITLE_STYLE_ID = (
+    f"{CHANNEL_PROFILE.profile_id}-speaker-sapphire-host-white-guest-v2"
+)
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 # Ivan-approved production contract (2026-07-10):
-# - every Li Dousha cue must byte-for-byte reuse the established sapphire72
+# - every host cue must byte-for-byte reuse the established sapphire72
 #   typography/colour metrics;
-# - every non-Li-Dousha cue uses the white style accepted in the v11 review,
+# - every guest cue uses the white style accepted in the v11 review,
 #   not a newly invented colour;
 # - overlap cues move only through an event-level MarginV override; they reuse
 #   the exact same two styles and cannot drift in typography or colours.
@@ -159,7 +170,8 @@ def parse_labelled_srt(path: Path) -> list[Cue]:
         label_match = LABEL_RE.match(body)
         if not label_match:
             raise ValueError(
-                f"source cue {source_index} is not labelled as [李豆沙] or [连线]: {body!r}"
+                f"source cue {source_index} is not labelled as "
+                f"[{HOST_SPEAKER}] or [{GUEST_SPEAKER}]: {body!r}"
             )
         cues.append(
             Cue(
@@ -390,7 +402,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     from scripts.run_auto_review_shadow_pipeline import _layout_cue_for_display
 
     for cue in cues:
-        style = "LDS" if cue.speaker == "李豆沙" else "GUEST"
+        style = "LDS" if cue.speaker == HOST_SPEAKER else "GUEST"
         margin_v = 142 if cue.placement == "above" else 0
         visible = f"[{cue.speaker}] {cue.text}" if show_speaker_labels else cue.text
         for start_ms, end_ms, display_text in _layout_cue_for_display(

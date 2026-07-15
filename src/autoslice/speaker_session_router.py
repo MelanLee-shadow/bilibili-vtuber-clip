@@ -1,4 +1,4 @@
-"""Hash-bound acoustic session routing for Li-Dousha speaker finalization.
+"""Hash-bound acoustic session routing for channel speaker finalization.
 
 The router never performs speaker inference itself.  It accepts a claim only
 from a sealed, explicitly configured acoustic provider and binds the decision
@@ -18,12 +18,18 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from scripts.apply_speaker_turn_overrides import atomic_write_text, sha256_file
+from src.autoslice.channel_profile import load_channel_profile
 
 
-REQUEST_SCHEMA_VERSION = "lidousha-speaker-routing-request.v3"
-PROVIDER_SCHEMA_VERSION = "lidousha-speaker-routing-provider-evidence.v3"
-ACOUSTIC_EVIDENCE_SCHEMA_VERSION = "lidousha-speaker-routing-acoustic-evidence.v1"
-CLAIM_SCHEMA_VERSION = "lidousha-speaker-routing-claim.v3"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+PROFILE_ID = CHANNEL_PROFILE.profile_id
+REQUEST_SCHEMA_VERSION = f"{PROFILE_ID}-speaker-routing-request.v3"
+PROVIDER_SCHEMA_VERSION = f"{PROFILE_ID}-speaker-routing-provider-evidence.v3"
+ACOUSTIC_EVIDENCE_SCHEMA_VERSION = (
+    f"{PROFILE_ID}-speaker-routing-acoustic-evidence.v1"
+)
+CLAIM_SCHEMA_VERSION = f"{PROFILE_ID}-speaker-routing-claim.v3"
 ROUTER_POLICY_VERSION = "audited-bundle-acoustic-all-candidates-solo-host.v3"
 FAST_SOLO = "FAST_SOLO"
 RUN_BINARY_FINALIZER = "RUN_BINARY_FINALIZER"
@@ -313,7 +319,7 @@ def routing_runtime_fingerprint(
     current = validate_provider_authority(provider_authority)
     root = (repo_root or Path(__file__).resolve().parents[2]).resolve(strict=True)
     digest = hashlib.sha256()
-    digest.update(b"lidousha-speaker-routing-runtime.v2\0")
+    digest.update(f"{PROFILE_ID}-speaker-routing-runtime.v2\0".encode("utf-8"))
     for relative in RUNTIME_CODE_PATHS:
         path = (root / relative).resolve(strict=True)
         if not path.is_file():
