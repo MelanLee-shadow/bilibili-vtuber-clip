@@ -123,7 +123,14 @@ def _has_exact_av_streams(path: Path) -> bool:
 
 
 def song_completion_evidence(
-    record: dict, *, has_exact_av_streams=None, host_vocal_profile=None
+    record: dict,
+    *,
+    has_exact_av_streams=None,
+    host_vocal_profile=None,
+    host_vocal_present_decision="LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
+    host_vocal_absent_decision="NO_LIDOUSHA_VOCAL_DETECTED",
+    verified_host_singing_decision="VERIFIED_LIDOUSHA_SINGING",
+    host_not_singing_reason="SONG_NOT_LIDOUSHA_SINGING",
 ) -> dict:
     """Verify the positive, hash-bound proof required to deliver a song.
 
@@ -657,10 +664,10 @@ def song_completion_evidence(
             )
             if host_error is not None:
                 failures.append("SONG_HOST_VOCAL_PROOF_INVALID")
-            elif host_vocal_status != "READY" or host_vocal_decision != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS":
+            elif host_vocal_status != "READY" or host_vocal_decision != host_vocal_present_decision:
                 failures.append(
-                    "SONG_NOT_LIDOUSHA_SINGING"
-                    if host_vocal_status == "BLOCKED" and host_vocal_decision == "NO_LIDOUSHA_VOCAL_DETECTED"
+                    host_not_singing_reason
+                    if host_vocal_status == "BLOCKED" and host_vocal_decision == host_vocal_absent_decision
                     else "SONG_HOST_VOCAL_UNPROVEN"
                 )
             else:
@@ -937,7 +944,7 @@ def song_completion_evidence(
         failures.append("SONG_RECUT_ARTIFACT_BINDING_INVALID")
 
     joint_singing_decision = (
-        "VERIFIED_LIDOUSHA_SINGING"
+        verified_host_singing_decision
         if live_performance_status == "READY"
         and live_performance_mode == "LIVE_STREAMER_SINGING"
         and host_vocal_verified
@@ -973,7 +980,13 @@ def song_completion_evidence(
     }
 
 
-def verified_song_fallback_title(song_title: str | None, hook: str | None) -> str | None:
+def verified_song_fallback_title(
+    song_title: str | None,
+    hook: str | None,
+    *,
+    song_hook_template: str = "【李豆沙】豆沙歌，《{song_title}》｜{hook}",
+    song_plain_template: str = "【李豆沙】豆沙歌，直播间唱《{song_title}》",
+) -> str | None:
     """Build a hook-bearing fallback when semantic publish staging was advisory-blocked."""
     song_title = str(song_title or "").strip()
     if not song_title:
@@ -986,5 +999,5 @@ def verified_song_fallback_title(song_title: str | None, hook: str | None) -> st
     # owns the name; keep only the hook phrase before a repeated quote.
     hook = re.split(r"[《「『]", hook, maxsplit=1)[0].rstrip("：:｜|、 ")
     if hook and hook != "确定性歌检测补充(演唱段)":
-        return f"【李豆沙】豆沙歌，《{song_title}》｜{hook[:16]}"
-    return f"【李豆沙】豆沙歌，直播间唱《{song_title}》"
+        return song_hook_template.format(song_title=song_title, hook=hook[:16])
+    return song_plain_template.format(song_title=song_title)

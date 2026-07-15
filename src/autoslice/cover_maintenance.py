@@ -30,7 +30,7 @@ def delivered_paths(date: str, rec: dict) -> tuple[Path, Path] | None:
         mp4 = Path(rec["delivered"])
     else:
         name = _runner.safe_name(rec.get("hook", ""), rec.get("candidate_id", ""))
-        mp4 = _runner.REPO_ROOT / "lidousha" / date / f"{name}.mp4"
+        mp4 = _runner.profile_delivery_root() / date / f"{name}.mp4"
     if not mp4.is_file():
         return None
     return mp4, mp4.with_suffix(".cover.png")
@@ -195,7 +195,7 @@ def repair_covers(
         try:
             with open(log_path, "a", encoding="utf-8") as sink:
                 completed = subprocess.run(
-                    [sys.executable, str(_runner.REPO_ROOT / "scripts" / "regenerate_lidousha_cover.py"),
+                    [sys.executable, str(_runner.profile_tool("cover_regenerator")),
                      "--title", str(rec["title"]), *src_args,
                      "--candidate-id", str(cid), "--ai-bg", str(ai_background),
                      "--out", str(generated_cover)],

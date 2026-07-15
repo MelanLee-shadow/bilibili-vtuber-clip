@@ -135,7 +135,7 @@ def known_song_titles() -> list[str]:
     include in both delivery and withheld runs.
     """
 
-    path = _runner.REPO_ROOT / "assets" / "lidousha" / "known_songs.json"
+    path = _runner.profile_asset_file("known_songs")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):

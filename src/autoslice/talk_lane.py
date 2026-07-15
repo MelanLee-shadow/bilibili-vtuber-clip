@@ -445,7 +445,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             # The producer now fails before delivery.  Keep cleanup for old
             # partial/stale attempts, then classify this deterministic lane so
             # the bounded title retry policy can act on it.
-            delivered = _runner.REPO_ROOT / "lidousha" / date
+            delivered = _runner.profile_delivery_root() / date
             for f in delivered.glob(f"{delivery_name}.*"):
                 f.unlink(missing_ok=True)
             recuts = out_root / cid / "replacement_recuts"
@@ -475,7 +475,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         return result
     if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
         # No delivery with a cid title / cid-text cover — clean and retry later.
-        delivered = _runner.REPO_ROOT / "lidousha" / date
+        delivered = _runner.profile_delivery_root() / date
         for f in delivered.glob(f"{delivery_name}.*"):
             f.unlink(missing_ok=True)
         recuts = out_root / cid / "replacement_recuts"

@@ -96,6 +96,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
@@ -139,6 +140,35 @@ from src.autoslice.visual_song_discovery import (
     union_visual_song_candidates,
 )
 
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+PROFILE_ID = CHANNEL_PROFILE.profile_id
+PROFILE_DISPLAY_NAME = CHANNEL_PROFILE.display_name
+PROFILE_OUTPUT_DIRECTORY = CHANNEL_PROFILE.output_directory
+PROFILE_HOST_SPEAKER_LABEL = CHANNEL_PROFILE.host_speaker_label
+PROFILE_GUEST_SPEAKER_LABEL = CHANNEL_PROFILE.guest_speaker_label
+HOST_VOCAL_PRESENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_present")
+HOST_VOCAL_ABSENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_absent")
+VERIFIED_HOST_SINGING_DECISION = CHANNEL_PROFILE.decision("verified_host_singing")
+HOST_NOT_SINGING_REASON = CHANNEL_PROFILE.decision("host_not_singing_reason")
+LYRIC_VOCAL_SUBJECT = CHANNEL_PROFILE.decision("lyric_vocal_subject")
+
+
+def profile_asset_file(key: str) -> Path:
+    return CHANNEL_PROFILE.asset_file(key, repo_root=REPO_ROOT)
+
+
+def profile_asset_directory(key: str) -> Path:
+    return CHANNEL_PROFILE.asset_directory(key, repo_root=REPO_ROOT)
+
+
+def profile_delivery_root() -> Path:
+    return CHANNEL_PROFILE.delivery_root_for(REPO_ROOT)
+
+
+def profile_tool(key: str) -> Path:
+    return CHANNEL_PROFILE.tool(key, repo_root=REPO_ROOT)
+
+
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 # Ivan 2026-07-13: during the speaker data-accumulation phase every delivered
 # clip keeps the single host (李豆沙) subtitle style and speaker uncertainty
@@ -147,7 +177,7 @@ BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 SPEAKER_MODE = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
 if SPEAKER_MODE not in {"uniform_host", "required", "auto"}:
     SPEAKER_MODE = "uniform_host"
-ROOM = os.environ.get("AUTOSLICE_ROOM", "22966160")
+ROOM = os.environ.get("AUTOSLICE_ROOM", CHANNEL_PROFILE.room_id)
 REC_ROOT = Path(
     os.environ.get(
         "AUTOSLICE_REC_ROOT",
@@ -161,11 +191,14 @@ HOST_VOCAL_PYTHON = Path(os.environ.get("AUTOSLICE_HOST_VOCAL_PYTHON", str(BASE 
 HOST_VOCAL_PROFILE = Path(
     os.environ.get(
         "AUTOSLICE_HOST_VOCAL_PROFILE",
-        str(REPO_ROOT / "assets/lidousha/voiceprint_profile.v1.json"),
+        str(profile_asset_file("voiceprint_profile")),
     )
 )
 HOST_VOCAL_REFERENCE_DIR = Path(
-    os.environ.get("AUTOSLICE_HOST_VOCAL_REFERENCE_DIR", str(BASE / "voiceprints/lidousha"))
+    os.environ.get(
+        "AUTOSLICE_HOST_VOCAL_REFERENCE_DIR",
+        str(BASE / "voiceprints" / CHANNEL_PROFILE.voiceprint_reference_subdirectory),
+    )
 )
 HOST_VOCAL_MODEL_DIR = Path(
     os.environ.get(
@@ -194,7 +227,7 @@ AUTOMATIC_MAINTENANCE_NOT_BEFORE = os.environ.get(
 SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
     {
         "SONG_BACKGROUND_PLAYBACK_ONLY",
-        "SONG_NOT_LIDOUSHA_SINGING",
+        HOST_NOT_SINGING_REASON,
     }
 )
 SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
@@ -290,34 +323,29 @@ def pipeline_fingerprint() -> str:
         "scripts/gemini_slice_jingting.py",
         "scripts/llm_via_cpa.sh",
         "scripts/produce_slice_package.py",
-        "scripts/regenerate_lidousha_cover.py",
         "scripts/repair_reviewed_covers.py",
         "scripts/resume_frozen_talk_package.py",
         "scripts/run_auto_review_shadow_pipeline.py",
         "scripts/run_full_session_selector_cpa_shadow.py",
-        "assets/lidousha/entity_confusables.json",
-        "assets/lidousha/glossary.txt",
-        "assets/lidousha/intro/branding_intro.v1.json",
-        "assets/lidousha/known_songs.json",
-        "assets/lidousha/persona.md",
-        "assets/lidousha/slice_selection_metric.md",
-        "assets/lidousha/subtitle_correction_principles.md",
-        "assets/lidousha/timely_terms.json",
-        "assets/lidousha/topic_entity_graph.json",
-        "assets/lidousha/title_style.md",
-        "assets/lidousha/voiceprint_profile.v1.json",
     }
     paths = [REPO_ROOT / relative for relative in explicit]
+    paths.append(profile_tool("cover_regenerator"))
+    paths.extend(CHANNEL_PROFILE.fingerprint_paths(repo_root=REPO_ROOT))
     autoslice_src = REPO_ROOT / "src" / "autoslice"
     paths.extend(autoslice_src.rglob("*.py") if autoslice_src.is_dir() else [])
-    cover_fonts = REPO_ROOT / "assets" / "lidousha" / "fonts"
-    paths.extend(path for path in cover_fonts.rglob("*") if path.is_file())
+
+    def path_label(path: Path) -> str:
+        try:
+            return path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            return str(path)
+
     missing = [path for path in paths if not path.is_file()]
     for path in missing:
-        hasher.update(path.relative_to(REPO_ROOT).as_posix().encode("utf-8") + b"\0MISSING\0")
+        hasher.update(path_label(path).encode("utf-8") + b"\0MISSING\0")
     paths = [path for path in paths if path.is_file()]
-    for path in sorted(paths, key=lambda value: value.relative_to(REPO_ROOT).as_posix()):
-        relative = path.relative_to(REPO_ROOT).as_posix()
+    for path in sorted(paths, key=path_label):
+        relative = path_label(path)
         hasher.update(relative.encode("utf-8") + b"\0")
         hasher.update(path.read_bytes())
         hasher.update(b"\0")
@@ -360,7 +388,7 @@ def candidate_text_override_path(candidate_id: str) -> Path | None:
         raise ValueError("unsafe candidate id for subtitle text override")
     if human_truth_mode() == "withheld":
         return None
-    root = REPO_ROOT / "assets" / "lidousha" / "subtitle_text_overrides"
+    root = profile_asset_directory("subtitle_text_overrides")
     path = root / f"{candidate_id}.text.v1.json"
     if not path.exists():
         return None
@@ -378,7 +406,7 @@ def candidate_subtitle_regression_path(candidate_id: str) -> Path | None:
         raise ValueError("unsafe candidate id for subtitle regression")
     if human_truth_mode() == "withheld":
         return None
-    root = REPO_ROOT / "assets" / "lidousha" / "subtitle_regressions"
+    root = profile_asset_directory("subtitle_regressions")
     path = root / f"{candidate_id}.subtitle-regression.v1.json"
     if not path.exists():
         return None
@@ -396,7 +424,7 @@ def candidate_speaker_override_path(candidate_id: str) -> Path | None:
         raise ValueError("unsafe candidate id for speaker override")
     if human_truth_mode() == "withheld":
         return None
-    root = REPO_ROOT / "assets" / "lidousha" / "speaker_overrides"
+    root = profile_asset_directory("speaker_overrides")
     path = root / f"{candidate_id}.speaker.v1.json"
     if not path.exists():
         return None
@@ -478,7 +506,6 @@ from src.autoslice.song_completion import (  # noqa: E402
     _expected_song_stream_contract,
     _expected_song_recut_command,
     _has_exact_av_streams,
-    verified_song_fallback_title,
 )
 from src.autoslice.song_lane import (  # noqa: E402
     _srt_cue_spans,
@@ -592,6 +619,19 @@ def song_completion_evidence(record: dict) -> dict:
         record,
         has_exact_av_streams=_has_exact_av_streams,
         host_vocal_profile=HOST_VOCAL_PROFILE,
+        host_vocal_present_decision=HOST_VOCAL_PRESENT_DECISION,
+        host_vocal_absent_decision=HOST_VOCAL_ABSENT_DECISION,
+        verified_host_singing_decision=VERIFIED_HOST_SINGING_DECISION,
+        host_not_singing_reason=HOST_NOT_SINGING_REASON,
+    )
+
+
+def verified_song_fallback_title(song_title: str | None, hook: str | None) -> str | None:
+    return _song_completion.verified_song_fallback_title(
+        song_title,
+        hook,
+        song_hook_template=CHANNEL_PROFILE.song_hook_template,
+        song_plain_template=CHANNEL_PROFILE.song_plain_template,
     )
 
 
@@ -681,9 +721,9 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
         relatives = (
             "scripts/produce_slice_package.py",
             "src/autoslice/speaker_finalizer.py",
-            "assets/lidousha/voiceprint_profile.v1.json",
+            profile_asset_file("voiceprint_profile"),
         )
-    paths = [REPO_ROOT / relative for relative in relatives]
+    paths = [relative if isinstance(relative, Path) else REPO_ROOT / relative for relative in relatives]
     if failure_kind in {"speaker_evidence", "runtime_prerequisite"}:
         override = candidate_speaker_override_path(candidate_id)
         if override is not None:
@@ -754,6 +794,7 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 def child_env() -> dict[str, str]:
     env = os.environ.copy()
+    env.setdefault("AUTOSLICE_PROFILE", PROFILE_ID)
     env.update(load_env_file(CPA_ENV))
     # Gemini API is the automatic source-context failover when the AGY account
     # is quota-limited.  Import only these named secrets from the recorder env;
@@ -776,7 +817,7 @@ def child_env() -> dict[str, str]:
     blind_timely_terms = os.environ.get("AUTOSLICE_BLIND_TIMELY_TERMS")
     configured_timely_terms = os.environ.get("AUTOSLICE_TIMELY_TERMS")
     runtime_timely_terms = BASE / "state" / "timely_terms.json"
-    committed_timely_terms = REPO_ROOT / "assets" / "lidousha" / "timely_terms.json"
+    committed_timely_terms = profile_asset_file("timely_terms")
     if truth_mode == "withheld":
         timely_terms = Path(blind_timely_terms) if blind_timely_terms else None
     elif configured_timely_terms:
@@ -799,7 +840,7 @@ def child_env() -> dict[str, str]:
     blind_topic_graph = os.environ.get("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH")
     configured_topic_graph = os.environ.get("AUTOSLICE_TOPIC_ENTITY_GRAPH")
     runtime_topic_graph = BASE / "state" / "topic_entity_graph.json"
-    committed_topic_graph = REPO_ROOT / "assets" / "lidousha" / "topic_entity_graph.json"
+    committed_topic_graph = profile_asset_file("topic_entity_graph")
     if truth_mode == "withheld":
         topic_graph = Path(blind_topic_graph) if blind_topic_graph else None
     elif configured_topic_graph:
@@ -1006,7 +1047,7 @@ def runtime_health_error() -> str | None:
     pause without touching any candidate state.
     """
 
-    tracked_speaker_profile = REPO_ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+    tracked_speaker_profile = profile_asset_file("voiceprint_profile")
     required = {
         "tracked_speaker_profile": tracked_speaker_profile,
         "talk_producer": REPO_ROOT / "scripts" / "produce_slice_package.py",

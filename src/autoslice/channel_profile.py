@@ -85,19 +85,31 @@ class ChannelProfile:
     def delivery_root(self) -> Path:
         return self.repo_root / self.output_directory
 
-    def asset_file(self, key: str) -> Path:
+    def delivery_root_for(self, repo_root: Path) -> Path:
+        """Rebase delivery under a test/eval repo while keeping profile policy."""
+
+        return repo_root / self.output_directory
+
+    def _rebase_repo_path(self, path: Path, repo_root: Path | None) -> Path:
+        if repo_root is None:
+            return path
+        return repo_root / path.relative_to(self.repo_root)
+
+    def asset_file(self, key: str, *, repo_root: Path | None = None) -> Path:
         try:
-            return self.asset_files[key]
+            path = self.asset_files[key]
         except KeyError as exc:
             raise ChannelProfileError(f"profile {self.profile_id!r} has no asset file {key!r}") from exc
+        return self._rebase_repo_path(path, repo_root)
 
-    def asset_directory(self, key: str) -> Path:
+    def asset_directory(self, key: str, *, repo_root: Path | None = None) -> Path:
         try:
-            return self.asset_directories[key]
+            path = self.asset_directories[key]
         except KeyError as exc:
             raise ChannelProfileError(
                 f"profile {self.profile_id!r} has no asset directory {key!r}"
             ) from exc
+        return self._rebase_repo_path(path, repo_root)
 
     def decision(self, key: str) -> str:
         try:
@@ -105,22 +117,31 @@ class ChannelProfile:
         except KeyError as exc:
             raise ChannelProfileError(f"profile {self.profile_id!r} has no decision {key!r}") from exc
 
-    def tool(self, key: str) -> Path:
+    def tool(self, key: str, *, repo_root: Path | None = None) -> Path:
         try:
-            return self.tools[key]
+            path = self.tools[key]
         except KeyError as exc:
             raise ChannelProfileError(f"profile {self.profile_id!r} has no tool {key!r}") from exc
+        return self._rebase_repo_path(path, repo_root)
 
     def format_song_title(self, song_title: str, *, hook: str | None = None) -> str:
         if hook:
             return self.song_hook_template.format(song_title=song_title, hook=hook)
         return self.song_plain_template.format(song_title=song_title)
 
-    def fingerprint_paths(self) -> tuple[Path, ...]:
-        paths: list[Path] = [self.manifest_path]
-        paths.extend(self.asset_file(key) for key in self.fingerprint_asset_keys)
+    def fingerprint_paths(self, *, repo_root: Path | None = None) -> tuple[Path, ...]:
+        manifest = self.manifest_path
+        if repo_root is not None:
+            try:
+                manifest = repo_root / manifest.relative_to(self.repo_root)
+            except ValueError:
+                pass
+        paths: list[Path] = [manifest]
+        paths.extend(
+            self.asset_file(key, repo_root=repo_root) for key in self.fingerprint_asset_keys
+        )
         for key in self.fingerprint_directory_keys:
-            root = self.asset_directory(key)
+            root = self.asset_directory(key, repo_root=repo_root)
             if root.is_dir():
                 paths.extend(path for path in root.rglob("*") if path.is_file())
             else:

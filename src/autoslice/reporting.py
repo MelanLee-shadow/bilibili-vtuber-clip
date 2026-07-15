@@ -12,7 +12,7 @@ _runner = RunnerProxy()
 
 
 def write_reports(date: str, state: dict) -> None:
-    delivery = _runner.REPO_ROOT / "lidousha" / date
+    delivery = _runner.profile_delivery_root() / date
     delivery.mkdir(parents=True, exist_ok=True)
 
     def fmt_dur(pick: dict) -> str:
@@ -76,7 +76,7 @@ def write_reports(date: str, state: dict) -> None:
             f"| {s.get('boundary_verdict') or '?'} "
             f"| {pick.get('cover_status') or s.get('cover_status') or '?'} |"
         )
-    lines += ["", f"## 歌切（至多 {_runner.MAX_SONGS_PER_DATE} 个、按弹幕量排序；仅李豆沙本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）", ""]
+    lines += ["", f"## 歌切（至多 {_runner.MAX_SONGS_PER_DATE} 个、按弹幕量排序；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）", ""]
     if songs:
         lines += ["| 歌 | 弹幕 | 门判定 | 原因码 | 标题 | 交付 |", "|---|---|---|---|---|---|"]
         for song in songs:
@@ -118,6 +118,6 @@ def write_reports(date: str, state: dict) -> None:
         f"- 日期: {date}  状态: {state.get('status')}\n"
         f"- 谈话: {delivered_talk} 交付(自修复 {repaired}, 不可修复 {unrepairable}) / {len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
         f"- 歌切: {delivered_songs} 交付 / {blocked_songs} 门拦 / {len(songs)} 尝试 (pending {len(state.get('pending_song', []))})\n"
-        f"- 交付: {_runner.REPO_ROOT}/lidousha/{date}/ (Mac launchd 拉取)\n",
+        f"- 交付: {_runner.profile_delivery_root()}/{date}/ (Mac launchd 拉取)\n",
         encoding="utf-8",
     )

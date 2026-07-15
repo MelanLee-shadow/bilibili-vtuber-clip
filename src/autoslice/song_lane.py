@@ -111,16 +111,16 @@ def song_delivery_ok(
         isinstance(completion_evidence, dict)
         and completion_evidence.get("ready") is True
         and completion_evidence.get("host_vocal_status") == "READY"
-        and completion_evidence.get("host_vocal_decision") == "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
+        and completion_evidence.get("host_vocal_decision") == _runner.HOST_VOCAL_PRESENT_DECISION
         and completion_evidence.get("live_performance_status") == "READY"
         and completion_evidence.get("live_performance_mode") == "LIVE_STREAMER_SINGING"
-        and completion_evidence.get("joint_singing_decision") == "VERIFIED_LIDOUSHA_SINGING"
+        and completion_evidence.get("joint_singing_decision") == _runner.VERIFIED_HOST_SINGING_DECISION
         and isinstance(proof_path, str)
         and isinstance(proof_sha256, str)
         and _matches_sha256(Path(proof_path), proof_sha256)
     )
     identity_failure = (
-        "SONG_NOT_LIDOUSHA_SINGING" in reasons
+        _runner.HOST_NOT_SINGING_REASON in reasons
         or "SONG_BACKGROUND_PLAYBACK_ONLY" in reasons
         or "SONG_LIVE_PERFORMANCE_UNPROVEN" in reasons
         or any(
@@ -330,7 +330,7 @@ def produce_song(date: str, item: dict) -> dict:
                  "--title-llm-command", _runner.CPA_CMD_TITLE,
                  "--cover-art-direction-llm-command", _runner.CPA_CMD_STRUCTURED,
                  "--lrc-provider", "auto", "--burn-preview", "--publish-staging",
-                 "--branding-intro-manifest", str(_runner.REPO_ROOT / "assets" / "lidousha" / "intro" / "branding_intro.v1.json"),
+                 "--branding-intro-manifest", str(_runner.profile_asset_file("branding_intro_manifest")),
                  "--host-vocal-python", str(_runner.HOST_VOCAL_PYTHON),
                  "--host-vocal-reference-profile", str(_runner.HOST_VOCAL_PROFILE),
                  "--host-vocal-reference-dir", str(_runner.HOST_VOCAL_REFERENCE_DIR),

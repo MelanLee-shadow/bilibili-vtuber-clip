@@ -191,7 +191,7 @@ def _write_song_active_record(
         if publish_path.parent != artifact_root or publish_path.is_symlink():
             raise SongDeliveryError("song deferred publish path escapes the materialized artifact root")
 
-        cover_text = title.removeprefix("【李豆沙】豆沙歌，").strip() or title
+        cover_text = title.removeprefix(_runner.CHANNEL_PROFILE.song_title_prefix).strip() or title
         cover_generation = {
             "workflow": "verified-song-delivery-deferred-cover.v1",
             "status": "BLOCKED",
@@ -379,7 +379,7 @@ def _commit_verified_song_package(
             raise SongDeliveryError(f"hash-bound delivery sidecar drifted: {role}")
 
     name = _song_delivery_basename(title, delivery_candidate_id)
-    delivery = _runner.REPO_ROOT / "lidousha" / date
+    delivery = _runner.profile_delivery_root() / date
     delivery.mkdir(parents=True, exist_ok=True)
     specs: dict[str, tuple[Path, Path, str]] = {
         "video": (burned, delivery / f"{name}.mp4", video_sha256),
