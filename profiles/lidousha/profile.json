@@ -1,0 +1,68 @@
+{
+  "schema_version": "vtuber-slice.channel-profile.v1",
+  "profile_id": "lidousha",
+  "identity": {
+    "display_name": "李豆沙",
+    "room_id": "22966160",
+    "output_directory": "lidousha",
+    "host_speaker_label": "李豆沙",
+    "guest_speaker_label": "连线"
+  },
+  "assets": {
+    "root": "assets/lidousha",
+    "files": {
+      "clip_opening_address": "clip_opening_address.json",
+      "entity_confusables": "entity_confusables.json",
+      "glossary": "glossary.txt",
+      "branding_intro_manifest": "intro/branding_intro.v1.json",
+      "known_songs": "known_songs.json",
+      "persona": "persona.md",
+      "slice_selection_metric": "slice_selection_metric.md",
+      "subtitle_correction_principles": "subtitle_correction_principles.md",
+      "timely_terms": "timely_terms.json",
+      "topic_entity_graph": "topic_entity_graph.json",
+      "title_style": "title_style.md",
+      "voiceprint_profile": "voiceprint_profile.v1.json"
+    },
+    "directories": {
+      "fonts": "fonts",
+      "speaker_overrides": "speaker_overrides",
+      "subtitle_regressions": "subtitle_regressions",
+      "subtitle_text_overrides": "subtitle_text_overrides"
+    },
+    "pipeline_fingerprint_files": [
+      "entity_confusables",
+      "glossary",
+      "branding_intro_manifest",
+      "known_songs",
+      "persona",
+      "slice_selection_metric",
+      "subtitle_correction_principles",
+      "timely_terms",
+      "topic_entity_graph",
+      "title_style",
+      "voiceprint_profile"
+    ],
+    "pipeline_fingerprint_directories": [
+      "fonts"
+    ]
+  },
+  "runtime": {
+    "voiceprint_reference_subdirectory": "lidousha"
+  },
+  "titles": {
+    "song_prefix": "【李豆沙】豆沙歌，",
+    "song_hook_template": "【李豆沙】豆沙歌，《{song_title}》｜{hook}",
+    "song_plain_template": "【李豆沙】豆沙歌，直播间唱《{song_title}》"
+  },
+  "decisions": {
+    "host_vocal_present": "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
+    "host_vocal_absent": "NO_LIDOUSHA_VOCAL_DETECTED",
+    "verified_host_singing": "VERIFIED_LIDOUSHA_SINGING",
+    "host_not_singing_reason": "SONG_NOT_LIDOUSHA_SINGING",
+    "lyric_vocal_subject": "LIDOUSHA"
+  },
+  "tools": {
+    "cover_regenerator": "scripts/regenerate_lidousha_cover.py"
+  }
+}
