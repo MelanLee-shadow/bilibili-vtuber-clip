@@ -417,10 +417,6 @@ def _search_score(query: str, row: Mapping[str, Any]) -> float:
     return best
 
 
-def _stable_search_url(query: str) -> str:
-    return "https://bgm.tv/subject_search/" + urllib.parse.quote(query, safe="") + "?cat=2"
-
-
 def _search_subjects(
     client: BoundedHttpClient,
     endpoint: str,

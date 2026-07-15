@@ -16,7 +16,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult, _parse_srt, run_shadow_pipeline
-from src.autoslice.branding_intro import require_branding_intro
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.subtitle_fidelity import (
     apply_subtitle_fidelity_guard,

@@ -846,6 +846,32 @@ def test_zero_byte_xml_falls_back_to_sibling_jsonl(tmp_path):
     ]
 
 
+def test_healthy_xml_is_hashed_and_kept_as_danmaku_authority(tmp_path):
+    segment = tmp_path / "22966160_20260710-19-00-17.mp4"
+    segment.write_bytes(b"media")
+    xml = segment.with_suffix(".xml")
+    xml.write_text(
+        "<?xml version='1.0' encoding='utf-8'?><i>"
+        '<d p="4.487,1,25,16777215,1782961247649,0,ea71f718,578340245">恋青</d>'
+        "</i>",
+        encoding="utf-8",
+    )
+    segment.with_suffix(".jsonl").write_text("", encoding="utf-8")
+
+    evidence = _piece_chat_evidence(
+        {
+            "remote_media": str(segment),
+            "danmaku_xml_local": str(xml),
+        }
+    )
+
+    assert [(item.kind, item.offset_ms, item.text) for item in evidence] == [
+        ("danmaku", 4_487, "恋青")
+    ]
+    assert evidence[0].source == str(xml)
+    assert evidence[0].source_sha256 == hashlib.sha256(xml.read_bytes()).hexdigest()
+
+
 def test_exact_danmaku_read_replaces_asr_span():
     source = _srt("等小室什么时候来看恋死呢", "恋死我自己有看了")
     evidence = [ChatEvidence("danmaku", -8_000, "等小李什么时候来看恋青呢")]

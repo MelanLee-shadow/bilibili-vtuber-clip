@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from .chat_authority import ChatEvidence, load_chat_jsonl, recording_start_epoch_ms
-from .danmaku_evidence import DanmakuItem, load_danmaku_xml
+from .danmaku_evidence import load_danmaku_xml
 
 
 DANMAKU_PRE_CONTEXT_MS = 30_000
@@ -13,6 +14,7 @@ DANMAKU_PRE_CONTEXT_MS = 30_000
 SC_PRE_CONTEXT_MS = 900_000  # include SCs up to 15min before the clip: she CLEARS THE
 
 GIFT_PRE_CONTEXT_MS = 120_000  # thanks for a gift usually follow within a couple
+
 
 def _load_superchats(jsonl_path: Path) -> list[tuple[int, str, str]]:
     """(video_relative_ms, sender_uname, message) for SUPER_CHAT events in a blrec
@@ -27,6 +29,7 @@ def _load_superchats(jsonl_path: Path) -> list[tuple[int, str, str]]:
         for item in load_chat_jsonl(jsonl_path)
         if item.kind == "superchat"
     ]
+
 
 def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
     """Load ordinary danmaku and SC independently from their healthy source.
@@ -63,6 +66,7 @@ def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
     evidence.extend(item for item in jsonl_items if item.kind == "superchat")
     evidence.extend(item for item in jsonl_items if item.kind == "gift")
     return evidence
+
 
 def _load_independent_chat_support_srts(media_path: Path) -> list[str]:
     """Load only transcripts that never saw chat or rendered video text.

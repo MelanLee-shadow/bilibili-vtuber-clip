@@ -6,12 +6,8 @@ from .chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
     normalize_chat_text,
-    normalize_srt_payload_text,
     normalize_srt_payload_window,
-    registered_entity_names,
-    sanitize_chat_display_text,
 )
-from .jingting_chunker import parse_srt_cues
 
 
 def _format_srt_timestamp(ms: int) -> str:
@@ -19,6 +15,7 @@ def _format_srt_timestamp(ms: int) -> str:
     minutes, remainder = divmod(remainder, 60_000)
     seconds, millis = divmod(remainder, 1_000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
 
 def _render_cues_to_srt(cues) -> str:
     """Render parsed cues back to SRT text, preserving index/timestamps."""
@@ -28,6 +25,7 @@ def _render_cues_to_srt(cues) -> str:
         for cue in cues
     ]
     return "\n\n".join(blocks) + ("\n" if blocks else "")
+
 
 def verify_chat_authority_final_surfaces(
     audit: dict,
