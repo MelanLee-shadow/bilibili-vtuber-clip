@@ -4,6 +4,38 @@ import json
 import pytest
 
 from src.autoslice import read_aloud_llm_verifier as verifier_module
+from src.autoslice.chat_authority import (
+    ChatEvidence,
+    apply_authoritative_chat_evidence,
+)
+from src.autoslice.jingting_chunker import parse_srt_cues
+
+# Real 2026-07-11 case: ASR is structurally deaf (外套→歪了), only the danmaku recovers it.
+_DANMU = "小豆的外套是可以脱的吗？"
+_GARBLE = "小豆歪了可以脱吗"
+
+
+def _srt(*texts: str) -> str:
+    blocks = [
+        f"{i}\n00:00:{i * 5:02d},000 --> 00:00:{i * 5 + 4:02d},000\n{t}"
+        for i, t in enumerate(texts, start=1)
+    ]
+    return "\n\n".join(blocks) + "\n"
+
+
+def _audio_stub(canonical: str):
+    """Stand-in for the AGY audio fallback verifier."""
+
+    def verify(request):
+        return {
+            "schema_version": verifier_module.VERDICT_SCHEMA,
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "canonical_entity": canonical,
+            "confidence": 0.97,
+        }
+
+    return verify
 
 
 def _request(**overrides):
@@ -118,3 +150,46 @@ def test_no_cpa_and_no_audio_preserves_the_preexisting_no_verdict_behavior():
     verify = verifier_module.build_cpa_read_aloud_verifier(None)
 
     assert verify(_request()) is None
+
+
+# --------------------------------------------------------------------------- #
+# integration: CPA drives the real restoration through chat_authority (no audio)
+# --------------------------------------------------------------------------- #
+def test_cpa_read_aloud_restores_garbled_cue_end_to_end_without_audio():
+    source = _srt(_GARBLE, "可以呀")
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _p: json.dumps(
+            {"is_read_aloud": True, "confidence": 0.98, "reason": "问句弹幕紧邻+外套→歪了谐音"},
+            ensure_ascii=False,
+        )
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, _DANMU)],
+        support_srt_texts=[source],
+        entity_verifier=verify,
+    )
+
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert texts[0] == _DANMU, texts  # garble replaced by the danmaku she read, no audio used
+    row = audit["read_aloud_arbitrations"][0]
+    assert row["outcome"] == "authority_confirmed_by_audio"
+    assert row["verdict"]["reason_code"] == "READ_ALOUD_CONFIRMED_BY_CONTEXT"
+
+
+def test_cpa_uncertain_falls_back_to_audio_that_keeps_asr():
+    source = _srt(_GARBLE)
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _p: json.dumps({"is_read_aloud": False, "confidence": 0.3}),
+        next_verifier=_audio_stub(_GARBLE),  # audio insists she said the ASR span
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, _DANMU)],
+        entity_verifier=verify,
+    )
+
+    assert parse_srt_cues(output)[0].text == _GARBLE
+    assert audit["read_aloud_arbitrations"][0]["outcome"] == "acoustic_span_confirmed_by_audio"
