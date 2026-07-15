@@ -50,7 +50,7 @@
 
 **下一步：** 新改动直接落到对应子系统模块；runner 只保留 runtime authority 与顶层编排。不要因为文件行数继续机械拆分。
 
-### channel profile 公共化（2026-07-15，本地完成、未部署）
+### channel profile 公共化 + runtime 收口（2026-07-15；profile 已部署，本轮清理未部署）
 
 **目标：** 把李豆沙从流水线代码里的隐含全局常量收进默认
 `profiles/lidousha/profile.json`；其他用户只需新增 profile 与对应资产即可切自己的直播间，默认 profile 的实际路径、协议 token、提示词和标题/封面结果保持旧行为。
@@ -68,12 +68,16 @@
 - **xinyi「展示新衣服」线上换源修正（Ivan 7/15 报「第一句念弹幕『外套能脱吗』字幕还是错」）**：`BV1puNv6QEXj` 7/15 06:00Z 被重试 timer 投出的是**旧 garble 烧录**——delivery-divergence 根因：7/13 prod 树 agy+cpa 精听已修对（`小豆歪了`→`小豆外套`、`眼镜`→`眼罩`、素颜/大概/我的耳朵），但 7/14 evals 重产撞 Gemini 配额回退 garble 并成了交付/上传件。`bili_archive_tool.py replace` 零配额换成 prod 正确烧录（old cid 39966081919→new **39967131174**，sha 673b1c3f，`edit code 0`，现「修改内容待审核」）；4 帧肉眼核对字幕+片头。证据 `reports/lidousha-uploads-20260714/xinyi.correction.uploaded.json`（+ postpublish）。pending-provisional 该件已闭。
 - **CPA 念读 verifier 层真 CPA canary（部分满足下一步）**：用模块自身 `_prompt` 打真实 CPA——正例真 cue#1(`小豆的外套是可以脱的吗？` vs ASR `小豆歪了可以脱吗`)→`is_read_aloud=true conf 0.99`；负例(无关问句弹幕`几点下播？`配无关 ASR)→`false conf 0.99`，证实「问句是强信号非决定性、靠重叠+语篇兜底」。另有整段 danmu-first 复现实验：纯文本+CPA 对念读句 cue#1 与 AGY 一字不差、零误伤（详见对话）。
 - **部署上线（`d2f1463`，2026-07-15T08:03:01Z，Ivan 指令「部署」）**：profile 重构把 `deploy_free_autoslice.sh` 卡住——它只 stream `scripts/src/assets` 漏了 `profiles/`（`e068214` 补齐 10 处 tree 列表），且旧部署 `70e504c` 无 `profiles/` 导致 switch/rollback 在「新增顶层树」上崩（`d2f1463`：manifest 缺失即跳过、备份缺失即打 `.absent` 标记、回滚遇标记则 `rm -rf` 删除新增树）。首次尝试被脚本 REMOTE_VALIDATE 正确拦下、生产回滚 `70e504c` 完好（runner md5 核对）；修好后事务部署成功、runner md5 verified、DISABLED/guard/残留全清。部署后 canary（**已部署模块**+真 CPA）：正例 cue#1→`RESOLVED=小豆的外套是可以脱的吗？`、负例→`DEFERRED`。
+- **runtime god-file 收口（`codex/cleanup-runtime-god-files`）**：standalone producer 降到 422 行、shadow runner 降到 1052 行；review、live-source、recut/publish、boundary/source-media/text/speaker/package-finalization、song/chat/entity-audio 等职责拆为独立模块。selector、frozen resume、song/speaker/topic crawler 的长编排也拆成有界步骤；除一次性历史修复脚本 `repair_false_green_20260709.py` 外，`src/autoslice` + `scripts` 的 1590 个活动函数现在 **0 个超过 300 行**。
+- **防回潮门**：新增 `tests/test_runtime_architecture.py`，固定活动函数 300 行上限，并给 producer/shadow 两个兼容入口设 500/1150 行预算。兼容 re-export、旧 v1 evidence 字段和 `LIDOUSHA_*` alias 有真实调用/历史 hash 约束，保留为显式 compatibility seam；不是未清的重复实现。
+- **接手静态审计修复**：无第三方 linter 环境下用 AST/symtable 查未使用导入、孤儿私有函数、重复定义和未绑定全局；删掉死导入/孤儿 URL helper，并抓到抽取后健康 XML 弹幕分支漏导入 `hashlib` 的潜在 `NameError`。新增健康 XML + source hash 回归，连同零字节 XML fallback 两路均通过。
+- **冻结实案旧/新等价**：以 pre-cleanup `54d5ab9` 和最终清理分支，对 7/11 一条真实 talk 源做相同语义候选（cue 68–87）、固定 CPA verdict、真实 FFmpeg 重切 + Sapphire 字幕烧录的 no-upload 双跑。排除 commit/path/timestamp/hash provenance 后 10/10 JSON 相同；3/3 SRT 与 3/3 MP4 逐字节相同（烧录成片 SHA256 `3341cdfc...a0ad0`、裸重切 `020d73d4...d3c4`、context `df435fe2...ac5`），候选、`AUTO_RECUT`、188450–221350 边界、标题、字幕来源和 reason codes 全同。
 
-**进行中：** 生产已部署 **`d2f1463`**（DEPLOYED_COMMIT 已盖、runner md5 verified、profiles/read_aloud/CPA wiring 就位、DISABLED absent、无 guard/残留）。runner cron `*/10` 将在下次 tick 用新码；uploads 仍 OFF + review-gated。`BV1puNv6QEXj` 换源后待 B 站复审恢复公开。
+**进行中：** 生产仍是已验证的 **`d2f1463`**（profile/read-aloud/CPA wiring 已上线）；本轮 runtime 清理只在本地分支完成，未部署、未上传。`BV1puNv6QEXj` 换源后待 B 站复审恢复公开。
 
-**阻塞：** 无代码 blocker。全仓 **1223 passed**；部署过脚本 REMOTE_VALIDATE（speaker context env/branding intro/speaker runtime assets/全 import/entity+timely+topic 资产校验）+ 部署后 verifier 层真 CPA canary（正/负例）。**未做**同场冻结 session 旧/新 full-pipeline 产物差分——依赖 SHA 合同（prompt 旧/新一致）+ 1223 测试 + review gate + 事务回滚兜底。
+**阻塞：** 无代码 blocker。最终全仓 **1227 passed**（仅 pypinyin 2 条依赖弃用 warning），compileall、architecture gate、5 个入口 CLI smoke、李豆沙完整 profile validator 和 `_template` config-only validator 全过。冻结实案已补足旧/新 selector→shadow→recut/burn talk 链差分；固定 provider 输出用于隔离代码重构，不宣称外部模型本身可逐字节复现。
 
-**下一步：** 观察首个真实 cron tick / 下一场 session 的候选·字幕·标题·封面与 review（uploads OFF，异常在 review 拦下）。念读 near-miss 会走 CPA。如需额外保险可补跑一场冻结 session 的旧/新 full-pipeline 差分；回滚用 `deploy_free_autoslice.sh` 部署上一 commit（脚本现已正确处理新增/移除顶层树）。旧 v1 evidence 字段和 `LIDOUSHA_*` 环境别名暂保留为可读兼容层。
+**下一步：** 本轮代码合入 main 后即结束本地清理；若 Ivan 另行授权部署，再用事务脚本上线并观察 uploads OFF 的真实 cron tick。回滚用 `deploy_free_autoslice.sh` 部署上一 commit（脚本已正确处理新增/移除顶层树）。新频道从 `profiles/_template/profile.json` 复制 manifest，自建 `assets/<profile-id>/`；专名、persona、歌单、标题/tag 策略和声纹都属于该资产包，不塞进小 manifest。
 
 ### 目标
 
