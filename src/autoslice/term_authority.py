@@ -15,11 +15,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from src.autoslice.channel_profile import load_channel_profile
+
+
 _GLOSSARY_TERM_RX = re.compile(r"^[-*]\s*(?:梗词：)?\*{0,2}([^：:（(＝=，,。\s*]{2,12})")
 
-_ASSET_CONFUSABLES = (
-    Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
-)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+_ASSET_CONFUSABLES = CHANNEL_PROFILE.asset_file("entity_confusables")
 
 
 def canonical_pair_sources() -> list[tuple[str, str]]:
@@ -28,14 +31,12 @@ def canonical_pair_sources() -> list[tuple[str, str]]:
 
     pairs: list[tuple[str, str]] = []
     try:
-        from src.autoslice.chat_authority import (
-            _CODE_SWITCH_CANONICAL_SURFACES,
-            _HARD_MEME_CANONICAL_SURFACES,
-            load_referent_groups,
-        )
+        from src.autoslice.chat_authority import load_referent_groups
 
-        pairs.extend(_CODE_SWITCH_CANONICAL_SURFACES)
-        pairs.extend(_HARD_MEME_CANONICAL_SURFACES)
+        pairs.extend(
+            (rule.surface, rule.canonical)
+            for rule in CHANNEL_PROFILE.canonical_surface_rules
+        )
         for group in load_referent_groups(_ASSET_CONFUSABLES):
             for entity in group.entities:
                 for surface in entity.surfaces:

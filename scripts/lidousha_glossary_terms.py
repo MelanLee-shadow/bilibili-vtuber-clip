@@ -25,15 +25,23 @@ the terminology gate simply degrades to the old single-term behaviour).
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
+
+
+CHANNEL_PROFILE = load_channel_profile(ROOT)
 # The repo-vendored glossary is the primary authority; the flat legacy copy is a
 # fallback for older checkouts.
 DEFAULT_GLOSSARY_PATHS: tuple[Path, ...] = (
-    ROOT / "assets" / "lidousha" / "glossary.txt",
+    CHANNEL_PROFILE.asset_file("glossary"),
     ROOT / "lidousha" / "lidousha_glossary.txt",
 )
 # Never return an empty canon list — kmx is the one name that must always be

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
 from src.autoslice.timely_term_crawler import (  # noqa: E402
     BoundedHttpClient,
     CrawlError,
@@ -25,6 +26,9 @@ from src.autoslice.timely_term_crawler import (  # noqa: E402
     snapshot_json,
     write_snapshot_atomically,
 )
+
+
+CHANNEL_PROFILE = load_channel_profile(ROOT)
 
 
 def _parse_now(value: str | None) -> dt.datetime:
@@ -47,12 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=Path,
-        default=ROOT / "assets/lidousha/timely_term_sources.json",
+        default=CHANNEL_PROFILE.asset_file("timely_term_sources"),
     )
     parser.add_argument(
         "--seed",
         type=Path,
-        default=ROOT / "assets/lidousha/timely_term_seeds.json",
+        default=CHANNEL_PROFILE.asset_file("timely_term_seeds"),
     )
     parser.add_argument(
         "--exclude-reviewed-seed",

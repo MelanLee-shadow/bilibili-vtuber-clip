@@ -71,6 +71,15 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         REPO_ROOT / "assets/lidousha/intro/branding_intro.v1.json"
     )
     assert profile.asset_file("known_songs") == REPO_ROOT / "assets/lidousha/known_songs.json"
+    assert profile.asset_file("psplive_roster") == (
+        REPO_ROOT / "assets/lidousha/psplive_roster.v1.md"
+    )
+    assert profile.asset_file("timely_term_seeds") == (
+        REPO_ROOT / "assets/lidousha/timely_term_seeds.json"
+    )
+    assert profile.asset_file("timely_term_sources") == (
+        REPO_ROOT / "assets/lidousha/timely_term_sources.json"
+    )
     assert profile.asset_directory("fonts") == REPO_ROOT / "assets/lidousha/fonts"
     assert profile.voiceprint_reference_subdirectory == "lidousha"
     assert profile.song_title_prefix == "【李豆沙】豆沙歌，"
