@@ -192,3 +192,53 @@ def test_runner_applies_selected_profile_before_building_runtime_paths(tmp_path)
         "delivery": str(REPO_ROOT / "other_host"),
         "references": "/opt/bilive/autoslice/voiceprints/other_host",
     }
+
+
+def test_standalone_producer_applies_selected_profile_to_delivery_and_assets(tmp_path):
+    document = _default_document()
+    document["profile_id"] = "other_host"
+    document["identity"] = {
+        "display_name": "另一位主播",
+        "room_id": "123456",
+        "output_directory": "other_host",
+        "host_speaker_label": "主播",
+        "guest_speaker_label": "嘉宾",
+    }
+    document["runtime"]["voiceprint_reference_subdirectory"] = "other_host"
+    manifest = tmp_path / "other-profile.json"
+    manifest.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["AUTOSLICE_PROFILE_MANIFEST"] = str(manifest)
+    env.pop("AUTOSLICE_PROFILE", None)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; import scripts.produce_slice_package as p; "
+                "print(json.dumps({'profile': p.CHANNEL_PROFILE.profile_id, "
+                "'host': p.CHANNEL_PROFILE.display_name, "
+                "'delivery': str(p.profile_delivery_root()), "
+                "'confusables': str(p.profile_asset_file('entity_confusables')), "
+                "'references': str(p.profile_voiceprint_reference_dir())}, "
+                "ensure_ascii=False))"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "profile": "other_host",
+        "host": "另一位主播",
+        "delivery": str(REPO_ROOT / "other_host"),
+        "confusables": str(REPO_ROOT / "assets/lidousha/entity_confusables.json"),
+        "references": "/opt/bilive/autoslice/voiceprints/other_host",
+    }

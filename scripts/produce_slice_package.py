@@ -67,6 +67,7 @@ from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
 from scripts.gemini_slice_jingting import approved_timely_terms
 from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.chat_authority import (
     ChatEvidence,
     _fragment_spoken_in,
@@ -126,6 +127,52 @@ from src.autoslice.topic_entity_graph import (
     merge_referent_groups,
     resolve_topic_context,
 )
+
+CHANNEL_PROFILE = load_channel_profile(ROOT)
+
+
+def profile_asset_file(key: str) -> Path:
+    """Resolve a selected-profile asset against this producer's repository."""
+
+    return CHANNEL_PROFILE.asset_file(key, repo_root=ROOT)
+
+
+def profile_delivery_root() -> Path:
+    """Return the selected profile's local delivery root."""
+
+    return CHANNEL_PROFILE.delivery_root_for(ROOT)
+
+
+def profile_voiceprint_reference_dir() -> Path:
+    """Return the selected profile's production voiceprint enrollment root."""
+
+    return (
+        Path("/opt/bilive/autoslice/voiceprints")
+        / CHANNEL_PROFILE.voiceprint_reference_subdirectory
+    )
+
+
+def _topic_graph_disabled() -> bool:
+    return (
+        os.environ.get("AUTOSLICE_DISABLE_TOPIC_ENTITY_GRAPH") == "1"
+        or os.environ.get("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH") == "1"
+    )
+
+
+def _topic_graph_path() -> Path:
+    configured = (
+        os.environ.get("AUTOSLICE_TOPIC_ENTITY_GRAPH")
+        or os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH")
+    )
+    return Path(configured) if configured else profile_asset_file("topic_entity_graph")
+
+
+def _topic_graph_expected_sha256() -> str:
+    return (
+        os.environ.get("AUTOSLICE_TOPIC_ENTITY_GRAPH_SHA256")
+        or os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256")
+        or ""
+    )
 
 SNAP_BEFORE_MS = 6_000
 SNAP_AFTER_MS = 9_000
@@ -770,16 +817,13 @@ def _load_term_boundary_surfaces(spec: dict) -> list[str]:
         surfaces.append(str(record.get("canonical") or ""))
         surfaces.extend(str(value) for value in record.get("readings") or [])
         surfaces.extend(str(value) for value in record.get("aliases") or [])
-    if os.environ.get("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH") != "1":
-        graph_path = Path(
-            os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH")
-            or ROOT / "assets" / "lidousha" / "topic_entity_graph.json"
-        )
+    if not _topic_graph_disabled():
+        graph_path = _topic_graph_path()
         if graph_path.is_file() and not graph_path.is_symlink():
             try:
                 graph, _graph_sha = load_topic_entity_graph(
                     graph_path,
-                    expected_sha256=os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", ""),
+                    expected_sha256=_topic_graph_expected_sha256(),
                 )
                 if dt.datetime.now(dt.timezone.utc) <= dt.datetime.fromisoformat(graph["expires_at"]):
                     # Full graph, not topic-resolved: resolution below scopes
@@ -1083,7 +1127,8 @@ def run_speaker_finalizer(
     source_session_anchor_path: Path | None = None,
     mixed_overlap_evidence_path: Path | None = None,
     speaker_python: Path = Path("/opt/bilive/autoslice/venv-diar/bin/python"),
-    reference_dir: Path = Path("/opt/bilive/autoslice/voiceprints/lidousha"),
+    reference_dir: Path | None = None,
+    profile_path: Path | None = None,
     model_dir: Path = Path("/opt/bilive/autoslice/models/campp"),
 ) -> dict:
     """Run the pinned speaker runtime locally on free or through a remote temp.
@@ -1094,7 +1139,8 @@ def run_speaker_finalizer(
 
     safe_cid = re.sub(r"[^A-Za-z0-9_.-]+", "_", candidate_id)[:80]
     local_host = host in {"localhost", "127.0.0.1", "::1"}
-    profile = ROOT / "assets" / "lidousha" / "voiceprint_profile.v1.json"
+    profile = profile_path or profile_asset_file("voiceprint_profile")
+    reference_dir = reference_dir or profile_voiceprint_reference_dir()
     output_srt_path.parent.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     # Clear stale results before reading any runtime prerequisite.  A missing
@@ -1180,11 +1226,21 @@ def run_speaker_finalizer(
                     ["scp", "-q", str(mixed_overlap_evidence_path), f"{host}:{remote_mixed_overlap}"],
                     timeout=120,
                 )
+            try:
+                remote_profile = (
+                    Path("/opt/bilive/autoslice/repo")
+                    / profile.resolve().relative_to(ROOT.resolve())
+                )
+            except ValueError as exc:
+                raise RuntimeError(
+                    "remote speaker finalization requires the selected voiceprint profile "
+                    "to live inside the repository"
+                ) from exc
             remote_command = [
                 str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
                 "--candidate-id", candidate_id,
                 "--media", remote_media, "--text-srt", remote_srt,
-                "--profile", "/opt/bilive/autoslice/repo/assets/lidousha/voiceprint_profile.v1.json",
+                "--profile", str(remote_profile),
                 "--reference-dir", str(reference_dir), "--model-dir", str(model_dir),
                 "--output-srt", remote_output_srt, "--output-ass", remote_output_ass,
                 "--output-manifest", remote_manifest, "--work-dir", f"{remote_dir}/work",
@@ -1564,7 +1620,7 @@ def main(argv: list[str] | None = None) -> int:
         default=_default_speaker_mode(),
         help=(
             "uniform_host = no speaker separation: every cue keeps the single host "
-            "(李豆沙) style and speaker uncertainty can never reject a delivery "
+            f"({CHANNEL_PROFILE.display_name}) style and speaker uncertainty can never reject a delivery "
             "(Ivan 2026-07-13 data-accumulation policy; evidence capture stays passive); "
             "required = always run binary finalizer; auto = verified FAST_SOLO else binary fallback"
         ),
@@ -1611,7 +1667,10 @@ def main(argv: list[str] | None = None) -> int:
     # Mandatory delivery intro (Ivan 2026-07-12): resolve before any expensive
     # stage so an unavailable intro fails the run instead of a late delivery.
     try:
-        branding_intro = require_branding_intro(ROOT)
+        branding_intro = require_branding_intro(
+            ROOT,
+            manifest_path=profile_asset_file("branding_intro_manifest"),
+        )
     except BrandingIntroError as exc:
         raise SystemExit(f"BRANDING_INTRO_UNAVAILABLE: {exc}")
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
@@ -1651,6 +1710,7 @@ def main(argv: list[str] | None = None) -> int:
     # never the processing date.  This prevents future-news leakage when an old
     # stream is repaired later.
     if isinstance(spec.get("date"), str):
+        os.environ["AUTOSLICE_TERM_AS_OF"] = spec["date"]
         os.environ["LIDOUSHA_TERM_AS_OF"] = spec["date"]
 
     cid = spec["candidate_id"]
@@ -1846,9 +1906,7 @@ def main(argv: list[str] | None = None) -> int:
             return audio_entity_verifier(request)
         return None
 
-    static_referent_groups = load_referent_groups(
-        ROOT / "assets" / "lidousha" / "entity_confusables.json"
-    )
+    static_referent_groups = load_referent_groups(profile_asset_file("entity_confusables"))
     dynamic_groups = []
     topic_resolution_audit: dict[str, object] = {
         "schema_version": "topic-resolution.v1",
@@ -1859,16 +1917,13 @@ def main(argv: list[str] | None = None) -> int:
         "scoped_entity_ids": [],
         "evidence": [],
     }
-    if os.environ.get("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH") != "1":
-        graph_path = Path(
-            os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH")
-            or ROOT / "assets" / "lidousha" / "topic_entity_graph.json"
-        )
+    if not _topic_graph_disabled():
+        graph_path = _topic_graph_path()
         if graph_path.is_file() and not graph_path.is_symlink():
             try:
                 graph, graph_sha = load_topic_entity_graph(
                     graph_path,
-                    expected_sha256=os.environ.get("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", ""),
+                    expected_sha256=_topic_graph_expected_sha256(),
                 )
                 if dt.datetime.now(dt.timezone.utc) <= dt.datetime.fromisoformat(
                     graph["expires_at"]
@@ -1926,7 +1981,7 @@ def main(argv: list[str] | None = None) -> int:
     opening_group = clip_opening_address_group(
         srt_text,
         load_clip_opening_address_config(
-            ROOT / "assets" / "lidousha" / "clip_opening_address.json"
+            profile_asset_file("clip_opening_address")
         ),
     )
     repetition_groups = repetition_divergence_groups(srt_text)
@@ -2647,7 +2702,7 @@ def main(argv: list[str] | None = None) -> int:
             f"TITLE_AUTHORITY_UNRESOLVED: {staging.get('title_authority_error') or 'unknown'}"
         )
 
-    delivery = ROOT / "lidousha" / spec["date"]
+    delivery = profile_delivery_root() / spec["date"]
     delivery.mkdir(parents=True, exist_ok=True)
     name = spec.get("delivery_name") or cid
     # Old sapphire renders may coexist in replacement_recuts; copy only the
