@@ -486,374 +486,233 @@ def _round_robin_unique_queries(
     return scheduled
 
 
-def attempt_song_repair(
+SelectedSong = tuple[
+    float,
+    LrcResult,
+    list[dict[str, object]],
+    list[dict[str, object]],
+    int,
+    int,
+    int,
+    int,
+    int,
+    Mapping[str, object] | None,
+    Mapping[str, object] | None,
+]
+
+
+@dataclass(frozen=True)
+class AudioSelectionOutcome:
+    selected: SelectedSong
+    audio_alignment_run: AudioLrcAlignmentRun
+    variant_attempts: list[dict[str, object]]
+
+
+def _select_audio_lrc(
     *,
     candidate_id: str,
-    cues: Sequence[SourceCue],
-    anchor_start_ms: int,
-    anchor_end_ms: int,
+    ranked: list[tuple[float, LrcResult, list[dict[str, object]]]],
+    prepared_pinned_lrc_results: list[LrcResult],
+    extra_queries: Sequence[str],
+    max_audio_lrc_attempts: int,
+    source_media_path: Path | None,
     source_duration_ms: int,
     output_dir: Path,
-    lrc_provider: LrcProvider | None = None,
-    provider_name: str | None = None,
-    hint_llm_call: LlmCall | None = None,
-    extra_queries: Sequence[str] = (),
-    max_queries: int = 10,
-    max_lrc_candidates: int = 8,
-    min_matched_ratio: float = 0.55,
-    match_threshold: float = 0.45,
-    max_window_gap_ms: int = 30_000,
-    pre_roll_ms: int = 1_500,
-    post_roll_ms: int = 4_000,
-    max_outro_ms: int = 22_000,
-    pinned_lrc_results: Sequence[LrcResult] = (),
-    source_media_path: Path | None = None,
-    audio_lrc_aligner: AudioLrcAligner | None = None,
-    max_audio_lrc_attempts: int = MAX_AUDIO_LRC_VARIANT_ATTEMPTS,
-    asr_anchor_cues: Sequence[SourceCue] = (),
-    asr_anchor_srt_path: Path | None = None,
-) -> SongRepairResult:
-    """Try to repair a song candidate into a fully-proven full-song boundary.
-
-    ``asr_anchor_cues`` are a fresh (non-AGY) ASR transcript of the same
-    source media, used only to anchor the AGY-audio path's global lyric shift
-    (see ``match_lrc_to_fresh_asr_anchor``); pass already-parsed cues when the
-    caller has them (e.g. the shadow pipeline's ``source_srt``).  When empty,
-    ``asr_anchor_srt_path`` (or a sibling-file lookup next to
-    ``source_media_path``) is tried as a fallback.
-
-    ``pinned_lrc_results`` are caller-supplied LRCs (e.g. a known recurring song
-    matched by fingerprint) that are added to the candidate pool BEFORE flaky
-    LLM/text discovery, so alignment ranking can still pick the right song when
-    search misses it.  ``max_outro_ms`` caps the instrumental 后奏 (outro) kept
-    after the last sung line up to the next spoken cue.
-    """
-
-    attempts: list[SongRepairAttempt] = []
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    window = _performance_window(cues, anchor_start_ms, anchor_end_ms, max_gap_ms=max_window_gap_ms)
-    if not window:
-        attempts.append(SongRepairAttempt("performance_window", "FAILED", "no cues overlap the anchor window"))
-        return _finish(candidate_id, attempts, output_dir)
-    attempts.append(
-        SongRepairAttempt(
-            "performance_window",
-            "SUCCESS",
-            f"{len(window)} cues {window[0].source_start_ms}..{window[-1].source_end_ms}ms",
-        )
-    )
-
-    if lrc_provider is None and not pinned_lrc_results:
-        attempts.append(
-            SongRepairAttempt(
-                "lrc_discovery",
-                "SKIPPED",
-                "no LRC provider configured (pass lrc_provider / --lrc-provider to enable API repair)",
-            )
-        )
-        return _finish(candidate_id, attempts, output_dir)
-
-    explicit_queries = [q.strip() for q in extra_queries if isinstance(q, str) and q.strip()]
-    llm_queries: list[str] = []
-    if hint_llm_call is not None:
-        # Semantic repair: garbled ASR defeats text search, but an LLM can often
-        # still recognize the song from misheard lyrics and give clean queries.
-        try:
-            hints = generate_llm_song_queries(window, hint_llm_call)
-        except Exception as exc:
-            hints = []
-            attempts.append(SongRepairAttempt("llm_song_hint", "FAILED", f"{type(exc).__name__}: {exc}"))
-        else:
-            if hints:
-                attempts.append(SongRepairAttempt("llm_song_hint", "SUCCESS", f"guessed queries: {hints}"))
-            else:
-                attempts.append(SongRepairAttempt("llm_song_hint", "FAILED", "LLM returned no usable song guesses"))
-        llm_queries.extend(hints)
-    lyric_queries = _build_lyric_queries(window, anchor_start_ms, anchor_end_ms)
-    deduped_queries = _round_robin_unique_queries(
-        (explicit_queries, llm_queries, lyric_queries),
-        max_queries=max_queries,
-    )
-
-    candidates: list[LrcResult] = []
-    seen_refs: set[str] = set()
-    prepared_pinned_lrc_results: list[LrcResult] = []
-    for pinned in pinned_lrc_results:
-        if not isinstance(pinned, LrcResult):
-            continue
-        prepared, excluded_metadata = _singable_lrc_result(pinned)
-        if prepared.lines and prepared.source_ref not in seen_refs:
-            seen_refs.add(prepared.source_ref)
-            candidates.append(prepared)
-            prepared_pinned_lrc_results.append(prepared)
-            attempts.append(
-                SongRepairAttempt(
-                    "pinned_lrc",
-                    "SUCCESS",
-                    f"{prepared.song_title!r} ({prepared.source_ref}) pinned "
-                    f"({len(prepared.lines)} singable LRC lines, {excluded_metadata} timed credit rows excluded) "
-                    "— deterministic, ranked against search",
-                )
-            )
-    provider_errors: list[str] = []
-    provider_results: list[tuple[str, list[LrcResult]]] = []
-    provider_candidate_cap = max(0, int(max_lrc_candidates))
-    if lrc_provider is not None and len(candidates) < provider_candidate_cap:
-        for query in deduped_queries:
-            try:
-                found = lrc_provider(query)
-            except Exception as exc:  # provider failures must not crash review; they are recorded
-                provider_errors.append(f"{query!r}: {type(exc).__name__}: {exc}")
-                continue
-            # A provider may return many near-identical search rows.  Retain at
-            # most the existing global candidate budget from any one call;
-            # admission below is breadth-first across calls.
-            provider_results.append((query, _coerce_lrc_results(found)[:provider_candidate_cap]))
-
-        # Round-robin the provider result rank too.  Previously the first query
-        # could append all eight rows and prevent a later correct title from
-        # entering the pool at all.  Query order still makes the visual result
-        # first when it is right, while actual ASR/audio proof may overturn it.
-        result_rank = 0
-        while len(candidates) < provider_candidate_cap:
-            progressed = False
-            for _query, found_list in provider_results:
-                if result_rank >= len(found_list):
-                    continue
-                progressed = True
-                item = found_list[result_rank]
-                prepared, _excluded_metadata = _singable_lrc_result(item)
-                if prepared.lines and prepared.source_ref not in seen_refs:
-                    seen_refs.add(prepared.source_ref)
-                    candidates.append(prepared)
-                    if len(candidates) >= provider_candidate_cap:
-                        break
-            if not progressed:
-                break
-            result_rank += 1
-    if not candidates:
-        detail = f"no LRC found for {len(deduped_queries)} queries {deduped_queries!r}"
-        if provider_errors:
-            detail += f"; provider errors: {'; '.join(provider_errors[:3])}"
-        attempts.append(SongRepairAttempt("lrc_discovery", "FAILED", detail))
-        return _finish(candidate_id, attempts, output_dir)
-    attempts.append(
-        SongRepairAttempt(
-            "lrc_discovery",
-            "SUCCESS",
-            f"{len(candidates)} LRC candidate(s) from {len(deduped_queries)} queries",
-        )
-    )
-
-    # Rank candidates by how well their lyrics actually align to this
-    # performance — search ranking is not evidence, alignment is.
-    ranked: list[tuple[float, LrcResult, list[dict[str, object]]]] = []
-    for candidate_lrc in candidates:
-        candidate_alignment = _align_lrc_to_cues(candidate_lrc.lines, window, match_threshold=match_threshold)
-        candidate_matched = [entry for entry in candidate_alignment if entry["matched_cue_id"] is not None]
-        ratio = len(candidate_matched) / len(candidate_alignment) if candidate_alignment else 0.0
-        ranked.append((ratio, candidate_lrc, candidate_alignment))
-        attempts.append(
-            SongRepairAttempt(
-                "candidate_alignment",
-                "SUCCESS" if ratio >= min_matched_ratio else "FAILED",
-                f"{candidate_lrc.song_title!r} ({candidate_lrc.source_ref}): {ratio:.0%} of {len(candidate_alignment)} lines matched",
-            )
-        )
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    selected: tuple[
-        float,
-        LrcResult,
-        list[dict[str, object]],
-        list[dict[str, object]],
-        int,
-        int,
-        int,
-        int,
-        int,
-        Mapping[str, object] | None,
-        Mapping[str, object] | None,
-    ] | None = None
+    audio_lrc_aligner: AudioLrcAligner,
+    asr_anchor_cues: Sequence[SourceCue],
+    asr_anchor_srt_path: Path | None,
+    min_matched_ratio: float,
+    attempts: list[SongRepairAttempt],
+) -> AudioSelectionOutcome | SongRepairResult:
+    selected: SelectedSong | None = None
     audio_alignment_run: AudioLrcAlignmentRun | None = None
     audio_lrc_variant_attempts: list[dict[str, object]] = []
-    if audio_lrc_aligner is not None:
-        if source_media_path is None:
-            attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", "source media is required"))
-            return _finish(candidate_id, attempts, output_dir)
-        resolved_asr_anchor_cues: Sequence[SourceCue] = asr_anchor_cues
-        if not resolved_asr_anchor_cues:
-            anchor_srt_candidate = asr_anchor_srt_path
-            if anchor_srt_candidate is None:
-                anchor_srt_candidate = _sibling_asr_anchor_srt_path(Path(source_media_path))
-            if anchor_srt_candidate is not None and anchor_srt_candidate.is_file():
-                resolved_asr_anchor_cues = _parse_asr_anchor_srt(anchor_srt_candidate)
-        try:
-            primary_lrc = _choose_audio_lrc_candidate(
-                ranked,
-                pinned_lrc_results=prepared_pinned_lrc_results,
-                min_recall_ratio=0.20,
-                min_margin=0.08,
-                preferred_title_hints=extra_queries,
-            )
-        except ValueError as exc:
-            attempts.append(SongRepairAttempt("agy_audio_lrc_identity", "FAILED", str(exc)))
-            return _finish(
-                candidate_id,
-                attempts,
-                output_dir,
-                reason_codes=("SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",),
-            )
-        verification_candidates = _audio_lrc_retry_candidates(
+    if source_media_path is None:
+        attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", "source media is required"))
+        return _finish(candidate_id, attempts, output_dir)
+    resolved_asr_anchor_cues: Sequence[SourceCue] = asr_anchor_cues
+    if not resolved_asr_anchor_cues:
+        anchor_srt_candidate = asr_anchor_srt_path
+        if anchor_srt_candidate is None:
+            anchor_srt_candidate = _sibling_asr_anchor_srt_path(Path(source_media_path))
+        if anchor_srt_candidate is not None and anchor_srt_candidate.is_file():
+            resolved_asr_anchor_cues = _parse_asr_anchor_srt(anchor_srt_candidate)
+    try:
+        primary_lrc = _choose_audio_lrc_candidate(
             ranked,
-            primary=primary_lrc,
+            pinned_lrc_results=prepared_pinned_lrc_results,
+            min_recall_ratio=0.20,
+            min_margin=0.08,
             preferred_title_hints=extra_queries,
-            max_attempts=max_audio_lrc_attempts,
         )
-        attempts.append(
-            SongRepairAttempt(
-                "agy_audio_lrc_identity",
-                "SUCCESS",
-                f"ranked {len(verification_candidates)} deduped LRC variant(s) for bounded audio proof "
-                f"(hard cap {MAX_AUDIO_LRC_VARIANT_ATTEMPTS}); primary={primary_lrc.song_title!r} "
-                f"({primary_lrc.source_ref})",
-            )
+    except ValueError as exc:
+        attempts.append(SongRepairAttempt("agy_audio_lrc_identity", "FAILED", str(exc)))
+        return _finish(
+            candidate_id,
+            attempts,
+            output_dir,
+            reason_codes=("SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",),
         )
-        for ordinal, lrc in enumerate(verification_candidates, start=1):
-            ranked_entry = next(
-                (entry for entry in ranked if entry[1].source_ref == lrc.source_ref),
-                (0.0, lrc, []),
+    verification_candidates = _audio_lrc_retry_candidates(
+        ranked,
+        primary=primary_lrc,
+        preferred_title_hints=extra_queries,
+        max_attempts=max_audio_lrc_attempts,
+    )
+    attempts.append(
+        SongRepairAttempt(
+            "agy_audio_lrc_identity",
+            "SUCCESS",
+            f"ranked {len(verification_candidates)} deduped LRC variant(s) for bounded audio proof "
+            f"(hard cap {MAX_AUDIO_LRC_VARIANT_ATTEMPTS}); primary={primary_lrc.song_title!r} "
+            f"({primary_lrc.source_ref})",
+        )
+    )
+    for ordinal, lrc in enumerate(verification_candidates, start=1):
+        ranked_entry = next(
+            (entry for entry in ranked if entry[1].source_ref == lrc.source_ref),
+            (0.0, lrc, []),
+        )
+        recall_ratio = float(ranked_entry[0])
+        matched_cues = len(_matched_cue_ids(ranked_entry[2]))
+        rank_detail = (
+            f"variant {ordinal}/{len(verification_candidates)} title={lrc.song_title!r} "
+            f"source={lrc.source_ref}; exact_title={_lrc_title_is_exact_hint(lrc, extra_queries)}; "
+            f"variant_penalty={_lrc_variant_penalty(lrc)}; "
+            f"ASR_support={matched_cues}/{len(lrc.lines)} distinct cues/lines "
+            f"({recall_ratio:.0%} row recall)"
+        )
+        attempts.append(SongRepairAttempt("agy_audio_lrc_variant", "SUCCESS", rank_detail))
+        try:
+            current_run = audio_lrc_aligner(
+                Path(source_media_path),
+                lrc,
+                candidate_id,
+                output_dir / "agy_audio_lrc" / f"variant-{ordinal:02d}",
             )
-            recall_ratio = float(ranked_entry[0])
-            matched_cues = len(_matched_cue_ids(ranked_entry[2]))
-            rank_detail = (
-                f"variant {ordinal}/{len(verification_candidates)} title={lrc.song_title!r} "
-                f"source={lrc.source_ref}; exact_title={_lrc_title_is_exact_hint(lrc, extra_queries)}; "
-                f"variant_penalty={_lrc_variant_penalty(lrc)}; "
-                f"ASR_support={matched_cues}/{len(lrc.lines)} distinct cues/lines "
-                f"({recall_ratio:.0%} row recall)"
-            )
-            attempts.append(SongRepairAttempt("agy_audio_lrc_variant", "SUCCESS", rank_detail))
-            try:
-                current_run = audio_lrc_aligner(
-                    Path(source_media_path),
-                    lrc,
-                    candidate_id,
-                    output_dir / "agy_audio_lrc" / f"variant-{ordinal:02d}",
-                )
-            except Exception as exc:
-                infrastructure_reason = _audio_lrc_infrastructure_reason(exc)
-                detail = f"{rank_detail}; runner failed: {type(exc).__name__}: {exc}"
-                attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
-                audio_lrc_variant_attempts.append(
-                    {
-                        "ordinal": ordinal,
-                        "song_title": lrc.song_title,
-                        "source_ref": lrc.source_ref,
-                        "status": "INFRA_FAILED" if infrastructure_reason else "FAILED",
-                        "reason": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-                # A provider timeout/quota/nonzero exit affects every variant.
-                # Do not burn the remaining expensive attempts; preserve the
-                # runner's cross-tick recoverable reason code.
-                return _finish(
-                    candidate_id,
-                    attempts,
-                    output_dir,
-                    reason_codes=(infrastructure_reason or "SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
-                )
-            try:
-                current_selected = _validated_audio_lrc_selection(
-                    run=current_run,
-                    lrc=lrc,
-                    candidate_id=candidate_id,
-                    source_media_path=Path(source_media_path),
-                    source_duration_ms=source_duration_ms,
-                    min_matched_ratio=min_matched_ratio,
-                    asr_anchor_cues=resolved_asr_anchor_cues,
-                )
-            except LivePerformanceRejected as exc:
-                detail = f"{rank_detail}; {type(exc).__name__}: {exc}"
-                attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
-                audio_lrc_variant_attempts.append(
-                    {
-                        "ordinal": ordinal,
-                        "song_title": lrc.song_title,
-                        "source_ref": lrc.source_ref,
-                        "status": "PERFORMER_REJECTED",
-                        "reason": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-                # A structurally valid same-audio performer veto is not an LRC
-                # variant problem and must never be bypassed by another lyric.
-                return _finish(
-                    candidate_id,
-                    attempts,
-                    output_dir,
-                    reason_codes=exc.reason_codes,
-                    live_performance=exc.performance,
-                )
-            except Exception as exc:
-                detail = f"{rank_detail}; validator rejected this variant: {type(exc).__name__}: {exc}"
-                attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
-                audio_lrc_variant_attempts.append(
-                    {
-                        "ordinal": ordinal,
-                        "song_title": lrc.song_title,
-                        "source_ref": lrc.source_ref,
-                        "status": "CONTENT_OR_ALIGNMENT_REJECTED",
-                        "reason": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-                continue
-            selected = current_selected
-            audio_alignment_run = current_run
+        except Exception as exc:
+            infrastructure_reason = _audio_lrc_infrastructure_reason(exc)
+            detail = f"{rank_detail}; runner failed: {type(exc).__name__}: {exc}"
+            attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
             audio_lrc_variant_attempts.append(
                 {
                     "ordinal": ordinal,
                     "song_title": lrc.song_title,
                     "source_ref": lrc.source_ref,
-                    "status": "ACCEPTED",
-                    "reason": "strict audio/LRC, live-performance, and global-shift proof passed",
+                    "status": "INFRA_FAILED" if infrastructure_reason else "FAILED",
+                    "reason": f"{type(exc).__name__}: {exc}",
                 }
             )
-            attempts.append(
-                SongRepairAttempt(
-                    "agy_audio_lrc_alignment",
-                    "SUCCESS",
-                    f"{rank_detail}; current audio proves {selected[0]:.0%} of performed live-arrangement lines, "
-                    f"{selected[9]['classification']}, one global shift, and "
-                    "LIVE_STREAMER_SINGING performance mode",
-                )
-            )
-            break
-        if selected is None:
-            attempts.append(
-                SongRepairAttempt(
-                    "agy_audio_lrc_variants_exhausted",
-                    "FAILED",
-                    f"all {len(verification_candidates)} bounded, deduped LRC variant(s) failed strict audio proof",
-                )
-            )
+            # A provider timeout/quota/nonzero exit affects every variant.
+            # Do not burn the remaining expensive attempts; preserve the
+            # runner's cross-tick recoverable reason code.
             return _finish(
                 candidate_id,
                 attempts,
                 output_dir,
-                reason_codes=("SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
+                reason_codes=(infrastructure_reason or "SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
             )
-    elif ranked[0][0] < min_matched_ratio:
-        matched_ratio, lrc, _alignment = ranked[0]
-        if source_media_path is None or audio_lrc_aligner is None:
-            attempts.append(
-                SongRepairAttempt(
-                    "lyrics_alignment",
-                    "FAILED",
-                    f"best of {len(ranked)} candidate(s) {lrc.song_title!r} matched only {matched_ratio:.0%} of LRC lines (need >= {min_matched_ratio:.0%}); likely a different song or too-noisy ASR",
-                )
+        try:
+            current_selected = _validated_audio_lrc_selection(
+                run=current_run,
+                lrc=lrc,
+                candidate_id=candidate_id,
+                source_media_path=Path(source_media_path),
+                source_duration_ms=source_duration_ms,
+                min_matched_ratio=min_matched_ratio,
+                asr_anchor_cues=resolved_asr_anchor_cues,
             )
-            return _finish(candidate_id, attempts, output_dir)
+        except LivePerformanceRejected as exc:
+            detail = f"{rank_detail}; {type(exc).__name__}: {exc}"
+            attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
+            audio_lrc_variant_attempts.append(
+                {
+                    "ordinal": ordinal,
+                    "song_title": lrc.song_title,
+                    "source_ref": lrc.source_ref,
+                    "status": "PERFORMER_REJECTED",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            # A structurally valid same-audio performer veto is not an LRC
+            # variant problem and must never be bypassed by another lyric.
+            return _finish(
+                candidate_id,
+                attempts,
+                output_dir,
+                reason_codes=exc.reason_codes,
+                live_performance=exc.performance,
+            )
+        except Exception as exc:
+            detail = f"{rank_detail}; validator rejected this variant: {type(exc).__name__}: {exc}"
+            attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
+            audio_lrc_variant_attempts.append(
+                {
+                    "ordinal": ordinal,
+                    "song_title": lrc.song_title,
+                    "source_ref": lrc.source_ref,
+                    "status": "CONTENT_OR_ALIGNMENT_REJECTED",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        selected = current_selected
+        audio_alignment_run = current_run
+        audio_lrc_variant_attempts.append(
+            {
+                "ordinal": ordinal,
+                "song_title": lrc.song_title,
+                "source_ref": lrc.source_ref,
+                "status": "ACCEPTED",
+                "reason": "strict audio/LRC, live-performance, and global-shift proof passed",
+            }
+        )
+        attempts.append(
+            SongRepairAttempt(
+                "agy_audio_lrc_alignment",
+                "SUCCESS",
+                f"{rank_detail}; current audio proves {selected[0]:.0%} of performed live-arrangement lines, "
+                f"{selected[9]['classification']}, one global shift, and "
+                "LIVE_STREAMER_SINGING performance mode",
+            )
+        )
+        break
+    if selected is None:
+        attempts.append(
+            SongRepairAttempt(
+                "agy_audio_lrc_variants_exhausted",
+                "FAILED",
+                f"all {len(verification_candidates)} bounded, deduped LRC variant(s) failed strict audio proof",
+            )
+        )
+        return _finish(
+            candidate_id,
+            attempts,
+            output_dir,
+            reason_codes=("SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
+        )
+    assert selected is not None
+    assert audio_alignment_run is not None
+    return AudioSelectionOutcome(
+        selected=selected,
+        audio_alignment_run=audio_alignment_run,
+        variant_attempts=audio_lrc_variant_attempts,
+    )
 
+def _select_text_lrc(
+    *,
+    ranked: list[tuple[float, LrcResult, list[dict[str, object]]]],
+    window: Sequence[SourceCue],
+    cues: Sequence[SourceCue],
+    source_duration_ms: int,
+    min_matched_ratio: float,
+    match_threshold: float,
+    pre_roll_ms: int,
+    post_roll_ms: int,
+    max_outro_ms: int,
+    attempts: list[SongRepairAttempt],
+) -> SelectedSong | None:
+    selected: SelectedSong | None = None
     for raw_matched_ratio, lrc, raw_alignment in ranked if selected is None else ():
         if raw_matched_ratio < min_matched_ratio:
             continue
@@ -1019,10 +878,162 @@ def attempt_song_repair(
             None,
         )
         break
+    return selected
 
-    if selected is None:
+@dataclass(frozen=True)
+class LrcDiscovery:
+    candidates: list[LrcResult]
+    prepared_pinned_results: list[LrcResult]
+    queries: list[str]
+
+
+def _discover_lrc_candidates(
+    *,
+    candidate_id: str,
+    window: Sequence[SourceCue],
+    anchor_start_ms: int,
+    anchor_end_ms: int,
+    output_dir: Path,
+    lrc_provider: LrcProvider | None,
+    hint_llm_call: LlmCall | None,
+    extra_queries: Sequence[str],
+    max_queries: int,
+    max_lrc_candidates: int,
+    pinned_lrc_results: Sequence[LrcResult],
+    attempts: list[SongRepairAttempt],
+) -> LrcDiscovery | SongRepairResult:
+    explicit_queries = [q.strip() for q in extra_queries if isinstance(q, str) and q.strip()]
+    llm_queries: list[str] = []
+    if hint_llm_call is not None:
+        # Semantic repair: garbled ASR defeats text search, but an LLM can often
+        # still recognize the song from misheard lyrics and give clean queries.
+        try:
+            hints = generate_llm_song_queries(window, hint_llm_call)
+        except Exception as exc:
+            hints = []
+            attempts.append(SongRepairAttempt("llm_song_hint", "FAILED", f"{type(exc).__name__}: {exc}"))
+        else:
+            if hints:
+                attempts.append(SongRepairAttempt("llm_song_hint", "SUCCESS", f"guessed queries: {hints}"))
+            else:
+                attempts.append(SongRepairAttempt("llm_song_hint", "FAILED", "LLM returned no usable song guesses"))
+        llm_queries.extend(hints)
+    lyric_queries = _build_lyric_queries(window, anchor_start_ms, anchor_end_ms)
+    deduped_queries = _round_robin_unique_queries(
+        (explicit_queries, llm_queries, lyric_queries),
+        max_queries=max_queries,
+    )
+
+    candidates: list[LrcResult] = []
+    seen_refs: set[str] = set()
+    prepared_pinned_lrc_results: list[LrcResult] = []
+    for pinned in pinned_lrc_results:
+        if not isinstance(pinned, LrcResult):
+            continue
+        prepared, excluded_metadata = _singable_lrc_result(pinned)
+        if prepared.lines and prepared.source_ref not in seen_refs:
+            seen_refs.add(prepared.source_ref)
+            candidates.append(prepared)
+            prepared_pinned_lrc_results.append(prepared)
+            attempts.append(
+                SongRepairAttempt(
+                    "pinned_lrc",
+                    "SUCCESS",
+                    f"{prepared.song_title!r} ({prepared.source_ref}) pinned "
+                    f"({len(prepared.lines)} singable LRC lines, {excluded_metadata} timed credit rows excluded) "
+                    "— deterministic, ranked against search",
+                )
+            )
+    provider_errors: list[str] = []
+    provider_results: list[tuple[str, list[LrcResult]]] = []
+    provider_candidate_cap = max(0, int(max_lrc_candidates))
+    if lrc_provider is not None and len(candidates) < provider_candidate_cap:
+        for query in deduped_queries:
+            try:
+                found = lrc_provider(query)
+            except Exception as exc:  # provider failures must not crash review; they are recorded
+                provider_errors.append(f"{query!r}: {type(exc).__name__}: {exc}")
+                continue
+            # A provider may return many near-identical search rows.  Retain at
+            # most the existing global candidate budget from any one call;
+            # admission below is breadth-first across calls.
+            provider_results.append((query, _coerce_lrc_results(found)[:provider_candidate_cap]))
+
+        # Round-robin the provider result rank too.  Previously the first query
+        # could append all eight rows and prevent a later correct title from
+        # entering the pool at all.  Query order still makes the visual result
+        # first when it is right, while actual ASR/audio proof may overturn it.
+        result_rank = 0
+        while len(candidates) < provider_candidate_cap:
+            progressed = False
+            for _query, found_list in provider_results:
+                if result_rank >= len(found_list):
+                    continue
+                progressed = True
+                item = found_list[result_rank]
+                prepared, _excluded_metadata = _singable_lrc_result(item)
+                if prepared.lines and prepared.source_ref not in seen_refs:
+                    seen_refs.add(prepared.source_ref)
+                    candidates.append(prepared)
+                    if len(candidates) >= provider_candidate_cap:
+                        break
+            if not progressed:
+                break
+            result_rank += 1
+    if not candidates:
+        detail = f"no LRC found for {len(deduped_queries)} queries {deduped_queries!r}"
+        if provider_errors:
+            detail += f"; provider errors: {'; '.join(provider_errors[:3])}"
+        attempts.append(SongRepairAttempt("lrc_discovery", "FAILED", detail))
         return _finish(candidate_id, attempts, output_dir)
+    attempts.append(
+        SongRepairAttempt(
+            "lrc_discovery",
+            "SUCCESS",
+            f"{len(candidates)} LRC candidate(s) from {len(deduped_queries)} queries",
+        )
+    )
+    return LrcDiscovery(
+        candidates=candidates,
+        prepared_pinned_results=prepared_pinned_lrc_results,
+        queries=deduped_queries,
+    )
 
+
+def _rank_lrc_candidates(
+    *,
+    candidates: list[LrcResult],
+    window: Sequence[SourceCue],
+    min_matched_ratio: float,
+    match_threshold: float,
+    attempts: list[SongRepairAttempt],
+) -> list[tuple[float, LrcResult, list[dict[str, object]]]]:
+    ranked: list[tuple[float, LrcResult, list[dict[str, object]]]] = []
+    for candidate_lrc in candidates:
+        candidate_alignment = _align_lrc_to_cues(candidate_lrc.lines, window, match_threshold=match_threshold)
+        candidate_matched = [entry for entry in candidate_alignment if entry["matched_cue_id"] is not None]
+        ratio = len(candidate_matched) / len(candidate_alignment) if candidate_alignment else 0.0
+        ranked.append((ratio, candidate_lrc, candidate_alignment))
+        attempts.append(
+            SongRepairAttempt(
+                "candidate_alignment",
+                "SUCCESS" if ratio >= min_matched_ratio else "FAILED",
+                f"{candidate_lrc.song_title!r} ({candidate_lrc.source_ref}): {ratio:.0%} of {len(candidate_alignment)} lines matched",
+            )
+        )
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked
+
+def _materialize_song_repair(
+    *,
+    candidate_id: str,
+    output_dir: Path,
+    provider_name: str | None,
+    selected: SelectedSong,
+    audio_alignment_run: AudioLrcAlignmentRun | None,
+    audio_lrc_variant_attempts: list[dict[str, object]],
+    attempts: list[SongRepairAttempt],
+) -> SongRepairResult:
     (
         matched_ratio,
         lrc,
@@ -1186,6 +1197,161 @@ def attempt_song_repair(
         repaired=True,
         song_boundary=song_boundary,
         lyrics_alignment=lyrics_alignment,
+    )
+
+def attempt_song_repair(
+    *,
+    candidate_id: str,
+    cues: Sequence[SourceCue],
+    anchor_start_ms: int,
+    anchor_end_ms: int,
+    source_duration_ms: int,
+    output_dir: Path,
+    lrc_provider: LrcProvider | None = None,
+    provider_name: str | None = None,
+    hint_llm_call: LlmCall | None = None,
+    extra_queries: Sequence[str] = (),
+    max_queries: int = 10,
+    max_lrc_candidates: int = 8,
+    min_matched_ratio: float = 0.55,
+    match_threshold: float = 0.45,
+    max_window_gap_ms: int = 30_000,
+    pre_roll_ms: int = 1_500,
+    post_roll_ms: int = 4_000,
+    max_outro_ms: int = 22_000,
+    pinned_lrc_results: Sequence[LrcResult] = (),
+    source_media_path: Path | None = None,
+    audio_lrc_aligner: AudioLrcAligner | None = None,
+    max_audio_lrc_attempts: int = MAX_AUDIO_LRC_VARIANT_ATTEMPTS,
+    asr_anchor_cues: Sequence[SourceCue] = (),
+    asr_anchor_srt_path: Path | None = None,
+) -> SongRepairResult:
+    """Try to repair a song candidate into a fully-proven full-song boundary.
+
+    ``asr_anchor_cues`` are a fresh (non-AGY) ASR transcript of the same
+    source media, used only to anchor the AGY-audio path's global lyric shift
+    (see ``match_lrc_to_fresh_asr_anchor``); pass already-parsed cues when the
+    caller has them (e.g. the shadow pipeline's ``source_srt``).  When empty,
+    ``asr_anchor_srt_path`` (or a sibling-file lookup next to
+    ``source_media_path``) is tried as a fallback.
+
+    ``pinned_lrc_results`` are caller-supplied LRCs (e.g. a known recurring song
+    matched by fingerprint) that are added to the candidate pool BEFORE flaky
+    LLM/text discovery, so alignment ranking can still pick the right song when
+    search misses it.  ``max_outro_ms`` caps the instrumental 后奏 (outro) kept
+    after the last sung line up to the next spoken cue.
+    """
+
+    attempts: list[SongRepairAttempt] = []
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    window = _performance_window(cues, anchor_start_ms, anchor_end_ms, max_gap_ms=max_window_gap_ms)
+    if not window:
+        attempts.append(SongRepairAttempt("performance_window", "FAILED", "no cues overlap the anchor window"))
+        return _finish(candidate_id, attempts, output_dir)
+    attempts.append(
+        SongRepairAttempt(
+            "performance_window",
+            "SUCCESS",
+            f"{len(window)} cues {window[0].source_start_ms}..{window[-1].source_end_ms}ms",
+        )
+    )
+
+    if lrc_provider is None and not pinned_lrc_results:
+        attempts.append(
+            SongRepairAttempt(
+                "lrc_discovery",
+                "SKIPPED",
+                "no LRC provider configured (pass lrc_provider / --lrc-provider to enable API repair)",
+            )
+        )
+        return _finish(candidate_id, attempts, output_dir)
+
+    discovery = _discover_lrc_candidates(
+        candidate_id=candidate_id,
+        window=window,
+        anchor_start_ms=anchor_start_ms,
+        anchor_end_ms=anchor_end_ms,
+        output_dir=output_dir,
+        lrc_provider=lrc_provider,
+        hint_llm_call=hint_llm_call,
+        extra_queries=extra_queries,
+        max_queries=max_queries,
+        max_lrc_candidates=max_lrc_candidates,
+        pinned_lrc_results=pinned_lrc_results,
+        attempts=attempts,
+    )
+    if isinstance(discovery, SongRepairResult):
+        return discovery
+    prepared_pinned_lrc_results = discovery.prepared_pinned_results
+    ranked = _rank_lrc_candidates(
+        candidates=discovery.candidates,
+        window=window,
+        min_matched_ratio=min_matched_ratio,
+        match_threshold=match_threshold,
+        attempts=attempts,
+    )
+    selected: SelectedSong | None = None
+    audio_alignment_run: AudioLrcAlignmentRun | None = None
+    audio_lrc_variant_attempts: list[dict[str, object]] = []
+    if audio_lrc_aligner is not None:
+        audio_outcome = _select_audio_lrc(
+            candidate_id=candidate_id,
+            ranked=ranked,
+            prepared_pinned_lrc_results=prepared_pinned_lrc_results,
+            extra_queries=extra_queries,
+            max_audio_lrc_attempts=max_audio_lrc_attempts,
+            source_media_path=source_media_path,
+            source_duration_ms=source_duration_ms,
+            output_dir=output_dir,
+            audio_lrc_aligner=audio_lrc_aligner,
+            asr_anchor_cues=asr_anchor_cues,
+            asr_anchor_srt_path=asr_anchor_srt_path,
+            min_matched_ratio=min_matched_ratio,
+            attempts=attempts,
+        )
+        if isinstance(audio_outcome, SongRepairResult):
+            return audio_outcome
+        selected = audio_outcome.selected
+        audio_alignment_run = audio_outcome.audio_alignment_run
+        audio_lrc_variant_attempts = audio_outcome.variant_attempts
+    elif ranked[0][0] < min_matched_ratio:
+        matched_ratio, lrc, _alignment = ranked[0]
+        if source_media_path is None or audio_lrc_aligner is None:
+            attempts.append(
+                SongRepairAttempt(
+                    "lyrics_alignment",
+                    "FAILED",
+                    f"best of {len(ranked)} candidate(s) {lrc.song_title!r} matched only {matched_ratio:.0%} of LRC lines (need >= {min_matched_ratio:.0%}); likely a different song or too-noisy ASR",
+                )
+            )
+            return _finish(candidate_id, attempts, output_dir)
+
+    if selected is None:
+        selected = _select_text_lrc(
+            ranked=ranked,
+            window=window,
+            cues=cues,
+            source_duration_ms=source_duration_ms,
+            min_matched_ratio=min_matched_ratio,
+            match_threshold=match_threshold,
+            pre_roll_ms=pre_roll_ms,
+            post_roll_ms=post_roll_ms,
+            max_outro_ms=max_outro_ms,
+            attempts=attempts,
+        )
+
+    if selected is None:
+        return _finish(candidate_id, attempts, output_dir)
+
+    return _materialize_song_repair(
+        candidate_id=candidate_id,
+        output_dir=output_dir,
+        provider_name=provider_name,
+        selected=selected,
+        audio_alignment_run=audio_alignment_run,
+        audio_lrc_variant_attempts=audio_lrc_variant_attempts,
+        attempts=attempts,
     )
 
 
@@ -2273,23 +2439,21 @@ def _audio_lrc_infrastructure_reason(exc: Exception) -> str | None:
     return None
 
 
-def _choose_audio_lrc_candidate(
+@dataclass(frozen=True)
+class AudioLrcGroups:
+    entries: list[tuple[float, LrcResult, list[dict[str, object]]]]
+    equivalent: list[list[bool]]
+    grouped: list[tuple[float, bool, str, list[tuple[float, LrcResult, list[dict[str, object]]]]]]
+    preferred_group: list[tuple[float, LrcResult, list[dict[str, object]]]] | None
+
+
+def _group_audio_lrc_candidates(
     ranked: Sequence[tuple[float, LrcResult, list[dict[str, object]]]],
     *,
     pinned_lrc_results: Sequence[LrcResult],
+    preferred_title_hints: Sequence[str],
     min_recall_ratio: float,
-    min_margin: float,
-    preferred_title_hints: Sequence[str] = (),
-) -> LrcResult:
-    """Choose one deterministic lyric identity before an expensive audio pass.
-
-    Provider records with the same normalized title+artist are one identity
-    even when their synced timestamps differ slightly.  A weak or tied signal
-    between *different songs* is intentionally not enough: feeding an
-    arbitrary LRC to a multimodal model invites it to force the supplied lyrics
-    onto unrelated audio.
-    """
-
+) -> AudioLrcGroups:
     entries = list(ranked)
     identities = [_lrc_identity_key(lrc) for _ratio, lrc, _alignment in entries]
     fingerprints = [_lrc_fingerprint(lrc) for _ratio, lrc, _alignment in entries]
@@ -2390,6 +2554,40 @@ def _choose_audio_lrc_candidate(
     # 《屑屑》 pin could lose arbitrarily to a Studio Live/provider variant with
     # the same 41/52 ASR recall and the audio verifier was never reached.
     grouped.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return AudioLrcGroups(
+        entries=entries,
+        equivalent=equivalent,
+        grouped=grouped,
+        preferred_group=preferred_group,
+    )
+
+def _choose_audio_lrc_candidate(
+    ranked: Sequence[tuple[float, LrcResult, list[dict[str, object]]]],
+    *,
+    pinned_lrc_results: Sequence[LrcResult],
+    min_recall_ratio: float,
+    min_margin: float,
+    preferred_title_hints: Sequence[str] = (),
+) -> LrcResult:
+    """Choose one deterministic lyric identity before an expensive audio pass.
+
+    Provider records with the same normalized title+artist are one identity
+    even when their synced timestamps differ slightly.  A weak or tied signal
+    between *different songs* is intentionally not enough: feeding an
+    arbitrary LRC to a multimodal model invites it to force the supplied lyrics
+    onto unrelated audio.
+    """
+
+    groups = _group_audio_lrc_candidates(
+        ranked,
+        pinned_lrc_results=pinned_lrc_results,
+        preferred_title_hints=preferred_title_hints,
+        min_recall_ratio=min_recall_ratio,
+    )
+    entries = groups.entries
+    equivalent = groups.equivalent
+    grouped = groups.grouped
+    preferred_group = groups.preferred_group
     preferred_top = preferred_group is not None
     variant_family_top = False
     variant_family: str | None = None
@@ -2835,36 +3033,14 @@ def derive_live_arrangement_completeness(
     }
 
 
-def _validated_audio_lrc_selection(
+def _validate_audio_lrc_artifact_bindings(
     *,
     run: AudioLrcAlignmentRun,
     lrc: LrcResult,
     candidate_id: str,
     source_media_path: Path,
     source_duration_ms: int,
-    min_matched_ratio: float,
-    asr_anchor_cues: Sequence[SourceCue] = (),
-) -> tuple[
-    float,
-    LrcResult,
-    list[dict[str, object]],
-    list[dict[str, object]],
-    int,
-    int,
-    int,
-    int,
-    int,
-    Mapping[str, object],
-    Mapping[str, object],
-]:
-    """Validate an AGY audio observation and convert it into standard proof.
-
-    The validator ignores any model-supplied title, offset, boundary, verdict,
-    or completeness claim.  It binds the current media/LRC bytes and derives
-    one exact observation per canonical LRC line, then derives the performed
-    live arrangement and a single global shift over the lines actually heard.
-    """
-
+) -> int:
     if run.provider == AGY_AUDIO_LRC_PROVIDER:
         preliminary_sandbox = True
     elif run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
@@ -3066,7 +3242,26 @@ def _validated_audio_lrc_selection(
     )
     if run.payload != expected_payload:
         raise ValueError("in-memory audio alignment differs from the bound canonical projection")
+    return effective_duration_ms
 
+
+@dataclass(frozen=True)
+class AudioObservationAlignment:
+    payload: Mapping[str, object]
+    alignment: list[dict[str, object]]
+    performed_lines: list[LrcLine]
+    performed_observations: list[Mapping[str, object]]
+    arrangement_completeness: Mapping[str, object]
+    offset_ms: int
+
+
+def _build_audio_observation_alignment(
+    *,
+    run: AudioLrcAlignmentRun,
+    lrc: LrcResult,
+    candidate_id: str,
+    effective_duration_ms: int,
+) -> AudioObservationAlignment:
     payload = run.payload
     required_top = {
         "schema_version",
@@ -3190,15 +3385,31 @@ def _validated_audio_lrc_selection(
         raise ValueError("audio observations imply tempo drift; explicit stretch proof is required")
     if not 0 <= offset_ms < effective_duration_ms:
         raise ValueError(f"nominal LRC zero {offset_ms}ms is outside the current source")
+    return AudioObservationAlignment(
+        payload=payload,
+        alignment=alignment,
+        performed_lines=performed_lines,
+        performed_observations=performed_observations,
+        arrangement_completeness=arrangement_completeness,
+        offset_ms=offset_ms,
+    )
 
-    # 2026-07-11 fix: AGY (Gemini audio listening) onset times can carry a
-    # uniform lateness bias that every consistency-only gate above lets
-    # through (verified: 《恋爱告急》 AGY was +860ms late on every line vs the
-    # same source's BCUT ASR).  When a fresh ASR transcript of the SAME
-    # source media fuzzy-matches enough canonical LRC lines with a tight
-    # residual spread, anchor the final shift on it instead — but never
-    # silently pick either reading when they disagree by more than the
-    # existing ±1500ms AGY self-consistency tolerance.
+
+def _finalize_audio_lrc_selection(
+    *,
+    run: AudioLrcAlignmentRun,
+    lrc: LrcResult,
+    asr_anchor_cues: Sequence[SourceCue],
+    effective_duration_ms: int,
+    min_matched_ratio: float,
+    observation: AudioObservationAlignment,
+) -> SelectedSong:
+    payload = observation.payload
+    alignment = observation.alignment
+    performed_lines = observation.performed_lines
+    performed_observations = observation.performed_observations
+    arrangement_completeness = observation.arrangement_completeness
+    offset_ms = observation.offset_ms
     agy_offset_ms = offset_ms
     asr_offset_ms, asr_matched_line_count, _asr_anchor_rejected_reason = match_lrc_to_fresh_asr_anchor(
         lrc.lines, asr_anchor_cues
@@ -3322,6 +3533,40 @@ def _validated_audio_lrc_selection(
         offset_ms,
         arrangement_completeness,
         offset_provenance,
+    )
+
+
+def _validated_audio_lrc_selection(
+    *,
+    run: AudioLrcAlignmentRun,
+    lrc: LrcResult,
+    candidate_id: str,
+    source_media_path: Path,
+    source_duration_ms: int,
+    min_matched_ratio: float,
+    asr_anchor_cues: Sequence[SourceCue] = (),
+) -> SelectedSong:
+    """Validate bound audio evidence and convert it into standard selection."""
+    effective_duration_ms = _validate_audio_lrc_artifact_bindings(
+        run=run,
+        lrc=lrc,
+        candidate_id=candidate_id,
+        source_media_path=source_media_path,
+        source_duration_ms=source_duration_ms,
+    )
+    observation = _build_audio_observation_alignment(
+        run=run,
+        lrc=lrc,
+        candidate_id=candidate_id,
+        effective_duration_ms=effective_duration_ms,
+    )
+    return _finalize_audio_lrc_selection(
+        run=run,
+        lrc=lrc,
+        asr_anchor_cues=asr_anchor_cues,
+        effective_duration_ms=effective_duration_ms,
+        min_matched_ratio=min_matched_ratio,
+        observation=observation,
     )
 
 
