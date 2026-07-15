@@ -23,7 +23,26 @@ import stat
 import tempfile
 from pathlib import Path
 
-import scripts.free_session_autoslice as _runner
+import sys as _sys
+
+
+class _RunnerProxy:
+    """Resolve the runner module at attribute-access time.
+
+    The runner is imported as ``scripts.free_session_autoslice`` under pytest /
+    ``python3 -m`` but runs as ``__main__`` under the cron's
+    ``python3 scripts/free_session_autoslice.py --once``.  A plain
+    ``import scripts.free_session_autoslice`` re-executes the runner (and
+    re-triggers this circular import) in that script case, so resolve lazily
+    from whichever live sys.modules entry actually holds the runner.
+    """
+
+    def __getattr__(self, name):
+        module = _sys.modules.get("scripts.free_session_autoslice") or _sys.modules.get("__main__")
+        return getattr(module, name)
+
+
+_runner = _RunnerProxy()
 from src.autoslice.verified_io import (
     _matches_sha256,
     _normalized_sha256,
