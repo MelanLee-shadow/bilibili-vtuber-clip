@@ -919,6 +919,59 @@ def test_song_core_span_trims_leading_talk_and_outro(tmp_path):
     assert runner._song_core_span(srt, 0, 60_000) == (0, 60_000)
 
 
+def test_extracted_song_lane_helpers_preserve_runner_patch_surface(tmp_path, monkeypatch):
+    """Moving helpers out of the runner must not bypass its public patch seam."""
+
+    class PatchedHelperReached(RuntimeError):
+        pass
+
+    def patched_srt_spans(*_args, **_kwargs):
+        raise PatchedHelperReached
+
+    monkeypatch.setattr(runner, "_srt_cue_spans", patched_srt_spans)
+    with pytest.raises(PatchedHelperReached):
+        runner._song_core_span(tmp_path / "unused.srt", 0, 200_000)
+
+    monkeypatch.setattr(runner, "scheduled_song_retry_epoch", lambda _state: 11)
+    monkeypatch.setattr(runner, "scheduled_talk_retry_epoch", lambda _state: 22)
+    assert runner.scheduled_retry_epoch({}) == 11
+
+    base = tmp_path / "autoslice"
+    cid = "song_patch_surface"
+    date = "2026-07-15"
+    anchor_start, anchor_end = 50_000, 100_000
+    window_path = runner.song_window_media_path(
+        base / "out" / date / cid,
+        cid,
+        "",
+        anchor_start - runner.SONG_WINDOW_PRE_MS,
+        anchor_end + runner.SONG_WINDOW_POST_MS,
+    )
+    window_path.parent.mkdir(parents=True)
+    window_path.write_bytes(b"already materialized")
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "slice_srt", lambda *_args, **_kwargs: 1)
+
+    def patched_selector_dir(*_args, **_kwargs):
+        raise PatchedHelperReached
+
+    monkeypatch.setattr(runner, "fresh_song_selector_dir", patched_selector_dir)
+    with pytest.raises(PatchedHelperReached):
+        runner.produce_song(
+            date,
+            {
+                "cid": cid,
+                "segment_path": str(tmp_path / "unused.mp4"),
+                "seg_dur_ms": 200_000,
+                "anchor_start_ms": anchor_start,
+                "anchor_end_ms": anchor_end,
+                "danmaku": 0,
+                "hook": "",
+                "preview": "",
+            },
+        )
+
+
 def test_cover_repair_budget_resets_per_pipeline_generation_but_keeps_lifetime_cap():
     rec = {
         "cover_repair_generation": "sha256:old",
