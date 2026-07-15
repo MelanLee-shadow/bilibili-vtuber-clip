@@ -33,6 +33,7 @@ _REQUIRED_ASSET_FILES = frozenset(
         "entity_confusables",
         "glossary",
         "branding_intro_manifest",
+        "cover_identity_prompt",
         "known_songs",
         "persona",
         "slice_selection_metric",
@@ -62,6 +63,9 @@ class ChannelProfileError(ValueError):
 class ChannelProfile:
     profile_id: str
     display_name: str
+    prompt_name: str
+    short_name: str
+    self_reference_aliases: tuple[str, ...]
     room_id: str
     output_directory: str
     host_speaker_label: str
@@ -73,6 +77,7 @@ class ChannelProfile:
     fingerprint_directory_keys: tuple[str, ...]
     voiceprint_reference_subdirectory: str
     song_title_prefix: str
+    talk_title_prefix: str
     song_hook_template: str
     song_plain_template: str
     decisions: Mapping[str, str]
@@ -213,6 +218,15 @@ def _string_list(value: object, *, label: str) -> tuple[str, ...]:
     return result
 
 
+def _nonempty_string_list(value: object, *, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise ChannelProfileError(f"{label} must be a non-empty list")
+    result = tuple(_string(item, label=f"{label} entry") for item in value)
+    if len(result) != len(set(result)):
+        raise ChannelProfileError(f"{label} must not contain duplicates")
+    return result
+
+
 def _resolve_repo_path(repo_root: Path, raw: str, *, label: str) -> Path:
     relative = _safe_relative_path(raw, label=label)
     resolved = (repo_root / relative).resolve()
@@ -297,6 +311,9 @@ def load_channel_profile(
         label="identity",
         required={
             "display_name",
+            "prompt_name",
+            "short_name",
+            "self_reference_aliases",
             "room_id",
             "output_directory",
             "host_speaker_label",
@@ -391,8 +408,14 @@ def load_channel_profile(
     _strict_keys(
         titles,
         label="titles",
-        required={"song_prefix", "song_hook_template", "song_plain_template"},
+        required={
+            "talk_prefix",
+            "song_prefix",
+            "song_hook_template",
+            "song_plain_template",
+        },
     )
+    talk_title_prefix = _string(titles.get("talk_prefix"), label="titles.talk_prefix")
     song_title_prefix = _string(titles.get("song_prefix"), label="titles.song_prefix")
     song_hook_template = _string(
         titles.get("song_hook_template"), label="titles.song_hook_template"
@@ -435,6 +458,12 @@ def load_channel_profile(
     return ChannelProfile(
         profile_id=loaded_profile_id,
         display_name=_string(identity.get("display_name"), label="identity.display_name"),
+        prompt_name=_string(identity.get("prompt_name"), label="identity.prompt_name"),
+        short_name=_string(identity.get("short_name"), label="identity.short_name"),
+        self_reference_aliases=_nonempty_string_list(
+            identity.get("self_reference_aliases"),
+            label="identity.self_reference_aliases",
+        ),
         room_id=room_id,
         output_directory=_safe_component(
             identity.get("output_directory"), label="identity.output_directory"
@@ -452,6 +481,7 @@ def load_channel_profile(
         fingerprint_directory_keys=fingerprint_directory_keys,
         voiceprint_reference_subdirectory=voiceprint_reference_subdirectory,
         song_title_prefix=song_title_prefix,
+        talk_title_prefix=talk_title_prefix,
         song_hook_template=song_hook_template,
         song_plain_template=song_plain_template,
         decisions=MappingProxyType(decisions),

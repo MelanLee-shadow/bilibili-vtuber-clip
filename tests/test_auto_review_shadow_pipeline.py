@@ -3287,6 +3287,9 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
 
     def fake_title_llm(prompt: str) -> str:
         assert "价格有点贵哈哈哈" in prompt
+        assert hashlib.sha256(prompt.encode()).hexdigest() == (
+            "c71d81886d13f1f1297cc23a2dc12b50fdc3b51652d61953e94e60c78444a56f"
+        )
         return '{"title": "主播吐槽游戏价格贵，笑场三连"}'
 
     staged = shadow_pipeline._stage_publish_draft(
@@ -3623,6 +3626,9 @@ def test_lidousha_cover_prompt_injects_persona_identity_descriptors():
     assert "熊猫" in prompt
     # Composition contract is preserved (16:9 protagonist-centered cover).
     assert "16:9" in prompt
+    assert hashlib.sha256(prompt.encode()).hexdigest() == (
+        "b9e1ea7ccb200545301698e6c15b8e04b4def7bdd8c2430da5ab18e752caf777"
+    )
 
 
 # ---------------------------------------------------------------------------

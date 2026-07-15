@@ -33,6 +33,7 @@ from src.autoslice.auto_review import (
 )
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution, TalkCue, resolve_talk_boundary
 from src.autoslice.chat_authority import canonicalize_hard_surfaces
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.branding_intro import (
     BrandingIntroError,
     prepend_branding_intro,
@@ -78,6 +79,20 @@ from src.autoslice.source_context_planner import JingtingJobProvenance, plan_sou
 from src.autoslice.subtitle_timing_qa import SpeechSpansProvider, sanitize_cue_timing
 from src.autoslice.style_profile import ManualStyleProfile, apply_style_profile
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
+
+CHANNEL_PROFILE = load_channel_profile(ROOT)
+PROFILE_ID = CHANNEL_PROFILE.profile_id
+
+
+def profile_asset_file(key: str) -> Path:
+    return CHANNEL_PROFILE.asset_file(key, repo_root=ROOT)
+
+
+def profile_asset_text(key: str) -> str:
+    try:
+        return profile_asset_file(key).read_text(encoding="utf-8").strip()
+    except OSError:
+        return "(资产文件缺失)"
 
 
 HostVocalProver = Callable[
@@ -560,7 +575,7 @@ def _run_live_source(
 
 def _default_lidousha_profile() -> ManualStyleProfile:
     return ManualStyleProfile(
-        profile_id="lidousha-manual-shadow-v1",
+        profile_id=f"{PROFILE_ID}-manual-shadow-v1",
         sample_count=5,
         preferred_duration_seconds={"p25": 20.0, "p50": 65.0, "p75": 120.0},
         title_hook_patterns=("？", "也太", "突然", "笑", "小皇帝", "离谱"),
@@ -1915,9 +1930,18 @@ def _verify_host_vocal_claim(
     )
     if error is not None:
         return error, "SONG_HOST_VOCAL_PROOF_INVALID"
-    if claim.get("status") != "READY" or claim.get("decision") != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS":
-        if claim.get("status") == "BLOCKED" and claim.get("decision") == "NO_LIDOUSHA_VOCAL_DETECTED":
-            return "no Li Dousha vocal was detected across the lyric span", "SONG_NOT_LIDOUSHA_SINGING"
+    if (
+        claim.get("status") != "READY"
+        or claim.get("decision") != CHANNEL_PROFILE.decision("host_vocal_present")
+    ):
+        if (
+            claim.get("status") == "BLOCKED"
+            and claim.get("decision") == CHANNEL_PROFILE.decision("host_vocal_absent")
+        ):
+            return (
+                f"no {CHANNEL_PROFILE.prompt_name} vocal was detected across the lyric span",
+                CHANNEL_PROFILE.decision("host_not_singing_reason"),
+            )
         return "host-vocal proof did not reach READY", "SONG_HOST_VOCAL_UNPROVEN"
     return None, "SONG_HOST_VOCAL_VERIFIED"
 
@@ -2495,7 +2519,7 @@ def _merge_song_proof_into_decision(decision, evidence: ReviewEvidence):
         or reason.startswith("SONG_HOST_VOCAL_")
         or reason.startswith("SONG_LIVE_PERFORMANCE_")
         or reason == "SONG_BACKGROUND_PLAYBACK_ONLY"
-        or reason == "SONG_NOT_LIDOUSHA_SINGING"
+        or reason == CHANNEL_PROFILE.decision("host_not_singing_reason")
     )
     if not blocking:
         return decision
@@ -2666,8 +2690,8 @@ def _recut_plan_record(
 
 
 def _load_known_songs() -> list[Mapping[str, object]]:
-    """Curated recurring-song table (assets/lidousha/known_songs.json)."""
-    path = ROOT / "assets" / "lidousha" / "known_songs.json"
+    """Curated recurring-song table from the selected channel profile."""
+    path = profile_asset_file("known_songs")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -2923,7 +2947,10 @@ def _burn_preview_subtitles(
     if isinstance(prebuilt_ass_value, str) and prebuilt_ass_value:
         ass_path = Path(prebuilt_ass_value)
         burned_path = media_path.with_suffix(".burned-final-speaker.mp4")
-        subtitle_style = str(record.get("subtitle_style") or "lidousha-speaker-sapphire-host-white-guest-v2")
+        subtitle_style = str(
+            record.get("subtitle_style")
+            or f"{PROFILE_ID}-speaker-sapphire-host-white-guest-v2"
+        )
         expected_ass_sha = (record.get("artifact_hashes") or {}).get("ass_sha256")
         actual_ass_sha = "sha256:" + _sha256(ass_path) if ass_path.is_file() else None
         if (
@@ -2942,7 +2969,7 @@ def _burn_preview_subtitles(
     else:
         ass_path = media_path.with_suffix(".final-sapphire72.ass")
         burned_path = media_path.with_suffix(".burned-final-sapphire72.mp4")
-        subtitle_style = "lidousha-final-sapphire72"
+        subtitle_style = f"{PROFILE_ID}-final-sapphire72"
         _write_lidousha_sapphire_ass_from_srt(subtitle_path, ass_path)
     if not run_ffmpeg:
         burned_path.write_bytes(b"dry-run burned preview placeholder\n")
@@ -3261,7 +3288,7 @@ def _escape_ffmpeg_filter_path(path: Path | str) -> str:
 
 def _lidousha_fontsdir(media_path: Path | None = None) -> Path | None:
     candidates: list[Path] = []
-    env_value = os.environ.get("LIDOUSHA_FONTS_DIR")
+    env_value = os.environ.get("AUTOSLICE_FONTS_DIR") or os.environ.get("LIDOUSHA_FONTS_DIR")
     if env_value:
         candidates.append(Path(env_value))
     if media_path is not None:
@@ -3269,7 +3296,7 @@ def _lidousha_fontsdir(media_path: Path | None = None) -> Path | None:
             candidates.append(parent / "fonts")
     candidates.extend(
         [
-            ROOT / "assets" / "lidousha" / "fonts",
+            CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT),
             ROOT / "assets" / "fonts",
             ROOT / "assets",
             Path("/app/assets/fonts"),
@@ -3284,11 +3311,10 @@ def _lidousha_fontsdir(media_path: Path | None = None) -> Path | None:
     return None
 
 
-# Title policy (authority: assets/lidousha/title_style.md, itself backfilled
-# from .agent/skills/lidousha-title-style/SKILL.md 2026-07-04).  These gates
+# Title policy (authority: the selected profile's title_style asset). These gates
 # apply ONLY to LLM-auto-generated titles — Ivan's manual titles pass through
 # untouched (title_llm_call=None; see the iron rule in _stage_publish_draft).
-_LIDOUSHA_TITLE_PREFIX = "【李豆沙】"
+_LIDOUSHA_TITLE_PREFIX = CHANNEL_PROFILE.talk_title_prefix
 # Empty hype/clickbait words Ivan bans as STANDALONE words (almost always empty hype).
 _TITLE_BANNED_HYPE_WORDS: tuple[str, ...] = ("炸裂", "震惊", "天花板", "绝了", "犯规", "太顶")
 # 离谱 is dual-use: descriptive "越看越离谱/越整越离谱" is an Ivan-APPROVED structure
@@ -3310,9 +3336,9 @@ _TITLE_BANNED_MIAO_RE = re.compile(r"秒[一-鿿]")  # 秒懂/秒回/秒怼… i
 _TITLE_MIN_LEN = 12  # counted WITH the 【李豆沙】 prefix
 _TITLE_MAX_LEN = 30
 _TITLE_MAX_ATTEMPTS = 3  # 1 initial generation + up to 2 bounded retries
-_SELECTION_HOOK_GENERIC_ANCHORS = {
-    "李豆沙",
-    "小李",
+_SELECTION_HOOK_GENERIC_WORDS = (
+    CHANNEL_PROFILE.display_name,
+    CHANNEL_PROFILE.short_name,
     "主播",
     "直播",
     "弹幕",
@@ -3323,7 +3349,16 @@ _SELECTION_HOOK_GENERIC_ANCHORS = {
     "然后",
     "时候",
     "表演",
-}
+)
+_SELECTION_HOOK_GENERIC_ANCHORS = set(_SELECTION_HOOK_GENERIC_WORDS)
+_SELECTION_HOOK_MEANINGLESS_RE = re.compile(
+    "(?:"
+    + "|".join(
+        re.escape(value)
+        for value in (*_SELECTION_HOOK_GENERIC_WORDS, "让", "叫", "她", "他", "的", "了", "在", "又")
+    )
+    + ")"
+)
 
 
 def _title_policy_violations(title: str) -> list[str]:
@@ -3346,11 +3381,10 @@ def _title_policy_violations(title: str) -> list[str]:
 
 
 def _ensure_lidousha_prefix(title: str) -> str:
-    """Guarantee the 【李豆沙】 publish prefix on an auto-generated title.
+    """Guarantee the selected profile's publish prefix on an auto title.
 
-    Song titles already carry the fuller ``【李豆沙】豆沙歌，`` prefix, which
-    itself starts with ``【李豆沙】``, so the ``startswith`` check avoids
-    double-prefixing.
+    Song titles already carry a fuller profile prefix, so the ``startswith``
+    check avoids double-prefixing.
     """
 
     stripped = title.strip()
@@ -3377,11 +3411,7 @@ def _selection_hook_anchor_valid(*, anchor: object, selection_hook: str, title: 
     first_clause = _selection_hook_first_clause(selection_hook)
     title_body = str(title).removeprefix(_LIDOUSHA_TITLE_PREFIX).strip()
     title_lead_clause = re.split(r"[，,。.!！?？；;：:\n…]", title_body, maxsplit=1)[0].strip()
-    meaningful = re.sub(
-        r"(?:李豆沙|小李|主播|直播|弹幕|观众|自己|这个|那个|然后|时候|表演|让|叫|她|他|的|了|在|又)",
-        "",
-        anchor,
-    ).strip()
+    meaningful = _SELECTION_HOOK_MEANINGLESS_RE.sub("", anchor).strip()
     return bool(
         2 <= len(anchor) <= 12
         and anchor not in _SELECTION_HOOK_GENERIC_ANCHORS
@@ -3409,10 +3439,10 @@ def _selection_hook_fallback_title(selection_hook: str | None) -> str | None:
     clauses = [part.strip() for part in re.split(r"[，,。；;：:\n…]", raw) if part.strip()]
     if not clauses:
         return None
-    first = clauses[0].replace("李豆沙", "小李")
+    first = clauses[0].replace(CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name)
     body = first
     if len(clauses) > 1:
-        second = clauses[1].replace("李豆沙", "小李")
+        second = clauses[1].replace(CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name)
         if second.startswith("她"):
             second = "结果" + second[1:]
         candidate = f"{first}，{second}"
@@ -3525,8 +3555,8 @@ def _stage_publish_draft(
         selection_hook = str(selection_hook or "").strip()
         selection_hook_clause = _selection_hook_first_clause(selection_hook)
         transcript_sample = _staged_transcript_sample(record, cues)
-        style_asset = _load_lidousha_asset("title_style.md")
-        persona_asset = _load_lidousha_asset("persona.md")
+        style_asset = profile_asset_text("title_style")
+        persona_asset = profile_asset_text("persona")
         selection_hook_contract = ""
         output_contract = '{"title": "标题"}'
         if selection_hook:
@@ -3534,19 +3564,19 @@ def _stage_publish_draft(
                 f"\n选片主钩子（这是为什么选中本片，权威高于后续陪衬话题）: {selection_hook}\n"
                 f"标题必须保留第一分句的核心事件: {selection_hook_clause}\n"
                 "同时输出 selection_hook_anchor：从该第一分句原样复制的 2–12 字具体短语，"
-                "避开‘李豆沙/小李/主播/直播/弹幕/观众/自己/这个/那个/然后/时候/表演’等泛词；"
+                f"避开‘{CHANNEL_PROFILE.display_name}/{CHANNEL_PROFILE.short_name}/主播/直播/弹幕/观众/自己/这个/那个/然后/时候/表演’等泛词；"
                 "该短语必须逐字出现在标题里。不得把片段后半段的陪衬话题偷换成主标题。\n"
             )
             output_contract = '{"title": "标题", "selection_hook_anchor": "第一分句中的具体短语"}'
         base_prompt = (
-            "为一条李豆沙(B站虚拟主播)的直播切片起中文标题。\n"
-            "最重要的原则：观众是因为'这是李豆沙'才点进来的,不是因为内容——标题必须围绕李豆沙本人"
+            f"为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)的直播切片起中文标题。\n"
+            f"最重要的原则：观众是因为'这是{CHANNEL_PROFILE.display_name}'才点进来的,不是因为内容——标题必须围绕{CHANNEL_PROFILE.display_name}本人"
             "(她的反应、气质、口癖、梗、名字谐音),切片内容只是辅助素材。引人注目为先。\n"
-            f"\n李豆沙特质:\n{persona_asset}\n"
+            f"\n{CHANNEL_PROFILE.display_name}特质:\n{persona_asset}\n"
             f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
             f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
             f"{selection_hook_contract}"
-            "硬性要求：含【李豆沙】前缀后 12–30 字；"
+            f"硬性要求：含{CHANNEL_PROFILE.talk_title_prefix}前缀后 12–30 字；"
             "禁用空洞夸张词(炸裂/震惊/天花板/绝了/犯规/太顶),"
             "更不许用'X到犯规/炸裂/离谱'这种万能后缀——标题必须具体到这条切片里到底发生了什么"
             "(描述性的'越看越离谱/越整越离谱'这类是可以的,禁的是空洞的'X到离谱'后缀)。\n"
@@ -3596,9 +3626,9 @@ def _stage_publish_draft(
             if _TITLE_MIN_LEN <= len(prefixed) <= _TITLE_MAX_LEN:
                 staged_title = prefixed
                 if title_source == "job_title":
-                    title_source = "llm+lidousha_style_asset"
+                    title_source = f"llm+{PROFILE_ID}_style_asset"
                 if title_policy_violations:
-                    title_source = "llm+lidousha_style_asset(title_policy_violation)"
+                    title_source = f"llm+{PROFILE_ID}_style_asset(title_policy_violation)"
                     title_authority_error = "title_policy_violation:" + ",".join(title_policy_violations)
                 elif title_source == "selection_hook_fallback_after_llm_mismatch":
                     title_authority_status = "RESOLVED_DETERMINISTIC_FALLBACK"
@@ -3973,13 +4003,13 @@ _COVER_ROLE_LEXICON: tuple[tuple[tuple[str, ...], str, str, str | None], ...] = 
 )
 _COVER_HOOK_LEXICON = (
     "反沙", "反杀", "拆台", "一群猴", "翻车", "破防", "看傻", "清唱", "一眼AI", "嘴硬", "吃醋", "哄睡",
-    "犯傻", "离谱", "掏兜", "买弹幕", "回扣", "反李豆沙", "海王", "认输", "自封", "妈妈", "宝宝", "破大防",
+    "犯傻", "离谱", "掏兜", "买弹幕", "回扣", f"反{CHANNEL_PROFILE.display_name}", "海王", "认输", "自封", "妈妈", "宝宝", "破大防",
     "猴群", "奇遇", "熊猫头",
 )
 
 
 def _cover_stable_hash(seed: str) -> int:
-    return int(hashlib.sha256((seed or "lidousha").encode("utf-8")).hexdigest(), 16)
+    return int(hashlib.sha256((seed or PROFILE_ID).encode("utf-8")).hexdigest(), 16)
 
 
 def _cover_role_from_title(title: str, cover_text: str) -> tuple[str, str, str | None]:
@@ -4012,7 +4042,7 @@ def _cover_default_hook_word(cover_text: str) -> str:
 
 
 def _lidousha_is_song_title(title: str) -> bool:
-    return title.strip().startswith("【李豆沙】豆沙歌")
+    return title.strip().startswith(CHANNEL_PROFILE.song_title_prefix.rstrip("，, "))
 
 
 def _lidousha_cover_art_direction(
@@ -4062,10 +4092,10 @@ def _lidousha_cover_art_direction(
 
 
 def _cover_art_direction_prompt(*, title: str, cover_text: str) -> str:
-    persona = _load_lidousha_asset("persona.md")
+    persona = profile_asset_text("persona")
     return (
-        "你在为一条李豆沙(B站虚拟主播)切片的封面挑选'艺术指导'。只依据人设与本条切片语义选择。\n"
-        f"\n李豆沙人设(权威):\n{persona}\n"
+        f"你在为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片的封面挑选'艺术指导'。只依据人设与本条切片语义选择。\n"
+        f"\n{CHANNEL_PROFILE.display_name}人设(权威):\n{persona}\n"
         "\n硬护栏:表情要贴这条切片里她扮演的角色;默认是软糯清纯邻家女同学(被欺负又软软反击);"
         "机灵鬼怪/得意只在角色需要时用(次要);**永远不要吐舌头**,不要油滑/挑衅/性感/媚。"
         "外观由参考帧决定,你不描述服装。\n"
@@ -4208,10 +4238,10 @@ def _normalize_cover_art_direction(
 def _lidousha_cover_text(title: str) -> str:
     # Cover title NEVER uses a colon (Ivan 2026-07-04): the archive/video title
     # may use "引语：反应", but on the cover the clause break is a LINE BREAK,
-    # not punctuation.  Strip the 【李豆沙】/豆沙歌 prefix and turn any colon
+    # not punctuation. Strip the selected profile's talk/song prefix and turn any colon
     # into a newline so the overlay splits clauses by line.
     text = title.strip()
-    for prefix in ("【李豆沙】豆沙歌，", "【李豆沙】"):
+    for prefix in (CHANNEL_PROFILE.song_title_prefix, CHANNEL_PROFILE.talk_title_prefix):
         if text.startswith(prefix):
             text = text[len(prefix) :]
             break
@@ -4224,15 +4254,14 @@ def _lidousha_cover_text(title: str) -> str:
 
 
 def _lidousha_identity_descriptor() -> str:
-    """Pull Li Dousha's visual identity descriptors from persona.md so the AI
-    cover keeps her recognizable (熊猫头/熊猫耳/白毛/小李).
+    """Pull the selected host's visual identity descriptors from persona.md.
 
     The reference frame anchors identity, but CPA images.edit drifts without an
     explicit character description, so we inject the persona 身份/形象 lines
     verbatim (authoritative Chinese descriptors) alongside an English gloss.
     """
 
-    persona = _load_lidousha_asset("persona.md")
+    persona = profile_asset_text("persona")
     descriptors: list[str] = []
     for line in persona.splitlines():
         stripped = line.strip().lstrip("-").strip()
@@ -4253,13 +4282,12 @@ def _lidousha_cover_prompt(*, title: str, cover_text: str, art_direction: Lidous
     if art_direction is None:
         art_direction = _lidousha_cover_art_direction(candidate_id="", title=title, cover_text=cover_text)
     identity_descriptor = _lidousha_identity_descriptor()
+    cover_identity_prompt = profile_asset_text("cover_identity_prompt")
     background = _COVER_BG_PHRASES.get(art_direction.background_style, _COVER_BG_PHRASES["pop-art-burst"])
     identity_block = (
-        "Create a bold 16:9 (1920x1080) anime VTuber livestream cover thumbnail for Li Dousha. "
+        f"Create a bold 16:9 (1920x1080) anime VTuber livestream cover thumbnail for {CHANNEL_PROFILE.prompt_name}. "
         "Use the supplied image ONLY as identity/style reference. "
-        "IDENTITY (keep her instantly recognizable): Li Dousha is a cute anime VTuber whose signature look is "
-        "a white PANDA hood with PANDA EARS over WHITE hair; her chibi/derivative form is '小李' (little Li). "
-        "Faithfully preserve her panda-hood/panda-ear and white-hair face features from the reference image. "
+        f"IDENTITY (keep her instantly recognizable): {cover_identity_prompt} "
         f"Persona identity descriptors (Chinese, authoritative): {identity_descriptor} "
         "PRESERVE THE EXACT OUTFIT, skin tone, hairstyle and accessories shown in the reference frame — she wears "
         "DIFFERENT costumes on different streams, so do NOT invent or lock a fixed costume; copy what the reference shows. "
@@ -4305,14 +4333,6 @@ def _lidousha_cover_prompt(*, title: str, cover_text: str, art_direction: Lidous
         + "The title is added separately afterwards, so the reserved title area must be a graphic background that is "
         + "COMPLETELY EMPTY of any glyphs or symbols. Keep the whole composition energetic, cute and eye-catching."
     )
-
-
-def _load_lidousha_asset(name: str) -> str:
-    path = ROOT / "assets" / "lidousha" / name
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return "(资产文件缺失)"
 
 
 _COVER_CANVAS = (1920, 1080)
@@ -4671,9 +4691,9 @@ def _cover_fallback_font_path():
     glyph (Ivan 2026-07-05: one cover = one uniform font; if ZCOOL can't render a
     char like 镚, swap the ENTIRE cover to this font — never mix fonts in a cover).
     得意黑/SmileySans (cute, complete) preferred; then plain complete fallbacks."""
-    for candidate in (ROOT / "assets/lidousha/fonts/SmileySans-Oblique.ttf",
+    for candidate in (CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT) / "SmileySans-Oblique.ttf",
                       Path("/System/Library/Fonts/Hiragino Sans GB.ttc"),
-                      ROOT / "lidousha/2026-06-29/redone_fullsong_433_travel_meaning/fonts/msyh.ttf"):
+                      CHANNEL_PROFILE.delivery_root_for(ROOT) / "2026-06-29/redone_fullsong_433_travel_meaning/fonts/msyh.ttf"):
         if candidate.is_file():
             return candidate
     return None
@@ -5200,13 +5220,12 @@ def _overlay_lidousha_cover_title(
 
 
 def _find_cover_font() -> Path:
-    """Cover title font is ZCOOL KuaiLe (站酷快乐体) — the established Li Dousha
-    cover look, deliberately different from the subtitle font.  Fail closed:
+    """Use the selected profile's ZCOOL cover title font. Fail closed:
     a silently substituted default font shipped wrong-font covers once
     (2026-07-04); a missing font must block the cover, not degrade it."""
 
     candidates = [
-        ROOT / "assets" / "lidousha" / "fonts" / "ZCOOLKuaiLe-Regular.ttf",
+        CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT) / "ZCOOLKuaiLe-Regular.ttf",
         Path("/opt/bilive/app/assets/fonts/ZCOOLKuaiLe-Regular.ttf"),
         Path("/app/assets/fonts/ZCOOLKuaiLe-Regular.ttf"),
     ]
@@ -5216,7 +5235,9 @@ def _find_cover_font() -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    raise RuntimeError("COVER_FONT_MISSING: ZCOOLKuaiLe-Regular.ttf not found (assets/lidousha/fonts/)")
+    raise RuntimeError(
+        "COVER_FONT_MISSING: ZCOOLKuaiLe-Regular.ttf not found in the selected profile fonts"
+    )
 
 
 def _materialize_recut_record(

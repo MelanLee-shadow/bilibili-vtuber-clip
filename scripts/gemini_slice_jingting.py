@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Li Dousha slice fine-transcription runner.
+Channel-profile-aware slice fine-transcription runner.
 
 Runs on the `free` host. Full-recording subtitles still drive rough semantic
 slicing; this script refines final slice sidecars only and writes a separate
@@ -12,8 +12,8 @@ Providers:
 
 Examples:
   gemini_slice_jingting.py --provider agy /path/to/slice.flv
-  gemini_slice_jingting.py --provider agy --once --room 22966160
-  gemini_slice_jingting.py --provider agy --daemon --room 22966160
+  gemini_slice_jingting.py --provider agy --once --room ROOM_ID
+  gemini_slice_jingting.py --provider agy --daemon --room ROOM_ID
 """
 
 from __future__ import annotations
@@ -36,8 +36,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-ROOM = "22966160"
+from src.autoslice.channel_profile import load_channel_profile
+
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+
+ROOM = CHANNEL_PROFILE.room_id
 HOST_VIDEOS = "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming"
 CONTAINER_VIDEOS = "/app/Videos"
 VIDEOS = os.environ.get("BILIVE_VIDEOS_ROOT") or (
@@ -52,43 +59,47 @@ AGY_MODEL = os.environ.get("AGY_MODEL", "Gemini 3.5 Flash (Low)")
 AGY_TIMEOUT = os.environ.get("AGY_PRINT_TIMEOUT", "15m")
 JINGTING_JOB_ROOT = os.environ.get("JINGTING_JOB_ROOT", "/opt/bilive/jingting_jobs")
 
-_GLOSSARY_ENV = os.environ.get("LIDOUSHA_GLOSSARY")
+_GLOSSARY_ENV = os.environ.get("AUTOSLICE_GLOSSARY") or os.environ.get("LIDOUSHA_GLOSSARY")
 # Repo-vendored glossary is the source of truth (sync it to free with
 # scripts/sync_lidousha_assets.sh); host paths keep the production daemon
 # working.  Without the repo path the local pipeline silently ran jingting
 # with an EMPTY glossary (the 小寺/小室-class name errors).
-_REPO_GLOSSARY = str(Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "glossary.txt")
-GLOSSARY_PATHS = (
-    [_GLOSSARY_ENV]
-    if _GLOSSARY_ENV
-    else [_REPO_GLOSSARY, "/opt/bilive/app/lidousha_glossary.txt", "/app/lidousha_glossary.txt"]
-)
+_REPO_GLOSSARY = str(CHANNEL_PROFILE.asset_file("glossary", repo_root=REPO_ROOT))
+GLOSSARY_PATHS = [_GLOSSARY_ENV] if _GLOSSARY_ENV else [_REPO_GLOSSARY]
+if not _GLOSSARY_ENV and CHANNEL_PROFILE.profile_id == "lidousha":
+    GLOSSARY_PATHS.extend(
+        ["/opt/bilive/app/lidousha_glossary.txt", "/app/lidousha_glossary.txt"]
+    )
 # Subtitle correction PRINCIPLES (the "how to correct" rules) live in a single
 # authoritative file; glossary.txt is now the TERM canon only.  glossary()
 # concatenates both so every correction prompt gets the full principle set from
 # one source — edit principles in one place, all prompts stay in sync.
-_PRINCIPLES_ENV = os.environ.get("LIDOUSHA_SUBTITLE_PRINCIPLES")
+_PRINCIPLES_ENV = os.environ.get("AUTOSLICE_SUBTITLE_PRINCIPLES") or os.environ.get(
+    "LIDOUSHA_SUBTITLE_PRINCIPLES"
+)
 _REPO_PRINCIPLES = str(
-    Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "subtitle_correction_principles.md"
+    CHANNEL_PROFILE.asset_file("subtitle_correction_principles", repo_root=REPO_ROOT)
 )
-PRINCIPLES_PATHS = (
-    [_PRINCIPLES_ENV]
-    if _PRINCIPLES_ENV
-    else [
-        _REPO_PRINCIPLES,
-        "/opt/bilive/app/lidousha_subtitle_principles.md",
-        "/app/lidousha_subtitle_principles.md",
-    ]
+PRINCIPLES_PATHS = [_PRINCIPLES_ENV] if _PRINCIPLES_ENV else [_REPO_PRINCIPLES]
+if not _PRINCIPLES_ENV and CHANNEL_PROFILE.profile_id == "lidousha":
+    PRINCIPLES_PATHS.extend(
+        [
+            "/opt/bilive/app/lidousha_subtitle_principles.md",
+            "/app/lidousha_subtitle_principles.md",
+        ]
+    )
+_TIMELY_TERMS_ENV = os.environ.get("AUTOSLICE_TIMELY_TERMS") or os.environ.get(
+    "LIDOUSHA_TIMELY_TERMS"
 )
-_TIMELY_TERMS_ENV = os.environ.get("LIDOUSHA_TIMELY_TERMS")
-_REPO_TIMELY_TERMS = str(
-    Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "timely_terms.json"
-)
-TIMELY_TERMS_PATHS = (
-    [_TIMELY_TERMS_ENV]
-    if _TIMELY_TERMS_ENV
-    else [_REPO_TIMELY_TERMS, "/opt/bilive/app/lidousha_timely_terms.json", "/app/lidousha_timely_terms.json"]
-)
+_REPO_TIMELY_TERMS = str(CHANNEL_PROFILE.asset_file("timely_terms", repo_root=REPO_ROOT))
+TIMELY_TERMS_PATHS = [_TIMELY_TERMS_ENV] if _TIMELY_TERMS_ENV else [_REPO_TIMELY_TERMS]
+if not _TIMELY_TERMS_ENV and CHANNEL_PROFILE.profile_id == "lidousha":
+    TIMELY_TERMS_PATHS.extend(
+        [
+            "/opt/bilive/app/lidousha_timely_terms.json",
+            "/app/lidousha_timely_terms.json",
+        ]
+    )
 SLICE_RX_TEMPLATE = r"\d+s_.*_%s_.*\.(flv|mp4)$"
 SRT_TIME_RX = re.compile(
     r"\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}"
@@ -523,8 +534,7 @@ def write_immutable_timely_terms_snapshot(
 
 
 def subtitle_principles() -> str:
-    """The authoritative subtitle-correction principle text (see
-    assets/lidousha/subtitle_correction_principles.md)."""
+    """The selected profile's authoritative subtitle-correction principles."""
     return _read_first(PRINCIPLES_PATHS)
 
 
@@ -538,12 +548,18 @@ def approved_timely_terms(*, as_of: dt.datetime | None = None) -> list[dict[str,
     ``TIMELY_TERMS_PATHS`` themselves.
     """
 
-    if os.environ.get("LIDOUSHA_DISABLE_TIMELY_TERMS") == "1":
+    if (
+        os.environ.get("AUTOSLICE_DISABLE_TIMELY_TERMS") == "1"
+        or os.environ.get("LIDOUSHA_DISABLE_TIMELY_TERMS") == "1"
+    ):
         return []
     raw = _read_first(TIMELY_TERMS_PATHS)
     if not raw:
         return []
-    expected_sha256 = os.environ.get("LIDOUSHA_TIMELY_TERMS_SHA256", "").removeprefix("sha256:").lower()
+    expected_sha256 = (
+        os.environ.get("AUTOSLICE_TIMELY_TERMS_SHA256")
+        or os.environ.get("LIDOUSHA_TIMELY_TERMS_SHA256", "")
+    ).removeprefix("sha256:").lower()
     if expected_sha256:
         if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
             return []
@@ -553,9 +569,12 @@ def approved_timely_terms(*, as_of: dt.datetime | None = None) -> list[dict[str,
         payload = validate_timely_terms_json(raw)
     except TimelyTermsValidationError:
         return []
-    if as_of is None and os.environ.get("LIDOUSHA_TERM_AS_OF"):
+    term_as_of = os.environ.get("AUTOSLICE_TERM_AS_OF") or os.environ.get(
+        "LIDOUSHA_TERM_AS_OF"
+    )
+    if as_of is None and term_as_of:
         try:
-            as_of_date = dt.date.fromisoformat(os.environ["LIDOUSHA_TERM_AS_OF"])
+            as_of_date = dt.date.fromisoformat(term_as_of)
             as_of = dt.datetime.combine(as_of_date, dt.time(12), tzinfo=dt.timezone.utc)
         except ValueError:
             return []
@@ -794,7 +813,7 @@ def gemini_correct(
     as_of = _as_of_datetime(as_of_date)
     prompt = (
         glossary(as_of=as_of)
-        + "\n\n----\n下面是这条李豆沙切片的 whisper 字幕草稿（SRT）。"
+        + f"\n\n----\n下面是这条{CHANNEL_PROFILE.display_name}切片的 whisper 字幕草稿（SRT）。"
         "请你听这段音频，按上面的术语表和纠错规则精修每一条字幕的文本："
         "改正误听、专有名词、标点、自然断句，保留主播口癖和语气。"
         "严格保留每条的序号和时间轴（时间戳一字不改），只改字幕文本。"
@@ -949,9 +968,9 @@ matching SC's EXACT name and wording. CRUCIAL MATCHING RULES:
 - Match a thank/read cue to the SC whose SENDER or CONTENT actually fits. If NO
   SC's sender/content plausibly fits a cue, KEEP THE AUDIO — never force a nearby
   SC's name onto a cue it doesn't match (a wrong name is worse than a heard one).
-- NEVER turn a streamer self-reference (李豆沙/小李/豆沙) into someone else's name.
+- NEVER turn a streamer self-reference ({'/'.join(CHANNEL_PROFILE.self_reference_aliases)}) into someone else's name.
 - Gift/灯牌 sender names are NOT provided — leave them as heard."""
-    return f"""You are refining subtitles for a Li Dousha Chinese VTuber clip.
+    return f"""You are refining subtitles for a {CHANNEL_PROFILE.prompt_name} Chinese VTuber clip.
 
 Use only these local files in this job directory:
 - input.mp4
@@ -976,7 +995,7 @@ Task:
    captions, UI labels, titles the streamer is looking at. Most of her speech
    reacts to on-screen content or reads danmaku aloud, so on-screen text is
    first-class evidence for the correct words (names, memes, homophones).
-5. Preserve Li Dousha tone, streamer-specific terms, and uncertainty when audio is unclear.
+5. Preserve {CHANNEL_PROFILE.prompt_name} tone, streamer-specific terms, and uncertainty when audio is unclear.
 6. Make MINIMAL edits. If a cue's audio is unclear, masked by music, or you cannot
    clearly hear every word, KEEP the draft text unchanged — never rewrite a whole
    line into a different-sounding sentence from guesswork. A wrong draft kept is

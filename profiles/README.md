@@ -11,5 +11,6 @@ local manifest outside the conventional directory, set
 
 Profile manifests are strict and fail on unknown keys, unsafe paths, missing
 pipeline fields, or malformed protocol tokens. A new channel should copy the
-default manifest, choose its own identity/output directory, and replace every
-referenced asset and voiceprint binding before running the unattended pipeline.
+default manifest, choose its own display name, romanized/English prompt name,
+room and output directory, then replace every referenced asset and voiceprint
+binding before running the unattended pipeline.

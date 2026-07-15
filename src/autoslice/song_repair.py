@@ -34,8 +34,14 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.llm_client import LlmCall, extract_json_object
 from src.autoslice.review_evidence import SourceCue
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+HOST_LYRIC_SUBJECT = CHANNEL_PROFILE.decision("lyric_vocal_subject")
+HOST_NOT_SINGING_REASON = CHANNEL_PROFILE.decision("host_not_singing_reason")
 
 SONG_REPAIR_SCHEMA_VERSION = "song-repair-report.v1"
 
@@ -77,13 +83,13 @@ AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES = frozenset(
     }
 )
 LYRIC_VOCAL_SUBJECTS = {
-    "LIDOUSHA",
+    HOST_LYRIC_SUBJECT,
     "OTHER_OR_MIXED_SINGER",
     "RECORDED_OR_PLAYBACK_SINGER",
     "NO_AUDIBLE_LYRIC_VOCAL",
     "AMBIGUOUS",
 }
-LIDOUSHA_LYRIC_ROLES = {
+HOST_LYRIC_ROLES = {
     "SINGING_THIS_LYRIC",
     "PERFORMING_THIS_LYRIC_SPOKEN",
     "SPEAKING_NOT_SINGING",
@@ -144,9 +150,9 @@ def live_performance_failure_reason_codes(performance: object) -> tuple[str, ...
 
     mode = performance.get("mode") if isinstance(performance, Mapping) else None
     if mode in {"ORIGINAL_OR_BACKGROUND_PLAYBACK", "STREAMER_TALKING_OVER_MUSIC"}:
-        return ("SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING")
+        return ("SONG_BACKGROUND_PLAYBACK_ONLY", HOST_NOT_SINGING_REASON)
     if mode == "OTHER_SINGER":
-        return ("SONG_NOT_LIDOUSHA_SINGING",)
+        return (HOST_NOT_SINGING_REASON,)
     return ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
 
 # Timed LRC providers sometimes put a production-credit card in the same timed
@@ -3351,7 +3357,7 @@ def _validate_lyric_vocal_observations(
 
     The AGY top-level summary is never trusted as a substitute for the rows.
     A READY result requires each line to say that the same live lyric source is
-    李豆沙 herself, with no guest/duet/harmony or recorded vocal audible.  A
+    the selected host, with no guest/duet/harmony or recorded vocal audible.  A
     narrowly labelled canonical spoken passage is allowed only inside an
     otherwise predominantly sung performance; ordinary speech over music is
     not.  CAM++ remains an independent speaker-similarity subclaim and is not
@@ -3386,25 +3392,30 @@ def _validate_lyric_vocal_observations(
         same_lidousha = row.get("same_live_vocal_source_as_lidousha")
         other_singer = row.get("other_singer_or_harmony_audible")
         recorded_vocal = row.get("recorded_or_playback_vocal_audible")
-        if subject not in LYRIC_VOCAL_SUBJECTS or role not in LIDOUSHA_LYRIC_ROLES:
+        if subject not in LYRIC_VOCAL_SUBJECTS or role not in HOST_LYRIC_ROLES:
             raise ValueError(f"live performance lyric row {index} singer enum is invalid")
         if not all(isinstance(value, bool) for value in (same_lidousha, other_singer, recorded_vocal)):
             raise ValueError(f"live performance lyric row {index} singer assertions are invalid")
 
         live_lidousha_lyric = (
-            subject == "LIDOUSHA"
+            subject == HOST_LYRIC_SUBJECT
             and role in {"SINGING_THIS_LYRIC", "PERFORMING_THIS_LYRIC_SPOKEN"}
             and other_singer is False
             and recorded_vocal is False
         )
         if same_lidousha is not live_lidousha_lyric:
             raise ValueError(f"live performance lyric row {index} same-subject assertion is inconsistent")
-        if subject == "LIDOUSHA" and role not in {
+        if subject == HOST_LYRIC_SUBJECT and role not in {
             "SINGING_THIS_LYRIC",
             "PERFORMING_THIS_LYRIC_SPOKEN",
         }:
-            raise ValueError(f"live performance lyric row {index} Li-Dousha role contradicts its subject")
-        if role in {"SINGING_THIS_LYRIC", "PERFORMING_THIS_LYRIC_SPOKEN"} and subject != "LIDOUSHA":
+            raise ValueError(
+                f"live performance lyric row {index} host role contradicts its subject"
+            )
+        if (
+            role in {"SINGING_THIS_LYRIC", "PERFORMING_THIS_LYRIC_SPOKEN"}
+            and subject != HOST_LYRIC_SUBJECT
+        ):
             raise ValueError(f"live performance lyric row {index} performance role contradicts its subject")
         if subject == "OTHER_OR_MIXED_SINGER" and other_singer is not True:
             raise ValueError(f"live performance lyric row {index} other-singer assertion is inconsistent")
@@ -3414,7 +3425,7 @@ def _validate_lyric_vocal_observations(
             raise ValueError(f"live performance lyric row {index} no-vocal assertion is inconsistent")
         if require_ready and not live_lidousha_lyric:
             raise ValueError(
-                f"live performance lyric row {index} does not affirm the same live Li-Dousha lyric source"
+                f"live performance lyric row {index} does not affirm the same live host lyric source"
             )
         roles.append(role)
         row_interval: tuple[int, int] | None = None
@@ -3458,7 +3469,7 @@ def _validate_lyric_vocal_observations(
             raise ValueError("live performance first and final canonical lyric rows must be sung")
         if singing_rows < MIN_READY_SUNG_LYRIC_ROWS or singing_rows / len(roles) < MIN_READY_SUNG_LYRIC_RATIO:
             raise ValueError(
-                "live performance is not predominantly sung by Li Dousha: "
+                f"live performance is not predominantly sung by {CHANNEL_PROFILE.prompt_name}: "
                 f"{singing_rows}/{len(roles)} canonical lyric rows are sung"
             )
         if longest_spoken_run > MAX_READY_CONSECUTIVE_SPOKEN_LYRIC_ROWS:
@@ -3499,9 +3510,9 @@ def validate_live_performance_observation(
 ) -> str | None:
     """Validate AGY's anti-background and same-subject singing observation.
 
-    AGY must assert the active lyric vocalist and Li-Dousha's role on every
+    AGY must assert the active lyric vocalist and the selected host's role on every
     canonical line.  Final delivery additionally combines this with the
-    independently generated Li-Dousha voiceprint claim on the same lyric rows.
+    independently generated host voiceprint claim on the same lyric rows.
     """
 
     try:

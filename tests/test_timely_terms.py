@@ -112,6 +112,20 @@ def test_malformed_pinned_snapshot_hash_fails_closed(tmp_path, monkeypatch):
     ) == ""
 
 
+def test_default_profile_keeps_pre_profile_jingting_prompt_byte_identical():
+    prompt = jingting.agy_prompt(
+        "1\n00:00:00,000 --> 00:00:01,000\n测试\n",
+        danmaku_lines=["00:01 你好"],
+        as_of_date="2026-07-10",
+        topic_entity_context="CTX",
+        song_name_candidates=["歌"],
+    )
+
+    assert hashlib.sha256(prompt.encode()).hexdigest() == (
+        "669e8d2b225dbf16ea1979ba2d1a2945dfb0a71d30068861d93f6c994003dbf4"
+    )
+
+
 def test_prompt_never_includes_reason_url_publisher_or_raw_web_text(tmp_path, monkeypatch):
     payload = _valid_snapshot()
     term = payload["terms"][0]

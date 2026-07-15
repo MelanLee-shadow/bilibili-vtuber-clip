@@ -1,7 +1,7 @@
-"""Hash-bound proof that a song candidate contains Li Dousha's live vocal.
+"""Hash-bound proof that a song candidate contains the selected host's live vocal.
 
 The lyric/LRC alignment gate proves *which recording is audible*.  It does not
-prove that Li Dousha is the person singing it: a background track aligns to the
+prove that the configured host is the person singing it: a background track aligns to the
 same LRC just as well.  This module adds an independent, fail-closed CAM++
 speaker-verification gate over seven lyric-spanning checkpoints.
 
@@ -26,9 +26,19 @@ import wave
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from src.autoslice.channel_profile import load_channel_profile
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 
 PROOF_SCHEMA_VERSION = "host-vocal-proof.v3"
 PROFILE_SCHEMA_VERSION = "lidousha-voiceprint-profile.v1"
+GENERIC_PROFILE_SCHEMA_VERSION = "host-voiceprint-profile.v1"
+SUPPORTED_PROFILE_SCHEMA_VERSIONS = {
+    PROFILE_SCHEMA_VERSION,
+    GENERIC_PROFILE_SCHEMA_VERSION,
+}
 
 CHECKPOINT_FRACTIONS = (0.08, 0.22, 0.36, 0.50, 0.64, 0.78, 0.92)
 CHECKPOINT_BUCKETS = ("head", "head", "middle", "middle", "middle", "tail", "tail")
@@ -50,7 +60,7 @@ REQUIRED_BUCKETS = ("head", "middle", "tail")
 EXPECTED_REFERENCE_COUNT = 3
 CHECKPOINT_REQUIRED_LYRIC_ROLE = "SINGING_THIS_LYRIC"
 READY_SINGING_ASSERTIONS = {
-    "lyric_vocal_subject": "LIDOUSHA",
+    "lyric_vocal_subject": CHANNEL_PROFILE.decision("lyric_vocal_subject"),
     "lidousha_role": CHECKPOINT_REQUIRED_LYRIC_ROLE,
     "same_live_vocal_source_as_lidousha": True,
     "other_singer_or_harmony_audible": False,
@@ -63,8 +73,8 @@ READY_SPOKEN_ASSERTIONS = {
 
 READY_STATUS = "READY"
 BLOCKED_STATUS = "BLOCKED"
-READY_DECISION = "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
-BLOCKED_DECISION = "NO_LIDOUSHA_VOCAL_DETECTED"
+READY_DECISION = CHANNEL_PROFILE.decision("host_vocal_present")
+BLOCKED_DECISION = CHANNEL_PROFILE.decision("host_vocal_absent")
 
 
 class HostVocalProofError(ValueError):
@@ -172,9 +182,16 @@ def _canonical_policy() -> dict[str, object]:
 
 
 def _validate_profile(profile: Mapping[str, object]) -> tuple[dict[str, object], list[dict[str, str]]]:
-    if profile.get("schema_version") != PROFILE_SCHEMA_VERSION:
-        raise HostVocalProofError(f"reference profile schema_version must be {PROFILE_SCHEMA_VERSION}")
+    if profile.get("schema_version") not in SUPPORTED_PROFILE_SCHEMA_VERSIONS:
+        raise HostVocalProofError(
+            "reference profile schema_version must be one of "
+            + ", ".join(sorted(SUPPORTED_PROFILE_SCHEMA_VERSIONS))
+        )
     _require_string(profile, "profile_id", label="reference_profile")
+    if _require_string(profile, "subject", label="reference_profile") != CHANNEL_PROFILE.display_name:
+        raise HostVocalProofError(
+            "reference_profile.subject does not match the selected channel profile"
+        )
     policy = profile.get("policy")
     if not isinstance(policy, Mapping) or dict(policy) != _canonical_policy():
         raise HostVocalProofError("reference_profile.policy does not match the compiled fail-closed policy")
@@ -276,7 +293,7 @@ def _selected_lyric_rows(alignment: Mapping[str, object]) -> list[dict[str, obje
             continue
         if assertions != READY_SINGING_ASSERTIONS:
             raise HostVocalProofError(
-                f"alignment[{alignment_index}] is not a structurally READY Li-Dousha lyric row"
+                f"alignment[{alignment_index}] is not a structurally READY host lyric row"
             )
         if end_ms - start_ms < MIN_LYRIC_CUE_MS:
             continue
@@ -636,7 +653,7 @@ def generate_host_vocal_proof(
         "reference_profile": {
             "path": str(profile_path),
             "sha256": profile_sha,
-            "schema_version": PROFILE_SCHEMA_VERSION,
+            "schema_version": profile["schema_version"],
             "profile_id": profile["profile_id"],
         },
         "speaker_model": {
@@ -742,6 +759,12 @@ def _verify_host_vocal_proof_claim(
 
     profile = _load_json_object(profile_path, label="reference profile")
     model_info, expected_references = _validate_profile(profile)
+    reference_binding = proof.get("reference_profile")
+    if (
+        not isinstance(reference_binding, Mapping)
+        or reference_binding.get("schema_version") != profile.get("schema_version")
+    ):
+        raise HostVocalProofError("host vocal proof reference profile schema mismatch")
     if proof.get("policy") != _canonical_policy():
         raise HostVocalProofError("host vocal proof policy does not match the compiled fail-closed policy")
 
@@ -922,7 +945,12 @@ def _verify_host_vocal_proof_claim(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate a hash-bound Li Dousha host-vocal proof")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate a hash-bound "
+            f"{CHANNEL_PROFILE.display_name} host-vocal proof"
+        )
+    )
     parser.add_argument("--source-media", type=Path, required=True)
     parser.add_argument("--candidate-id", required=True)
     parser.add_argument("--lyrics-alignment-report", type=Path, required=True)

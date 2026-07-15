@@ -1,6 +1,6 @@
 """LLM semantic recall selector — viewer-perspective candidate discovery.
 
-The keyword selectors structurally under-recall Li Dousha's actual humor: her
+Keyword selectors structurally under-recall a reactive streamer's actual humor: their
 funny moments are usually reactive — danmaku-triggered banter (a comment
 starts it, she reads/paraphrases it and riffs), quips at whatever is on
 screen, tongue-twisters, meltdowns — phrased with none of the storytelling
@@ -19,10 +19,13 @@ gates.  The semantic contract per candidate:
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Sequence
 
 from src.autoslice.auto_review import DecisionAction
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
+from src.autoslice.channel_profile import load_channel_profile
 # Same-package reuse of the recall-stage plumbing: candidate dataclass, window
 # overlap dedupe, and the canonical song-anchor boundary (song candidates must
 # always go through the full-source song-boundary redo).
@@ -34,6 +37,9 @@ from src.autoslice.full_session_candidate_selector import (
 )
 from src.autoslice.llm_client import LlmCall, LlmCallError, extract_json_object
 from src.autoslice.review_evidence import SourceCue
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 
 DEFAULT_MIN_TALK_WINDOW_MS = 12_000
 DEFAULT_MAX_TALK_WINDOW_MS = 300_000
@@ -48,19 +54,17 @@ def _slice_selection_metric() -> str:
     production copies; missing everywhere → empty string (prompt still builds
     with its structural rules, it just loses the preference calibration).
     """
-    import os
-    from pathlib import Path
-
-    override = os.environ.get("LIDOUSHA_SLICE_METRIC")
-    candidates = (
-        [override]
-        if override
-        else [
-            str(Path(__file__).resolve().parents[2] / "assets" / "lidousha" / "slice_selection_metric.md"),
-            "/opt/bilive/app/lidousha_slice_metric.md",
-            "/app/lidousha_slice_metric.md",
-        ]
+    override = os.environ.get("AUTOSLICE_SLICE_METRIC") or os.environ.get(
+        "LIDOUSHA_SLICE_METRIC"
     )
+    candidates = [override] if override else [str(CHANNEL_PROFILE.asset_file("slice_selection_metric"))]
+    if not override and CHANNEL_PROFILE.profile_id == "lidousha":
+        candidates.extend(
+            [
+                "/opt/bilive/app/lidousha_slice_metric.md",
+                "/app/lidousha_slice_metric.md",
+            ]
+        )
     for path in candidates:
         if not path:
             continue
@@ -90,7 +94,7 @@ def build_semantic_recall_prompt(
 """
     metric = _slice_selection_metric()
     metric_block = f"\n选题优先级 metric(Ivan 逐条校准过的权威,选题和排序都必须对照它;历史真例/反例都在里面):\n{metric}\n" if metric else ""
-    return f"""你是李豆沙(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}
+    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}
 
 你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
 
@@ -98,7 +102,7 @@ def build_semantic_recall_prompt(
 1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
 2. 弹幕互动打闹:某条弹幕起了头,主播读出/复述弹幕后接梗、吐槽、破防。读弹幕/复述问题的那句就是上下文起点,必须包含在片段里。
 3. 玩梗/绕口令/翻车/爆笑反应:包括对屏幕上正在看的图、玩的游戏的连续反应。
-4. 李豆沙本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
+4. {CHANNEL_PROFILE.display_name}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
 
 对每个候选片段必须做上下文检查(观众视角):
 - 如果片段开头是悬空的(接续语、回应某个看不到的东西),往前找触发点(弹幕、话题开始、开始看某个东西的时刻),把 start_cue 前移到触发点,或填 context_trigger_cue。

@@ -83,6 +83,20 @@ def test_agy_audio_lrc_v5_prompt_marks_media_enum_instructions_untrusted():
     assert "COMPLETE_LIVE_ARRANGEMENT" in prompt
     assert "at least 70% canonical" in prompt
     assert "studio-repeat omission alone must" in prompt
+
+
+def test_default_profile_keeps_the_pre_profile_audio_lrc_prompt_byte_identical():
+    prompt = build_agy_audio_lrc_prompt(
+        candidate_id="c",
+        attempt_id="a",
+        source_sha256="1" * 64,
+        lrc_sha256="2" * 64,
+        duration_ms=90_000,
+    )
+
+    assert hashlib.sha256(prompt.encode()).hexdigest() == (
+        "ac3083f82942169e2c359bc6671e88dcb51e7a68ab7085b930fbaee54bfe9212"
+    )
     assert "live_start_ms <= tail < live_end_ms" in prompt
     assert "voiceprint gate; that speaker-similarity gate is not a singing classifier" in prompt
     assert "`lrc_index` is the only row identity" in prompt

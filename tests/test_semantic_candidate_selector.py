@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -44,6 +45,18 @@ def test_prompt_is_viewer_perspective_and_lists_all_cues():
     assert "背景音乐都不是歌切" in prompt
     assert "#1 " in prompt and "#5 " in prompt
     assert "第5句话" in prompt
+
+
+def test_default_profile_keeps_pre_profile_semantic_prompt_byte_identical():
+    prompt = build_semantic_recall_prompt(
+        [SourceCue("c1", 1_000, 3_000, "测试")],
+        max_candidates=2,
+        danmaku_hints="00:01 burst",
+    )
+
+    assert hashlib.sha256(prompt.encode()).hexdigest() == (
+        "d15bf3e86469bde0505b8a4b3273820e0cc45933684319bc484b890d24dbcc51"
+    )
 
 
 def test_selects_talk_candidate_with_semantic_boundary():

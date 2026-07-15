@@ -3,6 +3,13 @@
   "profile_id": "lidousha",
   "identity": {
     "display_name": "李豆沙",
+    "prompt_name": "Li Dousha",
+    "short_name": "小李",
+    "self_reference_aliases": [
+      "李豆沙",
+      "小李",
+      "豆沙"
+    ],
     "room_id": "22966160",
     "output_directory": "lidousha",
     "host_speaker_label": "李豆沙",
@@ -15,6 +22,7 @@
       "entity_confusables": "entity_confusables.json",
       "glossary": "glossary.txt",
       "branding_intro_manifest": "intro/branding_intro.v1.json",
+      "cover_identity_prompt": "cover_identity_prompt.txt",
       "known_songs": "known_songs.json",
       "persona": "persona.md",
       "slice_selection_metric": "slice_selection_metric.md",
@@ -34,6 +42,7 @@
       "entity_confusables",
       "glossary",
       "branding_intro_manifest",
+      "cover_identity_prompt",
       "known_songs",
       "persona",
       "slice_selection_metric",
@@ -51,6 +60,7 @@
     "voiceprint_reference_subdirectory": "lidousha"
   },
   "titles": {
+    "talk_prefix": "【李豆沙】",
     "song_prefix": "【李豆沙】豆沙歌，",
     "song_hook_template": "【李豆沙】豆沙歌，《{song_title}》｜{hook}",
     "song_plain_template": "【李豆沙】豆沙歌，直播间唱《{song_title}》"
