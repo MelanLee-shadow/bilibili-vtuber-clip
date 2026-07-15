@@ -28,10 +28,24 @@
 
 ### 下一步
 
-1. 梦限大出货 → 换源 → `docs/pending-provisional-uploads-20260713.md` #1 打钩（10/10 清零）。
-2. free 上一次性脚本群（edit_replace_20260714/cover_only_edit/bandfan_*…）弃用改点 `bili_archive_tool.py`；authorized_upload.py 的 view/season 代码迁移到新模块（等明早两单发完再动上传路径）。
+1. ✅ 梦限大已换源、10/10 清零（见上节 #1）。
+2. free 上一次性脚本群（edit_replace_20260714/cover_only_edit/bandfan_*…）弃用改点 `bili_archive_tool.py`；authorized_upload.py 的 view/season 代码迁移到新模块（等两单发完再动上传路径）。
 3. TODO(homophone)：同音候选对（练死/恋死）不可听裁 → 直接披露不仲裁（pypinyin 本地已有，free 待确认）。
-4. 下一个重构大目标：`free_session_autoslice.py`（7600 行）按 状态机/歌道/谈话道/维护 拆分——需在无在飞跑批的窗口做，全量测试护航。
+
+### runner 屎山拆解（2026-07-15 进行中）
+
+**已完成（main，全量 1186 passed，行为保真）：**
+- `1ac9606`→`e4ac8bc` 已部署生产（02:24Z），含 speaker-routing 抽取 + 全部安全守卫，生产平稳（02:50 tick 零失败，歌切正常）。
+- 抽取 #1 `speaker_routing_session.py`（说话人路由+collab evidence，~880 行）——已在生产。
+- 抽取 #2 `song_completion.py`（843 行纯证明函数 `song_completion_evidence`+AV流合约 helper）+ `verified_io.py`（hash/path 叶子工具）——commit `2367e0c`，**在 main 领先生产、已测未部署**（纯结构变更、无功能收益，不在无人盯窗口推 live；下个有人盯窗口随批部署）。
+- runner：7697 → 5955 行（-23%），3 个聚焦模块。
+
+**方法论（见 memory [[runner-god-file-decomposition]]）：** 抽到 src 模块 + 保留同名 wrapper + 被 test patch 且跨模块互调的符号用参数/RunnerContext 注入（这样 `patch runner.X` 仍够得到模块内互调，零测试改动）。纯函数簇最安全；耦合 runner state 的簇走 RunnerContext（如 speaker_routing）。
+
+**剩余大簇（未拆，各需"有人盯 + 独立审查"的窗口，勿在无人值守 3am 硬拆 live 生产）：**
+- 封面修复子系统（~1486 行，2996-4482）：**非连续**（夹共享的 `_active/_updated_song_delivery_manifest`）、~13 runner 全局依赖、3 个被 patch 又簇内互调的函数（cover_repair_needed/_cover_authority_preflight/_bind_repaired_cover 各需注入）、真实出图 subprocess → RunnerContext 级，高 blast radius。
+- 歌切交付编排（_atomic_verified_song_delivery patch×8 + _commit/_write_song_active_record）：patch 密集且内部互调，需注入。
+- produce_song(363)/produce_talk(196) 车道编排。
 
 ### 目标
 
