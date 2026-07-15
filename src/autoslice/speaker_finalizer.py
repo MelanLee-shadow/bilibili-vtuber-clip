@@ -26,7 +26,7 @@ import statistics
 import stat
 import subprocess
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
@@ -1589,7 +1589,23 @@ def _assert_runtime_assets_stable(
             )
 
 
-def _run_campplus_analysis(
+@dataclass(frozen=True)
+class _CampPlusAnchorState:
+    policy: dict[str, object]
+    references: list[dict[str, object]]
+    model_hash: str
+    cue_paths: list[Path]
+    similarity: Callable[[Path, Path], float]
+    seed_scores: list[float]
+    clip_host_indices: list[int]
+    host_indices: list[int]
+    host_prints: list[Path]
+    host_anchor_scope: str
+    source_session_evidence: dict[str, object] | None
+    host_bank_similarity: Callable[[int], float]
+
+
+def _prepare_campplus_anchor_state(
     *,
     media_path: Path,
     cues: Sequence[TextCue],
@@ -1597,25 +1613,40 @@ def _run_campplus_analysis(
     reference_dir: Path,
     model_dir: Path,
     work_dir: Path,
-    context_call: Callable[[str], str] | None,
-    reviewed_context_votes: Mapping[int, str] | None = None,
-    source_session_anchor_path: Path | None = None,
-) -> dict[str, object]:
+    source_session_anchor_path: Path | None,
+) -> _CampPlusAnchorState:
+    """Load hash-bound runtime assets and construct the trusted host bank."""
+
     work_dir.mkdir(parents=True, exist_ok=True)
-    profile, references, model_hash, verifier = _load_runtime(profile_path, reference_dir, model_dir)
+    profile, references, model_hash, verifier = _load_runtime(
+        profile_path,
+        reference_dir,
+        model_dir,
+    )
     policy = _policy(profile)
     _audio, _sample_rate, cue_paths = _extract_cue_wavs(media_path, cues, work_dir)
     similarity = _build_embedding_similarity(
-        verifier=verifier, model_hash=model_hash, work_dir=work_dir
+        verifier=verifier,
+        model_hash=model_hash,
+        work_dir=work_dir,
     )
-
     seed_scores = [
-        float(statistics.median(similarity(Path(reference["path"]), cue_path) for reference in references))
+        float(
+            statistics.median(
+                similarity(Path(reference["path"]), cue_path)
+                for reference in references
+            )
+        )
         for cue_path in cue_paths
     ]
     anchor_count = int(policy["host_session_anchor_count"])
     clip_host_indices = [
-        index for index in sorted(range(len(cues)), key=seed_scores.__getitem__, reverse=True)
+        index
+        for index in sorted(
+            range(len(cues)),
+            key=seed_scores.__getitem__,
+            reverse=True,
+        )
         if seed_scores[index] >= float(policy["host_session_seed_min"])
     ][:anchor_count]
     source_session_evidence: dict[str, object] | None = None
@@ -1641,26 +1672,69 @@ def _run_campplus_analysis(
         host_prints = [cue_paths[index] for index in host_indices]
         host_anchor_scope = "clip"
 
-    host_bank_score_cache: dict[int, float] = {}
+    score_cache: dict[int, float] = {}
 
     def host_bank_similarity(index: int) -> float:
-        # A trusted host bank contains complementary speaking styles.  A cue
-        # that strongly matches any unchanged-high-gate host anchor is host-
-        # explained; averaging would dilute the one matching style and create
-        # false guest evidence (notably excited/farewell delivery).
-        if index in host_bank_score_cache:
-            return host_bank_score_cache[index]
+        if index in score_cache:
+            return score_cache[index]
         values = [similarity(host, cue_paths[index]) for host in host_prints]
-        if host_anchor_scope == "source_session":
-            score = float(max(values))
-            host_bank_score_cache[index] = score
-            return score
-        # Preserve the established clip-local classifier exactly.  The
-        # any-anchor veto is authorized only by an explicit, hash-bound source
-        # session bank; it must not silently relax every historical clip.
-        score = float(statistics.mean(values))
-        host_bank_score_cache[index] = score
+        score = (
+            float(max(values))
+            if host_anchor_scope == "source_session"
+            else float(statistics.mean(values))
+        )
+        score_cache[index] = score
         return score
+
+    return _CampPlusAnchorState(
+        policy=dict(policy),
+        references=references,
+        model_hash=model_hash,
+        cue_paths=cue_paths,
+        similarity=similarity,
+        seed_scores=seed_scores,
+        clip_host_indices=clip_host_indices,
+        host_indices=host_indices,
+        host_prints=host_prints,
+        host_anchor_scope=host_anchor_scope,
+        source_session_evidence=source_session_evidence,
+        host_bank_similarity=host_bank_similarity,
+    )
+
+
+def _run_campplus_analysis(
+    *,
+    media_path: Path,
+    cues: Sequence[TextCue],
+    profile_path: Path,
+    reference_dir: Path,
+    model_dir: Path,
+    work_dir: Path,
+    context_call: Callable[[str], str] | None,
+    reviewed_context_votes: Mapping[int, str] | None = None,
+    source_session_anchor_path: Path | None = None,
+) -> dict[str, object]:
+    anchors = _prepare_campplus_anchor_state(
+        media_path=media_path,
+        cues=cues,
+        profile_path=profile_path,
+        reference_dir=reference_dir,
+        model_dir=model_dir,
+        work_dir=work_dir,
+        source_session_anchor_path=source_session_anchor_path,
+    )
+    policy = anchors.policy
+    references = anchors.references
+    model_hash = anchors.model_hash
+    cue_paths = anchors.cue_paths
+    similarity = anchors.similarity
+    seed_scores = anchors.seed_scores
+    clip_host_indices = anchors.clip_host_indices
+    host_indices = anchors.host_indices
+    host_prints = anchors.host_prints
+    host_anchor_scope = anchors.host_anchor_scope
+    source_session_evidence = anchors.source_session_evidence
+    host_bank_similarity = anchors.host_bank_similarity
 
     guest_candidates: list[int] = []
     for index in sorted(range(len(cues)), key=seed_scores.__getitem__):
@@ -1874,6 +1948,527 @@ def _run_campplus_analysis(
     }
 
 
+@dataclass(frozen=True)
+class _BoundSpeakerInputs:
+    media_path: Path
+    text_srt_path: Path
+    profile_path: Path
+    profile_snapshot: Path
+    profile_sha256: str
+    cues: list[TextCue]
+    source_session_anchor_original: Path | None
+    source_session_anchor_snapshot: Path | None
+    source_session_anchor_sha256: str | None
+    mixed_overlap_evidence_original: Path | None
+    mixed_overlap_evidence_snapshot: Path | None
+    mixed_overlap_evidence_sha256: str | None
+
+
+def _snapshot_speaker_inputs(
+    *,
+    media_path: Path,
+    text_srt_path: Path,
+    profile_path: Path,
+    work_dir: Path,
+    source_session_anchor_path: Path | None,
+    mixed_overlap_evidence_path: Path | None,
+) -> _BoundSpeakerInputs:
+    """Resolve and freeze every mutable authority consumed by finalization."""
+
+    media_path = media_path.resolve(strict=True)
+    text_srt_path = text_srt_path.resolve(strict=True)
+    profile_path = profile_path.resolve(strict=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    profile_snapshot, profile_sha256 = _snapshot_bound_input(
+        profile_path,
+        work_dir / "bound-inputs" / "voiceprint-profile.json",
+    )
+    source_original: Path | None = None
+    source_snapshot: Path | None = None
+    source_sha256: str | None = None
+    if source_session_anchor_path is not None:
+        source_original = source_session_anchor_path.resolve(strict=True)
+        source_snapshot, source_sha256 = _snapshot_bound_input(
+            source_original,
+            work_dir / "bound-inputs" / "source-session-anchors.json",
+        )
+    mixed_original: Path | None = None
+    mixed_snapshot: Path | None = None
+    mixed_sha256: str | None = None
+    if mixed_overlap_evidence_path is not None:
+        mixed_original = mixed_overlap_evidence_path.resolve(strict=True)
+        mixed_snapshot, mixed_sha256 = _snapshot_bound_input(
+            mixed_original,
+            work_dir / "bound-inputs" / "mixed-overlap-evidence.json",
+        )
+    return _BoundSpeakerInputs(
+        media_path=media_path,
+        text_srt_path=text_srt_path,
+        profile_path=profile_path,
+        profile_snapshot=profile_snapshot,
+        profile_sha256=profile_sha256,
+        cues=parse_srt(text_srt_path),
+        source_session_anchor_original=source_original,
+        source_session_anchor_snapshot=source_snapshot,
+        source_session_anchor_sha256=source_sha256,
+        mixed_overlap_evidence_original=mixed_original,
+        mixed_overlap_evidence_snapshot=mixed_snapshot,
+        mixed_overlap_evidence_sha256=mixed_sha256,
+    )
+
+
+@dataclass(frozen=True)
+class _SpeakerOverrideState:
+    document: dict[str, object] | None
+    reviewed_votes: dict[int, str]
+    expected_automatic_sha256: str
+
+
+def _load_speaker_override_state(
+    override_path: Path | None,
+    *,
+    candidate_id: str | None,
+    media_path: Path,
+    text_srt_path: Path,
+    cue_count: int,
+) -> _SpeakerOverrideState:
+    """Validate one optional human override against the current frozen inputs."""
+
+    if override_path is None:
+        return _SpeakerOverrideState(None, {}, "")
+    loaded = json.loads(override_path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise SpeakerFinalizationError("speaker override document must be an object")
+    expected_text = str(loaded.get("text_final_srt_sha256") or "")
+    expected_automatic = str(loaded.get("source_srt_sha256") or "")
+    expected_media = str(loaded.get("source_media_sha256") or "")
+    actual_text = sha256_file(text_srt_path)
+    actual_media = sha256_file(media_path)
+    if not expected_media:
+        raise SpeakerFinalizationError("speaker override is missing source_media_sha256")
+    if expected_media != actual_media:
+        raise SpeakerFinalizationError(
+            f"speaker override media hash mismatch: expected {expected_media!r}, got {actual_media!r}"
+        )
+    if expected_text and expected_text != actual_text:
+        raise SpeakerFinalizationError(
+            f"speaker override text-final hash mismatch: expected {expected_text!r}, got {actual_text!r}"
+        )
+    if not str(candidate_id or "").strip():
+        raise SpeakerFinalizationError(
+            "candidate_id is required when a speaker override is present"
+        )
+    try:
+        validate_bound_speaker_override_document(
+            override_path,
+            candidate_id=str(candidate_id),
+            expected_source_media_sha256=actual_media,
+            expected_text_final_srt_sha256=actual_text,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise SpeakerFinalizationError(
+            f"speaker override authority binding failed: {exc}"
+        ) from exc
+    return _SpeakerOverrideState(
+        document=loaded,
+        reviewed_votes=_reviewed_context_votes(loaded, cue_count=cue_count),
+        expected_automatic_sha256=expected_automatic,
+    )
+
+
+@dataclass(frozen=True)
+class _MixedOverlapGate:
+    document: Mapping[str, object] | None
+    review_manifest: dict[str, object] | None
+
+
+def _evaluate_mixed_overlap_gate(
+    *,
+    bound: _BoundSpeakerInputs,
+    override_document: Mapping[str, object] | None,
+    override_path: Path | None,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+) -> _MixedOverlapGate:
+    """Validate provider evidence and fail closed before acoustic analysis."""
+
+    if bound.mixed_overlap_evidence_snapshot is None:
+        return _MixedOverlapGate(None, None)
+    try:
+        document = json.loads(
+            bound.mixed_overlap_evidence_snapshot.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SpeakerFinalizationError(
+            f"mixed/overlap evidence is invalid JSON: {exc}"
+        ) from exc
+    media_sha256 = sha256_file(bound.media_path)
+    text_sha256 = sha256_file(bound.text_srt_path)
+    mixed_rows = validate_mixed_overlap_evidence_document(
+        document,
+        expected_media_sha256=media_sha256,
+        expected_text_sha256=text_sha256,
+        cues=bound.cues,
+        expected_audio_root=bound.mixed_overlap_evidence_original.parent,
+    )
+    override_sources = {
+        int(item.get("source_cue", 0))
+        for item in ((override_document or {}).get("overrides") or [])
+        if isinstance(item, Mapping)
+    }
+    remaining_rows = [
+        row for row in mixed_rows if int(row["source_cue"]) not in override_sources
+    ]
+    if not remaining_rows:
+        return _MixedOverlapGate(document, None)
+    if (
+        sha256_file(bound.mixed_overlap_evidence_original)
+        != bound.mixed_overlap_evidence_sha256
+    ):
+        raise SpeakerFinalizationError("mixed/overlap evidence drifted during validation")
+    output_srt_path.unlink(missing_ok=True)
+    output_ass_path.unlink(missing_ok=True)
+    reason_codes = sorted(
+        {
+            str(reason)
+            for row in remaining_rows
+            for reason in row.get("reason_codes", [])
+        }
+    )
+    unresolved = [int(row["source_cue"]) for row in remaining_rows]
+    review_manifest: dict[str, object] = {
+        "schema_version": SPEAKER_FINALIZATION_SCHEMA,
+        "status": "SPEAKER_REVIEW_REQUIRED",
+        "production_ready": False,
+        "reason_code": "SPEAKER_REVIEW_REQUIRED",
+        "reason": "mixed/overlap speaker evidence requires review: "
+        + ",".join(reason_codes),
+        "stage_order": "text_final_then_speaker_then_ass_then_burn",
+        "source_media": str(bound.media_path),
+        "source_media_sha256": media_sha256,
+        "text_final_srt": str(bound.text_srt_path),
+        "text_final_srt_sha256": text_sha256,
+        "profile": str(bound.profile_path.resolve()),
+        "profile_sha256": bound.profile_sha256,
+        "speaker_override": str(override_path.resolve()) if override_path is not None else None,
+        "speaker_override_sha256": sha256_file(override_path)
+        if override_path is not None
+        else None,
+        "source_session_anchor_manifest": (
+            str(bound.source_session_anchor_original)
+            if bound.source_session_anchor_original is not None
+            else None
+        ),
+        "source_session_anchor_manifest_sha256": bound.source_session_anchor_sha256,
+        "mixed_overlap_evidence": str(bound.mixed_overlap_evidence_original),
+        "mixed_overlap_evidence_sha256": bound.mixed_overlap_evidence_sha256,
+        "source_cue_count": len(bound.cues),
+        "context_unresolved_cues": unresolved,
+        "review_reason_codes": reason_codes,
+        "review_required_cues": remaining_rows,
+        "analysis": {
+            "mode": "provider_mixed_overlap_gate",
+            "provider": document.get("provider"),
+        },
+    }
+    validate_speaker_review_manifest_document(
+        review_manifest,
+        expected_media_sha256=media_sha256,
+        expected_text_sha256=text_sha256,
+        cues=bound.cues,
+    )
+    atomic_write_text(
+        output_manifest_path,
+        json.dumps(review_manifest, ensure_ascii=False, indent=2) + "\n",
+    )
+    return _MixedOverlapGate(document, review_manifest)
+
+
+def _run_bound_speaker_analysis(
+    *,
+    bound: _BoundSpeakerInputs,
+    reference_dir: Path,
+    model_dir: Path,
+    work_dir: Path,
+    analyzer: Callable[..., dict[str, object]],
+    context_call: Callable[[str], str] | None,
+    reviewed_votes: Mapping[int, str],
+    mixed_overlap_document: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Run the analyzer, then prove every bound input stayed unchanged."""
+
+    analysis = analyzer(
+        media_path=bound.media_path,
+        cues=bound.cues,
+        profile_path=bound.profile_snapshot,
+        reference_dir=reference_dir,
+        model_dir=model_dir,
+        work_dir=work_dir,
+        context_call=context_call,
+        reviewed_context_votes=reviewed_votes,
+        source_session_anchor_path=bound.source_session_anchor_snapshot,
+    )
+    if sha256_file(bound.profile_path) != bound.profile_sha256:
+        raise SpeakerFinalizationError("voiceprint profile drifted during speaker analysis")
+    if (
+        bound.source_session_anchor_original is not None
+        and sha256_file(bound.source_session_anchor_original)
+        != bound.source_session_anchor_sha256
+    ):
+        raise SpeakerFinalizationError(
+            "source-session anchor manifest drifted during speaker analysis"
+        )
+    if (
+        bound.mixed_overlap_evidence_original is not None
+        and sha256_file(bound.mixed_overlap_evidence_original)
+        != bound.mixed_overlap_evidence_sha256
+    ):
+        raise SpeakerFinalizationError(
+            "mixed/overlap evidence drifted during speaker analysis"
+        )
+    if mixed_overlap_document is not None:
+        validate_mixed_overlap_evidence_document(
+            mixed_overlap_document,
+            expected_media_sha256=sha256_file(bound.media_path),
+            expected_text_sha256=sha256_file(bound.text_srt_path),
+            cues=bound.cues,
+            expected_audio_root=bound.mixed_overlap_evidence_original.parent,
+        )
+    return analysis
+
+
+@dataclass(frozen=True)
+class _SpeakerLabels:
+    automatic: list[Cue]
+    final: list[Cue]
+    automatic_srt: Path
+
+
+def _materialize_speaker_labels(
+    analysis: Mapping[str, object],
+    *,
+    cues: Sequence[TextCue],
+    work_dir: Path,
+    override_document: Mapping[str, object] | None,
+    expected_automatic_sha256: str,
+) -> _SpeakerLabels:
+    """Turn analyzer decisions into the immutable automatic and final cue sets."""
+
+    decisions = analysis.get("decisions")
+    if not isinstance(decisions, list) or len(decisions) != len(cues):
+        raise SpeakerFinalizationError("speaker analyzer returned incomplete decisions")
+    automatic: list[Cue] = []
+    for index, (text_cue, decision) in enumerate(
+        zip(cues, decisions, strict=True),
+        start=1,
+    ):
+        if not isinstance(decision, Mapping) or decision.get("speaker") not in SPEAKERS:
+            raise SpeakerFinalizationError(f"speaker decision {index} is invalid")
+        automatic.append(
+            Cue(
+                source_index=index,
+                start=text_cue.start,
+                end=text_cue.end,
+                speaker=str(decision["speaker"]),
+                text=text_cue.text,
+                decision_source=str(decision.get("decision_source") or "campp_audio"),
+                note=(
+                    f"margin={decision.get('margin')}"
+                    if decision.get("margin") is not None
+                    else None
+                ),
+            )
+        )
+    automatic_srt = work_dir / "automatic-labelled.srt"
+    write_srt(automatic, automatic_srt)
+    final_cues = automatic
+    if override_document is not None:
+        actual_automatic = sha256_file(automatic_srt)
+        if expected_automatic_sha256 and expected_automatic_sha256 != actual_automatic:
+            raise SpeakerFinalizationError(
+                "speaker override source hash mismatch: "
+                f"expected {expected_automatic_sha256!r}, got {actual_automatic!r}"
+            )
+        final_cues = apply_overrides(automatic, override_document)
+    return _SpeakerLabels(automatic, final_cues, automatic_srt)
+
+
+def _resolve_unresolved_speaker_gate(
+    analysis: Mapping[str, object],
+    *,
+    bound: _BoundSpeakerInputs,
+    override_document: Mapping[str, object] | None,
+    override_path: Path | None,
+    automatic_srt: Path,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+) -> dict[str, object] | None:
+    """Emit a validated review manifest or prove no unresolved cues remain."""
+
+    unresolved_raw = analysis.get("context_unresolved_cues") or []
+    if not isinstance(unresolved_raw, list) or any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in unresolved_raw
+    ):
+        raise SpeakerFinalizationError(
+            "speaker analyzer returned invalid unresolved-context evidence"
+        )
+    override_sources = {
+        int(item.get("source_cue", 0))
+        for item in ((override_document or {}).get("overrides") or [])
+        if isinstance(item, Mapping)
+    }
+    remaining_unresolved = sorted(set(unresolved_raw) - override_sources)
+    if not remaining_unresolved:
+        return None
+    if analysis.get("review_required") is not True:
+        raise SpeakerFinalizationError(
+            "whole-clip context did not resolve ambiguous speaker cues: "
+            + ",".join(str(value) for value in remaining_unresolved)
+        )
+    output_srt_path.unlink(missing_ok=True)
+    output_ass_path.unlink(missing_ok=True)
+    reason_codes_raw = analysis.get("review_reason_codes") or []
+    if not isinstance(reason_codes_raw, list) or any(
+        not isinstance(value, str) or not value.strip() for value in reason_codes_raw
+    ):
+        raise SpeakerFinalizationError("speaker analyzer returned invalid review reason codes")
+    reason_codes = list(dict.fromkeys(reason_codes_raw))
+    review_rows = analysis.get("review_required_cues")
+    if review_rows is None:
+        review_rows = analysis.get("singleton_evidence") or []
+    media_sha256 = sha256_file(bound.media_path)
+    text_sha256 = sha256_file(bound.text_srt_path)
+    review_manifest: dict[str, object] = {
+        "schema_version": SPEAKER_FINALIZATION_SCHEMA,
+        "status": "SPEAKER_REVIEW_REQUIRED",
+        "production_ready": False,
+        "reason_code": "SPEAKER_REVIEW_REQUIRED",
+        "reason": "speaker evidence requires review: "
+        + ",".join(reason_codes or ["UNRESOLVED_SPEAKER_EVIDENCE"]),
+        "stage_order": "text_final_then_speaker_then_ass_then_burn",
+        "source_media": str(bound.media_path),
+        "source_media_sha256": media_sha256,
+        "text_final_srt": str(bound.text_srt_path),
+        "text_final_srt_sha256": text_sha256,
+        "profile": str(bound.profile_path.resolve()),
+        "profile_sha256": bound.profile_sha256,
+        "automatic_labelled_srt": str(automatic_srt.resolve()),
+        "automatic_labelled_srt_sha256": sha256_file(automatic_srt),
+        "speaker_override": str(override_path.resolve()) if override_path is not None else None,
+        "speaker_override_sha256": sha256_file(override_path)
+        if override_path is not None
+        else None,
+        "source_session_anchor_manifest": (
+            str(bound.source_session_anchor_original)
+            if bound.source_session_anchor_original is not None
+            else None
+        ),
+        "source_session_anchor_manifest_sha256": bound.source_session_anchor_sha256,
+        "mixed_overlap_evidence": (
+            str(bound.mixed_overlap_evidence_original)
+            if bound.mixed_overlap_evidence_original is not None
+            else None
+        ),
+        "mixed_overlap_evidence_sha256": bound.mixed_overlap_evidence_sha256,
+        "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
+        "source_cue_count": len(bound.cues),
+        "context_unresolved_cues": remaining_unresolved,
+        "review_reason_codes": reason_codes,
+        "review_required_cues": review_rows,
+        "analysis": analysis,
+    }
+    validate_speaker_review_manifest_document(
+        review_manifest,
+        expected_media_sha256=media_sha256,
+        expected_text_sha256=text_sha256,
+        cues=bound.cues,
+    )
+    atomic_write_text(
+        output_manifest_path,
+        json.dumps(review_manifest, ensure_ascii=False, indent=2) + "\n",
+    )
+    return review_manifest
+
+
+def _write_ready_speaker_delivery(
+    *,
+    bound: _BoundSpeakerInputs,
+    analysis: Mapping[str, object],
+    final_cues: Sequence[Cue],
+    automatic_srt: Path,
+    override_path: Path | None,
+    output_srt_path: Path,
+    output_ass_path: Path,
+    output_manifest_path: Path,
+) -> dict[str, object]:
+    """Atomically materialize the READY subtitle artifacts and their bindings."""
+
+    write_srt(final_cues, output_srt_path)
+    write_ass(final_cues, output_ass_path, show_speaker_labels=False)
+    manifest: dict[str, object] = {
+        "schema_version": SPEAKER_FINALIZATION_SCHEMA,
+        "status": "READY",
+        "production_ready": True,
+        "stage_order": "text_final_then_speaker_then_ass_then_burn",
+        "source_media": str(bound.media_path),
+        "source_media_sha256": sha256_file(bound.media_path),
+        "text_final_srt": str(bound.text_srt_path),
+        "text_final_srt_sha256": sha256_file(bound.text_srt_path),
+        "profile": str(bound.profile_path.resolve()),
+        "profile_sha256": bound.profile_sha256,
+        "automatic_labelled_srt_sha256": sha256_file(automatic_srt),
+        "speaker_override": str(override_path.resolve()) if override_path is not None else None,
+        "speaker_override_sha256": sha256_file(override_path)
+        if override_path is not None
+        else None,
+        "source_session_anchor_manifest": (
+            str(bound.source_session_anchor_original)
+            if bound.source_session_anchor_original is not None
+            else None
+        ),
+        "source_session_anchor_manifest_sha256": bound.source_session_anchor_sha256,
+        "mixed_overlap_evidence": (
+            str(bound.mixed_overlap_evidence_original)
+            if bound.mixed_overlap_evidence_original is not None
+            else None
+        ),
+        "mixed_overlap_evidence_sha256": bound.mixed_overlap_evidence_sha256,
+        "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
+        "source_session_id": (
+            (analysis.get("source_session_anchor") or {}).get("source_session_id")
+            if isinstance(analysis.get("source_session_anchor"), Mapping)
+            else None
+        ),
+        "output_review_srt": str(output_srt_path.resolve()),
+        "output_review_srt_sha256": sha256_file(output_srt_path),
+        "output_ass": str(output_ass_path.resolve()),
+        "output_ass_sha256": sha256_file(output_ass_path),
+        "visible_speaker_prefixes": False,
+        "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
+        "speaker_taxonomy": "binary_visual_host_vs_guest",
+        "host_identity_aliases": list(CHANNEL_PROFILE.speaker_identity_aliases),
+        "source_cue_count": len(bound.cues),
+        "output_cue_count": len(final_cues),
+        "reviewed_output_cue_count": sum(
+            cue.decision_source.startswith("reviewed_") for cue in final_cues
+        ),
+        "accepted_context_output_cue_count": sum(
+            cue.decision_source == "accepted_context_baseline" for cue in final_cues
+        ),
+        "overlap_output_cue_count": sum(cue.placement == "above" for cue in final_cues),
+        "analysis": analysis,
+        "final_decisions": [asdict(cue) for cue in final_cues],
+    }
+    atomic_write_text(
+        output_manifest_path,
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+    )
+    return manifest
+
+
 def finalize_speaker_subtitles(
     *,
     media_path: Path,
@@ -1892,357 +2487,76 @@ def finalize_speaker_subtitles(
     analyzer: Callable[..., dict[str, object]] = _run_campplus_analysis,
     context_call: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
-    media_path = media_path.resolve(strict=True)
-    text_srt_path = text_srt_path.resolve(strict=True)
-    profile_path = profile_path.resolve(strict=True)
-    work_dir.mkdir(parents=True, exist_ok=True)
-    profile_snapshot, profile_sha256 = _snapshot_bound_input(
-        profile_path, work_dir / "bound-inputs" / "voiceprint-profile.json"
-    )
-    source_session_anchor_original: Path | None = None
-    source_session_anchor_snapshot: Path | None = None
-    source_session_anchor_sha256: str | None = None
-    if source_session_anchor_path is not None:
-        source_session_anchor_original = source_session_anchor_path.resolve(strict=True)
-        source_session_anchor_snapshot, source_session_anchor_sha256 = _snapshot_bound_input(
-            source_session_anchor_original,
-            work_dir / "bound-inputs" / "source-session-anchors.json",
-        )
-    mixed_overlap_evidence_original: Path | None = None
-    mixed_overlap_evidence_snapshot: Path | None = None
-    mixed_overlap_evidence_sha256: str | None = None
-    if mixed_overlap_evidence_path is not None:
-        mixed_overlap_evidence_original = mixed_overlap_evidence_path.resolve(strict=True)
-        mixed_overlap_evidence_snapshot, mixed_overlap_evidence_sha256 = _snapshot_bound_input(
-            mixed_overlap_evidence_original,
-            work_dir / "bound-inputs" / "mixed-overlap-evidence.json",
-        )
-    cues = parse_srt(text_srt_path)
-    override_document: dict[str, object] | None = None
-    reviewed_votes: dict[int, str] = {}
-    expected_automatic = ""
-    if override_path is not None:
-        loaded = json.loads(override_path.read_text(encoding="utf-8"))
-        if not isinstance(loaded, dict):
-            raise SpeakerFinalizationError("speaker override document must be an object")
-        override_document = loaded
-        expected_text = str(override_document.get("text_final_srt_sha256") or "")
-        expected_automatic = str(override_document.get("source_srt_sha256") or "")
-        expected_media = str(override_document.get("source_media_sha256") or "")
-        actual_text = sha256_file(text_srt_path)
-        actual_media = sha256_file(media_path)
-        if not expected_media:
-            raise SpeakerFinalizationError("speaker override is missing source_media_sha256")
-        if expected_media != actual_media:
-            raise SpeakerFinalizationError(
-                f"speaker override media hash mismatch: expected {expected_media!r}, got {actual_media!r}"
-            )
-        if expected_text and expected_text != actual_text:
-            raise SpeakerFinalizationError(
-                f"speaker override text-final hash mismatch: expected {expected_text!r}, got {actual_text!r}"
-            )
-        if not str(candidate_id or "").strip():
-            raise SpeakerFinalizationError(
-                "candidate_id is required when a speaker override is present"
-            )
-        try:
-            validate_bound_speaker_override_document(
-                override_path,
-                candidate_id=str(candidate_id),
-                expected_source_media_sha256=actual_media,
-                expected_text_final_srt_sha256=actual_text,
-            )
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            raise SpeakerFinalizationError(
-                f"speaker override authority binding failed: {exc}"
-            ) from exc
-        reviewed_votes = _reviewed_context_votes(override_document, cue_count=len(cues))
-    mixed_overlap_document: Mapping[str, object] | None = None
-    if mixed_overlap_evidence_snapshot is not None:
-        try:
-            mixed_overlap_document = json.loads(
-                mixed_overlap_evidence_snapshot.read_text(encoding="utf-8")
-            )
-        except (OSError, json.JSONDecodeError) as exc:
-            raise SpeakerFinalizationError(f"mixed/overlap evidence is invalid JSON: {exc}") from exc
-        media_sha256 = sha256_file(media_path)
-        text_sha256 = sha256_file(text_srt_path)
-        mixed_rows = validate_mixed_overlap_evidence_document(
-            mixed_overlap_document,
-            expected_media_sha256=media_sha256,
-            expected_text_sha256=text_sha256,
-            cues=cues,
-            expected_audio_root=mixed_overlap_evidence_original.parent,
-        )
-        override_sources = {
-            int(item.get("source_cue", 0))
-            for item in ((override_document or {}).get("overrides") or [])
-            if isinstance(item, Mapping)
-        }
-        remaining_rows = [
-            row for row in mixed_rows if int(row["source_cue"]) not in override_sources
-        ]
-        if remaining_rows:
-            if sha256_file(mixed_overlap_evidence_original) != mixed_overlap_evidence_sha256:
-                raise SpeakerFinalizationError("mixed/overlap evidence drifted during validation")
-            output_srt_path.unlink(missing_ok=True)
-            output_ass_path.unlink(missing_ok=True)
-            reason_codes = sorted(
-                {
-                    str(reason)
-                    for row in remaining_rows
-                    for reason in row.get("reason_codes", [])
-                }
-            )
-            unresolved = [int(row["source_cue"]) for row in remaining_rows]
-            review_manifest: dict[str, object] = {
-                "schema_version": SPEAKER_FINALIZATION_SCHEMA,
-                "status": "SPEAKER_REVIEW_REQUIRED",
-                "production_ready": False,
-                "reason_code": "SPEAKER_REVIEW_REQUIRED",
-                "reason": "mixed/overlap speaker evidence requires review: " + ",".join(reason_codes),
-                "stage_order": "text_final_then_speaker_then_ass_then_burn",
-                "source_media": str(media_path),
-                "source_media_sha256": media_sha256,
-                "text_final_srt": str(text_srt_path),
-                "text_final_srt_sha256": text_sha256,
-                "profile": str(profile_path.resolve()),
-                "profile_sha256": profile_sha256,
-                "speaker_override": str(override_path.resolve()) if override_path is not None else None,
-                "speaker_override_sha256": sha256_file(override_path) if override_path is not None else None,
-                "source_session_anchor_manifest": (
-                    str(source_session_anchor_original)
-                    if source_session_anchor_original is not None
-                    else None
-                ),
-                "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
-                "mixed_overlap_evidence": str(mixed_overlap_evidence_original),
-                "mixed_overlap_evidence_sha256": mixed_overlap_evidence_sha256,
-                "source_cue_count": len(cues),
-                "context_unresolved_cues": unresolved,
-                "review_reason_codes": reason_codes,
-                "review_required_cues": remaining_rows,
-                "analysis": {
-                    "mode": "provider_mixed_overlap_gate",
-                    "provider": mixed_overlap_document.get("provider"),
-                },
-            }
-            validate_speaker_review_manifest_document(
-                review_manifest,
-                expected_media_sha256=media_sha256,
-                expected_text_sha256=text_sha256,
-                cues=cues,
-            )
-            atomic_write_text(
-                output_manifest_path,
-                json.dumps(review_manifest, ensure_ascii=False, indent=2) + "\n",
-            )
-            return review_manifest
-    analysis = analyzer(
+    bound = _snapshot_speaker_inputs(
         media_path=media_path,
-        cues=cues,
-        profile_path=profile_snapshot,
+        text_srt_path=text_srt_path,
+        profile_path=profile_path,
+        work_dir=work_dir,
+        source_session_anchor_path=source_session_anchor_path,
+        mixed_overlap_evidence_path=mixed_overlap_evidence_path,
+    )
+    override_state = _load_speaker_override_state(
+        override_path,
+        candidate_id=candidate_id,
+        media_path=bound.media_path,
+        text_srt_path=bound.text_srt_path,
+        cue_count=len(bound.cues),
+    )
+    override_document = override_state.document
+    reviewed_votes = override_state.reviewed_votes
+    expected_automatic = override_state.expected_automatic_sha256
+    mixed_gate = _evaluate_mixed_overlap_gate(
+        bound=bound,
+        override_document=override_document,
+        override_path=override_path,
+        output_srt_path=output_srt_path,
+        output_ass_path=output_ass_path,
+        output_manifest_path=output_manifest_path,
+    )
+    if mixed_gate.review_manifest is not None:
+        return mixed_gate.review_manifest
+    mixed_overlap_document = mixed_gate.document
+    analysis = _run_bound_speaker_analysis(
+        bound=bound,
         reference_dir=reference_dir,
         model_dir=model_dir,
         work_dir=work_dir,
+        analyzer=analyzer,
         context_call=context_call,
-        reviewed_context_votes=reviewed_votes,
-        source_session_anchor_path=source_session_anchor_snapshot,
+        reviewed_votes=reviewed_votes,
+        mixed_overlap_document=mixed_overlap_document,
     )
-    if sha256_file(profile_path) != profile_sha256:
-        raise SpeakerFinalizationError("voiceprint profile drifted during speaker analysis")
-    if (
-        source_session_anchor_original is not None
-        and sha256_file(source_session_anchor_original) != source_session_anchor_sha256
-    ):
-        raise SpeakerFinalizationError(
-            "source-session anchor manifest drifted during speaker analysis"
-        )
-    if (
-        mixed_overlap_evidence_original is not None
-        and sha256_file(mixed_overlap_evidence_original) != mixed_overlap_evidence_sha256
-    ):
-        raise SpeakerFinalizationError(
-            "mixed/overlap evidence drifted during speaker analysis"
-        )
-    if mixed_overlap_document is not None:
-        # Recheck the actual extracted review audio after analyzer/override
-        # work so a concurrent byte change cannot be blessed by a prior hash.
-        validate_mixed_overlap_evidence_document(
-            mixed_overlap_document,
-            expected_media_sha256=sha256_file(media_path),
-            expected_text_sha256=sha256_file(text_srt_path),
-            cues=cues,
-            expected_audio_root=mixed_overlap_evidence_original.parent,
-        )
-    decisions = analysis.get("decisions")
-    if not isinstance(decisions, list) or len(decisions) != len(cues):
-        raise SpeakerFinalizationError("speaker analyzer returned incomplete decisions")
-    automatic: list[Cue] = []
-    for index, (text_cue, decision) in enumerate(zip(cues, decisions, strict=True), start=1):
-        if not isinstance(decision, Mapping) or decision.get("speaker") not in SPEAKERS:
-            raise SpeakerFinalizationError(f"speaker decision {index} is invalid")
-        automatic.append(
-            Cue(
-                source_index=index,
-                start=text_cue.start,
-                end=text_cue.end,
-                speaker=str(decision["speaker"]),
-                text=text_cue.text,
-                decision_source=str(decision.get("decision_source") or "campp_audio"),
-                note=(f"margin={decision.get('margin')}" if decision.get("margin") is not None else None),
-            )
-        )
-    automatic_srt = work_dir / "automatic-labelled.srt"
-    write_srt(automatic, automatic_srt)
-    final_cues = automatic
-    if override_document is not None:
-        actual_automatic = sha256_file(automatic_srt)
-        if expected_automatic and expected_automatic != actual_automatic:
-            raise SpeakerFinalizationError(
-                f"speaker override source hash mismatch: expected {expected_automatic!r}, got {actual_automatic!r}"
-            )
-        final_cues = apply_overrides(automatic, override_document)
-    unresolved_raw = analysis.get("context_unresolved_cues") or []
-    if not isinstance(unresolved_raw, list) or any(
-        isinstance(value, bool) or not isinstance(value, int)
-        for value in unresolved_raw
-    ):
-        raise SpeakerFinalizationError(
-            "speaker analyzer returned invalid unresolved-context evidence"
-        )
-    unresolved = set(unresolved_raw)
-    override_sources = {
-        int(item.get("source_cue", 0))
-        for item in ((override_document or {}).get("overrides") or [])
-        if isinstance(item, Mapping)
-    }
-    remaining_unresolved = sorted(unresolved - override_sources)
-    if remaining_unresolved:
-        if analysis.get("review_required") is True:
-            output_srt_path.unlink(missing_ok=True)
-            output_ass_path.unlink(missing_ok=True)
-            reason_codes_raw = analysis.get("review_reason_codes") or []
-            if not isinstance(reason_codes_raw, list) or any(
-                not isinstance(value, str) or not value.strip() for value in reason_codes_raw
-            ):
-                raise SpeakerFinalizationError("speaker analyzer returned invalid review reason codes")
-            reason_codes = list(dict.fromkeys(reason_codes_raw))
-            review_rows = analysis.get("review_required_cues")
-            if review_rows is None:
-                review_rows = analysis.get("singleton_evidence") or []
-            media_sha256 = sha256_file(media_path)
-            text_sha256 = sha256_file(text_srt_path)
-            review_manifest: dict[str, object] = {
-                "schema_version": SPEAKER_FINALIZATION_SCHEMA,
-                "status": "SPEAKER_REVIEW_REQUIRED",
-                "production_ready": False,
-                "reason_code": "SPEAKER_REVIEW_REQUIRED",
-                "reason": "speaker evidence requires review: "
-                + ",".join(reason_codes or ["UNRESOLVED_SPEAKER_EVIDENCE"]),
-                "stage_order": "text_final_then_speaker_then_ass_then_burn",
-                "source_media": str(media_path),
-                "source_media_sha256": media_sha256,
-                "text_final_srt": str(text_srt_path),
-                "text_final_srt_sha256": text_sha256,
-                "profile": str(profile_path.resolve()),
-                "profile_sha256": profile_sha256,
-                "automatic_labelled_srt": str(automatic_srt.resolve()),
-                "automatic_labelled_srt_sha256": sha256_file(automatic_srt),
-                "speaker_override": (
-                    str(override_path.resolve()) if override_path is not None else None
-                ),
-                "speaker_override_sha256": (
-                    sha256_file(override_path) if override_path is not None else None
-                ),
-                "source_session_anchor_manifest": (
-                    str(source_session_anchor_original)
-                    if source_session_anchor_original is not None
-                    else None
-                ),
-                "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
-                "mixed_overlap_evidence": (
-                    str(mixed_overlap_evidence_original)
-                    if mixed_overlap_evidence_original is not None
-                    else None
-                ),
-                "mixed_overlap_evidence_sha256": mixed_overlap_evidence_sha256,
-                "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
-                "source_cue_count": len(cues),
-                "context_unresolved_cues": remaining_unresolved,
-                "review_reason_codes": reason_codes,
-                "review_required_cues": review_rows,
-                "analysis": analysis,
-            }
-            validate_speaker_review_manifest_document(
-                review_manifest,
-                expected_media_sha256=media_sha256,
-                expected_text_sha256=text_sha256,
-                cues=cues,
-            )
-            atomic_write_text(
-                output_manifest_path,
-                json.dumps(review_manifest, ensure_ascii=False, indent=2) + "\n",
-            )
-            return review_manifest
-        raise SpeakerFinalizationError(
-            "whole-clip context did not resolve ambiguous speaker cues: "
-            + ",".join(str(value) for value in remaining_unresolved)
-        )
-    write_srt(final_cues, output_srt_path)
-    write_ass(final_cues, output_ass_path, show_speaker_labels=False)
-    manifest: dict[str, object] = {
-        "schema_version": SPEAKER_FINALIZATION_SCHEMA,
-        "status": "READY",
-        "production_ready": True,
-        "stage_order": "text_final_then_speaker_then_ass_then_burn",
-        "source_media": str(media_path),
-        "source_media_sha256": sha256_file(media_path),
-        "text_final_srt": str(text_srt_path),
-        "text_final_srt_sha256": sha256_file(text_srt_path),
-        "profile": str(profile_path.resolve()),
-        "profile_sha256": profile_sha256,
-        "automatic_labelled_srt_sha256": sha256_file(automatic_srt),
-        "speaker_override": str(override_path.resolve()) if override_path is not None else None,
-        "speaker_override_sha256": sha256_file(override_path) if override_path is not None else None,
-        "source_session_anchor_manifest": (
-            str(source_session_anchor_original)
-            if source_session_anchor_original is not None
-            else None
-        ),
-        "source_session_anchor_manifest_sha256": source_session_anchor_sha256,
-        "mixed_overlap_evidence": (
-            str(mixed_overlap_evidence_original)
-            if mixed_overlap_evidence_original is not None
-            else None
-        ),
-        "mixed_overlap_evidence_sha256": mixed_overlap_evidence_sha256,
-        "host_anchor_scope": analysis.get("host_anchor_scope", "clip"),
-        "source_session_id": (
-            (analysis.get("source_session_anchor") or {}).get("source_session_id")
-            if isinstance(analysis.get("source_session_anchor"), Mapping)
-            else None
-        ),
-        "output_review_srt": str(output_srt_path.resolve()),
-        "output_review_srt_sha256": sha256_file(output_srt_path),
-        "output_ass": str(output_ass_path.resolve()),
-        "output_ass_sha256": sha256_file(output_ass_path),
-        "visible_speaker_prefixes": False,
-        "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID,
-        "speaker_taxonomy": "binary_visual_host_vs_guest",
-        "host_identity_aliases": list(CHANNEL_PROFILE.speaker_identity_aliases),
-        "source_cue_count": len(cues),
-        "output_cue_count": len(final_cues),
-        "reviewed_output_cue_count": sum(cue.decision_source.startswith("reviewed_") for cue in final_cues),
-        "accepted_context_output_cue_count": sum(
-            cue.decision_source == "accepted_context_baseline" for cue in final_cues
-        ),
-        "overlap_output_cue_count": sum(cue.placement == "above" for cue in final_cues),
-        "analysis": analysis,
-        "final_decisions": [asdict(cue) for cue in final_cues],
-    }
-    atomic_write_text(output_manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-    return manifest
+    labels = _materialize_speaker_labels(
+        analysis,
+        cues=bound.cues,
+        work_dir=work_dir,
+        override_document=override_document,
+        expected_automatic_sha256=expected_automatic,
+    )
+    automatic_srt = labels.automatic_srt
+    final_cues = labels.final
+    review_manifest = _resolve_unresolved_speaker_gate(
+        analysis,
+        bound=bound,
+        override_document=override_document,
+        override_path=override_path,
+        automatic_srt=automatic_srt,
+        output_srt_path=output_srt_path,
+        output_ass_path=output_ass_path,
+        output_manifest_path=output_manifest_path,
+    )
+    if review_manifest is not None:
+        return review_manifest
+    return _write_ready_speaker_delivery(
+        bound=bound,
+        analysis=analysis,
+        final_cues=final_cues,
+        automatic_srt=automatic_srt,
+        override_path=override_path,
+        output_srt_path=output_srt_path,
+        output_ass_path=output_ass_path,
+        output_manifest_path=output_manifest_path,
+    )
 
 
 def finalize_fast_solo_subtitles(
