@@ -1,0 +1,13 @@
+{
+  "at": "2026-07-16T06:04:15+0000",
+  "bvid": "BV14gK36oEjN",
+  "aid": 116927699686846,
+  "title": "【李豆沙】豆沙歌，《怪獣の花唄》",
+  "before_cover": "http://i0.hdslb.com/bfs/archive/a1b1ead53b9fd63df3d3c395ae53cc0db841a13b.png",
+  "new_cover_upload_url": "https://archive.biliimg.com/bfs/archive/2ddedf2ea417abc20dc2e475532ce560792343a8.png",
+  "new_cover_sha256": "36e33883a1d099ff0fbebff898e3aff16f1f15b713bea3be736b9e0345f75b89",
+  "new_cover_path": "/opt/bilive/autoslice/out/2026-07-15/song_manual_kaiju_v2/kaiju_cover_v3.png",
+  "edit_code": 0,
+  "edit_message": "0",
+  "reason": "cover-only edit: v1 cover burned SmileySans .notdef for 獣; v3 regenerated via fixed font chain (NotoSansCJK-Bold JP face), commit e46d36a"
+}

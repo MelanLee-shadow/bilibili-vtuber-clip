@@ -15,6 +15,9 @@ reports/**
 !reports/**/*.upload_manifest*.json
 !reports/**/upload_ledger.jsonl
 !reports/**/ivan_*_results.json
+# 2026-07-16: cover edit + season-add are publish actions too — keep tracked.
+!reports/**/*.cover_edit*.json
+!reports/**/*.season_add*.json
 # 2026-07-13: tag edits are publish actions too — suggestion reports, applied
 # plans and verified results stay tracked (Ivan review record included).
 !reports/tag-suggestions-*/**

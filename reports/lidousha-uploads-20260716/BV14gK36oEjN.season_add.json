@@ -1,0 +1,29 @@
+{
+  "at": "2026-07-16",
+  "bvid": "BV14gK36oEjN",
+  "aid": 116927699686846,
+  "cid": 39996820552,
+  "title": "【李豆沙】豆沙歌，《怪獣の花唄》",
+  "operation": "season-add",
+  "reason": "Ivan 报「合集不对」= 歌切漏入集。pi agent 手工上传走完投稿+封面返修，但未做入集（发布未入集=流程未完成）。歌切应进「小李歌唱」而非「小李切片」。",
+  "target_season": {
+    "name": "小李歌唱",
+    "season_id": 8410735,
+    "section_id": 9364628,
+    "section_name": "正片"
+  },
+  "id_reverified_live": "GET member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30 → 小李切片(8383206/9320779) + 小李歌唱(8410735/9364628)，与 SKILL 一致",
+  "before": {
+    "is_season_display": false,
+    "ugc_season": null
+  },
+  "tool": "scripts/bili_archive_tool.py season-add BV14gK36oEjN --section-id 9364628 (camelCase sectionId, charging_pay=0)",
+  "add_response": {"code": 0, "message": "0", "ttl": 1},
+  "public_verify_after": {
+    "state": 0,
+    "is_season_display": true,
+    "ugc_season_id": 8410735,
+    "ugc_season_title": "小李歌唱"
+  },
+  "verified_via": "GET api.bilibili.com/x/web-interface/view?bvid=BV14gK36oEjN (公开面，非工具 code 0)"
+}
