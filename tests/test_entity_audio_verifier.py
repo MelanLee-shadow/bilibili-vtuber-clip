@@ -29,6 +29,34 @@ def _request():
     }
 
 
+def _context_request():
+    request = _request()
+    request.update(
+        {
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "context_start_ms": 500,
+            "context_end_ms": 7_500,
+            "context_before": "一直在说欠了很多首歌",
+            "context_after": "还欠两个",
+            "candidate_entities": [
+                {
+                    "candidate_id": "CURRENT",
+                    "canonical": "还没有歌杂呢",
+                    "surfaces": [],
+                    "readings": [],
+                },
+                {
+                    "candidate_id": "PROPOSED",
+                    "canonical": "还没有歌债呢",
+                    "surfaces": [],
+                    "readings": [],
+                },
+            ],
+        }
+    )
+    return request
+
+
 def test_audio_verifier_uses_black_frame_clip_and_neutral_prompt(tmp_path, monkeypatch):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source video pixels and audio")
@@ -113,6 +141,66 @@ def test_audio_verifier_low_confidence_is_uncertain(tmp_path, monkeypatch):
     )
 
     assert verify(_request())["status"] == "UNCERTAIN"
+
+
+def test_context_verifier_crops_adjacent_audio_and_exposes_bounded_discourse(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"context audio")
+            return _Completed()
+        Path(kwargs["cwd"], "verdict.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "entity-audio-observation.v1",
+                    "status": "OBSERVED",
+                    "target_audible": True,
+                    "heard_syllables": "hai mei you ge zhai ne",
+                    "current_fit": "PLAUSIBLE",
+                    "proposed_fit": "SUPPORTED",
+                    "confidence_current": 0.71,
+                    "confidence_proposed": 0.91,
+                    "reason": "reduced final is acoustically ambiguous; repeated debt context breaks tie",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return _Completed()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-15",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+
+    verdict = verify(_context_request())
+
+    assert verdict["status"] == "OBSERVED"
+    assert verdict["current_fit"] == "PLAUSIBLE"
+    assert verdict["proposed_fit"] == "SUPPORTED"
+    ffmpeg = commands[0]
+    assert ffmpeg[ffmpeg.index("-ss") + 1] == "0.500"
+    assert ffmpeg[ffmpeg.index("-t") + 1] == "7.000"
+    prompt = (tmp_path / "out/entity_verdicts" / ("a" * 20) / "prompt.md").read_text(
+        encoding="utf-8"
+    )
+    assert "一直在说欠了很多首歌" in prompt
+    assert "还欠两个" in prompt
+    assert "1500 ms" in prompt and "3500 ms" in prompt
+    assert "Semantic plausibility must never" in prompt
+    assert "INCOMPATIBLE" in prompt
+    assert '"current_fit"' in prompt and '"proposed_fit"' in prompt
+    assert '"candidate_id": "one exact candidate_id above, or null"' not in prompt
+    assert '"canonical_entity": "one exact candidate sentence' not in prompt
+    assert "Use RESOLVED only" not in prompt
 
 
 def _agy_quota_run(command, **kwargs):

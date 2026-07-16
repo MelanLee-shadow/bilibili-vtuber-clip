@@ -32,6 +32,8 @@ from src.autoslice.chat_authority import (
 )
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.final_review_auditor import (
+    MAX_CONTEXT_ADJUDICATIONS,
+    adjudicate_context_finding,
     audit_final_subtitles,
     persist_review_audit,
     route_findings,
@@ -513,70 +515,95 @@ def _run_final_review(
             srt_text, final_review_audit = route_findings(
                 srt_text, review_findings, protected_cue_indexes=protected_review_cues
             )
-            # 无人值守自定夺（Ivan 2026-07-14：审片员不该只给建议积压人工）：
-            # 非同音建议就地交黑帧音频二选一——RESOLVED=建议→采纳改写，
-            # RESOLVED=原文/UNCERTAIN→保留并披露，永不阻塞。词典钦定面与
-            # chat 拥有 cue 已在 route 阶段被挡，不会进到这里。
+            # 无人值守自定夺：非同音建议交专用的“完整 cue + 前后语境 +
+            # 上下文音频”声学相容度检查，再由固定代码规则融合。验证器不能选择或
+            # 生成文本；chat/词典权威 cue 已在 route 阶段被挡。UNCERTAIN 原样
+            # 保留并披露，永不阻塞。
             adjudicable = [
                 row
                 for row in (final_review_audit.get("findings") or [])
                 if row.get("routed") == "disclosure"
                 and row.get("suggestion")
                 and str(row.get("suggestion")) != str(row.get("suspect"))
-            ][:6]
+            ]
+            adjudicated_cues: set[int] = set()
+            adjudication_count = 0
+            partial = False
             for row in adjudicable:
                 suspect = str(row["suspect"])
-                suggestion = str(row["suggestion"])
+                finding_cue = int(row.get("cue_index") or 0)
+                if finding_cue in adjudicated_cues:
+                    row["routed"] = "deferred_same_cue"
+                    row["context_audio_adjudication"] = {
+                        "schema_version": "subtitle-span-adjudication.v1",
+                        "status": "DEFERRED_SAME_CUE",
+                        "repaired": False,
+                    }
+                    partial = True
+                    continue
+                if adjudication_count >= MAX_CONTEXT_ADJUDICATIONS:
+                    row["routed"] = "skipped_budget"
+                    row["context_audio_adjudication"] = {
+                        "schema_version": "subtitle-span-adjudication.v1",
+                        "status": "SKIPPED_BUDGET",
+                        "repaired": False,
+                    }
+                    partial = True
+                    continue
+                adjudicated_cues.add(finding_cue)
+                adjudication_count += 1
                 # 过期发现守卫（2026-07-14 恋青/练死案）：审片发现产自它当时
                 # 看到的文本快照；若后续 pass 已改写该 cue、suspect 不在当前
                 # 文本里，这条发现的前提已失效——只披露，绝不再持刀。
                 live_cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-                finding_cue = int(row.get("cue_index") or 0)
                 live_text = (
                     live_cues[finding_cue - 1].text
                     if 0 < finding_cue <= len(live_cues)
                     else ""
                 )
                 if suspect not in live_text:
-                    row["audio_adjudication"] = {
+                    row["context_audio_adjudication"] = {
                         "status": "STALE_FINDING_SKIPPED",
                         "repaired": False,
                     }
                     continue
-                pair_group = ReferentGroup(
-                    (
-                        ReferentEntity(suspect, (suspect,)),
-                        ReferentEntity(suggestion, (suggestion,)),
-                    ),
-                    reason=f"审片员自定夺：{str(row.get('why') or '')[:80]}",
-                    audio_verify_all_surfaces=True,
-                    uncertain_keep_canonicals=(suspect, suggestion),
-                    positions=("transcript_only",),
-                )
-                final_cue_total = len(
-                    [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-                )
-                adj_excluded = (
-                    set(range(1, final_cue_total + 1)) - {int(row["cue_index"])}
-                ) | set(protected_review_cues)
-                srt_text, adj_audit = apply_audio_entity_verification(
+                srt_text, adj_audit = adjudicate_context_finding(
                     srt_text,
-                    referent_groups=[
-                        dataclasses.replace(pair_group, positions=("transcript_only",))
-                    ],
                     entity_verifier=verify_confusable_entity,
-                    excluded_cue_indexes=adj_excluded,
+                    finding=row,
                 )
-                repaired = bool(adj_audit.get("repairs"))
-                row["audio_adjudication"] = {
-                    "status": adj_audit.get("status"),
-                    "repaired": repaired,
-                }
+                repaired = bool(adj_audit.get("repaired"))
+                row["context_audio_adjudication"] = adj_audit
                 if repaired:
-                    row["routed"] = "audio_adjudicated_fix"
-                    chat_authority_audit.setdefault("entity_repairs", []).extend(
-                        adj_audit.get("repairs") or []
+                    row["routed"] = "context_audio_adjudicated_fix"
+                    final_review_audit["applied_count"] = int(
+                        final_review_audit.get("applied_count") or 0
+                    ) + 1
+                    final_review_audit["status"] = "APPLIED"
+                    # 终稿面复证登记（delivery-divergence 防线，xinyi 案同类）：
+                    # 已应用的裁决修复必须和 chat/实体修复一样被
+                    # verify_chat_authority_final_surfaces 在交付工件上按原时窗
+                    # 复证存活。无 expected_entity/resolved_canonical，故不会被
+                    # 未注册回退或矛盾和解误伤。
+                    request = adj_audit.get("request") or {}
+                    chat_authority_audit.setdefault("entity_repairs", []).append(
+                        {
+                            "mode": "final_review_context_adjudication",
+                            "evidence_id": request.get("evidence_id"),
+                            "cue_indexes": [finding_cue],
+                            "matched_start_ms": int(request.get("matched_start_ms") or 0),
+                            "matched_end_ms": int(request.get("matched_end_ms") or 0),
+                            "before": [request.get("current_cue")],
+                            "after": [request.get("proposed_cue")],
+                            "structured_exact_text": request.get("proposed_cue"),
+                            "survived": True,
+                            "verdict": adj_audit.get("verdict"),
+                        }
                     )
+            final_review_audit["context_adjudication_count"] = adjudication_count
+            final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
+            if partial:
+                final_review_audit["status"] = "PARTIAL"
         except Exception as exc:
             final_review_audit = {
                 "schema_version": "final-review-audit.v1",

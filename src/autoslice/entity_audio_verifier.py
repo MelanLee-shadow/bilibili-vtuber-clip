@@ -60,6 +60,14 @@ def _json_sha256(value: Mapping[str, Any]) -> str:
 
 
 def _uncertain(request: Mapping[str, Any], reason: str, detail: str = "") -> dict[str, Any]:
+    if request.get("schema_version") == "subtitle-span-acoustic-check-request.v1":
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request.get("request_sha256"),
+            "status": "UNCERTAIN",
+            "reason_code": reason,
+            **({"detail": detail[-500:]} if detail else {}),
+        }
     return {
         "schema_version": "chat-entity-verdict.v1",
         "request_sha256": request.get("request_sha256"),
@@ -78,6 +86,9 @@ def _prompt(
     delivery_mode: str = "agy",
     context_before: str = "",
     context_after: str = "",
+    target_audio_start_ms: int | None = None,
+    target_audio_end_ms: int | None = None,
+    acoustic_fit_mode: bool = False,
 ) -> str:
     neutral_candidates = sorted(candidates, key=lambda row: str(row.get("canonical") or "").lower())
     if delivery_mode == "gemini_api":
@@ -102,6 +113,53 @@ def _prompt(
             "shell, terminal, browser, web, or search."
         )
     if sentence_mode:
+        if acoustic_fit_mode:
+            return f"""# Raw-audio subtitle-span acoustic compatibility check
+
+{source_line}
+Listen to the target cue several times. The two candidate sentences were already
+constructed by code. Do not choose by meaning and do not rewrite either sentence.
+Report only how well each candidate fits the literal target audio. Adjacent audio
+and text establish continuity, but another occurrence outside the target offsets
+is never evidence that the phrase occurred inside the target.
+
+Recording date: {recording_date}
+Candidate sentences (closed set; IDs are immutable):
+{json.dumps(neutral_candidates, ensure_ascii=False, indent=2, sort_keys=True)}
+
+Adjacent spoken lines (context only, never text authority):
+- before: {(context_before or "（无）")!s}
+- after: {(context_after or "（无）")!s}
+The target cue occupies {target_audio_start_ms if target_audio_start_ms is not None else "unknown"} ms
+through {target_audio_end_ms if target_audio_end_ms is not None else "unknown"} ms in the attached clip.
+
+Fit labels:
+- SUPPORTED: the target audio positively supports this candidate;
+- PLAUSIBLE: compatible with the target audio but not uniquely clear;
+- INCOMPATIBLE: literal target syllables contradict this candidate;
+- UNRESOLVED: audio is too weak to judge.
+Semantic plausibility must never turn acoustically incompatible syllables into
+SUPPORTED or PLAUSIBLE. Report the syllables actually heard before assigning fits.
+
+{output_head}
+{{
+  "schema_version": "entity-audio-observation.v1",
+  "status": "OBSERVED" or "UNCERTAIN",
+  "target_audible": true or false,
+  "heard_syllables": "literal syllables/phonetic observation",
+  "current_fit": "SUPPORTED|PLAUSIBLE|INCOMPATIBLE|UNRESOLVED",
+  "proposed_fit": "SUPPORTED|PLAUSIBLE|INCOMPATIBLE|UNRESOLVED",
+  "confidence_current": 0.0,
+  "confidence_proposed": 0.0,
+  "reason": "short acoustic explanation"
+}}
+
+Use OBSERVED when the target interval is audible enough to assign all fields,
+even when both candidates are only PLAUSIBLE or UNRESOLVED. Use UNCERTAIN when
+the target interval itself cannot be assessed. Do not apply a semantic winner
+and do not emit candidate_id, canonical_entity, or any rewritten text. No
+markdown fences or other output.
+"""
         return f"""# Raw-audio spoken-sentence forced choice
 
 {source_line}
@@ -119,6 +177,8 @@ Adjacent spoken lines (discourse frame, transcribed from the same audio; they
 are context, not text authority):
 - before: {(context_before or "（无）")!s}
 - after: {(context_after or "（无）")!s}
+The target cue occupies {target_audio_start_ms if target_audio_start_ms is not None else "unknown"} ms
+through {target_audio_end_ms if target_audio_end_ms is not None else "unknown"} ms in the attached clip.
 When the syllables are genuinely ambiguous between candidates, discourse fit
 with the adjacent lines MAY break the tie. Clearly incompatible syllables
 still always lose, regardless of discourse fit.
@@ -301,7 +361,13 @@ def _observe_entity_audio(
     """Run the AGY provider, then the policy-gated Gemini API fallback."""
 
     candidate_rows = [dict(row) for row in candidates if isinstance(row, dict)]
-    sentence_mode = request.get("schema_version") == "chat-read-aloud-verification-request.v1"
+    sentence_mode = request.get("schema_version") in {
+        "chat-read-aloud-verification-request.v1",
+        "subtitle-span-acoustic-check-request.v1",
+    }
+    acoustic_fit_mode = (
+        request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
+    )
     prompt = _prompt(
         candidates=candidate_rows,
         recording_date=recording_date,
@@ -309,6 +375,9 @@ def _observe_entity_audio(
         sentence_mode=sentence_mode,
         context_before=str(request.get("context_before") or ""),
         context_after=str(request.get("context_after") or ""),
+        target_audio_start_ms=request.get("target_audio_start_ms"),
+        target_audio_end_ms=request.get("target_audio_end_ms"),
+        acoustic_fit_mode=acoustic_fit_mode,
     )
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -412,6 +481,9 @@ def _observe_entity_audio(
                 sentence_mode=sentence_mode,
                 context_before=str(request.get("context_before") or ""),
                 context_after=str(request.get("context_after") or ""),
+                target_audio_start_ms=request.get("target_audio_start_ms"),
+                target_audio_end_ms=request.get("target_audio_end_ms"),
+                acoustic_fit_mode=acoustic_fit_mode,
                 delivery_mode="gemini_api",
             )
             api_prompt_path.write_text(api_prompt, encoding="utf-8")
@@ -487,6 +559,72 @@ def _observe_entity_audio(
     )
 
 
+def _subtitle_acoustic_verdict(
+    *,
+    request: Mapping[str, Any],
+    request_sha: str,
+    observed: Mapping[str, Any],
+    outcome: _EntityProviderOutcome,
+    source_sha256: str,
+    audio_path: Path,
+    start_ms: int,
+    end_ms: int,
+) -> dict[str, Any]:
+    """Validate a text-free acoustic-fit report and attach replay evidence."""
+
+    fit_values = {"SUPPORTED", "PLAUSIBLE", "INCOMPATIBLE", "UNRESOLVED"}
+    heard = str(observed.get("heard_syllables") or "").strip()
+    current_fit = str(observed.get("current_fit") or "")
+    proposed_fit = str(observed.get("proposed_fit") or "")
+    confidence_current = observed.get("confidence_current")
+    confidence_proposed = observed.get("confidence_proposed")
+    report_valid = (
+        observed.get("schema_version") == "entity-audio-observation.v1"
+        and observed.get("status") == "OBSERVED"
+        and isinstance(observed.get("target_audible"), bool)
+        and current_fit in fit_values
+        and proposed_fit in fit_values
+        and bool(heard)
+        and not any(
+            key in observed
+            for key in ("candidate_id", "canonical_entity", "proposed_cue", "rewritten_text")
+        )
+        and not isinstance(confidence_current, bool)
+        and isinstance(confidence_current, (int, float))
+        and 0.0 <= float(confidence_current) <= 1.0
+        and not isinstance(confidence_proposed, bool)
+        and isinstance(confidence_proposed, (int, float))
+        and 0.0 <= float(confidence_proposed) <= 1.0
+    )
+    if not report_valid:
+        return _uncertain(
+            request,
+            "ENTITY_AUDIO_UNCERTAIN",
+            str(observed.get("reason") or ""),
+        )
+    return {
+        "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+        "request_sha256": request_sha,
+        "status": "OBSERVED",
+        "target_audible": bool(observed["target_audible"]),
+        "heard_syllables": heard,
+        "current_fit": current_fit,
+        "proposed_fit": proposed_fit,
+        "confidence_current": float(confidence_current),
+        "confidence_proposed": float(confidence_proposed),
+        "reason": str(observed.get("reason") or ""),
+        "source_media_sha256": source_sha256,
+        "audio_clip_sha256": _sha256(audio_path),
+        "prompt_sha256": _sha256(outcome.prompt_path),
+        "response_sha256": _sha256(outcome.response_path),
+        "model": outcome.model,
+        "provider": outcome.provider,
+        **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
+        "audio_start_ms": start_ms,
+        "audio_end_ms": end_ms,
+    }
+
+
 def build_local_audio_entity_verifier(
     *,
     source_media: Path,
@@ -548,12 +686,30 @@ def build_local_audio_entity_verifier(
                 pass
 
         try:
-            start_ms = max(0, int(request["matched_start_ms"]) - 1_500)
-            end_ms = min(source_duration_ms, int(request["matched_end_ms"]) + 1_500)
+            target_start_ms = int(request["matched_start_ms"])
+            target_end_ms = int(request["matched_end_ms"])
+            if request.get("schema_version") == "subtitle-span-acoustic-check-request.v1":
+                start_ms = max(0, min(target_start_ms, int(request["context_start_ms"])))
+                end_ms = min(
+                    source_duration_ms,
+                    max(target_end_ms, int(request["context_end_ms"])),
+                )
+            else:
+                start_ms = max(0, target_start_ms - 1_500)
+                end_ms = min(source_duration_ms, target_end_ms + 1_500)
         except (KeyError, TypeError, ValueError):
             return _uncertain(request, "ENTITY_AUDIO_SPAN_INVALID")
-        if end_ms <= start_ms:
+        if (
+            target_end_ms <= target_start_ms
+            or end_ms <= start_ms
+            or end_ms - start_ms > 30_000
+            or target_start_ms < start_ms
+            or target_end_ms > end_ms
+        ):
             return _uncertain(request, "ENTITY_AUDIO_SPAN_INVALID")
+        observed_request = dict(request)
+        observed_request["target_audio_start_ms"] = target_start_ms - start_ms
+        observed_request["target_audio_end_ms"] = target_end_ms - start_ms
         duration_s = (end_ms - start_ms) / 1000.0
         ffmpeg = subprocess.run(
             [
@@ -600,7 +756,7 @@ def build_local_audio_entity_verifier(
             return _uncertain(request, "ENTITY_AUDIO_CROP_FAILED", ffmpeg.stderr)
 
         outcome = _observe_entity_audio(
-            request=request,
+            request=observed_request,
             candidates=candidates,
             audio_path=audio_path,
             job_dir=job_dir,
@@ -635,11 +791,47 @@ def build_local_audio_entity_verifier(
             )
             categories = ";".join(str(row.get("category")) for row in provider_failures[-4:])
             return _uncertain(request, "ENTITY_AUDIO_PROVIDER_FAILED", categories)
-        canonicals = {str(row.get("canonical") or "") for row in candidates if isinstance(row, dict)}
+        context_mode = request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
+        canonicals = {
+            str(row.get("canonical") or "") for row in candidates if isinstance(row, dict)
+        }
         status = observed.get("status") if isinstance(observed, dict) else None
-        canonical = observed.get("canonical_entity") if isinstance(observed, dict) else None
         confidence = observed.get("confidence") if isinstance(observed, dict) else None
         heard = str(observed.get("heard_syllables") or "").strip() if isinstance(observed, dict) else ""
+        if context_mode:
+            verdict = _subtitle_acoustic_verdict(
+                request=request,
+                request_sha=request_sha,
+                observed=observed if isinstance(observed, dict) else {},
+                outcome=outcome,
+                source_sha256=source_sha256,
+                audio_path=audio_path,
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
+            manifest = {
+                "schema_version": "entity-audio-verdict-manifest.v1",
+                "request_sha256": request_sha,
+                "request_payload_sha256": _json_sha256(dict(request)),
+                "source_media": str(source_media),
+                "source_media_sha256": source_sha256,
+                "audio_clip": str(audio_path),
+                "audio_clip_sha256": _sha256(audio_path),
+                "prompt_sha256": _sha256(prompt_path),
+                "response_sha256": _sha256(response_path),
+                "model": model_used,
+                "provider": provider,
+                **({"key_tier": accepted_key_tier} if accepted_key_tier else {}),
+                **({"paid_backup_policy": dict(paid_policy_stamp)} if paid_policy_stamp else {}),
+                **({"provider_failures": provider_failures} if provider_failures else {}),
+                "verdict": verdict,
+            }
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return verdict
+        canonical = observed.get("canonical_entity") if isinstance(observed, dict) else None
         resolved = (
             observed.get("schema_version") == "entity-audio-observation.v1"
             and status == "RESOLVED"

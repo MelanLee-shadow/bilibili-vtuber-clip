@@ -2,30 +2,40 @@
 
 今晚全部机制的共同缺陷：错误的发现向量始终是 Ivan 的眼睛——流水线里没有
 任何一层用"审片员视角"看过最终成品。本层补上这只眼睛：在全部证据车道之后
-用 LLM 扫终稿字幕，**只报不改**；每条发现按证据纪律路由：
+用 LLM 扫终稿字幕。LLM 本身**只报不改**；每条发现按证据纪律路由：
 
 - ``homophone_fix``：建议与原文去声调同音（声学保真）→ 自动应用。这等价
   于"修正器改对了 + 守卫放行"的正规路径，只是发现向量换成了审片员；
   chat 证据拥有的 cue 一律不动（外层终审的面不可被扰动）。
-- ``disclosure``：其余一切（语境怀疑、专名怀疑、非同音建议）保留原文，
-  只落工件与日报。Ivan 读清单，而不是逐帧看片。
+- ``context adjudication``：其余有局部替换建议的发现只能生成“当前完整 cue / 一次
+  局部替换后的完整 cue”两候选；音频验证器只报告两者的声学相容度，代码再按固定
+  规则融合语境与声学证据。模型不能自由改写或直接选择文本。UNCERTAIN、范围不合法、
+  chat/词典权威保护均保留原文并披露。
+- ``disclosure``：无可验证建议的怀疑只落工件与日报。
 
-审片员是发现器不是改写器：无声学等价的建议永不落盘。它的价值在于把
-「季下」「苏人」这类人眼一秒识别的胡话在交付前暴露出来——修不修由证据
-决定，但绝不允许"无人知晓地交付"。
+审片员是发现器不是自由改写器。它的价值在于把「季下」「苏人」这类人眼
+一秒识别的胡话在交付前暴露出来；非同音改写必须再经上下文音频定夺，并把
+请求、候选和判决完整留痕。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.subtitle_fidelity import _homophone_equal
 
-MAX_FINDINGS = 12
+MAX_FINDINGS = 24
+MAX_CONTEXT_ADJUDICATIONS = 12
+MAX_EDIT_SPAN_CODEPOINTS = 24
+MAX_EDIT_LENGTH_DELTA = 8
+_AUTO_REPAIR_CLASSES = frozenset(
+    {"phonetic", "segmentation", "spoken_unit", "source_backed_entity"}
+)
 
 _GLOSSARY_TERM_RX = re.compile(r"^[-*]\s*(?:梗词：)?\*{0,2}([^：:（(＝=，,。\s*]{2,12})")
 
@@ -51,14 +61,21 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
 
 规则：
 1. 宁缺毋滥：只报你有把握可疑的，正常口语、脏话、语气词、网络梗不要报。
-2. suggestion 只在你能从语境合理推断出原话时给出，否则为 null。
-3. 不确定就不报。最多 {max_findings} 条。
+2. 若能从发音与语境合理推断原话，给出 proposed_full_cue（整条修正后字幕）；
+   不能确定则为 null。不要自己计算字符下标。
+3. repair_class 只能是：phonetic（近音误识）、segmentation（词边界误切）、
+   spoken_unit（小范围漏字/多字）、source_backed_entity（有来源见证的专名/作品名）
+   或 disclosure_only（语法润色、意译、宽泛改写、无来源专名等只披露）。
+4. source_backed_entity 必须同时给 source_surface；该完整词面必须逐字出现在别的字幕行
+   或上方钦定词表中，不能只凭常识猜。evidence_cue_ids 列出支撑语境的字幕编号。
+5. suspect/replacement 可选；若给出，必须等于 current cue 与 proposed_full_cue 的最小
+   单段差异，否则建议会被代码拒绝。不确定就不报。最多 {max_findings} 条。
 
 字幕（每行：编号. 文本）：
 {numbered}
 
 只输出一个 JSON 对象：
-{{"findings": [{{"cue": 编号, "suspect": "原文中的可疑片段(逐字)", "kind": "nonword|context|self_ref|entity", "suggestion": "推断的原话或 null", "why": "一句话理由"}}]}}
+{{"findings": [{{"cue": 编号, "kind": "nonword|context|self_ref|entity", "proposed_full_cue": "整条修正后字幕或 null", "repair_class": "phonetic|segmentation|spoken_unit|source_backed_entity|disclosure_only", "source_surface": "来源见证的完整词面或 null", "evidence_cue_ids": [编号], "suspect": "可选的最小原片段", "replacement": "可选的最小替换片段", "why": "一句话理由"}}]}}
 没有可疑处就输出 {{"findings": []}}。
 """
 
@@ -94,25 +111,99 @@ def audit_final_subtitles(
             cue_index = int(row.get("cue"))
         except (TypeError, ValueError):
             continue
-        suspect = str(row.get("suspect") or "").strip()
-        if not (1 <= cue_index <= len(cues)) or not suspect:
+        if not 1 <= cue_index <= len(cues):
             continue
-        if suspect not in cues[cue_index - 1].text:
+        base_text = cues[cue_index - 1].text
+        reported_suspect = str(row.get("suspect") or "").strip()
+        reported_replacement = str(row.get("replacement") or "").strip()
+        if reported_suspect and reported_suspect not in base_text:
             continue
         kind = str(row.get("kind") or "")
         if kind not in {"nonword", "context", "self_ref", "entity"}:
             kind = "context"
-        suggestion_raw = row.get("suggestion")
-        suggestion = str(suggestion_raw).strip() if isinstance(suggestion_raw, str) else ""
-        findings.append(
-            {
-                "cue_index": cue_index,
-                "suspect": suspect,
-                "kind": kind,
-                "suggestion": suggestion or None,
-                "why": str(row.get("why") or "")[:120],
-            }
-        )
+        repair_class = str(row.get("repair_class") or "disclosure_only")
+        proposed_raw = row.get("proposed_full_cue")
+        proposed = str(proposed_raw).strip() if isinstance(proposed_raw, str) else ""
+        derived_suspect = ""
+        derived_replacement = ""
+        contract_error: str | None = None
+        span_start = 0
+        span_end = 0
+        if proposed:
+            (
+                derived_suspect,
+                derived_replacement,
+                span_start,
+                span_end,
+                contract_error,
+            ) = _derive_single_span_edit(base_text, proposed)
+            if not contract_error and reported_suspect and reported_suspect != derived_suspect:
+                contract_error = "REPORTED_SUSPECT_SCOPE_MISMATCH"
+            if (
+                not contract_error
+                and reported_replacement
+                and reported_replacement != derived_replacement
+            ):
+                contract_error = "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+            if not contract_error and repair_class not in _AUTO_REPAIR_CLASSES:
+                contract_error = "REPAIR_CLASS_DISCLOSURE_ONLY"
+            if (
+                not contract_error
+                and kind in {"entity", "self_ref"}
+                and repair_class != "source_backed_entity"
+            ):
+                contract_error = "ENTITY_REPAIR_REQUIRES_SOURCE_PROVENANCE"
+            if (
+                not contract_error
+                and repair_class != "source_backed_entity"
+                and re.search(r"[A-Za-z]", derived_replacement)
+            ):
+                contract_error = "LATIN_SCRIPT_REPAIR_REQUIRES_SOURCE_PROVENANCE"
+
+        source_surface = str(row.get("source_surface") or "").strip()
+        provenance: dict[str, Any] | None = None
+        if proposed and not contract_error and repair_class == "source_backed_entity":
+            other_cues = "\n".join(
+                cue.text for index, cue in enumerate(cues, start=1) if index != cue_index
+            )
+            if not source_surface or source_surface not in proposed:
+                contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
+            elif source_surface.casefold() in other_cues.casefold():
+                provenance = {"kind": "transcript_context", "surface": source_surface}
+            elif source_surface.casefold() in glossary_text.casefold():
+                provenance = {"kind": "glossary", "surface": source_surface}
+            else:
+                contract_error = "ENTITY_SOURCE_SURFACE_UNWITNESSED"
+
+        suspect = derived_suspect if proposed else reported_suspect
+        if not suspect:
+            continue
+        suggestion = derived_replacement if proposed and not contract_error else None
+        evidence_cue_ids: list[int] = []
+        for value in row.get("evidence_cue_ids") or []:
+            try:
+                evidence_index = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= evidence_index <= len(cues) and evidence_index != cue_index:
+                evidence_cue_ids.append(evidence_index)
+        finding = {
+            "cue_index": cue_index,
+            "suspect": suspect,
+            "kind": kind,
+            "suggestion": suggestion,
+            "proposed_full_cue": proposed if suggestion is not None else None,
+            "base_text_sha256": hashlib.sha256(base_text.encode("utf-8")).hexdigest(),
+            "repair_class": repair_class,
+            "evidence_cue_ids": evidence_cue_ids,
+            "candidate_provenance": provenance,
+            "span_start_codepoint": span_start if proposed else None,
+            "span_end_codepoint": span_end if proposed else None,
+            "why": str(row.get("why") or "")[:120],
+        }
+        if proposed and contract_error:
+            finding["suggestion_rejected_reason"] = contract_error
+        findings.append(finding)
         if len(findings) >= MAX_FINDINGS:
             break
     return findings
@@ -143,13 +234,21 @@ def route_findings(
             row["routed"] = "disclosure_protected_term"
             rows.append(row)
             continue
+        candidate, contract_error = _candidate_from_finding(texts[cue_index - 1], row)
+        expected_full_cue = row.get("proposed_full_cue")
+        if candidate is not None and expected_full_cue and candidate != str(expected_full_cue):
+            candidate = None
+            contract_error = "PROPOSED_FULL_CUE_MISMATCH"
+        if suggestion and contract_error:
+            row["suggestion_rejected_reason"] = contract_error
         if (
             suggestion
+            and candidate is not None
             and cue_index not in protected
             and suspect in texts[cue_index - 1]
             and _homophone_equal(suspect, str(suggestion))
         ):
-            texts[cue_index - 1] = texts[cue_index - 1].replace(suspect, str(suggestion), 1)
+            texts[cue_index - 1] = candidate
             row["routed"] = "homophone_fix"
             applied += 1
         else:
@@ -165,6 +264,264 @@ def route_findings(
         "findings": rows,
     }
     return ("\n".join(output_lines) if applied else srt_text), audit
+
+
+def _derive_single_span_edit(
+    base_text: str, proposed_text: str
+) -> tuple[str, str, int, int, str | None]:
+    """Derive the one minimal outer changed interval from two full cues."""
+
+    if base_text == proposed_text:
+        return "", "", 0, 0, "SUGGESTION_UNCHANGED"
+    if any(ord(char) < 32 for char in proposed_text) or "-->" in proposed_text:
+        return "", "", 0, 0, "SUGGESTION_STRUCTURAL_TEXT"
+    prefix_len = 0
+    max_prefix = min(len(base_text), len(proposed_text))
+    while prefix_len < max_prefix and base_text[prefix_len] == proposed_text[prefix_len]:
+        prefix_len += 1
+    suffix_len = 0
+    max_suffix = min(len(base_text) - prefix_len, len(proposed_text) - prefix_len)
+    while (
+        suffix_len < max_suffix
+        and base_text[len(base_text) - suffix_len - 1]
+        == proposed_text[len(proposed_text) - suffix_len - 1]
+    ):
+        suffix_len += 1
+    base_end = len(base_text) - suffix_len if suffix_len else len(base_text)
+    proposed_end = len(proposed_text) - suffix_len if suffix_len else len(proposed_text)
+    suspect = base_text[prefix_len:base_end]
+    replacement = proposed_text[prefix_len:proposed_end]
+    if not suspect or not replacement:
+        return suspect, replacement, prefix_len, base_end, "INSERT_DELETE_NOT_ALLOWED_V1"
+    if (
+        len(suspect) > MAX_EDIT_SPAN_CODEPOINTS
+        or len(replacement) > MAX_EDIT_SPAN_CODEPOINTS
+    ):
+        return suspect, replacement, prefix_len, base_end, "EDIT_SPAN_TOO_LARGE"
+    if abs(len(replacement) - len(suspect)) > MAX_EDIT_LENGTH_DELTA:
+        return suspect, replacement, prefix_len, base_end, "EDIT_LENGTH_DELTA_TOO_LARGE"
+    return suspect, replacement, prefix_len, base_end, None
+
+
+def _candidate_from_finding(
+    cue_text: str, finding: Mapping[str, Any]
+) -> tuple[str | None, str | None]:
+    suspect = str(finding.get("suspect") or "")
+    replacement = str(finding.get("suggestion") or "")
+    try:
+        start = int(finding["span_start_codepoint"])
+        end = int(finding["span_end_codepoint"])
+    except (KeyError, TypeError, ValueError):
+        return _single_span_candidate(cue_text, suspect, replacement)
+    if not (0 <= start < end <= len(cue_text)) or cue_text[start:end] != suspect:
+        return None, "DERIVED_SPAN_STALE"
+    if any(ord(char) < 32 for char in replacement) or "-->" in replacement:
+        return None, "SUGGESTION_STRUCTURAL_TEXT"
+    candidate = cue_text[:start] + replacement + cue_text[end:]
+    return candidate, None
+
+
+def _single_span_candidate(
+    cue_text: str, suspect: str, replacement: str
+) -> tuple[str | None, str | None]:
+    """Build one deterministic local edit or reject a scope-mismatched suggestion."""
+
+    if not replacement:
+        return None, "SUGGESTION_EMPTY"
+    if suspect == replacement:
+        return None, "SUGGESTION_UNCHANGED"
+    if cue_text.count(suspect) != 1:
+        return None, "SUSPECT_NOT_UNIQUE"
+    if any(ord(char) < 32 for char in replacement) or "-->" in replacement:
+        return None, "SUGGESTION_STRUCTURAL_TEXT"
+    start = cue_text.index(suspect)
+    prefix = cue_text[:start]
+    suffix = cue_text[start + len(suspect) :]
+    # The 2026-07-15 live failure supplied a partial suspect but a whole-cue
+    # suggestion.  Applying it as a substring would duplicate the suffix.
+    if prefix and replacement.startswith(prefix):
+        return None, "SUGGESTION_CONTAINS_UNCHANGED_PREFIX"
+    if suffix and replacement.endswith(suffix):
+        return None, "SUGGESTION_CONTAINS_UNCHANGED_SUFFIX"
+    if len(suspect) > MAX_EDIT_SPAN_CODEPOINTS or len(replacement) > MAX_EDIT_SPAN_CODEPOINTS:
+        return None, "EDIT_SPAN_TOO_LARGE"
+    if abs(len(replacement) - len(suspect)) > MAX_EDIT_LENGTH_DELTA:
+        return None, "EDIT_LENGTH_DELTA_TOO_LARGE"
+    return prefix + replacement + suffix, None
+
+
+def build_context_adjudication_request(
+    srt_text: str, finding: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Build a hash-bound, span-scoped acoustic compatibility request."""
+
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    cue_index = int(finding.get("cue_index") or 0)
+    if not 1 <= cue_index <= len(cues):
+        raise ValueError("CONTEXT_CUE_INDEX_INVALID")
+    cue = cues[cue_index - 1]
+    base_text_sha256 = hashlib.sha256(cue.text.encode("utf-8")).hexdigest()
+    if finding.get("base_text_sha256") not in {None, base_text_sha256}:
+        raise ValueError("STALE_BASE")
+    suspect = str(finding.get("suspect") or "")
+    replacement = str(finding.get("suggestion") or "")
+    proposed, error = _candidate_from_finding(cue.text, finding)
+    if proposed is None:
+        raise ValueError(error or "CONTEXT_SUGGESTION_INVALID")
+    if finding.get("proposed_full_cue") not in {None, proposed}:
+        raise ValueError("PROPOSED_FULL_CUE_MISMATCH")
+
+    before = cues[max(0, cue_index - 3) : cue_index - 1]
+    after = cues[cue_index : min(len(cues), cue_index + 2)]
+    cue_offset = cue_index - 1
+    audio_cues = cues[max(0, cue_offset - 1) : min(len(cues), cue_offset + 2)]
+    context_start_ms = max(0, audio_cues[0].start_ms - 500)
+    context_end_ms = audio_cues[-1].end_ms + 500
+    # Keep the black-frame audio request bounded even when an ASR cue is huge.
+    if context_end_ms - context_start_ms > 30_000:
+        target_mid = (cue.start_ms + cue.end_ms) // 2
+        context_start_ms = max(0, target_mid - 15_000)
+        context_end_ms = context_start_ms + 30_000
+
+    evidence_id = hashlib.sha256(
+        (
+            f"subtitle-span-acoustic\0{hashlib.sha256(srt_text.encode()).hexdigest()}\0"
+            f"{cue_index}\0{cue.start_ms}\0{cue.end_ms}\0{proposed}"
+        ).encode("utf-8")
+    ).hexdigest()
+    request: dict[str, Any] = {
+        "schema_version": "subtitle-span-acoustic-check-request.v1",
+        "evidence_id": evidence_id,
+        "kind": "subtitle_span_acoustic_check",
+        "cue_indexes": [cue_index],
+        "base_text_sha256": base_text_sha256,
+        "matched_start_ms": cue.start_ms,
+        "matched_end_ms": cue.end_ms,
+        "context_start_ms": context_start_ms,
+        "context_end_ms": context_end_ms,
+        "matched_audio_text": cue.text,
+        "suspect": suspect,
+        "replacement": replacement,
+        "current_cue": cue.text,
+        "proposed_cue": proposed,
+        "context_before": "\n".join(row.text for row in before),
+        "context_after": "\n".join(row.text for row in after),
+        "candidate_entities": [
+            {
+                "candidate_id": "CURRENT",
+                "canonical": cue.text,
+                "text_sha256": base_text_sha256,
+                "surfaces": [],
+                "readings": [],
+            },
+            {
+                "candidate_id": "PROPOSED",
+                "canonical": proposed,
+                "text_sha256": hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
+                "surfaces": [],
+                "readings": [],
+            },
+        ],
+        "repair_class": str(finding.get("repair_class") or ""),
+        "candidate_provenance": finding.get("candidate_provenance"),
+        "evidence_cue_ids": list(finding.get("evidence_cue_ids") or []),
+        "reason": str(finding.get("why") or "")[:120],
+    }
+    request["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return request
+
+
+def adjudicate_context_finding(
+    srt_text: str,
+    finding: Mapping[str, Any],
+    *,
+    entity_verifier: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
+) -> tuple[str, dict[str, Any]]:
+    """Fuse a reviewer proposal with a closed-set acoustic compatibility report."""
+
+    try:
+        request = build_context_adjudication_request(srt_text, finding)
+    except (TypeError, ValueError) as exc:
+        return srt_text, {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "INVALID_SUGGESTION",
+            "repaired": False,
+            "reason_code": str(exc),
+        }
+    try:
+        raw_verdict = entity_verifier(request) if entity_verifier is not None else None
+    except Exception as exc:
+        raw_verdict = {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "UNCERTAIN",
+            "reason_code": "CONTEXT_VERIFIER_ERROR",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    verdict = dict(raw_verdict) if isinstance(raw_verdict, Mapping) else {}
+    fit_values = {"SUPPORTED", "PLAUSIBLE", "INCOMPATIBLE", "UNRESOLVED"}
+    current_fit = str(verdict.get("current_fit") or "")
+    proposed_fit = str(verdict.get("proposed_fit") or "")
+    valid = (
+        verdict.get("schema_version") == "subtitle-span-acoustic-check-verdict.v1"
+        and verdict.get("request_sha256") == request["request_sha256"]
+        and verdict.get("status") == "OBSERVED"
+        and isinstance(verdict.get("target_audible"), bool)
+        and current_fit in fit_values
+        and proposed_fit in fit_values
+        and not any(
+            key in verdict
+            for key in ("candidate_id", "canonical_entity", "proposed_cue", "rewritten_text")
+        )
+    )
+    repaired = False
+    policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
+    if valid and not verdict["target_audible"]:
+        policy_branch = "TARGET_INAUDIBLE_KEEP_CURRENT"
+    elif valid and proposed_fit == "INCOMPATIBLE":
+        policy_branch = "PROPOSED_INCOMPATIBLE_KEEP_CURRENT"
+    elif valid:
+        fit_rank = {"INCOMPATIBLE": -1, "UNRESOLVED": 0, "PLAUSIBLE": 1, "SUPPORTED": 2}
+        if proposed_fit in {"PLAUSIBLE", "SUPPORTED"} and (
+            fit_rank[proposed_fit] > fit_rank[current_fit]
+            or (
+                fit_rank[proposed_fit] == fit_rank[current_fit]
+                and current_fit in {"PLAUSIBLE", "SUPPORTED"}
+            )
+        ):
+            repaired = True
+            policy_branch = "ACOUSTICALLY_ADMISSIBLE_CONTEXT_TIEBREAK_APPLY_PROPOSED"
+        else:
+            policy_branch = "CURRENT_ACOUSTIC_FIT_STRONGER_KEEP_CURRENT"
+    output = srt_text
+    if repaired:
+        cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+        live_cue = cues[int(finding["cue_index"]) - 1]
+        if hashlib.sha256(live_cue.text.encode("utf-8")).hexdigest() != request[
+            "base_text_sha256"
+        ]:
+            repaired = False
+            policy_branch = "STALE_BASE_KEEP_CURRENT"
+        else:
+            texts = [cue.text for cue in cues]
+            texts[int(finding["cue_index"]) - 1] = request["proposed_cue"]
+            output = "\n".join(
+                f"{index}\n{_ms(cue.start_ms)} --> {_ms(cue.end_ms)}\n{text}\n"
+                for index, (cue, text) in enumerate(zip(cues, texts), start=1)
+            )
+    return output, {
+        "schema_version": "subtitle-span-adjudication.v1",
+        "status": "OBSERVED" if valid else "UNCERTAIN",
+        "repaired": repaired,
+        "policy_branch": policy_branch,
+        "timing_immutable": True,
+        "request": request,
+        "verdict": verdict or raw_verdict,
+    }
 
 
 def _ms(value_ms: int) -> str:
