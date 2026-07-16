@@ -118,7 +118,12 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
             segment_value = row.get("segment_path") or row.get("segment")
             if not segment_value:
                 continue
-            session_id = mapping.get(Path(str(segment_value)).stem)
+            segment_path = Path(str(segment_value))
+            session_id = mapping.get(segment_path.stem)
+            if not session_id and segment_path.is_file():
+                session_id = recording_session_id(segment_path, date)
+                mapping[segment_path.stem] = session_id
+                changed = True
             if session_id:
                 row["session_id"] = session_id
                 changed = True

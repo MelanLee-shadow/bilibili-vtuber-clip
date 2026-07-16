@@ -2230,6 +2230,23 @@ def test_recording_session_annotation_uses_live_start_metadata(tmp_path, monkeyp
     assert state["talk_backlog"][0]["session_id"] == expected
 
 
+def test_session_annotation_recovers_state_segment_missing_from_inventory(tmp_path, monkeypatch):
+    segment = tmp_path / "22966160_20260716-20-30-03.mp4"
+    segment.write_bytes(b"media")
+    segment.with_suffix(".meta.json").write_text(
+        json.dumps({"description": {"LiveStartTime": "2026-07-16 19:59:58+08:00"}}),
+        encoding="utf-8",
+    )
+    # A flaky FUSE listing can omit one file even though a durable state row
+    # still points to that readable recording.
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    state = {"talk_backlog": [{"segment_path": str(segment), "cid": "late"}]}
+
+    assert runner.annotate_state_sessions("2026-07-16", state) is True
+    assert state["talk_backlog"][0]["session_id"] == "live-20260716T195958+0800"
+    assert state["segment_sessions"][segment.stem] == "live-20260716T195958+0800"
+
+
 def test_prioritize_allocates_talk_quota_per_live_session():
     first = "live-20260716T140049+0800"
     evening = "live-20260716T195958+0800"
