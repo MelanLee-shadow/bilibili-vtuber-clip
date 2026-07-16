@@ -21,6 +21,8 @@ from src.autoslice.song_common import (
     LrcResult,
     _LRC_VARIANT_MARKERS,
     canonicalize_audio_lrc_observation,
+    lrc_latin_letter_ratio as _lrc_latin_letter_ratio,
+    lrc_timed_structure_agreement as _lrc_timed_structure_agreement,
     normalize_lyric_text,
 )
 from src.autoslice.song_lrc_provider import parse_lrc_text
@@ -560,6 +562,8 @@ def _lrc_title_family(lrc: LrcResult) -> str:
     return normalize_lyric_text(title)
 
 
+
+
 def _matched_cue_ids(alignment: Sequence[Mapping[str, object]]) -> set[str]:
     return {
         str(row["matched_cue_id"])
@@ -1000,10 +1004,47 @@ def _choose_audio_lrc_candidate(
         group for group in grouped if group[0] == top_ratio and group[1]
     ]
     if len(curated_top_ties) > 1 and not preferred_top:
-        raise ValueError(
-            "ambiguous curated LRC identity: multiple pinned songs share the best ASR recall; "
-            "refusing to choose one before audio verification"
+        tie_entries = [
+            entry
+            for _ratio, _pinned, _key, group_entries in curated_top_ties
+            for entry in group_entries
+        ]
+        tie_families = {_lrc_title_family(entry[1]) for entry in tie_entries}
+        one_timeline = (
+            len(tie_families) == 1
+            and "" not in tie_families
+            and all(
+                _lrc_timed_structure_agreement(tie_entries[0][1], entry[1]) >= 0.80
+                for entry in tie_entries[1:]
+            )
         )
+        if not one_timeline:
+            raise ValueError(
+                "ambiguous curated LRC identity: multiple pinned songs share the best ASR recall; "
+                "refusing to choose one before audio verification"
+            )
+        # One song, several curated script/arrangement rows (2026-07-16
+        # 怪獣の花唄: native-JP and romaji lrclib rows share one synced timeline
+        # and tie at 0% recall because the Chinese ASR anchor is blind to
+        # Japanese).  Same title family + same timeline is ONE identity, not an
+        # ambiguity.  Prefer the native-script (lowest latin-letter ratio),
+        # fullest variant as primary; the bounded audio proof still arbitrates.
+        primary_entry = min(
+            tie_entries,
+            key=lambda entry: (
+                round(_lrc_latin_letter_ratio(entry[1]), 2),
+                -len(entry[1].lines),
+                entry[1].source_ref,
+            ),
+        )
+        primary_group = next(
+            group
+            for group in curated_top_ties
+            if any(entry is primary_entry for entry in group[3])
+        )
+        grouped.remove(primary_group)
+        grouped.insert(0, primary_group)
+        top_ratio, is_curated, _top_key, top_entries = grouped[0]
     if is_curated:
         if top_ratio < 0.08:
             raise ValueError(

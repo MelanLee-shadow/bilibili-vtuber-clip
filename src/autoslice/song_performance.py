@@ -655,6 +655,15 @@ def _build_audio_observation_alignment(
     offset_ms = sorted(residuals)[len(residuals) // 2]
     if any(abs(residual - offset_ms) > 1_500 for residual in residuals):
         raise ValueError("audio observations do not fit one global shift within ±1500ms")
+    # 回声防御（2026-07-16）：prompt 里带着 LRC 时间轴，模型可以不听音频、把
+    # LRC 时刻加常数原样回吐——那样残差会逐行到毫秒级一致。真实翻唱的逐行
+    # 残差必然抖动（怪獣の花唄实测数百 ms 级）。零抖动=非独立听音证据，拒收。
+    # 阈值 16 行：真实完整歌的 heard 行数远超 16，只有真歌规模的纯回声才可能
+    # 全程到毫秒一致；短合成用例不受影响。
+    if len(residuals) >= 16 and max(residuals) - min(residuals) == 0:
+        raise ValueError(
+            "audio observations echo the LRC timeline exactly; independent listening evidence is required"
+        )
     lrc_span = performed_lines[-1].time_ms - performed_lines[0].time_ms
     live_span = int(alignment[-1]["cue_start_ms"]) - int(alignment[0]["cue_start_ms"])
     if lrc_span < 20_000 or not 0.95 <= live_span / lrc_span <= 1.05:

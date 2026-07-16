@@ -19,6 +19,7 @@ BLOCK can say what was tried instead of silently giving up.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 import copy
 import hashlib
 import json
@@ -468,3 +469,46 @@ def _lrc_fingerprint(lrc: LrcResult) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def lrc_latin_letter_ratio(lrc: LrcResult) -> float:
+    """Share of alphabetic chars that are ASCII — a romanization (romaji/pinyin)
+    row of a CJK song scores near 1.0, the native-script row near 0.0."""
+
+    letters = [ch for line in lrc.lines for ch in line.text if ch.isalpha()]
+    if not letters:
+        return 0.0
+    return sum(1 for ch in letters if ch.isascii()) / len(letters)
+
+
+def lrc_timed_structure_agreement(left: LrcResult, right: LrcResult, *, tolerance_ms: int = 800) -> float:
+    """Fraction of the shorter LRC's line times reproduced by the longer one.
+
+    Script/arrangement variants of one recording share the synced timeline even
+    when their normalized texts share nothing (2026-07-16 怪獣の花唄: lrclib
+    native-JP vs romaji rows agree within ~150ms/line at text similarity 0.005).
+    """
+
+    left_times = sorted(line.time_ms for line in left.lines)
+    right_times = sorted(line.time_ms for line in right.lines)
+    if not left_times or not right_times:
+        return 0.0
+    shorter, longer = (
+        (left_times, right_times)
+        if len(left_times) <= len(right_times)
+        else (right_times, left_times)
+    )
+    hits = 0
+    for value in shorter:
+        index = bisect_left(longer, value)
+        nearest = min(
+            (
+                abs(longer[position] - value)
+                for position in (index - 1, index)
+                if 0 <= position < len(longer)
+            ),
+            default=None,
+        )
+        if nearest is not None and nearest <= tolerance_ms:
+            hits += 1
+    return hits / len(shorter)

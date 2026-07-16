@@ -20,6 +20,7 @@ from src.autoslice.song_repair import (
     AudioLrcAlignmentRun,
     LrcLine,
     LrcResult,
+    _build_audio_observation_alignment,
     _choose_audio_lrc_candidate,
     _build_lyric_queries,
     attempt_song_repair,
@@ -622,7 +623,11 @@ def _write_fake_audio_alignment_run(
     lrc_sha = hashlib.sha256(lrc_path.read_bytes()).hexdigest()
     observations = []
     for index, line in enumerate(lrc.lines):
-        start = line.time_ms + offset_ms
+        # 回声防御要求逐行残差有真实抖动。首行零抖动、其余 ±120 交替（先负后
+        # 正），残差排序后的中位数在任意行数下都恰等于 offset_ms，既过守卫又
+        # 不动任何精确 offset/边界断言。
+        jitter = 0 if index == 0 else (-120 if index % 2 else 120)
+        start = line.time_ms + offset_ms + jitter
         observations.append(
             {
                 "lrc_index": index,
@@ -1117,6 +1122,53 @@ def test_audio_identity_uses_shared_source_cues_for_low_text_similarity_variants
     # Exact recall tie: the version explaining more source cues and a fuller
     # canonical timeline is sent to audio verification.
     assert chosen.source_ref == full.source_ref
+
+
+def test_audio_identity_resolves_same_timeline_curated_script_variants():
+    """2026-07-16 怪獣の花唄案：同一首歌在 lrclib 上有日文原文行和罗马音行，
+    标题同族、时间轴逐行一致，但归一化文本近乎零重叠 → 复链聚类分不到一组，
+    以前在 curated 平票处直接拒绝。同族+同时间轴=同一身份，不是歧义；主选
+    必须是母语文字（拉丁字母占比最低）的那份，罗马音绝不能当字幕主选。"""
+    native = _japanese_lrc()
+    romaji = LrcResult(
+        provider="lrclib",
+        song_title=f"{native.song_title} - replica -",
+        artist=native.artist,
+        source_ref="https://lrclib.net/api/get/romaji",
+        lines=tuple(
+            LrcLine(line.time_ms + 120, f"romaji line {index}")
+            for index, line in enumerate(native.lines)
+        ),
+    )
+    chosen = _choose_audio_lrc_candidate(
+        [(0.30, romaji, []), (0.30, native, [])],
+        pinned_lrc_results=[native, romaji],
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+    assert chosen.source_ref == native.source_ref
+
+
+def test_audio_identity_still_rejects_curated_tie_across_different_timelines():
+    """同题不同歌（或不同 live 时间轴）的 curated 平票仍然是硬歧义。"""
+    first = _japanese_lrc()
+    second = LrcResult(
+        provider="lrclib",
+        song_title=f"{first.song_title} - other -",
+        artist="different artist",
+        source_ref="https://lrclib.net/api/get/other",
+        lines=tuple(
+            LrcLine(line.time_ms * 2 + 4_321, f"別の歌詞{index}")
+            for index, line in enumerate(first.lines)
+        ),
+    )
+    with pytest.raises(ValueError, match="ambiguous curated LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.30, second, []), (0.30, first, [])],
+            pinned_lrc_results=[first, second],
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
 
 
 def test_audio_identity_rejects_three_cue_subset_of_unrelated_same_title():
@@ -3140,6 +3192,106 @@ def test_song_boundary_keeps_lrc_instrumental_intro(tmp_path):
     assert result.lyrics_alignment["offset_ms"] == 42_300
     assert result.song_boundary["clip_start_ms"] == 40_800
     assert result.song_boundary["first_lyric_start_ms"] == 50_000
+
+
+def _observation_run_for_echo_test(jitter_ms: int):
+    """A 20-line observation bundle whose live times are LRC+10s, with per-line
+    jitter ±jitter_ms (0 = a pure LRC-timeline echo)."""
+
+    lines = tuple(LrcLine(3_000 * index + 500, f"実際の歌詞{index}") for index in range(20))
+    lrc = LrcResult(
+        provider="lrclib",
+        song_title="回声测试歌",
+        artist="歌手",
+        source_ref="https://lrclib.net/api/get/echo-guard",
+        lines=lines,
+    )
+    observations = []
+    for index, line in enumerate(lines):
+        start_ms = line.time_ms + 10_000 + (jitter_ms if index % 2 else -jitter_ms)
+        observations.append(
+            {
+                "lrc_index": index,
+                "lrc_time_ms": line.time_ms,
+                "text": line.text,
+                "heard": True,
+                "live_start_ms": start_ms,
+                "live_end_ms": start_ms + 2_500,
+                "confidence": 0.97,
+                **READY_LYRIC_VOCAL_ASSERTIONS,
+            }
+        )
+    final_end_ms = observations[-1]["live_end_ms"]
+    payload = {
+        "schema_version": AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+        "record": {
+            "attempt_id": "echo-guard-attempt",
+            "candidate_id": "echo-guard",
+            "source_sha256": "s" * 64,
+            "lrc_sha256": "l" * 64,
+            "source_duration_ms": 120_000,
+        },
+        "observations": observations,
+        "spot_checks": [
+            {"name": "first_line", "live_time_ms": observations[0]["live_start_ms"], "result": "OK", "notes": "heard"},
+            {"name": "chorus", "live_time_ms": observations[4]["live_start_ms"], "result": "OK", "notes": "heard"},
+            {"name": "repeated_section", "live_time_ms": observations[8]["live_start_ms"], "result": "OK", "notes": "later repeat"},
+            {"name": "longest_instrumental_gap", "live_time_ms": observations[5]["live_start_ms"], "result": "OK", "notes": "heard"},
+            {"name": "tail", "live_time_ms": final_end_ms - 1, "result": "OK", "notes": "heard"},
+        ],
+        "live_performance": {
+            "mode": "LIVE_STREAMER_SINGING",
+            "confidence": 0.96,
+            "continuous_live_song_performance": True,
+            "background_recording_likelihood": 0.03,
+            **READY_LIVE_PERFORMANCE_ASSERTIONS,
+            "evidence": [
+                {"time_ms": observations[1]["live_start_ms"], "observation": "head"},
+                {"time_ms": observations[10]["live_start_ms"], "observation": "middle"},
+                {"time_ms": observations[18]["live_start_ms"], "observation": "tail"},
+            ],
+            "notes": "continuous live streamer vocal",
+        },
+        "live_arrangement": {
+            "classification": "FULL_STUDIO_SEQUENCE",
+            "observed_live_song_opening": True,
+            "observed_live_song_ending": True,
+            "post_song_transition_kind": "HOST_TALK",
+            "post_song_transition_ms": final_end_ms + 2_000,
+            "notes": "complete",
+        },
+        "post_song_talk_start_ms": final_end_ms + 2_000,
+    }
+    run = SimpleNamespace(
+        payload=payload,
+        source_sha256="s" * 64,
+        lrc_sha256="l" * 64,
+        source_duration_ms=120_000,
+        output_sha256="o" * 64,
+    )
+    return run, lrc
+
+
+def test_observation_alignment_rejects_pure_lrc_timeline_echo():
+    """回声防御：prompt 携带 LRC 时间轴，纯回声（live=LRC+常数、零逐行抖动）
+    不是独立听音证据，真歌规模(≥16行)下必须拒收；带真实抖动的观察照常通过。"""
+    echo_run, echo_lrc = _observation_run_for_echo_test(jitter_ms=0)
+    with pytest.raises(ValueError, match="echo the LRC timeline"):
+        _build_audio_observation_alignment(
+            run=echo_run,
+            lrc=echo_lrc,
+            candidate_id="echo-guard",
+            effective_duration_ms=120_000,
+        )
+
+    real_run, real_lrc = _observation_run_for_echo_test(jitter_ms=120)
+    observation = _build_audio_observation_alignment(
+        run=real_run,
+        lrc=real_lrc,
+        candidate_id="echo-guard",
+        effective_duration_ms=120_000,
+    )
+    assert observation.offset_ms in range(9_800, 10_201)
 
 
 def test_repair_fails_closed_when_nominal_lrc_zero_precedes_source(tmp_path):
