@@ -1,0 +1,32 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "691c0e89207d",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-15/song_manual_kaiju_v2/kaiju_v4.mp4",
+    "sha256": "691c0e89207dd37d074f31f3145e4852cfe838e91c02ee1cb3a9f153f2d13eb7",
+    "bytes": 83909163
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-07-15/song_manual_kaiju_v2/kaiju_cover_ai.png",
+    "sha256": "7a418ee98daa7bcd056494ee5621614ea6b5753983ecf7ea9767cac1c7a0ba15",
+    "bytes": 2498877
+  },
+  "title": "【李豆沙】豆沙歌，《怪獣の花唄》",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "可以,按照标准流程上传",
+    "at": "2026-07-16T04:14:28+0000"
+  },
+  "created_at": "2026-07-16T04:14:28+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "怪獣の花唄",
+    "Vaundy",
+    "日语歌",
+    "翻唱"
+  ],
+  "tags_source": "cli"
+}

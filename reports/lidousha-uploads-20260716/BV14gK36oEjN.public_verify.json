@@ -1,0 +1,124 @@
+{
+    "code": 0,
+    "message": "OK",
+    "ttl": 1,
+    "data": {
+        "bvid": "BV14gK36oEjN",
+        "aid": 116927699686846,
+        "videos": 1,
+        "tid": 21,
+        "tid_v2": 2020,
+        "tname": "",
+        "tname_v2": "",
+        "copyright": 2,
+        "pic": "http://i2.hdslb.com/bfs/archive/2ddedf2ea417abc20dc2e475532ce560792343a8.png",
+        "title": "\u3010\u674e\u8c46\u6c99\u3011\u8c46\u6c99\u6b4c\uff0c\u300a\u602a\u7363\u306e\u82b1\u5504\u300b",
+        "pubdate": 1784175492,
+        "ctime": 1784175493,
+        "desc": "https://live.bilibili.com/\n\u674e\u8c46\u6c99\u4e2a\u4eba\u4e3b\u9875\uff1ahttps://space.bilibili.com/1703797642\n\u674e\u8c46\u6c99\u76f4\u64ad\u95f4\uff1ahttps://live.bilibili.com/22966160",
+        "desc_v2": [
+            {
+                "raw_text": "https://live.bilibili.com/\n\u674e\u8c46\u6c99\u4e2a\u4eba\u4e3b\u9875\uff1ahttps://space.bilibili.com/1703797642\n\u674e\u8c46\u6c99\u76f4\u64ad\u95f4\uff1ahttps://live.bilibili.com/22966160",
+                "type": 1,
+                "biz_id": 0
+            }
+        ],
+        "state": 0,
+        "duration": 229,
+        "rights": {
+            "bp": 0,
+            "elec": 0,
+            "download": 1,
+            "movie": 0,
+            "pay": 0,
+            "hd5": 0,
+            "no_reprint": 0,
+            "autoplay": 1,
+            "ugc_pay": 0,
+            "is_cooperation": 0,
+            "ugc_pay_preview": 0,
+            "no_background": 0,
+            "clean_mode": 0,
+            "is_stein_gate": 0,
+            "is_360": 0,
+            "no_share": 0,
+            "arc_pay": 0,
+            "free_watch": 0
+        },
+        "owner": {
+            "mid": 55006782,
+            "name": "\u70df\u96e8\u5e73\u751f\u4e00\u4e16",
+            "face": "http://i0.hdslb.com/bfs/face/a560e36ab166f78659e185a612433560d86e7d81.jpg"
+        },
+        "stat": {
+            "aid": 116927699686846,
+            "view": 22,
+            "danmaku": 0,
+            "reply": 0,
+            "favorite": 0,
+            "coin": 0,
+            "share": 0,
+            "now_rank": 0,
+            "his_rank": 0,
+            "like": 16,
+            "dislike": 0,
+            "evaluation": "",
+            "vt": 0
+        },
+        "argue_info": {
+            "argue_msg": "",
+            "argue_type": 0,
+            "argue_link": ""
+        },
+        "dynamic": "",
+        "cid": 39996820552,
+        "dimension": {
+            "width": 1280,
+            "height": 720,
+            "rotate": 0
+        },
+        "premiere": null,
+        "teenage_mode": 1,
+        "is_chargeable_season": false,
+        "is_story": false,
+        "is_upower_exclusive": false,
+        "is_upower_play": false,
+        "is_upower_preview": false,
+        "enable_vt": 0,
+        "vt_display": "",
+        "is_upower_exclusive_with_qa": false,
+        "no_cache": false,
+        "pages": [
+            {
+                "cid": 39996820552,
+                "page": 1,
+                "from": "vupload",
+                "part": "kaiju_v4",
+                "duration": 229,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                    "width": 1280,
+                    "height": 720,
+                    "rotate": 0
+                },
+                "first_frame": "http://i0.hdslb.com/bfs/storyff/_000030e3tyhfo1eii2e6bzda8olqg3b_firsti.jpg",
+                "ctime": 1784175493
+            }
+        ],
+        "subtitle": {
+            "allow_submit": false,
+            "list": []
+        },
+        "is_season_display": false,
+        "user_garb": {
+            "url_image_ani_cut": ""
+        },
+        "honor_reply": {},
+        "like_icon": "",
+        "need_jump_bv": false,
+        "disable_show_up_info": false,
+        "is_story_play": 1,
+        "is_view_self": false
+    }
+}
