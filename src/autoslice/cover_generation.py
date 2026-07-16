@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, NamedTuple, Sequence
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.llm_client import LlmCall, extract_json_object
@@ -833,69 +833,175 @@ _COVER_TEXT_BACKING = "outline"
 _COVER_MISSING_CHECKERS: dict = {}
 
 
+class _CoverFontChoice(NamedTuple):
+    """One concrete whole-cover font face: a font file plus a TTC face index."""
+
+    path: Path
+    face_index: int = 0
+
+    @property
+    def name(self) -> str:
+        if self.face_index:
+            return f"{self.path.name}#{self.face_index}"
+        return self.path.name
+
+    @property
+    def stem(self) -> str:
+        return self.path.stem
+
+
 def _cover_fallback_font_path():
-    """A cute + COMPLETE CJK font used for the WHOLE cover when ZCOOL is missing a
-    glyph (Ivan 2026-07-05: one cover = one uniform font; if ZCOOL can't render a
-    char like 镚, swap the ENTIRE cover to this font — never mix fonts in a cover).
-    得意黑/SmileySans (cute, complete) preferred; then plain complete fallbacks."""
-    for candidate in (CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT) / "SmileySans-Oblique.ttf",
-                      Path("/System/Library/Fonts/Hiragino Sans GB.ttc"),
-                      CHANNEL_PROFILE.delivery_root_for(ROOT) / "2026-06-29/redone_fullsong_433_travel_meaning/fonts/msyh.ttf"):
-        if candidate.is_file():
-            return candidate
-    return None
+    """A cute CJK font used for the WHOLE cover when ZCOOL fails glyph coverage
+    (Ivan 2026-07-05: one cover = one uniform font — never mix fonts in a cover).
+    得意黑/SmileySans preferred; the chain below adds truly complete tails."""
+    candidates = _cover_fallback_font_candidates()
+    return candidates[0] if candidates else None
 
 
-# ZCOOLKuaiLe renders these glyphs as the WRONG SHAPE (not .notdef tofu, so the
-# missing-glyph checker can't catch them): 自 comes out looking like 白 (自私→白私,
-# 擅自→擅白).  Any title containing one must use the complete fallback font for the
-# WHOLE cover.  Extend as more wrong-shape glyphs surface (data-only fix; the title
-# JSON is always correct — only the ZCOOL-rendered PNG was wrong).
-_COVER_ZCOOL_WRONG_GLYPHS = frozenset("自")
+def _cover_fallback_font_candidates() -> list[Path]:
+    return [
+        candidate
+        for candidate in (
+            CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT) / "SmileySans-Oblique.ttf",
+            Path("/System/Library/Fonts/Hiragino Sans GB.ttc"),
+            CHANNEL_PROFILE.delivery_root_for(ROOT) / "2026-06-29/redone_fullsong_433_travel_meaning/fonts/msyh.ttf",
+        )
+        if candidate.is_file()
+    ]
 
 
-def _cover_font_for_text(cover_text):
-    """Choose ONE font for the whole cover: default ZCOOL; if ZCOOL is MISSING any
-    glyph OR renders one as the wrong shape (自→白), use the complete fallback for
-    the ENTIRE cover (uniform — never mix fonts in a cover)."""
-    zcool = _find_cover_font()
-    missing = _cover_missing_checker(zcool)
-    if any(ch in _COVER_ZCOOL_WRONG_GLYPHS for ch in cover_text) or any(
-        (not ch.isspace()) and missing(ch) for ch in cover_text
+# Fonts that render specific glyphs as the WRONG SHAPE — a real glyph, not
+# .notdef, so the raster probe can't catch them: ZCOOL's 自 comes out looking
+# like 白 (自私→白私, 擅自→擅白).  Keyed by font file stem; extend per font as
+# more wrong-shape glyphs surface (data-only fix; the title JSON is always
+# correct — only the rendered PNG was wrong).
+_COVER_WRONG_SHAPE_GLYPHS: dict[str, frozenset[str]] = {
+    "ZCOOLKuaiLe-Regular": frozenset("自"),
+}
+
+
+def _noto_cjk_faces(collection_path: Path, *, prefer_jp: bool) -> list["_CoverFontChoice"]:
+    """Locate the JP/SC faces inside a Noto CJK .ttc by family name (face order
+    is not contractual across distros), regional-correct face first."""
+    from PIL import ImageFont
+
+    wanted = (
+        ("Noto Sans CJK JP", "Noto Sans CJK SC")
+        if prefer_jp
+        else ("Noto Sans CJK SC", "Noto Sans CJK JP")
+    )
+    found: dict[str, int] = {}
+    for index in range(12):
+        try:
+            family = ImageFont.truetype(str(collection_path), 24, index=index).getname()[0]
+        except Exception:
+            break
+        if family in wanted and family not in found:
+            found[family] = index
+    return [_CoverFontChoice(collection_path, found[name]) for name in wanted if name in found]
+
+
+def _cover_font_chain(*, prefer_jp: bool) -> list["_CoverFontChoice"]:
+    """Whole-cover font candidates, cutest first, completest last.
+
+    2026-07-16 《怪獣の花唄》 published-cover case: ZCOOL lacked 獣, the cover
+    swapped to SmileySans, and SmileySans ALSO lacks 獣 — its stylised .notdef
+    glyph shipped on a live cover because only ZCOOL was ever glyph-checked.
+    Every chain member is now checked, and the tail members are plain but
+    complete system CJK fonts (Noto CJK on free/Linux)."""
+    chain: list[_CoverFontChoice] = [_CoverFontChoice(_find_cover_font())]
+    chain.extend(_CoverFontChoice(path) for path in _cover_fallback_font_candidates())
+    for collection in (
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
     ):
-        fallback = _cover_fallback_font_path()
-        if fallback is not None:
-            return fallback
-    return zcool
+        if collection.is_file():
+            chain.extend(_noto_cjk_faces(collection, prefer_jp=prefer_jp))
+    unique: list[_CoverFontChoice] = []
+    seen: set[tuple[str, int]] = set()
+    for choice in chain:
+        key = (str(choice.path), choice.face_index)
+        if key not in seen:
+            seen.add(key)
+            unique.append(choice)
+    return unique
 
 
-def _cover_missing_checker(font_path):
-    """Cached ch->bool: True if ZCOOL is MISSING the glyph (renders .notdef tofu).
-    Detect by rendering the char and comparing to a known-missing PUA char."""
-    key=str(font_path)
-    cache_all=_COVER_MISSING_CHECKERS
+def _cover_font_for_text(cover_text, selection_audit: dict | None = None):
+    """Choose ONE font face for the whole cover (uniform — never mix): the first
+    chain member with a REAL glyph for every char (raster .notdef probe) and no
+    known wrong-shape glyph for this text.  If nothing fully covers, keep the
+    least-missing member and disclose the residual glyph risk instead of
+    silently shipping a .notdef (the 獣 case)."""
+    prefer_jp = any("぀" <= ch <= "ヿ" for ch in cover_text)
+    rejected: list[dict[str, object]] = []
+    best: tuple[int, _CoverFontChoice, list[str]] | None = None
+    for choice in _cover_font_chain(prefer_jp=prefer_jp):
+        wrong_shape = _COVER_WRONG_SHAPE_GLYPHS.get(choice.stem, frozenset())
+        wrong_hits = sorted({ch for ch in cover_text if ch in wrong_shape})
+        missing = _cover_missing_checker(choice)
+        missing_hits = sorted(
+            {ch for ch in cover_text if (not ch.isspace()) and missing(ch)}
+        )
+        if not wrong_hits and not missing_hits:
+            if selection_audit is not None:
+                selection_audit.update(
+                    {"font": choice.name, "rejected": rejected, "glyph_risk": []}
+                )
+            return choice
+        rejected.append(
+            {"font": choice.name, "wrong_shape": wrong_hits, "missing": missing_hits}
+        )
+        badness = len(wrong_hits) + len(missing_hits)
+        if best is None or badness < best[0]:
+            best = (badness, choice, [*wrong_hits, *missing_hits])
+    _badness, choice, risk = best  # chain always has >=1 member (ZCOOL fail-closed)
+    if selection_audit is not None:
+        selection_audit.update(
+            {"font": choice.name, "rejected": rejected, "glyph_risk": risk}
+        )
+    return choice
+
+
+def _cover_missing_checker(font_choice):
+    """Cached ch->bool: True if this font face is MISSING the glyph (renders its
+    .notdef).  Detect by rendering the char and comparing against two codepoints
+    that are never real glyphs -- a PUA char and a Unicode noncharacter (some
+    fonts do map PUA, so either probe alone can miss)."""
+    path, face_index = (
+        (font_choice.path, font_choice.face_index)
+        if isinstance(font_choice, _CoverFontChoice)
+        else (font_choice, 0)
+    )
+    key = (str(path), face_index)
+    cache_all = _COVER_MISSING_CHECKERS
     if key not in cache_all:
         from PIL import Image, ImageDraw, ImageFont
-        probe=ImageFont.truetype(str(font_path),100)
+        probe = ImageFont.truetype(str(path), 100, index=face_index)
         def render(ch):
-            img=Image.new("L",(160,180),0)
-            ImageDraw.Draw(img).text((12,12),ch,font=probe,fill=255)
+            img = Image.new("L", (160, 180), 0)
+            ImageDraw.Draw(img).text((12, 12), ch, font=probe, fill=255)
             return img.tobytes()
-        notdef=render("\ue000")
-        seen={}
+        notdef_renders = (render("\ue000"), render("\U0001fffe"))
+        seen = {}
         def missing(ch):
             if ch not in seen:
-                seen[ch]=(render(ch)==notdef)
+                seen[ch] = render(ch) in notdef_renders
             return seen[ch]
-        cache_all[key]=missing
+        cache_all[key] = missing
     return cache_all[key]
 
 
-def _cover_fonts(font_path, size):
-    """The single whole-cover font at `size` (no per-glyph mixing — the font is
+def _cover_fonts(font_choice, size):
+    """The single whole-cover font at `size` (no per-glyph mixing -- the font is
     chosen once per cover by _cover_font_for_text)."""
     from PIL import ImageFont
-    return (ImageFont.truetype(str(font_path), size), None, None)
+    path, face_index = (
+        (font_choice.path, font_choice.face_index)
+        if isinstance(font_choice, _CoverFontChoice)
+        else (font_choice, 0)
+    )
+    return (ImageFont.truetype(str(path), size, index=face_index), None, None)
 
 
 def _cover_char_font(ch, fonts):
@@ -1276,7 +1382,8 @@ def _overlay_lidousha_cover_title(
     the approved cream/navy palette.  Default backing is "outline" — the thick
     navy(+white) stroke alone lifts the text off bright pop backgrounds like the
     reference covers (the dark card/glow modes exist but Ivan rejected the card
-    box look).  Font is fail-closed ZCOOLKuaiLe (whole-cover swap to 得意黑 only
+    box look).  Font is fail-closed ZCOOLKuaiLe (whole-cover swap down a checked
+    complete-font chain only
     when ZCOOL lacks a glyph).
     """
     from PIL import Image, ImageDraw, ImageOps
@@ -1289,7 +1396,9 @@ def _overlay_lidousha_cover_title(
     scrim = render["scrim"]
     hook_rgb = _COVER_HOOK_COLORS.get(art_direction.hook_color, _COVER_HOOK_COLORS["yellow"])
 
-    font_path = _cover_font_for_text(cover_text)  # ZCOOL, or a complete font if ZCOOL lacks a glyph
+    font_selection: dict[str, object] = {}
+    # ZCOOL, or the first chain font whose glyph coverage is verified for this text
+    font_path = _cover_font_for_text(cover_text, selection_audit=font_selection)
     image = ImageOps.fit(Image.open(ai_background_path).convert("RGB"), (1920, 1080), method=Image.Resampling.LANCZOS)
     lines = _fit_cover_lines(
         cover_text,
@@ -1353,6 +1462,7 @@ def _overlay_lidousha_cover_title(
     image.save(final_cover_path)
     return {
         "font": font_path.name if font_path is not None else "PIL-default",
+        "font_selection": font_selection,
         "font_size": font_size,
         "angle_degrees": angle,
         "overlay_position": {"x": paste_x, "y": paste_y},

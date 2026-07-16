@@ -4129,7 +4129,48 @@ def test_cover_font_swaps_whole_cover_on_wrong_shape_glyph():
     fallback = shadow_pipeline._cover_fallback_font_path()
     assert fallback is not None, "fallback font (SmileySans/得意黑) must be present"
     # a title WITH 自 → fallback (whole-cover swap)
-    assert shadow_pipeline._cover_font_for_text("电脑擅自更新") == fallback
-    assert shadow_pipeline._cover_font_for_text("cos比sin自私") == fallback
+    assert shadow_pipeline._cover_font_for_text("电脑擅自更新").path == fallback
+    assert shadow_pipeline._cover_font_for_text("cos比sin自私").path == fallback
     # a title WITHOUT 自 → stays ZCOOL
-    assert shadow_pipeline._cover_font_for_text("电脑要造反小皇帝拒绝更新") == zcool
+    assert shadow_pipeline._cover_font_for_text("电脑要造反小皇帝拒绝更新").path == zcool
+
+
+def test_cover_font_checks_every_chain_member_never_silent_notdef(monkeypatch):
+    """2026-07-16 《怪獣の花唄》 published-cover case: ZCOOL lacks 獣, the cover
+    swapped to SmileySans — and SmileySans ALSO lacks 獣, so its stylised .notdef
+    shipped on a live B站 cover.  Only ZCOOL was ever glyph-checked.  Now every
+    chain member is checked; when nothing fully covers, the residual risk must be
+    DISCLOSED in the selection audit instead of silently shipping a .notdef."""
+    zcool = shadow_pipeline._find_cover_font()
+    smiley = shadow_pipeline._cover_fallback_font_path()
+    assert smiley is not None and "SmileySans" in smiley.name
+    # SmileySans really is missing 獣 (raster .notdef probe on the fallback font)
+    assert shadow_pipeline._cover_missing_checker(smiley)("獣") is True
+    assert shadow_pipeline._cover_missing_checker(smiley)("怪") is False
+
+    # Constrain the chain to the two repo fonts: neither covers 獣 → the choice
+    # must carry a non-empty glyph_risk (disclosure), never a silent pick.
+    from src.autoslice import cover_generation
+
+    limited = [
+        shadow_pipeline._CoverFontChoice(zcool),
+        shadow_pipeline._CoverFontChoice(smiley),
+    ]
+    monkeypatch.setattr(
+        cover_generation, "_cover_font_chain", lambda *, prefer_jp: limited
+    )
+    audit: dict = {}
+    choice = shadow_pipeline._cover_font_for_text("怪獣の花唄", selection_audit=audit)
+    assert "獣" in audit["glyph_risk"]
+    assert len(audit["rejected"]) == 2
+    assert choice in limited
+
+    # With the real chain (adds complete system CJK fonts when present): either a
+    # font that truly renders 獣 is chosen, or the risk is still disclosed.
+    monkeypatch.undo()
+    audit2: dict = {}
+    choice2 = shadow_pipeline._cover_font_for_text("怪獣の花唄", selection_audit=audit2)
+    if not audit2["glyph_risk"]:
+        assert shadow_pipeline._cover_missing_checker(choice2)("獣") is False
+    else:
+        assert "獣" in audit2["glyph_risk"]
