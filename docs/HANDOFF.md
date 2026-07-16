@@ -3,7 +3,36 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
-## 2026-07-14 晚：梦限大重制排雷 + 权威保向纠偏 + API 收编（当前）
+## 2026-07-16：怪獣の花唄善后 + 封面字体链治本 + 日语歌门修缮（当前）
+
+### 目标
+
+复核 7/15 夜 pi agent 会话（《怪獣の花唄》手工产出+上传、本地未提交代码改动），修好被它暴露的流水线缺陷，返修线上乱码封面。
+
+### 已完成
+
+- **pi agent 会话还原**：`BV14gK36oEjN`（【李豆沙】豆沙歌，《怪獣の花唄》）04:14Z Ivan 授权上传。歌跨录制分段（歌头在 21:12 分段尾），标准 song-repair 4 次全拦（免费 Gemini 3 key 429 → strict 付费轮 strikes=4 合规、usage-20260716 入帐 ✓ → 校验器 `nominal LRC zero -490ms` 拒绝=源真缺头）；agent 手工拼 part1_full+part2_curr、把管线算出的全局位移人肉套上（v4.ass=canonical−5.79s 裁头）、绕过 identity 门（内存驱动直调内部函数模仿 attempts 格式）。上传视频音画流独立解码零损伤 ✓、歌切无片头 ✓、精确重编码 ✓。
+- **v4 删 3 条结尾桥段 cue 判定正确**：频谱对比（被删窗 3.7-9.2s 直线持续和弦 vs 保留窗全程人声颤音）证实那遍确实基本没唱；反而坐实 AGY 观察顺从性（52/52 行 heard=true conf 一律 0.95 不可信）。
+- **线上封面乱码已返修**：v1/v2 封面「獣」都是 SmileySans 风格化 .notdef（ZCOOL 缺字→回退 SmileySans→它也缺字，旧链只探针 ZCOOL）。字体链治本 `a74520b`（逐成员错形表+缺字双探针+Noto CJK JP/SC face 兜底+glyph_risk 披露），free 上重出 v3（font_selection 显示 ZCOOL/Smiley 被拒、NotoSansCJK-Bold JP face 中选、glyph_risk 空）→ cover-only edit code 0 → 公开接口 pic sha256 与 v3 逐字节一致 ✓。证据 `reports/lidousha-uploads-20260716/`（`6889a3b`）。
+- **pi agent 本地改动收编**（审片员 context-audio 裁决，`70b9663`）：设计合格（闭集声学相容度+哈希绑定+固定融合规则+跨度/来源契约），测试可过；补上它漏的**终稿面验证登记**（已应用裁决修复进 entity_repairs，被 verify_chat_authority_final_surfaces 按原时窗复证——delivery-divergence 防线，xinyi 案同类）+ 登记回归测试。
+- **日语歌门修缮**（`e46d36a`）：curated 同轨平票放行（lrclib 日文原文行 vs 罗马音行：同族+时间轴逐行一致但文本零重叠；主选拉丁占比最低者，罗马音绝不当字幕主选；跨时间轴平票仍硬拒）+ AGY 回声防御（≥16 行残差零抖动=LRC 回声拒收）。
+- 全量 1248 tests passed；deploy `e46d36a` 至 free（06:00Z，md5 verified，DISABLED absent，heartbeat 正常）。memory 新增 `lidousha-japanese-song-gates`、重写 `cover-font-zi-renders-as-bai`。
+
+### 进行中（含后台进程）
+
+- 无后台进程。runner 正常 armed（cron */10）。
+
+### 阻塞
+
+- 无硬阻塞。两项遗留见下一步。
+
+### 下一步
+
+1. **日语歌无人值守仍封死**（勿静默放宽）：(a) curated 零 recall 门（`_choose_audio_lrc_candidate` top_ratio<0.08）放宽前提=防回声听音证明——设计：观察 pass prompt 不给 LRC 时间戳（只给行文本令模型独立报时）或双盲二次 pass；仅凭 pinned+视觉歌单见证不够（AGY 顺从性已实锤）。(b) 头部缺口自动扩窗：`nominal LRC zero -Xms outside source` 时按缺口重切源并重试，需媒体重切回调+跨录制分段拼接（kaiju 即跨段），有人盯窗口再做。
+2. `BV14gK36oEjN` 字幕时轴剩余风险（低优先）：头锚频谱读数显示 cue1 可能早人声 ~0.3-0.6s，但日语无 BCUT 锚无法证明更准值，已是管线级估计；除非 Ivan 耳审说早，不动。
+3. （承上节）free 一次性脚本群弃用改点 `bili_archive_tool.py`；TODO(homophone) 照旧。
+
+## 2026-07-14 晚：梦限大重制排雷 + 权威保向纠偏 + API 收编
 
 ### 目标
 
