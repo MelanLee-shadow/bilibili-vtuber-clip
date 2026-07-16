@@ -18,6 +18,10 @@ from src.autoslice.runner_proxy import RunnerProxy
 _runner = RunnerProxy()
 
 
+def _recording_session_id(record: dict) -> str:
+    return str(record.get("session_id") or "legacy-date-session")
+
+
 def requeue_recoverable_songs(date: str, state: dict) -> int:
     """Retry non-terminal song BLOCKs when the pipeline changes.
 
@@ -29,9 +33,6 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     """
 
     current = _runner.pipeline_fingerprint()
-    lifetime_attempts = len(state.get("songs", [])) + len(
-        state.get("song_superseded_attempts", [])
-    )
     existing_pending = {
         str(item.get("cid") or item.get("candidate_id") or "")
         for item in state.get("pending_song", [])
@@ -77,6 +78,12 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             and retry_count < 1
         )
         transient = infra_retry_due or legacy_transient
+        session_id = _recording_session_id(record)
+        lifetime_attempts = sum(
+            1
+            for attempt in state.get("songs", []) + state.get("song_superseded_attempts", [])
+            if isinstance(attempt, dict) and _recording_session_id(attempt) == session_id
+        )
         content_change_retry = changed and lifetime_attempts < _runner.SONG_LIFETIME_ATTEMPT_CAP
         cid = str(record.get("candidate_id") or "")
         if not cid or cid in existing_pending or not (content_change_retry or transient):
@@ -122,6 +129,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 if infra_retry_due
                 else "transient_source_context_failure"
             ),
+            "session_id": session_id,
             "resume_full_source": bool(
                 "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in reasons
                 and isinstance(record.get("full_source_retry"), dict)
@@ -137,6 +145,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 "pipeline_fingerprint": record.get("pipeline_fingerprint"),
                 "superseded_by": current,
                 "retry_reason": item["retry_reason"],
+                "session_id": session_id,
             }
         )
         _runner._remember_song_quarantine_interval(state, item)
@@ -521,6 +530,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 else "transient_produce_failure"
             ),
             "bcut_srt_path": str(_runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"),
+            "session_id": _recording_session_id(record),
         }
         requeued.append(item)
         existing_pending.add(cid)
@@ -540,6 +550,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 "failure_kind": record.get("failure_kind"),
                 "failure_stage": record.get("failure_stage"),
                 "failure_fingerprint": record.get("failure_fingerprint"),
+                "session_id": _recording_session_id(record),
             }
         )
     state["picks"] = kept

@@ -2293,6 +2293,41 @@ def test_song_attempt_cap_and_delivery_budget_are_per_live_session():
     assert [item["cid"] for item in state["song_backlog"]] == ["evening-song-2"]
 
 
+def test_selected_song_repairs_cannot_overfill_one_session_delivery_quota():
+    first = "live-first"
+    second = "live-second"
+    state = {
+        "songs": [],
+        "pending_song": [
+            {
+                "cid": f"repair-{session_id}-{index}",
+                "segment_path": f"/rec/{session_id}.mp4",
+                "anchor_start_ms": index * 10_000,
+                "anchor_end_ms": index * 10_000 + 5_000,
+                "selected_repair": True,
+                "session_id": session_id,
+            }
+            for session_id, count in ((first, 4), (second, 3))
+            for index in range(count)
+        ],
+        "song_backlog": [],
+    }
+
+    runner.refill_songs(state)
+
+    selected_by_session = {
+        session_id: sum(
+            1 for item in state["pending_song"] if item["session_id"] == session_id
+        )
+        for session_id in (first, second)
+    }
+    assert selected_by_session == {
+        first: MAX_SONGS_PER_DATE,
+        second: MAX_SONGS_PER_DATE,
+    }
+    assert len(state["song_backlog"]) == 3
+
+
 def test_new_session_backlog_reopens_an_otherwise_finished_date():
     first = "live-20260716T140049+0800"
     evening = "live-20260716T195958+0800"
@@ -4127,6 +4162,7 @@ def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer
                 "discovery_lane": "visual_song_list",
                 "title_hint": "怎么办",
                 "visual_song_evidence": {"frame_ms": 217_000, "list_index": 3},
+                "session_id": "live-20260710T200000+0800",
             }
         ],
     }
@@ -4142,6 +4178,50 @@ def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer
         "frame_ms": 217_000,
         "list_index": 3,
     }
+    assert state["pending_song"][0]["session_id"] == "live-20260710T200000+0800"
+    assert state["song_superseded_attempts"][0]["session_id"] == "live-20260710T200000+0800"
+
+
+def test_song_requeue_lifetime_cap_is_per_live_session(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-22-00-00.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    old_session = "live-old"
+    new_session = "live-new"
+    state = {
+        "pending_song": [],
+        "songs": [
+            *[
+                {
+                    "candidate_id": f"old-{index}",
+                    "delivered": f"/{index}.mp4",
+                    "session_id": old_session,
+                }
+                for index in range(runner.SONG_LIFETIME_ATTEMPT_CAP)
+            ],
+            {
+                "candidate_id": "song_new_session",
+                "segment": segment.name,
+                "start_ms": 100_000,
+                "end_ms": 400_000,
+                "status": "blocked",
+                "reason_codes": ["SONG_LIVE_PERFORMANCE_UNPROVEN"],
+                "pipeline_fingerprint": "sha256:old",
+                "session_id": new_session,
+            },
+        ],
+    }
+
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["session_id"] == new_session
 
 
 def test_verified_song_commit_reservation_is_not_requeued(monkeypatch):
@@ -4909,6 +4989,7 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
                 "pipeline_fingerprint": "sha256:old",
                 "hook": "小李嘴硬",
                 "confidence": 0.94,
+                "session_id": "live-20260710T200000+0800",
             },
             {"candidate_id": "delivered", "status": "review_ready"},
         ],
@@ -4918,7 +4999,9 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
     assert [row["candidate_id"] for row in state["picks"]] == ["delivered"]
     assert state["pending_talk"][0]["selected_repair"] is True
     assert state["pending_talk"][0]["talk_repair_retry_count"] == 1
+    assert state["pending_talk"][0]["session_id"] == "live-20260710T200000+0800"
     assert state["talk_superseded_attempts"][0]["superseded_by"] == "sha256:new"
+    assert state["talk_superseded_attempts"][0]["session_id"] == "live-20260710T200000+0800"
 
 
 def test_selected_talk_transient_failure_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):

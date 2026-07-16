@@ -109,6 +109,7 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
         "talk_backlog",
         "song_backlog",
         "song_superseded_attempts",
+        "talk_superseded_attempts",
     )
     for collection in collections:
         for row in state.get(collection, []):

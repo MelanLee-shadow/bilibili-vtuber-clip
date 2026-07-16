@@ -261,15 +261,23 @@ def refill_songs(state: dict) -> None:
     backlog entries (pre-v4 states) stay for the report but cannot backfill."""
     backlog = state.setdefault("song_backlog", [])
     pending = state.get("pending_song", [])
-    selected_repairs = [item for item in pending if item.get("selected_repair")]
-    pool = [item for item in pending if not item.get("selected_repair")] + [
-        b for b in backlog if isinstance(b, dict)
+    structured = [item for item in pending if isinstance(item, dict)] + [
+        item for item in backlog if isinstance(item, dict)
     ]
+    selected_repairs = [item for item in structured if item.get("selected_repair")]
+    pool = [item for item in structured if not item.get("selected_repair")]
     legacy = [b for b in backlog if not isinstance(b, dict)]
-    sessions = list(dict.fromkeys(_item_session_id(item) for item in pool))
+    sessions = list(dict.fromkeys(_item_session_id(item) for item in structured))
     selected: list[dict] = []
     deferred: list[dict] = []
     for session_id in sessions:
+        delivery_slots = _runner.song_delivery_budget(state, session_id)
+        session_repairs = [
+            item for item in selected_repairs if _item_session_id(item) == session_id
+        ]
+        selected.extend(session_repairs[:delivery_slots])
+        deferred.extend(session_repairs[delivery_slots:])
+        ordinary_slots = max(0, delivery_slots - min(len(session_repairs), delivery_slots))
         session_pool = [item for item in pool if _item_session_id(item) == session_id]
         session_pool.sort(
             key=lambda x: (
@@ -288,15 +296,16 @@ def refill_songs(state: dict) -> None:
             if isinstance(item, dict) and _item_session_id(item) == session_id
         )
         allowed = min(
-            _runner.song_delivery_budget(state, session_id),
+            ordinary_slots,
             max(0, _runner.SONG_ATTEMPT_CAP - attempts),
             max(0, _runner.SONG_LIFETIME_ATTEMPT_CAP - lifetime_attempts),
         )
         selected.extend(session_pool[:allowed])
         deferred.extend(session_pool[allowed:])
-    # Infrastructure retries belong to already-selected songs and never lose
-    # their reservation because sibling sessions filled their own budgets.
-    state["pending_song"] = selected_repairs + selected
+    # Infrastructure retries bypass discovery attempt caps, but never run more
+    # than the remaining delivery slots concurrently; otherwise several old
+    # attempts could all recover at once and over-deliver one live session.
+    state["pending_song"] = selected
     state["song_backlog"] = deferred + legacy
 
 
