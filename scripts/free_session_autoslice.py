@@ -9,7 +9,7 @@ canonical pipeline by itself — no human kick-off:
       → semantic recall candidate selection (CPA, viewer-perspective, with the
         curated slice-selection metric; deterministic fallback lanes if the
         LLM is down — zero-output is loud, never silent)
-      → top-N talk candidates + up to 2 songs (highest danmaku)
+      → per-live-session top-N talk candidates + up to 2 songs (highest danmaku)
       → produce_slice_package per candidate (BCUT+AGY+CPA text, final pronouns,
         sentence boundaries, CAM+++context speaker finalization, colour ASS
         burn, REAL CPA cover, 李豆沙-style title) / song LRC lane with the strict
@@ -36,7 +36,7 @@ HARD LESSONS BAKED IN (first real run, 2026-07-06):
   burns as a tofu box.  Checked at startup, loud in the report if missing.
 - **Songs**: semantic recall's per-segment candidate cap squeezes songs out,
   so a deterministic performance-detector supplement also feeds the song
-  queue; final pick = top MAX_SONGS_PER_DATE by danmaku count.
+  queue; final pick = top MAX_SONGS_PER_SESSION per live session by danmaku count.
 - **Covers self-heal**: the CPA image lane fails independently of the chat
   lane (2026-07-06: gateway 400 "multiples of 16" blanked a whole batch's
   covers while titles/subtitles were fine).  A delivered clip without a cover
@@ -56,7 +56,7 @@ RUNNER v4 (2026-07-09 external audit — "the control plane was lying"):
   fix-or-refuse, no deliver-and-ask-a-human quarantine), and an unrepairable
   boundary is `boundary_unrepairable` (no delivery; retried only after a
   relevant pipeline change, with a lifetime cap).
-- **Budget = deliveries**: gate-blocked songs no longer consume the per-date
+- **Budget = deliveries**: gate-blocked songs no longer consume the per-session
   song budget; the danmaku-sorted backlog backfills (bounded SONG_ATTEMPT_CAP).
 - **Global selection + sealing**: talk picks are ranked globally by recall
   confidence (soft per-segment diversity cap) and selection only happens after
@@ -208,10 +208,11 @@ HOST_VOCAL_MODEL_DIR = Path(
 )
 MAX_TALK_PICKS = 5
 TALK_ATTEMPT_CAP = 10  # reject unsafe content candidates and backfill, bounded
-MAX_SONGS_PER_DATE = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
+MAX_SONGS_PER_SESSION = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
+MAX_SONGS_PER_DATE = MAX_SONGS_PER_SESSION  # compatibility alias for callers/tests
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
-SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one date
-SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute date cap including superseded attempts;
+SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one live session
+SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute session cap including superseded attempts;
                                 # permits two self-healing generations after the initial run
 SONG_INFRA_RETRY_CAP = 6
 SONG_INFRA_RETRY_BASE_SECONDS = 15 * 60
@@ -545,6 +546,8 @@ from src.autoslice.session_discovery import (  # noqa: E402
     known_song_titles,
     collect_song_name_candidates,
     visual_song_config_from_env,
+    recording_session_id,
+    annotate_state_sessions,
     discover_segments,
 )
 from src.autoslice.song_delivery import (  # noqa: E402
@@ -575,6 +578,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     _remember_song_quarantine_interval,
     _note_not_selected,
     quarantine_overlapping_talk_candidates,
+    backlog_has_eligible_session_work,
     refill_songs,
     prioritize,
 )
@@ -1170,7 +1174,10 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
 
     def _one(item: dict) -> dict:
         try:
-            return produce_fn(date, item)
+            result = produce_fn(date, item)
+            if item.get("session_id"):
+                result.setdefault("session_id", item["session_id"])
+            return result
         except Exception as exc:  # noqa: BLE001 — one bad slice must not kill the batch
             log(f"produce crashed for {item.get('cid')}: {exc}")
             result = {
@@ -1205,6 +1212,7 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
                         "anchor_start_ms",
                         "anchor_end_ms",
                         "transient_retry_count",
+                        "session_id",
                     )
                     if key in item
                 },
@@ -1243,6 +1251,8 @@ def process_date(date: str) -> None:
         log(f"{date}: runtime invalid — batch deferred without consuming candidate retries: {runtime_err}")
         return
     state.pop("runtime_error", None)
+    if annotate_state_sessions(date, state):
+        write_state(date, state)
     automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
     recovered_song_deliveries = (
         recover_bound_song_deliveries(date, state) if automatic_maintenance else 0
@@ -1265,7 +1275,11 @@ def process_date(date: str) -> None:
         s.stem not in set(state.get("segments_done", [])) and s.stem not in state.get("segments_dead", {})
         for s in list_segments(date)
     )
-    has_pending = bool(state.get("pending_talk") or state.get("pending_song"))
+    has_pending = bool(
+        state.get("pending_talk")
+        or state.get("pending_song")
+        or backlog_has_eligible_session_work(state)
+    )
     needs_cover = automatic_maintenance and any(
         cover_repair_needed(date, r)
         for r in state.get("picks", []) + state.get("songs", [])

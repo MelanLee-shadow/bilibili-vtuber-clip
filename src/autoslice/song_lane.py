@@ -95,7 +95,7 @@ def song_delivery_ok(
     reason_codes,
     completion_evidence: bool | dict | None,
 ) -> bool:
-    """Ivan's FINAL song rule (2026-07-10): at most MAX_SONGS_PER_DATE per date,
+    """Ivan's FINAL song rule (2026-07-10): at most MAX_SONGS_PER_SESSION per live session,
     danmaku-desc; a song is delivered when the window IS a song and the
     performance is AFFIRMATIVELY PROVEN complete.  Absence of ``SONG_PARTIAL``
     is not evidence: the 2026-07-09 ``芽吹くとき`` run had no LRC proof

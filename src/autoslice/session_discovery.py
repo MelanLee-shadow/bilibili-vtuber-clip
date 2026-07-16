@@ -10,12 +10,123 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
 
 
 _runner = RunnerProxy()
+
+
+def _normalized_live_start_id(raw: object) -> str | None:
+    """Turn recorder live-start metadata into a stable quota identity."""
+
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return f"live-{parsed.strftime('%Y%m%dT%H%M%S%z')}"
+
+
+def recording_session_id(segment: Path, date: str) -> str:
+    """Read the recorder's authoritative live start for one media segment.
+
+    Every reconnect/rotated file from one broadcast carries the same
+    ``LiveStartTime``.  The MP4 ``date`` tag is a fallback for older sidecars.
+    Missing metadata deliberately collapses into one unknown session so the
+    runner under-delivers instead of inventing extra quotas.
+    """
+
+    meta_path = segment.with_suffix(".meta.json")
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        payload = {}
+    if isinstance(payload, dict):
+        description = payload.get("description")
+        candidates = [
+            description.get("LiveStartTime") if isinstance(description, dict) else None,
+            payload.get("LiveStartTime"),
+            payload.get("Date"),
+        ]
+        for candidate in candidates:
+            session_id = _normalized_live_start_id(candidate)
+            if session_id:
+                return session_id
+
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format_tags=date",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(segment),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        completed = None
+    if completed is not None and completed.returncode == 0:
+        session_id = _normalized_live_start_id(completed.stdout.strip())
+        if session_id:
+            return session_id
+    return f"live-{date.replace('-', '')}Tunknown"
+
+
+def annotate_state_sessions(date: str, state: dict) -> bool:
+    """Migrate date-level state rows onto recorder-defined live sessions."""
+
+    changed = False
+    mapping = state.setdefault("segment_sessions", {})
+    if not isinstance(mapping, dict):
+        mapping = {}
+        state["segment_sessions"] = mapping
+        changed = True
+    for segment in _runner.list_segments(date):
+        if mapping.get(segment.stem):
+            continue
+        session_id = recording_session_id(segment, date)
+        mapping[segment.stem] = session_id
+        changed = True
+
+    collections = (
+        "picks",
+        "songs",
+        "pending_talk",
+        "pending_song",
+        "talk_backlog",
+        "song_backlog",
+        "song_superseded_attempts",
+    )
+    for collection in collections:
+        for row in state.get(collection, []):
+            if not isinstance(row, dict) or row.get("session_id"):
+                continue
+            segment_value = row.get("segment_path") or row.get("segment")
+            if not segment_value:
+                continue
+            session_id = mapping.get(Path(str(segment_value)).stem)
+            if session_id:
+                row["session_id"] = session_id
+                changed = True
+
+    recording_sessions = sorted(set(mapping.values()))
+    if recording_sessions and state.get("recording_sessions") != recording_sessions:
+        state["recording_sessions"] = recording_sessions
+        changed = True
+    return changed
 
 
 def date_chat_jsonl_files(date: str) -> list[Path]:
@@ -260,6 +371,10 @@ def discover_segments(date: str, state: dict) -> None:
         _runner.log(f"{segment.name}: {len(candidates)} candidate(s) via {lane}")
         seg_tag = re.sub(r"\D", "", stem)[-6:]
         recalled_song_items: list[dict] = []
+        session_id = state.setdefault("segment_sessions", {}).get(stem)
+        if not session_id:
+            session_id = recording_session_id(segment, date)
+            state["segment_sessions"][stem] = session_id
         for cand in candidates:
             meta = extras.get(cand.anchor.candidate_id, {})
             base_item = {
@@ -272,6 +387,7 @@ def discover_segments(date: str, state: dict) -> None:
                 "lane": lane,
                 "preview": cand.text_preview[:80],
                 "bcut_srt_path": str(srt),
+                "session_id": session_id,
             }
             if getattr(cand, "content_type_hint", "talk") == "song":
                 a0, a1 = int(cand.anchor.anchor_start_ms), int(cand.anchor.anchor_end_ms)
@@ -303,6 +419,7 @@ def discover_segments(date: str, state: dict) -> None:
             song_item.setdefault("seg_dur_ms", seg_dur)
             song_item.setdefault("xml", str(xml) if xml else None)
             song_item.setdefault("chat_jsonl", str(chat_jsonl) if chat_jsonl else None)
+            song_item.setdefault("session_id", session_id)
             song_item.setdefault(
                 "danmaku",
                 _runner.danmaku_count_in(

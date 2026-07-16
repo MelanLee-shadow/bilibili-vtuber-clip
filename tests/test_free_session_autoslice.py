@@ -2202,6 +2202,132 @@ def test_prioritize_global_confidence_ranking_beats_arrival_order():
     assert "全局排序" in state["not_selected"][0]
 
 
+def test_recording_session_annotation_uses_live_start_metadata(tmp_path, monkeypatch):
+    """Two streams on one date must be keyed by the recorder's live start,
+    not collapsed into the date-level legacy quota."""
+    segment = tmp_path / "22966160_20260716-20-30-03.mp4"
+    segment.write_bytes(b"media")
+    segment.with_suffix(".meta.json").write_text(
+        json.dumps(
+            {
+                "Date": "2026-07-16 19:59:58+08:00",
+                "description": {"LiveStartTime": "2026-07-16 19:59:58+08:00"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [segment])
+    state = {
+        "picks": [{"segment": segment.name, "status": "review_ready"}],
+        "talk_backlog": [{"segment_path": str(segment), "cid": "late"}],
+    }
+
+    assert runner.annotate_state_sessions("2026-07-16", state) is True
+    expected = "live-20260716T195958+0800"
+    assert state["segment_sessions"][segment.stem] == expected
+    assert state["recording_sessions"] == [expected]
+    assert state["picks"][0]["session_id"] == expected
+    assert state["talk_backlog"][0]["session_id"] == expected
+
+
+def test_prioritize_allocates_talk_quota_per_live_session():
+    first = "live-20260716T140049+0800"
+    evening = "live-20260716T195958+0800"
+    state = {
+        "picks": [
+            {"candidate_id": f"first-{index}", "status": "review_ready", "session_id": first}
+            for index in range(MAX_TALK_PICKS)
+        ],
+        "songs": [],
+        "pending_song": [],
+        "pending_talk": [
+            {
+                "cid": f"evening-{index}",
+                "segment_path": f"/rec/evening-{index // 2}.mp4",
+                "start_ms": index * 10_000,
+                "end_ms": index * 10_000 + 9_000,
+                "confidence": 0.99 - index * 0.01,
+                "hook": f"晚场候选{index}",
+                "session_id": evening,
+            }
+            for index in range(MAX_TALK_PICKS + 1)
+        ],
+    }
+
+    runner.prioritize(state)
+
+    assert len(state["pending_talk"]) == MAX_TALK_PICKS
+    assert {item["session_id"] for item in state["pending_talk"]} == {evening}
+    assert [item["cid"] for item in state["talk_backlog"]] == [f"evening-{MAX_TALK_PICKS}"]
+
+
+def test_song_attempt_cap_and_delivery_budget_are_per_live_session():
+    first = "live-20260716T140049+0800"
+    evening = "live-20260716T195958+0800"
+    state = {
+        "picks": [],
+        "songs": [
+            {"candidate_id": f"first-song-{index}", "status": "blocked", "session_id": first}
+            for index in range(runner.SONG_ATTEMPT_CAP)
+        ],
+        "pending_song": [],
+        "song_backlog": [
+            {
+                "cid": f"evening-song-{index}",
+                "segment_path": "/rec/evening.mp4",
+                "anchor_start_ms": index * 100_000,
+                "anchor_end_ms": index * 100_000 + 60_000,
+                "danmaku": 100 - index,
+                "session_id": evening,
+            }
+            for index in range(3)
+        ],
+    }
+
+    runner.refill_songs(state)
+
+    assert [item["cid"] for item in state["pending_song"]] == [
+        "evening-song-0",
+        "evening-song-1",
+    ]
+    assert [item["cid"] for item in state["song_backlog"]] == ["evening-song-2"]
+
+
+def test_new_session_backlog_reopens_an_otherwise_finished_date():
+    first = "live-20260716T140049+0800"
+    evening = "live-20260716T195958+0800"
+    state = {
+        "picks": [
+            {"candidate_id": f"first-{index}", "status": "review_ready", "session_id": first}
+            for index in range(MAX_TALK_PICKS)
+        ],
+        "songs": [],
+        "talk_backlog": [
+            {
+                "cid": "evening",
+                "segment_path": "/rec/evening.mp4",
+                "start_ms": 0,
+                "end_ms": 9_000,
+                "confidence": 0.95,
+                "session_id": evening,
+            }
+        ],
+        "song_backlog": [],
+    }
+
+    assert runner.backlog_has_eligible_session_work(state) is True
+
+
+def test_produce_batch_preserves_session_id_on_success():
+    result = runner.produce_batch(
+        "2026-07-16",
+        [{"cid": "evening", "session_id": "live-evening"}],
+        lambda _date, _item: {"candidate_id": "evening", "status": "review_ready"},
+    )
+
+    assert result[0]["session_id"] == "live-evening"
+
+
 def test_recoverable_failed_pick_reserves_its_seat_from_backfill():
     """Ivan 2026-07-13 对账铁律：可恢复失败的原选手先复活，候补不许趁基础设施
     故障上位（7/11 实况：2 条 failed 席被当空席→候补顶上→复活后一天超发 7 条）。
@@ -3879,6 +4005,27 @@ def test_bound_song_delivery_recovery_never_exceeds_daily_quota(
     assert one_slot_state["songs"][1]["delivered"] == "/delivery/reserved_first.mp4"
     assert "verified_delivery_pending_commit" not in one_slot_state["songs"][1]
     assert one_slot_state["songs"][2]["verified_delivery_pending_commit"] is True
+
+    # A full earlier broadcast must not consume a later broadcast's recovery
+    # reservation on the same calendar date.
+    calls.clear()
+    later = reserved_record("reserved_later_session")
+    later["session_id"] = "live-later"
+    per_session_state = {
+        "songs": [
+            *[
+                {
+                    "candidate_id": f"early_{index}",
+                    "delivered": f"/early-{index}.mp4",
+                    "session_id": "live-early",
+                }
+                for index in range(MAX_SONGS_PER_DATE)
+            ],
+            later,
+        ]
+    }
+    assert runner.recover_bound_song_deliveries(date, per_session_state) == 1
+    assert calls == ["reserved_later_session"]
 
 
 def test_explicit_song_recovery_authority_backfill_verifies_exact_attempt_and_title(

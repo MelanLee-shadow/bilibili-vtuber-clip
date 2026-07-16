@@ -15,6 +15,13 @@ from src.autoslice.runner_proxy import RunnerProxy
 _runner = RunnerProxy()
 
 
+_LEGACY_SESSION_ID = "legacy-date-session"
+
+
+def _item_session_id(item: dict) -> str:
+    return str(item.get("session_id") or _LEGACY_SESSION_ID)
+
+
 def session_sealed(date: str, state: dict) -> bool:
     """The date's recordings are STABLE: same segment inventory (names+sizes)
     as the previous tick, with at least one segment.  Selecting before seal
@@ -33,7 +40,7 @@ def session_sealed(date: str, state: dict) -> bool:
     return bool(snapshot) and prev == snapshot
 
 
-def song_delivery_budget(state: dict) -> int:
+def song_delivery_budget(state: dict, session_id: str | None = None) -> int:
     """Remaining song DELIVERY slots, including verified commit reservations.
 
     An ordinary gate-BLOCKED attempt must not eat a slot (2026-07-09 audit:
@@ -49,12 +56,72 @@ def song_delivery_budget(state: dict) -> int:
         1
         for song in state.get("songs", [])
         if isinstance(song, dict)
+        and (session_id is None or _item_session_id(song) == session_id)
         and (
             bool(song.get("delivered"))
             or song.get("verified_delivery_pending_commit") is True
         )
     )
-    return max(0, _runner.MAX_SONGS_PER_DATE - consumed)
+    return max(0, _runner.MAX_SONGS_PER_SESSION - consumed)
+
+
+def _talk_slots_for_session(state: dict, session_id: str) -> int:
+    records = [
+        item
+        for item in state.get("picks", [])
+        if isinstance(item, dict) and _item_session_id(item) == session_id
+    ]
+    produced = sum(
+        1 for item in records if item.get("status") in _runner.DELIVERED_TALK_STATUSES
+    )
+    reserved_for_revival = sum(
+        1
+        for item in records
+        if item.get("status") == "failed"
+        and item.get("failure_recoverable") is True
+        and int(item.get("talk_transient_retry_count") or 0)
+        + int(item.get("talk_repair_retry_count") or 0)
+        < _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
+    )
+    attempts_left = max(0, _runner.TALK_ATTEMPT_CAP - len(records))
+    return min(
+        max(0, _runner.MAX_TALK_PICKS - produced - reserved_for_revival),
+        attempts_left,
+    )
+
+
+def backlog_has_eligible_session_work(state: dict) -> bool:
+    """Whether a backlog contains work for a session with quota remaining."""
+
+    if any(
+        _talk_slots_for_session(state, _item_session_id(item)) > 0
+        for item in state.get("talk_backlog", [])
+        if isinstance(item, dict)
+    ):
+        return True
+    song_sessions = {
+        _item_session_id(item)
+        for item in state.get("song_backlog", [])
+        if isinstance(item, dict)
+    }
+    for session_id in song_sessions:
+        generation_attempts = sum(
+            1
+            for item in state.get("songs", [])
+            if isinstance(item, dict) and _item_session_id(item) == session_id
+        )
+        lifetime_attempts = generation_attempts + sum(
+            1
+            for item in state.get("song_superseded_attempts", [])
+            if isinstance(item, dict) and _item_session_id(item) == session_id
+        )
+        if (
+            _runner.song_delivery_budget(state, session_id) > 0
+            and generation_attempts < _runner.SONG_ATTEMPT_CAP
+            and lifetime_attempts < _runner.SONG_LIFETIME_ATTEMPT_CAP
+        ):
+            return True
+    return False
 
 
 def _remember_song_quarantine_interval(state: dict, item: dict) -> None:
@@ -190,7 +257,7 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
 
 def refill_songs(state: dict) -> None:
     """Top up pending_song from the structured backlog, danmaku-desc, honoring
-    both the delivery budget and the hard per-date attempt cap.  Legacy string
+    both the delivery budget and the hard per-session attempt cap. Legacy string
     backlog entries (pre-v4 states) stay for the report but cannot backfill."""
     backlog = state.setdefault("song_backlog", [])
     pending = state.get("pending_song", [])
@@ -199,16 +266,38 @@ def refill_songs(state: dict) -> None:
         b for b in backlog if isinstance(b, dict)
     ]
     legacy = [b for b in backlog if not isinstance(b, dict)]
-    pool.sort(key=lambda x: (-(x.get("danmaku") or 0), -(x["anchor_end_ms"] - x["anchor_start_ms"])))
-    attempts_left_generation = max(0, _runner.SONG_ATTEMPT_CAP - len(state.get("songs", [])))
-    lifetime_attempts = len(state.get("songs", [])) + len(state.get("song_superseded_attempts", []))
-    attempts_left_lifetime = max(0, _runner.SONG_LIFETIME_ATTEMPT_CAP - lifetime_attempts)
-    allowed = min(_runner.song_delivery_budget(state), attempts_left_generation, attempts_left_lifetime)
-    # Infrastructure retries belong to already-selected songs.  A date-level
-    # discovery/backfill cap must never discard them merely because sibling
-    # attempts filled the historical tombstone budget.
-    state["pending_song"] = selected_repairs + pool[:allowed]
-    state["song_backlog"] = pool[allowed:] + legacy
+    sessions = list(dict.fromkeys(_item_session_id(item) for item in pool))
+    selected: list[dict] = []
+    deferred: list[dict] = []
+    for session_id in sessions:
+        session_pool = [item for item in pool if _item_session_id(item) == session_id]
+        session_pool.sort(
+            key=lambda x: (
+                -(x.get("danmaku") or 0),
+                -(x["anchor_end_ms"] - x["anchor_start_ms"]),
+            )
+        )
+        attempts = sum(
+            1
+            for item in state.get("songs", [])
+            if isinstance(item, dict) and _item_session_id(item) == session_id
+        )
+        lifetime_attempts = attempts + sum(
+            1
+            for item in state.get("song_superseded_attempts", [])
+            if isinstance(item, dict) and _item_session_id(item) == session_id
+        )
+        allowed = min(
+            _runner.song_delivery_budget(state, session_id),
+            max(0, _runner.SONG_ATTEMPT_CAP - attempts),
+            max(0, _runner.SONG_LIFETIME_ATTEMPT_CAP - lifetime_attempts),
+        )
+        selected.extend(session_pool[:allowed])
+        deferred.extend(session_pool[allowed:])
+    # Infrastructure retries belong to already-selected songs and never lose
+    # their reservation because sibling sessions filled their own budgets.
+    state["pending_song"] = selected_repairs + selected
+    state["song_backlog"] = deferred + legacy
 
 
 def prioritize(state: dict) -> None:
@@ -229,39 +318,33 @@ def prioritize(state: dict) -> None:
     pending_talk = state.get("pending_talk", [])
     selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
     pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
-    produced = sum(1 for p in state.get("picks", []) if p.get("status") in _runner.DELIVERED_TALK_STATUSES)
-    # 对账铁律（Ivan 2026-07-13）：可恢复失败的原选手优先复活，其席位保留——
-    # 候补不许趁基础设施故障上位（此前 failed 席被当空席，复活后一天超发 7 条）。
-    # 重试额度耗尽的不再占席（否则永久卡死一席，整日欠交付）。
-    reserved_for_revival = sum(
-        1
-        for p in state.get("picks", [])
-        if p.get("status") == "failed"
-        and p.get("failure_recoverable") is True
-        and int(p.get("talk_transient_retry_count") or 0)
-        + int(p.get("talk_repair_retry_count") or 0)
-        < _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
-    )
-    attempts_left = max(0, _runner.TALK_ATTEMPT_CAP - len(state.get("picks", [])))
-    slots = min(max(0, _runner.MAX_TALK_PICKS - produced - reserved_for_revival), attempts_left)
-    ranked = sorted(pending_talk, key=lambda x: -(x.get("confidence") or 0.0))
     keep: list[dict] = []
     deferred: list[dict] = []
-    per_seg: dict[str, int] = {}
-    for item in ranked:
-        seg = item["segment_path"]
-        if len(keep) < slots and per_seg.get(seg, 0) < _runner.TALK_PER_SEGMENT_CAP:
-            keep.append(item)
-            per_seg[seg] = per_seg.get(seg, 0) + 1
-        else:
-            deferred.append(item)
-    # The diversity cap is SOFT: refill unused slots from the deferred list
-    # (still confidence-ordered) rather than deliver fewer than `slots` picks.
-    for item in list(deferred):
-        if len(keep) >= slots:
-            break
-        keep.append(item)
-        deferred.remove(item)
+    sessions = list(dict.fromkeys(_item_session_id(item) for item in pending_talk))
+    for session_id in sessions:
+        slots = _talk_slots_for_session(state, session_id)
+        ranked = sorted(
+            (item for item in pending_talk if _item_session_id(item) == session_id),
+            key=lambda x: -(x.get("confidence") or 0.0),
+        )
+        session_keep: list[dict] = []
+        session_deferred: list[dict] = []
+        per_seg: dict[str, int] = {}
+        for item in ranked:
+            seg = item["segment_path"]
+            if len(session_keep) < slots and per_seg.get(seg, 0) < _runner.TALK_PER_SEGMENT_CAP:
+                session_keep.append(item)
+                per_seg[seg] = per_seg.get(seg, 0) + 1
+            else:
+                session_deferred.append(item)
+        # The diversity cap is SOFT inside each live session.
+        for item in list(session_deferred):
+            if len(session_keep) >= slots:
+                break
+            session_keep.append(item)
+            session_deferred.remove(item)
+        keep.extend(session_keep)
+        deferred.extend(session_deferred)
     # These candidates already won selection in an earlier generation and
     # failed without delivery.  Do not discard the retry merely because
     # successful siblings now fill the ordinary delivery quota.
