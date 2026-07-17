@@ -138,6 +138,7 @@ def test_auditor_prompt_distinguishes_gibberish_code_switch_from_real_foreign_di
     assert "不能翻译" in prompt
     assert "重复或近乎平行的句式" in prompt
     assert "直女/侄女" in prompt
+    assert "不行不行，并非不行" in prompt
 
 
 def test_auditor_rejects_full_cue_suggestion_for_partial_suspect():

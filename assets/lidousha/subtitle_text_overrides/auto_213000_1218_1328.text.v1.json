@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "candidate_id": "auto_213000_1218_1328",
+  "source_srt_sha256": "00193008deb9070b3f47ddc25aa4b64efca6c7f493f3da5a876afa1157f922b4",
+  "text_final_srt_sha256": "093cda531f683f840d9e95dbcdf367cfe63730f2b742fc21de8aa91ea576d75d",
+  "overrides": [
+    {
+      "source_cue": 5,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:09,970",
+        "end": "00:00:12,250",
+        "text": "不行不行，并非不行"
+      },
+      "text": "不行不行，绝对不行",
+      "authority": "The repeated refusal is acoustically and contextually an emphatic 绝对不行; the previous production transcript independently preserved it",
+      "reason": "Undo a semantic inversion introduced by the final correction pass"
+    }
+  ]
+}
