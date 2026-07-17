@@ -480,6 +480,29 @@ def _ffprobe_duration_ms(path: Path) -> int:
     return round(float(completed.stdout.strip()) * 1000)
 
 
+def _publish_source_cues_from_srt(srt_text: str) -> list[SourceCue]:
+    """Convert the shared SRT parser's current value objects for staging.
+
+    ``parse_srt_cues`` returns ``SrtCue`` with direct ``start_ms`` and
+    ``end_ms`` fields.  Keep that adapter explicit so the frozen-resume path
+    cannot silently retain the older review-cue ``.ctx`` access pattern.
+    """
+
+    return [
+        SourceCue(
+            f"text_final_{index:04d}",
+            cue.start_ms,
+            cue.end_ms,
+            cue.text.strip(),
+            language="zh",
+            kind="speech",
+            confidence=1.0,
+        )
+        for index, cue in enumerate(parse_srt_cues(srt_text), start=1)
+        if cue.text.strip()
+    ]
+
+
 def _assert_upload_ledger_unchanged(
     plan: Mapping[str, Any], ledger_path: Path
 ) -> None:
@@ -730,19 +753,7 @@ def _materialize_resume_transaction(
         "sha256:" + _sha256_bytes(active_speaker_manifest_bytes)
     )
 
-    final_cues = [
-        SourceCue(
-            f"text_final_{index:04d}",
-            cue.ctx.start_ms,
-            cue.ctx.end_ms,
-            cue.text.strip(),
-            "zh",
-            "speech",
-            1.0,
-        )
-        for index, cue in enumerate(parse_srt_cues(final_text), start=1)
-        if cue.text.strip()
-    ]
+    final_cues = _publish_source_cues_from_srt(final_text)
     staged = _stage_publish_draft(
         burned_record,
         candidate_id=ctx.candidate_id,

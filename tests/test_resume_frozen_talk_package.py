@@ -12,6 +12,7 @@ from scripts.resume_frozen_talk_package import (
     _assert_upload_ledger_unchanged,
     _clone_approved_cover_generation,
     _commit_transaction,
+    _publish_source_cues_from_srt,
     _recursive_path_rewrite,
     _validated_input,
 )
@@ -192,6 +193,21 @@ def test_recursive_path_rewrite_changes_only_exact_path_values():
     assert rewritten["path"] == active
     assert rewritten["command"] == ["tool", active, f"prefix:{original}"]
     assert rewritten["nested"]["path"] == active
+
+
+def test_publish_source_cues_use_shared_parser_direct_timestamps():
+    cues = _publish_source_cues_from_srt(
+        "1\n00:00:01,250 --> 00:00:03,500\n第一句\n\n"
+        "2\n00:00:04,000 --> 00:00:05,125\n第二句\n"
+    )
+
+    assert [
+        (cue.cue_id, cue.source_start_ms, cue.source_end_ms, cue.text)
+        for cue in cues
+    ] == [
+        ("text_final_0001", 1250, 3500, "第一句"),
+        ("text_final_0002", 4000, 5125, "第二句"),
+    ]
 
 
 def test_cover_clone_recovers_each_one_sided_atomic_write(tmp_path, monkeypatch):
