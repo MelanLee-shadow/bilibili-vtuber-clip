@@ -44,6 +44,7 @@
       },
       "old_text": "换成",
       "text": "玩成",
+      "required": false,
       "authority": "Gemini paid-backup audio adjudication observed 玩成 and rejected 换成 for this exact cue",
       "reason": "Preserve the acoustically verified verb even when the surrounding sentence is resegmented"
     }
