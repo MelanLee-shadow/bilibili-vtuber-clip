@@ -1744,13 +1744,13 @@ def test_reviewed_text_override_supersedes_conflicting_exact_chat_read():
     final = (
         "1\n"
         "00:00:47,790 --> 00:00:49,590\n"
-        "有没有直女女友喜欢吗？\n"
+        "有没有李豆沙女友喜欢吗？\n"
     )
     audit = {
         "applied": [
             {
                 "evidence_id": "chat-evidence",
-                "exact_text": "有没有侄女女友",
+                "exact_text": "有没有礼墨女友",
                 "matched_start_ms": delivery_start_ms + 47_790,
                 "matched_end_ms": delivery_start_ms + 49_590,
             }
@@ -1767,9 +1767,9 @@ def test_reviewed_text_override_supersedes_conflicting_exact_chat_read():
                     "source_index": 12,
                     "start": "00:00:47,790",
                     "end": "00:00:49,590",
-                    "text": "有没有侄女女友喜欢吗？",
+                    "text": "有没有礼墨女友喜欢吗？",
                 },
-                "output_text": "有没有直女女友喜欢吗？",
+                "output_text": "有没有李豆沙女友喜欢吗？",
                 "authority": "reviewed event semantics",
                 "reason": "correct the impossible homophone",
             }
@@ -1795,7 +1795,7 @@ def test_reviewed_text_override_supersedes_conflicting_exact_chat_read():
         "REVIEWED_TEXT_OVERRIDE_SUPERSEDES_CHAT_READ"
     )
     assert audit["superseded_chat_proposals"][-1]["reviewed_output_text"] == (
-        "有没有直女女友喜欢吗？"
+        "有没有李豆沙女友喜欢吗？"
     )
     assert verify_chat_authority_final_surfaces(
         audit,
@@ -1811,13 +1811,13 @@ def test_unrelated_reviewed_text_override_does_not_supersede_chat_read():
     final = (
         "1\n"
         "00:00:47,790 --> 00:00:49,590\n"
-        "有没有直女女友喜欢吗？\n"
+        "有没有李豆沙女友喜欢吗？\n"
     )
     audit = {
         "applied": [
             {
                 "evidence_id": "chat-evidence",
-                "exact_text": "有没有侄女女友",
+                "exact_text": "有没有礼墨女友",
                 "matched_start_ms": delivery_start_ms + 47_790,
                 "matched_end_ms": delivery_start_ms + 49_590,
             }
@@ -1876,6 +1876,42 @@ def test_hard_meme_surface_zhinv_is_always_canonicalized():
     # 标题/封面兜底走同一张表
     assert canonicalize_hard_surfaces("李豆沙坚称自己是直女，回忆大舞台") == (
         "李豆沙坚称自己是侄女，回忆大舞台"
+    )
+
+
+def test_only_zhinv_rule_is_unbypassable_at_final_surface():
+    from src.autoslice.chat_authority import canonicalize_hard_meme_surfaces
+
+    output, repairs = canonicalize_hard_meme_surfaces(
+        "直女在看难崩小视频，还说哇库哇库"
+    )
+    assert output == "侄女在看难崩小视频，还说哇库哇库"
+    assert [(row["surface"], row["canonical"]) for row in repairs] == [
+        ("直女", "侄女")
+    ]
+
+
+def test_final_surface_gate_rejects_human_override_that_reintroduces_zhinv():
+    bad = _srt("人工裁决又写回直女")
+    audit: dict = {}
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=bad,
+        final_speaker_srt=bad,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
+    )
+    assert audit["final_verification_failure"] == (
+        "UNBYPASSABLE_HARD_MEME_SURFACE_PRESENT"
+    )
+
+    good = _srt("人工裁决最终仍是侄女")
+    assert verify_chat_authority_final_surfaces(
+        {},
+        final_text_srt=good,
+        final_speaker_srt=good,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
     )
 
 

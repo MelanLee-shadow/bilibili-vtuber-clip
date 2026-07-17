@@ -95,25 +95,48 @@ def test_flash_cue_extended_to_min_readable_but_not_into_next_cue():
     assert solo[0].source_end_ms == 11_000
 
 
-def test_strong_vad_support_snaps_overhanging_edges():
+def test_normal_asr_cue_is_not_shortened_by_partial_vad_coverage():
     cues = [_cue("a", 10_000, 18_000, "这真的不是融了阿朵吗这也太像了吧")]
     spans = [SpeechSpan(10_100, 14_500)]
     result, report = sanitize_cue_timing(cues, spans, **WINDOW)
-    assert result[0].source_start_ms == 10_000  # start within slack, untouched
-    assert result[0].source_end_ms == 14_750  # island end + tail pad
-    assert "end_snapped_to_speech" in report["actions"][0]["reasons"]
+    assert result[0].source_start_ms == 10_000
+    assert result[0].source_end_ms == 18_000
+    assert report["actions"] == []
 
 
-def test_cue_opening_on_silence_snaps_start_to_first_island():
-    # Ivan's defect: the cue hangs on screen through silence and the words only
-    # come in the final seconds — the start must snap to the speech island even
-    # when overall VAD coverage of the cue is low.
+def test_low_recall_vad_cannot_prove_a_normal_cue_opens_on_silence():
     cues = [_cue("a", 10_000, 16_000, "这是什么")]
     spans = [SpeechSpan(14_500, 15_800)]
     result, report = sanitize_cue_timing(cues, spans, **WINDOW)
-    assert result[0].source_start_ms == 14_350  # island start - lead pad
+    assert result[0].source_start_ms == 10_000
     assert result[0].source_end_ms == 16_000
-    assert "start_snapped_to_speech" in report["actions"][0]["reasons"]
+    assert report["actions"] == []
+
+
+def test_tunnel_incident_normal_cues_keep_asr_timeline_despite_sparse_vad():
+    """2026-07-16 打灰片实案：VAD 漏掉 BGM 下的后半句，曾把三条正常
+    ASR cue 分别截短 2.634s / 2.984s、推迟 1.976s。普通 cue 必须原样保留。"""
+
+    cues = [
+        _cue("fresh_0014", 57_110, 60_030, "与你打灰到生命尽头"),
+        _cue("fresh_0016", 63_210, 68_090, "挖矿缺人，家人们，谁，那个在公会的"),
+        _cue("fresh_0017", 68_090, 71_310, "大家帮忙去打打灰吧"),
+    ]
+    spans = [
+        SpeechSpan(57_260, 57_976),
+        SpeechSpan(63_360, 64_856),
+        SpeechSpan(70_216, 71_060),
+    ]
+    result, report = sanitize_cue_timing(cues, spans, **WINDOW)
+    assert [
+        (cue.cue_id, cue.source_start_ms, cue.source_end_ms)
+        for cue in result
+    ] == [
+        ("fresh_0014", 57_110, 60_030),
+        ("fresh_0016", 63_210, 68_090),
+        ("fresh_0017", 68_090, 71_310),
+    ]
+    assert report["actions"] == []
 
 
 def test_good_cues_pass_through_unchanged():
@@ -141,4 +164,4 @@ def test_cues_outside_window_untouched_and_window_end_bounds_extension():
 def test_policy_is_recorded_in_report():
     _, report = sanitize_cue_timing([], [], **WINDOW, policy=TimingQaPolicy(soft_max_ms=5_000))
     assert report["policy"]["soft_max_ms"] == 5_000
-    assert report["vad_evidence_contract"] == "positive_only_low_recall_under_bgm"
+    assert report["vad_evidence_contract"] == "positive_only_never_shrink_normal_asr_cues"

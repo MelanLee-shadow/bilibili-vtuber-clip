@@ -3765,7 +3765,7 @@ def test_cover_art_direction_fail_open_on_llm_error():
         assert resolved.layout in expect_layouts
 
 
-def test_cover_art_direction_llm_guardrail_strips_tongue_keeps_layout():
+def test_cover_art_direction_llm_guardrail_strips_tongue_and_cannot_override_rotation():
     baseline = shadow_pipeline._lidousha_cover_art_direction(
         candidate_id="cand-7", title=_COVER_TALK_TITLE, cover_text=_COVER_TALK_TEXT
     )
@@ -3794,9 +3794,68 @@ def test_cover_art_direction_llm_guardrail_strips_tongue_keeps_layout():
     assert resolved.expression_en == baseline.expression_en
     assert "tongue out" not in resolved.expression_en.lower()
     assert "sexy" not in resolved.expression_en.lower()
-    # ...but the VALID layout/hook color from that same JSON are still honored.
-    assert resolved.layout == "banner"
-    assert resolved.hook_color == "pink"
+    # Layout/background/color are batch-diversity axes, so even valid values
+    # from the semantic judge cannot override the deterministic rotation.
+    assert resolved.layout == baseline.layout
+    assert resolved.background_style == baseline.background_style
+    assert resolved.hook_color == baseline.hook_color
+
+
+def test_cover_art_direction_degenerate_llm_cannot_collapse_real_batch():
+    """2026-07-16 实案：judge 连续八次偏爱 left/pop/pink，成片封面近乎
+    同模板。真实 candidate 批次即使遇到这种退化输出也必须保留轮换。"""
+
+    batch = (
+        ("auto_162645_264_391", "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！"),
+        ("auto_162645_394_507", "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心"),
+        ("auto_203003_1644_1737", "【李豆沙】自称喜欢坏姐姐，却被妹妹型坏女人奴役：我不恋姐"),
+        ("auto_203003_272_377", "【李豆沙】游戏苦手想通为何接到商单：用豆沙方式攻略妹妹"),
+        ("auto_210002_297_513", "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”"),
+        ("auto_213000_116_205", "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！"),
+        ("auto_213000_1218_1328", "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊"),
+        ("auto_162645_712_967", "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍"),
+    )
+
+    def degenerate_llm(_prompt: str) -> str:
+        return json.dumps(
+            {
+                "role": "shy_cute_default",
+                "expression_en": "softly surprised face",
+                "layout": "left-split",
+                "background_style": "pop-art-burst",
+                "hook_color": "pink",
+            },
+            ensure_ascii=False,
+        )
+
+    resolved_directions = []
+    for candidate_id, title in batch:
+        cover_text = shadow_pipeline._lidousha_cover_text(title)
+        baseline = shadow_pipeline._lidousha_cover_art_direction(
+            candidate_id=candidate_id,
+            title=title,
+            cover_text=cover_text,
+        )
+        resolved = shadow_pipeline._lidousha_cover_art_direction(
+            candidate_id=candidate_id,
+            title=title,
+            cover_text=cover_text,
+            art_direction_llm_call=degenerate_llm,
+        )
+        assert (
+            resolved.layout,
+            resolved.background_style,
+            resolved.hook_color,
+        ) == (
+            baseline.layout,
+            baseline.background_style,
+            baseline.hook_color,
+        )
+        resolved_directions.append(resolved)
+
+    assert len({row.layout for row in resolved_directions}) == 3
+    assert len({row.background_style for row in resolved_directions}) == 3
+    assert len({row.hook_color for row in resolved_directions}) >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -3951,6 +4010,7 @@ def test_cover_text_strips_song_parenthetical_qualifier():
     assert "2021" not in got
     # 非歌名括号不受影响
     plain = shadow_pipeline._lidousha_cover_text("【李豆沙】被问(超小声)为什么")
+    assert plain == "被问(超小声)为什么"
     assert "(超小声)" in plain
 
 

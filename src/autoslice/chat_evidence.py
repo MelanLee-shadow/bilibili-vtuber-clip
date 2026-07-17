@@ -21,6 +21,10 @@ from zoneinfo import ZoneInfo
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.surface_canon import (
+    canonicalize_hard_meme_surfaces,
+    normalize_hard_meme_surfaces,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

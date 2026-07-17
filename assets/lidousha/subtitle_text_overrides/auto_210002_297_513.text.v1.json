@@ -1,8 +1,8 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_210002_297_513",
-  "source_cue_witness_sha256": "2a5d4a8843be40067678ca10ed26b236032951b764671474344b0e04d64e9abf",
-  "decision_output_witness_sha256": "2181b99e25a4c0c5a4723966b000c6bba9f82672ad5ab15b3117358584e5e5c9",
+  "source_cue_witness_sha256": "490abea1dd8689fcbd71daba6badaf7f376da58e43bb3ac4c5b56656ca4bbd1a",
+  "decision_output_witness_sha256": "d058752cef25358a15cefdc2aa481f0cfecc43cbac5c38f8b15931efe0123f06",
   "overrides": [
     {
       "source_cue": 3,
@@ -74,30 +74,6 @@
       "text": "李豆沙一直是为爱做1",
       "authority": "Ivan reviewed the difficult 03:17 source audio and confirmed this exact wording",
       "reason": "Restore the clipped predicate without asking the semantic lane to guess an unclear utterance"
-    },
-    {
-      "source_cue": 55,
-      "action": "replace",
-      "expect": {
-        "start": "00:03:19,090",
-        "end": "00:03:20,090",
-        "text": "侄女"
-      },
-      "text": "直女",
-      "authority": "Immediate discourse contrast: the host asks whether she can still be a straight woman, not somebody's niece",
-      "reason": "Correct a homophone that is a dictionary word but impossible in the local identity discussion"
-    },
-    {
-      "source_cue": 56,
-      "action": "replace",
-      "expect": {
-        "start": "00:03:23,180",
-        "end": "00:03:25,700",
-        "text": "李豆沙还能是侄女吗"
-      },
-      "text": "李豆沙还能是直女吗",
-      "authority": "Immediate discourse contrast: the host asks whether she can still be a straight woman, not somebody's niece",
-      "reason": "Carry the same homophone correction into the complete repeated question"
     }
   ]
 }

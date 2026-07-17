@@ -229,13 +229,26 @@ def _lidousha_cover_art_direction(
     if art_direction_llm_call is None:
         return baseline
     try:
-        payload = extract_json_object(art_direction_llm_call(_cover_art_direction_prompt(title=title, cover_text=cover_text)))
+        payload = extract_json_object(
+            art_direction_llm_call(
+                _cover_art_direction_prompt(
+                    title=title,
+                    cover_text=cover_text,
+                    baseline=baseline,
+                )
+            )
+        )
         return _normalize_cover_art_direction(payload, baseline, cover_text)
     except Exception:
         return baseline
 
 
-def _cover_art_direction_prompt(*, title: str, cover_text: str) -> str:
+def _cover_art_direction_prompt(
+    *,
+    title: str,
+    cover_text: str,
+    baseline: LidoushaCoverArtDirection,
+) -> str:
     persona = profile_asset_text("persona")
     return (
         f"你在为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片的封面挑选'艺术指导'。只依据人设与本条切片语义选择。\n"
@@ -244,10 +257,11 @@ def _cover_art_direction_prompt(*, title: str, cover_text: str) -> str:
         "机灵鬼怪/得意只在角色需要时用(次要);**永远不要吐舌头**,不要油滑/挑衅/性感/媚。"
         "外观由参考帧决定,你不描述服装。\n"
         f"\n本切片标题: {title}\n封面文案(分行): {cover_text}\n"
-        "\n从下列集合里各选一个:\n"
-        f"- layout(谈话三选一,歌切固定 song-clean): {list(_COVER_TALK_LAYOUTS)} 或 song-clean\n"
-        f"- background_style(谈话用忙: {list(_COVER_BG_BUSY)};歌/温柔用净: {list(_COVER_BG_CALM)})\n"
-        f"- hook_color: {list(_COVER_HOOK_COLORS)}\n"
+        "\n系统已经为本条锁定下列三个抗同质化轴，禁止改动；它们由跨切片稳定轮换决定，而不是语义裁判决定:\n"
+        f"- layout: {baseline.layout}\n"
+        f"- background_style: {baseline.background_style}\n"
+        f"- hook_color: {baseline.hook_color}\n"
+        "\n请只选择/生成以下语义轴:\n"
         "- role: 一个简短英文角色键(如 shy_cute_default/shocked_bites_back/witty_smug/tender_soft/gentle_song)\n"
         "- expression_en: 一句英文脸部表情(贴角色,不吐舌)\n"
         "- hook_word: 封面文案里最该高亮的一个词(必须是文案里出现的原词)\n"
@@ -260,7 +274,7 @@ def _cover_art_direction_prompt(*, title: str, cover_text: str) -> str:
         "字号由最长一行的宽度决定,所以行要短。"
         "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(长文案 5-8 行,每行 2-4 字),"
         "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"
-        '只输出一个 JSON 对象: {"role":"...","expression_en":"...","background_style":"...","layout":"...","hook_color":"...","hook_word":"...","words":["...","..."],"lines":["...","..."]}'
+        '只输出一个 JSON 对象: {"role":"...","expression_en":"...","hook_word":"...","words":["...","..."],"lines":["...","..."]}'
     )
 
 
@@ -335,15 +349,12 @@ def _normalize_cover_art_direction(
     baseline: LidoushaCoverArtDirection,
     cover_text: str,
 ) -> LidoushaCoverArtDirection:
-    def pick(key: str, allowed, default: str) -> str:
-        value = payload.get(key)
-        return value if isinstance(value, str) and value in allowed else default
-
-    # song layout/background pools are fixed by is_song; only talk can rotate.
-    layout = baseline.layout if baseline.is_song else pick("layout", set(_COVER_TALK_LAYOUTS), baseline.layout)
-    hook_color = pick("hook_color", set(_COVER_HOOK_COLORS), baseline.hook_color)
-    bg_pool = _COVER_BG_CALM if baseline.is_song else _COVER_BG_BUSY
-    background_style = pick("background_style", set(bg_pool), baseline.background_style)
+    # These axes are the deterministic anti-monotony schedule.  The LLM may
+    # refine semantic choices below, but may not collapse a whole batch back
+    # onto one fashionable layout/background/color.
+    layout = baseline.layout
+    hook_color = baseline.hook_color
+    background_style = baseline.background_style
 
     expression_en = payload.get("expression_en")
     if not (isinstance(expression_en, str) and expression_en.strip()) or any(
@@ -1499,4 +1510,3 @@ def _find_cover_font() -> Path:
     raise RuntimeError(
         "COVER_FONT_MISSING: ZCOOLKuaiLe-Regular.ttf not found in the selected profile fonts"
     )
-

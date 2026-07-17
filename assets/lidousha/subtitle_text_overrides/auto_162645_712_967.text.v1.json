@@ -1,38 +1,9 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_162645_712_967",
-  "source_cue_witness_sha256": "e0a2ae686ffc2834e919d670dac7a1366eaed816a0d136c3bd0c9c0e29558543",
-  "decision_output_witness_sha256": "4b397178581a90f0640e86ef853377a823b7d5f56d3f65be64e48237a37fa911",
+  "source_cue_witness_sha256": "a64568bbad2b79e205535cb89d2c6a65d42b10495099298652b1a90b9adac6dc",
+  "decision_output_witness_sha256": "4803a5853eac3c44b60da05ef8ed67ac54e9a26ab6d6e045ffdc9fffc7854fcf",
   "overrides": [
-    {
-      "source_cue": 12,
-      "action": "replace_pattern",
-      "locator": {
-        "start": "00:00:47,790",
-        "end": "00:00:49,590"
-      },
-      "pattern": "侄女女友喜欢吗[？?]?[”\"]?(?:说[。.]?)?",
-      "text": "直女女友喜欢吗？",
-      "authority": "The surrounding sexuality/type discussion establishes 直女; 侄女 is a homophone with no valid referent",
-      "reason": "Correct the contextually impossible homophone without freezing optional surrounding words"
-    },
-    {
-      "source_cue": 14,
-      "action": "replace",
-      "expect": {
-        "start": "00:00:51,570",
-        "end": "00:00:55,370",
-        "text": "呵，“侄女，直系女同喜欢吗？”",
-        "text_match_mode": "punctuation_insensitive",
-        "text_alternatives": [
-          "呵，侄女，侄系女同喜欢吗？",
-          "呵，侄女，直系女同喜欢吗"
-        ]
-      },
-      "text": "呵，直女，直系女同喜欢吗？",
-      "authority": "Ivan confirmed 直系女同 in this event and the immediate discussion contrasts 直女 and女同",
-      "reason": "Repair both linked homophones without changing timing or sentence structure"
-    },
     {
       "source_cue": 15,
       "action": "replace_substring",

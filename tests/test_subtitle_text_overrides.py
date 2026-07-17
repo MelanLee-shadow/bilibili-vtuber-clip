@@ -459,7 +459,17 @@ def test_timeline_override_can_ignore_punctuation_but_not_word_drift(
     )
     output = tmp_path / "out.srt"
     apply_document(source, overrides, output, tmp_path / "manifest.json")
-    assert "呵，直女，直系女同喜欢吗？" in output.read_text(encoding="utf-8")
+    assert "呵，侄女，直系女同喜欢吗？" in output.read_text(encoding="utf-8")
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["decisions"][0]["requested_output_text"] == (
+        "呵，直女，直系女同喜欢吗？"
+    )
+    assert manifest["decisions"][0]["output_text"] == (
+        "呵，侄女，直系女同喜欢吗？"
+    )
+    assert manifest["decisions"][0]["final_surface_policy"]["authority"] == (
+        "lidousha-hard-meme-canon.v1"
+    )
 
     source.write_text(
         source.read_text(encoding="utf-8").replace("直系女同", "女同"),
@@ -509,7 +519,7 @@ def test_timeline_pattern_override_preserves_prefix_and_cleans_optional_punctuat
     output = tmp_path / "out.srt"
 
     apply_document(source, overrides, output, tmp_path / "manifest.json")
-    assert "有没有直女女友喜欢吗？" in output.read_text(encoding="utf-8")
+    assert "有没有侄女女友喜欢吗？" in output.read_text(encoding="utf-8")
     assert "”" not in output.read_text(encoding="utf-8")
 
     source.write_text(
@@ -520,7 +530,7 @@ def test_timeline_pattern_override_preserves_prefix_and_cleans_optional_punctuat
         encoding="utf-8",
     )
     apply_document(source, overrides, output, tmp_path / "manifest.json")
-    assert "直女女友喜欢吗？" in output.read_text(encoding="utf-8")
+    assert "侄女女友喜欢吗？" in output.read_text(encoding="utf-8")
 
 
 def test_committed_dog_clip_override_rejects_collateral_word_salad(

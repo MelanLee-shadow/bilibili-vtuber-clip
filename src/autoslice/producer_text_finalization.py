@@ -5,6 +5,7 @@ from __future__ import annotations
 from .chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
+    canonicalize_hard_meme_surfaces,
     normalize_chat_text,
     normalize_srt_payload_window,
 )
@@ -36,6 +37,24 @@ def verify_chat_authority_final_surfaces(
     delivery_end_ms: int,
 ) -> bool:
     """Verify every in-delivery authority decision at its original time span."""
+
+    hard_meme_failures = {}
+    for surface_name, srt_text in (
+        ("final_text_srt", final_text_srt),
+        ("final_speaker_srt", final_speaker_srt),
+    ):
+        _normalized, replacements = canonicalize_hard_meme_surfaces(srt_text)
+        if replacements:
+            hard_meme_failures[surface_name] = replacements
+    audit["final_hard_meme_surface_verification"] = {
+        "status": "FAIL" if hard_meme_failures else "PASS",
+        "failures": hard_meme_failures,
+    }
+    if hard_meme_failures:
+        audit["final_verification_failure"] = (
+            "UNBYPASSABLE_HARD_MEME_SURFACE_PRESENT"
+        )
+        return False
 
     decision_rows: list[tuple[str, dict, str]] = []
     decision_rows.extend(

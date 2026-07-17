@@ -13,8 +13,9 @@ high-precision but LOW-RECALL — loud BGM masks speech, and screams/laughter
 - a cue is NEVER dropped merely because VAD saw no speech;
 - the one deletable pattern is the whisper stuck-segment: text duplicating a
   recent cue + duration at/over the hard max + no VAD support;
-- retiming/shrinking only happens toward observed speech islands, or as a
-  duration clamp that keeps the cue anchored at its own start.
+- only cues already proven suspect by independent duration + text-density
+  evidence may be retimed toward observed speech islands or duration-clamped;
+- ordinary ASR cues are never shortened from VAD non-detection at either edge.
 
 Text is never invented, cue order is preserved, and every action is recorded
 for the evidence trail.
@@ -35,7 +36,7 @@ from src.autoslice.review_evidence import SourceCue
 
 SpeechSpansProvider = Callable[[Path, int, int], "list[SpeechSpan]"]
 
-SUBTITLE_TIMING_QA_SCHEMA_VERSION = "subtitle-timing-qa.v1"
+SUBTITLE_TIMING_QA_SCHEMA_VERSION = "subtitle-timing-qa.v2"
 
 _PUNCT_RX = re.compile(r"[\s？?！!。，,．.…~～　]+")
 
@@ -126,22 +127,6 @@ def sanitize_cue_timing(
                 new_end = start_ms + policy.soft_max_ms
                 reasons.append("long_low_density_clamped")
 
-        # 3. Island snap (shrink only): a speech island is positive evidence of
-        #    WHERE the words are.  A cue that opens on silence and only meets
-        #    its speech in the final seconds (the "字幕挂了半天人才开口" defect)
-        #    gets its start pulled to the first island; ends hanging far past
-        #    the last island get pulled back likewise.  Cues with NO islands
-        #    are left alone (low-recall VAD cannot testify about absence).
-        elif islands:
-            snapped_start = max(new_start, islands[0].start_ms - policy.lead_pad_ms)
-            snapped_end = min(new_end, islands[-1].end_ms + policy.tail_pad_ms)
-            if snapped_start - new_start > policy.snap_slack_ms:
-                new_start = snapped_start
-                reasons.append("start_snapped_to_speech")
-            if new_end - snapped_end > policy.snap_slack_ms:
-                new_end = snapped_end
-                reasons.append("end_snapped_to_speech")
-
         if new_end - new_start < policy.min_readable_ms:
             new_end = new_start + policy.min_readable_ms
             if "flash_extended" not in reasons:
@@ -175,7 +160,7 @@ def sanitize_cue_timing(
         },
         "speech_span_count": len(spans),
         "speech_total_ms": sum(span.end_ms - span.start_ms for span in spans),
-        "vad_evidence_contract": "positive_only_low_recall_under_bgm",
+        "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
         "actions": actions,
         "counts": {
             "dropped": sum(1 for action in actions if action["action"] == "drop_stuck_segment"),

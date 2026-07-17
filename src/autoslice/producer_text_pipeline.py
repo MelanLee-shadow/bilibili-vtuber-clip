@@ -21,6 +21,7 @@ from src.autoslice.chat_authority import (
     load_clip_opening_address_config,
     load_referent_groups,
     normalize_code_switch_surfaces,
+    normalize_hard_meme_surfaces,
     reconcile_contradictory_entity_repairs,
     registered_entity_names,
     repetition_divergence_groups,
@@ -807,6 +808,26 @@ def _finalize_text_evidence(
                 f"{cid}: pinned {len(song_name_pin_audit['replacements'])} "
                 "song name(s) from screen-songlist/点歌 evidence"
             )
+    # Final unbypassable meme canon (currently only 直女→侄女).  This runs after
+    # every LLM/entity/song-name text stage; the later hash-bound human override
+    # path independently re-runs the same policy before speaker rendering.
+    srt_text, hard_meme_surface_audit = normalize_hard_meme_surfaces(srt_text)
+    chat_authority_audit["final_hard_meme_surface_audit"] = (
+        hard_meme_surface_audit
+    )
+    chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
+        srt_text.encode("utf-8")
+    ).hexdigest()
+    chat_authority_path.write_text(
+        json.dumps(
+            chat_authority_audit,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (out_root / "padded.fresh.srt").write_text(srt_text, encoding="utf-8")
     cues = [c for c in parse_srt_cues(srt_text) if c.text.strip()]
     if len(cues) < 3:

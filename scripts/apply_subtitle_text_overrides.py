@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from src.autoslice.chat_authority import canonicalize_hard_meme_surfaces
+
 
 SRT_BLOCK_RE = re.compile(
     r"(?ms)^\s*(\d+)\s*\n"
@@ -521,7 +523,58 @@ def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list
             raise ValueError(f"replacement text for cue {cue.source_index} is empty")
         output.append(TextCue(cue.source_index, cue.start, cue.end, replacement))
         decisions.append({"source": asdict(cue), "action": "replace", "output_text": replacement, **override})
-    return output, decisions
+    # A reviewed decision can supersede ordinary automatic normalizations, but
+    # it cannot bypass the profile's explicitly unbypassable meme canon. Apply
+    # this inside the hash-producing function so every downstream manifest
+    # binds the actual canonical output.
+    canonical_output: list[TextCue] = []
+    for cue in output:
+        canonical_text, replacements = canonicalize_hard_meme_surfaces(cue.text)
+        canonical_output.append(
+            TextCue(
+                cue.source_index,
+                cue.start,
+                cue.end,
+                canonical_text,
+            )
+        )
+        if canonical_text != cue.text:
+            related_decision = next(
+                (
+                    row
+                    for row in reversed(decisions)
+                    if isinstance(row.get("source"), dict)
+                    and int(row["source"].get("source_index", 0))
+                    == cue.source_index
+                ),
+                None,
+            )
+            policy = {
+                "authority": ",".join(
+                    str(row["authority"]) for row in replacements
+                ),
+                "reason": (
+                    "profile hard-meme canon is a final output invariant "
+                    "and cannot be bypassed by a text override"
+                ),
+                "replacements": replacements,
+            }
+            if related_decision is not None:
+                related_decision["requested_output_text"] = related_decision.get(
+                    "output_text"
+                )
+                related_decision["output_text"] = canonical_text
+                related_decision["final_surface_policy"] = policy
+            else:
+                decisions.append(
+                    {
+                        "source": asdict(cue),
+                        "action": "hard_meme_canonicalize",
+                        "output_text": canonical_text,
+                        **policy,
+                    }
+                )
+    return canonical_output, decisions
 
 
 def render_srt(cues: list[TextCue]) -> str:

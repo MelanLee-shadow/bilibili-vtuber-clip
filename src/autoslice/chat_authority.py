@@ -10,6 +10,7 @@ from src.autoslice.jingting_chunker import parse_srt_cues as parse_srt_cues
 from src.autoslice.chat_evidence import (
     EntityVerifier as EntityVerifier,
     canonicalize_hard_surfaces as canonicalize_hard_surfaces,
+    canonicalize_hard_meme_surfaces as canonicalize_hard_meme_surfaces,
     ChatEvidence as ChatEvidence,
     ReferentEntity as ReferentEntity,
     ReferentGroup as ReferentGroup,
@@ -17,6 +18,7 @@ from src.autoslice.chat_evidence import (
     normalize_srt_payload_text as normalize_srt_payload_text,
     normalize_srt_payload_window as normalize_srt_payload_window,
     normalize_code_switch_surfaces as normalize_code_switch_surfaces,
+    normalize_hard_meme_surfaces as normalize_hard_meme_surfaces,
     sanitize_chat_display_text as sanitize_chat_display_text,
     load_referent_groups as load_referent_groups,
     _coerce_referent_groups as _coerce_referent_groups,
