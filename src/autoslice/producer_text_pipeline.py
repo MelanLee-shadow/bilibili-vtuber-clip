@@ -60,6 +60,7 @@ from src.autoslice.subtitle_fidelity import (
     apply_title_mark_balance_guard,
     audit_foreign_script_consistency,
     mixed_cjk_latin_findings_covered_by_overrides,
+    unproven_foreign_introductions_covered_by_overrides,
 )
 from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
@@ -678,6 +679,29 @@ def _finalize_text_evidence(
     chat_authority_audit[
         "final_source_language_preservation_audit"
     ] = final_source_language_audit
+    override_document: dict[str, Any] = {}
+    if text_override_path is not None:
+        try:
+            loaded_override = json.loads(
+                text_override_path.read_text(encoding="utf-8")
+            )
+            if isinstance(loaded_override, dict):
+                override_document = loaded_override
+        except (OSError, json.JSONDecodeError):
+            pass
+    if (
+        final_source_language_audit["status"]
+        == "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+        and unproven_foreign_introductions_covered_by_overrides(
+            final_source_language_audit,
+            override_document,
+        )
+    ):
+        final_source_language_audit["status"] = "DEFERRED_TO_BOUND_TEXT_OVERRIDE"
+        final_source_language_audit["deferred_reason"] = (
+            "every un-witnessed foreign-language cue has a timeline-bound "
+            "reviewed repair"
+        )
     foreign_script_audit = audit_foreign_script_consistency(srt_text)
     if (
         foreign_script_audit["status"]
@@ -692,12 +716,6 @@ def _finalize_text_evidence(
         foreign_script_audit["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
         and text_override_path is not None
     ):
-        try:
-            override_document = json.loads(
-                text_override_path.read_text(encoding="utf-8")
-            )
-        except (OSError, json.JSONDecodeError):
-            override_document = {}
         if mixed_cjk_latin_findings_covered_by_overrides(
             foreign_script_audit,
             override_document,
@@ -756,7 +774,10 @@ def _finalize_text_evidence(
         json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if str(foreign_script_audit["status"]).startswith("BLOCKED_"):
+    if (
+        str(final_source_language_audit["status"]).startswith("BLOCKED_")
+        or str(foreign_script_audit["status"]).startswith("BLOCKED_")
+    ):
         raise SystemExit(
             f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
         )

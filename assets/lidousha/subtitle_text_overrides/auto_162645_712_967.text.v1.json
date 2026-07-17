@@ -1,8 +1,8 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_162645_712_967",
-  "source_cue_witness_sha256": "e0a2ae686ffc2834e919d670dac7a1366eaed816a0d136c3bd0c9c0e29558543",
-  "decision_output_witness_sha256": "4b397178581a90f0640e86ef853377a823b7d5f56d3f65be64e48237a37fa911",
+  "source_cue_witness_sha256": "5e9cca181d15572e9971a48dc00667d097df7c953351b77959f1dfad6a822e23",
+  "decision_output_witness_sha256": "41d4a54f93dc682285eef98846c2889e5423a7953520ba9e45029279e6d8d331",
   "overrides": [
     {
       "source_cue": 12,
@@ -45,6 +45,30 @@
       "required": false,
       "authority": "Source-aware final review rejected the unsupported English phrase in this Chinese talk passage",
       "reason": "Remove mixed-language ASR word salad when present; skip safely when the automatic transcript is already clean"
+    },
+    {
+      "source_cue": 15,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:55,730",
+        "end": "00:00:57,410",
+        "text": "どうも、どうも"
+      },
+      "text": "都问那么多",
+      "authority": "The Chinese discussion answers a run of type questions with 都问那么多; the initial Chinese ASR provides a phonetic witness and no source witness supports Japanese",
+      "reason": "Remove an unproven multi-cue Japanese hallucination introduced by the correction model"
+    },
+    {
+      "source_cue": 16,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:57,530",
+        "end": "00:01:00,450",
+        "text": "すべての、私のために"
+      },
+      "text": "所有的都为我所用",
+      "authority": "The phrase is the semantic continuation of 都问那么多 and is phonetically witnessed by the initial Chinese ASR; no source witness supports Japanese",
+      "reason": "Restore the coherent Chinese answer while preserving the reviewed timing"
     }
   ]
 }

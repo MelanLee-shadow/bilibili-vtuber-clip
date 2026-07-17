@@ -9,6 +9,7 @@ from src.autoslice.subtitle_fidelity import (
     audit_foreign_script_consistency,
     digit_reading_equivalent,
     mixed_cjk_latin_findings_covered_by_overrides,
+    unproven_foreign_introductions_covered_by_overrides,
 )
 
 
@@ -185,6 +186,62 @@ def test_source_language_guard_reverts_english_speech_translation():
     assert "I just want to marry Fate" in guarded
     assert "我只是想" not in guarded
     assert audit["status"] == "REVERTED_TRANSLATION"
+
+
+def test_source_language_guard_blocks_unproven_adjacent_kana_introduction():
+    draft = _srt("都问那么多", "所有的都为我所用", "正常中文")
+    corrected = _srt("どうも、どうも", "すべての、私のために", "正常中文")
+
+    guarded, audit = apply_source_language_preservation_guard(draft, corrected)
+
+    assert "どうも、どうも" in guarded
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+    assert [
+        row["cue_index"] for row in audit["unproven_foreign_introductions"]
+    ] == [1, 2]
+
+
+def test_source_language_guard_allows_isolated_japanese_code_switch_recovery():
+    draft = _srt("哦，姐姐桑", "正常中文")
+    corrected = _srt("お姉さん", "正常中文")
+
+    guarded, audit = apply_source_language_preservation_guard(draft, corrected)
+
+    assert "お姉さん" in guarded
+    assert audit["status"] == "CLEAN"
+
+
+def test_unproven_foreign_cluster_defers_only_for_exact_reviewed_repairs():
+    draft = _srt("都问那么多", "所有的都为我所用")
+    corrected = _srt("どうも、どうも", "すべての、私のために")
+    _, audit = apply_source_language_preservation_guard(draft, corrected)
+    document = {
+        "schema_version": 3,
+        "overrides": [
+            {
+                "action": "replace",
+                "expect": {
+                    "start": "00:00:05,000",
+                    "end": "00:00:09,000",
+                    "text": "どうも、どうも",
+                },
+                "text": "都问那么多",
+            },
+            {
+                "action": "replace",
+                "expect": {
+                    "start": "00:00:10,000",
+                    "end": "00:00:14,000",
+                    "text": "すべての、私のために",
+                },
+                "text": "所有的都为我所用",
+            },
+        ],
+    }
+
+    assert unproven_foreign_introductions_covered_by_overrides(audit, document)
+    document["overrides"].pop()
+    assert not unproven_foreign_introductions_covered_by_overrides(audit, document)
 
 
 def test_foreign_script_consistency_blocks_japanese_passage_decoded_as_english_word_salad():

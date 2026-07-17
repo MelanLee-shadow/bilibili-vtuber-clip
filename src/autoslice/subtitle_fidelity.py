@@ -414,12 +414,46 @@ def apply_source_language_preservation_guard(
         "schema_version": "source-language-preservation-audit.v1",
         "status": "CLEAN",
         "reverted": [],
+        "unproven_foreign_introductions": [],
     }
     if len(draft_cues) != len(final_cues):
         audit["status"] = "SKIPPED_CUE_COUNT_MISMATCH"
         audit["draft_cue_count"] = len(draft_cues)
         audit["final_cue_count"] = len(final_cues)
         return final_srt, audit
+
+    introduced_kana_rows: list[dict[str, Any]] = []
+    for index, (draft_cue, final_cue) in enumerate(
+        zip(draft_cues, final_cues), start=1
+    ):
+        draft_kana_count = len(_JAPANESE_KANA_RX.findall(draft_cue.text))
+        final_kana_count = len(_JAPANESE_KANA_RX.findall(final_cue.text))
+        if (
+            draft_kana_count == 0
+            and final_kana_count >= 2
+            and len(re.findall(r"[\u3400-\u9fff]", draft_cue.text)) >= 2
+            and _strip_non_text(draft_cue.text) != _strip_non_text(final_cue.text)
+            and not _sanctioned_cue_equal(draft_cue.text, final_cue.text, pairs)
+        ):
+            introduced_kana_rows.append(
+                {
+                    "cue_index": index,
+                    "start_ms": final_cue.start_ms,
+                    "end_ms": final_cue.end_ms,
+                    "draft": draft_cue.text,
+                    "attempted": final_cue.text,
+                    "reason": "FOREIGN_LANGUAGE_INTRODUCED_WITHOUT_SOURCE_WITNESS",
+                }
+            )
+    clustered_introductions = [
+        row
+        for row in introduced_kana_rows
+        if any(
+            abs(int(row["cue_index"]) - int(other["cue_index"])) == 1
+            for other in introduced_kana_rows
+        )
+    ]
+    audit["unproven_foreign_introductions"] = clustered_introductions
 
     rendered: list[str] = []
     for index, (draft_cue, final_cue) in enumerate(
@@ -455,10 +489,97 @@ def apply_source_language_preservation_guard(
             f"{index}\n{_ms_to_ts(final_cue.start_ms)} --> "
             f"{_ms_to_ts(final_cue.end_ms)}\n{kept}"
         )
-    if audit["reverted"]:
+    if clustered_introductions:
+        # Do not silently choose between the draft and the correction here:
+        # either could be the wrong-language ASR.  The producer blocks unless
+        # a timeline-bound reviewed override resolves every affected cue.
+        audit["status"] = "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+    elif audit["reverted"]:
         audit["status"] = "REVERTED_TRANSLATION"
     audit["reverted_count"] = len(audit["reverted"])
     return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+def unproven_foreign_introductions_covered_by_overrides(
+    audit: dict[str, Any],
+    document: dict[str, Any],
+) -> bool:
+    """Prove every un-witnessed foreign-language cue has reviewed authority.
+
+    A model may legitimately recover Japanese that the first ASR missed, but a
+    correction model may also hallucinate Japanese from similar-sounding
+    Chinese.  Only an exact timeline-bound schema-v3 override can release an
+    introduced multi-cue foreign passage.
+    """
+
+    findings = audit.get("unproven_foreign_introductions")
+    overrides = document.get("overrides")
+    if (
+        not isinstance(findings, list)
+        or not findings
+        or document.get("schema_version") != 3
+        or not isinstance(overrides, list)
+    ):
+        return False
+
+    def overlaps(
+        left_start: int, left_end: int, right_start: int, right_end: int
+    ) -> bool:
+        return left_start < right_end and left_end > right_start
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            return False
+        attempted = str(finding.get("attempted") or "")
+        finding_start = int(finding.get("start_ms") or 0)
+        finding_end = int(finding.get("end_ms") or 0)
+        covered = False
+        for override in overrides:
+            if not isinstance(override, dict):
+                continue
+            action = str(override.get("action", "replace"))
+            replacement = str(override.get("text") or "")
+            if not replacement:
+                continue
+            if action == "replace":
+                expected = override.get("expect")
+                if not isinstance(expected, dict):
+                    continue
+                expected_start = _srt_clock_ms(str(expected.get("start") or ""))
+                expected_end = _srt_clock_ms(str(expected.get("end") or ""))
+                expected_texts = [
+                    expected.get("text"),
+                    *(expected.get("text_alternatives") or []),
+                ]
+                covered = (
+                    expected_start == finding_start
+                    and expected_end == finding_end
+                    and attempted in expected_texts
+                )
+            elif action == "replace_substring":
+                locator = override.get("locator")
+                if not isinstance(locator, dict):
+                    continue
+                locator_start = _srt_clock_ms(str(locator.get("start") or ""))
+                locator_end = _srt_clock_ms(str(locator.get("end") or ""))
+                old_text = str(override.get("old_text") or "")
+                covered = (
+                    locator_start is not None
+                    and locator_end is not None
+                    and overlaps(
+                        finding_start,
+                        finding_end,
+                        locator_start,
+                        locator_end,
+                    )
+                    and bool(old_text)
+                    and attempted.count(old_text) == 1
+                )
+            if covered:
+                break
+        if not covered:
+            return False
+    return True
 
 
 def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
