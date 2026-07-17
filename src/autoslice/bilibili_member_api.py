@@ -167,11 +167,13 @@ class BiliSession:
         cover_url: str | None = None,
         keep_only_cid: int | None = None,
         tag: str | None = None,
+        video_title: str | None = None,
     ) -> dict[str, Any]:
         """从 view 数据构造 edit 载荷；纯函数，离线可测。
 
         keep_only_cid：videos 只留这个 cid（append 后换源的关键一步）；
-        None = 原样回传全部 P。
+        None = 原样回传全部 P。video_title 显式覆盖保留分 P 的标题，避免
+        biliup append 的技术文件名泄露到公开稿件元数据。
         """
 
         archive = view_data["archive"]
@@ -190,7 +192,7 @@ class BiliSession:
                 "videos": [
                     {
                         "filename": v["filename"],
-                        "title": v.get("title") or "P1",
+                        "title": video_title if video_title is not None else (v.get("title") or "P1"),
                         "cid": v.get("cid"),
                     }
                     for v in videos
@@ -287,5 +289,6 @@ def replace_archive_source(
         title=new_title,
         cover_url=cover_url,
         keep_only_cid=new_video.get("cid"),
+        video_title=new_title or str((before.get("archive") or {}).get("title") or "P1"),
     )
     return session.edit_archive(payload)

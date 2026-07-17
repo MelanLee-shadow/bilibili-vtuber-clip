@@ -4,7 +4,7 @@
 用法（在 free 上、或任何持有 cookie 文件的机器上）：
 
   view        python3 scripts/bili_archive_tool.py view BV1xx
-  换封面/标题  python3 scripts/bili_archive_tool.py edit BV1xx [--title 新标题] [--cover new.png] [--tags "a,b,c"]
+  换封面/标题  python3 scripts/bili_archive_tool.py edit BV1xx [--title 新标题] [--part-title 分P标题] [--cover new.png] [--tags "a,b,c"]
   零配额换源   python3 scripts/bili_archive_tool.py replace BV1xx --media new.mp4 [--cover new.png] [--title 新标题]
   入合集       python3 scripts/bili_archive_tool.py season-add BV1xx --section-id 9320779
 
@@ -39,6 +39,7 @@ def main() -> int:
     p_edit = sub.add_parser("edit", help="改标题/封面/tags（不动视频）")
     p_edit.add_argument("bvid")
     p_edit.add_argument("--title")
+    p_edit.add_argument("--part-title", help="完整替换所有现有分P标题；单P修复时通常与稿件标题相同")
     p_edit.add_argument("--cover", type=Path)
     p_edit.add_argument("--tags", help="逗号分隔完整替换")
 
@@ -75,12 +76,16 @@ def main() -> int:
         return 0
 
     if args.command == "edit":
-        if args.title is None and args.cover is None and args.tags is None:
-            parser.error("edit needs at least one of --title/--cover/--tags")
+        if args.title is None and args.part_title is None and args.cover is None and args.tags is None:
+            parser.error("edit needs at least one of --title/--part-title/--cover/--tags")
         data = session.archive_view(args.bvid)
         cover_url = session.cover_up(args.cover.read_bytes()) if args.cover else None
         payload = session.build_edit_payload(
-            data, title=args.title, cover_url=cover_url, tag=args.tags
+            data,
+            title=args.title,
+            cover_url=cover_url,
+            tag=args.tags,
+            video_title=args.part_title,
         )
         print(json.dumps(session.edit_archive(payload), ensure_ascii=False))
         return 0

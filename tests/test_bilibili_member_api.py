@@ -101,6 +101,30 @@ def test_build_edit_payload_keep_only_new_cid(cookie_file):
         session.build_edit_payload(view_data, keep_only_cid=999)
 
 
+def test_build_edit_payload_can_replace_part_title(cookie_file):
+    session, _ = make_session(cookie_file(BILIUP_SHAPE), [])
+    view_data = {
+        "archive": {"aid": 42, "bvid": "BV1xx", "title": "正式标题"},
+        "videos": [
+            {
+                "filename": "content.burned-final-sapphire72",
+                "title": "content.burned-final-sapphire72",
+                "cid": 2,
+            }
+        ],
+    }
+
+    payload = session.build_edit_payload(view_data, video_title="正式标题")
+
+    assert payload["videos"] == [
+        {
+            "filename": "content.burned-final-sapphire72",
+            "title": "正式标题",
+            "cid": 2,
+        }
+    ]
+
+
 def test_season_add_treats_already_in_as_success(cookie_file):
     session, _ = make_session(
         cookie_file(BILIUP_SHAPE), [{"code": SEASON_ALREADY_IN_CODE}]
