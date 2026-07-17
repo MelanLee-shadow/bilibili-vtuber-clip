@@ -521,3 +521,33 @@ def test_timeline_pattern_override_preserves_prefix_and_cleans_optional_punctuat
     )
     apply_document(source, overrides, output, tmp_path / "manifest.json")
     assert "直女女友喜欢吗？" in output.read_text(encoding="utf-8")
+
+
+def test_committed_dog_clip_override_rejects_collateral_word_salad(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        """1
+00:00:45,158 --> 00:00:47,170
+的心动人你太坏了
+""",
+        encoding="utf-8",
+    )
+    override = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_text_overrides/auto_162645_394_507.text.v1.json"
+    )
+    output = tmp_path / "out.srt"
+
+    manifest = apply_document(
+        source,
+        override,
+        output,
+        tmp_path / "manifest.json",
+    )
+
+    assert parse_srt(output)[0].text == "人类你太坏了！"
+    assert manifest["decisions"][0]["authority"].startswith(
+        "The immediately repeated complaint"
+    )

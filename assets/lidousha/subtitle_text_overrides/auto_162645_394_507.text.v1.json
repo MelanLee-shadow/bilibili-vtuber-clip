@@ -1,0 +1,21 @@
+{
+  "schema_version": 3,
+  "candidate_id": "auto_162645_394_507",
+  "source_cue_witness_sha256": "2f778fb5d744d82b3c34f2c73c56447eff4e3ecc0f0dd114d81d41b84d367d0d",
+  "decision_output_witness_sha256": "0901eb0d7df0f407a35b72b4f1666c5cec1efa44a042bd7fa21d7a7c25da2a7f",
+  "overrides": [
+    {
+      "source_cue": 13,
+      "action": "replace_pattern",
+      "locator": {
+        "start": "00:00:44,500",
+        "end": "00:00:47,500"
+      },
+      "pattern": "^的心动人你太坏了[！!。.]?$",
+      "text": "人类你太坏了！",
+      "required": false,
+      "authority": "The immediately repeated complaint addresses 人类; the prior reviewed delivery preserved 人类你太坏了 and the targeted slang repair did not authorize unrelated wording drift",
+      "reason": "Reject a grammatically broken collateral rewrite introduced while repairing the independent 难绷 surface"
+    }
+  ]
+}
