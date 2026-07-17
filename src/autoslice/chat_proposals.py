@@ -341,6 +341,34 @@ def _resolve_chat_entity_proposal(
     group, chat_match = matched_groups[0]
     chat_canonical = chat_match["canonicals"][0]
     chat_surface = chat_match["occurrences"][0]["surface"]
+    acoustic_occurrences = _entity_occurrences(acoustic_span, group)
+    protected_canonical = any(
+        chat_canonical.lower() == keep.lower()
+        for keep in group.protected_canonicals
+    )
+    # 两份独立文本证据（音频转写 + 平台结构化原文）已逐字同意默认可信
+    # canonical 时，不再让一次后置音频模型把它们同时推翻。真实的竞争实体
+    # 仍会在文本不一致或没有结构化原文时进入音频仲裁。
+    if (
+        protected_canonical
+        and chat_surface.lower() == chat_canonical.lower()
+        and len(acoustic_occurrences) == 1
+        and str(acoustic_occurrences[0]["canonical"]).lower() == chat_canonical.lower()
+        and str(acoustic_occurrences[0]["surface"]).lower() == chat_canonical.lower()
+    ):
+        proposal["entity_group"] = group
+        proposal["structured_chat_canonical"] = chat_canonical
+        discovery.entity_verdicts.append(
+            {
+                **base_row,
+                "reason_code": "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_TRANSCRIPT",
+                "structured_chat_canonical": chat_canonical,
+                "transcript_canonical": acoustic_occurrences[0]["canonical"],
+                "authority_kind": "structured_chat_plus_independent_transcript",
+            }
+        )
+        discovery.proposals.append(proposal)
+        return True
     request: dict[str, Any] = {
         "schema_version": "chat-entity-verification-request.v1",
         **base_row,

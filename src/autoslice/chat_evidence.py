@@ -94,6 +94,9 @@ class ReferentGroup:
     # 正当别名（海铃/八幡海铃），不含误听面——多槽位命中=一句提了多个角色，
     # 无可改写直接放行；静态组不打此标（母鸡卡类误听面多槽仍歧义熔断）。
     alias_surfaces: bool = False
+    # 只有有长期实案证明“单次音频模型会高置信反向误改”的 canonical 才列入：
+    # 相反 RESOLVED 必须 fail-closed；结构化聊天与独立转写逐字同意时直接确证。
+    protected_canonicals: tuple[str, ...] = ()
 
 
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
@@ -278,6 +281,19 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     and sanitize_chat_display_text(value, max_chars=80).lower() in all_surfaces
                 )
             )
+            raw_protected = row.get("protected_canonicals") or []
+            protected = tuple(
+                dict.fromkeys(
+                    sanitize_chat_display_text(value, max_chars=80)
+                    for value in (raw_protected if isinstance(raw_protected, list) else [])
+                    if sanitize_chat_display_text(value, max_chars=80)
+                    and any(
+                        entity.canonical.lower()
+                        == sanitize_chat_display_text(value, max_chars=80).lower()
+                        for entity in parsed
+                    )
+                )
+            )
             groups.append(
                 ReferentGroup(
                     tuple(parsed),
@@ -286,6 +302,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     keep,
                     positions,
                     keep_surfaces,
+                    protected_canonicals=protected,
                 )
             )
     return groups

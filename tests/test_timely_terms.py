@@ -122,7 +122,7 @@ def test_default_profile_keeps_pre_profile_jingting_prompt_byte_identical():
     )
 
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "669e8d2b225dbf16ea1979ba2d1a2945dfb0a71d30068861d93f6c994003dbf4"
+        "e350ad54297125947bbd495fbf14b09c70433d35c261bf9a2a713b7268101701"
     )
 
 

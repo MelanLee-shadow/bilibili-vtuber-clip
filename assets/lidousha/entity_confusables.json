@@ -131,6 +131,9 @@
       "uncertain_keep_canonicals": [
         "kmx"
       ],
+      "protected_canonicals": [
+        "kmx"
+      ],
       "uncertain_keep_surfaces": [
         "纹熊"
       ]
