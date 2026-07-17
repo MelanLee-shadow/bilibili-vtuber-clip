@@ -135,6 +135,7 @@ def audit_final_subtitles(
         derived_suspect = ""
         derived_replacement = ""
         contract_error: str | None = None
+        scope_warnings: list[str] = []
         span_start = 0
         span_end = 0
         if proposed:
@@ -145,14 +146,20 @@ def audit_final_subtitles(
                 span_end,
                 contract_error,
             ) = _derive_single_span_edit(base_text, proposed)
+            # `proposed_full_cue` is the authority input: code derives its one
+            # bounded minimal edit and the audio lane verifies that complete
+            # candidate.  The model's optional suspect/replacement fields are
+            # only explanatory metadata.  Rejecting an otherwise valid full
+            # cue when those advisory spans are too broad discarded obvious
+            # repairs such as 做刘翔→做流量 before audio was ever consulted.
             if not contract_error and reported_suspect and reported_suspect != derived_suspect:
-                contract_error = "REPORTED_SUSPECT_SCOPE_MISMATCH"
+                scope_warnings.append("REPORTED_SUSPECT_SCOPE_MISMATCH")
             if (
                 not contract_error
                 and reported_replacement
                 and reported_replacement != derived_replacement
             ):
-                contract_error = "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+                scope_warnings.append("REPORTED_REPLACEMENT_SCOPE_MISMATCH")
             if not contract_error and repair_class not in _AUTO_REPAIR_CLASSES:
                 contract_error = "REPAIR_CLASS_DISCLOSURE_ONLY"
             if (
@@ -211,6 +218,8 @@ def audit_final_subtitles(
         }
         if proposed and contract_error:
             finding["suggestion_rejected_reason"] = contract_error
+        if scope_warnings:
+            finding["reported_scope_warnings"] = scope_warnings
         findings.append(finding)
         if len(findings) >= MAX_FINDINGS:
             break

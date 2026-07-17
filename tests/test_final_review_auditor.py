@@ -141,7 +141,7 @@ def test_auditor_prompt_distinguishes_gibberish_code_switch_from_real_foreign_di
     assert "不行不行，并非不行" in prompt
 
 
-def test_auditor_rejects_full_cue_suggestion_for_partial_suspect():
+def test_auditor_derives_bounded_edit_despite_advisory_scope_mismatch():
     source = _srt("地狱在理解，觉得成人吗")
     findings = audit_final_subtitles(
         source,
@@ -159,8 +159,13 @@ def test_auditor_rejects_full_cue_suggestion_for_partial_suspect():
         extract_json=_extract,
     )
 
-    assert findings[0]["suggestion"] is None
-    assert findings[0]["suggestion_rejected_reason"] == "REPORTED_SUSPECT_SCOPE_MISMATCH"
+    assert findings[0]["suspect"] == "在理解"
+    assert findings[0]["suggestion"] == "再爱我"
+    assert findings[0]["proposed_full_cue"] == "地狱再爱我，觉得成人吗"
+    assert findings[0]["reported_scope_warnings"] == [
+        "REPORTED_SUSPECT_SCOPE_MISMATCH",
+        "REPORTED_REPLACEMENT_SCOPE_MISMATCH",
+    ]
 
 
 def test_auditor_derives_title_span_only_when_source_surface_is_witnessed():
