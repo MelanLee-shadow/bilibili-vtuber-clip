@@ -3200,6 +3200,22 @@ def test_parse_lrc_text_skips_metadata_and_sorts():
     assert lines[1].time_ms == 12_500
 
 
+def test_parse_lrc_text_skips_compact_vocaloid_credit_heads():
+    lrc = (
+        "[00:00.00]词/曲/编:跳蝻\n"
+        "[00:13.36]扒谱： Even\n"
+        "[00:17.81]调校： Even\n"
+        "[00:23.38]混：落泠和羽、 Even\n"
+        "[00:36.84]在星海漫过沉没\n"
+        "[00:41.70]指尖流苏任苍穹闪烁\n"
+    )
+
+    assert [line.text for line in parse_lrc_text(lrc)] == [
+        "在星海漫过沉没",
+        "指尖流苏任苍穹闪烁",
+    ]
+
+
 def test_non_lyric_marker_filter_keeps_real_lyric_sentences():
     lrc = (
         "[00:01.00]SOLO\n"
