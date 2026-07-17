@@ -57,6 +57,7 @@ from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
     apply_source_language_preservation_guard,
     apply_title_mark_balance_guard,
+    audit_foreign_script_consistency,
 )
 from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
@@ -665,6 +666,7 @@ def _finalize_text_evidence(
     song_name_candidates: list[str],
     session_topic_authorities: tuple[dict[str, Any], ...],
     source_language_witness_srt: str,
+    human_text_override_configured: bool,
     out_root: Path,
     cid: str,
 ) -> TextEvidenceResult:
@@ -674,6 +676,17 @@ def _finalize_text_evidence(
     chat_authority_audit[
         "final_source_language_preservation_audit"
     ] = final_source_language_audit
+    foreign_script_audit = audit_foreign_script_consistency(srt_text)
+    if (
+        foreign_script_audit["status"]
+        == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
+        and human_text_override_configured
+    ):
+        foreign_script_audit["status"] = "DEFERRED_TO_BOUND_TEXT_OVERRIDE"
+        foreign_script_audit[
+            "deferred_reason"
+        ] = "candidate has a hash-bound reviewed text override before delivery"
+    chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
     chat_authority_audit["title_mark_balance_audit"] = title_mark_balance_audit
     srt_text, final_session_topic_absorption_audit = absorb_session_topic_entities(
@@ -717,6 +730,13 @@ def _finalize_text_evidence(
         json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    if (
+        foreign_script_audit["status"]
+        == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
+    ):
+        raise SystemExit(
+            f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
+        )
     if (
         chat_authority_audit["status"]
         in {"FAILED", "ENTITY_VERDICT_REQUIRED", "SC_SENDER_VERDICT_REQUIRED"}
@@ -821,6 +841,7 @@ def run_text_pipeline(
         song_name_candidates=draft.song_name_candidates,
         session_topic_authorities=draft.session_topic_authorities,
         source_language_witness_srt=draft.source_language_witness_srt,
+        human_text_override_configured=text_override_path is not None,
         out_root=out_root,
         cid=cid,
     )

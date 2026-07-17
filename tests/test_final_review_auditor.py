@@ -119,6 +119,27 @@ def test_auditor_llm_failure_returns_empty():
     )
 
 
+def test_auditor_prompt_distinguishes_gibberish_code_switch_from_real_foreign_dialogue():
+    captured = {}
+
+    def review(prompt):
+        captured["prompt"] = prompt
+        return '{"findings":[]}'
+
+    audit_final_subtitles(
+        _srt("因为李豆沙是侄女，kowa，kowai", "本物の気持ちです"),
+        llm_call=review,
+        extract_json=_extract,
+    )
+
+    prompt = captured["prompt"]
+    assert "侄女，kowa，kowai" in prompt
+    assert "真正的日语、英语对白" in prompt
+    assert "不能翻译" in prompt
+    assert "重复或近乎平行的句式" in prompt
+    assert "直女/侄女" in prompt
+
+
 def test_auditor_rejects_full_cue_suggestion_for_partial_suspect():
     source = _srt("地狱在理解，觉得成人吗")
     findings = audit_final_subtitles(

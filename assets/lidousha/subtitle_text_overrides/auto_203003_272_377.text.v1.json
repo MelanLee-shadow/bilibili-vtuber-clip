@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "candidate_id": "auto_203003_272_377",
+  "source_srt_sha256": "a41d125beeb87887922204b82a02772c061419a1169957243d418af2a4363da0",
+  "text_final_srt_sha256": "89491e4e95d3d986a3c1d2b4d3ca31f9d5722d52d22dcbdc069dacdd0f9b4a04",
+  "overrides": [
+    {
+      "source_cue": 9,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:14,740",
+        "end": "00:00:20,910",
+        "text": "因为李豆沙是侄女，kowa，kowai，哈哈"
+      },
+      "text": "因为李豆沙是夸夸怪的，哈哈",
+      "authority": "Gemini paid-backup forced-choice audio adjudication observed the exact phrase at 00:14.740-00:20.910",
+      "reason": "Restore the acoustically verified predicate after ASR produced a semantically broken mixed-language fragment"
+    }
+  ]
+}

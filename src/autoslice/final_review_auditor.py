@@ -55,6 +55,9 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
 - self_ref：主播自称混乱可疑处（她的自称专名是「李豆沙」和「小李」，两者平等；
   出现疑似自称却写成别的词的地方报出来）；
 - entity：疑似专名/人名/作品名被写错的地方。
+- mixed_language_anomaly：中文句子中突然出现无来源支撑、且让整句失去语义的音译或
+  拉丁字母碎片（例如“侄女，kowa，kowai”）。真正的日语、英语对白和正常
+  code-switch 必须保留，不能翻译；只有前后语义明显崩坏的混杂才报为 nonword/context。
 
 已知梗词与专名表（钦定写法，一律不要报）：
 {glossary}
@@ -68,7 +71,10 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
    或 disclosure_only（语法润色、意译、宽泛改写、无来源专名等只披露）。
 4. source_backed_entity 必须同时给 source_surface；该完整词面必须逐字出现在别的字幕行
    或上方钦定词表中，不能只凭常识猜。evidence_cue_ids 列出支撑语境的字幕编号。
-5. suspect/replacement 可选；若给出，必须等于 current cue 与 proposed_full_cue 的最小
+5. 主动比较前后重复或近乎平行的句式：若同一个专名槽位一次写成已有权威专名、
+   另一次漂成无关普通词，要报后一次；不要因为错误词本身是合法词典词就放过。
+   同样，像身份讨论里的「直女/侄女」这类同音词必须按整段语义检查。
+6. suspect/replacement 可选；若给出，必须等于 current cue 与 proposed_full_cue 的最小
    单段差异，否则建议会被代码拒绝。不确定就不报。最多 {max_findings} 条。
 
 字幕（每行：编号. 文本）：

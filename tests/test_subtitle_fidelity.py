@@ -5,6 +5,7 @@ from src.autoslice.subtitle_fidelity import (
     apply_source_language_preservation_guard,
     apply_subtitle_fidelity_guard,
     apply_title_mark_balance_guard,
+    audit_foreign_script_consistency,
     digit_reading_equivalent,
 )
 
@@ -184,6 +185,29 @@ def test_source_language_guard_reverts_english_speech_translation():
     assert audit["status"] == "REVERTED_TRANSLATION"
 
 
+def test_foreign_script_consistency_blocks_japanese_passage_decoded_as_english_word_salad():
+    audit = audit_foreign_script_consistency(
+        _srt(
+            "私は稼げない。",
+            "だって小学生だもん。",
+            "what's happening ah it's true",
+            "you don't know how to answer",
+            "普通的中文主播反应",
+        )
+    )
+
+    assert audit["status"] == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
+    assert [row["cue_index"] for row in audit["latin_heavy_cues"]] == [3, 4]
+
+
+def test_foreign_script_consistency_allows_real_japanese_or_isolated_code_switch():
+    audit = audit_foreign_script_consistency(
+        _srt("私は稼げない。", "だって小学生だもん。", "AI is useful", "正常中文")
+    )
+
+    assert audit["status"] == "CLEAN"
+
+
 def test_title_mark_guard_closes_one_dangling_open_mark_before_punctuation():
     guarded, audit = apply_title_mark_balance_guard(
         _srt("一起《与你打灰到生命尽头。", "完整《标题》不变")
@@ -191,6 +215,16 @@ def test_title_mark_guard_closes_one_dangling_open_mark_before_punctuation():
 
     assert "一起《与你打灰到生命尽头》。" in guarded
     assert "完整《标题》不变" in guarded
+    assert audit["status"] == "APPLIED"
+    assert audit["repair_count"] == 1
+
+
+def test_title_mark_guard_opens_one_leading_title_with_dangling_close_mark():
+    guarded, audit = apply_title_mark_balance_guard(
+        _srt("冒险与打灰》，这个什么与什么的", "普通句子不变")
+    )
+
+    assert "《冒险与打灰》，这个什么与什么的" in guarded
     assert audit["status"] == "APPLIED"
     assert audit["repair_count"] == 1
 

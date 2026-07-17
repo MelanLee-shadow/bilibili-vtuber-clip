@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "candidate_id": "auto_210002_297_513",
-  "source_srt_sha256": "f630d4089f0f20551da28aaebb9a0599650c1ce6ec981d20c92dc9d83225e174",
-  "text_final_srt_sha256": "d24cf03704162c4dd3cedef65794e58fc23019d73e9e3dac1d278a600ac7bf51",
+  "source_srt_sha256": "bd81caff61d442768522dcb33752bfd0938c06daeda662829200bc31f2656b2d",
+  "text_final_srt_sha256": "67479a286c04d7769498a26c6cbfc73bfd286f34d123125ad83074265a070343",
   "overrides": [
     {
       "source_cue": 3,
@@ -17,6 +17,18 @@
       "reason": "The challenge recipient was dropped and 一个 was duplicated into 下一个 by ASR"
     },
     {
+      "source_cue": 18,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:40,270",
+        "end": "00:00:42,050",
+        "text": "台词可以由评论区来定"
+      },
+      "text": "台词可以由kmx来定",
+      "authority": "The same sentence is repeated at cue 14 with the canonical proper name and Ivan confirmed the referent is kmx",
+      "reason": "Restore the repeated proper-name slot after the second occurrence drifted to an unrelated generic noun"
+    },
+    {
       "source_cue": 54,
       "action": "replace",
       "expect": {
@@ -27,6 +39,30 @@
       "text": "李豆沙一直是为爱做1",
       "authority": "Ivan reviewed the difficult 03:17 source audio and confirmed this exact wording",
       "reason": "Restore the clipped predicate without asking the semantic lane to guess an unclear utterance"
+    },
+    {
+      "source_cue": 55,
+      "action": "replace",
+      "expect": {
+        "start": "00:03:19,090",
+        "end": "00:03:20,090",
+        "text": "侄女"
+      },
+      "text": "直女",
+      "authority": "Immediate discourse contrast: the host asks whether she can still be a straight woman, not somebody's niece",
+      "reason": "Correct a homophone that is a dictionary word but impossible in the local identity discussion"
+    },
+    {
+      "source_cue": 56,
+      "action": "replace",
+      "expect": {
+        "start": "00:03:23,180",
+        "end": "00:03:25,700",
+        "text": "李豆沙还能是侄女吗"
+      },
+      "text": "李豆沙还能是直女吗",
+      "authority": "Immediate discourse contrast: the host asks whether she can still be a straight woman, not somebody's niece",
+      "reason": "Carry the same homophone correction into the complete repeated question"
     }
   ]
 }

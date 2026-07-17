@@ -184,12 +184,19 @@ def absorb_session_topic_entities(
             length = len(canonical)
             cursor = 0
             while cursor <= len(text) - length:
-                surface = text[cursor : cursor + length]
-                if (
-                    surface == canonical
-                    or not _CJK_RUN_RX.fullmatch(surface)
-                    or surface[-2:] != canonical[-2:]
+                exact_starts = [
+                    match.start()
+                    for match in re.finditer(re.escape(canonical), text)
+                ]
+                if any(
+                    cursor < exact_start + length
+                    and exact_start < cursor + length
+                    for exact_start in exact_starts
                 ):
+                    cursor += 1
+                    continue
+                surface = text[cursor : cursor + length]
+                if surface == canonical or not _CJK_RUN_RX.fullmatch(surface):
                     cursor += 1
                     continue
                 surface_reading = _reading(surface)
@@ -199,7 +206,42 @@ def absorb_session_topic_entities(
                     " ".join(canonical_reading),
                     autojunk=False,
                 ).ratio()
-                if similarity < 0.80:
+                syllable_similarities = [
+                    SequenceMatcher(None, actual, expected, autojunk=False).ratio()
+                    for actual, expected in zip(surface_reading, canonical_reading)
+                ]
+                mean_syllable_similarity = (
+                    sum(syllable_similarities) / len(syllable_similarities)
+                    if syllable_similarities
+                    else 0.0
+                )
+                suffix_similarity = (
+                    sum(syllable_similarities[-2:]) / 2
+                    if len(syllable_similarities) >= 2
+                    else 0.0
+                )
+                exact_syllables = sum(
+                    actual == expected
+                    for actual, expected in zip(surface_reading, canonical_reading)
+                )
+                # The authority itself has two independent structured sources.
+                # Therefore permit the common ASR failure where every
+                # character drifts slightly (杖剑传说 -> 钻戒传送), provided
+                # the entire syllable sequence remains close and at least one
+                # syllable is exact.  This is intentionally stricter than a
+                # generic fuzzy text replacement and applies only to the
+                # already corroborated session topic name.
+                phonetic_sequence_match = (
+                    len(surface_reading) == len(canonical_reading)
+                    and mean_syllable_similarity >= 0.68
+                    and suffix_similarity >= 0.70
+                    and min(syllable_similarities, default=0.0) >= 0.50
+                    and exact_syllables >= 1
+                )
+                standard_phonetic_match = (
+                    similarity >= 0.80 and suffix_similarity >= 0.80
+                )
+                if not standard_phonetic_match and not phonetic_sequence_match:
                     cursor += 1
                     continue
                 text = text[:cursor] + canonical + text[cursor + length :]
@@ -209,6 +251,11 @@ def absorb_session_topic_entities(
                         "surface": surface,
                         "canonical": canonical,
                         "pinyin_similarity": round(similarity, 6),
+                        "mean_syllable_similarity": round(
+                            mean_syllable_similarity, 6
+                        ),
+                        "suffix_syllable_similarity": round(suffix_similarity, 6),
+                        "exact_syllables": exact_syllables,
                         "authority": "ROOM_TITLE_PLUS_FULL_SESSION_STRUCTURED_CHAT",
                     }
                 )

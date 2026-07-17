@@ -435,10 +435,56 @@ def apply_source_language_preservation_guard(
     return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
 
 
+def audit_foreign_script_consistency(srt_text: str) -> dict[str, Any]:
+    """Detect a Japanese passage decoded as several English-heavy ASR cues.
+
+    Source-language preservation prevents translation, but the ASR witness can
+    itself be wrong.  A nearby run of Latin-heavy cues after kana dialogue is
+    therefore held for language-aware transcription instead of being delivered.
+    """
+
+    cues = parse_srt_cues(srt_text)
+    kana_indexes = [
+        index
+        for index, cue in enumerate(cues, start=1)
+        if len(_JAPANESE_KANA_RX.findall(cue.text)) >= 2
+    ]
+    latin_rows = [
+        {
+            "cue_index": index,
+            "text": cue.text,
+            "latin_word_count": len(_LATIN_WORD_RX.findall(cue.text)),
+        }
+        for index, cue in enumerate(cues, start=1)
+        if len(_LATIN_WORD_RX.findall(cue.text)) >= 3
+        and len(_JAPANESE_KANA_RX.findall(cue.text)) == 0
+    ]
+    clustered = [
+        row
+        for row in latin_rows
+        if any(abs(int(row["cue_index"]) - kana_index) <= 12 for kana_index in kana_indexes)
+    ]
+    blocked = bool(kana_indexes) and len(clustered) >= 2
+    return {
+        "schema_version": "foreign-script-consistency-audit.v1",
+        "status": (
+            "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER" if blocked else "CLEAN"
+        ),
+        "kana_cue_indexes": kana_indexes,
+        "latin_heavy_cues": clustered,
+        "reason": (
+            "Japanese passage contains a nearby run of Latin-heavy ASR cues; "
+            "language-aware source transcription is required"
+            if blocked
+            else None
+        ),
+    }
+
+
 def apply_title_mark_balance_guard(
     srt_text: str,
 ) -> tuple[str, dict[str, Any]]:
-    """Close one clearly dangling Chinese title mark without rewriting text."""
+    """Balance one clearly dangling Chinese title mark without rewriting text."""
 
     cues = parse_srt_cues(srt_text)
     audit: dict[str, Any] = {
@@ -481,6 +527,49 @@ def apply_title_mark_balance_guard(
                 }
             )
             text = repaired
+        elif closing_count == opening_count + 1:
+            previous_text = cues[index - 2].text if index > 1 else ""
+            if previous_text.count("《") > previous_text.count("》"):
+                audit["unresolved"].append(
+                    {
+                        "cue_index": index,
+                        "text": text,
+                        "reason": "POSSIBLE_CROSS_CUE_TITLE_MARK_PAIR",
+                    }
+                )
+            else:
+                leading_title = re.match(
+                    r"^([^《》：:，。！？!?]{2,30})》(?=[，。！？!?.,、]|$)",
+                    text,
+                )
+                prefixed_prose = (
+                    "接下来",
+                    "下一首",
+                    "这个叫",
+                    "作品叫",
+                    "书名叫",
+                    "标题叫",
+                )
+                if leading_title and not leading_title.group(1).startswith(prefixed_prose):
+                    repaired = "《" + text
+                    audit["repairs"].append(
+                        {
+                            "cue_index": index,
+                            "before": text,
+                            "after": repaired,
+                            "reason": "ONE_DANGLING_CHINESE_TITLE_CLOSE_MARK",
+                        }
+                    )
+                    text = repaired
+                else:
+                    audit["unresolved"].append(
+                        {
+                            "cue_index": index,
+                            "text": text,
+                            "opening_count": opening_count,
+                            "closing_count": closing_count,
+                        }
+                    )
         elif opening_count != closing_count:
             audit["unresolved"].append(
                 {

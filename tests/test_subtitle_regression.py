@@ -1,9 +1,11 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from src.autoslice.subtitle_regression import (
     SubtitleRegressionError,
+    load_subtitle_regression_document,
     verify_subtitle_regression_surfaces,
 )
 
@@ -127,3 +129,23 @@ def test_truth_asset_is_bound_to_candidate_and_rejects_symlink(tmp_path):
             final_text_srt=_srt("x"),
             final_speaker_srt=_srt("x"),
         )
+
+
+def test_all_committed_subtitle_regression_assets_are_loadable():
+    root = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_regressions"
+    )
+    paths = sorted(root.glob("*.subtitle-regression.v1.json"))
+    assert paths
+
+    for path in paths:
+        candidate_id = json.loads(path.read_text(encoding="utf-8"))["candidate_id"]
+        document, digest = load_subtitle_regression_document(
+            path,
+            candidate_id=candidate_id,
+        )
+        assert document["candidate_id"] == candidate_id
+        assert len(digest) == 64

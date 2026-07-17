@@ -37,17 +37,41 @@ def test_full_session_title_chat_authority_absorbs_all_close_name_variants(
             "为什么这个藏剑传说官方要找我",
             "能不能把战争传说玩成Galgame",
             "战舰传说和钻剑传说都应该是同一个名字",
+            "谢谢杖剑传说老师送的私人飞机，不是钻戒传送",
         ),
         authorities,
     )
-    assert repaired.count("杖剑传说") == 4
+    assert repaired.count("杖剑传说") == 6
     assert not any(
-        wrong in repaired for wrong in ("藏剑传说", "战争传说", "战舰传说", "钻剑传说")
+        wrong in repaired
+        for wrong in (
+            "藏剑传说",
+            "战争传说",
+            "战舰传说",
+            "钻剑传说",
+            "钻戒传送",
+        )
+    )
+    assert "谢谢杖剑传说老师送的私人飞机，不是杖剑传说" in repaired
+    assert all(
+        malformed not in repaired
+        for malformed in ("杖剑传说说", "杖剑传说说玩")
     )
     assert audit["status"] == "APPLIED"
     assert {row["authority"] for row in audit["repairs"]} == {
         "ROOM_TITLE_PLUS_FULL_SESSION_STRUCTURED_CHAT"
     }
+
+
+def test_session_topic_phonetic_absorption_does_not_match_unrelated_chinese():
+    repaired, audit = absorb_session_topic_entities(
+        _srt("妹妹提升好感度", "今晚大家一起聊天"),
+        [{"canonical": "杖剑传说"}],
+    )
+
+    assert "妹妹提升好感度" in repaired
+    assert "今晚大家一起聊天" in repaired
+    assert audit["status"] == "CLEAN"
 
 
 def test_room_title_without_differing_chat_spelling_is_not_auto_authority(
