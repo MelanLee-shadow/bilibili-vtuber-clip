@@ -1,0 +1,52 @@
+{
+  "schema_version": 3,
+  "candidate_id": "auto_162645_264_391",
+  "source_cue_witness_sha256": "d4516030be20768461f22e603d3387454ab048b744d2e45e751a0b2608e81e98",
+  "decision_output_witness_sha256": "fc6906b138f860bfbd7798bc00ada8e07d5ad3b9a9f53831b4277f5bbe36aaaa",
+  "overrides": [
+    {
+      "source_cue": 5,
+      "action": "replace_pattern",
+      "locator": {
+        "start": "00:00:47,500",
+        "end": "00:00:50,950"
+      },
+      "pattern": "^.+$",
+      "authority": "committed subtitle regression truth asset auto_162645_264_391.subtitle-regression.v1.json",
+      "text": "フェイト・テスタロッサ"
+    },
+    {
+      "source_cue": 6,
+      "action": "replace_pattern",
+      "locator": {
+        "start": "00:00:52,600",
+        "end": "00:00:54,050"
+      },
+      "pattern": "^.+$",
+      "authority": "committed subtitle regression truth asset auto_162645_264_391.subtitle-regression.v1.json",
+      "text": "私はフェイトちゃんと結婚をしたいだけなんだけど"
+    },
+    {
+      "source_cue": 11,
+      "action": "replace_pattern",
+      "locator": {
+        "start": "00:01:08,811",
+        "end": "00:01:10,550"
+      },
+      "pattern": "^.+$",
+      "authority": "committed subtitle regression truth asset auto_162645_264_391.subtitle-regression.v1.json",
+      "text": "フェイトちゃん、なんで一千万にこだわるの"
+    },
+    {
+      "source_cue": 12,
+      "action": "replace_pattern",
+      "locator": {
+        "start": "00:01:14,250",
+        "end": "00:01:15,400"
+      },
+      "pattern": "^.+$",
+      "authority": "committed subtitle regression truth asset auto_162645_264_391.subtitle-regression.v1.json",
+      "text": "そんなに、そのお衣装はお高いの"
+    }
+  ]
+}
