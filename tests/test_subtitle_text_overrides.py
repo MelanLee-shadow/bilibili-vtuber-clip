@@ -356,3 +356,56 @@ def test_timeline_substring_override_survives_sentence_resegmentation(
     )
     with pytest.raises(ValueError, match="matched 0 cues"):
         apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+
+def test_optional_timeline_substring_override_skips_when_source_is_already_clean(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        """1
+00:00:55,730 --> 00:00:58,650
+don't know那么多，所有的
+""",
+        encoding="utf-8",
+    )
+    document = {
+        "schema_version": 3,
+        "candidate_id": "optional_substring_test",
+        "source_cue_witness_sha256": "",
+        "decision_output_witness_sha256": "",
+        "overrides": [
+            {
+                "source_cue": 1,
+                "action": "replace_substring",
+                "locator": {
+                    "start": "00:00:55,000",
+                    "end": "00:00:59,000",
+                },
+                "old_text": "don't know",
+                "text": "都问",
+                "required": False,
+                "authority": "reviewed conditional repair",
+            }
+        ],
+    }
+    cues = parse_srt(source)
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(cues, document)
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(
+        cues, document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    source.write_text(
+        """1
+00:00:55,730 --> 00:00:57,410
+懂得那么多。
+""",
+        encoding="utf-8",
+    )
+    output = tmp_path / "out.srt"
+    manifest = apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+    assert output.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
+    assert manifest["decisions"] == []

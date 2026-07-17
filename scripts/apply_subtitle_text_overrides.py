@@ -157,6 +157,8 @@ def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, di
                     and cue.end > start
                     and old_text in cue.text
                 ]
+                if not matches and override.get("required") is False:
+                    continue
             else:
                 expected = override.get("expect")
                 if not isinstance(expected, dict):
@@ -249,6 +251,26 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
             ),
         }
 
+    witness_rows = [
+        witness_row(source_index) for source_index in sorted(by_index)
+    ]
+    if timeline_bound:
+        raw_overrides = document.get("overrides") or []
+        mapped_override_ids = {id(override) for override in by_index.values()}
+        witness_rows.extend(
+            {
+                "source_cue": int(override.get("source_cue", 0)),
+                "action": "replace_substring",
+                "locator": override.get("locator"),
+                "old_text": str(override.get("old_text") or ""),
+            }
+            for override in raw_overrides
+            if isinstance(override, dict)
+            and id(override) not in mapped_override_ids
+            and str(override.get("action", "replace")) == "replace_substring"
+            and override.get("required") is False
+        )
+        witness_rows.sort(key=lambda row: int(row["source_cue"]))
     payload = {
         "schema_version": (
             "subtitle-text-timeline-cue-witness.v1"
@@ -257,7 +279,7 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
         ),
         "candidate_id": str(document.get("candidate_id", "")),
         **({} if timeline_bound else {"source_cue_count": len(cues)}),
-        "cues": [witness_row(source_index) for source_index in sorted(by_index)],
+        "cues": witness_rows,
     }
     return _canonical_sha256(payload)
 
@@ -297,6 +319,23 @@ def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]
                     }
                 )
             reviewed_outputs.append(row)
+        raw_overrides = document.get("overrides") or []
+        mapped_override_ids = {id(override) for override in by_index.values()}
+        reviewed_outputs.extend(
+            {
+                "source_cue": int(override.get("source_cue", 0)),
+                "action": "replace_substring",
+                "locator": override.get("locator"),
+                "old_text": str(override.get("old_text") or ""),
+                "text": str(override.get("text", "")).strip(),
+            }
+            for override in raw_overrides
+            if isinstance(override, dict)
+            and id(override) not in mapped_override_ids
+            and str(override.get("action", "replace")) == "replace_substring"
+            and override.get("required") is False
+        )
+        reviewed_outputs.sort(key=lambda row: int(row["source_cue"]))
         payload = {
             "schema_version": "subtitle-text-timeline-decision-witness.v1",
             "candidate_id": str(document.get("candidate_id", "")),

@@ -1,24 +1,20 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_162645_712_967",
-  "source_cue_witness_sha256": "9f56d1ff6ddd466f965c12d20ebefab203d8cf7415b8c4b2336213be2fc189db",
-  "decision_output_witness_sha256": "bff1c38241fd21229c5922517c48a51e83670b85028b8f6e589717df7fb6f458",
+  "source_cue_witness_sha256": "af87666796f73286f9be3b5663e633cfc0715940a552ffc3ce3009ce6179920b",
+  "decision_output_witness_sha256": "b621ef1034ed32c9b35df253c80e763b19ed5ac6abbd9b7548184923f6d40d59",
   "overrides": [
     {
       "source_cue": 12,
-      "action": "replace",
-      "expect": {
+      "action": "replace_substring",
+      "locator": {
         "start": "00:00:47,790",
-        "end": "00:00:49,590",
-        "text": "有没有侄女女友喜欢吗？”",
-        "text_alternatives": [
-          "有没有侄女女友喜欢吗？",
-          "有没有侄女女友喜欢吗"
-        ]
+        "end": "00:00:49,590"
       },
-      "text": "有没有直女女友喜欢吗？",
+      "old_text": "侄女",
+      "text": "直女",
       "authority": "The surrounding sexuality/type discussion establishes 直女; 侄女 is a homophone with no valid referent",
-      "reason": "Correct a contextually impossible but dictionary-valid homophone"
+      "reason": "Correct the contextually impossible homophone without freezing optional surrounding words"
     },
     {
       "source_cue": 14,
@@ -45,8 +41,9 @@
       },
       "old_text": "don't know",
       "text": "都问",
+      "required": false,
       "authority": "Source-aware final review rejected the unsupported English phrase in this Chinese talk passage",
-      "reason": "Remove mixed-language ASR word salad while preserving the surrounding sentence and timing"
+      "reason": "Remove mixed-language ASR word salad when present; skip safely when the automatic transcript is already clean"
     }
   ]
 }
