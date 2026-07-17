@@ -3254,6 +3254,47 @@ def test_injected_lrc_filters_section_markers_and_credit_engineer_rows():
     ]
 
 
+def test_injected_lrc_filters_delayed_exact_title_card_before_first_lyric():
+    source = LrcResult(
+        provider="fixture",
+        song_title="莎图温的裙摆",
+        artist="fixture",
+        source_ref="fixture://timed-title-card",
+        lines=(
+            LrcLine(12_770, "莎图温的裙摆"),
+            LrcLine(36_400, "在星海漫过沉没"),
+            LrcLine(41_580, "指尖流苏任苍穹闪烁"),
+        ),
+    )
+
+    singable, removed = song_repair._singable_lrc_result(source)
+
+    assert removed == 1
+    assert [line.text for line in singable.lines] == [
+        "在星海漫过沉没",
+        "指尖流苏任苍穹闪烁",
+    ]
+
+
+def test_injected_lrc_keeps_song_title_when_it_is_part_of_continuous_lyrics():
+    source = LrcResult(
+        provider="fixture",
+        song_title="怎么办",
+        artist="fixture",
+        source_ref="fixture://sung-title",
+        lines=(
+            LrcLine(2_000, "怎么办"),
+            LrcLine(6_000, "我才能不再想念"),
+            LrcLine(10_000, "下一句歌词"),
+        ),
+    )
+
+    singable, removed = song_repair._singable_lrc_result(source)
+
+    assert removed == 0
+    assert singable.lines == source.lines
+
+
 def test_parse_lrc_text_filters_real_bilingual_credits_without_keyword_overreach():
     source = _anlian_lrc_with_real_bilingual_credits()
     ordinary_lyrics = [

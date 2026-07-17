@@ -420,15 +420,21 @@ def normalize_lyric_text(text: str) -> str:
 
 
 def _singable_lrc_result(lrc: LrcResult) -> tuple[LrcResult, int]:
-    """Remove explicit timed credits before recall, AGY, proof, and rendering.
+    """Remove timed metadata from provider, cached, pinned, and injected records
+    before recall, AGY, proof, and rendering."""
 
-    This is deliberately applied to caller-supplied/pinned ``LrcResult`` values
-    too, not only to provider text parsed in this process.  Cached or injected
-    canonical records must not reintroduce credit rows into the studio/live
-    arrangement gate or its coverage denominator.
-    """
-
-    singable = tuple(line for line in lrc.lines if not is_lrc_non_lyric_metadata(line.text))
+    title_identity = normalize_lyric_text(lrc.song_title)
+    singable_rows: list[LrcLine] = []
+    for index, line in enumerate(lrc.lines):
+        next_line = lrc.lines[index + 1] if index + 1 < len(lrc.lines) else None
+        is_timed_title_card = (
+            index < 3 and line.time_ms <= 20_000 and bool(title_identity)
+            and normalize_lyric_text(line.text) == title_identity
+            and next_line is not None and next_line.time_ms - line.time_ms >= 8_000
+        )
+        if not is_lrc_non_lyric_metadata(line.text) and not is_timed_title_card:
+            singable_rows.append(line)
+    singable = tuple(singable_rows)
     return (
         LrcResult(
             provider=lrc.provider,
