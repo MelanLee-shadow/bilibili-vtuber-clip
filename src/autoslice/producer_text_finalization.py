@@ -41,6 +41,10 @@ def verify_chat_authority_final_surfaces(
     decision_rows.extend(
         ("exact_read", row, str(row.get("exact_text") or ""))
         for row in audit.get("applied") or []
+        # A later hash-bound reviewed text decision owns a corrected homophone
+        # in the same cue.  The superseded chat proposal remains in the audit,
+        # but its old spelling is no longer a final-surface requirement.
+        if not row.get("reconciliation")
     )
     decision_rows.extend(
         ("sc_sender", row, str(row.get("after") or ""))

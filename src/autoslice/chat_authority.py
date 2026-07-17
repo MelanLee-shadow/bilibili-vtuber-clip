@@ -41,6 +41,9 @@ from src.autoslice.chat_evidence import (
     _srt_timestamp as _srt_timestamp,
     _render_srt as _render_srt,
 )
+from src.autoslice.reviewed_text_reconciliation import (
+    reconcile_reviewed_text_override_conflicts as reconcile_reviewed_text_override_conflicts,
+)
 from src.autoslice.chat_repair import (
     registered_entity_names as registered_entity_names,
     revert_unregistered_entity_repairs as revert_unregistered_entity_repairs,

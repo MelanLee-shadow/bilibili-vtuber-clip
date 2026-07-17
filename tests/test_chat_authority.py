@@ -26,6 +26,7 @@ from src.autoslice.chat_authority import (
     normalize_code_switch_surfaces,
     recording_start_epoch_ms,
     reconcile_pending_text_overrides,
+    reconcile_reviewed_text_override_conflicts,
     witness_disagreement_cues,
     introduced_term_cues,
 )
@@ -1735,6 +1736,128 @@ def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
         final_speaker_srt=missing_prefix,
         delivery_start_ms=0,
         delivery_end_ms=20_000,
+    )
+
+
+def test_reviewed_text_override_supersedes_conflicting_exact_chat_read():
+    delivery_start_ms = 712_000
+    final = (
+        "1\n"
+        "00:00:47,790 --> 00:00:49,590\n"
+        "有没有直女女友喜欢吗？\n"
+    )
+    audit = {
+        "applied": [
+            {
+                "evidence_id": "chat-evidence",
+                "exact_text": "有没有侄女女友",
+                "matched_start_ms": delivery_start_ms + 47_790,
+                "matched_end_ms": delivery_start_ms + 49_590,
+            }
+        ]
+    }
+    manifest = {
+        "status": "READY",
+        "override_document_sha256": "a" * 64,
+        "source_srt_sha256": "b" * 64,
+        "output_srt_sha256": "c" * 64,
+        "decisions": [
+            {
+                "source": {
+                    "source_index": 12,
+                    "start": "00:00:47,790",
+                    "end": "00:00:49,590",
+                    "text": "有没有侄女女友喜欢吗？",
+                },
+                "output_text": "有没有直女女友喜欢吗？",
+                "authority": "reviewed event semantics",
+                "reason": "correct the impossible homophone",
+            }
+        ],
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        copy.deepcopy(audit),
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=delivery_start_ms,
+        delivery_end_ms=delivery_start_ms + 60_000,
+    )
+    assert (
+        reconcile_reviewed_text_override_conflicts(
+            audit,
+            manifest,
+            delivery_start_ms=delivery_start_ms,
+        )
+        == 1
+    )
+    assert audit["applied"][0]["reconciliation"]["reason_code"] == (
+        "REVIEWED_TEXT_OVERRIDE_SUPERSEDES_CHAT_READ"
+    )
+    assert audit["superseded_chat_proposals"][-1]["reviewed_output_text"] == (
+        "有没有直女女友喜欢吗？"
+    )
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=delivery_start_ms,
+        delivery_end_ms=delivery_start_ms + 60_000,
+    )
+
+
+def test_unrelated_reviewed_text_override_does_not_supersede_chat_read():
+    delivery_start_ms = 712_000
+    final = (
+        "1\n"
+        "00:00:47,790 --> 00:00:49,590\n"
+        "有没有直女女友喜欢吗？\n"
+    )
+    audit = {
+        "applied": [
+            {
+                "evidence_id": "chat-evidence",
+                "exact_text": "有没有侄女女友",
+                "matched_start_ms": delivery_start_ms + 47_790,
+                "matched_end_ms": delivery_start_ms + 49_590,
+            }
+        ]
+    }
+    manifest = {
+        "status": "READY",
+        "override_document_sha256": "a" * 64,
+        "source_srt_sha256": "b" * 64,
+        "output_srt_sha256": "c" * 64,
+        "decisions": [
+            {
+                "source": {
+                    "source_index": 3,
+                    "start": "00:00:10,000",
+                    "end": "00:00:12,000",
+                    "text": "完全无关的一句",
+                },
+                "output_text": "另一句无关文本",
+                "authority": "reviewed source",
+                "reason": "unrelated correction",
+            }
+        ],
+    }
+
+    assert (
+        reconcile_reviewed_text_override_conflicts(
+            audit,
+            manifest,
+            delivery_start_ms=delivery_start_ms,
+        )
+        == 0
+    )
+    assert "reconciliation" not in audit["applied"][0]
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=delivery_start_ms,
+        delivery_end_ms=delivery_start_ms + 60_000,
     )
 
 

@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from src.autoslice.chat_authority import reconcile_pending_text_overrides
+from src.autoslice.chat_authority import (
+    reconcile_pending_text_overrides,
+    reconcile_reviewed_text_override_conflicts,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.producer_media import (
@@ -244,6 +247,11 @@ def _verify_final_authority(
         else final_text
     )
     pending_override_ok = reconcile_pending_text_overrides(
+        chat_authority_audit,
+        text_manifest,
+        delivery_start_ms=final_start,
+    )
+    reconcile_reviewed_text_override_conflicts(
         chat_authority_audit,
         text_manifest,
         delivery_start_ms=final_start,
