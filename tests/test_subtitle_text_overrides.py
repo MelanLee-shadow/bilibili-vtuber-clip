@@ -6,7 +6,9 @@ import pytest
 
 from scripts.apply_subtitle_text_overrides import (
     apply_document,
+    decision_output_witness_sha256,
     parse_srt,
+    source_cue_witness_sha256,
     validate_bound_override_document,
 )
 
@@ -160,3 +162,63 @@ def test_bound_human_decision_proves_candidate_source_and_derived_final(tmp_path
             expected_source_srt_sha256=document["source_srt_sha256"],
             expected_final_srt_sha256=final_sha,
         )
+
+
+def _cue_bound_document(source: Path) -> dict:
+    document = {
+        "schema_version": 2,
+        "candidate_id": "cue_bound_test",
+        "source_cue_count": 3,
+        "overrides": [
+            {
+                "source_cue": 2,
+                "expect": {
+                    "start": "00:00:02,000",
+                    "end": "00:00:04,000",
+                    "text": "因为李豆沙会一直说我帅",
+                },
+                "authority": "Ivan direct correction",
+                "text": "因为李豆沙会一直说话",
+            }
+        ],
+    }
+    cues = parse_srt(source)
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(cues, document)
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(cues, document)
+    return document
+
+
+def test_cue_bound_override_ignores_unreviewed_punctuation_drift(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE, encoding="utf-8")
+    document = _cue_bound_document(source)
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    source.write_text(SOURCE.replace("哼，啊，不对", "哼啊，不对。"), encoding="utf-8")
+    output = tmp_path / "out.srt"
+    manifest = apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+    assert [cue.text for cue in parse_srt(output)] == [
+        "TA想问是三个位置哦",
+        "因为李豆沙会一直说话",
+        "哼啊，不对。",
+    ]
+    assert manifest["override_schema_version"] == 2
+    assert manifest["candidate_id"] == "cue_bound_test"
+
+
+def test_cue_bound_override_rejects_reviewed_cue_or_count_drift(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE, encoding="utf-8")
+    document = _cue_bound_document(source)
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    source.write_text(SOURCE.replace("因为李豆沙会一直说我帅", "因为李豆沙会说我帅"), encoding="utf-8")
+    with pytest.raises(ValueError, match="witness mismatch"):
+        apply_document(source, overrides, tmp_path / "out.srt", tmp_path / "manifest.json")
+
+    source.write_text(SOURCE.rsplit("\n\n", 1)[0] + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="cue count drift"):
+        apply_document(source, overrides, tmp_path / "out.srt", tmp_path / "manifest.json")

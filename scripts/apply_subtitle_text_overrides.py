@@ -97,14 +97,17 @@ def _expect(cue: TextCue, override: dict[str, Any]) -> None:
             )
 
 
-def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list[TextCue], list[dict[str, Any]]]:
-    if document.get("schema_version") != 1:
-        raise ValueError("text override schema_version must be 1")
+def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    schema_version = document.get("schema_version")
+    if schema_version not in {1, 2}:
+        raise ValueError("text override schema_version must be 1 or 2")
     raw = document.get("overrides")
     if not isinstance(raw, list):
         raise ValueError("text overrides must be a list")
     by_index: dict[int, dict[str, Any]] = {}
     for override in raw:
+        if not isinstance(override, dict):
+            raise ValueError("each text override must be an object")
         source_index = int(override.get("source_cue", 0))
         if not 1 <= source_index <= len(cues):
             raise ValueError(f"text override references missing cue {source_index}")
@@ -114,6 +117,71 @@ def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list
         if not authority:
             raise ValueError(f"text override for cue {source_index} has no authority")
         by_index[source_index] = override
+    return by_index
+
+
+def _canonical_sha256(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> str:
+    """Bind only reviewed source cues while still binding candidate and cue layout."""
+
+    by_index = _override_map(cues, document)
+    payload = {
+        "schema_version": "subtitle-text-cue-witness.v1",
+        "candidate_id": str(document.get("candidate_id", "")),
+        "source_cue_count": len(cues),
+        "cues": [
+            {
+                "source_cue": source_index,
+                "start": cues[source_index - 1].start,
+                "end": cues[source_index - 1].end,
+                "text": cues[source_index - 1].text,
+            }
+            for source_index in sorted(by_index)
+        ],
+    }
+    return _canonical_sha256(payload)
+
+
+def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> str:
+    """Bind the reviewed decisions without binding unrelated automatic cues."""
+
+    by_index = _override_map(cues, document)
+    reviewed_outputs: list[dict[str, Any]] = []
+    for source_index, override in sorted(by_index.items()):
+        cue = cues[source_index - 1]
+        action = str(override.get("action", "replace"))
+        if action == "drop":
+            reviewed_outputs.append({"source_cue": source_index, "action": "drop"})
+            continue
+        reviewed_outputs.append(
+            {
+                "source_cue": source_index,
+                "action": action,
+                "start": cue.start,
+                "end": cue.end,
+                "text": str(override.get("text", "")).strip(),
+            }
+        )
+    payload = {
+        "schema_version": "subtitle-text-decision-witness.v1",
+        "candidate_id": str(document.get("candidate_id", "")),
+        "source_cue_count": len(cues),
+        "reviewed_outputs": reviewed_outputs,
+    }
+    return _canonical_sha256(payload)
+
+
+def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list[TextCue], list[dict[str, Any]]]:
+    by_index = _override_map(cues, document)
 
     output: list[TextCue] = []
     decisions: list[dict[str, Any]] = []
@@ -194,20 +262,55 @@ def validate_bound_override_document(
 def apply_document(source: Path, document_path: Path, output: Path, manifest_path: Path) -> dict[str, Any]:
     document = json.loads(document_path.read_text(encoding="utf-8"))
     actual_source_hash = sha256_file(source)
-    expected_source_hash = str(document.get("source_srt_sha256", ""))
-    if actual_source_hash != expected_source_hash:
-        raise ValueError(
-            f"source SRT hash mismatch: override expects {expected_source_hash!r}, got {actual_source_hash!r}"
-        )
     source_cues = parse_srt(source)
+    schema_version = document.get("schema_version")
+    witness_manifest: dict[str, Any] = {}
+    if schema_version == 1:
+        expected_source_hash = str(document.get("source_srt_sha256", ""))
+        if actual_source_hash != expected_source_hash:
+            raise ValueError(
+                f"source SRT hash mismatch: override expects {expected_source_hash!r}, got {actual_source_hash!r}"
+            )
+    elif schema_version == 2:
+        candidate_id = str(document.get("candidate_id", "")).strip()
+        if not candidate_id:
+            raise ValueError("cue-bound text override has no candidate_id")
+        expected_cue_count = int(document.get("source_cue_count", 0))
+        if len(source_cues) != expected_cue_count:
+            raise ValueError(
+                "source cue count drift: "
+                f"expected {expected_cue_count}, got {len(source_cues)}"
+            )
+        actual_source_witness = source_cue_witness_sha256(source_cues, document)
+        expected_source_witness = str(document.get("source_cue_witness_sha256", ""))
+        if actual_source_witness != expected_source_witness:
+            raise ValueError(
+                "reviewed source cue witness mismatch: "
+                f"expected {expected_source_witness!r}, got {actual_source_witness!r}"
+            )
+        actual_decision_witness = decision_output_witness_sha256(source_cues, document)
+        expected_decision_witness = str(document.get("decision_output_witness_sha256", ""))
+        if actual_decision_witness != expected_decision_witness:
+            raise ValueError(
+                "reviewed decision output witness mismatch: "
+                f"expected {expected_decision_witness!r}, got {actual_decision_witness!r}"
+            )
+        witness_manifest = {
+            "candidate_id": candidate_id,
+            "source_cue_witness_sha256": actual_source_witness,
+            "decision_output_witness_sha256": actual_decision_witness,
+        }
+    else:
+        raise ValueError("text override schema_version must be 1 or 2")
     output_cues, decisions = apply_overrides(source_cues, document)
     write_srt(output_cues, output)
-    declared_final_hash = document.get("text_final_srt_sha256")
+    declared_final_hash = document.get("text_final_srt_sha256") if schema_version == 1 else None
     if declared_final_hash is not None and sha256_file(output) != declared_final_hash:
         output.unlink(missing_ok=True)
         raise ValueError("text override derived final SRT hash does not match its decision asset")
     manifest = {
         "schema_version": "subtitle-text-finalization.v1",
+        "override_schema_version": schema_version,
         "status": "READY",
         "stage_order": "asr_correction_then_pronoun_then_human_text_then_speaker_then_burn",
         "source_srt": str(source.resolve()),
@@ -219,6 +322,7 @@ def apply_document(source: Path, document_path: Path, output: Path, manifest_pat
         "source_cue_count": len(source_cues),
         "output_cue_count": len(output_cues),
         "decisions": decisions,
+        **witness_manifest,
     }
     atomic_write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return manifest
