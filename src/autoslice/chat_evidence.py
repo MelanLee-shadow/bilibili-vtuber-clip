@@ -625,14 +625,29 @@ def build_human_text_entity_verifier(
     source = Path(document_path)
     raw = source.read_bytes()
     payload = json.loads(raw)
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
-        raise ValueError("text override schema_version must be 1")
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2}:
+        raise ValueError("text override schema_version must be 1 or 2")
     if payload.get("candidate_id") != candidate_id:
         raise ValueError("text override candidate_id mismatch")
-    source_hash = str(payload.get("source_srt_sha256") or "")
-    final_hash = str(payload.get("text_final_srt_sha256") or "")
-    if not _valid_sha256(source_hash) or not _valid_sha256(final_hash):
-        raise ValueError("text override must bind source and final SRT SHA256")
+    override_schema_version = int(payload["schema_version"])
+    if override_schema_version == 1:
+        binding = {
+            "source_srt_sha256": str(payload.get("source_srt_sha256") or ""),
+            "text_final_srt_sha256": str(payload.get("text_final_srt_sha256") or ""),
+        }
+        binding_error = "text override must bind source and final SRT SHA256"
+    else:
+        binding = {
+            "source_cue_witness_sha256": str(
+                payload.get("source_cue_witness_sha256") or ""
+            ),
+            "decision_output_witness_sha256": str(
+                payload.get("decision_output_witness_sha256") or ""
+            ),
+        }
+        binding_error = "cue-bound text override must bind source and decision witnesses"
+    if not all(_valid_sha256(value) for value in binding.values()):
+        raise ValueError(binding_error)
     rows = payload.get("chat_entity_verdicts") or []
     if not isinstance(rows, list):
         raise ValueError("chat_entity_verdicts must be a list")
@@ -660,8 +675,8 @@ def build_human_text_entity_verifier(
             "defer_to_text_override": True,
             "candidate_id": candidate_id,
             "override_document_sha256": document_hash,
-            "source_srt_sha256": source_hash,
-            "text_final_srt_sha256": final_hash,
+            "override_schema_version": override_schema_version,
+            **binding,
             "authority": str(row.get("authority") or "Ivan direct correction"),
         }
 
@@ -695,7 +710,32 @@ def reconcile_pending_text_overrides(
     document_hash = str(text_manifest.get("override_document_sha256") or "")
     source_hash = str(text_manifest.get("source_srt_sha256") or "")
     final_hash = str(text_manifest.get("output_srt_sha256") or "")
+    override_schema_version = int(text_manifest.get("override_schema_version") or 1)
+    if override_schema_version == 1:
+        manifest_binding = {
+            "source_srt_sha256": source_hash,
+            "text_final_srt_sha256": final_hash,
+        }
+    elif override_schema_version == 2:
+        manifest_binding = {
+            "source_cue_witness_sha256": str(
+                text_manifest.get("source_cue_witness_sha256") or ""
+            ),
+            "decision_output_witness_sha256": str(
+                text_manifest.get("decision_output_witness_sha256") or ""
+            ),
+        }
+    else:
+        return False
     rebound_document: dict[str, Any] | None = None
+
+    def verdict_matches_manifest(verdict: Mapping[str, Any]) -> bool:
+        return (
+            int(verdict.get("override_schema_version") or 1)
+            == override_schema_version
+            and verdict.get("override_document_sha256") == document_hash
+            and all(verdict.get(key) == value for key, value in manifest_binding.items())
+        )
 
     def rebind_deferred_verdict(
         pending_row: Mapping[str, Any], verdict: dict[str, Any]
@@ -733,12 +773,25 @@ def reconcile_pending_text_overrides(
         except (OSError, ValueError):
             return None
         document = rebound_document
-        if (
-            document.get("schema_version") != 1
-            or document.get("candidate_id") != verdict.get("candidate_id")
-            or document.get("source_srt_sha256") != source_hash
-            or document.get("text_final_srt_sha256") != final_hash
-        ):
+        if document.get("candidate_id") != verdict.get("candidate_id"):
+            return None
+        if int(document.get("schema_version") or 0) != override_schema_version:
+            return None
+        if override_schema_version == 1:
+            document_binding = {
+                "source_srt_sha256": document.get("source_srt_sha256"),
+                "text_final_srt_sha256": document.get("text_final_srt_sha256"),
+            }
+        else:
+            document_binding = {
+                "source_cue_witness_sha256": document.get(
+                    "source_cue_witness_sha256"
+                ),
+                "decision_output_witness_sha256": document.get(
+                    "decision_output_witness_sha256"
+                ),
+            }
+        if document_binding != manifest_binding:
             return None
         evidence_id = str(pending_row.get("evidence_id") or "")
         rows = [
@@ -754,8 +807,8 @@ def reconcile_pending_text_overrides(
         return {
             **verdict,
             "override_document_sha256": document_hash,
-            "source_srt_sha256": source_hash,
-            "text_final_srt_sha256": final_hash,
+            "override_schema_version": override_schema_version,
+            **manifest_binding,
             "authority": str(rows[0].get("authority") or verdict.get("authority") or ""),
         }
 
@@ -763,11 +816,7 @@ def reconcile_pending_text_overrides(
     used_decisions: set[int] = set()
     for pending_row in pending:
         verdict = dict(pending_row.get("verdict") or {})
-        if (
-            verdict.get("override_document_sha256") != document_hash
-            or verdict.get("source_srt_sha256") != source_hash
-            or verdict.get("text_final_srt_sha256") != final_hash
-        ):
+        if not verdict_matches_manifest(verdict):
             rebound = rebind_deferred_verdict(pending_row, verdict)
             if rebound is None:
                 return False
@@ -797,8 +846,10 @@ def reconcile_pending_text_overrides(
                     "text_final_srt_sha256"
                 ),
                 "override_document_sha256": document_hash,
+                "override_schema_version": override_schema_version,
                 "source_srt_sha256": source_hash,
                 "text_final_srt_sha256": final_hash,
+                **manifest_binding,
             }
             pending_row["verdict"] = rebound
             verdict = rebound
@@ -1005,13 +1056,17 @@ def _validated_entity_verdict(
     elif authority_kind == "ivan_text_override":
         if not row.get("defer_to_text_override"):
             return None
-        if not all(
+        override_schema_version = int(row.get("override_schema_version") or 1)
+        binding_keys = {
+            1: ("source_srt_sha256", "text_final_srt_sha256"),
+            2: (
+                "source_cue_witness_sha256",
+                "decision_output_witness_sha256",
+            ),
+        }.get(override_schema_version)
+        if binding_keys is None or not all(
             _valid_sha256(row.get(key))
-            for key in (
-                "override_document_sha256",
-                "source_srt_sha256",
-                "text_final_srt_sha256",
-            )
+            for key in ("override_document_sha256", *binding_keys)
         ):
             return None
         if not str(row.get("candidate_id") or ""):

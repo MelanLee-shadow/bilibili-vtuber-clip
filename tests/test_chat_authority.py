@@ -1515,6 +1515,86 @@ def test_hash_bound_ivan_override_supersedes_chat_and_survives_final_verifier(tm
     )
 
 
+def test_cue_bound_ivan_override_supersedes_chat_and_reconciles_witnesses(tmp_path):
+    source = _srt("还没看", "怎么有人说有母鸡卡的风险")
+    final = source.replace("母鸡卡", "梦限大")
+    evidence = ChatEvidence("danmaku", 0, "还没看，怎么有人说有母鸡卡的风险")
+    source_witness = hashlib.sha256(b"reviewed-source-cues").hexdigest()
+    decision_witness = hashlib.sha256(b"reviewed-output-decisions").hexdigest()
+    document = {
+        "schema_version": 2,
+        "candidate_id": "auto_test",
+        "source_cue_count": 2,
+        "source_cue_witness_sha256": source_witness,
+        "decision_output_witness_sha256": decision_witness,
+        "chat_entity_verdicts": [
+            {
+                "evidence_id": evidence.evidence_id,
+                "canonical_entity": "梦限大",
+                "authority": "Ivan direct correction",
+            }
+        ],
+        "overrides": [
+            {
+                "source_cue": 2,
+                "expect": {
+                    "start": "00:00:10,000",
+                    "end": "00:00:14,000",
+                    "text": "怎么有人说有母鸡卡的风险",
+                },
+                "text": "怎么有人说有梦限大的风险",
+                "authority": "Ivan direct correction",
+                "supersedes_chat_evidence_id": evidence.evidence_id,
+            }
+        ],
+    }
+    document_path = tmp_path / "auto_test.text.v1.json"
+    document_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    verifier = build_human_text_entity_verifier(document_path, candidate_id="auto_test")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [evidence],
+        support_srt_texts=[source],
+        referent_groups=[DREAM_MUJICA_GROUP],
+        entity_verifier=verifier,
+    )
+
+    assert output == source
+    assert audit["status"] == "PENDING_TEXT_OVERRIDE"
+    manifest = {
+        "status": "READY",
+        "override_schema_version": 2,
+        "override_document": str(document_path),
+        "override_document_sha256": hashlib.sha256(document_path.read_bytes()).hexdigest(),
+        "source_srt_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "output_srt_sha256": hashlib.sha256(final.encode()).hexdigest(),
+        "source_cue_witness_sha256": source_witness,
+        "decision_output_witness_sha256": decision_witness,
+        "decisions": [
+            {
+                "source": {
+                    "source_index": 2,
+                    "start": "00:00:10,000",
+                    "end": "00:00:14,000",
+                    "text": "怎么有人说有母鸡卡的风险",
+                },
+                "output_text": "怎么有人说有梦限大的风险",
+                "supersedes_chat_evidence_id": evidence.evidence_id,
+            }
+        ],
+    }
+    assert reconcile_pending_text_overrides(audit, manifest, delivery_start_ms=0)
+    assert audit["entity_repairs"][0]["mode"] == "entity_only_human_text_override"
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=20_000,
+    )
+
+
 def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
     source = _srt("还没看", "怎么有人说是Mujica的风险")
     final = _srt("还没看", "怎么有人说有梦限大的风险")
