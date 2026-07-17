@@ -665,6 +665,31 @@ def _build_audio_observation_alignment(
         previous_start = start_ms
         previous_end = end_ms
 
+    if not alignment:
+        raise ValueError("live arrangement has no heard canonical lyrics")
+    live_performance = payload.get("live_performance")
+    first_lyric_start_ms = int(alignment[0]["cue_start_ms"])
+    last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
+    performance_schema_error = validate_live_performance_observation(
+        live_performance,
+        first_lyric_start_ms=first_lyric_start_ms,
+        last_lyric_end_ms=last_lyric_end_ms,
+        observations=performed_observations,
+        require_ready=False,
+    )
+    if performance_schema_error is not None:
+        raise ValueError(performance_schema_error)
+    performance_error = validate_live_performance_observation(
+        live_performance,
+        first_lyric_start_ms=first_lyric_start_ms,
+        last_lyric_end_ms=last_lyric_end_ms,
+        observations=performed_observations,
+        require_ready=True,
+    )
+    if performance_error is not None:
+        assert isinstance(live_performance, Mapping)
+        raise LivePerformanceRejected(performance_error, live_performance)
+
     arrangement_completeness = derive_live_arrangement_completeness(
         observations=observations,
         live_arrangement=payload.get("live_arrangement"),
@@ -673,8 +698,6 @@ def _build_audio_observation_alignment(
         spot_checks=payload.get("spot_checks"),
         live_performance=payload.get("live_performance"),
     )
-    if not alignment:
-        raise ValueError("live arrangement has no heard canonical lyrics")
     offset_ms = sorted(residuals)[len(residuals) // 2]
     if any(abs(residual - offset_ms) > 1_500 for residual in residuals):
         raise ValueError("audio observations do not fit one global shift within ±1500ms")
@@ -742,27 +765,6 @@ def _finalize_audio_lrc_selection(
 
     first_lyric_start_ms = int(alignment[0]["cue_start_ms"])
     last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
-    live_performance = payload.get("live_performance")
-    performance_schema_error = validate_live_performance_observation(
-        live_performance,
-        first_lyric_start_ms=first_lyric_start_ms,
-        last_lyric_end_ms=last_lyric_end_ms,
-        observations=performed_observations,
-        require_ready=False,
-    )
-    if performance_schema_error is not None:
-        raise ValueError(performance_schema_error)
-    performance_error = validate_live_performance_observation(
-        live_performance,
-        first_lyric_start_ms=first_lyric_start_ms,
-        last_lyric_end_ms=last_lyric_end_ms,
-        observations=performed_observations,
-        require_ready=True,
-    )
-    if performance_error is not None:
-        assert isinstance(live_performance, Mapping)
-        raise LivePerformanceRejected(performance_error, live_performance)
-
     clip_end_ms = int(arrangement_completeness["post_song_transition_ms"])
     instrumental_spot_end_ms = clip_end_ms
 

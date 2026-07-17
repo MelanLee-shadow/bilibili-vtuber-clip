@@ -2783,6 +2783,81 @@ def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
         assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
 
 
+def test_background_playback_veto_precedes_long_instrumental_gap_validation(tmp_path):
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        lrc,
+        source_duration_ms=200_000,
+    )
+    payload = json.loads(json.dumps(run.payload))
+    for row in payload["observations"][8:]:
+        row["live_start_ms"] += 66_000
+        row["live_end_ms"] += 66_000
+    payload["post_song_talk_start_ms"] += 66_000
+    payload["live_arrangement"]["post_song_transition_ms"] += 66_000
+    for row in payload["observations"]:
+        row.update(
+            lyric_vocal_subject="RECORDED_OR_PLAYBACK_SINGER",
+            lidousha_role="SILENT_OR_NOT_AUDIBLE",
+            same_live_vocal_source_as_lidousha=False,
+            other_singer_or_harmony_audible=False,
+            recorded_or_playback_vocal_audible=True,
+        )
+    payload["live_performance"].update(
+        mode="ORIGINAL_OR_BACKGROUND_PLAYBACK",
+        confidence=0.98,
+        continuous_live_song_performance=False,
+        background_recording_likelihood=0.99,
+        same_lidousha_live_performer_across_all_lyrics=False,
+        other_singer_or_harmony_present=False,
+        recorded_or_playback_vocal_present=True,
+        evidence=[
+            {
+                "time_ms": payload["observations"][1]["live_start_ms"],
+                "observation": "playback vocal at head",
+            },
+            {
+                "time_ms": payload["observations"][7]["live_start_ms"],
+                "observation": "playback vocal at middle",
+            },
+            {
+                "time_ms": payload["observations"][8]["live_start_ms"],
+                "observation": "playback vocal at tail",
+            },
+        ],
+    )
+    run = _rebind_fake_audio_alignment_run(run, payload)
+
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=[
+            SourceCue("jp-0", 10_000, 13_000, lrc.lines[0].text, kind="singing"),
+            SourceCue("jp-1", 17_000, 20_000, lrc.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=200_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+    )
+
+    assert result.repaired is False
+    assert result.reason_codes == (
+        "SONG_BACKGROUND_PLAYBACK_ONLY",
+        "SONG_NOT_LIDOUSHA_SINGING",
+    )
+    failure = next(
+        item
+        for item in result.attempts
+        if item.step == "agy_audio_lrc_alignment" and item.status == "FAILED"
+    )
+    assert "LivePerformanceRejected" in failure.detail
+    assert "unexplained" not in failure.detail
+
+
 def test_build_lyric_queries_prefers_clean_lines_over_longest():
     """Ivan 2026-07-06 《屑屑》: the longest ASR lines are the English/rap parts
     BCUT mangles ("chewe now baby just chewe now") which find nothing on netease;
