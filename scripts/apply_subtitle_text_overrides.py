@@ -26,6 +26,9 @@ SRT_BLOCK_RE = re.compile(
     r"(\d{2}:\d{2}:\d{2},\d{3})\s*\n"
     r"(.*?)(?=\n{2,}|\Z)"
 )
+PUNCTUATION_INSENSITIVE_TEXT_RE = re.compile(
+    r"""[\s,，。.!！?？:：;；"'“”‘’()（）《》〈〉【】\[\]…—-]+"""
+)
 
 
 @dataclass(frozen=True)
@@ -85,31 +88,81 @@ def parse_srt(path: Path) -> list[TextCue]:
     return cues
 
 
+def _expected_text_matches(
+    actual: str,
+    expected: dict[str, Any],
+) -> bool:
+    alternatives = expected.get("text_alternatives", [])
+    if alternatives is None:
+        alternatives = []
+    if not isinstance(alternatives, list) or not all(
+        isinstance(value, str) for value in alternatives
+    ):
+        raise ValueError("text_alternatives must be a string list")
+    allowed = [expected.get("text"), *alternatives]
+    if actual in allowed:
+        return True
+    mode = str(expected.get("text_match_mode") or "exact")
+    if mode == "punctuation_insensitive":
+        normalized_actual = PUNCTUATION_INSENSITIVE_TEXT_RE.sub("", actual)
+        return any(
+            isinstance(value, str)
+            and PUNCTUATION_INSENSITIVE_TEXT_RE.sub("", value) == normalized_actual
+            for value in allowed
+        )
+    if mode != "exact":
+        raise ValueError(f"unsupported text_match_mode {mode!r}")
+    return False
+
+
 def _expect(cue: TextCue, override: dict[str, Any]) -> None:
-    if str(override.get("action", "replace")) == "replace_substring":
+    action = str(override.get("action", "replace"))
+    if action in {"replace_substring", "replace_pattern"}:
         locator = override.get("locator")
-        old_text = str(override.get("old_text", ""))
         replacement = str(override.get("text", ""))
         if (
             not isinstance(locator, dict)
             or not str(locator.get("start") or "")
             or not str(locator.get("end") or "")
-            or not old_text
             or not replacement
         ):
             raise ValueError(
-                f"substring override for cue {cue.source_index} has an invalid locator or text"
+                f"localized override for cue {cue.source_index} has an invalid locator or text"
             )
-        if cue.text.count(old_text) != 1:
+        if action == "replace_substring":
+            old_text = str(override.get("old_text", ""))
+            match_count = cue.text.count(old_text) if old_text else 0
+            label = old_text
+        else:
+            pattern = str(override.get("pattern", ""))
+            if not pattern or len(pattern) > 256:
+                raise ValueError(
+                    f"pattern override for cue {cue.source_index} has an invalid pattern"
+                )
+            try:
+                match_count = len(list(re.finditer(pattern, cue.text)))
+            except re.error as exc:
+                raise ValueError(
+                    f"pattern override for cue {cue.source_index} has an invalid pattern"
+                ) from exc
+            label = pattern
+        if match_count != 1:
             raise ValueError(
-                f"substring override for cue {cue.source_index} expected one "
-                f"{old_text!r}, got {cue.text.count(old_text)}"
+                f"{action} override for cue {cue.source_index} expected one "
+                f"{label!r}, got {match_count}"
             )
         return
     expected = override.get("expect")
     if not isinstance(expected, dict):
         raise ValueError(f"override for cue {cue.source_index} is missing expect")
     for field in ("start", "end", "text"):
+        if field == "text":
+            if not _expected_text_matches(cue.text, expected):
+                raise ValueError(
+                    f"source cue {cue.source_index} text drift: "
+                    f"expected {expected!r}, got {cue.text!r}"
+                )
+            continue
         alternatives = expected.get(f"{field}_alternatives", [])
         if alternatives is None:
             alternatives = []
@@ -141,7 +194,7 @@ def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, di
         declared_source_index = int(override.get("source_cue", 0))
         if schema_version == 3:
             action = str(override.get("action", "replace"))
-            if action == "replace_substring":
+            if action in {"replace_substring", "replace_pattern"}:
                 locator = override.get("locator")
                 if not isinstance(locator, dict):
                     raise ValueError(
@@ -150,12 +203,32 @@ def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, di
                 start = str(locator.get("start") or "")
                 end = str(locator.get("end") or "")
                 old_text = str(override.get("old_text") or "")
+                pattern = str(override.get("pattern") or "")
+                compiled_pattern = None
+                if action == "replace_pattern":
+                    if not pattern or len(pattern) > 256:
+                        raise ValueError(
+                            f"timeline override {declared_source_index} has an invalid pattern"
+                        )
+                    try:
+                        compiled_pattern = re.compile(pattern)
+                    except re.error as exc:
+                        raise ValueError(
+                            f"timeline override {declared_source_index} has an invalid pattern"
+                        ) from exc
                 matches = [
                     cue.source_index
                     for cue in cues
                     if cue.start < end
                     and cue.end > start
-                    and old_text in cue.text
+                    and (
+                        old_text in cue.text
+                        if action == "replace_substring"
+                        else bool(
+                            compiled_pattern is not None
+                            and compiled_pattern.search(cue.text)
+                        )
+                    )
                 ]
                 if not matches and override.get("required") is False:
                     continue
@@ -210,6 +283,8 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
         expected = override.get("expect")
         if not isinstance(expected, dict):
             return getattr(cue, field)
+        if field == "text" and _expected_text_matches(cue.text, expected):
+            return str(expected.get("text"))
         primary = expected.get(field)
         alternatives = expected.get(f"{field}_alternatives", [])
         allowed = (
@@ -227,13 +302,22 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
 
     def witness_row(source_index: int) -> dict[str, Any]:
         override = by_index[source_index]
-        if timeline_bound and str(override.get("action", "replace")) == "replace_substring":
-            return {
+        action = str(override.get("action", "replace"))
+        if timeline_bound and action in {"replace_substring", "replace_pattern"}:
+            row = {
                 "source_cue": int(override.get("source_cue", 0)),
-                "action": "replace_substring",
+                "action": action,
                 "locator": override.get("locator"),
-                "old_text": str(override.get("old_text") or ""),
             }
+            row[
+                "old_text" if action == "replace_substring" else "pattern"
+            ] = str(
+                override.get(
+                    "old_text" if action == "replace_substring" else "pattern"
+                )
+                or ""
+            )
+            return row
         return {
             "source_cue": (
                 int(override.get("source_cue", 0))
@@ -260,14 +344,19 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
         witness_rows.extend(
             {
                 "source_cue": int(override.get("source_cue", 0)),
-                "action": "replace_substring",
+                "action": str(override.get("action", "replace")),
                 "locator": override.get("locator"),
-                "old_text": str(override.get("old_text") or ""),
+                **(
+                    {"old_text": str(override.get("old_text") or "")}
+                    if str(override.get("action", "replace")) == "replace_substring"
+                    else {"pattern": str(override.get("pattern") or "")}
+                ),
             }
             for override in raw_overrides
             if isinstance(override, dict)
             and id(override) not in mapped_override_ids
-            and str(override.get("action", "replace")) == "replace_substring"
+            and str(override.get("action", "replace"))
+            in {"replace_substring", "replace_pattern"}
             and override.get("required") is False
         )
         witness_rows.sort(key=lambda row: int(row["source_cue"]))
@@ -301,13 +390,20 @@ def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]
             if action == "drop":
                 reviewed_outputs.append(row)
                 continue
-            if action == "replace_substring":
+            if action in {"replace_substring", "replace_pattern"}:
                 row.update(
                     {
                         "locator": override.get("locator"),
-                        "old_text": str(override.get("old_text") or ""),
                         "text": str(override.get("text", "")).strip(),
                     }
+                )
+                row[
+                    "old_text" if action == "replace_substring" else "pattern"
+                ] = str(
+                    override.get(
+                        "old_text" if action == "replace_substring" else "pattern"
+                    )
+                    or ""
                 )
             else:
                 expected = override.get("expect") or {}
@@ -324,15 +420,20 @@ def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]
         reviewed_outputs.extend(
             {
                 "source_cue": int(override.get("source_cue", 0)),
-                "action": "replace_substring",
+                "action": str(override.get("action", "replace")),
                 "locator": override.get("locator"),
-                "old_text": str(override.get("old_text") or ""),
                 "text": str(override.get("text", "")).strip(),
+                **(
+                    {"old_text": str(override.get("old_text") or "")}
+                    if str(override.get("action", "replace")) == "replace_substring"
+                    else {"pattern": str(override.get("pattern") or "")}
+                ),
             }
             for override in raw_overrides
             if isinstance(override, dict)
             and id(override) not in mapped_override_ids
-            and str(override.get("action", "replace")) == "replace_substring"
+            and str(override.get("action", "replace"))
+            in {"replace_substring", "replace_pattern"}
             and override.get("required") is False
         )
         reviewed_outputs.sort(key=lambda row: int(row["source_cue"]))
@@ -394,6 +495,20 @@ def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list
                 {
                     "source": asdict(cue),
                     "action": "replace_substring",
+                    "output_text": output_text,
+                    **override,
+                }
+            )
+            continue
+        if action == "replace_pattern":
+            pattern = str(override.get("pattern", ""))
+            replacement = str(override.get("text", ""))
+            output_text = re.sub(pattern, replacement, cue.text, count=1)
+            output.append(TextCue(cue.source_index, cue.start, cue.end, output_text))
+            decisions.append(
+                {
+                    "source": asdict(cue),
+                    "action": "replace_pattern",
                     "output_text": output_text,
                     **override,
                 }

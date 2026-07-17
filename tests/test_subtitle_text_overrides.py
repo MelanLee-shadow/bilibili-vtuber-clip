@@ -409,3 +409,115 @@ don't know那么多，所有的
 
     assert output.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
     assert manifest["decisions"] == []
+
+
+def test_timeline_override_can_ignore_punctuation_but_not_word_drift(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        """1
+00:00:51,570 --> 00:00:55,370
+呵，“侄女，直系女同喜欢吗？”
+""",
+        encoding="utf-8",
+    )
+    document = {
+        "schema_version": 3,
+        "candidate_id": "punctuation_test",
+        "source_cue_witness_sha256": "",
+        "decision_output_witness_sha256": "",
+        "overrides": [
+            {
+                "source_cue": 1,
+                "action": "replace",
+                "expect": {
+                    "start": "00:00:51,570",
+                    "end": "00:00:55,370",
+                    "text": "呵，“侄女，直系女同喜欢吗？”",
+                    "text_match_mode": "punctuation_insensitive",
+                },
+                "text": "呵，直女，直系女同喜欢吗？",
+                "authority": "reviewed homophone correction",
+            }
+        ],
+    }
+    cues = parse_srt(source)
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(cues, document)
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(
+        cues, document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    source.write_text(
+        """1
+00:00:51,570 --> 00:00:55,370
+呵，“侄女直系女同喜欢吗？”
+""",
+        encoding="utf-8",
+    )
+    output = tmp_path / "out.srt"
+    apply_document(source, overrides, output, tmp_path / "manifest.json")
+    assert "呵，直女，直系女同喜欢吗？" in output.read_text(encoding="utf-8")
+
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("直系女同", "女同"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="text drift"):
+        apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+
+def test_timeline_pattern_override_preserves_prefix_and_cleans_optional_punctuation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        """1
+00:00:47,790 --> 00:00:49,590
+有没有侄女女友喜欢吗？”
+""",
+        encoding="utf-8",
+    )
+    document = {
+        "schema_version": 3,
+        "candidate_id": "pattern_test",
+        "source_cue_witness_sha256": "",
+        "decision_output_witness_sha256": "",
+        "overrides": [
+            {
+                "source_cue": 1,
+                "action": "replace_pattern",
+                "locator": {
+                    "start": "00:00:47,000",
+                    "end": "00:00:50,000",
+                },
+                "pattern": "侄女女友喜欢吗[？?]?[”\\\"]?",
+                "text": "直女女友喜欢吗？",
+                "authority": "reviewed flexible phrase repair",
+            }
+        ],
+    }
+    cues = parse_srt(source)
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(cues, document)
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(
+        cues, document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    output = tmp_path / "out.srt"
+
+    apply_document(source, overrides, output, tmp_path / "manifest.json")
+    assert "有没有直女女友喜欢吗？" in output.read_text(encoding="utf-8")
+    assert "”" not in output.read_text(encoding="utf-8")
+
+    source.write_text(
+        """1
+00:00:47,790 --> 00:00:49,590
+侄女女友喜欢吗
+""",
+        encoding="utf-8",
+    )
+    apply_document(source, overrides, output, tmp_path / "manifest.json")
+    assert "直女女友喜欢吗？" in output.read_text(encoding="utf-8")
