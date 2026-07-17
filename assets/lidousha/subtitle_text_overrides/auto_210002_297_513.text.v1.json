@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "candidate_id": "auto_210002_297_513",
-  "source_srt_sha256": "bd81caff61d442768522dcb33752bfd0938c06daeda662829200bc31f2656b2d",
-  "text_final_srt_sha256": "67479a286c04d7769498a26c6cbfc73bfd286f34d123125ad83074265a070343",
+  "source_srt_sha256": "3bf37baa3a995e2daa305f3c022b3d2fb207ab570055680795ac1856f8a716cd",
+  "text_final_srt_sha256": "836f464a0dbadb759e30fba149f0b68c0fb4d933fb54d382e42750b3154c4cde",
   "overrides": [
     {
       "source_cue": 3,
@@ -17,6 +17,18 @@
       "reason": "The challenge recipient was dropped and 一个 was duplicated into 下一个 by ASR"
     },
     {
+      "source_cue": 14,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:29,870",
+        "end": "00:00:33,950",
+        "text": "这台词可以由题目组来定"
+      },
+      "text": "这台词可以由kmx来定",
+      "authority": "Ivan confirmed the spoken referent is kmx, pronounced kimo-xiong",
+      "reason": "Restore the proper-name slot after ASR replaced it with an unrelated generic group"
+    },
+    {
       "source_cue": 18,
       "action": "replace",
       "expect": {
@@ -27,6 +39,18 @@
       "text": "台词可以由kmx来定",
       "authority": "The same sentence is repeated at cue 14 with the canonical proper name and Ivan confirmed the referent is kmx",
       "reason": "Restore the repeated proper-name slot after the second occurrence drifted to an unrelated generic noun"
+    },
+    {
+      "source_cue": 53,
+      "action": "replace",
+      "expect": {
+        "start": "00:03:11,890",
+        "end": "00:03:13,542",
+        "text": "李豆沙一直是VIP 1"
+      },
+      "text": "李豆沙一直是……",
+      "authority": "The source audio supports the repeated lead-in but not the invented Latin numeric token; Ivan confirmed the complete wording in the following cue",
+      "reason": "Remove an unsupported decoded token while preserving the audible incomplete lead-in"
     },
     {
       "source_cue": 54,

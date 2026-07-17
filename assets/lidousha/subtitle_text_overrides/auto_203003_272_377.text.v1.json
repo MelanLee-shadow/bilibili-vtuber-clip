@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "candidate_id": "auto_203003_272_377",
-  "source_srt_sha256": "a41d125beeb87887922204b82a02772c061419a1169957243d418af2a4363da0",
-  "text_final_srt_sha256": "89491e4e95d3d986a3c1d2b4d3ca31f9d5722d52d22dcbdc069dacdd0f9b4a04",
+  "source_srt_sha256": "9962029adc75952f0fcc50b817743ba7cac7dc52dcdc958d85375945fe9e5cb2",
+  "text_final_srt_sha256": "2b24ea7a3451169845e24113f6001574dea2e971283deb0b8f64daad02d68d7b",
   "overrides": [
     {
       "source_cue": 9,
@@ -10,11 +10,35 @@
       "expect": {
         "start": "00:00:14,740",
         "end": "00:00:20,910",
-        "text": "因为李豆沙是侄女，kowa，kowai，哈哈"
+        "text": "因为李豆沙，哈哈"
       },
       "text": "因为李豆沙是夸夸怪的，哈哈",
       "authority": "Gemini paid-backup forced-choice audio adjudication observed the exact phrase at 00:14.740-00:20.910",
       "reason": "Restore the acoustically verified predicate after ASR produced a semantically broken mixed-language fragment"
+    },
+    {
+      "source_cue": 26,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:55,760",
+        "end": "00:01:00,600",
+        "text": "官方能同意李豆沙把杖剑传说完成Galgame 吗"
+      },
+      "text": "官方能同意李豆沙把杖剑传说玩成Galgame 吗",
+      "authority": "The repeated phrase and the paid-backup acoustic adjudication both support 玩成",
+      "reason": "Restore the repeated verb after speech segmentation collapsed 玩成 into 完成"
+    },
+    {
+      "source_cue": 37,
+      "action": "replace",
+      "expect": {
+        "start": "00:01:30,930",
+        "end": "00:01:34,510",
+        "text": "应该不是不可以把杖剑传说换成Galgame 的意思吧"
+      },
+      "text": "应该不是不可以把杖剑传说玩成Galgame 的意思吧",
+      "authority": "Gemini paid-backup audio adjudication observed 玩成 and rejected 换成 for this exact cue",
+      "reason": "Preserve the acoustically verified repeated phrase"
     }
   ]
 }

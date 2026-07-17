@@ -1,0 +1,21 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_162645_264_391",
+  "required_payload_substrings": [
+    "フェイト・テスタロッサ",
+    "私はフェイトちゃんと結婚をしたいだけなんだけど",
+    "私は稼げない",
+    "小学生",
+    "フェイトちゃん、なんで一千万にこだわるの",
+    "そんなに、そのお衣装はお高いの"
+  ],
+  "forbidden_payload_substrings": [
+    "what's happening ah it's true ah",
+    "he king article",
+    "son nakonoyori oh",
+    "vocal i need you to talk",
+    "我只是想和奈叶结婚而已",
+    "因为我是小学生"
+  ],
+  "forbidden_exact_cues": []
+}
