@@ -370,6 +370,7 @@ def _early_published_song_block(item: dict) -> dict | None:
         "rc": 0,
         "title_hint": title_hint,
         "pipeline_fingerprint": _runner.pipeline_fingerprint(),
+        "song_pipeline_fingerprint": _runner.song_pipeline_fingerprint(),
     }
     try:
         prior_upload = _runner.published_song_match(title_hint)
@@ -438,6 +439,7 @@ def produce_song(date: str, item: dict) -> dict:
                   "discovery_lane": item.get("lane"), "title_hint": item.get("title_hint"),
                   "visual_song_evidence": item.get("visual_song_evidence"),
                   "pipeline_fingerprint": _runner.pipeline_fingerprint(),
+                  "song_pipeline_fingerprint": _runner.song_pipeline_fingerprint(),
                   "transient_retry_count": int(item.get("transient_retry_count") or 0),
                   "anchor_start_ms": item.get("anchor_start_ms"),
                   "anchor_end_ms": item.get("anchor_end_ms")}

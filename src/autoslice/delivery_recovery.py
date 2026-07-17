@@ -32,7 +32,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     Confirmed background playback / non-Li-Dousha singing remains terminal.
     """
 
-    current = _runner.pipeline_fingerprint()
+    current = _runner.song_pipeline_fingerprint()
     existing_pending = {
         str(item.get("cid") or item.get("candidate_id") or "")
         for item in state.get("pending_song", [])
@@ -40,6 +40,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     }
     kept: list[dict] = []
     requeued: list[dict] = []
+    migrated_legacy_fingerprint = False
     for record in state.get("songs", []):
         if (
             not isinstance(record, dict)
@@ -53,7 +54,15 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
         if reasons & _runner.SONG_TERMINAL_PERFORMER_REJECTION_CODES:
             kept.append(record)
             continue
-        changed = record.get("pipeline_fingerprint") != current
+        recorded_song_fingerprint = record.get("song_pipeline_fingerprint")
+        if not isinstance(recorded_song_fingerprint, str) or not recorded_song_fingerprint:
+            # One-time migration from the historical global fingerprint.  Its
+            # value cannot distinguish a song-proof change from a talk-only
+            # entity change, so stamp the scoped baseline without retrying.
+            record["song_pipeline_fingerprint"] = current
+            recorded_song_fingerprint = current
+            migrated_legacy_fingerprint = True
+        changed = recorded_song_fingerprint != current
         retry_count = int(record.get("transient_retry_count") or 0)
         infra_transient = bool(reasons & _runner.SONG_INFRA_TRANSIENT_REASON_CODES)
         next_retry_at = record.get("next_retry_at_epoch")
@@ -143,6 +152,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 "status": record.get("status"),
                 "reason_codes": list(record.get("reason_codes") or []),
                 "pipeline_fingerprint": record.get("pipeline_fingerprint"),
+                "song_pipeline_fingerprint": recorded_song_fingerprint,
                 "superseded_by": current,
                 "retry_reason": item["retry_reason"],
                 "session_id": session_id,
@@ -151,6 +161,8 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
         _runner._remember_song_quarantine_interval(state, item)
     state["songs"] = kept
     state.setdefault("pending_song", []).extend(requeued)
+    if migrated_legacy_fingerprint:
+        state["song_pipeline_fingerprint_baseline"] = current
     return len(requeued)
 
 

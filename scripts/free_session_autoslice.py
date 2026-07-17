@@ -373,6 +373,112 @@ def pipeline_fingerprint() -> str:
     return "sha256:" + hasher.hexdigest()
 
 
+def song_pipeline_fingerprint() -> str:
+    """Hash only surfaces that can change song proof or song delivery.
+
+    The historical global fingerprint includes every talk subtitle/entity
+    module and asset.  Using it for song BLOCK recovery made a talk-only entity
+    fix requeue every old LRC failure and consume the paid Gemini fallback.
+    Keep song recovery sensitive to its real proof closure while excluding
+    talk-only ASR/entity authority.
+    """
+
+    explicit = {
+        "scripts/cpa_semantic_qa_llm.py",
+        "scripts/free_asr_client.py",
+        "scripts/gemini_slice_jingting.py",
+        "scripts/llm_via_cpa.sh",
+        "scripts/run_full_session_selector_cpa_shadow.py",
+        "src/autoslice/agy_lrc_alignment.py",
+        "src/autoslice/boundary_resolver.py",
+        "src/autoslice/candidate_selection.py",
+        "src/autoslice/channel_profile.py",
+        "src/autoslice/content_evidence.py",
+        "src/autoslice/cover_generation.py",
+        "src/autoslice/cpa_semantic_qa.py",
+        "src/autoslice/danmaku_evidence.py",
+        "src/autoslice/delivery_recovery.py",
+        "src/autoslice/full_session_candidate_selector.py",
+        "src/autoslice/full_session_transcription.py",
+        "src/autoslice/gemini_backup_policy.py",
+        "src/autoslice/host_vocal_proof.py",
+        "src/autoslice/jingting_chunker.py",
+        "src/autoslice/llm_client.py",
+        "src/autoslice/publish_staging.py",
+        "src/autoslice/published_song_history.py",
+        "src/autoslice/render_qa.py",
+        "src/autoslice/reporting.py",
+        "src/autoslice/review_evidence.py",
+        "src/autoslice/semantic_candidate_selector.py",
+        "src/autoslice/source_context_executor.py",
+        "src/autoslice/source_context_planner.py",
+        "src/autoslice/source_integrity.py",
+        "src/autoslice/style_profile.py",
+        "src/autoslice/subtitle_rendering.py",
+        "src/autoslice/title_policy.py",
+        "src/autoslice/upload_tag_policy.py",
+        "src/autoslice/verified_io.py",
+        "src/autoslice/visual_song_discovery.py",
+    }
+    paths = [REPO_ROOT / relative for relative in explicit]
+    paths.extend((REPO_ROOT / "src" / "autoslice").glob("song_*.py"))
+    paths.extend(
+        (
+            REPO_ROOT / "profiles" / PROFILE_ID / "profile.json",
+            profile_tool("cover_regenerator"),
+            profile_asset_file("cover_identity_prompt"),
+            profile_asset_file("known_songs"),
+            profile_asset_file("published_songs"),
+            profile_asset_file("persona"),
+            profile_asset_file("slice_selection_metric"),
+            profile_asset_file("title_policy"),
+            profile_asset_file("title_style"),
+            profile_asset_file("upload_tag_policy"),
+            profile_asset_file("voiceprint_profile"),
+        )
+    )
+    fonts = profile_asset_directory("fonts")
+    paths.extend(fonts.rglob("*") if fonts.is_dir() else [])
+
+    hasher = hashlib.sha256()
+    hasher.update(b"song-pipeline-fingerprint.v1\0")
+    for path in sorted(set(paths), key=lambda item: str(item)):
+        try:
+            relative = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            relative = str(path)
+        hasher.update(relative.encode("utf-8") + b"\0")
+        hasher.update(path.read_bytes() if path.is_file() else b"MISSING")
+        hasher.update(b"\0")
+    policy = {
+        "max_songs_per_session": MAX_SONGS_PER_SESSION,
+        "song_attempt_cap": SONG_ATTEMPT_CAP,
+        "song_lifetime_attempt_cap": SONG_LIFETIME_ATTEMPT_CAP,
+        "song_infra_retry_cap": SONG_INFRA_RETRY_CAP,
+        "song_infra_retry_base_seconds": SONG_INFRA_RETRY_BASE_SECONDS,
+        "song_infra_retry_max_seconds": SONG_INFRA_RETRY_MAX_SECONDS,
+        "song_window_pre_ms": SONG_WINDOW_PRE_MS,
+        "song_window_post_ms": SONG_WINDOW_POST_MS,
+        "song_proof_retry_pre_ms": SONG_PROOF_RETRY_PRE_MS,
+        "song_proof_retry_post_ms": SONG_PROOF_RETRY_POST_MS,
+        "song_anchor_trim_min_ms": SONG_ANCHOR_TRIM_MIN_MS,
+        "song_terminal_performer_rejection_codes": sorted(
+            SONG_TERMINAL_PERFORMER_REJECTION_CODES
+        ),
+        "song_infra_transient_reason_codes": sorted(
+            SONG_INFRA_TRANSIENT_REASON_CODES
+        ),
+        "cpa_deep_command": CPA_CMD_DEEP,
+        "cpa_title_command": CPA_CMD_TITLE,
+        "cpa_standard_command": CPA_CMD_STANDARD,
+        "cpa_structured_command": CPA_CMD_STRUCTURED,
+    }
+    hasher.update(
+        json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    return "sha256:" + hasher.hexdigest()
+
+
 def human_truth_mode() -> str:
     """Select whether reviewed candidate truth may enter generation inputs."""
 
@@ -1206,6 +1312,11 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
                     if produce_fn is produce_talk
                     else pipeline_fingerprint()
                 ),
+                **(
+                    {"song_pipeline_fingerprint": song_pipeline_fingerprint()}
+                    if produce_fn is produce_song
+                    else {}
+                ),
                 **{
                     key: item[key]
                     for key in (
@@ -1278,13 +1389,20 @@ def process_date(date: str) -> None:
             f"{date}: recovered {recovered_song_deliveries} verified song delivery "
             "package(s) without selector/ASR/LRC rerun"
         )
+    song_fingerprint_baseline_before = state.get("song_pipeline_fingerprint_baseline")
     requeued_talks = requeue_recoverable_talks(date, state) if automatic_maintenance else 0
     requeued_songs = requeue_recoverable_songs(date, state) if automatic_maintenance else 0
-    if requeued_talks or requeued_songs:
+    song_fingerprint_baseline_changed = (
+        state.get("song_pipeline_fingerprint_baseline")
+        != song_fingerprint_baseline_before
+    )
+    if requeued_talks or requeued_songs or song_fingerprint_baseline_changed:
         write_state(date, state)
+    if requeued_talks or requeued_songs:
         log(
             f"{date}: requeued {requeued_talks} boundary talk failure(s) and "
-            f"{requeued_songs} recoverable song BLOCK(s) for pipeline {pipeline_fingerprint()[:19]}…"
+            f"{requeued_songs} recoverable song BLOCK(s) for song pipeline "
+            f"{song_pipeline_fingerprint()[:19]}…"
         )
     has_new = any(
         s.stem not in set(state.get("segments_done", [])) and s.stem not in state.get("segments_dead", {})

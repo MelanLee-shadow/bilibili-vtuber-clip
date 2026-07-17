@@ -4159,7 +4159,7 @@ def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer
     segment = date_dir / "22966160_20260710-20-00-09.mp4"
     segment.write_bytes(b"media")
     monkeypatch.setattr(runner, "REC_ROOT", rec_root)
-    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:new")
     monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
     monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
     monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
@@ -4174,6 +4174,7 @@ def test_pipeline_change_requeues_unproven_song_without_treating_it_as_performer
                 "status": "blocked",
                 "reason_codes": ["SONG_LIVE_PERFORMANCE_UNPROVEN", "SONG_HOST_VOCAL_UNPROVEN"],
                 "pipeline_fingerprint": "sha256:old",
+                "song_pipeline_fingerprint": "sha256:old",
                 "hook": "《怎么办》",
                 "discovery_lane": "visual_song_list",
                 "title_hint": "怎么办",
@@ -4206,7 +4207,7 @@ def test_song_requeue_lifetime_cap_is_per_live_session(tmp_path, monkeypatch):
     segment = date_dir / "22966160_20260710-22-00-00.mp4"
     segment.write_bytes(b"media")
     monkeypatch.setattr(runner, "REC_ROOT", rec_root)
-    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:new")
     monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
     monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
     monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
@@ -4231,6 +4232,7 @@ def test_song_requeue_lifetime_cap_is_per_live_session(tmp_path, monkeypatch):
                 "status": "blocked",
                 "reason_codes": ["SONG_LIVE_PERFORMANCE_UNPROVEN"],
                 "pipeline_fingerprint": "sha256:old",
+                "song_pipeline_fingerprint": "sha256:old",
                 "session_id": new_session,
             },
         ],
@@ -4241,7 +4243,7 @@ def test_song_requeue_lifetime_cap_is_per_live_session(tmp_path, monkeypatch):
 
 
 def test_verified_song_commit_reservation_is_not_requeued(monkeypatch):
-    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:new")
     record = {
         "candidate_id": "song_verified_pending_commit",
         "status": "blocked",
@@ -4270,7 +4272,7 @@ def test_missing_song_recovery_authority_does_not_reserve_quota_and_gets_one_ret
     segment = date_dir / "22966160_20260710-20-00-09.mp4"
     segment.write_bytes(b"media")
     monkeypatch.setattr(runner, "REC_ROOT", rec_root)
-    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:same")
     monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
     monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
     monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
@@ -4288,6 +4290,7 @@ def test_missing_song_recovery_authority_does_not_reserve_quota_and_gets_one_ret
             "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
         ],
         "pipeline_fingerprint": "sha256:same",
+        "song_pipeline_fingerprint": "sha256:same",
         "hook": "《测试歌》",
     }
     state = {"pending_song": [], "songs": [record]}
@@ -4335,6 +4338,59 @@ def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
     unrelated.parent.mkdir(parents=True, exist_ok=True)
     unrelated.write_text("unrelated\n", encoding="utf-8")
     assert runner.pipeline_fingerprint() == baseline
+
+
+def test_song_pipeline_fingerprint_excludes_talk_entity_authority(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    song_paths = [
+        "scripts/run_full_session_selector_cpa_shadow.py",
+        "src/autoslice/agy_lrc_alignment.py",
+        "src/autoslice/song_lane.py",
+        "assets/lidousha/known_songs.json",
+        "assets/lidousha/voiceprint_profile.v1.json",
+    ]
+    talk_only_paths = [
+        "src/autoslice/chat_evidence.py",
+        "src/autoslice/chat_proposals.py",
+        "src/autoslice/chat_repair.py",
+        "src/autoslice/producer_text_pipeline.py",
+        "assets/lidousha/entity_confusables.json",
+        "assets/lidousha/subtitle_correction_principles.md",
+    ]
+    for relative in [*song_paths, *talk_only_paths]:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"base:{relative}\n", encoding="utf-8")
+
+    baseline = runner.song_pipeline_fingerprint()
+    for relative in talk_only_paths:
+        path = tmp_path / relative
+        original = path.read_text(encoding="utf-8")
+        path.write_text(original + "changed\n", encoding="utf-8")
+        assert runner.song_pipeline_fingerprint() == baseline, relative
+        path.write_text(original, encoding="utf-8")
+    for relative in song_paths:
+        path = tmp_path / relative
+        original = path.read_text(encoding="utf-8")
+        path.write_text(original + "changed\n", encoding="utf-8")
+        assert runner.song_pipeline_fingerprint() != baseline, relative
+        path.write_text(original, encoding="utf-8")
+
+
+def test_legacy_global_song_fingerprint_is_migrated_without_retry(monkeypatch):
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:scoped")
+    record = {
+        "candidate_id": "song_legacy_global",
+        "status": "blocked",
+        "reason_codes": ["SONG_LIVE_PERFORMANCE_UNPROVEN"],
+        "pipeline_fingerprint": "sha256:old-global",
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs("2026-07-10", state) == 0
+    assert record["song_pipeline_fingerprint"] == "sha256:scoped"
+    assert state["song_pipeline_fingerprint_baseline"] == "sha256:scoped"
+    assert state["pending_song"] == []
 
 
 def test_talk_fingerprint_scopes_candidate_override_add_edit_delete(tmp_path, monkeypatch):
