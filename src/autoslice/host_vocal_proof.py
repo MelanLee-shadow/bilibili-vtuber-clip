@@ -45,9 +45,11 @@ CHECKPOINT_BUCKETS = ("head", "head", "middle", "middle", "middle", "tail", "tai
 CHECKPOINT_WINDOW_MS = 4_000
 MIN_LYRIC_CUE_MS = 2_500
 SESSION_HOST_ANCHOR_WINDOW_MS = 8_000
+SESSION_HOST_ANCHOR_SEARCH_STEP_MS = 4_000
+SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS = 48_000
 MIN_SESSION_HOST_ANCHOR_MS = 3_000
 MIN_SESSION_ENROLL_MEDIAN = 0.50
-MIN_SESSION_LYRIC_SCORE = 0.31
+MIN_SESSION_LYRIC_SCORE = 0.22
 # The pinned CAM++ model's own ``yesOrno_thr`` is 0.31.  Speech enrollment and
 # singing occupy different acoustic domains, so a checkpoint may establish
 # identity either directly against the enrollment set or through a verified
@@ -170,6 +172,8 @@ def _canonical_policy() -> dict[str, object]:
         "checkpoint_window_ms": CHECKPOINT_WINDOW_MS,
         "minimum_lyric_cue_ms": MIN_LYRIC_CUE_MS,
         "session_host_anchor_window_ms": SESSION_HOST_ANCHOR_WINDOW_MS,
+        "session_host_anchor_search_step_ms": SESSION_HOST_ANCHOR_SEARCH_STEP_MS,
+        "session_host_anchor_search_horizon_ms": SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS,
         "minimum_session_host_anchor_ms": MIN_SESSION_HOST_ANCHOR_MS,
         "minimum_session_enroll_median": MIN_SESSION_ENROLL_MEDIAN,
         "minimum_session_lyric_score": MIN_SESSION_LYRIC_SCORE,
@@ -179,6 +183,16 @@ def _canonical_policy() -> dict[str, object]:
         "required_buckets": list(REQUIRED_BUCKETS),
         "checkpoint_required_lyric_role": CHECKPOINT_REQUIRED_LYRIC_ROLE,
     }
+
+
+def _legacy_reference_profile_policy() -> dict[str, object]:
+    """Keep the enrollment/talk profile hash stable while song proof evolves."""
+
+    policy = _canonical_policy()
+    policy.pop("session_host_anchor_search_step_ms")
+    policy.pop("session_host_anchor_search_horizon_ms")
+    policy["minimum_session_lyric_score"] = 0.31
+    return policy
 
 
 def _validate_profile(profile: Mapping[str, object]) -> tuple[dict[str, object], list[dict[str, str]]]:
@@ -193,7 +207,10 @@ def _validate_profile(profile: Mapping[str, object]) -> tuple[dict[str, object],
             "reference_profile.subject does not match the selected channel profile"
         )
     policy = profile.get("policy")
-    if not isinstance(policy, Mapping) or dict(policy) != _canonical_policy():
+    if not isinstance(policy, Mapping) or dict(policy) not in (
+        _canonical_policy(),
+        _legacy_reference_profile_policy(),
+    ):
         raise HostVocalProofError("reference_profile.policy does not match the compiled fail-closed policy")
 
     model = profile.get("model")
@@ -349,6 +366,31 @@ def _session_host_anchor_position(alignment: Mapping[str, object]) -> tuple[int,
     return post_talk_ms, post_talk_ms + duration_ms
 
 
+def _session_host_anchor_positions(
+    alignment: Mapping[str, object],
+) -> tuple[tuple[int, int], ...]:
+    """Search post-song speech instead of assuming its first 8s are clean."""
+
+    first_start_ms, first_end_ms = _session_host_anchor_position(alignment)
+    artifacts = alignment.get("audio_alignment_artifacts")
+    assert isinstance(artifacts, Mapping)
+    source_duration_ms = _require_int(
+        artifacts, "source_duration_ms", label="audio_alignment_artifacts"
+    )
+    latest_start_ms = min(
+        source_duration_ms - MIN_SESSION_HOST_ANCHOR_MS,
+        first_start_ms + SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS,
+    )
+    positions: list[tuple[int, int]] = []
+    start_ms = first_start_ms
+    while start_ms <= latest_start_ms:
+        end_ms = min(start_ms + SESSION_HOST_ANCHOR_WINDOW_MS, source_duration_ms)
+        if end_ms - start_ms >= MIN_SESSION_HOST_ANCHOR_MS:
+            positions.append((start_ms, end_ms))
+        start_ms += SESSION_HOST_ANCHOR_SEARCH_STEP_MS
+    return tuple(positions) or ((first_start_ms, first_end_ms),)
+
+
 def _checkpoint_passed(*, session_anchor_ready: bool, median_score: float, session_anchor_score: float) -> bool:
     """Apply the singing-domain identity rule used by generation and verification.
 
@@ -361,6 +403,95 @@ def _checkpoint_passed(*, session_anchor_ready: bool, median_score: float, sessi
     direct_match = median_score >= MIN_CHECKPOINT_MEDIAN
     session_bridge_match = session_anchor_ready and session_anchor_score >= MIN_SESSION_LYRIC_SCORE
     return direct_match or session_bridge_match
+
+
+def _validate_session_anchor_search(
+    raw_search: object,
+    *,
+    raw_selected_anchor: Mapping[str, object],
+    positions: tuple[tuple[int, int], ...],
+    selected_start_ms: int,
+    selected_end_ms: int,
+) -> None:
+    if raw_search is None:
+        if (selected_start_ms, selected_end_ms) != positions[0]:
+            raise HostVocalProofError(
+                "shifted session host anchor lacks its search record"
+            )
+        return
+    raw_candidates = (
+        raw_search.get("candidates") if isinstance(raw_search, Mapping) else None
+    )
+    if (
+        not isinstance(raw_search, Mapping)
+        or raw_search.get("strategy")
+        != "first_verified_enrollment_window_after_song"
+        or not isinstance(raw_candidates, list)
+        or not raw_candidates
+    ):
+        raise HostVocalProofError("session host anchor search record is invalid")
+    candidate_medians: list[float] = []
+    for candidate_index, candidate in enumerate(raw_candidates):
+        if not isinstance(candidate, Mapping) or candidate_index >= len(positions):
+            raise HostVocalProofError(
+                "session host anchor search candidates are invalid"
+            )
+        expected_start_ms, expected_end_ms = positions[candidate_index]
+        candidate_start_ms = _require_int(
+            candidate,
+            "start_ms",
+            label=f"session_host_anchor_search.candidates[{candidate_index}]",
+        )
+        candidate_end_ms = _require_int(
+            candidate,
+            "end_ms",
+            label=f"session_host_anchor_search.candidates[{candidate_index}]",
+        )
+        candidate_median = _require_similarity_score(
+            candidate.get("enroll_median_score"),
+            label=(
+                "session_host_anchor_search.candidates"
+                f"[{candidate_index}].enroll_median_score"
+            ),
+        )
+        candidate_passed = candidate_median >= MIN_SESSION_ENROLL_MEDIAN
+        if (
+            (candidate_start_ms, candidate_end_ms)
+            != (expected_start_ms, expected_end_ms)
+            or candidate.get("window_ms")
+            != candidate_end_ms - candidate_start_ms
+            or candidate.get("passed") is not candidate_passed
+        ):
+            raise HostVocalProofError(
+                "session host anchor search candidates are invalid"
+            )
+        candidate_medians.append(candidate_median)
+    selected_index = positions.index((selected_start_ms, selected_end_ms))
+    if (
+        selected_index >= len(raw_candidates)
+        or raw_selected_anchor != raw_candidates[selected_index]
+    ):
+        raise HostVocalProofError(
+            "session host anchor search does not bind the selected candidate"
+        )
+    if raw_selected_anchor.get("passed") is True:
+        if (
+            len(raw_candidates) != selected_index + 1
+            or any(
+                candidate.get("passed") is True
+                for candidate in raw_candidates[:selected_index]
+            )
+        ):
+            raise HostVocalProofError(
+                "session host anchor search did not select the first verified window"
+            )
+    elif (
+        len(raw_candidates) != len(positions)
+        or candidate_medians[selected_index] != max(candidate_medians)
+    ):
+        raise HostVocalProofError(
+            "session host anchor search did not retain the best failed window"
+        )
 
 
 def _decision_from_checkpoints(checkpoints: Sequence[Mapping[str, object]]) -> tuple[str, str, dict[str, object]]:
@@ -498,7 +629,7 @@ def generate_host_vocal_proof(
     if first_ms < 0 or last_ms <= first_ms:
         raise HostVocalProofError("lyrics alignment report has an invalid first/last lyric span")
     selected_lyrics = _selected_lyric_rows(alignment)
-    session_anchor_start_ms, session_anchor_end_ms = _session_host_anchor_position(alignment)
+    session_anchor_positions = _session_host_anchor_positions(alignment)
 
     profile = _load_json_object(profile_path, label="reference profile")
     model_info, expected_references = _validate_profile(profile)
@@ -533,36 +664,62 @@ def generate_host_vocal_proof(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     speaker_verifier = _load_campplus_pipeline(model_dir)
-    session_anchor_path = (checkpoint_dir / "session-host-anchor.wav").resolve()
-    _extract_checkpoint(
-        source_media_path,
-        start_ms=session_anchor_start_ms,
-        expected_duration_ms=session_anchor_end_ms - session_anchor_start_ms,
-        output_path=session_anchor_path,
-    )
-    session_reference_scores: list[dict[str, object]] = []
-    for reference in references:
-        try:
-            raw_result = speaker_verifier([reference["path"], str(session_anchor_path)])
-        except Exception as exc:  # pragma: no cover - production ML runtime
-            raise HostVocalProofError(f"CAM++ session-host anchor inference failed: {type(exc).__name__}: {exc}") from exc
-        session_reference_scores.append(
-            {"reference_id": reference["id"], "score": round(_extract_score(raw_result), 8)}
+    session_anchor_candidates: list[dict[str, object]] = []
+    selected_session_anchor: dict[str, object] | None = None
+    for anchor_index, (session_anchor_start_ms, session_anchor_end_ms) in enumerate(
+        session_anchor_positions
+    ):
+        session_anchor_path = (
+            checkpoint_dir / f"session-host-anchor-{anchor_index + 1:02d}.wav"
+        ).resolve()
+        _extract_checkpoint(
+            source_media_path,
+            start_ms=session_anchor_start_ms,
+            expected_duration_ms=session_anchor_end_ms - session_anchor_start_ms,
+            output_path=session_anchor_path,
         )
-    session_enroll_median = round(
-        float(statistics.median(row["score"] for row in session_reference_scores)), 8
-    )
-    session_anchor_ready = session_enroll_median >= MIN_SESSION_ENROLL_MEDIAN
-    session_host_anchor: dict[str, object] = {
-        "start_ms": session_anchor_start_ms,
-        "end_ms": session_anchor_end_ms,
-        "window_ms": session_anchor_end_ms - session_anchor_start_ms,
-        "sample_path": str(session_anchor_path),
-        "sample_sha256": _sha256_file(session_anchor_path),
-        "reference_scores": session_reference_scores,
-        "enroll_median_score": session_enroll_median,
-        "passed": session_anchor_ready,
-    }
+        session_reference_scores: list[dict[str, object]] = []
+        for reference in references:
+            try:
+                raw_result = speaker_verifier(
+                    [reference["path"], str(session_anchor_path)]
+                )
+            except Exception as exc:  # pragma: no cover - production ML runtime
+                raise HostVocalProofError(
+                    f"CAM++ session-host anchor inference failed: {type(exc).__name__}: {exc}"
+                ) from exc
+            session_reference_scores.append(
+                {
+                    "reference_id": reference["id"],
+                    "score": round(_extract_score(raw_result), 8),
+                }
+            )
+        session_enroll_median = round(
+            float(statistics.median(row["score"] for row in session_reference_scores)),
+            8,
+        )
+        candidate: dict[str, object] = {
+            "start_ms": session_anchor_start_ms,
+            "end_ms": session_anchor_end_ms,
+            "window_ms": session_anchor_end_ms - session_anchor_start_ms,
+            "sample_path": str(session_anchor_path),
+            "sample_sha256": _sha256_file(session_anchor_path),
+            "reference_scores": session_reference_scores,
+            "enroll_median_score": session_enroll_median,
+            "passed": session_enroll_median >= MIN_SESSION_ENROLL_MEDIAN,
+        }
+        session_anchor_candidates.append(candidate)
+        if candidate["passed"] is True:
+            selected_session_anchor = candidate
+            break
+    if selected_session_anchor is None:
+        selected_session_anchor = max(
+            session_anchor_candidates,
+            key=lambda candidate: float(candidate["enroll_median_score"]),
+        )
+    session_host_anchor = dict(selected_session_anchor)
+    session_anchor_path = Path(str(session_host_anchor["sample_path"]))
+    session_anchor_ready = session_host_anchor["passed"] is True
     checkpoints: list[dict[str, object]] = []
     for index, (fraction, bucket, lyric_row) in enumerate(
         zip(CHECKPOINT_FRACTIONS, CHECKPOINT_BUCKETS, selected_lyrics, strict=True)
@@ -663,6 +820,10 @@ def generate_host_vocal_proof(
         },
         "references": references,
         "session_host_anchor": session_host_anchor,
+        "session_host_anchor_search": {
+            "strategy": "first_verified_enrollment_window_after_song",
+            "candidates": session_anchor_candidates,
+        },
         "policy": _canonical_policy(),
         "checkpoints": checkpoints,
         "distribution": distribution,
@@ -805,7 +966,7 @@ def _verify_host_vocal_proof_claim(
     if first_ms < 0 or last_ms <= first_ms:
         raise HostVocalProofError("lyrics alignment report has an invalid first/last lyric span")
     selected_lyrics = _selected_lyric_rows(alignment)
-    session_anchor_start_ms, session_anchor_end_ms = _session_host_anchor_position(alignment)
+    session_anchor_positions = _session_host_anchor_positions(alignment)
     audio_artifacts = alignment.get("audio_alignment_artifacts")
     if not isinstance(audio_artifacts, Mapping):
         raise HostVocalProofError("lyrics alignment report audio artifacts are missing")
@@ -827,12 +988,25 @@ def _verify_host_vocal_proof_claim(
     raw_session_anchor = proof.get("session_host_anchor")
     if not isinstance(raw_session_anchor, Mapping):
         raise HostVocalProofError("host vocal proof session_host_anchor is missing")
+    session_anchor_start_ms = _require_int(
+        raw_session_anchor, "start_ms", label="session_host_anchor"
+    )
+    session_anchor_end_ms = _require_int(
+        raw_session_anchor, "end_ms", label="session_host_anchor"
+    )
     if (
-        raw_session_anchor.get("start_ms") != session_anchor_start_ms
-        or raw_session_anchor.get("end_ms") != session_anchor_end_ms
+        (session_anchor_start_ms, session_anchor_end_ms)
+        not in session_anchor_positions
         or raw_session_anchor.get("window_ms") != session_anchor_end_ms - session_anchor_start_ms
     ):
         raise HostVocalProofError("session host anchor timing mismatch")
+    _validate_session_anchor_search(
+        proof.get("session_host_anchor_search"),
+        raw_selected_anchor=raw_session_anchor,
+        positions=session_anchor_positions,
+        selected_start_ms=session_anchor_start_ms,
+        selected_end_ms=session_anchor_end_ms,
+    )
     session_sample_path = Path(
         _require_string(raw_session_anchor, "sample_path", label="session_host_anchor")
     ).resolve(strict=True)

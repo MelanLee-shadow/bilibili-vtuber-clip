@@ -236,6 +236,76 @@ def test_three_second_post_song_speech_anchor_is_accepted_without_backfill(tmp_p
     )
 
 
+def test_session_host_anchor_search_advances_through_post_song_speech(tmp_path):
+    bundle = _fixture(tmp_path)
+    alignment = json.loads(bundle["alignment"].read_text(encoding="utf-8"))
+    first_start = alignment["post_song_talk_start_ms"]
+    alignment["audio_alignment_artifacts"]["source_duration_ms"] = first_start + 30_000
+
+    positions = host_vocal._session_host_anchor_positions(alignment)
+
+    assert positions[:3] == (
+        (first_start, first_start + 8_000),
+        (first_start + 4_000, first_start + 12_000),
+        (first_start + 8_000, first_start + 16_000),
+    )
+
+
+def test_shifted_session_host_anchor_requires_ordered_search_evidence(tmp_path):
+    bundle = _fixture(tmp_path)
+    positions = host_vocal._session_host_anchor_positions(
+        json.loads(bundle["alignment"].read_text(encoding="utf-8"))
+    )
+    first_candidate = json.loads(
+        json.dumps(bundle["proof"]["session_host_anchor"])
+    )
+    first_candidate["enroll_median_score"] = 0.40
+    first_candidate["passed"] = False
+    selected_candidate = bundle["proof"]["session_host_anchor"]
+    selected_candidate["start_ms"], selected_candidate["end_ms"] = positions[1]
+    selected_candidate["window_ms"] = positions[1][1] - positions[1][0]
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    assert (
+        _verify(bundle)
+        == "shifted session host anchor lacks its search record"
+    )
+
+    bundle["proof"]["session_host_anchor_search"] = {
+        "strategy": "first_verified_enrollment_window_after_song",
+        "candidates": [first_candidate, selected_candidate],
+    }
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    assert _verify(bundle) is None
+
+
+def test_singing_domain_session_bridge_keeps_five_of_seven_gate():
+    assert host_vocal._checkpoint_passed(
+        session_anchor_ready=True,
+        median_score=0.0,
+        session_anchor_score=0.22,
+    )
+    assert not host_vocal._checkpoint_passed(
+        session_anchor_ready=True,
+        median_score=0.0,
+        session_anchor_score=0.219,
+    )
+    status, decision, distribution = host_vocal._decision_from_checkpoints(
+        [
+            {"bucket": bucket, "passed": passed}
+            for bucket, passed in zip(
+                host_vocal.CHECKPOINT_BUCKETS,
+                (True, True, False, True, True, False, True),
+                strict=True,
+            )
+        ]
+    )
+    assert status == host_vocal.READY_STATUS
+    assert decision == host_vocal.READY_DECISION
+    assert distribution["passed_count"] == 5
+
+
 def test_spoken_canonical_rows_never_supply_campp_singing_checkpoints(tmp_path):
     bundle = _fixture(tmp_path)
     alignment = json.loads(bundle["alignment"].read_text(encoding="utf-8"))
