@@ -1,0 +1,43 @@
+{
+  "schema": "same-bvid-part-title-fix.v1",
+  "reason": "Source replacement must not expose the technical artifact filename as public part metadata.",
+  "targets": [
+    {
+      "bvid": "BV1AbNR66ExW",
+      "cid": 40051345668,
+      "part_title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+      "status": "PUBLIC"
+    },
+    {
+      "bvid": "BV1cbNR66Eyt",
+      "cid": 40051346587,
+      "part_title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "status": "PUBLIC"
+    },
+    {
+      "bvid": "BV1AtNR63ERp",
+      "cid": 40051347150,
+      "part_title": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "status": "PUBLIC"
+    },
+    {
+      "bvid": "BV1cbNR66ECP",
+      "cid": 40051409139,
+      "part_title": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "status": "PUBLIC"
+    },
+    {
+      "bvid": "BV1pbNR66E2g",
+      "cid": 40051409236,
+      "part_title": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+      "status": "PUBLIC"
+    },
+    {
+      "bvid": "BV1pbNR66E2r",
+      "cid": 40051409832,
+      "part_title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "status": "PUBLIC"
+    }
+  ],
+  "verified_at": "2026-07-17T17:30:03Z"
+}
