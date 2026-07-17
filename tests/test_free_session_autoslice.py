@@ -2401,6 +2401,28 @@ def test_produce_batch_preserves_session_id_on_success():
     assert result[0]["session_id"] == "live-evening"
 
 
+def test_produce_batch_forwards_persisted_reuse_cover_for_talk_repairs(monkeypatch):
+    calls = []
+
+    def fake_talk(_date, item, *, reuse_cover=False):
+        calls.append((item["cid"], reuse_cover))
+        return {"candidate_id": item["cid"], "status": "review_ready"}
+
+    monkeypatch.setattr(runner, "produce_talk", fake_talk)
+
+    results = runner.produce_batch(
+        "2026-07-16",
+        [
+            {"cid": "repair", "reuse_cover": True},
+            {"cid": "fresh"},
+        ],
+        fake_talk,
+    )
+
+    assert calls == [("repair", True), ("fresh", False)]
+    assert [row["candidate_id"] for row in results] == ["repair", "fresh"]
+
+
 def test_recoverable_failed_pick_reserves_its_seat_from_backfill():
     """Ivan 2026-07-13 对账铁律：可恢复失败的原选手先复活，候补不许趁基础设施
     故障上位（7/11 实况：2 条 failed 席被当空席→候补顶上→复活后一天超发 7 条）。

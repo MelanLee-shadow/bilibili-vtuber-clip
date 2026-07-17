@@ -1329,12 +1329,18 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
     input order.  Each slice is an independent subprocess (produce_slice_package /
     the song selector), so threads just wait on those; a crash in one becomes a
     failed result and never kills the batch.  ``produce_fn`` is produce_talk /
-    produce_song, called as fn(date, item)."""
+    produce_song.  Targeted talk repairs may opt into the talk lane's
+    ``reuse_cover`` path through their persisted queue item."""
     from concurrent.futures import ThreadPoolExecutor
 
     def _one(item: dict) -> dict:
         try:
-            result = produce_fn(date, item)
+            produce_kwargs = (
+                {"reuse_cover": True}
+                if produce_fn is produce_talk and item.get("reuse_cover")
+                else {}
+            )
+            result = produce_fn(date, item, **produce_kwargs)
             if item.get("session_id"):
                 result.setdefault("session_id", item["session_id"])
             return result
