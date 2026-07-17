@@ -86,6 +86,26 @@ def parse_srt(path: Path) -> list[TextCue]:
 
 
 def _expect(cue: TextCue, override: dict[str, Any]) -> None:
+    if str(override.get("action", "replace")) == "replace_substring":
+        locator = override.get("locator")
+        old_text = str(override.get("old_text", ""))
+        replacement = str(override.get("text", ""))
+        if (
+            not isinstance(locator, dict)
+            or not str(locator.get("start") or "")
+            or not str(locator.get("end") or "")
+            or not old_text
+            or not replacement
+        ):
+            raise ValueError(
+                f"substring override for cue {cue.source_index} has an invalid locator or text"
+            )
+        if cue.text.count(old_text) != 1:
+            raise ValueError(
+                f"substring override for cue {cue.source_index} expected one "
+                f"{old_text!r}, got {cue.text.count(old_text)}"
+            )
+        return
     expected = override.get("expect")
     if not isinstance(expected, dict):
         raise ValueError(f"override for cue {cue.source_index} is missing expect")
@@ -120,18 +140,36 @@ def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, di
             raise ValueError("each text override must be an object")
         declared_source_index = int(override.get("source_cue", 0))
         if schema_version == 3:
-            expected = override.get("expect")
-            if not isinstance(expected, dict):
-                raise ValueError(
-                    f"timeline override {declared_source_index} is missing expect"
-                )
-            start = str(expected.get("start") or "")
-            end = str(expected.get("end") or "")
-            matches = [
-                cue.source_index
-                for cue in cues
-                if cue.start == start and cue.end == end
-            ]
+            action = str(override.get("action", "replace"))
+            if action == "replace_substring":
+                locator = override.get("locator")
+                if not isinstance(locator, dict):
+                    raise ValueError(
+                        f"timeline override {declared_source_index} is missing locator"
+                    )
+                start = str(locator.get("start") or "")
+                end = str(locator.get("end") or "")
+                old_text = str(override.get("old_text") or "")
+                matches = [
+                    cue.source_index
+                    for cue in cues
+                    if cue.start < end
+                    and cue.end > start
+                    and old_text in cue.text
+                ]
+            else:
+                expected = override.get("expect")
+                if not isinstance(expected, dict):
+                    raise ValueError(
+                        f"timeline override {declared_source_index} is missing expect"
+                    )
+                start = str(expected.get("start") or "")
+                end = str(expected.get("end") or "")
+                matches = [
+                    cue.source_index
+                    for cue in cues
+                    if cue.start == start and cue.end == end
+                ]
             if len(matches) != 1:
                 raise ValueError(
                     f"timeline override {declared_source_index} matched "
@@ -181,6 +219,36 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
         return str(primary) if actual in allowed else actual
 
     timeline_bound = document.get("schema_version") == 3
+    if timeline_bound:
+        for source_index, override in by_index.items():
+            _expect(cues[source_index - 1], override)
+
+    def witness_row(source_index: int) -> dict[str, Any]:
+        override = by_index[source_index]
+        if timeline_bound and str(override.get("action", "replace")) == "replace_substring":
+            return {
+                "source_cue": int(override.get("source_cue", 0)),
+                "action": "replace_substring",
+                "locator": override.get("locator"),
+                "old_text": str(override.get("old_text") or ""),
+            }
+        return {
+            "source_cue": (
+                int(override.get("source_cue", 0))
+                if timeline_bound
+                else source_index
+            ),
+            "start": witnessed_value(
+                cues[source_index - 1], override, "start"
+            ),
+            "end": witnessed_value(
+                cues[source_index - 1], override, "end"
+            ),
+            "text": witnessed_value(
+                cues[source_index - 1], override, "text"
+            ),
+        }
+
     payload = {
         "schema_version": (
             "subtitle-text-timeline-cue-witness.v1"
@@ -189,25 +257,7 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
         ),
         "candidate_id": str(document.get("candidate_id", "")),
         **({} if timeline_bound else {"source_cue_count": len(cues)}),
-        "cues": [
-            {
-                "source_cue": (
-                    int(by_index[source_index].get("source_cue", 0))
-                    if timeline_bound
-                    else source_index
-                ),
-                "start": witnessed_value(
-                    cues[source_index - 1], by_index[source_index], "start"
-                ),
-                "end": witnessed_value(
-                    cues[source_index - 1], by_index[source_index], "end"
-                ),
-                "text": witnessed_value(
-                    cues[source_index - 1], by_index[source_index], "text"
-                ),
-            }
-            for source_index in sorted(by_index)
-        ],
+        "cues": [witness_row(source_index) for source_index in sorted(by_index)],
     }
     return _canonical_sha256(payload)
 
@@ -216,6 +266,44 @@ def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]
     """Bind the reviewed decisions without binding unrelated automatic cues."""
 
     by_index = _override_map(cues, document)
+    timeline_bound = document.get("schema_version") == 3
+    if timeline_bound:
+        reviewed_outputs = []
+        for source_index, override in sorted(by_index.items()):
+            _expect(cues[source_index - 1], override)
+            action = str(override.get("action", "replace"))
+            row: dict[str, Any] = {
+                "source_cue": int(override.get("source_cue", 0)),
+                "action": action,
+            }
+            if action == "drop":
+                reviewed_outputs.append(row)
+                continue
+            if action == "replace_substring":
+                row.update(
+                    {
+                        "locator": override.get("locator"),
+                        "old_text": str(override.get("old_text") or ""),
+                        "text": str(override.get("text", "")).strip(),
+                    }
+                )
+            else:
+                expected = override.get("expect") or {}
+                row.update(
+                    {
+                        "start": str(expected.get("start") or ""),
+                        "end": str(expected.get("end") or ""),
+                        "text": str(override.get("text", "")).strip(),
+                    }
+                )
+            reviewed_outputs.append(row)
+        payload = {
+            "schema_version": "subtitle-text-timeline-decision-witness.v1",
+            "candidate_id": str(document.get("candidate_id", "")),
+            "reviewed_outputs": reviewed_outputs,
+        }
+        return _canonical_sha256(payload)
+
     reviewed_outputs: list[dict[str, Any]] = []
     for source_index, override in sorted(by_index.items()):
         cue = cues[source_index - 1]
@@ -232,19 +320,10 @@ def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]
                 "text": str(override.get("text", "")).strip(),
             }
         )
-    timeline_bound = document.get("schema_version") == 3
-    if timeline_bound:
-        for row in reviewed_outputs:
-            override = by_index[int(row["source_cue"])]
-            row["source_cue"] = int(override.get("source_cue", 0))
     payload = {
-        "schema_version": (
-            "subtitle-text-timeline-decision-witness.v1"
-            if timeline_bound
-            else "subtitle-text-decision-witness.v1"
-        ),
+        "schema_version": "subtitle-text-decision-witness.v1",
         "candidate_id": str(document.get("candidate_id", "")),
-        **({} if timeline_bound else {"source_cue_count": len(cues)}),
+        "source_cue_count": len(cues),
         "reviewed_outputs": reviewed_outputs,
     }
     return _canonical_sha256(payload)
@@ -266,6 +345,20 @@ def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list
             if not str(override.get("reason", "")).strip():
                 raise ValueError(f"drop override for cue {cue.source_index} has no reason")
             decisions.append({"source": asdict(cue), "action": "drop", **override})
+            continue
+        if action == "replace_substring":
+            old_text = str(override.get("old_text", ""))
+            replacement = str(override.get("text", ""))
+            output_text = cue.text.replace(old_text, replacement, 1)
+            output.append(TextCue(cue.source_index, cue.start, cue.end, output_text))
+            decisions.append(
+                {
+                    "source": asdict(cue),
+                    "action": "replace_substring",
+                    "output_text": output_text,
+                    **override,
+                }
+            )
             continue
         if action != "replace":
             raise ValueError(f"text override for cue {cue.source_index} has invalid action {action!r}")

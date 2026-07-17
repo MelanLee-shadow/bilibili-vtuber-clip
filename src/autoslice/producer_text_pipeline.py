@@ -58,6 +58,7 @@ from src.autoslice.subtitle_fidelity import (
     apply_source_language_preservation_guard,
     apply_title_mark_balance_guard,
     audit_foreign_script_consistency,
+    mixed_cjk_latin_findings_covered_by_overrides,
 )
 from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
@@ -666,7 +667,7 @@ def _finalize_text_evidence(
     song_name_candidates: list[str],
     session_topic_authorities: tuple[dict[str, Any], ...],
     source_language_witness_srt: str,
-    human_text_override_configured: bool,
+    text_override_path: Path | None,
     out_root: Path,
     cid: str,
 ) -> TextEvidenceResult:
@@ -680,12 +681,30 @@ def _finalize_text_evidence(
     if (
         foreign_script_audit["status"]
         == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
-        and human_text_override_configured
+        and text_override_path is not None
     ):
         foreign_script_audit["status"] = "DEFERRED_TO_BOUND_TEXT_OVERRIDE"
         foreign_script_audit[
             "deferred_reason"
         ] = "candidate has a hash-bound reviewed text override before delivery"
+    elif (
+        foreign_script_audit["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+        and text_override_path is not None
+    ):
+        try:
+            override_document = json.loads(
+                text_override_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            override_document = {}
+        if mixed_cjk_latin_findings_covered_by_overrides(
+            foreign_script_audit,
+            override_document,
+        ):
+            foreign_script_audit["status"] = "DEFERRED_TO_BOUND_TEXT_OVERRIDE"
+            foreign_script_audit["deferred_reason"] = (
+                "every mixed-language cue has a timeline-bound reviewed repair"
+            )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
     chat_authority_audit["title_mark_balance_audit"] = title_mark_balance_audit
@@ -838,7 +857,7 @@ def run_text_pipeline(
         song_name_candidates=draft.song_name_candidates,
         session_topic_authorities=draft.session_topic_authorities,
         source_language_witness_srt=draft.source_language_witness_srt,
-        human_text_override_configured=text_override_path is not None,
+        text_override_path=text_override_path,
         out_root=out_root,
         cid=cid,
     )

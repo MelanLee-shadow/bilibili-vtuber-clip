@@ -1,8 +1,8 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_162645_712_967",
-  "source_cue_witness_sha256": "3338000f5d0fe9cef47995bdd4f7d9cf4064e8f6dd16bf1da3e99d705aeb5d9e",
-  "decision_output_witness_sha256": "e47d3547e4843f8d2a36b375c22dd88c21410387d1fbb8d5281168b6d3434602",
+  "source_cue_witness_sha256": "9f56d1ff6ddd466f965c12d20ebefab203d8cf7415b8c4b2336213be2fc189db",
+  "decision_output_witness_sha256": "bff1c38241fd21229c5922517c48a51e83670b85028b8f6e589717df7fb6f458",
   "overrides": [
     {
       "source_cue": 12,
@@ -35,6 +35,18 @@
       "text": "呵，直女，直系女同喜欢吗？",
       "authority": "Ivan confirmed 直系女同 in this event and the immediate discussion contrasts 直女 and女同",
       "reason": "Repair both linked homophones without changing timing or sentence structure"
+    },
+    {
+      "source_cue": 15,
+      "action": "replace_substring",
+      "locator": {
+        "start": "00:00:55,000",
+        "end": "00:00:59,000"
+      },
+      "old_text": "don't know",
+      "text": "都问",
+      "authority": "Source-aware final review rejected the unsupported English phrase in this Chinese talk passage",
+      "reason": "Remove mixed-language ASR word salad while preserving the surrounding sentence and timing"
     }
   ]
 }

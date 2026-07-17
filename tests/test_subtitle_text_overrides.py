@@ -293,3 +293,66 @@ def test_timeline_bound_override_survives_unrelated_cue_resegmentation(
     source.write_text(resegmented.replace("00:00:02,000", "00:00:02,100"), encoding="utf-8")
     with pytest.raises(ValueError, match="matched 0 cues"):
         apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+
+def test_timeline_substring_override_survives_sentence_resegmentation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        """1
+00:01:30,930 --> 00:01:34,510
+应该不是不可以把杖剑传说换成Galgame 的意思吧
+""",
+        encoding="utf-8",
+    )
+    document = {
+        "schema_version": 3,
+        "candidate_id": "substring_test",
+        "source_cue_witness_sha256": "",
+        "decision_output_witness_sha256": "",
+        "overrides": [
+            {
+                "source_cue": 1,
+                "action": "replace_substring",
+                "locator": {
+                    "start": "00:01:29,000",
+                    "end": "00:01:35,500",
+                },
+                "old_text": "换成",
+                "text": "玩成",
+                "authority": "reviewed acoustic decision",
+            }
+        ],
+    }
+    cues = parse_srt(source)
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(cues, document)
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(
+        cues, document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    source.write_text(
+        """1
+00:01:29,950 --> 00:01:32,510
+私人飞机应该不是不可以
+
+2
+00:01:32,510 --> 00:01:34,510
+把杖剑传说换成Galgame 的意思吧
+""",
+        encoding="utf-8",
+    )
+    output = tmp_path / "out.srt"
+    apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+    assert "把杖剑传说玩成Galgame" in output.read_text(encoding="utf-8")
+    assert "换成Galgame" not in output.read_text(encoding="utf-8")
+
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("换成", "变成"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="matched 0 cues"):
+        apply_document(source, overrides, output, tmp_path / "manifest.json")

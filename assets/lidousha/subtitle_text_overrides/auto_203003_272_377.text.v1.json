@@ -1,8 +1,8 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_203003_272_377",
-  "source_cue_witness_sha256": "edc01c27b4a2634360f9b6927b08c370066f3fd45958273e52a3563e00178bd9",
-  "decision_output_witness_sha256": "db7443153dbff63beca5a138befd8b9a7fe3fb812243890d653de395f2f0c8dd",
+  "source_cue_witness_sha256": "b3e2381f1669c251aa97fb444cb42e45e96ec1acbce25173552ca1580dcbf6c0",
+  "decision_output_witness_sha256": "b8d1dca708f6999686d8a1e125a230b3ddd9725b5bc1420c784100c8017eb944",
   "overrides": [
     {
       "source_cue": 9,
@@ -13,7 +13,8 @@
         "text": "因为李豆沙，哈哈。",
         "text_alternatives": [
           "因为李豆沙，哈哈",
-          "因为李豆沙是侄女，括弧笑，哈哈"
+          "因为李豆沙是侄女，括弧笑，哈哈",
+          "因为李豆沙切夸夸克的，哈哈"
         ]
       },
       "text": "因为李豆沙是夸夸怪的，哈哈",
@@ -34,15 +35,15 @@
     },
     {
       "source_cue": 37,
-      "action": "replace",
-      "expect": {
-        "start": "00:01:30,930",
-        "end": "00:01:34,510",
-        "text": "应该不是不可以把杖剑传说换成Galgame 的意思吧"
+      "action": "replace_substring",
+      "locator": {
+        "start": "00:01:29,000",
+        "end": "00:01:35,500"
       },
-      "text": "应该不是不可以把杖剑传说玩成Galgame 的意思吧",
+      "old_text": "换成",
+      "text": "玩成",
       "authority": "Gemini paid-backup audio adjudication observed 玩成 and rejected 换成 for this exact cue",
-      "reason": "Preserve the acoustically verified repeated phrase"
+      "reason": "Preserve the acoustically verified verb even when the surrounding sentence is resegmented"
     }
   ]
 }

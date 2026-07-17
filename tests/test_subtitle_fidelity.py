@@ -7,6 +7,7 @@ from src.autoslice.subtitle_fidelity import (
     apply_title_mark_balance_guard,
     audit_foreign_script_consistency,
     digit_reading_equivalent,
+    mixed_cjk_latin_findings_covered_by_overrides,
 )
 
 
@@ -208,6 +209,17 @@ def test_foreign_script_consistency_allows_real_japanese_or_isolated_code_switch
     assert audit["status"] == "CLEAN"
 
 
+def test_foreign_script_consistency_allows_registered_franchise_and_chat_terms():
+    audit = audit_foreign_script_consistency(
+        _srt(
+            "怎么又把soyo也Mujica？对我们MyGO!!!!!想做什么？",
+            "谢谢她的SC，绯闻女友ID已被注册",
+        )
+    )
+
+    assert audit["status"] == "CLEAN"
+
+
 def test_foreign_script_consistency_blocks_unapproved_latin_phrase_inside_chinese_talk():
     audit = audit_foreign_script_consistency(
         _srt("都问那么多，所有的", "don't know那么多，所有的", "玩成Galgame")
@@ -217,10 +229,49 @@ def test_foreign_script_consistency_blocks_unapproved_latin_phrase_inside_chines
     assert audit["mixed_cjk_latin_cues"] == [
         {
             "cue_index": 2,
+            "start_ms": 10_000,
+            "end_ms": 14_000,
             "text": "don't know那么多，所有的",
             "latin_words": ["don't", "know"],
         }
     ]
+
+
+def test_mixed_cjk_latin_block_defers_only_for_exact_timeline_bound_repair():
+    audit = audit_foreign_script_consistency(
+        _srt("正常中文", "don't know那么多，所有的")
+    )
+    covering = {
+        "schema_version": 3,
+        "overrides": [
+            {
+                "action": "replace_substring",
+                "locator": {
+                    "start": "00:00:09,000",
+                    "end": "00:00:15,000",
+                },
+                "old_text": "don't know",
+                "text": "都问",
+            }
+        ],
+    }
+    unrelated = {
+        "schema_version": 3,
+        "overrides": [
+            {
+                "action": "replace_substring",
+                "locator": {
+                    "start": "00:00:20,000",
+                    "end": "00:00:25,000",
+                },
+                "old_text": "don't know",
+                "text": "都问",
+            }
+        ],
+    }
+
+    assert mixed_cjk_latin_findings_covered_by_overrides(audit, covering)
+    assert not mixed_cjk_latin_findings_covered_by_overrides(audit, unrelated)
 
 
 def test_title_mark_guard_closes_one_dangling_open_mark_before_punctuation():

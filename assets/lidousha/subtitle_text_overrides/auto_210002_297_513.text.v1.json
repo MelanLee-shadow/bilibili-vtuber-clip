@@ -52,7 +52,10 @@
       "expect": {
         "start": "00:03:11,890",
         "end": "00:03:13,542",
-        "text": "李豆沙一直是VIP 1"
+        "text": "李豆沙一直是VIP 1",
+        "text_alternatives": [
+          "李豆沙一直是 VIP 1"
+        ]
       },
       "text": "李豆沙一直是……",
       "authority": "The source audio supports the repeated lead-in but not the invented Latin numeric token; Ivan confirmed the complete wording in the following cue",

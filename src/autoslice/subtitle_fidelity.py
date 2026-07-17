@@ -67,6 +67,28 @@ _LATIN_WORD_RX = re.compile(r"\b[A-Za-z]+(?:['’-][A-Za-z]+)?\b")
 _EMBEDDED_LATIN_WORD_RX = re.compile(
     r"(?<![A-Za-z])[A-Za-z]+(?:['’-][A-Za-z]+)?(?![A-Za-z])"
 )
+_SRT_CLOCK_RX = re.compile(r"^(\d{2}):(\d{2}):(\d{2}),(\d{3})$")
+_SAFE_CODE_SWITCH_WORDS = frozenset(
+    {
+        "ado",
+        "ai",
+        "awa",
+        "fate",
+        "galgame",
+        "id",
+        "kmx",
+        "level",
+        "mujica",
+        "mygo",
+        "ok",
+        "san",
+        "sc",
+        "soyo",
+        "sumi",
+        "testarossa",
+        "vip",
+    }
+)
 
 
 def _strip_non_text(value: str) -> str:
@@ -438,6 +460,115 @@ def apply_source_language_preservation_guard(
     return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
 
 
+def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
+    """Return whether one Chinese talk cue contains unsupported Latin word salad."""
+
+    latin_words = [
+        word.lower() for word in _EMBEDDED_LATIN_WORD_RX.findall(text)
+    ]
+    return (
+        len(latin_words) >= 2
+        and re.search(r"[\u3400-\u9fff]", text) is not None
+        and _JAPANESE_KANA_RX.search(text) is None
+        and any(word not in _SAFE_CODE_SWITCH_WORDS for word in latin_words)
+    )
+
+
+def _srt_clock_ms(value: str) -> int | None:
+    match = _SRT_CLOCK_RX.fullmatch(value.strip())
+    if match is None:
+        return None
+    hours, minutes, seconds, millis = (int(part) for part in match.groups())
+    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
+
+
+def mixed_cjk_latin_findings_covered_by_overrides(
+    audit: dict[str, Any],
+    document: dict[str, Any],
+) -> bool:
+    """Prove every mixed-language finding has an exact, timeline-bound repair.
+
+    A configured override file alone is not enough: each blocked cue must be
+    covered by a schema-v3 decision whose projected output removes the anomaly.
+    This lets the automatic lane fail closed while still allowing a reviewed
+    local substring repair to run after LLM sentence resegmentation.
+    """
+
+    findings = audit.get("mixed_cjk_latin_cues")
+    overrides = document.get("overrides")
+    if (
+        not isinstance(findings, list)
+        or not findings
+        or document.get("schema_version") != 3
+        or not isinstance(overrides, list)
+    ):
+        return False
+
+    def overlaps(
+        left_start: int, left_end: int, right_start: int, right_end: int
+    ) -> bool:
+        return left_start < right_end and left_end > right_start
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            return False
+        finding_text = str(finding.get("text") or "")
+        finding_start = int(finding.get("start_ms") or 0)
+        finding_end = int(finding.get("end_ms") or 0)
+        covered = False
+        for override in overrides:
+            if not isinstance(override, dict):
+                continue
+            action = str(override.get("action", "replace"))
+            if action == "replace_substring":
+                locator = override.get("locator")
+                if not isinstance(locator, dict):
+                    continue
+                locator_start = _srt_clock_ms(str(locator.get("start") or ""))
+                locator_end = _srt_clock_ms(str(locator.get("end") or ""))
+                old_text = str(override.get("old_text") or "")
+                replacement = str(override.get("text") or "")
+                if (
+                    locator_start is None
+                    or locator_end is None
+                    or not overlaps(
+                        finding_start,
+                        finding_end,
+                        locator_start,
+                        locator_end,
+                    )
+                    or not old_text
+                    or finding_text.count(old_text) != 1
+                    or not replacement
+                ):
+                    continue
+                projected = finding_text.replace(old_text, replacement, 1)
+                covered = not has_unapproved_mixed_cjk_latin_phrase(projected)
+            elif action == "replace":
+                expected = override.get("expect")
+                if not isinstance(expected, dict):
+                    continue
+                expected_start = _srt_clock_ms(str(expected.get("start") or ""))
+                expected_end = _srt_clock_ms(str(expected.get("end") or ""))
+                expected_texts = [
+                    expected.get("text"),
+                    *(expected.get("text_alternatives") or []),
+                ]
+                replacement = str(override.get("text") or "")
+                covered = (
+                    expected_start == finding_start
+                    and expected_end == finding_end
+                    and finding_text in expected_texts
+                    and bool(replacement)
+                    and not has_unapproved_mixed_cjk_latin_phrase(replacement)
+                )
+            if covered:
+                break
+        if not covered:
+            return False
+    return True
+
+
 def audit_foreign_script_consistency(srt_text: str) -> dict[str, Any]:
     """Detect a Japanese passage decoded as several English-heavy ASR cues.
 
@@ -467,36 +598,17 @@ def audit_foreign_script_consistency(srt_text: str) -> dict[str, Any]:
         for row in latin_rows
         if any(abs(int(row["cue_index"]) - kana_index) <= 12 for kana_index in kana_indexes)
     ]
-    safe_code_switch_words = {
-        "ado",
-        "ai",
-        "awa",
-        "fate",
-        "galgame",
-        "kmx",
-        "level",
-        "ok",
-        "san",
-        "sc",
-        "soyo",
-        "sumi",
-        "testarossa",
-        "vip",
-    }
     mixed_cjk_latin_rows = []
     for index, cue in enumerate(cues, start=1):
         latin_words = [
             word.lower() for word in _EMBEDDED_LATIN_WORD_RX.findall(cue.text)
         ]
-        if (
-            len(latin_words) >= 2
-            and re.search(r"[\u3400-\u9fff]", cue.text)
-            and not _JAPANESE_KANA_RX.search(cue.text)
-            and any(word not in safe_code_switch_words for word in latin_words)
-        ):
+        if has_unapproved_mixed_cjk_latin_phrase(cue.text):
             mixed_cjk_latin_rows.append(
                 {
                     "cue_index": index,
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
                     "text": cue.text,
                     "latin_words": latin_words,
                 }
