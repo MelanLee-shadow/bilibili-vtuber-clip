@@ -5,8 +5,13 @@
     "妈感姐还是妈感妹",
     "kmx系喜欢吗",
     "萱萱卡娅算吧",
-    "萱卡一点都不妈",
     "萱萱卡娅应该是那种妹感姐"
+  ],
+  "required_any_substring_groups": [
+    [
+      "萱卡一点都不妈",
+      "萱萱卡娅一点都不妈"
+    ]
   ],
   "forbidden_payload_substrings": [
     "kimo熊",

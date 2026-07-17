@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from scripts.produce_slice_package import (
     _load_independent_chat_support_srts,
     _piece_chat_evidence,
@@ -1515,14 +1517,17 @@ def test_hash_bound_ivan_override_supersedes_chat_and_survives_final_verifier(tm
     )
 
 
-def test_cue_bound_ivan_override_supersedes_chat_and_reconciles_witnesses(tmp_path):
+@pytest.mark.parametrize("override_schema_version", [2, 3])
+def test_cue_bound_ivan_override_supersedes_chat_and_reconciles_witnesses(
+    tmp_path, override_schema_version
+):
     source = _srt("还没看", "怎么有人说有母鸡卡的风险")
     final = source.replace("母鸡卡", "梦限大")
     evidence = ChatEvidence("danmaku", 0, "还没看，怎么有人说有母鸡卡的风险")
     source_witness = hashlib.sha256(b"reviewed-source-cues").hexdigest()
     decision_witness = hashlib.sha256(b"reviewed-output-decisions").hexdigest()
     document = {
-        "schema_version": 2,
+        "schema_version": override_schema_version,
         "candidate_id": "auto_test",
         "source_cue_count": 2,
         "source_cue_witness_sha256": source_witness,
@@ -1564,7 +1569,7 @@ def test_cue_bound_ivan_override_supersedes_chat_and_reconciles_witnesses(tmp_pa
     assert audit["status"] == "PENDING_TEXT_OVERRIDE"
     manifest = {
         "status": "READY",
-        "override_schema_version": 2,
+        "override_schema_version": override_schema_version,
         "override_document": str(document_path),
         "override_document_sha256": hashlib.sha256(document_path.read_bytes()).hexdigest(),
         "source_srt_sha256": hashlib.sha256(source.encode()).hexdigest(),

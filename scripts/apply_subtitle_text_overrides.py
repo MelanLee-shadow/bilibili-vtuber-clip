@@ -90,17 +90,27 @@ def _expect(cue: TextCue, override: dict[str, Any]) -> None:
     if not isinstance(expected, dict):
         raise ValueError(f"override for cue {cue.source_index} is missing expect")
     for field in ("start", "end", "text"):
-        if expected.get(field) != getattr(cue, field):
+        alternatives = expected.get(f"{field}_alternatives", [])
+        if alternatives is None:
+            alternatives = []
+        if not isinstance(alternatives, list) or not all(
+            isinstance(value, str) for value in alternatives
+        ):
+            raise ValueError(
+                f"override for cue {cue.source_index} {field}_alternatives must be a string list"
+            )
+        allowed = [expected.get(field), *alternatives]
+        if getattr(cue, field) not in allowed:
             raise ValueError(
                 f"source cue {cue.source_index} {field} drift: "
-                f"expected {expected.get(field)!r}, got {getattr(cue, field)!r}"
+                f"expected one of {allowed!r}, got {getattr(cue, field)!r}"
             )
 
 
 def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, dict[str, Any]]:
     schema_version = document.get("schema_version")
-    if schema_version not in {1, 2}:
-        raise ValueError("text override schema_version must be 1 or 2")
+    if schema_version not in {1, 2, 3}:
+        raise ValueError("text override schema_version must be 1, 2, or 3")
     raw = document.get("overrides")
     if not isinstance(raw, list):
         raise ValueError("text overrides must be a list")
@@ -108,7 +118,28 @@ def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, di
     for override in raw:
         if not isinstance(override, dict):
             raise ValueError("each text override must be an object")
-        source_index = int(override.get("source_cue", 0))
+        declared_source_index = int(override.get("source_cue", 0))
+        if schema_version == 3:
+            expected = override.get("expect")
+            if not isinstance(expected, dict):
+                raise ValueError(
+                    f"timeline override {declared_source_index} is missing expect"
+                )
+            start = str(expected.get("start") or "")
+            end = str(expected.get("end") or "")
+            matches = [
+                cue.source_index
+                for cue in cues
+                if cue.start == start and cue.end == end
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"timeline override {declared_source_index} matched "
+                    f"{len(matches)} cues at {start} --> {end}"
+                )
+            source_index = matches[0]
+        else:
+            source_index = declared_source_index
         if not 1 <= source_index <= len(cues):
             raise ValueError(f"text override references missing cue {source_index}")
         if source_index in by_index:
@@ -134,16 +165,46 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
     """Bind only reviewed source cues while still binding candidate and cue layout."""
 
     by_index = _override_map(cues, document)
+
+    def witnessed_value(cue: TextCue, override: dict[str, Any], field: str) -> str:
+        expected = override.get("expect")
+        if not isinstance(expected, dict):
+            return getattr(cue, field)
+        primary = expected.get(field)
+        alternatives = expected.get(f"{field}_alternatives", [])
+        allowed = (
+            [primary, *alternatives]
+            if isinstance(alternatives, list)
+            else [primary]
+        )
+        actual = getattr(cue, field)
+        return str(primary) if actual in allowed else actual
+
+    timeline_bound = document.get("schema_version") == 3
     payload = {
-        "schema_version": "subtitle-text-cue-witness.v1",
+        "schema_version": (
+            "subtitle-text-timeline-cue-witness.v1"
+            if timeline_bound
+            else "subtitle-text-cue-witness.v1"
+        ),
         "candidate_id": str(document.get("candidate_id", "")),
-        "source_cue_count": len(cues),
+        **({} if timeline_bound else {"source_cue_count": len(cues)}),
         "cues": [
             {
-                "source_cue": source_index,
-                "start": cues[source_index - 1].start,
-                "end": cues[source_index - 1].end,
-                "text": cues[source_index - 1].text,
+                "source_cue": (
+                    int(by_index[source_index].get("source_cue", 0))
+                    if timeline_bound
+                    else source_index
+                ),
+                "start": witnessed_value(
+                    cues[source_index - 1], by_index[source_index], "start"
+                ),
+                "end": witnessed_value(
+                    cues[source_index - 1], by_index[source_index], "end"
+                ),
+                "text": witnessed_value(
+                    cues[source_index - 1], by_index[source_index], "text"
+                ),
             }
             for source_index in sorted(by_index)
         ],
@@ -171,10 +232,19 @@ def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]
                 "text": str(override.get("text", "")).strip(),
             }
         )
+    timeline_bound = document.get("schema_version") == 3
+    if timeline_bound:
+        for row in reviewed_outputs:
+            override = by_index[int(row["source_cue"])]
+            row["source_cue"] = int(override.get("source_cue", 0))
     payload = {
-        "schema_version": "subtitle-text-decision-witness.v1",
+        "schema_version": (
+            "subtitle-text-timeline-decision-witness.v1"
+            if timeline_bound
+            else "subtitle-text-decision-witness.v1"
+        ),
         "candidate_id": str(document.get("candidate_id", "")),
-        "source_cue_count": len(cues),
+        **({} if timeline_bound else {"source_cue_count": len(cues)}),
         "reviewed_outputs": reviewed_outputs,
     }
     return _canonical_sha256(payload)
@@ -271,16 +341,17 @@ def apply_document(source: Path, document_path: Path, output: Path, manifest_pat
             raise ValueError(
                 f"source SRT hash mismatch: override expects {expected_source_hash!r}, got {actual_source_hash!r}"
             )
-    elif schema_version == 2:
+    elif schema_version in {2, 3}:
         candidate_id = str(document.get("candidate_id", "")).strip()
         if not candidate_id:
             raise ValueError("cue-bound text override has no candidate_id")
-        expected_cue_count = int(document.get("source_cue_count", 0))
-        if len(source_cues) != expected_cue_count:
-            raise ValueError(
-                "source cue count drift: "
-                f"expected {expected_cue_count}, got {len(source_cues)}"
-            )
+        if schema_version == 2:
+            expected_cue_count = int(document.get("source_cue_count", 0))
+            if len(source_cues) != expected_cue_count:
+                raise ValueError(
+                    "source cue count drift: "
+                    f"expected {expected_cue_count}, got {len(source_cues)}"
+                )
         actual_source_witness = source_cue_witness_sha256(source_cues, document)
         expected_source_witness = str(document.get("source_cue_witness_sha256", ""))
         if actual_source_witness != expected_source_witness:
@@ -301,7 +372,7 @@ def apply_document(source: Path, document_path: Path, output: Path, manifest_pat
             "decision_output_witness_sha256": actual_decision_witness,
         }
     else:
-        raise ValueError("text override schema_version must be 1 or 2")
+        raise ValueError("text override schema_version must be 1, 2, or 3")
     output_cues, decisions = apply_overrides(source_cues, document)
     write_srt(output_cues, output)
     declared_final_hash = document.get("text_final_srt_sha256") if schema_version == 1 else None

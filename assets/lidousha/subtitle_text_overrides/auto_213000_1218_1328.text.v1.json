@@ -1,9 +1,8 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "candidate_id": "auto_213000_1218_1328",
-  "source_cue_count": 28,
-  "source_cue_witness_sha256": "4eef45e4469dc867d0d86158c0061a999355ba8304920e0917aac6f272de1968",
-  "decision_output_witness_sha256": "e5422919eae6cc5a5f4a735e87b8246ebd5ae001c12ad1919e7aa3b6461f4450",
+  "source_cue_witness_sha256": "f0768ecd6f7685caea57c9f218048f98261ea9f8e206e6c50c2e0b97e294bb4b",
+  "decision_output_witness_sha256": "629dc15245c2c398bf3d22d9948e20fe3da5645bda10208880e14bad9fbca031",
   "overrides": [
     {
       "source_cue": 5,

@@ -66,6 +66,41 @@ def test_candidate_truth_gate_fails_when_required_truth_disappears(tmp_path):
     assert audit["surfaces"]["final_text_srt"]["missing_required"] == ["恋死看吗"]
 
 
+def test_candidate_truth_gate_accepts_reviewed_required_alternatives(tmp_path):
+    path = _asset(
+        tmp_path,
+        required_any_substring_groups=[
+            ["萱卡一点都不妈", "萱萱卡娅一点都不妈"],
+        ],
+    )
+    short_name = _srt(
+        "但是我确实很想跟大家看梦限大",
+        "恋死看吗",
+        "萱卡一点都不妈",
+    )
+    full_name = short_name.replace("萱卡一点都不妈", "萱萱卡娅一点都不妈")
+    missing = short_name.replace("萱卡一点都不妈", "一点都不妈")
+
+    for payload in (short_name, full_name):
+        audit = verify_subtitle_regression_surfaces(
+            path,
+            candidate_id="auto_truth",
+            final_text_srt=payload,
+            final_speaker_srt=payload,
+        )
+        assert audit["status"] == "PASS"
+
+    failed = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id="auto_truth",
+        final_text_srt=missing,
+        final_speaker_srt=missing,
+    )
+    assert failed["surfaces"]["final_text_srt"]["missing_required_any_groups"] == [
+        ["萱卡一点都不妈", "萱萱卡娅一点都不妈"]
+    ]
+
+
 def test_candidate_truth_gate_rejects_forbidden_substring_on_either_surface(tmp_path):
     path = _asset(tmp_path)
     text = _srt("但是我确实很想跟大家看梦限大", "恋死看吗")

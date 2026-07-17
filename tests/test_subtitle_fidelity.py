@@ -208,6 +208,21 @@ def test_foreign_script_consistency_allows_real_japanese_or_isolated_code_switch
     assert audit["status"] == "CLEAN"
 
 
+def test_foreign_script_consistency_blocks_unapproved_latin_phrase_inside_chinese_talk():
+    audit = audit_foreign_script_consistency(
+        _srt("都问那么多，所有的", "don't know那么多，所有的", "玩成Galgame")
+    )
+
+    assert audit["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+    assert audit["mixed_cjk_latin_cues"] == [
+        {
+            "cue_index": 2,
+            "text": "don't know那么多，所有的",
+            "latin_words": ["don't", "know"],
+        }
+    ]
+
+
 def test_title_mark_guard_closes_one_dangling_open_mark_before_punctuation():
     guarded, audit = apply_title_mark_balance_guard(
         _srt("一起《与你打灰到生命尽头。", "完整《标题》不变")

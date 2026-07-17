@@ -64,6 +64,9 @@ _NON_TEXT_RX = re.compile(r"[^0-9A-Za-z一-鿿]+")
 _ARABIC_NUMBER_RX = re.compile(r"(?<![0-9A-Za-z])\d+(?:\.\d+)?(?![0-9A-Za-z])")
 _JAPANESE_KANA_RX = re.compile(r"[ぁ-ゖァ-ヺー]")
 _LATIN_WORD_RX = re.compile(r"\b[A-Za-z]+(?:['’-][A-Za-z]+)?\b")
+_EMBEDDED_LATIN_WORD_RX = re.compile(
+    r"(?<![A-Za-z])[A-Za-z]+(?:['’-][A-Za-z]+)?(?![A-Za-z])"
+)
 
 
 def _strip_non_text(value: str) -> str:
@@ -464,20 +467,64 @@ def audit_foreign_script_consistency(srt_text: str) -> dict[str, Any]:
         for row in latin_rows
         if any(abs(int(row["cue_index"]) - kana_index) <= 12 for kana_index in kana_indexes)
     ]
-    blocked = bool(kana_indexes) and len(clustered) >= 2
-    return {
-        "schema_version": "foreign-script-consistency-audit.v1",
-        "status": (
-            "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER" if blocked else "CLEAN"
-        ),
-        "kana_cue_indexes": kana_indexes,
-        "latin_heavy_cues": clustered,
-        "reason": (
+    safe_code_switch_words = {
+        "ado",
+        "ai",
+        "awa",
+        "fate",
+        "galgame",
+        "kmx",
+        "level",
+        "ok",
+        "san",
+        "sc",
+        "soyo",
+        "sumi",
+        "testarossa",
+        "vip",
+    }
+    mixed_cjk_latin_rows = []
+    for index, cue in enumerate(cues, start=1):
+        latin_words = [
+            word.lower() for word in _EMBEDDED_LATIN_WORD_RX.findall(cue.text)
+        ]
+        if (
+            len(latin_words) >= 2
+            and re.search(r"[\u3400-\u9fff]", cue.text)
+            and not _JAPANESE_KANA_RX.search(cue.text)
+            and any(word not in safe_code_switch_words for word in latin_words)
+        ):
+            mixed_cjk_latin_rows.append(
+                {
+                    "cue_index": index,
+                    "text": cue.text,
+                    "latin_words": latin_words,
+                }
+            )
+    foreign_cluster_blocked = bool(kana_indexes) and len(clustered) >= 2
+    mixed_cjk_latin_blocked = bool(mixed_cjk_latin_rows)
+    if foreign_cluster_blocked:
+        status = "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
+        reason = (
             "Japanese passage contains a nearby run of Latin-heavy ASR cues; "
             "language-aware source transcription is required"
-            if blocked
-            else None
-        ),
+        )
+    elif mixed_cjk_latin_blocked:
+        status = "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+        reason = (
+            "Chinese talk cue contains an unapproved multi-word Latin phrase; "
+            "source-aware transcription is required"
+        )
+    else:
+        status = "CLEAN"
+        reason = None
+    return {
+        "schema_version": "foreign-script-consistency-audit.v1",
+        "status": status,
+        "kana_cue_indexes": kana_indexes,
+        "latin_heavy_cues": clustered,
+        "mixed_cjk_latin_cues": mixed_cjk_latin_rows,
+        "reason": reason,
     }
 
 

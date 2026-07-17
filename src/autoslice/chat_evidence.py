@@ -625,8 +625,8 @@ def build_human_text_entity_verifier(
     source = Path(document_path)
     raw = source.read_bytes()
     payload = json.loads(raw)
-    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2}:
-        raise ValueError("text override schema_version must be 1 or 2")
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2, 3}:
+        raise ValueError("text override schema_version must be 1, 2, or 3")
     if payload.get("candidate_id") != candidate_id:
         raise ValueError("text override candidate_id mismatch")
     override_schema_version = int(payload["schema_version"])
@@ -716,7 +716,7 @@ def reconcile_pending_text_overrides(
             "source_srt_sha256": source_hash,
             "text_final_srt_sha256": final_hash,
         }
-    elif override_schema_version == 2:
+    elif override_schema_version in {2, 3}:
         manifest_binding = {
             "source_cue_witness_sha256": str(
                 text_manifest.get("source_cue_witness_sha256") or ""
@@ -1060,6 +1060,10 @@ def _validated_entity_verdict(
         binding_keys = {
             1: ("source_srt_sha256", "text_final_srt_sha256"),
             2: (
+                "source_cue_witness_sha256",
+                "decision_output_witness_sha256",
+            ),
+            3: (
                 "source_cue_witness_sha256",
                 "decision_output_witness_sha256",
             ),

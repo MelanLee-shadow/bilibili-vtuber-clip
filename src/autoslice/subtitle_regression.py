@@ -44,6 +44,31 @@ def _string_list(document: Mapping[str, Any], key: str, *, required: bool) -> tu
     return tuple(str(item) for item in value)
 
 
+def _string_groups(document: Mapping[str, Any], key: str) -> tuple[tuple[str, ...], ...]:
+    value = document.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise SubtitleRegressionError(f"{key} must be a list of non-empty string lists")
+    groups: list[tuple[str, ...]] = []
+    for group in value:
+        if (
+            not isinstance(group, list)
+            or not group
+            or any(not isinstance(item, str) or not item.strip() for item in group)
+        ):
+            raise SubtitleRegressionError(
+                f"{key} must contain only non-empty string lists"
+            )
+        normalized = [normalize_chat_text(item) for item in group]
+        if any(not item for item in normalized) or len(set(normalized)) != len(normalized):
+            raise SubtitleRegressionError(
+                f"{key} groups must contain unique subtitle text alternatives"
+            )
+        groups.append(tuple(group))
+    return tuple(groups)
+
+
 def load_subtitle_regression_document(
     path: Path,
     *,
@@ -66,15 +91,27 @@ def load_subtitle_regression_document(
         raise SubtitleRegressionError("subtitle regression candidate_id mismatch")
 
     required = _string_list(document, "required_payload_substrings", required=True)
+    required_any = _string_groups(document, "required_any_substring_groups")
     forbidden = _string_list(document, "forbidden_payload_substrings", required=False)
     forbidden_exact = _string_list(document, "forbidden_exact_cues", required=False)
     required_norm = {normalize_chat_text(item) for item in required}
     forbidden_norm = {normalize_chat_text(item) for item in forbidden}
     if required_norm & forbidden_norm:
         raise SubtitleRegressionError("the same normalized text cannot be both required and forbidden")
+    if any(
+        normalize_chat_text(item) in forbidden_norm
+        for group in required_any
+        for item in group
+    ):
+        raise SubtitleRegressionError(
+            "required alternatives cannot also be forbidden"
+        )
 
     normalized_document = dict(document)
     normalized_document["required_payload_substrings"] = list(required)
+    normalized_document["required_any_substring_groups"] = [
+        list(group) for group in required_any
+    ]
     normalized_document["forbidden_payload_substrings"] = list(forbidden)
     normalized_document["forbidden_exact_cues"] = list(forbidden_exact)
     return normalized_document, hashlib.sha256(raw).hexdigest()
@@ -93,11 +130,17 @@ def _surface_audit(
     srt_text: str,
     *,
     required: Sequence[str],
+    required_any: Sequence[Sequence[str]],
     forbidden: Sequence[str],
     forbidden_exact: Sequence[str],
 ) -> dict[str, Any]:
     payload, exact_cues = _surface_payload(srt_text)
     missing_required = [item for item in required if normalize_chat_text(item) not in payload]
+    missing_required_any = [
+        list(group)
+        for group in required_any
+        if not any(normalize_chat_text(item) in payload for item in group)
+    ]
     found_forbidden = [item for item in forbidden if normalize_chat_text(item) in payload]
     found_forbidden_exact = [
         item for item in forbidden_exact if normalize_chat_text(item) in exact_cues
@@ -105,12 +148,19 @@ def _surface_audit(
     return {
         "payload_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
         "required_count": len(required),
+        "required_any_group_count": len(required_any),
         "missing_required": missing_required,
+        "missing_required_any_groups": missing_required_any,
         "found_forbidden": found_forbidden,
         "found_forbidden_exact_cues": found_forbidden_exact,
         "status": (
             "PASS"
-            if not missing_required and not found_forbidden and not found_forbidden_exact
+            if (
+                not missing_required
+                and not missing_required_any
+                and not found_forbidden
+                and not found_forbidden_exact
+            )
             else "FAIL"
         ),
     }
@@ -130,18 +180,21 @@ def verify_subtitle_regression_surfaces(
         candidate_id=candidate_id,
     )
     required = document["required_payload_substrings"]
+    required_any = document["required_any_substring_groups"]
     forbidden = document["forbidden_payload_substrings"]
     forbidden_exact = document["forbidden_exact_cues"]
     surfaces = {
         "final_text_srt": _surface_audit(
             final_text_srt,
             required=required,
+            required_any=required_any,
             forbidden=forbidden,
             forbidden_exact=forbidden_exact,
         ),
         "final_speaker_srt": _surface_audit(
             final_speaker_srt,
             required=required,
+            required_any=required_any,
             forbidden=forbidden,
             forbidden_exact=forbidden_exact,
         ),

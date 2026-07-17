@@ -730,10 +730,7 @@ def _finalize_text_evidence(
         json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if (
-        foreign_script_audit["status"]
-        == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
-    ):
+    if str(foreign_script_audit["status"]).startswith("BLOCKED_"):
         raise SystemExit(
             f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
         )

@@ -222,3 +222,74 @@ def test_cue_bound_override_rejects_reviewed_cue_or_count_drift(tmp_path: Path) 
     source.write_text(SOURCE.rsplit("\n\n", 1)[0] + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="cue count drift"):
         apply_document(source, overrides, tmp_path / "out.srt", tmp_path / "manifest.json")
+
+
+def test_cue_bound_override_accepts_only_reviewed_source_text_alternatives(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE, encoding="utf-8")
+    document = _cue_bound_document(source)
+    document["overrides"][0]["expect"]["text_alternatives"] = [
+        "因为李豆沙会一直说我帅。",
+    ]
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(
+        parse_srt(source), document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    source.write_text(
+        SOURCE.replace("因为李豆沙会一直说我帅", "因为李豆沙会一直说我帅。"),
+        encoding="utf-8",
+    )
+    output = tmp_path / "out.srt"
+    apply_document(source, overrides, output, tmp_path / "manifest.json")
+    assert parse_srt(output)[1].text == "因为李豆沙会一直说话"
+
+    source.write_text(
+        SOURCE.replace("因为李豆沙会一直说我帅", "因为李豆沙会说我帅"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="witness mismatch"):
+        apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+
+def test_timeline_bound_override_survives_unrelated_cue_resegmentation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE, encoding="utf-8")
+    document = _cue_bound_document(source)
+    document["schema_version"] = 3
+    document.pop("source_cue_count")
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(
+        parse_srt(source), document
+    )
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(
+        parse_srt(source), document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    resegmented = """1
+00:00:02,000 --> 00:00:04,000
+因为李豆沙会一直说我帅
+
+2
+00:00:04,000 --> 00:00:05,000
+哼，啊，不对
+"""
+    source.write_text(resegmented, encoding="utf-8")
+    output = tmp_path / "out.srt"
+    manifest = apply_document(source, overrides, output, tmp_path / "manifest.json")
+
+    assert [cue.text for cue in parse_srt(output)] == [
+        "因为李豆沙会一直说话",
+        "哼，啊，不对",
+    ]
+    assert manifest["override_schema_version"] == 3
+
+    source.write_text(resegmented.replace("00:00:02,000", "00:00:02,100"), encoding="utf-8")
+    with pytest.raises(ValueError, match="matched 0 cues"):
+        apply_document(source, overrides, output, tmp_path / "manifest.json")
