@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 
 from src.autoslice import producer_text_pipeline as pipeline
+from src.autoslice.chat_authority import ReferentEntity, ReferentGroup
 
 
 def _srt(*texts: str) -> str:
@@ -22,12 +24,154 @@ def _adapters() -> pipeline.TextPipelineAdapters:
         build_aggregate_transcriber=unused,
         build_agy_transcriber=unused,
         load_term_boundary_surfaces=unused,
-        profile_asset_file=unused,
+        profile_asset_file=lambda _name: Path("/__vtuber_slice_missing_asset__"),
         review_glossary=lambda: "",
         topic_graph_disabled=lambda: True,
         topic_graph_path=unused,
         topic_graph_expected_sha256=lambda: "",
     )
+
+
+def _resolved_entity_verdict(request, canonical):
+    return {
+        "schema_version": "chat-entity-verdict.v1",
+        "request_sha256": request["request_sha256"],
+        "status": "RESOLVED",
+        "canonical_entity": canonical,
+        "authority_kind": "audio_forced_choice",
+        "confidence": 0.97,
+        "heard_syllables": canonical,
+        "source_media_sha256": "a" * 64,
+        "audio_clip_sha256": "b" * 64,
+        "prompt_sha256": "c" * 64,
+        "response_sha256": "d" * 64,
+    }
+
+
+def test_post_semantic_entity_stage_never_reverts_name_to_draft_witness(tmp_path):
+    """2026-07-16 实案抽象：LLM/词表已把 draft 怪词修成专名后，后置
+    Gemini 不得再用“必须和初始听写一致”把它改回 draft 或竞争实体。"""
+    padded = tmp_path / "padded.mp4"
+    padded.with_suffix(".asr_draft.srt").write_text(
+        _srt("给温柔已经成为了李豆沙的帕鲁", "第二句", "第三句"),
+        encoding="utf-8",
+    )
+    semantic_final = _srt("kmx已经成为了李豆沙的帕鲁", "第二句", "第三句")
+    group = ReferentGroup(
+        (
+            ReferentEntity("kmx", ("kmx",), ("k m x",)),
+            ReferentEntity("乒乓球", ("乒乓球",), ("ping pang qiu",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    calls = []
+
+    def conflicting_audio(request):
+        calls.append(request)
+        candidates = [row["canonical"] for row in request["candidate_entities"]]
+        winner = "乒乓球" if "乒乓球" in candidates else candidates[-1]
+        return _resolved_entity_verdict(request, winner)
+
+    result = pipeline._apply_entity_authority(
+        srt_text=semantic_final,
+        authoritative_chat=[],
+        support_srts=[],
+        referent_groups=[group],
+        verify_confusable_entity=conflicting_audio,
+        code_switch_audit={},
+        term_boundary_moves=[],
+        padded=padded,
+        adapters=_adapters(),
+    )
+
+    assert result.srt_text == semantic_final
+    assert calls == []
+    assert result.chat_authority_audit["post_semantic_entity_policy"]["status"] == (
+        "SEMANTIC_TEXT_FINAL"
+    )
+    assert result.chat_authority_audit["introduced_term_audits"][0]["status"] == (
+        "SEMANTIC_AUTHORITY_PRESERVED"
+    )
+
+
+def test_witness_disagreement_is_disclosure_not_post_semantic_rewrite(tmp_path):
+    padded = tmp_path / "padded.mp4"
+    padded.with_suffix(".asr_draft.srt").write_text(
+        _srt("所以你是想看留下跟别人亲亲", "第二句", "第三句"),
+        encoding="utf-8",
+    )
+    semantic_final = _srt("所以你是想看小李跟别人亲亲", "第二句", "第三句")
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙",), ("li dou sha",)),
+            ReferentEntity("小李", ("小李",), ("xiao li",)),
+        ),
+        audio_verify_all_surfaces=True,
+        positions=("witness_disagreement",),
+    )
+    calls = []
+
+    def conflicting_audio(request):
+        calls.append(request)
+        return _resolved_entity_verdict(request, "李豆沙")
+
+    result = pipeline._apply_entity_authority(
+        srt_text=semantic_final,
+        authoritative_chat=[],
+        support_srts=[],
+        referent_groups=[group],
+        verify_confusable_entity=conflicting_audio,
+        code_switch_audit={},
+        term_boundary_moves=[],
+        padded=padded,
+        adapters=_adapters(),
+    )
+
+    assert result.srt_text == semantic_final
+    assert calls == []
+    audit = result.chat_authority_audit["witness_disagreement_audits"][0]
+    assert audit["status"] == "SEMANTIC_AUTHORITY_PRESERVED"
+    assert audit["suspicious_cue_indexes"] == [1]
+
+
+def test_explicit_transcript_only_rescue_still_uses_audio_after_semantic_stage(tmp_path):
+    """真正未决的误听面仍可显式进入声学层；新边界只禁止重审普通专名。"""
+    padded = tmp_path / "padded.mp4"
+    padded.with_suffix(".asr_draft.srt").write_text(
+        _srt("所以理论上要直播", "第二句", "第三句"), encoding="utf-8"
+    )
+    source = _srt("所以理论上要直播", "第二句", "第三句")
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "理论上"), ("li dou sha",)),
+            ReferentEntity("小李", ("小李",), ("xiao li",)),
+        ),
+        positions=("transcript_only",),
+        uncertain_keep_surfaces=("理论上",),
+    )
+    calls = []
+
+    def resolve_name(request):
+        calls.append(request)
+        return _resolved_entity_verdict(request, "李豆沙")
+
+    result = pipeline._apply_entity_authority(
+        srt_text=source,
+        authoritative_chat=[],
+        support_srts=[],
+        referent_groups=[group],
+        verify_confusable_entity=resolve_name,
+        code_switch_audit={},
+        term_boundary_moves=[],
+        padded=padded,
+        adapters=_adapters(),
+    )
+
+    assert "所以李豆沙要直播" in result.srt_text
+    assert len(calls) == 1
+    assert result.chat_authority_audit["post_semantic_entity_policy"][
+        "explicit_audio_groups"
+    ] == [["李豆沙", "小李"]]
 
 
 def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(monkeypatch):

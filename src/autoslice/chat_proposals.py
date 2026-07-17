@@ -342,16 +342,11 @@ def _resolve_chat_entity_proposal(
     chat_canonical = chat_match["canonicals"][0]
     chat_surface = chat_match["occurrences"][0]["surface"]
     acoustic_occurrences = _entity_occurrences(acoustic_span, group)
-    protected_canonical = any(
-        chat_canonical.lower() == keep.lower()
-        for keep in group.protected_canonicals
-    )
-    # 两份独立文本证据（音频转写 + 平台结构化原文）已逐字同意默认可信
-    # canonical 时，不再让一次后置音频模型把它们同时推翻。真实的竞争实体
-    # 仍会在文本不一致或没有结构化原文时进入音频仲裁。
+    # 平台结构化原文与已经过 AGY/CPA/词表的语义文本逐字同意 canonical
+    # 时，后置声学模型没有未决问题可裁，不能把两份一致文本证据一起推翻。
+    # 真实冲突（两边实体不同或弹幕只给了别名面）仍进入音频仲裁。
     if (
-        protected_canonical
-        and chat_surface.lower() == chat_canonical.lower()
+        chat_surface.lower() == chat_canonical.lower()
         and len(acoustic_occurrences) == 1
         and str(acoustic_occurrences[0]["canonical"]).lower() == chat_canonical.lower()
         and str(acoustic_occurrences[0]["surface"]).lower() == chat_canonical.lower()
@@ -361,10 +356,10 @@ def _resolve_chat_entity_proposal(
         discovery.entity_verdicts.append(
             {
                 **base_row,
-                "reason_code": "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_TRANSCRIPT",
+                "reason_code": "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_SEMANTIC_TEXT",
                 "structured_chat_canonical": chat_canonical,
-                "transcript_canonical": acoustic_occurrences[0]["canonical"],
-                "authority_kind": "structured_chat_plus_independent_transcript",
+                "semantic_text_canonical": acoustic_occurrences[0]["canonical"],
+                "authority_kind": "structured_chat_plus_semantic_text",
             }
         )
         discovery.proposals.append(proposal)

@@ -132,7 +132,6 @@ KMX_GROUP = ReferentGroup(
     ),
     audio_verify_all_surfaces=True,
     uncertain_keep_canonicals=("kmx",),
-    protected_canonicals=("kmx",),
 )
 
 
@@ -177,48 +176,30 @@ def test_canonical_surface_kept_when_audio_uncertain_but_mishear_still_blocks():
     assert audit2["status"] == "ENTITY_VERDICT_REQUIRED"
 
 
-def test_protected_canonical_cannot_be_overwritten_by_one_conflicting_audio_verdict():
-    """2026-07-16 实案：AGY 已写 kmx，单次 Gemini 音频复核却高置信误判为
-    乒乓球。默认可信 canonical 遇到相反裁决必须 fail-closed，不能静默改坏。"""
-    source = _srt("kmx已经成为了李豆沙的帕鲁")
-
-    output, audit = apply_audio_entity_verification(
-        source,
-        referent_groups=[KMX_GROUP],
-        entity_verifier=_audio_entity_verifier("乒乓球"),
-    )
-
-    assert output == source
-    assert "乒乓球" not in output
-    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
-    assert audit["entity_verdict_required"][0]["reason_code"] == (
-        "ENTITY_PROTECTED_CANONICAL_AUDIO_CONTRADICTION"
-    )
-
-
-def test_exact_chat_and_transcript_agreement_outvote_conflicting_audio_verdict():
-    """结构化弹幕与音频转写都逐字为 kmx 时，两份独立文本证据已经同意；
-    后置单模型不得把它们一起推翻成乒乓球。"""
+def test_exact_chat_and_semantic_text_agreement_skips_entity_audio_for_any_name():
+    """结构化弹幕与语义精修文本逐字同意专名时，不限 kmx，后置声学模型
+    都不得把两份一致文本证据一起推翻。"""
     calls = []
 
     def conflicting_verifier(request):
         calls.append(request)
-        return _audio_entity_verifier("乒乓球")(request)
+        return _audio_entity_verifier("Ave Mujica")(request)
 
-    source = _srt("kmx一直在打灰")
+    source = _srt("梦限大最近很火")
     output, audit = apply_authoritative_chat_evidence(
         source,
-        [ChatEvidence("danmaku", 0, "kmx一直在打灰")],
+        [ChatEvidence("danmaku", 0, "梦限大最近很火")],
         support_srt_texts=[source],
-        referent_groups=[KMX_GROUP],
+        referent_groups=[DREAM_MUJICA_GROUP],
         entity_verifier=conflicting_verifier,
     )
 
-    assert "kmx一直在打灰" in output
-    assert "乒乓球" not in output
+    assert "梦限大最近很火" in output
+    assert "Ave Mujica" not in output
     assert calls == []
     assert any(
-        row.get("reason_code") == "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_TRANSCRIPT"
+        row.get("reason_code")
+        == "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_SEMANTIC_TEXT"
         for row in audit["entity_verdicts"]
     )
 
@@ -378,18 +359,6 @@ def test_loader_parses_uncertain_keep_surfaces_from_asset():
     assert set(sure.uncertain_keep_surfaces) == {"苏人", "苏惹"}
 
 
-def test_loader_scopes_single_audio_override_protection_to_kmx():
-    groups = load_referent_groups(
-        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
-    )
-    kmx = next(
-        group
-        for group in groups
-        if {entity.canonical for entity in group.entities} == {"kmx", "乒乓球"}
-    )
-    assert kmx.protected_canonicals == ("kmx",)
-
-
 def test_single_char_surfaces_never_form_slots():
     """2026-07-14 乐队番案：话题图组的单字面「灯」把「粉丝灯牌」命中成
     高松灯候选并阻塞整条——实体面最短两字。"""
@@ -478,8 +447,8 @@ def test_auditor_pair_adjudication_semantics_via_engine():
 
 
 def test_introduced_term_compiler_flags_injections_with_aligned_spans():
-    """2026-07-14 乐队番实案抽象：修正层把钦定词(Ave Mujica/睦睦)注入 draft
-    没有的位置——编译出 {注入词, draft 对齐片段} 仲裁对；单字对齐段向左扩。"""
+    """2026-07-14 乐队番实案抽象：记录修正层把钦定词(Ave Mujica/睦睦)
+    注入 draft 没有的位置及对应 draft 片段；单字对齐段向左扩。"""
     draft = _srt("不需要会打鼓的梦", "月月不是算妈妈吗", "正常句子")
     final = _srt("不需要会打鼓的，Ave Mujica", "睦睦不是算妈妈吗", "正常句子")
 

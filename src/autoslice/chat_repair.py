@@ -919,26 +919,6 @@ def apply_audio_entity_verification(
                 "resolved_canonical": resolved,
                 "verdict": verdict,
             }
-            protected_canonical = any(
-                str(occurrence["canonical"]).lower() == keep.lower()
-                for keep in group.protected_canonicals
-            )
-            if (
-                protected_canonical
-                and str(occurrence["surface"]).lower()
-                == str(occurrence["canonical"]).lower()
-                and resolved.lower() != str(occurrence["canonical"]).lower()
-            ):
-                # 默认可信规范形不能被一次相反的模型判定静默改坏。这里保留
-                # 原文并 fail-closed，等待结构化聊天/人工文本权威或其他证据裁定。
-                required.append(
-                    {
-                        **base_row,
-                        "request": request,
-                        "reason_code": "ENTITY_PROTECTED_CANONICAL_AUDIO_CONTRADICTION",
-                    }
-                )
-                continue
             claimed_strings.add(str(occurrence["surface"]).lower())
             claimed_strings.add(resolved.lower())
             if resolved == occurrence["canonical"]:

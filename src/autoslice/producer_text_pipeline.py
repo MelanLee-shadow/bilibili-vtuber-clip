@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -13,7 +12,6 @@ from typing import Any, Callable
 
 from src.autoslice.chat_authority import (
     ChatEvidence,
-    ReferentEntity,
     ReferentGroup,
     apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
@@ -377,8 +375,20 @@ def _apply_entity_authority(
         ),
     )
     repetition_groups = repetition_divergence_groups(srt_text)
+    # AGY/CPA/词表已经完成专名语义定稿。无位置标记的静态/话题实体组只给
+    # 结构化聊天匹配与终稿验证使用，绝不能再被黑帧 Gemini 按初始听写强制
+    # 二选一。声学层只接明确声明为 transcript_only/clip_initial 的未决槽位，
+    # 以及在终稿上新编译的片首/重复异常审计。
+    explicit_post_semantic_audio_groups = [
+        group
+        for group in referent_groups
+        if set(group.positions) & {"transcript_only", "clip_initial"}
+    ]
+    semantic_text_final_groups = [
+        group for group in referent_groups if group not in explicit_post_semantic_audio_groups
+    ]
     transcript_groups = [
-        *referent_groups,
+        *explicit_post_semantic_audio_groups,
         *([opening_group] if opening_group is not None else []),
         *repetition_groups,
     ]
@@ -389,6 +399,21 @@ def _apply_entity_authority(
         excluded_cue_indexes=handled_entity_cues,
     )
     chat_authority_audit["transcript_entity_audit"] = transcript_entity_audit
+    chat_authority_audit["post_semantic_entity_policy"] = {
+        "schema_version": "post-semantic-entity-policy.v1",
+        "status": "SEMANTIC_TEXT_FINAL",
+        "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+        "semantic_text_final_groups": [
+            [entity.canonical for entity in group.entities]
+            for group in semantic_text_final_groups
+        ],
+        "explicit_audio_groups": [
+            [entity.canonical for entity in group.entities]
+            for group in explicit_post_semantic_audio_groups
+        ],
+        "dynamic_audio_group_count": len(repetition_groups)
+        + (1 if opening_group is not None else 0),
+    }
     chat_authority_audit["code_switch_surface_audit"] = code_switch_audit
     chat_authority_audit["term_boundary_audit"] = {
         "schema_version": "term-boundary-audit.v1",
@@ -398,14 +423,12 @@ def _apply_entity_authority(
     chat_authority_audit.setdefault("entity_repairs", []).extend(
         transcript_entity_audit.get("repairs") or []
     )
-    # 证人引入仲裁（2026-07-14 生日结婚「小李」案）：修正层引入了 BCUT
-    # 逐字证人里不存在的组内形态（留下→小李，AGY 被弹幕上下文带偏）——
-    # 仅这些 cue 交无聊天上下文的黑帧裁决器强制多选一；弹幕逐字 cue
-    # (handled) 不复审；UNCERTAIN 双向保留绝不阻塞。
+    # draft/终稿专名差异只披露，不再把语义定稿交给黑帧 Gemini 强制回归
+    # 初始听写。初始 ASR 的价值是可追溯证人，不是语义修正后的 postcondition。
     wd_audits: list[dict] = []
     wd_groups = [
         group
-        for group in transcript_groups
+        for group in referent_groups
         if getattr(group, "positions", ()) and "witness_disagreement" in group.positions
     ]
     draft_witness_path = padded.with_suffix(".asr_draft.srt")
@@ -415,29 +438,20 @@ def _apply_entity_authority(
             suspicious = witness_disagreement_cues(draft_witness, srt_text, wd_group)
             if not suspicious:
                 continue
-            final_cue_count = len(
-                [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-            )
-            excluded = (
-                set(range(1, final_cue_count + 1)) - set(suspicious)
-            ) | set(handled_entity_cues)
-            srt_text, wd_audit = apply_audio_entity_verification(
-                srt_text,
-                referent_groups=[
-                    dataclasses.replace(wd_group, positions=("transcript_only",))
-                ],
-                entity_verifier=verify_confusable_entity,
-                excluded_cue_indexes=excluded,
-            )
-            wd_audit["suspicious_cue_indexes"] = suspicious
-            wd_audits.append(wd_audit)
-            chat_authority_audit.setdefault("entity_repairs", []).extend(
-                wd_audit.get("repairs") or []
+            wd_audits.append(
+                {
+                    "schema_version": "witness-disagreement-audit.v2",
+                    "status": "SEMANTIC_AUTHORITY_PRESERVED",
+                    "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+                    "suspicious_cue_indexes": suspicious,
+                    "candidate_entities": [
+                        entity.canonical for entity in wd_group.entities
+                    ],
+                }
             )
     chat_authority_audit["witness_disagreement_audits"] = wd_audits
-    # 引入词仲裁（2026-07-14 乐队番案：修正层注入 Ave Mujica/睦睦 而 draft
-    # 无此词，守卫因同族证人放行）——wd 机制泛化到全部钦定词面：注入词 vs
-    # draft 对齐片段交黑帧二选一；UNCERTAIN 保留终稿并披露，绝不阻塞。
+    # 语义层引入词与 draft 不同是专名修正的预期结果，只留来源差异审计。
+    # 禁止再构造 {终稿专名, draft 片段} 给 Gemini 强制二选一。
     introduced_term_audits: list[dict] = []
     if draft_witness_path.is_file():
         from src.autoslice.term_authority import protected_terms as _protected_terms
@@ -446,34 +460,13 @@ def _apply_entity_authority(
         for row in introduced_term_cues(
             draft_witness_text, srt_text, _protected_terms()
         ):
-            term = str(row["term"])
-            span = str(row["draft_span"])
-            pair_group = ReferentGroup(
-                (
-                    ReferentEntity(term, (term,)),
-                    ReferentEntity(span, (span,)),
-                ),
-                reason=f"引入词仲裁：终稿注入「{term}」而逐字证人为「{span}」",
-                audio_verify_all_surfaces=True,
-                uncertain_keep_canonicals=(term, span),
-                positions=("transcript_only",),
-            )
-            final_cue_total = len(
-                [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-            )
-            itc_excluded = (
-                set(range(1, final_cue_total + 1)) - {int(row["cue_index"])}
-            ) | set(handled_entity_cues)
-            srt_text, itc_audit = apply_audio_entity_verification(
-                srt_text,
-                referent_groups=[pair_group],
-                entity_verifier=verify_confusable_entity,
-                excluded_cue_indexes=itc_excluded,
-            )
-            itc_audit["introduced_term"] = row
-            introduced_term_audits.append(itc_audit)
-            chat_authority_audit.setdefault("entity_repairs", []).extend(
-                itc_audit.get("repairs") or []
+            introduced_term_audits.append(
+                {
+                    "schema_version": "introduced-term-audit.v2",
+                    "status": "SEMANTIC_AUTHORITY_PRESERVED",
+                    "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+                    "introduced_term": row,
+                }
             )
     chat_authority_audit["introduced_term_audits"] = introduced_term_audits
     return EntityAuthorityResult(

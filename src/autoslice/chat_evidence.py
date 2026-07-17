@@ -94,9 +94,6 @@ class ReferentGroup:
     # 正当别名（海铃/八幡海铃），不含误听面——多槽位命中=一句提了多个角色，
     # 无可改写直接放行；静态组不打此标（母鸡卡类误听面多槽仍歧义熔断）。
     alias_surfaces: bool = False
-    # 只有有长期实案证明“单次音频模型会高置信反向误改”的 canonical 才列入：
-    # 相反 RESOLVED 必须 fail-closed；结构化聊天与独立转写逐字同意时直接确证。
-    protected_canonicals: tuple[str, ...] = ()
 
 
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
@@ -281,19 +278,6 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     and sanitize_chat_display_text(value, max_chars=80).lower() in all_surfaces
                 )
             )
-            raw_protected = row.get("protected_canonicals") or []
-            protected = tuple(
-                dict.fromkeys(
-                    sanitize_chat_display_text(value, max_chars=80)
-                    for value in (raw_protected if isinstance(raw_protected, list) else [])
-                    if sanitize_chat_display_text(value, max_chars=80)
-                    and any(
-                        entity.canonical.lower()
-                        == sanitize_chat_display_text(value, max_chars=80).lower()
-                        for entity in parsed
-                    )
-                )
-            )
             groups.append(
                 ReferentGroup(
                     tuple(parsed),
@@ -302,7 +286,6 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     keep,
                     positions,
                     keep_surfaces,
-                    protected_canonicals=protected,
                 )
             )
     return groups
@@ -495,12 +478,10 @@ def witness_disagreement_cues(
 ) -> list[int]:
     """证人引入仲裁的怀疑编译器（2026-07-14 生日结婚「小李」案抽象）。
 
-    修正层（AGY 带弹幕上下文二听时会被聊天带偏）可能引入 BCUT 逐字证人
-    里并不存在的组内形态——draft 该 cue 听成「留下」，终稿却写「小李」。
     返回 final 中出现组内形态、而同时轴 draft cue 无该形态的 cue_index
-    （1-based，按 final 非空 cue 序）。这些 cue 应交给无聊天上下文的黑帧
-    裁决器强制多选一；两侧都在场的形态（她真说了）不打扰。时轴对不上的
-    cue 宁缺毋滥直接跳过。
+    （1-based，按 final 非空 cue 序）。这是语义专名修正的来源差异审计，
+    不是把终稿重新交给黑帧 Gemini、强制回归 draft 的许可。两侧都在场的
+    形态不打扰；时轴对不上的 cue 宁缺毋滥直接跳过。
     """
 
     draft_by_span = {
@@ -534,13 +515,11 @@ def introduced_term_cues(
     *,
     max_rows: int = 4,
 ) -> list[dict[str, Any]]:
-    """引入词仲裁编译器（2026-07-14 乐队番 Ave Mujica/睦睦 案抽象）。
+    """引入词来源差异探测器（2026-07-14 乐队番 Ave Mujica/睦睦 案抽象）。
 
-    修正层（被弹幕语境带偏的同族二听是主嫌）会把钦定实体词注入 BCUT 逐字
-    证人没有的位置；忠实守卫因"AGY 证人在场"放行——同族证人污染。这是
-    witness_disagreement 自称组机制向**全部钦定词面**的泛化：凡终稿 cue
-    出现钦定词而同时轴 draft cue 没有，就对齐出 draft 对应片段，交黑帧
-    音频在 {注入词, draft 片段} 间二选一；UNCERTAIN 保留终稿并披露。
+    凡语义终稿 cue 出现钦定词而同时轴 draft cue 没有，就对齐记录 draft
+    对应片段。它只证明“专名修正导致文本与初始听写不同”，供审计披露；
+    初始 ASR 不是终稿的后置硬门，禁止据此再让声学模型二选一改回去。
     """
 
     draft_by_span = {
