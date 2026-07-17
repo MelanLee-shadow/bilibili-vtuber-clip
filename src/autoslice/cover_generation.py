@@ -108,9 +108,51 @@ _COVER_HOOK_COLORS = {
     "orange": (255, 140, 60),
     "red": (233, 69, 69),
 }
-_COVER_BG_BUSY = ("pop-art-burst", "halftone-dots", "speed-lines")  # talk
-_COVER_BG_CALM = ("soft-radial", "clean-scenic")                    # song / tender
+_COVER_BG_BUSY = (
+    # These are deliberately different *visual families*, not three synonyms
+    # for the same blue comic background.  The deterministic batch rotation
+    # below owns this axis so a fashionable LLM preference cannot collapse a
+    # whole day's covers back onto one template.
+    "cobalt-comic-burst",
+    "warm-scrapbook-collage",
+    "violet-neon-stage",
+    "mint-doodle-stickers",
+    "mono-manga-panels",
+    "coral-checker-pop",
+)  # talk
+_COVER_BG_CALM = ("soft-radial", "clean-scenic")                    # song
 _COVER_BG_PHRASES = {
+    "cobalt-comic-burst": (
+        "a high-energy cobalt-and-navy comic-book burst with lemon-yellow accents, "
+        "radial speed lines, coarse halftone shadows and a few sharp starbursts; "
+        "the dominant palette must be cobalt/navy/yellow"
+    ),
+    "warm-scrapbook-collage": (
+        "a warm handmade scrapbook collage in coral, peach, cream and dark forest-green, "
+        "with torn-paper layers, masking-tape shapes and hand-cut blank stickers; "
+        "no blue-dominant comic burst and no written marks"
+    ),
+    "violet-neon-stage": (
+        "a sleek night-stage visual in deep plum and near-black with vivid magenta and cyan "
+        "neon rim lights, glowing arcs and soft lens bokeh; polished luminous depth, "
+        "not halftone comic art"
+    ),
+    "mint-doodle-stickers": (
+        "a playful pastel sticker-board in mint, turquoise, warm cream and tangerine, "
+        "with rounded doodle blobs, tiny flower and paw-print shapes and layered blank stickers; "
+        "soft flat shapes, not a radial comic burst"
+    ),
+    "mono-manga-panels": (
+        "a bold editorial manga-panel design in ink black, warm ivory and one vermilion-red accent, "
+        "with angular panel blocks, dry-brush textures and dramatic high contrast; "
+        "keep the character naturally colored while the graphic field stays mostly monochrome"
+    ),
+    "coral-checker-pop": (
+        "a cheerful retro magazine-pop composition in coral, brick red, pale aqua and mustard, "
+        "using large checkerboard blocks and clean Memphis-style circles and arches; "
+        "flat geometric design, no blue comic speed lines"
+    ),
+    # Legacy keys remain renderable for old committed metadata and fixtures.
     "pop-art-burst": "an energetic pop-art comic background — radiating burst/speed lines, halftone dots, scattered sparkles and little stars, filling the frame",
     "halftone-dots": "a vivid halftone dot-pattern background with a few bold stars and soft sparkles, filling the frame",
     "speed-lines": "a dynamic comic speed-line / radial motion background with halftone shading and sparkles, filling the frame",
@@ -127,23 +169,25 @@ _COVER_FORBIDDEN_EXPR = (
 
 # Title-keyword → in-character role/expression/background.  DEFAULT is soft/cute
 # 清纯邻家女同学; 机灵/得意 is SECONDARY (only when the clip role calls for it).
+# Role keywords may choose the face, but never the talk-lane visual family:
+# otherwise every "惊讶" clip becomes the same speed-line cover again.
 _COVER_ROLE_LEXICON: tuple[tuple[tuple[str, ...], str, str, str | None], ...] = (
     (("破防", "害怕", "好可怕", "吓", "怕", "惊", "傻眼", "？！", "!？", "遇到"), "shocked_bites_back",
-     "wide-eyed startled gasp, mouth open in surprise, flushed cheeks, hands drawn up near her face, scared-but-cute", "speed-lines"),
+     "wide-eyed startled gasp, mouth open in surprise, flushed cheeks, hands drawn up near her face, scared-but-cute", None),
     (("哭", "眼泪", "又哭", "哭哭"), "teary_cute",
-     "big welling teary eyes, a cute comedic about-to-cry frown, blush, sniffly", "speed-lines"),
+     "big welling teary eyes, a cute comedic about-to-cry frown, blush, sniffly", None),
     (("拆台", "反杀", "反怼", "玩梗", "一眼AI", "得意", "整活", "谐音", "反沙", "嘴瓢", "掏兜", "买弹幕", "自封"), "witty_smug",
-     "clever pleased closed-mouth grin, one eyebrow slightly raised, a little smug but cute", "halftone-dots"),
+     "clever pleased closed-mouth grin, one eyebrow slightly raised, a little smug but cute", None),
     (("嘴硬", "澄清", "不是", "嘴犟", "才不"), "stubborn_pout",
-     "pouty defiant frown, puffed cheeks, cute-stubborn hmph, arms-crossed energy", "halftone-dots"),
+     "pouty defiant frown, puffed cheeks, cute-stubborn hmph, arms-crossed energy", None),
     (("吃醋", "你只能", "占有", "醋"), "jealous_pout",
-     "jealous puffed-cheek pout, small knit brows, clingy-cute possessive look", "halftone-dots"),
+     "jealous puffed-cheek pout, small knit brows, clingy-cute possessive look", None),
     (("一本正经", "犯傻", "歪理", "认真", "讲道理"), "earnest_silly",
-     "earnest deadpan serious face, flat calm eyes, taking herself absurdly seriously", "pop-art-burst"),
+     "earnest deadpan serious face, flat calm eyes, taking herself absurdly seriously", None),
     (("看傻", "离谱", "越看越", "当场看", "越整越", "奇遇", "猴群", "见猴", "第一次见"), "dumbstruck",
-     "dumbstruck frozen face, wide round sparkly eyes, small O-shaped open mouth, hands near chin", "pop-art-burst"),
+     "dumbstruck frozen face, wide round sparkly eyes, small O-shaped open mouth, hands near chin", None),
     (("哄睡", "晚安", "温柔", "细声"), "tender_soft",
-     "tender warm soft-smiling face, gentle half-lidded caring eyes, soothing", "soft-radial"),
+     "tender warm soft-smiling face, gentle half-lidded caring eyes, soothing", None),
 )
 _COVER_HOOK_LEXICON = (
     "反沙", "反杀", "拆台", "一群猴", "翻车", "破防", "看傻", "清唱", "一眼AI", "嘴硬", "吃醋", "哄睡",
@@ -438,7 +482,10 @@ def _lidousha_cover_prompt(*, title: str, cover_text: str, art_direction: Lidous
         art_direction = _lidousha_cover_art_direction(candidate_id="", title=title, cover_text=cover_text)
     identity_descriptor = _lidousha_identity_descriptor()
     cover_identity_prompt = profile_asset_text("cover_identity_prompt")
-    background = _COVER_BG_PHRASES.get(art_direction.background_style, _COVER_BG_PHRASES["pop-art-burst"])
+    background = _COVER_BG_PHRASES.get(
+        art_direction.background_style,
+        _COVER_BG_PHRASES[_COVER_BG_BUSY[0]],
+    )
     identity_block = (
         f"Create a bold 16:9 (1920x1080) anime VTuber livestream cover thumbnail for {CHANNEL_PROFILE.prompt_name}. "
         "Use the supplied image ONLY as identity/style reference. "

@@ -3708,20 +3708,24 @@ def test_cover_art_direction_deterministic_rotation():
     )
     assert first == second
 
-    # A spread of candidate_ids over one talk title must rotate layout + hook color
-    # (anti-monotony) while staying inside the approved talk sets.
+    # A spread of candidate_ids over one talk title must rotate layout, visual
+    # family and hook color (anti-monotony) while staying inside approved sets.
     layouts: set[str] = set()
+    backgrounds: set[str] = set()
     hook_colors: set[str] = set()
     for i in range(24):
         direction = shadow_pipeline._lidousha_cover_art_direction(
             candidate_id=f"cand-{i}", title=_COVER_TALK_TITLE, cover_text=_COVER_TALK_TEXT
         )
         assert direction.layout in shadow_pipeline._COVER_TALK_LAYOUTS
+        assert direction.background_style in shadow_pipeline._COVER_BG_BUSY
         assert direction.hook_color in shadow_pipeline._COVER_HOOK_COLORS
         layouts.add(direction.layout)
+        backgrounds.add(direction.background_style)
         hook_colors.add(direction.hook_color)
 
     assert len(layouts) >= 2
+    assert len(backgrounds) >= 4
     assert len(hook_colors) >= 2
     assert layouts <= set(shadow_pipeline._COVER_TALK_LAYOUTS)
 
@@ -3854,8 +3858,22 @@ def test_cover_art_direction_degenerate_llm_cannot_collapse_real_batch():
         resolved_directions.append(resolved)
 
     assert len({row.layout for row in resolved_directions}) == 3
-    assert len({row.background_style for row in resolved_directions}) == 3
+    # The real July-16 batch spans five genuinely different style/palette
+    # families even when the judge asks for the same blue comic template eight
+    # times in a row.
+    assert len({row.background_style for row in resolved_directions}) == 5
     assert len({row.hook_color for row in resolved_directions}) >= 3
+
+
+def test_talk_cover_families_are_not_synonyms_for_one_blue_comic_template():
+    phrases = [
+        shadow_pipeline._COVER_BG_PHRASES[key].lower()
+        for key in shadow_pipeline._COVER_BG_BUSY
+    ]
+    assert len(phrases) == 6
+    assert len(set(phrases)) == 6
+    for palette_token in ("cobalt", "coral", "plum", "mint", "ivory", "mustard"):
+        assert any(palette_token in phrase for phrase in phrases)
 
 
 # ---------------------------------------------------------------------------
