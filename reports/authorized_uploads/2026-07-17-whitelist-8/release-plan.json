@@ -1,0 +1,207 @@
+{
+  "authorization_quote": "补跑完可以做权宜上传，如果能设置观众不可见最好，不行就公开没关系。只上传这些。",
+  "authorized_by": "Ivan",
+  "collection": {
+    "name": "小李切片",
+    "season_id": 8383206,
+    "section_id": 9320779
+  },
+  "created_at": "2026-07-17T14:28:23Z",
+  "duplicate_preflight_report": "/opt/bilive/autoslice/repo/reports/operator/2026-07-17/whitelist-channel-duplicate-preflight.json",
+  "entries": [
+    {
+      "artifact_id": "66b59b6b52bf",
+      "candidate_id": "auto_162645_264_391",
+      "cover_sha256": "88d410088cee5a6e7cf08ec84bacf07f790a61139ade9f08f0fa9a333c22ac5c",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/01-auto_162645_264_391.upload_manifest.json",
+      "manifest_sha256": "de3baf5cd0477a4e0e9414a2357e4048437f5531da2556ad1ffcdbeb12db7905",
+      "order": 1,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "上头",
+        "磕CP",
+        "求婚",
+        "AI"
+      ],
+      "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+      "video_sha256": "66b59b6b52bf88866897c01b315419e2a7df0c1b97b4601198026b96fd6dd568"
+    },
+    {
+      "artifact_id": "f20a6135220c",
+      "candidate_id": "auto_162645_394_507",
+      "cover_sha256": "b4a53d53992c396ed7a61df9b3f69013991d377f8d61d9abca20ad442b176c29",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/02-auto_162645_394_507.upload_manifest.json",
+      "manifest_sha256": "74c496ae465b6237b6ccbb30980662026431260da2adb3f1903e625a4b61f50e",
+      "order": 2,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "萌宠",
+        "心疼",
+        "爱狗人士",
+        "温柔",
+        "反差萌"
+      ],
+      "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "video_sha256": "f20a6135220c7c9ab83c90499a5e1677090ec4fdebc69ab0b08ccbc95722a4a8"
+    },
+    {
+      "artifact_id": "dad90937c4c0",
+      "candidate_id": "auto_203003_1644_1737",
+      "cover_sha256": "c630cf52fbf0e364dc5de46b941d36b4670ad5104a911c45165b9a7d73415c0b",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/03-auto_203003_1644_1737.upload_manifest.json",
+      "manifest_sha256": "78cbb3f4334c20e0c1d88a95f19f9d1542b95aa3c7921de37b8d205b12b63667",
+      "order": 3,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "坏女人",
+        "姐控",
+        "嘴硬",
+        "搞笑",
+        "反差萌"
+      ],
+      "title": "【李豆沙】自称喜欢坏姐姐，却被妹妹型坏女人奴役：我不恋姐",
+      "video_sha256": "dad90937c4c0a1b0fa44b15924abe995512d409cf5a6115e369c55652db90ae7"
+    },
+    {
+      "artifact_id": "015cab3f07d8",
+      "candidate_id": "auto_203003_272_377",
+      "cover_sha256": "7f970f026aee820119f3569b6d005cb593c3385ff26cfad92750730b66f4241d",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/04-auto_203003_272_377.upload_manifest.json",
+      "manifest_sha256": "b588084a744ad17e3e0fca2117b94867458f29bd250387edbfaa931b9f5f5310",
+      "order": 4,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "游戏苦手",
+        "自嘲",
+        "搞笑",
+        "恋爱养成",
+        "反差萌"
+      ],
+      "title": "【李豆沙】游戏苦手想通为何接到商单：用豆沙方式攻略妹妹",
+      "video_sha256": "015cab3f07d8674e7830928b9f0b93ff399bf8f9bbfaee6c9dff3791c7989ef2"
+    },
+    {
+      "artifact_id": "7d473299e6ec",
+      "candidate_id": "auto_210002_297_513",
+      "cover_sha256": "50b8806364728e3409bc01760dce50013d22833a6b188e220a887d3e8585efc3",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/05-auto_210002_297_513.upload_manifest.json",
+      "manifest_sha256": "b9f369488f2216a84cc79e3dcd5b5646e3ee239e8d0e1bb906813a93a68da730",
+      "order": 5,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "礼墨Sumi",
+        "侄女",
+        "百合",
+        "女同",
+        "抽卡",
+        "惩罚",
+        "整活",
+        "嘴硬"
+      ],
+      "title": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "video_sha256": "7d473299e6ecf9d36f8602be6a02a7f3ba962fdc16a162fb62c00e2dd1ef0b3c"
+    },
+    {
+      "artifact_id": "590c09b7e293",
+      "candidate_id": "auto_213000_116_205",
+      "cover_sha256": "e9e1296040a5510ee4fd5a809b281dc78d3183ee861e3be2f48d6c5c2f556662",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/06-auto_213000_116_205.upload_manifest.json",
+      "manifest_sha256": "30150f554d3315c2752c2a2f2e7173ebc2ad8853cb268fa8a7927495a32485ae",
+      "order": 6,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "搞笑",
+        "打工人",
+        "黑心老板",
+        "游戏实况",
+        "弹幕整活"
+      ],
+      "title": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+      "video_sha256": "590c09b7e2930b7dddca9901d7089974b8ddaf0a44bd0fff655583858ca9c260"
+    },
+    {
+      "artifact_id": "fe593d21f23d",
+      "candidate_id": "auto_213000_1218_1328",
+      "cover_sha256": "8f1f7d2e535921ddd6ccd906d3fc17e1312b18f3553aa0d35a50a7693c8dfd1d",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/07-auto_213000_1218_1328.upload_manifest.json",
+      "manifest_sha256": "107471f27d67c64968c4522975265c0b4a4bfb62a8a2792003c7a4e343090530",
+      "order": 7,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "打灰",
+        "土木工程",
+        "吐槽",
+        "破防",
+        "搞笑"
+      ],
+      "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "video_sha256": "fe593d21f23d24c361fcca01d7ef2073918d868dbf8d108438018787e6165ce5"
+    },
+    {
+      "artifact_id": "57630c637681",
+      "candidate_id": "auto_162645_712_967",
+      "cover_sha256": "b7c2951fe54910faf4b10cc35ba9b458e15da8d6148db2f9bef3bf6f31f5e6fb",
+      "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/08-auto_162645_712_967.upload_manifest.json",
+      "manifest_sha256": "d19e38f3f07891e1b22d2fc202eb69440ce404870a413f8e854f7b2413cc4742",
+      "order": 8,
+      "tags": [
+        "李豆沙",
+        "虚拟主播",
+        "虚拟UP主",
+        "直播切片",
+        "百合",
+        "女同",
+        "安晚awa",
+        "侄女",
+        "BanG Dream",
+        "邦多利",
+        "礼墨Sumi",
+        "Ave Mujica"
+      ],
+      "title": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "video_sha256": "57630c637681865180d5e0e56c606e6dc222773ba673601aec10b0bef7d20ab3"
+    }
+  ],
+  "only_upload_manifest_paths": [
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/01-auto_162645_264_391.upload_manifest.json",
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/02-auto_162645_394_507.upload_manifest.json",
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/03-auto_203003_1644_1737.upload_manifest.json",
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/04-auto_203003_272_377.upload_manifest.json",
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/05-auto_210002_297_513.upload_manifest.json",
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/06-auto_213000_116_205.upload_manifest.json",
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/07-auto_213000_1218_1328.upload_manifest.json",
+    "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/08-auto_162645_712_967.upload_manifest.json"
+  ],
+  "preflight_report": "/opt/bilive/autoslice/repo/reports/operator/2026-07-17/whitelist-upload-preflight.json",
+  "schema_version": "authorized-whitelist-release.v1",
+  "status": "READY_TO_UPLOAD",
+  "tag_report": "/opt/bilive/autoslice/repo/reports/operator/2026-07-17/whitelist-upload-tags.json",
+  "visibility": {
+    "authorized_fallback": "public",
+    "requested_preference": "audience_invisible_if_supported",
+    "selected": "public",
+    "uploader_support": "no_permanent_private_option"
+  },
+  "whitelist_count": 8
+}

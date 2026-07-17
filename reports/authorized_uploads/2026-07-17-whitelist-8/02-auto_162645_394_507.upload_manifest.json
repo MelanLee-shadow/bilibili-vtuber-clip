@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "f20a6135220c",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/本想看“难绷小视频”，却被受委屈的小.mp4",
+    "sha256": "f20a6135220c7c9ab83c90499a5e1677090ec4fdebc69ab0b08ccbc95722a4a8",
+    "bytes": 11716066
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/本想看“难绷小视频”，却被受委屈的小.cover.png",
+    "sha256": "b4a53d53992c396ed7a61df9b3f69013991d377f8d61d9abca20ad442b176c29",
+    "bytes": 2795367
+  },
+  "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "补跑完可以做权宜上传，如果能设置观众不可见最好，不行就公开没关系。只上传这些。",
+    "at": "2026-07-17T14:28:22+0000"
+  },
+  "created_at": "2026-07-17T14:28:22+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "萌宠",
+    "心疼",
+    "爱狗人士",
+    "温柔",
+    "反差萌"
+  ],
+  "tags_source": "cli"
+}

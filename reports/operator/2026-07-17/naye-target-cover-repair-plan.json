@@ -1,0 +1,45 @@
+{
+  "date": "2026-07-16",
+  "invalidations": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/看《魔法少女奈叶》求婚片段彻底上头，.cover.png",
+        "sha256": "sha256:5d260a8b1be68d9fb346dc069299fa213b38c7caf89da34221ce5bd293a715cd"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/看《魔法少女奈叶》求婚片段彻底上头，.record.json",
+          "sha256": "sha256:876100fe39c62f517f038ec70b0959e7789bac0ce45fae5483570de82cfbc99e"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/replacement_recuts/auto_162645_264_391.record.json",
+          "sha256": "sha256:876100fe39c62f517f038ec70b0959e7789bac0ce45fae5483570de82cfbc99e"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/replacement_recuts/auto_162645_264_391.recut.publish.json",
+          "sha256": "sha256:c7d97f58b086cd9a9c84de9c3cfd64129b864005a0f8ac734b124f2bd16200a8"
+        }
+      ],
+      "expected_cover_text": "看《魔法少女奈叶》求婚片段彻底上头\n求AI续上！",
+      "expected_title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：豆沙求后续",
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/看《魔法少女奈叶》求婚片段彻底上头，.mp4",
+        "sha256": "sha256:ac4abbf3bfadea96378ae697c42fadfb7806a7cae5882b03e302af4184c280df"
+      },
+      "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！"
+    }
+  ],
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "expected_state_record_sha256": "sha256:cc4afd52fefed990d22bacfdefb293c9d77a2f6ff06fdcb381b7a4d77b166fe0"
+    }
+  ],
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "sha256:2f57649883a46589bb005cfa545c47b4935cb9cfab4c9fc948d4cf728490180b"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "candidate_id": "auto_162645_264_391",
+  "date": "2026-07-16",
+  "delivery_end_ms": 137340,
+  "delivery_name": "看《魔法少女奈叶》求婚片段彻底上头，",
+  "delivery_start_ms": 9750,
+  "expected_final_text_srt_sha256": "43bc924f0f4dd1d8f220bf772c165132b54d70d826e49318cec3b9979305fcfc",
+  "expected_state_sha256": "fff48e45baa7c66574df89e1aebf94aeb9f8f3595424d435b80bd55cc2372abf",
+  "inputs": {
+    "boundary_audit": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/auto_162645_264_391.boundary_audit.json",
+      "sha256": "7ed7d25179452afcffbde7cfbedd38ed3db5cd659726dd24ac01308d01a48379"
+    },
+    "chat_authority_audit": {
+      "archive_path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/frozen_resume/sources/chat-authority.e21af2e.json",
+      "path": "/opt/bilive/autoslice/quarantine/2026-07-16/foreign-language-auto_162645_264_391-20260717T055549Z/看《魔法少女奈叶》求婚片段彻底上头，.chat-authority.json",
+      "sha256": "e21af2eec2b4b640d81f3f3dc8e21a30f3f1969bdaee25a4b1f85070d3871e18"
+    },
+    "cover_binding": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/cover_repair/generations/68062ea05ce3-01-1784296897215848020/final.cover.cover-binding.json",
+      "sha256": "0bcb058a46323035e1b6d2e0b8b77fd2ecaee1574b24dd7388c07ee76e5981b8"
+    },
+    "cover_generation_cover": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/cover_repair/generations/68062ea05ce3-01-1784296897215848020/final.cover.png",
+      "sha256": "88d410088cee5a6e7cf08ec84bacf07f790a61139ade9f08f0fa9a333c22ac5c"
+    },
+    "cover_generation_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/cover_repair/generations/68062ea05ce3-01-1784296897215848020/final.cover.cover_generation.json",
+      "sha256": "c9eeb2fbfd4ad49e7fd5cd3351754b7a60450088ab0ddd4e83e1090999180a28"
+    },
+    "existing_cover": {
+      "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/看《魔法少女奈叶》求婚片段彻底上头，.cover.png",
+      "sha256": "88d410088cee5a6e7cf08ec84bacf07f790a61139ade9f08f0fa9a333c22ac5c"
+    },
+    "frozen_text_srt": {
+      "archive_path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/frozen_resume/sources/automatic-reviewed.424d2d77.srt",
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/replacement_recuts/auto_162645_264_391.recut.automatic-text.srt",
+      "sha256": "424d2d7740afa5948f30fe4a52adc7738834a4229981dad217d1495f61cb853d"
+    },
+    "media": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/replacement_recuts/auto_162645_264_391.recut.mp4",
+      "sha256": "63ae5145a7a73a7d891a09e090b8829568e8a43a6b4504d7bddb3e368dd988aa"
+    },
+    "producer_spec": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/spec_auto_162645_264_391.json",
+      "sha256": "2c29681ba3e3e7873f033fc7fbf9d17462de4b32b95139880b80fa791a14aee4"
+    },
+    "speaker_profile": {
+      "path": "/opt/bilive/autoslice/repo/assets/lidousha/voiceprint_profile.v1.json",
+      "sha256": "663eee9820d7b0df9021c148ebe21c39f10d782f73cba22bfeeee0ff1a85ad1d"
+    },
+    "subtitle_regression": {
+      "path": "/opt/bilive/autoslice/repo/assets/lidousha/subtitle_regressions/auto_162645_264_391.subtitle-regression.v1.json",
+      "sha256": "47e09ab879c3684e0231aaa694826854ff19da5977be4bad7363767f484f7c84"
+    },
+    "text_override": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/frozen_resume/approved/auto_162645_264_391.frozen-text.v1.json",
+      "sha256": "eb5d68807eea781d9288d5da4c5ae638ac1ae1820fa84f272f4bcdfd5a8346ca"
+    },
+    "timing_qa": {
+      "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/replacement_recuts/auto_162645_264_391.recut.timing_qa.json",
+      "sha256": "046ea4cce41efd0bd4aefbfe0fc0037cd6d78db8f009b3ad5b461de908ed115c"
+    },
+    "upload_ledger": {
+      "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+      "sha256": "2f57649883a46589bb005cfa545c47b4935cb9cfab4c9fc948d4cf728490180b"
+    }
+  },
+  "schema_version": "frozen-talk-resume-plan.v1",
+  "selection_hook": "看《魔法少女奈叶》求婚片段彻底上头，没看够的李豆沙反复恳求AI把后续正片做出来。",
+  "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+  "upload_enabled": false
+}

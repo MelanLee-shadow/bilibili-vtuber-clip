@@ -1,0 +1,84 @@
+{
+  "authorized_count": 8,
+  "collection_bound_count": 8,
+  "completed_at": "2026-07-17T14:39:13Z",
+  "no_extra_manifest_authorized": true,
+  "public_count": 8,
+  "results": [
+    {
+      "bvid": "BV1AbNR66ExW",
+      "candidate_id": "auto_162645_264_391",
+      "collection_status": "PASS",
+      "order": 1,
+      "public_status": "PASS",
+      "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+      "url": "https://www.bilibili.com/video/BV1AbNR66ExW"
+    },
+    {
+      "bvid": "BV1cbNR66Eyt",
+      "candidate_id": "auto_162645_394_507",
+      "collection_status": "PASS",
+      "order": 2,
+      "public_status": "PASS",
+      "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "url": "https://www.bilibili.com/video/BV1cbNR66Eyt"
+    },
+    {
+      "bvid": "BV1cbNR66Eky",
+      "candidate_id": "auto_203003_1644_1737",
+      "collection_status": "PASS",
+      "order": 3,
+      "public_status": "PASS",
+      "title": "【李豆沙】自称喜欢坏姐姐，却被妹妹型坏女人奴役：我不恋姐",
+      "url": "https://www.bilibili.com/video/BV1cbNR66Eky"
+    },
+    {
+      "bvid": "BV1rbNR6zEWJ",
+      "candidate_id": "auto_203003_272_377",
+      "collection_status": "PASS",
+      "order": 4,
+      "public_status": "PASS",
+      "title": "【李豆沙】游戏苦手想通为何接到商单：用豆沙方式攻略妹妹",
+      "url": "https://www.bilibili.com/video/BV1rbNR6zEWJ"
+    },
+    {
+      "bvid": "BV1cbNR66ECP",
+      "candidate_id": "auto_210002_297_513",
+      "collection_status": "PASS",
+      "order": 5,
+      "public_status": "PASS",
+      "title": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "url": "https://www.bilibili.com/video/BV1cbNR66ECP"
+    },
+    {
+      "bvid": "BV1pbNR66E2g",
+      "candidate_id": "auto_213000_116_205",
+      "collection_status": "PASS",
+      "order": 6,
+      "public_status": "PASS",
+      "title": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+      "url": "https://www.bilibili.com/video/BV1pbNR66E2g"
+    },
+    {
+      "bvid": "BV1pbNR66E2r",
+      "candidate_id": "auto_213000_1218_1328",
+      "collection_status": "PASS",
+      "order": 7,
+      "public_status": "PASS",
+      "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "url": "https://www.bilibili.com/video/BV1pbNR66E2r"
+    },
+    {
+      "bvid": "BV1AtNR63ERp",
+      "candidate_id": "auto_162645_712_967",
+      "collection_status": "PASS",
+      "order": 8,
+      "public_status": "PASS",
+      "title": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "url": "https://www.bilibili.com/video/BV1AtNR63ERp"
+    }
+  ],
+  "schema_version": "authorized-whitelist-release-result.v1",
+  "status": "COMPLETE",
+  "uploaded_count": 8
+}

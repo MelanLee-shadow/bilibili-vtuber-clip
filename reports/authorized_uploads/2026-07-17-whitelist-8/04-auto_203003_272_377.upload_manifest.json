@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "015cab3f07d8",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/游戏苦手想通自己为何会接到商单：既然.mp4",
+    "sha256": "015cab3f07d8674e7830928b9f0b93ff399bf8f9bbfaee6c9dff3791c7989ef2",
+    "bytes": 31183844
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/游戏苦手想通自己为何会接到商单：既然.cover.png",
+    "sha256": "7f970f026aee820119f3569b6d005cb593c3385ff26cfad92750730b66f4241d",
+    "bytes": 2515168
+  },
+  "title": "【李豆沙】游戏苦手想通为何接到商单：用豆沙方式攻略妹妹",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "补跑完可以做权宜上传，如果能设置观众不可见最好，不行就公开没关系。只上传这些。",
+    "at": "2026-07-17T14:28:22+0000"
+  },
+  "created_at": "2026-07-17T14:28:22+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "游戏苦手",
+    "自嘲",
+    "搞笑",
+    "恋爱养成",
+    "反差萌"
+  ],
+  "tags_source": "cli"
+}

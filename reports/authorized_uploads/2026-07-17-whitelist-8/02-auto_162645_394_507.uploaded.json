@@ -1,0 +1,44 @@
+{
+  "aid": 116935786301806,
+  "bvid": "BV1cbNR66Eyt",
+  "candidate_id": "auto_162645_394_507",
+  "cid": 40047673668,
+  "collection": {
+    "season_id": 8383206,
+    "section_id": 9320779,
+    "status": "BOUND_AND_PUBLICLY_VERIFIED"
+  },
+  "ledger_terminal": {
+    "artifact_id": "f20a6135220c",
+    "at": "2026-07-17T14:30:06+0000",
+    "attempt_id": "8b866ea5c3ec4688984a2817d1a2330a",
+    "authorization_quote": "补跑完可以做权宜上传，如果能设置观众不可见最好，不行就公开没关系。只上传这些。",
+    "authorized_by": "Ivan",
+    "bvid": "BV1cbNR66Eyt",
+    "cover_sha256": "b4a53d53992c396ed7a61df9b3f69013991d377f8d61d9abca20ad442b176c29",
+    "event": "UPLOAD_ATTEMPT_FINISHED",
+    "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-17-whitelist-8/02-auto_162645_394_507.upload_manifest.json",
+    "manifest_sha256": "74c496ae465b6237b6ccbb30980662026431260da2adb3f1903e625a4b61f50e",
+    "rc": 0,
+    "tags": "李豆沙,虚拟主播,虚拟UP主,直播切片,萌宠,心疼,爱狗人士,温柔,反差萌",
+    "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+    "uploader": "/opt/bilive/app/tmp_manual_upload/do_upload.sh",
+    "video_sha256": "f20a6135220c7c9ab83c90499a5e1677090ec4fdebc69ab0b08ccbc95722a4a8"
+  },
+  "member_state": 0,
+  "member_state_desc": "开放浏览",
+  "member_tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "萌宠",
+    "心疼",
+    "爱狗人士",
+    "温柔",
+    "反差萌"
+  ],
+  "member_title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+  "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+  "verified_at": "2026-07-17T14:39:04Z"
+}

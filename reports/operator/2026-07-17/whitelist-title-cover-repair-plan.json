@@ -1,0 +1,141 @@
+{
+  "date": "2026-07-16",
+  "invalidations": [
+    {
+      "candidate_id": "auto_162645_394_507",
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/本想看“难绷小视频”，却被受委屈的小.cover.png",
+        "sha256": "sha256:e206cd657627e80baa27994c7a535cc31b6cb401aeedba1bf6e11961860a2b02"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/本想看“难绷小视频”，却被受委屈的小.record.json",
+          "sha256": "sha256:ea2b957c141c28182119d31321e8a80d7f2b52703b3903a2ba1653548e2e7d07"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_394_507/replacement_recuts/auto_162645_394_507.record.json",
+          "sha256": "sha256:ea2b957c141c28182119d31321e8a80d7f2b52703b3903a2ba1653548e2e7d07"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_394_507/replacement_recuts/auto_162645_394_507.recut.publish.json",
+          "sha256": "sha256:9d540cac7d05ebab57b3f43a3a0682ac4f9c121bc75a7c568af2158bf9e2e871"
+        }
+      ],
+      "expected_cover_text": "本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "expected_title": "【李豆沙】本想看“难绷小视频”，熊猫头却开始替小狗讨公道",
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/本想看“难绷小视频”，却被受委屈的小.mp4",
+        "sha256": "sha256:f20a6135220c7c9ab83c90499a5e1677090ec4fdebc69ab0b08ccbc95722a4a8"
+      },
+      "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心"
+    },
+    {
+      "candidate_id": "auto_203003_272_377",
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/游戏苦手想通自己为何会接到商单：既然.cover.png",
+        "sha256": "sha256:c0b882b9f119796286f12979e716f825833b02158a0761813f3efecc48787232"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/游戏苦手想通自己为何会接到商单：既然.record.json",
+          "sha256": "sha256:96326d29c6a2cb5577b9b131a21ff79d80da8209c5aa92467fdae11377c58f30"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_203003_272_377/replacement_recuts/auto_203003_272_377.record.json",
+          "sha256": "sha256:96326d29c6a2cb5577b9b131a21ff79d80da8209c5aa92467fdae11377c58f30"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_203003_272_377/replacement_recuts/auto_203003_272_377.recut.publish.json",
+          "sha256": "sha256:c8aec35cad6040a3855e5d87e385d3bc7da85bff4069d6ef42e0b4370c0d8672"
+        }
+      ],
+      "expected_cover_text": "游戏苦手想通为何接到商单\n用豆沙方式攻略妹妹",
+      "expected_title": "【李豆沙】游戏苦手想通为何接商单：《杖剑传说》就该攻略妹妹",
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/游戏苦手想通自己为何会接到商单：既然.mp4",
+        "sha256": "sha256:015cab3f07d8674e7830928b9f0b93ff399bf8f9bbfaee6c9dff3791c7989ef2"
+      },
+      "title": "【李豆沙】游戏苦手想通为何接到商单：用豆沙方式攻略妹妹"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕拒绝被虚拟主播骗去当土木工友，李.cover.png",
+        "sha256": "sha256:ee236856d11b26224864df12b9478e6f72f267ba9177b7e03555135f60a39955"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕拒绝被虚拟主播骗去当土木工友，李.record.json",
+          "sha256": "sha256:05fcc676c5e8c56d0171e6908496246469b5b8ccdaf5fdf2457a09faedd43218"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_213000_1218_1328/replacement_recuts/auto_213000_1218_1328.record.json",
+          "sha256": "sha256:05fcc676c5e8c56d0171e6908496246469b5b8ccdaf5fdf2457a09faedd43218"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_213000_1218_1328/replacement_recuts/auto_213000_1218_1328.recut.publish.json",
+          "sha256": "sha256:f67ab395a8953289c31658a807dc7122948d74029e48d18ae3ff8f5e7b8193fc"
+        }
+      ],
+      "expected_cover_text": "打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "expected_title": "【李豆沙】弹幕拒绝被主播骗去当土木工友，豆沙偏要编到生命尽头",
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕拒绝被虚拟主播骗去当土木工友，李.mp4",
+        "sha256": "sha256:fe593d21f23d24c361fcca01d7ef2073918d868dbf8d108438018787e6165ce5"
+      },
+      "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕追问她喜欢‘妈感姐’还是‘妈感妹.cover.png",
+        "sha256": "sha256:19edb830fc9aaed9f391a5e19c106a4dc0f398e62862cd1521fde4bd5069bea7"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕追问她喜欢‘妈感姐’还是‘妈感妹.record.json",
+          "sha256": "sha256:5b23e15d7547f71b4ccce6bbcb76ee9223465775062eae50df1517f70484b4a5"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_712_967/replacement_recuts/auto_162645_712_967.record.json",
+          "sha256": "sha256:5b23e15d7547f71b4ccce6bbcb76ee9223465775062eae50df1517f70484b4a5"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_712_967/replacement_recuts/auto_162645_712_967.recut.publish.json",
+          "sha256": "sha256:ebf2cba8cec139da5a0e3bf9498082bb72418cc7a472b03abc92b90fa9484796"
+        }
+      ],
+      "expected_cover_text": "‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "expected_title": "【李豆沙】弹幕追问她喜欢‘妈感姐’还是‘妈感妹’",
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕追问她喜欢‘妈感姐’还是‘妈感妹.mp4",
+        "sha256": "sha256:57630c637681865180d5e0e56c606e6dc222773ba673601aec10b0bef7d20ab3"
+      },
+      "title": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍"
+    }
+  ],
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_162645_394_507",
+      "expected_state_record_sha256": "sha256:c94f14d82a9127004878a0f96d8a46893aaf50ac90aae2c714d750adbe7e39c0"
+    },
+    {
+      "candidate_id": "auto_203003_272_377",
+      "expected_state_record_sha256": "sha256:6f938b5369fd6c4d2da8abbec49791a571d20bee639322040afe29f0d0eb183d"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "expected_state_record_sha256": "sha256:51a829f3d0369ddea713ed20758aaa97c42e461815eee6ff2575cf4977ab8592"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "expected_state_record_sha256": "sha256:0b55311105d5530e3d44e009ddcb0ee57f5c9aabaa9f14210880bc91630f0ded"
+    }
+  ],
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "sha256:2f57649883a46589bb005cfa545c47b4935cb9cfab4c9fc948d4cf728490180b"
+  }
+}

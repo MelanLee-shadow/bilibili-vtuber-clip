@@ -1,0 +1,89 @@
+{
+  "schema_version": "authorized-upload-runtime-provider-evidence.v1",
+  "generated_at": "2026-07-17T14:45:55Z",
+  "release": {
+    "status": "COMPLETE",
+    "authorized_count": 8,
+    "uploaded_count": 8,
+    "public_count": 8,
+    "collection_bound_count": 8,
+    "no_extra_manifest_authorized": true
+  },
+  "production": {
+    "deployed_commit": "f1c0df8c8730427d0209c51785eaf3ef5d7a3098",
+    "deployed_at": "2026-07-17T14:08:24Z",
+    "disabled_flag_present_after_restore": false,
+    "manual_tick": {
+      "at": "2026-07-17T14:45:55Z",
+      "rc": 0,
+      "live": false,
+      "dates": {
+        "2026-07-13": "review_ready",
+        "2026-07-15": "review_ready",
+        "2026-07-16": "review_ready_retry_wait"
+      }
+    },
+    "scheduled_cron_tick": {
+      "at": "2026-07-17T14:50:04Z",
+      "rc": 0,
+      "live": false,
+      "dates": {
+        "2026-07-13": "review_ready",
+        "2026-07-15": "review_ready",
+        "2026-07-16": "review_ready_retry_wait"
+      }
+    },
+    "runner_lock_free_after_tick": true,
+    "upload_lock_free_after_tick": true
+  },
+  "gemini_api": {
+    "environment_path": "/opt/bilive/.env",
+    "secret_values_recorded": false,
+    "configured_free_key_count": 3,
+    "paid_backup_configured": true,
+    "paid_backup_daily_cap": null,
+    "paid_backup_usage_by_utc_day": {
+      "2026-07-13": 32,
+      "2026-07-14": 3,
+      "2026-07-15": 5,
+      "2026-07-16": 14,
+      "2026-07-17": 88
+    },
+    "paid_backup_usage_today_by_mode": {
+      "dev_exception": 79,
+      "strict": 9
+    },
+    "paid_backup_usage_today_by_purpose": {
+      "entity_audio_verdict": 40,
+      "jingting_source_context": 41,
+      "song_audio_lrc_proof": 5,
+      "foreign_source_transcript": 1,
+      "foreign_source_name_check": 1
+    },
+    "recent_manifest_scan": {
+      "scope": [
+        "/opt/bilive/autoslice/out/2026-07-16",
+        "/opt/bilive/autoslice/reports/operator/2026-07-17"
+      ],
+      "unique_acceptance_records": 54,
+      "accepted_free": 35,
+      "accepted_paid_backup": 19,
+      "accepted_free_by_ordinal": {
+        "1": 19,
+        "2": 11,
+        "3": 5
+      },
+      "latest_observed_free_acceptance_at": "2026-07-17T11:17:26Z",
+      "latest_observed_paid_backup_acceptance_at": "2026-07-17T12:07:11Z"
+    },
+    "conclusion": "All three free keys and the paid backup are configured. Recent artifacts contain successful free-key acceptances as well as paid fallbacks. No configured paid daily cap was reached; this evidence does not show a Gemini balance or cap blocker. Of today's 88 paid calls, 79 were explicitly supervised dev-exception repair calls and 9 used the strict unattended gate."
+  },
+  "agy_subscription": {
+    "explicit_quota_error_observed": true,
+    "latest_observed_at": "2026-07-17T13:24:14Z",
+    "latest_error": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 73h17m53s.",
+    "latest_error_path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_394_507/entity_verdicts/17ace90a69f787f516d9/agy.stderr",
+    "visual_song_discovery_also_affected": true,
+    "conclusion": "The confirmed current quota blocker is the AGY/Antigravity individual subscription, not a Gemini API key. Until reset or upgrade, AGY-dependent song discovery and audio/entity review can fail open or fall back."
+  }
+}
