@@ -780,6 +780,7 @@ def _group_audio_lrc_candidates(
     pinned_lrc_results: Sequence[LrcResult],
     preferred_title_hints: Sequence[str],
     min_recall_ratio: float,
+    min_margin: float,
 ) -> AudioLrcGroups:
     entries = list(ranked)
     identities = [_lrc_identity_key(lrc) for _ratio, lrc, _alignment in entries]
@@ -850,16 +851,32 @@ def _group_audio_lrc_candidates(
     groups = [[entries[index] for index in members] for members in group_indices]
     if not groups:
         raise ValueError("no canonical LRC identity is available for audio alignment")
-    exact_title_groups = [
-        group
-        for group in groups
-        if max(item[0] for item in group) >= min_recall_ratio
-        and any(_lrc_title_is_exact_hint(item[1], preferred_title_hints) for item in group)
-    ]
+    exact_title_groups = sorted(
+        (
+            group
+            for group in groups
+            if max(item[0] for item in group) >= min_recall_ratio
+            and any(_lrc_title_is_exact_hint(item[1], preferred_title_hints) for item in group)
+        ),
+        key=lambda group: (
+            max(item[0] for item in group),
+            min(item[1].source_ref for item in group),
+        ),
+        reverse=True,
+    )
     if len(exact_title_groups) > 1:
-        raise ValueError(
-            "ambiguous exact-title LRC identity: multiple disconnected songs match the explicit title hint"
-        )
+        best_exact_ratio = max(item[0] for item in exact_title_groups[0])
+        runner_exact_ratio = max(item[0] for item in exact_title_groups[1])
+        # A catalog can contain unrelated songs with the same display title.
+        # Keep those identities disconnected, but do not let a barely passing
+        # title homonym veto a much stronger ASR-backed identity.  Near ties
+        # still fail closed before any expensive audio model can be prompted
+        # with an arbitrary lyric sheet.
+        if best_exact_ratio - runner_exact_ratio < min_margin:
+            raise ValueError(
+                "ambiguous exact-title LRC identity: multiple disconnected songs "
+                "match the explicit title hint without a sufficient ASR margin"
+            )
     preferred_group = exact_title_groups[0] if exact_title_groups else None
     pinned_identities = {_lrc_identity_key(item) for item in pinned_lrc_results}
     pinned_fingerprints = {_lrc_fingerprint(item) for item in pinned_lrc_results}
@@ -910,6 +927,7 @@ def _choose_audio_lrc_candidate(
         pinned_lrc_results=pinned_lrc_results,
         preferred_title_hints=preferred_title_hints,
         min_recall_ratio=min_recall_ratio,
+        min_margin=min_margin,
     )
     entries = groups.entries
     equivalent = groups.equivalent

@@ -1055,6 +1055,78 @@ def test_audio_identity_collapses_same_song_provider_variants_and_prefers_lrclib
     assert chosen.source_ref == "https://lrclib.net/api/get/33542202"
 
 
+def test_audio_identity_ignores_weak_exact_title_homonym_with_large_asr_margin():
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="Crying for You",
+        artist="Galneryus",
+        source_ref="netease://song/2629639371",
+        lines=canonical.lines,
+    )
+    live_variant = LrcResult(
+        provider="netease",
+        song_title="CRYING FOR YOU (Live At TACHIKAWA STAGE GARDEN, Tokyo, 2024/12/22)",
+        artist="Galneryus",
+        source_ref="netease://song/3314382760",
+        lines=tuple(LrcLine(line.time_ms + 25, line.text) for line in canonical.lines),
+    )
+    weak_homonym = LrcResult(
+        provider="netease",
+        song_title="Crying for You",
+        artist="unrelated artist",
+        source_ref="netease://song/weak-title-homonym",
+        lines=tuple(
+            LrcLine(index * 5_000, f"unrelated lyric line {index}")
+            for index in range(23)
+        ),
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [
+            (0.62, canonical, []),
+            (0.61, live_variant, []),
+            (0.22, weak_homonym, []),
+        ],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+        preferred_title_hints=("CRYING FOR YOU",),
+    )
+
+    assert chosen.source_ref == canonical.source_ref
+
+
+def test_audio_identity_keeps_near_tied_exact_title_homonyms_ambiguous():
+    first = _japanese_lrc()
+    first = LrcResult(
+        provider="netease",
+        song_title="Same Name",
+        artist="first artist",
+        source_ref="netease://song/same-name-first",
+        lines=first.lines,
+    )
+    second = LrcResult(
+        provider="netease",
+        song_title="Same Name",
+        artist="second artist",
+        source_ref="netease://song/same-name-second",
+        lines=tuple(
+            LrcLine(index * 5_000, f"different lyric line {index}")
+            for index in range(len(first.lines))
+        ),
+    )
+
+    with pytest.raises(ValueError, match="without a sufficient ASR margin"):
+        _choose_audio_lrc_candidate(
+            [(0.62, first, []), (0.58, second, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+            preferred_title_hints=("Same Name",),
+        )
+
+
 def test_audio_identity_collapses_same_title_with_different_line_splitting():
     canonical = _japanese_lrc()
     # Same lyrics, but provider B merged pairs of lines and shifted timing.
