@@ -1,0 +1,31 @@
+{
+  "schema": "cover-only-edit-results.v1",
+  "authorization_quote": "同意换源，同意替换封面。然后给我解释一下你做了什么",
+  "results": [
+    {
+      "bvid": "BV1cbNR66ECP",
+      "old_cover": "http://i0.hdslb.com/bfs/archive/d00d36bda3281cacfed3e52eca789b09b829bfa9.png",
+      "new_cover": "http://i0.hdslb.com/bfs/archive/554065198727d24bb0e9400f1d5a8373718d4675.png",
+      "approved_sha256": "992fa2a04c0e76795ef5df29d06671c78647c0a9c8d3b838a5eb2b9a1b43c442",
+      "public_download_sha256": "992fa2a04c0e76795ef5df29d06671c78647c0a9c8d3b838a5eb2b9a1b43c442",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "bvid": "BV1pbNR66E2g",
+      "old_cover": "http://i2.hdslb.com/bfs/archive/3265f8c1f1b56206c8b08a3dd40cfd26dfab1cae.png",
+      "new_cover": "http://i2.hdslb.com/bfs/archive/9012d1206edcb0a4fc7fa0e2d88c2c9605bd3cb2.png",
+      "approved_sha256": "4aa9d6cab43d9b26ce80c5265f6cd83b5c408fb268601d251049d10d98104548",
+      "public_download_sha256": "4aa9d6cab43d9b26ce80c5265f6cd83b5c408fb268601d251049d10d98104548",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "bvid": "BV1pbNR66E2r",
+      "old_cover": "http://i1.hdslb.com/bfs/archive/ab72039fb7ff237a51072600671cc0750932c9dd.png",
+      "new_cover": "http://i1.hdslb.com/bfs/archive/64eb071c5de7ceaf21c60f899f5aac6078b19516.png",
+      "approved_sha256": "b13c91fd2dfcad3365c933d66ecb2454c26180185cf39f041a5587bc740290ed",
+      "public_download_sha256": "b13c91fd2dfcad3365c933d66ecb2454c26180185cf39f041a5587bc740290ed",
+      "status": "EXACT_BYTES_PUBLIC"
+    }
+  ],
+  "verified_at": "2026-07-17T17:21:33Z"
+}

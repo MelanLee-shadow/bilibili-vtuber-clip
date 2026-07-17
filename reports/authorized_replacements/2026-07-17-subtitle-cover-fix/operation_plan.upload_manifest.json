@@ -1,0 +1,61 @@
+{
+  "schema": "authorized-existing-archive-repair.v1",
+  "authorized_by": "Ivan",
+  "authorization_quote": "同意换源，同意替换封面。然后给我解释一下你做了什么",
+  "scope": {
+    "replace_source_same_bvid": true,
+    "replace_covers": [
+      "BV1cbNR66ECP",
+      "BV1pbNR66E2g",
+      "BV1pbNR66E2r"
+    ],
+    "create_new_archives": false
+  },
+  "targets": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "bvid": "BV1AbNR66ExW",
+      "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+      "video_sha256": "335fce6aaefe0d3314593fda30ff440ee3fd768c87d3c5dfed5a589a494db42e",
+      "replace_cover": false
+    },
+    {
+      "candidate_id": "auto_162645_394_507",
+      "bvid": "BV1cbNR66Eyt",
+      "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "video_sha256": "1ec9b5072b734f1adf50f9191600365a89d033ed78b641f252457bee50d0d9d2",
+      "replace_cover": false
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "bvid": "BV1AtNR63ERp",
+      "title": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "video_sha256": "64c3e4fe5b79064b53af0fc3695f2aa4ff77671c9abb501ee3cd4d5ad83470b9",
+      "replace_cover": false
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "bvid": "BV1cbNR66ECP",
+      "title": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "video_sha256": "d5461987dd592c55885fc60665f9b71419eecd168f1045fcd6fe1024190e99b6",
+      "replace_cover": true,
+      "cover_sha256": "992fa2a04c0e76795ef5df29d06671c78647c0a9c8d3b838a5eb2b9a1b43c442"
+    },
+    {
+      "candidate_id": "auto_213000_116_205",
+      "bvid": "BV1pbNR66E2g",
+      "title": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+      "video_sha256": "3237bf394442de2f26005d730cab012f7bd78713edd4cf7a0940e417003126f0",
+      "replace_cover": true,
+      "cover_sha256": "4aa9d6cab43d9b26ce80c5265f6cd83b5c408fb268601d251049d10d98104548"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "bvid": "BV1pbNR66E2r",
+      "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "video_sha256": "9a81834be7517ddffecae6c842fad609a47ac97f0d934d9fd8cdf1c776cbc1e5",
+      "replace_cover": true,
+      "cover_sha256": "b13c91fd2dfcad3365c933d66ecb2454c26180185cf39f041a5587bc740290ed"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "9a81834be751",
+  "video": {
+    "path": "/opt/bilive/autoslice/reports/operator/2026-07-17/timing-repair-review/auto_213000_1218_1328/500dc2fab2442272/content.burned-final-sapphire72.mp4",
+    "sha256": "9a81834be7517ddffecae6c842fad609a47ac97f0d934d9fd8cdf1c776cbc1e5",
+    "bytes": 32765538
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-diversity-review-v2/final/auto_213000_1218_1328.cover.png",
+    "sha256": "b13c91fd2dfcad3365c933d66ecb2454c26180185cf39f041a5587bc740290ed",
+    "bytes": 2458577
+  },
+  "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "同意换源，同意替换封面。然后给我解释一下你做了什么",
+    "at": "2026-07-17T17:04:24+0000"
+  },
+  "created_at": "2026-07-17T17:04:24+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "打灰",
+    "土木工程",
+    "吐槽",
+    "搞笑"
+  ],
+  "tags_source": "cli"
+}

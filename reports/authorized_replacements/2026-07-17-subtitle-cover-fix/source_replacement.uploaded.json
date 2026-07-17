@@ -1,0 +1,56 @@
+{
+  "schema": "same-bvid-source-replacement-results.v1",
+  "authorization_quote": "同意换源，同意替换封面。然后给我解释一下你做了什么",
+  "new_archive_created": false,
+  "results": [
+    {
+      "bvid": "BV1AbNR66ExW",
+      "aid": 116935786305342,
+      "old_cid": 40047610737,
+      "new_cid": 40051345668,
+      "video_sha256": "335fce6aaefe0d3314593fda30ff440ee3fd768c87d3c5dfed5a589a494db42e",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "bvid": "BV1cbNR66Eyt",
+      "aid": 116935786301806,
+      "old_cid": 40047673668,
+      "new_cid": 40051346587,
+      "video_sha256": "1ec9b5072b734f1adf50f9191600365a89d033ed78b641f252457bee50d0d9d2",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "bvid": "BV1AtNR63ERp",
+      "aid": 116935803081751,
+      "old_cid": 40047740177,
+      "new_cid": 40051347150,
+      "video_sha256": "64c3e4fe5b79064b53af0fc3695f2aa4ff77671c9abb501ee3cd4d5ad83470b9",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "bvid": "BV1cbNR66ECP",
+      "aid": 116935786301887,
+      "old_cid": 40047676126,
+      "new_cid": 40051409139,
+      "video_sha256": "d5461987dd592c55885fc60665f9b71419eecd168f1045fcd6fe1024190e99b6",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "bvid": "BV1pbNR66E2g",
+      "aid": 116935786370775,
+      "old_cid": 40047676824,
+      "new_cid": 40051409236,
+      "video_sha256": "3237bf394442de2f26005d730cab012f7bd78713edd4cf7a0940e417003126f0",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "bvid": "BV1pbNR66E2r",
+      "aid": 116935786370801,
+      "old_cid": 40047738986,
+      "new_cid": 40051409832,
+      "video_sha256": "9a81834be7517ddffecae6c842fad609a47ac97f0d934d9fd8cdf1c776cbc1e5",
+      "status": "REPLACED_AND_PUBLIC"
+    }
+  ],
+  "verified_at": "2026-07-17T17:21:33Z"
+}
