@@ -9,7 +9,7 @@ canonical pipeline by itself — no human kick-off:
       → semantic recall candidate selection (CPA, viewer-perspective, with the
         curated slice-selection metric; deterministic fallback lanes if the
         LLM is down — zero-output is loud, never silent)
-      → per-live-session top-N talk candidates + up to 2 songs (highest danmaku)
+      → per-live-session top-N talk candidates + up to 1 new-to-channel song
       → produce_slice_package per candidate (BCUT+AGY+CPA text, final pronouns,
         sentence boundaries, CAM+++context speaker finalization, colour ASS
         burn, REAL CPA cover, 李豆沙-style title) / song LRC lane with the strict
@@ -208,7 +208,7 @@ HOST_VOCAL_MODEL_DIR = Path(
 )
 MAX_TALK_PICKS = 5
 TALK_ATTEMPT_CAP = 10  # reject unsafe content candidates and backfill, bounded
-MAX_SONGS_PER_SESSION = 2  # Ivan 2026-07-05: 每场直播至多两个歌切，按弹幕最高的两个
+MAX_SONGS_PER_SESSION = 1  # Ivan 2026-07-16: 每场直播至多一个歌切；已发布歌曲不再出
 MAX_SONGS_PER_DATE = MAX_SONGS_PER_SESSION  # compatibility alias for callers/tests
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
 SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one live session
@@ -524,6 +524,10 @@ from src.autoslice.song_lane import (  # noqa: E402
     scheduled_retry_epoch,
     produce_song,
 )
+from src.autoslice.published_song_history import (  # noqa: E402
+    PublishedSongHistoryError,
+    published_song_match as _published_song_match,
+)
 from src.autoslice.talk_lane import (  # noqa: E402
     danmaku_hints,
     danmaku_count_in,
@@ -636,6 +640,17 @@ def verified_song_fallback_title(song_title: str | None, hook: str | None) -> st
         hook,
         song_hook_template=CHANNEL_PROFILE.song_hook_template,
         song_plain_template=CHANNEL_PROFILE.song_plain_template,
+    )
+
+
+def published_song_match(value: str) -> dict | None:
+    """Match against reviewed history plus successful production uploads."""
+
+    return _published_song_match(
+        value,
+        snapshot_path=profile_asset_file("published_songs"),
+        ledger_path=BASE / "reports" / "upload_ledger.jsonl",
+        song_title_prefix=CHANNEL_PROFILE.song_title_prefix,
     )
 
 

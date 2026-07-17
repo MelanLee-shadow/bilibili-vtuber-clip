@@ -1,0 +1,86 @@
+{
+  "schema_version": "vtuber-slice.published-songs.v1",
+  "profile_id": "lidousha",
+  "account_mid": 55006782,
+  "verified_through": "2026-07-17T00:00:00Z",
+  "authority": "free creator-center GET /x/web/archives status=pubed plus public state=0",
+  "songs": [
+    {
+      "canonical_title": "怪獣の花唄",
+      "aliases": [],
+      "bvid": "BV14gK36oEjN",
+      "aid": 116927699686846,
+      "published_at_epoch": 1784175492
+    },
+    {
+      "canonical_title": "暗恋是一个人的事",
+      "aliases": [],
+      "bvid": "BV1TeN967EUp",
+      "aid": 116916794428779,
+      "published_at_epoch": 1784009204
+    },
+    {
+      "canonical_title": "小幸运",
+      "aliases": [],
+      "bvid": "BV18eN967ENy",
+      "aid": 116916794496386,
+      "published_at_epoch": 1784009185
+    },
+    {
+      "canonical_title": "屑屑",
+      "aliases": [],
+      "bvid": "BV1MgMt6UEGp",
+      "aid": 116877569297821,
+      "published_at_epoch": 1783410791
+    },
+    {
+      "canonical_title": "虫儿飞",
+      "aliases": [],
+      "bvid": "BV1CWMT6EE6c",
+      "aid": 116864449512452,
+      "published_at_epoch": 1783210027
+    },
+    {
+      "canonical_title": "梦一场",
+      "aliases": [],
+      "bvid": "BV1Z8746EE74",
+      "aid": 116807860031919,
+      "published_at_epoch": 1782346844
+    },
+    {
+      "canonical_title": "年轮",
+      "aliases": [],
+      "bvid": "BV1Wd746hE1N",
+      "aid": 116807574757010,
+      "published_at_epoch": 1782342499
+    },
+    {
+      "canonical_title": "左手右手",
+      "aliases": [],
+      "bvid": "BV1sd746hEMm",
+      "aid": 116807574756277,
+      "published_at_epoch": 1782342469
+    },
+    {
+      "canonical_title": "偶像宣言",
+      "aliases": [],
+      "bvid": "BV1AN7u6kEHB",
+      "aid": 116795864259248,
+      "published_at_epoch": 1782164104
+    },
+    {
+      "canonical_title": "嘉宾",
+      "aliases": [],
+      "bvid": "BV19Pjw6KEpM",
+      "aid": 116769826082975,
+      "published_at_epoch": 1781766996
+    },
+    {
+      "canonical_title": "宝贝",
+      "aliases": [],
+      "bvid": "BV1YPjw6KEGZ",
+      "aid": 116769826021307,
+      "published_at_epoch": 1781766780
+    }
+  ]
+}

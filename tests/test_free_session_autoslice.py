@@ -827,8 +827,8 @@ def test_prioritize_caps_talk_and_songs_with_reasons():
     assert len(state["not_selected"]) == 3
     assert len(state["talk_backlog"]) == 3
     assert len(state["pending_song"]) == MAX_SONGS_PER_DATE
-    # 弹幕最高的两个被保留（降序）
-    assert [s["danmaku"] for s in state["pending_song"]] == [30, 20]
+    # 新策略只保留弹幕最高的一首。
+    assert [s["danmaku"] for s in state["pending_song"]] == [20]
     # backlog 保留结构化条目（门拦截后回填的来源），不再是只读字符串
     assert len(state["song_backlog"]) == 2
     assert all(isinstance(b, dict) for b in state["song_backlog"])
@@ -2303,11 +2303,11 @@ def test_song_attempt_cap_and_delivery_budget_are_per_live_session():
 
     runner.refill_songs(state)
 
-    assert [item["cid"] for item in state["pending_song"]] == [
-        "evening-song-0",
+    assert [item["cid"] for item in state["pending_song"]] == ["evening-song-0"]
+    assert [item["cid"] for item in state["song_backlog"]] == [
         "evening-song-1",
+        "evening-song-2",
     ]
-    assert [item["cid"] for item in state["song_backlog"]] == ["evening-song-2"]
 
 
 def test_selected_song_repairs_cannot_overfill_one_session_delivery_quota():
@@ -2342,7 +2342,7 @@ def test_selected_song_repairs_cannot_overfill_one_session_delivery_quota():
         first: MAX_SONGS_PER_DATE,
         second: MAX_SONGS_PER_DATE,
     }
-    assert len(state["song_backlog"]) == 3
+    assert len(state["song_backlog"]) == 7 - 2 * MAX_SONGS_PER_DATE
 
 
 def test_new_session_backlog_reopens_an_otherwise_finished_date():
@@ -3690,9 +3690,9 @@ def test_blocked_songs_do_not_consume_budget_and_backlog_backfills():
         ],
     }
     runner.refill_songs(state)
-    # 一次 BLOCK 不消耗任何交付配额 → 两个坑都还在，从备份按弹幕回填
-    assert [s["cid"] for s in state["pending_song"]] == ["song_b", "song_c"]
-    assert state["song_backlog"] == []
+    # 一次 BLOCK 不消耗交付配额 → 唯一席位由弹幕最高的备份回填。
+    assert [s["cid"] for s in state["pending_song"]] == ["song_b"]
+    assert [s["cid"] for s in state["song_backlog"]] == ["song_c"]
 
 
 def test_song_attempt_cap_bounds_backfill():
@@ -3714,7 +3714,7 @@ def test_song_delivery_budget_counts_deliveries_and_verified_commit_reservations
             {"status": "blocked", "verified_delivery_pending_commit": True},
         ]
     }
-    assert runner.song_delivery_budget(state) == MAX_SONGS_PER_DATE - 2
+    assert runner.song_delivery_budget(state) == 0
 
 
 def test_legacy_string_backlog_tolerated():
@@ -4044,19 +4044,18 @@ def test_bound_song_delivery_recovery_never_exceeds_daily_quota(
     assert calls == []
     assert full_state["songs"][-1]["verified_delivery_pending_commit"] is True
 
-    # With one slot left, only the first of two reservations may commit.
+    # With the one session slot open, only the first of two reservations may commit.
     one_slot_state = {
         "songs": [
-            {"candidate_id": "done", "delivered": "/done.mp4"},
             reserved_record("reserved_first"),
             reserved_record("reserved_second"),
         ]
     }
     assert runner.recover_bound_song_deliveries(date, one_slot_state) == 1
     assert calls == ["reserved_first"]
-    assert one_slot_state["songs"][1]["delivered"] == "/delivery/reserved_first.mp4"
-    assert "verified_delivery_pending_commit" not in one_slot_state["songs"][1]
-    assert one_slot_state["songs"][2]["verified_delivery_pending_commit"] is True
+    assert one_slot_state["songs"][0]["delivered"] == "/delivery/reserved_first.mp4"
+    assert "verified_delivery_pending_commit" not in one_slot_state["songs"][0]
+    assert one_slot_state["songs"][1]["verified_delivery_pending_commit"] is True
 
     # A full earlier broadcast must not consume a later broadcast's recovery
     # reservation on the same calendar date.

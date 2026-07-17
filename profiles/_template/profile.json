@@ -27,6 +27,7 @@
       "branding_intro_manifest": "intro/branding_intro.v1.json",
       "cover_identity_prompt": "cover_identity_prompt.txt",
       "known_songs": "known_songs.json",
+      "published_songs": "published_songs.v1.json",
       "persona": "persona.md",
       "psplive_roster": "psplive_roster.md",
       "slice_selection_metric": "slice_selection_metric.md",

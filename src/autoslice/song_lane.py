@@ -356,18 +356,70 @@ def _read_song_selector_summary(
     return decision, reasons, is_song, summary_record, summary_path
 
 
-def produce_song(date: str, item: dict) -> dict:
-    """Song lane (Ivan 2026-07-05): cut a tight window around the sung anchor,
-    run the canonical song pipeline (NetEase/LRCLIB global-shift alignment + strict
-    completeness gate, fail-closed) and deliver only gate-passing results.
+def _early_published_song_block(item: dict) -> dict | None:
+    """Skip a visually identified prior upload before any provider/media work."""
 
-    Anchor-bleed guard (Ivan 2026-07-06): a recall song-anchor can begin dozens
-    of seconds inside the PRECEDING talk (《今天也过得很愉快》's anchor led with the
-    pig-nose banter), so the window leads with talk and the in-window recall
-    latches onto that talk (window_classified_song=False → AUTO_RECUT, no song
-    delivered).  When the first attempt misses the song, retry ONCE on the
-    danmaku-dense core of the anchor.  Self-correcting: it only fires when the
-    song was missed, so a clean song window (嘉宾) runs exactly once as before."""
+    title_hint = str(item.get("title_hint") or "").strip()
+    if not title_hint:
+        return None
+    common = {
+        "candidate_id": item.get("cid"),
+        "session_id": item.get("session_id"),
+        "status": "blocked",
+        "decision": "BLOCK",
+        "rc": 0,
+        "title_hint": title_hint,
+        "pipeline_fingerprint": _runner.pipeline_fingerprint(),
+    }
+    try:
+        prior_upload = _runner.published_song_match(title_hint)
+    except _runner.PublishedSongHistoryError as exc:
+        return {
+            **common,
+            "reason_codes": ["SONG_PUBLISHED_HISTORY_UNAVAILABLE"],
+            "error": str(exc),
+        }
+    if prior_upload is None:
+        return None
+    return {
+        **common,
+        "reason_codes": ["SONG_PREVIOUSLY_PUBLISHED"],
+        "published_song_match": prior_upload,
+    }
+
+
+def _published_song_delivery_allowed(result: dict, summary_record: dict) -> bool:
+    """Apply the final exact-title duplicate gate before atomic delivery."""
+
+    boundary = (summary_record.get("source_context_job") or {}).get("song_boundary") or {}
+    query = str(boundary.get("song_title") or result.get("title") or "").strip()
+    try:
+        prior_upload = _runner.published_song_match(query)
+    except _runner.PublishedSongHistoryError as exc:
+        result["decision"] = "BLOCK"
+        result["published_song_history_error"] = str(exc)
+        result["reason_codes"] = list(
+            dict.fromkeys(
+                [*(result.get("reason_codes") or []), "SONG_PUBLISHED_HISTORY_UNAVAILABLE"]
+            )
+        )
+        return False
+    if prior_upload is None:
+        return True
+    result["decision"] = "BLOCK"
+    result["published_song_match"] = prior_upload
+    result["reason_codes"] = list(
+        dict.fromkeys([*(result.get("reason_codes") or []), "SONG_PREVIOUSLY_PUBLISHED"])
+    )
+    return False
+
+
+def produce_song(date: str, item: dict) -> dict:
+    """Run the fail-closed song pipeline; retry anchor bleed on the sung core."""
+    early_block = _early_published_song_block(item)
+    if early_block is not None:
+        return early_block
+
     seg_dur_ms = item["seg_dur_ms"]
     segment = Path(item["segment_path"])
     cid = item["cid"]
@@ -518,9 +570,12 @@ def produce_song(date: str, item: dict) -> dict:
             result["title"] = _runner.verified_song_fallback_title(boundary.get("song_title"), item.get("hook"))
         if "cover_release_gate_satisfied" in artifacts:
             result["cover_release_gate_satisfied"] = artifacts["cover_release_gate_satisfied"]
-        if burned is not None and burned.is_file() and _runner.song_delivery_ok(
+        delivery_authorized = burned is not None and burned.is_file() and _runner.song_delivery_ok(
             completed.returncode, is_song, reasons, completion
-        ):
+        )
+        if delivery_authorized:
+            delivery_authorized = _published_song_delivery_allowed(result, summary_record)
+        if delivery_authorized:
             try:
                 delivery_update = _runner._commit_verified_song_package(
                     date=date,
