@@ -416,31 +416,39 @@ def apply_source_language_preservation_guard(
         "reverted": [],
         "unproven_foreign_introductions": [],
     }
-    if len(draft_cues) != len(final_cues):
-        audit["status"] = "SKIPPED_CUE_COUNT_MISMATCH"
+    cue_count_matches = len(draft_cues) == len(final_cues)
+    if not cue_count_matches:
         audit["draft_cue_count"] = len(draft_cues)
         audit["final_cue_count"] = len(final_cues)
-        return final_srt, audit
 
     introduced_kana_rows: list[dict[str, Any]] = []
-    for index, (draft_cue, final_cue) in enumerate(
-        zip(draft_cues, final_cues), start=1
-    ):
-        draft_kana_count = len(_JAPANESE_KANA_RX.findall(draft_cue.text))
+    for index, final_cue in enumerate(final_cues, start=1):
+        if cue_count_matches:
+            source_text = draft_cues[index - 1].text
+        else:
+            # Correction providers occasionally re-segment without changing
+            # the timeline.  Cue-count drift must not disable the language
+            # gate: bind each final cue to every overlapping source witness.
+            source_text = " ".join(
+                cue.text
+                for cue in draft_cues
+                if cue.start_ms < final_cue.end_ms and cue.end_ms > final_cue.start_ms
+            ).strip()
+        draft_kana_count = len(_JAPANESE_KANA_RX.findall(source_text))
         final_kana_count = len(_JAPANESE_KANA_RX.findall(final_cue.text))
         if (
             draft_kana_count == 0
             and final_kana_count >= 2
-            and len(re.findall(r"[\u3400-\u9fff]", draft_cue.text)) >= 2
-            and _strip_non_text(draft_cue.text) != _strip_non_text(final_cue.text)
-            and not _sanctioned_cue_equal(draft_cue.text, final_cue.text, pairs)
+            and len(re.findall(r"[\u3400-\u9fff]", source_text)) >= 2
+            and _strip_non_text(source_text) != _strip_non_text(final_cue.text)
+            and not _sanctioned_cue_equal(source_text, final_cue.text, pairs)
         ):
             introduced_kana_rows.append(
                 {
                     "cue_index": index,
                     "start_ms": final_cue.start_ms,
                     "end_ms": final_cue.end_ms,
-                    "draft": draft_cue.text,
+                    "draft": source_text,
                     "attempted": final_cue.text,
                     "reason": "FOREIGN_LANGUAGE_INTRODUCED_WITHOUT_SOURCE_WITNESS",
                 }
@@ -454,6 +462,14 @@ def apply_source_language_preservation_guard(
         )
     ]
     audit["unproven_foreign_introductions"] = clustered_introductions
+    if not cue_count_matches:
+        audit["status"] = (
+            "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+            if clustered_introductions
+            else "SKIPPED_CUE_COUNT_MISMATCH"
+        )
+        audit["reverted_count"] = 0
+        return final_srt, audit
 
     rendered: list[str] = []
     for index, (draft_cue, final_cue) in enumerate(

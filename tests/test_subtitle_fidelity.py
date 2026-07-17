@@ -211,6 +211,25 @@ def test_source_language_guard_allows_isolated_japanese_code_switch_recovery():
     assert audit["status"] == "CLEAN"
 
 
+def test_source_language_guard_keeps_blocking_across_cue_resegmentation():
+    draft = _srt("都问那么多，所有的都为我所用", "正常中文")
+    corrected = (
+        "1\n00:00:05,000 --> 00:00:06,900\nどうも、どうも\n\n"
+        "2\n00:00:06,900 --> 00:00:09,000\nすべての、私のために\n\n"
+        "3\n00:00:10,000 --> 00:00:14,000\n正常中文\n"
+    )
+
+    guarded, audit = apply_source_language_preservation_guard(draft, corrected)
+
+    assert guarded == corrected
+    assert audit["draft_cue_count"] == 2
+    assert audit["final_cue_count"] == 3
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+    assert [
+        row["cue_index"] for row in audit["unproven_foreign_introductions"]
+    ] == [1, 2]
+
+
 def test_unproven_foreign_cluster_defers_only_for_exact_reviewed_repairs():
     draft = _srt("都问那么多", "所有的都为我所用")
     corrected = _srt("どうも、どうも", "すべての、私のために")
