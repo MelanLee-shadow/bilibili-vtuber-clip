@@ -97,6 +97,7 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         ("哇哭哇哭", "wakuwaku"),
         ("哇库哇库", "wakuwaku"),
         ("直女", "侄女"),
+        ("难崩小视频", "难绷小视频"),
         ("gala game", "Galgame"),
         ("嘎啦 game", "Galgame"),
         ("嘎啦game", "Galgame"),

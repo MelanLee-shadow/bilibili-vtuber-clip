@@ -110,3 +110,20 @@ def test_confirmed_kimo_xiong_written_surfaces_are_canonicalized_to_kmx():
     assert normalized.count("kmx") == 3
     assert all(surface not in normalized for surface in ("kimo熊", "Kimo熊", "基默熊"))
     assert audit["status"] == "APPLIED"
+
+
+def test_channel_slang_surface_is_canonicalized_before_delivery():
+    normalized, audit = normalize_code_switch_surfaces(
+        _srt("下一个说的是难崩小视频")
+    )
+
+    assert "难绷小视频" in normalized
+    assert "难崩小视频" not in normalized
+    assert audit["status"] == "APPLIED"
+    assert audit["repairs"][0]["replacements"] == [
+        {
+            "surface": "难崩小视频",
+            "canonical": "难绷小视频",
+            "authority": "lidousha-hard-slang-canon.v1",
+        }
+    ]
