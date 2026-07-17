@@ -1,4 +1,7 @@
+from types import SimpleNamespace
+
 from src.autoslice.subtitle_fidelity import (
+    apply_numeric_fact_provenance_guard,
     apply_subtitle_fidelity_guard,
     digit_reading_equivalent,
 )
@@ -104,3 +107,34 @@ def test_cue_count_mismatch_skips_guard():
 
     assert audit["status"] == "SKIPPED_CUE_COUNT_MISMATCH"
     assert guarded == final
+
+
+def test_numeric_fact_introduced_by_semantic_lane_without_source_is_reverted():
+    draft = _srt("所以在这里喂，哈哈")
+    final = _srt("所以在这里为李豆沙做0.4")
+
+    guarded, audit = apply_numeric_fact_provenance_guard(draft, final)
+
+    assert "0.4" not in guarded
+    assert "所以在这里喂，哈哈" in guarded
+    assert audit["status"] == "REVERTED_UNPROVEN_NUMERIC_FACT"
+    assert audit["reverted"][0]["unsupported"][0]["token"] == "0.4"
+
+
+def test_numeric_fact_survives_when_same_time_structured_chat_contains_it():
+    draft = _srt("抽卡惩罚就做这个")
+    final = _srt("抽卡惩罚就为礼墨做0.6")
+    evidence = [
+        SimpleNamespace(
+            offset_ms=5_500,
+            text="为礼墨做0.6",
+            kind="danmaku",
+        )
+    ]
+
+    guarded, audit = apply_numeric_fact_provenance_guard(
+        draft, final, structured_evidence=evidence
+    )
+
+    assert "为礼墨做0.6" in guarded
+    assert audit["status"] == "CLEAN"

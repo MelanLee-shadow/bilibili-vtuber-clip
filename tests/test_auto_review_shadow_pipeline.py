@@ -1526,6 +1526,52 @@ def test_live_source_runs_agy_runner_when_refined_srt_is_absent(tmp_path, monkey
     assert "JINGTING_REVIEW_REQUIRED" not in record["reason_codes"]
 
 
+def test_live_song_without_pre_refined_srt_does_not_call_talk_agy(tmp_path):
+    source_video, source_srt, _refined_srt = _write_live_source_inputs(
+        tmp_path,
+        source_srt=(
+            "1\n00:00:00,000 --> 00:00:03,000\n唱歌上下文\n\n"
+            "2\n00:00:04,000 --> 00:00:08,000\n还在唱歌\n"
+        ),
+        refined_srt="unused\n",
+    )
+    calls = []
+
+    def forbidden_agy_runner(*args):
+        calls.append(args)
+        raise AssertionError("song proof context must bypass talk AGY")
+
+    summary = shadow_pipeline.run_shadow_pipeline(
+        source_video=source_video,
+        source_srt=source_srt,
+        refined_srt=None,
+        source_context_job={
+            "candidate_id": "song-no-talk-agy",
+            "song_candidate": True,
+            "content_type_hint": "song",
+            "cpa_optional": True,
+            "timeline": {
+                "source_duration_ms": 8_000,
+                "anchor_start_ms": 0,
+                "anchor_end_ms": 8_000,
+                "context_start_ms": 0,
+                "context_duration_ms": 8_000,
+            },
+        },
+        source_context_agy_runner=forbidden_agy_runner,
+        output_dir=tmp_path / "output",
+        no_upload=True,
+        source_context_run_ffmpeg=False,
+    )
+
+    assert calls == []
+    record = summary["records"][0]
+    assert record["source_context"]["decision"] == "READY"
+    assert record["source_context_job"]["song_context_subtitle_fallback"]["status"] == (
+        "BYPASSED_NOT_AUTHORITATIVE_FOR_SONG_LRC"
+    )
+
+
 def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_path, monkeypatch):
     from scripts import gemini_slice_jingting as jingting
     from src.autoslice.source_context_executor import AgyRunnerError

@@ -100,6 +100,15 @@ if not _TIMELY_TERMS_ENV and CHANNEL_PROFILE.profile_id == "lidousha":
             "/app/lidousha_timely_terms.json",
         ]
     )
+_PSPLIVE_ROSTER_ENV = os.environ.get("AUTOSLICE_PSPLIVE_ROSTER") or os.environ.get(
+    "LIDOUSHA_PSPLIVE_ROSTER"
+)
+_REPO_PSPLIVE_ROSTER = str(
+    CHANNEL_PROFILE.asset_file("psplive_roster", repo_root=REPO_ROOT)
+)
+PSPLIVE_ROSTER_PATHS = (
+    [_PSPLIVE_ROSTER_ENV] if _PSPLIVE_ROSTER_ENV else [_REPO_PSPLIVE_ROSTER]
+)
 SLICE_RX_TEMPLATE = r"\d+s_.*_%s_.*\.(flv|mp4)$"
 SRT_TIME_RX = re.compile(
     r"\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}"
@@ -641,6 +650,58 @@ def timely_terms_context(*, as_of: dt.datetime | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def psplive_roster_context(*, as_of: dt.datetime | None = None) -> str:
+    """Render the crawler roster as occurrence-neutral entity/alias candidates.
+
+    A roster row proves only that a name exists.  Every prompt repeats that it
+    supplies zero evidence that the name occurred in the current cue.
+    """
+
+    if os.environ.get("LIDOUSHA_DISABLE_PSPLIVE_ROSTER") == "1":
+        return ""
+    raw = _read_first(PSPLIVE_ROSTER_PATHS)
+    if not raw.strip():
+        return ""
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        # The reviewed markdown roster is the emergency fallback when the
+        # machine snapshot is absent/expired.  It remains explicitly
+        # occurrence-neutral and must never act as a blind replacement table.
+        return (
+            "PSPLive实体候选（回退名单；仅证明名字/别名存在，绝不证明本句提到了它；"
+            "所有候选地位平等，必须按本句发音、结构化原文和话题确认后才能采用）:\n"
+            + raw.strip()
+            + "\n"
+        )
+    try:
+        from src.autoslice.psplive_roster_crawler import validate_snapshot
+
+        snapshot = validate_snapshot(payload, as_of=as_of)
+    except (ValueError, TypeError):
+        return ""
+    lines = [
+        "PSPLive运行时实体候选（官方crawler；仅证明名字/别名存在，绝不证明本句提到了它；",
+        "kmx、礼墨/Sumi、萱萱卡娅/Kaya及所有其他专名地位完全平等。先比较本句实际音节、",
+        "结构化弹幕/SC与当前话题，再选实体；不得按词表收录、语言、常见度或中文/英文形式加权）:",
+    ]
+    for member in snapshot["members"]:
+        lines.append(
+            "- "
+            + json.dumps(
+                {
+                    "canonical": member["canonical"],
+                    "aliases": member["aliases"],
+                    "official_surface": member["official_surface"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def glossary(*, as_of: dt.datetime | None = None) -> str:
     """Term canon + subtitle-correction principles, concatenated.
 
@@ -651,7 +712,13 @@ def glossary(*, as_of: dt.datetime | None = None) -> str:
     terms = _read_first(GLOSSARY_PATHS)
     principles = subtitle_principles()
     timely = timely_terms_context(as_of=as_of)
-    return "\n\n".join(part.strip() for part in (terms, timely, principles) if part).strip() + "\n"
+    roster = psplive_roster_context(as_of=as_of)
+    return (
+        "\n\n".join(
+            part.strip() for part in (terms, timely, roster, principles) if part
+        ).strip()
+        + "\n"
+    )
 
 
 def find_srt(slice_path: str | Path) -> str | None:

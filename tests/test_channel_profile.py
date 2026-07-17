@@ -74,6 +74,9 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
     assert profile.asset_file("psplive_roster") == (
         REPO_ROOT / "assets/lidousha/psplive_roster.v1.md"
     )
+    assert profile.asset_file("psplive_roster_sources") == (
+        REPO_ROOT / "assets/lidousha/psplive_roster_sources.v1.json"
+    )
     assert profile.asset_file("timely_term_seeds") == (
         REPO_ROOT / "assets/lidousha/timely_term_seeds.json"
     )

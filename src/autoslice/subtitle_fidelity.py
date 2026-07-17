@@ -61,6 +61,7 @@ _DIGIT_READINGS: dict[str, frozenset[str]] = {
 }
 
 _NON_TEXT_RX = re.compile(r"[^0-9A-Za-z一-鿿]+")
+_ARABIC_NUMBER_RX = re.compile(r"(?<![0-9A-Za-z])\d+(?:\.\d+)?(?![0-9A-Za-z])")
 
 
 def _strip_non_text(value: str) -> str:
@@ -266,6 +267,97 @@ def apply_subtitle_fidelity_guard(
     audit["status"] = "APPLIED" if audit["reverted"] else "CLEAN"
     audit["reverted_count"] = len(audit["reverted"])
     return "\n".join(out_lines), audit
+
+
+def apply_numeric_fact_provenance_guard(
+    draft_srt: str,
+    final_srt: str,
+    *,
+    structured_evidence: Iterable[object] = (),
+    evidence_pre_ms: int = 10_000,
+    evidence_post_ms: int = 15_000,
+) -> tuple[str, dict[str, Any]]:
+    """Revert Arabic-number facts introduced without an independent source.
+
+    A multimodal correction model is not an independent witness for a number
+    it introduced itself (``0.4`` incident).  A numeric token may survive when
+    it was already present on the initial ASR timeline, or when same-time
+    structured chat/SC contains that exact token.  The full cue is reverted so
+    the number and its surrounding fact phrase cannot be validated separately.
+    """
+
+    draft_cues = parse_srt_cues(draft_srt)
+    final_cues = parse_srt_cues(final_srt)
+    audit: dict[str, Any] = {
+        "schema_version": "numeric-fact-provenance-audit.v1",
+        "status": "CLEAN",
+        "reverted": [],
+    }
+    if len(draft_cues) != len(final_cues):
+        audit["status"] = "SKIPPED_CUE_COUNT_MISMATCH"
+        return final_srt, audit
+    evidence_rows: list[tuple[int, str, str]] = []
+    for item in structured_evidence:
+        try:
+            offset_ms = int(getattr(item, "offset_ms"))
+            text = str(getattr(item, "text"))
+            kind = str(getattr(item, "kind"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        evidence_rows.append((offset_ms, text, kind))
+
+    rendered: list[str] = []
+    for index, (draft_cue, final_cue) in enumerate(
+        zip(draft_cues, final_cues), start=1
+    ):
+        final_tokens = tuple(match.group(0) for match in _ARABIC_NUMBER_RX.finditer(final_cue.text))
+        draft_tokens = set(
+            match.group(0) for match in _ARABIC_NUMBER_RX.finditer(draft_cue.text)
+        )
+        unsupported: list[dict[str, Any]] = []
+        for token in final_tokens:
+            if token in draft_tokens:
+                continue
+            support = [
+                {
+                    "kind": kind,
+                    "offset_ms": offset_ms,
+                    "text": text,
+                }
+                for offset_ms, text, kind in evidence_rows
+                if final_cue.start_ms - evidence_pre_ms
+                <= offset_ms
+                <= final_cue.end_ms + evidence_post_ms
+                and token in text
+            ]
+            if support:
+                continue
+            unsupported.append(
+                {
+                    "token": token,
+                    "reason_code": "NUMERIC_TOKEN_ABSENT_FROM_INITIAL_ASR_AND_STRUCTURED_EVIDENCE",
+                }
+            )
+        kept = draft_cue.text if unsupported else final_cue.text
+        if unsupported:
+            audit["reverted"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": final_cue.start_ms,
+                    "end_ms": final_cue.end_ms,
+                    "draft": draft_cue.text,
+                    "attempted": final_cue.text,
+                    "unsupported": unsupported,
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(final_cue.start_ms)} --> "
+            f"{_ms_to_ts(final_cue.end_ms)}\n{kept}"
+        )
+    if audit["reverted"]:
+        audit["status"] = "REVERTED_UNPROVEN_NUMERIC_FACT"
+    audit["reverted_count"] = len(audit["reverted"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
 
 
 def _ms_to_ts(value_ms: int) -> str:

@@ -556,6 +556,27 @@ def test_child_env_prefers_runtime_crawler_snapshot_without_dirtying_repo(tmp_pa
     )
 
 
+def test_child_env_prefers_runtime_psplive_roster_snapshot(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    base = tmp_path / "runtime"
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
+    committed = repo / "assets/lidousha/psplive_roster.v1.md"
+    runtime = base / "state/psplive_roster.json"
+    committed.parent.mkdir(parents=True)
+    runtime.parent.mkdir(parents=True)
+    committed.write_text("fallback roster\n", encoding="utf-8")
+    runtime.write_bytes(b'{"source":"official-crawler"}\n')
+
+    env = runner.child_env_for_date("2026-07-16")
+
+    assert env["LIDOUSHA_PSPLIVE_ROSTER"] == str(runtime.resolve())
+    assert env["LIDOUSHA_PSPLIVE_ROSTER_SHA256"] == (
+        "sha256:" + hashlib.sha256(runtime.read_bytes()).hexdigest()
+    )
+
+
 def test_safe_name_sanitizes_and_falls_back():
     assert safe_name("百合是工作？/她当场*不买书", "cid") == "百合是工作？她当场不买书"
     assert safe_name("", "cid") == "cid"

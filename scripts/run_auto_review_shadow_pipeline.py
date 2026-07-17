@@ -285,6 +285,8 @@ def _run_live_source(
         room_id=room_id,
     )
     candidate_id = str(job_manifest.get("candidate_id") or candidate_id)
+    song_candidate = _job_is_song_candidate(job_manifest)
+    source_refinement_required = not song_candidate or refined_srt is not None
     source_context = execute_source_context_job(
         job_manifest,
         source_video_path=source_video,
@@ -293,12 +295,26 @@ def _run_live_source(
         refined_srt_path=refined_srt,
         agy_result=agy_result,
         agy_runner=source_context_agy_runner or (_run_source_context_agy if refined_srt is None else None),
+        refinement_required=source_refinement_required,
         run_ffmpeg=source_context_run_ffmpeg,
     )
 
     source_context_subtitle_path = source_context.context_refined_srt_path
+    song_context_draft_only = bool(
+        song_candidate and not source_refinement_required and source_context.decision == "READY"
+    )
+    if song_context_draft_only:
+        job_manifest = {
+            **dict(job_manifest),
+            "song_context_subtitle_fallback": {
+                "status": "BYPASSED_NOT_AUTHORITATIVE_FOR_SONG_LRC",
+                "subtitle_path": source_context_subtitle_path,
+                "reason_codes": [],
+                "final_subtitle_authority": "verified_external_lrc_required",
+            },
+        }
     song_agy_context_fallback = bool(
-        _job_is_song_candidate(job_manifest)
+        song_candidate
         and source_context.decision == "RETRY_INFRA"
         and source_context.context_draft_srt_path
         and Path(source_context.context_draft_srt_path).is_file()
@@ -438,7 +454,7 @@ def _run_live_source(
         Path(source_context.review_required_path) if source_context.review_required_path else None
     )
     verified_song_lrc_authority = bool(
-        song_agy_context_fallback
+        (song_agy_context_fallback or song_context_draft_only)
         and lyric_timeline_loaded is not None
         and evidence.song_complete is True
         and evidence.lyrics_alignment_ready is True

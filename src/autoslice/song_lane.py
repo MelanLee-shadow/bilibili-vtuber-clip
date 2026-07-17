@@ -338,7 +338,14 @@ def _read_song_selector_summary(
                     continue
                 summary_record = entry
                 decision = entry.get("decision_action") or decision
-                reasons = list(entry.get("reason_codes") or reasons)
+                reasons = list(
+                    dict.fromkeys(
+                        [
+                            *reasons,
+                            *_nested_reason_codes(entry),
+                        ]
+                    )
+                )
                 is_song = is_song or _runner.record_is_song(entry)
         except ValueError:
             pass
@@ -354,6 +361,35 @@ def _read_song_selector_summary(
             # of the current in-memory, independently hash-bound proof chain.
             pass
     return decision, reasons, is_song, summary_record, summary_path
+
+
+def _nested_reason_codes(record: object, *, _depth: int = 0) -> list[str]:
+    """Collect machine reasons from the selector's nested proof record.
+
+    Song failures are often emitted by ``song_repair_gate`` or the source
+    context fallback below the top-level record.  Dropping those codes turns a
+    provider outage into a permanent content rejection, so the unattended
+    runner must preserve them when classifying retries.
+    """
+
+    if _depth > 6:
+        return []
+    if isinstance(record, dict):
+        reasons: list[str] = []
+        values = record.get("reason_codes")
+        if isinstance(values, list):
+            reasons.extend(str(value) for value in values if isinstance(value, str) and value)
+        for value in record.values():
+            if isinstance(value, (dict, list)):
+                reasons.extend(_nested_reason_codes(value, _depth=_depth + 1))
+        return list(dict.fromkeys(reasons))
+    if isinstance(record, list):
+        reasons: list[str] = []
+        for value in record:
+            if isinstance(value, (dict, list)):
+                reasons.extend(_nested_reason_codes(value, _depth=_depth + 1))
+        return list(dict.fromkeys(reasons))
+    return []
 
 
 def _early_published_song_block(item: dict) -> dict | None:

@@ -92,6 +92,7 @@ def execute_source_context_job(
     refined_srt_path: Path | None = None,
     agy_result: AgyExecutionResult | None = None,
     agy_runner: AgyRunner | None = None,
+    refinement_required: bool = True,
     run_ffmpeg: bool = True,
 ) -> SourceContextExecutionResult:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -177,7 +178,22 @@ def execute_source_context_job(
     )
     _write_relative_srt(selected, context_start_ms, context_draft_srt_path)
 
-    if refined_srt_path is None and agy_runner is not None:
+    if not refinement_required:
+        # Song lyrics are authorized later by independently fetched LRC plus
+        # audio alignment and host-vocal proof.  A talk-style multimodal
+        # rewrite here is both redundant and a provider-failure dependency.
+        # Keep the fresh source ASR only as proof context; it is never promoted
+        # to final lyric authority.
+        shutil.copy2(context_draft_srt_path, context_refined_srt_path)
+        refined_srt_path = context_refined_srt_path
+        agy_result = AgyExecutionResult(
+            provider="source_draft_context",
+            model=None,
+            agy_rc=0,
+            provider_fallback_used=False,
+            provider_request_id="BYPASSED_NOT_AUTHORITATIVE_FOR_SONG_LRC",
+        )
+    elif refined_srt_path is None and agy_runner is not None:
         try:
             agy_result = agy_runner(context_media_path, context_draft_srt_path, context_refined_srt_path)
             refined_srt_path = context_refined_srt_path
@@ -230,6 +246,12 @@ def execute_source_context_job(
         "agy_rc": agy_result.agy_rc,
         "provider_fallback_used": agy_result.provider_fallback_used,
         "provider_request_id": agy_result.provider_request_id,
+        "refinement_required": refinement_required,
+        "subtitle_authority_scope": (
+            "proof_context_only_external_lrc_required"
+            if not refinement_required
+            else "talk_source_context_refinement"
+        ),
         "source_offset_ms": context_start_ms,
         "source_sha256": f"sha256:{source_sha256}",
         "input_sha256": f"sha256:{_sha256_file(context_draft_srt_path)}",
@@ -238,7 +260,7 @@ def execute_source_context_job(
     }
     jingting_manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    reason_codes = _agy_reason_codes(agy_result)
+    reason_codes = _agy_reason_codes(agy_result, refinement_required=refinement_required)
     if reason_codes:
         _write_review_required(review_required_path, release_ready=False, findings=reason_codes)
         return SourceContextExecutionResult(
@@ -376,7 +398,13 @@ def _format_srt_time(ms: int) -> str:
     return f"{hours:02d}:{minute:02d}:{sec:02d},{millis:03d}"
 
 
-def _agy_reason_codes(result: AgyExecutionResult) -> tuple[str, ...]:
+def _agy_reason_codes(
+    result: AgyExecutionResult,
+    *,
+    refinement_required: bool = True,
+) -> tuple[str, ...]:
+    if not refinement_required and result.provider == "source_draft_context":
+        return ()
     reasons: list[str] = []
     accepted_gemini_fallback = (
         result.provider == "gemini_api"

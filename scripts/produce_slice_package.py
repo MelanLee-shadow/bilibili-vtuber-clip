@@ -349,6 +349,23 @@ def main(argv: list[str] | None = None) -> int:
     chat_authority_path = text_result.chat_authority_path
 
     # 4a. Sentence-snap the START (the clip must open on a sentence).
+    last_piece = spec["pieces"][-1]
+    semantic_target_rel = sum(durations[:-1]) + (
+        spec["semantic_end_ms"] - last_piece["start_ms"]
+    )
+    required_tail_end_ms = max(
+        (
+            int(row["matched_end_ms"])
+            for row in chat_authority_audit.get("applied") or []
+            if row.get("kind") in {"danmaku", "superchat"}
+            and int(row.get("source_offset_ms") or 0) <= semantic_target_rel + 1_000
+            and semantic_target_rel
+            < int(row.get("matched_end_ms") or 0)
+            <= semantic_target_rel + 15_000
+            and int(row.get("matched_start_ms") or 0) <= semantic_target_rel + 5_000
+        ),
+        default=None,
+    )
     boundary = resolve_producer_boundary(
         spec=spec,
         durations=durations,
@@ -360,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         cues=cues,
         spans=spans,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
+        required_tail_end_ms=required_tail_end_ms,
         adapters=BoundaryResolutionAdapters(
             accurate_recut_command=_accurate_reencode_recut_command,
             run_command=run,

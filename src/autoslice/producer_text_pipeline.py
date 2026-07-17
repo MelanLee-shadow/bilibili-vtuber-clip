@@ -47,7 +47,9 @@ from src.autoslice.producer_chat_input import (
 )
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
 from src.autoslice.song_name_pin import pin_song_names_in_srt
+from src.autoslice.self_reference_absorption import absorb_host_self_references
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
+from src.autoslice.subtitle_fidelity import apply_numeric_fact_provenance_guard
 from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
     TopicEvidence,
@@ -349,6 +351,7 @@ def _apply_entity_authority(
     padded: Path,
     adapters: TextPipelineAdapters,
 ) -> EntityAuthorityResult:
+    srt_text, self_reference_absorption_audit = absorb_host_self_references(srt_text)
     srt_text, chat_authority_audit = apply_authoritative_chat_evidence(
         srt_text,
         authoritative_chat,
@@ -356,6 +359,24 @@ def _apply_entity_authority(
         referent_groups=referent_groups,
         entity_verifier=verify_confusable_entity,
     )
+    chat_authority_audit[
+        "self_reference_absorption_audit"
+    ] = self_reference_absorption_audit
+    draft_witness_path = padded.with_suffix(".asr_draft.srt")
+    if draft_witness_path.is_file():
+        srt_text, numeric_fact_audit = apply_numeric_fact_provenance_guard(
+            draft_witness_path.read_text(encoding="utf-8", errors="replace"),
+            srt_text,
+            structured_evidence=authoritative_chat,
+        )
+    else:
+        numeric_fact_audit = {
+            "schema_version": "numeric-fact-provenance-audit.v1",
+            "status": "SKIPPED_NO_INITIAL_ASR",
+            "reverted": [],
+            "reverted_count": 0,
+        }
+    chat_authority_audit["numeric_fact_provenance_audit"] = numeric_fact_audit
     handled_entity_cues = {
         int(index)
         for key in ("applied", "pending_text_overrides", "entity_repairs", "coreference_repairs")
@@ -431,7 +452,6 @@ def _apply_entity_authority(
         for group in referent_groups
         if getattr(group, "positions", ()) and "witness_disagreement" in group.positions
     ]
-    draft_witness_path = padded.with_suffix(".asr_draft.srt")
     if wd_groups and draft_witness_path.is_file():
         draft_witness = draft_witness_path.read_text(encoding="utf-8", errors="replace")
         for wd_group in wd_groups:

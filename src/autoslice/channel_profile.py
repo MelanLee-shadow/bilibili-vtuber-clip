@@ -37,6 +37,7 @@ _REQUIRED_ASSET_FILES = frozenset(
         "known_songs",
         "persona",
         "psplive_roster",
+        "psplive_roster_sources",
         "slice_selection_metric",
         "subtitle_correction_principles",
         "timely_term_seeds",

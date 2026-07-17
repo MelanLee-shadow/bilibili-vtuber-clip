@@ -965,6 +965,35 @@ def child_env() -> dict[str, str]:
         env.pop("LIDOUSHA_TIMELY_TERMS", None)
         env.pop("LIDOUSHA_TIMELY_TERMS_SHA256", None)
 
+    blind_psplive_roster = os.environ.get("AUTOSLICE_BLIND_PSPLIVE_ROSTER")
+    configured_psplive_roster = os.environ.get("AUTOSLICE_PSPLIVE_ROSTER")
+    runtime_psplive_roster = BASE / "state" / "psplive_roster.json"
+    committed_psplive_roster = profile_asset_file("psplive_roster")
+    if truth_mode == "withheld":
+        psplive_roster = (
+            Path(blind_psplive_roster) if blind_psplive_roster else None
+        )
+    elif configured_psplive_roster:
+        psplive_roster = Path(configured_psplive_roster)
+    elif runtime_psplive_roster.is_file() and not runtime_psplive_roster.is_symlink():
+        psplive_roster = runtime_psplive_roster
+    else:
+        psplive_roster = committed_psplive_roster
+    if (
+        psplive_roster is not None
+        and psplive_roster.is_file()
+        and not psplive_roster.is_symlink()
+    ):
+        env["LIDOUSHA_PSPLIVE_ROSTER"] = str(psplive_roster.resolve())
+        env["LIDOUSHA_PSPLIVE_ROSTER_SHA256"] = (
+            "sha256:" + _sha256_regular_file(psplive_roster)
+        )
+        env.pop("LIDOUSHA_DISABLE_PSPLIVE_ROSTER", None)
+    elif truth_mode == "withheld":
+        env["LIDOUSHA_DISABLE_PSPLIVE_ROSTER"] = "1"
+        env.pop("LIDOUSHA_PSPLIVE_ROSTER", None)
+        env.pop("LIDOUSHA_PSPLIVE_ROSTER_SHA256", None)
+
     blind_topic_graph = os.environ.get("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH")
     configured_topic_graph = os.environ.get("AUTOSLICE_TOPIC_ENTITY_GRAPH")
     runtime_topic_graph = BASE / "state" / "topic_entity_graph.json"

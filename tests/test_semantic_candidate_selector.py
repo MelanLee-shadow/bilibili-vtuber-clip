@@ -55,7 +55,7 @@ def test_default_profile_keeps_pre_profile_semantic_prompt_byte_identical():
     )
 
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "d15bf3e86469bde0505b8a4b3273820e0cc45933684319bc484b890d24dbcc51"
+        "41053ff0d4f386501473825c083528e6797c119349b57e500737a8d731f12ca9"
     )
 
 
@@ -171,6 +171,56 @@ def test_overlapping_candidates_are_deduped_by_confidence():
     assert len(selected) == 1
     assert diagnostics["hooks"][selected[0].anchor.candidate_id] == "高分"
     assert any(item.get("reason") == "overlaps_selected" for item in diagnostics["skipped"])
+
+
+def test_same_event_key_merges_nonoverlapping_windows_before_top_n_quota():
+    cues = _cues(count=70)
+
+    def llm(prompt: str) -> str:
+        return _completion(
+            [
+                {
+                    "start_cue": 5,
+                    "end_cue": 15,
+                    "kind": "talk",
+                    "event_key": "妈感姐妹分类",
+                    "hook": "弹幕先问妈感姐还是妈感妹",
+                    "confidence": 0.92,
+                },
+                {
+                    "start_cue": 20,
+                    "end_cue": 40,
+                    "kind": "talk",
+                    "event_key": "妈感姐妹分类",
+                    "hook": "接着分类Kaya并给出绯闻女友包袱",
+                    "confidence": 0.88,
+                },
+                {
+                    "start_cue": 50,
+                    "end_cue": 60,
+                    "kind": "talk",
+                    "event_key": "另一个事件",
+                    "hook": "另一件事",
+                    "confidence": 0.80,
+                },
+            ]
+        )
+
+    selected, diagnostics = select_semantic_session_candidates(
+        cues, llm_call=llm, max_candidates=2
+    )
+
+    assert len(selected) == 2
+    merged = selected[0]
+    assert merged.boundary.resolved_start_ms == cues[4].source_start_ms
+    assert merged.boundary.resolved_end_ms == cues[39].source_end_ms
+    assert diagnostics["merged_events"] == [
+        {
+            "event_key": "妈感姐妹分类",
+            "input_ranges": [[5, 15], [20, 40]],
+            "merged_range": [5, 40],
+        }
+    ]
 
 
 def test_cue_positions_accept_llm_number_formats():

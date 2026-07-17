@@ -136,6 +136,39 @@ def test_source_context_job_runs_agy_runner_when_refined_srt_not_provided(tmp_pa
     assert not Path(result.review_required_path).exists()
 
 
+def test_song_proof_context_bypasses_talk_refinement_provider(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+    calls = []
+
+    def forbidden_agy_runner(*args):
+        calls.append(args)
+        raise AssertionError("song proof context must not call talk AGY")
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=forbidden_agy_runner,
+        refinement_required=False,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "READY"
+    assert result.reason_codes == ()
+    assert calls == []
+    assert Path(result.context_refined_srt_path).read_text(encoding="utf-8") == Path(
+        result.context_draft_srt_path
+    ).read_text(encoding="utf-8")
+    manifest = json.loads(Path(result.jingting_manifest_path).read_text(encoding="utf-8"))
+    assert manifest["provider"] == "source_draft_context"
+    assert manifest["refinement_required"] is False
+    assert manifest["subtitle_authority_scope"] == "proof_context_only_external_lrc_required"
+
+
 def test_agy_runner_error_reason_code_is_distinguishable(tmp_path):
     """rc=0-but-empty (AGY_EMPTY_OUTPUT) must not be conflated with a timeout:
     the 7/2 whole-session BLOCK was misdiagnosed as a timeout exactly because

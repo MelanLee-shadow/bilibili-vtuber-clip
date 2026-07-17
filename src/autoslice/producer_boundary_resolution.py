@@ -62,6 +62,7 @@ def _select_initial_boundary(
     out_root: Path,
     transcriber: Callable,
     cues: list[object],
+    required_tail_end_ms: int | None,
     adapters: BoundaryResolutionAdapters,
 ) -> InitialBoundary:
     first_piece = spec["pieces"][0]
@@ -74,6 +75,15 @@ def _select_initial_boundary(
     #     sentence gets its own boundary.
     last_piece = spec["pieces"][-1]
     target_rel = sum(durations[:-1]) + (spec["semantic_end_ms"] - last_piece["start_ms"])
+    semantic_target_rel = target_rel
+    if (
+        required_tail_end_ms is not None
+        and semantic_target_rel < required_tail_end_ms <= semantic_target_rel + 15_000
+    ):
+        # A structured message appeared inside the selected event and the
+        # transcript proves she finished reading it just after the semantic
+        # target.  The read is the event payoff, not the next topic.
+        target_rel = required_tail_end_ms
     # 受监督硬切（Ivan 2026-07-13 MUA 案：故事有语义落点但与下一话题零停顿
     # 衔接，续讲红旗永远拦截）。spec.given_end_ms = Ivan 人工授权的绝对终点：
     # 仍贴到最近的字幕句尾（±1.5s），仍走其余全部审计，仅豁免尾侧续讲红旗；
@@ -276,6 +286,7 @@ def resolve_producer_boundary(
     spans: list[object],
     boundary_repair_extend_cap_ms: int,
     adapters: BoundaryResolutionAdapters,
+    required_tail_end_ms: int | None = None,
 ) -> BoundaryResolution:
     initial = _select_initial_boundary(
         spec=spec,
@@ -285,6 +296,7 @@ def resolve_producer_boundary(
         out_root=out_root,
         transcriber=transcriber,
         cues=cues,
+        required_tail_end_ms=required_tail_end_ms,
         adapters=adapters,
     )
     return _repair_boundary(

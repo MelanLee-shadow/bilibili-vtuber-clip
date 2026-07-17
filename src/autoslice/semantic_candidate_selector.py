@@ -97,6 +97,10 @@ def build_semantic_recall_prompt(
     return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}
 
 你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
+“最多”是上限，不是必须凑满的数量。**同一场连续事件只能占一个候选**：话题中间即使有短暂停顿、
+读别的弹幕、操作游戏或换了一个同类名字，只要后段仍在延续同一问题/分类/讨价还价，且后段笑点依赖
+前段铺垫，就必须从首次触发点一直框到最后 payoff，绝不能拆成两条来满足数量。给同一事件稳定填写相同
+event_key（简短中文，如“妈感姐妹分类”）；不同事件的 event_key 必须不同。
 
 值得选的片段类型(语义判断,不要机械找关键词):
 1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
@@ -115,7 +119,7 @@ def build_semantic_recall_prompt(
 - hook 用一句中文概括这个片段的看点。
 
 只输出一个 JSON 对象,不要任何其他文字:
-{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数}}]}}
+{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数}}]}}
 
 字幕时间轴:
 {transcript}
@@ -180,6 +184,8 @@ def select_semantic_session_candidates(
                 start_cue = trigger_cue
         confidence = item.get("confidence")
         confidence_value = float(confidence) if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) else 0.5
+        raw_event_key = str(item.get("event_key") or "").strip()
+        event_key = " ".join(raw_event_key.split())[:80]
         parsed.append(
             (
                 min(1.0, max(0.0, confidence_value)),
@@ -187,12 +193,53 @@ def select_semantic_session_candidates(
                     "start_cue": start_cue,
                     "end_cue": end_cue,
                     "kind": kind,
+                    "event_key": event_key,
                     "hook": str(item.get("hook") or ""),
                     "context_inferable": bool(item.get("context_inferable", True)),
                 },
             )
         )
 
+    # Models occasionally return two non-overlapping windows for one event even
+    # after being told not to.  event_key makes the invariant deterministic:
+    # merge before confidence ranking/quota, so one continuous story can never
+    # consume two top-N slots.  A missing key stays unique for compatibility
+    # with older/fallback completions.
+    grouped: dict[tuple[str, str], list[tuple[float, dict[str, object]]]] = {}
+    unkeyed = 0
+    for confidence_value, spec in parsed:
+        event_key = str(spec.get("event_key") or "")
+        if not event_key:
+            unkeyed += 1
+            event_key = f"__unkeyed_{unkeyed}"
+        grouped.setdefault((str(spec["kind"]), event_key.casefold()), []).append(
+            (confidence_value, spec)
+        )
+    merged_parsed: list[tuple[float, dict[str, object]]] = []
+    merged_events: list[dict[str, object]] = []
+    for (_kind, _event_key), rows in grouped.items():
+        if len(rows) == 1:
+            merged_parsed.append(rows[0])
+            continue
+        winner_confidence, winner_spec = max(rows, key=lambda row: row[0])
+        merged_spec = dict(winner_spec)
+        merged_spec["start_cue"] = min(int(row[1]["start_cue"]) for row in rows)
+        merged_spec["end_cue"] = max(int(row[1]["end_cue"]) for row in rows)
+        merged_parsed.append((winner_confidence, merged_spec))
+        merged_events.append(
+            {
+                "event_key": merged_spec["event_key"],
+                "input_ranges": [
+                    [int(row[1]["start_cue"]), int(row[1]["end_cue"])]
+                    for row in rows
+                ],
+                "merged_range": [
+                    int(merged_spec["start_cue"]),
+                    int(merged_spec["end_cue"]),
+                ],
+            }
+        )
+    parsed = merged_parsed
     parsed.sort(key=lambda entry: entry[0], reverse=True)
     selected: list[FullSessionCandidate] = []
     hooks: dict[str, str] = {}
@@ -242,6 +289,7 @@ def select_semantic_session_candidates(
         "stage": SEMANTIC_RECALL_STAGE,
         "raw_candidates": len(raw_candidates),
         "raw_response_candidates": raw_candidates[:10],
+        "merged_events": merged_events,
         "selected": [candidate.anchor.candidate_id for candidate in selected],
         "hooks": hooks,
         "skipped": skipped,

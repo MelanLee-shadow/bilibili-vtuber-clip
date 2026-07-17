@@ -22,6 +22,10 @@ from scripts.produce_slice_package import (
     tail_requires_forward_extension,
 )
 from src.autoslice.jingting_chunker import SrtCue
+from src.autoslice.producer_boundary_resolution import (
+    BoundaryResolutionAdapters,
+    _select_initial_boundary,
+)
 from src.autoslice.subtitle_timing_qa import SpeechSpan
 
 
@@ -132,6 +136,36 @@ def test_runon_cue_straddling_target_triggers_refinement():
 def test_clean_snap_near_target_needs_no_refinement():
     cues = [_cue(70_000, 79_900), _cue(80_200, 84_000)]
     assert needs_tail_refinement(cues, snapped_end=79_900, target_ms=80_000) is False
+
+
+def test_structured_read_payoff_extends_semantic_tail_before_sentence_snap(tmp_path):
+    cues = [
+        _cue(0, 3_000, "开场。"),
+        _cue(3_200, 9_000, "本来准备收尾。"),
+        _cue(9_100, 12_000, "念完弹幕中的完整名字。"),
+    ]
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 0, "end_ms": 20_000}],
+            "semantic_start_ms": 0,
+            "semantic_end_ms": 9_000,
+        },
+        durations=[20_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=20_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        required_tail_end_ms=12_000,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    assert initial.target_rel == 12_000
+    assert initial.snapped_end == 12_000
+    assert initial.closure_cue.text == "念完弹幕中的完整名字。"
 
 
 def test_boundary_audit_requires_both_snapped_boundaries():
