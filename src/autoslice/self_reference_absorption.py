@@ -32,6 +32,12 @@ _SELF_REFERENCE_SLOT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 _CANONICALS = frozenset({"李豆沙", "小李", "豆沙"})
 _EXCLUDED = frozenset({"礼墨", "李姐", "老师", "官方"})
 _MIN_LIDOUSHA_PHONETIC_RATIO = 0.58
+_STANDALONE_ROLE_SLOT = re.compile(
+    rf"^(?:做|作为)(?P<surface>{_CJK_NAME})[，,。！？!?]?$"
+)
+_ROLE_RESTATEMENT = re.compile(r"^作为一个")
+_DISCOURSE_LOOKBACK_CUES = 8
+_MIN_PRIOR_HOST_REFERENCES = 2
 
 
 def _phonetic_text(value: str) -> str:
@@ -63,8 +69,6 @@ def absorb_host_self_references(srt_text: str) -> tuple[str, dict[str, Any]]:
                     continue
                 start, end = match.span("surface")
                 replacements.append((start, end, surface, ratio, pattern.pattern))
-        if not replacements:
-            continue
         # Replace right-to-left; overlapping grammar matches collapse to one.
         selected: list[tuple[int, int, str, float, str]] = []
         for row in sorted(replacements, key=lambda item: (item[0], item[1])):
@@ -88,6 +92,44 @@ def absorb_host_self_references(srt_text: str) -> tuple[str, dict[str, Any]]:
                     "phonetic_target": _phonetic_text("李豆沙"),
                     "grammar_pattern": grammar,
                     "authority": "HOST_SELF_REFERENCE_GRAMMAR_PLUS_PHONETIC_ABSORPTION",
+                }
+            )
+        # A common spoken construction is “作为小李，作为一个……的人”.  A
+        # rough ASR/final-review lane may collapse the short first clause into
+        # an unrelated-looking noun such as “做刘翔/做流量”.  This is still a
+        # host-name slot when the immediately following clause restates the
+        # same role and the nearby discourse has already established the host
+        # at least twice.  Resolve it after the ordinary grammar repairs so the
+        # evidence is the repaired local discourse, not a channel-wide prior.
+        role_match = _STANDALONE_ROLE_SLOT.fullmatch(after.strip())
+        next_text = texts[cue_offset + 1].strip() if cue_offset + 1 < len(texts) else ""
+        prior_text = "\n".join(
+            texts[max(0, cue_offset - _DISCOURSE_LOOKBACK_CUES) : cue_offset]
+        )
+        prior_host_references = sum(
+            prior_text.count(alias) for alias in _CANONICALS
+        )
+        if (
+            role_match is not None
+            and role_match.group("surface") not in _CANONICALS
+            and role_match.group("surface") not in _EXCLUDED
+            and _ROLE_RESTATEMENT.match(next_text)
+            and prior_host_references >= _MIN_PRIOR_HOST_REFERENCES
+        ):
+            before = after
+            after = "作为小李"
+            repairs.append(
+                {
+                    "cue_index": cue_offset + 1,
+                    "matched_start_ms": cue.start_ms,
+                    "matched_end_ms": cue.end_ms,
+                    "before": before,
+                    "after": after,
+                    "prior_host_references": prior_host_references,
+                    "next_cue": next_text,
+                    "authority": (
+                        "HOST_SELF_REFERENCE_DISCOURSE_REPEAT_PLUS_LOCAL_NAME_SLOT"
+                    ),
                 }
             )
         texts[cue_offset] = after
