@@ -271,12 +271,16 @@ SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
                               # ±60/45s and ±180/150s); 15/20s matches the
                               # validated 虫儿飞 run.
 # A recall window is still only an anchor.  If it identifies a song but cannot
-# prove both LRC ends, retry once with enough original-source context for the
-# boundary resolver to recover missed intro/tail audio.  This fixed the 7/9
-# 《芽吹くとき》case where aggregate ASR began ~18s late and ended ~27s
-# early; the old 15/20 source window physically excluded the true boundaries.
-SONG_PROOF_RETRY_PRE_MS = 45_000
-SONG_PROOF_RETRY_POST_MS = 45_000
+# prove both LRC ends, retry once with enough ORIGINAL source for a normal
+# full-length performance.  The old ±45s retry only repaired slightly clipped
+# anchors; on 2026-07-16 it fed 158s of a roughly seven-minute 《CRYING FOR
+# YOU》 performance to the LRC gate, so the strict gate correctly rejected an
+# artifact that the retry itself had made incomplete.  Detection anchors tend
+# to cover the first verse, hence the deliberately tail-heavy 2m/6m envelope.
+# The segment duration still caps the window, and the seeded anchor keeps the
+# selector focused when the envelope also contains pre/post-song talk.
+SONG_PROOF_RETRY_PRE_MS = 120_000
+SONG_PROOF_RETRY_POST_MS = 360_000
 SONG_ANCHOR_TRIM_MIN_MS = 20_000  # only retry on the danmaku-dense core when the
                                   # trim drops ≥20s of talk padding off an end
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")

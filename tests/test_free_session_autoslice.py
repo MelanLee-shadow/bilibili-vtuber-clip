@@ -2609,7 +2609,7 @@ def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
             {"segment_path": "/rec/session.mp4", "start_ms": 110_000, "end_ms": 120_000, "cid": "child"},
             {"segment_path": "/rec/session.mp4", "start_ms": 159_999, "end_ms": 170_000, "cid": "tail"},
             {"segment_path": "/rec/session.mp4", "start_ms": 160_000, "end_ms": 170_000, "cid": "adjacent"},
-            {"segment_path": "/rec/session.mp4", "start_ms": 205_000, "end_ms": 215_000, "cid": "outside"},
+            {"segment_path": "/rec/session.mp4", "start_ms": 525_000, "end_ms": 535_000, "cid": "outside"},
             {"segment_path": "/rec/other.mp4", "start_ms": 110_000, "end_ms": 120_000, "cid": "other"},
         ],
     }
@@ -2626,8 +2626,8 @@ def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
     assert state["song_quarantine_intervals"] == [
         {
             "segment_path": "/rec/session.mp4",
-            "start_ms": 55_000,
-            "end_ms": 205_000,
+            "start_ms": 0,
+            "end_ms": 520_000,
             "original_anchor_start_ms": 100_000,
             "original_anchor_end_ms": 160_000,
             "candidate_id": "song_background",
@@ -2940,10 +2940,22 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
     assert tight_command[tight_command.index("--seed-song-candidate-id") + 1] == "seededsong_15000_65000"
     assert "--agy-audio-lrc-align" not in tight_command
     assert "--agy-audio-lrc-align" in full_command
-    assert full_command[full_command.index("--seed-song-candidate-id") + 1] == "seededsong_45000_95000"
-    assert full_command[full_command.index("--seed-song-anchor-start-ms") + 1] == "45000"
-    assert full_command[full_command.index("--seed-song-anchor-end-ms") + 1] == "95000"
-    assert full_command[full_command.index("--source-duration-ms") + 1] == "140000"
+    expected_full_seed = (
+        f"seededsong_{anchor_start - full_start}_{anchor_end - full_start}"
+    )
+    assert (
+        full_command[full_command.index("--seed-song-candidate-id") + 1]
+        == expected_full_seed
+    )
+    assert full_command[full_command.index("--seed-song-anchor-start-ms") + 1] == str(
+        anchor_start - full_start
+    )
+    assert full_command[full_command.index("--seed-song-anchor-end-ms") + 1] == str(
+        anchor_end - full_start
+    )
+    assert full_command[full_command.index("--source-duration-ms") + 1] == str(
+        full_end - full_start
+    )
     query_indexes = [index for index, value in enumerate(full_command) if value == "--song-lrc-query"]
     assert [full_command[index + 1] for index in query_indexes] == [
         "芽吹くとき",
@@ -3448,8 +3460,15 @@ def test_verified_song_fallback_title_keeps_song_and_hook():
 def test_song_proof_retry_padding_exceeds_recall_padding():
     assert runner.SONG_PROOF_RETRY_PRE_MS > runner.SONG_WINDOW_PRE_MS
     assert runner.SONG_PROOF_RETRY_POST_MS > runner.SONG_WINDOW_POST_MS
-    assert runner.song_proof_retry_window(166_220, 321_760, 483_352) == (121_220, 366_760)
+    assert runner.song_proof_retry_window(166_220, 321_760, 483_352) == (46_220, 483_352)
     assert runner.song_proof_retry_window(10_000, 90_000, 100_000) == (0, 100_000)
+    # Regression: the 2026-07-16 《CRYING FOR YOU》 anchor covered only the
+    # first verse.  Full proof must include the rest of a seven-minute song,
+    # rather than expanding the same incomplete excerpt by just 45 seconds.
+    assert runner.song_proof_retry_window(208_540, 311_810, 639_473) == (
+        88_540,
+        639_473,
+    )
 
 
 def test_song_artifact_hash_check_rejects_mutation_and_symlink(tmp_path):
