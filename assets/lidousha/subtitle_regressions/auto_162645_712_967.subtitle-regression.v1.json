@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_162645_712_967",
+  "required_payload_substrings": [
+    "妈感姐还是妈感妹",
+    "kmx系喜欢吗",
+    "萱萱卡娅算吧",
+    "萱萱卡娅一点都不妈",
+    "萱萱卡娅应该是那种妹感姐"
+  ],
+  "forbidden_payload_substrings": [
+    "kimo熊",
+    "Kimo熊",
+    "星汐Seki",
+    "Seki",
+    "轩辕凯亚",
+    "轩凯"
+  ],
+  "forbidden_exact_cues": []
+}

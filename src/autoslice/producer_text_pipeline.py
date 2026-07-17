@@ -48,8 +48,16 @@ from src.autoslice.producer_chat_input import (
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
 from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.self_reference_absorption import absorb_host_self_references
+from src.autoslice.session_topic_authority import (
+    absorb_session_topic_entities,
+    discover_session_topic_authorities,
+)
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
-from src.autoslice.subtitle_fidelity import apply_numeric_fact_provenance_guard
+from src.autoslice.subtitle_fidelity import (
+    apply_numeric_fact_provenance_guard,
+    apply_source_language_preservation_guard,
+    apply_title_mark_balance_guard,
+)
 from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
     TopicEvidence,
@@ -93,6 +101,9 @@ class TranscriptionDraft:
     code_switch_audit: object
     term_boundary_moves: list[dict]
     support_srts: list[str]
+    session_topic_authorities: tuple[dict[str, Any], ...]
+    session_topic_absorption_audits: list[dict[str, Any]]
+    source_language_witness_srt: str
 
 
 @dataclass(frozen=True)
@@ -170,6 +181,7 @@ def _transcribe_draft(
     merged: list[DanmakuItem],
     adapters: TextPipelineAdapters,
 ) -> TranscriptionDraft:
+    session_topic_authorities = discover_session_topic_authorities(spec)
     song_name_candidates = [
         str(title).strip()
         for title in (spec.get("song_name_candidates") or [])
@@ -186,6 +198,7 @@ def _transcribe_draft(
             recording_date=str(spec.get("date") or ""),
             topic_hint=str(spec.get("selection_hook") or ""),
             song_name_candidates=song_name_candidates,
+            session_topic_authorities=session_topic_authorities,
         )
     else:
         transcriber = adapters.build_agy_transcriber(host, danmaku_items=merged or None, window_start_ms=0)
@@ -193,6 +206,9 @@ def _transcribe_draft(
     spans = vad(padded, 0, padded_dur)
     srt_text = transcriber(padded, [(s.start_ms, s.end_ms) for s in spans])
     srt_text, code_switch_audit = normalize_code_switch_surfaces(srt_text)
+    srt_text, session_topic_absorption_audit = absorb_session_topic_entities(
+        srt_text, session_topic_authorities
+    )
     # A known proper noun (e.g. 梦限大) straddled across two ASR cues can
     # never be repaired downstream: every later stage locks cue count and
     # indices 1:1, so no single cue ever contains the full surface again.
@@ -207,6 +223,12 @@ def _transcribe_draft(
         if term_boundary_moves:
             srt_text = _render_cues_to_srt(unified_cues)
     support_srts = _load_independent_chat_support_srts(padded)
+    draft_witness_path = padded.with_suffix(".asr_draft.srt")
+    source_language_witness_srt = (
+        draft_witness_path.read_text(encoding="utf-8", errors="replace")
+        if draft_witness_path.is_file()
+        else srt_text
+    )
     return TranscriptionDraft(
         song_name_candidates=song_name_candidates,
         transcriber=transcriber,
@@ -215,6 +237,9 @@ def _transcribe_draft(
         code_switch_audit=code_switch_audit,
         term_boundary_moves=term_boundary_moves,
         support_srts=support_srts,
+        session_topic_authorities=session_topic_authorities,
+        session_topic_absorption_audits=[session_topic_absorption_audit],
+        source_language_witness_srt=source_language_witness_srt,
     )
 
 
@@ -350,6 +375,7 @@ def _apply_entity_authority(
     term_boundary_moves: list[dict],
     padded: Path,
     adapters: TextPipelineAdapters,
+    session_topic_absorption_audits: list[dict[str, Any]] | None = None,
 ) -> EntityAuthorityResult:
     srt_text, self_reference_absorption_audit = absorb_host_self_references(srt_text)
     srt_text, chat_authority_audit = apply_authoritative_chat_evidence(
@@ -362,6 +388,9 @@ def _apply_entity_authority(
     chat_authority_audit[
         "self_reference_absorption_audit"
     ] = self_reference_absorption_audit
+    chat_authority_audit[
+        "session_topic_absorption_audits"
+    ] = list(session_topic_absorption_audits or [])
     draft_witness_path = padded.with_suffix(".asr_draft.srt")
     if draft_witness_path.is_file():
         srt_text, numeric_fact_audit = apply_numeric_fact_provenance_guard(
@@ -634,9 +663,25 @@ def _finalize_text_evidence(
     referent_groups: list[ReferentGroup],
     final_review_audit: dict,
     song_name_candidates: list[str],
+    session_topic_authorities: tuple[dict[str, Any], ...],
+    source_language_witness_srt: str,
     out_root: Path,
     cid: str,
 ) -> TextEvidenceResult:
+    srt_text, final_source_language_audit = apply_source_language_preservation_guard(
+        source_language_witness_srt, srt_text
+    )
+    chat_authority_audit[
+        "final_source_language_preservation_audit"
+    ] = final_source_language_audit
+    srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
+    chat_authority_audit["title_mark_balance_audit"] = title_mark_balance_audit
+    srt_text, final_session_topic_absorption_audit = absorb_session_topic_entities(
+        srt_text, session_topic_authorities
+    )
+    chat_authority_audit.setdefault("session_topic_absorption_audits", []).append(
+        final_session_topic_absorption_audit
+    )
     srt_text, unregistered_entity_reverts = revert_unregistered_entity_repairs(
         srt_text,
         chat_authority_audit.get("entity_repairs") or [],
@@ -756,6 +801,7 @@ def run_text_pipeline(
         verify_confusable_entity=entity_context.verify_confusable_entity,
         code_switch_audit=draft.code_switch_audit,
         term_boundary_moves=draft.term_boundary_moves,
+        session_topic_absorption_audits=draft.session_topic_absorption_audits,
         padded=padded,
         adapters=adapters,
     )
@@ -773,6 +819,8 @@ def run_text_pipeline(
         referent_groups=entity_context.referent_groups,
         final_review_audit=final_review_audit,
         song_name_candidates=draft.song_name_candidates,
+        session_topic_authorities=draft.session_topic_authorities,
+        source_language_witness_srt=draft.source_language_witness_srt,
         out_root=out_root,
         cid=cid,
     )

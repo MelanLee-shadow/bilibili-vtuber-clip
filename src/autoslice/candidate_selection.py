@@ -327,6 +327,32 @@ def prioritize(state: dict) -> None:
     pending_talk = state.get("pending_talk", [])
     selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
     pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
+    below_threshold = [
+        item
+        for item in pending_talk
+        if isinstance(item.get("confidence"), (int, float))
+        and not isinstance(item.get("confidence"), bool)
+        and float(item["confidence"]) < _runner.MIN_TALK_CONFIDENCE
+    ]
+    if below_threshold:
+        below_ids = {
+            str(item.get("cid") or item.get("candidate_id") or "")
+            for item in state.setdefault("talk_below_confidence_threshold", [])
+            if isinstance(item, dict)
+        }
+        for item in below_threshold:
+            cid = str(item.get("cid") or item.get("candidate_id") or "")
+            if cid not in below_ids:
+                state["talk_below_confidence_threshold"].append(item)
+                below_ids.add(cid)
+            _runner._note_not_selected(
+                state,
+                f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
+                f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
+                f"(落选:低于最低信心分{_runner.MIN_TALK_CONFIDENCE:.2f},top-{_runner.MAX_TALK_PICKS}是上限不是凑数目标)",
+            )
+    below_object_ids = {id(item) for item in below_threshold}
+    pending_talk = [item for item in pending_talk if id(item) not in below_object_ids]
     keep: list[dict] = []
     deferred: list[dict] = []
     sessions = list(dict.fromkeys(_item_session_id(item) for item in pending_talk))

@@ -260,6 +260,12 @@ COVER_REPAIR_LIFETIME_ATTEMPT_CAP = 9  # three bounded repair generations; never
 MAX_PARALLEL_PRODUCE = 3  # slices are independent; produce them concurrently (each is
                           # network-bound on AGY/CPA/gpt-image-2, so a few in flight
                           # cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
+# Top-5 is a ceiling, not a promise to ship five weak events.  The 2026-07-16
+# 0.78-confidence 《夏雪冬花》 candidate was admitted only because the session
+# still had an empty seat; that is the same quota-pressure failure mode that
+# used to split one coherent event into two clips.  Low-confidence recalls are
+# terminally recorded as not selected instead of living in the retry backlog.
+MIN_TALK_CONFIDENCE = 0.80
 PIECE_PRE_MS = 10_000
 PIECE_POST_MS = 32_000
 BOUNDARY_CONTEXT_RETRY_POST_MS = 90_000

@@ -1,0 +1,16 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_210002_297_513",
+  "required_payload_substrings": [
+    "给了李豆沙一个挑战",
+    "这台词可以由kmx来定",
+    "李豆沙一直是为爱做1"
+  ],
+  "forbidden_payload_substrings": [
+    "下一个挑战",
+    "礼墨Sumi来定",
+    "VIP 1",
+    "给了一个下一个挑战的"
+  ],
+  "forbidden_exact_cues": []
+}

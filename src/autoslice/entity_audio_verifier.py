@@ -30,6 +30,7 @@ from scripts.gemini_slice_jingting import (
     timely_terms_context,
 )
 from src.autoslice import gemini_backup_policy
+from src.autoslice.llm_client import extract_json_object
 
 
 ENTITY_AUDIO_MODEL = "Gemini 3.5 Flash (High)"
@@ -504,7 +505,10 @@ def _observe_entity_audio(
                     )
                     if not raw or len(raw.encode("utf-8")) > 2_000_000:
                         raise ValueError("empty or oversized Gemini API output")
-                    observed = json.loads(raw)
+                    try:
+                        observed = extract_json_object(raw)
+                    except Exception as exc:
+                        raise ValueError("Gemini API output had no valid JSON object") from exc
                     accepted_key_tier = key_tier
                     return True
                 except Exception as exc:

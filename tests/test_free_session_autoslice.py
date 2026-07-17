@@ -2473,6 +2473,41 @@ def test_prioritize_diversity_cap_is_soft():
     assert len(state["pending_talk"]) == MAX_TALK_PICKS
 
 
+def test_prioritize_treats_top_five_as_ceiling_not_low_confidence_fill_target():
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_song": [],
+        "pending_talk": [
+            {
+                "segment_path": "/rec/high.mp4",
+                "start_ms": 0,
+                "end_ms": 30_000,
+                "hook": "高信心完整事件",
+                "confidence": 0.81,
+                "cid": "high",
+            },
+            {
+                "segment_path": "/rec/low.mp4",
+                "start_ms": 40_000,
+                "end_ms": 70_000,
+                "hook": "低信心候选不应为了凑数交付",
+                "confidence": 0.78,
+                "cid": "low",
+            },
+        ],
+    }
+
+    prioritize(state)
+
+    assert [item["cid"] for item in state["pending_talk"]] == ["high"]
+    assert state["talk_backlog"] == []
+    assert [item["cid"] for item in state["talk_below_confidence_threshold"]] == [
+        "low"
+    ]
+    assert any("top-5是上限不是凑数目标" in line for line in state["not_selected"])
+
+
 def test_rejected_talk_candidate_automatically_backfills_next_ranked_reserve():
     candidates = [
         {

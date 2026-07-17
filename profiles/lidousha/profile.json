@@ -98,6 +98,46 @@
         "surface": "直女",
         "canonical": "侄女",
         "authority": "lidousha-hard-meme-canon.v1"
+      },
+      {
+        "surface": "gala game",
+        "canonical": "Galgame",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "嘎啦 game",
+        "canonical": "Galgame",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "嘎啦game",
+        "canonical": "Galgame",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "kimo熊",
+        "canonical": "kmx",
+        "authority": "Ivan-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "kimo 熊",
+        "canonical": "kmx",
+        "authority": "Ivan-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "Kimo熊",
+        "canonical": "kmx",
+        "authority": "Ivan-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "kimoxiong",
+        "canonical": "kmx",
+        "authority": "Ivan-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "基默熊",
+        "canonical": "kmx",
+        "authority": "Ivan-confirmed-kmx-pronunciation.v1"
       }
     ]
   },

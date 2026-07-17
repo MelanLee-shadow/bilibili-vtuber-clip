@@ -227,6 +227,20 @@ class _FakeApiResponse:
         return False
 
 
+class _FakeApiResponseRaw:
+    def __init__(self, payload):
+        self._stream = io.StringIO(json.dumps(payload, ensure_ascii=False))
+
+    def read(self, *args, **kwargs):
+        return self._stream.read(*args, **kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
 def _resolved_observation():
     return {
         "schema_version": "entity-audio-observation.v1",
@@ -341,6 +355,40 @@ def test_agy_quota_falls_back_to_gemini_api_free_key(tmp_path, monkeypatch):
     assert any(
         row["category"] == "AGY_QUOTA_EXHAUSTED" for row in manifest["provider_failures"]
     )
+
+
+def test_gemini_api_salvages_first_balanced_json_object_before_trailing_echo(
+    tmp_path, monkeypatch
+):
+    """2026-07-16 夸夸怪实案：付费 Gemini 给出完整合法对象后又回声了几个
+    片段；结构化响应不能因对象后的垃圾字符被误判为供应商整体失败。"""
+
+    _isolate_policy_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    observation = json.dumps(_resolved_observation(), ensure_ascii=False) + '\n de)."'
+    response_payload = {
+        "candidates": [{"content": {"parts": [{"text": observation}]}}]
+    }
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    monkeypatch.setattr(
+        verifier_module.urllib.request,
+        "urlopen",
+        lambda request, timeout=0: _FakeApiResponseRaw(response_payload),
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-10",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["status"] == "RESOLVED"
+    assert verdict["canonical_entity"] == "梦限大"
 
 
 def test_api_paid_gate_blocks_without_dev_exception(tmp_path, monkeypatch):

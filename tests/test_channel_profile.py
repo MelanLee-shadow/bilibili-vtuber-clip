@@ -97,6 +97,14 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         ("哇哭哇哭", "wakuwaku"),
         ("哇库哇库", "wakuwaku"),
         ("直女", "侄女"),
+        ("gala game", "Galgame"),
+        ("嘎啦 game", "Galgame"),
+        ("嘎啦game", "Galgame"),
+        ("kimo熊", "kmx"),
+        ("kimo 熊", "kmx"),
+        ("Kimo熊", "kmx"),
+        ("kimoxiong", "kmx"),
+        ("基默熊", "kmx"),
     ]
     assert profile.format_song_title("芽吹くとき", hook="下播前的温柔哄睡小歌") == (
         "【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌"

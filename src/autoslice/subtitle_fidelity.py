@@ -62,6 +62,8 @@ _DIGIT_READINGS: dict[str, frozenset[str]] = {
 
 _NON_TEXT_RX = re.compile(r"[^0-9A-Za-z一-鿿]+")
 _ARABIC_NUMBER_RX = re.compile(r"(?<![0-9A-Za-z])\d+(?:\.\d+)?(?![0-9A-Za-z])")
+_JAPANESE_KANA_RX = re.compile(r"[ぁ-ゖァ-ヺー]")
+_LATIN_WORD_RX = re.compile(r"\b[A-Za-z]+(?:['’-][A-Za-z]+)?\b")
 
 
 def _strip_non_text(value: str) -> str:
@@ -357,6 +359,145 @@ def apply_numeric_fact_provenance_guard(
     if audit["reverted"]:
         audit["status"] = "REVERTED_UNPROVEN_NUMERIC_FACT"
     audit["reverted_count"] = len(audit["reverted"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+def apply_source_language_preservation_guard(
+    draft_srt: str,
+    final_srt: str,
+    *,
+    sanctioned: Iterable[tuple[str, str]] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Keep foreign-language speech in its spoken language during correction.
+
+    The subtitle correction lane fixes transcription; it is not a translation
+    lane.  In particular, an embedded Japanese game/anime voice must not become
+    an invented Chinese paraphrase.  A whole-cue sanctioned proper-name
+    respelling is still allowed because that is transcript normalization rather
+    than translation.
+    """
+
+    pairs = (
+        tuple(sanctioned)
+        if sanctioned is not None
+        else tuple(sanctioned_respell_pairs())
+    )
+    draft_cues = parse_srt_cues(draft_srt)
+    final_cues = parse_srt_cues(final_srt)
+    audit: dict[str, Any] = {
+        "schema_version": "source-language-preservation-audit.v1",
+        "status": "CLEAN",
+        "reverted": [],
+    }
+    if len(draft_cues) != len(final_cues):
+        audit["status"] = "SKIPPED_CUE_COUNT_MISMATCH"
+        audit["draft_cue_count"] = len(draft_cues)
+        audit["final_cue_count"] = len(final_cues)
+        return final_srt, audit
+
+    rendered: list[str] = []
+    for index, (draft_cue, final_cue) in enumerate(
+        zip(draft_cues, final_cues), start=1
+    ):
+        draft_kana_count = len(_JAPANESE_KANA_RX.findall(draft_cue.text))
+        final_kana_count = len(_JAPANESE_KANA_RX.findall(final_cue.text))
+        draft_latin_words = _LATIN_WORD_RX.findall(draft_cue.text)
+        final_latin_words = _LATIN_WORD_RX.findall(final_cue.text)
+        source_language_removed = (
+            (draft_kana_count >= 2 and final_kana_count == 0)
+            or (len(draft_latin_words) >= 3 and len(final_latin_words) <= 1)
+        )
+        translated = (
+            source_language_removed
+            and bool(final_cue.text.strip())
+            and _strip_non_text(draft_cue.text) != _strip_non_text(final_cue.text)
+            and not _sanctioned_cue_equal(draft_cue.text, final_cue.text, pairs)
+        )
+        kept = draft_cue.text if translated else final_cue.text
+        if translated:
+            audit["reverted"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": final_cue.start_ms,
+                    "end_ms": final_cue.end_ms,
+                    "draft": draft_cue.text,
+                    "attempted": final_cue.text,
+                    "reason": "SOURCE_LANGUAGE_TRANSLATED_IN_CORRECTION_LANE",
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(final_cue.start_ms)} --> "
+            f"{_ms_to_ts(final_cue.end_ms)}\n{kept}"
+        )
+    if audit["reverted"]:
+        audit["status"] = "REVERTED_TRANSLATION"
+    audit["reverted_count"] = len(audit["reverted"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+def apply_title_mark_balance_guard(
+    srt_text: str,
+) -> tuple[str, dict[str, Any]]:
+    """Close one clearly dangling Chinese title mark without rewriting text."""
+
+    cues = parse_srt_cues(srt_text)
+    audit: dict[str, Any] = {
+        "schema_version": "title-mark-balance-audit.v1",
+        "status": "CLEAN",
+        "repairs": [],
+        "unresolved": [],
+    }
+    rendered: list[str] = []
+    for index, cue in enumerate(cues, start=1):
+        text = cue.text
+        opening_count = text.count("《")
+        closing_count = text.count("》")
+        if opening_count == closing_count + 1:
+            next_text = cues[index].text if index < len(cues) else ""
+            if next_text.count("》") > next_text.count("《"):
+                audit["unresolved"].append(
+                    {
+                        "cue_index": index,
+                        "text": text,
+                        "reason": "POSSIBLE_CROSS_CUE_TITLE_MARK_PAIR",
+                    }
+                )
+                rendered.append(
+                    f"{index}\n{_ms_to_ts(cue.start_ms)} --> "
+                    f"{_ms_to_ts(cue.end_ms)}\n{text}"
+                )
+                continue
+            match = re.search(r"([。！？!?.,，]?)$", text)
+            assert match is not None
+            punctuation = match.group(1)
+            body = text[: len(text) - len(punctuation)] if punctuation else text
+            repaired = f"{body}》{punctuation}"
+            audit["repairs"].append(
+                {
+                    "cue_index": index,
+                    "before": text,
+                    "after": repaired,
+                    "reason": "ONE_DANGLING_CHINESE_TITLE_OPEN_MARK",
+                }
+            )
+            text = repaired
+        elif opening_count != closing_count:
+            audit["unresolved"].append(
+                {
+                    "cue_index": index,
+                    "text": text,
+                    "opening_count": opening_count,
+                    "closing_count": closing_count,
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(cue.start_ms)} --> {_ms_to_ts(cue.end_ms)}\n{text}"
+        )
+    if audit["unresolved"]:
+        audit["status"] = "UNRESOLVED_COMPLEX_IMBALANCE"
+    elif audit["repairs"]:
+        audit["status"] = "APPLIED"
+    audit["repair_count"] = len(audit["repairs"])
     return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
 
 

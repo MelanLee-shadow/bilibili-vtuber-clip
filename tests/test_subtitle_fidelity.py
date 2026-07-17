@@ -2,7 +2,9 @@ from types import SimpleNamespace
 
 from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
+    apply_source_language_preservation_guard,
     apply_subtitle_fidelity_guard,
+    apply_title_mark_balance_guard,
     digit_reading_equivalent,
 )
 
@@ -138,3 +140,66 @@ def test_numeric_fact_survives_when_same_time_structured_chat_contains_it():
 
     assert "为礼墨做0.6" in guarded
     assert audit["status"] == "CLEAN"
+
+
+def test_source_language_guard_reverts_japanese_speech_translation():
+    draft = _srt(
+        "フェイトちゃん、テスタロッサさん。私はフェイトちゃんと結婚したいだけなんだけど"
+    )
+    translated = _srt("Fate Testarossa-san，我只是想和奈叶结婚而已啊！")
+
+    guarded, audit = apply_source_language_preservation_guard(draft, translated)
+
+    assert "フェイトちゃん" in guarded
+    assert "只是想和奈叶结婚" not in guarded
+    assert audit["status"] == "REVERTED_TRANSLATION"
+    assert (
+        audit["reverted"][0]["reason"]
+        == "SOURCE_LANGUAGE_TRANSLATED_IN_CORRECTION_LANE"
+    )
+
+
+def test_source_language_guard_allows_sanctioned_kana_name_respell():
+    draft = _srt("セキちゃんが来た")
+    corrected = _srt("萱萱卡娅ちゃんが来た")
+
+    guarded, audit = apply_source_language_preservation_guard(
+        draft,
+        corrected,
+        sanctioned=(("セキ", "萱萱卡娅"),),
+    )
+
+    assert "萱萱卡娅ちゃん" in guarded
+    assert audit["status"] == "CLEAN"
+
+
+def test_source_language_guard_reverts_english_speech_translation():
+    draft = _srt("I just want to marry Fate, that's all.")
+    translated = _srt("我只是想和菲特结婚，仅此而已。")
+
+    guarded, audit = apply_source_language_preservation_guard(draft, translated)
+
+    assert "I just want to marry Fate" in guarded
+    assert "我只是想" not in guarded
+    assert audit["status"] == "REVERTED_TRANSLATION"
+
+
+def test_title_mark_guard_closes_one_dangling_open_mark_before_punctuation():
+    guarded, audit = apply_title_mark_balance_guard(
+        _srt("一起《与你打灰到生命尽头。", "完整《标题》不变")
+    )
+
+    assert "一起《与你打灰到生命尽头》。" in guarded
+    assert "完整《标题》不变" in guarded
+    assert audit["status"] == "APPLIED"
+    assert audit["repair_count"] == 1
+
+
+def test_title_mark_guard_does_not_break_a_title_spanning_two_cues():
+    source = _srt("接下来唱《旅行", "的意义》给大家")
+
+    guarded, audit = apply_title_mark_balance_guard(source)
+
+    assert guarded == source
+    assert audit["status"] == "UNRESOLVED_COMPLEX_IMBALANCE"
+    assert audit["repair_count"] == 0

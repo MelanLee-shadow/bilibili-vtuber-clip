@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "candidate_id": "auto_210002_297_513",
+  "source_srt_sha256": "f630d4089f0f20551da28aaebb9a0599650c1ce6ec981d20c92dc9d83225e174",
+  "text_final_srt_sha256": "d24cf03704162c4dd3cedef65794e58fc23019d73e9e3dac1d278a600ac7bf51",
+  "overrides": [
+    {
+      "source_cue": 3,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:05,170",
+        "end": "00:00:07,250",
+        "text": "给了一个下一个挑战的"
+      },
+      "text": "给了李豆沙一个挑战",
+      "authority": "Ivan reviewed the 2026-07-16 source audio and confirmed this exact wording",
+      "reason": "The challenge recipient was dropped and 一个 was duplicated into 下一个 by ASR"
+    },
+    {
+      "source_cue": 54,
+      "action": "replace",
+      "expect": {
+        "start": "00:03:15,450",
+        "end": "00:03:17,650",
+        "text": "李豆沙一直是"
+      },
+      "text": "李豆沙一直是为爱做1",
+      "authority": "Ivan reviewed the difficult 03:17 source audio and confirmed this exact wording",
+      "reason": "Restore the clipped predicate without asking the semantic lane to guess an unclear utterance"
+    }
+  ]
+}
