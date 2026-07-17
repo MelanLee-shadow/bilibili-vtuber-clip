@@ -22,6 +22,7 @@ from .cpa_semantic_qa import (
     load_request_artifact,
 )
 from .host_vocal_proof import verify_host_vocal_proof_claim
+from .gemini_backup_policy import validate_key_acceptance_metadata
 from .llm_client import LlmCall
 from .review_evidence import ReviewEvidence, SourceCue
 from .shadow_review import _gap_summary, _sha256
@@ -775,6 +776,12 @@ def _verify_live_performance_observation(
         source_duration_ms = artifacts.get("source_duration_ms")
         configured_key_count = manifest.get("configured_key_count")
         accepted_key_ordinal = manifest.get("accepted_key_ordinal")
+        acceptance_error = validate_key_acceptance_metadata(
+            configured_key_count=configured_key_count,
+            accepted_key_ordinal=accepted_key_ordinal,
+            accepted_key_tier=manifest.get("accepted_key_tier"),
+            paid_backup_policy=manifest.get("paid_backup_policy"),
+        )
         if (
             manifest.get("direct_audio_input") is not True
             or not isinstance(api_audio_duration_ms, int)
@@ -785,14 +792,9 @@ def _verify_live_performance_observation(
             or manifest_artifacts.get("api_audio_path") != artifacts.get("api_audio_path")
             or manifest_artifacts.get("api_audio_sha256") != artifacts.get("api_audio_sha256")
             or manifest_artifacts.get("api_audio_duration_ms") != api_audio_duration_ms
-            or not isinstance(configured_key_count, int)
-            or isinstance(configured_key_count, bool)
-            or not 1 <= configured_key_count <= 3
-            or not isinstance(accepted_key_ordinal, int)
-            or isinstance(accepted_key_ordinal, bool)
-            or not 1 <= accepted_key_ordinal <= configured_key_count
+            or acceptance_error is not None
         ):
-            return "live-performance Gemini API complete-audio binding is invalid"
+            return acceptance_error or "live-performance Gemini API complete-audio binding is invalid"
 
     if manifest.get("schema_version") in {"agy-audio-lrc-run.v2", "agy-audio-lrc-run.v3"}:
         provider_raw_path, error = bound_artifact(

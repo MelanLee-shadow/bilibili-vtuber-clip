@@ -3076,8 +3076,11 @@ def test_shadow_pipeline_fails_closed_when_preexisting_marker_exists(tmp_path, m
 
 
 
-@pytest.mark.parametrize("audio_provider", ["agy", "gemini_api"])
-def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path, audio_provider):
+@pytest.mark.parametrize(
+    ("audio_provider", "paid_backup"),
+    [("agy", False), ("gemini_api", False), ("gemini_api", True)],
+)
+def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path, audio_provider, paid_backup):
     from src.autoslice.song_repair import LrcLine, LrcResult
 
     lyric_lines = [
@@ -3160,6 +3163,7 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path, audio_provid
             candidate_id=candidate,
             output_dir=artifact_dir,
             provider=audio_provider,
+            paid_backup=paid_backup,
         ),
         host_vocal_prover=_ready_host_vocal_prover,
     )

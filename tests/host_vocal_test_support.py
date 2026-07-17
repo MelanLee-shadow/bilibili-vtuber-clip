@@ -289,6 +289,7 @@ def make_ready_audio_alignment_run(
     output_dir: Path,
     offset_ms: int = 50_000,
     provider: str = "agy",
+    paid_backup: bool = False,
 ) -> AudioLrcAlignmentRun:
     """Build a strict, hash-bound AGY-v5 fixture for song-repair tests."""
 
@@ -409,6 +410,18 @@ def make_ready_audio_alignment_run(
     model = "gemini-3.5-flash" if is_gemini_api else "Gemini 3.5 Flash (High)"
     agy_rc = 1 if is_gemini_api else 0
     agy_failure_category = "AGY_QUOTA_EXHAUSTED" if is_gemini_api else None
+    configured_key_count = 3 if paid_backup else 2 if is_gemini_api else None
+    accepted_key_ordinal = 4 if paid_backup else 2 if is_gemini_api else None
+    accepted_key_tier = "paid_backup" if paid_backup else None
+    paid_backup_policy = (
+        {
+            "key_tier": "paid_backup",
+            "mode": "strict",
+            "free_chain_strikes": 3,
+        }
+        if paid_backup
+        else None
+    )
     _write_json(
         manifest,
         {
@@ -421,8 +434,10 @@ def make_ready_audio_alignment_run(
             "agy_failure_category": agy_failure_category,
             "sandbox": not is_gemini_api,
             "direct_audio_input": is_gemini_api,
-            "configured_key_count": 2 if is_gemini_api else None,
-            "accepted_key_ordinal": 2 if is_gemini_api else None,
+            "configured_key_count": configured_key_count,
+            "accepted_key_ordinal": accepted_key_ordinal,
+            **({"accepted_key_tier": accepted_key_tier} if accepted_key_tier else {}),
+            **({"paid_backup_policy": paid_backup_policy} if paid_backup_policy else {}),
             "canonicalization": {
                 "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
                 "row_identity": "strict_zero_based_lrc_index",
@@ -456,8 +471,10 @@ def make_ready_audio_alignment_run(
         provider_raw_output_path=str(provider_raw_output),
         provider_raw_output_sha256=provider_raw_sha,
         agy_failure_category=agy_failure_category,
-        configured_key_count=2 if is_gemini_api else None,
-        accepted_key_ordinal=2 if is_gemini_api else None,
+        configured_key_count=configured_key_count,
+        accepted_key_ordinal=accepted_key_ordinal,
+        accepted_key_tier=accepted_key_tier,
+        paid_backup_policy=paid_backup_policy,
         api_audio_path=str(api_audio_path) if is_gemini_api else None,
         api_audio_sha256=_sha(api_audio_path) if is_gemini_api else None,
         api_audio_duration_ms=source_duration_ms if is_gemini_api else None,

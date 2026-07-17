@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from src.autoslice.gemini_backup_policy import validate_key_acceptance_metadata
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.song_common import (
     AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
@@ -429,10 +430,14 @@ def _validate_audio_lrc_artifact_bindings(
     ):
         raise ValueError("audio run manifest is not bound to the current run artifacts")
     if run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        acceptance_error = validate_key_acceptance_metadata(
+            configured_key_count=run.configured_key_count,
+            accepted_key_ordinal=run.accepted_key_ordinal,
+            accepted_key_tier=run.accepted_key_tier,
+            paid_backup_policy=run.paid_backup_policy,
+        )
         if (
-            not _is_int(run.configured_key_count)
-            or not 1 <= int(run.configured_key_count) <= 3
-            or not _is_int(run.accepted_key_ordinal)
+            acceptance_error is not None
             or run_manifest.get("configured_key_count") != run.configured_key_count
             or run_manifest.get("accepted_key_ordinal") != run.accepted_key_ordinal
             or run_manifest.get("direct_audio_input") is not True
@@ -440,7 +445,7 @@ def _validate_audio_lrc_artifact_bindings(
             or not run.api_audio_sha256
             or not _is_int(run.api_audio_duration_ms)
         ):
-            raise ValueError("Gemini API audio failover metadata is incomplete")
+            raise ValueError(acceptance_error or "Gemini API audio failover metadata is incomplete")
         key_tier = run.accepted_key_tier or "free"
         if key_tier == "free":
             # Legacy manifests predate accepted_key_tier; a free acceptance
@@ -460,19 +465,11 @@ def _validate_audio_lrc_artifact_bindings(
             # failure rounds for this exact audio. Free keys always ran
             # first (ordinal == free count + 1). No hard cap by policy.
             policy = run.paid_backup_policy
-            gate_ok = isinstance(policy, Mapping) and (
-                policy.get("mode") == "dev_exception"
-                or (
-                    _is_int(policy.get("free_chain_strikes"))
-                    and int(policy["free_chain_strikes"]) >= 3
-                )
-            )
             if (
                 int(run.accepted_key_ordinal) != int(run.configured_key_count) + 1
                 or run_manifest.get("accepted_key_tier") != "paid_backup"
                 or not isinstance(policy, Mapping)
                 or run_manifest.get("paid_backup_policy") != dict(policy)
-                or not gate_ok
             ):
                 raise ValueError("paid Gemini backup acceptance violates the usage gate")
         else:

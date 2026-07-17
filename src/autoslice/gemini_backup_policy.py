@@ -29,12 +29,55 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Mapping
 
 PAID_KEY_ENV = "GEMINI_KEY_BACKUP"
 DEV_EXCEPTION_ENV = "GEMINI_PAID_BACKUP_DEV_EXCEPTION"
 MIN_FREE_CHAIN_STRIKES = 3
 PAID_KEY_TIER = "paid_backup"
 FREE_KEY_TIER = "free"
+
+
+def validate_key_acceptance_metadata(
+    *,
+    configured_key_count: object,
+    accepted_key_ordinal: object,
+    accepted_key_tier: object,
+    paid_backup_policy: object,
+) -> str | None:
+    """Validate the shared free-chain/paid-backup proof carried by artifacts."""
+
+    if (
+        not isinstance(configured_key_count, int)
+        or isinstance(configured_key_count, bool)
+        or not 1 <= configured_key_count <= 3
+        or not isinstance(accepted_key_ordinal, int)
+        or isinstance(accepted_key_ordinal, bool)
+    ):
+        return "Gemini API audio failover metadata is incomplete"
+    key_tier = accepted_key_tier or FREE_KEY_TIER
+    if key_tier == FREE_KEY_TIER:
+        if (
+            not 1 <= accepted_key_ordinal <= configured_key_count
+            or accepted_key_tier not in (None, FREE_KEY_TIER)
+            or paid_backup_policy is not None
+        ):
+            return "Gemini API audio failover metadata is incomplete"
+        return None
+    if key_tier == PAID_KEY_TIER:
+        policy = paid_backup_policy
+        gate_ok = isinstance(policy, Mapping) and (
+            policy.get("mode") == "dev_exception"
+            or (
+                isinstance(policy.get("free_chain_strikes"), int)
+                and not isinstance(policy.get("free_chain_strikes"), bool)
+                and int(policy["free_chain_strikes"]) >= MIN_FREE_CHAIN_STRIKES
+            )
+        )
+        if accepted_key_ordinal != configured_key_count + 1 or not gate_ok:
+            return "paid Gemini backup acceptance violates the usage gate"
+        return None
+    return "Gemini API audio failover key tier is unknown"
 
 
 def _ledger_root() -> Path:
