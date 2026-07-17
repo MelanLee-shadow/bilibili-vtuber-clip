@@ -27,7 +27,7 @@ SRT_BLOCK_RE = re.compile(
     r"(.*?)(?=\n{2,}|\Z)"
 )
 PUNCTUATION_INSENSITIVE_TEXT_RE = re.compile(
-    r"""[\s,，。.!！?？:：;；"'“”‘’()（）《》〈〉【】\[\]…—-]+"""
+    r"""[\s,，、。.!！?？:：;；"'“”‘’()（）《》〈〉【】\[\]…—-]+"""
 )
 
 

@@ -55,6 +55,7 @@ from src.autoslice.session_topic_authority import (
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
+    apply_impossible_punctuation_guard,
     apply_source_language_preservation_guard,
     apply_title_mark_balance_guard,
     audit_foreign_script_consistency,
@@ -708,6 +709,12 @@ def _finalize_text_evidence(
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
     chat_authority_audit["title_mark_balance_audit"] = title_mark_balance_audit
+    srt_text, impossible_punctuation_audit = apply_impossible_punctuation_guard(
+        srt_text
+    )
+    chat_authority_audit[
+        "impossible_punctuation_audit"
+    ] = impossible_punctuation_audit
     srt_text, final_session_topic_absorption_audit = absorb_session_topic_entities(
         srt_text, session_topic_authorities
     )

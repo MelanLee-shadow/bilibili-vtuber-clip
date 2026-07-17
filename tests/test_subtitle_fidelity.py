@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
+    apply_impossible_punctuation_guard,
     apply_source_language_preservation_guard,
     apply_subtitle_fidelity_guard,
     apply_title_mark_balance_guard,
@@ -303,3 +304,15 @@ def test_title_mark_guard_does_not_break_a_title_spanning_two_cues():
     assert guarded == source
     assert audit["status"] == "UNRESOLVED_COMPLEX_IMBALANCE"
     assert audit["repair_count"] == 0
+
+
+def test_impossible_punctuation_guard_collapses_comma_before_terminal_mark():
+    guarded, audit = apply_impossible_punctuation_guard(
+        _srt("豆沙绯闻女友ID已被注册，。", "真的吗？！", "正常，停顿")
+    )
+
+    assert "豆沙绯闻女友ID已被注册。" in guarded
+    assert "真的吗？！" in guarded
+    assert "正常，停顿" in guarded
+    assert audit["status"] == "APPLIED"
+    assert audit["repair_count"] == 1

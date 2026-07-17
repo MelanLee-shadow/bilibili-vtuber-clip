@@ -68,6 +68,7 @@ _EMBEDDED_LATIN_WORD_RX = re.compile(
     r"(?<![A-Za-z])[A-Za-z]+(?:['’-][A-Za-z]+)?(?![A-Za-z])"
 )
 _SRT_CLOCK_RX = re.compile(r"^(\d{2}):(\d{2}):(\d{2}),(\d{3})$")
+_IMPOSSIBLE_PUNCTUATION_RX = re.compile(r"[,，]\s*([。！？!?])")
 _SAFE_CODE_SWITCH_WORDS = frozenset(
     {
         "ado",
@@ -744,6 +745,39 @@ def apply_title_mark_balance_guard(
     if audit["unresolved"]:
         audit["status"] = "UNRESOLVED_COMPLEX_IMBALANCE"
     elif audit["repairs"]:
+        audit["status"] = "APPLIED"
+    audit["repair_count"] = len(audit["repairs"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+def apply_impossible_punctuation_guard(
+    srt_text: str,
+) -> tuple[str, dict[str, Any]]:
+    """Collapse comma-plus-terminal punctuation without changing any words."""
+
+    cues = parse_srt_cues(srt_text)
+    audit: dict[str, Any] = {
+        "schema_version": "impossible-punctuation-audit.v1",
+        "status": "CLEAN",
+        "repairs": [],
+    }
+    rendered: list[str] = []
+    for index, cue in enumerate(cues, start=1):
+        repaired = _IMPOSSIBLE_PUNCTUATION_RX.sub(r"\1", cue.text)
+        if repaired != cue.text:
+            audit["repairs"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                    "before": cue.text,
+                    "after": repaired,
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(cue.start_ms)} --> {_ms_to_ts(cue.end_ms)}\n{repaired}"
+        )
+    if audit["repairs"]:
         audit["status"] = "APPLIED"
     audit["repair_count"] = len(audit["repairs"])
     return "\n\n".join(rendered) + ("\n" if rendered else ""), audit

@@ -1,8 +1,8 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_162645_712_967",
-  "source_cue_witness_sha256": "e2f3fde984eba1b1d3aeba35ccc65b3027b2c58412db38d2719bff760d9d806d",
-  "decision_output_witness_sha256": "db60e29f58ad844d12c27ce0d82ee1dd875a3367c22b89a9df6898c4678ef982",
+  "source_cue_witness_sha256": "e0a2ae686ffc2834e919d670dac7a1366eaed816a0d136c3bd0c9c0e29558543",
+  "decision_output_witness_sha256": "4b397178581a90f0640e86ef853377a823b7d5f56d3f65be64e48237a37fa911",
   "overrides": [
     {
       "source_cue": 12,
@@ -11,7 +11,7 @@
         "start": "00:00:47,790",
         "end": "00:00:49,590"
       },
-      "pattern": "侄女女友喜欢吗[？?]?[”\"]?",
+      "pattern": "侄女女友喜欢吗[？?]?[”\"]?(?:说[。.]?)?",
       "text": "直女女友喜欢吗？",
       "authority": "The surrounding sexuality/type discussion establishes 直女; 侄女 is a homophone with no valid referent",
       "reason": "Correct the contextually impossible homophone without freezing optional surrounding words"
