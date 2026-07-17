@@ -3136,8 +3136,13 @@ def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, m
     assert "delivered" not in result
 
 
-@pytest.mark.parametrize("audio_provider", ["agy", "gemini_api"])
-def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(tmp_path, monkeypatch, audio_provider):
+@pytest.mark.parametrize(
+    ("audio_provider", "paid_backup"),
+    [("agy", False), ("gemini_api", False), ("gemini_api", True)],
+)
+def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(
+    tmp_path, monkeypatch, audio_provider, paid_backup
+):
     report = tmp_path / "song.lyrics-alignment-report.json"
     report_payload = {
         "schema_version": "lyrics-alignment-report.v1",
@@ -3164,6 +3169,7 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
         source_media=source,
         candidate_id="song-proof",
         provider=audio_provider,
+        paid_backup=paid_backup,
     )
     host_vocal_claim, host_vocal_profile = make_ready_host_vocal_claim(
         tmp_path / "host-vocal",

@@ -22,6 +22,7 @@ from src.autoslice.verified_io import (
     _canonical_existing_path,
     _normalized_sha256,
 )
+from src.autoslice.gemini_backup_policy import validate_key_acceptance_metadata
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
@@ -350,6 +351,12 @@ def _validate_audio_artifacts(
             source_duration_for_api = audio_artifacts.get("source_duration_ms")
             configured_key_count = audio_manifest.get("configured_key_count")
             accepted_key_ordinal = audio_manifest.get("accepted_key_ordinal")
+            key_acceptance_error = validate_key_acceptance_metadata(
+                configured_key_count=configured_key_count,
+                accepted_key_ordinal=accepted_key_ordinal,
+                accepted_key_tier=audio_manifest.get("accepted_key_tier"),
+                paid_backup_policy=audio_manifest.get("paid_backup_policy"),
+            )
             if (
                 audio_manifest.get("direct_audio_input") is not True
                 or not isinstance(api_audio_path, str)
@@ -362,10 +369,7 @@ def _validate_audio_artifacts(
                 or manifest_artifacts.get("api_audio_path") != api_audio_path
                 or manifest_artifacts.get("api_audio_sha256") != api_audio_sha
                 or manifest_artifacts.get("api_audio_duration_ms") != api_audio_duration_ms
-                or not is_int(configured_key_count)
-                or not 1 <= configured_key_count <= 3
-                or not is_int(accepted_key_ordinal)
-                or not 1 <= accepted_key_ordinal <= configured_key_count
+                or key_acceptance_error is not None
             ):
                 failures.append("SONG_AUDIO_LRC_API_AUDIO_BINDING_INVALID")
         raw_value = audio_artifacts.get("raw_output_path")
@@ -1120,6 +1124,9 @@ def _validate_recut_bindings(
     report_post_anchor = report.get("post_song_talk_start_ms") if isinstance(report, dict) else None
     host_anchor = host_proof.get("session_host_anchor") if isinstance(host_proof, dict) else None
     host_anchor_start = host_anchor.get("start_ms") if isinstance(host_anchor, dict) else None
+    # The performance report binds the earliest post-song talk boundary.  The
+    # verified voiceprint sample may start later when the first window contains
+    # residual music or overlap; its own proof constrains that bounded search.
     if (
         not all(is_int(value) for value in (start_ms, end_ms, duration_ms))
         or duration_ms != end_ms - start_ms
@@ -1127,7 +1134,7 @@ def _validate_recut_bindings(
         or (recut_manifest.get("requested_range") if isinstance(recut_manifest, dict) else None) != expected_interval
         or not is_int(report_post_anchor)
         or not is_int(host_anchor_start)
-        or report_post_anchor != host_anchor_start
+        or report_post_anchor > host_anchor_start
         or (output_binding.get("post_song_anchor_start_ms") if isinstance(output_binding, dict) else None) != report_post_anchor
         or (proofs.get("post_song_anchor_start_ms") if isinstance(proofs, dict) else None) != report_post_anchor
     ):

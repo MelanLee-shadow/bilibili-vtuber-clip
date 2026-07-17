@@ -63,7 +63,12 @@ def _ensure_alignment_rows(alignment: dict[str, object]) -> None:
 
 
 def bind_ready_live_performance_report(
-    report_path: Path, *, source_media: Path, candidate_id: str, provider: str = "agy"
+    report_path: Path,
+    *,
+    source_media: Path,
+    candidate_id: str,
+    provider: str = "agy",
+    paid_backup: bool = False,
 ) -> None:
     """Upgrade a synthetic alignment report to the bound AGY-v5 contract."""
 
@@ -191,6 +196,17 @@ def bind_ready_live_performance_report(
             }
         )
     model = "gemini-3.5-flash" if is_gemini_api else "Gemini 3.5 Flash (High)"
+    configured_key_count = 3 if paid_backup else 2 if is_gemini_api else None
+    accepted_key_ordinal = 4 if paid_backup else 2 if is_gemini_api else None
+    paid_backup_policy = (
+        {
+            "key_tier": "paid_backup",
+            "mode": "strict",
+            "free_chain_strikes": 3,
+        }
+        if paid_backup
+        else None
+    )
     _write_json(
         manifest,
         {
@@ -203,8 +219,10 @@ def bind_ready_live_performance_report(
             "agy_failure_category": "AGY_QUOTA_EXHAUSTED" if is_gemini_api else None,
             "sandbox": not is_gemini_api,
             "direct_audio_input": is_gemini_api,
-            "configured_key_count": 2 if is_gemini_api else None,
-            "accepted_key_ordinal": 2 if is_gemini_api else None,
+            "configured_key_count": configured_key_count,
+            "accepted_key_ordinal": accepted_key_ordinal,
+            **({"accepted_key_tier": "paid_backup"} if paid_backup else {}),
+            **({"paid_backup_policy": paid_backup_policy} if paid_backup else {}),
             **(
                 {
                     "canonicalization": {
