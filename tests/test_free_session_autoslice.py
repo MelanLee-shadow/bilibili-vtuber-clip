@@ -940,6 +940,33 @@ def test_song_core_span_trims_leading_talk_and_outro(tmp_path):
     assert runner._song_core_span(srt, 0, 60_000) == (0, 60_000)
 
 
+def test_song_work_item_normalizes_persisted_attempt_row(tmp_path, monkeypatch):
+    from src.autoslice.song_lane import normalize_song_work_item
+
+    date = "2026-07-16"
+    segment = tmp_path / date / "recording.mp4"
+    segment.parent.mkdir()
+    segment.write_bytes(b"recording")
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda path: 491_270 if path == segment else 0)
+
+    normalized = normalize_song_work_item(
+        date,
+        {
+            "candidate_id": "song_200010_41",
+            "segment": segment.name,
+            "anchor_start_ms": 41_860,
+            "anchor_end_ms": 131_270,
+            "discovery_lane": "semantic_recall",
+        },
+    )
+
+    assert normalized["cid"] == "song_200010_41"
+    assert normalized["segment_path"] == str(segment)
+    assert normalized["seg_dur_ms"] == 491_270
+    assert normalized["lane"] == "semantic_recall"
+
+
 def test_extracted_song_lane_helpers_preserve_runner_patch_surface(tmp_path, monkeypatch):
     """Moving helpers out of the runner must not bypass its public patch seam."""
 

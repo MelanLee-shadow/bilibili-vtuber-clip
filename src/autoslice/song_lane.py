@@ -456,6 +456,7 @@ def produce_song(date: str, item: dict) -> dict:
     early_block = _early_published_song_block(item)
     if early_block is not None:
         return early_block
+    item = normalize_song_work_item(date, item)
 
     seg_dur_ms = item["seg_dur_ms"]
     segment = Path(item["segment_path"])
@@ -749,3 +750,42 @@ def produce_song(date: str, item: dict) -> dict:
             if retry.get("window_classified_song") or retry.get("delivered"):
                 result = {**retry, "retried_core": True}
     return result
+
+
+def normalize_song_work_item(date: str, item: dict) -> dict:
+    """Accept both discovery queue items and persisted completed-attempt rows."""
+
+    normalized = dict(item)
+    cid = str(normalized.get("cid") or normalized.get("candidate_id") or "").strip()
+    if not cid:
+        raise ValueError("song work item is missing cid/candidate_id")
+    segment_value = str(
+        normalized.get("segment_path") or normalized.get("segment") or ""
+    ).strip()
+    if not segment_value:
+        raise ValueError(f"song work item {cid} is missing segment_path/segment")
+    segment = Path(segment_value)
+    if not segment.is_absolute():
+        segment = _runner.REC_ROOT / date / segment.name
+    seg_dur_ms = normalized.get("seg_dur_ms")
+    if (
+        not isinstance(seg_dur_ms, int)
+        or isinstance(seg_dur_ms, bool)
+        or seg_dur_ms <= 0
+    ):
+        seg_dur_ms = _runner.ffprobe_ms(segment)
+    if seg_dur_ms <= 0:
+        raise ValueError(f"song work item {cid} has no valid source duration")
+    for key in ("anchor_start_ms", "anchor_end_ms"):
+        value = normalized.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"song work item {cid} is missing {key}")
+    normalized.update(
+        {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": seg_dur_ms,
+            "lane": normalized.get("lane") or normalized.get("discovery_lane"),
+        }
+    )
+    return normalized
