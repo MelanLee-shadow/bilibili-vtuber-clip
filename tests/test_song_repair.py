@@ -96,7 +96,7 @@ def test_default_profile_keeps_the_pre_profile_audio_lrc_prompt_byte_identical()
     )
 
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "ac3083f82942169e2c359bc6671e88dcb51e7a68ab7085b930fbaee54bfe9212"
+        "155132160ebb2909e98df39e28ce5f8bbf0312eede8e616c8f224fa7be383097"
     )
     assert "live_start_ms <= tail < live_end_ms" in prompt
     assert "voiceprint gate; that speaker-similarity gate is not a singing classifier" in prompt
@@ -2046,6 +2046,159 @@ def test_complete_live_arrangement_accepts_real_gudan_tail_repeat_omission(tmp_p
     assert [text for _time_ms, text in timeline[0]] == [line.text for line in lrc.lines[:28]]
 
 
+def _bound_long_instrumental_gap_payload(tmp_path, *, inserted_gap_ms: int = 66_000):
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        _japanese_lrc(),
+        source_duration_ms=300_000,
+    )
+    payload = json.loads(json.dumps(run.payload))
+    observations = payload["observations"]
+    for row in observations[5:]:
+        row["live_start_ms"] += inserted_gap_ms
+        row["live_end_ms"] += inserted_gap_ms
+    payload["post_song_talk_start_ms"] += inserted_gap_ms
+    payload["live_arrangement"]["post_song_transition_ms"] += inserted_gap_ms
+    gap_start_ms = observations[4]["live_end_ms"]
+    gap_end_ms = observations[5]["live_start_ms"]
+    instrumental_spot = next(
+        spot
+        for spot in payload["spot_checks"]
+        if spot["name"] == "longest_instrumental_gap"
+    )
+    instrumental_spot.update(
+        live_time_ms=(gap_start_ms + gap_end_ms) // 2,
+        notes="audible guitar solo with no lyric vocal",
+    )
+    payload["live_performance"]["evidence"] = [
+        {
+            "time_ms": observations[1]["live_start_ms"],
+            "observation": "Li Dousha singing before the solo",
+        },
+        {
+            "time_ms": observations[4]["live_start_ms"],
+            "observation": "Li Dousha singing immediately before the solo",
+        },
+        {
+            "time_ms": observations[8]["live_start_ms"],
+            "observation": "same Li Dousha vocal resumes after the solo",
+        },
+    ]
+    return payload, gap_start_ms, gap_end_ms
+
+
+def test_live_arrangement_accepts_hash_bound_long_instrumental_bridge(tmp_path):
+    payload, gap_start_ms, gap_end_ms = _bound_long_instrumental_gap_payload(tmp_path)
+
+    result = song_repair.derive_live_arrangement_completeness(
+        observations=payload["observations"],
+        live_arrangement=payload["live_arrangement"],
+        post_song_talk_start_ms=payload["post_song_talk_start_ms"],
+        source_duration_ms=300_000,
+        spot_checks=payload["spot_checks"],
+        live_performance=payload["live_performance"],
+    )
+
+    assert result["classification"] == "FULL_STUDIO_SEQUENCE"
+    assert result["instrumental_gap_proof"] == {
+        "spot_check_ms": (gap_start_ms + gap_end_ms) // 2,
+        "bound_span_kind": "INTERLINE",
+        "long_spans": [
+            {
+                "kind": "INTERLINE",
+                "start_ms": gap_start_ms,
+                "end_ms": gap_end_ms,
+                "duration_ms": gap_end_ms - gap_start_ms,
+                "before_lrc_index": 4,
+                "after_lrc_index": 5,
+            }
+        ],
+    }
+
+
+def test_live_arrangement_accepts_hash_bound_long_instrumental_outro(tmp_path):
+    run = _write_fake_audio_alignment_run(
+        tmp_path,
+        _japanese_lrc(),
+        source_duration_ms=200_000,
+    )
+    payload = json.loads(json.dumps(run.payload))
+    observations = payload["observations"]
+    last_end_ms = observations[-1]["live_end_ms"]
+    transition_ms = last_end_ms + 66_000
+    payload["post_song_talk_start_ms"] = transition_ms
+    payload["live_arrangement"]["post_song_transition_ms"] = transition_ms
+    instrumental_spot = next(
+        spot
+        for spot in payload["spot_checks"]
+        if spot["name"] == "longest_instrumental_gap"
+    )
+    instrumental_spot.update(
+        live_time_ms=last_end_ms + 33_000,
+        notes="audible instrumental outro before host talk",
+    )
+
+    result = song_repair.derive_live_arrangement_completeness(
+        observations=observations,
+        live_arrangement=payload["live_arrangement"],
+        post_song_talk_start_ms=payload["post_song_talk_start_ms"],
+        source_duration_ms=200_000,
+        spot_checks=payload["spot_checks"],
+        live_performance=payload["live_performance"],
+    )
+
+    assert result["instrumental_gap_proof"]["bound_span_kind"] == "OUTRO"
+    assert result["instrumental_gap_proof"]["long_spans"] == [
+        {
+            "kind": "OUTRO",
+            "start_ms": last_end_ms,
+            "end_ms": transition_ms,
+            "duration_ms": 66_000,
+            "before_lrc_index": len(observations) - 1,
+            "after_lrc_index": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "inserted_gap_ms"),
+    [
+        ("spot_outside_gap", 66_000),
+        ("no_host_singing_after_gap", 66_000),
+        ("gap_above_hard_cap", 121_000),
+    ],
+)
+def test_live_arrangement_long_gap_without_closed_instrumental_proof_fails(
+    tmp_path,
+    mutation,
+    inserted_gap_ms,
+):
+    payload, gap_start_ms, _gap_end_ms = _bound_long_instrumental_gap_payload(
+        tmp_path,
+        inserted_gap_ms=inserted_gap_ms,
+    )
+    if mutation == "spot_outside_gap":
+        next(
+            spot
+            for spot in payload["spot_checks"]
+            if spot["name"] == "longest_instrumental_gap"
+        )["live_time_ms"] = gap_start_ms - 1
+    elif mutation == "no_host_singing_after_gap":
+        payload["live_performance"]["evidence"][-1]["time_ms"] = payload["observations"][3][
+            "live_start_ms"
+        ]
+
+    with pytest.raises(ValueError, match="unexplained .* interruption"):
+        song_repair.derive_live_arrangement_completeness(
+            observations=payload["observations"],
+            live_arrangement=payload["live_arrangement"],
+            post_song_talk_start_ms=payload["post_song_talk_start_ms"],
+            source_duration_ms=300_000,
+            spot_checks=payload["spot_checks"],
+            live_performance=payload["live_performance"],
+        )
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected_error"),
     [
@@ -2960,12 +3113,54 @@ def test_parse_lrc_text_skips_metadata_and_sorts():
         "[03:45.00]音乐制作 : ChiliChill乐团\n"
         "[03:47.00]贝斯演奏 : 李彦希\n"
         "[03:48.00]混音、母带 : ChiliChill乐团\n"
+        "[03:49.00]混音工程师 : Chifumi Karasawa\n"
+        "[02:15.00]SOLO\n"
+        "[02:16.00][Instrumental break]\n"
+        "[02:17.00]吉他独奏\n"
         "[00:12.50]第二句\n[00:02.00]第一句\n[junk]\n"
     )
     lines = parse_lrc_text(lrc)
     assert [line.text for line in lines] == ["第一句", "第二句"]
     assert lines[0].time_ms == 2_000
     assert lines[1].time_ms == 12_500
+
+
+def test_non_lyric_marker_filter_keeps_real_lyric_sentences():
+    lrc = (
+        "[00:01.00]SOLO\n"
+        "[00:02.00]Instrumental bridge\n"
+        "[00:03.00]ギターソロ\n"
+        "[00:04.00]This guitar solo keeps crying in my room\n"
+        "[00:05.00]你的间奏让我想起从前\n"
+    )
+
+    assert [line.text for line in parse_lrc_text(lrc)] == [
+        "This guitar solo keeps crying in my room",
+        "你的间奏让我想起从前",
+    ]
+
+
+def test_injected_lrc_filters_section_markers_and_credit_engineer_rows():
+    source = LrcResult(
+        provider="fixture",
+        song_title="Live metal song",
+        artist="fixture",
+        source_ref="fixture://live-metal",
+        lines=(
+            LrcLine(1_000, "First sung line"),
+            LrcLine(2_000, "SOLO"),
+            LrcLine(3_000, "Second sung line"),
+            LrcLine(4_000, "混音工程师 : Chifumi Karasawa"),
+        ),
+    )
+
+    singable, removed = song_repair._singable_lrc_result(source)
+
+    assert removed == 2
+    assert [line.text for line in singable.lines] == [
+        "First sung line",
+        "Second sung line",
+    ]
 
 
 def test_parse_lrc_text_filters_real_bilingual_credits_without_keyword_overreach():

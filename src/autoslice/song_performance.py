@@ -32,7 +32,6 @@ from src.autoslice.song_common import (
     MAX_LIVE_ARRANGEMENT_OMITTED_BLOCKS,
     MAX_LIVE_ARRANGEMENT_OMITTED_RATIO,
     MAX_LIVE_ARRANGEMENT_OMITTED_ROWS,
-    MAX_LIVE_ARRANGEMENT_OUTRO_MS,
     MAX_READY_CONSECUTIVE_SPOKEN_LYRIC_ROWS,
     MAX_READY_SPOKEN_BLOCKS,
     MAX_READY_SPOKEN_BLOCK_SPAN_MS,
@@ -46,6 +45,7 @@ from src.autoslice.song_common import (
     normalize_lyric_text,
     validate_audio_lrc_execution_metadata,
 )
+from src.autoslice.song_instrumental_proof import prove_long_instrumental_spans
 from src.autoslice.song_lrc_provider import parse_lrc_text
 from src.autoslice.song_alignment import (
     ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS,
@@ -99,6 +99,8 @@ def derive_live_arrangement_completeness(
     live_arrangement: object,
     post_song_talk_start_ms: object,
     source_duration_ms: int,
+    spot_checks: object = None,
+    live_performance: object = None,
 ) -> dict[str, object]:
     """Derive whether the *performed live arrangement* is complete.
 
@@ -146,6 +148,7 @@ def derive_live_arrangement_completeness(
     previous_start_ms: int | None = None
     previous_end_ms: int | None = None
     max_interline_gap_ms = 0
+    interline_gap_bounds: list[tuple[int, int, int, int]] = []
     for index, row in enumerate(observations):
         if not isinstance(row, Mapping) or row.get("lrc_index") != index:
             raise ValueError(f"live arrangement canonical row {index} is invalid")
@@ -184,7 +187,18 @@ def derive_live_arrangement_completeness(
         if previous_end_ms is not None and previous_end_ms - start_ms > 250:
             raise ValueError("live arrangement adjacent heard lyrics overlap by more than 250ms")
         if previous_end_ms is not None:
-            max_interline_gap_ms = max(max_interline_gap_ms, start_ms - previous_end_ms)
+            current_gap_ms = start_ms - previous_end_ms
+            if current_gap_ms > MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS:
+                interline_gap_bounds.append(
+                    (
+                        heard_rows[-1][0],
+                        index,
+                        int(previous_end_ms),
+                        int(start_ms),
+                    )
+                )
+            if current_gap_ms > max_interline_gap_ms:
+                max_interline_gap_ms = current_gap_ms
         heard_rows.append((index, row, int(start_ms), int(end_ms)))
         previous_start_ms = int(start_ms)
         previous_end_ms = int(end_ms)
@@ -202,10 +216,6 @@ def derive_live_arrangement_completeness(
     if performed_duration_ms < MIN_LIVE_ARRANGEMENT_DURATION_MS:
         raise ValueError(
             f"live arrangement performed span is too short: {performed_duration_ms}ms"
-        )
-    if max_interline_gap_ms > MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS:
-        raise ValueError(
-            f"live arrangement contains an unexplained {max_interline_gap_ms}ms interruption"
         )
     middle_start = canonical_count // 3
     tail_start = (canonical_count * 2) // 3
@@ -286,13 +296,21 @@ def derive_live_arrangement_completeness(
     else:
         raise ValueError("live arrangement has no proven post-song transition")
     assert _is_int(transition_ms)
-    if (
-        not last_end_ms <= transition_ms <= source_duration_ms
-        or transition_ms - last_end_ms > MAX_LIVE_ARRANGEMENT_OUTRO_MS
-    ):
+    if not last_end_ms <= transition_ms <= source_duration_ms:
         raise ValueError("live arrangement post-song transition is outside the actual ending boundary")
+    instrumental_gap_proof = prove_long_instrumental_spans(
+        observations=observations,
+        heard_rows=heard_rows,
+        live_arrangement=live_arrangement,
+        live_performance=live_performance,
+        spot_checks=spot_checks,
+        interline_gap_bounds=interline_gap_bounds,
+        last_index=last_index,
+        last_end_ms=last_end_ms,
+        transition_ms=int(transition_ms),
+    )
 
-    return {
+    result = {
         "classification": derived_classification,
         "canonical_line_count": canonical_count,
         "heard_line_count": heard_count,
@@ -307,6 +325,9 @@ def derive_live_arrangement_completeness(
         "post_song_transition_kind": transition_kind,
         "post_song_transition_ms": transition_ms,
     }
+    if instrumental_gap_proof is not None:
+        result["instrumental_gap_proof"] = instrumental_gap_proof
+    return result
 
 
 def _validate_audio_lrc_artifact_bindings(
@@ -649,6 +670,8 @@ def _build_audio_observation_alignment(
         live_arrangement=payload.get("live_arrangement"),
         post_song_talk_start_ms=payload.get("post_song_talk_start_ms"),
         source_duration_ms=effective_duration_ms,
+        spot_checks=payload.get("spot_checks"),
+        live_performance=payload.get("live_performance"),
     )
     if not alignment:
         raise ValueError("live arrangement has no heard canonical lyrics")

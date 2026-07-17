@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.song_lrc_metadata import is_lrc_section_metadata
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
@@ -120,6 +121,7 @@ MAX_LIVE_ARRANGEMENT_OMITTED_ROWS = 12
 MAX_LIVE_ARRANGEMENT_OMITTED_RATIO = 0.30
 MAX_LIVE_ARRANGEMENT_OMITTED_BLOCKS = 1
 MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS = 45_000
+MAX_PROVEN_LIVE_INSTRUMENTAL_GAP_MS = 120_000
 MAX_LIVE_ARRANGEMENT_OUTRO_MS = 45_000
 
 
@@ -156,7 +158,7 @@ def live_performance_failure_reason_codes(performance: object) -> tuple[str, ...
 _LRC_CHINESE_CREDIT_HEADS = {
     "作词", "填词", "词", "歌词", "作曲", "曲", "编曲", "制作", "制作人", "音乐制作", "制作统筹",
     "监制", "演唱", "原唱", "主唱", "歌手", "艺术家", "表演者", "录音", "录音师", "录音工程", "录音室",
-    "混音", "混音师", "母带", "母带工程", "配唱", "和声", "合声", "吉他", "吉他演奏", "贝斯", "贝斯演奏",
+    "混音", "混音师", "混音工程", "混音工程师", "母带", "母带工程", "配唱", "和声", "合声", "吉他", "吉他演奏", "贝斯", "贝斯演奏",
     "鼓", "鼓手", "键盘", "钢琴", "木吉他", "电吉他", "弦乐", "小提琴", "大提琴", "摄影", "封面", "封面设计", "平面设计", "美术", "插画", "设计",
     "出品", "发行", "版权", "统筹", "企划", "策划", "后期", "特别鸣谢", "鸣谢",
 }
@@ -178,8 +180,6 @@ _LRC_ENGLISH_BY_CREDIT = re.compile(
     r"mixed|mastered|vocals?|sung|photography|illustration|artwork|cover\s+art)\s+by\s+\S",
     re.IGNORECASE,
 )
-
-
 def _normalized_credit_head(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text).strip().casefold()
     return re.sub(r"\s+", " ", normalized)
@@ -228,6 +228,10 @@ def is_lrc_credit_metadata(text: str) -> bool:
         # role word with otherwise unrelated prose.
         return chinese_credit and english_credit
     return chinese_credit or english_credit
+
+
+def is_lrc_non_lyric_metadata(text: str) -> bool:
+    return is_lrc_credit_metadata(text) or is_lrc_section_metadata(text)
 
 
 @dataclass(frozen=True)
@@ -424,7 +428,7 @@ def _singable_lrc_result(lrc: LrcResult) -> tuple[LrcResult, int]:
     arrangement gate or its coverage denominator.
     """
 
-    singable = tuple(line for line in lrc.lines if not is_lrc_credit_metadata(line.text))
+    singable = tuple(line for line in lrc.lines if not is_lrc_non_lyric_metadata(line.text))
     return (
         LrcResult(
             provider=lrc.provider,

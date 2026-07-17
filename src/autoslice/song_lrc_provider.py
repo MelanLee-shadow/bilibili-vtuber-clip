@@ -15,7 +15,7 @@ from src.autoslice.song_common import (
     LrcProvider,
     LrcResult,
     _lrc_fingerprint,
-    is_lrc_credit_metadata,
+    is_lrc_non_lyric_metadata,
     normalize_lyric_text,
 )
 
@@ -357,7 +357,7 @@ def parse_lrc_text(lrc_text: str) -> list[LrcLine]:
         # structural bilingual classifier covers both the historical Chinese
         # outro credits and English/bilingual rows such as
         # ``录音师 Recording Engineer：...`` without deleting ordinary lyrics.
-        if is_lrc_credit_metadata(text):
+        if is_lrc_non_lyric_metadata(text):
             continue
         for minute, second, fraction in matches:
             fraction_ms = int((fraction or "0").ljust(3, "0")[:3])

@@ -236,6 +236,15 @@ Requirements:
    index plus its performed time binds the check to the canonical LRC row.
    If the LRC contains an exact repeated lyric, `repeated_section` must point
    to a later audible recurrence, not the first occurrence.
+   `longest_instrumental_gap` must point inside the actual longest non-vocal
+   instrumental span, including a solo/bridge or the post-lyric instrumental
+   outro before the proven transition, rather than at a nearby lyric. Compare
+   all inter-lyric gaps and the final-lyric-to-transition gap first; spans
+   within five seconds of one another count as co-longest.
+   If that span is longer than 45 seconds, its notes must identify the audible
+   instrumental event. An inter-lyric span requires host-sung evidence both
+   before and after it; an outro requires host-sung evidence before it plus the
+   observed song ending and the exact post-song transition.
    The `tail` time must be inside the final heard lyric interval using the
    half-open rule `live_start_ms <= tail < live_end_ms`; never copy the final
    row's `live_end_ms` as the tail point.
