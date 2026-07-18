@@ -10,6 +10,9 @@ from .chat_authority import (
     normalize_srt_payload_window,
 )
 
+FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS = 250
+FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO = 0.1
+
 
 def _format_srt_timestamp(ms: int) -> str:
     hours, remainder = divmod(ms, 3_600_000)
@@ -99,8 +102,25 @@ def verify_chat_authority_final_surfaces(
         matched_start = int(row["matched_start_ms"])
         matched_end = int(row["matched_end_ms"])
         row["final_verification_kind"] = kind
-        if matched_end <= delivery_start_ms or matched_start >= delivery_end_ms:
+        overlap_ms = max(
+            0,
+            min(matched_end, delivery_end_ms)
+            - max(matched_start, delivery_start_ms),
+        )
+        matched_duration_ms = max(1, matched_end - matched_start)
+        overlap_ratio = overlap_ms / matched_duration_ms
+        row["final_delivery_overlap_ms"] = overlap_ms
+        row["final_delivery_overlap_ratio"] = round(overlap_ratio, 6)
+        boundary_sliver = (
+            overlap_ms < FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS
+            and overlap_ratio < FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
+        )
+        if overlap_ms == 0 or boundary_sliver:
             row["final_verification_scope"] = "OUTSIDE_DELIVERY"
+            if boundary_sliver:
+                row["final_verification_scope_reason"] = (
+                    "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
+                )
             continue
         row["final_verification_scope"] = "DELIVERY"
         relative_start = max(0, matched_start - delivery_start_ms)

@@ -2350,3 +2350,52 @@ def test_final_surface_verification_ignores_matched_padding_outside_delivery():
         delivery_end_ms=20_000,
     )
     assert audit["applied"][0]["final_verification_scope"] == "OUTSIDE_DELIVERY"
+
+
+def test_final_surface_verification_ignores_ten_ms_boundary_sliver():
+    audit = {
+        "applied": [
+            {
+                "exact_text": "沧月第一首结束叫的，我第二首结束叫的",
+                "matched_start_ms": 6_880,
+                "matched_end_ms": 9_760,
+            }
+        ]
+    }
+    final_text = _srt("真正交付内容")
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=9_750,
+        delivery_end_ms=251_680,
+    )
+    row = audit["applied"][0]
+    assert row["final_verification_scope"] == "OUTSIDE_DELIVERY"
+    assert row["final_delivery_overlap_ms"] == 10
+    assert row["final_verification_scope_reason"] == (
+        "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
+    )
+
+
+def test_final_surface_verification_keeps_meaningful_boundary_overlap_strict():
+    audit = {
+        "applied": [
+            {
+                "exact_text": "跨边界仍在交付内的整句",
+                "matched_start_ms": 9_700,
+                "matched_end_ms": 10_700,
+            }
+        ]
+    }
+    final_text = _srt("交付字幕没有这句")
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=9_750,
+        delivery_end_ms=20_000,
+    )
+    assert audit["applied"][0]["final_verification_scope"] == "DELIVERY"
