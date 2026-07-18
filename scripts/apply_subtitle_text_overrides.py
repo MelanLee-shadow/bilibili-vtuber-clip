@@ -117,7 +117,38 @@ def _expected_text_matches(
     return False
 
 
-def _expect(cue: TextCue, override: dict[str, Any]) -> None:
+def _srt_clock_ms(value: str) -> int:
+    match = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})", value)
+    if match is None:
+        raise ValueError(f"invalid SRT timestamp: {value!r}")
+    hours, minutes, seconds, millis = (int(part) for part in match.groups())
+    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
+
+
+def _shift_srt_clock(value: str, offset_ms: int) -> str:
+    shifted_ms = _srt_clock_ms(value) - offset_ms
+    if shifted_ms < 0:
+        raise ValueError(
+            f"timeline override timestamp {value!r} precedes "
+            f"the recut offset {offset_ms}ms"
+        )
+    hours, remainder = divmod(shifted_ms, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _timeline_value(value: Any, timeline_offset_ms: int) -> str:
+    raw = str(value or "")
+    return _shift_srt_clock(raw, timeline_offset_ms) if timeline_offset_ms else raw
+
+
+def _expect(
+    cue: TextCue,
+    override: dict[str, Any],
+    *,
+    timeline_offset_ms: int = 0,
+) -> None:
     action = str(override.get("action", "replace"))
     if action in {"replace_substring", "replace_pattern"}:
         locator = override.get("locator")
@@ -174,7 +205,10 @@ def _expect(cue: TextCue, override: dict[str, Any]) -> None:
             raise ValueError(
                 f"override for cue {cue.source_index} {field}_alternatives must be a string list"
             )
-        allowed = [expected.get(field), *alternatives]
+        allowed = [
+            _timeline_value(value, timeline_offset_ms)
+            for value in [expected.get(field), *alternatives]
+        ]
         if getattr(cue, field) not in allowed:
             raise ValueError(
                 f"source cue {cue.source_index} {field} drift: "
@@ -182,7 +216,12 @@ def _expect(cue: TextCue, override: dict[str, Any]) -> None:
             )
 
 
-def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, dict[str, Any]]:
+def _override_map(
+    cues: list[TextCue],
+    document: dict[str, Any],
+    *,
+    timeline_offset_ms: int = 0,
+) -> dict[int, dict[str, Any]]:
     schema_version = document.get("schema_version")
     if schema_version not in {1, 2, 3}:
         raise ValueError("text override schema_version must be 1, 2, or 3")
@@ -202,8 +241,8 @@ def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, di
                     raise ValueError(
                         f"timeline override {declared_source_index} is missing locator"
                     )
-                start = str(locator.get("start") or "")
-                end = str(locator.get("end") or "")
+                start = _timeline_value(locator.get("start"), timeline_offset_ms)
+                end = _timeline_value(locator.get("end"), timeline_offset_ms)
                 old_text = str(override.get("old_text") or "")
                 pattern = str(override.get("pattern") or "")
                 compiled_pattern = None
@@ -240,8 +279,8 @@ def _override_map(cues: list[TextCue], document: dict[str, Any]) -> dict[int, di
                     raise ValueError(
                         f"timeline override {declared_source_index} is missing expect"
                     )
-                start = str(expected.get("start") or "")
-                end = str(expected.get("end") or "")
+                start = _timeline_value(expected.get("start"), timeline_offset_ms)
+                end = _timeline_value(expected.get("end"), timeline_offset_ms)
                 matches = [
                     cue.source_index
                     for cue in cues
@@ -276,10 +315,17 @@ def _canonical_sha256(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> str:
+def source_cue_witness_sha256(
+    cues: list[TextCue],
+    document: dict[str, Any],
+    *,
+    timeline_offset_ms: int = 0,
+) -> str:
     """Bind only reviewed source cues while still binding candidate and cue layout."""
 
-    by_index = _override_map(cues, document)
+    by_index = _override_map(
+        cues, document, timeline_offset_ms=timeline_offset_ms
+    )
 
     def witnessed_value(cue: TextCue, override: dict[str, Any], field: str) -> str:
         expected = override.get("expect")
@@ -295,12 +341,21 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
             else [primary]
         )
         actual = getattr(cue, field)
-        return str(primary) if actual in allowed else actual
+        match_values = (
+            [_timeline_value(value, timeline_offset_ms) for value in allowed]
+            if field in {"start", "end"}
+            else allowed
+        )
+        return str(primary) if actual in match_values else actual
 
     timeline_bound = document.get("schema_version") == 3
     if timeline_bound:
         for source_index, override in by_index.items():
-            _expect(cues[source_index - 1], override)
+            _expect(
+                cues[source_index - 1],
+                override,
+                timeline_offset_ms=timeline_offset_ms,
+            )
 
     def witness_row(source_index: int) -> dict[str, Any]:
         override = by_index[source_index]
@@ -375,15 +430,26 @@ def source_cue_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> 
     return _canonical_sha256(payload)
 
 
-def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]) -> str:
+def decision_output_witness_sha256(
+    cues: list[TextCue],
+    document: dict[str, Any],
+    *,
+    timeline_offset_ms: int = 0,
+) -> str:
     """Bind the reviewed decisions without binding unrelated automatic cues."""
 
-    by_index = _override_map(cues, document)
+    by_index = _override_map(
+        cues, document, timeline_offset_ms=timeline_offset_ms
+    )
     timeline_bound = document.get("schema_version") == 3
     if timeline_bound:
         reviewed_outputs = []
         for source_index, override in sorted(by_index.items()):
-            _expect(cues[source_index - 1], override)
+            _expect(
+                cues[source_index - 1],
+                override,
+                timeline_offset_ms=timeline_offset_ms,
+            )
             action = str(override.get("action", "replace"))
             row: dict[str, Any] = {
                 "source_cue": int(override.get("source_cue", 0)),
@@ -471,8 +537,15 @@ def decision_output_witness_sha256(cues: list[TextCue], document: dict[str, Any]
     return _canonical_sha256(payload)
 
 
-def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list[TextCue], list[dict[str, Any]]]:
-    by_index = _override_map(cues, document)
+def apply_overrides(
+    cues: list[TextCue],
+    document: dict[str, Any],
+    *,
+    timeline_offset_ms: int = 0,
+) -> tuple[list[TextCue], list[dict[str, Any]]]:
+    by_index = _override_map(
+        cues, document, timeline_offset_ms=timeline_offset_ms
+    )
 
     output: list[TextCue] = []
     decisions: list[dict[str, Any]] = []
@@ -481,7 +554,7 @@ def apply_overrides(cues: list[TextCue], document: dict[str, Any]) -> tuple[list
         if override is None:
             output.append(cue)
             continue
-        _expect(cue, override)
+        _expect(cue, override, timeline_offset_ms=timeline_offset_ms)
         action = str(override.get("action", "replace"))
         if action == "drop":
             if not str(override.get("reason", "")).strip():
@@ -629,11 +702,22 @@ def validate_bound_override_document(
     return document
 
 
-def apply_document(source: Path, document_path: Path, output: Path, manifest_path: Path) -> dict[str, Any]:
+def apply_document(
+    source: Path,
+    document_path: Path,
+    output: Path,
+    manifest_path: Path,
+    *,
+    timeline_offset_ms: int = 0,
+) -> dict[str, Any]:
     document = json.loads(document_path.read_text(encoding="utf-8"))
     actual_source_hash = sha256_file(source)
     source_cues = parse_srt(source)
     schema_version = document.get("schema_version")
+    if timeline_offset_ms < 0:
+        raise ValueError("timeline_offset_ms must be non-negative")
+    if timeline_offset_ms and schema_version != 3:
+        raise ValueError("timeline_offset_ms is supported only for schema_version 3")
     witness_manifest: dict[str, Any] = {}
     if schema_version == 1:
         expected_source_hash = str(document.get("source_srt_sha256", ""))
@@ -652,14 +736,22 @@ def apply_document(source: Path, document_path: Path, output: Path, manifest_pat
                     "source cue count drift: "
                     f"expected {expected_cue_count}, got {len(source_cues)}"
                 )
-        actual_source_witness = source_cue_witness_sha256(source_cues, document)
+        actual_source_witness = source_cue_witness_sha256(
+            source_cues,
+            document,
+            timeline_offset_ms=timeline_offset_ms,
+        )
         expected_source_witness = str(document.get("source_cue_witness_sha256", ""))
         if actual_source_witness != expected_source_witness:
             raise ValueError(
                 "reviewed source cue witness mismatch: "
                 f"expected {expected_source_witness!r}, got {actual_source_witness!r}"
             )
-        actual_decision_witness = decision_output_witness_sha256(source_cues, document)
+        actual_decision_witness = decision_output_witness_sha256(
+            source_cues,
+            document,
+            timeline_offset_ms=timeline_offset_ms,
+        )
         expected_decision_witness = str(document.get("decision_output_witness_sha256", ""))
         if actual_decision_witness != expected_decision_witness:
             raise ValueError(
@@ -673,7 +765,11 @@ def apply_document(source: Path, document_path: Path, output: Path, manifest_pat
         }
     else:
         raise ValueError("text override schema_version must be 1, 2, or 3")
-    output_cues, decisions = apply_overrides(source_cues, document)
+    output_cues, decisions = apply_overrides(
+        source_cues,
+        document,
+        timeline_offset_ms=timeline_offset_ms,
+    )
     write_srt(output_cues, output)
     declared_final_hash = document.get("text_final_srt_sha256") if schema_version == 1 else None
     if declared_final_hash is not None and sha256_file(output) != declared_final_hash:
@@ -692,6 +788,7 @@ def apply_document(source: Path, document_path: Path, output: Path, manifest_pat
         "output_srt_sha256": sha256_file(output),
         "source_cue_count": len(source_cues),
         "output_cue_count": len(output_cues),
+        "source_timeline_offset_ms": timeline_offset_ms,
         "decisions": decisions,
         **witness_manifest,
     }

@@ -135,9 +135,20 @@ def _materialize_final_recut(
         automatic_text_path = media_path.with_suffix(".automatic-text.srt")
         adapters.write_source_range_srt(sanitized, final_start, final_end, automatic_text_path)
         text_manifest_path = media_path.with_suffix(".text-finalization.json")
-        text_manifest = adapters.apply_text_override_document(
-            automatic_text_path, text_override_path, subtitle_path, text_manifest_path
+        override_document = json.loads(text_override_path.read_text(encoding="utf-8"))
+        text_manifest_args = (
+            automatic_text_path,
+            text_override_path,
+            subtitle_path,
+            text_manifest_path,
         )
+        if override_document.get("schema_version") == 3:
+            text_manifest = adapters.apply_text_override_document(
+                *text_manifest_args,
+                timeline_offset_ms=final_start,
+            )
+        else:
+            text_manifest = adapters.apply_text_override_document(*text_manifest_args)
     else:
         adapters.write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
     (recut_dir / f"{cid}.recut.timing_qa.json").write_text(

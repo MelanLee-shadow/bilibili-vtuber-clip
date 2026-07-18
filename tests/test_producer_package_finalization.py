@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
 
 
@@ -72,3 +73,62 @@ def test_delivery_summary_uses_persisted_boundary_audit(
     assert summary["red_flags"] == []
     assert summary["boundary_repairs"] == [{"reason": "tail_clamped"}]
     assert len(copy_commands) == 3
+
+
+def test_final_recut_rebases_timeline_bound_text_override(
+    tmp_path: Path,
+) -> None:
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"padded")
+    (tmp_path / "out").mkdir()
+    padded_provenance = tmp_path / "padded.provenance.json"
+    padded_provenance.write_text("{}\n", encoding="utf-8")
+    override = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_text_overrides/auto_225942_962_980.text.v1.json"
+    )
+
+    def run_command(command: list[str], **_kwargs) -> None:
+        Path(command[-1]).write_bytes(b"recut")
+
+    def write_source_range_srt(
+        _cues, _start_ms: int, _end_ms: int, output: Path
+    ) -> None:
+        output.write_text(
+            "1\n00:00:04,770 --> 00:00:07,970\n让李豆沙线下叫停了时\n",
+            encoding="utf-8",
+        )
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated finalization adapter was called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=lambda **kwargs: ["recut", str(kwargs["output_media"])],
+        run_command=run_command,
+        write_source_range_srt=write_source_range_srt,
+        apply_text_override_document=apply_document,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=lambda: tmp_path / "delivery",
+    )
+
+    recut = finalization._materialize_final_recut(
+        spec={"pieces": [{"start_ms": 952_920}]},
+        cid="auto_225942_962_980",
+        out_root=tmp_path / "out",
+        padded=padded,
+        padded_provenance_path=padded_provenance,
+        piece_provenance_rows=[],
+        final_start=9_770,
+        final_end=32_840,
+        sanitized=[],
+        timing_qa={},
+        text_override_path=override,
+        adapters=adapters,
+    )
+
+    assert "让李豆沙线下叫kmx" in recut.subtitle_path.read_text(encoding="utf-8")
+    assert recut.text_manifest is not None
+    assert recut.text_manifest["source_timeline_offset_ms"] == 9_770

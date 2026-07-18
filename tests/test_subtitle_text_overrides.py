@@ -584,6 +584,7 @@ def test_committed_dog_clip_override_rejects_collateral_word_salad(
     [
         "让礼墨线下叫kmx",
         "让刘莎线下叫停了时",
+        "让李豆沙线下叫停了时",
         "让李豆沙线下叫kmx",
     ],
 )
@@ -610,3 +611,33 @@ def test_committed_kmx_override_accepts_known_surfaces_and_canonicalizes(
     )
 
     assert "让李豆沙线下叫kmx" in output.read_text(encoding="utf-8")
+
+
+def test_committed_kmx_override_rebases_after_boundary_recut(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        "1\n00:00:04,770 --> 00:00:07,970\n让李豆沙线下叫停了时\n",
+        encoding="utf-8",
+    )
+    override = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_text_overrides/auto_225942_962_980.text.v1.json"
+    )
+    output = tmp_path / "out.srt"
+
+    manifest = apply_document(
+        source,
+        override,
+        output,
+        tmp_path / "manifest.json",
+        timeline_offset_ms=9_770,
+    )
+
+    assert "00:00:04,770 --> 00:00:07,970" in output.read_text(encoding="utf-8")
+    assert "让李豆沙线下叫kmx" in output.read_text(encoding="utf-8")
+    assert manifest["source_timeline_offset_ms"] == 9_770
+    assert manifest["source_cue_witness_sha256"] == json.loads(
+        override.read_text(encoding="utf-8")
+    )["source_cue_witness_sha256"]
