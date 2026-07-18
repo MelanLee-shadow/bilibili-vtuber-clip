@@ -8,6 +8,7 @@
   "reviewed_at": "2026-07-18",
   "reviewed_context_votes": {
     "authority": "Full-clip semantic source-turn review: the repeated watched-video lyric cues were removed upstream, so every remaining cue is Li Dousha reacting. CAM++ labels changed after those drops and are supporting evidence only, not deletion authority.",
+    "source_automatic_srt_sha256": "44f74cd75f04a778fa4292815085c778b0e8cb42e9358c8ec97a9315331cee02",
     "labels": {
       "1": "李豆沙",
       "2": "李豆沙",
