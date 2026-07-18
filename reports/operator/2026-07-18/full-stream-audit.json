@@ -146,6 +146,9 @@
       "status": "NEVER_PUBLISHED_NOT_CURRENT_DELIVERY",
       "old_timing_actions": 1,
       "old_destructive_timing_actions": 0,
+      "speaker_mode": "uniform_host",
+      "text_audit": "UNRESOLVED_TA_REMAINS_NOT_DELIVERY_READY",
+      "delivery_ready": false,
       "reburned": false
     },
     {
@@ -153,6 +156,8 @@
       "status": "SUPERSEDED_BY_AUTO_162645_712_967",
       "old_timing_actions": 1,
       "old_destructive_timing_actions": 0,
+      "speaker_mode": "uniform_host",
+      "delivery_ready": false,
       "reburned": false
     },
     {
@@ -160,6 +165,8 @@
       "status": "SUPERSEDED_BY_AUTO_162645_712_967",
       "old_timing_actions": 3,
       "old_destructive_timing_actions": 0,
+      "speaker_mode": "uniform_host",
+      "delivery_ready": false,
       "reburned": false
     }
   ],
