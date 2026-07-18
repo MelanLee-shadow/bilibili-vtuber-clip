@@ -537,11 +537,24 @@ def test_committed_dog_clip_override_rejects_collateral_word_salad(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.srt"
+    reviewed_cues = [
+        ("00:00:23,500", "00:00:25,100", "如果你是狗"),
+        ("00:00:31,800", "00:00:33,760", "抱紧了，抱紧了"),
+        ("00:00:33,760", "00:00:36,320", "我可怎么就不……"),
+        ("00:00:45,158", "00:00:47,170", "的心动人你太坏了"),
+        ("00:00:48,806", "00:00:49,806", "如果你是狗"),
+        ("00:00:52,780", "00:00:54,700", "如果你是狗"),
+        ("00:01:02,500", "00:01:04,740", "如果你是狗"),
+        ("00:01:31,830", "00:01:35,670", "如果你是狗，太可怜了，抱紧了我"),
+        ("00:01:35,710", "00:01:39,470", "可怎么就不给我一点机会"),
+        ("00:01:39,700", "00:01:41,580", "别再离开我了"),
+    ]
     source.write_text(
-        """1
-00:00:45,158 --> 00:00:47,170
-的心动人你太坏了
-""",
+        "\n\n".join(
+            f"{index}\n{start} --> {end}\n{text}"
+            for index, (start, end, text) in enumerate(reviewed_cues, start=1)
+        )
+        + "\n",
         encoding="utf-8",
     )
     override = (
@@ -557,7 +570,10 @@ def test_committed_dog_clip_override_rejects_collateral_word_salad(
         tmp_path / "manifest.json",
     )
 
-    assert parse_srt(output)[0].text == "人类你太坏了！"
-    assert manifest["decisions"][0]["authority"].startswith(
-        "The immediately repeated complaint"
+    assert [cue.text for cue in parse_srt(output)] == ["人类你太坏了！"]
+    assert len(manifest["decisions"]) == 10
+    assert sum(row["action"] == "drop" for row in manifest["decisions"]) == 9
+    assert any(
+        row["authority"].startswith("The immediately repeated complaint")
+        for row in manifest["decisions"]
     )
