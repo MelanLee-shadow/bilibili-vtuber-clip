@@ -4,7 +4,7 @@
   "owner_mid": 55006782,
   "ugc_season_id": 8383206,
   "ugc_season_title": "小李切片",
-  "status": "PASS_WITH_UNRELATED_TAG_WARNING",
+  "status": "PASS",
   "targets": [
     {
       "bvid": "BV1AbNR66ExW",
@@ -61,10 +61,10 @@
       "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
       "cover_sha256": "9ebad82a0f58bb4fe6a14a8d21aaa333a6a6c5a23776303f1b0f6495ec357e90",
       "status": "PASS",
-      "warning": {
-        "code": "PREEXISTING_TAG_DRIFT",
-        "observed_tags": ["李豆沙", "虚拟UP主", "周次", "恋死", "非人少女", "百合", "恋人不行", "终将"],
-        "expected_from_previous_repair": ["李豆沙", "虚拟主播", "虚拟UP主", "直播切片", "打灰", "土木工程", "吐槽", "搞笑"],
+      "manual_metadata": {
+        "code": "IVAN_CONFIRMED_MANUAL_TAGS",
+        "tags": ["李豆沙", "虚拟UP主", "周次", "恋死", "非人少女", "百合", "恋人不行", "终将"],
+        "authority_asset": "assets/lidousha/manual_archive_metadata.v1.json",
         "cover_edit_preserved_tags": true
       }
     },

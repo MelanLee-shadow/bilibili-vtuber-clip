@@ -41,6 +41,7 @@ The asset directory is the customization surface:
 | Subtitle decisions | `subtitle_correction_principles`, override/regression directories |
 | Title voice and deterministic gates | `title_style`, `title_policy` |
 | Upload tags and proper-noun search mappings | `upload_tag_policy` |
+| Per-archive manual metadata that later edits must preserve | `manual_archive_metadata` (optional profile asset) |
 | Persona and cover identity | `persona`, `cover_identity_prompt`, fonts, `cover_regenerator` |
 | Speaker identity | `voiceprint_profile` plus the runtime reference subdirectory |
 

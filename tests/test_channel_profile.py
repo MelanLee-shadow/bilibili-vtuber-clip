@@ -71,6 +71,9 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         REPO_ROOT / "assets/lidousha/intro/branding_intro.v1.json"
     )
     assert profile.asset_file("known_songs") == REPO_ROOT / "assets/lidousha/known_songs.json"
+    assert profile.asset_file("manual_archive_metadata") == (
+        REPO_ROOT / "assets/lidousha/manual_archive_metadata.v1.json"
+    )
     assert profile.asset_file("psplive_roster") == (
         REPO_ROOT / "assets/lidousha/psplive_roster.v1.md"
     )
@@ -119,6 +122,23 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
     assert profile.decision("host_not_singing_reason") == "SONG_NOT_LIDOUSHA_SINGING"
     assert profile.tool("cover_regenerator") == REPO_ROOT / "scripts/regenerate_lidousha_cover.py"
     assert not profile.missing_runtime_paths()
+
+    manual_metadata = json.loads(
+        profile.asset_file("manual_archive_metadata").read_text(encoding="utf-8")
+    )
+    manual_archive = manual_metadata["archives"]["BV1pbNR66E2r"]
+    assert manual_archive["tag_authority"] == "manual"
+    assert manual_archive["preserve_on_metadata_edits"] is True
+    assert manual_archive["tags"] == [
+        "李豆沙",
+        "虚拟UP主",
+        "周次",
+        "恋死",
+        "非人少女",
+        "百合",
+        "恋人不行",
+        "终将",
+    ]
 
 
 def test_committed_profile_can_drive_a_different_channel_without_code_changes(tmp_path):

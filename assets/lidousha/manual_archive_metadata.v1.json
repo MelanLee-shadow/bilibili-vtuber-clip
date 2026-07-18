@@ -1,0 +1,25 @@
+{
+  "schema_version": "vtuber-slice.manual-archive-metadata.v1",
+  "updated_at": "2026-07-18",
+  "authority": "Ivan-confirmed Bilibili archive metadata",
+  "archives": {
+    "BV1pbNR66E2r": {
+      "title_expect": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "tags": [
+        "李豆沙",
+        "虚拟UP主",
+        "周次",
+        "恋死",
+        "非人少女",
+        "百合",
+        "恋人不行",
+        "终将"
+      ],
+      "tag_authority": "manual",
+      "preserve_on_metadata_edits": true,
+      "confirmed_by": "Ivan",
+      "confirmation_quote": "标签是我人工改的，我把一些百合动画标签加入了进去",
+      "note": "These tags are an intentional manual editorial choice, not tag drift. Preserve the exact set during cover, source, title, description, collection, and other metadata edits unless Ivan explicitly replaces it."
+    }
+  }
+}
