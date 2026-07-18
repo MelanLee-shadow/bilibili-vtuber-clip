@@ -1,0 +1,173 @@
+{
+  "schema_version": "lidousha-full-stream-subtitle-audit.v1",
+  "status": "NO_UPLOAD_FULL_STREAM_READY",
+  "stream_date": "2026-07-16",
+  "generated_on": "2026-07-18",
+  "scope": {
+    "generated_talk_candidates": 11,
+    "current_online_talk_deliveries": 8,
+    "non_current_candidates": 3,
+    "audited_candidates": 11,
+    "reburned_current_deliveries": 8
+  },
+  "current_online": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "bvid": "BV1AbNR66ExW",
+      "review_stem": "看《魔法少女奈叶》求婚片段彻底上头，",
+      "old_timing_actions": 8,
+      "old_destructive_timing_actions": 7,
+      "intentional_watched_video_cue_drops": 9,
+      "final_cue_count": 19,
+      "authoritative_timing_match": true,
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "1d699f647392e4ef4cbf23c8fd8da520c7232a84e6cd879dc5ce7736be0e9011",
+      "srt_sha256": "f58c08845a95429ec6a1b4710586d699e22d74aa8032ac0e12c176563aa23be8"
+    },
+    {
+      "candidate_id": "auto_162645_394_507",
+      "bvid": "BV1cbNR66Eyt",
+      "review_stem": "本想看“难绷小视频”，却被受委屈的小",
+      "old_timing_actions": 6,
+      "old_destructive_timing_actions": 3,
+      "intentional_watched_video_cue_drops": 9,
+      "final_cue_count": 23,
+      "authoritative_timing_match": true,
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "d18fa52765bce16b29f600dc48f22934f354d6770a192ceee641e7a57609eabf",
+      "srt_sha256": "59bf94fccce2a18a40d286566580e87f6ddaca9b1a27071ccab87e6168c2a238"
+    },
+    {
+      "candidate_id": "auto_203003_1644_1737",
+      "bvid": "BV1cbNR66Eky",
+      "review_stem": "自称喜欢坏姐姐的李豆沙，被妹妹型坏女",
+      "old_timing_actions": 5,
+      "old_destructive_timing_actions": 0,
+      "intentional_watched_video_cue_drops": 0,
+      "final_cue_count": 27,
+      "authoritative_timing_match": "NOT_NEEDED_NO_DESTRUCTIVE_ACTION",
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "dad90937c4c0a1b0fa44b15924abe995512d409cf5a6115e369c55652db90ae7",
+      "srt_sha256": "f7e29d0cf759d277dc308598c109e7a027fb7e633184175d25626d686589c101"
+    },
+    {
+      "candidate_id": "auto_203003_272_377",
+      "bvid": "BV1rbNR6zEWJ",
+      "review_stem": "游戏苦手想通自己为何会接到商单：既然",
+      "old_timing_actions": 7,
+      "old_destructive_timing_actions": 0,
+      "intentional_watched_video_cue_drops": 0,
+      "final_cue_count": 41,
+      "authoritative_timing_match": "NOT_NEEDED_NO_DESTRUCTIVE_ACTION",
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "015cab3f07d8674e7830928b9f0b93ff399bf8f9bbfaee6c9dff3791c7989ef2",
+      "srt_sha256": "2e1048e71643324fda2e5cd886343ce9893b7835dc7773c4366bf756c9c27f65"
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "bvid": "BV1cbNR66ECP",
+      "review_stem": "抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "old_timing_actions": 10,
+      "old_destructive_timing_actions": 3,
+      "intentional_watched_video_cue_drops": 0,
+      "final_cue_count": 61,
+      "authoritative_timing_match": true,
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "d2784264f99002763d2b4505c5b71cfe62d31e42dae879274200ddd9a4d84b4e",
+      "srt_sha256": "9fd586981f97e33f79830a432f1a3aae0f30e357f82b01ff4f67838760025af9"
+    },
+    {
+      "candidate_id": "auto_213000_116_205",
+      "bvid": "BV1pbNR66E2g",
+      "review_stem": "刚想把观众拉进公会，系统却宣布大家成",
+      "old_timing_actions": 4,
+      "old_destructive_timing_actions": 2,
+      "intentional_watched_video_cue_drops": 0,
+      "final_cue_count": 26,
+      "authoritative_timing_match": true,
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "5c16ec02e234e35970e84fcb3098d5d402848eccc7d9cf8139a9397f4ccbe7a0",
+      "srt_sha256": "6eca9401e29f24066b528c997001f16acff7125df7257f816c19365d554af1bb"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "bvid": "BV1pbNR66E2r",
+      "review_stem": "弹幕拒绝被虚拟主播骗去当土木工友，李",
+      "old_timing_actions": 5,
+      "old_destructive_timing_actions": 3,
+      "intentional_watched_video_cue_drops": 0,
+      "final_cue_count": 28,
+      "authoritative_timing_match": true,
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "5c371614765bc6c9f8d206052b547fa70702ac05fe322e99cbfa2733ca329ce4",
+      "srt_sha256": "71150b4fe1af91dcf1b75fdfd8f482e4f75670f61ea62982713a533590cf0552"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "bvid": "BV1AtNR63ERp",
+      "review_stem": "弹幕追问她喜欢‘妈感姐’还是‘妈感妹",
+      "old_timing_actions": 6,
+      "old_destructive_timing_actions": 2,
+      "intentional_watched_video_cue_drops": 1,
+      "final_cue_count": 74,
+      "authoritative_timing_match": true,
+      "speaker_status": "READY",
+      "intro_offset_ms": 4288,
+      "decode": "PASS",
+      "upload_enabled": false,
+      "mp4_sha256": "82184bbc18825bffeb3602fa09743189c688fa50bd2e79bf935736bbc89a00d6",
+      "srt_sha256": "2b65c22f996851f5e2e08fb8e779e7025320b71e70401dc4aa5576dcfa3669ba"
+    }
+  ],
+  "non_current": [
+    {
+      "candidate_id": "auto_155648_152_178",
+      "status": "NEVER_PUBLISHED_NOT_CURRENT_DELIVERY",
+      "old_timing_actions": 1,
+      "old_destructive_timing_actions": 0,
+      "reburned": false
+    },
+    {
+      "candidate_id": "auto_162645_712_787",
+      "status": "SUPERSEDED_BY_AUTO_162645_712_967",
+      "old_timing_actions": 1,
+      "old_destructive_timing_actions": 0,
+      "reburned": false
+    },
+    {
+      "candidate_id": "auto_162645_938_967",
+      "status": "SUPERSEDED_BY_AUTO_162645_712_967",
+      "old_timing_actions": 3,
+      "old_destructive_timing_actions": 0,
+      "reburned": false
+    }
+  ],
+  "system_findings": [
+    "Six of eight current online deliveries had destructive v1 timing snaps; all six now match the authoritative repaired timing cue-for-cue after explicit source-turn drops.",
+    "The two current deliveries without destructive timing actions were still rerun through the required speaker and burn contract.",
+    "Watched-video exclusion is source-turn based, not language based: Japanese and Chinese external-video lines were dropped, host Japanese was retained, and game/system announcements were retained.",
+    "Li Dousha, Xiaoli, and Dousha remain equal proper-name candidates. A separate optional-you preposition bug that could absorb the character 由 into a name slot was fixed and regression-tested.",
+    "All current deliveries decode fully, contain the 4288 ms talk intro, bind flat delivery hashes to their records, and remain no-upload."
+  ]
+}

@@ -3,9 +3,44 @@
   "intro_offset_ms": 4288,
   "items": [
     {
+      "candidate_id": "auto_162645_264_391",
+      "mp4": "lidousha/2026-07-16/看《魔法少女奈叶》求婚片段彻底上头，.mp4",
+      "mp4_sha256": "1d699f647392e4ef4cbf23c8fd8da520c7232a84e6cd879dc5ce7736be0e9011",
+      "srt": "lidousha/2026-07-16/看《魔法少女奈叶》求婚片段彻底上头，.srt",
+      "srt_sha256": "f58c08845a95429ec6a1b4710586d699e22d74aa8032ac0e12c176563aa23be8"
+    },
+    {
+      "candidate_id": "auto_162645_394_507",
+      "mp4": "lidousha/2026-07-16/本想看“难绷小视频”，却被受委屈的小.mp4",
+      "mp4_sha256": "d18fa52765bce16b29f600dc48f22934f354d6770a192ceee641e7a57609eabf",
+      "srt": "lidousha/2026-07-16/本想看“难绷小视频”，却被受委屈的小.srt",
+      "srt_sha256": "59bf94fccce2a18a40d286566580e87f6ddaca9b1a27071ccab87e6168c2a238"
+    },
+    {
+      "candidate_id": "auto_203003_1644_1737",
+      "mp4": "lidousha/2026-07-16/自称喜欢坏姐姐的李豆沙，被妹妹型坏女.mp4",
+      "mp4_sha256": "dad90937c4c0a1b0fa44b15924abe995512d409cf5a6115e369c55652db90ae7",
+      "srt": "lidousha/2026-07-16/自称喜欢坏姐姐的李豆沙，被妹妹型坏女.srt",
+      "srt_sha256": "f7e29d0cf759d277dc308598c109e7a027fb7e633184175d25626d686589c101"
+    },
+    {
+      "candidate_id": "auto_203003_272_377",
+      "mp4": "lidousha/2026-07-16/游戏苦手想通自己为何会接到商单：既然.mp4",
+      "mp4_sha256": "015cab3f07d8674e7830928b9f0b93ff399bf8f9bbfaee6c9dff3791c7989ef2",
+      "srt": "lidousha/2026-07-16/游戏苦手想通自己为何会接到商单：既然.srt",
+      "srt_sha256": "2e1048e71643324fda2e5cd886343ce9893b7835dc7773c4366bf756c9c27f65"
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "mp4": "lidousha/2026-07-16/抽卡惩罚被弹幕定成“为礼墨做0.6”.mp4",
+      "mp4_sha256": "d2784264f99002763d2b4505c5b71cfe62d31e42dae879274200ddd9a4d84b4e",
+      "srt": "lidousha/2026-07-16/抽卡惩罚被弹幕定成“为礼墨做0.6”.srt",
+      "srt_sha256": "9fd586981f97e33f79830a432f1a3aae0f30e357f82b01ff4f67838760025af9"
+    },
+    {
       "candidate_id": "auto_213000_116_205",
       "mp4": "lidousha/2026-07-16/刚想把观众拉进公会，系统却宣布大家成.mp4",
-      "mp4_sha256": "3237bf394442de2f26005d730cab012f7bd78713edd4cf7a0940e417003126f0",
+      "mp4_sha256": "5c16ec02e234e35970e84fcb3098d5d402848eccc7d9cf8139a9397f4ccbe7a0",
       "srt": "lidousha/2026-07-16/刚想把观众拉进公会，系统却宣布大家成.srt",
       "srt_sha256": "6eca9401e29f24066b528c997001f16acff7125df7257f816c19365d554af1bb"
     },
@@ -22,15 +57,8 @@
       "mp4_sha256": "82184bbc18825bffeb3602fa09743189c688fa50bd2e79bf935736bbc89a00d6",
       "srt": "lidousha/2026-07-16/弹幕追问她喜欢‘妈感姐’还是‘妈感妹.srt",
       "srt_sha256": "2b65c22f996851f5e2e08fb8e779e7025320b71e70401dc4aa5576dcfa3669ba"
-    },
-    {
-      "candidate_id": "auto_210002_297_513",
-      "mp4": "lidousha/2026-07-16/抽卡惩罚被弹幕定成“为礼墨做0.6”.mp4",
-      "mp4_sha256": "d2784264f99002763d2b4505c5b71cfe62d31e42dae879274200ddd9a4d84b4e",
-      "srt": "lidousha/2026-07-16/抽卡惩罚被弹幕定成“为礼墨做0.6”.srt",
-      "srt_sha256": "9fd586981f97e33f79830a432f1a3aae0f30e357f82b01ff4f67838760025af9"
     }
   ],
   "schema_version": "lidousha-current-review-index.v1",
-  "status": "NO_UPLOAD_REPAIR_READY"
+  "status": "NO_UPLOAD_FULL_STREAM_READY"
 }
