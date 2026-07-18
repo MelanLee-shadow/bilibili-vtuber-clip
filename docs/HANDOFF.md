@@ -3,7 +3,33 @@
 > 约定：每次实质进展或会话收尾更新本文件（五段：目标/已完成/进行中/阻塞/下一步）。
 > 开工先读本文件 + AGENTS.md，别凭旧对话推断。
 
-## 2026-07-16：怪獣の花唄善后 + 封面字体链治本 + 日语歌门修缮（当前）
+## 2026-07-18：固定谈话片头换为 Z1 三句版（当前）
+
+### 目标
+
+把 Ivan 选定的「李豆沙一直是零，不对，李豆沙一直是为爱做一」同时固定到 `free` 生产运行时、hash 绑定和所有现行权威文档；旧 2026-07-12 候选 2 只保留为历史记录，不再作为当前片头。
+
+### 已完成
+
+- 当前片头 `intro_id=huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2`，成片 SHA-256 `bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5`，时长 5754ms。生产字节固定在 `free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4`；`assets/lidousha/intro/branding_intro.v1.json` 与运行时 hash 一致。
+- 画面契约：第一、三句使用右下角李豆沙区域放大的 1920×1080 无广告画面；中间“不对”保持原始完整画幅，不裁剪。
+- 谈话、活字乱刷、frozen-resume、字幕修正重交付必须前置该版本并 fail closed；歌切继续按 2026-07-14 政策无片头。
+- 现行入口 `AGENTS.md`、README、项目 publish skill、活字乱刷 workflow 与代码模块说明统一到新 target/intro_id/path/hash。历史 handoff、清理 manifest、旧批次审计保留原事实并显式标注已被 2026-07-18 版本取代。
+- `scripts/deploy_free_autoslice.sh` 的 commit-exact 管理面扩展到 `.agent/`、`docs/`、`AGENTS.md`、`README.md`，使 `free:/opt/bilive/autoslice/repo` 上的运行说明与同一部署提交同步，不再遗留旧 publish skill。
+
+### 进行中（含后台进程）
+
+- 无。
+
+### 阻塞
+
+- 无。
+
+### 下一步
+
+- 以后若再次换片头：先完成活字乱刷试听定版与证据绑定，再安装版本化媒体路径、更新 manifest/现行文档、commit-exact deploy，并用真实谈话源做 `PREPENDED` + full-decode 冒烟；不得覆盖旧媒体后再补清单。
+
+## 2026-07-16：怪獣の花唄善后 + 封面字体链治本 + 日语歌门修缮
 
 ### 目标
 
@@ -273,11 +299,11 @@ Ivan 审查 7/11 隔离产物（旧 BASE `failure-selfheal-6f9da78`，commit 早
 2. 验收通过后：integration 分支并回 main → `deploy_free_autoslice.sh free` 部署 → Ivan 授权后摘 `DISABLED`，生产自动回填 7/11+7/12（届时花之塔类 provider 故障有付费 key 兜底）。
 3. 付费 key 用量审计入口：`BASE/state/gemini-paid-backup/usage-*.jsonl` 与 manifest `paid_backup_policy` 戳。
 
-## 2026-07-12（续四）：固定片头上线（活字乱刷候选2 强制前置）
+## 2026-07-12（续四）：固定片头上线（历史；已由 2026-07-18 Z1 三句版取代）
 
 ### 目标
 
-Ivan 选定活字乱刷候选 2「小李本来就是零，不对，我是为爱做零」为固定片头；此后所有自动切片成品（talk、song、frozen-resume、字幕修正重投）必须前置该片头，缺片头 fail-closed 不交付。活字乱刷工作流本身保持按需手动使用，不进普通流水线。
+截至 2026-07-12，Ivan 曾选定活字乱刷候选 2「小李本来就是零，不对，我是为爱做零」为固定片头；该选择已于 2026-07-18 被本文件顶部的 Z1 三句版取代。此处以下内容只记录当时上线事实，不是当前运行指令；其中 song 强制片头也已被 2026-07-14 的歌切无片头政策取代。
 
 ### 已完成
 

@@ -77,7 +77,7 @@
 ```bash
 # 1. 粗字幕全历史发现；结果不能直接剪
 python3 scripts/huozi_luanshua.py history-scan \
-  --text '我本来就是零，不对，我要为爱做零' \
+  --text '李豆沙一直是零，不对，李豆沙一直是为爱做一' \
   --transcript-root /local/history-srt-mirror \
   --output /tmp/huozi/history-discovery.json
 
@@ -89,11 +89,11 @@ python3 scripts/huozi_luanshua.py corpus \
 # 3. 原句 + 小改句比较
 python3 scripts/huozi_luanshua.py plan \
   --corpus /tmp/huozi/corpus.json \
-  --text '我本来就是零，不对，我要为爱做零' \
+  --text '李豆沙一直是零，不对，李豆沙一直是为爱做一' \
   --output /tmp/huozi/original.plan.json
 python3 scripts/huozi_luanshua.py suggest \
   --corpus /tmp/huozi/corpus.json \
-  --text '我本来就是零，不对，我要为爱做零' \
+  --text '李豆沙一直是零，不对，李豆沙一直是为爱做一' \
   --suggestions /tmp/huozi/suggestions.json \
   --output /tmp/huozi/suggestion-report.json
 
@@ -126,15 +126,22 @@ python3 scripts/huozi_luanshua.py bundle \
   --output /tmp/huozi/comparison.manifest.json
 ```
 
-## 定版片头（2026-07-12）
+## 当前定版片头（2026-07-18）
 
-Ivan 选定候选 2「小李本来就是零，不对，我是为爱做零」为固定片头。绑定与出处都在
-`assets/lidousha/intro/branding_intro.v1.json`（含成片 SHA-256、逐 piece 来源、render manifest 副本）；
-媒体字节在 `free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.v1.mp4`（repo 树之外，部署不覆盖）。
-自动切片成品的强制前置拼接由 `src/autoslice/branding_intro.py` 在最终烧录处执行，属于主流水线的职责，
-不再经过本工作流。
+Ivan 选定 Z1 三句版「李豆沙一直是零，不对，李豆沙一直是为爱做一」为固定谈话片头，取代
+2026-07-12 的候选 2。画面顺序也是定版契约：第一句和第三句使用右下角李豆沙区域放大的
+1920×1080 无广告画面；中间“不对”使用原始完整画幅，不做裁剪。绑定与出处都在
+`assets/lidousha/intro/branding_intro.v1.json`（`intro_id=huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2`，
+成片 SHA-256 `bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5`，时长 5754ms，
+含逐 piece 来源与 render manifest 副本）。生产媒体字节固定在
+`free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4`
+（repo 树之外，部署不得删除）。
 
-## 首个片头验收目标
+谈话、活字乱刷、frozen-resume 与字幕修正重交付由 `src/autoslice/branding_intro.py` 在最终烧录处
+强制前置；歌切继续按 2026-07-14 政策豁免片头。运行时找不到当前路径、intro_id 或 hash 漂移时
+fail closed，不允许回退到旧候选 2。
+
+## 首个片头验收目标（2026-07-12 历史记录，已被当前定版替代）
 
 - 必交短版：`小李是零，不对，我是为爱做零`。
 - 必交长版：`小李本来就是零，不对，我是为爱做零`。

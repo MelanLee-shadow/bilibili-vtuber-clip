@@ -1,7 +1,7 @@
 """Profile-selected branding intro prepended to delivered autoslice videos.
 
 Ivan (2026-07-12) selected the 活字乱刷 candidate-2 render
-（小李本来就是零，不对，我是为爱做零）as the fixed opening for all future
+（李豆沙一直是零，不对，李豆沙一直是为爱做一）as the fixed opening for all future
 auto-slice deliverables.  The selected profile's committed
 ``branding_intro_manifest`` asset is the single switch and binds the exact
 intro bytes by SHA-256; the media itself lives outside the repo tree

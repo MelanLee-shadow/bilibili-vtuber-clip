@@ -236,7 +236,7 @@ def test_repo_manifest_binds_installed_intro_bytes():
     manifest_path = ROOT / "assets" / "lidousha" / "intro" / "branding_intro.v1.json"
     policy = load_branding_intro_policy(manifest_path)
     assert policy is not None and policy["enabled"] is True
-    assert policy["intro_id"] == "huozi-xiaoli-benlai-shiling-v1"
+    assert policy["intro_id"] == "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2"
     expected_sha = str(policy["video"]["sha256"])
     render_manifest_path = ROOT / "assets" / "lidousha" / "intro" / "lidousha-branding-intro.v1.render-manifest.json"
     render_manifest = json.loads(render_manifest_path.read_text(encoding="utf-8"))

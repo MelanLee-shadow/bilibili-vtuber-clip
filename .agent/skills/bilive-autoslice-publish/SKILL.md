@@ -3,9 +3,9 @@ name: bilive-autoslice-publish
 description: "李豆沙(房间22966160)切片从候选到 B 站发布的项目权威标准：候选管线、字幕权威、标题/封面/元数据规范、本地交付布局、投稿通道、入合集、公开验证。任何投稿/交付动作前必读。"
 ---
 
-# Bilive Autoslice Publish（项目权威版，2026-07-14 修订）
+# Bilive Autoslice Publish（项目权威版，2026-07-18 修订）
 
-本文件是**项目内唯一权威**（对 codex 和 Claude 会话同等生效）。`~/.codex/skills/bilive-autoslice-publish/SKILL.md` 是历史版本，其中 season/switch 等段已过时——以本文件为准。修订依据：2026-06-19~22 codex 实证 + 2026-07-03~04 Claude 实证（含真实投稿 BV1qxMc6XEM9）+ 2026-07-13~14 批量发布/换源实证（tag 新口径、歌切无片头、编辑修正总则、验收 checklist）。
+本文件是**项目内唯一权威**（对 codex 和 Claude 会话同等生效）。`~/.codex/skills/bilive-autoslice-publish/SKILL.md` 是历史版本，其中 season/switch 等段已过时——以本文件为准。修订依据：2026-06-19~22 codex 实证 + 2026-07-03~04 Claude 实证（含真实投稿 BV1qxMc6XEM9）+ 2026-07-13~14 批量发布/换源实证（tag 新口径、歌切无片头、编辑修正总则、验收 checklist）+ 2026-07-18 Z1 三句版固定谈话片头换版。
 
 **快速导航（成片之后按此走，别再翻散落文档）**：标题→§标题/封面/元数据 + `.agent/skills/lidousha-title-style/SKILL.md`；封面→§封面样式表；tag→§标签；片头→§片头；投稿/入合集/验证→§发布流程；**已发稿件任何修正→§修正总则（编辑，绝不新传）**；每条发布完成与审计→§投稿后验收 checklist。
 
@@ -90,7 +90,7 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
   - **tag 按最终成品字幕出（铁律）**：换源/字幕修复后必须 `scripts/suggest_upload_tags.py` 重算 + 人工过目，再用 `scripts/bili_update_tags.py`（plan-driven，inspect→apply，title_expect 前缀守卫，tag-only 编辑）落到线上；已知误听的临时裁定走 batch 条目 `suppress_tags/add_tags` 人工通道。
   - **单稿人工元数据高于自动 tag 策略**：Ivan 在创作中心人工调整过的完整 tag 集，登记在 profile 可选资产 `manual_archive_metadata`（李豆沙现行为 `assets/lidousha/manual_archive_metadata.v1.json`）。登记项的 `preserve_on_metadata_edits=true` 时，封面/换源/标题/简介/合集等后续编辑必须从创作中心全量克隆并原样保留该 tag 集；不得因为它不含基础 4 位或与旧自动建议不同就判为漂移，也不得运行 tag 重算覆盖，除非 Ivan 明确授权替换该稿标签。
 - **分区/属性**：tid=21（日常），copyright=2（转载），source=`https://live.bilibili.com/`。
-- **片头（成片结构，投稿前最后一道结构门）**：**谈话/活字乱刷/重交付一律强制前置固定片头**（活字乱刷候选2，`assets/lidousha/intro/branding_intro.v1.json` hash 绑定，`src/autoslice/branding_intro.py` 在最终 burn 内拼接，fail-closed，成品 record.json 有 `branding_intro.status=PREPENDED` + `intro_offset_ms`；媒体字节在 `free:/opt/bilive/autoslice/assets/intro/`，deploy 不得删）；**歌切一律不带片头直接进歌（Ivan 2026-07-14，commit cf09597）**——歌选择器唯一入口按政策忽略 intro manifest。审计口径：talk 无片头=违规；歌切带片头=违规（需无片头重烧+换源）。`AUTOSLICE_BRANDING_INTRO=off` 仅测试/应急，生产禁用。
+- **片头（成片结构，投稿前最后一道结构门）**：**谈话/活字乱刷/重交付一律强制前置 2026-07-18 Z1 三句版**「李豆沙一直是零，不对，李豆沙一直是为爱做一」。画面契约：中间“不对”保留原画幅，前后两句为右下角李豆沙区域放大的 1080p 无广告画面。`assets/lidousha/intro/branding_intro.v1.json` 以 `intro_id=huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2`、SHA-256 `bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5` 绑定；`src/autoslice/branding_intro.py` 在最终 burn 内拼接并 fail-closed，成品 record.json 必须有 `branding_intro.status=PREPENDED` + `intro_offset_ms`。生产字节固定在 `free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4`（repo 树外，deploy 不得删）。**歌切一律不带片头直接进歌（Ivan 2026-07-14，commit cf09597）**——歌选择器唯一入口按政策忽略 intro manifest。审计口径：talk 无片头或绑定的 intro_id/hash 不是当前值=违规；歌切带片头=违规（需无片头重烧+换源）。`AUTOSLICE_BRANDING_INTRO=off` 仅测试/应急，生产禁用。
 - **合集（发布未入集 = 流程未完成）**：谈话 → `小李切片`（season 8383206 / 正片 section 9320779）；歌 → `小李歌唱`（season 8410735 / 正片 section 9364628）。ID 用前从创作中心现查（`GET member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30`）。刚投稿在转码中时 `episodes/add` 会 -404：等 state=0 再加，或按 2026-07-13 惯例挂 30/90 分钟幂等重试 timer（重复添加返回 20080=已在集，无害）。
 
 ## 发布流程（每步都有实证，2026-07-04）
@@ -135,7 +135,7 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
 4. **tag**：基础 4 位在位 + 内容位合口径（§标签），≤12；换源过的稿件 tag 已按新字幕重算。
 5. **简介**：两行逐字（主页+直播间）；tid=21、copyright=2、source。
 6. **合集**：谈话在`小李切片`、歌在`小李歌唱`，`is_season_display=true`；改过标题的稿件合集条目标题未滞留旧值。
-7. **片头**：talk 有固定片头（record.json `PREPENDED`）；**歌切无片头**（2026-07-14 起）。
+7. **片头**：talk 有 2026-07-18 Z1 三句版固定片头（record.json `PREPENDED`，intro_id/hash 与本节一致）；**歌切无片头**（2026-07-14 起）。
 8. **修正方式**：所有修正走编辑通道（§修正总则），没有为修正新开 BV。
 9. **授权链**：manifest 里有 Ivan 授权原话；上传方式=authorized_upload 通道（非裸 do_upload/biliup）。
 10. **证据**：`uploaded.json`/`public_verify.json`/ledger 齐且已 commit。

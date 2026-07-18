@@ -3,10 +3,12 @@
 # deploys, no more "which code is production actually running?").
 #
 # - REFUSES a dirty working tree (production must be reproducible from a commit)
-# - streams committed scripts/ src/ assets/ profiles/ into staging (ignored files excluded)
+# - streams committed runtime trees plus project authority/docs into staging
+#   (scripts/ src/ assets/ profiles/ .agent/ docs/ cleanup_manifests/
+#   AGENTS.md README.md; ignored files excluded)
 # - verifies the complete staged file list and SHA-256 manifest
 # - owns a remote deploy guard from initial observation through final cleanup
-# - pauses new runs, waits for runner.lock, then swaps the three trees with rollback
+# - pauses new runs, waits for runner.lock, then swaps every managed component with rollback
 # - verifies rollback against a full path/type/mode/SHA-256 manifest
 # - stamps DEPLOYED_COMMIT only after every runtime/external-file check succeeds
 # - installs the mount watchdog + its cron line (idempotent)
@@ -54,7 +56,7 @@ backup=$3
 old_commit=$4
 test -d "$backup"
 test -f "$backup/repo.manifest.old.json"
-for component in scripts src assets profiles; do
+for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
     if [ -e "$backup/$component" ]; then
         rm -rf "$stage/$component"
         if [ -e "$repo/$component" ]; then
@@ -109,7 +111,17 @@ from pathlib import Path
 root = Path(sys.argv[1])
 expected = json.loads(Path(sys.argv[2]).read_text())
 actual = {}
-for component in ("scripts", "src", "assets", "profiles"):
+for component in (
+    "scripts",
+    "src",
+    "assets",
+    "profiles",
+    ".agent",
+    "docs",
+    "cleanup_manifests",
+    "AGENTS.md",
+    "README.md",
+):
     base = root / component
     if not base.exists():
         continue  # a tree added in this commit is absent from the prior deployment
@@ -220,7 +232,8 @@ fi
 # Freeze the exact committed bytes locally. Every later comparison and remote
 # archive uses COMMIT, never a mutable worktree or a HEAD that could advance.
 LOCAL_ARCHIVE_DIR=$(mktemp -d)
-git archive --format=tar "$COMMIT" scripts src assets profiles \
+git archive --format=tar "$COMMIT" \
+    scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
     | (umask 022; tar -xf - -C "$LOCAL_ARCHIVE_DIR")
 LOCAL_MANIFEST=$(python3 - "$LOCAL_ARCHIVE_DIR" <<'LOCAL_MANIFEST_PY'
 import hashlib
@@ -232,7 +245,17 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 manifest = {}
-for component in ("scripts", "src", "assets", "profiles"):
+for component in (
+    "scripts",
+    "src",
+    "assets",
+    "profiles",
+    ".agent",
+    "docs",
+    "cleanup_manifests",
+    "AGENTS.md",
+    "README.md",
+):
     base = root / component
     if not base.exists():
         continue  # a tree added in this commit is absent from the prior deployment
@@ -264,7 +287,8 @@ STAGE_CREATED=1
 # `git archive` is the deployment source of truth: only COMMIT-tracked bytes can
 # enter staging. assets/ is intentionally replaced as a repo-owned tree; private
 # enrollment WAVs and the CAM++ model live outside repo/.
-git archive --format=tar "$COMMIT" scripts src assets profiles \
+git archive --format=tar "$COMMIT" \
+    scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
     | ssh "$HOST" "umask 022; tar --no-same-permissions -xf - -C '$STAGE'"
 
 REMOTE_MANIFEST=$(ssh "$HOST" python3 - "$STAGE" <<'REMOTE_MANIFEST_PY'
@@ -277,7 +301,17 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 manifest = {}
-for component in ("scripts", "src", "assets", "profiles"):
+for component in (
+    "scripts",
+    "src",
+    "assets",
+    "profiles",
+    ".agent",
+    "docs",
+    "cleanup_manifests",
+    "AGENTS.md",
+    "README.md",
+):
     base = root / component
     if not base.exists():
         continue  # a tree added in this commit is absent from the prior deployment
@@ -453,7 +487,17 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 manifest = {}
-for component in ("scripts", "src", "assets", "profiles"):
+for component in (
+    "scripts",
+    "src",
+    "assets",
+    "profiles",
+    ".agent",
+    "docs",
+    "cleanup_manifests",
+    "AGENTS.md",
+    "README.md",
+):
     base = root / component
     if not base.exists():
         continue  # a tree added in this commit is absent from the prior deployment
@@ -510,7 +554,7 @@ restore_file() {
     fi
 }
 rollback() {
-    for component in scripts src assets profiles; do
+    for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
         if [ -e "$backup/$component" ]; then
             rm -rf "$stage/$component"
             if [ -e "$repo/$component" ]; then
@@ -537,7 +581,7 @@ trap 'rc=$?; trap - ERR; rollback; exit "$rc"' ERR
 trap 'trap - ERR HUP INT TERM; rollback; exit 130' INT
 trap 'trap - ERR HUP INT TERM; rollback; exit 143' TERM
 trap 'trap - ERR HUP INT TERM; rollback; exit 129' HUP
-for component in scripts src assets profiles; do
+for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
     if [ -e "$repo/$component" ]; then
         mv "$repo/$component" "$backup/$component"
     else
@@ -628,7 +672,17 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 manifest = {}
-for component in ("scripts", "src", "assets", "profiles"):
+for component in (
+    "scripts",
+    "src",
+    "assets",
+    "profiles",
+    ".agent",
+    "docs",
+    "cleanup_manifests",
+    "AGENTS.md",
+    "README.md",
+):
     base = root / component
     if not base.exists():
         continue  # a tree added in this commit is absent from the prior deployment

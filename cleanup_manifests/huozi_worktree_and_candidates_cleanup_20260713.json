@@ -1,6 +1,7 @@
 {
   "schema": "local-cleanup-manifest.v1",
   "created_at": "2026-07-13T03:59:42Z",
+  "historical_scope": "This manifest records the 2026-07-13 cleanup and preservation decision. Its selected_intro was superseded on 2026-07-18 and is not the current runtime policy.",
   "reason": "Ivan 2026-07-13: 活字乱刷开发 worktree 可以清理，未选中的片头候选不用保留。分支 codex/huozi-luanshua@76b449e 已完全并入 main（merge 9f51a3e），worktree 工作树干净、无未合并内容。选中的候选2已三处持久化并在删除前逐处 sha256 复核（见 preserved）。",
   "deleted": [
     {
@@ -35,5 +36,13 @@
       "/Users/ivan/Project/vtuber-slice/lidousha/branding/lidousha-branding-intro.v1.mp4 (2026-07-13T03:59Z sha 一致)",
       "assets/lidousha/intro/branding_intro.v1.json + lidousha-branding-intro.v1.render-manifest.json (committed 出处与哈希绑定)"
     ]
+  },
+  "superseded_by": {
+    "selected_on": "2026-07-18",
+    "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+    "target_text": "李豆沙一直是零，不对，李豆沙一直是为爱做一",
+    "sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+    "runtime_media_path": "free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+    "binding": "assets/lidousha/intro/branding_intro.v1.json"
   }
 }
