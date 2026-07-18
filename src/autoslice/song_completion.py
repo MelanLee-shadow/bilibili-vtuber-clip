@@ -26,6 +26,7 @@ from src.autoslice.gemini_backup_policy import validate_key_acceptance_metadata
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
+    ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS,
     LYRIC_VOCAL_ASSERTION_KEYS,
     derive_live_arrangement_completeness,
     load_audio_lrc_json_artifact,
@@ -555,12 +556,48 @@ def _validate_audio_observation_rows(
             ids.append(cue_id)
             starts.append(cue_start)
             residuals.append(cue_start - lyric["lrc_time_ms"])
+        observation_offset_ms = offset_ms
+        offset_provenance_ok = True
+        if residuals:
+            observed_median_ms = sorted(residuals)[len(residuals) // 2]
+            offset_basis = report.get("offset_basis")
+            if offset_basis == "asr_anchor":
+                agy_offset_ms = report.get("agy_offset_ms")
+                asr_offset_ms = report.get("asr_offset_ms")
+                offset_provenance_ok = bool(
+                    is_int(offset_ms)
+                    and is_int(asr_offset_ms)
+                    and asr_offset_ms == offset_ms
+                    and is_int(agy_offset_ms)
+                    and agy_offset_ms == observed_median_ms
+                    and abs(agy_offset_ms - offset_ms)
+                    <= ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS
+                )
+                if is_int(agy_offset_ms):
+                    # Raw AGY listening observations remain on their original
+                    # median.  The final subtitle/clip shift may use the
+                    # independently accepted ASR anchor, but that correction
+                    # does not retroactively move the raw observation rows.
+                    observation_offset_ms = agy_offset_ms
+            elif offset_basis == "agy_median":
+                agy_offset_ms = report.get("agy_offset_ms")
+                offset_provenance_ok = bool(
+                    is_int(offset_ms)
+                    and is_int(agy_offset_ms)
+                    and agy_offset_ms == offset_ms == observed_median_ms
+                )
+            elif offset_basis not in (None, ""):
+                offset_provenance_ok = False
         if (
             not audio_rows_ok
             or len(set(ids)) != len(ids)
             or starts != sorted(starts)
-            or not is_int(offset_ms)
-            or any(abs(value - offset_ms) > 1_500 for value in residuals)
+            or not offset_provenance_ok
+            or not is_int(observation_offset_ms)
+            or any(
+                abs(value - observation_offset_ms) > 1_500
+                for value in residuals
+            )
             or (starts and starts[0] != report.get("first_lyric_start_ms"))
             or (
                 report_alignment

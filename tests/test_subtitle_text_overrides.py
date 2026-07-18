@@ -577,3 +577,36 @@ def test_committed_dog_clip_override_rejects_collateral_word_salad(
         row["authority"].startswith("The immediately repeated complaint")
         for row in manifest["decisions"]
     )
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        "让礼墨线下叫kmx",
+        "让刘莎线下叫停了时",
+        "让李豆沙线下叫kmx",
+    ],
+)
+def test_committed_kmx_override_accepts_known_surfaces_and_canonicalizes(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        "1\n00:00:14,540 --> 00:00:17,740\n" + source_text + "\n",
+        encoding="utf-8",
+    )
+    override = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_text_overrides/auto_225942_962_980.text.v1.json"
+    )
+    output = tmp_path / "out.srt"
+
+    apply_document(
+        source,
+        override,
+        output,
+        tmp_path / "manifest.json",
+    )
+
+    assert "让李豆沙线下叫kmx" in output.read_text(encoding="utf-8")

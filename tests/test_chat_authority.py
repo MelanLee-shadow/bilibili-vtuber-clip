@@ -29,6 +29,7 @@ from src.autoslice.chat_authority import (
     reconcile_reviewed_text_override_conflicts,
     witness_disagreement_cues,
     introduced_term_cues,
+    _strip_interjections_once,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 
@@ -59,6 +60,34 @@ def _audio_entity_verifier(canonical: str):
         }
 
     return verify
+
+
+def test_interjection_stripping_preserves_authority_owned_duplicate_word():
+    expected = "妈妈主人老公姐姐宝贝晚上好今天李出来的时候眼睛袅袅了"
+    span = expected + "宝贝"
+
+    assert (
+        _strip_interjections_once(
+            span,
+            ["宝贝"],
+            required_substring=expected,
+        )
+        == span
+    )
+
+
+def test_interjection_stripping_removes_the_occurrence_that_splits_authority():
+    expected = "妈妈主人老公姐姐晚上好"
+    span = "妈妈主人宝贝老公姐姐晚上好"
+
+    assert (
+        _strip_interjections_once(
+            span,
+            ["宝贝"],
+            required_substring=expected,
+        )
+        == expected
+    )
 
 
 DREAM_MUJICA_GROUP = ReferentGroup(

@@ -242,3 +242,33 @@ def test_conflicting_names_in_one_audio_window_do_not_use_pattern_order():
 
     assert repaired == final
     assert audit["status"] == "NO_MATCH"
+
+
+def test_bcut_witness_corrects_excluded_name_in_offline_call_slot():
+    final = _srt("让礼墨线下叫kmx")
+    bcut = _srt("让刘莎线下叫停了时")
+
+    repaired, audit = absorb_host_self_references(
+        final,
+        source_witness_srt=bcut,
+    )
+
+    assert "让李豆沙线下叫kmx" in repaired
+    assert audit["status"] == "APPLIED"
+    assert audit["repairs"][0]["before"] == "礼墨"
+    assert (
+        audit["repairs"][0]["authority"]
+        == "HOST_SELF_REFERENCE_EQUAL_NAME_AUDIO_RESOLUTION"
+    )
+
+
+def test_real_limo_in_offline_call_slot_is_not_absorbed():
+    final = _srt("让礼墨线下叫kmx")
+
+    repaired, audit = absorb_host_self_references(
+        final,
+        source_witness_srt=final,
+    )
+
+    assert repaired == final
+    assert audit["status"] == "NO_MATCH"

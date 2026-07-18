@@ -730,10 +730,11 @@ def produce_song(date: str, item: dict) -> dict:
                 proof_reasons = [str(code) for code in (proof_retry.get("reason_codes") or [])]
                 if not proof_reasons:
                     proof_reasons = ["SONG_AUTHORITATIVE_RETRY_INCOMPLETE"]
-                result["decision"] = "BLOCK"
-                result["reason_codes"] = list(
-                    dict.fromkeys([*(result.get("reason_codes") or []), *proof_reasons])
+                result["initial_attempt_reason_codes"] = list(
+                    result.get("reason_codes") or []
                 )
+                result["decision"] = "BLOCK"
+                result["reason_codes"] = list(dict.fromkeys(proof_reasons))
                 result["song_completion_evidence"] = proof_retry.get("song_completion_evidence")
                 result["song_complete"] = False
                 result["lyrics_alignment_ready"] = bool(proof_retry.get("lyrics_alignment_ready"))

@@ -1,0 +1,24 @@
+{
+  "schema_version": 3,
+  "candidate_id": "auto_225942_962_980",
+  "source_cue_witness_sha256": "b3011157b79c46fdf81d88f297d1afd9bd8be62a480dc38a6701b36635f9a2b4",
+  "decision_output_witness_sha256": "09dc0cb041c7e4ff736701b99876bb4c210a25ea5de4e28847b8d75f25c33b40",
+  "overrides": [
+    {
+      "source_cue": 5,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:14,540",
+        "end": "00:00:17,740",
+        "text": "让李豆沙线下叫kmx",
+        "text_alternatives": [
+          "让礼墨线下叫kmx",
+          "让刘莎线下叫停了时"
+        ]
+      },
+      "text": "让李豆沙线下叫kmx",
+      "authority": "Ivan reviewed the 2026-07-18 source audio and confirmed this exact wording",
+      "reason": "Restore the host self-reference and canonical kmx spelling after the fallback refinement hallucinated another person"
+    }
+  ]
+}

@@ -11,6 +11,10 @@ import tempfile
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.refinement_provenance import (
+    agy_fidelity_witness as _agy_fidelity_witness,
+    agy_refinement_provenance as _agy_refinement_provenance,
+)
 from src.autoslice.subtitle_fidelity import (
     apply_source_language_preservation_guard,
     apply_subtitle_fidelity_guard,
@@ -19,7 +23,6 @@ from src.autoslice.subtitle_fidelity import (
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
-
 
 def profile_asset_file(key: str) -> Path:
     return CHANNEL_PROFILE.asset_file(key, repo_root=ROOT)
@@ -810,20 +813,35 @@ def _build_aggregate_asr_transcriber(
     def _agy_refine(media_path, draft_srt):
         """AGY jingting refine on the BCUT draft: same timeline, AGY's text."""
         if agy_refine_runner is None:
-            return None
+            return None, None
         with _tempfile.TemporaryDirectory(prefix="asr_refine_") as tmp:
             draft_path = Path(tmp) / "draft.srt"
             out_path = Path(tmp) / "out.srt"
             draft_path.write_text(draft_srt if draft_srt.endswith("\n") else draft_srt + "\n", encoding="utf-8")
             try:
-                agy_refine_runner(media_path, draft_path, out_path)
+                execution = agy_refine_runner(media_path, draft_path, out_path)
                 refined = out_path.read_text(encoding="utf-8")
                 if looks_like_srt(refined):
                     media_path.with_suffix(".agy_refined.srt").write_text(refined, encoding="utf-8")
-                    return refined
+                    provenance = _agy_refinement_provenance(
+                        execution
+                        if isinstance(execution, AgyExecutionResult)
+                        else None,
+                        refined_srt=refined,
+                    )
+                    media_path.with_suffix(".agy_refined.manifest.json").write_text(
+                        json.dumps(provenance, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                    return (
+                        refined,
+                        execution
+                        if isinstance(execution, AgyExecutionResult)
+                        else None,
+                    )
             except (AgyRunnerError, RuntimeError):
                 pass
-        return None
+        return None, None
 
     def transcriber(media_path: Path, speech_spans_ms=None) -> str:
         sound = extract_audio_mp3(Path(media_path))
@@ -838,12 +856,14 @@ def _build_aggregate_asr_transcriber(
         if correct == "none":
             return draft_srt
         agy_srt = None
+        agy_execution = None
         if correct == "agy":
-            corrected = _agy_refine(media_path, draft_srt) or draft_srt
+            agy_srt, agy_execution = _agy_refine(media_path, draft_srt)
+            corrected = agy_srt or draft_srt
         elif correct == "bcut_agy_cpa":
             # BCUT (timeline+rough) → AGY refine (heard audio, high-quality text)
             # → CPA reconcile (judge BCUT vs AGY, apply rules, drop hallucinations).
-            agy_srt = _agy_refine(media_path, draft_srt)
+            agy_srt, agy_execution = _agy_refine(media_path, draft_srt)
             if agy_srt is None:
                 # AGY down → fall back to CPA text-only on the BCUT draft.
                 corrected = _cpa_correct_draft_cues(
@@ -882,13 +902,25 @@ def _build_aggregate_asr_transcriber(
         # agy 分支免检（corrected 即音频证人本身）；守卫后的代词终审属
         # 同音白名单（他她它TA），不受影响。
         if correct in ("bcut_agy_cpa", "cpa"):
+            fidelity_witness = _agy_fidelity_witness(
+                agy_srt,
+                agy_execution,
+            )
             corrected, fidelity_audit = apply_subtitle_fidelity_guard(
-                draft_srt, corrected, agy_srt=agy_srt
+                draft_srt,
+                corrected,
+                agy_srt=fidelity_witness,
             )
             corrected, source_language_audit = (
                 apply_source_language_preservation_guard(draft_srt, corrected)
             )
             fidelity_audit["source_language_preservation"] = source_language_audit
+            fidelity_audit["agy_refinement_provenance"] = (
+                _agy_refinement_provenance(
+                    agy_execution,
+                    refined_srt=agy_srt,
+                )
+            )
             persist_fidelity_audit(
                 media_path.with_suffix(".fidelity-audit.json"), fidelity_audit
             )

@@ -38,6 +38,7 @@ _SELF_REFERENCE_SLOT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         rf"给了(?P<surface>{_CJK_NAME})一个",
         rf"(?P<surface>{_CJK_NAME})一直是",
         rf"(?P<surface>{_CJK_NAME})是什么",
+        rf"让(?P<surface>[\u3400-\u9fff]{{2,4}}?)(?:线下)?(?:叫|喊)",
     )
 )
 _CANONICAL_NAMES = ("李豆沙", "小李", "豆沙")
@@ -246,8 +247,6 @@ def absorb_host_self_references(
             else ""
         )
         for start, end, surface, grammar in _slot_matches(text):
-            if surface in _EXCLUDED:
-                continue
             resolution: dict[str, Any] | None = None
             authority = "HOST_SELF_REFERENCE_EQUAL_NAME_AUDIO_RESOLUTION"
             source_evidence: dict[str, Any] | None = None
@@ -258,6 +257,12 @@ def absorb_host_self_references(
                     cue_index=cue_index,
                 )
                 resolution = source_evidence
+            # Excluded names are real people/roles, so the final text alone
+            # must never absorb them into the host.  They can be corrected only
+            # when the independently timed BCUT witness resolves the same slot
+            # unambiguously to a host self-reference.
+            if surface in _EXCLUDED and source_evidence is None:
+                continue
             if resolution is None:
                 resolution = _resolve_name_surface(
                     surface,

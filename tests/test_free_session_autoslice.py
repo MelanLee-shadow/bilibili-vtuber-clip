@@ -2980,7 +2980,10 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
                             "reason_codes": (
                                 ["SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING"]
                                 if full_source
-                                else ["SONG_FULL_BOUNDARY_PROOF_MISSING"]
+                                else [
+                                    "TIGHT_ATTEMPT_DIAGNOSTIC",
+                                    "SONG_FULL_BOUNDARY_PROOF_MISSING",
+                                ]
                             ),
                             "source_context_job": {
                                 "content_type_hint": "song",
@@ -3017,6 +3020,11 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
     assert result["full_source_performer_rejection"] is True
     assert "SONG_BACKGROUND_PLAYBACK_ONLY" in result["reason_codes"]
     assert "SONG_NOT_LIDOUSHA_SINGING" in result["reason_codes"]
+    assert "TIGHT_ATTEMPT_DIAGNOSTIC" not in result["reason_codes"]
+    assert (
+        "TIGHT_ATTEMPT_DIAGNOSTIC"
+        in result["initial_attempt_reason_codes"]
+    )
     assert len(selector_commands) == 2
     tight_command = selector_commands[0]
     full_command = selector_commands[1]
@@ -4835,6 +4843,17 @@ def test_talk_failure_classifies_real_clip_anchor_shortage_as_speaker_evidence()
 
     assert classified["failure_kind"] == "speaker_evidence"
     assert classified["failure_stage"] == "speaker_finalization"
+    assert classified["failure_recoverable"] is False
+
+
+def test_talk_failure_classifies_chat_authority_finalization_as_terminal():
+    classified = runner.classify_talk_failure(
+        "RuntimeError: CHAT_AUTHORITY_FINALIZATION_FAILED: "
+        "exact structured-chat wording did not survive final subtitles"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "chat_authority_finalization"
     assert classified["failure_recoverable"] is False
 
 

@@ -1,0 +1,12 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_225942_962_980",
+  "required_payload_substrings": [
+    "让李豆沙线下叫kmx"
+  ],
+  "forbidden_payload_substrings": [
+    "让礼墨线下叫kmx",
+    "让刘莎线下叫停了时"
+  ],
+  "forbidden_exact_cues": []
+}

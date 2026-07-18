@@ -291,13 +291,46 @@ def _excess_is_mid_read_interjection(authority: str, candidate: str) -> bool:
     return True
 
 
-def _strip_interjections_once(span_norm: str, interjections) -> str:
+def _strip_interjections_once(
+    span_norm: str,
+    interjections,
+    *,
+    required_substring: str | None = None,
+) -> str:
     """把已声明的插话从（normalize 后的）跨度文本里各剥离一次，用于
     「authority 全文连续在场」类校验。"""
+    required_norm = normalize_chat_text(required_substring or "")
+    if required_norm and required_norm in span_norm:
+        # A repeated word can be both part of the authority and a preserved
+        # interjection.  If the authority already survives, deleting the first
+        # matching occurrence can only turn a valid surface into a false
+        # negative.
+        return span_norm
     for fragment in interjections or ():
         fragment_norm = normalize_chat_text(str(fragment))
         if fragment_norm and fragment_norm in span_norm:
-            span_norm = span_norm.replace(fragment_norm, "", 1)
+            positions: list[int] = []
+            start = 0
+            while True:
+                index = span_norm.find(fragment_norm, start)
+                if index < 0:
+                    break
+                positions.append(index)
+                start = index + 1
+            candidates = [
+                span_norm[:index] + span_norm[index + len(fragment_norm) :]
+                for index in positions
+            ]
+            if required_norm:
+                surviving = [
+                    candidate
+                    for candidate in candidates
+                    if required_norm in candidate
+                ]
+                if surviving:
+                    span_norm = surviving[0]
+                    continue
+            span_norm = candidates[0]
     return span_norm
 
 

@@ -1071,6 +1071,7 @@ def _finalize_chat_authority_output(
         span_check = _strip_interjections_once(
             normalize_chat_text(span_text),
             alignment.get("preserved_span_interjections"),
+            required_substring=expected,
         )
         row["survived"] = bool(expected) and expected in span_check and dropped_ok
     for row in parts.entity_repairs:
