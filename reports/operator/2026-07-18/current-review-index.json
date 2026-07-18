@@ -1,0 +1,36 @@
+{
+  "generated_on": "2026-07-18",
+  "intro_offset_ms": 4288,
+  "items": [
+    {
+      "candidate_id": "auto_213000_116_205",
+      "mp4": "lidousha/2026-07-16/刚想把观众拉进公会，系统却宣布大家成.mp4",
+      "mp4_sha256": "3237bf394442de2f26005d730cab012f7bd78713edd4cf7a0940e417003126f0",
+      "srt": "lidousha/2026-07-16/刚想把观众拉进公会，系统却宣布大家成.srt",
+      "srt_sha256": "6eca9401e29f24066b528c997001f16acff7125df7257f816c19365d554af1bb"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "mp4": "lidousha/2026-07-16/弹幕拒绝被虚拟主播骗去当土木工友，李.mp4",
+      "mp4_sha256": "5c371614765bc6c9f8d206052b547fa70702ac05fe322e99cbfa2733ca329ce4",
+      "srt": "lidousha/2026-07-16/弹幕拒绝被虚拟主播骗去当土木工友，李.srt",
+      "srt_sha256": "71150b4fe1af91dcf1b75fdfd8f482e4f75670f61ea62982713a533590cf0552"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "mp4": "lidousha/2026-07-16/弹幕追问她喜欢‘妈感姐’还是‘妈感妹.mp4",
+      "mp4_sha256": "82184bbc18825bffeb3602fa09743189c688fa50bd2e79bf935736bbc89a00d6",
+      "srt": "lidousha/2026-07-16/弹幕追问她喜欢‘妈感姐’还是‘妈感妹.srt",
+      "srt_sha256": "2b65c22f996851f5e2e08fb8e779e7025320b71e70401dc4aa5576dcfa3669ba"
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "mp4": "lidousha/2026-07-16/抽卡惩罚被弹幕定成“为礼墨做0.6”.mp4",
+      "mp4_sha256": "d2784264f99002763d2b4505c5b71cfe62d31e42dae879274200ddd9a4d84b4e",
+      "srt": "lidousha/2026-07-16/抽卡惩罚被弹幕定成“为礼墨做0.6”.srt",
+      "srt_sha256": "9fd586981f97e33f79830a432f1a3aae0f30e357f82b01ff4f67838760025af9"
+    }
+  ],
+  "schema_version": "lidousha-current-review-index.v1",
+  "status": "NO_UPLOAD_REPAIR_READY"
+}
