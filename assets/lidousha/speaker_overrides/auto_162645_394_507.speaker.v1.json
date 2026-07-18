@@ -2,13 +2,13 @@
   "schema_version": 1,
   "source_media_sha256": "de0c161ef9fc73463d90a722e88a3c3bc35cd73785266086a7c4976a136b8012",
   "text_final_srt_sha256": "59bf94fccce2a18a40d286566580e87f6ddaca9b1a27071ccab87e6168c2a238",
-  "source_srt_sha256": "44f74cd75f04a778fa4292815085c778b0e8cb42e9358c8ec97a9315331cee02",
+  "source_srt_sha256": "423ed8c80404e602ab2b4a23689f8ba14ffc6d41e0ef2a91b5a5b61224886c45",
   "candidate_id": "auto_162645_394_507",
   "status": "reviewed_complete_source_turns",
   "reviewed_at": "2026-07-18",
   "reviewed_context_votes": {
     "authority": "Full-clip semantic source-turn review: the repeated watched-video lyric cues were removed upstream, so every remaining cue is Li Dousha reacting. CAM++ labels changed after those drops and are supporting evidence only, not deletion authority.",
-    "source_automatic_srt_sha256": "44f74cd75f04a778fa4292815085c778b0e8cb42e9358c8ec97a9315331cee02",
+    "source_automatic_srt_sha256": "423ed8c80404e602ab2b4a23689f8ba14ffc6d41e0ef2a91b5a5b61224886c45",
     "labels": {
       "1": "李豆沙",
       "2": "李豆沙",
@@ -35,5 +35,125 @@
       "23": "李豆沙"
     }
   },
-  "overrides": []
+  "overrides": [
+    {
+      "source_cue": 7,
+      "expect": {
+        "start": "00:00:29,480",
+        "end": "00:00:31,600",
+        "text": "何意味啊！"
+      },
+      "authority": "Full-clip semantic turn review after watched-video lyric removal",
+      "segments": [
+        {
+          "start": "00:00:29,480",
+          "end": "00:00:31,600",
+          "speaker": "李豆沙",
+          "text": "何意味啊！"
+        }
+      ]
+    },
+    {
+      "source_cue": 8,
+      "expect": {
+        "start": "00:00:36,530",
+        "end": "00:00:38,610",
+        "text": "何意味啊！"
+      },
+      "authority": "Full-clip semantic turn review after watched-video lyric removal",
+      "segments": [
+        {
+          "start": "00:00:36,530",
+          "end": "00:00:38,610",
+          "speaker": "李豆沙",
+          "text": "何意味啊！"
+        }
+      ]
+    },
+    {
+      "source_cue": 9,
+      "expect": {
+        "start": "00:00:38,730",
+        "end": "00:00:42,330",
+        "text": "怎么能这样？人类你太坏了！"
+      },
+      "authority": "Full-clip semantic turn review after watched-video lyric removal",
+      "segments": [
+        {
+          "start": "00:00:38,730",
+          "end": "00:00:42,330",
+          "speaker": "李豆沙",
+          "text": "怎么能这样？人类你太坏了！"
+        }
+      ]
+    },
+    {
+      "source_cue": 10,
+      "expect": {
+        "start": "00:00:42,450",
+        "end": "00:00:47,170",
+        "text": "人类你太坏了！"
+      },
+      "authority": "Full-clip semantic turn review after watched-video lyric removal",
+      "segments": [
+        {
+          "start": "00:00:42,450",
+          "end": "00:00:47,170",
+          "speaker": "李豆沙",
+          "text": "人类你太坏了！"
+        }
+      ]
+    },
+    {
+      "source_cue": 11,
+      "expect": {
+        "start": "00:00:57,060",
+        "end": "00:00:59,580",
+        "text": "怎么能这样对小狗！"
+      },
+      "authority": "Full-clip semantic turn review after watched-video lyric removal",
+      "segments": [
+        {
+          "start": "00:00:57,060",
+          "end": "00:00:59,580",
+          "speaker": "李豆沙",
+          "text": "怎么能这样对小狗！"
+        }
+      ]
+    },
+    {
+      "source_cue": 12,
+      "expect": {
+        "start": "00:01:00,180",
+        "end": "00:01:02,500",
+        "text": "这人类太可恶了！"
+      },
+      "authority": "Full-clip semantic turn review after watched-video lyric removal",
+      "segments": [
+        {
+          "start": "00:01:00,180",
+          "end": "00:01:02,500",
+          "speaker": "李豆沙",
+          "text": "这人类太可恶了！"
+        }
+      ]
+    },
+    {
+      "source_cue": 16,
+      "expect": {
+        "start": "00:01:13,000",
+        "end": "00:01:19,320",
+        "text": "原来原来狗又牛哇又牛哇"
+      },
+      "authority": "Full-clip semantic turn review after watched-video lyric removal",
+      "segments": [
+        {
+          "start": "00:01:13,000",
+          "end": "00:01:19,320",
+          "speaker": "李豆沙",
+          "text": "原来原来狗又牛哇又牛哇"
+        }
+      ]
+    }
+  ]
 }
