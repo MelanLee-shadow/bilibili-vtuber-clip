@@ -34,12 +34,60 @@ from scripts.apply_subtitle_text_overrides import (  # noqa: E402
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
 from scripts.suggest_upload_tags import generate_upload_tags  # noqa: E402
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro  # noqa: E402
+from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
 
 BASE = Path("/opt/bilive/autoslice")
 
 
 def _srt_blocks(text: str):
     return [b for b in text.replace("\r\n", "\n").strip().split("\n\n") if b.strip()]
+
+
+def _srt_time(value_ms: int) -> str:
+    hours, rem = divmod(int(value_ms), 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
+    seconds, millis = divmod(rem, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _project_reviewed_text_onto_timing(
+    *,
+    text_source: Path,
+    decision_output: Path,
+    timing_source: Path,
+    text_override: Path,
+) -> str:
+    source_cues = parse_srt_cues(text_source.read_text(encoding="utf-8"))
+    decision_cues = parse_srt_cues(decision_output.read_text(encoding="utf-8"))
+    timing_cues = parse_srt_cues(timing_source.read_text(encoding="utf-8"))
+    if len(source_cues) != len(timing_cues):
+        raise ValueError(
+            "text source and authoritative timing source have different cue counts"
+        )
+    document = json.loads(text_override.read_text(encoding="utf-8"))
+    dropped = {
+        int(row["source_cue"])
+        for row in document.get("overrides", [])
+        if isinstance(row, dict) and row.get("action") == "drop"
+    }
+    expected_output_count = len(source_cues) - len(dropped)
+    if len(decision_cues) != expected_output_count:
+        raise ValueError(
+            "text decision output does not preserve source cue lineage"
+        )
+    projected: list[str] = []
+    decision_offset = 0
+    for source_index, timing_cue in enumerate(timing_cues, start=1):
+        if source_index in dropped:
+            continue
+        decision_cue = decision_cues[decision_offset]
+        decision_offset += 1
+        projected.append(
+            f"{len(projected) + 1}\n"
+            f"{_srt_time(timing_cue.start_ms)} --> {_srt_time(timing_cue.end_ms)}\n"
+            f"{decision_cue.text}\n"
+        )
+    return "\n".join(projected)
 
 
 def main(argv=None) -> int:
@@ -64,6 +112,11 @@ def main(argv=None) -> int:
         type=Path,
         help="schema-v3 hash-bound override document to apply as the complete text repair",
     )
+    p.add_argument(
+        "--timing-source",
+        type=Path,
+        help="authoritative BCUT/v2 SRT whose cue boundaries remain unchanged",
+    )
     p.add_argument("--out-base", type=Path, default=BASE)
     p.add_argument("--speaker-overrides", type=Path, help="optional hash-bound reviewed turn/split/overlap decisions")
     p.add_argument(
@@ -80,34 +133,57 @@ def main(argv=None) -> int:
     srt = srt_path.read_text(encoding="utf-8")
 
     before = srt
-    if (args.text_source is None) != (args.text_override is None):
-        print("--text-source and --text-override must be supplied together", file=sys.stderr)
+    text_repair_inputs = (
+        args.text_source,
+        args.text_override,
+        args.timing_source,
+    )
+    if any(value is not None for value in text_repair_inputs) and not all(
+        value is not None for value in text_repair_inputs
+    ):
+        print(
+            "--text-source, --text-override, and --timing-source must be supplied together",
+            file=sys.stderr,
+        )
         return 2
     text_override_manifest = None
     text_override_manifest_path = None
     text_override_output_path = None
-    if args.text_source is not None and args.text_override is not None:
+    text_override_decision_output_path = None
+    if (
+        args.text_source is not None
+        and args.text_override is not None
+        and args.timing_source is not None
+    ):
         if args.replace or args.set_line:
             print(
                 "hash-bound text repair cannot be mixed with --replace/--set-line",
                 file=sys.stderr,
             )
             return 2
-        text_override_output_path = (
-            recut_dir / f"{args.cid}.human-reviewed-text.srt"
+        text_override_decision_output_path = (
+            recut_dir / f"{args.cid}.human-reviewed-decision-output.srt"
         )
+        text_override_output_path = recut_dir / f"{args.cid}.human-reviewed-text.srt"
         text_override_manifest_path = (
             recut_dir / f"{args.cid}.human-reviewed-text.json"
         )
         text_override_manifest = apply_text_override_document(
             args.text_source,
             args.text_override,
-            text_override_output_path,
+            text_override_decision_output_path,
             text_override_manifest_path,
         )
         if text_override_manifest.get("candidate_id") != args.cid:
             print("text override candidate_id mismatch", file=sys.stderr)
             return 2
+        projected_text = _project_reviewed_text_onto_timing(
+            text_source=args.text_source,
+            decision_output=text_override_decision_output_path,
+            timing_source=args.timing_source,
+            text_override=args.text_override,
+        )
+        text_override_output_path.write_text(projected_text, encoding="utf-8")
         srt = text_override_output_path.read_text(encoding="utf-8")
     for pair in args.replace:
         old, _, new = pair.partition("=")
@@ -217,6 +293,20 @@ def main(argv=None) -> int:
         "text_override_manifest_sha256": (
             _sha256(text_override_manifest_path)
             if text_override_manifest_path
+            else None
+        ),
+        "timing_source": str(args.timing_source) if args.timing_source else None,
+        "timing_source_sha256": (
+            _sha256(args.timing_source) if args.timing_source else None
+        ),
+        "text_override_decision_output": (
+            str(text_override_decision_output_path)
+            if text_override_decision_output_path
+            else None
+        ),
+        "text_override_decision_output_sha256": (
+            _sha256(text_override_decision_output_path)
+            if text_override_decision_output_path
             else None
         ),
         "text_override_output": (

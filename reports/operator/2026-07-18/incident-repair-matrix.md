@@ -37,7 +37,7 @@ SRT 时间，因此 `成品时间 - 4.288s = cue 时间`。
 
 ## 已通过的自动验收
 
-- 173 项 text/timing/entity/override 聚焦测试通过。
+- 174 项 text/timing/entity/override/reburn 聚焦测试通过。
 - 专名平等回归包括反向 canary：BCUT 明确说 `小李` 时可把错误终稿
   `李豆沙` 恢复为 `小李`；`豆沙` 同理；`刘翔` 不被候选顺序吸附。
 - topic graph 的 35 项测试通过；`sumimi` 是 `unit`，通过
