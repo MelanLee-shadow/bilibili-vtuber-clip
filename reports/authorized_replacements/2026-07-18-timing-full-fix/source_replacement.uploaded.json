@@ -1,0 +1,62 @@
+{
+  "schema": "same-bvid-source-replacement-results.v1",
+  "authorization_quote": "修复完的可以编辑上传",
+  "new_archive_created": false,
+  "results": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "bvid": "BV1AbNR66ExW",
+      "aid": 116935786305342,
+      "old_cid": 40051345668,
+      "new_cid": 40063733708,
+      "video_sha256": "1d699f647392e4ef4cbf23c8fd8da520c7232a84e6cd879dc5ce7736be0e9011",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_162645_394_507",
+      "bvid": "BV1cbNR66Eyt",
+      "aid": 116935786301806,
+      "old_cid": 40051346587,
+      "new_cid": 40063860865,
+      "video_sha256": "d18fa52765bce16b29f600dc48f22934f354d6770a192ceee641e7a57609eabf",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "bvid": "BV1AtNR63ERp",
+      "aid": 116935803081751,
+      "old_cid": 40051347150,
+      "new_cid": 40063861535,
+      "video_sha256": "82184bbc18825bffeb3602fa09743189c688fa50bd2e79bf935736bbc89a00d6",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "bvid": "BV1cbNR66ECP",
+      "aid": 116935786301887,
+      "old_cid": 40051409139,
+      "new_cid": 40063862370,
+      "video_sha256": "d2784264f99002763d2b4505c5b71cfe62d31e42dae879274200ddd9a4d84b4e",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_213000_116_205",
+      "bvid": "BV1pbNR66E2g",
+      "aid": 116935786370775,
+      "old_cid": 40051409236,
+      "new_cid": 40063863019,
+      "video_sha256": "5c16ec02e234e35970e84fcb3098d5d402848eccc7d9cf8139a9397f4ccbe7a0",
+      "status": "REPLACED_AND_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "bvid": "BV1pbNR66E2r",
+      "aid": 116935786370801,
+      "old_cid": 40051409832,
+      "new_cid": 40063863703,
+      "video_sha256": "5c371614765bc6c9f8d206052b547fa70702ac05fe322e99cbfa2733ca329ce4",
+      "status": "REPLACED_AND_PUBLIC"
+    }
+  ],
+  "verified_at": "2026-07-18T06:32:23Z"
+}

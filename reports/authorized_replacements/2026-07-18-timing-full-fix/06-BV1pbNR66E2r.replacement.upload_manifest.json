@@ -1,0 +1,32 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "5c371614765b",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-16/auto_213000_1218_1328/replacement_recuts/auto_213000_1218_1328.recut.burned-final-speaker.mp4",
+    "sha256": "5c371614765bc6c9f8d206052b547fa70702ac05fe322e99cbfa2733ca329ce4",
+    "bytes": 32764925
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕拒绝被虚拟主播骗去当土木工友，李.cover.png",
+    "sha256": "8f1f7d2e535921ddd6ccd906d3fc17e1312b18f3553aa0d35a50a7693c8dfd1d",
+    "bytes": 2590758
+  },
+  "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复完的可以编辑上传",
+    "at": "2026-07-18T06:22:20+0000"
+  },
+  "created_at": "2026-07-18T06:22:20+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟UP主",
+    "周次",
+    "恋死",
+    "非人少女",
+    "百合",
+    "恋人不行",
+    "终将"
+  ],
+  "tags_source": "cli"
+}

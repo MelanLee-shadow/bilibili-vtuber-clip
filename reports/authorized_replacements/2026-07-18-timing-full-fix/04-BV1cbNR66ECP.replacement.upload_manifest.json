@@ -1,0 +1,36 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "d2784264f990",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-16/auto_210002_297_513/replacement_recuts/auto_210002_297_513.recut.burned-final-speaker.mp4",
+    "sha256": "d2784264f99002763d2b4505c5b71cfe62d31e42dae879274200ddd9a4d84b4e",
+    "bytes": 52926880
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-07-16/auto_210002_297_513/replacement_recuts/covers/auto_210002_297_513.ai-title.cover.png",
+    "sha256": "50b8806364728e3409bc01760dce50013d22833a6b188e220a887d3e8585efc3",
+    "bytes": 2618552
+  },
+  "title": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复完的可以编辑上传",
+    "at": "2026-07-18T06:22:20+0000"
+  },
+  "created_at": "2026-07-18T06:22:20+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "礼墨Sumi",
+    "侄女",
+    "百合",
+    "女同",
+    "抽卡",
+    "惩罚",
+    "嘴硬",
+    "搞笑"
+  ],
+  "tags_source": "cli"
+}

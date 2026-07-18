@@ -1,0 +1,986 @@
+{
+  "schema": "bilibili-public-repair-verification.v1",
+  "checked_at": "2026-07-18T06:32:23Z",
+  "owner_mid": 55006782,
+  "ugc_season_id": 8383206,
+  "ugc_season_title": "小李切片",
+  "status": "PASS",
+  "poll_history": [
+    {
+      "at": "2026-07-18T06:28:52Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:29:05Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:29:18Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:29:31Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:29:44Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:29:57Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:30:10Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:30:23Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:30:36Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:30:49Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:31:03Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": -60,
+          "state_desc": "审核中",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:31:16Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:31:29Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:31:42Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:31:55Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": -6,
+          "state_desc": "修改内容待审核…",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "at": "2026-07-18T06:32:08Z",
+      "states": [
+        {
+          "bvid": "BV1AbNR66ExW",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063733708,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66Eyt",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063860865,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1AtNR63ERp",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063861535,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1cbNR66ECP",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063862370,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2g",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863019,
+          "parts": 1
+        },
+        {
+          "bvid": "BV1pbNR66E2r",
+          "state": 0,
+          "state_desc": "开放浏览",
+          "cid": 40063863703,
+          "parts": 1
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "bvid": "BV1AbNR66ExW",
+      "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+      "cid": 40063733708,
+      "width": 1280,
+      "height": 720,
+      "tags": [
+        "搞笑",
+        "AI",
+        "虚拟UP主",
+        "直播切片",
+        "李豆沙",
+        "上头",
+        "求婚",
+        "虚拟主播",
+        "磕CP"
+      ],
+      "manual_tags_preserved": false,
+      "checks": {
+        "member_state_0": true,
+        "single_part": true,
+        "title_exact": true,
+        "part_title_exact": true,
+        "public_code_0": true,
+        "public_cid_matches": true,
+        "owner_mid": true,
+        "season_id": true,
+        "season_title": true,
+        "season_display": true,
+        "tag_code_0": true,
+        "tags_exact": true,
+        "dimensions_positive": true
+      },
+      "status": "PASS"
+    },
+    {
+      "candidate_id": "auto_162645_394_507",
+      "bvid": "BV1cbNR66Eyt",
+      "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "cid": 40063860865,
+      "width": 1280,
+      "height": 720,
+      "tags": [
+        "萌宠",
+        "搞笑",
+        "虚拟UP主",
+        "直播切片",
+        "李豆沙",
+        "反差萌",
+        "心疼",
+        "破防",
+        "虚拟主播"
+      ],
+      "manual_tags_preserved": false,
+      "checks": {
+        "member_state_0": true,
+        "single_part": true,
+        "title_exact": true,
+        "part_title_exact": true,
+        "public_code_0": true,
+        "public_cid_matches": true,
+        "owner_mid": true,
+        "season_id": true,
+        "season_title": true,
+        "season_display": true,
+        "tag_code_0": true,
+        "tags_exact": true,
+        "dimensions_positive": true
+      },
+      "status": "PASS"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "bvid": "BV1AtNR63ERp",
+      "title": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "cid": 40063861535,
+      "width": 1280,
+      "height": 720,
+      "tags": [
+        "百合",
+        "女同",
+        "虚拟UP主",
+        "直播切片",
+        "李豆沙",
+        "礼墨Sumi",
+        "Ave Mujica",
+        "侄女",
+        "BanG Dream",
+        "虚拟主播",
+        "邦多利",
+        "安晚awa"
+      ],
+      "manual_tags_preserved": false,
+      "checks": {
+        "member_state_0": true,
+        "single_part": true,
+        "title_exact": true,
+        "part_title_exact": true,
+        "public_code_0": true,
+        "public_cid_matches": true,
+        "owner_mid": true,
+        "season_id": true,
+        "season_title": true,
+        "season_display": true,
+        "tag_code_0": true,
+        "tags_exact": true,
+        "dimensions_positive": true
+      },
+      "status": "PASS"
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "bvid": "BV1cbNR66ECP",
+      "title": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "cid": 40063862370,
+      "width": 1920,
+      "height": 1080,
+      "tags": [
+        "百合",
+        "女同",
+        "搞笑",
+        "抽卡",
+        "虚拟UP主",
+        "直播切片",
+        "李豆沙",
+        "礼墨Sumi",
+        "惩罚",
+        "侄女",
+        "嘴硬",
+        "虚拟主播"
+      ],
+      "manual_tags_preserved": false,
+      "checks": {
+        "member_state_0": true,
+        "single_part": true,
+        "title_exact": true,
+        "part_title_exact": true,
+        "public_code_0": true,
+        "public_cid_matches": true,
+        "owner_mid": true,
+        "season_id": true,
+        "season_title": true,
+        "season_display": true,
+        "tag_code_0": true,
+        "tags_exact": true,
+        "dimensions_positive": true
+      },
+      "status": "PASS"
+    },
+    {
+      "candidate_id": "auto_213000_116_205",
+      "bvid": "BV1pbNR66E2g",
+      "title": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+      "cid": 40063863019,
+      "width": 1920,
+      "height": 1080,
+      "tags": [
+        "搞笑",
+        "虚拟UP主",
+        "吐槽",
+        "直播切片",
+        "李豆沙",
+        "名场面",
+        "沙雕",
+        "虚拟主播",
+        "打工人"
+      ],
+      "manual_tags_preserved": false,
+      "checks": {
+        "member_state_0": true,
+        "single_part": true,
+        "title_exact": true,
+        "part_title_exact": true,
+        "public_code_0": true,
+        "public_cid_matches": true,
+        "owner_mid": true,
+        "season_id": true,
+        "season_title": true,
+        "season_display": true,
+        "tag_code_0": true,
+        "tags_exact": true,
+        "dimensions_positive": true
+      },
+      "status": "PASS"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "bvid": "BV1pbNR66E2r",
+      "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "cid": 40063863703,
+      "width": 1920,
+      "height": 1080,
+      "tags": [
+        "百合",
+        "虚拟UP主",
+        "非人少女",
+        "李豆沙",
+        "恋人不行",
+        "周次",
+        "终将",
+        "恋死"
+      ],
+      "manual_tags_preserved": true,
+      "checks": {
+        "member_state_0": true,
+        "single_part": true,
+        "title_exact": true,
+        "part_title_exact": true,
+        "public_code_0": true,
+        "public_cid_matches": true,
+        "owner_mid": true,
+        "season_id": true,
+        "season_title": true,
+        "season_display": true,
+        "tag_code_0": true,
+        "tags_exact": true,
+        "dimensions_positive": true
+      },
+      "status": "PASS"
+    }
+  ],
+  "fatal": []
+}

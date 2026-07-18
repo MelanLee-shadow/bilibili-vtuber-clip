@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "1d699f647392",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-16/auto_162645_264_391/replacement_recuts/auto_162645_264_391.recut.burned-final-speaker.mp4",
+    "sha256": "1d699f647392e4ef4cbf23c8fd8da520c7232a84e6cd879dc5ce7736be0e9011",
+    "bytes": 15734105
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/看《魔法少女奈叶》求婚片段彻底上头，.cover.png",
+    "sha256": "88d410088cee5a6e7cf08ec84bacf07f790a61139ade9f08f0fa9a333c22ac5c",
+    "bytes": 2511498
+  },
+  "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复完的可以编辑上传",
+    "at": "2026-07-18T06:22:19+0000"
+  },
+  "created_at": "2026-07-18T06:22:19+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "上头",
+    "磕CP",
+    "求婚",
+    "搞笑",
+    "AI"
+  ],
+  "tags_source": "cli"
+}

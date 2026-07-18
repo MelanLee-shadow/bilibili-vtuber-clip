@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "5c16ec02e234",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-16/auto_213000_116_205/replacement_recuts/auto_213000_116_205.recut.burned-final-speaker.mp4",
+    "sha256": "5c16ec02e234e35970e84fcb3098d5d402848eccc7d9cf8139a9397f4ccbe7a0",
+    "bytes": 27176297
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-07-16/auto_213000_116_205/replacement_recuts/covers/auto_213000_116_205.ai-title.cover.png",
+    "sha256": "e9e1296040a5510ee4fd5a809b281dc78d3183ee861e3be2f48d6c5c2f556662",
+    "bytes": 2767655
+  },
+  "title": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复完的可以编辑上传",
+    "at": "2026-07-18T06:22:20+0000"
+  },
+  "created_at": "2026-07-18T06:22:20+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "搞笑",
+    "打工人",
+    "吐槽",
+    "沙雕",
+    "名场面"
+  ],
+  "tags_source": "cli"
+}
