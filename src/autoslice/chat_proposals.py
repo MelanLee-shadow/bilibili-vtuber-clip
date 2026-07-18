@@ -537,6 +537,7 @@ def _discover_chat_proposals(
 
     discovery = _ChatProposalDiscovery()
     arbitration_attempts = 0
+    high_confidence_arbitration_attempts = 0
     for item in evidence:
         if item.kind == "gift":
             continue
@@ -571,6 +572,30 @@ def _discover_chat_proposals(
                 continue
             if support_scores or best.get("thread_anchored"):
                 discovery.proposals.append(best)
+            elif (
+                entity_verifier is not None
+                and high_confidence_arbitration_attempts < 4
+                and best["count"] <= 2
+                and best["score"] >= 0.80
+                and best["coverage"] >= 0.80
+                and best["precision"] >= 0.70
+            ):
+                # A very close, same-time danmaku read can still differ in one
+                # semantically important word (2026-07-16:
+                # “soyo就是妈” -> “soyo是真妈”).  Independent ASR support is
+                # often the same correlated mis-hearing, so do not silently
+                # discard the structured exact text.  Spend a separate bounded
+                # raw-audio arbitration budget; the exact chat is applied only
+                # when the verifier selects it.
+                high_confidence_arbitration_attempts += 1
+                _arbitrate_read_aloud_near_match(
+                    item,
+                    best,
+                    cues=cues,
+                    texts=texts,
+                    entity_verifier=entity_verifier,
+                    discovery=discovery,
+                )
         elif best_near is not None and entity_verifier is not None and arbitration_attempts < 3:
             arbitration_attempts += 1
             _arbitrate_read_aloud_near_match(

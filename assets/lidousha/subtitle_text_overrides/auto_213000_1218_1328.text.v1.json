@@ -2,7 +2,7 @@
   "schema_version": 3,
   "candidate_id": "auto_213000_1218_1328",
   "source_cue_witness_sha256": "f0768ecd6f7685caea57c9f218048f98261ea9f8e206e6c50c2e0b97e294bb4b",
-  "decision_output_witness_sha256": "629dc15245c2c398bf3d22d9948e20fe3da5645bda10208880e14bad9fbca031",
+  "decision_output_witness_sha256": "6a93b311e46c10f086ab53e40fbf238eaddd492cafebf0d9219d7bb0eba8f198",
   "overrides": [
     {
       "source_cue": 5,
@@ -12,9 +12,9 @@
         "end": "00:00:12,250",
         "text": "不行不行，并非不行"
       },
-      "text": "不行不行，绝对不行",
-      "authority": "The repeated refusal is acoustically and contextually an emphatic 绝对不行; the previous production transcript independently preserved it",
-      "reason": "Undo a semantic inversion introduced by the final correction pass"
+      "text": "不行不行，并非不行",
+      "authority": "Ivan reviewed the 2026-07-16 source and confirmed BCUT's exact wording 不行不行，并非不行",
+      "reason": "Preserve the source wording instead of semantically rewriting the apparent contradiction"
     }
   ]
 }

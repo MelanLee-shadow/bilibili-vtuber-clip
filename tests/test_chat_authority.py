@@ -1093,6 +1093,24 @@ def test_danmaku_near_miss_is_arbitrated_by_audio_and_restored():
     assert audit["applied"][0]["alignment_basis"] == "raw-audio-forced-choice.v1"
 
 
+def test_high_confidence_danmaku_near_copy_uses_bounded_audio_arbitration():
+    exact = "soyo就是妈"
+    source = _srt("soyo是真妈", "已经超越妈感")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, exact)],
+        support_srt_texts=[],
+        entity_verifier=_audio_entity_verifier(exact),
+    )
+
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert texts == ["soyo就是妈", "已经超越妈感"]
+    row = audit["read_aloud_arbitrations"][0]
+    assert row["outcome"] == "authority_confirmed_by_audio"
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+
+
 def test_danmaku_near_miss_rejected_by_audio_keeps_asr_text():
     danmaku = "乐队不是需要妈妈吗"
     source = _srt("立希不是算妈妈吗")

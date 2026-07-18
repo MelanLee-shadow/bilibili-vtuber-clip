@@ -1,4 +1,4 @@
-"""Source-backed topic -> work -> character routing for subtitle correction.
+"""Source-backed topic -> work -> proper-name routing for subtitle correction.
 
 The graph is deliberately separate from the global glossary.  A clip must
 first match a topic/work surface before any child character names are exposed
@@ -288,12 +288,21 @@ def validate_topic_entity_graph(payload: object) -> dict[str, Any]:
     works: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_works):
         label = f"works[{index}]"
-        if not isinstance(raw, dict) or set(raw) != {
-            "work_id", "canonical", "aliases", "topic_ids", "entity_ids", "aired_from", "sources"
+        work_fields = {
+            "work_id",
+            "canonical",
+            "aliases",
+            "topic_ids",
+            "entity_ids",
+            "aired_from",
+            "sources",
+        }
+        if not isinstance(raw, dict) or set(raw) not in {
+            frozenset(work_fields),
+            frozenset(work_fields | {"retrieval_entity_ids"}),
         }:
             raise TopicEntityGraphError(f"{label} has unknown or missing fields")
-        works.append(
-            {
+        work = {
                 "work_id": _identifier(raw["work_id"], label=f"{label}.work_id"),
                 "canonical": _atom(raw["canonical"], label=f"{label}.canonical"),
                 "aliases": _atom_list(raw["aliases"], label=f"{label}.aliases", max_items=32),
@@ -301,22 +310,46 @@ def validate_topic_entity_graph(payload: object) -> dict[str, Any]:
                 "entity_ids": _id_list(raw["entity_ids"], label=f"{label}.entity_ids", max_items=64),
                 "aired_from": _date(raw["aired_from"], label=f"{label}.aired_from"),
                 "sources": _sources(raw["sources"], label=f"{label}.sources"),
-            }
-        )
+        }
+        if "retrieval_entity_ids" in raw:
+            work["retrieval_entity_ids"] = _id_list(
+                raw["retrieval_entity_ids"],
+                label=f"{label}.retrieval_entity_ids",
+                max_items=32,
+            )
+        works.append(work)
 
     entities: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_entities):
         label = f"entities[{index}]"
-        if not isinstance(raw, dict) or set(raw) != {
-            "entity_id", "kind", "canonical_zh", "native_names", "aliases", "readings", "role", "work_ids", "sources"
+        entity_fields = {
+            "entity_id",
+            "kind",
+            "canonical_zh",
+            "native_names",
+            "aliases",
+            "readings",
+            "role",
+            "work_ids",
+            "sources",
+        }
+        if not isinstance(raw, dict) or set(raw) not in {
+            frozenset(entity_fields),
+            frozenset(entity_fields | {"activation_work_ids"}),
         }:
             raise TopicEntityGraphError(f"{label} has unknown or missing fields")
-        if raw["kind"] != "character" or raw["role"] not in {"MAIN", "SUPPORTING"}:
+        supported_role = (
+            raw["kind"] == "character"
+            and raw["role"] in {"MAIN", "SUPPORTING"}
+        ) or (
+            raw["kind"] == "unit"
+            and raw["role"] == "RELATED"
+        )
+        if not supported_role:
             raise TopicEntityGraphError(f"{label} kind/role is unsupported")
-        entities.append(
-            {
+        entity = {
                 "entity_id": _identifier(raw["entity_id"], label=f"{label}.entity_id"),
-                "kind": "character",
+                "kind": raw["kind"],
                 "canonical_zh": _atom(raw["canonical_zh"], label=f"{label}.canonical_zh"),
                 "native_names": _atom_list(raw["native_names"], label=f"{label}.native_names", min_items=1, max_items=12),
                 "aliases": _atom_list(raw["aliases"], label=f"{label}.aliases", max_items=24),
@@ -324,8 +357,14 @@ def validate_topic_entity_graph(payload: object) -> dict[str, Any]:
                 "role": raw["role"],
                 "work_ids": _id_list(raw["work_ids"], label=f"{label}.work_ids", max_items=16),
                 "sources": _sources(raw["sources"], label=f"{label}.sources"),
-            }
-        )
+        }
+        if "activation_work_ids" in raw:
+            entity["activation_work_ids"] = _id_list(
+                raw["activation_work_ids"],
+                label=f"{label}.activation_work_ids",
+                max_items=16,
+            )
+        entities.append(entity)
 
     topic_ids = [row["topic_id"] for row in topics]
     work_ids = [row["work_id"] for row in works]
@@ -342,17 +381,39 @@ def validate_topic_entity_graph(payload: object) -> dict[str, Any]:
         if any(row["topic_id"] not in works_by_id[work_id]["topic_ids"] for work_id in row["work_ids"]):
             raise TopicEntityGraphError(f"topic {row['topic_id']} has a non-reciprocal work edge")
     for row in works:
-        if not set(row["topic_ids"]) <= topic_set or not set(row["entity_ids"]) <= entity_set:
+        retrieval_ids = row.get("retrieval_entity_ids", [])
+        if (
+            not set(row["topic_ids"]) <= topic_set
+            or not set(row["entity_ids"]) <= entity_set
+            or not set(retrieval_ids) <= entity_set
+        ):
             raise TopicEntityGraphError(f"work {row['work_id']} has dangling edges")
         if any(row["work_id"] not in topics_by_id[topic_id]["work_ids"] for topic_id in row["topic_ids"]):
             raise TopicEntityGraphError(f"work {row['work_id']} has a non-reciprocal topic edge")
         if any(row["work_id"] not in entities_by_id[entity_id]["work_ids"] for entity_id in row["entity_ids"]):
             raise TopicEntityGraphError(f"work {row['work_id']} has a non-reciprocal entity edge")
+        if any(
+            row["work_id"]
+            not in entities_by_id[entity_id].get("activation_work_ids", [])
+            for entity_id in retrieval_ids
+        ):
+            raise TopicEntityGraphError(
+                f"work {row['work_id']} has a non-reciprocal retrieval edge"
+            )
     for row in entities:
-        if not set(row["work_ids"]) <= work_set:
+        activation_ids = row.get("activation_work_ids", [])
+        if not set(row["work_ids"]) <= work_set or not set(activation_ids) <= work_set:
             raise TopicEntityGraphError(f"entity {row['entity_id']} has dangling work edges")
         if any(row["entity_id"] not in works_by_id[work_id]["entity_ids"] for work_id in row["work_ids"]):
             raise TopicEntityGraphError(f"entity {row['entity_id']} has a non-reciprocal work edge")
+        if any(
+            row["entity_id"]
+            not in works_by_id[work_id].get("retrieval_entity_ids", [])
+            for work_id in activation_ids
+        ):
+            raise TopicEntityGraphError(
+                f"entity {row['entity_id']} has a non-reciprocal activation edge"
+            )
     return {
         "schema_version": GRAPH_SCHEMA,
         "generator": GRAPH_GENERATOR,
@@ -477,12 +538,15 @@ def resolve_topic_context(
             graph_sha256,
             recording_date,
         )
-    role_rank = {"MAIN": 0, "SUPPORTING": 1}
+    role_rank = {"MAIN": 0, "SUPPORTING": 1, "RELATED": 2}
     scoped = sorted(
         {
             entity_id
             for work_id in selected_work_ids
-            for entity_id in works[work_id]["entity_ids"]
+            for entity_id in [
+                *works[work_id]["entity_ids"],
+                *works[work_id].get("retrieval_entity_ids", []),
+            ]
             if entity_id in entities
         },
         key=lambda entity_id: (
@@ -518,6 +582,7 @@ def render_scoped_entity_context(graph: Mapping[str, Any], resolution: TopicReso
         rows.append(
             {
                 "entity_id": entity_id,
+                "kind": entity["kind"],
                 "canonical_zh": entity["canonical_zh"],
                 "native_names": entity["native_names"],
                 "aliases": entity["aliases"],
@@ -526,8 +591,8 @@ def render_scoped_entity_context(graph: Mapping[str, Any], resolution: TopicReso
             }
         )
     return (
-        "\n已解析话题的角色子图（仅限本片话题；先按实际发音确认 entity_id，再使用 canonical_zh，"
-        "不得把同作品角色按热度互换；不确定就保留草稿）:\n"
+        "\n已解析话题的专名子图（仅限本片话题；先按实际发音确认 entity_id，再使用 canonical_zh，"
+        "不得把同作品角色/组合按热度互换；不确定就保留草稿）:\n"
         + json.dumps(header, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n"
         + "\n".join(
@@ -605,7 +670,7 @@ def dynamic_referent_groups(
                     for row in selected
                 ),
                 reason=(
-                    "Topic-scoped character graph. Resolve the spoken character from raw syllables; "
+                    "Topic-scoped proper-name graph. Resolve the spoken entity from raw syllables; "
                     "after identity is resolved, preserve a correct spoken short Chinese name and use "
                     "the graph only to repair a wrong/non-Chinese surface."
                 ),

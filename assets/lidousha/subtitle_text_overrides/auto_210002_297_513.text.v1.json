@@ -1,8 +1,8 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_210002_297_513",
-  "source_cue_witness_sha256": "490abea1dd8689fcbd71daba6badaf7f376da58e43bb3ac4c5b56656ca4bbd1a",
-  "decision_output_witness_sha256": "d058752cef25358a15cefdc2aa481f0cfecc43cbac5c38f8b15931efe0123f06",
+  "source_cue_witness_sha256": "c9fdaf03486070495e23a61755b28d4ef87f5edd3d8b3f68dccfeb3d2a89c781",
+  "decision_output_witness_sha256": "c01e51c4536b9d009b00e5fabc3a451f726aea74c4eca1fdfa117b89fa04be5b",
   "overrides": [
     {
       "source_cue": 3,
@@ -15,6 +15,18 @@
       "text": "给了李豆沙一个挑战",
       "authority": "Ivan reviewed the 2026-07-16 source audio and confirmed this exact wording",
       "reason": "The challenge recipient was dropped and 一个 was duplicated into 下一个 by ASR"
+    },
+    {
+      "source_cue": 13,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:28,040",
+        "end": "00:00:29,780",
+        "text": "比如说，说个台词"
+      },
+      "text": "李豆沙，说个台词",
+      "authority": "Ivan reviewed the 2026-07-16 source audio and confirmed the host self-reference",
+      "reason": "Restore the name occupying the self-reference slot"
     },
     {
       "source_cue": 14,
@@ -49,6 +61,54 @@
       "reason": "Keep the repeated canonical proper-name spelling stable across spacing drift"
     },
     {
+      "source_cue": 24,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:53,870",
+        "end": "00:00:58,570",
+        "text": "呃呃呃，可以在弹幕发出你想让小李说的台词"
+      },
+      "text": "呃呃呃，可以在弹幕发出你想让李豆沙说的台词",
+      "authority": "Ivan confirmed the source says Li Dousha; equal-name audio arbitration also resolves BCUT 流沙 to 李豆沙 here",
+      "reason": "Undo an unsupported proper-name substitution in a host self-reference slot"
+    },
+    {
+      "source_cue": 25,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:58,570",
+        "end": "00:01:01,670",
+        "text": "然后小李，小李就任选一个吧"
+      },
+      "text": "然后李豆沙，李豆沙就任选一个吧",
+      "authority": "Ivan confirmed both repeated name slots say Li Dousha",
+      "reason": "Apply equal-name audio arbitration independently to both repeated slots"
+    },
+    {
+      "source_cue": 27,
+      "action": "replace",
+      "expect": {
+        "start": "00:01:02,410",
+        "end": "00:01:04,330",
+        "text": "可以让小李任选吗"
+      },
+      "text": "可以让李豆沙任选吗",
+      "authority": "Ivan confirmed this host self-reference says Li Dousha",
+      "reason": "Restore the proper name supported by the source witness"
+    },
+    {
+      "source_cue": 30,
+      "action": "replace",
+      "expect": {
+        "start": "00:01:11,380",
+        "end": "00:01:14,140",
+        "text": "欧不欧是可以由小李自己来决定吗"
+      },
+      "text": "欧不欧是可以由李豆沙自己来决定吗",
+      "authority": "Ivan confirmed this host self-reference says Li Dousha; earlier source slots establish the same name without alias priority",
+      "reason": "Use clip-local repeated audio evidence for an otherwise ambiguous BCUT surface"
+    },
+    {
       "source_cue": 53,
       "action": "replace",
       "expect": {
@@ -59,9 +119,9 @@
           "李豆沙一直是 VIP 1"
         ]
       },
-      "text": "李豆沙一直是……",
-      "authority": "The source audio supports the repeated lead-in but not the invented Latin numeric token; Ivan confirmed the complete wording in the following cue",
-      "reason": "Remove an unsupported decoded token while preserving the audible incomplete lead-in"
+      "text": "李豆沙一直是为爱做1",
+      "authority": "Ivan reviewed the 2026-07-16 source and confirmed this complete wording belongs to cue 53",
+      "reason": "Restore the predicate in its actual earlier cue instead of moving it later"
     },
     {
       "source_cue": 54,
@@ -71,9 +131,21 @@
         "end": "00:03:17,650",
         "text": "李豆沙一直是"
       },
-      "text": "李豆沙一直是为爱做1",
-      "authority": "Ivan reviewed the difficult 03:17 source audio and confirmed this exact wording",
-      "reason": "Restore the clipped predicate without asking the semantic lane to guess an unclear utterance"
+      "text": "李豆沙一直是……",
+      "authority": "Ivan reviewed the 2026-07-16 source and confirmed cue 54 is only the incomplete repeated lead-in",
+      "reason": "Keep the incomplete repetition here and prevent cue text from drifting across timestamps"
+    },
+    {
+      "source_cue": 55,
+      "action": "replace",
+      "expect": {
+        "start": "00:03:19,090",
+        "end": "00:03:20,090",
+        "text": "侄女"
+      },
+      "text": "侄女",
+      "authority": "Ivan's channel-specific hard meme canon requires every spoken 直女 surface to render as 侄女",
+      "reason": "Bind the deterministic 直女-to-侄女 exception at the final text boundary"
     }
   ]
 }

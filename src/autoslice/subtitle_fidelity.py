@@ -453,19 +453,17 @@ def apply_source_language_preservation_guard(
                     "reason": "FOREIGN_LANGUAGE_INTRODUCED_WITHOUT_SOURCE_WITNESS",
                 }
             )
-    clustered_introductions = [
-        row
-        for row in introduced_kana_rows
-        if any(
-            abs(int(row["cue_index"]) - int(other["cue_index"])) == 1
-            for other in introduced_kana_rows
-        )
-    ]
-    audit["unproven_foreign_introductions"] = clustered_introductions
+    # An isolated foreign cue is not automatically a host code-switch.  The
+    # 2026-07-16 watched-video incident was exactly one Japanese cue introduced
+    # after BCUT and therefore escaped the old adjacent-cluster rule.  Keep the
+    # recovered text for review, but fail closed until a timeline-bound human
+    # decision either drops background media speech or explicitly preserves a
+    # host-spoken code-switch.
+    audit["unproven_foreign_introductions"] = introduced_kana_rows
     if not cue_count_matches:
         audit["status"] = (
-            "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
-            if clustered_introductions
+            "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+            if introduced_kana_rows
             else "SKIPPED_CUE_COUNT_MISMATCH"
         )
         audit["reverted_count"] = 0
@@ -505,11 +503,11 @@ def apply_source_language_preservation_guard(
             f"{index}\n{_ms_to_ts(final_cue.start_ms)} --> "
             f"{_ms_to_ts(final_cue.end_ms)}\n{kept}"
         )
-    if clustered_introductions:
+    if introduced_kana_rows:
         # Do not silently choose between the draft and the correction here:
         # either could be the wrong-language ASR.  The producer blocks unless
         # a timeline-bound reviewed override resolves every affected cue.
-        audit["status"] = "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+        audit["status"] = "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
     elif audit["reverted"]:
         audit["status"] = "REVERTED_TRANSLATION"
     audit["reverted_count"] = len(audit["reverted"])
@@ -525,7 +523,7 @@ def unproven_foreign_introductions_covered_by_overrides(
     A model may legitimately recover Japanese that the first ASR missed, but a
     correction model may also hallucinate Japanese from similar-sounding
     Chinese.  Only an exact timeline-bound schema-v3 override can release an
-    introduced multi-cue foreign passage.
+    introduced foreign passage, including a single isolated cue.
     """
 
     findings = audit.get("unproven_foreign_introductions")
@@ -555,9 +553,7 @@ def unproven_foreign_introductions_covered_by_overrides(
                 continue
             action = str(override.get("action", "replace"))
             replacement = str(override.get("text") or "")
-            if not replacement:
-                continue
-            if action == "replace":
+            if action in {"replace", "drop"}:
                 expected = override.get("expect")
                 if not isinstance(expected, dict):
                     continue
@@ -572,7 +568,11 @@ def unproven_foreign_introductions_covered_by_overrides(
                     and expected_end == finding_end
                     and attempted in expected_texts
                 )
+                if action == "replace" and not replacement:
+                    covered = False
             elif action == "replace_substring":
+                if not replacement:
+                    continue
                 locator = override.get("locator")
                 if not isinstance(locator, dict):
                     continue

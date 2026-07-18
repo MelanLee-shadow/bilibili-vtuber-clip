@@ -647,6 +647,39 @@
       "work_ids": [
         "bgm:subject:186515"
       ]
+    },
+    {
+      "aliases": [
+        "スミミ"
+      ],
+      "canonical_zh": "sumimi",
+      "entity_id": "official:bandori:unit:sumimi",
+      "kind": "unit",
+      "native_names": [
+        "sumimi"
+      ],
+      "readings": [
+        "sumimi",
+        "すみみ"
+      ],
+      "role": "RELATED",
+      "sources": [
+        {
+          "published_at": "2025-01-02",
+          "publisher": "BanG Dream official Ave Mujica character profile",
+          "url": "https://anime.bang-dream.com/avemujica/character/uika/"
+        },
+        {
+          "published_at": "2025-01-02",
+          "publisher": "BanG Dream official Ave Mujica character profile",
+          "url": "https://anime.bang-dream.com/avemujica/character/mana/"
+        }
+      ],
+      "activation_work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ],
+      "work_ids": []
     }
   ],
   "expires_at": "2026-07-19T21:00:00-04:00",
@@ -738,6 +771,9 @@
         "bgm:character:133285",
         "bgm:character:132481"
       ],
+      "retrieval_entity_ids": [
+        "official:bandori:unit:sumimi"
+      ],
       "sources": [
         {
           "published_at": "2023-06-29",
@@ -769,6 +805,9 @@
         "bgm:character:127794",
         "bgm:character:132481",
         "bgm:character:172369"
+      ],
+      "retrieval_entity_ids": [
+        "official:bandori:unit:sumimi"
       ],
       "sources": [
         {

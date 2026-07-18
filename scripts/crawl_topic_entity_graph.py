@@ -64,6 +64,12 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="validated prior graph to retain/refresh; defaults to an existing --write destination",
     )
+    result.add_argument(
+        "--related-entity-seeds",
+        type=Path,
+        default=ROOT / "assets/lidousha/related_entity_seeds.json",
+        help="reviewed source-backed units/groups missing from the cast API",
+    )
     result.add_argument("--offline", action="store_true")
     mode = result.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
@@ -88,6 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         now = _now(args.now)
         timely_terms_sha256 = hashlib.sha256(args.timely_terms.read_bytes()).hexdigest()
         snapshot = load_validated_timely_terms_snapshot(args.timely_terms)
+        related_entity_seeds = (
+            json.loads(args.related_entity_seeds.read_text(encoding="utf-8"))
+            if args.related_entity_seeds.is_file()
+            else None
+        )
         previous_path = args.previous_graph
         if previous_path is None and args.write is not None and args.write.is_file():
             previous_path = args.write
@@ -115,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             max_entities_per_work=args.max_entities_per_work,
             previous_graph=previous_graph,
             node_ttl=dt.timedelta(days=args.node_ttl_days),
+            related_entity_seeds=related_entity_seeds,
         )
         summary = {
             "topics": len(result.graph["topics"]),

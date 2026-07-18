@@ -195,20 +195,21 @@ def test_source_language_guard_blocks_unproven_adjacent_kana_introduction():
     guarded, audit = apply_source_language_preservation_guard(draft, corrected)
 
     assert "どうも、どうも" in guarded
-    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
     assert [
         row["cue_index"] for row in audit["unproven_foreign_introductions"]
     ] == [1, 2]
 
 
-def test_source_language_guard_allows_isolated_japanese_code_switch_recovery():
+def test_source_language_guard_holds_isolated_japanese_for_speaker_authority():
     draft = _srt("哦，姐姐桑", "正常中文")
     corrected = _srt("お姉さん", "正常中文")
 
     guarded, audit = apply_source_language_preservation_guard(draft, corrected)
 
     assert "お姉さん" in guarded
-    assert audit["status"] == "CLEAN"
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+    assert audit["unproven_foreign_introductions"][0]["cue_index"] == 1
 
 
 def test_source_language_guard_keeps_blocking_across_cue_resegmentation():
@@ -224,7 +225,7 @@ def test_source_language_guard_keeps_blocking_across_cue_resegmentation():
     assert guarded == corrected
     assert audit["draft_cue_count"] == 2
     assert audit["final_cue_count"] == 3
-    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
     assert [
         row["cue_index"] for row in audit["unproven_foreign_introductions"]
     ] == [1, 2]
@@ -261,6 +262,31 @@ def test_unproven_foreign_cluster_defers_only_for_exact_reviewed_repairs():
     assert unproven_foreign_introductions_covered_by_overrides(audit, document)
     document["overrides"].pop()
     assert not unproven_foreign_introductions_covered_by_overrides(audit, document)
+
+
+def test_isolated_background_japanese_can_be_resolved_by_exact_drop_override():
+    draft = _srt("所有的都为我所用")
+    corrected = _srt("裏表すごいし")
+    _, audit = apply_source_language_preservation_guard(draft, corrected)
+    document = {
+        "schema_version": 3,
+        "overrides": [
+            {
+                "source_cue": 1,
+                "action": "drop",
+                "expect": {
+                    "start": "00:00:05,000",
+                    "end": "00:00:09,000",
+                    "text": "裏表すごいし",
+                },
+                "authority": "Ivan confirmed this is watched-video audio",
+                "reason": "Background media speech is outside host subtitle authority",
+            }
+        ],
+    }
+
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+    assert unproven_foreign_introductions_covered_by_overrides(audit, document)
 
 
 def test_foreign_script_consistency_blocks_japanese_passage_decoded_as_english_word_salad():

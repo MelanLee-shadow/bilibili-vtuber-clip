@@ -180,6 +180,44 @@ def test_explicit_work_routes_without_sibling_character_leakage():
     assert result.status == "RESOLVED"
     assert result.selected_work_ids == ("work:mygo",)
     assert "character:uika" not in result.scoped_entity_ids
+
+
+def test_related_unit_is_scoped_like_an_equal_proper_name():
+    payload = _graph()
+    payload["entities"].append(
+        {
+            "entity_id": "unit:sumimi",
+            "kind": "unit",
+            "canonical_zh": "sumimi",
+            "native_names": ["sumimi"],
+            "aliases": ["スミミ"],
+            "readings": ["sumimi", "すみみ"],
+            "role": "RELATED",
+            "work_ids": [],
+            "activation_work_ids": ["work:mygo", "work:ave"],
+            "sources": [
+                _source(
+                    "https://anime.bang-dream.com/avemujica/character/uika/",
+                    "2025-01-02",
+                )
+            ],
+        }
+    )
+    payload["works"][0]["retrieval_entity_ids"] = ["unit:sumimi"]
+    payload["works"][1]["retrieval_entity_ids"] = ["unit:sumimi"]
+    graph = validate_topic_entity_graph(payload)
+
+    result = resolve_topic_context(
+        graph,
+        [TopicEvidence("transcript", "前面一直在聊MyGO和Mujica")],
+        recording_date="2026-07-12",
+        graph_sha256="c" * 64,
+    )
+    context = render_scoped_entity_context(graph, result)
+
+    assert "unit:sumimi" in result.scoped_entity_ids
+    assert '"kind":"unit"' in context
+    assert '"canonical_zh":"sumimi"' in context
     context = render_scoped_entity_context(graph, result)
     assert "椎名立希" in context
     assert "三角初华" not in context
@@ -390,6 +428,49 @@ def test_crawler_builds_chinese_name_and_short_reading_from_structured_subject()
     assert {"Rikki", "立希队长"} <= set(entity["aliases"])
     assert "Taki" in entity["readings"]
     assert "Current Work" in work["aliases"]
+
+
+def test_crawler_attaches_reviewed_unit_seed_to_exact_matching_work():
+    seeds = {
+        "schema_version": "lidousha-related-entity-seeds.v1",
+        "entities": [
+            {
+                "entity_id": "official:bandori:unit:sumimi",
+                "kind": "unit",
+                "canonical_zh": "sumimi",
+                "native_names": ["sumimi"],
+                "aliases": ["スミミ"],
+                "readings": ["sumimi", "すみみ"],
+                "role": "RELATED",
+                "work_surfaces": ["Current Work"],
+                "sources": [
+                    _source(
+                        "https://anime.bang-dream.com/avemujica/character/uika/",
+                        "2025-01-02",
+                    )
+                ],
+            }
+        ],
+    }
+
+    result = crawl_topic_entity_graph(
+        client=_FakeClient(),
+        timely_snapshot=_timely_snapshot(),
+        input_timely_terms_sha256="e" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=3,
+        max_works_per_topic=1,
+        related_entity_seeds=seeds,
+    )
+
+    unit = next(
+        entity for entity in result.graph["entities"] if entity["kind"] == "unit"
+    )
+    assert unit["canonical_zh"] == "sumimi"
+    assert unit["work_ids"] == []
+    assert unit["entity_id"] not in result.graph["works"][0]["entity_ids"]
+    assert unit["entity_id"] in result.graph["works"][0]["retrieval_entity_ids"]
 
 
 @pytest.mark.parametrize(

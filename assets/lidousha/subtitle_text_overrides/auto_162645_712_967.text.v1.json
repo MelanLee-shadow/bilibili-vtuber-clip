@@ -1,8 +1,8 @@
 {
   "schema_version": 3,
   "candidate_id": "auto_162645_712_967",
-  "source_cue_witness_sha256": "a64568bbad2b79e205535cb89d2c6a65d42b10495099298652b1a90b9adac6dc",
-  "decision_output_witness_sha256": "4803a5853eac3c44b60da05ef8ed67ac54e9a26ab6d6e045ffdc9fffc7854fcf",
+  "source_cue_witness_sha256": "f1563b8d0844633ddd3799498051437b61fe76bee4fea7398924a05df98847b4",
+  "decision_output_witness_sha256": "7f6310a91fdc822810557670efe848002f80c4326d56e8945aa0b862f51c5adb",
   "overrides": [
     {
       "source_cue": 15,
@@ -16,6 +16,41 @@
       "required": false,
       "authority": "Source-aware final review rejected the unsupported English phrase in this Chinese talk passage",
       "reason": "Remove mixed-language ASR word salad when present; skip safely when the automatic transcript is already clean"
+    },
+    {
+      "source_cue": 16,
+      "action": "drop",
+      "expect": {
+        "start": "00:00:57,530",
+        "end": "00:01:00,450",
+        "text": "裏表すごいし。"
+      },
+      "authority": "Ivan identified this Japanese speech as audio from the video being watched, not Li Dousha",
+      "reason": "Exclude watched-video speech while retaining Japanese spoken by Li Dousha herself"
+    },
+    {
+      "source_cue": 34,
+      "action": "replace",
+      "expect": {
+        "start": "00:02:05,090",
+        "end": "00:02:07,650",
+        "text": "soyo是真妈。"
+      },
+      "text": "soyo就是妈。",
+      "authority": "Ivan confirmed Li Dousha was reading the exact on-screen danmaku soyo就是妈",
+      "reason": "Exact-copy a demonstrably read danmaku instead of paraphrasing it"
+    },
+    {
+      "source_cue": 49,
+      "action": "replace",
+      "expect": {
+        "start": "00:02:57,190",
+        "end": "00:02:59,070",
+        "text": "哦，说秘密的。"
+      },
+      "text": "哦，sumimi的。",
+      "authority": "Ivan reviewed the source audio; the preceding MyGO and Mujica discussion scopes the official BanG Dream unit name sumimi for audio verification",
+      "reason": "Restore a same-franchise proper name from its spoken syllables rather than the ordinary-word homophone"
     }
   ]
 }

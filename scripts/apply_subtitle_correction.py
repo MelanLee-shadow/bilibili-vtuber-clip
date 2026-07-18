@@ -46,6 +46,11 @@ def main(argv=None) -> int:
     p.add_argument("--delivery", required=True, type=Path, help="delivered .mp4 to refresh")
     p.add_argument("--replace", action="append", default=[], metavar="OLD=NEW", help="surgical text swap across all cues")
     p.add_argument("--set-line", action="append", default=[], metavar="N=TEXT", help="replace the whole text of 1-based cue N")
+    p.add_argument(
+        "--refresh-only",
+        action="store_true",
+        help="re-burn the current SRT and refresh a stale delivery mirror without changing text",
+    )
     p.add_argument("--out-base", type=Path, default=BASE)
     p.add_argument("--speaker-overrides", type=Path, help="optional hash-bound reviewed turn/split/overlap decisions")
     p.add_argument(
@@ -73,7 +78,7 @@ def main(argv=None) -> int:
                 lines = b.split("\n")
                 blocks[i - 1] = "\n".join(lines[:2] + [wants[i]])  # keep index + timing, swap text
         srt = "\n\n".join(blocks) + "\n"
-    if srt == before:
+    if srt == before and not args.refresh_only:
         print("NO_CHANGE: nothing matched the correction — check --replace/--set-line", file=sys.stderr)
         return 2
     before_hash = hashlib.sha256(before.encode("utf-8")).hexdigest()
@@ -153,6 +158,7 @@ def main(argv=None) -> int:
         "after_srt_sha256": _sha256(srt_path),
         "replace_operations": args.replace,
         "set_line_operations": args.set_line,
+        "refresh_only": args.refresh_only,
         "speaker_mode": speaker_mode,
         "speaker_manifest": str(speaker_manifest_path) if speaker_manifest is not None else None,
         "speaker_manifest_sha256": _sha256(speaker_manifest_path) if speaker_manifest is not None else None,

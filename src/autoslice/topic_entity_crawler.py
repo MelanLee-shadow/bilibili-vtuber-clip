@@ -1,4 +1,4 @@
-"""Bounded Bangumi enrichment for the topic/entity graph.
+"""Bounded Bangumi plus reviewed-source enrichment for the topic/entity graph.
 
 Input is the already validated timely-term snapshot.  Search only discovers a
 stable subject ID; every emitted character spelling comes from structured
@@ -562,6 +562,88 @@ def _character_node(raw: Mapping[str, Any], *, work_id: str, aired_from: str) ->
     }
 
 
+def _related_seed_nodes(
+    seed_payload: object | None,
+    *,
+    work_id: str,
+    work_surfaces: Iterable[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Attach reviewed non-character entities to exact matching works.
+
+    Bangumi's subject graph exposes cast characters but not every in-universe
+    unit or group.  Matching is exact after identity normalization; franchise
+    proximity alone never injects a seed into an unrelated work.
+    """
+
+    if seed_payload is None or limit <= 0:
+        return []
+    if (
+        not isinstance(seed_payload, dict)
+        or set(seed_payload) != {"schema_version", "entities"}
+        or seed_payload.get("schema_version")
+        != "lidousha-related-entity-seeds.v1"
+        or not isinstance(seed_payload.get("entities"), list)
+    ):
+        raise ValueError("related entity seed payload is malformed")
+    work_keys = {
+        _identity(surface)
+        for surface in work_surfaces
+        if _identity(surface)
+    }
+    result: list[dict[str, Any]] = []
+    for raw in seed_payload["entities"]:
+        expected = {
+            "entity_id",
+            "kind",
+            "canonical_zh",
+            "native_names",
+            "aliases",
+            "readings",
+            "role",
+            "work_surfaces",
+            "sources",
+        }
+        if not isinstance(raw, dict) or set(raw) != expected:
+            raise ValueError("related entity seed row is malformed")
+        if raw["kind"] != "unit" or raw["role"] != "RELATED":
+            raise ValueError("related entity seed kind/role is unsupported")
+        seed_work_keys = (
+            {
+                _identity(surface)
+                for surface in raw["work_surfaces"]
+                if isinstance(surface, str) and _identity(surface)
+            }
+            if isinstance(raw["work_surfaces"], list)
+            else set()
+        )
+        if not work_keys & seed_work_keys:
+            continue
+        node = {
+            "entity_id": _clean(raw["entity_id"], max_chars=128),
+            "kind": "unit",
+            "canonical_zh": _clean(raw["canonical_zh"]),
+            "native_names": _unique(raw["native_names"], limit=12),
+            "aliases": _unique(raw["aliases"], limit=24),
+            "readings": _unique(raw["readings"], limit=20),
+            "role": "RELATED",
+            "work_ids": [],
+            "activation_work_ids": [work_id],
+            "sources": copy.deepcopy(raw["sources"]),
+        }
+        if (
+            not node["entity_id"]
+            or not node["canonical_zh"]
+            or not node["native_names"]
+            or not node["readings"]
+        ):
+            raise ValueError("related entity seed row has empty identity fields")
+        result.append(node)
+        if len(result) >= limit:
+            break
+    return result
+
+
 def _merge_retained_topics(
     *,
     topics: list[dict[str, Any]],
@@ -630,7 +712,10 @@ def _merge_retained_topics(
         for work_id in retained_work_ids:
             prior_work = previous_works[work_id]
             works_by_id.setdefault(work_id, copy.deepcopy(prior_work))
-            for entity_id in prior_work["entity_ids"]:
+            for entity_id in [
+                *prior_work["entity_ids"],
+                *prior_work.get("retrieval_entity_ids", []),
+            ]:
                 if entity_id in previous_entities:
                     entities_by_id.setdefault(entity_id, copy.deepcopy(previous_entities[entity_id]))
 
@@ -646,6 +731,12 @@ def _merge_retained_topics(
             work["entity_ids"] = [
                 entity_id for entity_id in work["entity_ids"] if entity_id in entities_by_id
             ]
+            if "retrieval_entity_ids" in work:
+                work["retrieval_entity_ids"] = [
+                    entity_id
+                    for entity_id in work["retrieval_entity_ids"]
+                    if entity_id in entities_by_id
+                ]
             if work["entity_ids"]:
                 valid_work_ids.append(work_id)
         if valid_work_ids:
@@ -666,13 +757,25 @@ def _merge_retained_topics(
     works_by_id.update(retained_works)
 
     work_refs_by_entity: dict[str, set[str]] = {}
+    activation_refs_by_entity: dict[str, set[str]] = {}
     for work in works_by_id.values():
         for entity_id in work["entity_ids"]:
             work_refs_by_entity.setdefault(entity_id, set()).add(work["work_id"])
+        for entity_id in work.get("retrieval_entity_ids", []):
+            activation_refs_by_entity.setdefault(entity_id, set()).add(
+                work["work_id"]
+            )
     retained_entities: dict[str, dict[str, Any]] = {}
-    for entity_id, work_ids in work_refs_by_entity.items():
+    for entity_id in set(work_refs_by_entity) | set(activation_refs_by_entity):
         entity = entities_by_id[entity_id]
-        entity["work_ids"] = sorted(work_ids)
+        entity["work_ids"] = sorted(work_refs_by_entity.get(entity_id, set()))
+        if (
+            "activation_work_ids" in entity
+            or entity_id in activation_refs_by_entity
+        ):
+            entity["activation_work_ids"] = sorted(
+                activation_refs_by_entity.get(entity_id, set())
+            )
         retained_entities[entity_id] = entity
     entities_by_id.clear()
     entities_by_id.update(retained_entities)
@@ -821,6 +924,8 @@ def _finalize_crawled_graph(
     ttl: dt.timedelta,
     query_count: int,
     diagnostics: list[str],
+    related_entity_seeds: object | None,
+    max_entities_per_work: int,
 ) -> GraphCrawlResult:
     _merge_retained_topics(
         topics=topics,
@@ -830,6 +935,40 @@ def _finalize_crawled_graph(
         eligible_terms=ordered_terms,
         generated_at=generated_at,
     )
+    for work in works_by_id.values():
+        retrieval_ids = work.setdefault("retrieval_entity_ids", [])
+        remaining = max(
+            0,
+            max_entities_per_work - len(work["entity_ids"]) - len(retrieval_ids),
+        )
+        for node in _related_seed_nodes(
+            related_entity_seeds,
+            work_id=work["work_id"],
+            work_surfaces=[work["canonical"], *work["aliases"]],
+            limit=remaining,
+        ):
+            entity_id = node["entity_id"]
+            if entity_id in work["entity_ids"]:
+                raise ValueError(
+                    f"reviewed retrieval entity conflicts with ontology edge: {entity_id}"
+                )
+            if entity_id in retrieval_ids:
+                continue
+            prior = entities_by_id.get(entity_id)
+            if prior is None:
+                entities_by_id[entity_id] = node
+            else:
+                if (
+                    prior.get("kind") != node["kind"]
+                    or prior.get("canonical_zh") != node["canonical_zh"]
+                ):
+                    raise ValueError(
+                        f"reviewed retrieval entity identity conflict: {entity_id}"
+                    )
+                activation_ids = prior.setdefault("activation_work_ids", [])
+                if work["work_id"] not in activation_ids:
+                    activation_ids.append(work["work_id"])
+            retrieval_ids.append(entity_id)
     if not topics or not works_by_id or not entities_by_id:
         raise CrawlError("no source-backed topic/entity subgraph could be built")
     graph = {
@@ -869,6 +1008,7 @@ def crawl_topic_entity_graph(
     future_horizon: dt.timedelta = dt.timedelta(days=183),
     previous_graph: object | None = None,
     node_ttl: dt.timedelta = dt.timedelta(days=30),
+    related_entity_seeds: object | None = None,
 ) -> GraphCrawlResult:
     setup = _prepare_topic_crawl(
         client=client,
@@ -1144,6 +1284,8 @@ def crawl_topic_entity_graph(
         ttl=ttl,
         query_count=scheduler.query_count,
         diagnostics=diagnostics,
+        related_entity_seeds=related_entity_seeds,
+        max_entities_per_work=max_entities_per_work,
     )
 
 

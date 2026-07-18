@@ -382,7 +382,16 @@ def _apply_entity_authority(
     adapters: TextPipelineAdapters,
     session_topic_absorption_audits: list[dict[str, Any]] | None = None,
 ) -> EntityAuthorityResult:
-    srt_text, self_reference_absorption_audit = absorb_host_self_references(srt_text)
+    draft_witness_path = padded.with_suffix(".asr_draft.srt")
+    source_witness_srt = (
+        draft_witness_path.read_text(encoding="utf-8", errors="replace")
+        if draft_witness_path.is_file()
+        else None
+    )
+    srt_text, self_reference_absorption_audit = absorb_host_self_references(
+        srt_text,
+        source_witness_srt=source_witness_srt,
+    )
     srt_text, chat_authority_audit = apply_authoritative_chat_evidence(
         srt_text,
         authoritative_chat,
@@ -396,7 +405,6 @@ def _apply_entity_authority(
     chat_authority_audit[
         "session_topic_absorption_audits"
     ] = list(session_topic_absorption_audits or [])
-    draft_witness_path = padded.with_suffix(".asr_draft.srt")
     if draft_witness_path.is_file():
         srt_text, numeric_fact_audit = apply_numeric_fact_provenance_guard(
             draft_witness_path.read_text(encoding="utf-8", errors="replace"),
@@ -691,8 +699,9 @@ def _finalize_text_evidence(
         except (OSError, json.JSONDecodeError):
             pass
     if (
-        final_source_language_audit["status"]
-        == "BLOCKED_UNPROVEN_FOREIGN_LANGUAGE_CLUSTER"
+        str(final_source_language_audit["status"]).startswith(
+            "BLOCKED_UNPROVEN_FOREIGN_"
+        )
         and unproven_foreign_introductions_covered_by_overrides(
             final_source_language_audit,
             override_document,
