@@ -1,0 +1,83 @@
+{
+  "schema": "authorized-cover-only-edit-results.v1",
+  "authorization_quote": "那你直接用最新流程跑一遍昨天权宜上传的封面吧，编辑封面。",
+  "workflow": "regenerate_lidousha_cover",
+  "model": "gpt-image-2",
+  "method": "images.edit",
+  "fallback_used": false,
+  "results": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "bvid": "BV1AbNR66ExW",
+      "old_cover": "http://i1.hdslb.com/bfs/archive/05156501e1af5e9f860925a6613e07448d7ef579.png",
+      "new_cover": "http://i0.hdslb.com/bfs/archive/6caaa12bb2b7bbd6e30fed319f612a2029fdeb24.png",
+      "approved_sha256": "53b575ede91359b783f88d5fddc16ce1df648432ef69a0112c6e15b0c6de0e23",
+      "public_download_sha256": "53b575ede91359b783f88d5fddc16ce1df648432ef69a0112c6e15b0c6de0e23",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_162645_394_507",
+      "bvid": "BV1cbNR66Eyt",
+      "old_cover": "http://i0.hdslb.com/bfs/archive/00b50fe9575f70d96c61054981d782f81a61c163.png",
+      "new_cover": "http://i1.hdslb.com/bfs/archive/e22722ebc0c1ea28016493c2213bc7f6616064d7.png",
+      "approved_sha256": "2ce6419bef0b9cc4973ec9788554b44c50d4cd922f53cd564626c593b70ae5a7",
+      "public_download_sha256": "2ce6419bef0b9cc4973ec9788554b44c50d4cd922f53cd564626c593b70ae5a7",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_203003_1644_1737",
+      "bvid": "BV1cbNR66Eky",
+      "old_cover": "http://i1.hdslb.com/bfs/archive/67655ae788c6a238fffd9746c9472c09dd08b9e2.png",
+      "new_cover": "http://i0.hdslb.com/bfs/archive/c22ebe87223d64b2ce5f339d9171fea582c64c86.png",
+      "approved_sha256": "cc71f43aa6e3fd50c5750fdb512494e9d0deadcd688bdc3b7f77d16b2e57d714",
+      "public_download_sha256": "cc71f43aa6e3fd50c5750fdb512494e9d0deadcd688bdc3b7f77d16b2e57d714",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_203003_272_377",
+      "bvid": "BV1rbNR6zEWJ",
+      "old_cover": "http://i0.hdslb.com/bfs/archive/e761aef175f6dd66ae8e27c903c79eaf1fa61ccb.png",
+      "new_cover": "http://i2.hdslb.com/bfs/archive/a2be7ab31956ba097660181ee7926822aa6d286d.png",
+      "approved_sha256": "30312f7a78692030505f37edd03596483486c4c61fda7edcfa2155bac742da15",
+      "public_download_sha256": "30312f7a78692030505f37edd03596483486c4c61fda7edcfa2155bac742da15",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "bvid": "BV1cbNR66ECP",
+      "old_cover": "http://i0.hdslb.com/bfs/archive/554065198727d24bb0e9400f1d5a8373718d4675.png",
+      "new_cover": "http://i0.hdslb.com/bfs/archive/3e3a0b14996d11b44762e849b9323918be0f3d70.png",
+      "approved_sha256": "919f18a64458d33c791437b5a86bc75ef10f9b68dbb3e3aed1913f65e5186341",
+      "public_download_sha256": "919f18a64458d33c791437b5a86bc75ef10f9b68dbb3e3aed1913f65e5186341",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_213000_116_205",
+      "bvid": "BV1pbNR66E2g",
+      "old_cover": "http://i2.hdslb.com/bfs/archive/9012d1206edcb0a4fc7fa0e2d88c2c9605bd3cb2.png",
+      "new_cover": "http://i1.hdslb.com/bfs/archive/bd9bcc24908de48dac319cd144d504133fb52d02.png",
+      "approved_sha256": "3c3b18f97c3c2d63775ada6b7b0a442028e731e5282de534e8747c6349269b26",
+      "public_download_sha256": "3c3b18f97c3c2d63775ada6b7b0a442028e731e5282de534e8747c6349269b26",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "bvid": "BV1pbNR66E2r",
+      "old_cover": "http://i1.hdslb.com/bfs/archive/64eb071c5de7ceaf21c60f899f5aac6078b19516.png",
+      "new_cover": "http://i1.hdslb.com/bfs/archive/b54a5a86caf081c80f17c8858f6c398a96e5a613.png",
+      "approved_sha256": "9ebad82a0f58bb4fe6a14a8d21aaa333a6a6c5a23776303f1b0f6495ec357e90",
+      "public_download_sha256": "9ebad82a0f58bb4fe6a14a8d21aaa333a6a6c5a23776303f1b0f6495ec357e90",
+      "status": "EXACT_BYTES_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "bvid": "BV1AtNR63ERp",
+      "old_cover": "http://i0.hdslb.com/bfs/archive/08e9ae7f5b83527a4fc64af2dc082fc5109f9839.png",
+      "new_cover": "http://i2.hdslb.com/bfs/archive/0184acf8c52e53d4da960b0412f357337aee7c29.png",
+      "approved_sha256": "2c1c2f5b7c431448c4271e8fd691e3fbb14d0e567dbbacf1c0d876e69140b1fc",
+      "public_download_sha256": "2c1c2f5b7c431448c4271e8fd691e3fbb14d0e567dbbacf1c0d876e69140b1fc",
+      "status": "EXACT_BYTES_PUBLIC"
+    }
+  ],
+  "verified_at": "2026-07-18T04:17:43Z"
+}

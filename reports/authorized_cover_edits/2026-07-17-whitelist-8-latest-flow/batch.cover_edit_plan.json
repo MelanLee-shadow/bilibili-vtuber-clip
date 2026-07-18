@@ -1,0 +1,66 @@
+{
+  "schema": "authorized-cover-only-edit-plan.v1",
+  "authorized_by": "Ivan",
+  "authorization_quote": "那你直接用最新流程跑一遍昨天权宜上传的封面吧，编辑封面。",
+  "create_new_archives": false,
+  "change_video_source": false,
+  "targets": [
+    {
+      "candidate_id": "auto_162645_264_391",
+      "bvid": "BV1AbNR66ExW",
+      "title_expect": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+      "cover_text": "奈叶求婚看上头：求AI续上！",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/attempts/auto_162645_264_391.v2.cover.png",
+      "cover_sha256": "53b575ede91359b783f88d5fddc16ce1df648432ef69a0112c6e15b0c6de0e23"
+    },
+    {
+      "candidate_id": "auto_162645_394_507",
+      "bvid": "BV1cbNR66Eyt",
+      "title_expect": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/final/auto_162645_394_507.cover.png",
+      "cover_sha256": "2ce6419bef0b9cc4973ec9788554b44c50d4cd922f53cd564626c593b70ae5a7"
+    },
+    {
+      "candidate_id": "auto_203003_1644_1737",
+      "bvid": "BV1cbNR66Eky",
+      "title_expect": "【李豆沙】自称喜欢坏姐姐，却被妹妹型坏女人奴役：我不恋姐",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/final/auto_203003_1644_1737.cover.png",
+      "cover_sha256": "cc71f43aa6e3fd50c5750fdb512494e9d0deadcd688bdc3b7f77d16b2e57d714"
+    },
+    {
+      "candidate_id": "auto_203003_272_377",
+      "bvid": "BV1rbNR6zEWJ",
+      "title_expect": "【李豆沙】游戏苦手想通为何接到商单：用豆沙方式攻略妹妹",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/final/auto_203003_272_377.cover.png",
+      "cover_sha256": "30312f7a78692030505f37edd03596483486c4c61fda7edcfa2155bac742da15"
+    },
+    {
+      "candidate_id": "auto_210002_297_513",
+      "bvid": "BV1cbNR66ECP",
+      "title_expect": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/final/auto_210002_297_513.cover.png",
+      "cover_sha256": "919f18a64458d33c791437b5a86bc75ef10f9b68dbb3e3aed1913f65e5186341"
+    },
+    {
+      "candidate_id": "auto_213000_116_205",
+      "bvid": "BV1pbNR66E2g",
+      "title_expect": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/final/auto_213000_116_205.cover.png",
+      "cover_sha256": "3c3b18f97c3c2d63775ada6b7b0a442028e731e5282de534e8747c6349269b26"
+    },
+    {
+      "candidate_id": "auto_213000_1218_1328",
+      "bvid": "BV1pbNR66E2r",
+      "title_expect": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/final/auto_213000_1218_1328.cover.png",
+      "cover_sha256": "9ebad82a0f58bb4fe6a14a8d21aaa333a6a6c5a23776303f1b0f6495ec357e90"
+    },
+    {
+      "candidate_id": "auto_162645_712_967",
+      "bvid": "BV1AtNR63ERp",
+      "title_expect": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "cover_path": "/opt/bilive/autoslice/reports/operator/2026-07-17/cover-latest-flow-whitelist-8/final/auto_162645_712_967.cover.png",
+      "cover_sha256": "2c1c2f5b7c431448c4271e8fd691e3fbb14d0e567dbbacf1c0d876e69140b1fc"
+    }
+  ]
+}

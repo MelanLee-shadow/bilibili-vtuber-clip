@@ -1,0 +1,80 @@
+{
+  "schema": "bilibili-public-cover-edit-verification.v1",
+  "checked_at": "2026-07-18T04:17:43Z",
+  "owner_mid": 55006782,
+  "ugc_season_id": 8383206,
+  "ugc_season_title": "小李切片",
+  "status": "PASS_WITH_UNRELATED_TAG_WARNING",
+  "targets": [
+    {
+      "bvid": "BV1AbNR66ExW",
+      "aid": 116935786305342,
+      "cid": 40051345668,
+      "title": "【李豆沙】看《魔法少女奈叶》求婚片段彻底上头：求AI续上！",
+      "cover_sha256": "53b575ede91359b783f88d5fddc16ce1df648432ef69a0112c6e15b0c6de0e23",
+      "status": "PASS"
+    },
+    {
+      "bvid": "BV1cbNR66Eyt",
+      "aid": 116935786301806,
+      "cid": 40051346587,
+      "title": "【李豆沙】本想看“难绷小视频”，熊猫头却为小狗操碎了心",
+      "cover_sha256": "2ce6419bef0b9cc4973ec9788554b44c50d4cd922f53cd564626c593b70ae5a7",
+      "status": "PASS"
+    },
+    {
+      "bvid": "BV1cbNR66Eky",
+      "aid": 116935786301834,
+      "cid": 40047674583,
+      "title": "【李豆沙】自称喜欢坏姐姐，却被妹妹型坏女人奴役：我不恋姐",
+      "cover_sha256": "cc71f43aa6e3fd50c5750fdb512494e9d0deadcd688bdc3b7f77d16b2e57d714",
+      "status": "PASS"
+    },
+    {
+      "bvid": "BV1rbNR6zEWJ",
+      "aid": 116935786236834,
+      "cid": 40047675395,
+      "title": "【李豆沙】游戏苦手想通为何接到商单：用豆沙方式攻略妹妹",
+      "cover_sha256": "30312f7a78692030505f37edd03596483486c4c61fda7edcfa2155bac742da15",
+      "status": "PASS"
+    },
+    {
+      "bvid": "BV1cbNR66ECP",
+      "aid": 116935786301887,
+      "cid": 40051409139,
+      "title": "【李豆沙】抽卡惩罚被弹幕定成“为礼墨做0.6”",
+      "cover_sha256": "919f18a64458d33c791437b5a86bc75ef10f9b68dbb3e3aed1913f65e5186341",
+      "status": "PASS"
+    },
+    {
+      "bvid": "BV1pbNR66E2g",
+      "aid": 116935786370775,
+      "cid": 40051409236,
+      "title": "【李豆沙】刚想把观众拉进公会，喜提一群打灰帕鲁！",
+      "cover_sha256": "3c3b18f97c3c2d63775ada6b7b0a442028e731e5282de534e8747c6349269b26",
+      "status": "PASS"
+    },
+    {
+      "bvid": "BV1pbNR66E2r",
+      "aid": 116935786370801,
+      "cid": 40051409832,
+      "title": "【李豆沙】打灰到生命尽头？周次买下打灰工友？这种事情不要啊",
+      "cover_sha256": "9ebad82a0f58bb4fe6a14a8d21aaa333a6a6c5a23776303f1b0f6495ec357e90",
+      "status": "PASS",
+      "warning": {
+        "code": "PREEXISTING_TAG_DRIFT",
+        "observed_tags": ["李豆沙", "虚拟UP主", "周次", "恋死", "非人少女", "百合", "恋人不行", "终将"],
+        "expected_from_previous_repair": ["李豆沙", "虚拟主播", "虚拟UP主", "直播切片", "打灰", "土木工程", "吐槽", "搞笑"],
+        "cover_edit_preserved_tags": true
+      }
+    },
+    {
+      "bvid": "BV1AtNR63ERp",
+      "aid": 116935803081751,
+      "cid": 40051347150,
+      "title": "【李豆沙】‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍",
+      "cover_sha256": "2c1c2f5b7c431448c4271e8fd691e3fbb14d0e567dbbacf1c0d876e69140b1fc",
+      "status": "PASS"
+    }
+  ]
+}
