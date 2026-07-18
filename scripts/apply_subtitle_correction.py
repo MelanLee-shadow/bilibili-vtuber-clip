@@ -28,6 +28,9 @@ if str(ROOT) not in sys.path:
 from scripts.run_auto_review_shadow_pipeline import _burn_preview_subtitles  # noqa: E402
 from scripts.run_auto_review_shadow_pipeline import _sha256  # noqa: E402
 from scripts.produce_slice_package import run_speaker_finalizer  # noqa: E402
+from scripts.apply_subtitle_text_overrides import (  # noqa: E402
+    apply_document as apply_text_override_document,
+)
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
 from scripts.suggest_upload_tags import generate_upload_tags  # noqa: E402
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro  # noqa: E402
@@ -51,6 +54,16 @@ def main(argv=None) -> int:
         action="store_true",
         help="re-burn the current SRT and refresh a stale delivery mirror without changing text",
     )
+    p.add_argument(
+        "--text-source",
+        type=Path,
+        help="automatic text SRT consumed by a hash-bound --text-override",
+    )
+    p.add_argument(
+        "--text-override",
+        type=Path,
+        help="schema-v3 hash-bound override document to apply as the complete text repair",
+    )
     p.add_argument("--out-base", type=Path, default=BASE)
     p.add_argument("--speaker-overrides", type=Path, help="optional hash-bound reviewed turn/split/overlap decisions")
     p.add_argument(
@@ -67,6 +80,35 @@ def main(argv=None) -> int:
     srt = srt_path.read_text(encoding="utf-8")
 
     before = srt
+    if (args.text_source is None) != (args.text_override is None):
+        print("--text-source and --text-override must be supplied together", file=sys.stderr)
+        return 2
+    text_override_manifest = None
+    text_override_manifest_path = None
+    text_override_output_path = None
+    if args.text_source is not None and args.text_override is not None:
+        if args.replace or args.set_line:
+            print(
+                "hash-bound text repair cannot be mixed with --replace/--set-line",
+                file=sys.stderr,
+            )
+            return 2
+        text_override_output_path = (
+            recut_dir / f"{args.cid}.human-reviewed-text.srt"
+        )
+        text_override_manifest_path = (
+            recut_dir / f"{args.cid}.human-reviewed-text.json"
+        )
+        text_override_manifest = apply_text_override_document(
+            args.text_source,
+            args.text_override,
+            text_override_output_path,
+            text_override_manifest_path,
+        )
+        if text_override_manifest.get("candidate_id") != args.cid:
+            print("text override candidate_id mismatch", file=sys.stderr)
+            return 2
+        srt = text_override_output_path.read_text(encoding="utf-8")
     for pair in args.replace:
         old, _, new = pair.partition("=")
         srt = srt.replace(old, new)
@@ -159,6 +201,32 @@ def main(argv=None) -> int:
         "replace_operations": args.replace,
         "set_line_operations": args.set_line,
         "refresh_only": args.refresh_only,
+        "text_source": str(args.text_source) if args.text_source else None,
+        "text_source_sha256": (
+            _sha256(args.text_source) if args.text_source else None
+        ),
+        "text_override": str(args.text_override) if args.text_override else None,
+        "text_override_sha256": (
+            _sha256(args.text_override) if args.text_override else None
+        ),
+        "text_override_manifest": (
+            str(text_override_manifest_path)
+            if text_override_manifest_path
+            else None
+        ),
+        "text_override_manifest_sha256": (
+            _sha256(text_override_manifest_path)
+            if text_override_manifest_path
+            else None
+        ),
+        "text_override_output": (
+            str(text_override_output_path) if text_override_output_path else None
+        ),
+        "text_override_output_sha256": (
+            _sha256(text_override_output_path)
+            if text_override_output_path
+            else None
+        ),
         "speaker_mode": speaker_mode,
         "speaker_manifest": str(speaker_manifest_path) if speaker_manifest is not None else None,
         "speaker_manifest_sha256": _sha256(speaker_manifest_path) if speaker_manifest is not None else None,
