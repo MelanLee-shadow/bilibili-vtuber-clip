@@ -1,290 +1,124 @@
 {
   "artifacts": {
     "subtitle_ass": {
-      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/prod-xiaoli-benlai-final.ass",
-      "sha256": "b5cf439d0eca4789ad8d2a8599605c6023dde6afb0fc3637bbf82d6208f070d6"
+      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/out/Z1定版候选-李豆沙一直是零-不对-李豆沙一直是为爱做一.ass",
+      "sha256": "80a1db2cede0bd5e61e8ccd54c325fd6f548df514e3151153128977447aa6baf"
     },
     "subtitle_srt": {
-      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/prod-xiaoli-benlai-final.srt",
-      "sha256": "f51c2660ebf2f9d51cb88c27bc9ea1b80536bc5adf21805de9daa2a3522282f9"
+      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/out/Z1定版候选-李豆沙一直是零-不对-李豆沙一直是为爱做一.srt",
+      "sha256": "5943b4ae57a45443ef6060075080fbe31add789089c9388a41afca320b218d0f"
     },
     "video": {
-      "duration_ms": 4288,
-      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/prod-xiaoli-benlai-final.mp4",
-      "sha256": "04dd12343e7ee34b419cfccfde903fad729a6b0574e99f05493048cbd239cb53"
+      "duration_ms": 5754,
+      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/out/Z1定版候选-李豆沙一直是零-不对-李豆沙一直是为爱做一.mp4",
+      "sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5"
     }
   },
-  "manifest_sha256": "022d92219222c6b515f88bdf61f2d5d7930d53f17914d5a34dd046a71ff9b467",
-  "normalized_target": "小李本来就是零不对我是为爱做零",
+  "manifest_sha256": "043ae779e87fd07bf44c50d7a53319d9c0cae8950dbd0bba7de208a6fafd1903",
+  "normalized_target": "李豆沙一直是零不对李豆沙一直是为爱做一",
   "pieces": [
     {
       "piece_id": "p001",
-      "rendered_duration_ms": 615,
-      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/.render-prod-xiaoli-benlai-final/piece-001.mp4",
-      "rendered_sha256": "52060404fd0e02c9960161340146eb294e02971bb1fa453234983b7c7a7447d5",
+      "rendered_duration_ms": 2250,
+      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/work/final/piece-001.mp4",
+      "rendered_sha256": "76dd89774030a5d5a87ab52896aa06ea3d6f44c0422e21c2368a9e1ec5b1d499",
       "source_core_interval_ms": [
-        1637360,
-        1637800
+        2230,
+        4100
       ],
-      "source_date": "2026-07-10",
-      "source_id": "solo-20260710-214959-v4",
+      "source_date": "2026-07-16",
+      "source_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1",
       "source_interval_ms": [
-        1637325,
-        1637820
+        2230,
+        4100
       ],
-      "source_media_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-10/22966160_20260710-21-49-59.mp4",
-      "source_media_sha256": "f8cb1eae8742eae13969277ff36f56b3826216af6675db51a314e49eced89c6c",
-      "source_utterance_text": "小李。可是啊",
-      "speaker_authority": "ivan_confirmed_solo_session",
+      "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/sources/source-context-480000-495000.avatar-clean.mp4",
+      "source_media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+      "source_utterance_text": "李豆沙一直是零",
+      "speaker_authority": "ivan_confirmed_phrase",
       "speaker_confidence": 1.0,
       "speaker_evidence": [
         {
-          "authority": "ivan_confirmed_solo_session",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/solo-session-human-authority.md",
-          "sha256": "295b5fe1ab4fdaf20556bf951f1b9861f2e7ab7b6fbb806064a429c6a82ecccc"
+          "authority": "ivan_confirmation",
+          "coverage_ranges_ms": [
+            [
+              2230,
+              4100
+            ]
+          ],
+          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-zero-boundary-confirmation.json",
+          "sha256": "89493a508c1e6a6943a69c85297a5c49f4689c1b1ab69b0fe7f966dc20671b04"
         }
       ],
-      "text": "小李",
+      "text": "李豆沙一直是零",
       "transcript_authorities": [
-        "bcut",
-        "jianying"
+        "bcut+ivan_exact_text+zero_tail_4100",
+        "jianying+ivan_exact_text+zero_tail_4100"
       ],
-      "utterance_id": "solo-20260710-214959-v4:u00468",
+      "utterance_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1:u00001",
       "verification_evidence": {
         "evidence": [
           {
-            "authority": "bcut",
+            "authority": "bcut+ivan_exact_text+zero_tail_4100",
             "observed_interval_ms": [
-              1637360,
-              1637800
+              2230,
+              4100
             ],
-            "observed_text": "小李。可是啊",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/golden-20260710/214959.json",
-            "sha256": "ca37e614aa3a72c3427d90366cc69906b933ec2a6f5e6138efe6476fa97add68",
+            "observed_text": "李豆沙一直是零",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.bcut.human-promoted.json",
+            "sha256": "106995fa4b887da6d69844692f441764c50c89cff3d9efe14d02e7343d06acbb",
             "timing_delta_ms": {
               "end": 0,
               "maximum_absolute": 0,
               "start": 0
             },
-            "utterance_index": 467
+            "utterance_index": 0
           },
           {
-            "authority": "jianying",
+            "authority": "jianying+ivan_exact_text+zero_tail_4100",
             "observed_interval_ms": [
-              1637290,
-              1637850
+              2230,
+              4100
             ],
-            "observed_text": "小李可是呃习武之人",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/jianying-20260710/214959.json",
-            "sha256": "0607cc9fc64a793a7f0aa9d22c628cf518750cee69738541e404ff1a1f7e31da",
+            "observed_text": "李豆沙一直是零",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.jianying.human-promoted.json",
+            "sha256": "1abb3a85d058b7d52caeda4aeb4af04f17042316d73ef69e21c81253f99fcfb5",
             "timing_delta_ms": {
-              "end": 50,
-              "maximum_absolute": 70,
-              "start": -70
+              "end": 0,
+              "maximum_absolute": 0,
+              "start": 0
             },
-            "utterance_index": 459
+            "utterance_index": 0
           }
         ],
-        "media_sha256": "f8cb1eae8742eae13969277ff36f56b3826216af6675db51a314e49eced89c6c",
-        "observed_text": "小李。可是啊",
+        "media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+        "observed_text": "李豆沙一直是零",
         "status": "VERIFIED",
         "transcript_authorities": [
-          "bcut",
-          "jianying"
+          "bcut+ivan_exact_text+zero_tail_4100",
+          "jianying+ivan_exact_text+zero_tail_4100"
         ],
         "transcript_confidence": 0.99
       }
     },
     {
       "piece_id": "p002",
-      "rendered_duration_ms": 679,
-      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/.render-prod-xiaoli-benlai-final/piece-002.mp4",
-      "rendered_sha256": "1ec785f5dd2eaad64b7804d9f550c71c2290f8fa2077bd0b02986688ec31bd8f",
+      "rendered_duration_ms": 655,
+      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/work/final/piece-002.mp4",
+      "rendered_sha256": "5c173c21f0b95378041ed8aa6204df72997a3706a4addb1ca6c9d517ddafddba",
       "source_core_interval_ms": [
-        424950,
-        425630
+        1120,
+        1440
       ],
       "source_date": "2026-07-10",
-      "source_id": "solo-20260710-190017-v4",
+      "source_id": "solo-20260710-190017-budui-full-frame",
       "source_interval_ms": [
-        424950,
-        425630
+        1100,
+        1495
       ],
-      "source_media_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-10/22966160_20260710-19-00-17.mp4",
-      "source_media_sha256": "6fc9de9d20411fd98bb0d7ec64bbcc8490f04f021663da08802e7f0a1abb5cdf",
-      "source_utterance_text": "那是因为你本来就是周末有假期的人",
-      "speaker_authority": "ivan_confirmed_solo_session",
-      "speaker_confidence": 1.0,
-      "speaker_evidence": [
-        {
-          "authority": "ivan_confirmed_solo_session",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/solo-session-human-authority.md",
-          "sha256": "295b5fe1ab4fdaf20556bf951f1b9861f2e7ab7b6fbb806064a429c6a82ecccc"
-        }
-      ],
-      "text": "本来就",
-      "transcript_authorities": [
-        "bcut",
-        "jianying"
-      ],
-      "utterance_id": "solo-20260710-190017-v4:u00093",
-      "verification_evidence": {
-        "evidence": [
-          {
-            "authority": "bcut",
-            "observed_interval_ms": [
-              424950,
-              425630
-            ],
-            "observed_text": "那是因为你本来就是周末有假期的人",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/golden-20260710/190017.json",
-            "sha256": "91226b8d120a4ddce315ab4aecfcb409177d4ea5fbf09125e2437c94b554f07d",
-            "timing_delta_ms": {
-              "end": 0,
-              "maximum_absolute": 0,
-              "start": 0
-            },
-            "utterance_index": 92
-          },
-          {
-            "authority": "jianying",
-            "observed_interval_ms": [
-              424930,
-              425810
-            ],
-            "observed_text": "那是因为你本来就是周末有假期的人",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/jianying-20260710/190017.json",
-            "sha256": "b4f2549ec4c4ecf90d16f6dd4e872ab49e653953a2fa7c0ecb2370554e1ba110",
-            "timing_delta_ms": {
-              "end": 180,
-              "maximum_absolute": 180,
-              "start": -20
-            },
-            "utterance_index": 116
-          }
-        ],
-        "media_sha256": "6fc9de9d20411fd98bb0d7ec64bbcc8490f04f021663da08802e7f0a1abb5cdf",
-        "observed_text": "那是因为你本来就是周末有假期的人",
-        "status": "VERIFIED",
-        "transcript_authorities": [
-          "bcut",
-          "jianying"
-        ],
-        "transcript_confidence": 0.99
-      }
-    },
-    {
-      "piece_id": "p003",
-      "rendered_duration_ms": 734,
-      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/.render-prod-xiaoli-benlai-final/piece-003.mp4",
-      "rendered_sha256": "08541c33350da8cdb17348a825900717c4dd9280f70d07220f7e5d87561f236b",
-      "source_core_interval_ms": [
-        1033839,
-        1034240
-      ],
-      "source_date": "2026-07-12",
-      "source_id": "collab-20260712-u195-lidousha-v4",
-      "source_interval_ms": [
-        1033820,
-        1034295
-      ],
-      "source_media_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-12/22966160_20260712-17-18-39.mp4",
-      "source_media_sha256": "c9df8b5f8b9b0bfd01e241e142e1ca135841a0d9a854b984a860209435ddd3ab",
-      "source_utterance_text": "豆沙是零",
-      "speaker_authority": "verified_lidousha_voiceprint",
-      "speaker_confidence": 0.99,
-      "speaker_evidence": [
-        {
-          "authority": "speaker_decision",
-          "coverage_ranges_ms": [
-            [
-              1033420,
-              1034440
-            ]
-          ],
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/zero-source-audit-v4/u195-speaker-decision.json",
-          "sha256": "bf302e69c0a10cf895a373a818d1bb667e8f7cc1a8daedecd8cb55fd13b3f073"
-        },
-        {
-          "authority": "campp",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/zero-source-audit-v4/campp-scores.json",
-          "sha256": "45eed0814c593734a63f537fa8c6de9f27d6ac6957b6e826344422dddfb0108b"
-        },
-        {
-          "authority": "wespeaker",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/zero-source-audit-v4/wespeaker-scores.json",
-          "sha256": "8ee209532278f90a596836ac1d82f302493ba13516243f4af93e89ef78d5db4a"
-        }
-      ],
-      "text": "是零",
-      "transcript_authorities": [
-        "bcut",
-        "jianying"
-      ],
-      "utterance_id": "collab-20260712-u195-lidousha-v4:u00196",
-      "verification_evidence": {
-        "evidence": [
-          {
-            "authority": "bcut",
-            "observed_interval_ms": [
-              1033839,
-              1034240
-            ],
-            "observed_text": "豆沙是零",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/golden-20260712/171839.json",
-            "sha256": "0966d661404a335c80cf12f012f51d610c060059fb96f4bc285765d089a1b6a7",
-            "timing_delta_ms": {
-              "end": 0,
-              "maximum_absolute": 0,
-              "start": 0
-            },
-            "utterance_index": 195
-          },
-          {
-            "authority": "jianying",
-            "observed_interval_ms": [
-              1033850,
-              1034450
-            ],
-            "observed_text": "哈哈哈李杜莎是0杜莎是0我是最",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/jianying-20260712/171839.json",
-            "sha256": "8740adfff0729d70d40cc135a09e01a8f0b226019213a18d027348d180582f16",
-            "timing_delta_ms": {
-              "end": 210,
-              "maximum_absolute": 210,
-              "start": 11
-            },
-            "utterance_index": 213
-          }
-        ],
-        "media_sha256": "c9df8b5f8b9b0bfd01e241e142e1ca135841a0d9a854b984a860209435ddd3ab",
-        "observed_text": "豆沙是零",
-        "status": "VERIFIED",
-        "transcript_authorities": [
-          "bcut",
-          "jianying"
-        ],
-        "transcript_confidence": 0.99
-      }
-    },
-    {
-      "piece_id": "p004",
-      "rendered_duration_ms": 694,
-      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/.render-prod-xiaoli-benlai-final/piece-004.mp4",
-      "rendered_sha256": "2f3b05952b1e6a74b7e9a0826b09049fb38864273868d67a8c9cf5344ba48d8a",
-      "source_core_interval_ms": [
-        1275130,
-        1275490
-      ],
-      "source_date": "2026-07-10",
-      "source_id": "solo-20260710-190017-v4",
-      "source_interval_ms": [
-        1275110,
-        1275545
-      ],
-      "source_media_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-10/22966160_20260710-19-00-17.mp4",
-      "source_media_sha256": "6fc9de9d20411fd98bb0d7ec64bbcc8490f04f021663da08802e7f0a1abb5cdf",
-      "source_utterance_text": "我明天不对",
+      "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/sources/budui-context-1274000-1277000.mp4",
+      "source_media_sha256": "9db18449722ef1cab119524fec13846e2966763e97af10896d99d93c7a330bde",
+      "source_utterance_text": "还没看我们明天不对",
       "speaker_authority": "ivan_confirmed_solo_session",
       "speaker_confidence": 1.0,
       "speaker_evidence": [
@@ -299,44 +133,44 @@
         "bcut",
         "jianying"
       ],
-      "utterance_id": "solo-20260710-190017-v4:u00451",
+      "utterance_id": "solo-20260710-190017-budui-full-frame:u00001",
       "verification_evidence": {
         "evidence": [
           {
             "authority": "bcut",
             "observed_interval_ms": [
-              1275130,
-              1275490
+              1120,
+              1440
             ],
-            "observed_text": "我明天不对",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/golden-20260710/190017.json",
-            "sha256": "91226b8d120a4ddce315ab4aecfcb409177d4ea5fbf09125e2437c94b554f07d",
+            "observed_text": "还没看我们明天不对",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/evidence/budui-context.bcut.json",
+            "sha256": "8d0ad84c65b6fb5a3e72ce58d6dbc0777a038c2a9c9454a00438788553d1de54",
             "timing_delta_ms": {
               "end": 0,
               "maximum_absolute": 0,
               "start": 0
             },
-            "utterance_index": 450
+            "utterance_index": 0
           },
           {
             "authority": "jianying",
             "observed_interval_ms": [
-              1275090,
-              1275650
+              1090,
+              1450
             ],
-            "observed_text": "明天不对",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/jianying-20260710/190017.json",
-            "sha256": "b4f2549ec4c4ecf90d16f6dd4e872ab49e653953a2fa7c0ecb2370554e1ba110",
+            "observed_text": "不对我们周天来看吧",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/evidence/budui-context.jianying.json",
+            "sha256": "5e207c4c15505a18faf58725bdafbf64f98903fcf5f7833c9541b617b5331122",
             "timing_delta_ms": {
-              "end": 160,
-              "maximum_absolute": 160,
-              "start": -40
+              "end": 10,
+              "maximum_absolute": 30,
+              "start": -30
             },
-            "utterance_index": 479
+            "utterance_index": 1
           }
         ],
-        "media_sha256": "6fc9de9d20411fd98bb0d7ec64bbcc8490f04f021663da08802e7f0a1abb5cdf",
-        "observed_text": "我明天不对",
+        "media_sha256": "9db18449722ef1cab119524fec13846e2966763e97af10896d99d93c7a330bde",
+        "observed_text": "还没看我们明天不对",
         "status": "VERIFIED",
         "transcript_authorities": [
           "bcut",
@@ -346,205 +180,102 @@
       }
     },
     {
-      "piece_id": "p005",
-      "rendered_duration_ms": 534,
-      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/.render-prod-xiaoli-benlai-final/piece-005.mp4",
-      "rendered_sha256": "c81aa80eb4dd1975afc83c35172852c8ebc8e6deceab69fb7d43c5896f343d04",
+      "piece_id": "p003",
+      "rendered_duration_ms": 2810,
+      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/work/final/piece-003.mp4",
+      "rendered_sha256": "4ee6231e5387b2e5060b1411058f90a1d997e5c3b6fcb27e875f75f3a8f4f45d",
       "source_core_interval_ms": [
-        571970,
-        572450
+        9630,
+        12420
       ],
-      "source_date": "2026-07-10",
-      "source_id": "solo-20260710-190017-v4",
+      "source_date": "2026-07-16",
+      "source_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1",
       "source_interval_ms": [
-        571935,
-        572470
+        9630,
+        12440
       ],
-      "source_media_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-10/22966160_20260710-19-00-17.mp4",
-      "source_media_sha256": "6fc9de9d20411fd98bb0d7ec64bbcc8490f04f021663da08802e7f0a1abb5cdf",
-      "source_utterance_text": "我是最不害怕",
-      "speaker_authority": "ivan_confirmed_solo_session",
+      "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/sources/source-context-480000-495000.avatar-clean.mp4",
+      "source_media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+      "source_utterance_text": "李豆沙一直是为爱做一",
+      "speaker_authority": "ivan_confirmed_phrase",
       "speaker_confidence": 1.0,
       "speaker_evidence": [
         {
-          "authority": "ivan_confirmed_solo_session",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/solo-session-human-authority.md",
-          "sha256": "295b5fe1ab4fdaf20556bf951f1b9861f2e7ab7b6fbb806064a429c6a82ecccc"
-        }
-      ],
-      "text": "我是",
-      "transcript_authorities": [
-        "bcut",
-        "jianying"
-      ],
-      "utterance_id": "solo-20260710-190017-v4:u00154",
-      "verification_evidence": {
-        "evidence": [
-          {
-            "authority": "bcut",
-            "observed_interval_ms": [
-              571970,
-              572450
-            ],
-            "observed_text": "我是最不害怕",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/golden-20260710/190017.json",
-            "sha256": "91226b8d120a4ddce315ab4aecfcb409177d4ea5fbf09125e2437c94b554f07d",
-            "timing_delta_ms": {
-              "end": 0,
-              "maximum_absolute": 0,
-              "start": 0
-            },
-            "utterance_index": 153
-          },
-          {
-            "authority": "jianying",
-            "observed_interval_ms": [
-              571850,
-              572450
-            ],
-            "observed_text": "我是最不害怕",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/jianying-20260710/190017.json",
-            "sha256": "b4f2549ec4c4ecf90d16f6dd4e872ab49e653953a2fa7c0ecb2370554e1ba110",
-            "timing_delta_ms": {
-              "end": 0,
-              "maximum_absolute": 120,
-              "start": -120
-            },
-            "utterance_index": 179
-          }
-        ],
-        "media_sha256": "6fc9de9d20411fd98bb0d7ec64bbcc8490f04f021663da08802e7f0a1abb5cdf",
-        "observed_text": "我是最不害怕",
-        "status": "VERIFIED",
-        "transcript_authorities": [
-          "bcut",
-          "jianying"
-        ],
-        "transcript_confidence": 0.99
-      }
-    },
-    {
-      "piece_id": "p006",
-      "rendered_duration_ms": 879,
-      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/woshi-wei-ai-v4/.render-prod-xiaoli-benlai-final/piece-006.mp4",
-      "rendered_sha256": "3dd226659734625aa663759e88112a3049451db45965ce0683e34c3b5f32bf1d",
-      "source_core_interval_ms": [
-        1462190,
-        1463070
-      ],
-      "source_date": "2026-07-12",
-      "source_id": "collab-20260712-u410-lidousha-v4",
-      "source_interval_ms": [
-        1462190,
-        1463070
-      ],
-      "source_media_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-12/22966160_20260712-17-18-39.mp4",
-      "source_media_sha256": "c9df8b5f8b9b0bfd01e241e142e1ca135841a0d9a854b984a860209435ddd3ab",
-      "source_utterance_text": "所以我就为爱做零了",
-      "speaker_authority": "verified_lidousha_voiceprint",
-      "speaker_confidence": 0.99,
-      "speaker_evidence": [
-        {
-          "authority": "campp",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/speaker-audit-20260712/campp-scores.json",
-          "sha256": "f5c8ffc198287aad09dc055efab1e0d763cf849ac154b0cebc773415bccf3eb4"
-        },
-        {
-          "authority": "eres2netv2",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/speaker-audit-20260712/eres2netv2-scores.json",
-          "sha256": "d897d16b08e7a30a81418ae8370014e4ddeb40062a43b13990079bad7941ee51"
-        },
-        {
-          "authority": "ecapa",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/speaker-audit-20260712/ecapa-scores.json",
-          "sha256": "aa0c5d9296c13aac5e8d2ced2e3ae2e2507838be7eb712245d5a80c56290149c"
-        },
-        {
-          "authority": "pyannote_overlap",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/speaker-audit-20260712/u410-pyannote-activity.json",
-          "sha256": "bc5d0e38a29cd0fd054ff67eed79672ad74084dfe010a7a3d05c92eccbe47851"
-        },
-        {
-          "authority": "speaker_decision",
+          "authority": "ivan_confirmation",
           "coverage_ranges_ms": [
             [
-              1461510,
-              1463630
+              9630,
+              12460
             ]
           ],
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/speaker-audit-20260712/speaker-decisions.json",
-          "sha256": "c30de7899b5c1f44af629f6b1835dc1d3874aef1522d6b46ba0fce215c141bd1"
-        },
-        {
-          "authority": "ivan_limo_control",
-          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/speaker-audit-20260712/known-limo-human-anchor.json",
-          "sha256": "baad4dbd9bf028aa2c9d032a123c9a459e086d393205d24cfe339a212f9cb089"
+          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/evidence/one-tail-confirmation.shifted.json",
+          "sha256": "53633ebb7a8ca7f5cbc94f9c075aa1d64a08e2c99d65a44491f668c12726e01f"
         }
       ],
-      "text": "为爱做零",
+      "text": "李豆沙一直是为爱做一",
       "transcript_authorities": [
-        "bcut",
-        "jianying"
+        "bcut+ivan_exact_text+zero_tail_4100",
+        "jianying+ivan_exact_text+zero_tail_4100"
       ],
-      "utterance_id": "collab-20260712-u410-lidousha-v4:u00411",
+      "utterance_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1:u00002",
       "verification_evidence": {
         "evidence": [
           {
-            "authority": "bcut",
+            "authority": "bcut+ivan_exact_text+zero_tail_4100",
             "observed_interval_ms": [
-              1462190,
-              1463070
+              9630,
+              12420
             ],
-            "observed_text": "所以我就为爱做零了",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/golden-20260712/171839.json",
-            "sha256": "0966d661404a335c80cf12f012f51d610c060059fb96f4bc285765d089a1b6a7",
+            "observed_text": "李豆沙一直是为爱做一",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.bcut.human-promoted.json",
+            "sha256": "106995fa4b887da6d69844692f441764c50c89cff3d9efe14d02e7343d06acbb",
             "timing_delta_ms": {
               "end": 0,
               "maximum_absolute": 0,
               "start": 0
             },
-            "utterance_index": 410
+            "utterance_index": 1
           },
           {
-            "authority": "jianying",
+            "authority": "jianying+ivan_exact_text+zero_tail_4100",
             "observed_interval_ms": [
-              1462130,
-              1463050
+              9630,
+              12420
             ],
-            "observed_text": "所以我就为爱做0",
-            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/jianying-20260712/171839.json",
-            "sha256": "8740adfff0729d70d40cc135a09e01a8f0b226019213a18d027348d180582f16",
+            "observed_text": "李豆沙一直是为爱做一",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.jianying.human-promoted.json",
+            "sha256": "1abb3a85d058b7d52caeda4aeb4af04f17042316d73ef69e21c81253f99fcfb5",
             "timing_delta_ms": {
-              "end": -20,
-              "maximum_absolute": 60,
-              "start": -60
+              "end": 0,
+              "maximum_absolute": 0,
+              "start": 0
             },
-            "utterance_index": 425
+            "utterance_index": 1
           }
         ],
-        "media_sha256": "c9df8b5f8b9b0bfd01e241e142e1ca135841a0d9a854b984a860209435ddd3ab",
-        "observed_text": "所以我就为爱做零了",
+        "media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+        "observed_text": "李豆沙一直是为爱做一",
         "status": "VERIFIED",
         "transcript_authorities": [
-          "bcut",
-          "jianying"
+          "bcut+ivan_exact_text+zero_tail_4100",
+          "jianying+ivan_exact_text+zero_tail_4100"
         ],
         "transcript_confidence": 0.99
       }
     }
   ],
   "quality": {
-    "average_piece_characters": 2.5,
-    "character_count": 15,
+    "average_piece_characters": 6.333,
+    "character_count": 19,
     "fragmented": false,
-    "longest_piece_characters": 4,
+    "longest_piece_characters": 10,
     "multi_character_coverage_ratio": 1.0,
-    "piece_count": 6,
+    "piece_count": 3,
     "single_character_piece_count": 0
   },
   "schema_version": "huozi-render.v1",
   "status": "REVIEW_READY_NO_UPLOAD",
-  "target": "小李本来就是零，不对，我是为爱做零",
+  "target": "李豆沙一直是零，不对，李豆沙一直是为爱做一",
   "upload_enabled": false,
-  "verified_plan_sha256": "dc8054a08331e45555505addc9cdddb4b935cbba46d9df9472df974b3597bdb9"
+  "verified_plan_sha256": "2ac78d6c0e66a7a930f7a678298f6491d60ff0a9db038dd52bdf343e9d6c7091"
 }

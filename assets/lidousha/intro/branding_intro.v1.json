@@ -4,16 +4,18 @@
   "enabled": true,
   "policy": {
     "mandatory": true,
-    "applies_to": ["talk", "song"],
+    "applies_to": [
+      "talk"
+    ],
     "position": "prepend",
-    "note": "Ivan 2026-07-12 选定活字乱刷候选2作为固定片头；此后所有自动切片成品 MP4 必须在正片前拼接本片头，缺失或 hash 不符时 fail closed，不允许交付无片头成品。"
+    "note": "Ivan 2026-07-18 选定 Z1 三句版作为固定谈话片头；顺序为“李豆沙一直是零，不对，李豆沙一直是为爱做一”。中间“不对”保留原画幅，前后两句使用右下角形象放大的 1080p 无广告画面。谈话成品缺失片头或 hash 不符时 fail closed；歌切按现行政策豁免片头。"
   },
-  "display_name": "活字乱刷片头-候选2-小李本来就是零-我是为爱做零",
-  "target_text": "小李本来就是零，不对，我是为爱做零",
+  "display_name": "活字乱刷片头-Z1-李豆沙一直是零-不对-李豆沙一直是为爱做一",
+  "target_text": "李豆沙一直是零，不对，李豆沙一直是为爱做一",
   "video": {
-    "sha256": "04dd12343e7ee34b419cfccfde903fad729a6b0574e99f05493048cbd239cb53",
-    "duration_ms": 4288,
-    "bytes": 1908711,
+    "sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+    "duration_ms": 5754,
+    "bytes": 2765024,
     "streams": {
       "video": {
         "codec": "h264",
@@ -32,33 +34,65 @@
     }
   },
   "subtitle_srt": {
-    "sha256": "f51c2660ebf2f9d51cb88c27bc9ea1b80536bc5adf21805de9daa2a3522282f9",
+    "sha256": "5943b4ae57a45443ef6060075080fbe31add789089c9388a41afca320b218d0f",
     "cues": [
-      {"start_ms": 0, "end_ms": 2028, "text": "小李本来就是零，"},
-      {"start_ms": 2028, "end_ms": 2722, "text": "不对，"},
-      {"start_ms": 2722, "end_ms": 4135, "text": "我是为爱做零"}
+      {
+        "start_ms": 0,
+        "end_ms": 2250,
+        "text": "李豆沙一直是零，"
+      },
+      {
+        "start_ms": 2250,
+        "end_ms": 2905,
+        "text": "不对，"
+      },
+      {
+        "start_ms": 2905,
+        "end_ms": 5715,
+        "text": "李豆沙一直是为爱做一"
+      }
     ]
   },
   "provenance": {
     "workflow": "docs/workflows/huozi-luanshua.md",
     "render_manifest_path": "assets/lidousha/intro/lidousha-branding-intro.v1.render-manifest.json",
-    "render_manifest_sha256": "c297575d7215e84c06123c3ac64fb15c521592df2106c4b923b10cdbc9985ee1",
-    "render_manifest_inner_sha256": "022d92219222c6b515f88bdf61f2d5d7930d53f17914d5a34dd046a71ff9b467",
-    "verified_plan_sha256": "dc8054a08331e45555505addc9cdddb4b935cbba46d9df9472df974b3597bdb9",
-    "produced_at_commit": "9f51a3ecc672845c873abecf54753b66fed25b62",
+    "render_manifest_sha256": "c9e8ad64fbb3990231be33a27bdeff76daa9783422422d0a19dfd250efc39c80",
+    "render_manifest_inner_sha256": "043ae779e87fd07bf44c50d7a53319d9c0cae8950dbd0bba7de208a6fafd1903",
+    "verified_plan_sha256": "2ac78d6c0e66a7a930f7a678298f6491d60ff0a9db038dd52bdf343e9d6c7091",
+    "produced_at_commit": "522367b5635d84134a1196092c1e9cb3538d1fd8",
     "selected_by": "ivan",
-    "selected_on": "2026-07-12",
+    "selected_on": "2026-07-18",
     "pieces": [
-      {"text": "小李", "source_date": "2026-07-10", "core_ms": [1637360, 1637800]},
-      {"text": "本来就", "source_date": "2026-07-10", "core_ms": [424950, 425630]},
-      {"text": "是零", "source_date": "2026-07-12", "core_ms": [1033839, 1034240]},
-      {"text": "不对", "source_date": "2026-07-10", "core_ms": [1275130, 1275490]},
-      {"text": "我是", "source_date": "2026-07-10", "core_ms": [571970, 572450]},
-      {"text": "为爱做零", "source_date": "2026-07-12", "core_ms": [1462190, 1463070]}
+      {
+        "text": "李豆沙一直是零",
+        "source_date": "2026-07-16",
+        "core_ms": [
+          482230,
+          484100
+        ],
+        "visual_mode": "avatar_enlarged_1080p_no_ad"
+      },
+      {
+        "text": "不对",
+        "source_date": "2026-07-10",
+        "core_ms": [
+          1275120,
+          1275440
+        ],
+        "visual_mode": "original_full_frame"
+      },
+      {
+        "text": "李豆沙一直是为爱做一",
+        "source_date": "2026-07-16",
+        "core_ms": [
+          489630,
+          492420
+        ],
+        "visual_mode": "avatar_enlarged_1080p_no_ad"
+      }
     ]
   },
   "runtime_media_paths": [
-    "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.v1.mp4",
-    "lidousha/branding/lidousha-branding-intro.v1.mp4"
+    "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4"
   ]
 }
