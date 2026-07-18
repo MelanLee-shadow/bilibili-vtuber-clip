@@ -146,6 +146,65 @@ def test_numeric_fact_survives_when_same_time_structured_chat_contains_it():
     assert audit["status"] == "CLEAN"
 
 
+def test_numeric_fact_survives_confirmed_delayed_chat_read_span():
+    draft = _srt("大熊猫三个字能说熊猫")
+    final = _srt("大熊猫是3个字能说熊猫")
+    raw_evidence = [
+        SimpleNamespace(
+            offset_ms=-10_000,
+            text="大熊猫是3个字",
+            kind="danmaku",
+        )
+    ]
+    matched_evidence = [
+        {
+            "evidence_id": "confirmed-read",
+            "kind": "danmaku",
+            "exact_text": "大熊猫是3个字",
+            "matched_start_ms": 5_000,
+            "matched_end_ms": 9_000,
+            "survived": True,
+        }
+    ]
+
+    guarded, audit = apply_numeric_fact_provenance_guard(
+        draft,
+        final,
+        structured_evidence=raw_evidence,
+        matched_structured_evidence=matched_evidence,
+    )
+
+    assert "大熊猫是3个字能说熊猫" in guarded
+    assert audit["status"] == "CLEAN"
+    assert audit["supported"][0]["evidence"][0]["basis"] == (
+        "chat_authority_matched_spoken_span"
+    )
+
+
+def test_numeric_fact_ignores_unverified_chat_match_span():
+    draft = _srt("大熊猫三个字能说熊猫")
+    final = _srt("大熊猫是3个字能说熊猫")
+    matched_evidence = [
+        {
+            "evidence_id": "unverified-read",
+            "kind": "danmaku",
+            "exact_text": "大熊猫是3个字",
+            "matched_start_ms": 5_000,
+            "matched_end_ms": 9_000,
+            "survived": False,
+        }
+    ]
+
+    guarded, audit = apply_numeric_fact_provenance_guard(
+        draft,
+        final,
+        matched_structured_evidence=matched_evidence,
+    )
+
+    assert "大熊猫三个字能说熊猫" in guarded
+    assert audit["status"] == "REVERTED_UNPROVEN_NUMERIC_FACT"
+
+
 def test_source_language_guard_reverts_japanese_speech_translation():
     draft = _srt(
         "フェイトちゃん、テスタロッサさん。私はフェイトちゃんと結婚したいだけなんだけど"

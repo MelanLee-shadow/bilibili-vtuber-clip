@@ -410,6 +410,7 @@ def _apply_entity_authority(
             draft_witness_path.read_text(encoding="utf-8", errors="replace"),
             srt_text,
             structured_evidence=authoritative_chat,
+            matched_structured_evidence=chat_authority_audit.get("applied") or (),
         )
     else:
         numeric_fact_audit = {

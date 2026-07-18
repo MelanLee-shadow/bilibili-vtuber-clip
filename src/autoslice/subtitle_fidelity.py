@@ -28,7 +28,7 @@ from difflib import SequenceMatcher
 import json
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 
@@ -302,6 +302,7 @@ def apply_numeric_fact_provenance_guard(
     final_srt: str,
     *,
     structured_evidence: Iterable[object] = (),
+    matched_structured_evidence: Iterable[Mapping[str, Any]] = (),
     evidence_pre_ms: int = 10_000,
     evidence_post_ms: int = 15_000,
 ) -> tuple[str, dict[str, Any]]:
@@ -309,9 +310,11 @@ def apply_numeric_fact_provenance_guard(
 
     A multimodal correction model is not an independent witness for a number
     it introduced itself (``0.4`` incident).  A numeric token may survive when
-    it was already present on the initial ASR timeline, or when same-time
-    structured chat/SC contains that exact token.  The full cue is reverted so
-    the number and its surrounding fact phrase cannot be validated separately.
+    it was already present on the initial ASR timeline, when same-time
+    structured chat/SC contains that exact token, or when the chat-authority
+    stage has already matched that exact structured text to the cue's spoken
+    span.  The full cue is reverted so the number and its surrounding fact
+    phrase cannot be validated separately.
     """
 
     draft_cues = parse_srt_cues(draft_srt)
@@ -320,6 +323,7 @@ def apply_numeric_fact_provenance_guard(
         "schema_version": "numeric-fact-provenance-audit.v1",
         "status": "CLEAN",
         "reverted": [],
+        "supported": [],
     }
     if len(draft_cues) != len(final_cues):
         audit["status"] = "SKIPPED_CUE_COUNT_MISMATCH"
@@ -333,6 +337,28 @@ def apply_numeric_fact_provenance_guard(
         except (TypeError, ValueError, AttributeError):
             continue
         evidence_rows.append((offset_ms, text, kind))
+    matched_evidence_rows: list[dict[str, Any]] = []
+    for item in matched_structured_evidence:
+        if item.get("survived") is not True:
+            continue
+        try:
+            matched_start_ms = int(item["matched_start_ms"])
+            matched_end_ms = int(item["matched_end_ms"])
+            text = str(item["exact_text"])
+            kind = str(item["kind"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if matched_end_ms <= matched_start_ms:
+            continue
+        matched_evidence_rows.append(
+            {
+                "evidence_id": str(item.get("evidence_id") or ""),
+                "kind": kind,
+                "matched_start_ms": matched_start_ms,
+                "matched_end_ms": matched_end_ms,
+                "text": text,
+            }
+        )
 
     rendered: list[str] = []
     for index, (draft_cue, final_cue) in enumerate(
@@ -358,7 +384,28 @@ def apply_numeric_fact_provenance_guard(
                 <= final_cue.end_ms + evidence_post_ms
                 and token in text
             ]
+            support.extend(
+                {
+                    **row,
+                    "basis": "chat_authority_matched_spoken_span",
+                }
+                for row in matched_evidence_rows
+                if max(
+                    0,
+                    min(final_cue.end_ms, row["matched_end_ms"])
+                    - max(final_cue.start_ms, row["matched_start_ms"]),
+                )
+                > 0
+                and token in row["text"]
+            )
             if support:
+                audit["supported"].append(
+                    {
+                        "cue_index": index,
+                        "token": token,
+                        "evidence": support,
+                    }
+                )
                 continue
             unsupported.append(
                 {
