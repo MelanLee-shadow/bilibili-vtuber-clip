@@ -342,23 +342,39 @@ def _resolve_chat_entity_proposal(
     chat_canonical = chat_match["canonicals"][0]
     chat_surface = chat_match["occurrences"][0]["surface"]
     acoustic_occurrences = _entity_occurrences(acoustic_span, group)
-    # 平台结构化原文与已经过 AGY/CPA/词表的语义文本逐字同意 canonical
-    # 时，后置声学模型没有未决问题可裁，不能把两份一致文本证据一起推翻。
-    # 真实冲突（两边实体不同或弹幕只给了别名面）仍进入音频仲裁。
+    # 平台结构化原文给出 canonical，且已经过 AGY/CPA/词表的语义文本
+    # 命中同一实体时，后置声学模型没有未决 referent 可裁。别名面只在该
+    # canonical 显式列入 uncertain_keep_canonicals 时走这条路；真实冲突
+    # （如结构化 kmx、语义文本却命中乒乓球）仍进入音频仲裁。
+    semantic_entity = acoustic_occurrences[0] if len(acoustic_occurrences) == 1 else None
+    canonical_is_directionally_trusted = any(
+        value.lower() == chat_canonical.lower()
+        for value in group.uncertain_keep_canonicals
+    )
+    semantic_surface_is_canonical = bool(
+        semantic_entity
+        and str(semantic_entity["surface"]).lower() == chat_canonical.lower()
+    )
     if (
         chat_surface.lower() == chat_canonical.lower()
-        and len(acoustic_occurrences) == 1
-        and str(acoustic_occurrences[0]["canonical"]).lower() == chat_canonical.lower()
-        and str(acoustic_occurrences[0]["surface"]).lower() == chat_canonical.lower()
+        and semantic_entity is not None
+        and str(semantic_entity["canonical"]).lower() == chat_canonical.lower()
+        and (semantic_surface_is_canonical or canonical_is_directionally_trusted)
     ):
         proposal["entity_group"] = group
         proposal["structured_chat_canonical"] = chat_canonical
+        reason_code = (
+            "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_SEMANTIC_TEXT"
+            if semantic_surface_is_canonical
+            else "ENTITY_CANONICAL_CORROBORATED_BY_EXACT_CHAT_AND_REGISTERED_SEMANTIC_ALIAS"
+        )
         discovery.entity_verdicts.append(
             {
                 **base_row,
-                "reason_code": "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_SEMANTIC_TEXT",
+                "reason_code": reason_code,
                 "structured_chat_canonical": chat_canonical,
-                "semantic_text_canonical": acoustic_occurrences[0]["canonical"],
+                "semantic_text_canonical": semantic_entity["canonical"],
+                "semantic_text_surface": semantic_entity["surface"],
                 "authority_kind": "structured_chat_plus_semantic_text",
             }
         )

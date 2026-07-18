@@ -159,7 +159,11 @@ def test_ordinary_speech_entity_verification_fails_closed_when_uncertain():
 
 KMX_GROUP = ReferentGroup(
     (
-        ReferentEntity("kmx", ("kmx",), ("k m x",)),
+        ReferentEntity(
+            "kmx",
+            ("kmx", "kimo熊", "提莫熊", "提莫的熊"),
+            ("ki mo xiong", "kimo xiong"),
+        ),
         ReferentEntity("乒乓球", ("乒乓球",), ("ping pang qiu",)),
     ),
     audio_verify_all_surfaces=True,
@@ -233,6 +237,61 @@ def test_exact_chat_and_semantic_text_agreement_skips_entity_audio_for_any_name(
         row.get("reason_code")
         == "ENTITY_CANONICAL_CORROBORATED_BY_CHAT_AND_SEMANTIC_TEXT"
         for row in audit["entity_verdicts"]
+    )
+
+
+def test_exact_kmx_chat_and_registered_semantic_alias_skip_provider() -> None:
+    calls = []
+
+    def unavailable_verifier(request):
+        calls.append(request)
+        return _uncertain_verifier(request)
+
+    source = _srt(
+        "其实我有想到熊猫",
+        "但是我想到提莫的熊",
+        "会没人想到熊猫就想笑",
+    )
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence(
+                "danmaku",
+                0,
+                "其实我有想到熊猫 但是我想到kmx会没人想到熊猫就想笑",
+            )
+        ],
+        support_srt_texts=[source],
+        referent_groups=[KMX_GROUP],
+        entity_verifier=unavailable_verifier,
+    )
+
+    assert "kmx" in output
+    assert "提莫的熊" not in output
+    assert calls == []
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+    assert audit["entity_verdict_required"] == []
+    assert any(
+        row.get("reason_code")
+        == "ENTITY_CANONICAL_CORROBORATED_BY_EXACT_CHAT_AND_REGISTERED_SEMANTIC_ALIAS"
+        for row in audit["entity_verdicts"]
+    )
+
+
+def test_exact_kmx_chat_and_competing_ping_pong_semantic_text_still_block() -> None:
+    source = _srt("我想到乒乓球", "会没人想到熊猫就想笑")
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, "我想到kmx会没人想到熊猫就想笑")],
+        support_srt_texts=[source],
+        referent_groups=[KMX_GROUP],
+        entity_verifier=_uncertain_verifier,
+    )
+
+    assert output == source
+    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    assert audit["entity_verdict_required"][0]["matched_audio_text"] == (
+        "我想到乒乓球会没人想到熊猫就想笑"
     )
 
 
