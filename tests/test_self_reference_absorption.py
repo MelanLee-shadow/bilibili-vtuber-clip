@@ -146,6 +146,28 @@ def test_bcut_witness_does_not_rewrite_real_xiaoli_or_ordinary_mentions():
     assert audit["status"] == "NO_MATCH"
 
 
+def test_optional_you_preposition_is_not_absorbed_into_name_slot():
+    final = _srt(
+        "官方要找李豆沙来玩这个游戏",
+        "因为李豆沙很会玩",
+        "欧不欧是可以由李豆沙自己来决定吗",
+    )
+    bcut = _srt(
+        "官方要找流沙来玩这个游戏",
+        "因为李杜莎很会玩",
+        "欧不欧是可以留下来自己来代替吗",
+    )
+
+    repaired, audit = absorb_host_self_references(
+        final,
+        source_witness_srt=bcut,
+    )
+
+    assert repaired == final
+    assert "可以李豆沙自己" not in repaired
+    assert all(row["before"] != "由李豆沙" for row in audit["repairs"])
+
+
 def test_name_arbitration_is_symmetric_when_bcut_says_xiaoli():
     final = _srt(
         "可以在弹幕发出你想让李豆沙说的台词",

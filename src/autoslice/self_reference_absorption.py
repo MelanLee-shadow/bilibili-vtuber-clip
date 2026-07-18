@@ -27,7 +27,11 @@ _SELF_REFERENCE_SLOT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         rf"然后(?P<surface>{_CJK_NAME})(?:[，,、\s]*(?P=surface))?就任选",
         rf"(?P<surface>{_CJK_NAME})就任选",
         rf"由(?P<surface>{_CJK_NAME})自己",
-        rf"可以(?P<surface>{_CJK_NAME})自己",
+        # Keep the optional preposition outside the proper-name slot.  If
+        # ``由`` is swallowed into the surface (``由李豆沙``), repeat
+        # consensus can incorrectly rewrite an already-correct ordinary
+        # sentence by replacing four characters with a three-character name.
+        rf"可以(?:由)?(?P<surface>{_CJK_NAME})自己",
         rf"因为(?P<surface>{_CJK_NAME})(?:$|[，,。！？\s]|切|是|把)",
         rf"用(?P<surface>{_CJK_NAME})的方式",
         rf"同意(?P<surface>{_CJK_NAME})把",
