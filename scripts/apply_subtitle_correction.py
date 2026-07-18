@@ -90,6 +90,29 @@ def _project_reviewed_text_onto_timing(
     return "\n".join(projected)
 
 
+def _project_existing_text_onto_timing(
+    *,
+    text_srt: str,
+    timing_srt: str,
+) -> str:
+    text_cues = parse_srt_cues(text_srt)
+    timing_cues = parse_srt_cues(timing_srt)
+    if len(text_cues) != len(timing_cues):
+        raise ValueError(
+            "current text and authoritative timing source have different cue counts"
+        )
+    return "\n".join(
+        f"{index}\n"
+        f"{_srt_time(timing_cue.start_ms)} --> "
+        f"{_srt_time(timing_cue.end_ms)}\n"
+        f"{text_cue.text}\n"
+        for index, (text_cue, timing_cue) in enumerate(
+            zip(text_cues, timing_cues),
+            start=1,
+        )
+    )
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--cid", required=True)
@@ -133,16 +156,25 @@ def main(argv=None) -> int:
     srt = srt_path.read_text(encoding="utf-8")
 
     before = srt
-    text_repair_inputs = (
-        args.text_source,
-        args.text_override,
-        args.timing_source,
-    )
-    if any(value is not None for value in text_repair_inputs) and not all(
-        value is not None for value in text_repair_inputs
+    if (args.text_source is None) != (args.text_override is None):
+        print(
+            "--text-source and --text-override must be supplied together",
+            file=sys.stderr,
+        )
+        return 2
+    if args.text_source is not None and args.timing_source is None:
+        print(
+            "hash-bound text repair requires an authoritative --timing-source",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        args.timing_source is not None
+        and args.text_source is None
+        and not args.refresh_only
     ):
         print(
-            "--text-source, --text-override, and --timing-source must be supplied together",
+            "timing-only projection requires --refresh-only",
             file=sys.stderr,
         )
         return 2
@@ -185,6 +217,11 @@ def main(argv=None) -> int:
         )
         text_override_output_path.write_text(projected_text, encoding="utf-8")
         srt = text_override_output_path.read_text(encoding="utf-8")
+    elif args.refresh_only and args.timing_source is not None:
+        srt = _project_existing_text_onto_timing(
+            text_srt=srt,
+            timing_srt=args.timing_source.read_text(encoding="utf-8"),
+        )
     for pair in args.replace:
         old, _, new = pair.partition("=")
         srt = srt.replace(old, new)
