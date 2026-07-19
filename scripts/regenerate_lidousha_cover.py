@@ -37,6 +37,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice.cover_emote import (
+    compose_companion_reference,
+    load_emote_library,
+    resolve_emote_reference,
+)
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from scripts.run_auto_review_shadow_pipeline import (
     _call_cpa_image_edit,
@@ -76,6 +81,9 @@ def regenerate_cover(
     reuse_bg: bool = False,
     use_llm: bool = True,
     layout: str | None = None,
+    emote_id: str | None = None,
+    emote_mode: str = "replace",
+    emote_reason: str = "",
 ) -> dict:
     """Produce one redesigned cover. Returns a metadata dict (also written next to
     the cover as ``<out>.cover_generation.json``)."""
@@ -97,31 +105,95 @@ def regenerate_cover(
         art_direction_llm = build_llm_call(
             LlmConfig(transport="command", command_template=_CPA_ART_DIRECTION_LLM, timeout_seconds=180.0)
         )
+    emote_library = load_emote_library(ROOT)
     art_direction = _lidousha_cover_art_direction(
-        candidate_id=candidate_id, title=title, cover_text=cover_text, art_direction_llm_call=art_direction_llm
+        candidate_id=candidate_id,
+        title=title,
+        cover_text=cover_text,
+        art_direction_llm_call=art_direction_llm,
+        emote_library=emote_library,
     )
+    import dataclasses
+
     if layout:
         # Force the text side (the AI bg's character is fixed; put text OPPOSITE it):
         # right-split = text LEFT (character on the right), left-split = text RIGHT.
-        import dataclasses
-
         art_direction = dataclasses.replace(art_direction, layout=layout)
+    if emote_id:
+        # Ivan 点名表情包（人工强理由通道）：--emote 覆盖 judge 的选择。歌切照旧禁用。
+        if art_direction.is_song:
+            raise SystemExit("EMOTE_NOT_ALLOWED_ON_SONG_COVERS")
+        if emote_library.get(emote_id) is None:
+            raise SystemExit(f"EMOTE_ID_UNKNOWN: {emote_id!r} not in the emote library")
+        art_direction = dataclasses.replace(
+            art_direction,
+            emote_id=emote_id,
+            emote_mode=emote_mode,
+            emote_reason=emote_reason or "Ivan manual pick (--emote)",
+        )
 
     base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
     api_key = os.environ.get("CPA_API_KEY", "").strip()
     if not base_url or not api_key:
         raise SystemExit("BLOCKED_AI_COVER_REQUIRED: CPA_BASE_URL/CPA_API_KEY missing (no frame-grab fakery)")
-    if reference_path is None:
+
+    # Emote reference resolution: replace mode swaps the reference to the
+    # sticker (no live frame needed at all); companion insets the sticker into
+    # the frame.  Judge picks degrade to the default redraw; an explicit
+    # --emote must fail loudly instead of shipping something Ivan didn't ask.
+    emote_entry = None
+    emote_meta: dict | None = None
+    emote_reference: Path | None = None
+    if art_direction.emote_id:
+        entry = emote_library.get(art_direction.emote_id)
+        resolved, resolve_detail = (
+            resolve_emote_reference(entry, repo_root=ROOT, runtime_roots=emote_library.runtime_roots)
+            if entry is not None
+            else (None, "EMOTE_ID_UNKNOWN")
+        )
+        if resolved is None:
+            if emote_id:
+                raise SystemExit(f"EMOTE_REFERENCE_UNAVAILABLE: {resolve_detail}")
+            emote_meta = {
+                "id": art_direction.emote_id,
+                "status": "FALLBACK_DEFAULT_REDRAW",
+                "detail": resolve_detail,
+            }
+            art_direction = dataclasses.replace(art_direction, emote_id="", emote_mode="", emote_reason="")
+        else:
+            emote_entry = entry
+            emote_reference = resolved
+            emote_meta = {
+                "id": entry.id,
+                "label": entry.label,
+                "mode": art_direction.emote_mode,
+                "reason": art_direction.emote_reason,
+                "status": "EMOTE_REFERENCE_READY",
+                "hd_file": str(resolved),
+                "hd_sha256": "sha256:" + entry.hd_sha256,
+            }
+
+    needs_frame = emote_entry is None or art_direction.emote_mode == "companion"
+    if needs_frame and reference_path is None:
         if media_path is None:
             raise SystemExit("need --ref or --media")
         reference_path = out_path.with_suffix(".cover-ref.png")
         _extract_reference_frame(media_path, reference_path)
+    if emote_entry is not None and emote_reference is not None:
+        if art_direction.emote_mode == "companion":
+            reference_path = compose_companion_reference(
+                reference_path, emote_reference, out_path.with_suffix(".cover-ref.with-emote.png")
+            )
+        else:
+            reference_path = emote_reference
     result = _call_cpa_image_edit(
         base_url=base_url,
         api_key=api_key,
         reference_path=reference_path,
         output_path=ai_bg_path,
-        prompt=_lidousha_cover_prompt(title=title, cover_text=cover_text, art_direction=art_direction),
+        prompt=_lidousha_cover_prompt(
+            title=title, cover_text=cover_text, art_direction=art_direction, emote=emote_entry
+        ),
         request_path=request_path,
         response_path=response_path,
     )
@@ -151,7 +223,11 @@ def regenerate_cover(
             "hook_color": art_direction.hook_color,
             "hook_word": art_direction.hook_word,
             "is_song": art_direction.is_song,
+            "emote_id": art_direction.emote_id,
+            "emote_mode": art_direction.emote_mode,
+            "emote_reason": art_direction.emote_reason,
         },
+        "emote": emote_meta,
         "ai_background": str(ai_bg_path),
         "ai_background_sha256": "sha256:" + _sha256(ai_bg_path),
         "reference_image": str(reference_path) if reference_path is not None else None,
@@ -190,6 +266,10 @@ def main(argv=None) -> int:
     p.add_argument("--no-llm", action="store_true", help="Skip the CPA art-direction judge; use the deterministic baseline.")
     p.add_argument("--layout", choices=("left-split", "right-split", "banner", "song-clean"),
                    help="force the text layout (right-split=text LEFT/character RIGHT; left-split=text RIGHT). Use when the reused AI bg's character is on the side the auto-layout put text.")
+    p.add_argument("--emote", help="force an emote sticker as the cover subject by library id (e.g. 09); Ivan's manual strong-reason channel. replace mode needs no --ref/--media at all.")
+    p.add_argument("--emote-mode", choices=("replace", "companion"), default="replace",
+                   help="replace = the sticker IS the subject (no character redraw); companion = sticker inset beside the character (分身/代画粉丝kmx; needs --ref or --media).")
+    p.add_argument("--emote-reason", default="", help="one-line strong reason recorded in the evidence manifest.")
     args = p.parse_args(argv)
 
     meta = regenerate_cover(
@@ -202,6 +282,9 @@ def main(argv=None) -> int:
         reuse_bg=args.reuse_bg,
         use_llm=not args.no_llm,
         layout=args.layout,
+        emote_id=args.emote,
+        emote_mode=args.emote_mode,
+        emote_reason=args.emote_reason,
     )
     ad = meta["art_direction"]
     print(json.dumps({"out": str(args.out), "layout": ad["layout"], "role": ad["role"],

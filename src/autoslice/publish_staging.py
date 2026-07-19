@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from dataclasses import asdict
+from dataclasses import asdict, replace as dataclasses_replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -17,6 +17,11 @@ from typing import Callable, Mapping, Sequence
 from .auto_review import DecisionAction, ReviewDecision
 from .channel_profile import load_channel_profile
 from .chat_authority import canonicalize_hard_surfaces
+from .cover_emote import (
+    compose_companion_reference,
+    load_emote_library,
+    resolve_emote_reference,
+)
 from .cover_generation import (
     _call_cpa_image_edit as _cover_call_cpa_image_edit,
     _cpa_image_model_candidates,
@@ -425,12 +430,70 @@ def _stage_lidousha_ai_cover(
     # Art direction is picked AFTER the fail-closed gates (creds/ffmpeg/ref frame)
     # so a blocked cover never spends an LLM call. It is fail-OPEN (deterministic
     # baseline) while the cover IMAGE stays fail-closed.
+    emote_library = load_emote_library(ROOT)
     art_direction = _lidousha_cover_art_direction(
         candidate_id=candidate_id,
         title=title,
         cover_text=cover_text,
         art_direction_llm_call=art_direction_llm_call,
+        emote_library=emote_library,
     )
+
+    # Strong-reason emote pick (Ivan 2026-07-19): "replace" swaps the CPA
+    # reference from the live frame to the official sticker (subject swap,
+    # mutually exclusive with the character redraw); "companion" keeps the
+    # frame and insets the sticker (分身 / kmx stand-in).  Any resolution
+    # failure downgrades the ART DIRECTION back to the default character
+    # redraw with disclosed evidence — never a blocked cover.
+    emote_entry = None
+    if art_direction.emote_id:
+        entry = emote_library.get(art_direction.emote_id)
+        resolved, resolve_detail = (
+            resolve_emote_reference(entry, repo_root=ROOT, runtime_roots=emote_library.runtime_roots)
+            if entry is not None
+            else (None, "EMOTE_ID_UNKNOWN")
+        )
+        emote_evidence: dict[str, object] = {
+            "id": art_direction.emote_id,
+            "label": entry.label if entry is not None else None,
+            "mode": art_direction.emote_mode,
+            "reason": art_direction.emote_reason,
+        }
+        if resolved is None:
+            emote_evidence.update({"status": "FALLBACK_DEFAULT_REDRAW", "detail": resolve_detail})
+            art_direction = dataclasses_replace(
+                art_direction, emote_id="", emote_mode="", emote_reason=""
+            )
+        else:
+            try:
+                if art_direction.emote_mode == "companion":
+                    reference_path = compose_companion_reference(
+                        reference_path,
+                        resolved,
+                        cover_refs_dir / f"{candidate_id}.cover-ref.with-emote.png",
+                    )
+                else:
+                    reference_path = resolved
+                emote_entry = entry
+                emote_evidence.update(
+                    {
+                        "status": "EMOTE_REFERENCE_READY",
+                        "hd_file": str(resolved),
+                        "hd_sha256": "sha256:" + entry.hd_sha256,
+                    }
+                )
+            except Exception as exc:  # companion composite failed → default redraw
+                emote_evidence.update(
+                    {
+                        "status": "FALLBACK_DEFAULT_REDRAW",
+                        "detail": f"EMOTE_COMPANION_COMPOSE_FAILED: {type(exc).__name__}: {exc}",
+                    }
+                )
+                reference_path = cover_refs_dir / f"{candidate_id}.cover-ref.png"
+                art_direction = dataclasses_replace(
+                    art_direction, emote_id="", emote_mode="", emote_reason=""
+                )
+        cover_generation["emote"] = emote_evidence
     cover_generation["art_direction"] = asdict(art_direction)
 
     ai_background_path = ai_dir / f"{candidate_id}.ai-bg.cpa-image-edit.png"
@@ -441,7 +504,12 @@ def _stage_lidousha_ai_cover(
         api_key=api_key,
         reference_path=reference_path,
         output_path=ai_background_path,
-        prompt=_lidousha_cover_prompt(title=title, cover_text=cover_text, art_direction=art_direction),
+        prompt=_lidousha_cover_prompt(
+            title=title,
+            cover_text=cover_text,
+            art_direction=art_direction,
+            emote=emote_entry,
+        ),
         request_path=request_path,
         response_path=response_path,
     )

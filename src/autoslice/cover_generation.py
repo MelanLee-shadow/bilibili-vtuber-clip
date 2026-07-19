@@ -19,6 +19,12 @@ from pathlib import Path
 from typing import Callable, Mapping, NamedTuple, Sequence
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.cover_emote import (
+    EmoteEntry,
+    EmoteLibrary,
+    emote_catalog_prompt_block,
+    normalize_emote_choice,
+)
 from src.autoslice.llm_client import LlmCall, extract_json_object
 
 
@@ -91,6 +97,14 @@ class LidoushaCoverArtDirection:
     words: tuple[str, ...] = ()  # LLM word segmentation of cover_text — wrap atoms
     #   (Ivan 2026-07-10: keep the FULL title and grow the font via MANY line
     #   breaks; only whole words / hook / proper nouns may never split)
+    # Official emote sticker as the cover subject (Ivan 2026-07-19).  "" = the
+    # default character redraw.  Only the strong-reason judge may set these
+    # (never the deterministic baseline); "replace" swaps the subject, and
+    # "companion" (sticker AND character) is reserved for 分身 memes or a
+    # sticker depicting kmx (kimo熊 — her FANS' name, not a mascot).
+    emote_id: str = ""
+    emote_mode: str = ""    # "" | "replace" | "companion"
+    emote_reason: str = ""
 
 
 _COVER_TALK_LAYOUTS = ("left-split", "right-split", "banner")
@@ -239,6 +253,7 @@ def _lidousha_cover_art_direction(
     title: str,
     cover_text: str,
     art_direction_llm_call: LlmCall | None = None,
+    emote_library: EmoteLibrary | None = None,
 ) -> LidoushaCoverArtDirection:
     """Pick the cover's role/expression/background/layout/hook color.
 
@@ -279,10 +294,13 @@ def _lidousha_cover_art_direction(
                     title=title,
                     cover_text=cover_text,
                     baseline=baseline,
+                    emote_library=emote_library,
                 )
             )
         )
-        return _normalize_cover_art_direction(payload, baseline, cover_text)
+        return _normalize_cover_art_direction(
+            payload, baseline, cover_text, emote_library=emote_library
+        )
     except Exception:
         return baseline
 
@@ -292,8 +310,16 @@ def _cover_art_direction_prompt(
     title: str,
     cover_text: str,
     baseline: LidoushaCoverArtDirection,
+    emote_library: EmoteLibrary | None = None,
 ) -> str:
     persona = profile_asset_text("persona")
+    # Sticker catalog only when a library is supplied AND this is a talk cover:
+    # song covers never use emotes, and the no-library prompt stays byte-stable.
+    emote_block = ""
+    emote_output_field = ""
+    if emote_library and not baseline.is_song:
+        emote_block = emote_catalog_prompt_block(emote_library)
+        emote_output_field = ',"emote":null|{"id":"...","mode":"replace"|"companion","reason":"..."}'
     return (
         f"你在为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片的封面挑选'艺术指导'。只依据人设与本条切片语义选择。\n"
         f"\n{CHANNEL_PROFILE.display_name}人设(权威):\n{persona}\n"
@@ -318,7 +344,10 @@ def _cover_art_direction_prompt(
         "字号由最长一行的宽度决定,所以行要短。"
         "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(长文案 5-8 行,每行 2-4 字),"
         "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"
-        '只输出一个 JSON 对象: {"role":"...","expression_en":"...","hook_word":"...","words":["...","..."],"lines":["...","..."]}'
+        + emote_block
+        + '只输出一个 JSON 对象: {"role":"...","expression_en":"...","hook_word":"...","words":["...","..."],"lines":["...","..."]'
+        + emote_output_field
+        + "}"
     )
 
 
@@ -392,6 +421,7 @@ def _normalize_cover_art_direction(
     payload: Mapping[str, object],
     baseline: LidoushaCoverArtDirection,
     cover_text: str,
+    emote_library: EmoteLibrary | None = None,
 ) -> LidoushaCoverArtDirection:
     # These axes are the deterministic anti-monotony schedule.  The LLM may
     # refine semantic choices below, but may not collapse a whole batch back
@@ -421,6 +451,15 @@ def _normalize_cover_art_direction(
     line_breaks = _validated_cover_lines(payload.get("lines"), cover_text, hook_word=hook_word, max_lines=max_lines)
     words = _validated_cover_words(payload.get("words"), cover_text, hook_word=hook_word)
 
+    # Emote stickers are opt-in with a strong articulated reason; anything short
+    # of a valid pick (unknown id/mode, bare reason, song, no library) falls
+    # back to the default character redraw — the sticker can never be forced.
+    emote_id, emote_mode, emote_reason = normalize_emote_choice(
+        payload.get("emote"),
+        library=emote_library or EmoteLibrary(enabled=False, entries=()),
+        is_song=baseline.is_song,
+    )
+
     return LidoushaCoverArtDirection(
         role=role,
         expression_en=expression_en,
@@ -431,6 +470,9 @@ def _normalize_cover_art_direction(
         hook_word=hook_word,
         line_breaks=line_breaks,
         words=words,
+        emote_id=emote_id,
+        emote_mode=emote_mode,
+        emote_reason=emote_reason,
     )
 
 
@@ -469,7 +511,89 @@ def _lidousha_identity_descriptor() -> str:
     return " ".join(descriptors)
 
 
-def _lidousha_cover_prompt(*, title: str, cover_text: str, art_direction: LidoushaCoverArtDirection | None = None) -> str:
+_COVER_NO_TEXT_CRITICAL = (
+    "CRITICAL — render ABSOLUTELY NO text of any kind: no letters, words, Chinese/Japanese/English "
+    "characters, numbers, watermark, logos, UI, subtitles, or comic 'POW'/speech-bubble text anywhere. "
+    "The title is added separately afterwards, so the reserved title area must be a graphic background that is "
+    "COMPLETELY EMPTY of any glyphs or symbols. Keep the whole composition energetic, cute and eye-catching."
+)
+
+
+def _lidousha_emote_cover_prompt(
+    *,
+    emote: EmoteEntry,
+    art_direction: LidoushaCoverArtDirection,
+    background: str,
+    cover_identity_prompt: str,
+) -> str:
+    """Replace-mode prompt: the official emote sticker IS the cover subject.
+
+    The sticker replaces the live-frame character redraw one-for-one, so it
+    follows the same rules: it owns most of the frame (same layout zones), gets
+    only a LIGHT redraw (polish + background integration — Ivan: 表情包也可以
+    重绘,但不能太过), and the title area stays text-free for the local overlay.
+    """
+
+    if emote.subject == "panda_creature":
+        subject_line = (
+            "The sticker shows her fluffy PANDA-CREATURE mascot form, NOT the human girl — keep it a cute round "
+            "panda creature exactly as drawn; do NOT humanize it and do NOT add any human character. "
+        )
+    else:
+        subject_line = f"IDENTITY (keep her instantly recognizable): {cover_identity_prompt} "
+    caption_line = ""
+    if emote.baked_text:
+        caption_line = (
+            f"The original sticker has the caption text “{emote.baked_text}” baked into the art — OMIT that "
+            "caption completely and draw the character only; its emotion must read from the pose and face alone. "
+        )
+    identity_block = (
+        f"Create a bold 16:9 (1920x1080) anime VTuber livestream cover thumbnail for {CHANNEL_PROFILE.prompt_name}. "
+        "The supplied image is one of her OFFICIAL chibi emote stickers — for this clip the sticker character is "
+        "the COVER SUBJECT, used INSTEAD of her regular half-body portrait. "
+        "STICKER FIDELITY (redraw lightly, never reinvent): keep the sticker's EXACT pose, expression, emotion, "
+        "proportions, hairstyle, outfit, props and accessories exactly as shown — do NOT restyle or redesign it, "
+        "do NOT add hats/accessories/extra props, do NOT change or exaggerate the emotion; only polish it (crisp "
+        "clean linework, smooth vivid shading, high resolution) and integrate it into the new background so it "
+        "still reads instantly as the same official sticker. "
+        + subject_line
+        + caption_line
+        + "The character must NEVER stick its tongue out — no tongue showing; never provocative or sexy. "
+        "FEED-SAFE FRAMING: keep the sticker character's FACE and all key features within the central 4:3 portion "
+        "of the frame — feed thumbnails crop the outer ~13% of the width on EACH side, so place nothing important "
+        "in the far-left or far-right edges; those edges may hold only background. "
+    )
+    layout = art_direction.layout
+    if layout == "left-split":
+        composition = (
+            "COMPOSITION: place the redrawn sticker character LARGE, filling the LEFT ~55% of the frame and most "
+            "of its height, big and expressive, with a clean white sticker-style outline so it pops off the "
+            f"background. The RIGHT ~45% is an empty graphic zone reserved for a title (keep the sticker out of "
+            f"it): fill it and the whole frame with {background}. Minimal empty space, high energy. "
+        )
+    elif layout == "banner":
+        composition = (
+            "COMPOSITION: place the redrawn sticker character LARGE in the LOWER-CENTER, head around the middle "
+            "of the frame, with a clean white sticker outline. Keep the TOP ~40% a clear vibrant band reserved "
+            f"for a big title. Fill the whole frame with {background}. Minimal empty space. "
+        )
+    else:  # right-split (and the defensive song-clean case: subject right, text left)
+        composition = (
+            "COMPOSITION: place the redrawn sticker character LARGE, filling the RIGHT ~55% of the frame and most "
+            "of its height, big and expressive, with a clean white sticker-style outline so it pops off the "
+            f"background. The LEFT ~45% is an empty graphic zone reserved for a title (keep the sticker out of "
+            f"it): fill it and the whole frame with {background}. Minimal empty space, high energy. "
+        )
+    return identity_block + composition + _COVER_NO_TEXT_CRITICAL
+
+
+def _lidousha_cover_prompt(
+    *,
+    title: str,
+    cover_text: str,
+    art_direction: LidoushaCoverArtDirection | None = None,
+    emote: EmoteEntry | None = None,
+) -> str:
     """Text-free CPA background prompt, ART-DIRECTED per clip (Ivan 2026-07-04).
 
     Identity stays anchored (panda/小李/熊猫, from persona.md) but the OUTFIT/skin
@@ -477,6 +601,12 @@ def _lidousha_cover_prompt(*, title: str, cover_text: str, art_direction: Lidous
     different streams.  Layout/expression/background follow ``art_direction``; the
     title is overlaid locally so this prompt forbids any rendered text.  She must
     NEVER stick her tongue out.
+
+    ``emote`` (Ivan 2026-07-19): when the art direction carries a strong-reason
+    sticker pick, "replace" swaps the subject to the sticker (mutually exclusive
+    with the character redraw) and "companion" keeps the character but adds the
+    sticker as a secondary element (分身 / depicting her fans kmx).  ``emote=None`` keeps
+    this prompt byte-identical to the pre-emote contract.
     """
     if art_direction is None:
         art_direction = _lidousha_cover_art_direction(candidate_id="", title=title, cover_text=cover_text)
@@ -486,6 +616,14 @@ def _lidousha_cover_prompt(*, title: str, cover_text: str, art_direction: Lidous
         art_direction.background_style,
         _COVER_BG_PHRASES[_COVER_BG_BUSY[0]],
     )
+    emote_mode = art_direction.emote_mode if emote is not None else ""
+    if emote_mode == "replace":
+        return _lidousha_emote_cover_prompt(
+            emote=emote,
+            art_direction=art_direction,
+            background=background,
+            cover_identity_prompt=cover_identity_prompt,
+        )
     identity_block = (
         f"Create a bold 16:9 (1920x1080) anime VTuber livestream cover thumbnail for {CHANNEL_PROFILE.prompt_name}. "
         "Use the supplied image ONLY as identity/style reference. "
@@ -527,14 +665,19 @@ def _lidousha_cover_prompt(*, title: str, cover_text: str, art_direction: Lidous
             "with a clean gentle look. Keep the LEFT ~45% a CLEAN calm zone reserved for a title: fill it with "
             f"{background}. Cohesive blue / navy / cream palette, tasteful and pretty rather than loud. "
         )
-    return (
-        identity_block
-        + composition
-        + "CRITICAL — render ABSOLUTELY NO text of any kind: no letters, words, Chinese/Japanese/English "
-        + "characters, numbers, watermark, logos, UI, subtitles, or comic 'POW'/speech-bubble text anywhere. "
-        + "The title is added separately afterwards, so the reserved title area must be a graphic background that is "
-        + "COMPLETELY EMPTY of any glyphs or symbols. Keep the whole composition energetic, cute and eye-catching."
-    )
+    companion_block = ""
+    if emote_mode == "companion" and emote is not None:
+        caption_note = (
+            f" (omit the sticker's baked caption text “{emote.baked_text}”)" if emote.baked_text else ""
+        )
+        companion_block = (
+            "COMPANION STICKER: the reference image has an INSET panel at its bottom-right corner showing one of "
+            "her official chibi emote stickers. Draw that sticker character ONCE as a clearly SECONDARY companion "
+            "element beside her — about one third of her size, never covering her face — faithfully preserving the "
+            f"sticker's pose, expression and design{caption_note}; do NOT reproduce the inset panel's frame/border "
+            f"itself. Reason this companion appears (from the clip): {art_direction.emote_reason}. "
+        )
+    return identity_block + composition + companion_block + _COVER_NO_TEXT_CRITICAL
 
 
 _COVER_CANVAS = (1920, 1080)

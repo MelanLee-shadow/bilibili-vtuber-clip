@@ -43,6 +43,7 @@ The asset directory is the customization surface:
 | Upload tags and proper-noun search mappings | `upload_tag_policy` |
 | Per-archive manual metadata that later edits must preserve | `manual_archive_metadata` (optional profile asset) |
 | Persona and cover identity | `persona`, `cover_identity_prompt`, fonts, `cover_regenerator` |
+| Official emote stickers usable as the cover subject | `emote_library` (optional profile asset; sticker media lives outside git under `assets/emote/`, override with `AUTOSLICE_EMOTE_DIR`) |
 | Speaker identity | `voiceprint_profile` plus the runtime reference subdirectory |
 
 Copying `assets/lidousha/` is useful only as a schema/example reference. A new

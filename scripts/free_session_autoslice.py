@@ -408,6 +408,7 @@ def song_pipeline_fingerprint() -> str:
         "src/autoslice/candidate_selection.py",
         "src/autoslice/channel_profile.py",
         "src/autoslice/content_evidence.py",
+        "src/autoslice/cover_emote.py",
         "src/autoslice/cover_generation.py",
         "src/autoslice/cpa_semantic_qa.py",
         "src/autoslice/danmaku_evidence.py",
@@ -436,6 +437,10 @@ def song_pipeline_fingerprint() -> str:
     }
     paths = [REPO_ROOT / relative for relative in explicit]
     paths.extend((REPO_ROOT / "src" / "autoslice").glob("song_*.py"))
+    # Optional profile assets join the closure only when the profile registers
+    # them (asset_file raises on unregistered keys; the emote library is opt-in).
+    if "emote_library" in CHANNEL_PROFILE.asset_files:
+        paths.append(profile_asset_file("emote_library"))
     paths.extend(
         (
             REPO_ROOT / "profiles" / PROFILE_ID / "profile.json",

@@ -798,6 +798,15 @@ from src.autoslice.title_policy import (  # noqa: E402
 # role, varies the background, highlights a hook word, and backs the text with a
 # soft dark card so any fill color reads on a bright pop background.  CPA still
 # makes only a text-free background; the title is overlaid locally (fail-closed).
+from src.autoslice.cover_emote import (
+    EmoteEntry,
+    EmoteLibrary,
+    compose_companion_reference,
+    emote_catalog_prompt_block,
+    load_emote_library,
+    normalize_emote_choice,
+    resolve_emote_reference,
+)
 from src.autoslice.cover_generation import (
     LidoushaCoverArtDirection,
     _COVER_BASE_FILL,
@@ -813,6 +822,7 @@ from src.autoslice.cover_generation import (
     _COVER_LAYOUT_RENDER,
     _COVER_MIN_EMPH,
     _COVER_MISSING_CHECKERS,
+    _COVER_NO_TEXT_CRITICAL,
     _COVER_OPENING_PUNCT,
     _COVER_OUTLINE_NAVY_RATIO,
     _COVER_OUTLINE_WHITE_RATIO,
@@ -856,6 +866,7 @@ from src.autoslice.cover_generation import (
     _find_cover_font,
     _fit_cover_lines,
     _lidousha_cover_art_direction,
+    _lidousha_emote_cover_prompt,
     _lidousha_fontsdir,
     _lidousha_cover_prompt,
     _lidousha_cover_text,
