@@ -54,8 +54,9 @@ def test_default_profile_semantic_prompt_policy_fingerprint():
         danmaku_hints="00:01 burst",
     )
 
+    # 2026-07-19：event_key 增补「同主题隔段再触发也用同一 key」规则后的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "7c00da68fdc60e65d3e1575f3b4be2003c47d5f1fbd7f6fa260f8bdf82cfdc58"
+        "f4474d7898efc4dfc2aabf9a9fd618a81f3c97cb1d9c25b82eb9971fc013975d"
     )
 
 
@@ -253,12 +254,20 @@ def test_same_event_key_merges_nonoverlapping_windows_before_top_n_quota():
     merged = selected[0]
     assert merged.boundary.resolved_start_ms == cues[4].source_start_ms
     assert merged.boundary.resolved_end_ms == cues[39].source_end_ms
+    # 2026-07-19 同主题合并跳切：25s 缝隙成为 merge_gap（由 talk_filler 的
+    # merge_gap 车道在成品里跳切掉），审计带 merge_outcome 与缝隙毫秒区间。
     assert diagnostics["merged_events"] == [
         {
             "event_key": "妈感姐妹分类",
             "input_ranges": [[5, 15], [20, 40]],
+            "merge_gaps_ms": [[89000, 114000]],
+            "merge_outcome": "merged",
             "merged_range": [5, 40],
         }
+    ]
+    merged_cid = merged.anchor.candidate_id
+    assert diagnostics["merge_gaps"][merged_cid] == [
+        {"start_ms": 89000, "end_ms": 114000, "event_key": "妈感姐妹分类"}
     ]
 
 
@@ -306,3 +315,63 @@ def test_repo_metric_asset_reaches_prompt_by_default():
     prompt = build_semantic_recall_prompt(_cues(3), max_candidates=2)
     assert "观点/立场强度" in prompt  # from assets/lidousha/slice_selection_metric.md
     assert "不许因「niche/otaku 向」武断压低" in prompt
+
+
+def test_same_topic_merge_with_8min_gap_produces_merge_gap_jumpcut():
+    """2026-07-18 kmx 称呼两条切片案（源间距 8min25s）：同一 event_key 的
+    分离窗口按有效时长过门、缝隙成为 merge_gap，而不是被 5 分钟窗口上限
+    整条毙掉或分成两条切片。"""
+    cues = _cues(count=200, cue_ms=5_000, gap_ms=1_000)
+
+    def llm(prompt: str) -> str:
+        return _completion(
+            [
+                # 两段各 ~1min，中间隔 ~8.4min（85 个 cue × 6s）。
+                {"start_cue": 5, "end_cue": 15, "kind": "talk",
+                 "event_key": "kmx称呼串", "hook": "SC称呼串起头", "confidence": 0.9},
+                {"start_cue": 100, "end_cue": 112, "kind": "talk",
+                 "event_key": "kmx称呼串", "hook": "回访同一个梗", "confidence": 0.85},
+            ]
+        )
+
+    selected, diagnostics = select_semantic_session_candidates(
+        cues, llm_call=llm, max_candidates=2
+    )
+
+    assert len(selected) == 1
+    merged = selected[0]
+    assert merged.boundary.resolved_start_ms == cues[4].source_start_ms
+    assert merged.boundary.resolved_end_ms == cues[111].source_end_ms
+    event = diagnostics["merged_events"][0]
+    assert event["merge_outcome"] == "merged"
+    gaps = diagnostics["merge_gaps"][merged.anchor.candidate_id]
+    assert len(gaps) == 1
+    gap_ms = gaps[0]["end_ms"] - gaps[0]["start_ms"]
+    assert 500_000 < gap_ms <= 600_000
+
+
+def test_same_topic_merge_gap_over_cap_keeps_winner_only():
+    """缝隙超过 10 分钟上限时不盲扫中间内容：保置信度最高的一段，审计记录。"""
+    cues = _cues(count=300, cue_ms=5_000, gap_ms=1_000)
+
+    def llm(prompt: str) -> str:
+        return _completion(
+            [
+                {"start_cue": 5, "end_cue": 15, "kind": "talk",
+                 "event_key": "超远同主题", "hook": "第一段", "confidence": 0.9},
+                {"start_cue": 250, "end_cue": 262, "kind": "talk",
+                 "event_key": "超远同主题", "hook": "第二段", "confidence": 0.7},
+            ]
+        )
+
+    selected, diagnostics = select_semantic_session_candidates(
+        cues, llm_call=llm, max_candidates=2
+    )
+
+    assert len(selected) == 1
+    winner = selected[0]
+    assert winner.boundary.resolved_start_ms == cues[4].source_start_ms
+    assert winner.boundary.resolved_end_ms == cues[14].source_end_ms
+    event = diagnostics["merged_events"][0]
+    assert event["merge_outcome"] == "kept_winner_gap_too_large"
+    assert diagnostics["merge_gaps"] == {}

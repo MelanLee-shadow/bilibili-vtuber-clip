@@ -44,6 +44,11 @@ CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 DEFAULT_MIN_TALK_WINDOW_MS = 45_000
 DEFAULT_MAX_TALK_WINDOW_MS = 300_000
 MAX_CONTEXT_BACKTRACK_MS = 120_000
+# 同主题合并跳切（Ivan 2026-07-19）：同一 event_key 的分离窗口之间允许的
+# 最大缝隙（与 talk_filler.MAX_MERGE_GAP_MS 对齐）；小于 MIN 的缝隙直接
+# 吞进窗口，不值得跳切。
+MAX_SAME_TOPIC_MERGE_GAP_MS = 600_000
+MIN_SAME_TOPIC_MERGE_GAP_MS = 5_000
 SEMANTIC_RECALL_STAGE = "semantic_recall"
 
 
@@ -101,6 +106,9 @@ def build_semantic_recall_prompt(
 读别的弹幕、操作游戏或换了一个同类名字，只要后段仍在延续同一问题/分类/讨价还价，且后段笑点依赖
 前段铺垫，就必须从首次触发点一直框到最后 payoff，绝不能拆成两条来满足数量。给同一事件稳定填写相同
 event_key（简短中文，如“妈感姐妹分类”）；不同事件的 event_key 必须不同。
+**同一个梗/称呼/话题隔几分钟被再次触发（比如新弹幕或 SC 又提起同一件事、主播回访之前的梗）也算
+同一事件**：两段窗口都列出来，但用**同一个 event_key**——系统会自动把它们合并成一条带跳切的切片，
+不要因为中间隔了别的内容就换 key（Ivan 2026-07-19 规定：主题一致尽量放在一个切片里）。
 
 值得选的片段类型(语义判断,不要机械找关键词):
 1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
@@ -281,39 +289,85 @@ def select_semantic_session_candidates(
         )
     merged_parsed: list[tuple[float, dict[str, object]]] = []
     merged_events: list[dict[str, object]] = []
-    for (_kind, _event_key), rows in grouped.items():
+    for (kind_key, _event_key), rows in grouped.items():
         if len(rows) == 1:
             merged_parsed.append(rows[0])
             continue
         winner_confidence, winner_spec = max(rows, key=lambda row: row[0])
         merged_spec = dict(winner_spec)
-        merged_spec["start_cue"] = min(int(row[1]["start_cue"]) for row in rows)
-        merged_spec["end_cue"] = max(int(row[1]["end_cue"]) for row in rows)
+        input_ranges = [
+            [int(row[1]["start_cue"]), int(row[1]["end_cue"])] for row in rows
+        ]
+        event_audit: dict[str, object] = {
+            "event_key": merged_spec["event_key"],
+            "input_ranges": input_ranges,
+        }
+        # 归一化重叠/相邻区间（cue 位置）。
+        normalized: list[list[int]] = []
+        for start_cue, end_cue in sorted(
+            (int(row[1]["start_cue"]), int(row[1]["end_cue"])) for row in rows
+        ):
+            if normalized and start_cue <= normalized[-1][1] + 1:
+                normalized[-1][1] = max(normalized[-1][1], end_cue)
+            else:
+                normalized.append([start_cue, end_cue])
+        # talk 的分离同主题段走 merge_gap 跳切合并（Ivan 2026-07-19「主题一致
+        # 尽量放在一个切片里」；7/18 kmx 称呼两条切片案）。gap 超上限时不
+        # 盲扫中间内容，退回 winner 单段并留审计——旧的 min..max sweep 会把
+        # 8 分钟无关内容框进窗口，被时长门整条毙掉，两段全丢。
+        merge_gaps: list[dict[str, object]] = []
+        gap_too_large = False
+        for left, right in zip(normalized, normalized[1:]):
+            gap_start_ms = ordered[left[1] - 1].source_end_ms
+            gap_end_ms = ordered[right[0] - 1].source_start_ms
+            gap_ms = gap_end_ms - gap_start_ms
+            if gap_ms > MAX_SAME_TOPIC_MERGE_GAP_MS:
+                gap_too_large = True
+                break
+            if gap_ms >= MIN_SAME_TOPIC_MERGE_GAP_MS:
+                merge_gaps.append(
+                    {
+                        "start_ms": gap_start_ms,
+                        "end_ms": gap_end_ms,
+                        "event_key": str(merged_spec.get("event_key") or ""),
+                    }
+                )
+        if kind_key == "talk" and gap_too_large:
+            merged_spec = dict(winner_spec)
+            event_audit["merge_outcome"] = "kept_winner_gap_too_large"
+            event_audit["merged_range"] = [
+                int(merged_spec["start_cue"]),
+                int(merged_spec["end_cue"]),
+            ]
+            merged_parsed.append((winner_confidence, merged_spec))
+            merged_events.append(event_audit)
+            continue
+        merged_spec["start_cue"] = normalized[0][0]
+        merged_spec["end_cue"] = normalized[-1][1]
+        if kind_key == "talk" and merge_gaps:
+            merged_spec["merge_gaps"] = merge_gaps
+            event_audit["merge_gaps_ms"] = [
+                [int(gap["start_ms"]), int(gap["end_ms"])] for gap in merge_gaps
+            ]
         merged_spec["filler_removals"] = [
             removal
             for row in rows
             for removal in row[1].get("filler_removals", [])
             if isinstance(removal, dict)
         ][:3]
+        event_audit["merge_outcome"] = "merged"
+        event_audit["merged_range"] = [
+            int(merged_spec["start_cue"]),
+            int(merged_spec["end_cue"]),
+        ]
         merged_parsed.append((winner_confidence, merged_spec))
-        merged_events.append(
-            {
-                "event_key": merged_spec["event_key"],
-                "input_ranges": [
-                    [int(row[1]["start_cue"]), int(row[1]["end_cue"])]
-                    for row in rows
-                ],
-                "merged_range": [
-                    int(merged_spec["start_cue"]),
-                    int(merged_spec["end_cue"]),
-                ],
-            }
-        )
+        merged_events.append(event_audit)
     parsed = merged_parsed
     parsed.sort(key=lambda entry: entry[0], reverse=True)
     selected: list[FullSessionCandidate] = []
     hooks: dict[str, str] = {}
     filler_proposals: dict[str, list[dict[str, object]]] = {}
+    merge_gap_plans: dict[str, list[dict[str, object]]] = {}
     for confidence_value, spec in parsed:
         if len(selected) >= max_candidates:
             break
@@ -321,8 +375,19 @@ def select_semantic_session_candidates(
         start_ms = window[0].source_start_ms
         end_ms = window[-1].source_end_ms
         duration_ms = end_ms - start_ms
-        if spec["kind"] == "talk" and not (min_talk_window_ms < duration_ms <= max_talk_window_ms):
-            skipped.append({"start_cue": spec["start_cue"], "end_cue": spec["end_cue"], "reason": "talk_duration_out_of_range", "duration_ms": duration_ms})
+        # 合并候选按有效时长（扣掉 merge_gap 缝隙）过时长门，否则跨缝
+        # 合并的窗口必超 5 分钟上限、被整条毙掉。
+        spec_merge_gaps = [
+            gap for gap in (spec.get("merge_gaps") or []) if isinstance(gap, dict)
+        ]
+        gap_total_ms = sum(
+            max(0, int(gap["end_ms"]) - int(gap["start_ms"])) for gap in spec_merge_gaps
+        )
+        effective_duration_ms = duration_ms - gap_total_ms
+        if spec["kind"] == "talk" and not (
+            min_talk_window_ms < effective_duration_ms <= max_talk_window_ms
+        ):
+            skipped.append({"start_cue": spec["start_cue"], "end_cue": spec["end_cue"], "reason": "talk_duration_out_of_range", "duration_ms": duration_ms, "effective_duration_ms": effective_duration_ms})
             continue
         anchor = AnchorCandidate(
             candidate_id=f"semantic{spec['kind']}_{start_ms}_{end_ms}",
@@ -355,6 +420,8 @@ def select_semantic_session_candidates(
             continue
         selected.append(candidate)
         hooks[anchor.candidate_id] = spec["hook"]
+        if spec_merge_gaps:
+            merge_gap_plans[anchor.candidate_id] = [dict(gap) for gap in spec_merge_gaps]
         raw_filler_proposals = spec.get("filler_removals")
         if isinstance(raw_filler_proposals, list) and raw_filler_proposals:
             filler_proposals[anchor.candidate_id] = [
@@ -371,6 +438,7 @@ def select_semantic_session_candidates(
         "selected": [candidate.anchor.candidate_id for candidate in selected],
         "hooks": hooks,
         "filler_proposals": filler_proposals,
+        "merge_gaps": merge_gap_plans,
         "skipped": skipped,
     }
     return selected, diagnostics

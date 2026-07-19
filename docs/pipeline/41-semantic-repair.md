@@ -1,0 +1,51 @@
+# 41 语义修复引擎（[40-subtitle-text.md](40-subtitle-text.md) 的核心子权威）
+
+设计原则（Ivan 2026-07-19，源自 7/18 交付事故复盘 + 业界调研）：
+
+## 分层架构
+
+```
+检测层（谁发现错）          裁决层（谁决定改不改）        强制层（谁保证落地）
+─────────────────          ─────────────────────        ─────────────────
+确定性词表/弹幕/ledger  →  见证人规则(fidelity)      →  choke-point 替换
+终审审片员 LLM          →  声学仲裁(两候选比较)      →  带伤交付闸
+漏听 recall 检查        →  fail-closed 默认保留原文  →  runner 有界重试
+```
+
+1. **检测≠裁决≠落地**，三层独立记账。7/18 事故的教训：检测层 6/6 全对，落地层全军覆没——事后审计必须能分清是哪层坏了（review-flags 的 `infra_unresolved` 字段就是这个用途）。
+2. **LLM 只报不改**（审片员）；改动要么同音自动应用、要么过声学仲裁；插入只对 source_backed_entity 放开（kmx 漏听案）。
+3. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。
+4. **付费兜底政策可达**：纯额度类失败轮在同一次运行内连续补足「同项失败≥3轮」（`gemini_backup_policy.quota_exhausted_round`），付费触发时 ledger 已有完整失败证据 + 每笔入帐。
+5. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
+6. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁。
+
+## 模块指针
+
+| 职责 | 模块 |
+|---|---|
+| 词表/专名权威 | `term_authority.py`、`assets/lidousha/glossary.txt`（含方言节）、`entity_confusables.json` |
+| 弹幕/SC 证据修复 | `chat_proposals.py`、`chat_repair.py`（阈值 score≥0.68/coverage≥0.60/precision≥0.52） |
+| 见证人规则 | `subtitle_fidelity.py`（glossary/拼音同音/音频见证/重复见证四选一，否则 revert） |
+| 终审审片员 | `final_review_auditor.py`（发现器；同音自动应用+声学仲裁路由+插入契约） |
+| 声学仲裁 | `entity_audio_verifier.py`（黑帧片段强制选边；quota 轮次+付费兜底） |
+| 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道） |
+| 付费兜底政策 | `gemini_backup_policy.py`（≥3轮 strikes + 日帽 + 入帐） |
+| 梗词铁律 | `surface_canon.py`（直女→侄女等 hard canon） |
+
+## 已知结构性欠账（按性价比排序，做前先读调研）
+
+1. ~~付费兜底不可达~~（2026-07-19 已修，`2da11e9`）
+2. ~~infra-UNCERTAIN 带伤交付~~（同上已修）
+3. ~~方言零覆盖~~（同上已修，词表持续扩充）
+4. ~~专名零召回无修复通道~~（同上已修：source-backed 插入）
+5. **专名匹配纯精确**：glossary 误听面靠人工枚举（核酸天下案：新变体漏网）。方向：拼音编辑距离/音节序列匹配作为候选发现层（pypinyin 已装，`song_name_pin.py` 有先例），发现≠裁决，候选仍走声学仲裁。
+6. **本地可疑度粗筛缺失**：调研结论第一优先级（PPL/pycorrector 漏斗），把昂贵 LLM/音频调用集中到高可疑行。当前每片全量过审片员，成本可接受，暂缓。
+7. **语义QA评审文本≠最终交付文本**（选题阶段 vs 文本终稿时间线分离）——审片员已覆盖终稿面，风险有限，记录在案。
+8. **歌词正文绕过词表链**（LRC 是歌词权威，影响面小，记录在案）。
+
+## 业界调研要点（2026-07-19，详见 commit 记录）
+
+- RLLM-CF（prompt-only 四步分解：预检→定位→拟音→验证，验证不过保留原文）与 LIR-ASR（拼音一致性硬约束候选池，消融证明该约束是防过改写的关键）与本引擎架构同构，可直接借鉴 prompt 设计。
+- ASR-EC 基准警示：中文裸 prompting 纠错无效甚至有害——印证「LLM 只报不改+声学仲裁」路线。
+- 必剪/剪映黑盒无热词接口；软热词（词表+钩子+弹幕实体注入 prompt）是现实替代，已落地。
+- 长期选项：自建 FunASR SeACo-Paraformer/Qwen3-ASR（方言优先+热词解码），残留错误率压不下去再评估。

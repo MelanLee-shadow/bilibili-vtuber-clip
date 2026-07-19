@@ -1795,6 +1795,7 @@ def main(argv: list[str] | None = None) -> int:
             "filler_proposal_srt_sha256": meta.get(
                 "filler_proposal_srt_sha256"
             ),
+            "merge_gap_removals": list(meta.get("merge_gap_removals") or []),
         }
         result = produce_talk(date, item)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

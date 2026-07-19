@@ -24,6 +24,13 @@ MAX_REVIEWED_REMOVALS = 3
 MAX_SINGLE_REMOVAL_MS = 15_000
 MAX_AUTOMATIC_REMOVED_RATIO = 0.15
 MAX_AUTOMATIC_REMOVED_MS = 20_000
+# 同主题合并跳切（Ivan 2026-07-18 kmx 称呼两条切片案 → 2026-07-19 新规
+# 「主题一致尽量放在一个切片里」）：同一 event_key 的两段窗口之间的无关
+# 插曲作为确定性 merge_gap 移除，走 pieces 拼接。上限远大于微剪（15s），
+# 因为它移除的是"两次同主题触发之间的整段别的内容"，由 event_key 合并
+# 审计确定性授权，不依赖模型置信度。
+MAX_MERGE_GAP_MS = 600_000
+MAX_MERGE_GAP_REMOVALS = 2
 MIN_RETAINED_PIECE_MS = 6_000
 MIN_DEAD_PAUSE_MS = 3_000
 AUTOMATIC_EDGE_GUARD_MS = 5_000
@@ -368,6 +375,60 @@ def _authorize_reviewed_removals(
     return accepted
 
 
+def _authorize_merge_gap_removals(
+    merge_gaps: Sequence[Mapping[str, object]],
+    *,
+    start_ms: int,
+    end_ms: int,
+    rejected: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Authorize deterministic same-topic merge gaps (selector event_key merge)."""
+
+    accepted: list[dict[str, object]] = []
+    for index, row in enumerate(merge_gaps):
+        try:
+            gap_start = int(row["start_ms"])
+            gap_end = int(row["end_ms"])
+        except (KeyError, TypeError, ValueError):
+            rejected.append(
+                {"merge_gap_index": index, "reason_code": "MERGE_GAP_INTERVAL_INVALID"}
+            )
+            continue
+        if not start_ms < gap_start < gap_end < end_ms:
+            rejected.append(
+                {"merge_gap_index": index, "reason_code": "MERGE_GAP_NOT_STRICTLY_INSIDE"}
+            )
+            continue
+        if gap_end - gap_start > MAX_MERGE_GAP_MS:
+            rejected.append(
+                {"merge_gap_index": index, "reason_code": "MERGE_GAP_TOO_LARGE"}
+            )
+            continue
+        accepted.append(
+            {
+                "proposal_id": str(row.get("proposal_id") or f"merge_gap_{index + 1}"),
+                "mode": "merge_gap",
+                "reason": "same_topic_merge_gap",
+                "source_start_ms": gap_start,
+                "source_end_ms": gap_end,
+                "removed_duration_ms": gap_end - gap_start,
+                "model_confidence": None,
+                "bridge_coherent": True,
+                "bridge_reason": str(
+                    row.get("bridge")
+                    or "同一 event_key 的两段同主题窗口合并，中间为无关插曲"
+                ),
+                "event_key": str(row.get("event_key") or ""),
+                "removed_cues": [],
+                "left_retained_context": None,
+                "right_retained_context": None,
+                "authority": "selector_event_key_merge_v1",
+                "authorization_kind": "merge_gap",
+            }
+        )
+    return accepted
+
+
 def _select_removals(
     accepted: Sequence[dict[str, object]],
     *,
@@ -378,10 +439,15 @@ def _select_removals(
     selected: list[dict[str, object]] = []
     original_duration_ms = end_ms - start_ms
     removed_duration_ms = 0
+    automatic_removed_ms = 0
     automatic_removal_count = 0
     reviewed_removal_count = 0
+    merge_gap_removal_count = 0
     for removal in accepted:
-        is_reviewed = removal.get("authorization_kind") == "reviewed"
+        kind = str(removal.get("authorization_kind") or "automatic")
+        is_reviewed = kind == "reviewed"
+        is_merge_gap = kind == "merge_gap"
+        is_automatic = not is_reviewed and not is_merge_gap
         if is_reviewed and reviewed_removal_count >= MAX_REVIEWED_REMOVALS:
             rejected.append(
                 {
@@ -390,7 +456,15 @@ def _select_removals(
                 }
             )
             continue
-        if not is_reviewed and automatic_removal_count >= MAX_AUTOMATIC_REMOVALS:
+        if is_merge_gap and merge_gap_removal_count >= MAX_MERGE_GAP_REMOVALS:
+            rejected.append(
+                {
+                    "proposal_id": removal["proposal_id"],
+                    "reason_code": "MERGE_GAP_REMOVAL_COUNT_CAP_EXCEEDED",
+                }
+            )
+            continue
+        if is_automatic and automatic_removal_count >= MAX_AUTOMATIC_REMOVALS:
             rejected.append(
                 {
                     "proposal_id": removal["proposal_id"],
@@ -408,7 +482,7 @@ def _select_removals(
                 }
             )
             continue
-        if not is_reviewed and (
+        if is_automatic and (
             int(removal["source_start_ms"]) - start_ms < AUTOMATIC_EDGE_GUARD_MS
             or end_ms - int(removal["source_end_ms"]) < AUTOMATIC_EDGE_GUARD_MS
         ):
@@ -419,11 +493,16 @@ def _select_removals(
                 }
             )
             continue
-        proposed_removed = removed_duration_ms + int(removal["removed_duration_ms"])
-        if not is_reviewed and (
-            proposed_removed / original_duration_ms
+        # merge_gap 不受微剪预算约束（它移除的是同主题两段之间的整段
+        # 无关内容，量级本来就大）；自动微剪预算只统计自动车道自身的量，
+        # 不被 merge_gap 的大移除吃掉。
+        proposed_automatic_removed = automatic_removed_ms + (
+            int(removal["removed_duration_ms"]) if is_automatic else 0
+        )
+        if is_automatic and (
+            proposed_automatic_removed / original_duration_ms
             > MAX_AUTOMATIC_REMOVED_RATIO
-            or proposed_removed > MAX_AUTOMATIC_REMOVED_MS
+            or proposed_automatic_removed > MAX_AUTOMATIC_REMOVED_MS
         ):
             rejected.append(
                 {
@@ -433,9 +512,12 @@ def _select_removals(
             )
             continue
         selected.append(removal)
-        removed_duration_ms = proposed_removed
+        removed_duration_ms += int(removal["removed_duration_ms"])
+        automatic_removed_ms = proposed_automatic_removed
         if is_reviewed:
             reviewed_removal_count += 1
+        elif is_merge_gap:
+            merge_gap_removal_count += 1
         else:
             automatic_removal_count += 1
     return selected, removed_duration_ms
@@ -467,6 +549,7 @@ def build_talk_filler_plan(
     proposal_srt_sha256: str | None = None,
     source_srt_path: Path | None = None,
     reviewed_removals: Sequence[Mapping[str, object]] | None = None,
+    merge_gap_removals: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Authorize proposals and return a complete retained-interval plan.
 
@@ -515,6 +598,14 @@ def build_talk_filler_plan(
     accepted.extend(
         _authorize_reviewed_removals(
             reviewed,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            rejected=rejected,
+        )
+    )
+    accepted.extend(
+        _authorize_merge_gap_removals(
+            list(merge_gap_removals or []),
             start_ms=start_ms,
             end_ms=end_ms,
             rejected=rejected,

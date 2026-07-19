@@ -141,6 +141,7 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
         )
         hooks = diag.get("hooks") or {}
         filler_proposals = diag.get("filler_proposals") or {}
+        merge_gap_plans = diag.get("merge_gaps") or {}
         source_srt_sha256 = "sha256:" + hashlib.sha256(
             srt_path.read_bytes()
         ).hexdigest()
@@ -152,6 +153,8 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
                 "confidence": round(float(getattr(cand.boundary, "start_boundary_score", 0.5) or 0.5), 2),
                 "filler_proposals": list(filler_proposals.get(cid) or []),
                 "filler_proposal_srt_sha256": source_srt_sha256,
+                # 同主题合并跳切缝隙（event_key 确定性合并，Ivan 2026-07-19）。
+                "merge_gap_removals": list(merge_gap_plans.get(cid) or []),
             }
         # Deterministic song supplement: recall's candidate cap squeezes songs
         # out on song-heavy streams (first real run: 4+ songs sung, 1 caught).
@@ -358,6 +361,11 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
         ),
         source_srt_path=source_srt_path,
         reviewed_removals=reviewed_removals,
+        merge_gap_removals=[
+            row
+            for row in (item.get("merge_gap_removals") or [])
+            if isinstance(row, dict)
+        ],
     )
     automatic_removals = [
         row
@@ -428,6 +436,33 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """
     cid = item["cid"]
     filler_plan = _prepare_talk_filler_plan(item)
+    # 合并候选的缝隙移除若被 plan 拒绝，绝不回退成整窗连续交付——那会把
+    # 缝里的 8 分钟无关内容一起端出去（fail-closed，候选拒绝留审计）。
+    requested_merge_gaps = [
+        row for row in (item.get("merge_gap_removals") or []) if isinstance(row, dict)
+    ]
+    if requested_merge_gaps:
+        planned_merge_gaps = [
+            row
+            for row in (filler_plan.get("removals") or [])
+            if isinstance(row, dict) and row.get("authorization_kind") == "merge_gap"
+        ]
+        if len(planned_merge_gaps) != len(requested_merge_gaps):
+            return {
+                "candidate_id": cid,
+                "segment": Path(item["segment_path"]).name,
+                "start_ms": item["start_ms"],
+                "end_ms": item["end_ms"],
+                "hook": item.get("hook", ""),
+                "confidence": item.get("confidence"),
+                "lane": item.get("lane", ""),
+                "talk_filler_plan": filler_plan,
+                "rc": 0,
+                "status": "candidate_rejected",
+                "rejection_reason": "merge_gap_plan_rejected",
+                "reason_codes": ["SAME_TOPIC_MERGE_GAP_PLAN_REJECTED"],
+                "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
+            }
     effective_duration_ms = int(filler_plan["effective_duration_ms"])
     if effective_duration_ms <= _runner.MIN_TALK_EFFECTIVE_DURATION_MS:
         return {
@@ -560,6 +595,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_transient_retry_count": int(item.get("talk_transient_retry_count") or 0),
         "selected_repair": bool(item.get("selected_repair")),
         "retry_reason": item.get("retry_reason"),
+        # 跳切/微剪计划随 result 持久化：requeue 重建 item 时必须原样恢复，
+        # 否则合并候选重试会退化成整窗 sweep（fail-closed 守卫会拒绝，但
+        # 那等于白丢一次重试）。
+        "filler_proposals": list(item.get("filler_proposals") or []),
+        "filler_proposal_srt_sha256": item.get("filler_proposal_srt_sha256"),
+        "merge_gap_removals": list(item.get("merge_gap_removals") or []),
         "effective_duration_ms": effective_duration_ms,
         "talk_filler_plan_status": filler_plan.get("status"),
         "talk_filler_removal_count": len(filler_plan.get("removals") or []),

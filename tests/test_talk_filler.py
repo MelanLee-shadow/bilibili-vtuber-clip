@@ -306,3 +306,52 @@ def test_final_audit_rebinds_jump_times_to_actual_burned_intro(tmp_path: Path):
     assert audit["branding_intro_offset_ms"] == 5_749
     assert audit["removals"][0]["delivered_output_jump_ms"] == 26_749
     assert audit["removals"][1]["delivered_output_jump_ms"] is None
+
+
+def test_merge_gap_removal_produces_two_piece_plan():
+    """同主题合并跳切（2026-07-19）：merge_gap 车道不受 15s 微剪上限约束，
+    产出两段 retained intervals（→ 两个 pieces 拼接）。"""
+    from src.autoslice.talk_filler import build_talk_filler_plan
+
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=660_000,
+        cues=[],
+        merge_gap_removals=[
+            {"start_ms": 60_000, "end_ms": 565_000, "event_key": "kmx称呼串"}
+        ],
+    )
+
+    assert plan["status"] == "active"
+    removals = plan["removals"]
+    assert len(removals) == 1
+    assert removals[0]["authorization_kind"] == "merge_gap"
+    assert removals[0]["reason"] == "same_topic_merge_gap"
+    assert plan["retained_intervals"] == [
+        {"start_ms": 0, "end_ms": 60_000},
+        {"start_ms": 565_000, "end_ms": 660_000},
+    ]
+    assert plan["effective_duration_ms"] == 155_000
+
+
+def test_merge_gap_over_cap_is_rejected():
+    from src.autoslice.talk_filler import MAX_MERGE_GAP_MS, build_talk_filler_plan
+
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=1_500_000,
+        cues=[],
+        merge_gap_removals=[
+            {"start_ms": 60_000, "end_ms": 60_000 + MAX_MERGE_GAP_MS + 1}
+        ],
+    )
+
+    assert not [
+        row
+        for row in (plan.get("removals") or [])
+        if row.get("authorization_kind") == "merge_gap"
+    ]
+    assert any(
+        row.get("reason_code") == "MERGE_GAP_TOO_LARGE"
+        for row in plan.get("rejected_proposals") or []
+    )

@@ -400,6 +400,7 @@ def discover_segments(date: str, state: dict) -> None:
                 "filler_proposal_srt_sha256": meta.get(
                     "filler_proposal_srt_sha256"
                 ),
+                "merge_gap_removals": list(meta.get("merge_gap_removals") or []),
             }
             if getattr(cand, "content_type_hint", "talk") == "song":
                 a0, a1 = int(cand.anchor.anchor_start_ms), int(cand.anchor.anchor_end_ms)

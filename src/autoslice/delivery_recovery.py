@@ -543,6 +543,11 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             ),
             "bcut_srt_path": str(_runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"),
             "session_id": _recording_session_id(record),
+            # 恢复跳切/微剪计划（2026-07-19）：requeue 丢失 merge_gap_removals
+            # 会让合并候选退化成整窗 sweep 被 fail-closed 守卫拒绝。
+            "filler_proposals": list(record.get("filler_proposals") or []),
+            "filler_proposal_srt_sha256": record.get("filler_proposal_srt_sha256"),
+            "merge_gap_removals": list(record.get("merge_gap_removals") or []),
         }
         requeued.append(item)
         existing_pending.add(cid)
