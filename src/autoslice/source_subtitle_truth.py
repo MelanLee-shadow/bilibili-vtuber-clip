@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -106,6 +107,15 @@ def _source_coverage_ms(windows: Sequence[Mapping[str, int]]) -> int:
         covered += current_end - current_start
         current_start, current_end = start, end
     return covered + current_end - current_start
+
+
+_TRUTH_SURFACE_PUNCT_RX = re.compile(r"[\s，。！？；、：,.!?;:\"“”'‘’…~～|·（）()\[\]【】]+")
+
+
+def _normalize_truth_surface(text: str) -> str:
+    """Punctuation/whitespace-insensitive form for cross-cue truth comparison."""
+
+    return _TRUTH_SURFACE_PUNCT_RX.sub("", text)
 
 
 def _overlap_ms(cue: SrtCue, start_ms: int, end_ms: int) -> int:
@@ -247,13 +257,16 @@ def apply_source_subtitle_truth(
             elif len(target_indexes) != 1:
                 # 2026-07-19 合并跳切实证：fresh 重转写会把同一源区间切成
                 # 两条 cue（或 bleed 进相邻 cue），时间锚定的目标不再唯一。
-                # 真值文本已在目标 cue 组里逐字成立（单条等于或跨界拼接包含）
-                # 时按 satisfied 记账——no-op 不落刀；未成立才是真失败：
-                # 多 cue 替换无法安全落刀，保持 fail-closed。
-                joined = "".join(texts[index] for index in target_indexes)
-                if replacement in joined or any(
-                    texts[index] == replacement for index in target_indexes
-                ):
+                # 真值**内容**已在目标 cue 组里成立时按 satisfied 记账——
+                # 比对做去标点归一（「…事情，kmx」跨 cue 时逗号由边界停顿
+                # 表达，字符串级比对会被一个标点冤枉）；未成立才是真失败：
+                # 多 cue 替换无法安全落刀，保持 fail-closed。单 cue 可落刀
+                # 路径不归一，原样保留 Ivan 审定的标点渲染。
+                joined_norm = _normalize_truth_surface(
+                    "".join(texts[index] for index in target_indexes)
+                )
+                replacement_norm = _normalize_truth_surface(replacement)
+                if replacement_norm and replacement_norm in joined_norm:
                     satisfied = True
                 else:
                     row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"

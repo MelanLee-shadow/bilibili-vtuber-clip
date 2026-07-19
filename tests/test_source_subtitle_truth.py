@@ -395,3 +395,41 @@ def test_replace_cue_split_cues_with_wrong_text_still_fails(tmp_path):
     )
     assert audit["status"] == "FAILED"
     assert audit["failures"][0]["reason_code"] == "REPLACE_CUE_TARGET_NOT_UNIQUE"
+
+
+def test_replace_cue_split_cues_punctuation_insensitive_satisfied(tmp_path):
+    """2026-07-19 实证第二层：审定文本「…事情，kmx」跨 cue 时逗号由边界
+    停顿表达——去标点归一后内容成立即 satisfied，不被一个标点冤枉。"""
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "punct-split",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_000,
+                "action": "replace_cue",
+                "text": "很多人笑出声这件事情，kmx",
+                "authority": "Ivan",
+                "required": True,
+            }
+        ],
+    )
+    srt = _srt(
+        (10, 13, "很多人笑出声这件事情"),
+        (13, 16, "kmx要不要考虑一下为什么"),
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec={
+            "pieces": [
+                {"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 120_000}
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+    assert audit["status"] == "ALREADY_SATISFIED"
+    assert audit["failures"] == []
+    assert corrected == srt
