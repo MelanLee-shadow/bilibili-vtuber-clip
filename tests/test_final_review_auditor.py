@@ -191,6 +191,7 @@ def test_auditor_derives_title_span_only_when_source_surface_is_witnessed():
     assert findings[0]["candidate_provenance"] == {
         "kind": "transcript_context",
         "surface": "地狱再爱我",
+        "nearest_cue_distance": 1,
     }
 
 
@@ -613,4 +614,60 @@ def test_witnessed_but_phonetically_distant_stays_disclosure():
     )
     output, audit = route_findings(srt, findings)
     assert "苹果手机" in output
+    assert audit["findings"][0]["routed"] == "disclosure"
+
+
+def test_widened_span_admits_syllable_count_change():
+    """醉堆→这一堆案：裸 span（醉/这一 0.44）被量法冤枉——有界扩窗带上
+    共享锚字「堆」后 ~0.71 过 0.65 档，纯文本修复。"""
+    srt = _srt("旁边这一堆都是新来的", "醉堆小李好可爱哦")
+    findings = audit_final_subtitles(
+        srt,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 2,
+                    "kind": "context",
+                    "proposed_full_cue": "这一堆小李好可爱哦",
+                    "repair_class": "phonetic",
+                    "source_surface": "这一堆",
+                    "why": "醉堆不成词，前文刚说旁边这一堆",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+    )
+    assert findings[0]["candidate_provenance"]["kind"] == "transcript_context"
+    assert findings[0]["candidate_provenance"]["nearest_cue_distance"] == 1
+
+    output, audit = route_findings(srt, findings)
+    assert "这一堆小李好可爱哦" in output
+    row = audit["findings"][0]
+    assert row["routed"] == "witnessed_near_homophone_fix"
+    assert row["near_homophone_gate"]["tier"] in {"widened_span", "nearby_transcript_witness"}
+
+
+def test_widened_span_does_not_admit_absurd_shared_tail():
+    """反例：苹果天下→和成天下（词表见证 + 共享「天下」尾巴）不许被扩窗
+    量法抬上线——扩窗只放 1 共享字 + 0.65 高阈值。"""
+    srt = _srt("只剩下苹果天下了", "第二句")
+    findings = audit_final_subtitles(
+        srt,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "只剩下和成天下了",
+                    "repair_class": "phonetic",
+                    "source_surface": "和成天下",
+                    "why": "强行替换",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+        glossary_text="- 品牌/话题词：和成天下（槟榔品牌）",
+    )
+    output, audit = route_findings(srt, findings)
+    assert "苹果天下" in output
     assert audit["findings"][0]["routed"] == "disclosure"

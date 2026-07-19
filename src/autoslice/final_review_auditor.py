@@ -38,12 +38,23 @@ _AUTO_REPAIR_CLASSES = frozenset(
     {"phonetic", "segmentation", "spoken_unit", "source_backed_entity"}
 )
 # T1 见证近音自动应用（Ivan 2026-07-19「不能把修复链绑死在 Gemini 额度上」）：
-# 修复词面有词表/转写/弹幕见证 + 拼音相似度 ≥ 此阈值 + suspect 不是注册实体
+# 修复词面有词表/转写/弹幕见证 + 拼音相似度过档 + suspect 不是注册实体
 # （实体选边永远走音频，kmx/乒乓球案铁律）→ 纯文本直接应用，不消耗任何
-# 外部调用。阈值按 7/18 六案标定：子女/侄女 0.89、七夕/七星 0.83、
-# 查烟查/恰烟恰 ~0.67、一代/伊那 0.67、核酸/和成 ~0.53 全过线；
-# 醉/这一 ~0.44 有意落线下（拼音强变形留给声学仲裁）。
+# 外部调用。三档拼音判定（任一即过）：
+# 1) 裸最小 span ≥ 0.45（七/18 六案标定：子女/侄女 0.89、七夕/七星 0.83、
+#    查烟查/恰烟恰 ~0.67、一代/伊那 0.67、核酸/和成 ~0.53）；
+# 2) 有界扩窗（span 两侧各 +1 共享字）≥ 0.65——裸 span 量法会把「单字换
+#    双字」类增音节替换的共享锚字剥掉、分数系统性压低（醉/这一 0.44，
+#    带上共享的「堆」即 ~0.71）；扩窗只放 1 字并配更高阈值，防止长共享
+#    尾巴（苹果天下→和成天下的「天下」）把荒谬替换抬上线；
+# 3) 近邻重复见证（同片 ±6 行内逐字出现）≥ 0.35——同一人几秒内说过同一
+#    短语，几乎是声学证据的文本投影，见证强度换拼音门。0.35 不是拍脑袋：
+#    SequenceMatcher 对同长度无关拼音串的噪声底就在 ~0.30（苹果手机/
+#    和成天下=0.303），0.35 恰好压住噪声底又放行真实近音（醉/这一 0.444）。
 NEAR_HOMOPHONE_MIN_SIMILARITY = 0.45
+WIDENED_SPAN_MIN_SIMILARITY = 0.65
+NEARBY_WITNESS_MIN_SIMILARITY = 0.35
+NEARBY_WITNESS_MAX_CUE_DISTANCE = 6
 
 try:  # pypinyin 生产已装（song_name_pin 同款可选依赖）；缺失则 T1 关闭回音频
     from pypinyin import lazy_pinyin as _lazy_pinyin
@@ -59,6 +70,58 @@ def _pinyin_similarity(a: str, b: str) -> float:
     return SequenceMatcher(
         None, " ".join(_lazy_pinyin(a)), " ".join(_lazy_pinyin(b))
     ).ratio()
+
+
+def _near_homophone_gate(row: Mapping[str, Any], base_text: str) -> dict[str, Any] | None:
+    """Three-tier pinyin admissibility for the T1 witnessed lane.
+
+    Returns an audit dict naming the passing tier, or None when no tier
+    admits the pair (→ acoustic lane).
+    """
+
+    suspect = str(row.get("suspect") or "")
+    suggestion = str(row.get("suggestion") or "")
+    if not suspect:
+        # 插入（kmx 漏听案）永远走声学仲裁：无 suspect 音节可比对，任何
+        # 扩窗量法都会拿共享锚字冒充发音证据。
+        return None
+    core = _pinyin_similarity(suspect, suggestion)
+    if core >= NEAR_HOMOPHONE_MIN_SIMILARITY:
+        return {"tier": "core_span", "pinyin_similarity": round(core, 3)}
+    proposed = str(row.get("proposed_full_cue") or "")
+    try:
+        start = int(row["span_start_codepoint"])
+        end = int(row["span_end_codepoint"])
+    except (KeyError, TypeError, ValueError):
+        start = end = -1
+    if (
+        proposed
+        and 0 <= start <= end <= len(base_text)
+        and base_text[start:end] == suspect
+    ):
+        wstart = max(0, start - 1)
+        widened_suspect = base_text[wstart : min(len(base_text), end + 1)]
+        widened_replacement = proposed[wstart : min(len(proposed), start + len(suggestion) + 1)]
+        widened = _pinyin_similarity(widened_suspect, widened_replacement)
+        if widened >= WIDENED_SPAN_MIN_SIMILARITY:
+            return {
+                "tier": "widened_span",
+                "pinyin_similarity": round(core, 3),
+                "widened_similarity": round(widened, 3),
+            }
+    provenance = row.get("candidate_provenance") or {}
+    distance = provenance.get("nearest_cue_distance") if isinstance(provenance, Mapping) else None
+    if (
+        isinstance(distance, int)
+        and distance <= NEARBY_WITNESS_MAX_CUE_DISTANCE
+        and core >= NEARBY_WITNESS_MIN_SIMILARITY
+    ):
+        return {
+            "tier": "nearby_transcript_witness",
+            "pinyin_similarity": round(core, 3),
+            "witness_cue_distance": distance,
+        }
+    return None
 
 _GLOSSARY_TERM_RX = re.compile(r"^[-*]\s*(?:梗词：)?\*{0,2}([^：:（(＝=，,。\s*]{2,12})")
 
@@ -236,7 +299,20 @@ def audit_final_subtitles(
                 else:
                     scope_warnings.append("SOURCE_SURFACE_NOT_IN_PROPOSED")
             elif source_surface.casefold() in other_cues.casefold():
-                provenance = {"kind": "transcript_context", "surface": source_surface}
+                # 近邻重复见证强于词表见证一档（同一人几秒内说过同一短语，
+                # 几乎是声学证据的文本投影）——记录最近见证行距离，T1 车道
+                # 据此对近邻见证放宽拼音门（醉堆→这一堆案）。
+                distances = [
+                    abs(index - cue_index)
+                    for index, cue in enumerate(cues, start=1)
+                    if index != cue_index
+                    and source_surface.casefold() in cue.text.casefold()
+                ]
+                provenance = {
+                    "kind": "transcript_context",
+                    "surface": source_surface,
+                    "nearest_cue_distance": min(distances) if distances else None,
+                }
             elif source_surface.casefold() in glossary_text.casefold():
                 provenance = {"kind": "glossary", "surface": source_surface}
             elif source_surface.casefold() in structured_context_text.casefold():
@@ -344,21 +420,21 @@ def route_findings(
             texts[cue_index - 1] = candidate
             row["routed"] = "homophone_fix"
             applied += 1
-        elif (
-            applicable
-            # T1 见证近音（2026-07-19，7/18 额度事故类机制）：词面有
-            # 词表/转写/弹幕见证 + 拼音近音 + suspect 不是注册实体 →
-            # 纯文本应用，零外部调用。实体选边与拼音强变形仍走声学仲裁。
-            and row.get("candidate_provenance")
-            and not suspect_is_entity
-            and _pinyin_similarity(suspect, str(suggestion))
-            >= NEAR_HOMOPHONE_MIN_SIMILARITY
-        ):
+            rows.append(row)
+            continue
+        # T1 见证近音（2026-07-19，7/18 额度事故类机制）：词面有
+        # 词表/转写/弹幕见证 + 拼音三档判定过档 + suspect 不是注册实体 →
+        # 纯文本应用，零外部调用。实体选边与拼音强变形仍走声学仲裁。
+        near_gate = (
+            _near_homophone_gate(row, texts[cue_index - 1])
+            if applicable and row.get("candidate_provenance") and not suspect_is_entity
+            else None
+        )
+        if near_gate is not None:
             texts[cue_index - 1] = candidate
             row["routed"] = "witnessed_near_homophone_fix"
-            row["pinyin_similarity"] = round(
-                _pinyin_similarity(suspect, str(suggestion)), 3
-            )
+            row["near_homophone_gate"] = near_gate
+            row["pinyin_similarity"] = near_gate["pinyin_similarity"]
             applied += 1
         else:
             if applicable and suspect_is_entity:
