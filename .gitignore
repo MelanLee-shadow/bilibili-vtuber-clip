@@ -71,3 +71,6 @@ __pycache__/
 # Deployment/hotfix backups; keep only if explicitly referenced by a cleanup manifest
 *.bak-*
 *.backup
+
+# ChatGPT/Gemini generated emote images (Ivan local assets, media stays out of git)
+assets/emote/
