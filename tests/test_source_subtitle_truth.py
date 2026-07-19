@@ -1,8 +1,12 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _srt(*rows: tuple[int, int, str]) -> str:
@@ -207,6 +211,31 @@ def test_source_interval_substring_repair_is_local_and_idempotent(tmp_path):
     )
     assert second == corrected
     assert second_audit["status"] == "ALREADY_SATISFIED"
+
+
+def test_july18_hecheng_kmx_truth_handles_downstream_third_homophone():
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((25_730, 27_960, "我这真的有一些题")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/source/22966160_20260718-23-59-36.mp4"
+                    ),
+                    "start_ms": 517_500,
+                    "end_ms": 559_670,
+                }
+            ]
+        },
+        durations=[42_183],
+        ledger_path=(
+            REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
+        ),
+    )
+
+    assert "我这真的有一些kmx" in corrected
+    assert audit["status"] == "APPLIED"
+    assert not audit["failures"]
 
 
 def test_required_included_truth_fails_closed_when_timeline_has_no_cue(tmp_path):

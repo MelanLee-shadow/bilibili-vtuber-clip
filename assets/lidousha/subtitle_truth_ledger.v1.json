@@ -97,6 +97,10 @@
         {
           "surface": "提莫怂",
           "canonical": "kmx"
+        },
+        {
+          "surface": "题",
+          "canonical": "kmx"
         }
       ],
       "required_text": "kmx",
