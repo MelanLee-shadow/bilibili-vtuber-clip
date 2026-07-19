@@ -2438,6 +2438,39 @@ def test_sc_sender_final_verification_owns_only_the_narrow_sender_slot():
     )
 
 
+def test_entity_final_verification_owns_only_its_repaired_span():
+    final_text = _srt(
+        "“李姐是侄女”，好多人笑出声这个事情呢"
+    )
+    row = {
+        "mode": "final_review_context_adjudication",
+        "before": ["“李姐是子女”，好的人笑出声这个事情呢，"],
+        "after": ["“李姐是侄女”，好的人笑出声这个事情呢，"],
+        "structured_exact_text": "“李姐是侄女”，好的人笑出声这个事情呢，",
+        "matched_start_ms": 5_000,
+        "matched_end_ms": 9_000,
+    }
+    audit = {"entity_repairs": [row]}
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
+    )
+    assert row["final_verification_kind"] == "entity_repair"
+
+    missing_repair = _srt("“李姐是子女”，好多人笑出声这个事情呢")
+    assert not verify_chat_authority_final_surfaces(
+        {"entity_repairs": [dict(row)]},
+        final_text_srt=missing_repair,
+        final_speaker_srt=missing_repair,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
+    )
+
+
 def test_final_surface_verification_rejects_same_text_at_wrong_time():
     exact = "同一句原文"
     final_text = _srt(exact, "实际匹配处被改坏")

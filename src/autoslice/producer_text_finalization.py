@@ -14,6 +14,48 @@ FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS = 250
 FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO = 0.1
 
 
+def _minimal_changed_surface(before: str, after: str) -> str:
+    """Return the repaired span plus one stable character of local context."""
+
+    if not before or not after or before == after:
+        return after
+    prefix = 0
+    prefix_cap = min(len(before), len(after))
+    while prefix < prefix_cap and before[prefix] == after[prefix]:
+        prefix += 1
+    suffix = 0
+    suffix_cap = min(len(before) - prefix, len(after) - prefix)
+    while (
+        suffix < suffix_cap
+        and before[len(before) - suffix - 1] == after[len(after) - suffix - 1]
+    ):
+        suffix += 1
+    changed_end = len(after) - suffix if suffix else len(after)
+    context_start = max(0, prefix - 1)
+    context_end = min(len(after), changed_end + 1)
+    return after[context_start:context_end] or after
+
+
+def _entity_repair_final_surface(row: dict) -> str:
+    """Return only the text surface actually owned by an entity repair."""
+
+    if row.get("mode") == "chat_scaffold_plus_human_entity_override":
+        return str(row.get("structured_exact_text") or "")
+    expected_entity = str(
+        row.get("expected_entity") or row.get("resolved_canonical") or ""
+    )
+    if expected_entity:
+        return expected_entity
+    before = [str(value) for value in row.get("before") or []]
+    after = [str(value) for value in row.get("after") or []]
+    if (
+        row.get("mode") == "final_review_context_adjudication"
+        and len(before) == len(after) == 1
+    ):
+        return _minimal_changed_surface(before[0], after[0])
+    return str(row.get("structured_exact_text") or "") or "".join(after)
+
+
 def _sc_sender_final_surface(row: dict) -> str:
     """Return only the narrow sender slot owned by an SC sender repair."""
 
@@ -97,8 +139,7 @@ def verify_chat_authority_final_surfaces(
         (
             "entity_repair",
             row,
-            str(row.get("structured_exact_text") or "")
-            or "".join(str(value) for value in row.get("after") or []),
+            _entity_repair_final_surface(row),
         )
         for row in audit.get("entity_repairs") or []
         # 已被和解回退的行（矛盾裁定/未注册实体）不再要求其结果存活于终稿。
