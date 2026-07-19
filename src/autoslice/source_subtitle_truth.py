@@ -22,6 +22,7 @@ from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 
 SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
 AUDIT_SCHEMA_VERSION = "source-subtitle-truth-audit.v1"
+MIN_CUE_OVERLAP_MS = 80
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -123,7 +124,7 @@ def _target_indexes(
             ),
             default=0,
         )
-        if overlap > 0:
+        if overlap >= MIN_CUE_OVERLAP_MS:
             matches.append((index, overlap))
     matches.sort(key=lambda row: row[0])
     return [index for index, _overlap in matches]

@@ -14,6 +14,19 @@ def _srt(*rows: tuple[int, int, str]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+def _srt_ms(*rows: tuple[int, int, str]) -> str:
+    def timestamp(value: int) -> str:
+        seconds, millis = divmod(value, 1_000)
+        return f"00:00:{seconds:02d},{millis:03d}"
+
+    blocks = []
+    for index, (start, end, text) in enumerate(rows, start=1):
+        blocks.append(
+            f"{index}\n{timestamp(start)} --> {timestamp(end)}\n{text}"
+        )
+    return "\n\n".join(blocks) + "\n"
+
+
 def _ledger(tmp_path, entries):
     path = tmp_path / "truth.json"
     path.write_text(
@@ -101,6 +114,51 @@ def test_source_interval_truth_does_not_leak_to_other_recording(tmp_path):
     )
     assert corrected == original
     assert audit["status"] == "NO_RELEVANT_INTERVAL"
+
+
+def test_piece_duration_jitter_does_not_capture_adjacent_cue(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "encoded-duration-jitter",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 21_000,
+                "source_end_ms": 22_000,
+                "action": "replace_cue",
+                "text": "正确文本",
+                "required": True,
+            }
+        ],
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (11_000, 12_000, "误听文本"),
+            (12_000, 13_000, "下一句"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 0,
+                    "end_ms": 10_000,
+                },
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 20_000,
+                    "end_ms": 30_000,
+                },
+            ]
+        },
+        durations=[10_003, 10_000],
+        ledger_path=ledger,
+    )
+
+    assert "正确文本" in corrected
+    assert "下一句" in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["cue_indexes"] == [1]
 
 
 def test_source_interval_substring_repair_is_local_and_idempotent(tmp_path):
