@@ -1258,7 +1258,13 @@ def list_segments(date: str) -> list[Path]:
     except OSError as exc:
         log(f"list_segments({date}): unreadable: {exc}")
         return []
-    return [f for f in files if f.parent == date_dir]
+    # The CloudFS FUSE view can emit duplicate directory entries for one file
+    # (observed 2026-07-19 while its upload queue drained); keep one per name.
+    unique: dict[str, Path] = {}
+    for f in files:
+        if f.parent == date_dir:
+            unique.setdefault(f.name, f)
+    return list(unique.values())
 
 
 def ffprobe_ms(path: Path) -> int:

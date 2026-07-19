@@ -6086,3 +6086,26 @@ def test_cpa_qa_cmd_routes_judge_to_luna_responses(monkeypatch):
     assert "--max-tokens 16000" in cmd
     assert "--retries 3" in cmd
     assert "--api-base https://cpa.test/v1" in cmd
+
+
+def test_list_segments_dedupes_duplicate_fuse_dirents(tmp_path, monkeypatch):
+    date = "2026-07-19"
+    date_dir = tmp_path / date
+    date_dir.mkdir()
+    for stem in ("20260719-16-01-12", "20260719-16-31-09"):
+        (date_dir / f"{runner.ROOM}_{stem}.mp4").write_bytes(b"x")
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path)
+    real_glob = Path.glob
+
+    def duplicated_glob(self, pattern):
+        results = list(real_glob(self, pattern))
+        # CloudFS FUSE has been observed emitting each dirent twice while its
+        # upload queue drains; list_segments must collapse them.
+        return results + results
+
+    monkeypatch.setattr(Path, "glob", duplicated_glob)
+
+    names = [segment.name for segment in runner.list_segments(date)]
+
+    assert len(names) == 2
+    assert names == sorted(names)
