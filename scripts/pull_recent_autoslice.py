@@ -121,10 +121,17 @@ def pull_date(host: str, remote_root: str, local_root: Path, value: date) -> Non
     date_name = value.isoformat()
     destination = local_root / date_name
     destination.mkdir(parents=True, exist_ok=True)
+    # The flat namespace of a date dir is a machine-owned mirror: files the
+    # runner deleted or quarantined remotely must not survive locally as if
+    # still deliverable (2026-07-19: three stale pre-fix clip sets lingered
+    # next to the fresh rerun).  Subdirectories are human review packages
+    # (e.g. 正式补切-*/) that exist only locally — protect them from deletion.
     subprocess.run(
         [
             "rsync",
             "-a",
+            "--delete",
+            "--filter=protect */",
             "--timeout=120",
             f"{host}:{remote_root.rstrip('/')}/{date_name}/",
             f"{destination}/",
