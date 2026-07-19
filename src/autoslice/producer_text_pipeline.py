@@ -549,6 +549,7 @@ def _run_final_review(
     verify_confusable_entity: Callable,
     adapters: TextPipelineAdapters,
     authoritative_chat: list[ChatEvidence] | tuple[ChatEvidence, ...] = (),
+    selection_hook: str = "",
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -567,11 +568,20 @@ def _run_final_review(
                 glossary_text=adapters.review_glossary(),
                 structured_context_text="\n".join(
                     (
-                        f"{item.kind} @{item.offset_ms}ms"
-                        f"{(' sender=' + item.sender) if item.sender else ''}: "
-                        f"{sanitize_chat_display_text(item.text)}"
+                        # 选片钩子进入审片员视野（2026-07-18 kmx 漏听案）：钩子
+                        # 点名的专名是漏听检查（prompt 规则7）的第一线索。
+                        [f"selection_hook: {selection_hook.strip()}"]
+                        if selection_hook.strip()
+                        else []
                     )
-                    for item in authoritative_chat[:160]
+                    + [
+                        (
+                            f"{item.kind} @{item.offset_ms}ms"
+                            f"{(' sender=' + item.sender) if item.sender else ''}: "
+                            f"{sanitize_chat_display_text(item.text)}"
+                        )
+                        for item in authoritative_chat[:160]
+                    ]
                 ),
             )
             protected_review_cues = set(handled_entity_cues)
@@ -670,6 +680,29 @@ def _run_final_review(
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
             if partial:
                 final_review_audit["status"] = "PARTIAL"
+            # 2026-07-18 交付事故类机制：区分「证据裁决后的保留」与「基础设施
+            # 失败导致的未决」。前者（OBSERVED 下 keep-current）是正当结论；
+            # 后者（provider 额度/异常，裁决根本没发生）不许当作终局——审片员
+            # 已给出高置信修复提案、只是没有法官到场。这些行记入
+            # infra_unresolved，由 run_text_pipeline 在全部 provenance 落盘后
+            # 拒绝带伤交付（转 runner 有界重试；付费兜底修复后通常一轮即过）。
+            infra_unresolved = []
+            for row in adjudicable:
+                adjudication = row.get("context_audio_adjudication") or {}
+                if adjudication.get("repaired") or adjudication.get("status") != "UNCERTAIN":
+                    continue
+                verdict = adjudication.get("verdict") or {}
+                reason_code = str(verdict.get("reason_code") or "")
+                if reason_code in {"ENTITY_AUDIO_PROVIDER_FAILED", "CONTEXT_VERIFIER_ERROR"}:
+                    infra_unresolved.append(
+                        {
+                            "cue_index": row.get("cue_index"),
+                            "suspect": row.get("suspect"),
+                            "reason_code": reason_code,
+                        }
+                    )
+            final_review_audit["infra_unresolved"] = infra_unresolved
+            final_review_audit["infra_unresolved_count"] = len(infra_unresolved)
         except Exception as exc:
             final_review_audit = {
                 "schema_version": "final-review-audit.v1",
@@ -931,6 +964,7 @@ def run_text_pipeline(
         verify_confusable_entity=entity_context.verify_confusable_entity,
         authoritative_chat=authoritative_chat,
         adapters=adapters,
+        selection_hook=str(spec.get("selection_hook") or ""),
     )
     evidence = _finalize_text_evidence(
         spec=spec,
@@ -952,6 +986,22 @@ def run_text_pipeline(
         out_root=out_root,
         cid=cid,
     )
+    # 带伤交付闸（2026-07-18 醉堆/七夕/核酸天下案）：审片员的修复提案若因
+    # provider 基础设施失败（而非证据裁决）未落地、且后续确定性 pass（如
+    # source_subtitle_truth ledger）也没有修掉对应文本，则拒绝交付——全部
+    # provenance 已在上方落盘，runner 按 provider_transient 有界重试。
+    still_unresolved = [
+        row
+        for row in (final_review_audit.get("infra_unresolved") or [])
+        if str(row.get("suspect") or "") and str(row.get("suspect")) in evidence.srt_text
+    ]
+    if still_unresolved:
+        raise SystemExit(
+            "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED: "
+            f"{len(still_unresolved)} repair proposal(s) blocked by provider failure "
+            f"(cues {[row.get('cue_index') for row in still_unresolved]}); "
+            "refusing to deliver known-suspect text — runner will retry"
+        )
     return TextPipelineResult(
         srt_text=evidence.srt_text,
         cues=evidence.cues,

@@ -121,8 +121,9 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
         song_name_candidates=["歌"],
     )
 
+    # 2026-07-19 glossary 新增七星词条+长沙话方言词保护节后的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "cc79efdcdfdfbaba6bb2fc9b808c8b19ed9d81e228b70ff9fba9abcfb7a6a95b"
+        "e2a725d60310c8c021af6180f4d6d330722c2fecd72c07e14c30b0e08df08190"
     )
 
 

@@ -1263,46 +1263,57 @@ def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
     srt_text = Path(srt_path).read_text(encoding="utf-8")
     errors: list[dict[str, object]] = []
     corrected = ""
-    for index, key in enumerate(keys, start=1):
-        try:
-            corrected = gemini_correct(
-                str(audio),
-                srt_text,
-                key,
-                as_of_date=recording_date_from_path(slice_p),
-            )
-            if not looks_like_srt(corrected):
-                raise RuntimeError("Gemini API produced no valid SRT")
-            corrected = restore_draft_timing(srt_text, corrected)
+    # Ivan 2026-07-13: the PAID backup key may fire only after the free
+    # chain has already failed >= 3 recorded rounds for this exact audio,
+    # and never past the daily cap. 2026-07-19: pure quota-class (429)
+    # failure rounds may complete back-to-back within one run — see
+    # gemini_backup_policy.quota_exhausted_round for the delivery-incident
+    # rationale; non-quota failures still stop after one round.
+    from src.autoslice import gemini_backup_policy as backup_policy
+
+    item_key = sha256_file(audio)
+    for _round in range(backup_policy.MIN_FREE_CHAIN_STRIKES):
+        round_error_start = len(errors)
+        for index, key in enumerate(keys, start=1):
+            try:
+                corrected = gemini_correct(
+                    str(audio),
+                    srt_text,
+                    key,
+                    as_of_date=recording_date_from_path(slice_p),
+                )
+                if not looks_like_srt(corrected):
+                    raise RuntimeError("Gemini API produced no valid SRT")
+                corrected = restore_draft_timing(srt_text, corrected)
+                break
+            except Exception as exc:  # each configured key is an independent failover lane
+                # Exception text from an HTTP client may contain its request URL,
+                # including the Gemini key query parameter.  Persist only bounded,
+                # non-secret structural diagnostics.
+                diagnostic: dict[str, object] = {
+                    "key_ordinal": index,
+                    "error_type": type(exc).__name__,
+                }
+                status = getattr(exc, "code", None)
+                if isinstance(status, int):
+                    diagnostic["http_status"] = status
+                errors.append(diagnostic)
+                corrected = ""
+        if corrected:
             break
-        except Exception as exc:  # each configured key is an independent failover lane
-            # Exception text from an HTTP client may contain its request URL,
-            # including the Gemini key query parameter.  Persist only bounded,
-            # non-secret structural diagnostics.
-            diagnostic: dict[str, object] = {
-                "key_ordinal": index,
-                "error_type": type(exc).__name__,
-            }
-            status = getattr(exc, "code", None)
-            if isinstance(status, int):
-                diagnostic["http_status"] = status
-            errors.append(diagnostic)
-            corrected = ""
+        strikes = backup_policy.record_free_chain_failure(item_key)
+        if strikes >= backup_policy.MIN_FREE_CHAIN_STRIKES:
+            break
+        round_categories = [
+            "GEMINI_API_QUOTA_EXHAUSTED" if error.get("http_status") == 429 else "OTHER"
+            for error in errors[round_error_start:]
+        ]
+        if not backup_policy.quota_exhausted_round(round_categories):
+            break
     accepted_key_tier = "free"
     paid_policy_stamp: dict[str, object] | None = None
     if not corrected:
-        # Ivan 2026-07-13: the PAID backup key may fire only after the free
-        # chain has already failed >= 3 recorded rounds for this exact audio,
-        # and never past the daily cap. The strike is recorded regardless so
-        # later rounds can prove the wait actually happened.
-        from src.autoslice import gemini_backup_policy as backup_policy
-
-        item_key = sha256_file(audio)
-        prior_strikes = backup_policy.free_chain_strikes(item_key)
-        backup_policy.record_free_chain_failure(item_key)
-        allowed, gate_reason = backup_policy.paid_attempt_allowed(
-            item_key, prior_strikes=prior_strikes
-        )
+        allowed, gate_reason = backup_policy.paid_attempt_allowed(item_key)
         if allowed:
             paid_key = backup_policy.paid_backup_key()
             try:

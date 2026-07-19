@@ -1018,24 +1018,37 @@ def run_agy_audio_lrc_alignment(
                         api_errors.append(diagnostic)
                         return False
 
-                for key_ordinal, key in enumerate(keys, start=1):
-                    if _attempt_gemini_api_key(
-                        key,
-                        key_ordinal=key_ordinal,
-                        key_tier=gemini_backup_policy.FREE_KEY_TIER,
+                # Ivan 2026-07-13: the PAID backup key fires only after the
+                # free chain failed >= 3 recorded rounds for this exact audio
+                # and only under the daily cap.  2026-07-19: pure quota-class
+                # failure rounds may complete back-to-back within one run
+                # (gemini_backup_policy.quota_exhausted_round) — 429 against an
+                # exhausted chain is a deterministic fast-fail, and one strike
+                # per run made the >=3 policy unreachable while wrong text
+                # shipped.  Non-quota failures still stop after one round.
+                for _round in range(gemini_backup_policy.MIN_FREE_CHAIN_STRIKES):
+                    round_error_start = len(api_errors)
+                    for key_ordinal, key in enumerate(keys, start=1):
+                        if _attempt_gemini_api_key(
+                            key,
+                            key_ordinal=key_ordinal,
+                            key_tier=gemini_backup_policy.FREE_KEY_TIER,
+                        ):
+                            break
+                    else:
+                        accepted_key_ordinal = None
+                    if accepted_key_ordinal is not None or not api_audio_sha:
+                        break
+                    strikes = gemini_backup_policy.record_free_chain_failure(api_audio_sha)
+                    if strikes >= gemini_backup_policy.MIN_FREE_CHAIN_STRIKES:
+                        break
+                    if not gemini_backup_policy.quota_exhausted_round(
+                        [error.get("category") for error in api_errors[round_error_start:]]
                     ):
                         break
-                else:
-                    accepted_key_ordinal = None
                 if accepted_key_ordinal is None and api_audio_sha:
-                    # Ivan 2026-07-13: the PAID backup key fires only after the
-                    # free chain failed >= 3 recorded rounds for this exact
-                    # audio and only under the daily cap; the strike is
-                    # recorded first so later rounds can prove the wait.
-                    prior_strikes = gemini_backup_policy.free_chain_strikes(api_audio_sha)
-                    gemini_backup_policy.record_free_chain_failure(api_audio_sha)
                     allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
-                        api_audio_sha, prior_strikes=prior_strikes
+                        api_audio_sha
                     )
                     if allowed and _attempt_gemini_api_key(
                         str(gemini_backup_policy.paid_backup_key()),

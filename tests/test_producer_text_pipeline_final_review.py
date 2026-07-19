@@ -381,3 +381,60 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
     assert audit["findings"][12]["routed"] == "skipped_budget"
     assert audit["findings"][12]["context_audio_adjudication"]["status"] == "SKIPPED_BUDGET"
     assert audit["status"] == "PARTIAL"
+
+
+def test_final_review_marks_provider_failed_adjudications_infra_unresolved(monkeypatch):
+    """2026-07-18 交付事故类机制：provider 额度失败导致的 UNCERTAIN 不是证据
+    裁决，必须记入 infra_unresolved（而 OBSERVED 下的 keep-current 不记）。"""
+    findings = [
+        {
+            "cue": 1,
+            "kind": "context",
+            "proposed_full_cue": "只剩下和成天下了",
+            "repair_class": "phonetic",
+            "why": "quota blocked",
+        },
+        {
+            "cue": 2,
+            "kind": "context",
+            "proposed_full_cue": "观察后保留原文的句子",
+            "repair_class": "phonetic",
+            "why": "observed keep current",
+        },
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "build_llm_call",
+        lambda config: lambda prompt: json.dumps({"findings": findings}, ensure_ascii=False),
+    )
+
+    def provider_failed_then_observed(request):
+        if request["cue_indexes"] == [1]:
+            return {
+                "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+                "request_sha256": request["request_sha256"],
+                "status": "UNCERTAIN",
+                "reason_code": "ENTITY_AUDIO_PROVIDER_FAILED",
+                "detail": "GEMINI_API_QUOTA_EXHAUSTED;GEMINI_API_QUOTA_EXHAUSTED",
+            }
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "SUPPORTED",
+            "proposed_fit": "UNRESOLVED",
+        }
+
+    output, audit = pipeline._run_final_review(
+        srt_text=_srt("只剩下核酸天下了", "观察后保留原立的句子"),
+        chat_authority_audit={"applied": []},
+        handled_entity_cues=set(),
+        verify_confusable_entity=provider_failed_then_observed,
+        adapters=_adapters(),
+    )
+
+    assert "核酸天下" in output  # 未修（provider 失败），但必须被标记
+    assert audit["infra_unresolved_count"] == 1
+    assert audit["infra_unresolved"][0]["cue_index"] == 1
+    assert audit["infra_unresolved"][0]["reason_code"] == "ENTITY_AUDIO_PROVIDER_FAILED"

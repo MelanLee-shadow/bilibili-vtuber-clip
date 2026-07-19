@@ -70,6 +70,9 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
 
 规则：
 1. 宁缺毋滥：只报你有把握可疑的，正常口语、脏话、语气词、网络梗不要报。
+   主播说**长沙话**：方言词（见词表「长沙话方言词保护」节，如 恰=吃）是真实
+   口播内容，不要当错报；反之，方言词被误听成普通话近音词（恰烟恰酒→查烟查酒）
+   要报，且 proposed_full_cue 必须写**方言原字**，禁止改成普通话意译（抽烟喝酒）。
 2. 若能从发音与语境合理推断原话，给出 proposed_full_cue（整条修正后字幕）；
    不能确定则为 null。不要自己计算字符下标。
 3. repair_class 只能是：phonetic（近音误识）、segmentation（词边界误切）、
@@ -82,6 +85,11 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
    同样，像身份讨论里的「直女/侄女」这类同音词必须按整段语义检查。
 6. suspect/replacement 可选；若给出，必须等于 current cue 与 proposed_full_cue 的最小
    单段差异，否则建议会被代码拒绝。不确定就不报。最多 {max_findings} 条。
+7. 漏听检查（2026-07-18 kmx 整词漏听案）：上方结构化证据/选片钩子里的**词表内
+   专名**若在字幕全文一次都没出现，主动检查最可能提到它的句位（称呼、接话、
+   突击等语境）是否被 ASR 整词吞掉；有把握时按 source_backed_entity 给出
+   **插入**该专名后的 proposed_full_cue（source_surface 从钩子/弹幕/词表原文
+   引用），没把握就报 disclosure。插入建议最终由音频仲裁定夺，不会盲改。
 
 字幕（每行：编号. 文本）：
 {numbered}
@@ -151,7 +159,11 @@ def audit_final_subtitles(
                 span_start,
                 span_end,
                 contract_error,
-            ) = _derive_single_span_edit(base_text, proposed)
+            ) = _derive_single_span_edit(
+                base_text,
+                proposed,
+                allow_insertion=repair_class == "source_backed_entity",
+            )
             # `proposed_full_cue` is the authority input: code derives its one
             # bounded minimal edit and the audio lane verifies that complete
             # candidate.  The model's optional suspect/replacement fields are
@@ -202,9 +214,11 @@ def audit_final_subtitles(
                 contract_error = "ENTITY_SOURCE_SURFACE_UNWITNESSED"
 
         suspect = derived_suspect if proposed else reported_suspect
-        if not suspect:
-            continue
         suggestion = derived_replacement if proposed and not contract_error else None
+        # 空 suspect 只有一种合法形态：source_backed_entity 的插入建议
+        # （kmx 整词漏听案）；其余空 suspect 一律丢弃。
+        if not suspect and suggestion is None:
+            continue
         evidence_cue_ids: list[int] = []
         for value in row.get("evidence_cue_ids") or []:
             try:
@@ -295,9 +309,15 @@ def route_findings(
 
 
 def _derive_single_span_edit(
-    base_text: str, proposed_text: str
+    base_text: str, proposed_text: str, *, allow_insertion: bool = False
 ) -> tuple[str, str, int, int, str | None]:
-    """Derive the one minimal outer changed interval from two full cues."""
+    """Derive the one minimal outer changed interval from two full cues.
+
+    ``allow_insertion``（2026-07-18 kmx 整词漏听案）：ASR 零召回的专名无法用
+    「替换」表达，必须允许插入——但只对 source_backed_entity（词面已被转写/
+    词表/结构化证据见证）放开，且插入候选仍要走声学仲裁两候选比较。删除
+    永远不放开（幻听删除有专门 pass，审片员不持删刀）。
+    """
 
     if base_text == proposed_text:
         return "", "", 0, 0, "SUGGESTION_UNCHANGED"
@@ -319,7 +339,9 @@ def _derive_single_span_edit(
     proposed_end = len(proposed_text) - suffix_len if suffix_len else len(proposed_text)
     suspect = base_text[prefix_len:base_end]
     replacement = proposed_text[prefix_len:proposed_end]
-    if not suspect or not replacement:
+    if not replacement:
+        return suspect, replacement, prefix_len, base_end, "INSERT_DELETE_NOT_ALLOWED_V1"
+    if not suspect and not allow_insertion:
         return suspect, replacement, prefix_len, base_end, "INSERT_DELETE_NOT_ALLOWED_V1"
     if (
         len(suspect) > MAX_EDIT_SPAN_CODEPOINTS
@@ -341,7 +363,9 @@ def _candidate_from_finding(
         end = int(finding["span_end_codepoint"])
     except (KeyError, TypeError, ValueError):
         return _single_span_candidate(cue_text, suspect, replacement)
-    if not (0 <= start < end <= len(cue_text)) or cue_text[start:end] != suspect:
+    # start == end 是合法的插入点（kmx 整词漏听案）：空区间时 suspect 必须
+    # 同为空串，等式校验依旧把关。
+    if not (0 <= start <= end <= len(cue_text)) or cue_text[start:end] != suspect:
         return None, "DERIVED_SPAN_STALE"
     if any(ord(char) < 32 for char in replacement) or "-->" in replacement:
         return None, "SUGGESTION_STRUCTURAL_TEXT"

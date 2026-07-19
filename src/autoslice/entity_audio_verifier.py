@@ -522,16 +522,30 @@ def _observe_entity_audio(
                     )
                     return False
 
-            for key in _configured_free_keys():
-                if attempt_api_key(key, key_tier=gemini_backup_policy.FREE_KEY_TIER):
+            item_key = _sha256(api_audio_path)
+            # 免费链轮次：纯额度类失败（429 快败）在同一次运行内连续补足
+            # 「同项失败≥3轮」的政策线（quota_exhausted_round docstring 记有
+            # 2026-07-18 交付事故根因）；非额度失败保持单轮。轮数有界——
+            # ledger 不可写的环境 strikes 永远读 0，绝不允许无界循环。
+            for _round in range(gemini_backup_policy.MIN_FREE_CHAIN_STRIKES):
+                round_start = len(provider_failures)
+                for key in _configured_free_keys():
+                    if attempt_api_key(key, key_tier=gemini_backup_policy.FREE_KEY_TIER):
+                        break
+                if observed is not None:
+                    break
+                strikes = gemini_backup_policy.record_free_chain_failure(item_key)
+                if strikes >= gemini_backup_policy.MIN_FREE_CHAIN_STRIKES:
+                    break
+                round_categories = [
+                    failure.get("category")
+                    for failure in provider_failures[round_start:]
+                    if failure.get("provider") == "gemini_api"
+                ]
+                if not gemini_backup_policy.quota_exhausted_round(round_categories):
                     break
             if observed is None:
-                item_key = _sha256(api_audio_path)
-                prior_strikes = gemini_backup_policy.free_chain_strikes(item_key)
-                gemini_backup_policy.record_free_chain_failure(item_key)
-                allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
-                    item_key, prior_strikes=prior_strikes
-                )
+                allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(item_key)
                 if allowed and attempt_api_key(
                     str(gemini_backup_policy.paid_backup_key()),
                     key_tier=gemini_backup_policy.PAID_KEY_TIER,

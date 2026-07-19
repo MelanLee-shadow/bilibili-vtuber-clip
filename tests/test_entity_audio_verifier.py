@@ -420,8 +420,10 @@ def test_api_paid_gate_blocks_without_dev_exception(tmp_path, monkeypatch):
     assert api_calls == []
     job_dir = tmp_path / "out/entity_verdicts" / ("a" * 20)
     failures = json.loads((job_dir / "provider-failures.json").read_text(encoding="utf-8"))
+    # 2026-07-19 起 strike 含本次运行已记录的轮次（付费触发时 ledger 必须已有
+    # ≥3 轮完整失败证据）；免费 key 未配置只记 1 轮即停。
     assert any(
-        str(row.get("category", "")).startswith("PAID_BACKUP_SKIPPED:FREE_CHAIN_STRIKES_0")
+        str(row.get("category", "")).startswith("PAID_BACKUP_SKIPPED:FREE_CHAIN_STRIKES_1")
         for row in failures["failures"]
     )
     ledger_root = tmp_path / "policy-base/state/gemini-paid-backup"

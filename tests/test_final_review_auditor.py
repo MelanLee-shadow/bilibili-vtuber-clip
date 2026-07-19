@@ -435,3 +435,90 @@ def test_context_adjudication_rejects_any_model_returned_text_channel():
 
     assert output == source
     assert audit["status"] == "UNCERTAIN"
+
+
+def test_source_backed_entity_insertion_survives_contract(monkeypatch):
+    """2026-07-18 kmx 整词漏听案：ASR 零召回的专名只能靠插入修复。
+    source_backed_entity + 词表见证 + 声学仲裁三重门下允许空 suspect 插入。"""
+    srt = (
+        "1\n00:00:00,000 --> 00:00:04,000\n只有怎么，你为什么会这样称呼李豆沙\n\n"
+        "2\n00:00:05,000 --> 00:00:09,000\n第二句正常文本\n"
+    )
+    findings = audit_final_subtitles(
+        srt,
+        llm_call=lambda prompt: json.dumps(
+            {
+                "findings": [
+                    {
+                        "cue": 1,
+                        "kind": "entity",
+                        "proposed_full_cue": "只有kmx怎么，你为什么会这样称呼李豆沙",
+                        "repair_class": "source_backed_entity",
+                        "source_surface": "kmx",
+                        "evidence_cue_ids": [],
+                        "why": "SC称呼串只有kmx会说，ASR整词漏听",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        extract_json=json.loads,
+        glossary_text="- 人名/ID：kmx（李豆沙常提的人）",
+        structured_context_text="selection_hook: 只有kmx会这样称呼李豆沙",
+    )
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding["suspect"] == ""
+    assert finding["suggestion"] == "kmx"
+    assert finding.get("suggestion_rejected_reason") is None
+    assert finding["candidate_provenance"] == {"kind": "glossary", "surface": "kmx"}
+
+    # 插入建议不走同音自动应用（空 suspect 与 kmx 不同音），必须进声学仲裁。
+    output, audit = route_findings(srt, findings)
+    assert "只有kmx怎么" not in output
+    row = audit["findings"][0]
+    assert row["routed"] == "disclosure"
+
+    # 声学仲裁支持插入候选时才真正落地。
+    def prefer_proposed(request):
+        assert request["proposed_cue"] == "只有kmx怎么，你为什么会这样称呼李豆沙"
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "UNRESOLVED",
+            "proposed_fit": "SUPPORTED",
+        }
+
+    repaired_srt, adj = adjudicate_context_finding(
+        srt, findings[0], entity_verifier=prefer_proposed
+    )
+    assert adj["repaired"] is True
+    assert "只有kmx怎么" in repaired_srt
+
+
+def test_plain_insertion_without_source_provenance_still_rejected():
+    """非 source_backed 的插入建议依旧被拒（防审片员自由加词）。"""
+    srt = "1\n00:00:00,000 --> 00:00:04,000\n只有怎么会这样\n"
+    findings = audit_final_subtitles(
+        srt,
+        llm_call=lambda prompt: json.dumps(
+            {
+                "findings": [
+                    {
+                        "cue": 1,
+                        "kind": "context",
+                        "proposed_full_cue": "只有他怎么会这样",
+                        "repair_class": "phonetic",
+                        "why": "凭感觉加词",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        extract_json=json.loads,
+    )
+    assert findings == [] or all(
+        row.get("suggestion") is None for row in findings
+    )

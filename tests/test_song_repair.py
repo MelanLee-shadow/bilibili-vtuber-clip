@@ -4116,8 +4116,9 @@ def test_audio_lrc_paid_backup_withheld_below_three_strikes(
         lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
     )
     item_key = hashlib.sha256(b"complete-derived-audio").hexdigest()
-    for _ in range(2):
-        backup_policy.record_free_chain_failure(item_key)
+    # 1 条历史 strike + 本次运行 1 轮非额度类失败 = 2 strikes < 3 → 付费被门拦。
+    # （非额度失败每次运行只记 1 轮；额度类失败可在同次运行内连续补轮，另测。）
+    backup_policy.record_free_chain_failure(item_key)
 
     calls = []
 
@@ -4437,3 +4438,64 @@ def test_attempt_song_repair_sibling_srt_fallback_anchors_when_cues_not_threaded
     report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
     assert report["offset_basis"] == "asr_anchor"
     assert report["offset_ms"] == 17_140
+
+
+def test_audio_lrc_quota_rounds_complete_in_run_and_paid_fires(
+    tmp_path,
+    monkeypatch,
+):
+    """2026-07-18 交付事故的类机制修复：免费链纯额度类失败(429)时，
+    「同项失败≥3轮」在同一次运行内连续补足，付费兜底随后合规触发
+    （触发时 ledger 已有 3 轮完整失败证据 + 每笔入帐）。"""
+    import hashlib
+
+    import src.autoslice.gemini_backup_policy as backup_policy
+
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    paid_secret = "paid-backup-secret"
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "gap-key-one")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "gap-key-two")
+    monkeypatch.setenv("GEMINI_API_KEY_3", "gap-key-three")
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", paid_secret)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="429 quota", stderr=""),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 100_000),
+    )
+    item_key = hashlib.sha256(b"complete-derived-audio").hexdigest()
+
+    calls = []
+
+    class _QuotaError(RuntimeError):
+        code = 429
+
+    def fake_observe(*, prompt, key, **_kwargs):
+        calls.append(key)
+        raise _QuotaError("quota exhausted")
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
+        agy_lrc_alignment.run_agy_audio_lrc_alignment(
+            media,
+            lrc,
+            "paid-fires-after-quota-rounds",
+            tmp_path / "jobs",
+        )
+    # 免费链 3 keys × 3 轮 = 9 次失败尝试之后，付费 key 被合规尝试。
+    assert calls.count("gap-key-one") == 3
+    assert calls.count("gap-key-two") == 3
+    assert calls.count("gap-key-three") == 3
+    assert paid_secret in calls
+    assert backup_policy.free_chain_strikes(item_key) >= 3

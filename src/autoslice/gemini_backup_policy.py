@@ -103,6 +103,21 @@ def dev_exception_active() -> bool:
     return os.environ.get(DEV_EXCEPTION_ENV, "").strip() == "1"
 
 
+def quota_exhausted_round(categories: object) -> bool:
+    """True when a completed free-chain round failed purely on quota class.
+
+    2026-07-18 交付事故根因：免费额度整体耗尽时，一次运行只给每个 item 记
+    1 strike，「同项失败≥3轮」永远凑不满，正确的修复提案全部卡死在
+    UNCERTAIN。429 对已耗尽的免费链是确定性快败——同一次运行内把失败轮
+    连续补足到政策线不是绕过政策，而是让政策的失败证据要求可以被满足。
+    调用方只在本函数为 True（纯额度类失败）时才继续下一轮；任何非额度
+    失败（认证、超时、输出坏）都保持单轮，交给外层重试。
+    """
+
+    values = [str(value or "") for value in (categories or [])]
+    return bool(values) and all("QUOTA_EXHAUSTED" in value for value in values)
+
+
 def _safe_item_name(item_key: str) -> str:
     safe = "".join(ch for ch in str(item_key) if ch.isalnum() or ch in "-_.")[:128]
     return safe or "unkeyed"
