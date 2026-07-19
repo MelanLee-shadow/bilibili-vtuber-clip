@@ -242,8 +242,21 @@ def apply_source_subtitle_truth(
 
         if action == "replace_cue":
             replacement = str(raw_entry.get("text") or "")
-            if not replacement or len(target_indexes) != 1:
+            if not replacement:
                 row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
+            elif len(target_indexes) != 1:
+                # 2026-07-19 合并跳切实证：fresh 重转写会把同一源区间切成
+                # 两条 cue（或 bleed 进相邻 cue），时间锚定的目标不再唯一。
+                # 真值文本已在目标 cue 组里逐字成立（单条等于或跨界拼接包含）
+                # 时按 satisfied 记账——no-op 不落刀；未成立才是真失败：
+                # 多 cue 替换无法安全落刀，保持 fail-closed。
+                joined = "".join(texts[index] for index in target_indexes)
+                if replacement in joined or any(
+                    texts[index] == replacement for index in target_indexes
+                ):
+                    satisfied = True
+                else:
+                    row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
             else:
                 index = target_indexes[0]
                 satisfied = texts[index] == replacement

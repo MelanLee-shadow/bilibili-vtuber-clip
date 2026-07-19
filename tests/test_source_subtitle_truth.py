@@ -321,3 +321,77 @@ def test_symlink_ledger_is_rejected(tmp_path):
             durations=[],
             ledger_path=linked,
         )
+
+
+def test_replace_cue_split_across_recued_cues_counts_satisfied(tmp_path):
+    """2026-07-19 合并跳切实证：fresh 重转写把钉子区间切成两条 cue，
+    真值文本跨界拼接已逐字成立 → satisfied（no-op），不再 NOT_UNIQUE 失败。"""
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "split-cue-satisfied",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 118_000,
+                "action": "replace_cue",
+                "text": "很多人笑出声这件事情kmx要不要想想为什么",
+                "authority": "Ivan",
+                "required": True,
+            }
+        ],
+    )
+    srt = _srt(
+        (10, 14, "很多人笑出声这件事情"),
+        (14, 18, "kmx要不要想想为什么"),
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec={
+            "pieces": [
+                {"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 120_000}
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+    assert audit["status"] == "ALREADY_SATISFIED"
+    assert audit["failures"] == []
+    assert audit["satisfied"][0]["truth_id"] == "split-cue-satisfied"
+    assert corrected == srt  # no-op
+
+
+def test_replace_cue_split_cues_with_wrong_text_still_fails(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "split-cue-wrong",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 118_000,
+                "action": "replace_cue",
+                "text": "很多人笑出声这件事情kmx要不要想想为什么",
+                "authority": "Ivan",
+                "required": True,
+            }
+        ],
+    )
+    srt = _srt(
+        (10, 14, "很多人笑出声这件事情"),
+        (14, 18, "乒乓球要不要想想为什么"),
+    )
+    _, audit = apply_source_subtitle_truth(
+        srt,
+        spec={
+            "pieces": [
+                {"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 120_000}
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+    assert audit["status"] == "FAILED"
+    assert audit["failures"][0]["reason_code"] == "REPLACE_CUE_TARGET_NOT_UNIQUE"
