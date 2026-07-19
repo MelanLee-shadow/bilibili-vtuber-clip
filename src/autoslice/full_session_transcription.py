@@ -18,6 +18,7 @@ from src.autoslice.refinement_provenance import (
     agy_corroborating_witness as _agy_corroborating_witness,
     agy_fidelity_witness as _agy_fidelity_witness,
     agy_refinement_provenance as _agy_refinement_provenance,
+    run_agy_refinement_attempt as _run_agy_refinement_attempt,
 )
 from src.autoslice.subtitle_fidelity import (
     apply_source_language_preservation_guard,
@@ -723,8 +724,6 @@ def _build_aggregate_asr_transcriber(
     Fail-open at each stage: a stage failure degrades to the best draft so far.
     """
 
-    import tempfile as _tempfile
-
     from scripts.free_asr_client import extract_audio_mp3, to_srt, transcribe
     from scripts.gemini_slice_jingting import looks_like_srt
     from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
@@ -818,36 +817,12 @@ def _build_aggregate_asr_transcriber(
         """AGY jingting refine on the BCUT draft: same timeline, AGY's text."""
         if agy_refine_runner is None:
             return None, None
-        with _tempfile.TemporaryDirectory(prefix="asr_refine_") as tmp:
-            draft_path = Path(tmp) / "draft.srt"
-            out_path = Path(tmp) / "out.srt"
-            draft_path.write_text(draft_srt if draft_srt.endswith("\n") else draft_srt + "\n", encoding="utf-8")
-            try:
-                execution = agy_refine_runner(media_path, draft_path, out_path)
-                refined = out_path.read_text(encoding="utf-8")
-                if looks_like_srt(refined):
-                    media_path.with_suffix(".agy_refined.srt").write_text(refined, encoding="utf-8")
-                    provenance = _agy_refinement_provenance(
-                        execution
-                        if isinstance(execution, AgyExecutionResult)
-                        else None,
-                        refined_srt=refined,
-                        draft_srt=draft_srt,
-                        media_path=Path(media_path),
-                    )
-                    media_path.with_suffix(".agy_refined.manifest.json").write_text(
-                        json.dumps(provenance, ensure_ascii=False, indent=2) + "\n",
-                        encoding="utf-8",
-                    )
-                    return (
-                        refined,
-                        execution
-                        if isinstance(execution, AgyExecutionResult)
-                        else None,
-                    )
-            except (AgyRunnerError, RuntimeError):
-                pass
-        return None, None
+        return _run_agy_refinement_attempt(
+            agy_refine_runner,
+            media_path=Path(media_path),
+            draft_srt=draft_srt,
+            valid_srt=looks_like_srt,
+        )
 
     def transcriber(media_path: Path, speech_spans_ms=None) -> str:
         sound = extract_audio_mp3(Path(media_path))

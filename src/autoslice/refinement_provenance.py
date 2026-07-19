@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
+import tempfile
+from typing import Callable
 
 from src.autoslice.source_context_executor import AgyExecutionResult
 
@@ -158,6 +161,69 @@ def agy_refinement_provenance(
         "fidelity_witness_eligible": independent_eligible,
         "corroborating_audio_eligible": corroborating_eligible,
     }
+
+
+def run_agy_refinement_attempt(
+    runner: Callable[[Path, Path, Path], object],
+    *,
+    media_path: Path,
+    draft_srt: str,
+    valid_srt: Callable[[str], bool],
+) -> tuple[str | None, AgyExecutionResult | None]:
+    """Run one refinement attempt and make its evidence paths run-owned."""
+
+    refined_path = media_path.with_suffix(".agy_refined.srt")
+    manifest_path = media_path.with_suffix(".agy_refined.manifest.json")
+    refined_path.unlink(missing_ok=True)
+    manifest_path.unlink(missing_ok=True)
+    failure_reason_code = "AGY_REFINEMENT_UNAVAILABLE"
+    with tempfile.TemporaryDirectory(prefix="asr_refine_") as tmp:
+        draft_path = Path(tmp) / "draft.srt"
+        out_path = Path(tmp) / "out.srt"
+        draft_path.write_text(
+            draft_srt if draft_srt.endswith("\n") else draft_srt + "\n",
+            encoding="utf-8",
+        )
+        try:
+            execution = runner(media_path, draft_path, out_path)
+            refined = out_path.read_text(encoding="utf-8")
+            if valid_srt(refined):
+                refined_path.write_text(refined, encoding="utf-8")
+                typed_execution = (
+                    execution
+                    if isinstance(execution, AgyExecutionResult)
+                    else None
+                )
+                provenance = agy_refinement_provenance(
+                    typed_execution,
+                    refined_srt=refined,
+                    draft_srt=draft_srt,
+                    media_path=media_path,
+                )
+                provenance["refinement_status"] = "READY"
+                manifest_path.write_text(
+                    json.dumps(provenance, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                return refined, typed_execution
+            failure_reason_code = "AGY_REFINEMENT_OUTPUT_INVALID"
+        except (RuntimeError, OSError) as exc:
+            failure_reason_code = str(
+                getattr(exc, "reason_code", "") or type(exc).__name__
+            )
+    unavailable = agy_refinement_provenance(
+        None,
+        refined_srt=None,
+        draft_srt=draft_srt,
+        media_path=media_path,
+    )
+    unavailable["refinement_status"] = "UNAVAILABLE"
+    unavailable["failure_reason_code"] = failure_reason_code
+    manifest_path.write_text(
+        json.dumps(unavailable, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return None, None
 
 
 def agy_fidelity_witness(

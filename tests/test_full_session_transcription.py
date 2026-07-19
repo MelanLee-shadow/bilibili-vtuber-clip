@@ -275,3 +275,74 @@ def test_api_fallback_rewrite_is_rejected_by_aggregate_transcriber(
         fidelity["agy_refinement_provenance"]["fidelity_witness_eligible"]
         is False
     )
+
+
+def test_failed_rerun_replaces_stale_agy_artifacts_with_v2_none_manifest(
+    tmp_path,
+    monkeypatch,
+):
+    draft = "1\n00:00:00,000 --> 00:00:01,000\n我这真的有一些题\n"
+
+    def unavailable_runner(_media_path, _draft_path, _output_path):
+        raise RuntimeError("current AGY attempt unavailable")
+
+    monkeypatch.setattr(
+        transcription,
+        "_build_ssh_agy_runner",
+        lambda *_args, **_kwargs: unavailable_runner,
+    )
+    monkeypatch.setattr(
+        transcription,
+        "_cpa_correct_draft_cues",
+        lambda draft_srt, **_kwargs: draft_srt,
+    )
+    monkeypatch.setattr(
+        transcription,
+        "_cpa_pronoun_ta_pass",
+        lambda corrected, **_kwargs: corrected,
+    )
+    monkeypatch.setattr(
+        llm_client,
+        "build_llm_call",
+        lambda _config: lambda _prompt: "{}",
+    )
+    monkeypatch.setattr(
+        free_asr_client,
+        "extract_audio_mp3",
+        lambda media_path: media_path,
+    )
+    monkeypatch.setattr(
+        free_asr_client,
+        "transcribe",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(free_asr_client, "to_srt", lambda _result: draft)
+
+    transcriber = transcription._build_aggregate_asr_transcriber(
+        host="free",
+        correct="bcut_agy_cpa",
+    )
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"current media")
+    refined_path = media.with_suffix(".agy_refined.srt")
+    manifest_path = media.with_suffix(".agy_refined.manifest.json")
+    refined_path.write_text("stale refined text", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "agy-refinement-provenance.v1",
+                "provider_request_id": "stale-run",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert transcriber(media) == draft
+    assert not refined_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "agy-refinement-provenance.v2"
+    assert manifest["refinement_status"] == "UNAVAILABLE"
+    assert manifest["failure_reason_code"] == "RuntimeError"
+    assert manifest["witness_tier"] == "none"
+    assert manifest["attestation_bound"] is False
+    assert manifest["provider_request_id"] is None
