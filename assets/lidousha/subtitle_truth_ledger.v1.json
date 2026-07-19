@@ -142,6 +142,17 @@
       "required_text": "分号分号",
       "authority": "Ivan-reviewed-emoticon-reading-2026-07-19",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-only-kmx-would",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 1067100,
+      "source_end_ms": 1069700,
+      "action": "replace_cue",
+      "text": "只有kmx，怎么，你为什么会这样称呼李豆沙，",
+      "authority": "Ivan-stated-20260719-conversation(0:49只有kmx会这么称呼)",
+      "required": true
     }
   ]
 }
