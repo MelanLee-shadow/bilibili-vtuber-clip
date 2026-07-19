@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from src.autoslice.talk_filler import (
+    bind_final_filler_audit_to_burn,
     build_piece_specs,
     build_talk_filler_plan,
     verify_automatic_filler_plan,
@@ -259,10 +261,48 @@ def test_final_audit_records_content_and_delivered_jump_times(tmp_path: Path):
     )
 
     assert path is not None
-    import json
-
     audit = json.loads(path.read_text(encoding="utf-8"))
     jump = audit["removals"][0]
     assert jump["actual_concat_jump_ms"] == 25_000
     assert jump["final_content_output_jump_ms"] == 21_000
     assert jump["delivered_output_jump_ms"] == 26_754
+
+
+def test_final_audit_rebinds_jump_times_to_actual_burned_intro(tmp_path: Path):
+    audit_path = tmp_path / "audit.json"
+    audit_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "talk-filler-audit.v1",
+                "status": "FINALIZED",
+                "branding_intro_offset_ms": 0,
+                "removals": [
+                    {
+                        "final_content_output_jump_ms": 21_000,
+                        "delivered_output_jump_ms": 21_000,
+                        "survives_final_boundary": True,
+                    },
+                    {
+                        "final_content_output_jump_ms": -500,
+                        "delivered_output_jump_ms": None,
+                        "survives_final_boundary": False,
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bind_final_filler_audit_to_burn(
+        audit_path=audit_path,
+        burned_preview={
+            "status": "BURNED",
+            "branding_intro": {"status": "PREPENDED", "intro_offset_ms": 5_749},
+        },
+    )
+
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["branding_intro_offset_ms"] == 5_749
+    assert audit["removals"][0]["delivered_output_jump_ms"] == 26_749
+    assert audit["removals"][1]["delivered_output_jump_ms"] is None

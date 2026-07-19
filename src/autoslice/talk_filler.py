@@ -821,3 +821,52 @@ def write_final_filler_audit(
         encoding="utf-8",
     )
     return output_path
+
+
+def bind_final_filler_audit_to_burn(
+    *,
+    audit_path: Path | None,
+    burned_preview: Mapping[str, object] | None,
+) -> Path | None:
+    """Bind delivered jump positions to the intro offset from the actual burn."""
+    if audit_path is None:
+        return None
+    if not audit_path.is_file():
+        raise RuntimeError("TALK_FILLER_AUDIT_MISSING_BEFORE_BURN_BINDING")
+
+    intro_offset_ms = 0
+    if isinstance(burned_preview, Mapping):
+        branding_intro = burned_preview.get("branding_intro")
+        if isinstance(branding_intro, Mapping):
+            intro_offset_ms = int(branding_intro.get("intro_offset_ms") or 0)
+            if intro_offset_ms < 0:
+                raise RuntimeError("TALK_FILLER_AUDIT_NEGATIVE_INTRO_OFFSET")
+
+    document = json.loads(audit_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(document, dict)
+        or document.get("schema_version") != FILLER_AUDIT_SCHEMA
+        or document.get("status") != "FINALIZED"
+    ):
+        raise RuntimeError("TALK_FILLER_AUDIT_INVALID_BEFORE_BURN_BINDING")
+
+    removals = document.get("removals")
+    if not isinstance(removals, list):
+        raise RuntimeError("TALK_FILLER_AUDIT_REMOVALS_INVALID")
+    for removal in removals:
+        if not isinstance(removal, dict):
+            raise RuntimeError("TALK_FILLER_AUDIT_REMOVAL_INVALID")
+        content_jump_ms = removal.get("final_content_output_jump_ms")
+        survives = removal.get("survives_final_boundary") is True
+        removal["delivered_output_jump_ms"] = (
+            intro_offset_ms + int(content_jump_ms)
+            if survives and isinstance(content_jump_ms, int)
+            else None
+        )
+
+    document["branding_intro_offset_ms"] = intro_offset_ms
+    audit_path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return audit_path

@@ -24,6 +24,7 @@ from src.autoslice.producer_text_finalization import verify_chat_authority_final
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
+from src.autoslice.talk_filler import bind_final_filler_audit_to_burn
 
 
 @dataclass(frozen=True)
@@ -405,6 +406,14 @@ def _build_and_burn_record(
     if not isinstance(record.get("burned_preview"), dict) or record["burned_preview"].get("status") != "BURNED":
         raise SystemExit(f"FINAL_SUBTITLE_BURN_FAILED: {record.get('burned_preview')}")
     burned = _validated_burned_artifact(record)
+    bind_final_filler_audit_to_burn(
+        audit_path=talk_filler_audit_path,
+        burned_preview=record["burned_preview"],
+    )
+    if talk_filler_audit_path is not None:
+        record["artifact_hashes"]["talk_filler_audit_sha256"] = (
+            "sha256:" + _sha256(talk_filler_audit_path)
+        )
     chat_authority_audit["burn_binding"] = {
         "burned_media_path": str(burned),
         "burned_media_sha256": _sha256(burned),
