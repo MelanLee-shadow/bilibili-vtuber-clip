@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -36,6 +37,28 @@ MAX_EDIT_LENGTH_DELTA = 8
 _AUTO_REPAIR_CLASSES = frozenset(
     {"phonetic", "segmentation", "spoken_unit", "source_backed_entity"}
 )
+# T1 见证近音自动应用（Ivan 2026-07-19「不能把修复链绑死在 Gemini 额度上」）：
+# 修复词面有词表/转写/弹幕见证 + 拼音相似度 ≥ 此阈值 + suspect 不是注册实体
+# （实体选边永远走音频，kmx/乒乓球案铁律）→ 纯文本直接应用，不消耗任何
+# 外部调用。阈值按 7/18 六案标定：子女/侄女 0.89、七夕/七星 0.83、
+# 查烟查/恰烟恰 ~0.67、一代/伊那 0.67、核酸/和成 ~0.53 全过线；
+# 醉/这一 ~0.44 有意落线下（拼音强变形留给声学仲裁）。
+NEAR_HOMOPHONE_MIN_SIMILARITY = 0.45
+
+try:  # pypinyin 生产已装（song_name_pin 同款可选依赖）；缺失则 T1 关闭回音频
+    from pypinyin import lazy_pinyin as _lazy_pinyin
+except Exception:  # pragma: no cover - 依赖缺失环境
+    _lazy_pinyin = None
+
+
+def _pinyin_similarity(a: str, b: str) -> float:
+    """Toneless-pinyin string similarity; 0.0 when pypinyin is unavailable."""
+
+    if not a or not b or _lazy_pinyin is None:
+        return 0.0
+    return SequenceMatcher(
+        None, " ".join(_lazy_pinyin(a)), " ".join(_lazy_pinyin(b))
+    ).ratio()
 
 _GLOSSARY_TERM_RX = re.compile(r"^[-*]\s*(?:梗词：)?\*{0,2}([^：:（(＝=，,。\s*]{2,12})")
 
@@ -80,6 +103,10 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
    或 disclosure_only（语法润色、意译、宽泛改写、无来源专名等只披露）。
 4. source_backed_entity 必须同时给 source_surface；该完整词面必须逐字出现在别的字幕行
    或上方钦定词表中，不能只凭常识猜。evidence_cue_ids 列出支撑语境的字幕编号。
+   **其余修复类（phonetic/segmentation/spoken_unit）也尽量给 source_surface**：只要
+   修正后的词面在别的字幕行/钦定词表/结构化弹幕里逐字出现（如词表里的品牌名、
+   前文说过的同一短语），就把那个词面填进 source_surface——有见证的近音修复
+   可以免音频直接生效，没见证的才需要音频仲裁。
 5. 主动比较前后重复或近乎平行的句式：若同一个专名槽位一次写成已有权威专名、
    另一次漂成无关普通词，要报后一次；不要因为错误词本身是合法词典词就放过。
    同样，像身份讨论里的「直女/侄女」这类同音词必须按整段语义检查。
@@ -195,12 +222,19 @@ def audit_final_subtitles(
 
         source_surface = str(row.get("source_surface") or "").strip()
         provenance: dict[str, Any] | None = None
-        if proposed and not contract_error and repair_class == "source_backed_entity":
+        if proposed and not contract_error and source_surface:
+            # 见证解析对所有自动修复类开放（2026-07-19 T1 车道）：词面在本片
+            # 其它字幕行 / 词表 / 结构化弹幕逐字出现即为见证。entity/self_ref
+            # 仍硬性要求见证（否则 contract error）；其余类见证是加分项——
+            # 有见证+近音的才有资格走 T1 纯文本应用，没有就照旧走声学仲裁。
             other_cues = "\n".join(
                 cue.text for index, cue in enumerate(cues, start=1) if index != cue_index
             )
-            if not source_surface or source_surface not in proposed:
-                contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
+            if source_surface not in proposed:
+                if repair_class == "source_backed_entity":
+                    contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
+                else:
+                    scope_warnings.append("SOURCE_SURFACE_NOT_IN_PROPOSED")
             elif source_surface.casefold() in other_cues.casefold():
                 provenance = {"kind": "transcript_context", "surface": source_surface}
             elif source_surface.casefold() in glossary_text.casefold():
@@ -210,8 +244,12 @@ def audit_final_subtitles(
                     "kind": "structured_context",
                     "surface": source_surface,
                 }
-            else:
+            elif repair_class == "source_backed_entity":
                 contract_error = "ENTITY_SOURCE_SURFACE_UNWITNESSED"
+            else:
+                scope_warnings.append("SOURCE_SURFACE_UNWITNESSED")
+        if proposed and not contract_error and repair_class == "source_backed_entity" and not source_surface:
+            contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
 
         suspect = derived_suspect if proposed else reported_suspect
         suggestion = derived_replacement if proposed and not contract_error else None
@@ -257,13 +295,22 @@ def route_findings(
     *,
     protected_cue_indexes: Iterable[int] = (),
     protected_term_set: frozenset[str] | None = None,
+    entity_surface_set: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
-    """Apply only sound-faithful suggestions; disclose everything else."""
+    """Apply sound-faithful and witnessed-near-homophone suggestions; disclose the rest.
+
+    ``entity_surface_set``：注册实体（referent groups）的全部 canonical+surface
+    词面。suspect 命中它 = 实体选边（kmx/乒乓球案），永不纯文本应用，必须走
+    声学仲裁——这是 T1 车道的保向铁律边界。
+    """
 
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     texts = [cue.text for cue in cues]
     protected = {int(v) for v in protected_cue_indexes}
     guarded_terms = protected_terms() if protected_term_set is None else protected_term_set
+    folded_entity_surfaces = {
+        surface.casefold() for surface in entity_surface_set if surface
+    }
     rows: list[dict[str, Any]] = []
     applied = 0
     for finding in findings:
@@ -283,17 +330,39 @@ def route_findings(
             contract_error = "PROPOSED_FULL_CUE_MISMATCH"
         if suggestion and contract_error:
             row["suggestion_rejected_reason"] = contract_error
-        if (
+        applicable = (
             suggestion
             and candidate is not None
             and cue_index not in protected
             and suspect in texts[cue_index - 1]
-            and _homophone_equal(suspect, str(suggestion))
-        ):
+        )
+        suspect_is_entity = bool(suspect) and any(
+            surface in suspect.casefold() or suspect.casefold() in surface
+            for surface in folded_entity_surfaces
+        )
+        if applicable and _homophone_equal(suspect, str(suggestion)):
             texts[cue_index - 1] = candidate
             row["routed"] = "homophone_fix"
             applied += 1
+        elif (
+            applicable
+            # T1 见证近音（2026-07-19，7/18 额度事故类机制）：词面有
+            # 词表/转写/弹幕见证 + 拼音近音 + suspect 不是注册实体 →
+            # 纯文本应用，零外部调用。实体选边与拼音强变形仍走声学仲裁。
+            and row.get("candidate_provenance")
+            and not suspect_is_entity
+            and _pinyin_similarity(suspect, str(suggestion))
+            >= NEAR_HOMOPHONE_MIN_SIMILARITY
+        ):
+            texts[cue_index - 1] = candidate
+            row["routed"] = "witnessed_near_homophone_fix"
+            row["pinyin_similarity"] = round(
+                _pinyin_similarity(suspect, str(suggestion)), 3
+            )
+            applied += 1
         else:
+            if applicable and suspect_is_entity:
+                row["entity_surface_conflict"] = True
             row["routed"] = "disclosure" if cue_index not in protected else "disclosure_protected"
         rows.append(row)
     output_lines = []

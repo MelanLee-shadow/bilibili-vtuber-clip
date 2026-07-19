@@ -8,7 +8,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from src.autoslice.chat_authority import (
     ChatEvidence,
@@ -550,6 +550,7 @@ def _run_final_review(
     adapters: TextPipelineAdapters,
     authoritative_chat: list[ChatEvidence] | tuple[ChatEvidence, ...] = (),
     selection_hook: str = "",
+    referent_groups: Sequence[object] = (),
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -588,8 +589,23 @@ def _run_final_review(
             for row in chat_authority_audit.get("applied") or []:
                 for index in row.get("cue_indexes") or []:
                     protected_review_cues.add(int(index))
+            # 注册实体词面（canonical+surfaces）：suspect 命中即实体选边，
+            # T1 纯文本车道让位声学仲裁（kmx/乒乓球保向铁律）。
+            entity_surfaces = frozenset(
+                surface
+                for group in referent_groups
+                for entity in getattr(group, "entities", ())
+                for surface in (
+                    getattr(entity, "canonical", ""),
+                    *getattr(entity, "surfaces", ()),
+                )
+                if surface
+            )
             srt_text, final_review_audit = route_findings(
-                srt_text, review_findings, protected_cue_indexes=protected_review_cues
+                srt_text,
+                review_findings,
+                protected_cue_indexes=protected_review_cues,
+                entity_surface_set=entity_surfaces,
             )
             # 无人值守自定夺：非同音建议交专用的“完整 cue + 前后语境 +
             # 上下文音频”声学相容度检查，再由固定代码规则融合。验证器不能选择或
@@ -965,6 +981,7 @@ def run_text_pipeline(
         authoritative_chat=authoritative_chat,
         adapters=adapters,
         selection_hook=str(spec.get("selection_hook") or ""),
+        referent_groups=entity_context.referent_groups,
     )
     evidence = _finalize_text_evidence(
         spec=spec,

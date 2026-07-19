@@ -13,11 +13,17 @@
 ```
 
 1. **检测≠裁决≠落地**，三层独立记账。7/18 事故的教训：检测层 6/6 全对，落地层全军覆没——事后审计必须能分清是哪层坏了（review-flags 的 `infra_unresolved` 字段就是这个用途）。
-2. **LLM 只报不改**（审片员）；改动要么同音自动应用、要么过声学仲裁；插入只对 source_backed_entity 放开（kmx 漏听案）。
-3. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。
-4. **付费兜底政策可达**：纯额度类失败轮在同一次运行内连续补足「同项失败≥3轮」（`gemini_backup_policy.quota_exhausted_round`），付费触发时 ledger 已有完整失败证据 + 每笔入帐。
-5. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
-6. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁。
+2. **LLM 只报不改**（审片员）；改动按分层裁决落地（见下）；插入只对 source_backed_entity 放开（kmx 漏听案）。
+3. **裁决分层（Ivan 2026-07-19「不能绑死 Gemini 额度、也不能老用付费key」）**：
+   - **T0 确定性**：hard canon / 源真值 ledger / 弹幕逐字——零模型。
+   - **T0.5 同音自动应用**：拼音无调全等（`homophone_fix`）——零外部调用。
+   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有词表/本片转写/结构化弹幕见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **suspect 不是注册实体词面** → 纯文本应用，零外部调用。7/18 六案有五案属此层。
+   - **T3 声学仲裁**：只剩实体 vs 实体选边（kmx/乒乓球、梦限大/Mujica 保向铁律）与拼音强变形（醉堆→这一堆型）。量级 ~1/10。
+   - T2 备选未实施：免费 BCUT 对争议 span 重转写+拼音距离比对（「穷人声学见证」），T3 仍嫌贵时再上。
+4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。
+5. **付费兜底**：同项失败≥3轮即可触发（额度类失败可同 run 连续补轮，`quota_exhausted_round`），每笔入帐。**Ivan 2026-07-19 明确否决冷却期类附加门**——控制付费用量靠 T1 分层缩减声学仲裁需求本身，不靠拖延付费。
+6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
+7. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁（插入永远走 T3，不进 T1）。
 
 ## 模块指针
 

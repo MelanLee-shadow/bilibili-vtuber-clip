@@ -522,3 +522,95 @@ def test_plain_insertion_without_source_provenance_still_rejected():
     assert findings == [] or all(
         row.get("suggestion") is None for row in findings
     )
+
+
+def test_witnessed_near_homophone_applies_without_audio():
+    """T1 车道（2026-07-19 额度事故重构）：词表见证 + 拼音近音 + 非实体选边
+    → 纯文本应用，零外部调用（核酸天下→和成天下案型）。"""
+    srt = _srt("只剩下核酸天下了", "第二句正常文本")
+    findings = audit_final_subtitles(
+        srt,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "只剩下和成天下了",
+                    "repair_class": "phonetic",
+                    "source_surface": "和成天下",
+                    "why": "槟榔品牌语境，核酸天下不成词",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+        glossary_text="- 品牌/话题词：和成天下（槟榔品牌）",
+    )
+    assert findings[0]["candidate_provenance"] == {"kind": "glossary", "surface": "和成天下"}
+
+    output, audit = route_findings(srt, findings)
+    assert "和成天下" in output
+    assert "核酸天下" not in output
+    row = audit["findings"][0]
+    assert row["routed"] == "witnessed_near_homophone_fix"
+    assert row["pinyin_similarity"] >= 0.45
+    assert audit["applied_count"] == 1
+
+
+def test_entity_surface_suspect_never_text_applied():
+    """kmx/乒乓球 保向铁律：suspect 是注册实体词面时 T1 让位声学仲裁。"""
+    srt = _srt("我的乒乓球又来直播间了", "第二句")
+    findings = audit_final_subtitles(
+        srt,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "entity",
+                    "proposed_full_cue": "我的kmx又来直播间了",
+                    "repair_class": "source_backed_entity",
+                    "source_surface": "kmx",
+                    "why": "帕鲁语境乒乓球是kmx误听",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+        glossary_text="- 人名/ID：kmx",
+    )
+    assert findings and findings[0]["suggestion"] == "kmx"
+
+    # protected_term_set 置空以隔离测试实体选边车道本身（真实运行里
+    # 乒乓球还会先被词表保护车道拦下——两道防线殊途同归都不许纯文本改写）。
+    output, audit = route_findings(
+        srt,
+        findings,
+        protected_term_set=frozenset(),
+        entity_surface_set=frozenset({"kmx", "乒乓球"}),
+    )
+    assert "乒乓球" in output  # 未被纯文本改写
+    row = audit["findings"][0]
+    assert row["routed"] == "disclosure"
+    assert row.get("entity_surface_conflict") is True
+
+
+def test_witnessed_but_phonetically_distant_stays_disclosure():
+    srt = _srt("只剩下苹果手机了", "上面提到和成天下")
+    findings = audit_final_subtitles(
+        srt,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "只剩下和成天下了",
+                    "repair_class": "phonetic",
+                    "source_surface": "和成天下",
+                    "why": "强行替换",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+        glossary_text="- 品牌/话题词：和成天下（槟榔品牌）",
+    )
+    output, audit = route_findings(srt, findings)
+    assert "苹果手机" in output
+    assert audit["findings"][0]["routed"] == "disclosure"
