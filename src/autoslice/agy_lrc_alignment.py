@@ -369,6 +369,17 @@ def _gemini_api_observe(*, audio_path: Path, prompt: str, key: str) -> str:
     """
 
     audio_b64 = base64.b64encode(audio_path.read_bytes()).decode("ascii")
+    # AGY-parity thinking budget (Ivan 2026-07-19: the subscription lane runs
+    # this same model in High thinking mode, and the tiers differ only in call
+    # order — without an explicit budget the API skims multi-minute audio and
+    # returns sparse observations that still pass shape validation).  -1 keeps
+    # provider-side dynamic thinking.
+    try:
+        thinking_budget = int(os.environ.get("SONG_GEMINI_API_THINKING_BUDGET", "24576"))
+    except ValueError:
+        thinking_budget = 24_576
+    if thinking_budget != -1:
+        thinking_budget = min(32_768, max(0, thinking_budget))
     body = {
         "contents": [
             {
@@ -382,6 +393,7 @@ def _gemini_api_observe(*, audio_path: Path, prompt: str, key: str) -> str:
             "temperature": 0.1,
             "maxOutputTokens": 65_536,
             "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingBudget": thinking_budget},
         },
     }
     url = GEMINI_API_URL.format(model=urllib.parse.quote(GEMINI_API_AUDIO_LRC_MODEL, safe=""))

@@ -4499,3 +4499,58 @@ def test_audio_lrc_quota_rounds_complete_in_run_and_paid_fires(
     assert calls.count("gap-key-three") == 3
     assert paid_secret in calls
     assert backup_policy.free_chain_strikes(item_key) >= 3
+
+
+@pytest.mark.parametrize(
+    ("env_value", "expected_budget"),
+    [
+        (None, 24_576),
+        ("512", 512),
+        ("-1", -1),
+        ("999999", 32_768),
+        ("junk", 24_576),
+    ],
+)
+def test_gemini_api_observe_requests_agy_parity_thinking_budget(
+    tmp_path, monkeypatch, env_value, expected_budget
+):
+    # AGY runs the same model in High thinking mode; the API request must
+    # carry an explicit budget or long audio gets skimmed into sparse
+    # observations that still pass shape validation.
+    if env_value is None:
+        monkeypatch.delenv("SONG_GEMINI_API_THINKING_BUDGET", raising=False)
+    else:
+        monkeypatch.setenv("SONG_GEMINI_API_THINKING_BUDGET", env_value)
+    audio = tmp_path / "input.mp3"
+    audio.write_bytes(b"fake-audio")
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(
+        agy_lrc_alignment.urllib.request, "urlopen", fake_urlopen
+    )
+
+    raw = agy_lrc_alignment._gemini_api_observe(
+        audio_path=audio, prompt="prompt", key="secret"
+    )
+
+    assert raw == "{}"
+    generation_config = captured["body"]["generationConfig"]
+    assert generation_config["thinkingConfig"] == {
+        "thinkingBudget": expected_budget
+    }
