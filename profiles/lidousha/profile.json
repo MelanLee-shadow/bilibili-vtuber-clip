@@ -83,8 +83,7 @@
   "titles": {
     "talk_prefix": "【李豆沙】",
     "song_prefix": "【李豆沙】豆沙歌，",
-    "song_hook_template": "【李豆沙】豆沙歌，《{song_title}》｜{hook}",
-    "song_plain_template": "【李豆沙】豆沙歌，直播间唱《{song_title}》"
+    "song_plain_template": "【李豆沙】豆沙歌，《{song_title}》"
   },
   "text_normalization": {
     "canonical_surfaces": [

@@ -758,11 +758,10 @@ def song_completion_evidence(record: dict) -> dict:
     )
 
 
-def verified_song_fallback_title(song_title: str | None, hook: str | None) -> str | None:
+def verified_song_fallback_title(song_title: str | None, hook: str | None = None) -> str | None:
     return _song_completion.verified_song_fallback_title(
         song_title,
         hook,
-        song_hook_template=CHANNEL_PROFILE.song_hook_template,
         song_plain_template=CHANNEL_PROFILE.song_plain_template,
     )
 

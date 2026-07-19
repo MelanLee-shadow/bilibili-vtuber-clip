@@ -37,3 +37,29 @@ def test_title_policy_asset_rejects_unknown_fields(tmp_path, monkeypatch):
 
     with pytest.raises(title_policy.TitlePolicyError, match=r"unknown=\['surprise'\]"):
         title_policy._load_title_policy()
+
+
+# Ivan 2026-07-14/19 歌切标题铁律：自动标题只要带歌切前缀就折叠成
+# 「前缀《歌名》」，「｜副标题」/hook 尾巴/衬词一律清除。
+def test_canonicalize_song_catalog_title_strips_hook_suffix():
+    assert title_policy.canonicalize_song_catalog_title(
+        "【李豆沙】豆沙歌，《暖暖》｜自弹自唱温柔哄睡"
+    ) == "【李豆沙】豆沙歌，《暖暖》"
+    assert title_policy.canonicalize_song_catalog_title(
+        "【李豆沙】豆沙歌，直播间唱《芽吹くとき》"
+    ) == "【李豆沙】豆沙歌，《芽吹くとき》"
+    assert title_policy.canonicalize_song_catalog_title(
+        "【李豆沙】豆沙歌，吵闹熊猫头的《嘉宾》"
+    ) == "【李豆沙】豆沙歌，《嘉宾》"
+
+
+def test_canonicalize_song_catalog_title_passes_talk_titles_through():
+    talk = "【李豆沙】被说开组会来晚了，主播反怼：因为我们还没开始唱"
+    assert title_policy.canonicalize_song_catalog_title(talk) == talk
+    quoted_talk = "【李豆沙】《虫儿飞》翻车成《冲而飞》？主播唱到满屏幻听笑点"
+    assert title_policy.canonicalize_song_catalog_title(quoted_talk) == quoted_talk
+
+
+def test_canonicalize_song_catalog_title_no_song_name_untouched():
+    weird = "【李豆沙】豆沙歌，没有书名号的标题"
+    assert title_policy.canonicalize_song_catalog_title(weird) == weird

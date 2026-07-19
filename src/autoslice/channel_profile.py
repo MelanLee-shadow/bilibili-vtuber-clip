@@ -93,7 +93,6 @@ class ChannelProfile:
     voiceprint_reference_subdirectory: str
     song_title_prefix: str
     talk_title_prefix: str
-    song_hook_template: str
     song_plain_template: str
     canonical_surface_rules: tuple[CanonicalSurfaceRule, ...]
     decisions: Mapping[str, str]
@@ -146,8 +145,9 @@ class ChannelProfile:
         return self._rebase_repo_path(path, repo_root)
 
     def format_song_title(self, song_title: str, *, hook: str | None = None) -> str:
-        if hook:
-            return self.song_hook_template.format(song_title=song_title, hook=hook)
+        # Ivan 2026-07-14 / 2026-07-19: 歌切标题是固定目录式「前缀《歌名》」，
+        # 《歌名》后不允许任何字符（含「｜副标题」/hook 尾巴）。hook 参数仅为
+        # 兼容旧调用点保留，永远被忽略。
         return self.song_plain_template.format(song_title=song_title)
 
     def fingerprint_paths(self, *, repo_root: Path | None = None) -> tuple[Path, ...]:
@@ -429,25 +429,29 @@ def load_channel_profile(
         required={
             "talk_prefix",
             "song_prefix",
-            "song_hook_template",
             "song_plain_template",
         },
     )
     talk_title_prefix = _string(titles.get("talk_prefix"), label="titles.talk_prefix")
     song_title_prefix = _string(titles.get("song_prefix"), label="titles.song_prefix")
-    song_hook_template = _string(
-        titles.get("song_hook_template"), label="titles.song_hook_template"
-    )
     song_plain_template = _string(
         titles.get("song_plain_template"), label="titles.song_plain_template"
     )
     try:
-        hook_probe = song_hook_template.format(song_title="SONG", hook="HOOK")
         plain_probe = song_plain_template.format(song_title="SONG")
     except (KeyError, ValueError) as exc:
         raise ChannelProfileError(f"invalid song title template: {exc}") from exc
-    if "SONG" not in hook_probe or "HOOK" not in hook_probe or "SONG" not in plain_probe:
+    if "SONG" not in plain_probe:
         raise ChannelProfileError("song title templates must preserve their declared fields")
+    # Ivan 2026-07-14 / 2026-07-19 铁律：歌切标题固定为「前缀《歌名》」，
+    # 前缀与《歌名》之间、《歌名》之后都不允许任何字符（含「｜副标题」/hook
+    # 尾巴/「直播间唱」类衬词）。schema 层直接拒绝违规模板，让规则无法再被
+    # 单点资产/prompt 悄悄绕开。
+    if song_plain_template != song_title_prefix + "《{song_title}》":
+        raise ChannelProfileError(
+            "titles.song_plain_template must be exactly song_prefix + 《{song_title}》 — "
+            "song titles are fixed catalog form with nothing before or after the song name"
+        )
 
     text_normalization = _mapping(
         root.get("text_normalization"), label="text_normalization"
@@ -543,7 +547,6 @@ def load_channel_profile(
         voiceprint_reference_subdirectory=voiceprint_reference_subdirectory,
         song_title_prefix=song_title_prefix,
         talk_title_prefix=talk_title_prefix,
-        song_hook_template=song_hook_template,
         song_plain_template=song_plain_template,
         canonical_surface_rules=tuple(canonical_surface_rules),
         decisions=MappingProxyType(decisions),

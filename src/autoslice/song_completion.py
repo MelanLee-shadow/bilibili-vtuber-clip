@@ -1355,22 +1355,17 @@ def song_completion_evidence(
 
 def verified_song_fallback_title(
     song_title: str | None,
-    hook: str | None,
+    hook: str | None = None,
     *,
-    song_hook_template: str = CHANNEL_PROFILE.song_hook_template,
     song_plain_template: str = CHANNEL_PROFILE.song_plain_template,
 ) -> str | None:
-    """Build a hook-bearing fallback when semantic publish staging was advisory-blocked."""
+    """Deterministic song title: fixed catalog form, never a hook suffix.
+
+    Ivan 2026-07-14 / 2026-07-19 铁律：歌切标题就是「【李豆沙】豆沙歌，《歌名》」，
+    《歌名》后不加任何字（旧「｜{hook}」副标题格式已废除）。hook 参数仅为兼容
+    旧调用点保留，永远被忽略。
+    """
     song_title = str(song_title or "").strip()
     if not song_title:
         return None
-    hook = str(hook or "").strip()
-    hook = re.split(r"[，。！？；]", hook, maxsplit=1)[0].strip()
-    # Recall hooks often repeat a slightly different ASR spelling of the song
-    # inside 《》.  Truncating that text at 16 characters produced broken titles
-    # such as "《和你迎着台风去看".  The LRC-verified canonical title already
-    # owns the name; keep only the hook phrase before a repeated quote.
-    hook = re.split(r"[《「『]", hook, maxsplit=1)[0].rstrip("：:｜|、 ")
-    if hook and hook != "确定性歌检测补充(演唱段)":
-        return song_hook_template.format(song_title=song_title, hook=hook[:16])
     return song_plain_template.format(song_title=song_title)

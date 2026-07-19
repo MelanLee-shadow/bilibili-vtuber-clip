@@ -451,6 +451,23 @@ def _published_song_delivery_allowed(result: dict, summary_record: dict) -> bool
     return False
 
 
+def _apply_canonical_song_title(result: dict, *, summary_record: dict, cid: str) -> None:
+    """Ivan 2026-07-19 歌切标题铁律：边界/LRC 验证过的《歌名》是唯一标题权威，
+    标题固定为「【李豆沙】豆沙歌，《歌名》」——staged/LLM 标题带任何 hook 尾巴
+    或不同拼写时在这里最终定形，覆盖记录留审计。"""
+
+    boundary = (summary_record.get("source_context_job") or {}).get("song_boundary") or {}
+    canonical_title = _runner.verified_song_fallback_title(boundary.get("song_title"))
+    if canonical_title and result.get("title") != canonical_title:
+        if result.get("title"):
+            _runner.log(
+                f"song lane {cid}: staged title {result['title']!r} "
+                f"canonicalized to {canonical_title!r}"
+            )
+            result["title_before_canonical_override"] = result["title"]
+        result["title"] = canonical_title
+
+
 def produce_song(date: str, item: dict) -> dict:
     """Run the fail-closed song pipeline; retry anchor bleed on the sung core."""
     early_block = _early_published_song_block(item)
@@ -604,9 +621,8 @@ def produce_song(date: str, item: dict) -> dict:
             burned = None
         result["song_complete"] = completion["ready"] is True
         result["lyrics_alignment_ready"] = completion["lyrics_alignment_status"] == "READY"
-        if result["song_complete"] and not result.get("title"):
-            boundary = (summary_record.get("source_context_job") or {}).get("song_boundary") or {}
-            result["title"] = _runner.verified_song_fallback_title(boundary.get("song_title"), item.get("hook"))
+        if result["song_complete"]:
+            _apply_canonical_song_title(result, summary_record=summary_record, cid=cid)
         if "cover_release_gate_satisfied" in artifacts:
             result["cover_release_gate_satisfied"] = artifacts["cover_release_gate_satisfied"]
         delivery_authorized = burned is not None and burned.is_file() and _runner.song_delivery_ok(

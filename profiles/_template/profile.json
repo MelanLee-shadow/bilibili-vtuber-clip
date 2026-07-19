@@ -80,8 +80,7 @@
   "titles": {
     "talk_prefix": "【替换为主播名】",
     "song_prefix": "【替换为主播名】歌切，",
-    "song_hook_template": "【替换为主播名】歌切，《{song_title}》｜{hook}",
-    "song_plain_template": "【替换为主播名】歌切，直播间唱《{song_title}》"
+    "song_plain_template": "【替换为主播名】歌切，《{song_title}》"
   },
   "text_normalization": {
     "canonical_surfaces": []

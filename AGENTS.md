@@ -1,5 +1,9 @@
 # vtuber-slice Agent Notes
 
+## 流水线分步权威（Ivan 2026-07-19）
+
+- 流水线按步拆分在 `docs/pipeline/`（`README.md` 是指针索引）。**进行到某一步只读该步文件；改某步规则只改该步文件及其指向的代码强制层。** 其他文档（含本文件）对步骤规则只放指针，不复制正文——复制即债。
+
 ## Project direction
 
 - The autoslice production source of truth is the committed deployment at `free:/opt/bilive/autoslice/repo` plus its live `state/`, `out/`, and `reports/` directories. The recorder source remains `free:/opt/bilive/app` and the `bilive_record` container path `/app`. The local macOS workspace is source staging/docs/tests plus review mirrors, not the final runtime or artifact store.
@@ -13,8 +17,8 @@
 - For 李豆沙 “活字乱刷” historical-speech reconstruction, source repair, guest-speaker exclusion, suggestion variants, and no-upload试听交付, use `.agent/skills/huozi-luanshua/SKILL.md`.
 - For song lyric subtitle timing in this repository, use the project-local skill at `.agent/skills/song-lyrics-timeline-aligner/SKILL.md`.
 - Do not rely on a personal/global copy of that skill. The intended workflow is project-specific: external timed lyric source, clip-local first/last lyric anchors, global shift first, tail verification, and only explicit evidence-based stretch.
-- For 李豆沙 song uploads, keep the `【李豆沙】豆沙歌，...` prefix but prefer hook-style titles that fold in the song name and live context, instead of plain catalog titles like `【李豆沙】豆沙歌，《歌名》`.
-- When a song upload title changes, update the matching cover text before considering the edit complete. Cover text should omit `【李豆沙】豆沙歌，` and use the same hook phrase in a short readable form.
+- 歌切标题铁律（Ivan 2026-07-14 定、2026-07-19 重申并全局落地）：固定目录式 `【李豆沙】豆沙歌，《歌名》`，《歌名》前后不加任何字——禁止 `｜副标题`、hook 尾巴、「直播间唱」类衬词。schema 校验（`channel_profile.py`）、choke-point 规范化（`title_policy.canonicalize_song_catalog_title`）与 song lane canonical override 三层强制；不要在任何 prompt/资产/文档里再引入 hook 式歌切标题指导。
+- When a song upload title changes, update the matching cover text before considering the edit complete. Song cover text is the title minus the `【李豆沙】豆沙歌，` prefix (i.e. `《歌名》`), rendered big (banner) per the cover skill.
 
 ## Unattended runner (2026-07-06)
 

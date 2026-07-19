@@ -3817,13 +3817,17 @@ def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization
     assert "SONG_BURNED_PREVIEW_HASH_INVALID" in evidence["reason_codes"]
 
 
-def test_verified_song_fallback_title_keeps_song_and_hook():
+def test_verified_song_fallback_title_is_fixed_catalog_form():
+    # Ivan 2026-07-14/19 铁律：歌切标题就是「【李豆沙】豆沙歌，《歌名》」，
+    # hook 永远被忽略，《歌名》后不加任何字。
     assert runner.verified_song_fallback_title("芽吹くとき", "下播前的温柔哄睡小歌，唱完刷晚安") == (
-        "【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌"
+        "【李豆沙】豆沙歌，《芽吹くとき》"
     )
     assert runner.verified_song_fallback_title(
         "想和你迎着台风去看海", "台风天唱甜甜的《和你迎着台风去看海》"
-    ) == "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
+    ) == "【李豆沙】豆沙歌，《想和你迎着台风去看海》"
+    assert runner.verified_song_fallback_title("暖暖") == "【李豆沙】豆沙歌，《暖暖》"
+    assert runner.verified_song_fallback_title(None) is None
 
 
 def test_song_proof_retry_padding_exceeds_recall_padding():
@@ -4530,9 +4534,8 @@ def test_explicit_song_recovery_authority_backfill_verifies_exact_attempt_and_ti
     )
     assert state_record["selector_record_candidate_id"] == "seededsong_ready"
     assert state_record["verified_delivery_pending_commit"] is True
-    assert state_record["title"] == (
-        "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
-    )
+    # Ivan 2026-07-14/19 铁律：恢复路径的标题同样是固定目录式，hook 被忽略。
+    assert state_record["title"] == "【李豆沙】豆沙歌，《想和你迎着台风去看海》"
     assert state_record["selector_summary_authority_backfill"]["upload_enabled"] is False
     assert state_record["song_delivery_recovery_authority"] == {
         "schema_version": "song-delivery-recovery-authority.v1",

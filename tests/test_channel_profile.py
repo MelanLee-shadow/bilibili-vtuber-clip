@@ -38,8 +38,7 @@ def _other_profile_document() -> dict:
     document["titles"] = {
         "talk_prefix": "【另一位主播】",
         "song_prefix": "【另一位主播】歌切，",
-        "song_hook_template": "【另一位主播】歌切，《{song_title}》｜{hook}",
-        "song_plain_template": "【另一位主播】歌切，直播间唱《{song_title}》",
+        "song_plain_template": "【另一位主播】歌切，《{song_title}》",
     }
     document["text_normalization"] = {"canonical_surfaces": []}
     document["decisions"] = {
@@ -115,10 +114,11 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         ("李豆莎", "李豆沙"),
         ("苏马奶", "十麻乃"),
     ]
+    # Ivan 2026-07-14/19 铁律：歌切标题固定目录式，hook 一律被忽略。
     assert profile.format_song_title("芽吹くとき", hook="下播前的温柔哄睡小歌") == (
-        "【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌"
+        "【李豆沙】豆沙歌，《芽吹くとき》"
     )
-    assert profile.format_song_title("芽吹くとき") == "【李豆沙】豆沙歌，直播间唱《芽吹くとき》"
+    assert profile.format_song_title("芽吹くとき") == "【李豆沙】豆沙歌，《芽吹くとき》"
     assert profile.decision("host_vocal_present") == (
         "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
     )
@@ -174,7 +174,7 @@ def test_committed_profile_can_drive_a_different_channel_without_code_changes(tm
     assert profile.delivery_root == repo / "other_host"
     assert profile.asset_file("known_songs") == asset_root / "known_songs.json"
     assert profile.format_song_title("测试歌", hook="测试钩子") == (
-        "【另一位主播】歌切，《测试歌》｜测试钩子"
+        "【另一位主播】歌切，《测试歌》"
     )
     assert profile.decision("host_vocal_present") == "HOST_VOCAL_PRESENT"
     assert profile.canonical_surface_rules == ()

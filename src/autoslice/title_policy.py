@@ -125,6 +125,29 @@ def _title_policy_violations(title: str) -> list[str]:
     return violations
 
 
+_SONG_NAME_IN_TITLE_RX = re.compile(r"《([^《》]{1,80})》")
+
+
+def canonicalize_song_catalog_title(title: str) -> str:
+    """Collapse an automatic song title to the fixed catalog form.
+
+    Ivan 2026-07-14 / 2026-07-19 铁律：歌切标题 = 歌切前缀 + 《歌名》，前缀与
+    《歌名》之间、《歌名》之后都不允许任何字符（含「｜副标题」/hook 尾巴）。
+    这是所有自动标题的最终 choke point——无论标题来自 LLM、兜底模板还是恢复
+    路径，只要带歌切前缀就在这里折叠定形。谈话标题与不含《歌名》的标题原样
+    通过；Ivan 手定标题（title_llm_call=None）不经过本函数。
+    """
+
+    stripped = title.strip()
+    prefix = CHANNEL_PROFILE.song_title_prefix
+    if not stripped.startswith(prefix):
+        return stripped
+    match = _SONG_NAME_IN_TITLE_RX.search(stripped[len(prefix):])
+    if match is None:
+        return stripped
+    return f"{prefix}《{match.group(1)}》"
+
+
 def _ensure_lidousha_prefix(title: str) -> str:
     """Guarantee the selected profile's publish prefix on an automatic title."""
 

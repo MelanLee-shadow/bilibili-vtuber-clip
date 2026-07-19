@@ -3337,8 +3337,10 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
 
     def fake_title_llm(prompt: str) -> str:
         assert "价格有点贵哈哈哈" in prompt
+        # Prompt freeze includes the title_style asset; 2026-07-19 歌切标题
+        # 铁律改写该资产后哈希随之更新。
         assert hashlib.sha256(prompt.encode()).hexdigest() == (
-            "c71d81886d13f1f1297cc23a2dc12b50fdc3b51652d61953e94e60c78444a56f"
+            "3edd92ccbe43503b5aa9d80347319383bec1b0591486e67749246762fa8f47aa"
         )
         return '{"title": "主播吐槽游戏价格贵，笑场三连"}'
 

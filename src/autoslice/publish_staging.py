@@ -33,6 +33,7 @@ from .title_policy import (
     _TITLE_MAX_LEN,
     _TITLE_MIN_LEN,
     _ensure_lidousha_prefix,
+    canonicalize_song_catalog_title,
     _selection_hook_anchor_valid,
     _selection_hook_fallback_title,
     _selection_hook_first_clause,
@@ -246,6 +247,11 @@ def _stage_publish_draft(
     # Ivan 2026-07-13 梗词铁律的标题/封面确定性兜底（字幕面在
     # normalize_code_switch_surfaces；LLM 标题若仍写出「直女」这里回正）。
     staged_title = canonicalize_hard_surfaces(staged_title)
+    # Ivan 2026-07-14/19 歌切标题铁律 choke point：自动标题只要带歌切前缀就
+    # 折叠成「前缀《歌名》」，任何「｜副标题」/hook 尾巴在这里被最终清除。
+    # 手定标题（title_llm_call=None）保持一字不改的铁律，不进此函数。
+    if title_llm_call is not None:
+        staged_title = canonicalize_song_catalog_title(staged_title)
     cover_text = _lidousha_cover_text(staged_title)
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail
