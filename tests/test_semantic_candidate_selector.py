@@ -47,7 +47,7 @@ def test_prompt_is_viewer_perspective_and_lists_all_cues():
     assert "第5句话" in prompt
 
 
-def test_default_profile_keeps_pre_profile_semantic_prompt_byte_identical():
+def test_default_profile_semantic_prompt_policy_fingerprint():
     prompt = build_semantic_recall_prompt(
         [SourceCue("c1", 1_000, 3_000, "测试")],
         max_candidates=2,
@@ -55,7 +55,7 @@ def test_default_profile_keeps_pre_profile_semantic_prompt_byte_identical():
     )
 
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "41053ff0d4f386501473825c083528e6797c119349b57e500737a8d731f12ca9"
+        "7c00da68fdc60e65d3e1575f3b4be2003c47d5f1fbd7f6fa260f8bdf82cfdc58"
     )
 
 
@@ -77,6 +77,45 @@ def test_selects_talk_candidate_with_semantic_boundary():
     assert candidate.boundary.resolved_end_ms == cues[19].source_end_ms
     assert "SEMANTIC_RECALL" in candidate.boundary.reason_codes
     assert diagnostics["hooks"][candidate.anchor.candidate_id] == "弹幕接梗"
+
+
+def test_semantic_recall_carries_bounded_filler_proposals_to_diagnostics():
+    cues = _cues()
+
+    def llm(prompt: str) -> str:
+        return _completion(
+            [
+                {
+                    "start_cue": 5,
+                    "end_cue": 20,
+                    "kind": "talk",
+                    "hook": "礼物致谢后继续原话题",
+                    "confidence": 0.95,
+                    "filler_removals": [
+                        {
+                            "mode": "remove_cues",
+                            "start_cue": "#10",
+                            "end_cue": 11.0,
+                            "reason": "gift_thanks",
+                            "bridge_coherent": True,
+                            "bridge": "第9句和第12句在讲同一个话题",
+                            "confidence": 0.98,
+                        }
+                    ],
+                }
+            ]
+        )
+
+    selected, diagnostics = select_semantic_session_candidates(
+        cues, llm_call=llm, max_candidates=3
+    )
+
+    candidate_id = selected[0].anchor.candidate_id
+    proposal = diagnostics["filler_proposals"][candidate_id][0]
+    assert proposal["start_cue"] == 10
+    assert proposal["end_cue"] == 11
+    assert proposal["reason"] == "gift_thanks"
+    assert proposal["bridge_coherent"] is True
 
 
 def test_context_trigger_extends_window_start():

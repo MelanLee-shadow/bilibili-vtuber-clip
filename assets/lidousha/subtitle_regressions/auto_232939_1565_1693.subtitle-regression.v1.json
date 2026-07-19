@@ -1,0 +1,11 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_232939_1565_1693",
+  "required_payload_substrings": [
+    "花篮"
+  ],
+  "forbidden_payload_substrings": [
+    "ありがとう"
+  ],
+  "forbidden_exact_cues": []
+}

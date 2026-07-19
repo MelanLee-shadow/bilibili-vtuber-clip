@@ -21,6 +21,11 @@ from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
 )
+from src.autoslice.talk_filler import (
+    build_piece_specs,
+    build_talk_filler_plan,
+    verify_automatic_filler_plan,
+)
 
 
 _runner = RunnerProxy()
@@ -135,12 +140,18 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
             cues, llm_call=llm, max_candidates=_runner.PER_SEGMENT_CANDIDATES, danmaku_hints=hints
         )
         hooks = diag.get("hooks") or {}
+        filler_proposals = diag.get("filler_proposals") or {}
+        source_srt_sha256 = "sha256:" + hashlib.sha256(
+            srt_path.read_bytes()
+        ).hexdigest()
         extras = {}
         for cand in candidates:
             cid = cand.anchor.candidate_id
             extras[cid] = {
                 "hook": str(hooks.get(cid) or ""),
                 "confidence": round(float(getattr(cand.boundary, "start_boundary_score", 0.5) or 0.5), 2),
+                "filler_proposals": list(filler_proposals.get(cid) or []),
+                "filler_proposal_srt_sha256": source_srt_sha256,
             }
         # Deterministic song supplement: recall's candidate cap squeezes songs
         # out on song-heavy streams (first real run: 4+ songs sung, 1 caught).
@@ -275,7 +286,9 @@ def classify_talk_failure(attempt_output: str) -> dict:
     tail = attempt_output[-8000:]
     nonempty = [line.strip() for line in tail.splitlines() if line.strip()]
     message = nonempty[-1][:1200] if nonempty else "producer exited without diagnostic"
-    if "BOUNDARY_UNREPAIRABLE" in tail:
+    if "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
+        kind, stage, recoverable = "content_duration", "boundary_resolution", False
+    elif "BOUNDARY_UNREPAIRABLE" in tail:
         kind, stage, recoverable = "content_boundary", "boundary_resolution", False
     elif "voiceprint_profile.v1.json" in tail and (
         "FileNotFoundError" in tail or "No such file" in tail
@@ -310,6 +323,96 @@ def classify_talk_failure(attempt_output: str) -> dict:
     }
 
 
+def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
+    source_srt_path = (
+        Path(str(item["bcut_srt_path"]))
+        if item.get("bcut_srt_path")
+        else None
+    )
+    filler_proposals = [
+        row
+        for row in (item.get("filler_proposals") or [])
+        if isinstance(row, dict)
+    ]
+    reviewed_removals = [
+        row
+        for row in (item.get("reviewed_filler_removals") or [])
+        if isinstance(row, dict)
+    ]
+    cues = []
+    if source_srt_path is not None and source_srt_path.is_file():
+        from scripts.run_auto_review_shadow_pipeline import _parse_srt
+
+        cues = _parse_srt(source_srt_path)
+    filler_plan = build_talk_filler_plan(
+        start_ms=int(item["start_ms"]),
+        end_ms=int(item["end_ms"]),
+        cues=cues,
+        proposals=filler_proposals,
+        proposal_srt_sha256=(
+            str(item.get("filler_proposal_srt_sha256") or "") or None
+        ),
+        source_srt_path=source_srt_path,
+        reviewed_removals=reviewed_removals,
+    )
+    automatic_removals = [
+        row
+        for row in (filler_plan.get("removals") or [])
+        if isinstance(row, dict)
+        and row.get("authorization_kind") == "automatic"
+    ]
+    if not automatic_removals:
+        return filler_plan
+
+    from src.autoslice.llm_client import LlmConfig, build_llm_call
+
+    verifier = build_llm_call(
+        LlmConfig(
+            transport="command",
+            command_template=(
+                f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh "
+                "{prompt_file} {completion_file} "
+                "'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+            ),
+            timeout_seconds=600.0,
+        )
+    )
+    global_verification = verify_automatic_filler_plan(
+        cues=cues,
+        plan=filler_plan,
+        llm_call=verifier,
+    )
+    if global_verification.get("status") == "PASS":
+        filler_plan["global_verification"] = global_verification
+        return filler_plan
+
+    rejected_plan = filler_plan
+    filler_plan = build_talk_filler_plan(
+        start_ms=int(item["start_ms"]),
+        end_ms=int(item["end_ms"]),
+        cues=cues,
+        source_srt_path=source_srt_path,
+        reviewed_removals=reviewed_removals,
+    )
+    filler_plan["status"] = (
+        "active_reviewed_only_after_global_semantic_veto"
+        if filler_plan.get("removals")
+        else "contiguous_fallback_global_semantic_veto"
+    )
+    filler_plan["rejected_proposals"] = [
+        *(rejected_plan.get("rejected_proposals") or []),
+        *[
+            {
+                "proposal_id": row.get("proposal_id"),
+                "reason_code": "GLOBAL_SEMANTIC_VERIFIER_VETO",
+            }
+            for row in automatic_removals
+        ],
+    ]
+    filler_plan["global_verification"] = global_verification
+    return filler_plan
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -320,8 +423,33 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
     """
     cid = item["cid"]
+    filler_plan = _prepare_talk_filler_plan(item)
+    effective_duration_ms = int(filler_plan["effective_duration_ms"])
+    if effective_duration_ms <= _runner.MIN_TALK_EFFECTIVE_DURATION_MS:
+        return {
+            "candidate_id": cid,
+            "segment": Path(item["segment_path"]).name,
+            "start_ms": item["start_ms"],
+            "end_ms": item["end_ms"],
+            "effective_duration_ms": effective_duration_ms,
+            "hook": item.get("hook", ""),
+            "confidence": item.get("confidence"),
+            "lane": item.get("lane", ""),
+            "talk_filler_plan": filler_plan,
+            "rc": 0,
+            "status": "candidate_rejected",
+            "rejection_reason": "talk_effective_duration_too_short",
+            "reason_codes": ["TALK_EFFECTIVE_DURATION_NOT_OVER_45S"],
+            "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
+        }
     out_root = _runner.BASE / "out" / date
     delivery_name = _runner.safe_name(item.get("hook", ""), cid)
+    pieces = build_piece_specs(
+        item=item,
+        plan=filler_plan,
+        pre_ms=_runner.PIECE_PRE_MS,
+        post_ms=_runner.PIECE_POST_MS,
+    )
     spec = {
         "candidate_id": cid,
         "date": date,
@@ -333,16 +461,10 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "lead_pad_ms": 400,
         "semantic_start_ms": item["start_ms"],
         "semantic_end_ms": item["end_ms"],
+        "minimum_effective_duration_ms": _runner.MIN_TALK_EFFECTIVE_DURATION_MS,
         "boundary_repair_extend_cap_ms": _runner.BOUNDARY_REPAIR_INITIAL_CAP_MS,
-        "pieces": [
-            {
-                "remote_media": item["segment_path"],
-                "start_ms": max(0, item["start_ms"] - _runner.PIECE_PRE_MS),
-                "end_ms": min(item["seg_dur_ms"], item["end_ms"] + _runner.PIECE_POST_MS) if item["seg_dur_ms"] else item["end_ms"] + _runner.PIECE_POST_MS,
-                **({"danmaku_xml_local": item["xml"]} if item.get("xml") else {}),
-                **({"chat_jsonl_local": item["chat_jsonl"]} if item.get("chat_jsonl") else {}),
-            }
-        ],
+        "pieces": pieces,
+        "talk_filler_plan": filler_plan,
     }
     song_name_candidates = item.get("song_name_candidates")
     if song_name_candidates:
@@ -368,8 +490,17 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     out_root.mkdir(parents=True, exist_ok=True)
     spec_path = out_root / f"spec_{cid}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+    filler_plan_path = out_root / f"{cid}.filler-plan.json"
+    filler_plan_path.write_text(
+        json.dumps(filler_plan, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
     log_path = _runner.BASE / "logs" / f"{date}_{cid}.log"
-    _runner.log(f"producing {cid} ({(item['end_ms'] - item['start_ms']) // 1000}s) from {Path(item['segment_path']).name}")
+    _runner.log(
+        f"producing {cid} ({effective_duration_ms // 1000}s effective, "
+        f"{len(pieces)} piece(s)) from {Path(item['segment_path']).name}"
+    )
     cmd = [sys.executable, str(_runner.REPO_ROOT / "scripts" / "produce_slice_package.py"),
            "--spec", str(spec_path), "--ssh-host", "localhost", "--speaker-mode", _runner.SPEAKER_MODE]
     if reuse_cover:
@@ -396,7 +527,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         and "BOUNDARY_UNREPAIRABLE" in first_tail
         and "retry_scope=same_topic_continues" in first_tail
     ):
-        piece = spec["pieces"][0]
+        piece = spec["pieces"][-1]
         retry_end = (
             min(item["seg_dur_ms"], item["end_ms"] + _runner.BOUNDARY_CONTEXT_RETRY_POST_MS)
             if item["seg_dur_ms"]
@@ -425,6 +556,10 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_transient_retry_count": int(item.get("talk_transient_retry_count") or 0),
         "selected_repair": bool(item.get("selected_repair")),
         "retry_reason": item.get("retry_reason"),
+        "effective_duration_ms": effective_duration_ms,
+        "talk_filler_plan_status": filler_plan.get("status"),
+        "talk_filler_removal_count": len(filler_plan.get("removals") or []),
+        "talk_filler_plan_path": str(filler_plan_path),
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
     # Classify only bytes written by this subprocess attempt.  The log is
@@ -472,6 +607,13 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                 return result
         if _runner._speaker_evidence_insufficient_failure(tail):
             result["status"] = "speaker_evidence_insufficient"
+            return result
+        if "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
+            result["status"] = "candidate_rejected"
+            result["rejection_reason"] = "talk_effective_duration_too_short"
+            result["reason_codes"] = [
+                "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY"
+            ]
             return result
         # BOUNDARY_UNREPAIRABLE is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.

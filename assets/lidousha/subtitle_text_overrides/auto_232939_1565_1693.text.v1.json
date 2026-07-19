@@ -1,0 +1,21 @@
+{
+  "schema_version": 3,
+  "candidate_id": "auto_232939_1565_1693",
+  "source_cue_witness_sha256": "8fc57cda78c89a1a40787cc8345fb3f8daea09b10c67ea655f8c09a678750687",
+  "decision_output_witness_sha256": "5863b5f170f3b69c563b82a3bcb3e8499b71f6dcda9888210dbb009c5a9af4bc",
+  "overrides": [
+    {
+      "source_cue": 4,
+      "action": "replace_substring",
+      "locator": {
+        "start": "00:00:06,660",
+        "end": "00:00:09,720"
+      },
+      "old_text": "ありがとう",
+      "text": "阿里嘎多",
+      "required": false,
+      "authority": "Source-language preservation review: BCUT witness 日嘎多 and corrected audio witness ありがとう identify the same spoken Japanese thanks",
+      "reason": "Keep the spoken Japanese thanks as Chinese phonetic text if padded pre-context survives the final boundary; skip safely when the final boundary removes it"
+    }
+  ]
+}

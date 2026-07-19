@@ -320,6 +320,7 @@ def discover_segments(date: str, state: dict) -> None:
     pending_song = state.setdefault("pending_song", [])
     visual_inventory = state.setdefault("visual_song_inventory", {})
     visual_seen = set(state.setdefault("visual_song_seen_entries", []))
+    segment_durations_ms = state.setdefault("segment_durations_ms", {})
 
     for segment in _runner.list_segments(date):
         stem = segment.stem
@@ -344,6 +345,7 @@ def discover_segments(date: str, state: dict) -> None:
         chat_jsonl = _runner.find_chat_jsonl(segment)
         candidates, lane, extras = _runner.recall_candidates(srt, _runner.danmaku_hints(xml))
         seg_dur = _runner.ffprobe_ms(segment)
+        segment_durations_ms[stem] = seg_dur
         visual_result = _runner.discover_visual_songs(
             segment,
             _runner.BASE / "cache" / date / "visual-song-inventory",
@@ -394,6 +396,10 @@ def discover_segments(date: str, state: dict) -> None:
                 "preview": cand.text_preview[:80],
                 "bcut_srt_path": str(srt),
                 "session_id": session_id,
+                "filler_proposals": list(meta.get("filler_proposals") or []),
+                "filler_proposal_srt_sha256": meta.get(
+                    "filler_proposal_srt_sha256"
+                ),
             }
             if getattr(cand, "content_type_hint", "talk") == "song":
                 a0, a1 = int(cand.anchor.anchor_start_ms), int(cand.anchor.anchor_end_ms)

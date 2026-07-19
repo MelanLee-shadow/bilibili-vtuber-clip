@@ -18,10 +18,32 @@ def test_parse_real_glossary_extracts_multiple_canon_and_blacklist():
     # The point of the fix: the terminology gate now knows many proper nouns,
     # not just kmx.
     assert len(terms.canon) > 5
-    for canon in ("kmx", "142", "小室", "Ado", "沙豆李", "掏兜", "倒反天罡", "奶油苏打", "小李"):
+    for canon in (
+        "kmx",
+        "142",
+        "小室",
+        "Ado",
+        "沙豆李",
+        "掏兜",
+        "倒反天罡",
+        "奶油苏打",
+        "小李",
+        "和成天下",
+    ):
         assert canon in terms.canon, canon
     # ASR mishearing variants are harvested for the blacklist.
-    for variant in ("停放熊", "康姆叉", "沙特琳", "一四二", "苏丹", "阿朵", "小寺", "大爽天高"):
+    for variant in (
+        "停放熊",
+        "康姆叉",
+        "沙特琳",
+        "一四二",
+        "苏丹",
+        "阿朵",
+        "小寺",
+        "大爽天高",
+        "合成天下",
+        "何成天下",
+    ):
         assert variant in terms.mishear_blacklist, variant
     # A canonical spelling is never simultaneously flagged as a violation.
     assert not (set(terms.canon) & set(terms.mishear_blacklist))
@@ -39,6 +61,16 @@ def test_parse_glossary_terms_pairs_canon_with_its_mishearings():
     assert "142" in terms.canon
     assert {"小寺", "小时", "小师"} <= set(terms.mishear_blacklist)
     assert {"一四二", "伊索尔"} <= set(terms.mishear_blacklist)
+
+
+def test_parser_does_not_split_canonical_names_that_begin_with_he():
+    terms = parse_glossary_terms(
+        "- 品牌：和成天下。ASR 常误写成“合成天下/何成天下”，一律写成和成天下。\n"
+    )
+
+    assert "和成天下" in terms.canon
+    assert "成天下" not in terms.canon
+    assert {"合成天下", "何成天下"} <= set(terms.mishear_blacklist)
 
 
 def test_load_glossary_terms_is_fail_safe_on_missing_file(tmp_path):

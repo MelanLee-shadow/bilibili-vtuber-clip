@@ -112,7 +112,7 @@ def test_malformed_pinned_snapshot_hash_fails_closed(tmp_path, monkeypatch):
     ) == ""
 
 
-def test_default_profile_keeps_pre_profile_jingting_prompt_byte_identical():
+def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerprint():
     prompt = jingting.agy_prompt(
         "1\n00:00:00,000 --> 00:00:01,000\n测试\n",
         danmaku_lines=["00:01 你好"],
@@ -122,7 +122,7 @@ def test_default_profile_keeps_pre_profile_jingting_prompt_byte_identical():
     )
 
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "782ad342586fea5d234f178850d553c66b1e015c8d5c765394dce1155c690685"
+        "7ac35fc189652aa4a80858a60792aa4e14814aaf2526d29f5f5843ebe62232ce"
     )
 
 

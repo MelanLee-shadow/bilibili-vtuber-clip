@@ -332,6 +332,7 @@ def _build_and_burn_record(
     audit: dict,
     branding_intro: dict[str, object] | None,
     adapters: ProducerFinalizationAdapters,
+    talk_filler_audit_path: Path | None = None,
 ) -> dict:
     media_path = recut.media_path
     subtitle_path = recut.subtitle_path
@@ -364,6 +365,14 @@ def _build_and_burn_record(
                 if subtitle_regression_audit_path is not None
                 else {}
             ),
+            **(
+                {
+                    "talk_filler_audit_sha256": "sha256:"
+                    + _sha256(talk_filler_audit_path)
+                }
+                if talk_filler_audit_path is not None
+                else {}
+            ),
         },
         "chat_authority_audit_path": str(chat_authority_path),
         "subtitle_regression_audit_path": (
@@ -372,6 +381,11 @@ def _build_and_burn_record(
             else None
         ),
         "subtitle_regression": subtitle_regression_audit,
+        "talk_filler_audit_path": (
+            str(talk_filler_audit_path)
+            if talk_filler_audit_path is not None
+            else None
+        ),
         "text_finalization_manifest_path": str(text_manifest_path) if text_manifest_path is not None else None,
         "speaker_mode": options.speaker_mode,
         "speaker_review_srt_path": str(speaker_review_srt) if speaker_review_srt is not None else None,
@@ -490,6 +504,7 @@ def _deliver_staged_record(
     chat_authority_path: Path,
     staged: StagedRecord,
     adapters: ProducerFinalizationAdapters,
+    talk_filler_audit_path: Path | None = None,
 ) -> int:
     record = staged.record
     staging = staged.staging
@@ -516,6 +531,7 @@ def _deliver_staged_record(
         (speaker_manifest_path, ".speaker.json"),
         (chat_authority_path, ".chat-authority.json"),
         (subtitle_regression_audit_path, ".subtitle-regression.json"),
+        (talk_filler_audit_path, ".filler-audit.json"),
         (text_manifest_path, ".text-finalization.json"),
         (record_path, ".record.json"),
     ):
@@ -546,6 +562,11 @@ def _deliver_staged_record(
                 if subtitle_regression_audit is not None
                 else "NOT_CONFIGURED"
             ),
+            "talk_filler_audit": (
+                str(delivery / f"{name}.filler-audit.json")
+                if talk_filler_audit_path is not None
+                else None
+            ),
         },
         ensure_ascii=False,
         indent=2,
@@ -574,6 +595,7 @@ def finalize_producer_package(
     chat_authority_path: Path,
     branding_intro: dict[str, object] | None,
     adapters: ProducerFinalizationAdapters,
+    talk_filler_audit_path: Path | None = None,
 ) -> int:
     recut = _materialize_final_recut(
         spec=spec,
@@ -624,6 +646,7 @@ def finalize_producer_package(
         audit=audit,
         branding_intro=branding_intro,
         adapters=adapters,
+        talk_filler_audit_path=talk_filler_audit_path,
     )
     staged = _stage_record(
         options=options,
@@ -645,4 +668,5 @@ def finalize_producer_package(
         chat_authority_path=chat_authority_path,
         staged=staged,
         adapters=adapters,
+        talk_filler_audit_path=talk_filler_audit_path,
     )

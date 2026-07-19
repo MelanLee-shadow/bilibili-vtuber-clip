@@ -411,6 +411,64 @@ don't know那么多，所有的
     assert manifest["decisions"] == []
 
 
+def test_optional_timeline_override_skips_when_final_boundary_removes_locator(
+    tmp_path: Path,
+) -> None:
+    padded = tmp_path / "padded.srt"
+    padded.write_text(
+        "1\n00:00:06,660 --> 00:00:09,720\n"
+        "谢谢你，ありがとう，谢谢哦\n\n"
+        "2\n00:00:10,020 --> 00:00:14,230\n说到这个\n",
+        encoding="utf-8",
+    )
+    document = {
+        "schema_version": 3,
+        "candidate_id": "optional_preroll_test",
+        "source_cue_witness_sha256": "",
+        "decision_output_witness_sha256": "",
+        "overrides": [
+            {
+                "source_cue": 1,
+                "action": "replace_substring",
+                "locator": {
+                    "start": "00:00:06,660",
+                    "end": "00:00:09,720",
+                },
+                "old_text": "ありがとう",
+                "text": "阿里嘎多",
+                "required": False,
+                "authority": "reviewed padded pre-context repair",
+            }
+        ],
+    }
+    padded_cues = parse_srt(padded)
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(
+        padded_cues, document
+    )
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(
+        padded_cues, document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    final = tmp_path / "final.srt"
+    final.write_text(
+        "1\n00:00:00,250 --> 00:00:04,460\n说到这个\n",
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "out.srt"
+    manifest = apply_document(
+        final,
+        overrides,
+        output,
+        tmp_path / "manifest.json",
+        timeline_offset_ms=9_770,
+    )
+
+    assert output.read_text(encoding="utf-8") == final.read_text(encoding="utf-8")
+    assert manifest["decisions"] == []
+
+
 def test_timeline_override_can_ignore_punctuation_but_not_word_drift(
     tmp_path: Path,
 ) -> None:
@@ -641,3 +699,45 @@ def test_committed_kmx_override_rebases_after_boundary_recut(
     assert manifest["source_cue_witness_sha256"] == json.loads(
         override.read_text(encoding="utf-8")
     )["source_cue_witness_sha256"]
+
+
+def test_committed_flower_basket_override_repairs_or_skips_padded_thanks(
+    tmp_path: Path,
+) -> None:
+    override = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_text_overrides"
+        / "auto_232939_1565_1693.text.v1.json"
+    )
+    padded = tmp_path / "padded.srt"
+    padded.write_text(
+        "1\n00:00:06,660 --> 00:00:09,720\n"
+        "谢谢你，ありがとう，谢谢哦\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "out.srt"
+    manifest = apply_document(
+        padded,
+        override,
+        output,
+        tmp_path / "padded.manifest.json",
+    )
+
+    assert "谢谢你，阿里嘎多，谢谢哦" in output.read_text(encoding="utf-8")
+    assert len(manifest["decisions"]) == 1
+
+    recut = tmp_path / "recut.srt"
+    recut.write_text(
+        "1\n00:00:00,250 --> 00:00:04,460\n说到这个\n",
+        encoding="utf-8",
+    )
+    manifest = apply_document(
+        recut,
+        override,
+        output,
+        tmp_path / "recut.manifest.json",
+        timeline_offset_ms=9_770,
+    )
+
+    assert output.read_text(encoding="utf-8") == recut.read_text(encoding="utf-8")
+    assert manifest["decisions"] == []

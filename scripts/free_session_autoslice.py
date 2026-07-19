@@ -210,6 +210,7 @@ MAX_TALK_PICKS = 5
 TALK_ATTEMPT_CAP = 10  # reject unsafe content candidates and backfill, bounded
 MAX_SONGS_PER_SESSION = 1  # Ivan 2026-07-16: 每场直播至多一个歌切；已发布歌曲不再出
 MAX_SONGS_PER_DATE = MAX_SONGS_PER_SESSION  # compatibility alias for callers/tests
+MIN_TALK_EFFECTIVE_DURATION_MS = 45_000
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
 SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one live session
 SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute session cap including superseded attempts;
@@ -287,6 +288,9 @@ SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
 # selector focused when the envelope also contains pre/post-song talk.
 SONG_PROOF_RETRY_PRE_MS = 120_000
 SONG_PROOF_RETRY_POST_MS = 360_000
+SONG_TALK_QUARANTINE_GUARD_MS = 5_000
+SESSION_INTRO_BGM_MAX_OFFSET_MS = 180_000
+SESSION_OUTRO_BGM_MAX_REMAINING_MS = 240_000
 SONG_ANCHOR_TRIM_MIN_MS = 20_000  # only retry on the danmaku-dense core when the
                                   # trim drops ≥20s of talk padding off an end
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -471,6 +475,9 @@ def song_pipeline_fingerprint() -> str:
         "song_window_post_ms": SONG_WINDOW_POST_MS,
         "song_proof_retry_pre_ms": SONG_PROOF_RETRY_PRE_MS,
         "song_proof_retry_post_ms": SONG_PROOF_RETRY_POST_MS,
+        "song_talk_quarantine_guard_ms": SONG_TALK_QUARANTINE_GUARD_MS,
+        "session_intro_bgm_max_offset_ms": SESSION_INTRO_BGM_MAX_OFFSET_MS,
+        "session_outro_bgm_max_remaining_ms": SESSION_OUTRO_BGM_MAX_REMAINING_MS,
         "song_anchor_trim_min_ms": SONG_ANCHOR_TRIM_MIN_MS,
         "song_terminal_performer_rejection_codes": sorted(
             SONG_TERMINAL_PERFORMER_REJECTION_CODES
@@ -697,6 +704,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     song_delivery_budget,
     _remember_song_quarantine_interval,
     _note_not_selected,
+    exclude_session_edge_bgm_candidates,
     quarantine_overlapping_talk_candidates,
     backlog_has_eligible_session_work,
     refill_songs,
@@ -1571,6 +1579,8 @@ def process_date(date: str) -> None:
                     else "speaker_identity_unresolved_backfilled"
                 )
                 rejected += 1
+            elif result.get("status") == "candidate_rejected":
+                rejected += 1
             if result.get("failure_recoverable") is True:
                 recoverable_failure = True
             state["picks"].append(result)
@@ -1775,6 +1785,11 @@ def main(argv: list[str] | None = None) -> int:
             "hook": meta.get("hook", ""),
             "confidence": meta.get("confidence"),
             "lane": lane,
+            "bcut_srt_path": str(srt),
+            "filler_proposals": list(meta.get("filler_proposals") or []),
+            "filler_proposal_srt_sha256": meta.get(
+                "filler_proposal_srt_sha256"
+            ),
         }
         result = produce_talk(date, item)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

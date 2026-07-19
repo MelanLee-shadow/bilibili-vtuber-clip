@@ -104,13 +104,6 @@ def load_producer_request(
     repo_root: Path,
     profile_asset_file: Callable[[str], Path],
 ) -> ProducerRequest:
-    try:
-        branding_intro = require_branding_intro(
-            repo_root,
-            manifest_path=profile_asset_file("branding_intro_manifest"),
-        )
-    except BrandingIntroError as exc:
-        raise SystemExit(f"BRANDING_INTRO_UNAVAILABLE: {exc}")
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
     repair_cap_raw = spec.get("boundary_repair_extend_cap_ms", BOUNDARY_REPAIR_EXTEND_CAP_MS)
     if isinstance(repair_cap_raw, bool) or not isinstance(repair_cap_raw, int):
@@ -144,6 +137,13 @@ def load_producer_request(
             raise ValueError(
                 "blind subtitle generation refuses human-truth inputs: " + ", ".join(leaked_inputs)
             )
+    try:
+        branding_intro = require_branding_intro(
+            repo_root,
+            manifest_path=profile_asset_file("branding_intro_manifest"),
+        )
+    except BrandingIntroError as exc:
+        raise SystemExit(f"BRANDING_INTRO_UNAVAILABLE: {exc}")
     # Time-sensitive terminology must be evaluated as of the recording date,
     # never the processing date.  This prevents future-news leakage when an old
     # stream is repaired later.

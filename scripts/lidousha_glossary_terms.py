@@ -70,9 +70,16 @@ _CANON_QUOTED_FIX_RE = re.compile(r"修正为\s*[“\"‘'『「]([A-Za-z0-9一-
 # 等" forms stop at the first 等 so we never swallow the trailing prose.
 _MISHEAR_DONT_RE = re.compile(r"不要(?:改成|写成)\s*([^。\n]+)")
 _MISHEAR_HEARD_RE = re.compile(r"(?:误听成|误听|听成)\s*([^。\n]+?)\s*等")
+_MISHEAR_CANDIDATES_RE = re.compile(
+    r"(?:常见)?误听候选包括\s*([^；。\n]+)"
+)
+_MISWRITE_QUOTED_RE = re.compile(
+    r"(?:常)?误写成\s*[“\"‘'『「]([^”\"’'』」；。\n]+)[”\"’'』」]"
+)
 
-# Split an extracted span into individual terms.
-_TOKEN_SPLIT_RE = re.compile(r"[、,，/｜|]|或|和")
+# Split an extracted span into individual terms.  Bare CJK "和" is not a safe
+# delimiter: it is the first character of canonical names such as 和成天下.
+_TOKEN_SPLIT_RE = re.compile(r"[、,，/｜|]|\s+(?:或|和)\s+")
 
 
 @dataclass(frozen=True)
@@ -116,6 +123,8 @@ def _blacklist_terms(content: str) -> list[str]:
     spans: list[str] = []
     spans.extend(_MISHEAR_DONT_RE.findall(content))
     spans.extend(_MISHEAR_HEARD_RE.findall(content))
+    spans.extend(_MISHEAR_CANDIDATES_RE.findall(content))
+    spans.extend(_MISWRITE_QUOTED_RE.findall(content))
     out: list[str] = []
     for span in spans:
         for piece in _TOKEN_SPLIT_RE.split(span):

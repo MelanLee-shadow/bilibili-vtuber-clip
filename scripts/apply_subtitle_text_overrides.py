@@ -241,6 +241,17 @@ def _override_map(
                     raise ValueError(
                         f"timeline override {declared_source_index} is missing locator"
                     )
+                if (
+                    timeline_offset_ms
+                    and override.get("required") is False
+                    and _srt_clock_ms(str(locator.get("end") or ""))
+                    <= timeline_offset_ms
+                ):
+                    # A reviewed repair may target padded pre-context that the
+                    # final boundary removes completely.  Optional overrides
+                    # remain hash-bound evidence, but must not fail rebasing
+                    # merely because their entire locator precedes t=0.
+                    continue
                 start = _timeline_value(locator.get("start"), timeline_offset_ms)
                 end = _timeline_value(locator.get("end"), timeline_offset_ms)
                 old_text = str(override.get("old_text") or "")

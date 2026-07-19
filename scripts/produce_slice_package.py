@@ -215,6 +215,7 @@ from src.autoslice.producer_text_pipeline import (
     TextPipelineAdapters,
     run_text_pipeline,
 )
+from src.autoslice.talk_filler import write_final_filler_audit
 
 
 def _load_term_boundary_surfaces(spec: dict) -> list[str]:
@@ -383,6 +384,29 @@ def main(argv: list[str] | None = None) -> int:
             run_command=run,
         ),
     )
+    minimum_effective_duration_ms = spec.get("minimum_effective_duration_ms")
+    if minimum_effective_duration_ms is not None:
+        if (
+            isinstance(minimum_effective_duration_ms, bool)
+            or not isinstance(minimum_effective_duration_ms, int)
+            or minimum_effective_duration_ms < 0
+        ):
+            raise ValueError("minimum_effective_duration_ms must be a non-negative integer")
+        if boundary.final_end - boundary.final_start <= minimum_effective_duration_ms:
+            raise SystemExit(
+                "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY: "
+                f"effective={boundary.final_end - boundary.final_start}ms "
+                f"minimum_exclusive={minimum_effective_duration_ms}ms"
+            )
+    talk_filler_audit_path = write_final_filler_audit(
+        spec=spec,
+        durations=durations,
+        final_start_ms=boundary.final_start,
+        final_end_ms=boundary.final_end,
+        piece_provenance_rows=piece_provenance_rows,
+        branding_intro=branding_intro,
+        output_path=out_root / f"{cid}.filler-audit.json",
+    )
     # 5. Final accurate cut + VAD-sanitized subtitles rebased to the cut.
     finalization_options = ProducerFinalizationOptions(
         spec=args.spec,
@@ -416,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
         chat_authority_audit=chat_authority_audit,
         chat_authority_path=chat_authority_path,
         branding_intro=branding_intro,
+        talk_filler_audit_path=talk_filler_audit_path,
         adapters=ProducerFinalizationAdapters(
             accurate_recut_command=_accurate_reencode_recut_command,
             run_command=run,

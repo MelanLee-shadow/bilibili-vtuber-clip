@@ -113,7 +113,7 @@ def _project_existing_text_onto_timing(
     )
 
 
-def main(argv=None) -> int:
+def _parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--cid", required=True)
     p.add_argument("--date", required=True)
@@ -147,7 +147,11 @@ def main(argv=None) -> int:
         type=Path,
         default=Path(os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")),
     )
-    args = p.parse_args(argv)
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = _parse_args(argv)
 
     recut_dir = args.out_base / "out" / args.date / args.cid / "replacement_recuts"
     record_path = recut_dir / f"{args.cid}.record.json"

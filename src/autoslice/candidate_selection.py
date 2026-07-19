@@ -7,6 +7,8 @@ stable in module and cron script execution modes.
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
@@ -16,6 +18,8 @@ _runner = RunnerProxy()
 
 
 _LEGACY_SESSION_ID = "legacy-date-session"
+_SESSION_ID_RX = re.compile(r"^live-(\d{8})T(\d{6})(?:[+-]\d{4})?$")
+_SEGMENT_TIME_RX = re.compile(r"_(\d{8})-(\d{2})-(\d{2})-(\d{2})$")
 
 
 def _item_session_id(item: dict) -> str:
@@ -145,11 +149,15 @@ def _remember_song_quarantine_interval(state: dict, item: dict) -> None:
         or not 0 <= anchor_start_ms < anchor_end_ms
     ):
         return
-    # Quarantining only the recall anchor still lets a talk sibling escape with
-    # the song's intro or tail.  Cover the same conservative source range that
-    # the authoritative full-proof retry is allowed to inspect.
-    start_ms = max(0, anchor_start_ms - _runner.SONG_PROOF_RETRY_PRE_MS)
-    end_ms = anchor_end_ms + _runner.SONG_PROOF_RETRY_POST_MS
+    # A proof retry window is evidence-search context, not music occupancy.
+    # Treating the 2m-pre/6m-post search envelope as a song interval blocked
+    # unrelated talks hundreds of seconds away on 2026-07-18.  The recall
+    # anchor is the only content-local evidence available before song repair;
+    # retain a small boundary guard without laundering the search window into
+    # a content boundary.
+    guard_ms = _runner.SONG_TALK_QUARANTINE_GUARD_MS
+    start_ms = max(0, anchor_start_ms - guard_ms)
+    end_ms = anchor_end_ms + guard_ms
     segment_duration_ms = item.get("seg_dur_ms")
     if (
         isinstance(segment_duration_ms, int)
@@ -168,18 +176,226 @@ def _remember_song_quarantine_interval(state: dict, item: dict) -> None:
     }
     intervals = state.setdefault("song_quarantine_intervals", [])
     identity = (Path(segment).name, anchor_start_ms, anchor_end_ms)
-    if any(
-        isinstance(existing, dict)
-        and (
+    for index, existing in enumerate(intervals):
+        if not isinstance(existing, dict):
+            continue
+        existing_identity = (
             Path(str(existing.get("segment_path") or "")).name,
             existing.get("original_anchor_start_ms", existing.get("start_ms")),
             existing.get("original_anchor_end_ms", existing.get("end_ms")),
         )
-        == identity
-        for existing in intervals
-    ):
-        return
+        if existing_identity == identity:
+            # Canonicalize old persisted states too.  Returning early here used
+            # to make an obsolete broad interval survive every deployment.
+            intervals[index] = interval
+            return
     intervals.append(interval)
+
+
+def _canonicalize_persisted_song_quarantine_intervals(state: dict) -> None:
+    """Migrate proof-window-era intervals without needing a queued song item."""
+
+    intervals = state.get("song_quarantine_intervals")
+    if not isinstance(intervals, list):
+        return
+    segment_durations = state.get("segment_durations_ms")
+    for index, existing in enumerate(list(intervals)):
+        if not isinstance(existing, dict):
+            continue
+        anchor_start_ms = existing.get(
+            "original_anchor_start_ms", existing.get("start_ms")
+        )
+        anchor_end_ms = existing.get(
+            "original_anchor_end_ms", existing.get("end_ms")
+        )
+        if (
+            not isinstance(anchor_start_ms, int)
+            or isinstance(anchor_start_ms, bool)
+            or not isinstance(anchor_end_ms, int)
+            or isinstance(anchor_end_ms, bool)
+            or not 0 <= anchor_start_ms < anchor_end_ms
+        ):
+            continue
+        end_ms = anchor_end_ms + _runner.SONG_TALK_QUARANTINE_GUARD_MS
+        stem = Path(str(existing.get("segment_path") or "")).stem
+        if isinstance(segment_durations, dict):
+            duration_ms = segment_durations.get(stem)
+            if (
+                isinstance(duration_ms, int)
+                and not isinstance(duration_ms, bool)
+                and duration_ms > 0
+            ):
+                end_ms = min(end_ms, duration_ms)
+        intervals[index] = {
+            **existing,
+            "start_ms": max(
+                0,
+                anchor_start_ms - _runner.SONG_TALK_QUARANTINE_GUARD_MS,
+            ),
+            "end_ms": end_ms,
+            "original_anchor_start_ms": anchor_start_ms,
+            "original_anchor_end_ms": anchor_end_ms,
+            "reason_code": "SONG_INTERVAL_REQUIRES_JOINT_SINGING_PROOF",
+        }
+
+
+def _session_relative_ms(item: dict, local_ms: int) -> int | None:
+    session_match = _SESSION_ID_RX.match(_item_session_id(item))
+    segment_value = str(item.get("segment_path") or item.get("segment") or "")
+    segment_match = _SEGMENT_TIME_RX.search(Path(segment_value).stem)
+    if session_match is None or segment_match is None:
+        return None
+    try:
+        session_start = datetime.strptime(
+            "".join(session_match.groups()), "%Y%m%d%H%M%S"
+        )
+        segment_start = datetime.strptime(
+            "".join(segment_match.groups()), "%Y%m%d%H%M%S"
+        )
+    except ValueError:
+        return None
+    return int((segment_start - session_start).total_seconds() * 1000) + local_ms
+
+
+def exclude_session_edge_bgm_candidates(state: dict) -> None:
+    """Exclude positional opening/ending BGM before song proof or talk taint.
+
+    This is deliberately session-relative rather than segment-relative: a real
+    host performance can begin at 00:00 after a recorder rotation.  Missing or
+    malformed recorder timestamps fail closed and leave the candidate alone.
+    """
+
+    queue_names = ("pending_song", "song_backlog")
+    queued = [
+        item
+        for name in queue_names
+        for item in state.get(name, [])
+        if isinstance(item, dict)
+    ]
+    if not queued:
+        return
+
+    session_ends: dict[str, int] = {}
+    segment_sessions = state.get("segment_sessions")
+    segment_durations = state.get("segment_durations_ms")
+    if isinstance(segment_sessions, dict) and isinstance(segment_durations, dict):
+        for stem, duration_ms in segment_durations.items():
+            session_id = segment_sessions.get(stem)
+            if (
+                not isinstance(session_id, str)
+                or not isinstance(duration_ms, int)
+                or isinstance(duration_ms, bool)
+                or duration_ms <= 0
+            ):
+                continue
+            relative_end = _session_relative_ms(
+                {"session_id": session_id, "segment_path": str(stem)},
+                duration_ms,
+            )
+            if relative_end is not None:
+                session_ends[session_id] = max(
+                    session_ends.get(session_id, relative_end), relative_end
+                )
+    for item in queued:
+        duration_ms = item.get("seg_dur_ms")
+        if (
+            not isinstance(duration_ms, int)
+            or isinstance(duration_ms, bool)
+            or duration_ms <= 0
+        ):
+            continue
+        relative_end = _session_relative_ms(item, duration_ms)
+        if relative_end is not None:
+            session_id = _item_session_id(item)
+            session_ends[session_id] = max(
+                session_ends.get(session_id, relative_end), relative_end
+            )
+
+    excluded_ids: set[str] = set()
+    excluded_rows = state.setdefault("song_edge_bgm_excluded", [])
+    known_ids = {
+        str(row.get("candidate_id") or "")
+        for row in excluded_rows
+        if isinstance(row, dict)
+    }
+    for item in queued:
+        candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
+        anchor_start_ms = item.get("anchor_start_ms")
+        anchor_end_ms = item.get("anchor_end_ms")
+        if (
+            not candidate_id
+            or not isinstance(anchor_start_ms, int)
+            or isinstance(anchor_start_ms, bool)
+            or not isinstance(anchor_end_ms, int)
+            or isinstance(anchor_end_ms, bool)
+        ):
+            continue
+        relative_start = _session_relative_ms(item, anchor_start_ms)
+        relative_end = _session_relative_ms(item, anchor_end_ms)
+        session_id = _item_session_id(item)
+        session_end = session_ends.get(session_id)
+        reason_code = None
+        if (
+            relative_start is not None
+            and relative_start <= _runner.SESSION_INTRO_BGM_MAX_OFFSET_MS
+        ):
+            reason_code = "SESSION_INTRO_BGM_BY_POSITION"
+        elif (
+            relative_end is not None
+            and session_end is not None
+            and 0 <= session_end - relative_end
+            <= _runner.SESSION_OUTRO_BGM_MAX_REMAINING_MS
+        ):
+            reason_code = "SESSION_OUTRO_BGM_BY_POSITION"
+        if reason_code is None:
+            continue
+
+        excluded_ids.add(candidate_id)
+        if candidate_id not in known_ids:
+            excluded_rows.append(
+                {
+                    "candidate_id": candidate_id,
+                    "session_id": session_id,
+                    "segment_path": str(
+                        item.get("segment_path") or item.get("segment") or ""
+                    ),
+                    "anchor_start_ms": anchor_start_ms,
+                    "anchor_end_ms": anchor_end_ms,
+                    "session_relative_anchor_start_ms": relative_start,
+                    "session_relative_anchor_end_ms": relative_end,
+                    "session_end_ms": session_end,
+                    "reason_code": reason_code,
+                    "decision": "EXCLUDE_POSITIONAL_BGM",
+                }
+            )
+            known_ids.add(candidate_id)
+        _note_not_selected(
+            state,
+            f"{Path(str(item.get('segment_path') or item.get('segment') or '')).name} "
+            f"{anchor_start_ms // 1000}-{anchor_end_ms // 1000}s "
+            f"(排除:{reason_code},整场首尾背景曲默认不视为主播演唱)",
+        )
+
+    if not excluded_ids:
+        return
+    for name in queue_names:
+        state[name] = [
+            item
+            for item in state.get(name, [])
+            if not (
+                isinstance(item, dict)
+                and str(item.get("cid") or item.get("candidate_id") or "")
+                in excluded_ids
+            )
+        ]
+    state["song_quarantine_intervals"] = [
+        interval
+        for interval in state.get("song_quarantine_intervals", [])
+        if not (
+            isinstance(interval, dict)
+            and str(interval.get("candidate_id") or "") in excluded_ids
+        )
+    ]
 
 
 def _note_not_selected(state: dict, entry: str) -> None:
@@ -199,15 +415,37 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
     an ordinary talk artifact that bypasses the song gate.
     """
 
+    _canonicalize_persisted_song_quarantine_intervals(state)
     for source in (state.get("pending_song", []), state.get("song_backlog", [])):
         for item in (source if isinstance(source, list) else []):
             if isinstance(item, dict):
                 _runner._remember_song_quarantine_interval(state, item)
 
     intervals = [item for item in state.get("song_quarantine_intervals", []) if isinstance(item, dict)]
-    kept: list[dict] = []
     blocked = state.setdefault("song_overlap_blocked_talk", [])
-    for talk in state.get("pending_talk", []):
+    reconsidered = list(state.get("pending_talk", []))
+    pending_ids = {
+        str(item.get("cid") or item.get("candidate_id") or "")
+        for item in reconsidered
+        if isinstance(item, dict)
+    }
+    for tombstone in blocked:
+        candidate = tombstone.get("candidate") if isinstance(tombstone, dict) else None
+        candidate_id = (
+            str(candidate.get("cid") or candidate.get("candidate_id") or "")
+            if isinstance(candidate, dict)
+            else ""
+        )
+        if (
+            tombstone.get("status") == "blocked"
+            and candidate_id
+            and candidate_id not in pending_ids
+        ):
+            reconsidered.append(candidate)
+            pending_ids.add(candidate_id)
+
+    kept: list[dict] = []
+    for talk in reconsidered:
         talk_segment = Path(str(talk.get("segment_path") or talk.get("segment") or "")).name
         talk_start = talk.get("start_ms")
         talk_end = talk.get("end_ms")
@@ -231,6 +469,17 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
         )
         if overlap is None:
             kept.append(talk)
+            talk_id = str(talk.get("cid") or talk.get("candidate_id") or "")
+            for tombstone in blocked:
+                if (
+                    isinstance(tombstone, dict)
+                    and tombstone.get("status") == "blocked"
+                    and str(tombstone.get("candidate_id") or "") == talk_id
+                ):
+                    tombstone["status"] = "released"
+                    tombstone["release_reason_code"] = (
+                        "SONG_QUARANTINE_INTERVAL_REEVALUATED"
+                    )
             continue
         tombstone = {
             "candidate_id": str(talk.get("cid") or talk.get("candidate_id") or ""),
@@ -242,8 +491,26 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
             "song_candidate_id": str(overlap.get("candidate_id") or ""),
             "song_start_ms": overlap.get("start_ms"),
             "song_end_ms": overlap.get("end_ms"),
+            "candidate": dict(talk),
         }
-        if tombstone not in blocked:
+        identity = (
+            tombstone["candidate_id"],
+            Path(tombstone["segment_path"]).name,
+            tombstone["start_ms"],
+            tombstone["end_ms"],
+        )
+        if not any(
+            isinstance(existing, dict)
+            and (
+                str(existing.get("candidate_id") or ""),
+                Path(str(existing.get("segment_path") or "")).name,
+                existing.get("start_ms"),
+                existing.get("end_ms"),
+            )
+            == identity
+            and existing.get("status") == "blocked"
+            for existing in blocked
+        ):
             blocked.append(tombstone)
         _runner._note_not_selected(
             state,
@@ -323,6 +590,7 @@ def prioritize(state: dict) -> None:
         item for item in state.pop("talk_backlog", []) if isinstance(item, dict)
     ]
     state.setdefault("pending_talk", []).extend(prior_backlog)
+    _runner.exclude_session_edge_bgm_candidates(state)
     _runner.quarantine_overlapping_talk_candidates(state)
     pending_talk = state.get("pending_talk", [])
     selected_repairs = [item for item in pending_talk if item.get("selected_repair")]

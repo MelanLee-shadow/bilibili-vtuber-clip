@@ -41,7 +41,7 @@ from src.autoslice.review_evidence import SourceCue
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 
-DEFAULT_MIN_TALK_WINDOW_MS = 12_000
+DEFAULT_MIN_TALK_WINDOW_MS = 45_000
 DEFAULT_MAX_TALK_WINDOW_MS = 300_000
 MAX_CONTEXT_BACKTRACK_MS = 120_000
 SEMANTIC_RECALL_STAGE = "semantic_recall"
@@ -113,13 +113,26 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 - 如果观众能从片段内部合理推测出缺失的背景,可以接受,context_inferable 填 true。
 - 如果上下文既不在片段里、也推测不出来、也找不到触发点,不要选这个片段。
 
+谈话内部跳切提议(只提议,后续还会由确定性规则逐条验收):
+- talk 候选可以填写 filler_removals,最多 3 段。只有删除后左右仍是同一话题、因果和指代都完整时才提议。
+- mode="remove_cues": start_cue/end_cue 是可整段删除的首尾字幕(含);只用于礼物致谢 gift_thanks、
+  短进场欢迎 welcome_chatter 或完全无关的插话 unrelated_aside。
+- mode="gap_only": start_cue 是停顿左边保留的字幕,end_cue 是右边紧邻保留的字幕;只用于至少约 3 秒、
+  没有承载画面反应或话题节奏的 dead_pause。
+- 不得删除 SC/礼物所引发的实质回答,也不得删除起因、铺垫、指代来源、纠正、笑点、结论和收尾。
+- bridge_coherent 只有在删除后左右两句可自然直连时才填 true;bridge 简述为什么语义可直连。
+- 对每段语音删除还必须逐项检查 contains_setup/contains_cause/contains_answer/contains_punchline/
+  contains_referent_intro/contains_correction/contains_resolution/later_dependency/interaction_relevant/
+  meaning_or_stance_changed。只要有一项为 true 或不确定,就不要提议。
+- 没有十分把握就返回空数组,让成品保持连续。confidence 是对“这段可安全删除”的信心。
+
 约束:
-- talk 片段时长 15 秒到 4 分钟之间;song 不限。
+- talk 片段有效内容必须长于 45 秒且不超过 5 分钟;song 不限。
 - 按有趣程度从高到低排序。confidence 是你对"路人观众会觉得有趣"的信心(0-1)。
 - hook 用一句中文概括这个片段的看点。
 
 只输出一个 JSON 对象,不要任何其他文字:
-{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数}}]}}
+{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "filler_removals": [{{"mode": "remove_cues"或"gap_only", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"welcome_chatter"或"dead_pause"或"unrelated_aside", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
 
 字幕时间轴:
 {transcript}
@@ -186,6 +199,56 @@ def select_semantic_session_candidates(
         confidence_value = float(confidence) if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) else 0.5
         raw_event_key = str(item.get("event_key") or "").strip()
         event_key = " ".join(raw_event_key.split())[:80]
+        filler_removals: list[dict[str, object]] = []
+        if kind == "talk" and isinstance(item.get("filler_removals"), list):
+            for removal_index, removal in enumerate(item["filler_removals"][:3]):
+                if not isinstance(removal, dict):
+                    continue
+                removal_start = _cue_position(removal.get("start_cue"), len(ordered))
+                removal_end = _cue_position(removal.get("end_cue"), len(ordered))
+                if (
+                    removal_start is None
+                    or removal_end is None
+                    or removal_start > removal_end
+                ):
+                    continue
+                removal_confidence = removal.get("confidence")
+                filler_removals.append(
+                    {
+                        "proposal_id": f"semantic_{item_index + 1}_{removal_index + 1}",
+                        "mode": str(removal.get("mode") or "remove_cues"),
+                        "start_cue": removal_start,
+                        "end_cue": removal_end,
+                        "reason": str(removal.get("reason") or ""),
+                        "bridge_coherent": removal.get("bridge_coherent") is True,
+                        "bridge": str(removal.get("bridge") or "").strip()[:240],
+                        "topic_relation": str(
+                            removal.get("topic_relation") or ""
+                        ),
+                        "contains_setup": removal.get("contains_setup"),
+                        "contains_cause": removal.get("contains_cause"),
+                        "contains_answer": removal.get("contains_answer"),
+                        "contains_punchline": removal.get("contains_punchline"),
+                        "contains_referent_intro": removal.get(
+                            "contains_referent_intro"
+                        ),
+                        "contains_correction": removal.get("contains_correction"),
+                        "contains_resolution": removal.get("contains_resolution"),
+                        "later_dependency": removal.get("later_dependency"),
+                        "interaction_relevant": removal.get(
+                            "interaction_relevant"
+                        ),
+                        "meaning_or_stance_changed": removal.get(
+                            "meaning_or_stance_changed"
+                        ),
+                        "confidence": (
+                            min(1.0, max(0.0, float(removal_confidence)))
+                            if isinstance(removal_confidence, (int, float))
+                            and not isinstance(removal_confidence, bool)
+                            else 0.0
+                        ),
+                    }
+                )
         parsed.append(
             (
                 min(1.0, max(0.0, confidence_value)),
@@ -196,6 +259,7 @@ def select_semantic_session_candidates(
                     "event_key": event_key,
                     "hook": str(item.get("hook") or ""),
                     "context_inferable": bool(item.get("context_inferable", True)),
+                    "filler_removals": filler_removals,
                 },
             )
         )
@@ -225,6 +289,12 @@ def select_semantic_session_candidates(
         merged_spec = dict(winner_spec)
         merged_spec["start_cue"] = min(int(row[1]["start_cue"]) for row in rows)
         merged_spec["end_cue"] = max(int(row[1]["end_cue"]) for row in rows)
+        merged_spec["filler_removals"] = [
+            removal
+            for row in rows
+            for removal in row[1].get("filler_removals", [])
+            if isinstance(removal, dict)
+        ][:3]
         merged_parsed.append((winner_confidence, merged_spec))
         merged_events.append(
             {
@@ -243,6 +313,7 @@ def select_semantic_session_candidates(
     parsed.sort(key=lambda entry: entry[0], reverse=True)
     selected: list[FullSessionCandidate] = []
     hooks: dict[str, str] = {}
+    filler_proposals: dict[str, list[dict[str, object]]] = {}
     for confidence_value, spec in parsed:
         if len(selected) >= max_candidates:
             break
@@ -250,7 +321,7 @@ def select_semantic_session_candidates(
         start_ms = window[0].source_start_ms
         end_ms = window[-1].source_end_ms
         duration_ms = end_ms - start_ms
-        if spec["kind"] == "talk" and not (min_talk_window_ms <= duration_ms <= max_talk_window_ms):
+        if spec["kind"] == "talk" and not (min_talk_window_ms < duration_ms <= max_talk_window_ms):
             skipped.append({"start_cue": spec["start_cue"], "end_cue": spec["end_cue"], "reason": "talk_duration_out_of_range", "duration_ms": duration_ms})
             continue
         anchor = AnchorCandidate(
@@ -284,6 +355,13 @@ def select_semantic_session_candidates(
             continue
         selected.append(candidate)
         hooks[anchor.candidate_id] = spec["hook"]
+        raw_filler_proposals = spec.get("filler_removals")
+        if isinstance(raw_filler_proposals, list) and raw_filler_proposals:
+            filler_proposals[anchor.candidate_id] = [
+                dict(row)
+                for row in raw_filler_proposals
+                if isinstance(row, dict)
+            ][:3]
 
     diagnostics = {
         "stage": SEMANTIC_RECALL_STAGE,
@@ -292,6 +370,7 @@ def select_semantic_session_candidates(
         "merged_events": merged_events,
         "selected": [candidate.anchor.candidate_id for candidate in selected],
         "hooks": hooks,
+        "filler_proposals": filler_proposals,
         "skipped": skipped,
     }
     return selected, diagnostics

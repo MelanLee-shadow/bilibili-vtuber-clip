@@ -2710,8 +2710,8 @@ def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
     assert state["song_quarantine_intervals"] == [
         {
             "segment_path": "/rec/session.mp4",
-            "start_ms": 0,
-            "end_ms": 520_000,
+            "start_ms": 95_000,
+            "end_ms": 165_000,
             "original_anchor_start_ms": 100_000,
             "original_anchor_end_ms": 160_000,
             "candidate_id": "song_background",
@@ -2728,6 +2728,277 @@ def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
     prioritize(state)
     assert state["pending_talk"] == []
     assert state["song_overlap_blocked_talk"][-1]["candidate_id"] == "late_clone"
+
+
+def test_quarantine_canonicalizes_persisted_broad_proof_window():
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_song": [],
+        "song_backlog": [],
+        "pending_talk": [
+            {
+                "segment_path": "/rec/session.mp4",
+                "start_ms": 200_000,
+                "end_ms": 260_000,
+                "cid": "talk_outside_real_anchor",
+                "confidence": 0.9,
+            }
+        ],
+        "song_quarantine_intervals": [
+            {
+                "segment_path": "/rec/session.mp4",
+                "start_ms": 0,
+                "end_ms": 520_000,
+                "original_anchor_start_ms": 100_000,
+                "original_anchor_end_ms": 160_000,
+                "candidate_id": "song_background",
+                "reason_code": "SONG_INTERVAL_REQUIRES_JOINT_SINGING_PROOF",
+            }
+        ]
+    }
+
+    prioritize(state)
+
+    assert state["song_quarantine_intervals"][0]["start_ms"] == 95_000
+    assert state["song_quarantine_intervals"][0]["end_ms"] == 165_000
+    assert [item["cid"] for item in state["pending_talk"]] == [
+        "talk_outside_real_anchor"
+    ]
+
+
+def test_july18_talks_are_not_blocked_by_song_proof_search_context():
+    session_id = "live-20260718T225932+0800"
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_song": [
+            {
+                "segment_path": "/rec/22966160_20260718-23-29-39.mp4",
+                "seg_dur_ms": 1_798_015,
+                "anchor_start_ms": 1_244_050,
+                "anchor_end_ms": 1_508_570,
+                "danmaku": 173,
+                "cid": "song_warm",
+                "session_id": session_id,
+            },
+            {
+                "segment_path": "/rec/22966160_20260718-23-59-36.mp4",
+                "seg_dur_ms": 1_440_088,
+                "anchor_start_ms": 0,
+                "anchor_end_ms": 205_760,
+                "danmaku": 187,
+                "cid": "song_cross_segment",
+                "session_id": session_id,
+            },
+        ],
+        "pending_talk": [
+            {
+                "segment_path": "/rec/22966160_20260718-22-59-42.mp4",
+                "start_ms": 434_530,
+                "end_ms": 520_220,
+                "cid": "talk_01",
+                "confidence": 0.91,
+                "session_id": session_id,
+            },
+            {
+                "segment_path": "/rec/22966160_20260718-23-29-39.mp4",
+                "start_ms": 1_565_590,
+                "end_ms": 1_693_270,
+                "cid": "talk_03",
+                "confidence": 0.90,
+                "session_id": session_id,
+            },
+            {
+                "segment_path": "/rec/22966160_20260718-23-59-36.mp4",
+                "start_ms": 527_500,
+                "end_ms": 695_400,
+                "cid": "talk_05",
+                "confidence": 0.89,
+                "session_id": session_id,
+            },
+        ],
+    }
+
+    prioritize(state)
+
+    assert {item["cid"] for item in state["pending_talk"]} == {
+        "talk_01",
+        "talk_03",
+        "talk_05",
+    }
+    assert state.get("song_overlap_blocked_talk", []) == []
+
+
+def test_session_edge_bgm_is_excluded_without_misclassifying_rotated_song():
+    session_id = "live-20260718T225932+0800"
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_talk": [],
+        "pending_song": [
+            {
+                "segment_path": "/rec/22966160_20260718-22-59-42.mp4",
+                "seg_dur_ms": 1_797_861,
+                "anchor_start_ms": 77_650,
+                "anchor_end_ms": 160_360,
+                "cid": "opening_bgm",
+                "session_id": session_id,
+                "danmaku": 0,
+            },
+            {
+                "segment_path": "/rec/22966160_20260718-23-59-36.mp4",
+                "seg_dur_ms": 1_440_088,
+                "anchor_start_ms": 0,
+                "anchor_end_ms": 205_760,
+                "cid": "cross_segment_host_song",
+                "session_id": session_id,
+                "danmaku": 187,
+            },
+            {
+                "segment_path": "/rec/22966160_20260718-23-59-36.mp4",
+                "seg_dur_ms": 1_440_088,
+                "anchor_start_ms": 1_240_780,
+                "anchor_end_ms": 1_312_300,
+                "cid": "ending_bgm",
+                "session_id": session_id,
+                "danmaku": 11,
+            },
+        ],
+    }
+
+    prioritize(state)
+
+    assert [item["cid"] for item in state["pending_song"]] == [
+        "cross_segment_host_song"
+    ]
+    assert {
+        row["candidate_id"]: row["reason_code"]
+        for row in state["song_edge_bgm_excluded"]
+    } == {
+        "opening_bgm": "SESSION_INTRO_BGM_BY_POSITION",
+        "ending_bgm": "SESSION_OUTRO_BGM_BY_POSITION",
+    }
+
+
+def test_outro_position_uses_whole_session_end_even_when_last_segment_has_no_song():
+    session_id = "live-20260718T225932+0800"
+    early_stem = "22966160_20260718-22-59-42"
+    later_stem = "22966160_20260718-23-29-39"
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_talk": [],
+        "segment_sessions": {
+            early_stem: session_id,
+            later_stem: session_id,
+        },
+        "segment_durations_ms": {
+            early_stem: 1_797_861,
+            later_stem: 1_798_015,
+        },
+        "pending_song": [
+            {
+                "segment_path": f"/rec/{early_stem}.mp4",
+                "seg_dur_ms": 1_797_861,
+                "anchor_start_ms": 1_500_000,
+                "anchor_end_ms": 1_700_000,
+                "cid": "real_song_before_later_quiet_segment",
+                "session_id": session_id,
+                "danmaku": 100,
+            }
+        ],
+    }
+
+    prioritize(state)
+
+    assert [item["cid"] for item in state["pending_song"]] == [
+        "real_song_before_later_quiet_segment"
+    ]
+    assert state.get("song_edge_bgm_excluded", []) == []
+
+
+def test_produce_talk_rejects_effective_duration_not_over_45_seconds(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: "sha256:test",
+    )
+
+    result = runner.produce_talk(
+        "2026-07-18",
+        {
+            "cid": "auto_232939_1520_1538",
+            "segment_path": "/recordings/segment.mp4",
+            "start_ms": 1_520_610,
+            "end_ms": 1_538_450,
+        },
+    )
+
+    assert result["status"] == "candidate_rejected"
+    assert result["effective_duration_ms"] == 17_840
+    assert result["reason_codes"] == ["TALK_EFFECTIVE_DURATION_NOT_OVER_45S"]
+
+
+def test_produce_talk_materializes_reviewed_july18_jump_pieces(
+    tmp_path,
+    monkeypatch,
+):
+    date = "2026-07-18"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: "sha256:test",
+    )
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(_command, **kwargs):
+        kwargs["stdout"].write('{"red_flags": [], "boundary_repairs": []}\n')
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": "auto_235936_527_695",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 1_434_340,
+            "start_ms": 527_500,
+            "end_ms": 695_400,
+            "hook": "和成天下和老李头",
+            "reviewed_filler_removals": [
+                {"start_ms": 559_670, "end_ms": 569_730, "reason": "gift_thanks"},
+                {"start_ms": 603_170, "end_ms": 611_530, "reason": "gift_thanks"},
+                {"start_ms": 638_270, "end_ms": 650_250, "reason": "gift_thanks"},
+            ],
+        },
+    )
+
+    spec = json.loads(
+        (base / "out" / date / "spec_auto_235936_527_695.json").read_text()
+    )
+    assert result["status"] == "review_ready"
+    assert result["effective_duration_ms"] == 137_500
+    assert result["talk_filler_removal_count"] == 3
+    assert [(row["start_ms"], row["end_ms"]) for row in spec["pieces"]] == [
+        (517_500, 559_670),
+        (569_730, 603_170),
+        (611_530, 638_270),
+        (650_250, 727_400),
+    ]
+    assert spec["minimum_effective_duration_ms"] == 45_000
 
 
 def test_song_status_words():
@@ -5471,7 +5742,7 @@ def test_talk_clip_anchor_shortage_becomes_nonretryable_speaker_evidence(
             "segment_path": "/recordings/segment.mp4",
             "seg_dur_ms": 2_000_000,
             "start_ms": 1_367_000,
-            "end_ms": 1_407_000,
+            "end_ms": 1_413_000,
             "hook": "real blind-eval shape",
         },
     )

@@ -67,6 +67,9 @@ _LATIN_WORD_RX = re.compile(r"\b[A-Za-z]+(?:['’-][A-Za-z]+)?\b")
 _EMBEDDED_LATIN_WORD_RX = re.compile(
     r"(?<![A-Za-z])[A-Za-z]+(?:['’-][A-Za-z]+)?(?![A-Za-z])"
 )
+_SAFE_CODE_SWITCH_PHRASE_RX = re.compile(
+    r"(?i)(?<![A-Za-z0-9])3D\s*Live(?![A-Za-z0-9])"
+)
 _SRT_CLOCK_RX = re.compile(r"^(\d{2}):(\d{2}):(\d{2}),(\d{3})$")
 _IMPOSSIBLE_PUNCTUATION_RX = re.compile(r"[,，]\s*([。！？!?])")
 _SAFE_CODE_SWITCH_WORDS = frozenset(
@@ -648,6 +651,7 @@ def unproven_foreign_introductions_covered_by_overrides(
 def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
     """Return whether one Chinese talk cue contains unsupported Latin word salad."""
 
+    text = _SAFE_CODE_SWITCH_PHRASE_RX.sub("", text)
     latin_words = [
         word.lower() for word in _EMBEDDED_LATIN_WORD_RX.findall(text)
     ]

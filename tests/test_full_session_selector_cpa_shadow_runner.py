@@ -208,9 +208,9 @@ def test_semantic_recall_lane_runs_first_and_marks_semantic_authority(tmp_path):
     # produce nothing usable from this — only the semantic lane can.
     source_srt.write_text(
         "1\n00:00:01,000 --> 00:00:04,000\n我们来看看这张AI生成的图\n\n"
-        "2\n00:00:05,000 --> 00:00:09,000\n好像阿朵\n\n"
-        "3\n00:00:10,000 --> 00:00:14,000\n这真的不是融了阿朵吗\n\n"
-        "4\n00:00:15,000 --> 00:00:19,000\n一眼AI 好吧\n",
+        "2\n00:00:05,000 --> 00:00:20,000\n好像阿朵\n\n"
+        "3\n00:00:21,000 --> 00:00:38,000\n这真的不是融了阿朵吗\n\n"
+        "4\n00:00:39,000 --> 00:00:55,000\n一眼AI 好吧\n",
         encoding="utf-8",
     )
     recall = tmp_path / "fake_recall.py"
@@ -255,10 +255,10 @@ def test_semantic_recall_lane_runs_first_and_marks_semantic_authority(tmp_path):
     assert summary["selector_stage"] == "semantic_recall"
     record = summary["records"][0]
     # The context trigger (cue 1, reading out the image) was pulled into the window.
-    assert record["candidate_id"] == "semantictalk_1000_19000"
+    assert record["candidate_id"] == "semantictalk_1000_55000"
     assert record["source_context_job"]["boundary_authority"] == "semantic"
     diagnostics = json.loads((output_dir / "semantic_recall.json").read_text(encoding="utf-8"))
-    assert diagnostics["hooks"]["semantictalk_1000_19000"] == "一眼AI连环吐槽"
+    assert diagnostics["hooks"]["semantictalk_1000_55000"] == "一眼AI连环吐槽"
 
 
 def test_viewer_context_incomplete_expands_window_and_rereviews(tmp_path):
