@@ -1,0 +1,15 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_235936_527_695",
+  "required_payload_substrings": [
+    "kmx",
+    "李豆沙不是私下烟酒都来的吗",
+    "和成天下"
+  ],
+  "forbidden_payload_substrings": [
+    "我这真的有一些提防",
+    "不是私下里烟酒都来了吗",
+    "李豆莎"
+  ],
+  "forbidden_exact_cues": []
+}

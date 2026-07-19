@@ -1,0 +1,154 @@
+{
+  "schema_version": "source-subtitle-truth-ledger.v1",
+  "entries": [
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-thanks-shimanao",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 409480,
+      "source_end_ms": 410980,
+      "action": "replace_cue",
+      "text": "谢谢十麻乃的钢蹦",
+      "authority": "Ivan-reviewed-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-laugh-kmx",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 449040,
+      "source_end_ms": 451920,
+      "action": "replace_cue",
+      "text": "很多人笑出声这件事情，kmx",
+      "authority": "Ivan-reviewed-plus-audio-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-kmx-offline",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 454470,
+      "source_end_ms": 456770,
+      "action": "replace_cue",
+      "text": "kmx在线下叫李豆沙",
+      "authority": "Ivan-reviewed-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-niece-repeat",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 468020,
+      "source_end_ms": 470460,
+      "action": "replace_cue",
+      "text": "“李姐是侄女”，好多人笑出声这个事情呢",
+      "authority": "Ivan-reviewed-context-repeat-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-used-to-kmx",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 473180,
+      "source_end_ms": 477430,
+      "action": "replace_cue",
+      "text": "但是，为什么大家已经习惯了kmx",
+      "authority": "Ivan-reviewed-plus-audio-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-because-kmx",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 492980,
+      "source_end_ms": 494380,
+      "action": "replace_cue",
+      "text": "但是因为kmx",
+      "authority": "Ivan-reviewed-plus-audio-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-pride-burn",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 502280,
+      "source_end_ms": 505600,
+      "action": "replace_cue",
+      "text": "叫“骄傲在哪，燃在哪”",
+      "authority": "Ivan-reviewed-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-baby-address-shimanao-sc",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 507660,
+      "source_end_ms": 511680,
+      "action": "replace_cue",
+      "text": "十麻乃SC啊，得了一种听到“是侄女”就想笑的病",
+      "authority": "Ivan-reviewed-structured-SC-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-hecheng-kmx-slot",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 543230,
+      "source_end_ms": 545460,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "提防",
+          "canonical": "kmx"
+        },
+        {
+          "surface": "请问熊",
+          "canonical": "kmx"
+        },
+        {
+          "surface": "提莫怂",
+          "canonical": "kmx"
+        }
+      ],
+      "required_text": "kmx",
+      "authority": "Ivan-reviewed-local-span-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-hecheng-private-smoke-drink",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 580840,
+      "source_end_ms": 582520,
+      "action": "replace_cue",
+      "text": "李豆沙不是私下烟酒都来的吗",
+      "authority": "Ivan-reviewed-2026-07-19",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260718-flower-basket-semicolon-emote",
+      "recording_basename": "22966160_20260718-23-29-39.mp4",
+      "source_start_ms": 1677530,
+      "source_end_ms": 1686010,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "风光风光",
+          "canonical": "分号分号"
+        },
+        {
+          "surface": "封号封号",
+          "canonical": "分号分号"
+        },
+        {
+          "surface": "破防破防",
+          "canonical": "分号分号"
+        }
+      ],
+      "required_text": "分号分号",
+      "authority": "Ivan-reviewed-emoticon-reading-2026-07-19",
+      "required": true
+    }
+  ]
+}

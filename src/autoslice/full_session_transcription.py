@@ -11,7 +11,11 @@ import tempfile
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.jingting_remote_runner import (
+    build_ssh_agy_runner as _attested_build_ssh_agy_runner,
+)
 from src.autoslice.refinement_provenance import (
+    agy_corroborating_witness as _agy_corroborating_witness,
     agy_fidelity_witness as _agy_fidelity_witness,
     agy_refinement_provenance as _agy_refinement_provenance,
 )
@@ -828,6 +832,8 @@ def _build_aggregate_asr_transcriber(
                         if isinstance(execution, AgyExecutionResult)
                         else None,
                         refined_srt=refined,
+                        draft_srt=draft_srt,
+                        media_path=Path(media_path),
                     )
                     media_path.with_suffix(".agy_refined.manifest.json").write_text(
                         json.dumps(provenance, ensure_ascii=False, indent=2) + "\n",
@@ -905,11 +911,20 @@ def _build_aggregate_asr_transcriber(
             fidelity_witness = _agy_fidelity_witness(
                 agy_srt,
                 agy_execution,
+                draft_srt=draft_srt,
+                media_path=Path(media_path),
+            )
+            corroborating_witness = _agy_corroborating_witness(
+                agy_srt,
+                agy_execution,
+                draft_srt=draft_srt,
+                media_path=Path(media_path),
             )
             corrected, fidelity_audit = apply_subtitle_fidelity_guard(
                 draft_srt,
                 corrected,
                 agy_srt=fidelity_witness,
+                corroborating_srt=corroborating_witness,
             )
             corrected, source_language_audit = (
                 apply_source_language_preservation_guard(draft_srt, corrected)
@@ -919,6 +934,8 @@ def _build_aggregate_asr_transcriber(
                 _agy_refinement_provenance(
                     agy_execution,
                     refined_srt=agy_srt,
+                    draft_srt=draft_srt,
+                    media_path=Path(media_path),
                 )
             )
             persist_fidelity_audit(
@@ -937,7 +954,7 @@ def _copy_draft_runner(media_path: Path, draft_srt_path: Path, output_srt_path: 
     return AgyExecutionResult(provider="agy", model="copy-draft-test-runner", agy_rc=0, provider_fallback_used=False)
 
 
-def _build_ssh_agy_runner(
+def _legacy_build_ssh_agy_runner(
     host: str,
     *,
     danmaku_items=None,
@@ -945,21 +962,7 @@ def _build_ssh_agy_runner(
     topic_entity_context_provider=None,
     song_name_candidates=(),
 ):
-    """Chunked jingting second-listen over ssh: agy lives on the remote host.
-
-    gemini-3.5-flash silently returns empty output (rc=0, no file, no stderr)
-    on long-video contexts — the 7/2 whole-session job died exactly this way —
-    and the documented sweet spot for transcription-accuracy work is ~5 minute
-    clips.  So the context is split at cue gaps (jingting_chunker), each chunk
-    re-encoded to a small 1280p clip (the proven-good ~50MB input profile),
-    refined by one agy call per chunk with the production jingting prompt, and
-    the refined texts are merged back onto the untouched draft timeline.
-
-    Fail-closed with distinguishable reason codes: AGY_EMPTY_OUTPUT vs
-    AGY_TIMEOUT vs AGY_FAILED_RC — a mislabeled failure sends the follow-up
-    fix in the wrong direction.  Exactly one retry per chunk: empty output is
-    often transient, but unbounded retries are how free's disk filled up.
-    """
+    """Legacy implementation kept temporarily for behavior comparison."""
 
     import shlex
     import time as _time
@@ -1054,7 +1057,6 @@ def _build_ssh_agy_runner(
             run(["scp", "-q", str(chunk_clip), f"{host}:{job_dir}/input.mp4"])
             run(["scp", "-q", str(draft_file), f"{host}:{job_dir}/draft.srt"])
             run(["scp", "-q", str(prompt_file), f"{host}:{job_dir}/prompt.md"])
-
         short_prompt = (
             f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
             f"Use only {job_dir}/prompt.md, {job_dir}/input.mp4, "
@@ -1155,11 +1157,6 @@ def _build_ssh_agy_runner(
                     except (AgyRunnerError, RuntimeError) as exc:
                         last_error = exc
                 if last_error is not None:
-                    # AGY 双尝试尽头 → 同模型换 API 载体续命（run_gemini_api：
-                    # 免费 3 key → 付费门+入帐）。这是载体冗余不是二证人——背后
-                    # 同为 gemini-3.5-flash（Ivan 2026-07-14）；证人独立性由
-                    # BCUT 草稿与忠实性守卫承担。API 也失败才让整次 refine 失败
-                    # （上游据此退 CPA 纯文本，守卫会回退其无证改写）。
                     try:
                         from scripts.gemini_slice_jingting import run_gemini_api
 
@@ -1198,3 +1195,6 @@ def _build_ssh_agy_runner(
         )
 
     return runner
+
+
+_build_ssh_agy_runner = _attested_build_ssh_agy_runner

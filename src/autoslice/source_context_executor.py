@@ -13,12 +13,36 @@ from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_t
 
 
 @dataclass(frozen=True)
+class AgyChunkAttestation:
+    chunk_index: int
+    media_start_ms: int
+    media_end_ms: int
+    media_sha256: str
+    draft_srt_sha256: str
+    refined_srt_sha256: str
+    executed_provider: str
+    timing_validated: bool
+    audio_input_attested: bool
+
+
+@dataclass(frozen=True)
 class AgyExecutionResult:
     provider: str = "agy"
     model: str | None = None
     agy_rc: int | None = None
     provider_fallback_used: bool | None = None
     provider_request_id: str | None = None
+    requested_provider: str | None = None
+    executed_provider: str | None = None
+    source_media_sha256: str | None = None
+    draft_srt_sha256: str | None = None
+    refined_srt_sha256: str | None = None
+    timing_validated: bool | None = None
+    audio_input_attested: bool | None = None
+    chunk_count: int | None = None
+    agy_chunk_count: int | None = None
+    api_fallback_chunk_count: int | None = None
+    chunk_attestations: tuple[AgyChunkAttestation, ...] = ()
 
 
 class AgyRunnerError(RuntimeError):
@@ -246,6 +270,30 @@ def execute_source_context_job(
         "agy_rc": agy_result.agy_rc,
         "provider_fallback_used": agy_result.provider_fallback_used,
         "provider_request_id": agy_result.provider_request_id,
+        "requested_provider": agy_result.requested_provider,
+        "executed_provider": agy_result.executed_provider,
+        "declared_source_media_sha256": agy_result.source_media_sha256,
+        "declared_draft_srt_sha256": agy_result.draft_srt_sha256,
+        "declared_refined_srt_sha256": agy_result.refined_srt_sha256,
+        "timing_validated": agy_result.timing_validated,
+        "audio_input_attested": agy_result.audio_input_attested,
+        "chunk_count": agy_result.chunk_count,
+        "agy_chunk_count": agy_result.agy_chunk_count,
+        "api_fallback_chunk_count": agy_result.api_fallback_chunk_count,
+        "chunk_attestations": [
+            {
+                "chunk_index": row.chunk_index,
+                "media_start_ms": row.media_start_ms,
+                "media_end_ms": row.media_end_ms,
+                "media_sha256": row.media_sha256,
+                "draft_srt_sha256": row.draft_srt_sha256,
+                "refined_srt_sha256": row.refined_srt_sha256,
+                "executed_provider": row.executed_provider,
+                "timing_validated": row.timing_validated,
+                "audio_input_attested": row.audio_input_attested,
+            }
+            for row in agy_result.chunk_attestations
+        ],
         "refinement_required": refinement_required,
         "subtitle_authority_scope": (
             "proof_context_only_external_lrc_required"

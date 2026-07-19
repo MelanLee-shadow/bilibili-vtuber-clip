@@ -617,6 +617,34 @@ def _repair_sc_sender(text: str, sender: str) -> str | None:
     return text[: match.start("name")] + alias + text[match.end("name") :]
 
 
+_SC_ACTION_SENDER = re.compile(
+    r"^(?P<name>[^，。！？!?\s]{1,10}?)"
+    r"(?P<action>(?:SC|sc)(?:啊)?|(?:苏|斯)(?:恰|擦)(?:啊)?)"
+)
+
+
+def _repair_sc_action_sender(text: str, sender: str) -> str | None:
+    """Repair a spoken sender only when the same cue explicitly says SC.
+
+    The platform sender does not prove that a name was spoken.  A matched SC
+    body plus an acoustic action anchor (``SC`` or a bounded ASR rendering such
+    as ``苏恰``) does prove the narrow sender slot.  Display suffixes such as
+    ``orient`` are intentionally stripped by ``_spoken_sender_alias``.
+    """
+
+    alias = _spoken_sender_alias(sender)
+    match = _SC_ACTION_SENDER.search(text)
+    if not alias or match is None:
+        return None
+    heard_name = match.group("name")
+    action = match.group("action")
+    canonical_action = "SC啊" if action.lower().endswith("啊") else "SC"
+    replacement = alias + canonical_action
+    if heard_name.lower() == alias.lower() and action == canonical_action:
+        return None
+    return replacement + text[match.end() :]
+
+
 # Gift-thanks grammar is looser than the SC thank-name grammar above: there is
 # no fixed suffix keyword (「送的」/「的SC」), just "谢(谢)?...的<TAIL>" where
 # TAIL is whatever ASR heard as the gift name, up to the end of the cue (minus

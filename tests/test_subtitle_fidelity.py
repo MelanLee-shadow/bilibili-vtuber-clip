@@ -105,14 +105,60 @@ def test_pinyin_homophone_respell_passes_without_witness():
     assert audit["reverted_count"] == 1
 
 
-def test_cue_count_mismatch_skips_guard():
+def test_cue_count_mismatch_is_aligned_to_draft_timing_instead_of_skipped():
     draft = _srt("一句")
     final = _srt("一句", "多出来的")
 
     guarded, audit = apply_subtitle_fidelity_guard(draft, final, agy_srt=None, sanctioned=())
 
-    assert audit["status"] == "SKIPPED_CUE_COUNT_MISMATCH"
-    assert guarded == final
+    assert audit["status"] == "ALIGNED_WITH_GAPS"
+    assert "一句" in guarded
+    assert "多出来的" not in guarded
+    assert audit["ignored_final_cues"][0]["reason_code"] == (
+        "FINAL_CUE_HAS_NO_DRAFT_TIMING_KEY"
+    )
+
+
+def test_guard_reverts_only_bad_span_and_keeps_sanctioned_name_span():
+    draft = _srt("让刘莎线下叫提莫怂")
+    final = _srt("让礼墨线下叫kmx")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft,
+        final,
+        sanctioned=(("提莫怂", "kmx"),),
+    )
+
+    assert "让刘莎线下叫kmx" in guarded
+    assert "让礼墨" not in guarded
+    assert audit["status"] == "APPLIED"
+    assert audit["reverted"][0]["kept"] == "让刘莎线下叫kmx"
+
+
+def test_hash_bound_fallback_can_only_support_a_repeated_name_slot():
+    draft = _srt("请问熊在线下说", "但是因为提")
+    corrected = _srt("kmx在线下说", "但是因为kmx")
+    fallback = corrected
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft,
+        corrected,
+        corroborating_srt=fallback,
+        sanctioned=(("请问熊", "kmx"),),
+    )
+
+    assert "kmx在线下说" in guarded
+    assert "但是因为kmx" in guarded
+    assert audit["status"] == "CLEAN"
+
+    single_guarded, _single_audit = apply_subtitle_fidelity_guard(
+        _srt("但是因为提"),
+        _srt("但是因为kmx"),
+        corroborating_srt=_srt("但是因为kmx"),
+        sanctioned=(),
+    )
+    assert "但是因为提" in single_guarded
+    assert "但是因为kmx" not in single_guarded
 
 
 def test_numeric_fact_introduced_by_semantic_lane_without_source_is_reverted():

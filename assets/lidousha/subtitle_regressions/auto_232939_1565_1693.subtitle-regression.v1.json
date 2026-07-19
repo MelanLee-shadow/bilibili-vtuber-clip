@@ -2,10 +2,14 @@
   "schema_version": "lidousha-subtitle-regression.v1",
   "candidate_id": "auto_232939_1565_1693",
   "required_payload_substrings": [
-    "花篮"
+    "花篮",
+    "分号分号"
   ],
   "forbidden_payload_substrings": [
-    "ありがとう"
+    "ありがとう",
+    "风光风光",
+    "封号封号",
+    "破防破防"
   ],
   "forbidden_exact_cues": []
 }

@@ -40,6 +40,7 @@ _REQUIRED_ASSET_FILES = frozenset(
         "psplive_roster_sources",
         "slice_selection_metric",
         "subtitle_correction_principles",
+        "subtitle_truth_ledger",
         "timely_term_seeds",
         "timely_term_sources",
         "timely_terms",

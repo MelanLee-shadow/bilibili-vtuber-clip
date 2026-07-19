@@ -53,6 +53,7 @@ from src.autoslice.session_topic_authority import (
     absorb_session_topic_entities,
     discover_session_topic_authorities,
 )
+from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
@@ -547,6 +548,7 @@ def _run_final_review(
     handled_entity_cues: set[int],
     verify_confusable_entity: Callable,
     adapters: TextPipelineAdapters,
+    authoritative_chat: list[ChatEvidence] | tuple[ChatEvidence, ...] = (),
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -563,6 +565,14 @@ def _run_final_review(
                 llm_call=review_llm_call,
                 extract_json=extract_json_object,
                 glossary_text=adapters.review_glossary(),
+                structured_context_text="\n".join(
+                    (
+                        f"{item.kind} @{item.offset_ms}ms"
+                        f"{(' sender=' + item.sender) if item.sender else ''}: "
+                        f"{sanitize_chat_display_text(item.text)}"
+                    )
+                    for item in authoritative_chat[:160]
+                ),
             )
             protected_review_cues = set(handled_entity_cues)
             for row in chat_authority_audit.get("applied") or []:
@@ -671,6 +681,8 @@ def _run_final_review(
 
 def _finalize_text_evidence(
     *,
+    spec: dict,
+    durations: list[int],
     srt_text: str,
     chat_authority_audit: dict,
     transcript_entity_audit: dict,
@@ -680,6 +692,7 @@ def _finalize_text_evidence(
     session_topic_authorities: tuple[dict[str, Any], ...],
     source_language_witness_srt: str,
     text_override_path: Path | None,
+    source_truth_ledger_path: Path | None,
     out_root: Path,
     cid: str,
 ) -> TextEvidenceResult:
@@ -825,6 +838,13 @@ def _finalize_text_evidence(
     chat_authority_audit["final_hard_meme_surface_audit"] = (
         hard_meme_surface_audit
     )
+    srt_text, source_truth_audit = apply_source_subtitle_truth(
+        srt_text,
+        spec=spec,
+        durations=durations,
+        ledger_path=source_truth_ledger_path,
+    )
+    chat_authority_audit["source_subtitle_truth_audit"] = source_truth_audit
     chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
         srt_text.encode("utf-8")
     ).hexdigest()
@@ -838,6 +858,10 @@ def _finalize_text_evidence(
         + "\n",
         encoding="utf-8",
     )
+    if source_truth_audit["status"] == "FAILED":
+        raise SystemExit(
+            f"SOURCE_SUBTITLE_TRUTH_REQUIRED: {chat_authority_path}"
+        )
     (out_root / "padded.fresh.srt").write_text(srt_text, encoding="utf-8")
     cues = [c for c in parse_srt_cues(srt_text) if c.text.strip()]
     if len(cues) < 3:
@@ -905,9 +929,12 @@ def run_text_pipeline(
         chat_authority_audit=authority.chat_authority_audit,
         handled_entity_cues=authority.handled_entity_cues,
         verify_confusable_entity=entity_context.verify_confusable_entity,
+        authoritative_chat=authoritative_chat,
         adapters=adapters,
     )
     evidence = _finalize_text_evidence(
+        spec=spec,
+        durations=durations,
         srt_text=reviewed_srt,
         chat_authority_audit=authority.chat_authority_audit,
         transcript_entity_audit=authority.transcript_entity_audit,
@@ -917,6 +944,11 @@ def run_text_pipeline(
         session_topic_authorities=draft.session_topic_authorities,
         source_language_witness_srt=draft.source_language_witness_srt,
         text_override_path=text_override_path,
+        source_truth_ledger_path=(
+            None
+            if str(spec.get("human_truth_mode") or "delivery") == "withheld"
+            else adapters.profile_asset_file("subtitle_truth_ledger")
+        ),
         out_root=out_root,
         cid=cid,
     )

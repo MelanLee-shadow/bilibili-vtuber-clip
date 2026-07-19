@@ -194,6 +194,31 @@ def test_auditor_derives_title_span_only_when_source_surface_is_witnessed():
     }
 
 
+def test_auditor_can_cite_structured_chat_as_name_spelling_evidence():
+    source = _srt("但是因为提")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm([
+            {
+                "cue": 1,
+                "kind": "entity",
+                "proposed_full_cue": "但是因为kmx",
+                "repair_class": "source_backed_entity",
+                "source_surface": "kmx",
+                "why": "同一时间窗弹幕重复使用该专名",
+            }
+        ]),
+        extract_json=_extract,
+        structured_context_text="danmaku @1000ms: 大家：kmx是这样的",
+    )
+
+    assert findings[0]["suggestion"] == "kmx"
+    assert findings[0]["candidate_provenance"] == {
+        "kind": "structured_context",
+        "surface": "kmx",
+    }
+
+
 def test_auditor_rejects_reviewer_only_proper_name():
     source = _srt("那群 P 7赖我的群绝对不止有我一个人")
     findings = audit_final_subtitles(

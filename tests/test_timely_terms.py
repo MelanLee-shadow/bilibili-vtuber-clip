@@ -122,7 +122,7 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     )
 
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "7ac35fc189652aa4a80858a60792aa4e14814aaf2526d29f5f5843ebe62232ce"
+        "cc79efdcdfdfbaba6bb2fc9b808c8b19ed9d81e228b70ff9fba9abcfb7a6a95b"
     )
 
 

@@ -16,8 +16,9 @@ draft→终稿 的每个编辑跨度必须被至少一类证人背书：
 - 纯标点/空白差异；
 - 整 cue 置空（幻听丢弃，修正合同明确允许）。
 
-违者整 cue 回退 draft 原文（fail-open to verbatim，绝不阻塞产线），逐条
-入 audit。后续证据车道（chat authority / 实体音频仲裁 / 礼物链 / 硬表）
+违者只回退该最小编辑跨度；同 cue 内已经有证据的修复继续保留。终稿先按
+draft 的时间键对齐，删除/增补 cue 不再让整个守卫跳过。后续证据车道
+（chat authority / 实体音频仲裁 / 礼物链 / 硬表）
 在本守卫之后运行且各自带证据，不受影响；代词终审(_cpa_pronoun_ta_pass)
 的 tā 组已在同音白名单内。
 """
@@ -187,6 +188,8 @@ def _span_verdict(
     final_span: str,
     *,
     agy_cue_text: str | None,
+    corroborating_cue_text: str | None,
+    corroborating_texts: Iterable[str],
     pairs: Iterable[tuple[str, str]],
 ) -> str | None:
     """Return None when the span is witnessed, else a bounded violation code."""
@@ -202,9 +205,21 @@ def _span_verdict(
             return None
         if agy_cue_text and _strip_non_text(final_span) and _strip_non_text(final_span) in _strip_non_text(agy_cue_text):
             return None
+        if _corroborating_repeat_support(
+            final_span,
+            cue_text=corroborating_cue_text,
+            all_texts=corroborating_texts,
+        ):
+            return None
         return "REPLACE_UNWITNESSED"
     if op == "insert":
         if agy_cue_text and _strip_non_text(final_span) and _strip_non_text(final_span) in _strip_non_text(agy_cue_text):
+            return None
+        if _corroborating_repeat_support(
+            final_span,
+            cue_text=corroborating_cue_text,
+            all_texts=corroborating_texts,
+        ):
             return None
         return "INSERT_UNWITNESSED"
     if op == "delete":
@@ -217,37 +232,136 @@ def _span_verdict(
     return None
 
 
+def _corroborating_repeat_support(
+    final_span: str,
+    *,
+    cue_text: str | None,
+    all_texts: Iterable[str],
+) -> bool:
+    """Use a fallback listen only when the same non-trivial span recurs.
+
+    A hash-bound API fallback did hear the audio, but it is not an independent
+    witness for its own one-off guess.  Requiring the current cue plus another
+    cue to contain the same span turns it into bounded repetition support
+    without globally trusting every fallback rewrite.  Single-character slots
+    such as ``提`` are intentionally ineligible.
+    """
+
+    needle = _strip_non_text(final_span)
+    if len(needle) < 2 or cue_text is None:
+        return False
+    if needle not in _strip_non_text(cue_text):
+        return False
+    return (
+        sum(1 for text in all_texts if needle in _strip_non_text(text))
+        >= 2
+    )
+
+
 def apply_subtitle_fidelity_guard(
     draft_srt: str,
     corrected_srt: str,
     *,
     agy_srt: str | None = None,
+    corroborating_srt: str | None = None,
     sanctioned: Iterable[tuple[str, str]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Revert unwitnessed rewrites cue-by-cue; never blocks, only audits."""
+    """Revert only unwitnessed spans on the immutable draft timeline."""
 
     pairs = tuple(sanctioned) if sanctioned is not None else tuple(sanctioned_respell_pairs())
     draft_cues = parse_srt_cues(draft_srt)
     final_cues = parse_srt_cues(corrected_srt)
     audit: dict[str, Any] = {
-        "schema_version": "subtitle-fidelity-audit.v1",
+        "schema_version": "subtitle-fidelity-audit.v2",
         "agy_witness_available": agy_srt is not None,
+        "corroborating_audio_available": corroborating_srt is not None,
         "reverted": [],
         "hallucination_drops": [],
+        "alignment_gaps": [],
+        "ignored_final_cues": [],
     }
-    if len(draft_cues) != len(final_cues):
-        audit["status"] = "SKIPPED_CUE_COUNT_MISMATCH"
-        audit["draft_cue_count"] = len(draft_cues)
-        audit["final_cue_count"] = len(final_cues)
-        return corrected_srt, audit
     agy_cues = parse_srt_cues(agy_srt) if agy_srt else []
-    agy_by_index: dict[int, str] = {i: c.text for i, c in enumerate(agy_cues, start=1)}
+    corroborating_cues = (
+        parse_srt_cues(corroborating_srt) if corroborating_srt else []
+    )
+
+    def by_timing(cues):
+        grouped: dict[tuple[int, int], list[Any]] = {}
+        for cue in cues:
+            grouped.setdefault((cue.start_ms, cue.end_ms), []).append(cue)
+        return grouped
+
+    final_by_timing = by_timing(final_cues)
+    agy_by_timing = by_timing(agy_cues)
+    corroborating_by_timing = by_timing(corroborating_cues)
+    draft_timing_keys = {(cue.start_ms, cue.end_ms) for cue in draft_cues}
+    for cue in final_cues:
+        if (cue.start_ms, cue.end_ms) not in draft_timing_keys:
+            audit["ignored_final_cues"].append(
+                {
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                    "text": cue.text,
+                    "reason_code": "FINAL_CUE_HAS_NO_DRAFT_TIMING_KEY",
+                }
+            )
 
     out_lines: list[str] = []
-    for index, (draft_cue, final_cue) in enumerate(zip(draft_cues, final_cues), start=1):
+    for index, draft_cue in enumerate(draft_cues, start=1):
+        timing_key = (draft_cue.start_ms, draft_cue.end_ms)
+        exact_final = final_by_timing.get(timing_key) or []
+        if len(exact_final) == 1:
+            final_text = exact_final[0].text
+        elif len(exact_final) > 1:
+            final_text = draft_cue.text
+            audit["alignment_gaps"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": draft_cue.start_ms,
+                    "end_ms": draft_cue.end_ms,
+                    "reason_code": "FINAL_TIMING_KEY_AMBIGUOUS",
+                }
+            )
+        else:
+            overlapping = [
+                cue
+                for cue in final_cues
+                if min(cue.end_ms, draft_cue.end_ms)
+                > max(cue.start_ms, draft_cue.start_ms)
+            ]
+            if overlapping:
+                final_text = draft_cue.text
+                audit["alignment_gaps"].append(
+                    {
+                        "cue_index": index,
+                        "start_ms": draft_cue.start_ms,
+                        "end_ms": draft_cue.end_ms,
+                        "reason_code": "FINAL_TIMING_DRIFT_OR_MERGE",
+                        "overlapping_final_cue_count": len(overlapping),
+                    }
+                )
+            else:
+                # An intentionally dropped hallucination/filler cue is an
+                # allowed empty-cue decision.  Keep the draft timing key so
+                # downstream indices remain stable.
+                final_text = ""
+                audit["alignment_gaps"].append(
+                    {
+                        "cue_index": index,
+                        "start_ms": draft_cue.start_ms,
+                        "end_ms": draft_cue.end_ms,
+                        "reason_code": "FINAL_CUE_DROPPED",
+                    }
+                )
         draft_text = draft_cue.text
-        final_text = final_cue.text
-        agy_text = agy_by_index.get(index) if agy_srt else None
+        exact_agy = agy_by_timing.get(timing_key) or []
+        agy_text = exact_agy[0].text if len(exact_agy) == 1 else None
+        exact_corroborating = corroborating_by_timing.get(timing_key) or []
+        corroborating_text = (
+            exact_corroborating[0].text
+            if len(exact_corroborating) == 1
+            else None
+        )
         kept = final_text
         if final_text != draft_text:
             if not final_text.strip():
@@ -260,18 +374,25 @@ def apply_subtitle_fidelity_guard(
                 pass
             else:
                 violations: list[dict[str, str]] = []
+                rebuilt: list[str] = []
                 matcher = SequenceMatcher(None, draft_text, final_text, autojunk=False)
                 for op, a1, a2, b1, b2 in matcher.get_opcodes():
                     if op == "equal":
+                        rebuilt.append(draft_text[a1:a2])
                         continue
                     verdict = _span_verdict(
                         op,
                         draft_text[a1:a2],
                         final_text[b1:b2],
                         agy_cue_text=agy_text,
+                        corroborating_cue_text=corroborating_text,
+                        corroborating_texts=(
+                            cue.text for cue in corroborating_cues
+                        ),
                         pairs=pairs,
                     )
                     if verdict:
+                        rebuilt.append(draft_text[a1:a2])
                         violations.append(
                             {
                                 "op": op,
@@ -280,22 +401,35 @@ def apply_subtitle_fidelity_guard(
                                 "reason": verdict,
                             }
                         )
+                    else:
+                        rebuilt.append(final_text[b1:b2])
                 if violations:
-                    kept = draft_text
+                    kept = "".join(rebuilt)
                     audit["reverted"].append(
                         {
                             "cue_index": index,
                             "draft": draft_text,
                             "attempted": final_text,
+                            "kept": kept,
                             "violations": violations,
                         }
                     )
-        start = final_cue.start_ms
-        end = final_cue.end_ms
+        start = draft_cue.start_ms
+        end = draft_cue.end_ms
         out_lines.append(
             f"{index}\n{_ms_to_ts(start)} --> {_ms_to_ts(end)}\n{kept}\n"
         )
-    audit["status"] = "APPLIED" if audit["reverted"] else "CLEAN"
+    audit["draft_cue_count"] = len(draft_cues)
+    audit["final_cue_count"] = len(final_cues)
+    audit["status"] = (
+        "APPLIED"
+        if audit["reverted"]
+        else (
+            "ALIGNED_WITH_GAPS"
+            if audit["alignment_gaps"] or audit["ignored_final_cues"]
+            else "CLEAN"
+        )
+    )
     audit["reverted_count"] = len(audit["reverted"])
     return "\n".join(out_lines), audit
 

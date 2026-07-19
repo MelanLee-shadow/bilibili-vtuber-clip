@@ -35,6 +35,7 @@
       "psplive_roster_sources": "psplive_roster_sources.v1.json",
       "slice_selection_metric": "slice_selection_metric.md",
       "subtitle_correction_principles": "subtitle_correction_principles.md",
+      "subtitle_truth_ledger": "subtitle_truth_ledger.v1.json",
       "timely_term_seeds": "timely_term_seeds.json",
       "timely_term_sources": "timely_term_sources.json",
       "timely_terms": "timely_terms.json",
@@ -62,6 +63,7 @@
       "psplive_roster_sources",
       "slice_selection_metric",
       "subtitle_correction_principles",
+      "subtitle_truth_ledger",
       "timely_term_seeds",
       "timely_term_sources",
       "timely_terms",
@@ -145,6 +147,16 @@
         "surface": "基默熊",
         "canonical": "kmx",
         "authority": "Ivan-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "李豆莎",
+        "canonical": "李豆沙",
+        "authority": "Ivan-confirmed-self-name.v1"
+      },
+      {
+        "surface": "苏马奶",
+        "canonical": "十麻乃",
+        "authority": "Ivan-confirmed-sc-sender.v1"
       }
     ]
   },

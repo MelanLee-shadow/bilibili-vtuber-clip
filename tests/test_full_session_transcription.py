@@ -1,16 +1,19 @@
+import hashlib
 import json
 
 import scripts.free_asr_client as free_asr_client
 import src.autoslice.full_session_transcription as transcription
 import src.autoslice.llm_client as llm_client
 from src.autoslice.full_session_transcription import (
+    _agy_corroborating_witness,
     _agy_fidelity_witness,
     _agy_refinement_provenance,
 )
 from src.autoslice.source_context_executor import AgyExecutionResult
+from src.autoslice.source_context_executor import AgyChunkAttestation
 
 
-def test_direct_agy_refinement_is_an_independent_fidelity_witness():
+def test_unbound_direct_agy_refinement_is_not_a_fidelity_witness():
     refined = "1\n00:00:00,000 --> 00:00:01,000\n李豆沙\n"
     result = AgyExecutionResult(
         provider="agy",
@@ -20,11 +23,63 @@ def test_direct_agy_refinement_is_an_independent_fidelity_witness():
         provider_request_id="agy-job-1",
     )
 
-    assert _agy_fidelity_witness(refined, result) == refined
+    assert _agy_fidelity_witness(refined, result) is None
     assert _agy_refinement_provenance(
         result,
         refined_srt=refined,
-    )["fidelity_witness_eligible"] is True
+    )["fidelity_witness_eligible"] is False
+
+
+def test_hash_bound_direct_agy_is_an_independent_fidelity_witness(tmp_path):
+    draft = "1\n00:00:00,000 --> 00:00:01,000\n李豆莎\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\n李豆沙\n"
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"bound media")
+    result = AgyExecutionResult(
+        provider="agy",
+        model="Gemini 3.5 Flash (High)",
+        agy_rc=0,
+        provider_fallback_used=False,
+        provider_request_id="agy-job-bound-direct",
+        requested_provider="agy",
+        executed_provider="agy",
+        source_media_sha256=hashlib.sha256(media.read_bytes()).hexdigest(),
+        draft_srt_sha256=hashlib.sha256(draft.encode()).hexdigest(),
+        refined_srt_sha256=hashlib.sha256(refined.encode()).hexdigest(),
+        timing_validated=True,
+        audio_input_attested=True,
+        chunk_count=1,
+        agy_chunk_count=1,
+        api_fallback_chunk_count=0,
+        chunk_attestations=(
+            AgyChunkAttestation(
+                chunk_index=0,
+                media_start_ms=0,
+                media_end_ms=1_000,
+                media_sha256="a" * 64,
+                draft_srt_sha256="b" * 64,
+                refined_srt_sha256="c" * 64,
+                executed_provider="agy",
+                timing_validated=True,
+                audio_input_attested=True,
+            ),
+        ),
+    )
+
+    assert _agy_fidelity_witness(
+        refined,
+        result,
+        draft_srt=draft,
+        media_path=media,
+    ) == refined
+    provenance = _agy_refinement_provenance(
+        result,
+        refined_srt=refined,
+        draft_srt=draft,
+        media_path=media,
+    )
+    assert provenance["witness_tier"] == "independent_audio"
+    assert provenance["fidelity_witness_eligible"] is True
 
 
 def test_api_fallback_refinement_cannot_witness_its_own_rewrite():
@@ -42,6 +97,102 @@ def test_api_fallback_refinement_cannot_witness_its_own_rewrite():
     assert provenance["provider_fallback_used"] is True
     assert provenance["fidelity_witness_eligible"] is False
     assert provenance["refined_srt_sha256"]
+
+
+def test_incomplete_attestation_counts_fail_closed(tmp_path):
+    draft = "1\n00:00:00,000 --> 00:00:01,000\n请问熊\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\nkmx\n"
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"bound media")
+    result = AgyExecutionResult(
+        provider="agy",
+        agy_rc=0,
+        provider_fallback_used=False,
+        executed_provider="agy",
+        source_media_sha256=hashlib.sha256(media.read_bytes()).hexdigest(),
+        draft_srt_sha256=hashlib.sha256(draft.encode()).hexdigest(),
+        refined_srt_sha256=hashlib.sha256(refined.encode()).hexdigest(),
+        timing_validated=True,
+        audio_input_attested=True,
+        chunk_count=1,
+    )
+
+    provenance = _agy_refinement_provenance(
+        result,
+        refined_srt=refined,
+        draft_srt=draft,
+        media_path=media,
+    )
+
+    assert provenance["attestation_bound"] is False
+    assert provenance["fidelity_witness_eligible"] is False
+
+
+def test_hash_bound_api_fallback_is_only_a_context_bound_audio_witness(tmp_path):
+    draft = "1\n00:00:00,000 --> 00:00:01,000\n请问熊\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\nkmx\n"
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"bound media")
+    result = AgyExecutionResult(
+        provider="agy",
+        model="Gemini 3.5 Flash (Low)",
+        agy_rc=0,
+        provider_fallback_used=True,
+        provider_request_id="agy-job-bound:api_fb=1",
+        requested_provider="agy",
+        executed_provider="gemini_api",
+        source_media_sha256=hashlib.sha256(media.read_bytes()).hexdigest(),
+        draft_srt_sha256=hashlib.sha256(draft.encode()).hexdigest(),
+        refined_srt_sha256=hashlib.sha256(refined.encode()).hexdigest(),
+        timing_validated=True,
+        audio_input_attested=True,
+        chunk_count=1,
+        agy_chunk_count=0,
+        api_fallback_chunk_count=1,
+        chunk_attestations=(
+            AgyChunkAttestation(
+                chunk_index=0,
+                media_start_ms=0,
+                media_end_ms=1_000,
+                media_sha256="a" * 64,
+                draft_srt_sha256="b" * 64,
+                refined_srt_sha256="c" * 64,
+                executed_provider="gemini_api",
+                timing_validated=True,
+                audio_input_attested=True,
+            ),
+        ),
+    )
+
+    assert _agy_fidelity_witness(
+        refined,
+        result,
+        draft_srt=draft,
+        media_path=media,
+    ) is None
+    assert _agy_corroborating_witness(
+        refined,
+        result,
+        draft_srt=draft,
+        media_path=media,
+    ) == refined
+    provenance = _agy_refinement_provenance(
+        result,
+        refined_srt=refined,
+        draft_srt=draft,
+        media_path=media,
+    )
+    assert provenance["witness_tier"] == "context_bound_audio"
+    assert provenance["fidelity_witness_eligible"] is False
+    assert provenance["corroborating_audio_eligible"] is True
+
+    drifted = _agy_refinement_provenance(
+        result,
+        refined_srt=refined.replace("kmx", "礼墨"),
+        draft_srt=draft,
+        media_path=media,
+    )
+    assert drifted["corroborating_audio_eligible"] is False
 
 
 def test_api_fallback_rewrite_is_rejected_by_aggregate_transcriber(

@@ -1291,6 +1291,45 @@ def test_matched_sc_body_makes_platform_sender_authoritative_for_thank_name_slot
     )
 
 
+def test_matched_sc_body_repairs_same_cue_sender_only_with_action_anchor():
+    exact = "得了一种听到“是侄女”就想笑的病"
+    source = _srt("左乃苏恰得了一种听到“是侄女”就想笑的病")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence(
+                "superchat",
+                0,
+                exact,
+                "十麻乃orient",
+                source_event_id="sc-shimanao",
+            )
+        ],
+        support_srt_texts=[source],
+    )
+
+    assert "十麻乃SC" in output
+    assert "orient" not in output
+    assert audit["sender_repairs"][0]["alignment_basis"] == (
+        "matched-superchat-body-plus-action-anchor.v1"
+    )
+
+
+def test_matched_sc_body_does_not_invent_sender_without_spoken_action_anchor():
+    exact = "得了一种听到“是侄女”就想笑的病"
+    source = _srt("左乃说得了一种听到“是侄女”就想笑的病")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact, "十麻乃orient")],
+        support_srt_texts=[source],
+    )
+
+    assert "十麻乃" not in output
+    assert audit["sender_repairs"] == []
+
+
 def test_duplicate_real_sc_body_with_different_senders_fails_closed():
     exact = "如果能唱的到想点首小城夏天，唱不到就算了"
     source = _srt("谢谢错名送的", "如果能唱的到想点首小城夏天唱不到就算了")

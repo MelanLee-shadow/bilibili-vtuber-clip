@@ -3,7 +3,7 @@ name: bilive-autoslice-publish
 description: "李豆沙(房间22966160)切片从候选到 B 站发布的项目权威标准：候选管线、字幕权威、标题/封面/元数据规范、本地交付布局、投稿通道、入合集、公开验证。任何投稿/交付动作前必读。"
 ---
 
-# Bilive Autoslice Publish（项目权威版，2026-07-18 修订）
+# Bilive Autoslice Publish（项目权威版，2026-07-19 修订）
 
 本文件是**项目内唯一权威**（对 codex 和 Claude 会话同等生效）。`~/.codex/skills/bilive-autoslice-publish/SKILL.md` 是历史版本，其中 season/switch 等段已过时——以本文件为准。修订依据：2026-06-19~22 codex 实证 + 2026-07-03~04 Claude 实证（含真实投稿 BV1qxMc6XEM9）+ 2026-07-13~14 批量发布/换源实证（tag 新口径、歌切无片头、编辑修正总则、验收 checklist）+ 2026-07-18 Z1 三句版固定谈话片头换版。
 
@@ -29,10 +29,11 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
 
 - **语义召回**为主 lane（`--semantic-recall-llm-command`，观众视角），关键词 lane 只作 LLM 故障退路；弹幕突发 hints（`--danmaku-xml`）必带。
 - **CPA 观众视角审查**：窗内真实弹幕 + 前后 90s 原文进证据；`VIEWER_CONTEXT_INCOMPLETE` 自动扩窗一次重审。
-- **talk 成品字幕顺序（2026-07-10 起的强制契约）**：`聚合 ASR 句级毫秒时间轴 + draft → AGY 听音精修（可用时）→ CPA 对照裁决/词表/弹幕/SC 校正 → 全片人称定稿 → 可选 hash-bound 人工文本真值 → CAM++ 李豆沙声纹 + 全片语境二分色 → 可选 hash-bound 人工换人/拆句/抢话真值 → 分色 ASS → 烧录`。`scripts/free_asr_client.py`（必剪 bcut 主 / 剪映 jianying 备）仍拥有时间轴；AGY/CPA/人称层只改文本，不得重写时间。已知女主播（李豆沙、礼墨Sumi、安晚Awa 等）一律用“她”，已知男性用“他”，动物/物体用“它”，只有全文仍无法确认的人才用 `TA`；人称 pass 必须同时支持 `TA→她/他/它` 与错误性别代词 `→TA`。说话人阶段只消费已经 text-final 的 SRT，`--speaker-mode required` 且 fail closed；产出一份带 `[李豆沙]/[连线]` 的复核 SRT 和一份**无可见标签**的白/黄分色 ASS，烧录器只能使用 hash 匹配的该 ASS，不能临时重建成单色字幕。短句/阈值带必须被全片语境逐条回答，缺答只可由 hash-bound 人工真值补齐，否则整条拒绝交付；抢话 best effort，副说话人字词或区间不可靠时只保主说话人。人工改字必须重新跑说话人阶段再烧录，禁止直接改单个已烧录 SRT。**歌切字幕仍是 LRC 全局位移**，不进入 talk 说话人链（见 `docs/workflows/lidousha-song-finished-package-workflow.md`）。
+- **talk 成品字幕顺序（2026-07-10 起的强制契约）**：`聚合 ASR 句级毫秒时间轴 + draft → AGY 听音精修（可用时）→ CPA 对照裁决/词表/弹幕/SC 校正 → 全片人称定稿 → SOURCE_INTERVAL_TRUTH 源时间轴真值 → CAM++ 李豆沙声纹 + 全片语境二分色 → 可选 hash-bound 人工换人/拆句/抢话真值 → 分色 ASS → 烧录`。`scripts/free_asr_client.py`（必剪 bcut 主 / 剪映 jianying 备）仍拥有时间轴；AGY/CPA/人称层只改文本，不得重写时间。已知女主播（李豆沙、礼墨Sumi、安晚Awa 等）一律用“她”，已知男性用“他”，动物/物体用“它”，只有全文仍无法确认的人才用 `TA`；人称 pass 必须同时支持 `TA→她/他/它` 与错误性别代词 `→TA`。说话人阶段只消费已经 text-final 的 SRT，`--speaker-mode required` 且 fail closed；产出一份带 `[李豆沙]/[连线]` 的复核 SRT 和一份**无可见标签**的白/黄分色 ASS，烧录器只能使用 hash 匹配的该 ASS，不能临时重建成单色字幕。短句/阈值带必须被全片语境逐条回答，缺答只可由 hash-bound 人工真值补齐，否则整条拒绝交付；抢话 best effort，副说话人字词或区间不可靠时只保主说话人。人工改字必须重新跑说话人阶段再烧录，禁止直接改单个已烧录 SRT。**歌切字幕仍是 LRC 全局位移**，不进入 talk 说话人链（见 `docs/workflows/lidousha-song-finished-package-workflow.md`）。
+- **精修证据分级（2026-07-19 强制）**：只有“直接音频精修”可作为独立声学 witness；API fallback 必须逐块绑定源视频、draft、refined 哈希和时间窗，最多记为 `context_bound_audio`，不得因 `rc=0` 就升级成独立 witness。字幕完整性保护按最小冲突片段回滚；cue 数量变化、删填充、拆并句不能触发整条 cue 回滚或整道 guard 跳过。无法用声学/语境/结构化 SC 证据裁决的高风险专名必须 hold，不能发布猜测。
 - **VAD 时间轴 QA**：silero（free:/opt/bilive/vad/）只作正证据；唯一删除规则=卡住幻觉（重复文本+≥12s+零VAD）；起止吸附到语音岛。
 - 精听分块 ≤5min/块（全段输入=agy 确定性空输出）；失败码区分 AGY_EMPTY_OUTPUT/AGY_TIMEOUT/AGY_FAILED_RC。
-- 人工订正通道：Ivan 给出的字幕/标题真值即定稿，落 `*.human_corrections.json`，不再烧配额重试。
+- 人工订正通道：Ivan 给出的字幕文本真值必须落到 `SOURCE_INTERVAL_TRUTH` 账本，以“源录像 basename + 源绝对毫秒区间”绑定，并通过 jump-cut piece 映射到每次重切；不得只绑 candidate id 或手改某个 SRT。账本条目必须区分“局部替换”和“整 cue 定稿”，应用失败、歧义命中或缺失 required 条目一律 fail closed。标题真值仍按对应 hash-bound 记录保存，不再烧配额重试。
 - **词表是误听修复的第一通道**（Ivan 2026-07-04）：专名/近音误听（实例：一四二/伊索尔→`142`、刘彩→李豆沙的自称误听、小寺→小室、阿朵→Ado）本应由纠正 LLM 靠词表修复——成品里出现未收录的误听 = 词表缺口。处置：立即把该词加进 `assets/lidousha/glossary.txt`（含"不要写成X"反例），跑 `scripts/sync_lidousha_assets.sh` 同步 free，**用新词表重出该切片**，而不是手改单个字幕文件。特别注意主播第三人称自称"李豆沙/小李/豆沙"的近音人名（刘彩、李彩类）都是误听。
 - **CPA 文本校正的四类共性错误**（Ivan 2026-07-04，已写进 glossary 文本规则 + `_cpa_correct_draft_cues` 提示词，成品里再出现即为规则未生效需查）：ASR/纯文本校正听不见音频，反复在这几类栽跟头，必须按语境修——① **同音词按语境推测**（偷渡vs掏兜、反杀vs反沙）；② **不把口语词臆造成国家/地名/生僻专名**（奶油苏丹→奶油苏打）；③ **英文/日文外来词保留原文罗马字**，不硬拼谐音汉字（cream soda≠库里瘦的）；④ **代词与指代对象一致**，动物(猴/熊/猫/宠物)用"它/它们"不用"他/她"（他胸口→它胸口 同类）。发现新类别就补进 glossary 文本规则并同步。
 - **superchat/画面文字：词表优先，图像只补未知（Ivan 2026-07-04 实测修正）**：主播念 SC/醒目留言/画面标题时念的是画面卡片原文，SC **不在 blrec 弹幕 XML 里**（XML 只存滚动弹幕）。**但实测结论：词表才是可靠权威**——"沙特琳→沙豆李"实测靠词表(context)能稳修对；而 agy 视觉对**花体/艺术字 SC 卡片识别本身会错**（把"沙豆李"读成"大小姐姐姐"），开图像校正反而让 CPA 整行改写、盖过词表、结果更糟。所以：① **已知专名一律进词表，以词表为准**（`_cpa_correct_draft_cues` 默认 glossary+context+danmaku 已够，沙豆李/142/掏兜/苏打/cream soda/它 全靠这条链修对）；② 图像校正(`_agy_screen_text_lines`, `produce_slice_package --screen-text`)**默认关**，只在某条切片的意思依赖**词表还没有的**画面文字、且卡片清晰可读时才开，且它是补充不是权威、绝不能盖过词表名字。agy 视觉读画面是它在新架构唯一独占职责，但花体卡片不可靠，将来 OCR 也一样受此限。
@@ -176,6 +177,7 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
 - **上传授权语义**：Ivan 说「可以上传/直接上传」= 该条走完整发布链（biliup 单次 → 入合集 → 公开验证 state=0 → uploaded.json + public_verify.json → 按规矩 commit）；「不能上传」= 只 staged 交付；他没点名的候选 = 不做。
 - **合并/长切片**：相关片段合并时按语义重推整体边界，叙事必须完整（触发点→发展→收束）；可用多 piece 掐纯岔话但保留桥接句（例：保留「日本那边作者没少干」桥进作者暴雷）；收束优先落在有立场/可引用的句子（例：「我们22966160是个温和派直播间」）。
 - **作品讨论类切片**：标题必须带《作品名》；作品名从转写/弹幕双确证（例：《在意的人不是男生》= 弹幕原话 + 唱片店剧情描述吻合），确证不了就问 Ivan，不许猜。
-- **专名闭环**：新专名（联动对象 礼墨Sumi/安晚awa、梗名 百破图/百乃工 等）出现即入 glossary → sync → 重出该切片；绝不手改字幕文件。
+- **专名闭环**：新专名（联动对象 礼墨Sumi/安晚awa、梗名 百破图/百乃工 等）出现即入 glossary/entity confusables → sync → 经完整正式流水线重出该切片；绝不手改字幕文件。混合字母专名（如 `kmx`，口语可念“kimo熊”）只能在发音近似、同段重复、结构化弹幕/SC 或明确语境至少一项支持时吸附；不得把单字“提”或常用词“提防”全局改成 `kmx`。SC sender 只有在主播同句出现“谢谢/感谢/念 SC”等动作锚点时才可覆盖同句人名，SC 卡片存在本身不能证明主播念了 sender。
+- **新切/重切同管线**：任何“人工补切”“字幕修复”“同源重切”都必须调用当前 production text pipeline、完整性门禁、说话人链、回归 canary 和烧录哈希链；禁止以手工 ffmpeg/SRT 绕开最新流程。人工真值是流水线输入资产，不是流水线外的最终文件补丁。
 - **标题语料铁律**：只有 Ivan 已上传/手定的标题算风格语料；free 生产线机器生成的旧标题不算（曾污染词库引入 直接/当场/疯狂/破防 等他从未用过的词）。
 - **封面观感有分歧时**：推线上前把像素级证据摆给他（两版并排+指出差异），执行他的最终选择；封面可热换、可逆，别僵持。

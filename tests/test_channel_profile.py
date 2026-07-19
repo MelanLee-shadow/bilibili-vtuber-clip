@@ -92,6 +92,9 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
     assert profile.asset_file("upload_tag_policy") == (
         REPO_ROOT / "assets/lidousha/upload_tag_policy.json"
     )
+    assert profile.asset_file("subtitle_truth_ledger") == (
+        REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
+    )
     assert profile.asset_directory("fonts") == REPO_ROOT / "assets/lidousha/fonts"
     assert profile.voiceprint_reference_subdirectory == "lidousha"
     assert profile.song_title_prefix == "【李豆沙】豆沙歌，"
@@ -109,6 +112,8 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         ("Kimo熊", "kmx"),
         ("kimoxiong", "kmx"),
         ("基默熊", "kmx"),
+        ("李豆莎", "李豆沙"),
+        ("苏马奶", "十麻乃"),
     ]
     assert profile.format_song_title("芽吹くとき", hook="下播前的温柔哄睡小歌") == (
         "【李豆沙】豆沙歌，《芽吹くとき》｜下播前的温柔哄睡小歌"

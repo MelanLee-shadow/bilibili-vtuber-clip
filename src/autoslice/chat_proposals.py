@@ -33,6 +33,7 @@ from src.autoslice.chat_repair import (
     _match_metrics,
     _matched_read_prefix,
     _partial_question_patch,
+    _repair_sc_action_sender,
     _repair_sc_sender,
     _sender_thank_anchor,
     _shift_boundary_punct,
@@ -871,7 +872,16 @@ def _apply_sc_sender_repairs(
         if item.kind != "superchat" or not item.sender:
             continue
         repair_candidate: tuple[int, str] | None = None
+        alignment_basis = "matched-superchat-body-plus-platform-sender.v1"
+        for index in range(proposal["start"], proposal["start"] + proposal["count"]):
+            repaired = _repair_sc_action_sender(texts[index], item.sender)
+            if repaired is not None:
+                repair_candidate = (index, repaired)
+                alignment_basis = "matched-superchat-body-plus-action-anchor.v1"
+                break
         for index in range(proposal["start"] - 1, max(-1, proposal["start"] - 3), -1):
+            if repair_candidate is not None:
+                break
             if index < 0 or cues[proposal["start"]].start_ms - cues[index].end_ms > 10_000:
                 break
             repaired = _repair_sc_sender(texts[index], item.sender)
@@ -935,7 +945,7 @@ def _apply_sc_sender_repairs(
                 "matched_end_ms": cues[index].end_ms,
                 "before": before_text,
                 "after": repaired,
-                "alignment_basis": "matched-superchat-body-plus-platform-sender.v1",
+                "alignment_basis": alignment_basis,
             }
         )
     return sender_repairs, sender_verdict_required
