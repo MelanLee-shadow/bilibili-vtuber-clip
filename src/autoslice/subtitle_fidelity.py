@@ -792,8 +792,13 @@ def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
     """Return whether one Chinese talk cue contains unsupported Latin word salad."""
 
     text = _SAFE_CODE_SWITCH_PHRASE_RX.sub("", text)
+    # Single letters inside Chinese talk are option/grade/label tokens
+    # (\u9009A\u8fd8\u662f\u9009B, S\u7ea7), not words of a foreign phrase \u2014 2026-07-19 an A/B
+    # game-choice readout blocked a whole delivery.
     latin_words = [
-        word.lower() for word in _EMBEDDED_LATIN_WORD_RX.findall(text)
+        word.lower()
+        for word in _EMBEDDED_LATIN_WORD_RX.findall(text)
+        if len(word) >= 2
     ]
     return (
         len(latin_words) >= 2

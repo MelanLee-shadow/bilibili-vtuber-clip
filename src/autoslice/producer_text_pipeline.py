@@ -48,6 +48,10 @@ from src.autoslice.producer_chat_input import (
 )
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
 from src.autoslice.song_name_pin import pin_song_names_in_srt
+from src.autoslice.foreign_span_witness import (
+    witness_foreign_script_audit,
+    witness_language_preservation_audit,
+)
 from src.autoslice.self_reference_absorption import absorb_host_self_references
 from src.autoslice.session_topic_authority import (
     absorb_session_topic_entities,
@@ -744,6 +748,7 @@ def _finalize_text_evidence(
     source_truth_ledger_path: Path | None,
     out_root: Path,
     cid: str,
+    padded: Path | None = None,
 ) -> TextEvidenceResult:
     srt_text, final_source_language_audit = apply_source_language_preservation_guard(
         source_language_witness_srt, srt_text
@@ -775,6 +780,16 @@ def _finalize_text_evidence(
             "every un-witnessed foreign-language cue has a timeline-bound "
             "reviewed repair"
         )
+    if padded is not None:
+        # Machine witness (Ivan 2026-07-19): the same Gemini chain that does
+        # foreign transcription listens to the exact blocked spans; a match
+        # is evidence, a mismatch or provider failure keeps the block.
+        witness_language_preservation_audit(
+            media_path=padded,
+            audit=final_source_language_audit,
+            out_root=out_root,
+            cid=cid,
+        )
     foreign_script_audit = audit_foreign_script_consistency(srt_text)
     if (
         foreign_script_audit["status"]
@@ -797,6 +812,13 @@ def _finalize_text_evidence(
             foreign_script_audit["deferred_reason"] = (
                 "every mixed-language cue has a timeline-bound reviewed repair"
             )
+    if padded is not None:
+        witness_foreign_script_audit(
+            media_path=padded,
+            audit=foreign_script_audit,
+            out_root=out_root,
+            cid=cid,
+        )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
     chat_authority_audit["title_mark_balance_audit"] = title_mark_balance_audit
@@ -1002,6 +1024,7 @@ def run_text_pipeline(
         ),
         out_root=out_root,
         cid=cid,
+        padded=padded,
     )
     # 带伤交付闸（2026-07-18 醉堆/七夕/核酸天下案）：审片员的修复提案若因
     # provider 基础设施失败（而非证据裁决）未落地、且后续确定性 pass（如
