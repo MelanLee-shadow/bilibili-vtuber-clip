@@ -2406,6 +2406,38 @@ def test_final_surface_verification_is_time_bound_and_strips_known_speaker_label
     assert audit["applied"][0]["final_verification_scope"] == "DELIVERY"
 
 
+def test_sc_sender_final_verification_owns_only_the_narrow_sender_slot():
+    final_text = _srt(
+        "十麻乃SC啊，得了一种听到“是侄女”就想笑的病"
+    )
+    row = {
+        "after": "十麻乃SC得了一种听到\"是侄女\"就想笑的病",
+        "spoken_sender": "十麻乃",
+        "alignment_basis": "matched-superchat-body-plus-action-anchor.v1",
+        "matched_start_ms": 5_000,
+        "matched_end_ms": 9_000,
+    }
+    audit = {"sender_repairs": [row]}
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
+    )
+    assert row["final_verification_kind"] == "sc_sender"
+
+    missing_sender = _srt("某人SC啊，得了一种听到侄女就想笑的病")
+    assert not verify_chat_authority_final_surfaces(
+        {"sender_repairs": [dict(row)]},
+        final_text_srt=missing_sender,
+        final_speaker_srt=missing_sender,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
+    )
+
+
 def test_final_surface_verification_rejects_same_text_at_wrong_time():
     exact = "同一句原文"
     final_text = _srt(exact, "实际匹配处被改坏")

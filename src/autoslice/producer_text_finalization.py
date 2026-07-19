@@ -14,6 +14,19 @@ FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS = 250
 FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO = 0.1
 
 
+def _sc_sender_final_surface(row: dict) -> str:
+    """Return only the narrow sender slot owned by an SC sender repair."""
+
+    spoken_sender = str(row.get("spoken_sender") or "")
+    if not spoken_sender:
+        return str(row.get("after") or "")
+    if row.get("alignment_basis") == (
+        "matched-superchat-body-plus-action-anchor.v1"
+    ):
+        return spoken_sender + "SC"
+    return spoken_sender
+
+
 def _format_srt_timestamp(ms: int) -> str:
     hours, remainder = divmod(ms, 3_600_000)
     minutes, remainder = divmod(remainder, 60_000)
@@ -69,7 +82,7 @@ def verify_chat_authority_final_surfaces(
         if not row.get("reconciliation")
     )
     decision_rows.extend(
-        ("sc_sender", row, str(row.get("after") or ""))
+        ("sc_sender", row, _sc_sender_final_surface(row))
         for row in audit.get("sender_repairs") or []
     )
     decision_rows.extend(

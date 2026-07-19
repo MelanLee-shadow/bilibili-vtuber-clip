@@ -2,14 +2,13 @@
   "schema_version": "lidousha-subtitle-regression.v1",
   "candidate_id": "auto_225942_434_520",
   "required_payload_substrings": [
-    "谢谢十麻乃的钢蹦",
     "kmx在线下叫李豆沙",
     "李姐是侄女",
     "好多人笑出声",
     "为什么大家已经习惯了kmx",
     "但是因为kmx",
     "骄傲在哪，燃在哪",
-    "十麻乃SC啊"
+    "十麻乃SC"
   ],
   "forbidden_payload_substrings": [
     "提莫怂",

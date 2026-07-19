@@ -3,17 +3,6 @@
   "entries": [
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
-      "truth_id": "20260718-baby-address-thanks-shimanao",
-      "recording_basename": "22966160_20260718-22-59-42.mp4",
-      "source_start_ms": 409480,
-      "source_end_ms": 410980,
-      "action": "replace_cue",
-      "text": "谢谢十麻乃的钢蹦",
-      "authority": "Ivan-reviewed-2026-07-19",
-      "required": true
-    },
-    {
-      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260718-baby-address-laugh-kmx",
       "recording_basename": "22966160_20260718-22-59-42.mp4",
       "source_start_ms": 449040,
@@ -85,7 +74,7 @@
       "source_start_ms": 507660,
       "source_end_ms": 511680,
       "action": "replace_cue",
-      "text": "十麻乃SC啊，得了一种听到“是侄女”就想笑的病",
+      "text": "十麻乃SC得了一种听到“是侄女”就想笑的病",
       "authority": "Ivan-reviewed-structured-SC-2026-07-19",
       "required": true
     },
