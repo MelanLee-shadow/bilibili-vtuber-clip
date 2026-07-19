@@ -164,11 +164,17 @@ def _sanctioned_cue_equal(
     draft_text: str, final_text: str, pairs: Iterable[tuple[str, str]]
 ) -> bool:
     """Cue 级白名单改写（SequenceMatcher 会把「直女→侄女」切成「直→侄」，
-    跨度级匹配不到表对，所以整句层面先试一次单表对应用）。"""
+    跨度级匹配不到表对，所以整句层面先试一次单表对应用）。
 
+    比对做去标点归一（2026-07-19 看花篮 ありがとう 案）：修复层按词表把
+    音译误听换成日语原词时顺带调了标点（尾部「！」），精确相等把内容
+    正确的白名单改写冤枉成无见证外语引入。标点渲染差异不是内容差异。
+    """
+
+    final_norm = _strip_non_text(final_text)
     for surface, canonical in pairs:
         if surface and canonical and surface in draft_text:
-            if draft_text.replace(surface, canonical) == final_text:
+            if _strip_non_text(draft_text.replace(surface, canonical)) == final_norm:
                 return True
     return False
 

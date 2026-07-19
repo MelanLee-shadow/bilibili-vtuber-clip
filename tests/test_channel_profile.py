@@ -113,6 +113,7 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         ("基默熊", "kmx"),
         ("李豆莎", "李豆沙"),
         ("苏马奶", "十麻乃"),
+        ("日嘎多", "ありがとう"),
     ]
     # Ivan 2026-07-14/19 铁律：歌切标题固定目录式，hook 一律被忽略。
     assert profile.format_song_title("芽吹くとき", hook="下播前的温柔哄睡小歌") == (

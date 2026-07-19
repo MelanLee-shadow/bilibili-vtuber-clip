@@ -158,6 +158,11 @@
         "surface": "苏马奶",
         "canonical": "十麻乃",
         "authority": "Ivan-confirmed-sc-sender.v1"
+      },
+      {
+        "surface": "日嘎多",
+        "canonical": "ありがとう",
+        "authority": "lidousha-code-switch-canon.v1"
       }
     ]
   },

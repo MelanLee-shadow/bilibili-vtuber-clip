@@ -525,3 +525,30 @@ def test_impossible_punctuation_guard_collapses_comma_before_terminal_mark():
     assert "正常，停顿" in guarded
     assert audit["status"] == "APPLIED"
     assert audit["repair_count"] == 1
+
+
+def test_language_guard_allows_glossary_witnessed_transliteration_fix():
+    """2026-07-19 看花篮案：ASR 把 ありがとう 音译成「日嘎多」，修复层按
+    词表 canon 换回日语原词并调了尾标点——白名单改写 + 标点归一比对下
+    不再被判无见证外语引入。"""
+    from src.autoslice.subtitle_fidelity import apply_source_language_preservation_guard
+
+    draft = "1\n00:00:06,660 --> 00:00:09,720\n谢谢你，日嘎多，谢谢哦\n"
+    final = "1\n00:00:06,660 --> 00:00:09,720\n谢谢你，ありがとう，谢谢哦！\n"
+    output, audit = apply_source_language_preservation_guard(
+        draft, final, sanctioned=[("日嘎多", "ありがとう")]
+    )
+    assert audit["status"] == "CLEAN"
+    assert audit["unproven_foreign_introductions"] == []
+    assert "ありがとう" in output
+
+
+def test_language_guard_still_blocks_unwitnessed_foreign_introduction():
+    """同形反例：音译字被换成外语但改写对不在白名单（无词表见证）→ 仍 BLOCK。"""
+    from src.autoslice.subtitle_fidelity import apply_source_language_preservation_guard
+
+    draft = "1\n00:00:06,660 --> 00:00:09,720\n谢谢你，日嘎多，谢谢哦\n"
+    final = "1\n00:00:06,660 --> 00:00:09,720\n谢谢你，ありがとう，谢谢哦\n"
+    _, audit = apply_source_language_preservation_guard(draft, final, sanctioned=[])
+    assert audit["status"].startswith("BLOCKED_")
+    assert audit["unproven_foreign_introductions"]
