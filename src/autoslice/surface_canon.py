@@ -93,3 +93,71 @@ def normalize_hard_meme_surfaces(
         "input_srt_sha256": hashlib.sha256(srt_text.encode()).hexdigest(),
         "output_srt_sha256": hashlib.sha256(output.encode()).hexdigest(),
     }
+
+
+# ---------------------------------------------------------------------------
+# 称呼串等价类（Ivan 2026-07-19 立项，kmx 称呼串 2:29 妈妈→吗 案）
+
+ADDRESS_FORMULA_MEMBERS = ("姐姐", "妈妈", "宝宝", "老公", "主人", "宝贝")
+_ADDRESS_SINGLE_TO_MEMBER = {"吗": "妈妈", "嘛": "妈妈", "妈": "妈妈"}
+_ENUM_TAIL_PUNCT = "，。！？!?…"
+
+
+def repair_address_enumerations(srt_text: str) -> tuple[str, dict[str, object]]:
+    """固定称呼串{姐姐、妈妈、宝宝、老公、主人(、宝贝)}式内单字修复。
+
+    只修最安全的形态：同一 cue 内以「、」分隔的枚举串里，至少两段是成员
+    词时，夹在中间的单字近音 token（吗/嘛/妈）按成员词补全为「妈妈」。
+    句尾疑问「…宝宝吗」没有顿号包夹，不在本规则射程（真疑问句保留——
+    该形态交 glossary 规则和音频复核）。零模型、可审计（T0.5 同级）。
+    """
+
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    texts = [cue.text for cue in cues]
+    repairs: list[dict[str, object]] = []
+    for index, text in enumerate(texts):
+        if "、" not in text:
+            continue
+        segments = text.split("、")
+        member_hits = 0
+        for segment in segments:
+            probe = segment.strip().rstrip(_ENUM_TAIL_PUNCT)
+            if any(probe == member or probe.endswith(member) for member in ADDRESS_FORMULA_MEMBERS):
+                member_hits += 1
+        if member_hits < 2:
+            continue
+        changed = False
+        for position in range(1, len(segments)):
+            probe = segments[position].strip().rstrip(_ENUM_TAIL_PUNCT)
+            replacement = _ADDRESS_SINGLE_TO_MEMBER.get(probe)
+            if replacement is None:
+                continue
+            tail = segments[position][len(segments[position].rstrip(_ENUM_TAIL_PUNCT)):]
+            segments[position] = replacement + tail
+            changed = True
+        if changed:
+            before = text
+            texts[index] = "、".join(segments)
+            repairs.append(
+                {
+                    "cue_index": index + 1,
+                    "before": before,
+                    "after": texts[index],
+                }
+            )
+    output = srt_text
+    if repairs:
+        output = "\n\n".join(
+            (
+                f"{index}\n{_srt_timestamp(cue.start_ms)} --> "
+                f"{_srt_timestamp(cue.end_ms)}\n{text.strip()}"
+            )
+            for index, (cue, text) in enumerate(zip(cues, texts), start=1)
+        ) + "\n"
+    return output, {
+        "schema_version": "address-enumeration-audit.v1",
+        "status": "APPLIED" if repairs else "NO_CHANGE",
+        "repairs": repairs,
+    }

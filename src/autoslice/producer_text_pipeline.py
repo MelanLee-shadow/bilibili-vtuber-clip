@@ -426,6 +426,28 @@ def _apply_entity_authority(
             "reverted_count": 0,
         }
     chat_authority_audit["numeric_fact_provenance_audit"] = numeric_fact_audit
+    # 答谢完整性（2026-07-19）：SC 字幕卡行丢「谢谢」按 draft 见证还原；
+    # 窗口内未被答谢的送礼人/SC 发送者只披露不改写（0:23 打码礼物案）。
+    from src.autoslice.thank_integrity import (
+        restore_thank_prefixes,
+        unthanked_donor_disclosure,
+    )
+
+    if draft_witness_path.is_file():
+        srt_text, thank_restore_audit = restore_thank_prefixes(
+            srt_text,
+            draft_witness_path.read_text(encoding="utf-8", errors="replace"),
+        )
+    else:
+        thank_restore_audit = {
+            "schema_version": "thank-prefix-restore-audit.v1",
+            "status": "SKIPPED_NO_INITIAL_ASR",
+            "restorations": [],
+        }
+    chat_authority_audit["thank_prefix_restore_audit"] = thank_restore_audit
+    chat_authority_audit["unthanked_donor_disclosure"] = unthanked_donor_disclosure(
+        srt_text, authoritative_chat
+    )
     handled_entity_cues = {
         int(index)
         for key in ("applied", "pending_text_overrides", "entity_repairs", "coreference_repairs")
@@ -945,6 +967,12 @@ def _finalize_text_evidence(
                 f"{cid}: pinned {len(song_name_pin_audit['replacements'])} "
                 "song name(s) from screen-songlist/点歌 evidence"
             )
+    # 称呼串等价类（2026-07-19）：、包夹的单字近音 token 按成员词补全，
+    # 与 hard canon 同一 choke point、同级确定性。
+    from src.autoslice.surface_canon import repair_address_enumerations
+
+    srt_text, address_enumeration_audit = repair_address_enumerations(srt_text)
+    chat_authority_audit["address_enumeration_audit"] = address_enumeration_audit
     # Final unbypassable meme canon (currently only 直女→侄女).  This runs after
     # every LLM/entity/song-name text stage; the later hash-bound human override
     # path independently re-runs the same policy before speaker rendering.

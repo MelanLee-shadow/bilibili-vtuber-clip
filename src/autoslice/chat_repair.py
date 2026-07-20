@@ -9,6 +9,10 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.cue_split_hygiene import (
+    _shift_boundary_punct as _shift_boundary_punct,
+    _snap_split_to_punct as _snap_split_to_punct,
+)
 from src.autoslice.chat_evidence import (
     ChatEvidence,
     EntityVerifier,
@@ -216,21 +220,6 @@ def _norm_with_map(text: str) -> tuple[str, list[int]]:
             norm_chars.append(out_char)
             raw_indexes.append(raw_index)
     return "".join(norm_chars), raw_indexes
-
-
-def _shift_boundary_punct(parts: list[str]) -> list[str]:
-    """_best_text_split 只按相似度找断点，会切出「，我会打」这种闭标点开头的
-    cue；把行首闭/终结标点移回上一段（不动总文本）。"""
-    closing = "，,、。；;：:！!？?…”』」》）)"
-    out = list(parts)
-    for index in range(1, len(out)):
-        moved = ""
-        while out[index] and out[index][0] in closing:
-            moved += out[index][0]
-            out[index] = out[index][1:]
-        if moved and index >= 1:
-            out[index - 1] += moved
-    return out
 
 
 _EMOTE_PLACEHOLDER_RUN = re.compile(r"[；;]{2,}")
@@ -575,7 +564,7 @@ def _spoken_sender_alias(sender: str) -> str:
 _THANK_NAME = re.compile(
     r"(?P<prefix>(?:谢谢|感谢|谢)(?:一下)?)"
     r"(?P<name>[^，。！？!?\s]{1,24}?)"
-    r"(?P<suffix>送的|的\s*SC|的醒目留言)",
+    r"(?P<suffix>送的|的\s*SC|的醒目留言|的钢镚)",
     re.IGNORECASE,
 )
 
