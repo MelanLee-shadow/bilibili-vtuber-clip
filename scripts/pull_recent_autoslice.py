@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
@@ -117,23 +118,83 @@ def list_remote_dates(host: str, remote_root: str) -> list[str]:
     return [line.rstrip("/").rsplit("/", 1)[-1] for line in result.stdout.splitlines()]
 
 
+def _normalized(name: str) -> str:
+    # APFS may hand back decomposed Unicode for names Finder touched; compare
+    # both sides in NFC so a composed remote twin is not misread as local-only.
+    try:
+        return unicodedata.normalize("NFC", name)
+    except ValueError:
+        return name
+
+
+def list_remote_subdirs(host: str, remote_dir: str) -> set[str]:
+    """Relative paths of every directory below remote_dir."""
+    result = subprocess.run(
+        ["ssh", host, "find", remote_dir, "-mindepth", "1", "-type", "d", "-print0"],
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    prefix = remote_dir.rstrip("/") + "/"
+    subdirs: set[str] = set()
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        path = raw.decode("utf-8", "surrogateescape")
+        if path.startswith(prefix):
+            subdirs.add(path[len(prefix) :])
+    return subdirs
+
+
+def local_only_dirs(root: Path, remote_subdirs: set[str]) -> list[str]:
+    """Topmost directories below root that have no remote counterpart."""
+    remote = {_normalized(rel) for rel in remote_subdirs}
+    found: list[str] = []
+    for current, dirnames, _ in os.walk(root):
+        base = os.path.relpath(current, root)
+        shared: list[str] = []
+        for name in sorted(dirnames):
+            rel = name if base == "." else f"{base}/{name}"
+            if _normalized(rel) in remote:
+                shared.append(name)
+            else:
+                found.append(rel)
+        dirnames[:] = shared
+    return found
+
+
+def delete_protection_excludes(rel_paths: Iterable[str]) -> list[str]:
+    return [
+        "--exclude=/" + re.sub(r"([*?\[])", r"\\\1", rel) + "/"
+        for rel in rel_paths
+    ]
+
+
 def pull_date(host: str, remote_root: str, local_root: Path, value: date) -> None:
     date_name = value.isoformat()
     destination = local_root / date_name
     destination.mkdir(parents=True, exist_ok=True)
+    remote_dir = f"{remote_root.rstrip('/')}/{date_name}"
     # The flat namespace of a date dir is a machine-owned mirror: files the
     # runner deleted or quarantined remotely must not survive locally as if
     # still deliverable (2026-07-19: three stale pre-fix clip sets lingered
-    # next to the fresh rerun).  Subdirectories are human review packages
-    # (e.g. 正式补切-*/) that exist only locally — protect them from deletion.
+    # next to the fresh rerun).  Local-only subdirectories are human review
+    # packages (e.g. 正式补切-*/) that must survive --delete.  macOS openrsync
+    # forwards "--filter=protect */" to the sender as a plain exclude, which
+    # silently drops every remote subdirectory from the transfer (2026-07-20:
+    # 舞台切片-* never synced), so the protection is spelled as anchored
+    # --exclude rules for the dirs that are actually local-only — semantics
+    # openrsync and GNU rsync agree on.
+    protected = local_only_dirs(destination, list_remote_subdirs(host, remote_dir))
+    if protected:
+        print(f"  protecting local-only: {', '.join(protected)}", flush=True)
     subprocess.run(
         [
             "rsync",
             "-a",
             "--delete",
-            "--filter=protect */",
+            *delete_protection_excludes(protected),
             "--timeout=120",
-            f"{host}:{remote_root.rstrip('/')}/{date_name}/",
+            f"{host}:{remote_dir}/",
             f"{destination}/",
         ],
         check=True,
