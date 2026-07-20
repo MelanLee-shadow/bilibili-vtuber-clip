@@ -22,6 +22,9 @@ from src.autoslice.chat_evidence import (
     normalize_chat_text,
     sanitize_chat_display_text,
 )
+from src.autoslice.read_aloud_arbitration import (
+    _arbitrate_read_aloud_near_match as _arbitrate_read_aloud_near_match,
+)
 from src.autoslice.chat_repair import (
     _aligned_span_replacements,
     _apply_gift_name_repairs,
@@ -452,94 +455,6 @@ def _resolve_chat_entity_proposal(
     return True
 
 
-def _arbitrate_read_aloud_near_match(
-    item: ChatEvidence,
-    proposal: dict[str, Any],
-    *,
-    cues: Sequence[Any],
-    texts: Sequence[str],
-    entity_verifier: EntityVerifier,
-    discovery: _ChatProposalDiscovery,
-) -> None:
-    """Run one raw-audio forced choice for a bounded near-match."""
-
-    near_span = "".join(texts[proposal["start"] : proposal["start"] + proposal["count"]])
-    request = {
-        "schema_version": "chat-read-aloud-verification-request.v1",
-        "evidence_id": item.evidence_id,
-        "kind": item.kind,
-        "source": item.source,
-        "source_sha256": item.source_sha256,
-        "source_event_id": item.source_event_id,
-        "source_offset_ms": item.offset_ms,
-        "exact_text": item.text,
-        "cue_indexes": [
-            index + 1
-            for index in range(proposal["start"], proposal["start"] + proposal["count"])
-        ],
-        "matched_start_ms": cues[proposal["start"]].start_ms,
-        "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
-        "matched_audio_text": near_span,
-        "candidate_entities": [
-            {"canonical": item.text, "surfaces": [], "readings": []},
-            {"canonical": near_span, "surfaces": [], "readings": []},
-        ],
-        "context_before": texts[proposal["start"] - 1] if proposal["start"] > 0 else "",
-        "context_after": texts[proposal["start"] + proposal["count"]]
-        if proposal["start"] + proposal["count"] < len(texts)
-        else "",
-        "reason": "danmaku near-miss read-aloud arbitration",
-    }
-    request["request_sha256"] = _request_sha256(request)
-    try:
-        raw_verdict = entity_verifier(request)
-    except Exception as exc:  # verifier failure is evidence, never permission
-        raw_verdict = {
-            "schema_version": "chat-entity-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "UNCERTAIN",
-            "reason_code": "READ_ALOUD_VERIFIER_ERROR",
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-    verdict = _validated_read_aloud_verdict(raw_verdict, request=request)
-    arbitration_row = {
-        "evidence_id": item.evidence_id,
-        "kind": item.kind,
-        "exact_text": item.text,
-        "matched_audio_text": near_span,
-        "cue_indexes": request["cue_indexes"],
-        "matched_start_ms": request["matched_start_ms"],
-        "matched_end_ms": request["matched_end_ms"],
-        "score": round(proposal["score"], 4),
-        "coverage": round(proposal["coverage"], 4),
-        "sender_anchored": bool(proposal.get("sender_anchored")),
-        "request_sha256": request["request_sha256"],
-        "verdict": verdict if verdict is not None else raw_verdict,
-    }
-    if verdict is not None and verdict.get("canonical_entity") == item.text:
-        arbitration_row["outcome"] = "authority_confirmed_by_audio"
-        proposal["mode"] = "exact_span"
-        proposal["read_aloud_verdict"] = verdict
-        proposal["support_scores"] = []
-        discovery.proposals.append(proposal)
-    elif verdict is not None:
-        arbitration_row["outcome"] = "acoustic_span_confirmed_by_audio"
-        discovery.superseded_chat_proposals.append(
-            {
-                "evidence_id": item.evidence_id,
-                "kind": item.kind,
-                "exact_text": item.text,
-                "cue_indexes": request["cue_indexes"],
-                "matched_start_ms": request["matched_start_ms"],
-                "matched_end_ms": request["matched_end_ms"],
-                "reason_code": "EXACT_CHAT_REJECTED_BY_READ_ALOUD_AUDIO",
-            }
-        )
-    else:
-        arbitration_row["outcome"] = "uncertain_no_change"
-    discovery.read_aloud_arbitrations.append(arbitration_row)
-
-
 def _discover_chat_proposals(
     evidence: Sequence[ChatEvidence],
     *,
@@ -553,7 +468,9 @@ def _discover_chat_proposals(
     """Discover candidate spans while keeping every uncertain case fail-closed."""
 
     discovery = _ChatProposalDiscovery()
-    arbitration_attempts = 0
+    # 近失仲裁：先全量收集→按(score,precision)排序→同跨度去重→再花预算
+    # （2026-07-20 脑海案：按到达序消费时晚段真念读被早段低分近失饿死）。
+    near_queue: list[tuple[ChatEvidence, dict[str, Any]]] = []
     high_confidence_arbitration_attempts = 0
     for item in evidence:
         if item.kind == "gift":
@@ -613,16 +530,26 @@ def _discover_chat_proposals(
                     entity_verifier=entity_verifier,
                     discovery=discovery,
                 )
-        elif best_near is not None and entity_verifier is not None and arbitration_attempts < 3:
-            arbitration_attempts += 1
-            _arbitrate_read_aloud_near_match(
-                item,
-                best_near,
-                cues=cues,
-                texts=texts,
-                entity_verifier=entity_verifier,
-                discovery=discovery,
-            )
+        elif best_near is not None and entity_verifier is not None:
+            near_queue.append((item, best_near))
+    best_by_span: dict[tuple[int, int], tuple[ChatEvidence, dict[str, Any]]] = {}
+    for item, proposal in near_queue:
+        span = (proposal["start"], proposal["count"])
+        incumbent = best_by_span.get(span)
+        if incumbent is None or (proposal["score"], proposal["precision"]) > (
+            incumbent[1]["score"], incumbent[1]["precision"]
+        ):
+            best_by_span[span] = (item, proposal)
+    ranked_near = sorted(
+        best_by_span.values(),
+        key=lambda row: (row[1]["score"], row[1]["precision"]),
+        reverse=True,
+    )
+    for item, proposal in ranked_near[:3]:
+        _arbitrate_read_aloud_near_match(
+            item, proposal, cues=cues, texts=texts,
+            entity_verifier=entity_verifier, discovery=discovery,
+        )
     discovery.proposals.sort(
         key=lambda row: (row["score"], -row["count"]),
         reverse=True,
