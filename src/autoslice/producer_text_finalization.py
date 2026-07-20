@@ -97,18 +97,26 @@ def _source_truth_pinned_intervals(
     早期决策不再作为终稿存活要求。"""
 
     truth = audit.get("source_subtitle_truth_audit") or {}
+    intervals: list[tuple[int, int]] = []
     indexes: set[int] = set()
     for key in ("applied", "satisfied"):
         for row in truth.get(key) or []:
+            windows = row.get("local_windows") or []
+            if windows:
+                # 首选：ledger 落刀时记录的交付时间轴辖区（layout 重排后
+                # cue 序号会漂，时间不会——2026-07-20 kmx r3 案）。
+                for window in windows:
+                    intervals.append(
+                        (int(window["start_ms"]), int(window["end_ms"]))
+                    )
+                continue
             for index in row.get("cue_indexes") or []:
                 indexes.add(int(index))
-    if not indexes:
-        return []
-    cues = [cue for cue in parse_srt_cues(final_text_srt)]
-    intervals: list[tuple[int, int]] = []
-    for index in sorted(indexes):
-        if 1 <= index <= len(cues):
-            intervals.append((cues[index - 1].start_ms, cues[index - 1].end_ms))
+    if indexes:
+        cues = [cue for cue in parse_srt_cues(final_text_srt)]
+        for index in sorted(indexes):
+            if 1 <= index <= len(cues):
+                intervals.append((cues[index - 1].start_ms, cues[index - 1].end_ms))
     return intervals
 
 

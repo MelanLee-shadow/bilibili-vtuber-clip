@@ -87,6 +87,10 @@
       "action": "replace_substring",
       "replacements": [
         {
+          "surface": "提问",
+          "canonical": "kmx"
+        },
+        {
           "surface": "提防",
           "canonical": "kmx"
         },
@@ -104,7 +108,7 @@
         }
       ],
       "required_text": "kmx",
-      "authority": "Ivan-reviewed-local-span-2026-07-19",
+      "authority": "Ivan-reviewed-local-span-2026-07-19; 2026-07-20 增面:提问(r4 fresh 新变体)",
       "required": true
     },
     {

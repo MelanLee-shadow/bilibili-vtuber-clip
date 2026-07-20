@@ -226,6 +226,13 @@ def apply_source_subtitle_truth(
             "source_end_ms": source_end_ms,
             "action": action,
             "cue_indexes": [index + 1 for index in target_indexes],
+            # 交付时间轴上的钉子辖区（2026-07-20 kmx r3 案）：终稿校验器的
+            # 钉子豁免必须按时间比对——ledger 之后 layout 会重排 cue，序号
+            # 映射到终稿会漂移。
+            "local_windows": [
+                {"start_ms": int(window["start_ms"]), "end_ms": int(window["end_ms"])}
+                for window in windows
+            ],
             "entry_sha256": "sha256:"
             + _sha256_bytes(
                 json.dumps(

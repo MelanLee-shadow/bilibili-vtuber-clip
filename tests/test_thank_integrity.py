@@ -207,3 +207,37 @@ class TestSourceTruthSupersedesDecisionSurfaces:
             ],
         }
         assert self._verify(audit) is False
+
+    def test_local_windows_survive_layout_resegmentation(self) -> None:
+        """钉子辖区按时间豁免（2026-07-20 kmx r3 案）：layout 重排后 cue
+        序号漂移,cue_indexes 映射失效;local_windows 时间区间不受影响。"""
+
+        from src.autoslice.producer_text_finalization import (
+            verify_chat_authority_final_surfaces,
+        )
+
+        # 终稿被 layout 拆成两条,ledger 时的 cue 1 序号已不可靠
+        final = _srt(
+            (9_750, 10_800, "谢谢十麻乃的SC，"),
+            (10_800, 12_000, "得了一种听到“是侄女”就想笑的病"),
+        )
+        audit = {
+            "sender_repairs": [
+                {"matched_start_ms": 9_750, "matched_end_ms": 12_000,
+                 "after": "十麻乃SC得了一种病。"}
+            ],
+            "source_subtitle_truth_audit": {
+                "applied": [{
+                    "cue_indexes": [99],
+                    "local_windows": [{"start_ms": 9_750, "end_ms": 12_000}],
+                }],
+            },
+        }
+        ok = verify_chat_authority_final_surfaces(
+            audit, final_text_srt=final, final_speaker_srt=final,
+            delivery_start_ms=0, delivery_end_ms=20_000,
+        )
+        assert ok is True
+        assert audit["sender_repairs"][0]["final_verification_scope"] == (
+            "SUPERSEDED_BY_SOURCE_TRUTH"
+        )
