@@ -96,6 +96,18 @@ def _parse_observation(raw: str) -> dict[str, str]:
     }
 
 
+def _is_quota_error(exc: Exception) -> bool:
+    """HTTP 429 / quota-class detection across urllib+requests error shapes."""
+
+    status = getattr(exc, "code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 429:
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return "429" in text or "resource_exhausted" in text or "quota" in text
+
+
 def _observe_with_key_ladder(
     *,
     audio_path: Path,
@@ -106,6 +118,7 @@ def _observe_with_key_ladder(
 
     audio_sha = hashlib.sha256(audio_path.read_bytes()).hexdigest()
     failures: list[str] = []
+    quota_flags: list[bool] = []
     for key in _gemini_keys():
         try:
             return (
@@ -114,8 +127,19 @@ def _observe_with_key_ladder(
             )
         except Exception as exc:  # each key is an independent failover lane
             failures.append(type(exc).__name__)
+            quota_flags.append(_is_quota_error(exc))
     gemini_backup_policy.record_free_chain_failure(audio_sha)
-    allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(audio_sha)
+    if quota_flags and all(quota_flags):
+        # Ivan 2026-07-20: a fully-429 free chain is deterministic quota
+        # exhaustion — the paid backup steps in the SAME round; the >=3
+        # strikes gate applies only to non-quota failure classes.
+        allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
+            audio_sha,
+            prior_strikes=gemini_backup_policy.MIN_FREE_CHAIN_STRIKES,
+        )
+        gate_reason = f"QUOTA_FASTPATH:{gate_reason}"
+    else:
+        allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(audio_sha)
     if allowed:
         try:
             observation = _parse_observation(

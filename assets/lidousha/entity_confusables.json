@@ -249,6 +249,78 @@
         }
       ],
       "reason": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。"
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "田中姬",
+          "surfaces": [
+            "田中姬",
+            "田中基"
+          ],
+          "readings": [
+            "tian zhong ji",
+            "tanaka hime"
+          ]
+        },
+        {
+          "canonical": "铃木雏",
+          "surfaces": [
+            "铃木雏"
+          ],
+          "readings": [
+            "ling mu chu",
+            "suzuki hina"
+          ]
+        },
+        {
+          "canonical": "田中雏",
+          "surfaces": [
+            "田中雏",
+            "田中楚"
+          ],
+          "readings": [
+            "tian zhong chu"
+          ]
+        },
+        {
+          "canonical": "Hime",
+          "surfaces": [
+            "Hime",
+            "提美",
+            "黑妹"
+          ],
+          "readings": [
+            "hime",
+            "ti mei",
+            "hei mei"
+          ]
+        },
+        {
+          "canonical": "Hina",
+          "surfaces": [
+            "Hina",
+            "希娜",
+            "金娜",
+            "黑那"
+          ],
+          "readings": [
+            "hina",
+            "xi na",
+            "jin na",
+            "hei na"
+          ]
+        }
+      ],
+      "reason": "HimeHina 双人组（Ivan 2026-07-19 裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。",
+      "uncertain_keep_canonicals": [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
     }
   ]
 }

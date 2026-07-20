@@ -153,6 +153,176 @@
       "text": "只有kmx，怎么，你为什么会这样称呼李豆沙，",
       "authority": "Ivan-stated-20260719-conversation(0:49只有kmx会这么称呼)",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-standing-question",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 368670,
+      "source_end_ms": 372440,
+      "action": "replace_cue",
+      "text": "你是站Hime1还是Hina1",
+      "authority": "Ivan-stated-20260719-conversation(HimeHina结婚照切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-standing-answer-hina1",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 373160,
+      "source_end_ms": 376140,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "在黑那一",
+          "canonical": "站Hina1"
+        },
+        {
+          "surface": "黑那一",
+          "canonical": "Hina1"
+        }
+      ],
+      "required_text": "Hina1",
+      "authority": "Ivan-stated-20260719-conversation(HimeHina结婚照切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-chao-not-chou",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 400950,
+      "source_end_ms": 405290,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "很丑",
+          "canonical": "很吵"
+        }
+      ],
+      "required_text": "吵",
+      "authority": "Ivan-stated-20260719-conversation(HimeHina结婚照切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-host-self-intro",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 419270,
+      "source_end_ms": 420330,
+      "action": "replace_cue",
+      "text": "主播是在自我介绍吗",
+      "authority": "Ivan-stated-20260719-conversation(HimeHina结婚照切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-weiaizuoling",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 463900,
+      "source_end_ms": 466170,
+      "action": "replace_cue",
+      "authority": "Ivan-stated-20260719(2:06为爱做零槽位)+三轮独立转写稳定尾部(威尔作霖/为爱做0/为0做1轮次均同尾)",
+      "required": true,
+      "text": "为爱做零有点那个，有点一般，品味一般"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-support-line",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 466770,
+      "source_end_ms": 469110,
+      "action": "replace_cue",
+      "text": "所以请支持我们那个Hime，那个Hina1吧",
+      "authority": "Ivan-stated-20260719-conversation(HimeHina结婚照切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-zhinv-slot",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 487910,
+      "source_end_ms": 490560,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "子女",
+          "canonical": "侄女"
+        }
+      ],
+      "required_text": "侄女",
+      "authority": "Ivan-stated-20260719-conversation(HimeHina结婚照切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-clip-surface-mopup",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 345870,
+      "source_end_ms": 506040,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "黑妹衣",
+          "canonical": "Hime1"
+        },
+        {
+          "surface": "黑娜一",
+          "canonical": "Hina1"
+        },
+        {
+          "surface": "黑那一",
+          "canonical": "Hina1"
+        },
+        {
+          "surface": "赞希娜伊",
+          "canonical": "站Hina1"
+        },
+        {
+          "surface": "希娜伊",
+          "canonical": "Hina1"
+        },
+        {
+          "surface": "希乃伊",
+          "canonical": "Hina1"
+        },
+        {
+          "surface": "提美",
+          "canonical": "Hime"
+        },
+        {
+          "surface": "黑妹",
+          "canonical": "Hime"
+        },
+        {
+          "surface": "金娜",
+          "canonical": "Hina"
+        },
+        {
+          "surface": "新男一",
+          "canonical": "Hina1"
+        },
+        {
+          "surface": "田中基",
+          "canonical": "田中姬"
+        },
+        {
+          "surface": "田中楚",
+          "canonical": "田中雏"
+        }
+      ],
+      "authority": "Ivan-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+      "required": false
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-himehina-hina-armwrestle-line",
+      "recording_basename": "22966160_20260719-13-48-19.mp4",
+      "source_start_ms": 440200,
+      "source_end_ms": 442320,
+      "action": "replace_cue",
+      "text": "Hina是1的可能性几乎为零",
+      "authority": "Ivan-authorized-20260719(后面同类Hime/Hina误听按此修复)+掰手腕语境(两手没掰赢Hime者=Hina)+黑黑那口吃形折叠",
+      "required": true
     }
   ]
 }
