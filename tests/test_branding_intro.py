@@ -13,9 +13,12 @@ if str(ROOT) not in sys.path:
 import scripts.run_auto_review_shadow_pipeline as shadow_pipeline
 from src.autoslice.branding_intro import (
     BRANDING_INTRO_ENV_SWITCH,
+    BRANDING_INTRO_PICK_ENV,
     BRANDING_INTRO_SCHEMA,
+    BRANDING_INTRO_SCHEMA_V2,
     BrandingIntroError,
     load_branding_intro_policy,
+    policy_intros,
     prepend_branding_intro,
     require_branding_intro,
     resolve_intro_media,
@@ -92,6 +95,59 @@ def intro_media(tmp_path_factory) -> Path:
         fps=24,
         sample_rate=44100,
     )
+
+
+@pytest.fixture(scope="module")
+def intro_media_b(tmp_path_factory) -> Path:
+    return _write_av(
+        tmp_path_factory.mktemp("intro-b") / "intro-b.mp4",
+        seconds=1.4,
+        size="192x108",
+        fps=24,
+        sample_rate=44100,
+    )
+
+
+def _write_policy_v2(
+    repo_root: Path,
+    intro_a: Path,
+    intro_b: Path,
+    *,
+    sha_b: str | None = None,
+) -> Path:
+    manifest_path = repo_root / "assets" / "lidousha" / "intro" / "branding_intro.v1.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": BRANDING_INTRO_SCHEMA_V2,
+                "enabled": True,
+                "rotation": {"mode": "main-sha256"},
+                "intros": [
+                    {
+                        "intro_id": "rotation-a",
+                        "video": {
+                            "sha256": _sha256(intro_a),
+                            "duration_ms": max(1, _duration_ms(intro_a)),
+                        },
+                        "runtime_media_paths": [str(intro_a)],
+                    },
+                    {
+                        "intro_id": "rotation-b",
+                        "video": {
+                            "sha256": sha_b or _sha256(intro_b),
+                            "duration_ms": max(1, _duration_ms(intro_b)),
+                        },
+                        "runtime_media_paths": [str(intro_b)],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
 
 
 def test_policy_absent_and_disabled_mean_off(tmp_path, intro_media):
@@ -232,25 +288,93 @@ def test_burn_without_branding_keeps_legacy_shape(tmp_path):
     assert preview["branding_intro"] is None
 
 
+def test_rotation_context_resolves_all_candidates(tmp_path, intro_media, intro_media_b):
+    _write_policy_v2(tmp_path, intro_media, intro_media_b)
+    context = require_branding_intro(tmp_path)
+    assert [c["intro_id"] for c in context["candidates"]] == ["rotation-a", "rotation-b"]
+    assert context["rotation_mode"] == "main-sha256"
+    # Legacy top-level fields keep pointing at the first roster member.
+    assert Path(str(context["media_path"])) == intro_media
+
+
+def test_rotation_drifted_member_fails_closed(tmp_path, intro_media, intro_media_b):
+    _write_policy_v2(tmp_path, intro_media, intro_media_b, sha_b="3" * 64)
+    with pytest.raises(BrandingIntroError, match="must not proceed"):
+        require_branding_intro(tmp_path)
+
+
+def test_rotation_pick_is_content_keyed_and_stable(tmp_path, intro_media, intro_media_b):
+    _write_policy_v2(tmp_path, intro_media, intro_media_b)
+    context = require_branding_intro(tmp_path)
+    main = _write_av(tmp_path / "main.mp4", seconds=2.0, size="256x144", fps=30, sample_rate=48000)
+    main_bytes = main.read_bytes()
+    main_sha = _sha256(main)
+    expected_id = ["rotation-a", "rotation-b"][int(main_sha[:16], 16) % 2]
+    binding = prepend_branding_intro(context=context, main_path=main, work_dir=tmp_path / "w1")
+    assert binding["status"] == "PREPENDED"
+    assert binding["intro_id"] == expected_id
+    assert binding["rotation"]["picked_intro_id"] == expected_id
+    assert binding["rotation"]["selector"] == "main_sha256"
+    assert binding["rotation"]["candidate_intro_ids"] == ["rotation-a", "rotation-b"]
+    # Re-burn of the same material picks the same intro (content-keyed).
+    main2 = tmp_path / "main2.mp4"
+    main2.write_bytes(main_bytes)
+    binding2 = prepend_branding_intro(context=context, main_path=main2, work_dir=tmp_path / "w2")
+    assert binding2["intro_id"] == expected_id
+
+
+def test_rotation_env_override(tmp_path, intro_media, intro_media_b, monkeypatch):
+    _write_policy_v2(tmp_path, intro_media, intro_media_b)
+    context = require_branding_intro(tmp_path)
+    main = _write_av(tmp_path / "main.mp4", seconds=1.0, size="128x128", fps=30, sample_rate=48000)
+    monkeypatch.setenv(BRANDING_INTRO_PICK_ENV, "rotation-b")
+    binding = prepend_branding_intro(context=context, main_path=main, work_dir=tmp_path / "w")
+    assert binding["intro_id"] == "rotation-b"
+    assert binding["rotation"]["selector"] == "env_override"
+    monkeypatch.setenv(BRANDING_INTRO_PICK_ENV, "no-such-intro")
+    main2 = _write_av(tmp_path / "main2.mp4", seconds=1.0, size="128x128", fps=30, sample_rate=48000)
+    with pytest.raises(BrandingIntroError, match="names no manifest intro"):
+        prepend_branding_intro(context=context, main_path=main2, work_dir=tmp_path / "w2")
+
+
 def test_repo_manifest_binds_installed_intro_bytes():
     manifest_path = ROOT / "assets" / "lidousha" / "intro" / "branding_intro.v1.json"
     policy = load_branding_intro_policy(manifest_path)
     assert policy is not None and policy["enabled"] is True
-    assert policy["intro_id"] == "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2"
-    expected_sha = str(policy["video"]["sha256"])
-    render_manifest_path = ROOT / "assets" / "lidousha" / "intro" / "lidousha-branding-intro.v1.render-manifest.json"
-    render_manifest = json.loads(render_manifest_path.read_text(encoding="utf-8"))
-    assert render_manifest["status"] == "REVIEW_READY_NO_UPLOAD"
-    assert render_manifest["artifacts"]["video"]["sha256"] == expected_sha
-    assert render_manifest["target"] == policy["target_text"]
-    provenance = policy["provenance"]
-    assert provenance["render_manifest_sha256"] == _sha256(render_manifest_path)
-    assert provenance["verified_plan_sha256"] == render_manifest["verified_plan_sha256"]
+    intros = policy_intros(policy)
+    assert [entry["intro_id"] for entry in intros] == [
+        "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+    ]
+    assert policy["rotation"]["mode"] == "main-sha256"
+
+    z1 = intros[0]
+    z1_sha = str(z1["video"]["sha256"])
+    z1_render_path = ROOT / "assets" / "lidousha" / "intro" / "lidousha-branding-intro.v1.render-manifest.json"
+    z1_render = json.loads(z1_render_path.read_text(encoding="utf-8"))
+    assert z1_render["status"] == "REVIEW_READY_NO_UPLOAD"
+    assert z1_render["artifacts"]["video"]["sha256"] == z1_sha
+    assert z1_render["target"] == z1["target_text"]
+    assert z1["provenance"]["render_manifest_sha256"] == _sha256(z1_render_path)
+    assert z1["provenance"]["verified_plan_sha256"] == z1_render["verified_plan_sha256"]
+
+    z2 = intros[1]
+    z2_sha = str(z2["video"]["sha256"])
+    z2_render_path = ROOT / "assets" / "lidousha" / "intro" / "lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.render-manifest.json"
+    z2_render = json.loads(z2_render_path.read_text(encoding="utf-8"))
+    assert z2_render["status"] == "ADOPTED_IN_ROTATION"
+    assert z2_render["artifacts"]["video"]["sha256"] == z2_sha
+    assert z2_render["target_text"] == z2["target_text"]
+    assert z2["provenance"]["render_manifest_sha256"] == _sha256(z2_render_path)
+    z2_srt_path = ROOT / "assets" / "lidousha" / "intro" / "lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.srt"
+    assert _sha256(z2_srt_path) == z2["subtitle_srt"]["sha256"]
+
     # The media itself stays outside git; when a runtime copy is present it
     # must match the committed binding exactly.
-    for raw in policy["runtime_media_paths"]:
-        candidate = Path(str(raw))
-        if not candidate.is_absolute():
-            candidate = ROOT / candidate
-        if candidate.is_file():
-            assert _sha256(candidate) == expected_sha
+    for entry, expected_sha in ((z1, z1_sha), (z2, z2_sha)):
+        for raw in entry["runtime_media_paths"]:
+            candidate = Path(str(raw))
+            if not candidate.is_absolute():
+                candidate = ROOT / candidate
+            if candidate.is_file():
+                assert _sha256(candidate) == expected_sha

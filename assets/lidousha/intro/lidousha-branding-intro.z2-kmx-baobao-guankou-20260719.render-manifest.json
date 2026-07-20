@@ -9,8 +9,8 @@
   "bvid": "BV1yrKq6hEap",
   "origin": "东爱璃直播间21692711录播(爱瑠璃投稿) 萤火虫互动舞台 2026-07-19 12:22:53+08:00",
   "pieces": [
-   {"id": "p1-chant", "interval_s": [1043.72, 1048.62], "text": "kmx是我的宝宝、妈妈、老公、主人", "lead_pause_ms": 120, "tail_pause_ms": 20},
-   {"id": "p2-jiejie", "interval_s": [1065.0, 1066.29], "text": "姐姐!"}
+   {"id": "p1-chant", "interval_s": [1043.72, 1048.46], "text": "kmx是我的宝宝、妈妈、老公、主人", "lead_pause_ms": 120, "tail_pause_ms": 20},
+   {"id": "p2-jiejie", "interval_s": [1065.03, 1066.29], "text": "姐姐!"}
   ]
  },
  "artifacts": {

@@ -1,98 +1,161 @@
 {
-  "schema_version": "lidousha-branding-intro.v1",
-  "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
-  "enabled": true,
-  "policy": {
-    "mandatory": true,
-    "applies_to": [
-      "talk"
-    ],
-    "position": "prepend",
-    "note": "Ivan 2026-07-18 选定 Z1 三句版作为固定谈话片头；顺序为“李豆沙一直是零，不对，李豆沙一直是为爱做一”。中间“不对”保留原画幅，前后两句使用右下角形象放大的 1080p 无广告画面。谈话成品缺失片头或 hash 不符时 fail closed；歌切按现行政策豁免片头。"
-  },
-  "display_name": "活字乱刷片头-Z1-李豆沙一直是零-不对-李豆沙一直是为爱做一",
-  "target_text": "李豆沙一直是零，不对，李豆沙一直是为爱做一",
-  "video": {
-    "sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
-    "duration_ms": 5754,
-    "bytes": 2765024,
-    "streams": {
-      "video": {
-        "codec": "h264",
-        "profile": "High",
-        "width": 1920,
-        "height": 1080,
-        "fps": "30/1",
-        "pix_fmt": "yuv420p"
-      },
-      "audio": {
-        "codec": "aac",
-        "profile": "LC",
-        "sample_rate": 48000,
-        "channels": 2
-      }
-    }
-  },
-  "subtitle_srt": {
-    "sha256": "5943b4ae57a45443ef6060075080fbe31add789089c9388a41afca320b218d0f",
-    "cues": [
-      {
-        "start_ms": 0,
-        "end_ms": 2250,
-        "text": "李豆沙一直是零，"
-      },
-      {
-        "start_ms": 2250,
-        "end_ms": 2905,
-        "text": "不对，"
-      },
-      {
-        "start_ms": 2905,
-        "end_ms": 5715,
-        "text": "李豆沙一直是为爱做一"
-      }
+    "schema_version": "lidousha-branding-intro.v2",
+    "enabled": true,
+    "policy": {
+        "mandatory": true,
+        "applies_to": [
+            "talk"
+        ],
+        "position": "prepend",
+        "note": "Ivan 2026-07-18 定 Z1 三句版为谈话固定片头;2026-07-20 增补 Z2(kmx贯口)并拍板两者轮换插入。轮换按成品主片内容 sha256 决定(同素材重烧不漂移,edit-replace/refix 不会换片头),可用 AUTOSLICE_BRANDING_INTRO_PICK 按 intro_id 手选。谈话成品缺片头、任一在册片头缺失或 hash 不符时 fail closed;歌切按现行政策豁免片头。"
+    },
+    "rotation": {
+        "mode": "main-sha256",
+        "env_override": "AUTOSLICE_BRANDING_INTRO_PICK",
+        "note": "int(main_sha256[:16],16) % len(intros);无状态、可复现,不追求严格 ABAB,只保证同素材恒定与长程均匀。"
+    },
+    "intros": [
+        {
+            "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+            "display_name": "活字乱刷片头-Z1-李豆沙一直是零-不对-李豆沙一直是为爱做一",
+            "target_text": "李豆沙一直是零，不对，李豆沙一直是为爱做一",
+            "video": {
+                "sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+                "duration_ms": 5754,
+                "bytes": 2765024,
+                "streams": {
+                    "video": {
+                        "codec": "h264",
+                        "profile": "High",
+                        "width": 1920,
+                        "height": 1080,
+                        "fps": "30/1",
+                        "pix_fmt": "yuv420p"
+                    },
+                    "audio": {
+                        "codec": "aac",
+                        "profile": "LC",
+                        "sample_rate": 48000,
+                        "channels": 2
+                    }
+                }
+            },
+            "subtitle_srt": {
+                "sha256": "5943b4ae57a45443ef6060075080fbe31add789089c9388a41afca320b218d0f",
+                "cues": [
+                    {
+                        "start_ms": 0,
+                        "end_ms": 2250,
+                        "text": "李豆沙一直是零，"
+                    },
+                    {
+                        "start_ms": 2250,
+                        "end_ms": 2905,
+                        "text": "不对，"
+                    },
+                    {
+                        "start_ms": 2905,
+                        "end_ms": 5715,
+                        "text": "李豆沙一直是为爱做一"
+                    }
+                ]
+            },
+            "provenance": {
+                "workflow": "docs/workflows/huozi-luanshua.md",
+                "render_manifest_path": "assets/lidousha/intro/lidousha-branding-intro.v1.render-manifest.json",
+                "render_manifest_sha256": "c9e8ad64fbb3990231be33a27bdeff76daa9783422422d0a19dfd250efc39c80",
+                "render_manifest_inner_sha256": "043ae779e87fd07bf44c50d7a53319d9c0cae8950dbd0bba7de208a6fafd1903",
+                "verified_plan_sha256": "2ac78d6c0e66a7a930f7a678298f6491d60ff0a9db038dd52bdf343e9d6c7091",
+                "produced_at_commit": "522367b5635d84134a1196092c1e9cb3538d1fd8",
+                "selected_by": "ivan",
+                "selected_on": "2026-07-18",
+                "pieces": [
+                    {
+                        "text": "李豆沙一直是零",
+                        "source_date": "2026-07-16",
+                        "core_ms": [
+                            482230,
+                            484100
+                        ],
+                        "visual_mode": "avatar_enlarged_1080p_no_ad"
+                    },
+                    {
+                        "text": "不对",
+                        "source_date": "2026-07-10",
+                        "core_ms": [
+                            1275120,
+                            1275440
+                        ],
+                        "visual_mode": "original_full_frame"
+                    },
+                    {
+                        "text": "李豆沙一直是为爱做一",
+                        "source_date": "2026-07-16",
+                        "core_ms": [
+                            489630,
+                            492420
+                        ],
+                        "visual_mode": "avatar_enlarged_1080p_no_ad"
+                    }
+                ]
+            },
+            "runtime_media_paths": [
+                "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4"
+            ]
+        },
+        {
+            "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+            "display_name": "活字乱刷片头-Z2-kmx是我的宝宝妈妈老公主人-姐姐",
+            "target_text": "kmx是我的宝宝、妈妈、老公、主人，姐姐！",
+            "video": {
+                "sha256": "d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29",
+                "duration_ms": 6188,
+                "bytes": 2065153,
+                "streams": {
+                    "video": {
+                        "codec": "h264",
+                        "profile": "High",
+                        "width": 1920,
+                        "height": 1080,
+                        "fps": "30/1",
+                        "pix_fmt": "yuv420p"
+                    },
+                    "audio": {
+                        "codec": "aac",
+                        "profile": "LC",
+                        "sample_rate": 48000,
+                        "channels": 2
+                    }
+                }
+            },
+            "subtitle_srt": {
+                "sha256": "ae956206d41572c44824f648e752ed81054c8da22e8b1ab394526fa5131da768",
+                "cues": [
+                    {
+                        "start_ms": 0,
+                        "end_ms": 4880,
+                        "text": "kmx是我的宝宝、妈妈、老公、主人"
+                    },
+                    {
+                        "start_ms": 4880,
+                        "end_ms": 6140,
+                        "text": "姐姐!"
+                    }
+                ]
+            },
+            "provenance": {
+                "workflow": "manual stage build following scripts/huozi_luanshua.py conventions",
+                "render_manifest_path": "assets/lidousha/intro/lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.render-manifest.json",
+                "render_manifest_sha256": "456d4b4e6e738001755ed157fff57df611358b431e6e6c2b3f46fc79f78cda9e",
+                "source_bvid": "BV1yrKq6hEap",
+                "selected_by": "ivan",
+                "selected_on": "2026-07-20",
+                "gap_variant": "gap010(主人→姐姐约0.10秒,四档试听选定)",
+                "adjudication": "喊词『宝宝』为 Ivan 人工亲听裁定,推翻模型『爸爸』判读"
+            },
+            "runtime_media_paths": [
+                "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.mp4"
+            ]
+        }
     ]
-  },
-  "provenance": {
-    "workflow": "docs/workflows/huozi-luanshua.md",
-    "render_manifest_path": "assets/lidousha/intro/lidousha-branding-intro.v1.render-manifest.json",
-    "render_manifest_sha256": "c9e8ad64fbb3990231be33a27bdeff76daa9783422422d0a19dfd250efc39c80",
-    "render_manifest_inner_sha256": "043ae779e87fd07bf44c50d7a53319d9c0cae8950dbd0bba7de208a6fafd1903",
-    "verified_plan_sha256": "2ac78d6c0e66a7a930f7a678298f6491d60ff0a9db038dd52bdf343e9d6c7091",
-    "produced_at_commit": "522367b5635d84134a1196092c1e9cb3538d1fd8",
-    "selected_by": "ivan",
-    "selected_on": "2026-07-18",
-    "pieces": [
-      {
-        "text": "李豆沙一直是零",
-        "source_date": "2026-07-16",
-        "core_ms": [
-          482230,
-          484100
-        ],
-        "visual_mode": "avatar_enlarged_1080p_no_ad"
-      },
-      {
-        "text": "不对",
-        "source_date": "2026-07-10",
-        "core_ms": [
-          1275120,
-          1275440
-        ],
-        "visual_mode": "original_full_frame"
-      },
-      {
-        "text": "李豆沙一直是为爱做一",
-        "source_date": "2026-07-16",
-        "core_ms": [
-          489630,
-          492420
-        ],
-        "visual_mode": "avatar_enlarged_1080p_no_ad"
-      }
-    ]
-  },
-  "runtime_media_paths": [
-    "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4"
-  ]
 }
