@@ -39,6 +39,7 @@ from .title_policy import (
     _TITLE_MIN_LEN,
     _ensure_lidousha_prefix,
     canonicalize_song_catalog_title,
+    manual_title_override,
     _selection_hook_anchor_valid,
     _selection_hook_fallback_title,
     _selection_hook_first_clause,
@@ -157,6 +158,13 @@ def _stage_publish_draft(
     title_policy_violations: list[str] = []
     title_authority_error: str | None = None
     title_authority_status = "RESOLVED_MANUAL" if title_llm_call is None else "UNRESOLVED_AUTO"
+    # Ivan 手定标题按 candidate 注入（2026-07-19）：命中即定稿，LLM 不再跑。
+    manual_override = manual_title_override(candidate_id)
+    if manual_override is not None:
+        staged_title = manual_override
+        title_source = "ivan_manual_override"
+        title_authority_status = "RESOLVED_MANUAL"
+        title_llm_call = None
     if title_llm_call is not None:
         selection_hook = str(selection_hook or "").strip()
         selection_hook_clause = _selection_hook_first_clause(selection_hook)

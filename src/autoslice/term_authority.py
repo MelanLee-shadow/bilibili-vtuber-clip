@@ -18,7 +18,12 @@ from pathlib import Path
 from src.autoslice.channel_profile import load_channel_profile
 
 
-_GLOSSARY_TERM_RX = re.compile(r"^[-*]\s*(?:梗词：)?\*{0,2}([^：:（(＝=，,。\s*]{2,12})")
+# 行首「类别标签：」（梗词：/品牌/话题词：/人名/ID：…）先剥掉再取词面；
+# 2026-07-19 修正：旧式只认「梗词：」，导致带其他标签的行捕获到的是标签
+# 本身（「品牌/话题词」），和成天下/七星等词面从未真正进入保护集。
+_GLOSSARY_TERM_RX = re.compile(
+    r"^[-*]\s*(?:[^：:（(]{1,10}[：:])?\*{0,2}([^：:（(＝=，,。、；\s*]{2,12})"
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)

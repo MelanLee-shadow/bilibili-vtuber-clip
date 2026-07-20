@@ -222,12 +222,14 @@ def test_july18_hecheng_kmx_truth_handles_downstream_third_homophone():
                     "remote_media": (
                         "/source/22966160_20260718-23-59-36.mp4"
                     ),
+                    # 窗口止于 kmx 钉区间末端：2026-07-19 起同一录播 545.5s
+                    # 处还有「为什么幻听」钉，本测试只回放 kmx 三重同音案。
                     "start_ms": 517_500,
-                    "end_ms": 559_670,
+                    "end_ms": 545_460,
                 }
             ]
         },
-        durations=[42_183],
+        durations=[27_960],
         ledger_path=(
             REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
         ),

@@ -110,6 +110,46 @@ _SELECTION_HOOK_MEANINGLESS_RE = re.compile(
 )
 
 
+_CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
+
+
+def _candidate_family(candidate_id: str) -> str:
+    """auto_225942_698_931r2 与 auto_225942_698_931 是同一内容家族。"""
+
+    return _CANDIDATE_RECUT_SUFFIX_RX.sub("", str(candidate_id or "").strip())
+
+
+def manual_title_override(candidate_id: str) -> str | None:
+    """Ivan 手定标题按 candidate 注入（2026-07-19，7/18 五件套定版）。
+
+    铁律与 publish_staging 既有约定一致：手定标题一字不改、免前缀/长度/
+    违禁词门。加载失败只会让结果为 None（回落自动标题），绝不抛错。
+    """
+
+    family = _candidate_family(candidate_id)
+    if not family:
+        return None
+    try:
+        import json
+
+        path = CHANNEL_PROFILE.asset_file("manual_title_overrides")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != (
+            f"{CHANNEL_PROFILE.profile_id}-manual-title-overrides.v1"
+        ):
+            return None
+        for row in payload.get("overrides") or []:
+            if not isinstance(row, dict):
+                continue
+            if _candidate_family(str(row.get("candidate_id") or "")) == family:
+                title = str(row.get("title") or "").strip()
+                if title:
+                    return title
+    except Exception:
+        return None
+    return None
+
+
 def _title_policy_violations(title: str) -> list[str]:
     """Return deterministic policy codes tripped by an automatic title."""
 

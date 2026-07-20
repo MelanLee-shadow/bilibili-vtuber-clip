@@ -121,9 +121,10 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
         song_name_candidates=["歌"],
     )
 
-    # 2026-07-19 glossary 新增七星词条+长沙话方言词保护节后的指纹。
+    # 2026-07-19 审片第二轮：glossary 新增 奶P/咋这样/钢镚/SC音读/称呼串
+    # 等价类词条 + ありがとう(林更多)误听面后的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "e2a725d60310c8c021af6180f4d6d330722c2fecd72c07e14c30b0e08df08190"
+        "3e86043568c9e49bfe6da000ff8b3e158991b503676e600a2941a7c83e0ada67"
     )
 
 

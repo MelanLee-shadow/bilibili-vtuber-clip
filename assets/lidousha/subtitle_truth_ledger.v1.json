@@ -74,8 +74,8 @@
       "source_start_ms": 507660,
       "source_end_ms": 511680,
       "action": "replace_cue",
-      "text": "十麻乃SC得了一种听到“是侄女”就想笑的病",
-      "authority": "Ivan-reviewed-structured-SC-2026-07-19",
+      "text": "谢谢十麻乃的SC，得了一种听到“是侄女”就想笑的病",
+      "authority": "Ivan-stated-20260719(1:45 谢谢十麻乃的SC;谢谢不许丢)",
       "required": true
     },
     {
@@ -150,9 +150,459 @@
       "source_start_ms": 1067100,
       "source_end_ms": 1069700,
       "action": "replace_cue",
-      "text": "只有kmx，怎么，你为什么会这样称呼李豆沙，",
-      "authority": "Ivan-stated-20260719-conversation(0:49只有kmx会这么称呼)",
+      "text": "只有kmx会这样称呼李豆沙",
+      "authority": "Ivan-stated-20260719(2:39 只有kmx会这样称呼李豆沙;指正=整句替换)",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-baby-address-dajiao-split-a",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 436040,
+      "source_end_ms": 438480,
+      "authority": "Ivan-stated-20260719-review-round2(0:33 大叫不拆cue)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "主人、老公主人，反应不是很大"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-baby-address-dajiao-split-b",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 438480,
+      "source_end_ms": 439880,
+      "authority": "Ivan-stated-20260719-review-round2(0:33 大叫不拆cue;SC原文见证)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "大叫“李姐是侄女”，"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-baby-address-thanks-kuailemaomao",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 1025710,
+      "source_end_ms": 1028450,
+      "authority": "Ivan-stated-20260719-review-round2(1:58 谢谢不许丢;SC记录见证发送者)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "谢谢快乐猫猫和忧郁小狗的SC：李姐"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-baby-address-mama-not-ma",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 1054880,
+      "source_end_ms": 1059320,
+      "authority": "Ivan-stated-20260719-review-round2(2:29 称呼串内妈妈误听成吗)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "所以这个世界上很难再有第二个可爱的姐姐、妈妈"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-hecheng-weishenme-hallucination",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 545470,
+      "source_end_ms": 547250,
+      "authority": "Ivan-stated-20260719-review-round2(0:25 为什么系幻听删除)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "真的很恐怖啊"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-hecheng-lingsan-echo-drop",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 578360,
+      "source_end_ms": 580790,
+      "authority": "Ivan-stated-20260719-review-round2(0:59 零三=下句李豆沙误听重复,删)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "我的，我也不"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-hecheng-tudaodi",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 621190,
+      "source_end_ms": 622950,
+      "authority": "Ivan-stated-20260719-review-round2(1:41 上文gif图语境)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "那个图到底是谁做的"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-hecheng-arigatou-1",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 607140,
+      "source_end_ms": 609220,
+      "authority": "Ivan-stated-20260719-review-round2(2:06 arigatou误听成林更多)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "谢谢你呀，ありがとう"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-hecheng-arigatou-2",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 644120,
+      "source_end_ms": 647360,
+      "authority": "Ivan-stated-20260719-review-round2(2:06 arigatou误听成林更多)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "ありがとう，谢谢，谢谢你呀"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-hecheng-arigatou-3",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 647389,
+      "source_end_ms": 648990,
+      "authority": "Ivan-stated-20260719-review-round2(2:06 arigatou误听成林更多)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "ありがとう，收到了"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-hecheng-ouxiang-no-lian",
+      "recording_basename": "22966160_20260718-23-59-36.mp4",
+      "source_start_ms": 659090,
+      "source_end_ms": 663330,
+      "authority": "Ivan-stated-20260719-review-round2(2:20 脸系幻听插入,删)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "能不能，能不能给李豆沙抽那种偶像一点的"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-flower-bang-not-bao",
+      "recording_basename": "22966160_20260718-23-29-39.mp4",
+      "source_start_ms": 1575090,
+      "source_end_ms": 1577930,
+      "authority": "Ivan-stated-20260719-review-round2(0:22 帮;前句帮小李见证)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "就是帮小李准备那个花了"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-flower-he-yi-kou-shui",
+      "recording_basename": "22966160_20260718-23-29-39.mp4",
+      "source_start_ms": 1637020,
+      "source_end_ms": 1638300,
+      "authority": "Ivan-stated-20260719-review-round2(1:25 喝一口水)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "喝一口水"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-linggeren-1",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 698220,
+      "source_end_ms": 702700,
+      "authority": "Ivan-stated-20260719-review-round2(0:09 零个人)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "我看到有人说零个人喊熊猫，是什么意思呢"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-naip-maipi",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 709890,
+      "source_end_ms": 713730,
+      "authority": "Ivan-stated-20260719-review-round2(0:21 奶P且与前句分开)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "有人，有人说零个人喊熊猫。奶P"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-naip-naipizi",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 718670,
+      "source_end_ms": 721230,
+      "authority": "Ivan-stated-20260719-review-round2(0:27 奶P)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "奶皮子",
+          "canonical": "奶P"
+        }
+      ],
+      "required_text": "奶P"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-naip-naiping",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 721390,
+      "source_end_ms": 723070,
+      "authority": "Ivan-stated-20260719-review-round2(0:30 奶P)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "奶瓶",
+          "canonical": "奶P"
+        }
+      ],
+      "required_text": "奶P"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-lidousha-litoutade",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 731700,
+      "source_end_ms": 734700,
+      "authority": "Ivan-stated-20260719-review-round2(0:41 李豆沙)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "里头她",
+          "canonical": "李豆沙"
+        }
+      ],
+      "required_text": "李豆沙"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-kmx-geiwoxiu",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 751050,
+      "source_end_ms": 754710,
+      "authority": "Ivan-stated-20260719-review-round2(1:02 kmx)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "给我修",
+          "canonical": "kmx"
+        }
+      ],
+      "required_text": "kmx"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-3dlive-span-a",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 758370,
+      "source_end_ms": 760310,
+      "authority": "Ivan-stated-20260719-review-round2(1:08 8月份小李自己的3Dlive怎么办)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "嗯，8月份小李自己的"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-3dlive-span-b",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 760310,
+      "source_end_ms": 761750,
+      "authority": "Ivan-stated-20260719-review-round2(1:08 8月份小李自己的3Dlive怎么办)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "3Dlive怎么办"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-momo-persona",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 763540,
+      "source_end_ms": 764420,
+      "authority": "Ivan-stated-20260719-review-round2(1:12 摸摸;妈妈型人设先验)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "摸摸摸摸"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-lingeren-zaiyi",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 771560,
+      "source_end_ms": 773960,
+      "authority": "Ivan-stated-20260719-review-round2(1:21 整句)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "零个人在意李豆沙是大熊猫"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-lidousha-liusha",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 774240,
+      "source_end_ms": 778160,
+      "authority": "Ivan-stated-20260719-review-round2(1:26 李豆沙)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "流沙",
+          "canonical": "李豆沙"
+        }
+      ],
+      "required_text": "李豆沙"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-kmx-pimaoxiong",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 799300,
+      "source_end_ms": 801020,
+      "authority": "Ivan-stated-20260719-review-round2(1:49 kmx)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "皮毛熊",
+          "canonical": "kmx"
+        }
+      ],
+      "required_text": "kmx"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-kmx-ktouxiao",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 801020,
+      "source_end_ms": 801900,
+      "authority": "Ivan-stated-20260719-review-round2(1:50 kmx)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "K头小",
+          "canonical": "kmx"
+        }
+      ],
+      "required_text": "kmx"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-kmx-ktoutou",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 801900,
+      "source_end_ms": 802880,
+      "authority": "Ivan-stated-20260719-review-round2(1:50 kmx)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "K头头",
+          "canonical": "kmx"
+        }
+      ],
+      "required_text": "kmx"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-nashuo-xiongmao",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 802880,
+      "source_end_ms": 805320,
+      "authority": "Ivan-stated-20260719-review-round2(1:53 那说熊猫,就字省略)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "大熊猫是3个字，那说熊猫"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-sc-buwangwang",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 822200,
+      "source_end_ms": 824380,
+      "authority": "Ivan-stated-20260719+SC-record(步汪汪 ¥2 t=395s 正文三行全吻合)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "谢谢步汪汪的钢镚"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-sc-content-1",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 824380,
+      "source_end_ms": 826140,
+      "authority": "Ivan-stated-20260719(2:10 复制SC内容)+SC-record原文",
+      "required": true,
+      "action": "replace_cue",
+      "text": "今晚的姐姐大人超级棒"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-sc-content-2",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 826850,
+      "source_end_ms": 828330,
+      "authority": "Ivan-stated-20260719(2:10 复制SC内容)+SC-record原文",
+      "required": true,
+      "action": "replace_cue",
+      "text": "现场听的特别开心"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-sc-content-3",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 829610,
+      "source_end_ms": 830350,
+      "authority": "Ivan-stated-20260719(2:10 复制SC内容)+SC-record原文",
+      "required": true,
+      "action": "replace_cue",
+      "text": "更多更多的歌"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-lidousha-liwenxuan",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 846900,
+      "source_end_ms": 850420,
+      "authority": "Ivan-stated-20260719-review-round2(2:36 李豆沙)",
+      "required": true,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "李文轩",
+          "canonical": "李豆沙"
+        }
+      ],
+      "required_text": "李豆沙"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-yaoshiyou",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 850740,
+      "source_end_ms": 855140,
+      "authority": "Ivan-stated-20260719-review-round2(2:42 要是有)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "我想，要是有第一次见的"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-lidousha-liuxialai",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 855180,
+      "source_end_ms": 856700,
+      "authority": "Ivan-stated-20260719-review-round2(2:45 李豆沙)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "第一次见李豆沙"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-kmx-qwoxiong",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 904700,
+      "source_end_ms": 906420,
+      "authority": "Ivan-stated-20260719-review-round2(kmx变体裁定,31级粉丝牌语境)",
+      "required": true,
+      "action": "replace_cue",
+      "text": "你不是31级kmx吗"
     }
   ]
 }

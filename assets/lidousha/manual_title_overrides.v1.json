@@ -1,0 +1,26 @@
+{
+  "schema_version": "lidousha-manual-title-overrides.v1",
+  "comment": "Ivan 手定标题按 candidate 注入（铁律：手定标题一字不改、免前缀/长度/违禁词门）。candidate_id 匹配忽略 rN 重切后缀——重切不改内容主题，标题跟内容走。",
+  "overrides": [
+    {
+      "candidate_id": "auto_225942_411_1073",
+      "title": "大喊李豆沙是姐姐妈妈宝宝老公主人，观众已见怪不怪了，这就是主包和kmx的羁绊啊",
+      "authority": "Ivan-2026-07-19"
+    },
+    {
+      "candidate_id": "auto_235936_527_695",
+      "title": "都，都怪你kmx，你看看现在别人对我都什么印象，老李头私下烟酒槟榔都来的（误",
+      "authority": "Ivan-2026-07-19"
+    },
+    {
+      "candidate_id": "auto_225942_698_931",
+      "title": "精心设计MC环节想让kmx用两个字为大家介绍自己，是奶P！才，才不是熊猫呢！",
+      "authority": "Ivan-2026-07-19"
+    },
+    {
+      "candidate_id": "auto_232939_1565_1693",
+      "title": "李豆沙第一次收到这么贵重的礼物花篮，非常感谢kmx，kmx都是好人！",
+      "authority": "Ivan-2026-07-19"
+    }
+  ]
+}

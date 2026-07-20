@@ -445,6 +445,18 @@ def _apply_entity_authority(
         ),
     )
     repetition_groups = repetition_divergence_groups(srt_text)
+    # 2026-07-19 欠账 #0/#5 落地：短语级重复分歧编译器（抱/帮案）+ 词表
+    # 拼音候选发现层（皮毛熊/卖批案）。同为「发现≠裁决」的确定性怀疑
+    # 编译器，与句级重复组共用声学仲裁；UNCERTAIN 双向保留绝不阻塞。
+    from src.autoslice.phonetic_scan import (
+        glossary_phonetic_candidate_groups,
+        phrase_repetition_divergence_groups,
+    )
+
+    phrase_divergence_groups = phrase_repetition_divergence_groups(srt_text)
+    phonetic_candidate_groups = glossary_phonetic_candidate_groups(
+        srt_text, referent_groups
+    )
     # AGY/CPA/词表已经完成专名语义定稿。无位置标记的静态/话题实体组只给
     # 结构化聊天匹配与终稿验证使用，绝不能再被黑帧 Gemini 按初始听写强制
     # 二选一。声学层只接明确声明为 transcript_only/clip_initial 的未决槽位，
@@ -461,6 +473,8 @@ def _apply_entity_authority(
         *explicit_post_semantic_audio_groups,
         *([opening_group] if opening_group is not None else []),
         *repetition_groups,
+        *phrase_divergence_groups,
+        *phonetic_candidate_groups,
     ]
     srt_text, transcript_entity_audit = apply_audio_entity_verification(
         srt_text,
@@ -482,7 +496,17 @@ def _apply_entity_authority(
             for group in explicit_post_semantic_audio_groups
         ],
         "dynamic_audio_group_count": len(repetition_groups)
+        + len(phrase_divergence_groups)
+        + len(phonetic_candidate_groups)
         + (1 if opening_group is not None else 0),
+        "phrase_divergence_groups": [
+            [entity.canonical for entity in group.entities]
+            for group in phrase_divergence_groups
+        ],
+        "phonetic_candidate_groups": [
+            [entity.canonical for entity in group.entities]
+            for group in phonetic_candidate_groups
+        ],
     }
     chat_authority_audit["code_switch_surface_audit"] = code_switch_audit
     chat_authority_audit["term_boundary_audit"] = {
