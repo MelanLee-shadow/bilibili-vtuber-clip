@@ -1,0 +1,41 @@
+{
+  "manifest_version": 2,
+  "artifact_id": "06be3572d069",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/kmx专属称呼串：先发现“宝宝姐姐主.mp4",
+    "sha256": "06be3572d06940a4d44213d08937ef6372fa5b7ae98d6b24779d2e2f0d101af3",
+    "bytes": 56480951
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/kmx专属称呼串：先发现“宝宝姐姐主.cover.png",
+    "sha256": "21730c07f8d73281295f60f7aeace9174ea85bb92d8851189e3e9a137e724dfd",
+    "bytes": 2275025
+  },
+  "title": "【李豆沙】大喊李豆沙是姐姐妈妈宝宝老公主人，观众已见怪不怪了，这就是主包和kmx的羁绊啊",
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "剩下两个跑完后按这两个标题重命名就可以上传了。大喊李豆沙是姐姐妈妈宝宝老公主人，观众已见怪不怪了，这就是主包和kmx的羁绊啊，以及“都，都怪你kmx，你看看现在别人对我都什么印象，老李头私下烟酒槟榔都来的（误”（前缀【李豆沙】沿当晚六连发既定先例）",
+    "at": "2026-07-20T06:19:27+0000"
+  },
+  "created_at": "2026-07-20T06:19:27+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "侄女",
+    "百合",
+    "女同",
+    "吐槽",
+    "搞笑",
+    "嘴硬",
+    "名场面",
+    "害羞"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}
