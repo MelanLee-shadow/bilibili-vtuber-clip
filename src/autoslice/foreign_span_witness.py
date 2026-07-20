@@ -24,9 +24,11 @@ from typing import Any, Callable
 
 from src.autoslice import gemini_backup_policy
 from src.autoslice.agy_lrc_alignment import _gemini_api_observe, _gemini_keys
+from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.subtitle_fidelity import _JAPANESE_KANA_RX
 
 FOREIGN_WITNESS_SCHEMA = "foreign-span-audio-witness.v1"
+CLUSTER_RETRANSCRIPTION_SCHEMA = "foreign-cluster-retranscription.v1"
 LANGUAGE_WITNESSED_STATUS = "WITNESSED_FOREIGN_AUDIO_TRANSCRIPTION"
 MIXED_PHRASE_WITNESSED_STATUS = "WITNESSED_MIXED_PHRASE_AUDIO"
 
@@ -247,6 +249,111 @@ def witness_language_preservation_audit(
         audit["status"] = LANGUAGE_WITNESSED_STATUS
 
 
+def _ms_to_srt_ts(ms: int) -> str:
+    seconds, millis = divmod(max(0, int(ms)), 1000)
+    minutes, sec = divmod(seconds, 60)
+    hours, minute = divmod(minutes, 60)
+    return f"{hours:02d}:{minute:02d}:{sec:02d},{millis:03d}"
+
+
+def retranscribe_foreign_script_cluster(
+    *,
+    media_path: Path,
+    srt_text: str,
+    audit: dict[str, Any],
+    out_root: Path,
+    cid: str,
+    observe: Callable[..., str] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Re-transcribe Latin-salad cues of a foreign cluster from their audio.
+
+    ``BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER`` means a Japanese passage was
+    decoded by the Chinese ASR into Latin-heavy garbage — the text itself is
+    wrong, so a confirm-only witness cannot help.  Each clustered cue gets an
+    independent Gemini listen over its exact interval; when the observation
+    is Japanese (or mixed) speech, the heard native-script transcript
+    replaces that cue's text.  Timeline is never touched, other cues are
+    never touched, and every replacement carries its audio witness.  The
+    caller re-audits the repaired SRT — an unrepaired cluster stays blocked.
+    """
+
+    repair_audit: dict[str, Any] = {
+        "schema_version": CLUSTER_RETRANSCRIPTION_SCHEMA,
+        "attempted_rows": [],
+        "replaced_count": 0,
+    }
+    if audit.get("status") != "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER":
+        return srt_text, repair_audit
+    cluster_indexes = {
+        row.get("cue_index")
+        for row in audit.get("latin_heavy_cues") or []
+        if isinstance(row, dict)
+    }
+    if not cluster_indexes:
+        return srt_text, repair_audit
+    observe_fn = observe if observe is not None else _gemini_api_observe
+    audio_dir = out_root / f"{cid}.foreign-witness"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    cues = parse_srt_cues(srt_text)
+    replacements: dict[int, str] = {}
+    for index, cue in enumerate(cues, start=1):
+        if index not in cluster_indexes:
+            continue
+        row: dict[str, Any] = {
+            "cue_index": index,
+            "start_ms": cue.start_ms,
+            "end_ms": cue.end_ms,
+            "original": cue.text,
+            "replaced": False,
+        }
+        repair_audit["attempted_rows"].append(row)
+        audio_path = audio_dir / f"cluster_{cue.start_ms}_{cue.end_ms}.mp3"
+        try:
+            _extract_span_audio(media_path, cue.start_ms, cue.end_ms, audio_path)
+            duration_ms = cue.end_ms - cue.start_ms + 2 * _SPAN_PAD_MS
+            observation, key_tier = _observe_with_key_ladder(
+                audio_path=audio_path,
+                prompt=_PROMPT_TEMPLATE.format(duration_ms=duration_ms),
+                observe=observe_fn,
+            )
+        except Exception as exc:
+            row["failure"] = f"{type(exc).__name__}: {exc}"[:200]
+            continue
+        transcript = " ".join(observation["exact_transcript"].split())
+        row["audible_language"] = observation["audible_language"]
+        row["speaker_impression"] = observation["speaker_impression"]
+        row["key_tier"] = key_tier
+        row["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()
+        row["transcript"] = transcript
+        japanese_shaped = bool(_kana_only(transcript)) or (
+            observation["audible_language"] == "ja"
+            and re.search(r"[㐀-鿿]", transcript) is not None
+        )
+        if (
+            observation["audible_language"] in {"ja", "mixed"}
+            and transcript
+            and japanese_shaped
+        ):
+            replacements[index] = transcript
+            row["replaced"] = True
+        else:
+            row["failure"] = "OBSERVATION_NOT_FOREIGN_SPEECH"
+    repair_audit["replaced_count"] = len(replacements)
+    _persist_witness(
+        out_root, cid, "cluster_retranscription", repair_audit["attempted_rows"]
+    )
+    if not replacements:
+        return srt_text, repair_audit
+    rendered = []
+    for index, cue in enumerate(cues, start=1):
+        text = replacements.get(index, cue.text)
+        rendered.append(
+            f"{index}\n{_ms_to_srt_ts(cue.start_ms)} --> "
+            f"{_ms_to_srt_ts(cue.end_ms)}\n{text}"
+        )
+    return "\n\n".join(rendered) + "\n", repair_audit
+
+
 def witness_foreign_script_audit(
     *,
     media_path: Path,
@@ -257,10 +364,10 @@ def witness_foreign_script_audit(
 ) -> None:
     """Try to witness mixed CJK/Latin cues as verbatim-audible speech.
 
-    Only ``BLOCKED_MIXED_CJK_LATIN_PHRASE`` rows carry timeline addresses;
-    the kana-cluster block (``BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER``) means
-    the text itself is suspected wrong-language ASR, which a confirm-only
-    witness cannot repair — that stays with the correction lane/override.
+    ``BLOCKED_MIXED_CJK_LATIN_PHRASE`` rows carry timeline addresses and the
+    text is plausibly right, so hearing it verbatim is evidence.  The
+    kana-cluster block is handled by ``retranscribe_foreign_script_cluster``
+    instead — there the text itself is suspected wrong-language ASR.
     """
 
     if audit.get("status") != "BLOCKED_MIXED_CJK_LATIN_PHRASE":

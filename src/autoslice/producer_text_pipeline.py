@@ -49,6 +49,7 @@ from src.autoslice.producer_chat_input import (
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
 from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.foreign_span_witness import (
+    retranscribe_foreign_script_cluster,
     witness_foreign_script_audit,
     witness_language_preservation_audit,
 )
@@ -812,6 +813,24 @@ def _finalize_text_evidence(
             foreign_script_audit["deferred_reason"] = (
                 "every mixed-language cue has a timeline-bound reviewed repair"
             )
+    if (
+        padded is not None
+        and foreign_script_audit["status"] == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
+    ):
+        # Wrong-language ASR repair (Ivan 2026-07-19): the cluster text itself
+        # is garbage, so re-transcribe each clustered cue from its own audio
+        # and let a fresh audit judge the repaired text; unrepaired clusters
+        # stay blocked.
+        srt_text, cluster_repair_audit = retranscribe_foreign_script_cluster(
+            media_path=padded,
+            srt_text=srt_text,
+            audit=foreign_script_audit,
+            out_root=out_root,
+            cid=cid,
+        )
+        if cluster_repair_audit.get("replaced_count"):
+            foreign_script_audit = audit_foreign_script_consistency(srt_text)
+        foreign_script_audit["cluster_retranscription"] = cluster_repair_audit
     if padded is not None:
         witness_foreign_script_audit(
             media_path=padded,
