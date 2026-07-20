@@ -8,6 +8,7 @@ from .chat_authority import (
     canonicalize_hard_meme_surfaces,
     normalize_chat_text,
     normalize_srt_payload_window,
+    parse_srt_cues,
 )
 
 FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS = 250
@@ -86,6 +87,31 @@ def _render_cues_to_srt(cues) -> str:
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
+def _source_truth_pinned_intervals(
+    audit: dict, final_text_srt: str
+) -> list[tuple[int, int]]:
+    """已应用/已满足的 ledger 钉子在交付时间轴上的 cue 区间。
+
+    钉子是最高文本权威且最后落刀（2026-07-20 kmx r2 案：十麻乃钉子加了
+    「的」，把更早的 sender 修复面的子串校验打破）——被钉子辖区覆盖的
+    早期决策不再作为终稿存活要求。"""
+
+    truth = audit.get("source_subtitle_truth_audit") or {}
+    indexes: set[int] = set()
+    for key in ("applied", "satisfied"):
+        for row in truth.get(key) or []:
+            for index in row.get("cue_indexes") or []:
+                indexes.add(int(index))
+    if not indexes:
+        return []
+    cues = [cue for cue in parse_srt_cues(final_text_srt)]
+    intervals: list[tuple[int, int]] = []
+    for index in sorted(indexes):
+        if 1 <= index <= len(cues):
+            intervals.append((cues[index - 1].start_ms, cues[index - 1].end_ms))
+    return intervals
+
+
 def verify_chat_authority_final_surfaces(
     audit: dict,
     *,
@@ -151,11 +177,23 @@ def verify_chat_authority_final_surfaces(
     ):
         audit["final_verification_failure"] = "PENDING_TEXT_OVERRIDE_NOT_RECONCILED"
         return False
+    pinned_intervals = _source_truth_pinned_intervals(audit, final_text_srt)
+    superseded_by_truth = 0
     required_rows: list[dict] = []
     for kind, row, expected_text in decision_rows:
         matched_start = int(row["matched_start_ms"])
         matched_end = int(row["matched_end_ms"])
         row["final_verification_kind"] = kind
+        relative_matched_start = matched_start - delivery_start_ms
+        relative_matched_end = matched_end - delivery_start_ms
+        if any(
+            min(relative_matched_end, pin_end) - max(relative_matched_start, pin_start)
+            >= 200
+            for pin_start, pin_end in pinned_intervals
+        ):
+            row["final_verification_scope"] = "SUPERSEDED_BY_SOURCE_TRUTH"
+            superseded_by_truth += 1
+            continue
         overlap_ms = max(
             0,
             min(matched_end, delivery_end_ms)
@@ -246,7 +284,10 @@ def verify_chat_authority_final_surfaces(
         row["survived_final_speaker_srt"] = bool(span_expected and span_expected in speaker_check) and dropped_ok
         required_rows.append(row)
     audit["final_required_decision_count"] = len(required_rows)
-    audit["final_outside_delivery_count"] = len(decision_rows) - len(required_rows)
+    audit["final_superseded_by_source_truth_count"] = superseded_by_truth
+    audit["final_outside_delivery_count"] = (
+        len(decision_rows) - len(required_rows) - superseded_by_truth
+    )
     return all(
         row.get("survived_final_text_srt") and row.get("survived_final_speaker_srt")
         for row in required_rows

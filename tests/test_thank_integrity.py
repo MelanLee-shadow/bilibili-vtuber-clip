@@ -163,3 +163,47 @@ class TestAddressEnumerationRepair:
         srt = _srt((0, 2_000, "这个、这个八个字的称呼"))
         out, audit = repair_address_enumerations(srt)
         assert audit["status"] == "NO_CHANGE"
+
+
+class TestSourceTruthSupersedesDecisionSurfaces:
+    """钉子辖区豁免（2026-07-20 kmx r2 案）：ledger 钉子最后落刀且是最高
+    权威——被钉子 cue 覆盖的早期决策面不再要求存活于终稿。"""
+
+    @staticmethod
+    def _verify(audit):
+        from src.autoslice.producer_text_finalization import (
+            verify_chat_authority_final_surfaces,
+        )
+
+        final = _srt((9_750, 12_000, "谢谢十麻乃的SC，得了一种听到“是侄女”就想笑的病"))
+        return verify_chat_authority_final_surfaces(
+            audit,
+            final_text_srt=final,
+            final_speaker_srt=final,
+            delivery_start_ms=0,
+            delivery_end_ms=20_000,
+        )
+
+    def test_pinned_cue_exempts_conflicting_sender_repair(self) -> None:
+        audit = {
+            "sender_repairs": [
+                {"matched_start_ms": 9_750, "matched_end_ms": 12_000,
+                 "after": "十麻乃SC得了一种听到\"是侄女\"就想笑的病。"}
+            ],
+            "source_subtitle_truth_audit": {
+                "applied": [{"cue_indexes": [1]}],
+            },
+        }
+        assert self._verify(audit) is True
+        row = audit["sender_repairs"][0]
+        assert row["final_verification_scope"] == "SUPERSEDED_BY_SOURCE_TRUTH"
+        assert audit["final_superseded_by_source_truth_count"] == 1
+
+    def test_without_pin_conflict_still_fails(self) -> None:
+        audit = {
+            "sender_repairs": [
+                {"matched_start_ms": 9_750, "matched_end_ms": 12_000,
+                 "after": "十麻乃SC得了一种听到\"是侄女\"就想笑的病。"}
+            ],
+        }
+        assert self._verify(audit) is False
