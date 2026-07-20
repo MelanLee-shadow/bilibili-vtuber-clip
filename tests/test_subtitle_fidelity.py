@@ -594,8 +594,10 @@ class TestPhoneticTransliterationWitness:
             apply_source_language_preservation_guard,
         )
 
+        # 用未注册变体测见证机制本体（已注册面走 sanctioned 白名单路，
+        # 轮不到见证——灵感多注册后正是如此）。
         out, audit = apply_source_language_preservation_guard(
-            self._srt("谢谢你呀！灵感多"),
+            self._srt("谢谢你呀！凌敢多"),
             self._srt("谢谢你呀，ありがとう！ありがとう"),
         )
         assert audit["status"] != "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
