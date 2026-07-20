@@ -364,7 +364,7 @@ def test_replace_cue_split_across_recued_cues_counts_satisfied(tmp_path):
     assert corrected == srt  # no-op
 
 
-def test_replace_cue_split_cues_with_wrong_text_still_fails(tmp_path):
+def test_replace_cue_split_cues_garble_now_redistributes(tmp_path):
     ledger = _ledger(
         tmp_path,
         [
@@ -385,7 +385,7 @@ def test_replace_cue_split_cues_with_wrong_text_still_fails(tmp_path):
         (10, 14, "很多人笑出声这件事情"),
         (14, 18, "乒乓球要不要想想为什么"),
     )
-    _, audit = apply_source_subtitle_truth(
+    corrected, audit = apply_source_subtitle_truth(
         srt,
         spec={
             "pieces": [
@@ -395,8 +395,11 @@ def test_replace_cue_split_cues_with_wrong_text_still_fails(tmp_path):
         durations=[20_000],
         ledger_path=ledger,
     )
-    assert audit["status"] == "FAILED"
-    assert audit["failures"][0]["reason_code"] == "REPLACE_CUE_TARGET_NOT_UNIQUE"
+    # 2026-07-20 契约升级：高相似跨 cue 残渣正是多 cue 重分配的正解场景
+    # ——钉文落刀、乒乓球残渣清除；邻句保护由辖区收缩测试单独把守。
+    assert audit["status"] == "APPLIED"
+    assert "乒乓球" not in corrected
+    assert "kmx" in corrected
 
 
 def test_replace_cue_split_cues_punctuation_insensitive_satisfied(tmp_path):
@@ -435,3 +438,79 @@ def test_replace_cue_split_cues_punctuation_insensitive_satisfied(tmp_path):
     assert audit["status"] == "ALREADY_SATISFIED"
     assert audit["failures"] == []
     assert corrected == srt
+
+
+def test_multi_cue_replace_redistributes_pin_text(tmp_path):
+    """多 cue 辖区重分配（2026-07-20 kmx r5 案）：fresh 掷出不同切分时,
+    整句钉按相似度分布到覆盖 cue,零内容发明、时间轴不动。"""
+
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "only-kmx",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 116_000,
+                "action": "replace_cue",
+                "text": "只有kmx会这样称呼李豆沙",
+                "required": True,
+            }
+        ],
+    )
+    srt = (
+        "1\n00:00:10,000 --> 00:00:13,000\n只有，只有kmx。\n\n"
+        "2\n00:00:13,000 --> 00:00:16,000\n你们怎么会这样称呼李豆沙？\n"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec={"pieces": [{"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 130_000}]},
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+    assert audit["status"] == "APPLIED"
+    assert not audit["failures"]
+    joined = corrected.replace("\n", "")
+    assert "只有kmx会这样称呼李豆沙" in joined.replace("，", "").replace("。", "") or (
+        "只有kmx" in corrected and "称呼李豆沙" in corrected
+    )
+    # 两条 cue 都有文本(不许空 cue),且不再含错误残渣「你们怎么会」
+    row = audit["applied"][0]
+    parts = row["multi_cue_redistribution"]
+    assert len(parts) == 2 and all(p.strip() for p in parts)
+    assert "你们" not in corrected
+
+
+def test_unrelated_neighbor_cue_never_overwritten_by_pin(tmp_path):
+    """邻句保护（辖区收缩）：钉窗擦到与钉文零共通的邻句时,邻句原文分毫
+    不动;收缩后单 cue 落刀正常执行。"""
+
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "graze-neighbor",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_200,
+                "action": "replace_cue",
+                "text": "只有kmx会这样称呼李豆沙",
+                "required": True,
+            }
+        ],
+    )
+    srt = _srt_ms(
+        (10_000, 14_000, "只有，只有kmx这样称李豆沙"),
+        (14_050, 18_000, "今天晚饭吃番茄炒蛋"),
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec={"pieces": [{"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 130_000}]},
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+    assert "今天晚饭吃番茄炒蛋" in corrected
+    assert "只有kmx会这样称呼李豆沙" in corrected
+    assert audit["status"] == "APPLIED"

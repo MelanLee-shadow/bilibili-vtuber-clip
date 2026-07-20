@@ -108,6 +108,9 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
         str(tmp_path / "lock-ledger.jsonl"),
         "--lock",
         str(lock),
+        # 本测试标的是锁竞争契约；season 流程在真子进程里无法 monkeypatch
+        # （会打真 API），由 test_authorized_upload_season.py 专门覆盖。
+        "--skip-season",
         "--uploader",
         str(uploader),
     ]

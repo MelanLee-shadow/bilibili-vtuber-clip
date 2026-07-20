@@ -266,9 +266,7 @@ def apply_source_subtitle_truth(
                 # 两条 cue（或 bleed 进相邻 cue），时间锚定的目标不再唯一。
                 # 真值**内容**已在目标 cue 组里成立时按 satisfied 记账——
                 # 比对做去标点归一（「…事情，kmx」跨 cue 时逗号由边界停顿
-                # 表达，字符串级比对会被一个标点冤枉）；未成立才是真失败：
-                # 多 cue 替换无法安全落刀，保持 fail-closed。单 cue 可落刀
-                # 路径不归一，原样保留 Ivan 审定的标点渲染。
+                # 表达，字符串级比对会被一个标点冤枉）。
                 joined_norm = _normalize_truth_surface(
                     "".join(texts[index] for index in target_indexes)
                 )
@@ -276,7 +274,61 @@ def apply_source_subtitle_truth(
                 if replacement_norm and replacement_norm in joined_norm:
                     satisfied = True
                 else:
-                    row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
+                    # 多 cue 辖区重分配（2026-07-20 kmx r5 案：每轮 fresh 的
+                    # cue 切分方差让单目标 fail-closed 变成无限重掷）。钉子
+                    # 文本按与现文本的相似度分布到覆盖的连续 cue 上（断点
+                    # 吸附标点，词不跨 cue）——内容全部来自 Ivan 审定文本，
+                    # 零发明；时间轴与 cue 数不动。
+                    from src.autoslice.cue_split_hygiene import (
+                        _shift_boundary_punct,
+                        _snap_split_to_punct,
+                    )
+                    from src.autoslice.chat_repair import (
+                        _best_text_split,
+                        _match_metrics,
+                    )
+
+                    # 辖区收缩：与钉文毫无字符共通的 cue 是被窗口误圈的
+                    # 邻句（真实内容不许被钉文覆盖），从两端剔除后必须仍
+                    # 连续；收缩集与钉文整体相似 ≥0.55 才允许重分配落刀。
+                    kept = [
+                        index
+                        for index in target_indexes
+                        if _match_metrics(replacement, texts[index])[4] >= 2
+                    ]
+                    contiguous = bool(kept) and kept == list(
+                        range(kept[0], kept[0] + len(kept))
+                    )
+                    joined_score = (
+                        _match_metrics(
+                            replacement,
+                            "".join(texts[index] for index in kept),
+                        )[0]
+                        if kept
+                        else 0.0
+                    )
+                    if contiguous and joined_score >= 0.55:
+                        parts = _snap_split_to_punct(
+                            _shift_boundary_punct(
+                                _best_text_split(
+                                    replacement,
+                                    [texts[index] for index in kept],
+                                )
+                            )
+                        )
+                        if len(parts) == len(kept) and all(
+                            part.strip() for part in parts
+                        ):
+                            for index, part in zip(kept, parts):
+                                texts[index] = part
+                            changed = True
+                            satisfied = True
+                            row["multi_cue_redistribution"] = parts
+                            row["cue_indexes"] = [index + 1 for index in kept]
+                        else:
+                            row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
+                    else:
+                        row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
             else:
                 index = target_indexes[0]
                 satisfied = texts[index] == replacement
