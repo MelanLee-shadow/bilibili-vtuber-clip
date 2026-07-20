@@ -1,0 +1,15 @@
+{
+  "bvid": "BV1mmK16bEXu",
+  "aid": 116950466300180,
+  "cid": 40120291320,
+  "title": "【李豆沙】豆沙歌，《暖暖》",
+  "uploaded_at": "2026-07-20T04:41:56+0000",
+  "video_sha256": "94fd762b2be604c577573b5708614952cc39fd048041ffbe493df45464ee7550",
+  "cover_sha256": "69690a7350082a2088576db5fb025de4194806e6d37cd94188bf66165605e762",
+  "tags": "李豆沙,虚拟主播,虚拟UP主,直播切片,暖暖,梁静茹,翻唱",
+  "tool": "scripts/authorized_upload.py upload (biliup-rs v0.2.4 via do_upload.sh)",
+  "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-20-ivan-sixpack/03-nuannuan.upload_manifest.json",
+  "manifest_sha256": "88324ca22813cd7da92eb5b8d337e9c71bb134727f8813d9d2c99250ef5b76e9",
+  "authorized_by": "Ivan",
+  "authorization_quote": "你要按照流水线标准流程上传以下切片。歌切_【李豆沙】豆沙歌，《暖暖》｜自__song_232939_870直接上传。"
+}

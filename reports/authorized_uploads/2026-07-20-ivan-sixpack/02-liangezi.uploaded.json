@@ -1,0 +1,15 @@
+{
+  "bvid": "BV1UUK16ZE2C",
+  "aid": 116950449526771,
+  "cid": 40120290679,
+  "title": "【李豆沙】精心设计MC环节想让kmx用两个字为大家介绍自己，是奶P！才，才不是熊猫呢！",
+  "uploaded_at": "2026-07-20T04:41:23+0000",
+  "video_sha256": "f0eacd8190c50979637235ca5a511380bfaa0a7af24815ea3899f1b043e26dca",
+  "cover_sha256": "d2c8086a5181430d22c0deed09ccaadfca86af9b69097299ae3f3a30c31e7502",
+  "tags": "李豆沙,虚拟主播,虚拟UP主,直播切片,侄女,百合,女同,破防,嘴硬,吐槽,搞笑,可爱",
+  "tool": "scripts/authorized_upload.py upload (biliup-rs v0.2.4 via do_upload.sh)",
+  "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-20-ivan-sixpack/02-liangezi.upload_manifest.json",
+  "manifest_sha256": "6a5d71c79d82034f4ee122540d3370682c15e2c7fefe71c7f54e99861a3222ae",
+  "authorized_by": "Ivan",
+  "authorization_quote": "你要按照流水线标准流程上传以下切片。她精心设计让现场观众用两个字介绍自己直接上传。"
+}

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "f0eacd8190c5",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/她精心设计让现场观众用两个字介绍自己.mp4",
+    "sha256": "f0eacd8190c50979637235ca5a511380bfaa0a7af24815ea3899f1b043e26dca",
+    "bytes": 84923230
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/她精心设计让现场观众用两个字介绍自己.cover.png",
+    "sha256": "d2c8086a5181430d22c0deed09ccaadfca86af9b69097299ae3f3a30c31e7502",
+    "bytes": 2710019
+  },
+  "title": "【李豆沙】精心设计MC环节想让kmx用两个字为大家介绍自己，是奶P！才，才不是熊猫呢！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "你要按照流水线标准流程上传以下切片。她精心设计让现场观众用两个字介绍自己直接上传。",
+    "at": "2026-07-20T04:40:07+0000"
+  },
+  "created_at": "2026-07-20T04:40:07+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "侄女",
+    "百合",
+    "女同",
+    "破防",
+    "嘴硬",
+    "吐槽",
+    "搞笑",
+    "可爱"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}

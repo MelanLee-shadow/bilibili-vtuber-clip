@@ -1,0 +1,26 @@
+{
+  "bvid": "BV1mmK16bEXu",
+  "verified_at": "2026-07-20T05:05:06+0000",
+  "state": 0,
+  "title": "【李豆沙】豆沙歌，《暖暖》",
+  "season": {
+    "lane": "song",
+    "season_title": "小李歌唱",
+    "source": "auto:title-prefix"
+  },
+  "season_id": 8410735,
+  "section_id": 9364628,
+  "season_add_code": 0,
+  "ugc_season_title": "小李歌唱",
+  "is_season_display": true,
+  "tags": [
+    "暖暖",
+    "翻唱",
+    "梁静茹",
+    "虚拟UP主",
+    "直播切片",
+    "李豆沙",
+    "虚拟主播"
+  ],
+  "status": "IN_SEASON_PUBLIC"
+}

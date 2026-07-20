@@ -1,0 +1,15 @@
+{
+  "bvid": "BV16PK26mEbK",
+  "aid": 116950483075249,
+  "cid": 40120484922,
+  "title": "【李豆沙】熊猫头现场表白到底爱不爱kmx，早就说过很──爱──了!",
+  "uploaded_at": "2026-07-20T04:48:49+0000",
+  "video_sha256": "dc26bb4bca8e807062959cecae3ff5beedb0df05889fad96839e0fd10708b386",
+  "cover_sha256": "04f1dda2972daa6f680c7db533448ba29e313b3a5ad45dfd9524a35a99bcab97",
+  "tags": "李豆沙,虚拟主播,虚拟UP主,直播切片,东爱璃,萤火虫漫展,快问快答,表白,可爱",
+  "tool": "scripts/authorized_upload.py upload (biliup-rs v0.2.4 via do_upload.sh)",
+  "manifest": "/opt/bilive/autoslice/repo/reports/authorized_uploads/2026-07-20-ivan-sixpack/06-kmx-biaobai.upload_manifest.json",
+  "manifest_sha256": "75d81d01c47823d388bd7a98962202d548ef708286f309ae5b226887102c12d3",
+  "authorized_by": "Ivan",
+  "authorization_quote": "你要按照流水线标准流程上传以下切片。被问到底爱不爱kmx,她说早就说过，标题取为“熊猫头现场表白到底爱不爱kmx，早就说过很──爱──了!”，重做封面后上传。"
+}

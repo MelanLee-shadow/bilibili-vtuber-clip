@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "bb7d79c87d8d",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/看花篮照片聊3Dlive姿势，她回应.mp4",
+    "sha256": "bb7d79c87d8dba1bf0ac7eda3a96bbee97d638ae142741e622267c34e01e8e04",
+    "bytes": 44759648
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/看花篮照片聊3Dlive姿势，她回应.cover.png",
+    "sha256": "adc533ccefbd29ec328d235703f6d8fe4d6c5eb05b1affea85b565829d0c50f6",
+    "bytes": 2765555
+  },
+  "title": "【李豆沙】李豆沙第一次收到这么贵重的礼物花篮，非常感谢kmx，kmx都是好人！",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "你要按照流水线标准流程上传以下切片。看花篮照片聊3Dlive姿势，她回应直接上传。",
+    "at": "2026-07-20T04:40:07+0000"
+  },
+  "created_at": "2026-07-20T04:40:07+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "萤火虫漫展",
+    "粉丝应援",
+    "感动",
+    "可爱",
+    "双向奔赴"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}

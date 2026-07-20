@@ -1,0 +1,36 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "bbd4261c1a47",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-19/观众拿“结婚照”拷问HimeHina.mp4",
+    "sha256": "bbd4261c1a476ef8d7da2f42507f0dd7201941fa3f418f357c0a5b06d0afac73",
+    "bytes": 49776802
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-19/观众拿“结婚照”拷问HimeHina.cover.png",
+    "sha256": "33ce355078cc1f377844fe029722ef3e99c3376a9312e34df57c99abc9af255c",
+    "bytes": 2655980
+  },
+  "title": "【李豆沙】试问Hime Hina谁1谁0，吵闹小李直言，这种吵吵闹闹的最难当1了",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "你要按照流水线标准流程上传以下切片。观众拿“结婚照”拷问HimeHina直接上传。",
+    "at": "2026-07-20T04:40:07+0000"
+  },
+  "created_at": "2026-07-20T04:40:07+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "侄女",
+    "百合",
+    "女同",
+    "磕CP",
+    "嘴硬",
+    "吐槽",
+    "破防",
+    "搞笑"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}

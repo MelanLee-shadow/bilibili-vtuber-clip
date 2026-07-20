@@ -1,0 +1,31 @@
+{
+  "manifest_version": 1,
+  "artifact_id": "94fd762b2be6",
+  "video": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/歌切_【李豆沙】豆沙歌，《暖暖》｜自__song_232939_870.mp4",
+    "sha256": "94fd762b2be604c577573b5708614952cc39fd048041ffbe493df45464ee7550",
+    "bytes": 81126701
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/歌切_【李豆沙】豆沙歌，《暖暖》｜自__song_232939_870.cover.png",
+    "sha256": "69690a7350082a2088576db5fb025de4194806e6d37cd94188bf66165605e762",
+    "bytes": 2218372
+  },
+  "title": "【李豆沙】豆沙歌，《暖暖》",
+  "authorization": {
+    "by": "Ivan",
+    "quote": "你要按照流水线标准流程上传以下切片。歌切_【李豆沙】豆沙歌，《暖暖》｜自__song_232939_870直接上传。",
+    "at": "2026-07-20T04:40:07+0000"
+  },
+  "created_at": "2026-07-20T04:40:07+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "暖暖",
+    "梁静茹",
+    "翻唱"
+  ],
+  "tags_source": "cli"
+}
