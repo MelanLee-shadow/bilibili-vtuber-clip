@@ -586,3 +586,18 @@ class TestPhoneticTransliterationWitness:
             self._srt("ありがとう，收到了"),
         )
         assert audit["unproven_foreign_introductions"]
+
+    def test_repeated_insert_witnessed(self) -> None:
+        """连说形态（灵感多案）：ありがとう×2 仍可被单次 draft 乱码见证。"""
+
+        from src.autoslice.subtitle_fidelity import (
+            apply_source_language_preservation_guard,
+        )
+
+        out, audit = apply_source_language_preservation_guard(
+            self._srt("谢谢你呀！灵感多"),
+            self._srt("谢谢你呀，ありがとう！ありがとう"),
+        )
+        assert audit["status"] != "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+        rows = audit.get("witnessed_foreign_introductions") or []
+        assert rows and rows[0]["witness"]["repeat"] == 2

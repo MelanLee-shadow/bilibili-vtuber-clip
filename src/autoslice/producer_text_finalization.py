@@ -192,11 +192,11 @@ def verify_chat_authority_final_surfaces(
         matched_start = int(row["matched_start_ms"])
         matched_end = int(row["matched_end_ms"])
         row["final_verification_kind"] = kind
-        relative_matched_start = matched_start - delivery_start_ms
-        relative_matched_end = matched_end - delivery_start_ms
+        # 同轴直比（2026-07-20 kmx r4 案）：决策行 matched_* 与 ledger 的
+        # local_windows 都锚在产线 spec（padded）时间轴上；换算到交付轴再比
+        # 会差 recut 头（9770ms 级），豁免只剩巧合交叠。
         if any(
-            min(relative_matched_end, pin_end) - max(relative_matched_start, pin_start)
-            >= 200
+            min(matched_end, pin_end) - max(matched_start, pin_start) >= 200
             for pin_start, pin_end in pinned_intervals
         ):
             row["final_verification_scope"] = "SUPERSEDED_BY_SOURCE_TRUTH"

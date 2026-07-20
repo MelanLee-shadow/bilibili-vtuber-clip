@@ -221,21 +221,23 @@ class TestSourceTruthSupersedesDecisionSurfaces:
             (9_750, 10_800, "谢谢十麻乃的SC，"),
             (10_800, 12_000, "得了一种听到“是侄女”就想笑的病"),
         )
+        # 决策行 matched_* 与钉子 local_windows 同锚 padded 轴——
+        # delivery_start 非零时同轴直比仍必须命中（kmx r4 案）。
         audit = {
             "sender_repairs": [
-                {"matched_start_ms": 9_750, "matched_end_ms": 12_000,
+                {"matched_start_ms": 106_200, "matched_end_ms": 110_700,
                  "after": "十麻乃SC得了一种病。"}
             ],
             "source_subtitle_truth_audit": {
                 "applied": [{
                     "cue_indexes": [99],
-                    "local_windows": [{"start_ms": 9_750, "end_ms": 12_000}],
+                    "local_windows": [{"start_ms": 106_700, "end_ms": 110_720}],
                 }],
             },
         }
         ok = verify_chat_authority_final_surfaces(
             audit, final_text_srt=final, final_speaker_srt=final,
-            delivery_start_ms=0, delivery_end_ms=20_000,
+            delivery_start_ms=9_750, delivery_end_ms=170_000,
         )
         assert ok is True
         assert audit["sender_repairs"][0]["final_verification_scope"] == (

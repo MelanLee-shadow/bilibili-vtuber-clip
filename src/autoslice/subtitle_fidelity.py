@@ -623,17 +623,30 @@ def _phonetic_transliteration_witness(
     if not draft_mid or not final_mid:
         return None
     for canonical, readings in entities:
-        if final_mid != canonical:
+        # 连说形态（2026-07-20 灵感多 案：她把 ありがとう 说了两遍）——
+        # final 段允许是 canonical 的 1-3 次重复；draft 段只需与单次读音
+        # 对齐（ASR 常把连说塌缩成一个乱码）。
+        repeat = 0
+        for n in (1, 2, 3):
+            if final_mid == canonical * n:
+                repeat = n
+                break
+        if repeat == 0:
             continue
         spaced = [r.split() for r in readings if " " in str(r)]
         window = _syllables(draft_mid)
         if not spaced or not window:
             continue
-        score = max(_aligned_score(window, reading) for reading in spaced)
+        score = max(
+            _aligned_score(window, reading * n)
+            for reading in spaced
+            for n in range(1, repeat + 1)
+        )
         if score >= 0.55:
             return {
                 "target": canonical,
                 "draft_segment": draft_mid,
+                "repeat": repeat,
                 "phonetic_score": round(score, 3),
             }
     return None
