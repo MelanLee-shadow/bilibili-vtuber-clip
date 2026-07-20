@@ -603,6 +603,17 @@
       "required": true,
       "action": "replace_cue",
       "text": "你不是31级kmx吗"
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260719-mc-danmaku-naohai-xiongmao-erzi",
+      "recording_basename": "22966160_20260718-22-59-42.mp4",
+      "source_start_ms": 842990,
+      "source_end_ms": 844330,
+      "action": "replace_cue",
+      "text": "脑海里面根本没有冒出熊猫二字啊",
+      "authority": "Ivan-stated-20260720(2:32念的弹幕原文,弹幕=念读文本权威)",
+      "required": true
     }
   ]
 }
