@@ -105,3 +105,25 @@ def protected_terms() -> frozenset[str]:
     except Exception:
         pass
     return frozenset(t for t in terms if t and len(t) >= 2)
+
+
+def foreign_insert_entities() -> list[tuple[str, tuple[str, ...]]]:
+    """注册的外语插话实体（canonical 含假名，如 ありがとう/おめでとう）。
+
+    语言保真门用它做拼音见证：draft 里被替换的中文近音段与这些实体的
+    readings 对齐即构成"有见证的转写修复"。加载失败返回空（门更严）。"""
+
+    out: list[tuple[str, tuple[str, ...]]] = []
+    try:
+        import re as _re
+
+        from src.autoslice.chat_authority import load_referent_groups
+
+        kana = _re.compile(r"[぀-ヿ]")
+        for group in load_referent_groups(_ASSET_CONFUSABLES):
+            for entity in group.entities:
+                if kana.search(entity.canonical) and entity.readings:
+                    out.append((entity.canonical, tuple(entity.readings)))
+    except Exception:
+        return []
+    return out

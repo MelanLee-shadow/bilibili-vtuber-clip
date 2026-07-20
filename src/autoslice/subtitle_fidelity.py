@@ -578,6 +578,64 @@ def apply_numeric_fact_provenance_guard(
     return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
 
 
+_WITNESS_STRIP_RX = re.compile(r"[\s，。！？!?、；;：:…“”\"'（）()《》]+")
+
+
+def _phonetic_transliteration_witness(
+    source_text: str, final_text: str
+) -> dict[str, Any] | None:
+    """假名引入的拼音见证（2026-07-20 领个多→ありがとう 案）。
+
+    注册外语插话实体（term_authority.foreign_insert_entities）的注册误听面
+    走 sanctioned 对；**新变体**靠这里：剥掉两文本公共前后缀，剩余段若
+    final 侧＝实体 canonical、draft 侧与其 readings 拼音对齐 ≥0.55，即构成
+    有见证的转写修复。发现引擎在此只当证人，不当改写权。"""
+
+    try:
+        from src.autoslice.term_authority import foreign_insert_entities
+        from src.autoslice.phonetic_scan import _aligned_score, _syllables
+
+        entities = foreign_insert_entities()
+    except Exception:
+        return None
+    if not entities:
+        return None
+    prefix = 0
+    while (
+        prefix < len(source_text)
+        and prefix < len(final_text)
+        and source_text[prefix] == final_text[prefix]
+    ):
+        prefix += 1
+    suffix = 0
+    while (
+        suffix < len(source_text) - prefix
+        and suffix < len(final_text) - prefix
+        and source_text[len(source_text) - 1 - suffix]
+        == final_text[len(final_text) - 1 - suffix]
+    ):
+        suffix += 1
+    draft_mid = _WITNESS_STRIP_RX.sub("", source_text[prefix : len(source_text) - suffix])
+    final_mid = _WITNESS_STRIP_RX.sub("", final_text[prefix : len(final_text) - suffix])
+    if not draft_mid or not final_mid:
+        return None
+    for canonical, readings in entities:
+        if final_mid != canonical:
+            continue
+        spaced = [r.split() for r in readings if " " in str(r)]
+        window = _syllables(draft_mid)
+        if not spaced or not window:
+            continue
+        score = max(_aligned_score(window, reading) for reading in spaced)
+        if score >= 0.55:
+            return {
+                "target": canonical,
+                "draft_segment": draft_mid,
+                "phonetic_score": round(score, 3),
+            }
+    return None
+
+
 def apply_source_language_preservation_guard(
     draft_srt: str,
     final_srt: str,
@@ -633,6 +691,19 @@ def apply_source_language_preservation_guard(
             and _strip_non_text(source_text) != _strip_non_text(final_cue.text)
             and not _sanctioned_cue_equal(source_text, final_cue.text, pairs)
         ):
+            phonetic_witness = _phonetic_transliteration_witness(
+                source_text, final_cue.text
+            )
+            if phonetic_witness is not None:
+                audit.setdefault("witnessed_foreign_introductions", []).append(
+                    {
+                        "cue_index": index,
+                        "draft": source_text,
+                        "attempted": final_cue.text,
+                        "witness": phonetic_witness,
+                    }
+                )
+                continue
             introduced_kana_rows.append(
                 {
                     "cue_index": index,

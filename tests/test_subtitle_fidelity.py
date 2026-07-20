@@ -552,3 +552,37 @@ def test_language_guard_still_blocks_unwitnessed_foreign_introduction():
     _, audit = apply_source_language_preservation_guard(draft, final, sanctioned=[])
     assert audit["status"].startswith("BLOCKED_")
     assert audit["unproven_foreign_introductions"]
+
+
+class TestPhoneticTransliterationWitness:
+    """假名引入的拼音见证（2026-07-20 领个多→ありがとう 七星 r3 拦截案）。"""
+
+    @staticmethod
+    def _srt(text: str) -> str:
+        return f"1\n00:00:10,000 --> 00:00:12,000\n{text}\n"
+
+    def test_new_variant_passes_with_phonetic_witness(self) -> None:
+        from src.autoslice.subtitle_fidelity import (
+            apply_source_language_preservation_guard,
+        )
+
+        out, audit = apply_source_language_preservation_guard(
+            self._srt("领个多收到了"),
+            self._srt("ありがとう，收到了"),
+        )
+        assert audit["status"] != "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+        assert not audit["unproven_foreign_introductions"]
+        rows = audit.get("witnessed_foreign_introductions") or []
+        assert rows and rows[0]["witness"]["target"] == "ありがとう"
+        assert rows[0]["witness"]["phonetic_score"] >= 0.55
+
+    def test_phonetically_incompatible_introduction_still_blocked(self) -> None:
+        from src.autoslice.subtitle_fidelity import (
+            apply_source_language_preservation_guard,
+        )
+
+        out, audit = apply_source_language_preservation_guard(
+            self._srt("今天天气收到了"),
+            self._srt("ありがとう，收到了"),
+        )
+        assert audit["unproven_foreign_introductions"]
