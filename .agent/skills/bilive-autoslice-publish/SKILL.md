@@ -92,7 +92,7 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
   - **单稿人工元数据高于自动 tag 策略**：Ivan 在创作中心人工调整过的完整 tag 集，登记在 profile 可选资产 `manual_archive_metadata`（李豆沙现行为 `assets/lidousha/manual_archive_metadata.v1.json`）。登记项的 `preserve_on_metadata_edits=true` 时，封面/换源/标题/简介/合集等后续编辑必须从创作中心全量克隆并原样保留该 tag 集；不得因为它不含基础 4 位或与旧自动建议不同就判为漂移，也不得运行 tag 重算覆盖，除非 Ivan 明确授权替换该稿标签。
 - **分区/属性**：tid=21（日常），copyright=2（转载），source=`https://live.bilibili.com/`。
 - **片头（成片结构，投稿前最后一道结构门）**：**谈话/活字乱刷/重交付一律强制前置 2026-07-18 Z1 三句版**「李豆沙一直是零，不对，李豆沙一直是为爱做一」。画面契约：中间“不对”保留原画幅，前后两句为右下角李豆沙区域放大的 1080p 无广告画面。`assets/lidousha/intro/branding_intro.v1.json` 以 `intro_id=huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2`、SHA-256 `bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5` 绑定；`src/autoslice/branding_intro.py` 在最终 burn 内拼接并 fail-closed，成品 record.json 必须有 `branding_intro.status=PREPENDED` + `intro_offset_ms`。生产字节固定在 `free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4`（repo 树外，deploy 不得删）。**歌切一律不带片头直接进歌（Ivan 2026-07-14，commit cf09597）**——歌选择器唯一入口按政策忽略 intro manifest。审计口径：talk 无片头或绑定的 intro_id/hash 不是当前值=违规；歌切带片头=违规（需无片头重烧+换源）。`AUTOSLICE_BRANDING_INTRO=off` 仅测试/应急，生产禁用。
-- **合集（发布未入集 = 流程未完成）**：谈话 → `小李切片`（season 8383206 / 正片 section 9320779）；歌 → `小李歌唱`（season 8410735 / 正片 section 9364628）。ID 用前从创作中心现查（`GET member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30`）。刚投稿在转码中时 `episodes/add` 会 -404：等 state=0 再加，或按 2026-07-13 惯例挂 30/90 分钟幂等重试 timer（重复添加返回 20080=已在集，无害）。
+- **合集（发布未入集 = 流程未完成；2026-07-20 起在上传工具链内强制）**：谈话 → `小李切片`；歌 → `小李歌唱`。合集 lane 由 `authorized_upload.py make-manifest` 按冻结标题确定性派生（歌切目录式前缀→歌合集，其余→切片合集）并写进 manifest（`--season none` 才可显式退出）；`upload` 投稿成功后自动等 state=0、现查 season/section ID、入集并**公开面复验**，rc=6=已投稿但入集未完成，用 `season-add --manifest` 幂等补挂/复验（证据落 `<stem>.season_verify.json`）。ID 永远现查不写死（工具即如此实现）；重复添加返回 20080=已在集，无害。
 
 ## 发布流程（每步都有实证，2026-07-04）
 
@@ -102,15 +102,10 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
    - **`biliup renew` 会轮换 token——用后必须把新 cookie_info/token_info 写回 `/opt/bilive/app/cookie.json`**（先备份），否则生产端登录失效；
    - 上传命令带全部元数据（--title/--desc/--tag/--tid/--copyright/--source/--cover）；
    - 旧通道已死：bilitool 客户端提交接口被 B 站停用（分片能传、提交报"投稿工具已停用"）；`src.upload.upload` 禁止作无人值守 worker（会投稿并删文件）。
-2. **补挂合集**（投稿后，state=0 再操作）：
-   ```text
-   POST member.bilibili.com/x2/creative/web/season/section/episodes/add?csrf=<bili_jct>
-   JSON 正文（必须 camelCase）：
-   {"sectionId": <section_id>, "episodes": [{"aid":..., "cid":..., "title":"【李豆沙】...", "charging_pay": 0}]}
-   ```
+2. **入合集（2026-07-20 起由 `authorized_upload.py` 内建，不再手拼 API）**：`upload` 成功后自动完成「等 state=0 → 现查 ID → episodes/add → 公开面复验」，rc=6 时用 `season-add --manifest <m>` 幂等重跑到 `IN_SEASON_PUBLIC` 为止。API 合同已编码进工具（camelCase `sectionId`+`episodes`、20080=已在集、**绝不信 add 的 code 0，只信公开 view 的 `ugc_season`+`is_season_display`**）。背景坑（改工具前必读）：
    - **season/switch 已死（-404），不要用**（2026-06-22 与 2026-07-04 两次实证）；
-   - **snake_case `section_id`+`episode` 会返回 code 0 假成功但不生效**——必须公开验证；
-   - 重复添加返回 code 20080（已在合集中）；改标题后合集条目标题可能滞留旧值，用 `season/section/episode/edit` 修。
+   - **snake_case `section_id`+`episode` 会返回 code 0 假成功但不生效**——这就是公开复验是唯一真值的原因；
+   - 改标题后合集条目标题可能滞留旧值，用 `season/section/episode/edit` 修。
    - **biliup 上传只跑一次,绝不为取 bvid 重跑**：rc=0 即投稿成功,bvid 从 stderr 的 `ResponseData{...bvid: String("BV..")}` 抓,或查 `GET member.bilibili.com/x/web/archives?pn=1&ps=10&status=is_pubing,pubed,not_pubed`。重跑上传=重复稿件(2026-07-04 犯过,传了两条充电器)。
    - **稿件删除需验证码(340022),无法 headless 删**：`/x/web/archive/delete` 报"验证码错误"。重复稿件只能 Ivan 在创作中心手动删——所以务必一次投准。
 3. **修正总则（Ivan 2026-07-14 重申：已发稿件任何修正 = 编辑原稿，绝不上传新视频，绝不删稿）**：

@@ -10,14 +10,25 @@ This tool binds the whole chain to one manifest file:
     1. make-manifest   — at review time: records sha256 of the exact video and
                          cover plus the verbatim title and Ivan's authorization
                          quote.  The manifest IS the reviewed artifact's identity.
+                         The target season (合集) lane is derived from the frozen
+                         title (song catalog prefix → 小李歌唱, else 小李切片) and
+                         frozen into the manifest — season membership is part of
+                         the publish, not an afterthought (Ivan 2026-07-20).
     2. upload          — at upload time: RECOMPUTES the hashes; any drift since
                          review refuses loudly.  A ledger (jsonl, pulled to the
                          Mac with the other reports) makes re-uploading the same
                          video a hard error.  The uploader command receives the
                          manifest's paths/title — never hand-typed ones — and
                          runs with AUTHORIZED_UPLOAD=1 (do_upload.sh refuses to
-                         run without it).
-    3. verify          — hash re-check only (pre-flight).
+                         run without it).  After a successful post it completes
+                         the manifest's season add (waits for state=0, live-
+                         queries the season id by title, adds the episode, then
+                         PUBLICLY re-verifies) — exit 6 means "posted but season
+                         membership is not publicly verified yet: run season-add".
+    3. season-add      — idempotently finish/re-verify the season step for an
+                         already-posted manifest (bvid resolved from the ledger).
+                         发布未入集 = 流程未完成; this subcommand is the retry path.
+    4. verify          — hash re-check only (pre-flight).
 
 Upload authorization remains per-clip and human (Ivan): this tool cannot invent
 an authorization, it only makes the authorized artifact tamper-evident.
@@ -41,6 +52,24 @@ DEFAULT_BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 DEFAULT_LEDGER = DEFAULT_BASE / "reports" / "upload_ledger.jsonl"
 DEFAULT_UPLOAD_LOCK = DEFAULT_BASE / "upload.lock"
 DEFAULT_UPLOADER = "/opt/bilive/app/tmp_manual_upload/do_upload.sh"
+DEFAULT_COOKIE_JSON = Path("/opt/bilive/app/cookie.json")
+
+# Season (合集) policy — membership is part of the publish (Ivan 2026-07-20).
+# The LANE is a deterministic choke point on the frozen title: the song catalog
+# prefix is schema-enforced elsewhere (title_policy.canonicalize_song_catalog_title),
+# so title→lane cannot drift from content.  Season IDs are deliberately NOT
+# frozen: the skill requires live-querying them from 创作中心 before use.
+SONG_TITLE_PREFIX = "【李豆沙】豆沙歌，"
+SEASON_TITLES = {"talk": "小李切片", "song": "小李歌唱"}
+SEASON_ADD_ALREADY_IN = 20080  # episodes/add: already in the season (idempotent OK)
+VIEW_API = "https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+TAGS_API = "https://api.bilibili.com/x/tag/archive/tags?bvid={bvid}"
+SEASONS_API = "https://member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30"
+EPISODES_ADD_API = "https://member.bilibili.com/x2/creative/web/season/section/episodes/add?csrf={csrf}"
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+)
 
 
 class UploadLockBusy(RuntimeError):
@@ -99,6 +128,238 @@ def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
+def derive_season_lane(title: str) -> str:
+    """talk|song from the frozen title — the song catalog prefix is the choke point."""
+    return "song" if title.startswith(SONG_TITLE_PREFIX) else "talk"
+
+
+def season_block_for(title: str, choice: str) -> dict | None:
+    """The manifest's frozen season binding.  ``none`` opts out explicitly;
+    an explicit talk/song that contradicts the title-derived lane is refused
+    (song titles publish to 小李歌唱, everything else to 小李切片 — no exceptions
+    without changing the title first)."""
+    derived = derive_season_lane(title)
+    if choice == "none":
+        return None
+    if choice == "auto":
+        lane = derived
+    elif choice in SEASON_TITLES:
+        if choice != derived:
+            raise ValueError(
+                f"--season {choice} contradicts the title-derived lane {derived!r}"
+                " — the title decides the season; fix the title instead"
+            )
+        lane = choice
+    else:
+        raise ValueError(f"unknown season choice {choice!r}")
+    return {"lane": lane, "season_title": SEASON_TITLES[lane], "source": f"{choice}:title-prefix"}
+
+
+def validate_season_block(block: object) -> list[str]:
+    if block is None:
+        return []
+    if not isinstance(block, dict):
+        return ["season block must be an object or null"]
+    lane = block.get("lane")
+    if lane not in SEASON_TITLES:
+        return [f"season lane must be one of {sorted(SEASON_TITLES)}: {lane!r}"]
+    if block.get("season_title") != SEASON_TITLES[lane]:
+        return [f"season title for lane {lane!r} must be {SEASON_TITLES[lane]!r}"]
+    return []
+
+
+def effective_season_block(manifest: dict) -> tuple[dict | None, str]:
+    """(block, provenance).  Legacy manifests (pre-2026-07-20, no season key)
+    derive the lane from the frozen title so the completion contract still
+    applies to them."""
+    if "season" in manifest:
+        return manifest["season"], "manifest"
+    return season_block_for(str(manifest.get("title") or ""), "auto"), "derived-from-frozen-title"
+
+
+def _build_season_http(cookie_json: Path):
+    """(http, csrf) using the production bilibili cookie file.
+
+    ``http(url, data=None, is_json=False) -> dict`` — member.* endpoints get the
+    cookie jar; the public view/tags API only needs a browser UA.  Cookie values
+    are never printed or embedded in results."""
+    import urllib.request
+
+    raw = json.loads(Path(cookie_json).read_text(encoding="utf-8"))
+    cookies = raw["data"]["cookie_info"]["cookies"]
+    jar = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+    csrf = next(c["value"] for c in cookies if c["name"] == "bili_jct")
+
+    def http(url: str, data: dict | None = None, is_json: bool = False) -> dict:
+        headers = {"User-Agent": _BROWSER_UA}
+        if "member.bilibili.com" in url:
+            headers["Cookie"] = jar
+            headers["Referer"] = "https://member.bilibili.com/"
+        body: bytes | None = None
+        if data is not None:
+            if is_json:
+                body = json.dumps(data).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            else:
+                import urllib.parse
+
+                body = urllib.parse.urlencode(data).encode("utf-8")
+        request = urllib.request.Request(url, data=body, headers=headers)
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+
+    return http, csrf
+
+
+def season_add_flow(
+    manifest: dict,
+    bvid: str,
+    *,
+    http,
+    csrf: str,
+    wait_seconds: float = 900.0,
+    poll_seconds: float = 30.0,
+    display_wait_seconds: float = 240.0,
+    sleeper=time.sleep,
+) -> dict:
+    """Add the archive to its manifest-bound season and PUBLICLY verify it.
+
+    Returns an evidence dict whose ``status`` is the completion truth:
+    IN_SEASON_PUBLIC is the only success; everything else means the publish is
+    not finished (re-run ``season-add``).  API pitfalls encoded here, from the
+    2026-06-22/07-04 incidents: episodes/add wants camelCase ``sectionId`` +
+    ``episodes`` (snake_case returns code 0 without taking effect — which is why
+    this flow re-reads the PUBLIC view instead of trusting code 0), season/switch
+    is dead (-404), and 20080 means already-in-season (idempotent success)."""
+    block, provenance = effective_season_block(manifest)
+    result: dict = {
+        "schema_version": "authorized-upload-season-verify.v1",
+        "bvid": bvid,
+        "title": manifest.get("title"),
+        "season_binding": block,
+        "season_binding_source": provenance,
+        "verified_at": now(),
+    }
+    if block is None:
+        result["status"] = "SEASON_OPTED_OUT"
+        return result
+    expected_season = block["season_title"]
+
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    view_data: dict = {}
+    while True:
+        view = http(VIEW_API.format(bvid=bvid))
+        view_data = view.get("data") or {}
+        state = view_data.get("state")
+        result["last_view_code"], result["state"] = view.get("code"), state
+        if view.get("code") == 0 and state == 0:
+            break
+        if time.monotonic() >= deadline:
+            result["status"] = "PENDING_TRANSCODE"
+            return result
+        sleeper(poll_seconds)
+    aid, cid = view_data.get("aid"), view_data.get("cid")
+    result["aid"], result["cid"] = aid, cid
+    if not aid or not cid:
+        result["status"] = "PENDING_VIEW_INCOMPLETE"
+        return result
+
+    seasons = http(SEASONS_API)
+    season_id = section_id = None
+    for entry in ((seasons.get("data") or {}).get("seasons") or []):
+        season = entry.get("season") or {}
+        if season.get("title") != expected_season:
+            continue
+        sections = ((entry.get("sections") or {}).get("sections") or [])
+        chosen = next((s for s in sections if s.get("title") == "正片"), None) or (sections[0] if sections else None)
+        if chosen:
+            season_id, section_id = season.get("id"), chosen.get("id")
+        break
+    result["season_id"], result["section_id"] = season_id, section_id
+    if not season_id or not section_id:
+        result["status"] = "SEASON_NOT_FOUND"
+        return result
+
+    add = http(
+        EPISODES_ADD_API.format(csrf=csrf),
+        data={
+            "sectionId": section_id,
+            "episodes": [{"aid": aid, "cid": cid, "title": manifest.get("title"), "charging_pay": 0}],
+        },
+        is_json=True,
+    )
+    result["season_add_code"], result["season_add_message"] = add.get("code"), add.get("message")
+    if add.get("code") not in (0, SEASON_ADD_ALREADY_IN):
+        result["status"] = f"ADD_FAILED_{add.get('code')}"
+        return result
+
+    display_deadline = time.monotonic() + max(0.0, display_wait_seconds)
+    while True:
+        view = http(VIEW_API.format(bvid=bvid))
+        data = view.get("data") or {}
+        ugc_season = (data.get("ugc_season") or {}).get("title")
+        displayed = bool(data.get("is_season_display"))
+        result["ugc_season_title"], result["is_season_display"] = ugc_season, displayed
+        if view.get("code") == 0 and ugc_season == expected_season and displayed:
+            break
+        if time.monotonic() >= display_deadline:
+            result["status"] = "PENDING_DISPLAY"
+            return result
+        sleeper(poll_seconds)
+    try:
+        tags = http(TAGS_API.format(bvid=bvid))
+        result["tags"] = [t.get("tag_name") for t in (tags.get("data") or [])]
+    except Exception as exc:  # tags are evidence garnish, not the completion gate
+        result["tags_error"] = str(exc)
+    result["verified_at"] = now()
+    result["status"] = "IN_SEASON_PUBLIC"
+    return result
+
+
+def season_verify_sidecar_path(manifest_path: Path) -> Path:
+    name = manifest_path.name
+    stem = name[: -len(".upload_manifest.json")] if name.endswith(".upload_manifest.json") else name
+    return manifest_path.parent / (stem + ".season_verify.json")
+
+
+def _run_season_step(manifest: dict, manifest_path: Path, bvid: str | None, args: argparse.Namespace) -> int:
+    """Shared by upload (post-success) and season-add.  0 = publicly in-season."""
+    block, provenance = effective_season_block(manifest)
+    if block is None:
+        print("season: manifest explicitly opts out (season=null) — archive stays outside collections")
+        return 0
+    if not bvid:
+        print(
+            "SEASON PENDING: no bvid available (uploader output had no BVID= line); "
+            "run: authorized_upload.py season-add --manifest <manifest> --bvid <BV...>",
+            file=sys.stderr,
+        )
+        return 6
+    http, csrf = _build_season_http(Path(args.cookie_json))
+    result = season_add_flow(
+        manifest,
+        bvid,
+        http=http,
+        csrf=csrf,
+        wait_seconds=args.season_wait,
+        poll_seconds=args.season_poll,
+    )
+    sidecar = season_verify_sidecar_path(manifest_path)
+    sidecar.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"SEASON {result['status']}: bvid={bvid} season={block['season_title']} ({provenance}) "
+        f"evidence={sidecar}"
+    )
+    if result["status"] == "IN_SEASON_PUBLIC":
+        return 0
+    print(
+        f"SEASON INCOMPLETE ({result['status']}): the publish is NOT finished — "
+        f"re-run: authorized_upload.py season-add --manifest {manifest_path}",
+        file=sys.stderr,
+    )
+    return 6
+
+
 def make_manifest(args: argparse.Namespace) -> int:
     video, cover = Path(args.video), Path(args.cover)
     for path in (video, cover):
@@ -136,13 +397,23 @@ def make_manifest(args: argparse.Namespace) -> int:
         print(f"tags: {len(tags)} from {tags_source}", file=sys.stderr)
     else:
         print("tags: none (uploader falls back to base tags)", file=sys.stderr)
+    try:
+        season = season_block_for(args.title, args.season)
+    except ValueError as exc:
+        print(f"REFUSE: {exc}", file=sys.stderr)
+        return 2
+    if season is None:
+        print("season: EXPLICITLY none — this archive will not join a collection", file=sys.stderr)
+    else:
+        print(f"season: {season['season_title']} ({season['source']})", file=sys.stderr)
     video_sha = sha256_file(video)
     manifest = {
-        "manifest_version": 1,
+        "manifest_version": 2,
         "artifact_id": video_sha[:12],
         "video": {"path": str(video.resolve()), "sha256": video_sha, "bytes": video.stat().st_size},
         "cover": {"path": str(cover.resolve()), "sha256": sha256_file(cover), "bytes": cover.stat().st_size},
         "title": args.title,
+        "season": season,
         "authorization": {"by": args.authorized_by, "quote": args.quote, "at": now()},
         "created_at": now(),
     }
@@ -167,6 +438,8 @@ def load_and_verify(manifest_path: Path) -> tuple[dict | None, list[str]]:
         problems.append("manifest carries no authorization (by+quote required)")
     if not str(manifest.get("title") or "").strip():
         problems.append("manifest has no title")
+    if "season" in manifest:
+        problems.extend(validate_season_block(manifest["season"]))
     if "tags" in manifest:
         problems.extend(validate_tags(manifest["tags"]))
     for kind in ("video", "cover"):
@@ -430,7 +703,19 @@ def upload(args: argparse.Namespace) -> int:
             },
         )
         print(f"ledger += artifact {manifest['artifact_id']} rc={completed.returncode} bvid={bvid or '?'}")
+    if completed.returncode != 0:
         return completed.returncode
+    # Season membership is part of the publish (发布未入集 = 流程未完成).  This
+    # runs OUTSIDE the shared upload lock: it is read-mostly plus an idempotent
+    # add, and the transcode wait must not serialize other transactions.
+    if args.skip_season:
+        print(
+            "SEASON SKIPPED (--skip-season): the publish is NOT complete until "
+            f"season-add succeeds for {manifest_path}",
+            file=sys.stderr,
+        )
+        return 0
+    return _run_season_step(manifest, manifest_path, bvid, args)
 
 
 def verify(args: argparse.Namespace) -> int:
@@ -441,6 +726,35 @@ def verify(args: argparse.Namespace) -> int:
         return 2
     print(f"OK: artifact {manifest['artifact_id']} matches its manifest (video+cover hashes, title, authorization present)")
     return 0
+
+
+def season_add(args: argparse.Namespace) -> int:
+    """Finish/re-verify season membership for an already-posted manifest."""
+    manifest_path = Path(args.manifest)
+    manifest, problems = load_and_verify(manifest_path)
+    if problems:
+        # The archive is already public — hash drift of the LOCAL copy must not
+        # block finishing its season membership, but say it loudly.
+        for p in problems:
+            print(f"WARN (season-add continues): {p}", file=sys.stderr)
+        if manifest is None:
+            return 2
+    bvid = args.bvid
+    if not bvid:
+        status, row, ledger_problems = ledger_guard(Path(args.ledger), manifest["video"]["sha256"])
+        if ledger_problems:
+            for problem in ledger_problems:
+                print(f"REFUSE: {problem}", file=sys.stderr)
+            return 5
+        if status != "uploaded" or not row or not row.get("bvid"):
+            print(
+                "REFUSE: ledger has no successful upload with a bvid for this manifest's video; "
+                "pass --bvid explicitly if the post exists",
+                file=sys.stderr,
+            )
+            return 5
+        bvid = str(row["bvid"])
+    return _run_season_step(manifest, manifest_path, bvid, args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -461,15 +775,39 @@ def main(argv: list[str] | None = None) -> int:
         "else no tags and the uploader falls back to the base-4 line",
     )
     mk.add_argument("--no-tags", action="store_true", help="skip record.json tag auto-pickup")
+    mk.add_argument(
+        "--season",
+        default="auto",
+        choices=["auto", "talk", "song", "none"],
+        help="season (合集) binding frozen into the manifest; auto derives from the title "
+        "(song catalog prefix → 小李歌唱, else 小李切片); none opts out explicitly",
+    )
     mk.add_argument("--out", default=None)
     mk.set_defaults(func=make_manifest)
 
-    up = sub.add_parser("upload", help="verify hashes + ledger, then run the uploader with manifest args")
+    def _season_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON), help="bilibili login-API cookie file")
+        p.add_argument("--season-wait", type=float, default=900.0, help="seconds to wait for state=0 (transcode)")
+        p.add_argument("--season-poll", type=float, default=30.0, help="poll interval seconds")
+
+    up = sub.add_parser(
+        "upload",
+        help="verify hashes + ledger, run the uploader with manifest args, then finish the season add (exit 6 = posted but season incomplete)",
+    )
     up.add_argument("--manifest", required=True)
     up.add_argument("--ledger", default=str(DEFAULT_LEDGER))
     up.add_argument("--lock", default=None, help="shared upload/repair lock (default: production base/upload.lock)")
     up.add_argument("--uploader", default=DEFAULT_UPLOADER)
+    up.add_argument("--skip-season", action="store_true", help="EMERGENCY ONLY: post without finishing the season step")
+    _season_args(up)
     up.set_defaults(func=upload)
+
+    se = sub.add_parser("season-add", help="idempotently finish/re-verify season membership for a posted manifest")
+    se.add_argument("--manifest", required=True)
+    se.add_argument("--bvid", default=None, help="override; default resolves from the ledger's successful upload")
+    se.add_argument("--ledger", default=str(DEFAULT_LEDGER))
+    _season_args(se)
+    se.set_defaults(func=season_add)
 
     ve = sub.add_parser("verify", help="pre-flight hash/authorization check only")
     ve.add_argument("--manifest", required=True)

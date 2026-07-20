@@ -16,6 +16,53 @@ def _isolated_default_upload_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(au, "DEFAULT_UPLOAD_LOCK", tmp_path / "default-upload.lock")
 
 
+@pytest.fixture(autouse=True)
+def _stub_season_http(monkeypatch):
+    """Canned always-successful season API so pre-existing upload tests keep
+    exercising the manifest/ledger/uploader contract; season-specific behavior
+    is covered in test_authorized_upload_season.py."""
+
+    def fake_build(cookie_json):
+        def http(url, data=None, is_json=False):
+            if "web-interface/view" in url:
+                return {
+                    "code": 0,
+                    "data": {
+                        "state": 0,
+                        "aid": 111,
+                        "cid": 222,
+                        "title": "t",
+                        "is_season_display": True,
+                        "ugc_season": {"title": "小李切片"},
+                    },
+                }
+            if "web/seasons" in url:
+                return {
+                    "code": 0,
+                    "data": {
+                        "seasons": [
+                            {
+                                "season": {"id": 1, "title": "小李切片"},
+                                "sections": {"sections": [{"id": 11, "title": "正片"}]},
+                            },
+                            {
+                                "season": {"id": 2, "title": "小李歌唱"},
+                                "sections": {"sections": [{"id": 22, "title": "正片"}]},
+                            },
+                        ]
+                    },
+                }
+            if "episodes/add" in url:
+                return {"code": 0, "message": "0"}
+            if "tag/archive/tags" in url:
+                return {"code": 0, "data": [{"tag_name": "李豆沙"}]}
+            raise AssertionError(f"unexpected url {url}")
+
+        return http, "csrf-test"
+
+    monkeypatch.setattr(au, "_build_season_http", fake_build)
+
+
 def _mk(tmp_path, title="【李豆沙】标题", quote="可以上传了"):
     video = tmp_path / "clip.mp4"
     cover = tmp_path / "clip.cover.png"
@@ -276,6 +323,7 @@ def test_upload_holds_shared_lock_through_uploader_and_ledger_append(tmp_path, c
         "    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
         "except BlockingIOError:\n"
         "    print('LOCK_HELD')\n"
+        "    print('BVID=BV1LOCK')\n"
         "    raise SystemExit(0)\n"
         "print('LOCK_NOT_HELD')\n"
         "raise SystemExit(9)\n",
