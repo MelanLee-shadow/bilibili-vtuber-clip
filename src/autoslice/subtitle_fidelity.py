@@ -603,23 +603,27 @@ def _phonetic_transliteration_witness(
         return None
     if not entities:
         return None
+    # 公共前后缀在去标点形态上对齐（2026-07-20 r7 案：尾部多一个「。」就
+    # 掐断了后缀匹配）——标点渲染差异不是内容差异。
+    source_clean = _WITNESS_STRIP_RX.sub("", source_text)
+    final_clean = _WITNESS_STRIP_RX.sub("", final_text)
     prefix = 0
     while (
-        prefix < len(source_text)
-        and prefix < len(final_text)
-        and source_text[prefix] == final_text[prefix]
+        prefix < len(source_clean)
+        and prefix < len(final_clean)
+        and source_clean[prefix] == final_clean[prefix]
     ):
         prefix += 1
     suffix = 0
     while (
-        suffix < len(source_text) - prefix
-        and suffix < len(final_text) - prefix
-        and source_text[len(source_text) - 1 - suffix]
-        == final_text[len(final_text) - 1 - suffix]
+        suffix < len(source_clean) - prefix
+        and suffix < len(final_clean) - prefix
+        and source_clean[len(source_clean) - 1 - suffix]
+        == final_clean[len(final_clean) - 1 - suffix]
     ):
         suffix += 1
-    draft_mid = _WITNESS_STRIP_RX.sub("", source_text[prefix : len(source_text) - suffix])
-    final_mid = _WITNESS_STRIP_RX.sub("", final_text[prefix : len(final_text) - suffix])
+    draft_mid = source_clean[prefix : len(source_clean) - suffix]
+    final_mid = final_clean[prefix : len(final_clean) - suffix]
     if not draft_mid or not final_mid:
         return None
     for canonical, readings in entities:

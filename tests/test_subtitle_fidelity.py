@@ -566,8 +566,9 @@ class TestPhoneticTransliterationWitness:
             apply_source_language_preservation_guard,
         )
 
+        # 未注册变体测见证本体（领个多已注册,走 sanctioned 白名单路）。
         out, audit = apply_source_language_preservation_guard(
-            self._srt("领个多收到了"),
+            self._srt("李根多收到了"),
             self._srt("ありがとう，收到了"),
         )
         assert audit["status"] != "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
@@ -603,3 +604,13 @@ class TestPhoneticTransliterationWitness:
         assert audit["status"] != "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
         rows = audit.get("witnessed_foreign_introductions") or []
         assert rows and rows[0]["witness"]["repeat"] == 2
+
+    def test_trailing_punct_does_not_break_witness(self) -> None:
+        """r7 案：尾部句号不许掐断公共后缀对齐（去标点形态上比对）。"""
+
+        from src.autoslice.subtitle_fidelity import (
+            _phonetic_transliteration_witness,
+        )
+
+        w = _phonetic_transliteration_witness("凌敢多收到了", "ありがとう，收到了。")
+        assert w is not None and w["target"] == "ありがとう"
