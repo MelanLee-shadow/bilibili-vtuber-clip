@@ -468,8 +468,11 @@ def _apply_entity_authority(
     )
     repetition_groups = repetition_divergence_groups(srt_text)
     # 2026-07-19 欠账 #0/#5 落地：短语级重复分歧编译器（抱/帮案）+ 词表
-    # 拼音候选发现层（皮毛熊/卖批案）。同为「发现≠裁决」的确定性怀疑
-    # 编译器，与句级重复组共用声学仲裁；UNCERTAIN 双向保留绝不阻塞。
+    # 拼音候选发现层（皮毛熊/卖批案）。**披露不改写（2026-07-20 降级）**：
+    # 91_291 实证单次黑帧强制二选一会顺从确认动态候选（小李小李→小立希李、
+    # 干粮之类→干祥子类），不满足保向铁律的证据门（本句音节+结构化证据）。
+    # 两条 lane 的产出只进审计披露供审片员/人工复核，不进声学仲裁、不产生
+    # 任何文本改写；见证充分的裁决通道（phase 2）见 41 文档欠账 #11。
     from src.autoslice.phonetic_scan import (
         glossary_phonetic_candidate_groups,
         phrase_repetition_divergence_groups,
@@ -495,8 +498,6 @@ def _apply_entity_authority(
         *explicit_post_semantic_audio_groups,
         *([opening_group] if opening_group is not None else []),
         *repetition_groups,
-        *phrase_divergence_groups,
-        *phonetic_candidate_groups,
     ]
     srt_text, transcript_entity_audit = apply_audio_entity_verification(
         srt_text,
@@ -518,14 +519,13 @@ def _apply_entity_authority(
             for group in explicit_post_semantic_audio_groups
         ],
         "dynamic_audio_group_count": len(repetition_groups)
-        + len(phrase_divergence_groups)
-        + len(phonetic_candidate_groups)
         + (1 if opening_group is not None else 0),
-        "phrase_divergence_groups": [
+        # 披露专用（不进声学仲裁、零改写）：审片员与人工复核的注意力提示。
+        "phrase_divergence_candidates_disclosure_only": [
             [entity.canonical for entity in group.entities]
             for group in phrase_divergence_groups
         ],
-        "phonetic_candidate_groups": [
+        "phonetic_candidates_disclosure_only": [
             [entity.canonical for entity in group.entities]
             for group in phonetic_candidate_groups
         ],

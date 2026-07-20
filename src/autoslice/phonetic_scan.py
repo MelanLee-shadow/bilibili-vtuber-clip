@@ -190,6 +190,19 @@ def glossary_phonetic_candidate_groups(
     candidates: list[tuple[float, str, ReferentEntity]] = []
     for cue in cues:
         for run in _CJK_RUN.findall(cue.text):
+            # 注册面的出现位置（叠名守卫，2026-07-20 小李小李→小立希李案）：
+            # 滑窗骑在注册面出现区间上（「小李小李」中段的「李小」）不是新
+            # 误听面，是窗口切进了已知实体本身——按位置重叠一律跳过。
+            face_spans: list[tuple[int, int]] = []
+            lowered_run = run.lower()
+            for face in owned_faces:
+                probe = 0
+                while True:
+                    hit = lowered_run.find(face, probe)
+                    if hit < 0:
+                        break
+                    face_spans.append((hit, hit + len(face)))
+                    probe = hit + 1
             for entity, readings in targets:
                 lengths = {len(r) for r in readings}
                 min_len = min(lengths) - 1
@@ -201,6 +214,11 @@ def glossary_phonetic_candidate_groups(
                         if lowered in registered_faces or lowered in protected:
                             continue
                         if any(face in lowered for face in owned_faces):
+                            continue
+                        if any(
+                            start < face_end and face_start < start + size
+                            for face_start, face_end in face_spans
+                        ):
                             continue
                         if surface in entity.canonical or entity.canonical in surface:
                             continue

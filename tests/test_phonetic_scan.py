@@ -249,3 +249,32 @@ def test_alignment_calibration(reading, window, expected) -> None:
     )
     hit = any(g.entities[1].canonical == window for g in groups)
     assert hit is expected
+
+
+def test_reduplicated_registered_face_not_windowed() -> None:
+    """叠名守卫（2026-07-20 小李小李→小立希李回归案）：滑窗骑在注册面
+    「小李」的出现区间上（中段「李小」）不许成为其他实体的候选。"""
+
+    srt = _srt("小李小李，你能教教我怎么样")
+    groups = [
+        ReferentGroup(
+            (
+                ReferentEntity("立希", ("立希",), ("li xi",)),
+                ReferentEntity("祥子", ("祥子",), ("xiang zi",)),
+            ),
+            audio_verify_all_surfaces=True,
+        ),
+        ReferentGroup(
+            (
+                ReferentEntity("李豆沙", (), ("li dou sha",)),
+                ReferentEntity("小李", ("小李",), ("xiao li",)),
+            ),
+            audio_verify_all_surfaces=True,
+        ),
+    ]
+    found = glossary_phonetic_candidate_groups(
+        srt, groups, protected_faces=frozenset()
+    )
+    surfaces = {g.entities[1].canonical for g in found}
+    assert "李小" not in surfaces
+    assert not any("立希" == g.entities[0].canonical for g in found)
