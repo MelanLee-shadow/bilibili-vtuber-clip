@@ -43,6 +43,8 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -183,8 +185,6 @@ def _build_season_http(cookie_json: Path):
     ``http(url, data=None, is_json=False) -> dict`` — member.* endpoints get the
     cookie jar; the public view/tags API only needs a browser UA.  Cookie values
     are never printed or embedded in results."""
-    import urllib.request
-
     raw = json.loads(Path(cookie_json).read_text(encoding="utf-8"))
     cookies = raw["data"]["cookie_info"]["cookies"]
     jar = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
@@ -201,8 +201,6 @@ def _build_season_http(cookie_json: Path):
                 body = json.dumps(data).encode("utf-8")
                 headers["Content-Type"] = "application/json"
             else:
-                import urllib.parse
-
                 body = urllib.parse.urlencode(data).encode("utf-8")
         request = urllib.request.Request(url, data=body, headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:

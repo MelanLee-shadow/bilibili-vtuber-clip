@@ -98,6 +98,43 @@ def _uploader(tmp_path, bvid="BV1TEST"):
     return stub
 
 
+def test_build_season_http_really_constructs_requests(tmp_path, monkeypatch):
+    """Regression for the shadowed-import UnboundLocalError: exercise the REAL
+    _build_season_http closure (both GET and JSON-POST branches) against a
+    monkeypatched urlopen — mocking the builder wholesale hid a crash that only
+    fired on the first production call."""
+    import io
+    import urllib.request as _urlreq
+
+    cookie_json = tmp_path / "cookie.json"
+    cookie_json.write_text(json.dumps({
+        "data": {"cookie_info": {"cookies": [
+            {"name": "SESSDATA", "value": "sess-value"},
+            {"name": "bili_jct", "value": "csrf-value"},
+        ]}}
+    }), encoding="utf-8")
+    seen = []
+
+    def fake_urlopen(request, timeout=0):
+        seen.append(request)
+        return io.BytesIO(json.dumps({"code": 0, "data": {"ok": True}}).encode("utf-8"))
+
+    monkeypatch.setattr(_urlreq, "urlopen", fake_urlopen)
+    http, csrf = au._build_season_http(cookie_json)
+    assert csrf == "csrf-value"
+
+    assert http(au.VIEW_API.format(bvid="BV1X"))["code"] == 0
+    assert "Cookie" not in seen[0].headers  # 公开 API 不带 cookie
+
+    assert http(au.EPISODES_ADD_API.format(csrf=csrf), data={"sectionId": 1, "episodes": []}, is_json=True)["code"] == 0
+    member_request = seen[1]
+    assert member_request.get_header("Cookie") and "sess-value" in member_request.get_header("Cookie")
+    assert json.loads(member_request.data.decode("utf-8"))["sectionId"] == 1
+
+    assert http("https://member.bilibili.com/form", data={"a": "b"})["code"] == 0
+    assert seen[2].data == b"a=b"  # form 编码分支同样必须真的能构造请求
+
+
 def test_lane_derivation_is_a_title_choke_point():
     assert au.derive_season_lane(SONG_TITLE) == "song"
     assert au.derive_season_lane(TALK_TITLE) == "talk"
