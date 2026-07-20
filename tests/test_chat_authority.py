@@ -1253,7 +1253,8 @@ def test_matched_sc_repairs_only_the_explicit_thank_name_slot():
 
     output, audit = apply_authoritative_chat_evidence(
         source,
-        [ChatEvidence("superchat", 10_000, exact, "十麻乃orient", source_event_id="17439760")],
+        # 发送先于首个念读 cue ≥4s：满足念读因果下界（发送+2s 前不可能开念）
+        [ChatEvidence("superchat", 6_000, exact, "十麻乃orient", source_event_id="17439760")],
         support_srt_texts=[
             source,
             _srt(

@@ -108,3 +108,33 @@ def test_same_span_deduped_to_best_candidate() -> None:
     same_span = [r for r in verifier.requests if r["cue_indexes"] == [1]]
     assert len(same_span) == 1
     assert same_span[0]["exact_text"] == "甲乙丙丁戊己庚辛壬癸"
+
+
+class TestCausalReadFloor:
+    """念读因果下界（Ivan 2026-07-20）：发送+2s 之前开始的 cue 不可能在念它。"""
+
+    def test_physically_impossible_bind_excluded(self) -> None:
+        srt = _srt((10_000, 12_000, "甲乙丙丁戊己庚"))
+        cues = [c for c in parse_srt_cues(srt) if c.text.strip()]
+        texts = [c.text for c in cues]
+        verifier = _RecordingVerifier()
+        # 发送于 cue 开始前 1s：渲染+反应+推流不可能在 1s 内完成
+        _discover_chat_proposals(
+            [ChatEvidence("danmaku", 9_000, "甲乙丙丁戊己庚辛壬癸", "快手")],
+            cues=cues, texts=texts, entity_groups=[],
+            max_cues=3, support_srt_texts=[], entity_verifier=verifier,
+        )
+        assert verifier.requests == []
+
+    def test_plausible_bind_still_enters(self) -> None:
+        srt = _srt((10_000, 12_000, "甲乙丙丁戊己庚"))
+        cues = [c for c in parse_srt_cues(srt) if c.text.strip()]
+        texts = [c.text for c in cues]
+        verifier = _RecordingVerifier()
+        # 发送于 cue 开始前 2.5s：过弱界，正常进近失仲裁
+        _discover_chat_proposals(
+            [ChatEvidence("danmaku", 7_500, "甲乙丙丁戊己庚辛壬癸", "正常")],
+            cues=cues, texts=texts, entity_groups=[],
+            max_cues=3, support_srt_texts=[], entity_verifier=verifier,
+        )
+        assert len(verifier.requests) == 1

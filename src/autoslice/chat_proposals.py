@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.chat_evidence import (
+    READ_ALOUD_MIN_DELAY_MS,
     ChatEvidence,
     EntityVerifier,
     ReferentGroup,
@@ -84,11 +85,11 @@ def _find_best_read_aloud_candidate(
         if item.kind == "danmaku":
             if item.offset_ms >= 0:
                 delay = cues[start].start_ms - item.offset_ms
-                if delay < -2_000 or delay > 90_000:
+                if delay < READ_ALOUD_MIN_DELAY_MS or delay > 90_000:
                     continue
             elif cues[start].start_ms > 90_000:
                 continue
-        elif item.offset_ms >= 0 and cues[start].start_ms < item.offset_ms - 2_000:
+        elif item.offset_ms >= 0 and cues[start].start_ms < item.offset_ms + READ_ALOUD_MIN_DELAY_MS:
             continue
         for count in range(1, min(max_cues, len(cues) - start) + 1):
             candidate_parts = texts[start : start + count]
@@ -128,7 +129,7 @@ def _find_best_read_aloud_candidate(
                 and count <= 2
                 and len(authority_norm) >= 4
                 and thread_delay_ms is not None
-                and -2_000 <= thread_delay_ms <= 45_000
+                and READ_ALOUD_MIN_DELAY_MS <= thread_delay_ms <= 45_000
                 and 0.7 <= extent <= 1.4
                 and common >= 2
             )
@@ -234,7 +235,7 @@ def _read_aloud_support_scores(
         for support_start in range(len(support_cues)):
             if item.kind == "danmaku" and item.offset_ms >= 0:
                 delay = support_cues[support_start].start_ms - item.offset_ms
-                if delay < -2_000 or delay > 90_000:
+                if delay < READ_ALOUD_MIN_DELAY_MS or delay > 90_000:
                     continue
             for support_count in range(
                 1,

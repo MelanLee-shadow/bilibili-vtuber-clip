@@ -103,6 +103,12 @@ class ReferentGroup:
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
 
 
+# 念读因果下界（Ivan 2026-07-20）：事件时间戳＝发送时刻，经 渲染→看到→
+# 开口→推流 每环只加正延迟（繁忙房渲染实测 ~15s）。cue 早于发送+2s 的
+# "念读"物理不可能，确定性排除；弱界宁松勿枉，非渲染延迟估计。
+READ_ALOUD_MIN_DELAY_MS = 2_000
+
+
 def normalize_chat_text(text: str) -> str:
     return _NON_TEXT.sub("", str(text)).lower()
 
