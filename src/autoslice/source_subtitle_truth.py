@@ -385,3 +385,39 @@ def apply_source_subtitle_truth(
     elif audit["satisfied"]:
         audit["status"] = "ALREADY_SATISFIED"
     return _render(cues, texts), audit
+
+
+def ledger_local_windows(
+    *,
+    spec: Mapping[str, object],
+    durations: Sequence[int],
+    ledger_path: Path | None,
+) -> list[tuple[int, int]]:
+    """本候选交付时间轴上所有钉子的辖区窗口（只算不改）。
+
+    2026-07-20 七星 r6 案：实体声学仲裁抢在钉子落刀前对「零三」烧完整条
+    key ladder 再 fail-closed——ledger 已拥有的 span 不该进任何后置仲裁。
+    加载失败返回空（豁免消失=门更严，安全方向）。"""
+
+    try:
+        if ledger_path is None or not ledger_path.is_file():
+            return []
+        document = json.loads(ledger_path.read_bytes().decode("utf-8"))
+        entries = document.get("entries") or []
+        pieces = [p for p in (spec.get("pieces") or []) if isinstance(p, Mapping)]
+        if len(pieces) != len(durations):
+            return []
+        out: list[tuple[int, int]] = []
+        for raw_entry in entries:
+            if (
+                not isinstance(raw_entry, Mapping)
+                or raw_entry.get("knowledge_type") != "SOURCE_INTERVAL_TRUTH"
+            ):
+                continue
+            for window in _entry_local_windows(
+                raw_entry, pieces=pieces, durations=durations
+            ):
+                out.append((int(window["start_ms"]), int(window["end_ms"])))
+        return out
+    except Exception:
+        return []

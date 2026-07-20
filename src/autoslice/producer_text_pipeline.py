@@ -387,6 +387,7 @@ def _apply_entity_authority(
     padded: Path,
     adapters: TextPipelineAdapters,
     session_topic_absorption_audits: list[dict[str, Any]] | None = None,
+    source_truth_windows: Sequence[tuple[int, int]] = (),
 ) -> EntityAuthorityResult:
     draft_witness_path = padded.with_suffix(".asr_draft.srt")
     source_witness_srt = (
@@ -499,12 +500,26 @@ def _apply_entity_authority(
         *([opening_group] if opening_group is not None else []),
         *repetition_groups,
     ]
+    ledger_excluded_cues: set[int] = set()
+    if source_truth_windows:
+        for index, cue in enumerate(
+            (c for c in parse_srt_cues(srt_text) if c.text.strip()), start=1
+        ):
+            if any(
+                min(cue.end_ms, win_end) - max(cue.start_ms, win_start) >= 80
+                for win_start, win_end in source_truth_windows
+            ):
+                ledger_excluded_cues.add(index)
     srt_text, transcript_entity_audit = apply_audio_entity_verification(
         srt_text,
         referent_groups=transcript_groups,
         entity_verifier=verify_confusable_entity,
-        excluded_cue_indexes=handled_entity_cues,
+        excluded_cue_indexes=handled_entity_cues | ledger_excluded_cues,
     )
+    if ledger_excluded_cues:
+        transcript_entity_audit["ledger_excluded_cue_indexes"] = sorted(
+            ledger_excluded_cues
+        )
     chat_authority_audit["transcript_entity_audit"] = transcript_entity_audit
     chat_authority_audit["post_semantic_entity_policy"] = {
         "schema_version": "post-semantic-entity-policy.v1",
@@ -1088,6 +1103,8 @@ def run_text_pipeline(
         authoritative_chat=authoritative_chat,
         adapters=adapters,
     )
+    from src.autoslice.source_subtitle_truth import ledger_local_windows
+
     authority = _apply_entity_authority(
         srt_text=draft.srt_text,
         authoritative_chat=authoritative_chat,
@@ -1099,6 +1116,14 @@ def run_text_pipeline(
         session_topic_absorption_audits=draft.session_topic_absorption_audits,
         padded=padded,
         adapters=adapters,
+        # 钉子辖区先豁免（2026-07-20 七星 r6 零三案）：ledger 已拥有的
+        # span 不进实体声学仲裁——省 key ladder，也不许 infra 失败把
+        # 钉子能确定性解决的槽位 fail-closed 成整条不交付。
+        source_truth_windows=ledger_local_windows(
+            spec=spec,
+            durations=durations,
+            ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
+        ),
     )
     reviewed_srt, final_review_audit = _run_final_review(
         srt_text=authority.srt_text,

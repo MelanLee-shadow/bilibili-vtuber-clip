@@ -438,3 +438,45 @@ def test_final_review_marks_provider_failed_adjudications_infra_unresolved(monke
     assert audit["infra_unresolved_count"] == 1
     assert audit["infra_unresolved"][0]["cue_index"] == 1
     assert audit["infra_unresolved"][0]["reason_code"] == "ENTITY_AUDIO_PROVIDER_FAILED"
+
+
+def test_ledger_owned_cue_skips_entity_arbitration(tmp_path):
+    """钉子辖区先豁免（2026-07-20 七星 r6 零三案）：ledger 拥有的 cue 不进
+    声学仲裁——不烧 key ladder,也不许 infra 失败挡住钉子能解决的槽位。"""
+    padded = tmp_path / "padded.mp4"
+    padded.with_suffix(".asr_draft.srt").write_text(
+        _srt("我的我也不零三", "第二句", "第三句"), encoding="utf-8"
+    )
+    source = _srt("我的我也不零三", "第二句", "第三句")
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "零三"), ("li dou sha",)),
+            ReferentEntity("小李", ("小李",), ("xiao li",)),
+        ),
+        positions=("transcript_only",),
+        uncertain_keep_surfaces=(),
+    )
+    calls = []
+
+    def resolve_name(request):
+        calls.append(request)
+        return _resolved_entity_verdict(request, "李豆沙")
+
+    result = pipeline._apply_entity_authority(
+        srt_text=source,
+        authoritative_chat=[],
+        support_srts=[],
+        referent_groups=[group],
+        verify_confusable_entity=resolve_name,
+        code_switch_audit={},
+        term_boundary_moves=[],
+        padded=padded,
+        adapters=_adapters(),
+        # 第一条 cue (5-9s) 在钉子辖区内
+        source_truth_windows=[(5_000, 7_500)],
+    )
+
+    assert calls == []
+    assert result.srt_text == source
+    audit = result.chat_authority_audit["transcript_entity_audit"]
+    assert audit["ledger_excluded_cue_indexes"] == [1]
