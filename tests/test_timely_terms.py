@@ -121,10 +121,10 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
         song_name_candidates=["歌"],
     )
 
-    # 2026-07-19 审片第二轮：glossary 新增 奶P/咋这样/钢镚/SC音读/称呼串
-    # 等价类词条 + ありがとう(林更多)误听面后的指纹。
+    # 2026-07-20 弹幕时间模型（发送≠可见，渲染延迟 ~15s）入 principles
+    # §十一后的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "3e86043568c9e49bfe6da000ff8b3e158991b503676e600a2941a7c83e0ada67"
+        "0a51137d05250110174705984f1d5cda42107607439d0f359ad27333a9d9396e"
     )
 
 
