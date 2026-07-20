@@ -32,10 +32,19 @@ from src.autoslice.channel_profile import load_channel_profile
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 BRANDING_INTRO_SCHEMA = f"{CHANNEL_PROFILE.profile_id}-branding-intro.v1"
+# v2 (Ivan 2026-07-20): the manifest may carry SEVERAL verified intros and the
+# delivery rotates between them, keyed on the main clip's content hash so a
+# re-burn of the same material never flips its intro (edit-replace and refix
+# reruns must stay byte-stable relative to their recorded bindings).
+BRANDING_INTRO_SCHEMA_V2 = f"{CHANNEL_PROFILE.profile_id}-branding-intro.v2"
 BRANDING_INTRO_MANIFEST_RELPATH = CHANNEL_PROFILE.asset_file(
     "branding_intro_manifest"
 ).relative_to(REPO_ROOT)
 BRANDING_INTRO_ENV_SWITCH = "AUTOSLICE_BRANDING_INTRO"
+# Operator hand-pick escape hatch for the v2 rotation: must name an intro_id
+# from the manifest; any other value fails closed (a typo must not silently
+# change which intro ships).
+BRANDING_INTRO_PICK_ENV = "AUTOSLICE_BRANDING_INTRO_PICK"
 _COPY_CONCAT_DURATION_TOLERANCE_MS = 150
 _REENCODE_DURATION_TOLERANCE_MS = 250
 _X264_PROFILE_FLAGS = {"high": "high", "main": "main", "baseline": "baseline"}
@@ -79,7 +88,8 @@ def load_branding_intro_policy(manifest_path: Path) -> Mapping[str, object] | No
         raise BrandingIntroError(f"unreadable branding intro manifest {manifest_path}: {exc}") from exc
     if not isinstance(policy, Mapping):
         raise BrandingIntroError(f"branding intro manifest is not an object: {manifest_path}")
-    if policy.get("schema_version") != BRANDING_INTRO_SCHEMA:
+    schema = policy.get("schema_version")
+    if schema not in (BRANDING_INTRO_SCHEMA, BRANDING_INTRO_SCHEMA_V2):
         raise BrandingIntroError(
             f"unsupported branding intro schema {policy.get('schema_version')!r} in {manifest_path}"
         )
@@ -87,7 +97,26 @@ def load_branding_intro_policy(manifest_path: Path) -> Mapping[str, object] | No
         return None
     if policy.get("enabled") is not True:
         raise BrandingIntroError(f"branding intro manifest needs an explicit enabled flag: {manifest_path}")
-    video = policy.get("video")
+    for entry in policy_intros(policy):
+        _validate_intro_entry(entry, manifest_path)
+    return policy
+
+
+def policy_intros(policy: Mapping[str, object]) -> list[Mapping[str, object]]:
+    """Normalize v1 (single top-level intro) and v2 (``intros`` list) manifests."""
+
+    if policy.get("schema_version") == BRANDING_INTRO_SCHEMA_V2:
+        intros = policy.get("intros")
+        if not isinstance(intros, list) or not intros:
+            raise BrandingIntroError("branding intro v2 manifest lists no intros")
+        if not all(isinstance(entry, Mapping) for entry in intros):
+            raise BrandingIntroError("branding intro v2 manifest has a non-object intro entry")
+        return list(intros)
+    return [policy]
+
+
+def _validate_intro_entry(entry: Mapping[str, object], manifest_path: Path) -> None:
+    video = entry.get("video")
     if not isinstance(video, Mapping):
         raise BrandingIntroError(f"branding intro manifest has no video binding: {manifest_path}")
     sha = str(video.get("sha256") or "").removeprefix("sha256:")
@@ -95,20 +124,23 @@ def load_branding_intro_policy(manifest_path: Path) -> Mapping[str, object] | No
         raise BrandingIntroError(f"branding intro manifest has no valid video sha256: {manifest_path}")
     if int(video.get("duration_ms", 0)) <= 0:
         raise BrandingIntroError(f"branding intro manifest has no positive duration: {manifest_path}")
-    paths = policy.get("runtime_media_paths")
+    paths = entry.get("runtime_media_paths")
     if not isinstance(paths, list) or not paths:
         raise BrandingIntroError(f"branding intro manifest lists no runtime media paths: {manifest_path}")
-    if not str(policy.get("intro_id") or ""):
+    if not str(entry.get("intro_id") or ""):
         raise BrandingIntroError(f"branding intro manifest has no intro_id: {manifest_path}")
-    return policy
 
 
 def resolve_intro_media(policy: Mapping[str, object], repo_root: Path) -> Path:
-    """Find the intro bytes at one of the declared runtime paths, hash-verified."""
+    """Find the first intro's bytes at a declared runtime path, hash-verified."""
 
-    expected_sha = str(policy["video"]["sha256"]).removeprefix("sha256:")  # type: ignore[index]
+    return _resolve_intro_entry(policy_intros(policy)[0], repo_root)
+
+
+def _resolve_intro_entry(entry: Mapping[str, object], repo_root: Path) -> Path:
+    expected_sha = str(entry["video"]["sha256"]).removeprefix("sha256:")  # type: ignore[index]
     attempts: list[str] = []
-    for raw in policy.get("runtime_media_paths", []):  # type: ignore[union-attr]
+    for raw in entry.get("runtime_media_paths", []):  # type: ignore[union-attr]
         candidate = Path(str(raw))
         if not candidate.is_absolute():
             candidate = repo_root / candidate
@@ -149,12 +181,24 @@ def require_branding_intro(
     policy = load_branding_intro_policy(resolved_manifest)
     if policy is None:
         return None
-    media_path = resolve_intro_media(policy, repo_root)
+    # Resolve EVERY declared intro up front: a drifted/missing member of the
+    # rotation roster blocks delivery instead of silently narrowing the pool.
+    candidates = [
+        {
+            "intro_id": str(entry["intro_id"]),
+            "media_path": _resolve_intro_entry(entry, repo_root),
+            "media_sha256": str(entry["video"]["sha256"]),  # type: ignore[index]
+        }
+        for entry in policy_intros(policy)
+    ]
+    rotation = policy.get("rotation") if isinstance(policy.get("rotation"), Mapping) else {}
     return {
         "policy": policy,
-        "intro_id": str(policy["intro_id"]),
-        "media_path": media_path,
-        "media_sha256": str(policy["video"]["sha256"]),  # type: ignore[index]
+        "intro_id": candidates[0]["intro_id"],
+        "media_path": candidates[0]["media_path"],
+        "media_sha256": candidates[0]["media_sha256"],
+        "candidates": candidates,
+        "rotation_mode": str(rotation.get("mode") or ("main-sha256" if len(candidates) > 1 else "single")),
         "manifest_path": resolved_manifest,
         "manifest_sha256": _sha256_file(resolved_manifest),
     }
@@ -374,6 +418,52 @@ def _concat_reencode(
     )
 
 
+def _pick_intro(
+    context: Mapping[str, object], main_sha256: str
+) -> tuple[Mapping[str, object], dict[str, object] | None]:
+    """Select the intro for this delivery from the verified candidate roster.
+
+    Single-intro contexts (v1 manifests, hand-built contexts) keep the legacy
+    top-level fields and no rotation binding.  With several candidates the
+    choice is keyed on the main clip's content hash — deterministic, stateless,
+    and stable across re-burns of the same material — unless the operator
+    pins one explicitly via ``AUTOSLICE_BRANDING_INTRO_PICK`` (which must name
+    an intro_id from the roster; anything else fails closed).
+    """
+
+    raw = context.get("candidates")
+    candidates = [c for c in raw if isinstance(c, Mapping)] if isinstance(raw, list) else []
+    if len(candidates) <= 1:
+        # Single-intro contexts (v1 manifests, hand-built contexts) stay driven
+        # by the legacy top-level fields so callers that pin or adjust them
+        # keep their meaning.
+        if "media_path" in context and "media_sha256" in context:
+            return {
+                "intro_id": context.get("intro_id"),
+                "media_path": context["media_path"],
+                "media_sha256": context["media_sha256"],
+            }, None
+        return candidates[0], None
+    ids = [str(c["intro_id"]) for c in candidates]
+    override = os.environ.get(BRANDING_INTRO_PICK_ENV, "").strip()
+    if override:
+        if override not in ids:
+            raise BrandingIntroError(
+                f"{BRANDING_INTRO_PICK_ENV}={override!r} names no manifest intro (have: {', '.join(ids)})"
+            )
+        index = ids.index(override)
+        reason = "env_override"
+    else:
+        index = int(main_sha256[:16], 16) % len(candidates)
+        reason = "main_sha256"
+    return candidates[index], {
+        "mode": str(context.get("rotation_mode") or "main-sha256"),
+        "selector": reason,
+        "candidate_intro_ids": ids,
+        "picked_intro_id": ids[index],
+    }
+
+
 def prepend_branding_intro(
     *,
     context: Mapping[str, object],
@@ -389,16 +479,17 @@ def prepend_branding_intro(
     delivery must fail.
     """
 
-    intro_path = Path(str(context["media_path"]))
-    expected_sha = str(context["media_sha256"]).removeprefix("sha256:")
+    if not main_path.is_file():
+        raise BrandingIntroError(f"main clip missing before intro prepend: {main_path}")
+    main_sha_before = _sha256_file(main_path)
+    picked, rotation_binding = _pick_intro(context, main_sha_before)
+    intro_path = Path(str(picked["media_path"]))
+    expected_sha = str(picked["media_sha256"]).removeprefix("sha256:")
     actual_sha = _sha256_file(intro_path)
     if actual_sha != expected_sha:
         raise BrandingIntroError(
             f"branding intro media drifted at render time: {intro_path} {actual_sha[:12]}"
         )
-    if not main_path.is_file():
-        raise BrandingIntroError(f"main clip missing before intro prepend: {main_path}")
-    main_sha_before = _sha256_file(main_path)
     main_probe = _probe_media(main_path)
     contract = _stream_contract(main_probe)
     main_counts = main_probe["counts"]
@@ -463,7 +554,8 @@ def prepend_branding_intro(
     shutil.rmtree(work_dir, ignore_errors=True)
     return {
         "status": "PREPENDED",
-        "intro_id": str(context["intro_id"]),
+        "intro_id": str(picked["intro_id"]),
+        "rotation": rotation_binding,
         "policy_manifest_path": str(context["manifest_path"]),
         "policy_manifest_sha256": str(context["manifest_sha256"]),
         "intro_media_path": str(intro_path),

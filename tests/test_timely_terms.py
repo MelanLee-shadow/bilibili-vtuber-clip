@@ -121,10 +121,9 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
         song_name_candidates=["歌"],
     )
 
-    # 2026-07-20 弹幕时间模型（发送≠可见，渲染延迟 ~15s）入 principles
-    # §十一后的指纹。
+    # 2026-07-20 合并 7/19 会话资产（HimeHina 词条、贬低性用词§十四）后的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "0a51137d05250110174705984f1d5cda42107607439d0f359ad27333a9d9396e"
+        "f3f20c604498c56002f4dcbf204caf8bb5be6a58982c4f0aecd679bbdbc737db"
     )
 
 

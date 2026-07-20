@@ -527,25 +527,33 @@ def _observe_entity_audio(
             # 「同项失败≥3轮」的政策线（quota_exhausted_round docstring 记有
             # 2026-07-18 交付事故根因）；非额度失败保持单轮。轮数有界——
             # ledger 不可写的环境 strikes 永远读 0，绝不允许无界循环。
-            for _round in range(gemini_backup_policy.MIN_FREE_CHAIN_STRIKES):
-                round_start = len(provider_failures)
-                for key in _configured_free_keys():
-                    if attempt_api_key(key, key_tier=gemini_backup_policy.FREE_KEY_TIER):
-                        break
-                if observed is not None:
+            round_start = len(provider_failures)
+            for key in _configured_free_keys():
+                if attempt_api_key(key, key_tier=gemini_backup_policy.FREE_KEY_TIER):
                     break
-                strikes = gemini_backup_policy.record_free_chain_failure(item_key)
-                if strikes >= gemini_backup_policy.MIN_FREE_CHAIN_STRIKES:
-                    break
+            quota_fastpath = False
+            if observed is None:
+                gemini_backup_policy.record_free_chain_failure(item_key)
                 round_categories = [
                     failure.get("category")
                     for failure in provider_failures[round_start:]
                     if failure.get("provider") == "gemini_api"
                 ]
-                if not gemini_backup_policy.quota_exhausted_round(round_categories):
-                    break
+                # Ivan 2026-07-20（取代 7/19 同 run 连补 3 轮的过渡机制）：
+                # 纯 429 配额轮=确定性耗尽证据，付费当轮直接顶上；
+                # >=3 strikes 门只管非配额类失败。
+                quota_fastpath = gemini_backup_policy.quota_exhausted_round(
+                    round_categories
+                )
             if observed is None:
-                allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(item_key)
+                if quota_fastpath:
+                    allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
+                        item_key,
+                        prior_strikes=gemini_backup_policy.MIN_FREE_CHAIN_STRIKES,
+                    )
+                    gate_reason = f"QUOTA_FASTPATH:{gate_reason}"
+                else:
+                    allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(item_key)
                 if allowed and attempt_api_key(
                     str(gemini_backup_policy.paid_backup_key()),
                     key_tier=gemini_backup_policy.PAID_KEY_TIER,

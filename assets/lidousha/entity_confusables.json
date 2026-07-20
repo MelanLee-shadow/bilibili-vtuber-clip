@@ -338,6 +338,78 @@
         }
       ],
       "reason": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（Ivan 确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "田中姬",
+          "surfaces": [
+            "田中姬",
+            "田中基"
+          ],
+          "readings": [
+            "tian zhong ji",
+            "tanaka hime"
+          ]
+        },
+        {
+          "canonical": "铃木雏",
+          "surfaces": [
+            "铃木雏"
+          ],
+          "readings": [
+            "ling mu chu",
+            "suzuki hina"
+          ]
+        },
+        {
+          "canonical": "田中雏",
+          "surfaces": [
+            "田中雏",
+            "田中楚"
+          ],
+          "readings": [
+            "tian zhong chu"
+          ]
+        },
+        {
+          "canonical": "Hime",
+          "surfaces": [
+            "Hime",
+            "提美",
+            "黑妹"
+          ],
+          "readings": [
+            "hime",
+            "ti mei",
+            "hei mei"
+          ]
+        },
+        {
+          "canonical": "Hina",
+          "surfaces": [
+            "Hina",
+            "希娜",
+            "金娜",
+            "黑那"
+          ],
+          "readings": [
+            "hina",
+            "xi na",
+            "jin na",
+            "hei na"
+          ]
+        }
+      ],
+      "reason": "HimeHina 双人组（Ivan 2026-07-19 裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。",
+      "uncertain_keep_canonicals": [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
     }
   ]
 }

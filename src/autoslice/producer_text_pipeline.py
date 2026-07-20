@@ -987,6 +987,40 @@ def _finalize_text_evidence(
         ledger_path=source_truth_ledger_path,
     )
     chat_authority_audit["source_subtitle_truth_audit"] = source_truth_audit
+    # Ivan source-interval truth (authority #1) supersedes read-aloud exact
+    # surfaces (authority #2) on the same cue: the guest may rephrase a danmaku
+    # rather than read it verbatim (2026-07-19 HimeHina case, audio support 0).
+    # Mirror of the reviewed-text-override reconciliation channel.
+    _truth_rows = [
+        row
+        for key in ("applied", "satisfied")
+        for row in (source_truth_audit.get(key) or [])
+    ]
+    _truth_cues = {
+        index for row in _truth_rows for index in (row.get("cue_indexes") or [])
+    }
+    if _truth_cues:
+        _reconciled = []
+        for _chat_row in chat_authority_audit.get("applied") or []:
+            if _chat_row.get("reconciliation"):
+                continue
+            _row_cues = set(_chat_row.get("cue_indexes") or [])
+            if _row_cues & _truth_cues:
+                _owners = sorted(
+                    str(row.get("truth_id"))
+                    for row in _truth_rows
+                    if set(row.get("cue_indexes") or []) & _row_cues
+                )
+                _chat_row["reconciliation"] = {
+                    "kind": "SOURCE_INTERVAL_TRUTH_SUPERSEDES",
+                    "truth_ids": _owners,
+                    "note": "Ivan source-interval truth owns this cue; read-aloud surface no longer a final requirement",
+                }
+                _reconciled.append(
+                    {"cue_indexes": sorted(_row_cues), "truth_ids": _owners}
+                )
+        if _reconciled:
+            chat_authority_audit["source_truth_reconciliations"] = _reconciled
     chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
         srt_text.encode("utf-8")
     ).hexdigest()
