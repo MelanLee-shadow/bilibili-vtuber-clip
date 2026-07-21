@@ -699,6 +699,7 @@ def _stage_lidousha_ai_cover(
     cover_text: str,
     run_ffmpeg: bool,
     art_direction_llm_call: LlmCall | None = None,
+    punch_allowed: bool = False,
 ) -> dict[str, object]:
     """Compatibility seam for patched CPA image-edit adapters."""
 
@@ -711,6 +712,7 @@ def _stage_lidousha_ai_cover(
         run_ffmpeg=run_ffmpeg,
         art_direction_llm_call=art_direction_llm_call,
         image_edit=_call_cpa_image_edit,
+        punch_allowed=punch_allowed,
     )
 
 

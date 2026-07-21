@@ -300,6 +300,9 @@ def _stage_publish_draft(
             cover_text=cover_text,
             run_ffmpeg=run_ffmpeg,
             art_direction_llm_call=art_direction_llm_call,
+            # 梗字封面只对自动标题开放：Ivan 手定标题（title_llm_call=None）的
+            # 封面仍走"每个成分都不许丢"的短句化铁律（2026-07-06 22966160 案）。
+            punch_allowed=title_llm_call is not None,
         )
     cover_status = str(cover_result["status"])
     cover_path_value = cover_result.get("cover_path") if cover_status == "AI_COVER_READY" else None
@@ -358,6 +361,7 @@ def _stage_lidousha_ai_cover(
     run_ffmpeg: bool,
     art_direction_llm_call: LlmCall | None = None,
     image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
+    punch_allowed: bool = False,
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
@@ -367,6 +371,7 @@ def _stage_lidousha_ai_cover(
         "fallback_used": False,
         "model_fallback_used": False,
         "cover_text": cover_text,
+        "cover_punch_allowed": punch_allowed,
         "title": title,
     }
     base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
@@ -447,6 +452,7 @@ def _stage_lidousha_ai_cover(
         cover_text=cover_text,
         art_direction_llm_call=art_direction_llm_call,
         emote_library=emote_library,
+        allow_punch=punch_allowed,
     )
 
     # Strong-reason emote pick (Ivan 2026-07-19): "replace" swaps the CPA

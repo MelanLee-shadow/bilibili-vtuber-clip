@@ -3340,7 +3340,7 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
         # Prompt freeze includes the title_style asset; 2026-07-20 标题风格
         # 大修（Ivan 手定语料+生态调研回灌、长度门 30→48）后哈希随之更新。
         assert hashlib.sha256(prompt.encode()).hexdigest() == (
-            "a01ab78109b3875ad7ff99b8c40ab1e1b629d21bd9102de044ee9f0b72398109"
+            "14f84a70bc9e45cf0861b09d935711821f3d39a7d7b6e3db560f8d0227ef8aef"
         )
         return '{"title": "主播吐槽游戏价格贵，笑场三连"}'
 
@@ -4139,6 +4139,171 @@ def test_overlay_falls_back_to_balancer_without_forced_lines(tmp_path):
     )
     assert out.is_file()
     assert meta["line_split"] == "balancer"  # no forced split, no colon → balancer path
+
+
+# ---------------------------------------------------------------------------
+# 封面梗字（2026-07-20 B站高播放封面调研）：自动标题封面渲染 2-12 字梗字，
+# 不再整条标题上封面；手定标题/歌切保持旧行为。
+# ---------------------------------------------------------------------------
+
+_PUNCH_TITLE = "【李豆沙】精心设计MC环节想让kmx介绍自己，是奶P！才，才不是熊猫呢！"
+_PUNCH_TEXT = "精心设计MC环节想让kmx介绍自己，是奶P！才，才不是熊猫呢！"
+
+
+def test_cover_punch_deterministic_baseline_and_gates():
+    from src.autoslice import cover_generation
+
+    # 确定性兜底：取最后一个 ≤12 字的 ！/？ 完整分句（点睛尾惯例）。
+    assert cover_generation._cover_default_punch(_PUNCH_TEXT) == ("才不是熊猫呢！",)
+    # 无强信号（没有 ！/？ 短分句）→ () → 整段文案旧行为。
+    assert cover_generation._cover_default_punch("温情李姐下播后说了很多心里话") == ()
+
+    # allow_punch 默认关（老调用路径字节不变）。
+    off = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-7", title=_PUNCH_TITLE, cover_text=_PUNCH_TEXT
+    )
+    assert off.cover_punch == ()
+    # 自动标题开启 → baseline 带确定性梗字。
+    on = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-7", title=_PUNCH_TITLE, cover_text=_PUNCH_TEXT, allow_punch=True
+    )
+    assert on.cover_punch == ("才不是熊猫呢！",)
+    # 歌切永远不用梗字（裸《歌名》banner 已是终态）。
+    song = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="song-1", title=_COVER_SONG_TITLE, cover_text=_COVER_SONG_TEXT, allow_punch=True
+    )
+    assert song.cover_punch == ()
+
+
+def test_cover_punch_llm_pick_is_source_bound():
+    from src.autoslice import cover_generation
+
+    # LLM 选中合法梗字（文案逐字片段）→ 采用（main+sub 两行）。
+    def judge_ok(_prompt: str) -> str:
+        return (
+            '{"role":"stubborn_pout","expression_en":"pouty defiant frown",'
+            '"hook_word":"熊猫","words":[],"lines":[],'
+            '"cover_punch":{"main":"才，才不是熊猫呢！","sub":"是奶P！"}}'
+        )
+
+    picked = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-7",
+        title=_PUNCH_TITLE,
+        cover_text=_PUNCH_TEXT,
+        art_direction_llm_call=judge_ok,
+        allow_punch=True,
+    )
+    assert picked.cover_punch == ("才，才不是熊猫呢！", "是奶P！")
+
+    # 编造的字（不在文案里）→ 拒绝 → 回退确定性兜底。
+    def judge_fabricated(_prompt: str) -> str:
+        return (
+            '{"role":"stubborn_pout","expression_en":"pouty defiant frown",'
+            '"hook_word":"熊猫","words":[],"lines":[],'
+            '"cover_punch":{"main":"你不许玩谐音梗","sub":null}}'
+        )
+
+    rejected = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-7",
+        title=_PUNCH_TITLE,
+        cover_text=_PUNCH_TEXT,
+        art_direction_llm_call=judge_fabricated,
+        allow_punch=True,
+    )
+    assert rejected.cover_punch == ("才不是熊猫呢！",)
+
+    # 超长（>12 字）同样拒绝 → 兜底。
+    assert cover_generation._validated_cover_punch(
+        {"main": "精心设计MC环节想让kmx介绍自己", "sub": None}, _PUNCH_TEXT
+    ) == ()
+    # 未开启 allow_punch 时 LLM 字段被忽略（手定标题防线）。
+    ignored = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-7",
+        title=_PUNCH_TITLE,
+        cover_text=_PUNCH_TEXT,
+        art_direction_llm_call=judge_ok,
+    )
+    assert ignored.cover_punch == ()
+
+
+def test_overlay_renders_punch_instead_of_full_text(tmp_path):
+    from PIL import Image
+
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1920, 1080), (40, 80, 160)).save(bg)
+    out = tmp_path / "cover.png"
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="stubborn_pout",
+        expression_en="pouty defiant frown",
+        background_style="halftone-dots",
+        layout="banner",
+        hook_color="orange",
+        is_song=False,
+        hook_word="熊猫",
+        cover_punch=("才，才不是熊猫呢！", "是奶P！"),
+    )
+    meta = shadow_pipeline._overlay_lidousha_cover_title(
+        bg, out, cover_text=_PUNCH_TEXT, art_direction=art_direction
+    )
+    assert out.is_file()
+    assert meta["line_split"] == "punch"
+    assert meta["cover_text_mode"] == "punch"
+    assert meta["cover_punch"] == ["才，才不是熊猫呢！", "是奶P！"]
+    rendered = "".join(meta["rendered_lines"])
+    # 渲染的只有梗字，绝不是整条文案。
+    assert "才不是熊猫呢！" in rendered and "是奶P！" in rendered
+    assert "精心设计" not in rendered
+    # 梗字必须渲染得大（整段文案时代 banner 里 30+ 字会被压小）。
+    assert meta["font_size"] >= 120
+
+
+def test_stage_publish_draft_gates_punch_by_title_authority(tmp_path):
+    captured: list[dict] = []
+
+    def fake_stage_cover(record, **kwargs):
+        captured.append(kwargs)
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(tmp_path / "cover.png"),
+            "cover_generation": {"status": "OK"},
+            "reason_codes": [],
+        }
+
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"x")
+    srt = tmp_path / "clip.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:02,000\n才，才不是熊猫呢\n", encoding="utf-8")
+    record = {
+        "status": "MATERIALIZED",
+        "media_path": str(media),
+        "subtitle_path": str(srt),
+        "artifact_hashes": {"video_sha256": "sha256:x"},
+    }
+    cues = [shadow_pipeline.SourceCue("c1", 0, 2_000, "x")]
+
+    # 自动标题（LLM 起题）→ punch_allowed=True。
+    shadow_pipeline._stage_publish_draft_impl(
+        dict(record),
+        candidate_id="talk-auto",
+        title="job",
+        cues=cues,
+        run_ffmpeg=False,
+        title_llm_call=lambda prompt: '{"title": "才，才不是熊猫呢！小李被kmx用两个字点名"}',
+        stage_cover=fake_stage_cover,
+    )
+    assert captured[-1]["punch_allowed"] is True
+
+    # 手定标题（title_llm_call=None，一字不改直通）→ punch_allowed=False。
+    shadow_pipeline._stage_publish_draft_impl(
+        dict(record),
+        candidate_id="talk-manual",
+        title="【李豆沙】反沙，不是反李豆沙！",
+        cues=cues,
+        run_ffmpeg=False,
+        title_llm_call=None,
+        stage_cover=fake_stage_cover,
+    )
+    assert captured[-1]["punch_allowed"] is False
 
 
 def test_cover_prompt_layout_and_overlay_hook_metadata(tmp_path):

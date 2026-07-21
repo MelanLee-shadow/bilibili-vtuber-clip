@@ -14,7 +14,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from typing import Callable, Mapping, NamedTuple, Sequence
 
@@ -105,6 +105,13 @@ class LidoushaCoverArtDirection:
     emote_id: str = ""
     emote_mode: str = ""    # "" | "replace" | "companion"
     emote_reason: str = ""
+    # 2026-07-20 B站生态调研（李豆沙/南町/礼墨圈 20万+ 播放封面）：高播放封面
+    # 的字是 2-12 字的"梗字"（她的原话/质问/反差点），从不是整条标题。
+    # cover_punch 非空时叠字层只渲染它：第 1 行=主梗字（整行 hook 色、巨大），
+    # 可选第 2 行副字（奶油色小一号）；整段 cover_text 退为 fallback。
+    # 只有自动标题允许（Ivan 手定标题的封面仍走"每个成分都不许丢"的旧铁律，
+    # 见 2026-07-06 22966160 案）；歌切 song-clean 永远不用（裸《歌名》已是终态）。
+    cover_punch: tuple[str, ...] = ()
 
 
 _COVER_TALK_LAYOUTS = ("left-split", "right-split", "banner")
@@ -247,6 +254,61 @@ def _lidousha_is_song_title(title: str) -> bool:
     return title.strip().startswith(CHANNEL_PROFILE.song_title_prefix.rstrip("，, "))
 
 
+_COVER_PUNCH_CLAUSE_RX = re.compile(r"[^，,。；;：:…！!？?\n]+[！!？?]")
+
+
+def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
+    """Deterministic ecosystem-style punch fallback: the last short ！/？ clause.
+
+    2026-07-20 调研共识：高播放封面字=短梗字。确定性兜底只在文案里有强信号
+    （！/？收尾、≤12 字的完整分句，取最后一个=点睛尾惯例）时出手；否则返回
+    ()，叠字层回退整段 cover_text（fail-open，绝不比旧行为差）。
+    """
+
+    matches = [
+        m.group().strip()
+        for m in _COVER_PUNCH_CLAUSE_RX.finditer(cover_text.replace("\n", "，"))
+    ]
+    matches = [m for m in matches if 3 <= len(m) <= 12]
+    return (matches[-1],) if matches else ()
+
+
+def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
+    """Accept an LLM cover punch only when provably source-bound.
+
+    main 必填、sub 可选；每行都必须是 cover_text 的逐字连续片段（忽略布局空
+    白），2-12 字，行首禁闭标点/行末禁开标点。任何不合格 → () → 调用方回退
+    确定性兜底。防的是 LLM 编造封面字（字幕/标题同源的真实性铁律）。
+    """
+
+    if not isinstance(value, Mapping):
+        return ()
+    haystack = _cover_lines_canon(cover_text)
+    lines: list[str] = []
+    for key in ("main", "sub"):
+        raw = value.get(key)
+        if raw is None:
+            if key == "main":
+                return ()
+            continue
+        if not isinstance(raw, str):
+            return ()
+        fragment = raw.strip()
+        canon = _cover_lines_canon(fragment)
+        if not (2 <= len(canon) <= 12) or "\n" in fragment:
+            return ()
+        if canon not in haystack:
+            return ()
+        if fragment.startswith(tuple(_COVER_CLOSING_PUNCT)) or fragment.endswith(
+            tuple(_COVER_OPENING_PUNCT)
+        ):
+            return ()
+        lines.append(fragment)
+    if len(lines) == 2 and lines[0] == lines[1]:
+        lines = lines[:1]
+    return tuple(lines)
+
+
 def _lidousha_cover_art_direction(
     *,
     candidate_id: str,
@@ -254,6 +316,7 @@ def _lidousha_cover_art_direction(
     cover_text: str,
     art_direction_llm_call: LlmCall | None = None,
     emote_library: EmoteLibrary | None = None,
+    allow_punch: bool = False,
 ) -> LidoushaCoverArtDirection:
     """Pick the cover's role/expression/background/layout/hook color.
 
@@ -264,6 +327,8 @@ def _lidousha_cover_art_direction(
     """
 
     is_song = _lidousha_is_song_title(title)
+    # 歌切封面永远裸《歌名》banner，梗字模式只属于自动谈话封面。
+    allow_punch = allow_punch and not is_song
     digest = _cover_stable_hash(candidate_id or title)
     hook_keys = list(_COVER_HOOK_COLORS)
     hook_color = hook_keys[(digest // 31) % len(hook_keys)]
@@ -284,9 +349,10 @@ def _lidousha_cover_art_direction(
         hook_color=hook_color,
         is_song=is_song,
         hook_word=_cover_default_hook_word(cover_text),
+        cover_punch=_cover_default_punch(cover_text) if allow_punch else (),
     )
     if art_direction_llm_call is None:
-        return baseline
+        return _punch_layout_override(baseline)
     try:
         payload = extract_json_object(
             art_direction_llm_call(
@@ -295,14 +361,30 @@ def _lidousha_cover_art_direction(
                     cover_text=cover_text,
                     baseline=baseline,
                     emote_library=emote_library,
+                    allow_punch=allow_punch,
                 )
             )
         )
-        return _normalize_cover_art_direction(
-            payload, baseline, cover_text, emote_library=emote_library
+        return _punch_layout_override(
+            _normalize_cover_art_direction(
+                payload, baseline, cover_text, emote_library=emote_library, allow_punch=allow_punch
+            )
         )
     except Exception:
-        return baseline
+        return _punch_layout_override(baseline)
+
+
+def _punch_layout_override(direction: LidoushaCoverArtDirection) -> LidoushaCoverArtDirection:
+    """梗字封面强制 banner 文字区（2026-07-20 生态调研）。
+
+    高播放封面的大字横贯全宽——窄边栏 zone 里 9-10 字的梗字只能到 ~80px，比
+    整段文案还小，梗字的意义就没了；banner 宽区里同样的字直接翻倍。CPA 构图
+    prompt 与叠字 zone 都跟着 layout 走，所以必须在艺术指导终态统一改。
+    """
+
+    if direction.cover_punch and direction.layout != "banner" and not direction.is_song:
+        return dataclass_replace(direction, layout="banner")
+    return direction
 
 
 def _cover_art_direction_prompt(
@@ -311,6 +393,7 @@ def _cover_art_direction_prompt(
     cover_text: str,
     baseline: LidoushaCoverArtDirection,
     emote_library: EmoteLibrary | None = None,
+    allow_punch: bool = False,
 ) -> str:
     persona = profile_asset_text("persona")
     # Sticker catalog only when a library is supplied AND this is a talk cover:
@@ -320,6 +403,19 @@ def _cover_art_direction_prompt(
     if emote_library and not baseline.is_song:
         emote_block = emote_catalog_prompt_block(emote_library)
         emote_output_field = ',"emote":null|{"id":"...","mode":"replace"|"companion","reason":"..."}'
+    # 梗字轴只对自动标题开放（手定标题封面守"成分不许丢"铁律，prompt 保持字节稳定）。
+    punch_block = ""
+    punch_output_field = ""
+    if allow_punch:
+        punch_block = (
+            "- cover_punch: **封面主梗字（最高优先，2026-07-20 B站高播放封面调研铁律：封面上的字是 2-12 字的'梗字'，"
+            "从不是整条标题）**。从封面文案里挑她最出圈的那一句：原话/口癖/质问/反差点"
+            "（参考同类高播放封面：'什么是直女''给我整无语了''我是侄女啊'这种）。\n"
+            "  硬约束：main 必须是封面文案里的**逐字连续片段**（不加/不减/不改字，可含标点），2-12 字；"
+            "sub 可选（null 或第二行 2-12 字小字补语境，同样必须是文案原文片段）。"
+            "文案里确实挑不出有梗短句时 main 给 null（系统回退整段文案）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
+        )
+        punch_output_field = ',"cover_punch":null|{"main":"...","sub":null|"..."}'
     return (
         f"你在为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片的封面挑选'艺术指导'。只依据人设与本条切片语义选择。\n"
         f"\n{CHANNEL_PROFILE.display_name}人设(权威):\n{persona}\n"
@@ -332,6 +428,7 @@ def _cover_art_direction_prompt(
         f"- background_style: {baseline.background_style}\n"
         f"- hook_color: {baseline.hook_color}\n"
         "\n请只选择/生成以下语义轴:\n"
+        + punch_block +
         "- role: 一个简短英文角色键(如 shy_cute_default/shocked_bites_back/witty_smug/tender_soft/gentle_song)\n"
         "- expression_en: 一句英文脸部表情(贴角色,不吐舌)\n"
         "- hook_word: 封面文案里最该高亮的一个词(必须是文案里出现的原词)\n"
@@ -346,6 +443,7 @@ def _cover_art_direction_prompt(
         "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"
         + emote_block
         + '只输出一个 JSON 对象: {"role":"...","expression_en":"...","hook_word":"...","words":["...","..."],"lines":["...","..."]'
+        + punch_output_field
         + emote_output_field
         + "}"
     )
@@ -422,6 +520,7 @@ def _normalize_cover_art_direction(
     baseline: LidoushaCoverArtDirection,
     cover_text: str,
     emote_library: EmoteLibrary | None = None,
+    allow_punch: bool = False,
 ) -> LidoushaCoverArtDirection:
     # These axes are the deterministic anti-monotony schedule.  The LLM may
     # refine semantic choices below, but may not collapse a whole batch back
@@ -460,6 +559,13 @@ def _normalize_cover_art_direction(
         is_song=baseline.is_song,
     )
 
+    # 梗字：LLM 选中且逐字可溯 → 用它；null/不合格 → 确定性兜底（baseline）。
+    cover_punch = baseline.cover_punch
+    if allow_punch:
+        validated_punch = _validated_cover_punch(payload.get("cover_punch"), cover_text)
+        if validated_punch:
+            cover_punch = validated_punch
+
     return LidoushaCoverArtDirection(
         role=role,
         expression_en=expression_en,
@@ -473,6 +579,7 @@ def _normalize_cover_art_direction(
         emote_id=emote_id,
         emote_mode=emote_mode,
         emote_reason=emote_reason,
+        cover_punch=cover_punch,
     )
 
 
@@ -1467,6 +1574,82 @@ def _regroup_lines(lines: Sequence[str], k: int) -> list[str]:
     return [g for g in groups if g]
 
 
+def _punch_wrap(fragment: str, *, max_em: float = 9.0, max_lines: int = 2) -> list[str]:
+    """Wrap one punch fragment into 1-2 short lines.
+
+    ≤9 em 整行不拆（banner 全宽下 9 字单行仍有 ~146px，干净最重要）；更长时
+    优先在内部标点断（两半各 ≥3 字才算干净断点），否则均分并避开行首闭标点/
+    行末开标点。
+    """
+
+    frag = fragment.strip()
+    if not frag or _atom_em_width(frag) <= max_em:
+        return [frag] if frag else []
+    breaks = [
+        i + 1
+        for i, ch in enumerate(frag[:-1])
+        if ch in "，,。！!？?；;…" and i + 1 >= 3 and len(frag) - (i + 1) >= 3
+    ]
+    if breaks:
+        cut = min(breaks, key=lambda i: abs(i - len(frag) / 2))
+    else:
+        cut = len(frag) // 2
+        while 0 < cut < len(frag) and (
+            frag[cut] in _COVER_CLOSING_PUNCT or frag[cut - 1] in _COVER_OPENING_PUNCT
+        ):
+            cut += 1
+    left, right = frag[:cut].strip(), frag[cut:].strip()
+    return [line for line in (left, right) if line][:max_lines]
+
+
+def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill, max_size):
+    """Ecosystem-style punch typesetting (2026-07-20 B站高播放封面调研)。
+
+    主梗字整行 hook 色、越大越好；副行奶油色半号。不走通用 fitter 的候选竞争
+    （它会把整行梗字当不可拆 hook 原子钉死字号），直接对固定行结构解最大字号：
+    宽度 ≤ zone、总高 ≤ zone，下限 72px 兜底渲染永不失败。
+    """
+
+    from PIL import Image, ImageDraw
+
+    x0, y0, x1, y1 = zone
+    zone_w = (x1 - x0) * 0.98
+    zone_h = (y1 - y0) * 0.96
+    scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    main_lines = _punch_wrap(punch_lines[0])
+    sub_lines = [wrapped for frag in punch_lines[1:] for wrapped in _punch_wrap(frag)]
+
+    def build(emph: int):
+        sub_size = max(56, int(round(emph * 0.5)))
+        lines = []
+        for text in main_lines:
+            lines.append({"segs": [(text, hook_rgb)], "size": emph, "gap": max(6, int(emph * 0.08))})
+        for text in sub_lines:
+            lines.append({"segs": [(text, base_fill)], "size": sub_size, "gap": max(6, int(sub_size * 0.08))})
+        return lines
+
+    def fits(emph: int) -> bool:
+        total_h = 0.0
+        for line in build(emph):
+            fonts = _cover_fonts(font_path, line["size"])
+            pad = _cover_outlines_for(line["size"])[0][0]
+            if _cover_line_width(scratch, line["segs"], fonts, pad) > zone_w:
+                return False
+            total_h += sum(fonts[0].getmetrics()) + line["gap"]
+        return total_h <= zone_h
+
+    lo, hi = 72, max(72, int(max_size))
+    if not fits(lo):
+        return build(lo)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if fits(mid):
+            lo = mid
+        else:
+            hi = mid - 1
+    return build(lo)
+
+
 def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_path, max_lines=3, max_size=300, forced_lines=(), word_atoms=()):
     """Choose the line-wrap + font size that makes the title as BIG as possible
     while filling the zone: evaluate every line count (the LLM/colon word-safe
@@ -1597,22 +1780,37 @@ def _overlay_lidousha_cover_title(
     scrim = render["scrim"]
     hook_rgb = _COVER_HOOK_COLORS.get(art_direction.hook_color, _COVER_HOOK_COLORS["yellow"])
 
+    # 梗字模式（2026-07-20 生态调研）：cover_punch 非空时只渲染 1-2 行短梗字
+    # （主行=hook 色整行、巨大；副行奶油色小一号），整段 cover_text 退为语境/
+    # 回退。punch 行同时作为 wrap 原子，避免字盲均衡器把副行拆词。
+    punch_lines = tuple(art_direction.cover_punch)
+    render_text = "\n".join(punch_lines) if punch_lines else cover_text
     font_selection: dict[str, object] = {}
     # ZCOOL, or the first chain font whose glyph coverage is verified for this text
-    font_path = _cover_font_for_text(cover_text, selection_audit=font_selection)
+    font_path = _cover_font_for_text(render_text, selection_audit=font_selection)
     image = ImageOps.fit(Image.open(ai_background_path).convert("RGB"), (1920, 1080), method=Image.Resampling.LANCZOS)
-    lines = _fit_cover_lines(
-        cover_text,
-        hook_word=art_direction.hook_word,
-        base_fill=_COVER_BASE_FILL,
-        hook_rgb=hook_rgb,
-        zone=zone,
-        font_path=font_path,
-        max_lines=render["max_lines"],
-        max_size=render["max_size"],
-        forced_lines=art_direction.line_breaks,
-        word_atoms=art_direction.words,
-    )
+    if punch_lines:
+        lines = _fit_cover_punch_lines(
+            punch_lines,
+            zone=zone,
+            font_path=font_path,
+            hook_rgb=hook_rgb,
+            base_fill=_COVER_BASE_FILL,
+            max_size=render["max_size"],
+        )
+    else:
+        lines = _fit_cover_lines(
+            cover_text,
+            hook_word=art_direction.hook_word,
+            base_fill=_COVER_BASE_FILL,
+            hook_rgb=hook_rgb,
+            zone=zone,
+            font_path=font_path,
+            max_lines=render["max_lines"],
+            max_size=render["max_size"],
+            forced_lines=art_direction.line_breaks,
+            word_atoms=art_direction.words,
+        )
 
     scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     meta = []
@@ -1674,7 +1872,13 @@ def _overlay_lidousha_cover_title(
         "hook_word": art_direction.hook_word,
         "role": art_direction.role,
         "expression_en": art_direction.expression_en,
-        "line_split": "explicit" if "\n" in cover_text else ("llm_word_aware" if art_direction.line_breaks else "balancer"),
+        "line_split": (
+            "punch"
+            if punch_lines
+            else ("explicit" if "\n" in cover_text else ("llm_word_aware" if art_direction.line_breaks else "balancer"))
+        ),
+        "cover_text_mode": "punch" if punch_lines else "full",
+        "cover_punch": list(punch_lines),
         "rendered_lines": ["".join(seg[0] for seg in line["segs"]) for line in lines],
         "text_backing": _COVER_TEXT_BACKING,
         "scrim": backing is not None,
