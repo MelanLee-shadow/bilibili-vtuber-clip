@@ -2804,6 +2804,9 @@ def test_publish_staging_blocks_without_cpa_ai_cover_and_never_extracts_frame_co
     manifest_path = tmp_path / "recuts" / "lidousha-song.manifest.json"
     monkeypatch.delenv("CPA_BASE_URL", raising=False)
     monkeypatch.delenv("CPA_API_KEY", raising=False)
+    # 2026-07-21 起 auto/screenshot 路线可产出"设计过的截图封面"（Ivan 批准）；
+    # 本测试守护的旧保证只属于强制 cpa 模式：无凭据必须在任何抽帧前卡死。
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "cpa")
 
     def fail_if_frame_cover_is_extracted(*_args, **_kwargs):
         raise AssertionError("publish staging must not extract a deterministic frame cover as a finished cover")
@@ -4293,6 +4296,93 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
     assert generation["reference_selection"]["status"] == "SELECTED"
     assert Path(str(result["cover_path"])).is_file()
     assert Image.open(str(result["cover_path"])).size == (1920, 1080)
+
+
+def test_cover_treatment_router_by_moment_strength():
+    from src.autoslice import publish_staging
+
+    sel = lambda score, emo=0.0: {"candidates": [{"score": score, "emotion": emo}]}
+    decide = publish_staging._decide_cover_treatment
+    # 强名场面 → 直出；中等 → 轻微调；弱 → 全图重绘。
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(5.2))[0] == "screenshot_direct"
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(3.4, 1.0))[0] == "screenshot_direct"
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(3.4))[0] == "screenshot_polish"
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(1.9))[0] == "cpa_redraw"
+    # 铁律分支：歌切 / 手定标题 / 无选帧 → 全图重绘；强制模式直通。
+    assert decide(cover_mode="auto", is_song=True, punch_allowed=True, frame_selection=sel(9.0))[0] == "cpa_redraw"
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=False, frame_selection=sel(9.0))[0] == "cpa_redraw"
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=None)[0] == "cpa_redraw"
+    assert decide(cover_mode="screenshot", is_song=False, punch_allowed=True, frame_selection=sel(0.5))[0] == "screenshot_direct"
+    assert decide(cover_mode="polish", is_song=False, punch_allowed=True, frame_selection=sel(9.0))[0] == "screenshot_polish"
+    assert decide(cover_mode="cpa", is_song=False, punch_allowed=True, frame_selection=sel(9.0))[0] == "cpa_redraw"
+
+
+def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):
+    """polish 路线：CPA 以裁切后的截图为参考做保真修图，成品用修图版叠梗字。"""
+
+    from PIL import Image
+
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    monkeypatch.delenv("AUTOSLICE_COVER_REF_MS", raising=False)
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "polish")
+    media = _write_synthetic_performance_clip(tmp_path)
+    captured: dict = {}
+
+    def fake_polish_edit(**kwargs):
+        captured.update(kwargs)
+        Image.new("RGB", (1920, 1080), (90, 120, 40)).save(kwargs["output_path"])
+        return {"status": "AI_BACKGROUND_READY", "selected_model": "gpt-image-2", "attempted_models": ["gpt-image-2"]}
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="polish-1",
+        title="【李豆沙】才，才不是熊猫呢！小李被kmx用两个字点名",
+        cover_text="才，才不是熊猫呢！小李被kmx用两个字点名",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=fake_polish_edit,
+        punch_allowed=True,
+    )
+    assert result["status"] == "AI_COVER_READY", result
+    generation = result["cover_generation"]
+    assert generation["cover_treatment"]["treatment"] == "screenshot_polish"
+    assert generation["method"] == "screenshot_polish"
+    assert generation["screenshot_polish"]["status"] == "POLISHED"
+    # 修图参考=裁切后的截图底图；prompt 是保真修图合同，不是重绘。
+    assert Path(str(captured["reference_path"])).name == "polish-1.screenshot-base.png"
+    assert "RETOUCH" in captured["prompt"] and "remove livestream overlay clutter" in captured["prompt"]
+    assert Path(str(result["cover_path"])).is_file()
+
+
+def test_screenshot_polish_degrades_to_direct_on_cpa_failure(tmp_path, monkeypatch):
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "polish")
+    media = _write_synthetic_performance_clip(tmp_path)
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="polish-degrade",
+        title="【李豆沙】才，才不是熊猫呢！小李被kmx用两个字点名",
+        cover_text="才，才不是熊猫呢！小李被kmx用两个字点名",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=lambda **kwargs: {"status": "FAILED", "detail": "boom"},
+        punch_allowed=True,
+    )
+    assert result["status"] == "AI_COVER_READY"
+    generation = result["cover_generation"]
+    assert generation["method"] == "screenshot_direct"
+    assert generation["screenshot_polish"]["status"] == "DEGRADED_TO_DIRECT"
 
 
 def test_screenshot_mode_song_falls_back_to_cpa_gate(tmp_path, monkeypatch):

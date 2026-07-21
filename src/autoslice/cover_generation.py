@@ -792,6 +792,29 @@ def _lidousha_cover_prompt(
     return identity_block + composition + companion_block + _COVER_NO_TEXT_CRITICAL
 
 
+def _cover_screenshot_polish_prompt() -> str:
+    """截图轻微调 prompt（2026-07-21 Ivan：截图微调以达到更好效果）。
+
+    与全图重绘相反的合同：构图/姿势/表情/取景**逐像素忠实**，只做两类事——
+    ①清掉直播 UI 杂物（弹幕框/SC条/歌单字/字幕字/水印）并自然补背景；
+    ②画质打磨（压缩噪点/线条/色彩光感）。表情来自真实名场面，所以不注入
+    role/expression 轴；no-text 铁律照常（标题仍由本地叠字）。
+    """
+
+    return (
+        "Restore and enhance this EXACT livestream screenshot for a cover thumbnail. "
+        "This is a faithful RETOUCH, not a redraw: keep the character's EXACT pose, facial expression, "
+        "face proportions, outfit, framing and overall composition pixel-faithful — do NOT restyle her, "
+        "do NOT change or exaggerate the emotion, do NOT move, resize or reinterpret anything. "
+        "CLEAN-UP PASS: remove livestream overlay clutter — chat/comment boxes, superchat bars, "
+        "song-list text, watermarks, UI panels and any burned-in subtitle text — and reconstruct the "
+        "background naturally where they were. "
+        "POLISH PASS: fix compression artifacts and banding, crisp clean linework, gently richer color "
+        "and lighting, keep it looking like the same real screenshot but pristine. "
+        + _COVER_NO_TEXT_CRITICAL
+    )
+
+
 _COVER_CANVAS = (1920, 1080)
 # The CPA image gateway (new_api) rejects sizes that aren't positive multiples
 # of 16 with HTTP 400 model_price_error — 1080 isn't one (first hit 2026-07-06,

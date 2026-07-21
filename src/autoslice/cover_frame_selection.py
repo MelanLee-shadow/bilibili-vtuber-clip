@@ -193,6 +193,21 @@ def select_expressive_cover_frame(
         for i in range(len(stamps_ms))
     ]
     window_lo = skip_head_ms
+    # 片头→正片过渡自适应（2026-07-21 实锤：z1-budui 片头 5749ms > 固定 skip
+    # 5000ms，过渡帧的整屏 diff 把 6000ms 打成假峰、平静脸拿 8 分）。片头版本
+    # 会轮换（Z1/Z2/未来 Z3 时长不同），不硬编码时长：前 9s 内 >8×全片中位的
+    # 全局 diff 突刺视为片头切点，窗口起点推到最后一个突刺后 1.2s。
+    positive_motion = sorted(m for m in motion[1:] if m > 0)
+    if positive_motion:
+        median_motion = positive_motion[len(positive_motion) // 2]
+        boundary_ms = None
+        for i, ms in enumerate(stamps_ms):
+            if i == 0 or ms > 9_000:
+                continue
+            if median_motion > 0 and motion[i] > 8 * median_motion:
+                boundary_ms = ms
+        if boundary_ms is not None:
+            window_lo = max(window_lo, boundary_ms + 1_200)
     window_hi = max(window_lo + 1_000, duration_ms - skip_tail_ms)
     eligible = [
         i for i, ms in enumerate(stamps_ms) if window_lo <= ms <= window_hi and i > 0

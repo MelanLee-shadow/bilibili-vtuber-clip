@@ -23,11 +23,13 @@ from .cover_emote import (
     resolve_emote_reference,
 )
 from .cover_frame_selection import (
+    DEFAULT_SKIP_HEAD_MS,
     extract_zoomed_cover_frame,
     select_expressive_cover_frame,
 )
 from .cover_generation import (
     _call_cpa_image_edit as _cover_call_cpa_image_edit,
+    _cover_screenshot_polish_prompt,
     _cpa_image_model_candidates,
     _lidousha_cover_art_direction,
     _lidousha_cover_prompt,
@@ -378,15 +380,17 @@ def _stage_lidousha_ai_cover(
         "cover_punch_allowed": punch_allowed,
         "title": title,
     }
-    # 截图直出模式（2026-07-21 Ivan 试点，"如果是这样的话我不要求CPA强制出图"）：
-    # AUTOSLICE_COVER_MODE=screenshot → talk 封面底图=表现力选帧的真实截图（脸部
-    # 放大裁切），完全不调 CPA；选帧/裁切失败或歌切 → 落回 CPA 路径。CPA 凭据
-    # 门在该模式下推迟到真正要调 CPA 时再卡。
-    cover_mode = (os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "cpa")
+    # 封面路线（2026-07-21 Ivan："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
+    # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
+    # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
+    # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
+    cover_mode = (os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "auto")
+    if cover_mode not in ("auto", "screenshot", "polish", "cpa"):
+        cover_mode = "auto"
     cover_generation["cover_mode"] = cover_mode
     base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
     api_key = os.environ.get("CPA_API_KEY", "").strip()
-    if (not base_url or not api_key) and cover_mode != "screenshot":
+    if (not base_url or not api_key) and cover_mode == "cpa":
         return _blocked_ai_cover_result(
             cover_generation,
             ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
@@ -415,10 +419,20 @@ def _stage_lidousha_ai_cover(
     frame_selection: dict[str, object] | None = None
     if not cover_ref_override.isdigit():
         srt_value = materialized_recut.get("subtitle_path")
+        # 片头跳过的权威来源=burn 阶段记录的 intro_offset_ms（片头版本轮换、
+        # 时长不一，z1-budui=5749ms 曾越过固定 skip 造成过渡假峰）；record 缺失
+        # 时由选帧器内置的切点探测兜底。
+        intro_offset = (
+            (materialized_recut.get("burned_preview") or {}).get("branding_intro") or {}
+        ).get("intro_offset_ms")
+        skip_head_ms = DEFAULT_SKIP_HEAD_MS
+        if isinstance(intro_offset, (int, float)) and intro_offset > 0:
+            skip_head_ms = max(skip_head_ms, int(intro_offset) + 1_500)
         try:
             frame_selection = select_expressive_cover_frame(
                 media_path,
                 workdir=cover_refs_dir,
+                skip_head_ms=skip_head_ms,
                 srt_path=(
                     Path(srt_value)
                     if isinstance(srt_value, str) and srt_value and Path(srt_value).is_file()
@@ -431,55 +445,14 @@ def _stage_lidousha_ai_cover(
                 "status": "FALLBACK_THUMBNAIL",
                 "detail": f"{type(exc).__name__}: {exc}",
             }
-    if cover_ref_override.isdigit():
-        ref_command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-ss",
-            f"{int(cover_ref_override) / 1000:.3f}",
-            "-i",
-            str(media_path),
-            "-vf",
-            "scale=1920:-2",
-            "-frames:v",
-            "1",
-            str(reference_path),
-        ]
-    elif frame_selection is not None:
-        ref_command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-ss",
-            f"{int(frame_selection['best_ms']) / 1000:.3f}",
-            "-i",
-            str(media_path),
-            "-vf",
-            "scale=1920:-2",
-            "-frames:v",
-            "1",
-            str(reference_path),
-        ]
-    else:
-        ref_command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(media_path),
-            "-vf",
-            "thumbnail=120,scale=1920:-2",
-            "-frames:v",
-            "1",
-            str(reference_path),
-        ]
+    ref_command = _cover_reference_command(
+        media_path=media_path,
+        reference_path=reference_path,
+        override_ms=int(cover_ref_override) if cover_ref_override.isdigit() else None,
+        selected_ms=(
+            int(frame_selection["best_ms"]) if frame_selection is not None else None
+        ),
+    )
     completed = subprocess.run(ref_command, check=False, capture_output=True, text=True)
     if completed.returncode != 0 or not reference_path.is_file():
         cover_generation["reference_command"] = ref_command
@@ -502,9 +475,15 @@ def _stage_lidousha_ai_cover(
         allow_punch=punch_allowed,
     )
 
-    # 截图直出（talk 专属）：表现力帧 → 脸部放大裁切 → 直接叠梗字，零 CPA 调用。
-    # 任何一步失败都带证据落回 CPA 路径；歌切保持 CPA 唱歌净美学。
-    if cover_mode == "screenshot" and not art_direction.is_song and frame_selection is not None:
+    # 路由：每条切片自己决定走 直出 / 截图+轻微调 / 全图重绘。
+    treatment, treatment_reason = _decide_cover_treatment(
+        cover_mode=cover_mode,
+        is_song=art_direction.is_song,
+        punch_allowed=punch_allowed,
+        frame_selection=frame_selection,
+    )
+    cover_generation["cover_treatment"] = {"treatment": treatment, "reason": treatment_reason}
+    if treatment in ("screenshot_direct", "screenshot_polish"):
         screenshot_result = _stage_screenshot_direct_cover(
             media_path=media_path,
             candidate_id=candidate_id,
@@ -514,16 +493,21 @@ def _stage_lidousha_ai_cover(
             reference_path=reference_path,
             ai_dir=ai_dir,
             covers_dir=covers_dir,
+            evidence_dir=evidence_dir,
             cover_generation=cover_generation,
+            polish=(treatment == "screenshot_polish"),
+            image_edit=image_edit,
+            base_url=base_url,
+            api_key=api_key,
         )
         if screenshot_result is not None:
             return screenshot_result
     if not base_url or not api_key:
-        # screenshot 模式落回 CPA 但凭据缺失 → 与 cpa 模式同语义地卡死。
+        # 截图路线失败落回 CPA 但凭据缺失 → 与 cpa 模式同语义地卡死。
         return _blocked_ai_cover_result(
             cover_generation,
             ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
-            "screenshot-direct cover failed and CPA_BASE_URL/CPA_API_KEY missing",
+            "screenshot cover lane failed and CPA_BASE_URL/CPA_API_KEY missing",
         )
 
     # Strong-reason emote pick (Ivan 2026-07-19): "replace" swaps the CPA
@@ -641,6 +625,73 @@ def _stage_lidousha_ai_cover(
         "cover_reference_sha256": "sha256:" + _sha256(reference_path),
     }
 
+def _cover_reference_command(
+    *,
+    media_path: Path,
+    reference_path: Path,
+    override_ms: int | None,
+    selected_ms: int | None,
+) -> list[str]:
+    """封面参考帧的 ffmpeg 命令：人工点名帧 > 表现力选帧 > thumbnail 代表帧。"""
+
+    base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    at_ms = override_ms if override_ms is not None else selected_ms
+    if at_ms is not None:
+        return base + [
+            "-ss", f"{at_ms / 1000:.3f}", "-i", str(media_path),
+            "-vf", "scale=1920:-2", "-frames:v", "1", str(reference_path),
+        ]
+    return base + [
+        "-i", str(media_path),
+        "-vf", "thumbnail=120,scale=1920:-2", "-frames:v", "1", str(reference_path),
+    ]
+
+
+_COVER_TREATMENT_SCORE_HI = 4.5
+_COVER_TREATMENT_SCORE_LO = 2.6
+
+
+def _decide_cover_treatment(
+    *,
+    cover_mode: str,
+    is_song: bool,
+    punch_allowed: bool,
+    frame_selection: Mapping[str, object] | None,
+) -> tuple[str, str]:
+    """每条切片选封面路线（2026-07-21 Ivan：哪些适合全图 CPA 重做、哪些适合截图）。
+
+    判据=表现力选帧最高分（"这条片有没有值得原样示人的真名场面"）：
+    - 歌切 / 手定标题 / 选帧失败 → cpa_redraw（唱歌净美学 / 成分不丢铁律 / 无帧可用）
+    - 强名场面（≥4.5，或 ≥3.2 且命中情绪字幕段）→ screenshot_direct：真表情就是
+      封面，重绘反而丢梗
+    - 中等瞬间（≥2.6）→ screenshot_polish：保真帧构图，CPA 只清杂物修画质
+    - 更低 → cpa_redraw：没有好瞬间，插画重做的承载力更强
+    阈值标定自 2026-07-15/19 十七条本地成片修掉片头假峰后的分数分布
+    （强：5.1-9.1；中：2.8-3.9；弱：1.9-2.1）。
+    """
+
+    if cover_mode == "cpa":
+        return "cpa_redraw", "mode=cpa (forced)"
+    if is_song:
+        return "cpa_redraw", "song keeps the clean CPA aesthetic"
+    if not punch_allowed:
+        return "cpa_redraw", "manual title keeps the illustrated cover"
+    if frame_selection is None:
+        return "cpa_redraw", "frame selection unavailable"
+    if cover_mode == "screenshot":
+        return "screenshot_direct", "mode=screenshot (forced)"
+    if cover_mode == "polish":
+        return "screenshot_polish", "mode=polish (forced)"
+    candidates = frame_selection.get("candidates") or []
+    best = float(candidates[0]["score"]) if candidates else 0.0
+    emotional = bool(candidates and candidates[0].get("emotion"))
+    if best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2):
+        return "screenshot_direct", f"strong real moment (score={best:.2f})"
+    if best >= _COVER_TREATMENT_SCORE_LO:
+        return "screenshot_polish", f"usable moment + CPA touch-up (score={best:.2f})"
+    return "cpa_redraw", f"no strong real moment (score={best:.2f})"
+
+
 def _stage_screenshot_direct_cover(
     *,
     media_path: Path,
@@ -652,11 +703,17 @@ def _stage_screenshot_direct_cover(
     ai_dir: Path,
     covers_dir: Path,
     cover_generation: dict[str, object],
+    evidence_dir: Path | None = None,
+    polish: bool = False,
+    image_edit: Callable[..., dict[str, object]] | None = None,
+    base_url: str = "",
+    api_key: str = "",
 ) -> dict[str, object] | None:
-    """截图直出封面（2026-07-21 试点）：成功返回 READY 结果，失败记证据返回 None。
+    """截图路线封面：直出或 +CPA 轻微调；成功返回 READY，失败记证据返回 None。
 
-    表现力选帧的最佳帧 → 脸部放大裁切（Ivan 批准加大占比）→ 直接叠梗字。
-    零 CPA 调用；None 让调用方按原 CPA 路径继续（fail-open 到旧行为）。
+    表现力选帧的最佳帧 → 裁切（吃掉弹幕栏/字幕带）→ [polish：CPA 逐像素保真
+    修图（清 UI 杂物+画质），失败降级直出] → 叠梗字。None 让调用方按 CPA
+    重绘路径继续（fail-open 到旧行为）。
     """
 
     try:
@@ -684,26 +741,58 @@ def _stage_screenshot_direct_cover(
                 else 0.0
             ),
         )
+        # polish：CPA 保真修图（清 UI 杂物+画质），任何失败降级为直出。
+        overlay_source = screenshot_base
+        method = "screenshot_direct"
+        selected_model = "none"
+        attempted_models: list[str] = []
+        if polish and image_edit is not None and base_url and api_key and evidence_dir is not None:
+            polished_path = ai_dir / f"{candidate_id}.screenshot-polished.png"
+            cpa_result = image_edit(
+                base_url=base_url,
+                api_key=api_key,
+                reference_path=screenshot_base,
+                output_path=polished_path,
+                prompt=_cover_screenshot_polish_prompt(),
+                request_path=evidence_dir / f"{candidate_id}.cover-polish-request.redacted.json",
+                response_path=evidence_dir / f"{candidate_id}.cover-polish-response.redacted.json",
+            )
+            attempted_models = list(cpa_result.get("attempted_models") or [])
+            if cpa_result.get("status") == "AI_BACKGROUND_READY" and polished_path.is_file():
+                overlay_source = polished_path
+                method = "screenshot_polish"
+                selected_model = str(cpa_result.get("selected_model") or "cpa")
+                cover_generation["screenshot_polish"] = {"status": "POLISHED"}
+            else:
+                cover_generation["screenshot_polish"] = {
+                    "status": "DEGRADED_TO_DIRECT",
+                    "detail": str(cpa_result.get("detail") or cpa_result.get("status") or "polish failed"),
+                }
+        elif polish:
+            cover_generation["screenshot_polish"] = {
+                "status": "DEGRADED_TO_DIRECT",
+                "detail": "CPA credentials/adapter unavailable",
+            }
         final_cover_path = covers_dir / f"{candidate_id}.ai-title.cover.png"
         overlay = _overlay_lidousha_cover_title(
-            screenshot_base, final_cover_path, cover_text=cover_text, art_direction=art_direction
+            overlay_source, final_cover_path, cover_text=cover_text, art_direction=art_direction
         )
         cover_generation["art_direction"] = asdict(art_direction)
         if art_direction.emote_id:
             cover_generation["emote"] = {"status": "IGNORED_SCREENSHOT_MODE"}
         cover_generation.update(
             {
-                "method": "screenshot_direct",
-                "model": "none",
-                "image_gen_model": "none",
+                "method": method,
+                "model": selected_model,
+                "image_gen_model": selected_model,
                 "screenshot_frame": crop_evidence,
                 "reference_image": str(reference_path),
                 "reference_sha256": "sha256:" + _sha256(reference_path),
-                "ai_background": str(screenshot_base),
-                "ai_background_sha256": "sha256:" + _sha256(screenshot_base),
+                "ai_background": str(overlay_source),
+                "ai_background_sha256": "sha256:" + _sha256(overlay_source),
                 "final_cover": str(final_cover_path),
                 "final_cover_sha256": "sha256:" + _sha256(final_cover_path),
-                "attempted_models": [],
+                "attempted_models": attempted_models,
                 **overlay,
             }
         )
@@ -713,7 +802,7 @@ def _stage_screenshot_direct_cover(
             "cover_path": str(final_cover_path),
             "cover_generation": cover_generation,
             "cover_sha256": "sha256:" + _sha256(final_cover_path),
-            "ai_background_sha256": "sha256:" + _sha256(screenshot_base),
+            "ai_background_sha256": "sha256:" + _sha256(overlay_source),
             "cover_reference_sha256": "sha256:" + _sha256(reference_path),
         }
     except Exception as exc:
