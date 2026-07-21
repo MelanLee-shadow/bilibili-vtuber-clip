@@ -255,22 +255,38 @@ def _lidousha_is_song_title(title: str) -> bool:
 
 
 _COVER_PUNCH_CLAUSE_RX = re.compile(r"[^，,。；;：:…！!？?\n]+[！!？?]")
+_COVER_PUNCH_QUOTED_RX = re.compile(r"[“‘「『]([^”’」』]{4,12})[”’」』]")
 
 
 def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
-    """Deterministic ecosystem-style punch fallback: the last short ！/？ clause.
+    """Deterministic ecosystem-style punch fallback chain.
 
-    2026-07-20 调研共识：高播放封面字=短梗字。确定性兜底只在文案里有强信号
-    （！/？收尾、≤12 字的完整分句，取最后一个=点睛尾惯例）时出手；否则返回
-    ()，叠字层回退整段 cover_text（fail-open，绝不比旧行为差）。
+    2026-07-20 调研共识：高播放封面字=短梗字。2026-07-21 二期实测 LLM 对
+    cover_punch 过度保守（8 条里 5 条给 null），兜底从单一「！/？短句」扩成
+    四级链——①最后一个 ≤12 字 ！/？ 分句（点睛尾）；②引号内 4-12 字梗词
+    （"为礼墨做0.6"/"难绷小视频"这类通常就是本条的梗）；③最后一个 4-12 字
+    普通分句；④词库钩子词。全空才返回 ()（screenshot 路线届时回落 CPA 重绘，
+    绝不把整题叠上未为文字区构图的截图）。
     """
 
-    matches = [
-        m.group().strip()
-        for m in _COVER_PUNCH_CLAUSE_RX.finditer(cover_text.replace("\n", "，"))
+    flat = cover_text.replace("\n", "，")
+    bang_clauses = [
+        m.group().strip() for m in _COVER_PUNCH_CLAUSE_RX.finditer(flat)
     ]
-    matches = [m for m in matches if 3 <= len(m) <= 12]
-    return (matches[-1],) if matches else ()
+    bang_clauses = [c for c in bang_clauses if 3 <= len(c) <= 12]
+    if bang_clauses:
+        return (bang_clauses[-1],)
+    quoted = _COVER_PUNCH_QUOTED_RX.findall(flat)
+    if quoted:
+        return (quoted[-1].strip(),)
+    clauses = [c.strip() for c in re.split(r"[，,。；;：:…！!？?]", flat) if c.strip()]
+    for clause in reversed(clauses):
+        if 4 <= len(clause) <= 12:
+            return (clause,)
+    hook = _cover_default_hook_word(cover_text)
+    if hook and "\n" not in hook and 2 <= len(hook) <= 12:
+        return (hook,)
+    return ()
 
 
 def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
@@ -413,7 +429,8 @@ def _cover_art_direction_prompt(
             "（参考同类高播放封面：'什么是直女''给我整无语了''我是侄女啊'这种）。\n"
             "  硬约束：main 必须是封面文案里的**逐字连续片段**（不加/不减/不改字，可含标点），2-12 字；"
             "sub 可选（null 或第二行 2-12 字小字补语境，同样必须是文案原文片段）。"
-            "文案里确实挑不出有梗短句时 main 给 null（系统回退整段文案）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
+            "**几乎永远都选得出来**——按优先级找：她的原话感叹句＞引号里的梗词＞最后一个短分句；"
+            "只有文案完全不存在 2-12 字连续片段时才允许 main 给 null（极罕见）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
         )
         punch_output_field = ',"cover_punch":null|{"main":"...","sub":null|"..."}'
     return (

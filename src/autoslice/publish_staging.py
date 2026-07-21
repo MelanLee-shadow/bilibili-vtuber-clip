@@ -716,6 +716,14 @@ def _stage_screenshot_direct_cover(
     重绘路径继续（fail-open 到旧行为）。
     """
 
+    # 截图路线必须有梗字：整条标题叠在未为文字区构图的截图上是最差形态
+    # （2026-07-21 二期实测）。四级兜底后仍无 punch → 交回 CPA 重绘路线。
+    if not art_direction.cover_punch:
+        cover_generation["screenshot_direct"] = {
+            "status": "FALLBACK_TO_CPA",
+            "detail": "no cover punch available for the screenshot lane",
+        }
+        return None
     try:
         screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
         # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版

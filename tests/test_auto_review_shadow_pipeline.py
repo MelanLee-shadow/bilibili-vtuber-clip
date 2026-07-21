@@ -4156,10 +4156,15 @@ _PUNCH_TEXT = "精心设计MC环节想让kmx介绍自己，是奶P！才，才�
 def test_cover_punch_deterministic_baseline_and_gates():
     from src.autoslice import cover_generation
 
-    # 确定性兜底：取最后一个 ≤12 字的 ！/？ 完整分句（点睛尾惯例）。
+    # 确定性兜底链①：取最后一个 ≤12 字的 ！/？ 完整分句（点睛尾惯例）。
     assert cover_generation._cover_default_punch(_PUNCH_TEXT) == ("才不是熊猫呢！",)
-    # 无强信号（没有 ！/？ 短分句）→ () → 整段文案旧行为。
-    assert cover_generation._cover_default_punch("温情李姐下播后说了很多心里话") == ()
+    # 链②：引号内 4-12 字梗词（2026-07-21 二期：LLM 保守给 null 的实测案例）。
+    assert cover_generation._cover_default_punch("抽卡惩罚被弹幕定成“为礼墨做0.6”") == ("为礼墨做0.6",)
+    # 链③：最后一个 4-12 字普通分句（引号词太短时跳过链②）。
+    assert cover_generation._cover_default_punch("‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍") == ("小李把女主播分了个遍",)
+    assert cover_generation._cover_default_punch("游戏苦手想通为何接到商单\n用豆沙方式攻略妹妹") == ("用豆沙方式攻略妹妹",)
+    # 全链无命中 → () （单一超长分句、无引号、无词库钩子）。
+    assert cover_generation._cover_default_punch("温情李姐下播后说了很多很多的心里话啊") == ()
 
     # allow_punch 默认关（老调用路径字节不变）。
     off = shadow_pipeline._lidousha_cover_art_direction(
