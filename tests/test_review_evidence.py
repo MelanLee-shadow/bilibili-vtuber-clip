@@ -9,7 +9,7 @@ def good_provenance():
         manifest_present=True,
         provider="agy",
         agy_rc=0,
-        model="Gemini 3.5 Flash (Low)",
+        model="Gemini 3.6 Flash (Low)",
         provider_fallback_used=False,
     )
 

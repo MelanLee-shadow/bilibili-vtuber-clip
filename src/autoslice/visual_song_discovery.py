@@ -13,7 +13,7 @@ from typing import Callable, Mapping, Sequence
 
 VISUAL_SONG_SCHEMA_VERSION = "visual-song-inventory.v1"
 VISUAL_SONG_PROMPT_VERSION = "lidousha-numbered-song-list.v1"
-DEFAULT_MODEL = "Gemini 3.5 Flash (High)"
+DEFAULT_MODEL = "Gemini 3.6 Flash (High)"
 _RESULT_KEYS = {"song_title", "start_ms", "end_ms", "evidence", "confidence"}
 
 

@@ -4,7 +4,7 @@ from src.autoslice.style_profile import ManualStyleProfile, apply_style_profile,
 
 
 def good_provenance():
-    return JingtingProvenance(True, "agy", 0, "Gemini 3.5 Flash (Low)", False)
+    return JingtingProvenance(True, "agy", 0, "Gemini 3.6 Flash (Low)", False)
 
 
 def evidence(**overrides):

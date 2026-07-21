@@ -33,7 +33,7 @@ from src.autoslice import gemini_backup_policy
 from src.autoslice.llm_client import extract_json_object
 
 
-ENTITY_AUDIO_MODEL = "Gemini 3.5 Flash (High)"
+ENTITY_AUDIO_MODEL = "Gemini 3.6 Flash (High)"
 ENTITY_AUDIO_TIMEOUT = "10m"
 
 # Gemini API 直连兜底（Ivan 2026-07-14：付费 API key 当然能裁决音频——AGY
@@ -42,7 +42,7 @@ ENTITY_AUDIO_TIMEOUT = "10m"
 # 帽/入帐），key 只存在于内存 header。
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
-ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.5-flash"
+ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
 ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
 
 

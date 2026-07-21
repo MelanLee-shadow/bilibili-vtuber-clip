@@ -36,7 +36,7 @@ def good_jingting_provenance(**overrides):
         "manifest_present": True,
         "provider": "agy",
         "agy_rc": 0,
-        "model": "Gemini 3.5 Flash (Low)",
+        "model": "Gemini 3.6 Flash (Low)",
         "provider_fallback_used": False,
     }
     data.update(overrides)
@@ -195,7 +195,7 @@ def test_strict_gemini_api_fallback_provenance_is_accepted():
                 provider="gemini_api",
                 agy_rc=None,
                 provider_fallback_used=True,
-                model="gemini-3.5-flash",
+                model="gemini-3.6-flash",
             ),
         )
     )
@@ -435,7 +435,7 @@ def test_auto_review_manifest_serializes_provenance_checks_for_failures():
     data = manifest.to_dict()
 
     assert data["metadata"]["jingting_provenance"]["provider"] == "gemini"
-    assert data["metadata"]["jingting_provenance"]["model"] == "Gemini 3.5 Flash (Low)"
+    assert data["metadata"]["jingting_provenance"]["model"] == "Gemini 3.6 Flash (Low)"
     failed_codes = [check["code"] for check in data["checks"] if not check["pass"]]
     assert "JINGTING_PROVIDER_AGY" in failed_codes
     assert "JINGTING_PROVIDER_FALLBACK_NOT_USED" in failed_codes

@@ -893,7 +893,7 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
 
 def song_selector_env(date: str) -> dict[str, str]:
     env = child_env_for_date(date)
-    env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.5 Flash (High)")
+    env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.6 Flash (High)")
     # Full-song source-context inspection is materially heavier than ordinary
     # talk windows.  A 269 s real 《怎么办》 run wrote its valid output.srt only
     # near the generic 15 minute deadline and was killed while finalizing.

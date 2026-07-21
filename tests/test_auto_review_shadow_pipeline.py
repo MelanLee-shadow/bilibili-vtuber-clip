@@ -102,7 +102,7 @@ def _write_lyrics_alignment_proof(root: Path, *, stem: str = "travel-meaning") -
     return {
         "status": "READY",
         "provider": "agy",
-        "model": "Gemini 3.5 Flash (High)",
+        "model": "Gemini 3.6 Flash (High)",
         "source": "external_lrc_plus_chunked_gemini35_spectrogram",
         "external_lrc": "kugeci://travel-meaning",
         "chunked_probe_count": 3,
@@ -481,7 +481,7 @@ def test_review_required_candidate_blocks_with_mutually_exclusive_markers(tmp_pa
         jingting_manifest={
             "provider": "agy",
             "agy_rc": 0,
-            "model": "Gemini 3.5 Flash (Low)",
+            "model": "Gemini 3.6 Flash (Low)",
             "provider_fallback_used": False,
         },
         review_required={"release_ready": False, "findings": ["missing payoff"]},
@@ -513,7 +513,7 @@ def test_auto_upload_candidate_only_writes_shadow_would_upload_marker_and_no_upl
         jingting_manifest={
             "provider": "agy",
             "agy_rc": 0,
-            "model": "Gemini 3.5 Flash (Low)",
+            "model": "Gemini 3.6 Flash (Low)",
             "provider_fallback_used": False,
         },
         review_required={"release_ready": True, "findings": []},
@@ -560,7 +560,7 @@ def test_missing_required_artifact_hash_blocks_auto_upload_and_skips_would_uploa
         jingting_manifest={
             "provider": "agy",
             "agy_rc": 0,
-            "model": "Gemini 3.5 Flash (Low)",
+            "model": "Gemini 3.6 Flash (Low)",
             "provider_fallback_used": False,
         },
         review_required={"release_ready": True, "findings": []},
@@ -605,7 +605,7 @@ def test_missing_required_artifact_hash_overrides_retry_to_block_and_skips_retry
         jingting_manifest={
             "provider": "agy",
             "agy_rc": 0,
-            "model": "Gemini 3.5 Flash (Low)",
+            "model": "Gemini 3.6 Flash (Low)",
             "provider_fallback_used": False,
         },
         review_required={"release_ready": True, "findings": []},
@@ -668,7 +668,7 @@ def test_live_source_anchor_job_is_planned_and_recorded(tmp_path, monkeypatch):
         source_context_job={"candidate_id": "anchor-planned", "anchor_start_ms": 120_000, "anchor_end_ms": 150_000, "cpa_optional": True},
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -725,7 +725,7 @@ def test_planned_upstream_song_keeps_guard_and_never_materializes_as_talk(tmp_pa
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (High)",
+            model="Gemini 3.6 Flash (High)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -786,7 +786,7 @@ def test_live_source_song_window_blocks_without_full_song_proof(tmp_path, monkey
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -870,7 +870,7 @@ def test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignmen
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (High)",
+            model="Gemini 3.6 Flash (High)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -1005,7 +1005,7 @@ def _run_song_ready_shadow_with_lyrics_alignment(
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (High)",
+            model="Gemini 3.6 Flash (High)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -1245,7 +1245,7 @@ def test_background_mode_from_real_song_repair_cannot_fall_back_to_talk_or_mater
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (High)",
+            model="Gemini 3.6 Flash (High)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -1788,7 +1788,7 @@ def test_live_source_dialogue_boundary_auto_recuts_and_records_source_context_me
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -1886,7 +1886,7 @@ def test_live_source_requires_cpa_semantic_response_by_default(tmp_path, monkeyp
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -1971,7 +1971,7 @@ def test_live_source_applies_cpa_semantic_review_and_blocks_terminology_failure(
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -2017,7 +2017,7 @@ def test_live_source_response_without_request_artifact_fails_closed(tmp_path, mo
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -2074,7 +2074,7 @@ def test_live_source_closed_boundary_clears_content_open_loop_false_positive(tmp
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -2140,7 +2140,7 @@ def test_live_source_auto_upload_candidate_materializes_preview_render_qa(tmp_pa
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -2267,7 +2267,7 @@ def test_live_source_materialized_recut_backfills_actual_cut_error_from_render_q
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (Low)",
+            model="Gemini 3.6 Flash (Low)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -3061,7 +3061,7 @@ def test_shadow_pipeline_fails_closed_when_preexisting_marker_exists(tmp_path, m
         jingting_manifest={
             "provider": "agy",
             "agy_rc": 0,
-            "model": "Gemini 3.5 Flash (Low)",
+            "model": "Gemini 3.6 Flash (Low)",
             "provider_fallback_used": False,
         },
         review_required={"release_ready": True, "findings": []},
@@ -3151,7 +3151,7 @@ def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path, audio_provid
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (High)",
+            model="Gemini 3.6 Flash (High)",
             agy_rc=0,
             provider_fallback_used=False,
         ),
@@ -3283,7 +3283,7 @@ def test_live_source_song_repair_failure_records_attempts_then_blocks(tmp_path):
         },
         agy_result=shadow_pipeline.AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (High)",
+            model="Gemini 3.6 Flash (High)",
             agy_rc=0,
             provider_fallback_used=False,
         ),

@@ -343,7 +343,7 @@ def test_agy_quota_falls_back_to_gemini_api_free_key(tmp_path, monkeypatch):
     assert verdict["status"] == "RESOLVED"
     assert verdict["canonical_entity"] == "梦限大"
     assert verdict["provider"] == "gemini_api"
-    assert verdict["model"] == "gemini-3.5-flash"
+    assert verdict["model"] == "gemini-3.6-flash"
     assert verdict["key_tier"] == "free"
     assert seen_requests[0].headers.get("X-goog-api-key") == "free-key-1"
     job_dir = tmp_path / "out/entity_verdicts" / ("a" * 20)

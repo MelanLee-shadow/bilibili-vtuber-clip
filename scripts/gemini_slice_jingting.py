@@ -51,11 +51,11 @@ VIDEOS = os.environ.get("BILIVE_VIDEOS_ROOT") or (
     HOST_VIDEOS if os.path.isdir(HOST_VIDEOS) else CONTAINER_VIDEOS
 )
 
-GEMINI_MODEL = os.environ.get("JINGTING_GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_MODEL = os.environ.get("JINGTING_GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 AGY_BIN = os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
-AGY_MODEL = os.environ.get("AGY_MODEL", "Gemini 3.5 Flash (Low)")
+AGY_MODEL = os.environ.get("AGY_MODEL", "Gemini 3.6 Flash (Low)")
 AGY_TIMEOUT = os.environ.get("AGY_PRINT_TIMEOUT", "15m")
 JINGTING_JOB_ROOT = os.environ.get("JINGTING_JOB_ROOT", "/opt/bilive/jingting_jobs")
 

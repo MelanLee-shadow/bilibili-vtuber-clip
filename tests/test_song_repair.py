@@ -729,7 +729,7 @@ def _write_fake_audio_alignment_run(
                 "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
                 "candidate_id": candidate_id,
                 "provider": "agy",
-                "model": "Gemini 3.5 Flash (High)",
+                "model": "Gemini 3.6 Flash (High)",
                 "agy_rc": 0,
                 "provider_fallback_used": False,
                 "sandbox": True,
@@ -769,7 +769,7 @@ def _write_fake_audio_alignment_run(
     return AudioLrcAlignmentRun(
         payload=payload,
         provider="agy",
-        model="Gemini 3.5 Flash (High)",
+        model="Gemini 3.6 Flash (High)",
         rc=0,
         provider_fallback_used=False,
         source_origin_path=str(source.resolve()),

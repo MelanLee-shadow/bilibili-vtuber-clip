@@ -8,7 +8,7 @@ set -euo pipefail
 LOCAL_MEDIA="$1"
 OUT_SRT="$2"
 OUT_NOTES="$3"
-AGY_MODEL="${AGY_MODEL:-Gemini 3.5 Flash (High)}"
+AGY_MODEL="${AGY_MODEL:-Gemini 3.6 Flash (High)}"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 JOB_DIR="/opt/bilive/livesong_jobs/transcribe-${STAMP}"

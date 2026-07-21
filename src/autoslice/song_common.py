@@ -62,9 +62,9 @@ AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v5"
 AGY_AUDIO_LRC_RUN_SCHEMA_VERSION = "agy-audio-lrc-run.v3"
 AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY = "canonical-lrc-by-exact-index.v1"
 AGY_AUDIO_LRC_PROVIDER = "agy"
-AGY_AUDIO_LRC_MODEL = "Gemini 3.5 Flash (High)"
+AGY_AUDIO_LRC_MODEL = "Gemini 3.6 Flash (High)"
 GEMINI_API_AUDIO_LRC_PROVIDER = "gemini_api"
-GEMINI_API_AUDIO_LRC_MODEL = "gemini-3.5-flash"
+GEMINI_API_AUDIO_LRC_MODEL = "gemini-3.6-flash"
 AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES = frozenset(
     {
         "AGY_UNAVAILABLE",

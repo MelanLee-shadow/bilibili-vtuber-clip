@@ -96,7 +96,7 @@ def _build_ssh_agy_transcribe_runner(
     from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
     from src.autoslice.source_context_executor import AgyRunnerError
 
-    model = os.environ.get("AGY_TRANSCRIBE_MODEL", "Gemini 3.5 Flash (High)")
+    model = os.environ.get("AGY_TRANSCRIBE_MODEL", "Gemini 3.6 Flash (High)")
     poll_deadline_seconds = 1500
     poll_interval_seconds = 20
     attempts = 2

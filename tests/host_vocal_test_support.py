@@ -195,7 +195,7 @@ def bind_ready_live_performance_report(
                 "api_audio_duration_ms": last_ms + 10_000,
             }
         )
-    model = "gemini-3.5-flash" if is_gemini_api else "Gemini 3.5 Flash (High)"
+    model = "gemini-3.6-flash" if is_gemini_api else "Gemini 3.6 Flash (High)"
     configured_key_count = 3 if paid_backup else 2 if is_gemini_api else None
     accepted_key_ordinal = 4 if paid_backup else 2 if is_gemini_api else None
     paid_backup_policy = (
@@ -425,7 +425,7 @@ def make_ready_audio_alignment_run(
                 "api_audio_duration_ms": source_duration_ms,
             }
         )
-    model = "gemini-3.5-flash" if is_gemini_api else "Gemini 3.5 Flash (High)"
+    model = "gemini-3.6-flash" if is_gemini_api else "Gemini 3.6 Flash (High)"
     agy_rc = 1 if is_gemini_api else 0
     agy_failure_category = "AGY_QUOTA_EXHAUSTED" if is_gemini_api else None
     configured_key_count = 3 if paid_backup else 2 if is_gemini_api else None

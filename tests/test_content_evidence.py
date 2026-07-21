@@ -4,7 +4,7 @@ from src.autoslice.review_evidence import SourceCue, to_candidate_review
 
 
 def good_provenance():
-    return JingtingProvenance(True, "agy", 0, "Gemini 3.5 Flash (Low)", False)
+    return JingtingProvenance(True, "agy", 0, "Gemini 3.6 Flash (Low)", False)
 
 
 def cue(cue_id, start_s, end_s, text, kind="speech"):

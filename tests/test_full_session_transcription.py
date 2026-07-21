@@ -17,7 +17,7 @@ def test_unbound_direct_agy_refinement_is_not_a_fidelity_witness():
     refined = "1\n00:00:00,000 --> 00:00:01,000\n李豆沙\n"
     result = AgyExecutionResult(
         provider="agy",
-        model="Gemini 3.5 Flash (High)",
+        model="Gemini 3.6 Flash (High)",
         agy_rc=0,
         provider_fallback_used=False,
         provider_request_id="agy-job-1",
@@ -37,7 +37,7 @@ def test_hash_bound_direct_agy_is_an_independent_fidelity_witness(tmp_path):
     media.write_bytes(b"bound media")
     result = AgyExecutionResult(
         provider="agy",
-        model="Gemini 3.5 Flash (High)",
+        model="Gemini 3.6 Flash (High)",
         agy_rc=0,
         provider_fallback_used=False,
         provider_request_id="agy-job-bound-direct",
@@ -86,7 +86,7 @@ def test_api_fallback_refinement_cannot_witness_its_own_rewrite():
     refined = "1\n00:00:00,000 --> 00:00:01,000\n让礼墨线下叫kmx\n"
     result = AgyExecutionResult(
         provider="agy",
-        model="Gemini 3.5 Flash (High)",
+        model="Gemini 3.6 Flash (High)",
         agy_rc=0,
         provider_fallback_used=True,
         provider_request_id="agy-job-2:api_fb=1",
@@ -135,7 +135,7 @@ def test_hash_bound_api_fallback_is_only_a_context_bound_audio_witness(tmp_path)
     media.write_bytes(b"bound media")
     result = AgyExecutionResult(
         provider="agy",
-        model="Gemini 3.5 Flash (Low)",
+        model="Gemini 3.6 Flash (Low)",
         agy_rc=0,
         provider_fallback_used=True,
         provider_request_id="agy-job-bound:api_fb=1",
@@ -212,7 +212,7 @@ def test_api_fallback_rewrite_is_rejected_by_aggregate_transcriber(
         output_path.write_text(fallback_refined, encoding="utf-8")
         return AgyExecutionResult(
             provider="agy",
-            model="Gemini 3.5 Flash (High)",
+            model="Gemini 3.6 Flash (High)",
             agy_rc=0,
             provider_fallback_used=True,
             provider_request_id="agy-job-3:api_fb=1",

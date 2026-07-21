@@ -235,7 +235,7 @@ def test_strict_gemini_api_fallback_is_accepted_source_context_provider(tmp_path
         output.write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
         return AgyExecutionResult(
             provider="gemini_api",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             agy_rc=None,
             provider_fallback_used=True,
             provider_request_id="fallback-job",
