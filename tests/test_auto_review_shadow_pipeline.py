@@ -3338,9 +3338,9 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     def fake_title_llm(prompt: str) -> str:
         assert "价格有点贵哈哈哈" in prompt
         # Prompt freeze includes the title_style asset; 2026-07-20 标题风格
-        # 大修（Ivan 手定语料+生态调研回灌、长度门 30→48）后哈希随之更新。
+        # 大修与 2026-07-21 遮字体/题材规则追加后哈希随之更新（资产变即更新）。
         assert hashlib.sha256(prompt.encode()).hexdigest() == (
-            "14f84a70bc9e45cf0861b09d935711821f3d39a7d7b6e3db560f8d0227ef8aef"
+            "fa4ed24f4aa032602f3290b2ce531c0e1b9c5a3f28d3ab8ae794d97220907c21"
         )
         return '{"title": "主播吐槽游戏价格贵，笑场三连"}'
 
@@ -4255,6 +4255,70 @@ def test_overlay_renders_punch_instead_of_full_text(tmp_path):
     assert "精心设计" not in rendered
     # 梗字必须渲染得大（整段文案时代 banner 里 30+ 字会被压小）。
     assert meta["font_size"] >= 120
+
+
+def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypatch):
+    """AUTOSLICE_COVER_MODE=screenshot：表现力帧+梗字直出，全程零 CPA 调用。"""
+
+    from PIL import Image
+
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.delenv("CPA_BASE_URL", raising=False)
+    monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.delenv("AUTOSLICE_COVER_REF_MS", raising=False)
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "screenshot")
+    media = _write_synthetic_performance_clip(tmp_path)
+
+    def forbidden_image_edit(**_kwargs):
+        raise AssertionError("screenshot mode must not call CPA image edit")
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="shot-1",
+        title="【李豆沙】才，才不是熊猫呢！小李被kmx用两个字点名",
+        cover_text="才，才不是熊猫呢！小李被kmx用两个字点名",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=forbidden_image_edit,
+        punch_allowed=True,
+    )
+    assert result["status"] == "AI_COVER_READY", result
+    generation = result["cover_generation"]
+    assert generation["cover_mode"] == "screenshot"
+    assert generation["method"] == "screenshot_direct"
+    assert generation["cover_text_mode"] == "punch"
+    assert generation["reference_selection"]["status"] == "SELECTED"
+    assert Path(str(result["cover_path"])).is_file()
+    assert Image.open(str(result["cover_path"])).size == (1920, 1080)
+
+
+def test_screenshot_mode_song_falls_back_to_cpa_gate(tmp_path, monkeypatch):
+    """歌切在 screenshot 模式下仍走 CPA；凭据缺失 → 同语义卡死。"""
+
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.delenv("CPA_BASE_URL", raising=False)
+    monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "screenshot")
+    media = _write_synthetic_performance_clip(tmp_path)
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="song-shot",
+        title="【李豆沙】豆沙歌，《暖暖》",
+        cover_text="《暖暖》",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=lambda **kwargs: {"status": "NEVER"},
+        punch_allowed=False,
+    )
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert "CPA_CREDENTIALS_MISSING" in result["reason_codes"]
 
 
 def test_stage_publish_draft_gates_punch_by_title_authority(tmp_path):

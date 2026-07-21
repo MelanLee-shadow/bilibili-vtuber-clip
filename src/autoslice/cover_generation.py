@@ -745,24 +745,29 @@ def _lidousha_cover_prompt(
         "thumbnails crop the outer ~13% of the width on EACH side, so place nothing important (face, hands, key props) "
         "in the far-left or far-right edges; those edges may hold only background. "
     )
+    # 2026-07-21 Ivan 批准加大脸部占比（B站 20万+ 播放封面共性：脸占画面 50-90%）：
+    # talk 三版式从 chest-up 半身收紧到 head-and-shoulders 特写，脸≈画面高 1/3+。
     layout = art_direction.layout
     if layout == "left-split":
         composition = (
-            "COMPOSITION: draw her as a LARGE chest-up bust filling the LEFT ~55% of the frame, close to the camera, "
-            "big and expressive, with a clean white sticker-style outline so she pops off the background. "
+            "COMPOSITION: draw her as a VERY LARGE head-and-shoulders CLOSE-UP filling the LEFT ~55% of the frame — "
+            "camera close, her FACE alone spans roughly a THIRD of the frame height, bold and expressive, "
+            "with a clean white sticker-style outline so she pops off the background. "
             f"The RIGHT ~45% is an empty graphic zone reserved for a title (keep her body out of it): fill it and the "
             f"whole frame with {background}. Minimal empty space, high energy. "
         )
     elif layout == "right-split":
         composition = (
-            "COMPOSITION: draw her as a LARGE chest-up bust filling the RIGHT ~55% of the frame, close to the camera, "
-            "big and expressive, with a clean white sticker-style outline so she pops off the background. "
+            "COMPOSITION: draw her as a VERY LARGE head-and-shoulders CLOSE-UP filling the RIGHT ~55% of the frame — "
+            "camera close, her FACE alone spans roughly a THIRD of the frame height, bold and expressive, "
+            "with a clean white sticker-style outline so she pops off the background. "
             f"The LEFT ~45% is an empty graphic zone reserved for a title (keep her body out of it): fill it and the "
             f"whole frame with {background}. Minimal empty space, high energy. "
         )
     elif layout == "banner":
         composition = (
-            "COMPOSITION: place her as a LARGE chest-up bust in the LOWER-CENTER, head around the middle of the frame, "
+            "COMPOSITION: place her as a VERY LARGE head-and-shoulders CLOSE-UP in the LOWER-CENTER — camera close, "
+            "her FACE alone spans roughly a THIRD of the frame height, "
             "with a clean white sticker outline. Keep the TOP ~40% a clear vibrant band reserved for a big title. "
             f"Fill the whole frame with {background}. Minimal empty space. "
         )

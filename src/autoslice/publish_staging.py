@@ -22,6 +22,10 @@ from .cover_emote import (
     load_emote_library,
     resolve_emote_reference,
 )
+from .cover_frame_selection import (
+    extract_zoomed_cover_frame,
+    select_expressive_cover_frame,
+)
 from .cover_generation import (
     _call_cpa_image_edit as _cover_call_cpa_image_edit,
     _cpa_image_model_candidates,
@@ -374,9 +378,15 @@ def _stage_lidousha_ai_cover(
         "cover_punch_allowed": punch_allowed,
         "title": title,
     }
+    # 截图直出模式（2026-07-21 Ivan 试点，"如果是这样的话我不要求CPA强制出图"）：
+    # AUTOSLICE_COVER_MODE=screenshot → talk 封面底图=表现力选帧的真实截图（脸部
+    # 放大裁切），完全不调 CPA；选帧/裁切失败或歌切 → 落回 CPA 路径。CPA 凭据
+    # 门在该模式下推迟到真正要调 CPA 时再卡。
+    cover_mode = (os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "cpa")
+    cover_generation["cover_mode"] = cover_mode
     base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
     api_key = os.environ.get("CPA_API_KEY", "").strip()
-    if not base_url or not api_key:
+    if (not base_url or not api_key) and cover_mode != "screenshot":
         return _blocked_ai_cover_result(
             cover_generation,
             ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
@@ -399,8 +409,28 @@ def _stage_lidousha_ai_cover(
 
     reference_path = cover_refs_dir / f"{candidate_id}.cover-ref.png"
     # 受监督重产时可指定封面参考帧（内容时间轴毫秒，Ivan 点名画面用）；
-    # 未设置则维持 thumbnail 自动代表帧。
+    # 未设置则先跑表现力选帧（2026-07-21：动作能量×人声响度×字幕情绪×清晰度，
+    # 跳过片头/结尾），失败才落回 thumbnail 代表帧。
     cover_ref_override = os.environ.get("AUTOSLICE_COVER_REF_MS", "").strip()
+    frame_selection: dict[str, object] | None = None
+    if not cover_ref_override.isdigit():
+        srt_value = materialized_recut.get("subtitle_path")
+        try:
+            frame_selection = select_expressive_cover_frame(
+                media_path,
+                workdir=cover_refs_dir,
+                srt_path=(
+                    Path(srt_value)
+                    if isinstance(srt_value, str) and srt_value and Path(srt_value).is_file()
+                    else None
+                ),
+            )
+            cover_generation["reference_selection"] = frame_selection
+        except Exception as exc:
+            cover_generation["reference_selection"] = {
+                "status": "FALLBACK_THUMBNAIL",
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
     if cover_ref_override.isdigit():
         ref_command = [
             "ffmpeg",
@@ -410,6 +440,23 @@ def _stage_lidousha_ai_cover(
             "-y",
             "-ss",
             f"{int(cover_ref_override) / 1000:.3f}",
+            "-i",
+            str(media_path),
+            "-vf",
+            "scale=1920:-2",
+            "-frames:v",
+            "1",
+            str(reference_path),
+        ]
+    elif frame_selection is not None:
+        ref_command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{int(frame_selection['best_ms']) / 1000:.3f}",
             "-i",
             str(media_path),
             "-vf",
@@ -454,6 +501,30 @@ def _stage_lidousha_ai_cover(
         emote_library=emote_library,
         allow_punch=punch_allowed,
     )
+
+    # 截图直出（talk 专属）：表现力帧 → 脸部放大裁切 → 直接叠梗字，零 CPA 调用。
+    # 任何一步失败都带证据落回 CPA 路径；歌切保持 CPA 唱歌净美学。
+    if cover_mode == "screenshot" and not art_direction.is_song and frame_selection is not None:
+        screenshot_result = _stage_screenshot_direct_cover(
+            media_path=media_path,
+            candidate_id=candidate_id,
+            cover_text=cover_text,
+            art_direction=art_direction,
+            frame_selection=frame_selection,
+            reference_path=reference_path,
+            ai_dir=ai_dir,
+            covers_dir=covers_dir,
+            cover_generation=cover_generation,
+        )
+        if screenshot_result is not None:
+            return screenshot_result
+    if not base_url or not api_key:
+        # screenshot 模式落回 CPA 但凭据缺失 → 与 cpa 模式同语义地卡死。
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
+            "screenshot-direct cover failed and CPA_BASE_URL/CPA_API_KEY missing",
+        )
 
     # Strong-reason emote pick (Ivan 2026-07-19): "replace" swaps the CPA
     # reference from the live frame to the official sticker (subject swap,
@@ -569,6 +640,89 @@ def _stage_lidousha_ai_cover(
         "ai_background_sha256": "sha256:" + _sha256(ai_background_path),
         "cover_reference_sha256": "sha256:" + _sha256(reference_path),
     }
+
+def _stage_screenshot_direct_cover(
+    *,
+    media_path: Path,
+    candidate_id: str,
+    cover_text: str,
+    art_direction,
+    frame_selection: Mapping[str, object],
+    reference_path: Path,
+    ai_dir: Path,
+    covers_dir: Path,
+    cover_generation: dict[str, object],
+) -> dict[str, object] | None:
+    """截图直出封面（2026-07-21 试点）：成功返回 READY 结果，失败记证据返回 None。
+
+    表现力选帧的最佳帧 → 脸部放大裁切（Ivan 批准加大占比）→ 直接叠梗字。
+    零 CPA 调用；None 让调用方按原 CPA 路径继续（fail-open 到旧行为）。
+    """
+
+    try:
+        screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
+        # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版
+        # 手游列（都窄而高），真正的脸部识别放大要等 CPA 视觉裁判。v1 保守：
+        # 默认 1.16x 顶部锚定——恰好裁掉底部烧录字幕带、微裁两侧，任何场景都
+        # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
+        confident = bool(frame_selection.get("subject_confident"))
+        crop_evidence = extract_zoomed_cover_frame(
+            media_path,
+            int(frame_selection["best_ms"]),
+            screenshot_base,
+            zoom=1.32 if confident else 1.16,
+            anchor_x_frac=(
+                float(frame_selection["subject_anchor_x_frac"])
+                if confident and frame_selection.get("subject_anchor_x_frac") is not None
+                # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
+                # 优先吃掉左侧弹幕栏。
+                else 0.58
+            ),
+            head_top_frac=(
+                float(frame_selection["subject_head_top_frac"])
+                if confident and frame_selection.get("subject_head_top_frac") is not None
+                else 0.0
+            ),
+        )
+        final_cover_path = covers_dir / f"{candidate_id}.ai-title.cover.png"
+        overlay = _overlay_lidousha_cover_title(
+            screenshot_base, final_cover_path, cover_text=cover_text, art_direction=art_direction
+        )
+        cover_generation["art_direction"] = asdict(art_direction)
+        if art_direction.emote_id:
+            cover_generation["emote"] = {"status": "IGNORED_SCREENSHOT_MODE"}
+        cover_generation.update(
+            {
+                "method": "screenshot_direct",
+                "model": "none",
+                "image_gen_model": "none",
+                "screenshot_frame": crop_evidence,
+                "reference_image": str(reference_path),
+                "reference_sha256": "sha256:" + _sha256(reference_path),
+                "ai_background": str(screenshot_base),
+                "ai_background_sha256": "sha256:" + _sha256(screenshot_base),
+                "final_cover": str(final_cover_path),
+                "final_cover_sha256": "sha256:" + _sha256(final_cover_path),
+                "attempted_models": [],
+                **overlay,
+            }
+        )
+        return {
+            "status": "AI_COVER_READY",
+            "reason_codes": [],
+            "cover_path": str(final_cover_path),
+            "cover_generation": cover_generation,
+            "cover_sha256": "sha256:" + _sha256(final_cover_path),
+            "ai_background_sha256": "sha256:" + _sha256(screenshot_base),
+            "cover_reference_sha256": "sha256:" + _sha256(reference_path),
+        }
+    except Exception as exc:
+        cover_generation["screenshot_direct"] = {
+            "status": "FALLBACK_TO_CPA",
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+        return None
+
 
 def _blocked_ai_cover_result(cover_generation: Mapping[str, object], reason_codes: Sequence[str], detail: str) -> dict[str, object]:
     generation = {**dict(cover_generation), "status": "BLOCKED", "detail": detail}
