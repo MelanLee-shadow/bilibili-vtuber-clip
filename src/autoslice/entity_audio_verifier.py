@@ -398,6 +398,7 @@ def _observe_entity_audio(
             [
                 binary,
                 "--sandbox",
+        "--dangerously-skip-permissions",
                 "--add-dir",
                 str(job_dir),
                 "--model",

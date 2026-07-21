@@ -818,6 +818,7 @@ def _run_primary_agy_alignment(
     command = [
         str(agy_bin),
         "--sandbox",
+        "--dangerously-skip-permissions",
         "--add-dir",
         str(job.job_dir),
         "--model",

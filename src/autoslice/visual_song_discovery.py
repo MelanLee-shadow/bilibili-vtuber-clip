@@ -333,6 +333,7 @@ def _run_agy_once(
         [
             str(agy_bin),
             "--sandbox",
+        "--dangerously-skip-permissions",
             "--add-dir",
             str(job_dir),
             "--model",

@@ -195,7 +195,7 @@ timeline below are TIME-PAIRED evidence.
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
         agy_inner = (
-            f"/root/.local/bin/agy --sandbox --add-dir {shlex.quote(job_dir)} "
+            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
             f"--model {shlex.quote(model)} -p {shlex.quote(short_prompt)} --print-timeout 15m"
         )
         agy_cmd = (
@@ -661,7 +661,7 @@ def _agy_screen_text_lines(host: str, media_path: Path) -> list[str]:
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
         inner = (
-            f"/root/.local/bin/agy --sandbox --add-dir {shlex.quote(job_dir)} "
+            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
             f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short)} --print-timeout 15m"
         )
         agy_cmd = (
@@ -1042,7 +1042,7 @@ def _legacy_build_ssh_agy_runner(
         # mode is documented to drop its stdout entirely (antigravity-cli#76).
         # output.srt stays the authority; stdout is only diagnostics.
         agy_inner = (
-            f"/root/.local/bin/agy --sandbox --add-dir {shlex.quote(job_dir)} "
+            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
             f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short_prompt)} --print-timeout {chunk_print_timeout}"
         )
         agy_cmd = (

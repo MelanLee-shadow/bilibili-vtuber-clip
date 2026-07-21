@@ -122,6 +122,7 @@ def test_discover_visual_songs_caches_success_and_calls_agy_once(tmp_path):
     agy_command = next(command for command in calls if Path(command[0]).name == "agy")
     assert agy_command[agy_command.index("--model") + 1] == DEFAULT_MODEL
     assert "--sandbox" in agy_command
+    assert "--dangerously-skip-permissions" in agy_command
     add_dir = agy_command[agy_command.index("--add-dir") + 1]
     assert Path(add_dir).name.startswith("visual_song_")
     assert "Do not inspect any other file" in agy_command[agy_command.index("-p") + 1]

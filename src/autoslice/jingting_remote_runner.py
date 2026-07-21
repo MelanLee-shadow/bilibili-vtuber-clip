@@ -218,7 +218,7 @@ class _RemoteJingtingRunner:
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
         agy_inner = (
-            f"/root/.local/bin/agy --sandbox --add-dir {shlex.quote(job_dir)} "
+            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
             f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short_prompt)} "
             f"--print-timeout {self.chunk_print_timeout}"
         )

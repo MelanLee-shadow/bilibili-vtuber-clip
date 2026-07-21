@@ -56,9 +56,11 @@ EOF
 scp -q "$PROMPT_FILE" "free:$JOB_DIR/prompt.md"
 rm -f "$PROMPT_FILE"
 
-ssh free "cd '$JOB_DIR' && /root/.local/bin/agy --sandbox --add-dir '$JOB_DIR' --model '$AGY_MODEL' -p 'Open $JOB_DIR/prompt.md with view_file and follow it exactly. Use only $JOB_DIR/prompt.md, $JOB_DIR/input.mp4, $JOB_DIR/output.srt, $JOB_DIR/notes.json. Do not inspect any other file or directory. Do not use shell or terminal.' --print-timeout ${AGY_TIMEOUT:-30m} > '$JOB_DIR/agy.stdout' 2> '$JOB_DIR/agy.stderr'; echo rc=\$? > '$JOB_DIR/agy.rc'"
+ssh free "cd '$JOB_DIR' && /root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir '$JOB_DIR' --model '$AGY_MODEL' -p 'Open $JOB_DIR/prompt.md with view_file and follow it exactly. Use only $JOB_DIR/prompt.md, $JOB_DIR/input.mp4, $JOB_DIR/output.srt, $JOB_DIR/notes.json. Do not inspect any other file or directory. Do not use shell or terminal.' --print-timeout ${AGY_TIMEOUT:-30m} > '$JOB_DIR/agy.stdout' 2> '$JOB_DIR/agy.stderr'; echo rc=\$? > '$JOB_DIR/agy.rc'"
 
 ssh free "cat '$JOB_DIR/agy.rc'"
 scp -q "free:$JOB_DIR/output.srt" "$OUT_SRT"
 scp -q "free:$JOB_DIR/notes.json" "$OUT_NOTES"
+[ -s "$OUT_SRT" ] || { echo "agy output.srt is empty (headless auto-deny or model failure); see $JOB_DIR" >&2; exit 3; }
+[ -s "$OUT_NOTES" ] || { echo "agy notes.json is empty; see $JOB_DIR" >&2; exit 3; }
 echo "job_dir=$JOB_DIR"

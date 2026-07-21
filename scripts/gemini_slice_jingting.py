@@ -1150,6 +1150,7 @@ def run_agy(
     cmd = [
         agy_bin,
         "--sandbox",
+        "--dangerously-skip-permissions",
         "--add-dir",
         str(job_dir),
         "--model",
