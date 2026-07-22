@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -110,6 +111,19 @@ def _source_coverage_ms(windows: Sequence[Mapping[str, int]]) -> int:
         covered += current_end - current_start
         current_start, current_end = start, end
     return covered + current_end - current_start
+
+
+def _source_point_to_local_ms(
+    windows: Sequence[Mapping[str, int]], source_ms: int
+) -> int | None:
+    """Project one absolute recording timestamp onto the retained timeline."""
+
+    for window in windows:
+        source_start = int(window["source_overlap_start_ms"])
+        source_end = int(window["source_overlap_end_ms"])
+        if source_start <= source_ms < source_end:
+            return int(window["start_ms"]) + source_ms - source_start
+    return None
 
 
 _TRUTH_SURFACE_PUNCT_RX = re.compile(r"[\s，。！？；、：,.!?;:\"“”'‘’…~～|·（）()\[\]【】]+")
@@ -308,7 +322,40 @@ def apply_source_subtitle_truth(
         changed = False
         satisfied = False
 
-        if action == "replace_cue":
+        # A removed hallucinated prefix can leave the surviving words displayed
+        # over the old prefix's silent/audio-only lead.  Text truth and timing
+        # truth are therefore allowed to travel together, but only as an
+        # absolute source-timeline speech onset on a unique cue.  Never infer
+        # an onset from VAD absence here: this field is reviewed evidence.
+        spoken_start_raw = raw_entry.get("spoken_start_ms")
+        spoken_start_local: int | None = None
+        timing_pin_error: str | None = None
+        if spoken_start_raw is not None:
+            if action != "replace_cue":
+                timing_pin_error = "SPOKEN_START_REQUIRES_REPLACE_CUE"
+            elif isinstance(spoken_start_raw, bool) or not isinstance(
+                spoken_start_raw, int
+            ):
+                timing_pin_error = "SPOKEN_START_INVALID"
+            elif not source_start_ms <= spoken_start_raw < source_end_ms:
+                timing_pin_error = "SPOKEN_START_OUTSIDE_TRUTH_INTERVAL"
+            elif len(target_indexes) != 1:
+                timing_pin_error = "SPOKEN_START_TARGET_NOT_UNIQUE"
+            else:
+                spoken_start_local = _source_point_to_local_ms(
+                    windows, spoken_start_raw
+                )
+                target_cue = cues[target_indexes[0]]
+                if (
+                    spoken_start_local is None
+                    or spoken_start_local < target_cue.start_ms
+                    or spoken_start_local >= target_cue.end_ms
+                ):
+                    timing_pin_error = "SPOKEN_START_OUTSIDE_TARGET_CUE"
+
+        if timing_pin_error is not None:
+            row["reason_code"] = timing_pin_error
+        elif action == "replace_cue":
             replacement = str(raw_entry.get("text") or "")
             if not replacement:
                 row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
@@ -387,6 +434,18 @@ def apply_source_subtitle_truth(
                     texts[index] = replacement
                     changed = True
                     satisfied = True
+                if spoken_start_local is not None:
+                    before_start_ms = cues[index].start_ms
+                    if before_start_ms != spoken_start_local:
+                        cues[index] = replace(
+                            cues[index], start_ms=spoken_start_local
+                        )
+                        changed = True
+                    row["timing_pin"] = {
+                        "source_spoken_start_ms": spoken_start_raw,
+                        "before_start_ms": before_start_ms,
+                        "after_start_ms": spoken_start_local,
+                    }
         elif action == "replace_substring":
             replacements_raw = raw_entry.get("replacements")
             if not isinstance(replacements_raw, list) or not target_indexes:

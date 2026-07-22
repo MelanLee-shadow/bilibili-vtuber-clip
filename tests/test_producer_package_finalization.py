@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -132,3 +133,98 @@ def test_final_recut_rebases_timeline_bound_text_override(
     assert "让李豆沙线下叫kmx" in recut.subtitle_path.read_text(encoding="utf-8")
     assert recut.text_manifest is not None
     assert recut.text_manifest["source_timeline_offset_ms"] == 9_770
+
+
+def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
+    tmp_path: Path,
+) -> None:
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"padded")
+    (tmp_path / "out").mkdir()
+    padded_provenance = tmp_path / "padded.provenance.json"
+    padded_provenance.write_text("{}\n", encoding="utf-8")
+    baseline = tmp_path / "prior-delivery.srt"
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n旧审定第一句\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n旧错误第二句\n",
+        encoding="utf-8",
+    )
+
+    def run_command(command: list[str], **_kwargs) -> None:
+        Path(command[-1]).write_bytes(b"recut")
+
+    def write_source_range_srt(
+        _cues, _start_ms: int, _end_ms: int, output: Path
+    ) -> None:
+        output.write_text(
+            "1\n00:00:00,020 --> 00:00:01,020\n随机漂移第一句\n\n"
+            "2\n00:00:01,020 --> 00:00:02,020\nIvan新源真值\n",
+            encoding="utf-8",
+        )
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated finalization adapter was called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=lambda **kwargs: [
+            "recut",
+            str(kwargs["output_media"]),
+        ],
+        run_command=run_command,
+        write_source_range_srt=write_source_range_srt,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=lambda: tmp_path / "delivery",
+    )
+    chat_audit = {
+        "source_subtitle_truth_audit": {
+            "status": "APPLIED",
+            "applied": [
+                {
+                    # Padded timeline; final_start=1000 rebases this to the
+                    # second delivery cue.
+                    "local_windows": [{"start_ms": 2_000, "end_ms": 3_000}]
+                }
+            ],
+            "satisfied": [],
+        }
+    }
+    spec = {
+        "pieces": [{"start_ms": 100_000}],
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v1",
+            "mode": "preserve_text_outside_source_truth",
+            "path": str(baseline),
+            "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+            "authority": "previous reviewed delivery",
+        },
+    }
+
+    recut = finalization._materialize_final_recut(
+        spec=spec,
+        cid="candidate",
+        out_root=tmp_path / "out",
+        padded=padded,
+        padded_provenance_path=padded_provenance,
+        piece_provenance_rows=[],
+        final_start=1_000,
+        final_end=3_020,
+        sanitized=[],
+        timing_qa={},
+        text_override_path=None,
+        adapters=adapters,
+        spec_parent=tmp_path,
+        chat_authority_audit=chat_audit,
+    )
+
+    output = recut.subtitle_path.read_text(encoding="utf-8")
+    assert "00:00:00,020 --> 00:00:01,020\n旧审定第一句" in output
+    assert "00:00:01,020 --> 00:00:02,020\nIvan新源真值" in output
+    assert "旧错误第二句" not in output
+    assert recut.redelivery_baseline_audit is not None
+    assert recut.redelivery_baseline_audit["status"] == "APPLIED"
+    assert recut.redelivery_baseline_audit_path is not None
+    assert recut.redelivery_baseline_audit_path.is_file()

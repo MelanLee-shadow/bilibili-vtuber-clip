@@ -243,3 +243,36 @@ class TestSourceTruthSupersedesDecisionSurfaces:
         assert audit["sender_repairs"][0]["final_verification_scope"] == (
             "SUPERSEDED_BY_SOURCE_TRUTH"
         )
+
+
+def test_redelivery_baseline_supersedes_stochastic_decision_outside_truth() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 3_000, "上一版已审定口播"))
+    audit = {
+        "entity_repairs": [
+            {
+                "matched_start_ms": 11_000,
+                "matched_end_ms": 12_000,
+                "expected_entity": "本轮随机改写",
+            }
+        ],
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "owned_intervals": [{"start_ms": 1_000, "end_ms": 2_000}],
+        },
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=10_000,
+        delivery_end_ms=13_000,
+    )
+    assert audit["entity_repairs"][0]["final_verification_scope"] == (
+        "SUPERSEDED_BY_REDELIVERY_BASELINE"
+    )
+    assert audit["final_superseded_by_redelivery_baseline_count"] == 1

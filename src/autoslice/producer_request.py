@@ -129,6 +129,10 @@ def load_producer_request(
                 ("--speaker-overrides", args.speaker_overrides),
                 ("spec.subtitle_text_overrides", spec.get("subtitle_text_overrides")),
                 ("spec.subtitle_regression", spec.get("subtitle_regression")),
+                (
+                    "spec.subtitle_redelivery_baseline",
+                    spec.get("subtitle_redelivery_baseline"),
+                ),
                 ("spec.speaker_overrides", spec.get("speaker_overrides")),
             )
             if value is not None

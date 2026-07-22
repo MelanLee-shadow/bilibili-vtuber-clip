@@ -818,7 +818,8 @@
       "source_end_ms": 681070,
       "action": "replace_cue",
       "text": "乱说的啊",
-      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；前半段无声，后半段有声)",
+      "spoken_start_ms": 678970,
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；前半段无声，后半段有声)+black-frame-raw-audio-onset-check(20260722; onset 678970ms +/-100ms)",
       "required": true
     },
     {

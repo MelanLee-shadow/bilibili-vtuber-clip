@@ -120,6 +120,16 @@ def _source_truth_pinned_intervals(
     return intervals
 
 
+def _redelivery_baseline_intervals(audit: dict) -> list[tuple[int, int]]:
+    baseline = audit.get("redelivery_subtitle_baseline_audit") or {}
+    if baseline.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
+        return []
+    return [
+        (int(row["start_ms"]), int(row["end_ms"]))
+        for row in baseline.get("owned_intervals") or []
+    ]
+
+
 def verify_chat_authority_final_surfaces(
     audit: dict,
     *,
@@ -186,7 +196,9 @@ def verify_chat_authority_final_surfaces(
         audit["final_verification_failure"] = "PENDING_TEXT_OVERRIDE_NOT_RECONCILED"
         return False
     pinned_intervals = _source_truth_pinned_intervals(audit, final_text_srt)
+    redelivery_intervals = _redelivery_baseline_intervals(audit)
     superseded_by_truth = 0
+    superseded_by_redelivery = 0
     required_rows: list[dict] = []
     for kind, row, expected_text in decision_rows:
         matched_start = int(row["matched_start_ms"])
@@ -201,6 +213,19 @@ def verify_chat_authority_final_surfaces(
         ):
             row["final_verification_scope"] = "SUPERSEDED_BY_SOURCE_TRUTH"
             superseded_by_truth += 1
+            continue
+        relative_matched_start = matched_start - delivery_start_ms
+        relative_matched_end = matched_end - delivery_start_ms
+        if any(
+            min(relative_matched_end, pin_end)
+            - max(relative_matched_start, pin_start)
+            >= 200
+            for pin_start, pin_end in redelivery_intervals
+        ):
+            row["final_verification_scope"] = (
+                "SUPERSEDED_BY_REDELIVERY_BASELINE"
+            )
+            superseded_by_redelivery += 1
             continue
         overlap_ms = max(
             0,
@@ -293,8 +318,14 @@ def verify_chat_authority_final_surfaces(
         required_rows.append(row)
     audit["final_required_decision_count"] = len(required_rows)
     audit["final_superseded_by_source_truth_count"] = superseded_by_truth
+    audit["final_superseded_by_redelivery_baseline_count"] = (
+        superseded_by_redelivery
+    )
     audit["final_outside_delivery_count"] = (
-        len(decision_rows) - len(required_rows) - superseded_by_truth
+        len(decision_rows)
+        - len(required_rows)
+        - superseded_by_truth
+        - superseded_by_redelivery
     )
     return all(
         row.get("survived_final_text_srt") and row.get("survived_final_speaker_srt")

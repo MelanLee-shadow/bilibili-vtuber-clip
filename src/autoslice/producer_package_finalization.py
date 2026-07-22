@@ -21,6 +21,9 @@ from src.autoslice.producer_media import (
     _write_json_atomic,
 )
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
+from src.autoslice.redelivery_subtitle_baseline import (
+    apply_redelivery_subtitle_baseline,
+)
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
@@ -60,6 +63,8 @@ class FinalRecutArtifacts:
     subtitle_path: Path
     text_manifest_path: Path | None
     text_manifest: dict | None
+    redelivery_baseline_audit_path: Path | None = None
+    redelivery_baseline_audit: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,8 @@ def _materialize_final_recut(
     timing_qa: dict,
     text_override_path: Path | None,
     adapters: ProducerFinalizationAdapters,
+    spec_parent: Path | None = None,
+    chat_authority_audit: dict | None = None,
 ) -> FinalRecutArtifacts:
     recut_dir = out_root / "replacement_recuts"
     recut_dir.mkdir(exist_ok=True)
@@ -152,6 +159,60 @@ def _materialize_final_recut(
             text_manifest = adapters.apply_text_override_document(*text_manifest_args)
     else:
         adapters.write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
+    redelivery_baseline_audit_path: Path | None = None
+    redelivery_baseline_audit: dict | None = None
+    baseline_config = spec.get("subtitle_redelivery_baseline")
+    if baseline_config is not None:
+        if text_override_path is not None:
+            raise SystemExit(
+                "REDELIVERY_BASELINE_CONFLICTS_WITH_TEXT_OVERRIDE: use source truth "
+                "windows for incident corrections"
+            )
+        truth_audit = (
+            (chat_authority_audit or {}).get("source_subtitle_truth_audit") or {}
+        )
+        protected_windows: list[tuple[int, int]] = []
+        for key in ("applied", "satisfied"):
+            for row in truth_audit.get(key) or []:
+                for window in row.get("local_windows") or []:
+                    start_ms = max(0, int(window["start_ms"]) - final_start)
+                    end_ms = min(
+                        final_end - final_start,
+                        int(window["end_ms"]) - final_start,
+                    )
+                    if start_ms < end_ms:
+                        protected_windows.append((start_ms, end_ms))
+        current_text = subtitle_path.read_text(encoding="utf-8")
+        output_text, redelivery_baseline_audit = (
+            apply_redelivery_subtitle_baseline(
+                current_text,
+                config=baseline_config,
+                spec_parent=(spec_parent or Path.cwd()),
+                protected_windows=protected_windows,
+            )
+        )
+        redelivery_baseline_audit_path = (
+            recut_dir / f"{cid}.redelivery-baseline.json"
+        )
+        redelivery_baseline_audit_path.write_text(
+            json.dumps(
+                redelivery_baseline_audit,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        if chat_authority_audit is not None:
+            chat_authority_audit["redelivery_subtitle_baseline_audit"] = (
+                redelivery_baseline_audit
+            )
+        if redelivery_baseline_audit["status"] == "FAILED":
+            raise SystemExit(
+                f"REDELIVERY_SUBTITLE_BASELINE_FAILED: {redelivery_baseline_audit_path}"
+            )
+        subtitle_path.write_text(output_text, encoding="utf-8")
     (recut_dir / f"{cid}.recut.timing_qa.json").write_text(
         json.dumps(timing_qa, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -161,6 +222,8 @@ def _materialize_final_recut(
         subtitle_path=subtitle_path,
         text_manifest_path=text_manifest_path,
         text_manifest=text_manifest,
+        redelivery_baseline_audit_path=redelivery_baseline_audit_path,
+        redelivery_baseline_audit=redelivery_baseline_audit,
     )
 
 def _finalize_speaker(
@@ -338,6 +401,8 @@ def _build_and_burn_record(
     media_path = recut.media_path
     subtitle_path = recut.subtitle_path
     text_manifest_path = recut.text_manifest_path
+    redelivery_baseline_audit_path = recut.redelivery_baseline_audit_path
+    redelivery_baseline_audit = recut.redelivery_baseline_audit
     speaker_manifest = speaker.manifest
     speaker_review_srt = speaker.review_srt
     speaker_ass = speaker.ass
@@ -348,7 +413,10 @@ def _build_and_burn_record(
         "status": "MATERIALIZED",
         "media_path": str(media_path),
         "subtitle_path": str(subtitle_path),
-        "subtitle_source": f"{options.substrate}+{options.correct}+pronoun+text_final",
+        "subtitle_source": (
+            f"{options.substrate}+{options.correct}+pronoun+text_final"
+            + ("+redelivery_baseline" if redelivery_baseline_audit is not None else "")
+        ),
         "start_ms": 0,
         "end_ms": final_end - final_start,
         "duration_ms": final_end - final_start,
@@ -358,6 +426,14 @@ def _build_and_burn_record(
             **({"ass_sha256": "sha256:" + _sha256(speaker_ass)} if speaker_ass is not None else {}),
             **({"speaker_review_srt_sha256": "sha256:" + _sha256(speaker_review_srt)} if speaker_review_srt is not None else {}),
             "chat_authority_audit_sha256": "sha256:" + _sha256(chat_authority_path),
+            **(
+                {
+                    "redelivery_baseline_audit_sha256": "sha256:"
+                    + _sha256(redelivery_baseline_audit_path)
+                }
+                if redelivery_baseline_audit_path is not None
+                else {}
+            ),
             **(
                 {
                     "subtitle_regression_audit_sha256": "sha256:"
@@ -376,6 +452,12 @@ def _build_and_burn_record(
             ),
         },
         "chat_authority_audit_path": str(chat_authority_path),
+        "redelivery_baseline_audit_path": (
+            str(redelivery_baseline_audit_path)
+            if redelivery_baseline_audit_path is not None
+            else None
+        ),
+        "redelivery_baseline": redelivery_baseline_audit,
         "subtitle_regression_audit_path": (
             str(subtitle_regression_audit_path)
             if subtitle_regression_audit_path is not None
@@ -521,6 +603,7 @@ def _deliver_staged_record(
     record_path = staged.record_path
     subtitle_path = recut.subtitle_path
     text_manifest_path = recut.text_manifest_path
+    redelivery_baseline_audit_path = recut.redelivery_baseline_audit_path
     speaker_manifest = speaker.manifest
     speaker_review_srt = speaker.review_srt
     speaker_ass = speaker.ass
@@ -540,6 +623,7 @@ def _deliver_staged_record(
         (speaker_ass, ".speaker.ass"),
         (speaker_manifest_path, ".speaker.json"),
         (chat_authority_path, ".chat-authority.json"),
+        (redelivery_baseline_audit_path, ".redelivery-baseline.json"),
         (subtitle_regression_audit_path, ".subtitle-regression.json"),
         (talk_filler_audit_path, ".filler-audit.json"),
         (text_manifest_path, ".text-finalization.json"),
@@ -570,6 +654,11 @@ def _deliver_staged_record(
             "subtitle_regression_status": (
                 subtitle_regression_audit.get("status")
                 if subtitle_regression_audit is not None
+                else "NOT_CONFIGURED"
+            ),
+            "redelivery_baseline_status": (
+                recut.redelivery_baseline_audit.get("status")
+                if recut.redelivery_baseline_audit is not None
                 else "NOT_CONFIGURED"
             ),
             "talk_filler_audit": (
@@ -607,6 +696,10 @@ def finalize_producer_package(
     adapters: ProducerFinalizationAdapters,
     talk_filler_audit_path: Path | None = None,
 ) -> int:
+    if spec.get("subtitle_redelivery_baseline") is not None and not options.reuse_cover:
+        raise SystemExit(
+            "REDELIVERY_SUBTITLE_BASELINE_REQUIRES_REUSE_COVER"
+        )
     recut = _materialize_final_recut(
         spec=spec,
         cid=cid,
@@ -620,6 +713,8 @@ def finalize_producer_package(
         timing_qa=timing_qa,
         text_override_path=text_override_path,
         adapters=adapters,
+        spec_parent=options.spec.parent,
+        chat_authority_audit=chat_authority_audit,
     )
     speaker = _finalize_speaker(
         options=options,

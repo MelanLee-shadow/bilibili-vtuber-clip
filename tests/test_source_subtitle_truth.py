@@ -85,6 +85,94 @@ def test_source_interval_truth_applies_to_every_overlapping_candidate(tmp_path):
         assert audit["status"] == "APPLIED"
 
 
+def test_replace_cue_can_pin_reviewed_spoken_start_after_silent_prefix(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "silent-hallucinated-prefix",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_000,
+                "action": "replace_cue",
+                "text": "乱说的啊",
+                "spoken_start_ms": 111_500,
+                "authority": "Ivan plus bounded raw-audio onset check",
+                "required": True,
+            }
+        ],
+    )
+    source = _srt_ms((10_000, 14_000, "我草，乱说的啊"))
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 120_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+
+    assert "00:00:11,500 --> 00:00:14,000" in corrected
+    assert "乱说的啊" in corrected
+    assert "我草" not in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["timing_pin"] == {
+        "source_spoken_start_ms": 111_500,
+        "before_start_ms": 10_000,
+        "after_start_ms": 11_500,
+    }
+
+
+def test_spoken_start_pin_fails_closed_when_target_is_not_unique(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "ambiguous-onset",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_000,
+                "action": "replace_cue",
+                "text": "审定文本",
+                "spoken_start_ms": 111_500,
+                "required": True,
+            }
+        ],
+    )
+    source = _srt_ms(
+        (10_000, 12_000, "第一条"),
+        (12_000, 14_000, "第二条"),
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 120_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+
+    assert corrected == source
+    assert audit["status"] == "FAILED"
+    assert audit["failures"][0]["reason_code"] == (
+        "SPOKEN_START_TARGET_NOT_UNIQUE"
+    )
+
+
 def test_source_interval_truth_does_not_leak_to_other_recording(tmp_path):
     ledger = _ledger(
         tmp_path,
