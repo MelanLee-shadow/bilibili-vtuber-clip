@@ -1,0 +1,82 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "date": "2026-07-22",
+  "authority": "Ivan 2026-07-22: rewrite the ambiguous 南町/最最最喜欢 title and cover, and move the duplicate cobalt cover to a distinct violet-neon family; isolated official-replay recovery only, no upload",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/reports/upload_ledger.jsonl",
+    "sha256": "f3775e2e56cf78707fc249a159a0e97ad394c15854076e7f9315f445535ab225"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_193450_670_909",
+      "expected_state_record_sha256": "2acedcc05ee59a50f504e322996c3b13406d305ebdca0e6bb824252e6c23eb42"
+    },
+    {
+      "candidate_id": "auto_193450_5341_5459",
+      "expected_state_record_sha256": "ba8916770cb69a6a40083cf1b906721e711c107620cd2c1c7777d840e93172c5"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_193450_670_909",
+      "expected_title": "【李豆沙】联动对象当面追问“最最最最喜欢”是真是假，熊猫头越解释越像收集L、争站位的侄女海王",
+      "title": "【李豆沙】南町当面追问：为什么提到我就要“最最最喜欢”？越解释越像海王",
+      "expected_cover_text": "为什么提到我\n就要“最最最喜欢”？",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 0,
+      "media": {
+        "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.mp4",
+        "sha256": "8d29e0f2dbf6411a7dfe5dd3f023c855b2dc7cb6478806510913812144327333"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.cover.png",
+        "sha256": "7b34a95becc1ebdd015a907136de5bde952bccb68a4361e05b89abc558a76f2f"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.record.json",
+          "sha256": "1cdad0df285f9c032405743d8e7365697c185ec91a92e9366a84e8f079fd0842"
+        },
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/replacement_recuts/auto_193450_670_909.record.json",
+          "sha256": "1cdad0df285f9c032405743d8e7365697c185ec91a92e9366a84e8f079fd0842"
+        },
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/replacement_recuts/auto_193450_670_909.recut.publish.json",
+          "sha256": "4fbd4b93f7c33490f7391d4aaf99c6dfe8bd3e8174373a875f0453ba68477cd6"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193450_5341_5459",
+      "expected_title": "【李豆沙】两人争论下播时没人挽留到底谁更可怜，小李挽留只因东西没下好，反被回敬零个人想看就赶紧下",
+      "title": "【李豆沙】两人争论下播时没人挽留到底谁更可怜，小李挽留只因东西没下好，反被回敬零个人想看就赶紧下",
+      "expected_cover_text": "零个人想看\n赶紧下",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 2,
+      "media": {
+        "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/两人争论下播时没人挽留到底谁更可怜，.mp4",
+        "sha256": "3361ea6f986474afe64467138749e086b7e508f18c1ec9f9b25e076803677824"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/两人争论下播时没人挽留到底谁更可怜，.cover.png",
+        "sha256": "b99eb8c943ec91a4824a687cb3c2f7562ec8c19475fbe6d6450142b75073b2ee"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/两人争论下播时没人挽留到底谁更可怜，.record.json",
+          "sha256": "1beac23a9927eacb24d9d4470f3740a16d6bb387c380625142536e7370b3ea3f"
+        },
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5341_5459/replacement_recuts/auto_193450_5341_5459.record.json",
+          "sha256": "1beac23a9927eacb24d9d4470f3740a16d6bb387c380625142536e7370b3ea3f"
+        },
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5341_5459/replacement_recuts/auto_193450_5341_5459.recut.publish.json",
+          "sha256": "96c884671ad6c09e73a51b71114bb49a1b68770a9e9c5901b771a0283fce8b29"
+        }
+      ]
+    }
+  ]
+}
