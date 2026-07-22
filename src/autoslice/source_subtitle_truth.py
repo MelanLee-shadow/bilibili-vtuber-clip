@@ -26,6 +26,7 @@ SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
 AUDIT_SCHEMA_VERSION = "source-subtitle-truth-audit.v1"
 MIN_CUE_OVERLAP_MS = 80
 DROP_CUE_BOUNDARY_EPSILON_MS = 120
+_SOURCE_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -60,12 +61,100 @@ def _piece_media_basename(piece: Mapping[str, object]) -> str:
     return ""
 
 
+def _load_source_aliases(
+    document: Mapping[str, object],
+) -> tuple[Mapping[str, object], ...]:
+    """Validate evidence-bound alternate recordings of one source timeline.
+
+    A basename alone is never enough to inherit reviewed subtitle truth.  An
+    alias must be declared in the committed ledger and the candidate piece
+    must carry the exact source-media SHA-256 from that declaration.  This is
+    intentionally stricter than ordinary source matching because an official
+    replay can have different leading/trailing bytes or a shifted timeline.
+    """
+
+    aliases_raw = document.get("source_aliases", [])
+    if not isinstance(aliases_raw, list):
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIASES_INVALID")
+    aliases: list[Mapping[str, object]] = []
+    identities: set[tuple[str, str]] = set()
+    alias_ids: set[str] = set()
+    for raw_alias in aliases_raw:
+        if not isinstance(raw_alias, Mapping):
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_INVALID")
+        alias_id = str(raw_alias.get("alias_id") or "")
+        alias_name = str(raw_alias.get("alias_recording_basename") or "")
+        canonical_name = str(
+            raw_alias.get("canonical_recording_basename") or ""
+        )
+        source_sha256 = str(raw_alias.get("alias_source_sha256") or "")
+        offset = raw_alias.get("alias_timeline_offset_ms")
+        authority = str(raw_alias.get("authority") or "")
+        if not alias_id or alias_id in alias_ids:
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_ID_INVALID")
+        if (
+            not alias_name
+            or Path(alias_name).name != alias_name
+            or not canonical_name
+            or Path(canonical_name).name != canonical_name
+            or alias_name == canonical_name
+        ):
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_BASENAME_INVALID")
+        if _SOURCE_SHA256_RX.fullmatch(source_sha256) is None:
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_SHA256_INVALID")
+        if isinstance(offset, bool) or not isinstance(offset, int):
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_OFFSET_INVALID")
+        if not authority:
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_AUTHORITY_MISSING")
+        identity = (alias_name, source_sha256)
+        if identity in identities:
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_DUPLICATE")
+        identities.add(identity)
+        alias_ids.add(alias_id)
+        aliases.append(raw_alias)
+    return tuple(aliases)
+
+
+def _piece_source_binding(
+    piece: Mapping[str, object],
+    *,
+    canonical_name: str,
+    source_aliases: Sequence[Mapping[str, object]],
+) -> tuple[int, Mapping[str, object] | None] | None:
+    """Return alias-minus-canonical offset plus its evidence row, if bound."""
+
+    piece_name = _piece_media_basename(piece)
+    if piece_name == canonical_name:
+        return 0, None
+    candidates = [
+        alias
+        for alias in source_aliases
+        if alias.get("alias_recording_basename") == piece_name
+        and alias.get("canonical_recording_basename") == canonical_name
+    ]
+    if not candidates:
+        return None
+    piece_sha256 = piece.get("source_media_sha256")
+    if not isinstance(piece_sha256, str) or not piece_sha256:
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_PIECE_SHA256_MISSING")
+    matches = [
+        alias
+        for alias in candidates
+        if alias.get("alias_source_sha256") == piece_sha256
+    ]
+    if len(matches) != 1:
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ALIAS_PIECE_SHA256_MISMATCH")
+    alias = matches[0]
+    return int(alias["alias_timeline_offset_ms"]), alias
+
+
 def _entry_local_windows(
     entry: Mapping[str, object],
     *,
     pieces: Sequence[Mapping[str, object]],
     durations: Sequence[int],
-) -> list[dict[str, int]]:
+    source_aliases: Sequence[Mapping[str, object]] = (),
+) -> list[dict[str, object]]:
     source_name = str(entry.get("recording_basename") or "")
     source_start = int(entry["source_start_ms"])
     source_end = int(entry["source_end_ms"])
@@ -74,25 +163,46 @@ def _entry_local_windows(
     for piece, duration in zip(pieces, durations):
         piece_start = int(piece["start_ms"])
         piece_end = int(piece["end_ms"])
-        overlap_start = max(piece_start, source_start)
-        overlap_end = min(piece_end, source_end)
-        if (
-            _piece_media_basename(piece) == source_name
-            and overlap_start < overlap_end
-        ):
-            windows.append(
-                {
-                    "start_ms": output_offset + overlap_start - piece_start,
-                    "end_ms": output_offset + overlap_end - piece_start,
+        binding = _piece_source_binding(
+            piece,
+            canonical_name=source_name,
+            source_aliases=source_aliases,
+        )
+        if binding is not None:
+            # alias_timeline = canonical_timeline + offset
+            alias_offset, alias = binding
+            canonical_piece_start = piece_start - alias_offset
+            canonical_piece_end = piece_end - alias_offset
+            overlap_start = max(canonical_piece_start, source_start)
+            overlap_end = min(canonical_piece_end, source_end)
+            if overlap_start < overlap_end:
+                window: dict[str, object] = {
+                    "start_ms": (
+                        output_offset + overlap_start - canonical_piece_start
+                    ),
+                    "end_ms": (
+                        output_offset + overlap_end - canonical_piece_start
+                    ),
                     "source_overlap_start_ms": overlap_start,
                     "source_overlap_end_ms": overlap_end,
                 }
-            )
+                if alias is not None:
+                    window.update(
+                        {
+                            "source_alias_id": alias["alias_id"],
+                            "alias_recording_basename": alias[
+                                "alias_recording_basename"
+                            ],
+                            "alias_source_sha256": alias["alias_source_sha256"],
+                            "alias_timeline_offset_ms": alias_offset,
+                        }
+                    )
+                windows.append(window)
         output_offset += int(duration)
     return windows
 
 
-def _source_coverage_ms(windows: Sequence[Mapping[str, int]]) -> int:
+def _source_coverage_ms(windows: Sequence[Mapping[str, object]]) -> int:
     intervals = sorted(
         (
             int(window["source_overlap_start_ms"]),
@@ -114,7 +224,7 @@ def _source_coverage_ms(windows: Sequence[Mapping[str, int]]) -> int:
 
 
 def _source_point_to_local_ms(
-    windows: Sequence[Mapping[str, int]], source_ms: int
+    windows: Sequence[Mapping[str, object]], source_ms: int
 ) -> int | None:
     """Project one absolute recording timestamp onto the retained timeline."""
 
@@ -140,7 +250,7 @@ def _overlap_ms(cue: SrtCue, start_ms: int, end_ms: int) -> int:
 
 
 def _target_indexes(
-    cues: Sequence[SrtCue], windows: Sequence[Mapping[str, int]]
+    cues: Sequence[SrtCue], windows: Sequence[Mapping[str, object]]
 ) -> list[int]:
     matches: list[tuple[int, int]] = []
     for index, cue in enumerate(cues):
@@ -158,7 +268,7 @@ def _target_indexes(
 
 
 def _drop_cue_targets(
-    cues: Sequence[SrtCue], windows: Sequence[Mapping[str, int]]
+    cues: Sequence[SrtCue], windows: Sequence[Mapping[str, object]]
 ) -> tuple[list[int], list[dict[str, Any]]]:
     """Resolve deletions without allowing a truth window to eat real speech.
 
@@ -220,6 +330,22 @@ def _replace_substrings(
     return output, applied
 
 
+def _audit_source_aliases(
+    windows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    used = {
+        str(window["source_alias_id"]): {
+            "alias_id": window["source_alias_id"],
+            "alias_recording_basename": window["alias_recording_basename"],
+            "alias_source_sha256": window["alias_source_sha256"],
+            "alias_timeline_offset_ms": window["alias_timeline_offset_ms"],
+        }
+        for window in windows
+        if "source_alias_id" in window
+    }
+    return list(used.values())
+
+
 def apply_source_subtitle_truth(
     srt_text: str,
     *,
@@ -250,6 +376,7 @@ def apply_source_subtitle_truth(
     entries = document.get("entries")
     if not isinstance(entries, list):
         raise RuntimeError("SOURCE_SUBTITLE_TRUTH_LEDGER_ENTRIES_INVALID")
+    source_aliases = _load_source_aliases(document)
     pieces_raw = spec.get("pieces")
     if not isinstance(pieces_raw, list) or len(pieces_raw) != len(durations):
         raise RuntimeError("SOURCE_SUBTITLE_TRUTH_PIECE_MAPPING_INVALID")
@@ -276,6 +403,7 @@ def apply_source_subtitle_truth(
             raw_entry,
             pieces=pieces,
             durations=durations,
+            source_aliases=source_aliases,
         )
         if not windows:
             continue
@@ -308,6 +436,9 @@ def apply_source_subtitle_truth(
                 ).encode("utf-8")
             ),
         }
+        used_aliases = _audit_source_aliases(windows)
+        if used_aliases:
+            row["source_aliases"] = used_aliases
         source_duration_ms = source_end_ms - source_start_ms
         source_coverage_ms = _source_coverage_ms(windows)
         row["source_coverage_ms"] = source_coverage_ms
@@ -534,6 +665,7 @@ def ledger_local_windows(
             return []
         document = json.loads(ledger_path.read_bytes().decode("utf-8"))
         entries = document.get("entries") or []
+        source_aliases = _load_source_aliases(document)
         pieces = [p for p in (spec.get("pieces") or []) if isinstance(p, Mapping)]
         if len(pieces) != len(durations):
             return []
@@ -545,7 +677,10 @@ def ledger_local_windows(
             ):
                 continue
             for window in _entry_local_windows(
-                raw_entry, pieces=pieces, durations=durations
+                raw_entry,
+                pieces=pieces,
+                durations=durations,
+                source_aliases=source_aliases,
             ):
                 out.append((int(window["start_ms"]), int(window["end_ms"])))
         return out

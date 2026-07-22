@@ -1,5 +1,15 @@
 {
   "schema_version": "source-subtitle-truth-ledger.v1",
+  "source_aliases": [
+    {
+      "alias_id": "20260722-official-replay-bv1fjg16xex6",
+      "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+      "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "canonical_recording_basename": "22966160_20260722-19-35-15.mp4",
+      "alias_timeline_offset_ms": 0,
+      "authority": "Bilibili official replay BV1Fjg16xEx6 cid40199521906; full-file SHA-256 verified 2026-07-22; bounded PCM cross-correlation peak 0.961448 placed canonical and replay source timelines within 39.5ms, below subtitle cue tolerance"
+    }
+  ],
   "entries": [
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",

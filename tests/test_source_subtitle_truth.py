@@ -31,12 +31,13 @@ def _srt_ms(*rows: tuple[int, int, str]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def _ledger(tmp_path, entries):
+def _ledger(tmp_path, entries, *, source_aliases=None):
     path = tmp_path / "truth.json"
     path.write_text(
         json.dumps(
             {
                 "schema_version": "source-subtitle-truth-ledger.v1",
+                "source_aliases": source_aliases or [],
                 "entries": entries,
             },
             ensure_ascii=False,
@@ -44,6 +45,119 @@ def _ledger(tmp_path, entries):
         encoding="utf-8",
     )
     return path
+
+
+def test_source_alias_requires_exact_piece_hash_and_projects_offset(tmp_path):
+    alias_sha256 = "sha256:" + "a" * 64
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "official-replay-alias",
+                "recording_basename": "canonical.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_000,
+                "action": "replace_cue",
+                "text": "审定文本",
+                "required": True,
+            }
+        ],
+        source_aliases=[
+            {
+                "alias_id": "official-replay-v1",
+                "alias_recording_basename": "replay.mp4",
+                "alias_source_sha256": alias_sha256,
+                "canonical_recording_basename": "canonical.mp4",
+                "alias_timeline_offset_ms": 2_000,
+                "authority": "exact media hash plus reviewed audio alignment",
+            }
+        ],
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((10_000, 14_000, "误听文本")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/replay.mp4",
+                    "source_media_sha256": alias_sha256,
+                    # Alias interval 112000..116000 maps to canonical
+                    # interval 110000..114000.
+                    "start_ms": 102_000,
+                    "end_ms": 122_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+
+    assert "审定文本" in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["source_aliases"] == [
+        {
+            "alias_id": "official-replay-v1",
+            "alias_recording_basename": "replay.mp4",
+            "alias_source_sha256": alias_sha256,
+            "alias_timeline_offset_ms": 2_000,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("piece_hash", "reason"),
+    [
+        (None, "SOURCE_SUBTITLE_TRUTH_ALIAS_PIECE_SHA256_MISSING"),
+        (
+            "sha256:" + "b" * 64,
+            "SOURCE_SUBTITLE_TRUTH_ALIAS_PIECE_SHA256_MISMATCH",
+        ),
+    ],
+)
+def test_source_alias_fails_closed_without_exact_piece_hash(
+    tmp_path, piece_hash, reason
+):
+    alias_sha256 = "sha256:" + "a" * 64
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "bound-alias",
+                "recording_basename": "canonical.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_000,
+                "action": "replace_cue",
+                "text": "审定文本",
+                "required": True,
+            }
+        ],
+        source_aliases=[
+            {
+                "alias_id": "official-replay-v1",
+                "alias_recording_basename": "replay.mp4",
+                "alias_source_sha256": alias_sha256,
+                "canonical_recording_basename": "canonical.mp4",
+                "alias_timeline_offset_ms": 0,
+                "authority": "reviewed evidence",
+            }
+        ],
+    )
+    piece = {
+        "remote_media": "/source/replay.mp4",
+        "start_ms": 100_000,
+        "end_ms": 120_000,
+    }
+    if piece_hash is not None:
+        piece["source_media_sha256"] = piece_hash
+
+    with pytest.raises(RuntimeError, match=reason):
+        apply_source_subtitle_truth(
+            _srt_ms((10_000, 14_000, "误听文本")),
+            spec={"pieces": [piece]},
+            durations=[20_000],
+            ledger_path=ledger,
+        )
 
 
 def test_source_interval_truth_applies_to_every_overlapping_candidate(tmp_path):
@@ -729,3 +843,41 @@ def test_committed_ledger_restores_complete_opening_nancho_cue():
     assert [row["truth_id"] for row in audit["applied"]] == [
         "20260722-nancho-confrontation-opening-mixed-name"
     ]
+
+
+def test_committed_ledger_projects_nancho_truth_to_hash_bound_official_replay():
+    """7/22 官方回放只在精确哈希绑定时继承原录制时间轴的审定钉子。"""
+
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    replay_sha256 = (
+        "sha256:"
+        "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 2_800, "这不是主播最最最最喜欢")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recovery/22966160_20260722-19-34-50.mp4"
+                    ),
+                    "source_media_sha256": replay_sha256,
+                    "start_ms": 672_920,
+                    "end_ms": 675_480,
+                }
+            ]
+        },
+        durations=[2_560],
+        ledger_path=ledger,
+    )
+
+    assert "这不是主播最最最最喜欢的南町nightin吗，llnnhhb" in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["source_aliases"][0]["alias_id"] == (
+        "20260722-official-replay-bv1fjg16xex6"
+    )
