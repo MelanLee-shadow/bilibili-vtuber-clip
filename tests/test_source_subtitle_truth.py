@@ -697,8 +697,8 @@ def test_unrelated_neighbor_cue_never_overwritten_by_pin(tmp_path):
     assert audit["status"] == "APPLIED"
 
 
-def test_committed_ledger_canonicalizes_opening_nancho_mixed_name():
-    """同一已确认专名在未逐点列出的邻近 cue 也必须落成统一词面。"""
+def test_committed_ledger_restores_complete_opening_nancho_cue():
+    """已审定整句不能依赖误词仍存在；ASR 删掉专名时也必须完整恢复。"""
 
     ledger = (
         Path(__file__).resolve().parents[1]
@@ -706,9 +706,7 @@ def test_committed_ledger_canonicalizes_opening_nancho_mixed_name():
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
     )
-    srt = _srt_ms(
-        (0, 2_800, "这不是主播最最最最喜欢的南町nighting吗，LLNNHHB"),
-    )
+    srt = _srt_ms((0, 2_800, "这不是主播最最最最喜欢"),)
     spec = {
         "pieces": [
             {
@@ -726,8 +724,7 @@ def test_committed_ledger_canonicalizes_opening_nancho_mixed_name():
         ledger_path=ledger,
     )
 
-    assert "南町nightin吗" in corrected
-    assert "nighting" not in corrected.lower()
+    assert "这不是主播最最最最喜欢的南町nightin吗，llnnhhb" in corrected
     assert audit["status"] == "APPLIED"
     assert [row["truth_id"] for row in audit["applied"]] == [
         "20260722-nancho-confrontation-opening-mixed-name"

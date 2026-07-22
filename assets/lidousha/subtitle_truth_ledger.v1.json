@@ -795,18 +795,8 @@
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 672920,
       "source_end_ms": 675480,
-      "action": "replace_substring",
-      "replacements": [
-        {
-          "surface": "南町nighting",
-          "canonical": "南町nightin"
-        },
-        {
-          "surface": "南町Nighting",
-          "canonical": "南町nightin"
-        }
-      ],
-      "required_text": "南町nightin",
+      "action": "replace_cue",
+      "text": "这不是主播最最最最喜欢的南町nightin吗，llnnhhb",
       "authority": "Ivan-stated-20260722-conversation(南町nightin为连续混合专名；同切片开场语义锚点复查发现nighting多生尾音)",
       "required": true
     },
