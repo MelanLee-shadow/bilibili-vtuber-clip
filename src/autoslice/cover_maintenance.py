@@ -171,6 +171,22 @@ def repair_covers(
         log_path = _runner.BASE / "logs" / f"{date}_{cid}_cover.log"
         ref = _runner.cover_ref_for(date, cid)
         src_args = ["--ref", str(ref)] if ref else ["--media", str(mp4)]
+        style_args: list[str] = []
+        diversity_slot = rec.get("cover_diversity_slot")
+        if (
+            isinstance(diversity_slot, int)
+            and not isinstance(diversity_slot, bool)
+            and diversity_slot >= 0
+        ):
+            style_args.extend(["--diversity-slot", str(diversity_slot)])
+        if (
+            str(cid) not in expected_cover_texts
+            and rec.get("title_authority_status") != "RESOLVED_MANUAL"
+        ):
+            style_args.append("--allow-punch")
+        reviewed_cover_text = expected_cover_texts.get(str(cid))
+        if reviewed_cover_text is not None:
+            style_args.extend(["--cover-text", reviewed_cover_text])
         repair_root = _runner.BASE / "out" / date / str(cid) / "cover_repair"
         attempt_id = (
             f"{fingerprint.removeprefix('sha256:')[:12]}-"
@@ -198,7 +214,7 @@ def repair_covers(
                     [sys.executable, str(_runner.profile_tool("cover_regenerator")),
                      "--title", str(rec["title"]), *src_args,
                      "--candidate-id", str(cid), "--ai-bg", str(ai_background),
-                     "--out", str(generated_cover)],
+                     "--out", str(generated_cover), *style_args],
                     check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=1200,
                     cwd=str(_runner.REPO_ROOT), env=_runner.child_env_for_date(date),
                 )

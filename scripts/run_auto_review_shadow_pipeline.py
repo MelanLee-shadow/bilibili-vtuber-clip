@@ -700,6 +700,7 @@ def _stage_lidousha_ai_cover(
     run_ffmpeg: bool,
     art_direction_llm_call: LlmCall | None = None,
     punch_allowed: bool = False,
+    diversity_slot: int | None = None,
 ) -> dict[str, object]:
     """Compatibility seam for patched CPA image-edit adapters."""
 
@@ -713,6 +714,7 @@ def _stage_lidousha_ai_cover(
         art_direction_llm_call=art_direction_llm_call,
         image_edit=_call_cpa_image_edit,
         punch_allowed=punch_allowed,
+        diversity_slot=diversity_slot,
     )
 
 
@@ -727,6 +729,7 @@ def _stage_publish_draft(
     art_direction_llm_call: LlmCall | None = None,
     skip_cover: bool = False,
     selection_hook: str | None = None,
+    cover_diversity_slot: int | None = None,
 ) -> dict[str, object] | None:
     return _stage_publish_draft_impl(
         materialized_recut,
@@ -738,6 +741,7 @@ def _stage_publish_draft(
         art_direction_llm_call=art_direction_llm_call,
         skip_cover=skip_cover,
         selection_hook=selection_hook,
+        cover_diversity_slot=cover_diversity_slot,
         stage_cover=_stage_lidousha_ai_cover,
     )
 

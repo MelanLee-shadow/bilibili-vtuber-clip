@@ -135,6 +135,123 @@ _MIN_SEGMENT_DURATION_MS = 10_000
 _MIN_SEGMENT_SIZE_BYTES = 64 * 1024
 
 
+def audit_finalized_recording_inventory(
+    date_dir: Path,
+    *,
+    room_id: str,
+) -> dict[str, object]:
+    """Fail closed when recorder output never reached the runner's MP4 lane.
+
+    The unattended runner consumes only root-level ``<room>_*.mp4`` files. A
+    finalized HLS playlist or raw fMP4 sidecar without that sibling therefore
+    represents real source bytes which selection cannot see.  The 2026-07-22
+    incident had exactly this shape: segment two ended cleanly as m3u8/m4s but
+    never became MP4, so the first 30 minutes were falsely reported as the
+    whole session.
+
+    This audit is intentionally cheap (directory names plus at most 1 MiB of
+    playlist text) and contains no wall-clock assumptions.  It can run before
+    the runner's early "nothing new" return on every tick.
+    """
+
+    stems: dict[str, dict[str, Path]] = {}
+    prefix = f"{room_id}_"
+    try:
+        paths = sorted(date_dir.iterdir()) if date_dir.is_dir() else []
+    except OSError as exc:
+        return {
+            "schema_version": "recording-inventory-audit.v1",
+            "status": "BLOCKED",
+            "can_select": False,
+            "room_id": room_id,
+            "date_dir": str(date_dir),
+            "consumer_segments": [],
+            "observed_stems": [],
+            "issues": [
+                {
+                    "code": "SOURCE_DIRECTORY_UNREADABLE",
+                    "severity": "BLOCK",
+                    "message": f"Recording directory is unreadable: {type(exc).__name__}",
+                    "path": str(date_dir),
+                }
+            ],
+        }
+
+    for path in paths:
+        if not path.is_file() or not path.name.startswith(prefix):
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in {".mp4", ".m4s", ".m3u8"}:
+            continue
+        stems.setdefault(path.stem, {})[suffix] = path
+
+    issues: list[dict[str, object]] = []
+    consumer_segments: list[str] = []
+    for stem, siblings in sorted(stems.items()):
+        mp4 = siblings.get(".mp4")
+        if mp4 is not None:
+            consumer_segments.append(str(mp4))
+            continue
+
+        playlist = siblings.get(".m3u8")
+        raw_media = siblings.get(".m4s")
+        playlist_finalized = False
+        if playlist is not None:
+            try:
+                with playlist.open("r", encoding="utf-8", errors="replace") as handle:
+                    playlist_finalized = "#EXT-X-ENDLIST" in handle.read(1024 * 1024)
+            except OSError:
+                issues.append(
+                    {
+                        "code": "SOURCE_PLAYLIST_UNREADABLE",
+                        "severity": "BLOCK",
+                        "message": "Recorder playlist exists but cannot be read.",
+                        "segment_stem": stem,
+                        "path": str(playlist),
+                    }
+                )
+                continue
+
+        if playlist_finalized:
+            code = "FINALIZED_PLAYLIST_WITHOUT_MP4"
+            message = (
+                "Recorder playlist has ENDLIST and raw media, but the MP4 consumed "
+                "by autoslice was never finalized."
+            )
+        elif playlist is not None:
+            code = "PLAYLIST_NOT_FINALIZED"
+            message = (
+                "Recorder playlist has no ENDLIST and no consumable MP4 after the "
+                "session processing gate."
+            )
+        elif raw_media is not None:
+            code = "RAW_MEDIA_WITHOUT_MP4"
+            message = "Recorder raw media exists without the MP4 consumed by autoslice."
+        else:
+            continue
+        issues.append(
+            {
+                "code": code,
+                "severity": "BLOCK",
+                "message": message,
+                "segment_stem": stem,
+                "path": str(playlist or raw_media),
+                "raw_media_path": str(raw_media) if raw_media is not None else None,
+            }
+        )
+
+    return {
+        "schema_version": "recording-inventory-audit.v1",
+        "status": "BLOCKED" if issues else "PASS",
+        "can_select": not issues,
+        "room_id": room_id,
+        "date_dir": str(date_dir),
+        "consumer_segments": consumer_segments,
+        "observed_stems": sorted(stems),
+        "issues": issues,
+    }
+
+
 def build_source_range_ledger(
     *,
     room_id: str,

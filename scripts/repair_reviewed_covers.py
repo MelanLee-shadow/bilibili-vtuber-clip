@@ -149,6 +149,24 @@ def load_plan(path: Path) -> tuple[dict[str, Any], str]:
     for row in invalidations:
         if not all(isinstance(row.get(key), str) and row.get(key) for key in ("expected_title", "title")):
             raise ReviewedCoverRepairError("invalidation title authority is incomplete")
+        expected_cover_text = row.get("expected_cover_text")
+        if expected_cover_text is not None and (
+            not isinstance(expected_cover_text, str) or not expected_cover_text.strip()
+        ):
+            raise ReviewedCoverRepairError("expected_cover_text must be non-empty")
+        if row.get("require_rendered_text_exact") is True and not isinstance(
+            expected_cover_text, str
+        ):
+            raise ReviewedCoverRepairError(
+                "exact reviewed cover repair requires expected_cover_text"
+            )
+        diversity_slot = row.get("cover_diversity_slot")
+        if diversity_slot is not None and (
+            not isinstance(diversity_slot, int)
+            or isinstance(diversity_slot, bool)
+            or not 0 <= diversity_slot <= 5
+        ):
+            raise ReviewedCoverRepairError("cover_diversity_slot must be an integer from 0 through 5")
         media = row.get("media")
         cover = row.get("cover")
         documents = row.get("documents")
@@ -178,14 +196,19 @@ def _assert_ledger(plan: Mapping[str, Any]) -> None:
         raise ReviewedCoverRepairError("upload ledger changed during reviewed cover repair")
 
 
-def _invalidate_document(document: Mapping[str, Any], *, title: str) -> dict[str, Any]:
+def _invalidate_document(
+    document: Mapping[str, Any],
+    *,
+    title: str,
+    cover_text: str | None = None,
+) -> dict[str, Any]:
     updated = copy.deepcopy(dict(document))
     hashes = updated.get("artifact_hashes")
     if not isinstance(hashes, dict):
         raise ReviewedCoverRepairError("active document artifact_hashes is missing")
     hashes.pop("cover_sha256", None)
     updated.pop("cover_repair_binding", None)
-    cover_text = _lidousha_cover_text(title)
+    cover_text = cover_text if isinstance(cover_text, str) else _lidousha_cover_text(title)
     views: list[dict[str, Any]] = []
     if updated.get("schema_version") == "shadow-publish-draft.v1":
         views.append(updated)
@@ -260,7 +283,20 @@ def _validated_invalidation_documents(
         if path.is_symlink() or _sha256_file(path) != expected[path]:
             raise ReviewedCoverRepairError(f"{candidate_id} active document hash drifted: {path}")
         intended.append(
-            (path, _json_file_bytes(_invalidate_document(document, title=str(row["title"]))))
+            (
+                path,
+                _json_file_bytes(
+                    _invalidate_document(
+                        document,
+                        title=str(row["title"]),
+                        cover_text=(
+                            str(row["expected_cover_text"])
+                            if isinstance(row.get("expected_cover_text"), str)
+                            else None
+                        ),
+                    )
+                ),
+            )
         )
     return intended
 
@@ -419,6 +455,8 @@ def _invalidate_state_record(
             }
         )
     record["title"] = str(row["title"])
+    if row.get("cover_diversity_slot") is not None:
+        record["cover_diversity_slot"] = int(row["cover_diversity_slot"])
     record["cover_status"] = "BLOCKED_AI_COVER_REQUIRED"
     for key in (
         "cover_path",

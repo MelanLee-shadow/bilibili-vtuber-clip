@@ -107,6 +107,22 @@ def write_reports(date: str, state: dict) -> None:
         lines += ["", "## 死段（不再重试）", ""] + [f"- {k}: {v}" for k, v in dead.items()]
     if state.get("status") == "paused_cpa_down":
         lines += ["", "> ⚠ CPA 链路不可用，批次已暂停；cron 每 10 分钟自动重试，恢复后从断点续产。"]
+    if state.get("status") == "source_incomplete":
+        source_integrity = (
+            state.get("source_integrity")
+            if isinstance(state.get("source_integrity"), dict)
+            else {}
+        )
+        issue_codes = [
+            str(issue.get("code") or "SOURCE_INCOMPLETE")
+            for issue in source_integrity.get("issues", [])
+            if isinstance(issue, dict)
+        ]
+        lines += [
+            "",
+            "> ⚠ **源录像不完整，已禁止进入选片/完成态。** "
+            + ("原因码：" + "、".join(issue_codes) if issue_codes else "需检查录像段终态。"),
+        ]
     if state.get("status") == "no_delivery":
         lines += ["", "> ⚠ 本场 0 条交付（候选被门拦截/失败/耗尽）。这不是成功状态，需人工过目落选与拦截原因。"]
     (delivery / "AUTOSLICE_SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -474,6 +474,7 @@ def _stage_record(
         art_direction_llm_call=art_direction_llm,
         skip_cover=options.reuse_cover,
         selection_hook=str(spec.get("selection_hook") or ""),
+        cover_diversity_slot=spec.get("cover_diversity_slot"),
     )
     staging = record.get("publish_staging") or {}
     # 7. Upload tags (Ivan 2026-07-13): generated at package time against the

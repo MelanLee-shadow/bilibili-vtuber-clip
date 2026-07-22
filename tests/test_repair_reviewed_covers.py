@@ -52,6 +52,44 @@ def test_invalidate_document_preserves_media_authority_and_resolves_manual_title
     assert updated["artifact_hashes"]["subtitle_sha256"] == original["artifact_hashes"]["subtitle_sha256"]
 
 
+def test_invalidate_document_accepts_hash_bound_short_cover_copy():
+    source = {
+        "schema_version": "shadow-publish-draft.v1",
+        "artifact_hashes": {"burned_video_sha256": "sha256:" + "1" * 64},
+        "reason_codes": [],
+    }
+
+    updated = reviewed._invalidate_document(
+        source,
+        title="【李豆沙】完整归档标题保留上下文",
+        cover_text="短梗字\n保留问号？",
+    )
+
+    assert updated["title"] == "【李豆沙】完整归档标题保留上下文"
+    assert updated["cover_text"] == "短梗字\n保留问号？"
+
+
+def test_invalidate_state_record_persists_reviewed_cover_diversity_slot():
+    record = {
+        "candidate_id": "auto_test",
+        "title": "【李豆沙】旧标题",
+        "cover_status": "AI_COVER_READY",
+    }
+
+    reviewed._invalidate_state_record(
+        record,
+        row={
+            "title": "【李豆沙】新标题",
+            "cover_diversity_slot": 4,
+        },
+        plan_sha256="a" * 64,
+    )
+
+    assert record["title"] == "【李豆沙】新标题"
+    assert record["cover_diversity_slot"] == 4
+    assert record["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
+
+
 def _transaction_fixture(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     base = tmp_path / "base"
@@ -180,3 +218,37 @@ def test_checked_in_july10_plan_is_well_formed():
         "auto_200009_524_545",
         "song_212005_1444",
     }
+
+
+def test_checked_in_july22_background_diversity_plan_is_well_formed():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/cover_repair_plans/2026-07-22.background-diversity-and-title.v1.json"
+    )
+
+    plan, digest = reviewed.load_plan(path)
+
+    assert len(digest) == 64
+    assert [row["cover_diversity_slot"] for row in plan["invalidations"]] == [
+        3,
+        4,
+        0,
+        5,
+    ]
+    assert [row["expected_cover_text"] for row in plan["invalidations"][:3]] == [
+        "帅气不良\n被豆沙霸凌",
+        "熟悉的中毒感\n像回家了一样",
+        "左右分不清\n反正都弹了",
+    ]
+    target = next(
+        row
+        for row in plan["invalidations"]
+        if row["candidate_id"] == "auto_193515_672_909"
+    )
+    assert target["title"] == (
+        "【李豆沙】南町当面追问：为什么提到我就要“最最最喜欢”？越解释越像海王"
+    )
+    assert target["expected_cover_text"].splitlines() == [
+        "为什么提到我",
+        "就要“最最最喜欢”？",
+    ]

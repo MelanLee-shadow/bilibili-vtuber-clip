@@ -256,6 +256,10 @@ def _lidousha_is_song_title(title: str) -> bool:
 
 _COVER_PUNCH_CLAUSE_RX = re.compile(r"[^，,。；;：:…！!？?\n]+[！!？?]")
 _COVER_PUNCH_QUOTED_RX = re.compile(r"[“‘「『]([^”’」』]{4,12})[”’」』]")
+# Short quoted catchphrases are semantic and visual atoms on a cover.  The
+# July 22 fallback split ``“最最最喜欢”`` in half, which looked like a typo even
+# though every character survived.  Paired short quotes must stay together.
+_COVER_QUOTED_SPAN_RX = re.compile(r"[“‘「『][^”’」』\n]{1,8}[”’」』]")
 
 
 def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
@@ -333,6 +337,7 @@ def _lidousha_cover_art_direction(
     art_direction_llm_call: LlmCall | None = None,
     emote_library: EmoteLibrary | None = None,
     allow_punch: bool = False,
+    diversity_slot: int | None = None,
 ) -> LidoushaCoverArtDirection:
     """Pick the cover's role/expression/background/layout/hook color.
 
@@ -347,16 +352,29 @@ def _lidousha_cover_art_direction(
     allow_punch = allow_punch and not is_song
     digest = _cover_stable_hash(candidate_id or title)
     hook_keys = list(_COVER_HOOK_COLORS)
-    hook_color = hook_keys[(digest // 31) % len(hook_keys)]
+    valid_diversity_slot = (
+        isinstance(diversity_slot, int)
+        and not isinstance(diversity_slot, bool)
+        and diversity_slot >= 0
+    )
+    hook_color = hook_keys[
+        (diversity_slot if valid_diversity_slot else digest // 31) % len(hook_keys)
+    ]
     if is_song:
         layout = _COVER_SONG_LAYOUT
         role = "gentle_song"
         expression_en = "gentle serene face, eyes softly closed or half-lidded, singing calmly with a faint tender smile"
         background_style = _COVER_BG_CALM[digest % len(_COVER_BG_CALM)]
     else:
-        layout = _COVER_TALK_LAYOUTS[digest % len(_COVER_TALK_LAYOUTS)]
+        layout = _COVER_TALK_LAYOUTS[
+            (diversity_slot if valid_diversity_slot else digest)
+            % len(_COVER_TALK_LAYOUTS)
+        ]
         role, expression_en, forced_bg = _cover_role_from_title(title, cover_text)
-        background_style = forced_bg if forced_bg is not None else _COVER_BG_BUSY[(digest // 7) % len(_COVER_BG_BUSY)]
+        background_style = forced_bg if forced_bg is not None else _COVER_BG_BUSY[
+            (diversity_slot if valid_diversity_slot else digest // 7)
+            % len(_COVER_BG_BUSY)
+        ]
     baseline = LidoushaCoverArtDirection(
         role=role,
         expression_en=expression_en,
@@ -497,9 +515,13 @@ def _validated_cover_lines(value: object, cover_text: str, *, hook_word: str, ma
         lines.append(line)
     if _cover_lines_canon("".join(lines)) != _cover_lines_canon(cover_text):
         return ()
-    for atom in [*re.findall(r"《[^》]*》", cover_text), *( [hook_word] if hook_word else [] )]:
+    for atom in [
+        *re.findall(r"《[^》]*》", cover_text),
+        *_COVER_QUOTED_SPAN_RX.findall(cover_text),
+        *([hook_word] if hook_word else []),
+    ]:
         if atom and not any(atom in line for line in lines):
-            return ()  # a song name / the highlighted hook must never break across lines
+            return ()  # a song name / quoted catchphrase / hook must stay whole
     return tuple(lines)
 
 
@@ -526,7 +548,11 @@ def _validated_cover_words(value: object, cover_text: str, *, hook_word: str) ->
         words.append(word)
     if _cover_lines_canon("".join(words)) != _cover_lines_canon(cover_text):
         return ()
-    for atom in [*re.findall(r"《[^》]*》", cover_text), *([hook_word] if hook_word else [])]:
+    for atom in [
+        *re.findall(r"《[^》]*》", cover_text),
+        *_COVER_QUOTED_SPAN_RX.findall(cover_text),
+        *([hook_word] if hook_word else []),
+    ]:
         if atom and not any(atom in word for word in words):
             return ()
     return tuple(words)
@@ -1489,6 +1515,10 @@ def _split_wide_atom(atom: str, max_em: float, protect: str = "") -> list[str]:
     ASCII/数字串不拆，标点按 _bind_punctuation_atoms 绑定。"""
     if _atom_em_width(atom) <= max_em:
         return [atom]
+    # A short complete quote is itself the punchline.  Let the fitter reduce
+    # the line font if needed instead of producing a visibly broken half-quote.
+    if _COVER_QUOTED_SPAN_RX.fullmatch(atom):
+        return [atom]
     pieces = [p for p in (re.split(f"({re.escape(protect)})", atom) if protect else [atom]) if p]
     units: list[str] = []
     for piece in pieces:
@@ -1521,8 +1551,9 @@ def _wrap_even(text, n, keep=()):
     """Wrap text into n balanced lines: prefer punctuation-delimited clauses when
     there are exactly n of them, else pack 'atoms' greedily into n length-balanced
     lines.  Atoms kept WHOLE (never split across lines): each ASCII run
-    (kmx/TPL/AI/0.5), any 《song name》, and any phrase in ``keep`` (the highlighted
-    hook word, so its color stays intact).  Shorter lines ⇒ bigger font."""
+    (kmx/TPL/AI/0.5), any 《song name》, a short paired Chinese quote, and any
+    phrase in ``keep`` (the highlighted hook word, so its color stays intact).
+    Shorter lines ⇒ bigger font."""
     text = text.strip()
     if n <= 1 or len(text) <= 1:
         return [text]
@@ -1552,7 +1583,15 @@ def _wrap_even(text, n, keep=()):
             lines += _wrap_even(suf, suf_n)
         return [ln for ln in lines if ln]
     keeps = sorted((re.escape(k) for k in keep if k), key=len, reverse=True)
-    pattern = "|".join([*keeps, r"《[^》]*》", r"[A-Za-z0-9]+", r"[^A-Za-z0-9]"])
+    pattern = "|".join(
+        [
+            *keeps,
+            _COVER_QUOTED_SPAN_RX.pattern,
+            r"《[^》]*》",
+            r"[A-Za-z0-9]+",
+            r"[^A-Za-z0-9]",
+        ]
+    )
     raw_atoms = re.findall(pattern, text)
     atoms: list[str] = _bind_punctuation_atoms(raw_atoms)
     n = min(n, len(atoms))

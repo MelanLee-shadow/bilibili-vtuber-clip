@@ -505,6 +505,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "pieces": pieces,
         "talk_filler_plan": filler_plan,
     }
+    if (
+        isinstance(item.get("cover_diversity_slot"), int)
+        and not isinstance(item.get("cover_diversity_slot"), bool)
+        and int(item["cover_diversity_slot"]) >= 0
+    ):
+        spec["cover_diversity_slot"] = int(item["cover_diversity_slot"])
     song_name_candidates = item.get("song_name_candidates")
     if song_name_candidates:
         # Machine-evidence song-name pool (screen songlist + 点歌 + known-songs)
@@ -607,6 +613,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_filler_plan_path": str(filler_plan_path),
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
+    if "cover_diversity_slot" in item:
+        result["cover_diversity_slot"] = item["cover_diversity_slot"]
     # Classify only bytes written by this subprocess attempt.  The log is
     # append-only; a stale boundary marker followed by a transient CPA error
     # must not make the new attempt terminal again.

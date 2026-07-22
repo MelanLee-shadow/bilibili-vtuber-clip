@@ -1,0 +1,150 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "date": "2026-07-22",
+  "authority": "Ivan 2026-07-22: make the batch backgrounds materially different and rewrite the ambiguous 最最最喜欢 cover/title without changing video or subtitles",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "f3775e2e56cf78707fc249a159a0e97ad394c15854076e7f9315f445535ab225"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_193515_1569_1672",
+      "expected_state_record_sha256": "4d0b270413dbbac7169fe0b17f98648d0388c1173245fb433cdc113fbea71de1"
+    },
+    {
+      "candidate_id": "auto_193515_233_361",
+      "expected_state_record_sha256": "dca165c85b84948372622e1320e374177ea644b9ffaa465d63d7afdd8297ffd7"
+    },
+    {
+      "candidate_id": "auto_193515_1406_1543",
+      "expected_state_record_sha256": "a5d6f71e0b187f61ca3d3232dc065f713f0f5f3c9ee5373d2dfc4039eae388b8"
+    },
+    {
+      "candidate_id": "auto_193515_672_909",
+      "expected_state_record_sha256": "c07fef806d0a87cd9c21738a0765433e4264626c5a65b152abb4c2c4b77b225d"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_193515_1569_1672",
+      "expected_title": "【李豆沙】主人把电脑椅让给李豆沙，自己缩在小椅子上像坐地板，熊猫霸凌帅气不良还逼出假哭",
+      "title": "【李豆沙】主人把电脑椅让给李豆沙，自己缩在小椅子上像坐地板，熊猫霸凌帅气不良还逼出假哭",
+      "expected_cover_text": "帅气不良\n被豆沙霸凌",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 3,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/主人把电脑椅让给李豆沙，自己缩在小椅.mp4",
+        "sha256": "6fc98919a436bd5f40f4034459a1933136aaba19f1d244f28886dcd57326cd6a"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/主人把电脑椅让给李豆沙，自己缩在小椅.cover.png",
+        "sha256": "9435ffee9fcb562e9c9fac06e8cd69b8362ef91de7b4d29437f829e0e4273f8e"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/主人把电脑椅让给李豆沙，自己缩在小椅.record.json",
+          "sha256": "03c90f5224d24a51ee1d088a0fe58b9759cf76e562d78c68efb7aa36eb92078d"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_1569_1672/replacement_recuts/auto_193515_1569_1672.record.json",
+          "sha256": "03c90f5224d24a51ee1d088a0fe58b9759cf76e562d78c68efb7aa36eb92078d"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_1569_1672/replacement_recuts/auto_193515_1569_1672.recut.publish.json",
+          "sha256": "679c1adf3aa519ea5a3aeb9f2bde515fee93634234640533ab9c97e0f5e02422"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193515_233_361",
+      "expected_title": "【李豆沙】吃过一次没熟豆角仍敢再次尝试，中毒还说“有经验了”，神农尝百草这块是这样的",
+      "title": "【李豆沙】吃过一次没熟豆角仍敢再次尝试，中毒还说“有经验了”，神农尝百草这块是这样的",
+      "expected_cover_text": "熟悉的中毒感\n像回家了一样",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 4,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/李豆沙吃过一次没熟豆角仍敢再次尝试，.mp4",
+        "sha256": "182bc4a66c681cf7908537378ed13fd3e609d8b0f315d15b8832f9b029b5ab0e"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/李豆沙吃过一次没熟豆角仍敢再次尝试，.cover.png",
+        "sha256": "2afe7b84808150a27e8b3bc4e6fe8527a69fa2f91f25573141ffd011f2057876"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/李豆沙吃过一次没熟豆角仍敢再次尝试，.record.json",
+          "sha256": "d3526231f59e04fe0f21eef9c11ce84e11599eecf1d1da4d18f9395f745733f5"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_233_361/replacement_recuts/auto_193515_233_361.record.json",
+          "sha256": "d3526231f59e04fe0f21eef9c11ce84e11599eecf1d1da4d18f9395f745733f5"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_233_361/replacement_recuts/auto_193515_233_361.recut.publish.json",
+          "sha256": "9e6aa54037685208322269d1273335378d8bbfaf198396527d76ea38aa758061"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193515_1406_1543",
+      "expected_title": "【李豆沙】弹幕要求给左边的人一个脑瓜崩，镜面左右绕晕熊猫头，管他是谁先弹再说！",
+      "title": "【李豆沙】弹幕要求给左边的人一个脑瓜崩，镜面左右绕晕熊猫头，管他是谁先弹再说！",
+      "expected_cover_text": "左右分不清\n反正都弹了",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 0,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/弹幕要求给左边的人一个脑瓜崩，两人却.mp4",
+        "sha256": "4448162a95e87cc7252362f2430ad245a5937178c7f6f2c6a390b535ca8cd325"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/弹幕要求给左边的人一个脑瓜崩，两人却.cover.png",
+        "sha256": "1a53a96b6950ebd331f9195bee72f2c28911ca6ad45c192bcbb876f0d656169e"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/弹幕要求给左边的人一个脑瓜崩，两人却.record.json",
+          "sha256": "eb053bf604d7e3c38fa00acadec5f56b7b0e475c8b689f58ff49a58a4b3934fe"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_1406_1543/replacement_recuts/auto_193515_1406_1543.record.json",
+          "sha256": "eb053bf604d7e3c38fa00acadec5f56b7b0e475c8b689f58ff49a58a4b3934fe"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_1406_1543/replacement_recuts/auto_193515_1406_1543.recut.publish.json",
+          "sha256": "4963d59a2b01956eb918f44a4a1a714cbb34808a3a509c3d7197354a410b8715"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193515_672_909",
+      "expected_title": "【李豆沙】侄女一句“最最最喜欢”引发当面对质，报恩式喜欢被拆穿，原来是收集一串L的海王",
+      "title": "【李豆沙】南町当面追问：为什么提到我就要“最最最喜欢”？越解释越像海王",
+      "expected_cover_text": "为什么提到我\n就要“最最最喜欢”？",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 5,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/一句“最最最喜欢”引发当面对质，李豆.mp4",
+        "sha256": "e1168b9abc89562fefbc165854dde51a76c0ee22fb77b1d03abc7e8afb6677b1"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/一句“最最最喜欢”引发当面对质，李豆.cover.png",
+        "sha256": "e4a3ae1d0845b2e89bae5094b7475feb2d215a694c1f9a37dc46bbb996c9576f"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-07-22/一句“最最最喜欢”引发当面对质，李豆.record.json",
+          "sha256": "553dc86729bd1f40c1bc1d38d5db36cf3f2196c7187f5e4238fc46d0b7845e70"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_672_909/replacement_recuts/auto_193515_672_909.record.json",
+          "sha256": "553dc86729bd1f40c1bc1d38d5db36cf3f2196c7187f5e4238fc46d0b7845e70"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-07-22/auto_193515_672_909/replacement_recuts/auto_193515_672_909.recut.publish.json",
+          "sha256": "3c8743360ab9c40140726ae06787a3abca72012df92d87b313d21c85705ce18b"
+        }
+      ]
+    }
+  ]
+}

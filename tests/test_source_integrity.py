@@ -1,9 +1,49 @@
 from src.autoslice.source_integrity import (
     MediaSegmentObservation,
+    audit_finalized_recording_inventory,
     build_source_range_ledger,
     plan_bilibili_replay_compensation,
     plan_bilibili_replay_download_commands,
 )
+
+
+def test_recording_inventory_blocks_finalized_playlist_without_mp4(tmp_path):
+    date_dir = tmp_path / "2026-07-22"
+    date_dir.mkdir()
+    stem = "22966160_20260722-20-05-11"
+    (date_dir / f"{stem}.m4s").write_bytes(b"raw-media")
+    (date_dir / f"{stem}.m3u8").write_text(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-ENDLIST\n",
+        encoding="utf-8",
+    )
+
+    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+
+    assert audit["status"] == "BLOCKED"
+    assert audit["can_select"] is False
+    assert audit["consumer_segments"] == []
+    assert [issue["code"] for issue in audit["issues"]] == [
+        "FINALIZED_PLAYLIST_WITHOUT_MP4"
+    ]
+
+
+def test_recording_inventory_accepts_raw_sidecars_with_consumable_mp4(tmp_path):
+    date_dir = tmp_path / "2026-07-22"
+    date_dir.mkdir()
+    stem = "22966160_20260722-19-35-15"
+    for suffix in (".m4s", ".mp4"):
+        (date_dir / f"{stem}{suffix}").write_bytes(b"media")
+    (date_dir / f"{stem}.m3u8").write_text(
+        "#EXTM3U\n#EXT-X-ENDLIST\n",
+        encoding="utf-8",
+    )
+
+    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+
+    assert audit["status"] == "PASS"
+    assert audit["can_select"] is True
+    assert audit["issues"] == []
+    assert audit["consumer_segments"] == [str(date_dir / f"{stem}.mp4")]
 
 
 def test_danmaku_outruns_tiny_media_requires_replay_compensation():

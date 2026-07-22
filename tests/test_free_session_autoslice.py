@@ -2065,7 +2065,10 @@ def test_reviewed_cover_text_gate_rejects_dropped_question_mark_before_binding(
     class Completed:
         returncode = 0
 
+    commands = []
+
     def generate(command, **_kwargs):
+        commands.append(command)
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"generated")
@@ -2104,6 +2107,9 @@ def test_reviewed_cover_text_gate_rejects_dropped_question_mark_before_binding(
     assert record["cover_repair_attempts"] == 1
     assert record["cover_integrity_status"] == "INVALID_REPAIR_PENDING"
     assert record.get("cover_binding_path") is None
+    assert commands[0][commands[0].index("--cover-text") + 1] == (
+        "去彩排前连问三遍\n你们还要来找我玩，好不好？"
+    )
 
 
 def test_cover_repair_attempts_use_unique_immutable_generation_directories(tmp_path, monkeypatch):
@@ -2588,6 +2594,76 @@ def test_rejected_talk_candidate_automatically_backfills_next_ranked_reserve():
 
     assert [item["cid"] for item in state["pending_talk"]] == ["talk-5"]
     assert state["talk_backlog"] == []
+
+
+def test_prioritize_assigns_distinct_cover_background_slots_within_session():
+    candidates = [
+        {
+            "segment_path": "/rec/session.mp4",
+            "start_ms": index * 60_000,
+            "end_ms": index * 60_000 + 50_000,
+            "hook": f"hook-{index}",
+            "confidence": 0.99 - index * 0.01,
+            "cid": f"talk-{index}",
+            "session_id": "live-20260722T193450+0800",
+        }
+        for index in range(4)
+    ]
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_song": [],
+        "pending_talk": candidates,
+    }
+
+    prioritize(state)
+
+    slots = [item["cover_diversity_slot"] for item in state["pending_talk"]]
+    assert slots == [0, 1, 2, 3]
+    assert len(set(slots)) == 4
+
+
+def test_process_date_blocks_finalized_raw_segment_missing_mp4(monkeypatch, tmp_path):
+    date = "2026-07-22"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    good = "22966160_20260722-19-35-15"
+    orphan = "22966160_20260722-20-05-11"
+    (date_dir / f"{good}.mp4").write_bytes(b"usable")
+    (date_dir / f"{orphan}.m4s").write_bytes(b"raw")
+    (date_dir / f"{orphan}.m3u8").write_text(
+        "#EXTM3U\n#EXT-X-ENDLIST\n",
+        encoding="utf-8",
+    )
+    state = {
+        "status": "review_ready",
+        "segments_done": [good],
+        "segments_dead": {},
+        "pending_talk": [],
+        "pending_song": [],
+        "picks": [{"candidate_id": "old", "status": "review_ready"}],
+        "songs": [],
+    }
+    alerts = []
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_reports", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_alert", lambda code, message: alerts.append((code, message)))
+    monkeypatch.setattr(
+        runner,
+        "cpa_healthy",
+        lambda: pytest.fail("source inventory must block before the CPA gate"),
+    )
+
+    runner.process_date(date)
+
+    assert state["status"] == "source_incomplete"
+    assert state["source_integrity"]["can_select"] is False
+    assert state["source_integrity"]["issues"][0]["code"] == "FINALIZED_PLAYLIST_WITHOUT_MP4"
+    assert alerts and alerts[0][0] == "SOURCE_INCOMPLETE"
 
 
 def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypatch, tmp_path):

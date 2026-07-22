@@ -4,8 +4,10 @@
 `docs/workflows/lidousha-song-finished-package-workflow.md` §5（CPA 路线）+
 memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidousha-cover-no-extra-accessories`。
 
-- 永远 CPA 真实出图（gpt-image-2 `images.edit`，含测试）；CPA 在 Cloudflare 后必须带浏览器 UA。失败 fail-closed `BLOCKED_AI_COVER_REQUIRED`。
+- 默认 `auto` 路由：有强表情/动作证据时优先真实直播帧直出或轻修；否则走 CPA `gpt-image-2 images.edit` 全图重绘。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
-- 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。
-- 封面文字 = 标题去前缀（歌切即 `《歌名》`）；无冒号，分句换行；Ivan 定稿标题成分一个不许丢。
+- 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
+- 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
+- 自动 talk 封面按 2026-07-20 生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；完整长标题不是默认封面文案。Ivan 定稿标题仍按人工权威保留其要求的全部成分；歌切恒为 `《歌名》`。
+- 经审阅的封面返修可用 `regenerate_lidousha_cover.py --cover-text` 锁定短梗字；该文案必须由 hash-bound repair plan 提供并逐字验收，不得让返修入口擅自改写。
 - 字体：全链验字形 + Noto CJK 兜底 + `glyph_risk` 披露（memory `cover-font-zi-renders-as-bai`，a74520b）。

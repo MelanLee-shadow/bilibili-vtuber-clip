@@ -98,6 +98,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
+from src.autoslice.source_integrity import audit_finalized_recording_inventory
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
     LYRIC_VOCAL_ASSERTION_KEYS,
@@ -1402,6 +1403,7 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
                         "anchor_end_ms",
                         "transient_retry_count",
                         "session_id",
+                        "cover_diversity_slot",
                     )
                     if key in item
                 },
@@ -1440,6 +1442,37 @@ def process_date(date: str) -> None:
         log(f"{date}: runtime invalid — batch deferred without consuming candidate retries: {runtime_err}")
         return
     state.pop("runtime_error", None)
+    source_inventory = audit_finalized_recording_inventory(
+        REC_ROOT / date,
+        room_id=ROOM,
+    )
+    previous_source_inventory = state.get("source_integrity")
+    state["source_integrity"] = source_inventory
+    if not source_inventory["can_select"]:
+        changed = (
+            state.get("status") != "source_incomplete"
+            or previous_source_inventory != source_inventory
+        )
+        state["status"] = "source_incomplete"
+        write_state(date, state)
+        write_reports(date, state)
+        codes = sorted(
+            {
+                str(issue.get("code") or "SOURCE_INCOMPLETE")
+                for issue in source_inventory.get("issues", [])
+                if isinstance(issue, dict)
+            }
+        )
+        if changed:
+            write_alert(
+                "SOURCE_INCOMPLETE",
+                f"{date}: source inventory blocks selection ({','.join(codes)})",
+            )
+        log(
+            f"{date}: source incomplete — selection blocked before early return "
+            f"({','.join(codes)})"
+        )
+        return
     if annotate_state_sessions(date, state):
         write_state(date, state)
     automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE

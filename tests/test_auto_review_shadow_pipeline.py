@@ -3735,6 +3735,24 @@ def test_cover_art_direction_deterministic_rotation():
     assert layouts <= set(shadow_pipeline._COVER_TALK_LAYOUTS)
 
 
+def test_cover_art_direction_batch_slots_force_distinct_background_families():
+    directions = [
+        shadow_pipeline._lidousha_cover_art_direction(
+            candidate_id="same-hash-family",
+            title=_COVER_TALK_TITLE,
+            cover_text=_COVER_TALK_TEXT,
+            diversity_slot=slot,
+        )
+        for slot in range(6)
+    ]
+
+    assert [direction.background_style for direction in directions] == list(
+        shadow_pipeline._COVER_BG_BUSY
+    )
+    assert len({direction.hook_color for direction in directions}) == 6
+    assert len({direction.layout for direction in directions}) == 3
+
+
 def test_cover_art_direction_song_uses_clean_layout():
     song = shadow_pipeline._lidousha_cover_art_direction(
         candidate_id="song-1", title=_COVER_SONG_TITLE, cover_text=_COVER_SONG_TEXT
@@ -3922,6 +3940,31 @@ def test_validated_cover_lines_keeps_song_and_hook_whole():
     assert v(["吵闹熊猫头的", "《嘉宾》"], ct, hook_word="《嘉宾》", max_lines=5) == ("吵闹熊猫头的", "《嘉宾》")
     # the highlighted hook word broken across lines → rejected (its color would tear)
     assert v(["小李当场反", "杀"], "小李当场反杀", hook_word="反杀", max_lines=5) == ()
+
+
+def test_cover_wrapping_keeps_short_quoted_catchphrase_whole():
+    text = "为什么提到我就要“最最最喜欢”？"
+    quoted = "“最最最喜欢”"
+
+    v_lines = shadow_pipeline._validated_cover_lines
+    assert v_lines(
+        ["为什么提到我就要“最最最喜", "欢”？"],
+        text,
+        hook_word="",
+        max_lines=5,
+    ) == ()
+
+    v_words = shadow_pipeline._validated_cover_words
+    assert v_words(
+        ["为什么", "提到我", "就要“", "最最最喜欢", "”？"],
+        text,
+        hook_word="",
+    ) == ()
+
+    lines = shadow_pipeline._wrap_even(text, 4)
+    assert "".join(lines) == text
+    assert any(quoted in line for line in lines), lines
+    assert shadow_pipeline._split_wide_atom(quoted, 4.0) == [quoted]
 
 
 def test_validated_cover_words_accepts_lossless_segmentation():

@@ -73,6 +73,7 @@ def _extract_reference_frame(media: Path, out: Path) -> None:
 def regenerate_cover(
     *,
     title: str,
+    cover_text: str | None = None,
     out_path: Path,
     reference_path: Path | None = None,
     media_path: Path | None = None,
@@ -84,10 +85,18 @@ def regenerate_cover(
     emote_id: str | None = None,
     emote_mode: str = "replace",
     emote_reason: str = "",
+    diversity_slot: int | None = None,
+    allow_punch: bool = False,
 ) -> dict:
     """Produce one redesigned cover. Returns a metadata dict (also written next to
     the cover as ``<out>.cover_generation.json``)."""
-    cover_text = _lidousha_cover_text(title)
+    cover_text = (
+        cover_text.strip()
+        if isinstance(cover_text, str)
+        else _lidousha_cover_text(title)
+    )
+    if not cover_text:
+        raise SystemExit("COVER_TEXT_EMPTY")
     candidate_id = candidate_id or out_path.stem
     out_path.parent.mkdir(parents=True, exist_ok=True)
     ai_bg_path = ai_bg_path or out_path.with_suffix(".ai-bg.png")
@@ -112,6 +121,8 @@ def regenerate_cover(
         cover_text=cover_text,
         art_direction_llm_call=art_direction_llm,
         emote_library=emote_library,
+        diversity_slot=diversity_slot,
+        allow_punch=allow_punch,
     )
     import dataclasses
 
@@ -226,7 +237,10 @@ def regenerate_cover(
             "emote_id": art_direction.emote_id,
             "emote_mode": art_direction.emote_mode,
             "emote_reason": art_direction.emote_reason,
+            "cover_punch": list(art_direction.cover_punch),
         },
+        "cover_diversity_slot": diversity_slot,
+        "cover_punch": list(art_direction.cover_punch),
         "emote": emote_meta,
         "ai_background": str(ai_bg_path),
         "ai_background_sha256": "sha256:" + _sha256(ai_bg_path),
@@ -257,6 +271,10 @@ def regenerate_cover(
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Regenerate a Li Dousha cover in the redesigned persona-driven style.")
     p.add_argument("--title", required=True, help="Archive title (【李豆沙】… prefix is auto-stripped for the cover text).")
+    p.add_argument(
+        "--cover-text",
+        help="reviewed cover-only copy; defaults to the title with the channel prefix removed",
+    )
     p.add_argument("--out", required=True, type=Path, help="Output cover PNG path.")
     p.add_argument("--ref", type=Path, help="Per-clip reference frame (identity/skin).")
     p.add_argument("--media", type=Path, help="Clip media to extract a fresh reference frame from.")
@@ -270,10 +288,13 @@ def main(argv=None) -> int:
     p.add_argument("--emote-mode", choices=("replace", "companion"), default="replace",
                    help="replace = the sticker IS the subject (no character redraw); companion = sticker inset beside the character (分身/代画粉丝kmx; needs --ref or --media).")
     p.add_argument("--emote-reason", default="", help="one-line strong reason recorded in the evidence manifest.")
+    p.add_argument("--diversity-slot", type=int, help="stable same-session cover slot; slots 0-5 map to distinct background families.")
+    p.add_argument("--allow-punch", action="store_true", help="render the source-bound 2-12 character cover punch used by automatic talk titles.")
     args = p.parse_args(argv)
 
     meta = regenerate_cover(
         title=args.title,
+        cover_text=args.cover_text,
         out_path=args.out,
         reference_path=args.ref,
         media_path=args.media,
@@ -285,6 +306,8 @@ def main(argv=None) -> int:
         emote_id=args.emote,
         emote_mode=args.emote_mode,
         emote_reason=args.emote_reason,
+        diversity_slot=args.diversity_slot,
+        allow_punch=args.allow_punch,
     )
     ad = meta["art_direction"]
     print(json.dumps({"out": str(args.out), "layout": ad["layout"], "role": ad["role"],

@@ -142,6 +142,7 @@ def _stage_publish_draft(
     art_direction_llm_call: LlmCall | None = None,
     skip_cover: bool = False,
     selection_hook: str | None = None,
+    cover_diversity_slot: int | None = None,
     stage_cover: Callable[..., dict[str, object]] | None = None,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
@@ -309,6 +310,7 @@ def _stage_publish_draft(
             # 梗字封面只对自动标题开放：Ivan 手定标题（title_llm_call=None）的
             # 封面仍走"每个成分都不许丢"的短句化铁律（2026-07-06 22966160 案）。
             punch_allowed=title_llm_call is not None,
+            diversity_slot=cover_diversity_slot,
         )
     cover_status = str(cover_result["status"])
     cover_path_value = cover_result.get("cover_path") if cover_status == "AI_COVER_READY" else None
@@ -368,6 +370,7 @@ def _stage_lidousha_ai_cover(
     art_direction_llm_call: LlmCall | None = None,
     image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
     punch_allowed: bool = False,
+    diversity_slot: int | None = None,
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
@@ -378,6 +381,7 @@ def _stage_lidousha_ai_cover(
         "model_fallback_used": False,
         "cover_text": cover_text,
         "cover_punch_allowed": punch_allowed,
+        "cover_diversity_slot": diversity_slot,
         "title": title,
     }
     # 封面路线（2026-07-21 Ivan："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
@@ -473,6 +477,7 @@ def _stage_lidousha_ai_cover(
         art_direction_llm_call=art_direction_llm_call,
         emote_library=emote_library,
         allow_punch=punch_allowed,
+        diversity_slot=diversity_slot,
     )
 
     # 路由：每条切片自己决定走 直出 / 截图+轻微调 / 全图重绘。

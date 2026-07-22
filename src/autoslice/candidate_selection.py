@@ -94,6 +94,49 @@ def _talk_slots_for_session(state: dict, session_id: str) -> int:
     )
 
 
+def _assign_cover_diversity_slots(state: dict) -> None:
+    """Allocate a stable, collision-free cover family within each live session.
+
+    Candidate-id hashing gives good long-run variety but can still draw the
+    same two backgrounds four times in one review batch.  Selection is the one
+    place that sees the full batch, so it assigns slots 0..N here.  Delivered
+    siblings reserve their old slots; rejected candidates do not, allowing a
+    backfill candidate to reuse the missing visual family.
+    """
+
+    pending = [
+        item for item in state.get("pending_talk", []) if isinstance(item, dict)
+    ]
+    sessions = list(dict.fromkeys(_item_session_id(item) for item in pending))
+    for session_id in sessions:
+        used = {
+            int(record["cover_diversity_slot"])
+            for record in state.get("picks", [])
+            if isinstance(record, dict)
+            and _item_session_id(record) == session_id
+            and record.get("status") in _runner.DELIVERED_TALK_STATUSES
+            and isinstance(record.get("cover_diversity_slot"), int)
+            and not isinstance(record.get("cover_diversity_slot"), bool)
+            and int(record["cover_diversity_slot"]) >= 0
+        }
+        session_pending = [
+            item for item in pending if _item_session_id(item) == session_id
+        ]
+        for item in session_pending:
+            existing = item.get("cover_diversity_slot")
+            if (
+                isinstance(existing, int)
+                and not isinstance(existing, bool)
+                and existing >= 0
+                and existing not in used
+            ):
+                slot = existing
+            else:
+                slot = next(value for value in range(len(used) + len(session_pending) + 1) if value not in used)
+            item["cover_diversity_slot"] = slot
+            used.add(slot)
+
+
 def backlog_has_eligible_session_work(state: dict) -> bool:
     """Whether a backlog contains work for a session with quota remaining."""
 
@@ -653,6 +696,7 @@ def prioritize(state: dict) -> None:
     # successful siblings now fill the ordinary delivery quota.
     state["pending_talk"] = selected_repairs + keep
     state["talk_backlog"] = deferred
+    _assign_cover_diversity_slots(state)
     for item in deferred:
         _runner._note_not_selected(
             state,
