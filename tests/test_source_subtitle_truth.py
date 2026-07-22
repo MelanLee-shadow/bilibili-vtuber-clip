@@ -625,8 +625,8 @@ def test_committed_ledger_canonicalizes_opening_nancho_mixed_name():
         "pieces": [
             {
                 "remote_media": "/recordings/22966160_20260722-19-35-15.mp4",
-                "start_ms": 663_100,
-                "end_ms": 665_900,
+                "start_ms": 672_920,
+                "end_ms": 675_480,
             }
         ]
     }
@@ -634,7 +634,7 @@ def test_committed_ledger_canonicalizes_opening_nancho_mixed_name():
     corrected, audit = apply_source_subtitle_truth(
         srt,
         spec=spec,
-        durations=[2_800],
+        durations=[2_560],
         ledger_path=ledger,
     )
 
