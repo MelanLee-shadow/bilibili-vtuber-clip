@@ -2209,6 +2209,48 @@ def test_sc_read_with_address_prefix_already_spoken_survives_self_check():
     assert all(row["survived"] for row in audit["applied"])
 
 
+def test_aligned_sc_keeps_current_reply_prefix_when_authority_head_was_previous():
+    """2026-07-22：SC 问句头在上一 cue，当前回答的「当然」不能一起被吞。"""
+    from src.autoslice.chat_repair import _aligned_span_replacements
+
+    result = _aligned_span_replacements(
+        "那你今晚不是要住她家了，要小心小n老师啊，另外你俩的cp叫啥",
+        [
+            "当然不是啦",
+            "确实要，要小心小鹅老师啊",
+            "另外你俩CP叫啥",
+        ],
+        prev_context="那你今晚不是要住她家了",
+    )
+
+    assert result is not None
+    replacements, alignment = result
+    assert "".join(replacements).startswith("当然不是啦")
+    assert alignment["dropped_duplicate_authority_head"] == "那你今晚"
+    assert alignment["preserved_span_head"] == "当然"
+
+
+def test_aligned_sc_deduplicates_only_surplus_title_close_at_splice():
+    from src.autoslice.chat_repair import _aligned_span_replacements
+
+    title = "《躲在屏幕后面抽烟的二人》"
+    result = _aligned_span_replacements(
+        title,
+        [title + "》这个名字需要这么长吗"],
+    )
+
+    assert result is not None
+    replacements, alignment = result
+    assert replacements == [title + "这个名字需要这么长吗"]
+    assert alignment["deduplicated_title_close_at_splice"] == 2
+
+    nested = _aligned_span_replacements("《A《B》", ["《A《B》》后续"])
+    assert nested is not None
+    nested_replacements, nested_alignment = nested
+    assert nested_replacements == ["《A《B》》后续"]
+    assert nested_alignment["deduplicated_title_close_at_splice"] == 1
+
+
 def test_dropped_head_claim_must_hold_or_self_check_fails_closed():
     """弃置声明撒谎（相邻句里其实没有那个头）时，内部自检必须 FAILED。"""
     from src.autoslice import chat_authority as ca

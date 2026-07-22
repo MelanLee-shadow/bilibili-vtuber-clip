@@ -1002,6 +1002,15 @@ def _finalize_text_evidence(
         ledger_path=source_truth_ledger_path,
     )
     chat_authority_audit["source_subtitle_truth_audit"] = source_truth_audit
+    # Re-run the structural guard after every text authority, including source
+    # truth.  Earlier guards cannot protect against a later splice, and a
+    # detected but unresolved title-mark imbalance must not reach review_ready.
+    srt_text, final_title_mark_balance_audit = apply_title_mark_balance_guard(
+        srt_text
+    )
+    chat_authority_audit["final_title_mark_balance_audit"] = (
+        final_title_mark_balance_audit
+    )
     # Ivan source-interval truth (authority #1) supersedes read-aloud exact
     # surfaces (authority #2) on the same cue: the guest may rephrase a danmaku
     # rather than read it verbatim (2026-07-19 HimeHina case, audio support 0).
@@ -1053,6 +1062,11 @@ def _finalize_text_evidence(
         raise SystemExit(
             f"SOURCE_SUBTITLE_TRUTH_REQUIRED: {chat_authority_path}"
         )
+    if (
+        final_title_mark_balance_audit["status"]
+        == "UNRESOLVED_COMPLEX_IMBALANCE"
+    ):
+        raise SystemExit(f"TITLE_MARK_BALANCE_REQUIRED: {chat_authority_path}")
     (out_root / "padded.fresh.srt").write_text(srt_text, encoding="utf-8")
     cues = [c for c in parse_srt_cues(srt_text) if c.text.strip()]
     if len(cues) < 3:

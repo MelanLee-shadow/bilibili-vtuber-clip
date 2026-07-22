@@ -24,6 +24,7 @@ from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
 AUDIT_SCHEMA_VERSION = "source-subtitle-truth-audit.v1"
 MIN_CUE_OVERLAP_MS = 80
+DROP_CUE_BOUNDARY_EPSILON_MS = 120
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -38,13 +39,15 @@ def _format_ms(value: int) -> str:
 
 
 def _render(cues: Sequence[SrtCue], texts: Sequence[str]) -> str:
-    blocks = [
-        (
+    blocks = []
+    for cue, text in zip(cues, texts):
+        if not text.strip():
+            continue
+        index = len(blocks) + 1
+        blocks.append(
             f"{index}\n{_format_ms(cue.start_ms)} --> {_format_ms(cue.end_ms)}\n"
             f"{text}"
         )
-        for index, (cue, text) in enumerate(zip(cues, texts), start=1)
-    ]
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
@@ -138,6 +141,54 @@ def _target_indexes(
             matches.append((index, overlap))
     matches.sort(key=lambda row: row[0])
     return [index for index, _overlap in matches]
+
+
+def _drop_cue_targets(
+    cues: Sequence[SrtCue], windows: Sequence[Mapping[str, int]]
+) -> tuple[list[int], list[dict[str, Any]]]:
+    """Resolve deletions without allowing a truth window to eat real speech.
+
+    A cue may be dropped only when one local truth window contains its complete
+    timeline.  The small epsilon absorbs encoder/SRT rounding drift; a cue that
+    materially straddles either boundary is a conflict and is left untouched.
+    """
+
+    targets: list[int] = []
+    conflicts: list[dict[str, Any]] = []
+    for index, cue in enumerate(cues):
+        overlapping = [
+            window
+            for window in windows
+            if _overlap_ms(cue, int(window["start_ms"]), int(window["end_ms"]))
+            >= MIN_CUE_OVERLAP_MS
+        ]
+        if not overlapping:
+            continue
+        if any(
+            cue.start_ms
+            >= int(window["start_ms"]) - DROP_CUE_BOUNDARY_EPSILON_MS
+            and cue.end_ms
+            <= int(window["end_ms"]) + DROP_CUE_BOUNDARY_EPSILON_MS
+            for window in overlapping
+        ):
+            targets.append(index)
+            continue
+        conflicts.append(
+            {
+                "cue_index": index + 1,
+                "cue_start_ms": cue.start_ms,
+                "cue_end_ms": cue.end_ms,
+                "text": cue.text,
+                "windows": [
+                    {
+                        "start_ms": int(window["start_ms"]),
+                        "end_ms": int(window["end_ms"]),
+                    }
+                    for window in overlapping
+                ],
+            }
+        )
+    return targets, conflicts
 
 
 def _replace_substrings(
@@ -365,6 +416,26 @@ def apply_source_subtitle_truth(
                         or any(required_text in texts[index] for index in target_indexes)
                     )
                 )
+        elif action == "drop_cue":
+            drop_indexes, conflicts = _drop_cue_targets(cues, windows)
+            target_indexes = drop_indexes
+            row["cue_indexes"] = [index + 1 for index in target_indexes]
+            before = [texts[index] for index in target_indexes]
+            if conflicts:
+                row["reason_code"] = "DROP_CUE_STRADDLES_TRUTH_INTERVAL"
+                row["conflicts"] = conflicts
+                row["drop_status"] = "CONFLICT"
+            elif not target_indexes:
+                # Desired absence is idempotent.  Source coverage above still
+                # proves that this candidate actually retains the truth span.
+                satisfied = True
+                row["drop_status"] = "ALREADY_ABSENT"
+            else:
+                changed = any(texts[index].strip() for index in target_indexes)
+                for index in target_indexes:
+                    texts[index] = ""
+                satisfied = True
+                row["drop_status"] = "APPLIED" if changed else "ALREADY_ABSENT"
         else:
             row["reason_code"] = "ACTION_UNSUPPORTED"
 

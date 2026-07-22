@@ -121,9 +121,9 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
         song_name_candidates=["歌"],
     )
 
-    # 2026-07-20 合并 7/19 会话资产（HimeHina 词条、贬低性用词§十四）后的指纹。
+    # 2026-07-22 加入南町nightin/L 人名串/公公又式式受限术语后的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "f3f20c604498c56002f4dcbf204caf8bb5be6a58982c4f0aecd679bbdbc737db"
+        "cc31605672aa771d8bbbccedcce044e47cc2c9b031576c5b7165379bf6440bf1"
     )
 
 

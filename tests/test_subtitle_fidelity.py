@@ -293,6 +293,18 @@ def test_source_language_guard_reverts_english_speech_translation():
     assert audit["status"] == "REVERTED_TRANSLATION"
 
 
+def test_source_language_guard_does_not_restore_mixed_cjk_latin_echo():
+    draft = _srt("h tb 这个 NN 和 L 的排列是怎么排的")
+    corrected = _srt("这个 NN 和 L 的排列是怎么排的")
+
+    guarded, audit = apply_source_language_preservation_guard(draft, corrected)
+
+    assert "h tb" not in guarded
+    assert "这个 NN 和 L" in guarded
+    assert audit["status"] == "CLEAN"
+    assert audit["reverted_count"] == 0
+
+
 def test_source_language_guard_blocks_unproven_adjacent_kana_introduction():
     draft = _srt("都问那么多", "所有的都为我所用", "正常中文")
     corrected = _srt("どうも、どうも", "すべての、私のために", "正常中文")
@@ -511,8 +523,24 @@ def test_title_mark_guard_does_not_break_a_title_spanning_two_cues():
     guarded, audit = apply_title_mark_balance_guard(source)
 
     assert guarded == source
-    assert audit["status"] == "UNRESOLVED_COMPLEX_IMBALANCE"
+    assert audit["status"] == "CROSS_CUE_BALANCED"
     assert audit["repair_count"] == 0
+
+
+def test_title_mark_guard_removes_one_surplus_close_but_keeps_legal_nesting():
+    guarded, audit = apply_title_mark_balance_guard(
+        _srt(
+            "《躲在屏幕后面抽烟的二人》》这个名字需要这么长吗",
+            "《A《B》》是合法嵌套",
+        )
+    )
+
+    assert "《躲在屏幕后面抽烟的二人》这个名字" in guarded
+    assert "《A《B》》是合法嵌套" in guarded
+    assert audit["status"] == "APPLIED"
+    assert audit["repairs"][0]["reason"] == (
+        "ONE_DUPLICATED_CHINESE_TITLE_CLOSE_MARK"
+    )
 
 
 def test_impossible_punctuation_guard_collapses_comma_before_terminal_mark():

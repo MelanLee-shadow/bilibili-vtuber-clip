@@ -120,6 +120,99 @@ def test_source_interval_truth_does_not_leak_to_other_recording(tmp_path):
     assert audit["status"] == "NO_RELEVANT_INTERVAL"
 
 
+def test_drop_cue_requires_full_containment_and_renumbers(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "silent-hallucination",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_000,
+                "action": "drop_cue",
+                "authority": "Ivan",
+                "required": True,
+            }
+        ],
+    )
+    spec = {
+        "pieces": [
+            {
+                "remote_media": "/source/recording.mp4",
+                "start_ms": 100_000,
+                "end_ms": 120_000,
+            }
+        ]
+    }
+    source = _srt((8, 10, "前一句"), (10, 14, "无声幻听"), (14, 18, "后一句"))
+
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec=spec,
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+
+    assert "无声幻听" not in corrected
+    assert "1\n00:00:08,000" in corrected
+    assert "2\n00:00:14,000" in corrected
+    assert "3\n" not in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["drop_status"] == "APPLIED"
+
+    second, second_audit = apply_source_subtitle_truth(
+        corrected,
+        spec=spec,
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+    assert second == corrected
+    assert second_audit["status"] == "ALREADY_SATISFIED"
+    assert second_audit["satisfied"][0]["drop_status"] == "ALREADY_ABSENT"
+
+
+def test_drop_cue_fails_closed_when_cue_straddles_truth_interval(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "do-not-over-delete",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 114_000,
+                "action": "drop_cue",
+                "authority": "Ivan",
+                "required": True,
+            }
+        ],
+    )
+    source = _srt((9, 15, "真实前半句，无声后半句"), (15, 18, "后一句"))
+
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 120_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+
+    assert corrected == source
+    assert audit["status"] == "FAILED"
+    assert audit["failures"][0]["reason_code"] == (
+        "DROP_CUE_STRADDLES_TRUTH_INTERVAL"
+    )
+    assert audit["failures"][0]["drop_status"] == "CONFLICT"
+
+
 def test_piece_duration_jitter_does_not_capture_adjacent_cue(tmp_path):
     ledger = _ledger(
         tmp_path,

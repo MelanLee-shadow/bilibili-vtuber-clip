@@ -788,6 +788,198 @@
       "text": "Hina是1的可能性几乎为零",
       "authority": "Ivan-authorized-20260719(后面同类Hime/Hina误听按此修复)+掰手腕语境(两手没掰赢Hime者=Hina)+黑黑那口吃形折叠",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-silent-prefix",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 678040,
+      "source_end_ms": 681070,
+      "action": "replace_cue",
+      "text": "乱说的啊",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；前半段无声，后半段有声)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-mixed-name",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 714440,
+      "source_end_ms": 715560,
+      "action": "replace_cue",
+      "text": "南町nightin哦",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-huishen-surface",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 747400,
+      "source_end_ms": 762740,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "灰神",
+          "canonical": "毁神"
+        }
+      ],
+      "required_text": "毁神",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；按读音最小落字，不主张身份)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-favorite-name",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 769790,
+      "source_end_ms": 773570,
+      "action": "replace_cue",
+      "text": "所以就是，就是最最最最喜欢的南町nightin",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-drop-hallucinated-echo",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 773570,
+      "source_end_ms": 776410,
+      "action": "drop_cue",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；该区间无说话)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-l-name-ling",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 783260,
+      "source_end_ms": 785280,
+      "action": "replace_cue",
+      "text": "这L可是很多人，可以是灵",
+      "authority": "Ivan-stated-20260722-conversation(病院坂灵的灵)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-l-name-li-sumi",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 785280,
+      "source_end_ms": 786420,
+      "action": "replace_cue",
+      "text": "可以是礼",
+      "authority": "Ivan-stated-20260722-conversation(礼墨的礼)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-l-name-li-dousha",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 786420,
+      "source_end_ms": 787490,
+      "action": "replace_cue",
+      "text": "可以是李",
+      "authority": "Ivan-stated-20260722-conversation(李豆沙的李)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-l-name-li-huali",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 787490,
+      "source_end_ms": 788370,
+      "action": "replace_cue",
+      "text": "可以是礼",
+      "authority": "Ivan-stated-20260722-conversation(花礼的礼)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-too-many-li",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 789470,
+      "source_end_ms": 791550,
+      "action": "replace_cue",
+      "text": "李太多了哈",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-this-li-too-many",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 791700,
+      "source_end_ms": 793820,
+      "action": "replace_cue",
+      "text": "这个李有点太多了",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-opaque-meme",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 797580,
+      "source_end_ms": 800860,
+      "action": "replace_cue",
+      "text": "公公又式式啊",
+      "authority": "Ivan-stated-20260722-conversation(固定表面专名式梗词)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-reply-prefix",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 819210,
+      "source_end_ms": 820410,
+      "action": "replace_cue",
+      "text": "当然不是啦",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-title-close",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 829520,
+      "source_end_ms": 832700,
+      "action": "replace_cue",
+      "text": "《躲在屏幕后面抽烟的二人》这个名字需要这么长吗",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-drop-latin-echo",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 867020,
+      "source_end_ms": 871860,
+      "action": "replace_cue",
+      "text": "这个 NN 和 L 的排列是怎么排的",
+      "authority": "Ivan-stated-20260722-conversation(h tb 属上一句 hhb 回声，不是本句口播)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-first-ship",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 892820,
+      "source_end_ms": 894240,
+      "action": "replace_cue",
+      "text": "首发是病院坂灵",
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-cp-order-question",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 895880,
+      "source_end_ms": 897620,
+      "action": "replace_cue",
+      "text": "那个时候你是什么",
+      "authority": "Ivan-stated-20260722-conversation(逐字口播；语义为CP前后位，不作解释性改写)",
+      "required": true
     }
   ]
 }

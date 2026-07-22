@@ -397,6 +397,11 @@ def _aligned_span_replacements(
     elif a_lo:
         if _spoken_nearby(auth_head_raw, prev_context):
             audit["dropped_duplicate_authority_head"] = auth_head_raw
+            # Keep an unmatched current reply (`当然`) when only the authority
+            # head (`那你今晚`) belongs to the previous cue.
+            if s_lo and len(normalize_chat_text(span_head_raw)) >= 2:
+                head = span_head_raw
+                audit["preserved_span_head"] = span_head_raw
         else:
             head = auth_head_raw
     tail = ""
@@ -440,6 +445,16 @@ def _aligned_span_replacements(
                 aligned_parts.append(authority[prev_a_hi : auth_map[block.a]])
         aligned_parts.append(authority[block_a_lo:block_a_hi])
     aligned_raw = "".join(aligned_parts)
+    # Strip only the leading tail closers needed to balance this splice.
+    if aligned_raw.endswith("》") and tail.startswith("》"):
+        combined = f"{head}{aligned_raw}{tail}"
+        surplus = combined.count("》") - combined.count("《")
+        leading_closers = len(tail) - len(tail.lstrip("》"))
+        if 0 < surplus <= leading_closers:
+            candidate = f"{head}{aligned_raw}{tail[surplus:]}"
+            if candidate.count("》") == candidate.count("《"):
+                tail = tail[surplus:]
+                audit["deduplicated_title_close_at_splice"] = surplus
     desired = _strip_unrenderable_for_subtitle(f"{head}{aligned_raw}{tail}")
     if not normalize_chat_text(desired):
         return None

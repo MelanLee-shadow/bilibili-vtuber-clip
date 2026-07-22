@@ -756,11 +756,20 @@ def apply_source_language_preservation_guard(
     ):
         draft_kana_count = len(_JAPANESE_KANA_RX.findall(draft_cue.text))
         final_kana_count = len(_JAPANESE_KANA_RX.findall(final_cue.text))
-        draft_latin_words = _LATIN_WORD_RX.findall(draft_cue.text)
-        final_latin_words = _LATIN_WORD_RX.findall(final_cue.text)
+        draft_latin_words = _EMBEDDED_LATIN_WORD_RX.findall(draft_cue.text)
+        final_latin_words = _EMBEDDED_LATIN_WORD_RX.findall(final_cue.text)
+        draft_cjk_count = len(re.findall(r"[\u3400-\u9fff]", draft_cue.text))
         source_language_removed = (
             (draft_kana_count >= 2 and final_kana_count == 0)
-            or (len(draft_latin_words) >= 3 and len(final_latin_words) <= 1)
+            # Whole-cue rollback is safe only for a Latin-language cue.  A
+            # Chinese cue with short Latin labels is mixed speech, not an
+            # English passage; count-based rollback restored the deleted `h tb`
+            # echo in the 2026-07-22 incident.
+            or (
+                draft_cjk_count == 0
+                and len(draft_latin_words) >= 3
+                and len(final_latin_words) <= 1
+            )
         )
         translated = (
             source_language_removed
@@ -1076,18 +1085,37 @@ def apply_title_mark_balance_guard(
         "status": "CLEAN",
         "repairs": [],
         "unresolved": [],
+        "cross_cue_pairs": [],
     }
     rendered: list[str] = []
     for index, cue in enumerate(cues, start=1):
         text = cue.text
         opening_count = text.count("《")
         closing_count = text.count("》")
+        if (
+            text.count("》》") == 1
+            and closing_count == opening_count + 1
+        ):
+            repaired = text.replace("》》", "》", 1)
+            if repaired.count("《") == repaired.count("》"):
+                audit["repairs"].append(
+                    {
+                        "cue_index": index,
+                        "before": text,
+                        "after": repaired,
+                        "reason": "ONE_DUPLICATED_CHINESE_TITLE_CLOSE_MARK",
+                    }
+                )
+                text = repaired
+                opening_count = text.count("《")
+                closing_count = text.count("》")
         if opening_count == closing_count + 1:
             next_text = cues[index].text if index < len(cues) else ""
             if next_text.count("》") > next_text.count("《"):
-                audit["unresolved"].append(
+                audit["cross_cue_pairs"].append(
                     {
                         "cue_index": index,
+                        "next_cue_index": index + 1,
                         "text": text,
                         "reason": "POSSIBLE_CROSS_CUE_TITLE_MARK_PAIR",
                     }
@@ -1114,13 +1142,10 @@ def apply_title_mark_balance_guard(
         elif closing_count == opening_count + 1:
             previous_text = cues[index - 2].text if index > 1 else ""
             if previous_text.count("《") > previous_text.count("》"):
-                audit["unresolved"].append(
-                    {
-                        "cue_index": index,
-                        "text": text,
-                        "reason": "POSSIBLE_CROSS_CUE_TITLE_MARK_PAIR",
-                    }
-                )
+                # The opening cue recorded this pair.  A title may legally span
+                # SRT cues, so a balanced adjacent pair is evidence, not an
+                # unresolved single-cue structure error.
+                pass
             else:
                 leading_title = re.match(
                     r"^([^《》：:，。！？!?]{2,30})》(?=[，。！？!?.,、]|$)",
@@ -1170,6 +1195,8 @@ def apply_title_mark_balance_guard(
         audit["status"] = "UNRESOLVED_COMPLEX_IMBALANCE"
     elif audit["repairs"]:
         audit["status"] = "APPLIED"
+    elif audit["cross_cue_pairs"]:
+        audit["status"] = "CROSS_CUE_BALANCED"
     audit["repair_count"] = len(audit["repairs"])
     return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
 
