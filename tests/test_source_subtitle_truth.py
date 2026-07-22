@@ -287,6 +287,61 @@ def test_spoken_start_pin_fails_closed_when_target_is_not_unique(tmp_path):
     )
 
 
+def test_spoken_start_pin_preserves_pre_onset_neighbor_and_moves_late_cue_earlier(
+    tmp_path,
+):
+    """7/22 official replay: the broad silent-prefix window grazes the prior
+    question, while the reviewed spoken onset belongs uniquely to the next cue.
+    """
+
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "silent-prefix-after-question",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 117_320,
+                "source_end_ms": 120_350,
+                "action": "replace_cue",
+                "text": "乱说的啊",
+                "spoken_start_ms": 118_250,
+                "authority": "reviewed raw-audio onset",
+                "required": True,
+            }
+        ],
+    )
+    source = _srt_ms(
+        (14_760, 18_080, "你为什么提到我就要最最最喜欢？草"),
+        (18_440, 20_280, "乱说的啊"),
+        (20_800, 23_640, "怎么到现在就是乱说的哈"),
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 130_000,
+                }
+            ]
+        },
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+
+    assert audit["status"] == "APPLIED"
+    assert "你为什么提到我就要最最最喜欢？草" in corrected
+    assert "00:00:18,250 --> 00:00:20,280\n乱说的啊" in corrected
+    assert audit["applied"][0]["cue_indexes"] == [2]
+    assert audit["applied"][0]["timing_pin"] == {
+        "source_spoken_start_ms": 118_250,
+        "before_start_ms": 18_440,
+        "after_start_ms": 18_250,
+    }
+
+
 def test_source_interval_truth_does_not_leak_to_other_recording(tmp_path):
     ledger = _ledger(
         tmp_path,

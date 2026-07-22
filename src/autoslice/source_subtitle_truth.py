@@ -26,6 +26,7 @@ SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
 AUDIT_SCHEMA_VERSION = "source-subtitle-truth-audit.v1"
 MIN_CUE_OVERLAP_MS = 80
 DROP_CUE_BOUNDARY_EPSILON_MS = 120
+SPOKEN_START_CUE_LAG_TOLERANCE_MS = 500
 _SOURCE_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -346,6 +347,54 @@ def _audit_source_aliases(
     return list(used.values())
 
 
+def _resolve_spoken_start_target(
+    cues: Sequence[SrtCue],
+    target_indexes: Sequence[int],
+    spoken_start_local: int,
+) -> tuple[int | None, str | None]:
+    """Select the spoken cue without consuming a real pre-onset neighbour.
+
+    A broad reviewed truth window can graze the preceding sentence even though
+    its absolute spoken-start pin belongs to the next cue.  Fresh ASR may also
+    timestamp that next cue a few hundred milliseconds late.  Accept that
+    bounded lag only when exactly one cue can own the onset, every earlier
+    overlap ends before it, and no later overlap remains in the truth window.
+    """
+
+    eligible = [
+        index
+        for index in target_indexes
+        if cues[index].start_ms
+        <= spoken_start_local + SPOKEN_START_CUE_LAG_TOLERANCE_MS
+        and spoken_start_local < cues[index].end_ms
+    ]
+    if len(eligible) != 1:
+        return None, "SPOKEN_START_TARGET_NOT_UNIQUE"
+    selected = eligible[0]
+    if any(index > selected for index in target_indexes) or any(
+        cues[index].end_ms > spoken_start_local
+        for index in target_indexes
+        if index < selected
+    ):
+        return None, "SPOKEN_START_TARGET_NOT_UNIQUE"
+    if selected > 0 and cues[selected - 1].end_ms > spoken_start_local:
+        return None, "SPOKEN_START_OVERLAPS_PREVIOUS_CUE"
+    return selected, None
+
+
+def _resolve_spoken_start_binding(
+    windows: Sequence[Mapping[str, object]],
+    cues: Sequence[SrtCue],
+    target_indexes: Sequence[int],
+    source_spoken_start_ms: int,
+) -> tuple[int | None, int | None, str | None]:
+    local_ms = _source_point_to_local_ms(windows, source_spoken_start_ms)
+    if local_ms is None:
+        return None, None, "SPOKEN_START_OUTSIDE_TARGET_CUE"
+    target, error = _resolve_spoken_start_target(cues, target_indexes, local_ms)
+    return local_ms, target, error
+
+
 def apply_source_subtitle_truth(
     srt_text: str,
     *,
@@ -470,19 +519,16 @@ def apply_source_subtitle_truth(
                 timing_pin_error = "SPOKEN_START_INVALID"
             elif not source_start_ms <= spoken_start_raw < source_end_ms:
                 timing_pin_error = "SPOKEN_START_OUTSIDE_TRUTH_INTERVAL"
-            elif len(target_indexes) != 1:
-                timing_pin_error = "SPOKEN_START_TARGET_NOT_UNIQUE"
             else:
-                spoken_start_local = _source_point_to_local_ms(
-                    windows, spoken_start_raw
+                spoken_start_local, spoken_target, timing_pin_error = (
+                    _resolve_spoken_start_binding(
+                        windows, cues, target_indexes, spoken_start_raw
+                    )
                 )
-                target_cue = cues[target_indexes[0]]
-                if (
-                    spoken_start_local is None
-                    or spoken_start_local < target_cue.start_ms
-                    or spoken_start_local >= target_cue.end_ms
-                ):
-                    timing_pin_error = "SPOKEN_START_OUTSIDE_TARGET_CUE"
+                if spoken_target is not None:
+                    target_indexes = [spoken_target]
+                    row["cue_indexes"] = [spoken_target + 1]
+                    before = [texts[spoken_target]]
 
         if timing_pin_error is not None:
             row["reason_code"] = timing_pin_error
