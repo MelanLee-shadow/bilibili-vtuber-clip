@@ -4394,9 +4394,10 @@ def test_screenshot_poster_materializes_six_distinct_background_families(tmp_pat
 def test_cover_treatment_router_by_moment_strength():
     from src.autoslice import publish_staging
 
-    sel = lambda score, emo=0.0, subject=True: {
+    sel = lambda score, emo=0.0, subject=True, dispersion=None: {
         "candidates": [{"score": score, "emotion": emo}],
         "subject_confident": subject,
+        "motion_dispersion_frac": dispersion,
     }
     decide = publish_staging._decide_cover_treatment
     # 强名场面 → 直出；中等 → 轻微调；弱 → 全图重绘。
@@ -4405,6 +4406,21 @@ def test_cover_treatment_router_by_moment_strength():
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(3.4))[0] == "screenshot_polish"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(1.9))[0] == "cpa_redraw"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(8.8, subject=False))[0] == "cpa_redraw"
+    # A local motion blob can look subject-like while a game UI moves across
+    # most of the canvas.  This witnessed 2026-07-22 geometry must redraw a
+    # large face instead of preserving a mostly empty game screenshot.
+    assert decide(
+        cover_mode="auto",
+        is_song=False,
+        punch_allowed=True,
+        frame_selection=sel(4.35, dispersion=0.6033),
+    )[0] == "cpa_redraw"
+    assert decide(
+        cover_mode="auto",
+        is_song=False,
+        punch_allowed=True,
+        frame_selection=sel(4.35, dispersion=0.42),
+    )[0] == "screenshot_polish"
     # 铁律分支：歌切 / 手定标题 / 无选帧 → 全图重绘；强制模式直通。
     assert decide(cover_mode="auto", is_song=True, punch_allowed=True, frame_selection=sel(9.0))[0] == "cpa_redraw"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=False, frame_selection=sel(9.0))[0] == "cpa_redraw"

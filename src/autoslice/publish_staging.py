@@ -655,6 +655,7 @@ def _cover_reference_command(
 
 _COVER_TREATMENT_SCORE_HI = 4.5
 _COVER_TREATMENT_SCORE_LO = 2.6
+_COVER_SUBJECT_MAX_MOTION_DISPERSION = 0.50
 
 
 def _decide_cover_treatment(
@@ -691,7 +692,24 @@ def _decide_cover_treatment(
     candidates = frame_selection.get("candidates") or []
     best = float(candidates[0]["score"]) if candidates else 0.0
     emotional = bool(candidates and candidates[0].get("emotion"))
-    subject_confident = frame_selection.get("subject_confident") is True
+    # A narrow local motion box is not sufficient proof of a usable cover
+    # subject when the rest of the scene is moving across most of the canvas.
+    # The 2026-07-22 game-UI miss reported a plausible local box but a 0.6033
+    # accumulated-motion footprint; screenshot polish consequently preserved a
+    # mostly empty game panel with tiny avatars in one corner.  Prefer the CPA
+    # big-face redraw whenever global motion is that dispersed.  Missing legacy
+    # evidence remains compatible with the earlier subject-confidence gate.
+    raw_dispersion = frame_selection.get("motion_dispersion_frac")
+    try:
+        motion_dispersion = (
+            float(raw_dispersion) if raw_dispersion is not None else None
+        )
+    except (TypeError, ValueError):
+        motion_dispersion = None
+    subject_confident = frame_selection.get("subject_confident") is True and (
+        motion_dispersion is None
+        or motion_dispersion <= _COVER_SUBJECT_MAX_MOTION_DISPERSION
+    )
     if subject_confident and (
         best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2)
     ):
