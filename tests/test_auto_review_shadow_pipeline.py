@@ -4342,20 +4342,69 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
     assert generation["method"] == "screenshot_direct"
     assert generation["cover_text_mode"] == "punch"
     assert generation["reference_selection"]["status"] == "SELECTED"
+    assert generation["screenshot_graphic_poster"]["status"] == "COMPOSED"
+    assert generation["screenshot_graphic_poster"]["background_style"] == generation["background_style"]
+    assert Path(str(generation["ai_background"])).name == "shot-1.screenshot-poster.png"
     assert Path(str(result["cover_path"])).is_file()
     assert Image.open(str(result["cover_path"])).size == (1920, 1080)
+
+
+def test_screenshot_poster_materializes_six_distinct_background_families(tmp_path):
+    """The diversity slot must change pixels, not only metadata."""
+
+    from PIL import Image, ImageStat
+
+    from src.autoslice.cover_generation import (
+        LidoushaCoverArtDirection,
+        _COVER_BG_BUSY,
+    )
+    from src.autoslice.cover_screenshot_poster import (
+        _compose_screenshot_poster_background,
+    )
+
+    source = tmp_path / "same-live-frame.png"
+    Image.new("RGB", (1920, 1080), (118, 126, 136)).save(source)
+    top_band_means = []
+    for slot, style in enumerate(_COVER_BG_BUSY):
+        output = tmp_path / f"poster-{slot}.png"
+        evidence = _compose_screenshot_poster_background(
+            source,
+            output,
+            art_direction=LidoushaCoverArtDirection(
+                role="shy_cute_default",
+                expression_en="soft smile",
+                background_style=style,
+                layout="banner",
+                hook_color="yellow",
+                is_song=False,
+                cover_punch=("真实名场面",),
+            ),
+        )
+        assert evidence["status"] == "COMPOSED"
+        assert evidence["background_style"] == style
+        with Image.open(output) as rendered:
+            assert rendered.size == (1920, 1080)
+            top_band_means.append(
+                tuple(round(value, 1) for value in ImageStat.Stat(rendered.crop((0, 0, 1920, 250))).mean)
+            )
+
+    assert len(set(top_band_means)) == len(_COVER_BG_BUSY)
 
 
 def test_cover_treatment_router_by_moment_strength():
     from src.autoslice import publish_staging
 
-    sel = lambda score, emo=0.0: {"candidates": [{"score": score, "emotion": emo}]}
+    sel = lambda score, emo=0.0, subject=True: {
+        "candidates": [{"score": score, "emotion": emo}],
+        "subject_confident": subject,
+    }
     decide = publish_staging._decide_cover_treatment
     # 强名场面 → 直出；中等 → 轻微调；弱 → 全图重绘。
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(5.2))[0] == "screenshot_direct"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(3.4, 1.0))[0] == "screenshot_direct"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(3.4))[0] == "screenshot_polish"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(1.9))[0] == "cpa_redraw"
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(8.8, subject=False))[0] == "cpa_redraw"
     # 铁律分支：歌切 / 手定标题 / 无选帧 → 全图重绘；强制模式直通。
     assert decide(cover_mode="auto", is_song=True, punch_allowed=True, frame_selection=sel(9.0))[0] == "cpa_redraw"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=False, frame_selection=sel(9.0))[0] == "cpa_redraw"

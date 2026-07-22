@@ -5207,6 +5207,31 @@ def test_talk_failure_classifies_chat_authority_finalization_as_terminal():
     assert classified["failure_recoverable"] is False
 
 
+def test_talk_failure_classifies_foreign_source_transcription_as_terminal():
+    classified = runner.classify_talk_failure(
+        "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: /tmp/candidate.chat-authority.json"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "foreign_source_transcription"
+    assert classified["failure_recoverable"] is False
+
+
+def test_terminal_subtitle_authority_failure_backfills_without_weakening_gate():
+    result = {
+        "candidate_id": "blocked-subtitle",
+        "status": "failed",
+        "failure_kind": "subtitle_authority",
+        "failure_stage": "foreign_source_transcription",
+        "failure_recoverable": False,
+    }
+
+    assert runner.backfillable_talk_rejection(result) == (
+        "failed",
+        "subtitle_authority_unresolved_backfilled",
+    )
+
+
 @pytest.mark.parametrize(
     "message",
     [

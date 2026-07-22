@@ -36,6 +36,7 @@ from .cover_generation import (
     _lidousha_cover_text,
     _overlay_lidousha_cover_title,
 )
+from .cover_screenshot_poster import _compose_screenshot_poster_background
 from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
 from .shadow_review import _sha256, _write_json_file
@@ -690,10 +691,15 @@ def _decide_cover_treatment(
     candidates = frame_selection.get("candidates") or []
     best = float(candidates[0]["score"]) if candidates else 0.0
     emotional = bool(candidates and candidates[0].get("emotion"))
-    if best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2):
+    subject_confident = frame_selection.get("subject_confident") is True
+    if subject_confident and (
+        best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2)
+    ):
         return "screenshot_direct", f"strong real moment (score={best:.2f})"
-    if best >= _COVER_TREATMENT_SCORE_LO:
+    if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:
         return "screenshot_polish", f"usable moment + CPA touch-up (score={best:.2f})"
+    if best >= _COVER_TREATMENT_SCORE_LO:
+        return "cpa_redraw", f"motion without confident cover subject (score={best:.2f})"
     return "cpa_redraw", f"no strong real moment (score={best:.2f})"
 
 
@@ -786,6 +792,14 @@ def _stage_screenshot_direct_cover(
                 "status": "DEGRADED_TO_DIRECT",
                 "detail": "CPA credentials/adapter unavailable",
             }
+        poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"
+        poster_evidence = _compose_screenshot_poster_background(
+            overlay_source,
+            poster_path,
+            art_direction=art_direction,
+        )
+        overlay_source = poster_path
+        cover_generation["screenshot_graphic_poster"] = poster_evidence
         final_cover_path = covers_dir / f"{candidate_id}.ai-title.cover.png"
         overlay = _overlay_lidousha_cover_title(
             overlay_source, final_cover_path, cover_text=cover_text, art_direction=art_direction

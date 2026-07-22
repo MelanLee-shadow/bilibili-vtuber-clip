@@ -308,6 +308,12 @@ def classify_talk_failure(attempt_output: str) -> dict:
         kind, stage, recoverable = "speaker_evidence", "speaker_finalization", False
     elif _runner._speaker_evidence_insufficient_failure(tail):
         kind, stage, recoverable = "speaker_evidence", "speaker_finalization", False
+    elif "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED" in tail:
+        kind, stage, recoverable = (
+            "subtitle_authority",
+            "foreign_source_transcription",
+            False,
+        )
     elif "CHAT_AUTHORITY_FINALIZATION_FAILED" in tail:
         kind, stage, recoverable = (
             "subtitle_authority",

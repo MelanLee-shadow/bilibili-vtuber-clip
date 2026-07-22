@@ -1428,6 +1428,36 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
         return list(pool.map(_one, items))
 
 
+def backfillable_talk_rejection(result: dict) -> tuple[str, str] | None:
+    """Return the persisted rejection status/reason when a reserve may replace it.
+
+    Deterministic content/evidence failures are candidate-local: retaining them
+    as generic ``failed`` picks would occupy the top-five budget forever.  The
+    subtitle authority gate stays fail-closed; this function only permits the
+    selector to try the next already-ranked candidate.
+    """
+
+    status = result.get("status")
+    if status in {
+        "boundary_unrepairable",
+        "speaker_review_required",
+        "speaker_evidence_insufficient",
+    }:
+        reason = (
+            "unsafe_boundary_backfilled"
+            if status == "boundary_unrepairable"
+            else "speaker_identity_unresolved_backfilled"
+        )
+        return str(status), reason
+    if (
+        status == "failed"
+        and result.get("failure_kind") == "subtitle_authority"
+        and result.get("failure_recoverable") is False
+    ):
+        return "failed", "subtitle_authority_unresolved_backfilled"
+    return None
+
+
 def process_date(date: str) -> None:
     state = read_state(date)
     if state.get("status") == "state_corrupt_blocked":
@@ -1612,18 +1642,12 @@ def process_date(date: str) -> None:
                     continue
                 result["status"] = "failed"
                 result["error"] = "title generation failed 3x"
-            if result.get("status") in {
-                "boundary_unrepairable",
-                "speaker_review_required",
-                "speaker_evidence_insufficient",
-            }:
-                result["rejected_status"] = result["status"]
+            backfill_rejection = backfillable_talk_rejection(result)
+            if backfill_rejection is not None:
+                rejected_status, rejection_reason = backfill_rejection
+                result["rejected_status"] = rejected_status
                 result["status"] = "candidate_rejected"
-                result["rejection_reason"] = (
-                    "unsafe_boundary_backfilled"
-                    if result["rejected_status"] == "boundary_unrepairable"
-                    else "speaker_identity_unresolved_backfilled"
-                )
+                result["rejection_reason"] = rejection_reason
                 rejected += 1
             elif result.get("status") == "candidate_rejected":
                 rejected += 1

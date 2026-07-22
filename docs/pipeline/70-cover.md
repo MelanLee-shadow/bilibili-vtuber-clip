@@ -4,7 +4,7 @@
 `docs/workflows/lidousha-song-finished-package-workflow.md` §5（CPA 路线）+
 memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidousha-cover-no-extra-accessories`。
 
-- 默认 `auto` 路由：有强表情/动作证据时优先真实直播帧直出或轻修；否则走 CPA `gpt-image-2 images.edit` 全图重绘。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
+- 默认 `auto` 路由：只有同时具备强表情/动作证据和可信主播主体几何时才保留真实直播帧；游戏运动高分但 `subject_confident=false` 不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
