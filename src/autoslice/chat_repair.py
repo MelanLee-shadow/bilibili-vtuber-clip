@@ -295,6 +295,53 @@ def _strip_interjections_once(
         # matching occurrence can only turn a valid surface into a false
         # negative.
         return span_norm
+    if required_norm:
+        # The verification window intentionally includes cues that touch the
+        # authority boundaries.  A short interjection such as ``NN`` may thus
+        # occur in a neighbouring cue as well as in the repaired cue.  Greedy
+        # first-occurrence deletion can remove the neighbour and manufacture a
+        # false final-artifact failure.  Search the bounded combinations of one
+        # deletion per declared interjection and accept only a path that makes
+        # the required authority surface contiguous.
+        states = [span_norm]
+        for fragment in interjections or ():
+            fragment_norm = normalize_chat_text(str(fragment))
+            if not fragment_norm:
+                continue
+            next_states: list[str] = []
+            seen: set[str] = set()
+            for state in states:
+                positions: list[int] = []
+                start = 0
+                while True:
+                    index = state.find(fragment_norm, start)
+                    if index < 0:
+                        break
+                    positions.append(index)
+                    start = index + 1
+                candidates = (
+                    [
+                        state[:index] + state[index + len(fragment_norm) :]
+                        for index in positions
+                    ]
+                    if positions
+                    else [state]
+                )
+                for candidate in candidates:
+                    if required_norm in candidate:
+                        return candidate
+                    if candidate not in seen:
+                        seen.add(candidate)
+                        next_states.append(candidate)
+            # Chat spans are short and interjection lists are tiny; this cap is
+            # a fail-safe against malformed evidence creating combinatorial
+            # work.  Ordering stays deterministic and preserves the historic
+            # first-occurrence fallback when no valid path exists.
+            states = next_states[:512]
+            if not states:
+                break
+        if states:
+            return states[0]
     for fragment in interjections or ():
         fragment_norm = normalize_chat_text(str(fragment))
         if fragment_norm and fragment_norm in span_norm:

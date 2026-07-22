@@ -90,6 +90,23 @@ def test_interjection_stripping_removes_the_occurrence_that_splits_authority():
     )
 
 
+def test_interjection_stripping_searches_past_same_token_in_neighbor_cue():
+    expected = "一般不是llnn吗"
+    # Final verification windows include boundary-touching neighbour cues.
+    # The first ``NN`` belongs to the neighbour; only the second one is the
+    # declared interjection inside the authority span.
+    span = "都是nnll一般不是nnllhhb或者nn吗对对对"
+
+    repaired = _strip_interjections_once(
+        span,
+        [" NN", "HHB 或者 "],
+        required_substring=expected,
+    )
+
+    assert expected in repaired
+    assert repaired == "都是nnll一般不是llnn吗对对对"
+
+
 DREAM_MUJICA_GROUP = ReferentGroup(
     (
         ReferentEntity("梦限大", ("梦限大", "梦现代"), ("meng xian da",)),
