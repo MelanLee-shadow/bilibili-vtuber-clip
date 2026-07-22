@@ -146,7 +146,42 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     baseline = tmp_path / "prior-delivery.srt"
     baseline.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n旧审定第一句\n\n"
-        "2\n00:00:01,000 --> 00:00:02,000\n旧错误第二句\n",
+        "2\n00:00:01,000 --> 00:00:02,000\n旧错误第二句\n\n"
+        "3\n00:00:02,000 --> 00:00:03,000\n旧静音幻听\n",
+        encoding="utf-8",
+    )
+    ledger = tmp_path / "subtitle-truth.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "schema_version": "source-subtitle-truth-ledger.v1",
+                "entries": [
+                    {
+                        "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                        "truth_id": "new-reviewed-line",
+                        "recording_basename": "recording.mp4",
+                        "source_start_ms": 102_020,
+                        "source_end_ms": 103_020,
+                        "action": "replace_cue",
+                        "text": "Ivan新源真值",
+                        "authority": "newer source review",
+                        "required": True,
+                    },
+                    {
+                        "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                        "truth_id": "drop-silent-cue",
+                        "recording_basename": "recording.mp4",
+                        "source_start_ms": 103_020,
+                        "source_end_ms": 104_020,
+                        "action": "drop_cue",
+                        "authority": "reviewed silence",
+                        "required": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -182,18 +217,34 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     chat_audit = {
         "source_subtitle_truth_audit": {
             "status": "APPLIED",
+            "ledger_path": str(ledger),
             "applied": [
                 {
+                    "action": "replace_cue",
                     # Padded timeline; final_start=1000 rebases this to the
                     # second delivery cue.
-                    "local_windows": [{"start_ms": 2_000, "end_ms": 3_000}]
+                    "local_windows": [
+                        {"start_ms": 2_020, "end_ms": 3_020}
+                    ],
+                },
+                {
+                    "action": "drop_cue",
+                    "local_windows": [
+                        {"start_ms": 3_020, "end_ms": 4_020}
+                    ],
                 }
             ],
             "satisfied": [],
         }
     }
     spec = {
-        "pieces": [{"start_ms": 100_000}],
+        "pieces": [
+            {
+                "remote_media": "/recordings/recording.mp4",
+                "start_ms": 100_000,
+                "end_ms": 104_020,
+            }
+        ],
         "subtitle_redelivery_baseline": {
             "schema_version": "subtitle-redelivery-baseline.v1",
             "mode": "preserve_text_outside_source_truth",
@@ -211,7 +262,7 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
         padded_provenance_path=padded_provenance,
         piece_provenance_rows=[],
         final_start=1_000,
-        final_end=3_020,
+        final_end=4_020,
         sanitized=[],
         timing_qa={},
         text_override_path=None,
@@ -224,16 +275,23 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     assert "00:00:00,020 --> 00:00:01,020\n旧审定第一句" in output
     assert "00:00:01,020 --> 00:00:02,020\nIvan新源真值" in output
     assert "旧错误第二句" not in output
+    assert "旧静音幻听" not in output
     assert recut.redelivery_baseline_audit is not None
     assert recut.redelivery_baseline_audit["status"] == "APPLIED"
+    assert recut.redelivery_baseline_audit["source_truth_reapplication"][
+        "status"
+    ] == "APPLIED"
+    assert recut.redelivery_baseline_audit["protected_intervals"] == [
+        {"start_ms": 2_020, "end_ms": 3_020}
+    ]
     assert recut.redelivery_baseline_audit_path is not None
     assert recut.redelivery_baseline_audit_path.is_file()
 
 
-def test_final_recut_restores_baseline_before_deferred_source_truth(
+def test_final_recut_replays_truth_after_broad_window_was_satisfied(
     tmp_path: Path,
 ) -> None:
-    """A fresh-ASR omission must not make a reviewed substring pin unfixable."""
+    """One canonical mention must not hide a wrong sibling in the same window."""
 
     padded = tmp_path / "padded.mp4"
     padded.write_bytes(b"padded")
@@ -243,7 +301,8 @@ def test_final_recut_restores_baseline_before_deferred_source_truth(
     baseline = tmp_path / "prior-delivery.srt"
     baseline.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n旧审定第一句\n\n"
-        "2\n00:00:01,000 --> 00:00:02,000\n就灰神，好像是灰神吧\n",
+        "2\n00:00:01,000 --> 00:00:02,000\n就灰神，好像是灰神吧\n\n"
+        "3\n00:00:02,000 --> 00:00:03,000\n灰神说救救李姐\n",
         encoding="utf-8",
     )
     ledger = tmp_path / "subtitle-truth.json"
@@ -257,7 +316,7 @@ def test_final_recut_restores_baseline_before_deferred_source_truth(
                         "truth_id": "entity-spelling",
                         "recording_basename": "recording.mp4",
                         "source_start_ms": 102_000,
-                        "source_end_ms": 103_000,
+                        "source_end_ms": 104_000,
                         "action": "replace_substring",
                         "replacements": [
                             {"surface": "灰神", "canonical": "毁神"}
@@ -282,7 +341,8 @@ def test_final_recut_restores_baseline_before_deferred_source_truth(
     ) -> None:
         output.write_text(
             "1\n00:00:00,000 --> 00:00:01,000\n随机漂移第一句\n\n"
-            "2\n00:00:01,000 --> 00:00:02,000\n就仓鼠，好像是仓鼠吧\n",
+            "2\n00:00:01,000 --> 00:00:02,000\n就毁神，好像是毁神吧\n\n"
+            "3\n00:00:02,000 --> 00:00:03,000\n鼠神说救救李姐\n",
             encoding="utf-8",
         )
 
@@ -306,19 +366,19 @@ def test_final_recut_restores_baseline_before_deferred_source_truth(
     chat_audit = {
         "source_subtitle_truth_audit": {
             "schema_version": "source-subtitle-truth-audit.v1",
-            "status": "DEFERRED_TO_REDELIVERY_BASELINE",
-            "pre_redelivery_status": "FAILED",
+            "status": "ALREADY_SATISFIED",
             "ledger_path": str(ledger),
             "applied": [],
-            "satisfied": [],
-            "failures": [
+            "satisfied": [
                 {
                     "truth_id": "entity-spelling",
+                    "action": "replace_substring",
                     "local_windows": [
-                        {"start_ms": 2_000, "end_ms": 3_000}
+                        {"start_ms": 2_000, "end_ms": 4_000}
                     ],
                 }
             ],
+            "failures": [],
         }
     }
     spec = {
@@ -326,7 +386,7 @@ def test_final_recut_restores_baseline_before_deferred_source_truth(
             {
                 "remote_media": "/recordings/recording.mp4",
                 "start_ms": 100_000,
-                "end_ms": 103_000,
+                "end_ms": 104_000,
             }
         ],
         "subtitle_redelivery_baseline": {
@@ -346,7 +406,7 @@ def test_final_recut_restores_baseline_before_deferred_source_truth(
         padded_provenance_path=padded_provenance,
         piece_provenance_rows=[],
         final_start=1_000,
-        final_end=3_000,
+        final_end=4_000,
         sanitized=[],
         timing_qa={},
         text_override_path=None,
@@ -358,12 +418,13 @@ def test_final_recut_restores_baseline_before_deferred_source_truth(
     output = recut.subtitle_path.read_text(encoding="utf-8")
     assert "旧审定第一句" in output
     assert "就毁神，好像是毁神吧" in output
-    assert "仓鼠" not in output
+    assert "毁神说救救李姐" in output
+    assert "鼠神" not in output
     assert "灰神" not in output
     assert chat_audit["source_subtitle_truth_audit"]["status"] == "APPLIED"
     assert chat_audit["source_subtitle_truth_audit"]["applied"][0][
         "local_windows"
-    ] == [{"start_ms": 2_000, "end_ms": 3_000}]
+    ] == [{"start_ms": 2_000, "end_ms": 4_000}]
     assert chat_audit["source_subtitle_truth_post_redelivery_audit"][
         "timeline_basis"
     ] == "final_delivery"

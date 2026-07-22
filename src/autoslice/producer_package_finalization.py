@@ -241,16 +241,25 @@ def _materialize_final_recut(
         truth_audit = (
             (chat_authority_audit or {}).get("source_subtitle_truth_audit") or {}
         )
-        truth_deferred = (
-            truth_audit.get("status") == "DEFERRED_TO_REDELIVERY_BASELINE"
-        )
+        truth_rows = [
+            row
+            for key in ("applied", "satisfied", "failures")
+            for row in (truth_audit.get(key) or [])
+            if isinstance(row, Mapping)
+        ]
+        truth_reapply = bool(truth_rows)
         protected_windows: list[tuple[int, int]] = []
-        # Successfully applied truth stays newer than the baseline.  Failed
-        # truth windows are deliberately *not* protected: the old reviewed
-        # delivery must first restore the stable lexical surface, after which
-        # the ledger is reapplied below as the final authority.
+        # A dropped hallucination no longer has a current cue to align against
+        # its old baseline cue, so that exact deletion window must be excluded
+        # from both sides of the one-to-one mapper.  Every text-bearing truth
+        # window is intentionally *not* protected: restore the entire reviewed
+        # lexical baseline first, then replay every higher-authority truth.
+        # Otherwise one canonical mention anywhere in a broad entity window
+        # can hide a new wrong variant in a sibling cue (毁神/鼠神 incident).
         for key in ("applied", "satisfied"):
             for row in truth_audit.get(key) or []:
+                if row.get("action") != "drop_cue":
+                    continue
                 for window in row.get("local_windows") or []:
                     start_ms = max(0, int(window["start_ms"]) - final_start)
                     end_ms = min(
@@ -273,7 +282,7 @@ def _materialize_final_recut(
         )
         final_truth_failed = False
         final_title_failed = False
-        if redelivery_baseline_audit["status"] != "FAILED" and truth_deferred:
+        if redelivery_baseline_audit["status"] != "FAILED" and truth_reapply:
             ledger_raw = truth_audit.get("ledger_path")
             if not isinstance(ledger_raw, str) or not ledger_raw:
                 raise SystemExit("REDELIVERY_SOURCE_TRUTH_LEDGER_PATH_MISSING")
