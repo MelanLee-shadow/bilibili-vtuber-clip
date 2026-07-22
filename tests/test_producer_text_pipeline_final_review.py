@@ -534,3 +534,67 @@ def test_structural_source_truth_failure_never_defers_to_baseline(tmp_path):
 
     assert audit["status"] == "FAILED"
     assert not path.exists()
+
+
+def _unproven_foreign_audit() -> dict:
+    return {
+        "status": "BLOCKED_UNPROVEN_FOREIGN_SPEAKER",
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 37,
+                "start_ms": 85_220,
+                "end_ms": 87_900,
+                "draft": "分牙三四关就毁神",
+                "attempted": "非常やさしい，就病院坂灵",
+            }
+        ],
+    }
+
+
+def _redelivery_baseline_config() -> dict:
+    return {
+        "schema_version": "subtitle-redelivery-baseline.v1",
+        "mode": "preserve_text_outside_source_truth",
+        "path": "/reviewed/prior.srt",
+        "sha256": "a" * 64,
+        "authority": "hash-bound reviewed prior delivery",
+    }
+
+
+def test_unproven_foreign_cue_defers_to_full_source_truth_ownership():
+    audit = _unproven_foreign_audit()
+
+    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+        audit,
+        source_truth_windows=[(85_000, 88_000)],
+        redelivery_baseline_config=None,
+    )
+
+    assert audit["status"] == "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+
+
+def test_unproven_foreign_cue_does_not_defer_to_partial_source_truth():
+    audit = _unproven_foreign_audit()
+
+    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+        audit,
+        # 2026-07-22 actual shape: the broad 毁神 window overlaps the cue but
+        # begins after the blocked cue's start, so source truth alone cannot
+        # own the finding.
+        source_truth_windows=[(86_680, 102_020)],
+        redelivery_baseline_config=None,
+    )
+
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+
+
+def test_partial_source_truth_can_defer_to_hash_bound_redelivery_baseline():
+    audit = _unproven_foreign_audit()
+
+    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+        audit,
+        source_truth_windows=[(86_680, 102_020)],
+        redelivery_baseline_config=_redelivery_baseline_config(),
+    )
+
+    assert audit["status"] == "DEFERRED_TO_REDELIVERY_BASELINE"

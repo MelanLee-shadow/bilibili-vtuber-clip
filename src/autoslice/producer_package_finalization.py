@@ -28,7 +28,10 @@ from src.autoslice.redelivery_subtitle_baseline import (
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
 from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
-from src.autoslice.subtitle_fidelity import apply_title_mark_balance_guard
+from src.autoslice.subtitle_fidelity import (
+    apply_title_mark_balance_guard,
+    resolve_deferred_foreign_introductions,
+)
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
 from src.autoslice.talk_filler import bind_final_filler_audit_to_burn
 
@@ -375,6 +378,56 @@ def _materialize_final_recut(
         redelivery_baseline_audit=redelivery_baseline_audit,
     )
 
+
+def _resolve_deferred_foreign_introductions_after_redelivery(
+    *,
+    source_language_audit: dict[str, object],
+    final_text: str,
+    baseline_audit: Mapping[str, object],
+    final_start: int,
+) -> bool:
+    """Verify the hash-bound baseline actually removed every deferred surface."""
+
+    if source_language_audit.get("status") != (
+        "DEFERRED_TO_REDELIVERY_BASELINE"
+    ):
+        return True
+    authority_rows = [
+        {
+            "authority_id": (
+                f"redelivery-baseline-cue-{row.get('current_cue_index')}"
+            ),
+            "current_cue_index": row.get("current_cue_index"),
+            "local_windows": [
+                {
+                    "start_ms": row.get("start_ms"),
+                    "end_ms": row.get("end_ms"),
+                }
+            ],
+        }
+        for row in (baseline_audit.get("mappings") or [])
+        if isinstance(row, Mapping)
+    ]
+    resolution = resolve_deferred_foreign_introductions(
+        source_language_audit,
+        final_text,
+        authority_rows=authority_rows,
+        authority_kind="hash_bound_redelivery_baseline",
+        timeline_offset_ms=final_start,
+    )
+    source_language_audit["deferred_resolution"] = resolution
+    baseline_ok = (
+        baseline_audit.get("status") in {"APPLIED", "ALREADY_SATISFIED"}
+        and not baseline_audit.get("failures")
+    )
+    if baseline_ok and resolution["status"] == "PASS":
+        source_language_audit["status"] = "RESOLVED_BY_REDELIVERY_BASELINE"
+        return True
+    source_language_audit["status"] = (
+        "BLOCKED_REDELIVERY_BASELINE_DID_NOT_RESOLVE_FOREIGN_INTRODUCTION"
+    )
+    return False
+
 def _finalize_speaker(
     *,
     options: ProducerFinalizationOptions,
@@ -470,6 +523,35 @@ def _verify_final_authority(
         if speaker_review_srt is not None and speaker_review_srt.is_file()
         else final_text
     )
+    source_language_audit = chat_authority_audit.get(
+        "final_source_language_preservation_audit"
+    )
+    if (
+        isinstance(source_language_audit, dict)
+        and source_language_audit.get("status")
+        == "DEFERRED_TO_REDELIVERY_BASELINE"
+    ):
+        baseline_audit = recut.redelivery_baseline_audit or {}
+        if not _resolve_deferred_foreign_introductions_after_redelivery(
+            source_language_audit=source_language_audit,
+            final_text=final_text,
+            baseline_audit=baseline_audit,
+            final_start=final_start,
+        ):
+            chat_authority_path.write_text(
+                json.dumps(
+                    chat_authority_audit,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            raise SystemExit(
+                "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED_AFTER_REDELIVERY: "
+                f"{chat_authority_path}"
+            )
     pending_override_ok = reconcile_pending_text_overrides(
         chat_authority_audit,
         text_manifest,

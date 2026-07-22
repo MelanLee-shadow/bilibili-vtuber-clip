@@ -30,7 +30,7 @@ from difflib import SequenceMatcher
 import json
 import re
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 
@@ -1012,6 +1012,174 @@ def unproven_foreign_introductions_covered_by_overrides(
         if not covered:
             return False
     return True
+
+
+def _interval_fully_covered(
+    start_ms: int,
+    end_ms: int,
+    windows: Sequence[tuple[int, int]],
+) -> bool:
+    """Return whether the union of ``windows`` contains the whole interval."""
+
+    if start_ms >= end_ms:
+        return False
+    cursor = start_ms
+    for window_start, window_end in sorted(windows):
+        if window_end <= cursor:
+            continue
+        if window_start > cursor:
+            return False
+        cursor = max(cursor, window_end)
+        if cursor >= end_ms:
+            return True
+    return False
+
+
+def resolve_deferred_foreign_introductions(
+    audit: Mapping[str, Any],
+    final_srt: str,
+    *,
+    authority_rows: Sequence[Mapping[str, Any]],
+    authority_kind: str,
+    timeline_offset_ms: int = 0,
+) -> dict[str, Any]:
+    """Prove a late, deterministic text authority removed blocked kana.
+
+    This is deliberately narrower than re-running the generic source-language
+    guard: reviewed source truth may itself contain legitimate code-switch
+    names.  We only revisit the exact kana runs that an earlier correction
+    introduced without a source witness.  Each finding must be fully owned by
+    one authority row, and every introduced run must be absent from the final
+    text inside that row's windows.
+    """
+
+    result: dict[str, Any] = {
+        "schema_version": "deferred-foreign-introduction-resolution.v1",
+        "status": "FAILED",
+        "authority_kind": authority_kind,
+        "timeline_offset_ms": int(timeline_offset_ms),
+        "findings": [],
+        "failures": [],
+    }
+    findings = audit.get("unproven_foreign_introductions")
+    if not isinstance(findings, list) or not findings:
+        result["failures"].append({"reason_code": "NO_DEFERRED_FINDINGS"})
+        return result
+
+    parsed_rows: list[tuple[Mapping[str, Any], list[tuple[int, int]]]] = []
+    for row in authority_rows:
+        if not isinstance(row, Mapping):
+            continue
+        windows: list[tuple[int, int]] = []
+        for window in row.get("local_windows") or []:
+            if not isinstance(window, Mapping):
+                continue
+            start = window.get("start_ms")
+            end = window.get("end_ms")
+            if (
+                isinstance(start, int)
+                and not isinstance(start, bool)
+                and isinstance(end, int)
+                and not isinstance(end, bool)
+                and start < end
+            ):
+                windows.append((start, end))
+        if windows:
+            parsed_rows.append((row, windows))
+
+    final_cues = parse_srt_cues(final_srt)
+    kana_run_rx = re.compile(r"[ぁ-ゖァ-ヺー]{2,}")
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            result["failures"].append(
+                {"reason_code": "DEFERRED_FINDING_INVALID"}
+            )
+            continue
+        raw_start = finding.get("start_ms")
+        raw_end = finding.get("end_ms")
+        attempted = str(finding.get("attempted") or "")
+        introduced_surfaces = sorted(set(kana_run_rx.findall(attempted)))
+        if (
+            not isinstance(raw_start, int)
+            or isinstance(raw_start, bool)
+            or not isinstance(raw_end, int)
+            or isinstance(raw_end, bool)
+            or raw_start >= raw_end
+            or not introduced_surfaces
+        ):
+            result["failures"].append(
+                {
+                    "cue_index": finding.get("cue_index"),
+                    "reason_code": "DEFERRED_FINDING_NOT_ADDRESSABLE",
+                }
+            )
+            continue
+        start_ms = raw_start - int(timeline_offset_ms)
+        end_ms = raw_end - int(timeline_offset_ms)
+        owners = [
+            (row, windows)
+            for row, windows in parsed_rows
+            if _interval_fully_covered(start_ms, end_ms, windows)
+        ]
+        row_result: dict[str, Any] = {
+            "cue_index": finding.get("cue_index"),
+            "source_start_ms": raw_start,
+            "source_end_ms": raw_end,
+            "final_start_ms": start_ms,
+            "final_end_ms": end_ms,
+            "introduced_surfaces": introduced_surfaces,
+            "authority_ids": [],
+            "resolved": False,
+        }
+        result["findings"].append(row_result)
+        if not owners:
+            row_result["reason_code"] = "FINDING_NOT_FULLY_AUTHORITY_OWNED"
+            result["failures"].append(dict(row_result))
+            continue
+
+        owned_windows = sorted(
+            {
+                window
+                for _row, windows in owners
+                for window in windows
+            }
+        )
+        row_result["authority_ids"] = sorted(
+            {
+                str(
+                    row.get("truth_id")
+                    or row.get("authority_id")
+                    or row.get("current_cue_index")
+                    or "unnamed-authority"
+                )
+                for row, _windows in owners
+            }
+        )
+        owned_texts = [
+            cue.text
+            for cue in final_cues
+            if any(
+                cue.start_ms < window_end and cue.end_ms > window_start
+                for window_start, window_end in owned_windows
+            )
+        ]
+        row_result["final_window_texts"] = owned_texts
+        if not owned_texts:
+            row_result["reason_code"] = "AUTHORITY_WINDOW_HAS_NO_FINAL_CUE"
+            result["failures"].append(dict(row_result))
+            continue
+        joined = "\n".join(owned_texts)
+        unresolved = [surface for surface in introduced_surfaces if surface in joined]
+        if unresolved:
+            row_result["unresolved_surfaces"] = unresolved
+            row_result["reason_code"] = "INTRODUCED_FOREIGN_SURFACE_SURVIVED"
+            result["failures"].append(dict(row_result))
+            continue
+        row_result["resolved"] = True
+
+    if result["findings"] and not result["failures"]:
+        result["status"] = "PASS"
+    return result
 
 
 def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:

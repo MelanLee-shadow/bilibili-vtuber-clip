@@ -9,6 +9,7 @@ from src.autoslice.subtitle_fidelity import (
     audit_foreign_script_consistency,
     digit_reading_equivalent,
     mixed_cjk_latin_findings_covered_by_overrides,
+    resolve_deferred_foreign_introductions,
     unproven_foreign_introductions_covered_by_overrides,
 )
 
@@ -20,6 +21,88 @@ def _srt(*texts: str) -> str:
             f"{index}\n00:00:{index * 5:02d},000 --> 00:00:{index * 5 + 4:02d},000\n{text}"
         )
     return "\n\n".join(blocks) + "\n"
+
+
+def test_late_authority_resolves_only_fully_owned_introduced_kana():
+    audit = {
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 37,
+                "start_ms": 85_220,
+                "end_ms": 87_900,
+                "draft": "分牙三四关就毁神",
+                "attempted": "非常やさしい，就病院坂灵",
+            }
+        ]
+    }
+    authority_rows = [
+        {
+            "truth_id": "reviewed-cue",
+            "local_windows": [{"start_ms": 85_000, "end_ms": 88_000}],
+        }
+    ]
+    final_srt = (
+        "1\n00:01:25,000 --> 00:01:28,000\n分牙三四关就毁神——\n"
+    )
+
+    resolution = resolve_deferred_foreign_introductions(
+        audit,
+        final_srt,
+        authority_rows=authority_rows,
+        authority_kind="source_subtitle_truth",
+    )
+
+    assert resolution["status"] == "PASS"
+    assert resolution["findings"][0]["authority_ids"] == ["reviewed-cue"]
+    assert resolution["findings"][0]["introduced_surfaces"] == ["やさしい"]
+
+
+def test_late_authority_blocks_partial_ownership_or_surviving_kana():
+    audit = {
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 37,
+                "start_ms": 85_220,
+                "end_ms": 87_900,
+                "attempted": "非常やさしい，就病院坂灵",
+            }
+        ]
+    }
+    final_srt = (
+        "1\n00:01:25,000 --> 00:01:28,000\n仍然非常やさしい\n"
+    )
+
+    partial = resolve_deferred_foreign_introductions(
+        audit,
+        final_srt,
+        authority_rows=[
+            {
+                "truth_id": "partial",
+                "local_windows": [{"start_ms": 86_680, "end_ms": 88_000}],
+            }
+        ],
+        authority_kind="source_subtitle_truth",
+    )
+    surviving = resolve_deferred_foreign_introductions(
+        audit,
+        final_srt,
+        authority_rows=[
+            {
+                "truth_id": "full",
+                "local_windows": [{"start_ms": 85_000, "end_ms": 88_000}],
+            }
+        ],
+        authority_kind="source_subtitle_truth",
+    )
+
+    assert partial["status"] == "FAILED"
+    assert partial["failures"][0]["reason_code"] == (
+        "FINDING_NOT_FULLY_AUTHORITY_OWNED"
+    )
+    assert surviving["status"] == "FAILED"
+    assert surviving["failures"][0]["reason_code"] == (
+        "INTRODUCED_FOREIGN_SURFACE_SURVIVED"
+    )
 
 
 def test_number_paraphrase_reverts_to_draft_without_witness():

@@ -58,7 +58,10 @@ from src.autoslice.session_topic_authority import (
     absorb_session_topic_entities,
     discover_session_topic_authorities,
 )
-from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
+from src.autoslice.source_subtitle_truth import (
+    apply_source_subtitle_truth,
+    ledger_local_windows,
+)
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
@@ -67,6 +70,7 @@ from src.autoslice.subtitle_fidelity import (
     apply_title_mark_balance_guard,
     audit_foreign_script_consistency,
     mixed_cjk_latin_findings_covered_by_overrides,
+    resolve_deferred_foreign_introductions,
     unproven_foreign_introductions_covered_by_overrides,
 )
 from src.autoslice.term_boundary import unify_terms_across_cues
@@ -836,6 +840,149 @@ def _defer_source_truth_failure_for_redelivery(
     )
 
 
+def _windows_fully_cover(
+    start_ms: int,
+    end_ms: int,
+    windows: Sequence[tuple[int, int]],
+) -> bool:
+    if start_ms >= end_ms:
+        return False
+    cursor = start_ms
+    for window_start, window_end in sorted(windows):
+        if window_end <= cursor:
+            continue
+        if window_start > cursor:
+            return False
+        cursor = max(cursor, window_end)
+        if cursor >= end_ms:
+            return True
+    return False
+
+
+def _valid_redelivery_baseline_config(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    expected_sha = str(value.get("sha256") or "").removeprefix("sha256:")
+    return (
+        value.get("schema_version") == "subtitle-redelivery-baseline.v1"
+        and value.get("mode") == "preserve_text_outside_source_truth"
+        and bool(str(value.get("path") or "").strip())
+        and len(expected_sha) == 64
+        and all(char in "0123456789abcdef" for char in expected_sha)
+        and bool(str(value.get("authority") or "").strip())
+    )
+
+
+def _defer_unproven_foreign_introductions_to_late_authority(
+    audit: dict[str, Any],
+    *,
+    source_truth_windows: Sequence[tuple[int, int]],
+    redelivery_baseline_config: object,
+) -> None:
+    """Release the early gate only to a deterministic, later text authority."""
+
+    if not str(audit.get("status") or "").startswith(
+        "BLOCKED_UNPROVEN_FOREIGN_"
+    ):
+        return
+    findings = audit.get("unproven_foreign_introductions")
+    if not isinstance(findings, list) or not findings:
+        return
+    addressable: list[tuple[int, int]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            return
+        start = finding.get("start_ms")
+        end = finding.get("end_ms")
+        attempted = str(finding.get("attempted") or "")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start >= end
+            or not attempted.strip()
+        ):
+            return
+        addressable.append((start, end))
+
+    if source_truth_windows and all(
+        _windows_fully_cover(start, end, source_truth_windows)
+        for start, end in addressable
+    ):
+        audit["status"] = "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+        audit["deferred_reason"] = (
+            "every un-witnessed foreign-language cue is fully contained by "
+            "a committed source-truth interval; the exact introduced kana "
+            "must disappear after that authority runs"
+        )
+        audit["deferred_authority_windows"] = [
+            {"start_ms": start, "end_ms": end}
+            for start, end in sorted(source_truth_windows)
+        ]
+        return
+
+    # A hash-bound reviewed redelivery baseline runs only after final recut.
+    # Its mapper must own every affected final cue one-to-one, and package
+    # finalization separately proves the introduced kana is gone.  Merely
+    # having a baseline-shaped dict is not success: invalid hash/path/mapping
+    # still fails closed in redelivery_subtitle_baseline.py.
+    if _valid_redelivery_baseline_config(redelivery_baseline_config):
+        audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
+        audit["deferred_reason"] = (
+            "a hash-bound reviewed subtitle baseline is configured; final "
+            "recut must prove one-to-one ownership and removal of every "
+            "introduced foreign surface"
+        )
+
+
+def _apply_source_truth_and_resolve_deferred_foreign(
+    srt_text: str,
+    *,
+    spec: Mapping[str, object],
+    durations: Sequence[int],
+    ledger_path: Path | None,
+    source_language_audit: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    srt_text, source_truth_audit = apply_source_subtitle_truth(
+        srt_text,
+        spec=spec,
+        durations=durations,
+        ledger_path=ledger_path,
+    )
+    if source_language_audit.get("status") != (
+        "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+    ):
+        return srt_text, source_truth_audit
+    truth_rows = [
+        row
+        for key in ("applied", "satisfied")
+        for row in (source_truth_audit.get(key) or [])
+        if isinstance(row, Mapping)
+    ]
+    resolution = resolve_deferred_foreign_introductions(
+        source_language_audit,
+        srt_text,
+        authority_rows=truth_rows,
+        authority_kind="source_subtitle_truth",
+    )
+    source_language_audit["deferred_resolution"] = resolution
+    if resolution["status"] == "PASS":
+        source_language_audit["status"] = "RESOLVED_BY_SOURCE_SUBTITLE_TRUTH"
+    elif _valid_redelivery_baseline_config(
+        spec.get("subtitle_redelivery_baseline")
+    ):
+        source_language_audit["source_truth_resolution_status"] = (
+            "NOT_RESOLVED_BEFORE_REDELIVERY"
+        )
+        source_language_audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
+    else:
+        source_language_audit["status"] = (
+            "BLOCKED_SOURCE_SUBTITLE_TRUTH_DID_NOT_RESOLVE_FOREIGN_INTRODUCTION"
+        )
+    return srt_text, source_truth_audit
+
+
 def _finalize_text_evidence(
     *,
     spec: dict,
@@ -894,6 +1041,13 @@ def _finalize_text_evidence(
             out_root=out_root,
             cid=cid,
         )
+    _defer_unproven_foreign_introductions_to_late_authority(
+        final_source_language_audit,
+        source_truth_windows=ledger_local_windows(
+            spec=spec, durations=durations, ledger_path=source_truth_ledger_path,
+        ),
+        redelivery_baseline_config=spec.get("subtitle_redelivery_baseline"),
+    )
     foreign_script_audit = audit_foreign_script_consistency(srt_text)
     if (
         foreign_script_audit["status"]
@@ -1037,11 +1191,10 @@ def _finalize_text_evidence(
     chat_authority_audit["final_hard_meme_surface_audit"] = (
         hard_meme_surface_audit
     )
-    srt_text, source_truth_audit = apply_source_subtitle_truth(
-        srt_text,
-        spec=spec,
-        durations=durations,
+    srt_text, source_truth_audit = _apply_source_truth_and_resolve_deferred_foreign(
+        srt_text, spec=spec, durations=durations,
         ledger_path=source_truth_ledger_path,
+        source_language_audit=final_source_language_audit,
     )
     chat_authority_audit["source_subtitle_truth_audit"] = source_truth_audit
     # Re-run the structural guard after every text authority, including source
@@ -1100,6 +1253,12 @@ def _finalize_text_evidence(
         + "\n",
         encoding="utf-8",
     )
+    if str(final_source_language_audit.get("status") or "").startswith(
+        "BLOCKED_"
+    ):
+        raise SystemExit(
+            f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
+        )
     # In a hash-bound subtitle redelivery only, a missing substring target can
     # be restored from the reviewed baseline and the higher source truth then
     # reapplied.  Every other mode still stops here.

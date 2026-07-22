@@ -432,3 +432,89 @@ def test_final_recut_replays_truth_after_broad_window_was_satisfied(
     assert recut.redelivery_baseline_audit["source_truth_reapplication"][
         "status"
     ] == "APPLIED"
+
+
+def test_redelivery_baseline_resolves_actual_unproven_foreign_shape() -> None:
+    source_language_audit = {
+        "status": "DEFERRED_TO_REDELIVERY_BASELINE",
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 37,
+                "start_ms": 85_220,
+                "end_ms": 87_900,
+                "draft": "分牙三四关就毁神",
+                "attempted": "非常やさしい，就病院坂灵",
+            }
+        ],
+    }
+    baseline_audit = {
+        "status": "APPLIED",
+        "failures": [],
+        "mappings": [
+            {
+                "current_cue_index": 34,
+                "start_ms": 75_220,
+                "end_ms": 77_900,
+            }
+        ],
+    }
+    final_text = (
+        "1\n00:01:15,220 --> 00:01:17,900\n分牙三四关就毁神——\n"
+    )
+
+    resolved = (
+        finalization._resolve_deferred_foreign_introductions_after_redelivery(
+            source_language_audit=source_language_audit,
+            final_text=final_text,
+            baseline_audit=baseline_audit,
+            final_start=10_000,
+        )
+    )
+
+    assert resolved
+    assert source_language_audit["status"] == (
+        "RESOLVED_BY_REDELIVERY_BASELINE"
+    )
+    assert source_language_audit["deferred_resolution"]["status"] == "PASS"
+
+
+def test_redelivery_baseline_keeps_block_when_foreign_surface_survives() -> None:
+    source_language_audit = {
+        "status": "DEFERRED_TO_REDELIVERY_BASELINE",
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 37,
+                "start_ms": 85_220,
+                "end_ms": 87_900,
+                "attempted": "非常やさしい，就病院坂灵",
+            }
+        ],
+    }
+    baseline_audit = {
+        "status": "APPLIED",
+        "failures": [],
+        "mappings": [
+            {
+                "current_cue_index": 34,
+                "start_ms": 75_220,
+                "end_ms": 77_900,
+            }
+        ],
+    }
+    final_text = (
+        "1\n00:01:15,220 --> 00:01:17,900\n仍然非常やさしい\n"
+    )
+
+    resolved = (
+        finalization._resolve_deferred_foreign_introductions_after_redelivery(
+            source_language_audit=source_language_audit,
+            final_text=final_text,
+            baseline_audit=baseline_audit,
+            final_start=10_000,
+        )
+    )
+
+    assert not resolved
+    assert source_language_audit["status"] == (
+        "BLOCKED_REDELIVERY_BASELINE_DID_NOT_RESOLVE_FOREIGN_INTRODUCTION"
+    )
