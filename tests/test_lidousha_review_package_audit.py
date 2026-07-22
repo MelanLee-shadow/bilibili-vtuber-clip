@@ -205,6 +205,76 @@ def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Pa
     assert result["issues"] == []
 
 
+def test_audit_accepts_explicit_bounded_sapphire72_visual_contract(tmp_path: Path):
+    root = tmp_path / "pkg"
+    stem = "autoslice-talk"
+    line = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯"
+    assert 18 < len(line) <= 28
+    srt = _write(
+        root / f"{stem}.srt",
+        f"1\n00:00:00,000 --> 00:00:06,000\n{line}\n",
+    )
+    ass = _write(
+        root / f"{stem}.ass",
+        "[Events]\n"
+        f"Dialogue: 0,0:00:00.00,0:00:06.00,Default,,0,0,0,,{line}\n",
+    )
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished_review_package_no_upload_pending_human_review",
+                "subtitle_visual_contract": {
+                    "profile": "autoslice-sapphire72",
+                    "max_visual_lines": 2,
+                    "max_chars_per_line": 28,
+                },
+                "items": [
+                    {
+                        "stem": stem,
+                        "title": "【李豆沙】测试",
+                        "subtitle_srt": str(srt),
+                        "ass_path": str(ass),
+                        "ai_cover_generated": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is True
+    assert result["issues"] == []
+
+
+def test_audit_rejects_visual_contract_looser_than_renderer(tmp_path: Path):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished_review_package_no_upload_pending_human_review",
+                "subtitle_visual_contract": {
+                    "max_visual_lines": 3,
+                    "max_chars_per_line": 40,
+                },
+                "items": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is False
+    assert {issue["code"] for issue in result["issues"]} == {
+        "SUBTITLE_VISUAL_CONTRACT_INVALID"
+    }
+
+
 def test_audit_blocks_package_with_extended_invalid_review_draft_status(tmp_path: Path):
     root = tmp_path / "pkg"
     root.mkdir()

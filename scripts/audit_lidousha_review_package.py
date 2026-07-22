@@ -3,11 +3,22 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
-MAX_VISUAL_LINES = 2
-MAX_VISUAL_LINE_CHARS = 18
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.autoslice.subtitle_rendering import (  # noqa: E402
+    ASS_MAX_CHARS_PER_LINE,
+    ASS_MAX_VISUAL_LINES,
+)
+
+
+DEFAULT_MAX_VISUAL_LINES = 2
+DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
 
 
@@ -179,6 +190,54 @@ def _add_issue(issues: list[dict[str, Any]], code: str, *, stem: str = "", path:
     issues.append(issue)
 
 
+def _subtitle_visual_contract(
+    manifest: dict[str, Any],
+    issues: list[dict[str, Any]],
+    manifest_path: Path,
+) -> tuple[int, int]:
+    """Resolve a package-bound display contract without permitting a looser
+    limit than the canonical Sapphire renderer can actually guarantee.
+
+    Historical/manual packages keep the stricter 18-character default.  The
+    autoslice Sapphire72 lane renders at the current 28-character contract and
+    must declare that profile explicitly in its review manifest; otherwise a
+    perfectly valid burn is falsely rejected by the older package default.
+    """
+
+    raw = manifest.get("subtitle_visual_contract")
+    if raw is None:
+        return DEFAULT_MAX_VISUAL_LINES, DEFAULT_MAX_VISUAL_LINE_CHARS
+    if not isinstance(raw, dict):
+        _add_issue(
+            issues,
+            "SUBTITLE_VISUAL_CONTRACT_INVALID",
+            path=manifest_path,
+            detail="subtitle_visual_contract must be an object",
+        )
+        return DEFAULT_MAX_VISUAL_LINES, DEFAULT_MAX_VISUAL_LINE_CHARS
+    max_lines = raw.get("max_visual_lines")
+    max_chars = raw.get("max_chars_per_line")
+    if (
+        isinstance(max_lines, bool)
+        or not isinstance(max_lines, int)
+        or not 1 <= max_lines <= ASS_MAX_VISUAL_LINES
+        or isinstance(max_chars, bool)
+        or not isinstance(max_chars, int)
+        or not 1 <= max_chars <= ASS_MAX_CHARS_PER_LINE
+    ):
+        _add_issue(
+            issues,
+            "SUBTITLE_VISUAL_CONTRACT_INVALID",
+            path=manifest_path,
+            detail=(
+                f"requested lines/chars={max_lines!r}/{max_chars!r}; "
+                f"supported maxima are {ASS_MAX_VISUAL_LINES}/{ASS_MAX_CHARS_PER_LINE}"
+            ),
+        )
+        return DEFAULT_MAX_VISUAL_LINES, DEFAULT_MAX_VISUAL_LINE_CHARS
+    return max_lines, max_chars
+
+
 def audit_package(root: str | Path) -> dict[str, Any]:
     root = Path(root)
     manifest_path = root / "review_manifest.json"
@@ -188,6 +247,10 @@ def audit_package(root: str | Path) -> dict[str, Any]:
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return {"passed": False, "root": str(root), "issues": issues, "issue_count": len(issues)}
+
+    max_visual_lines, max_visual_line_chars = _subtitle_visual_contract(
+        manifest, issues, manifest_path
+    )
 
     status = str(manifest.get("status") or "")
     if status.startswith("invalid_review_draft"):
@@ -235,11 +298,11 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             for cue in _parse_srt(subtitle_path):
                 duration = cue["end"] - cue["start"]
                 lines = [line.strip() for line in cue["lines"] if line.strip()]
-                if len(lines) > MAX_VISUAL_LINES:
+                if len(lines) > max_visual_lines:
                     _add_issue(issues, "SUBTITLE_CUE_TOO_MANY_LINES", stem=stem, path=subtitle_path, detail=f"cue {cue['index']} has {len(lines)} lines")
                 for line in lines:
                     n = _text_len(line)
-                    if n > MAX_VISUAL_LINE_CHARS:
+                    if n > max_visual_line_chars:
                         _add_issue(issues, "SUBTITLE_LINE_TOO_LONG", stem=stem, path=subtitle_path, detail=f"cue {cue['index']} line length {n}: {line}")
                 if duration >= LONG_STATIC_CUE_SECONDS and lines:
                     _add_issue(issues, "SUBTITLE_LONG_STATIC_CUE", stem=stem, path=subtitle_path, detail=f"cue {cue['index']} lasts {duration:.2f}s")
@@ -247,11 +310,11 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         if ass_path and ass_path.exists():
             for idx, text in enumerate(_ass_dialogue_texts(ass_path), start=1):
                 visual_lines = _visual_lines(text)
-                if len(visual_lines) > MAX_VISUAL_LINES:
+                if len(visual_lines) > max_visual_lines:
                     _add_issue(issues, "SUBTITLE_ASS_TOO_MANY_VISUAL_LINES", stem=stem, path=ass_path, detail=f"dialogue {idx} has {len(visual_lines)} visual lines")
                 for line in visual_lines:
                     n = _text_len(line)
-                    if n > MAX_VISUAL_LINE_CHARS:
+                    if n > max_visual_line_chars:
                         _add_issue(issues, "SUBTITLE_ASS_LINE_TOO_LONG", stem=stem, path=ass_path, detail=f"dialogue {idx} line length {n}: {line}")
 
         title_txt = _read_title_txt(title_txt_path)
