@@ -90,19 +90,77 @@ def test_hallucination_drop_and_small_particle_trim_allowed():
     assert audit["status"] == "CLEAN"
 
 
+def test_question_intent_guard_does_not_resurrect_a_dropped_hallucination():
+    draft = _srt("这是什么")
+    corrected = _srt("")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft, corrected, agy_srt=None, sanctioned=()
+    )
+
+    assert "这是什么" not in guarded
+    assert audit["hallucination_drops"][0]["cue_index"] == 1
+
+
 def test_pinyin_homophone_respell_passes_without_witness():
     """2026-07-14 五年之约冤杀案回归：季下→记下(jì同音)、小丽→小李(lǐ同音)
-    是声学保真的合法重拼，AGY 缺席也必须放行；转述(一米九)与非同音实体换写
-    (留下→小李)仍回退。"""
+    都保留读音，但「小+姓」是人名写法槽，音频不能自证李/丽；普通词法重拼
+    仍可放行，姓名写法与转述都回退。"""
     draft = _srt("欢迎季下", "小丽只是恰好处在一个", "就是她被那个190粉毛抢了手机")
     final = _srt("欢迎记下", "小李只是恰好处在一个", "就是她被那个一米九粉毛抢了手机")
 
     guarded, audit = apply_subtitle_fidelity_guard(draft, final, agy_srt=None, sanctioned=())
 
     assert "欢迎记下" in guarded
-    assert "小李只是恰好处在一个" in guarded
+    assert "小丽只是恰好处在一个" in guarded
+    assert "小李只是恰好处在一个" not in guarded
     assert "一米九" not in guarded  # 转述仍被回退
-    assert audit["reverted_count"] == 1
+    assert audit["reverted_count"] == 2
+
+
+def test_agy_cannot_self_witness_homophone_name_orthography():
+    draft = _srt("毁神应该也一样吧")
+    guessed = _srt("灰神应该也一样吧")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft, guessed, agy_srt=guessed, sanctioned=()
+    )
+
+    assert "毁神应该也一样吧" in guarded
+    assert "灰神" not in guarded
+    assert audit["reverted"][0]["violations"][0]["reason"] == (
+        "HOMOPHONE_NAME_ORTHOGRAPHY_UNWITNESSED"
+    )
+
+
+def test_registered_mapping_can_authorize_homophone_name_orthography():
+    draft = _srt("毁神应该也一样吧")
+    corrected = _srt("灰神应该也一样吧")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft,
+        corrected,
+        agy_srt=corrected,
+        sanctioned=(("毁神", "灰神"),),
+    )
+
+    assert "灰神应该也一样吧" in guarded
+    assert audit["reverted_count"] == 0
+
+
+def test_agy_cannot_rewrite_question_intent_without_text_authority():
+    draft = _srt("那那个时候你是什么呢")
+    paraphrased = _srt("那那个时候你是怎么排的")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft, paraphrased, agy_srt=paraphrased, sanctioned=()
+    )
+
+    assert "那那个时候你是什么呢" in guarded
+    assert "怎么排的" not in guarded
+    assert audit["reverted"][0]["violations"][0]["reason"] == (
+        "QUESTION_INTENT_UNWITNESSED"
+    )
 
 
 def test_cue_count_mismatch_is_aligned_to_draft_timing_instead_of_skipped():
@@ -460,6 +518,15 @@ def test_foreign_script_consistency_allows_cp_formulas_beside_one_latin_name():
             "NNL一般都是NNLL，是吗",
             "一般不是NNLLLHHB或者NN吗",
         )
+    )
+
+    assert audit["status"] == "CLEAN"
+    assert audit["mixed_cjk_latin_cues"] == []
+
+
+def test_foreign_script_consistency_treats_uppercase_ta_as_chinese_pronoun():
+    audit = audit_foreign_script_consistency(
+        _srt("TA说，TA说你不否认拿烟头烫我这件事，说别躲了")
     )
 
     assert audit["status"] == "CLEAN"

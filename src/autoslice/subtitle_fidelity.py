@@ -8,7 +8,8 @@
 机制：BCUT draft 是逐字形态证人（ASR 按字面转写），AGY 精听是音频证人。
 draft→终稿 的每个编辑跨度必须被至少一类证人背书：
 
-- 同音重拼（内置封闭同音组：他她它TA / 的得地 / 吗嘛）；
+- 同音重拼（内置封闭同音组：他她它TA / 的得地 / 吗嘛）；一般拼音同音
+  仍可作声学保真改字，但疑似人名/称呼的同音汉字不能靠音频模型自证写法；
 - 数字读法等价（190 ↔ 一九零/幺九零 逐字读法）；
 - 白名单规范表（硬梗表、代码切换表、实体混淆面→canonical、时效词
   alias/confusable→canonical）——这些表本身就是有据词典；
@@ -70,6 +71,26 @@ _EMBEDDED_LATIN_WORD_RX = re.compile(
 )
 _CP_FORMULA_RX = re.compile(
     r"(?i)(?<![A-Za-z])(?:[nlhb][\s._-]*){2,}(?![A-Za-z])"
+)
+_CHINESE_ROMANIZED_PRONOUN_RX = re.compile(r"(?<![A-Za-z])TA(?![A-Za-z])")
+_QUESTION_INTENT_RX = re.compile(
+    r"为什么|怎么样|怎么|什么|哪里|哪儿|哪个|哪位|多少|何时|谁|几(?:个|点|岁|次|天|年|位|只|条|遍|回|分钟|小时)"
+)
+_NAME_LIKE_PREFIXES = ("小", "老", "阿")
+_NAME_LIKE_SUFFIXES = (
+    "老师",
+    "姐姐",
+    "哥哥",
+    "妈妈",
+    "爸爸",
+    "神",
+    "姐",
+    "哥",
+    "酱",
+    "桑",
+    "君",
+    "总",
+    "宝",
 )
 _SAFE_CODE_SWITCH_PHRASE_RX = re.compile(
     r"(?i)(?<![A-Za-z0-9])3D\s*Live(?![A-Za-z0-9])"
@@ -138,6 +159,40 @@ def _homophone_equal(left: str, right: str) -> bool:
     if _HAS_PYPINYIN and a and b:
         sa, sb = _toneless_syllables(a), _toneless_syllables(b)
         return bool(sa) and sa == sb
+    return False
+
+
+def _question_intent_signature(value: str) -> tuple[str, ...]:
+    """Meaning-bearing interrogatives; changing the family changes the question."""
+
+    return tuple(match.group(0) for match in _QUESTION_INTENT_RX.finditer(value))
+
+
+def _name_like_homophone_rewrite(draft_text: str, final_text: str) -> bool:
+    """Detect orthographically ambiguous homophone edits in a name/address slot.
+
+    Audio can distinguish ``liu xia`` from ``li dou sha`` but it cannot decide
+    whether the same ``hui shen`` syllables are written 毁神 or 灰神.  Common
+    address morphology bounds the conservative rule so ordinary lexical fixes
+    such as 季下→记下 remain eligible.
+    """
+
+    matcher = SequenceMatcher(None, draft_text, final_text, autojunk=False)
+    for op, a1, a2, b1, b2 in matcher.get_opcodes():
+        if op != "replace":
+            continue
+        before = draft_text[a1:a2]
+        after = final_text[b1:b2]
+        if not before or not after or before == after:
+            continue
+        if not _homophone_equal(before, after):
+            continue
+        left = final_text[max(0, b1 - 2) : b1]
+        right = final_text[b2 : b2 + 3]
+        if any(left.endswith(prefix) for prefix in _NAME_LIKE_PREFIXES):
+            return True
+        if any(right.startswith(suffix) for suffix in _NAME_LIKE_SUFFIXES):
+            return True
     return False
 
 
@@ -381,13 +436,57 @@ def apply_subtitle_fidelity_guard(
         )
         kept = final_text
         if final_text != draft_text:
+            sanctioned_cue = _sanctioned_cue_equal(draft_text, final_text, pairs)
+            question_intent_changed = (
+                _question_intent_signature(draft_text)
+                != _question_intent_signature(final_text)
+            )
+            ambiguous_name_orthography = _name_like_homophone_rewrite(
+                draft_text, final_text
+            )
             if not final_text.strip():
                 audit["hallucination_drops"].append({"cue_index": index, "draft": draft_text})
+            elif question_intent_changed and not sanctioned_cue:
+                kept = draft_text
+                audit["reverted"].append(
+                    {
+                        "cue_index": index,
+                        "draft": draft_text,
+                        "attempted": final_text,
+                        "kept": kept,
+                        "violations": [
+                            {
+                                "op": "replace",
+                                "draft_span": draft_text[:40],
+                                "final_span": final_text[:40],
+                                "reason": "QUESTION_INTENT_UNWITNESSED",
+                            }
+                        ],
+                    }
+                )
+            elif ambiguous_name_orthography and not sanctioned_cue:
+                kept = draft_text
+                audit["reverted"].append(
+                    {
+                        "cue_index": index,
+                        "draft": draft_text,
+                        "attempted": final_text,
+                        "kept": kept,
+                        "violations": [
+                            {
+                                "op": "replace",
+                                "draft_span": draft_text[:40],
+                                "final_span": final_text[:40],
+                                "reason": "HOMOPHONE_NAME_ORTHOGRAPHY_UNWITNESSED",
+                            }
+                        ],
+                    }
+                )
             elif agy_text is not None and _strip_non_text(final_text) == _strip_non_text(agy_text):
                 pass  # 整句采信音频证人
             elif _homophone_equal(draft_text, final_text):
                 pass
-            elif _sanctioned_cue_equal(draft_text, final_text, pairs):
+            elif sanctioned_cue:
                 pass
             else:
                 violations: list[dict[str, str]] = []
@@ -901,6 +1000,9 @@ def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
     """Return whether one Chinese talk cue contains unsupported Latin word salad."""
 
     text = _SAFE_CODE_SWITCH_PHRASE_RX.sub("", text)
+    # The pronoun finalizer deliberately emits uppercase TA for an unknown
+    # person's gender.  It is a Chinese pronoun surface, not a Latin word.
+    text = _CHINESE_ROMANIZED_PRONOUN_RX.sub("", text)
     # CP-order formulas are spoken labels, not an accidentally decoded foreign
     # sentence: NNLL / L L N N / NNLLHHB may coexist with one real Latin name.
     text = _CP_FORMULA_RX.sub("", text)
