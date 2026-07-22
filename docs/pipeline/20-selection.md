@@ -6,6 +6,8 @@
 ## 链路
 
 1. 语义召回为主：`select_semantic_session_candidates`（`src/autoslice/semantic_candidate_selector.py`），关键词只兜底（Ivan 2026-07-03）。
+   - 单段超过 45 分钟时，必须按 30 分钟核心窗 + 前后各 2 分钟上下文重叠分别召回，再在整段范围按信心分去重排序；禁止把 2 小时字幕塞进一次调用后，把模型只返回前半场少数候选误当作整场无内容。
+   - 每段候选池上限 12 是召回余量，不是交付配额；最终仍按每场 talk top-5 上限与最低信心门筛选，不为凑数降门槛。
 2. 弹幕热度 hints：`danmaku_evidence.py`（爆发窗口，选题信号，不改文本）。
 3. CPA 观众视角审查：每个候选无条件过 `scripts/cpa_semantic_qa_llm.py` 判官（`viewer_context_ok` 语境自足性 + 自动扩窗建议），失败即 BLOCK（`live_source_review.py::_merge_cpa_semantic_review_into_decision`）。
 4. 候选是内容锚点不是最终边界；边界由 [30-boundary.md](30-boundary.md) 决定。

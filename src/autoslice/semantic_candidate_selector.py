@@ -50,6 +50,10 @@ MAX_CONTEXT_BACKTRACK_MS = 120_000
 MAX_SAME_TOPIC_MERGE_GAP_MS = 600_000
 MIN_SAME_TOPIC_MERGE_GAP_MS = 5_000
 SEMANTIC_RECALL_STAGE = "semantic_recall"
+SEMANTIC_RECALL_SINGLE_PASS_MAX_MS = 45 * 60 * 1000
+SEMANTIC_RECALL_SHARD_DURATION_MS = 30 * 60 * 1000
+SEMANTIC_RECALL_SHARD_OVERLAP_MS = 2 * 60 * 1000
+SEMANTIC_RECALL_CANDIDATES_PER_SHARD = 4
 
 
 def _slice_selection_metric() -> str:
@@ -85,6 +89,7 @@ def build_semantic_recall_prompt(
     *,
     max_candidates: int,
     danmaku_hints: str | None = None,
+    scope_note: str | None = None,
 ) -> str:
     lines = []
     for position, cue in enumerate(cues, start=1):
@@ -99,7 +104,8 @@ def build_semantic_recall_prompt(
 """
     metric = _slice_selection_metric()
     metric_block = f"\n选题优先级 metric(Ivan 逐条校准过的权威,选题和排序都必须对照它;历史真例/反例都在里面):\n{metric}\n" if metric else ""
-    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}
+    scope_block = f"\n召回范围说明:{scope_note}\n" if scope_note else ""
+    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}{scope_block}
 
 你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
 “最多”是上限，不是必须凑满的数量。**同一场连续事件只能占一个候选**：话题中间即使有短暂停顿、
@@ -155,6 +161,7 @@ def select_semantic_session_candidates(
     min_talk_window_ms: int = DEFAULT_MIN_TALK_WINDOW_MS,
     max_talk_window_ms: int = DEFAULT_MAX_TALK_WINDOW_MS,
     danmaku_hints: str | None = None,
+    scope_note: str | None = None,
 ) -> tuple[list[FullSessionCandidate], dict[str, object]]:
     """Semantic recall over the full session; returns (candidates, diagnostics).
 
@@ -166,9 +173,11 @@ def select_semantic_session_candidates(
     ordered = sorted(cues, key=lambda cue: (cue.source_start_ms, cue.source_end_ms, cue.cue_id))
     if not ordered:
         return [], {"skipped": [], "raw_candidates": 0, "error": "no cues"}
-    completion = llm_call(
-        build_semantic_recall_prompt(ordered, max_candidates=max_candidates, danmaku_hints=danmaku_hints)
+    prompt = build_semantic_recall_prompt(
+        ordered, max_candidates=max_candidates, danmaku_hints=danmaku_hints,
+        scope_note=scope_note,
     )
+    completion = llm_call(prompt)
     payload = extract_json_object(completion)
     raw_candidates = payload.get("candidates")
     if not isinstance(raw_candidates, list):
@@ -442,6 +451,237 @@ def select_semantic_session_candidates(
         "skipped": skipped,
     }
     return selected, diagnostics
+
+
+def plan_semantic_recall_shards(
+    cues: Sequence[SourceCue],
+    *,
+    single_pass_max_ms: int = SEMANTIC_RECALL_SINGLE_PASS_MAX_MS,
+    shard_duration_ms: int = SEMANTIC_RECALL_SHARD_DURATION_MS,
+    overlap_ms: int = SEMANTIC_RECALL_SHARD_OVERLAP_MS,
+) -> list[dict[str, object]]:
+    """Plan bounded semantic-recall windows over an absolute source timeline.
+
+    One huge two-hour prompt under-recalled the 2026-07-22 stream: it returned
+    two events and even missed three already-known strong events in the first
+    half hour.  Long sessions therefore get independent 30-minute recall
+    opportunities.  Two minutes of overlap preserves triggers and payoffs at
+    a boundary; the global pass below removes overlapping duplicates.
+    """
+
+    ordered = sorted(
+        cues,
+        key=lambda cue: (
+            cue.source_start_ms,
+            cue.source_end_ms,
+            cue.cue_id,
+        ),
+    )
+    if not ordered:
+        return []
+    coverage_end_ms = max(cue.source_end_ms for cue in ordered)
+    if coverage_end_ms <= single_pass_max_ms:
+        return [
+            {
+                "index": 0,
+                "core_start_ms": 0,
+                "core_end_ms": coverage_end_ms,
+                "window_start_ms": 0,
+                "window_end_ms": coverage_end_ms,
+                "cues": tuple(ordered),
+            }
+        ]
+
+    shards: list[dict[str, object]] = []
+    core_start_ms = 0
+    while core_start_ms < coverage_end_ms:
+        core_end_ms = min(coverage_end_ms, core_start_ms + shard_duration_ms)
+        window_start_ms = max(0, core_start_ms - overlap_ms)
+        window_end_ms = min(coverage_end_ms, core_end_ms + overlap_ms)
+        shard_cues = tuple(
+            cue
+            for cue in ordered
+            if cue.source_end_ms > window_start_ms
+            and cue.source_start_ms < window_end_ms
+        )
+        if shard_cues:
+            shards.append(
+                {
+                    "index": len(shards),
+                    "core_start_ms": core_start_ms,
+                    "core_end_ms": core_end_ms,
+                    "window_start_ms": window_start_ms,
+                    "window_end_ms": window_end_ms,
+                    "cues": shard_cues,
+                }
+            )
+        core_start_ms = core_end_ms
+    return shards
+
+
+def select_semantic_session_candidates_covered(
+    cues: Sequence[SourceCue],
+    *,
+    llm_call: LlmCall,
+    max_candidates: int,
+    min_talk_window_ms: int = DEFAULT_MIN_TALK_WINDOW_MS,
+    max_talk_window_ms: int = DEFAULT_MAX_TALK_WINDOW_MS,
+    danmaku_hints: str | None = None,
+) -> tuple[list[FullSessionCandidate], dict[str, object]]:
+    """Recall a whole session without letting long timelines starve later time.
+
+    Short sessions retain the exact single-call behavior.  Long sessions are
+    recalled independently per overlapping window, then confidence-ranked and
+    overlap-deduplicated under one global candidate-pool cap.  Any shard call
+    failure still raises ``LlmCallError`` so the existing deterministic
+    fallback remains authoritative instead of silently accepting partial
+    semantic coverage.
+    """
+
+    shards = plan_semantic_recall_shards(cues)
+    if not shards:
+        return [], {
+            "stage": SEMANTIC_RECALL_STAGE,
+            "mode": "empty",
+            "coverage_end_ms": 0,
+            "shards": [],
+            "selected": [],
+            "hooks": {},
+            "filler_proposals": {},
+            "merge_gaps": {},
+            "skipped": [],
+        }
+    coverage_end_ms = max(cue.source_end_ms for cue in cues)
+    if len(shards) == 1:
+        selected, diagnostics = select_semantic_session_candidates(
+            tuple(shards[0]["cues"]),
+            llm_call=llm_call,
+            max_candidates=max_candidates,
+            min_talk_window_ms=min_talk_window_ms,
+            max_talk_window_ms=max_talk_window_ms,
+            danmaku_hints=danmaku_hints,
+        )
+        diagnostics = dict(diagnostics)
+        diagnostics.update(
+            {
+                "mode": "single",
+                "coverage_end_ms": coverage_end_ms,
+                "shards": [
+                    {
+                        key: shards[0][key]
+                        for key in (
+                            "index",
+                            "core_start_ms",
+                            "core_end_ms",
+                            "window_start_ms",
+                            "window_end_ms",
+                        )
+                    }
+                ],
+            }
+        )
+        return selected, diagnostics
+
+    recalled: list[FullSessionCandidate] = []
+    hooks: dict[str, str] = {}
+    filler_proposals: dict[str, list[dict[str, object]]] = {}
+    merge_gaps: dict[str, list[dict[str, object]]] = {}
+    shard_diagnostics: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    for shard in shards:
+        core_start_ms = int(shard["core_start_ms"])
+        core_end_ms = int(shard["core_end_ms"])
+        window_start_ms = int(shard["window_start_ms"])
+        window_end_ms = int(shard["window_end_ms"])
+        scope_note = (
+            "这是整场直播的一个覆盖窗,核心范围 "
+            f"{_mmss(core_start_ms)}-{_mmss(core_end_ms)},为补齐上下文实际提供 "
+            f"{_mmss(window_start_ms)}-{_mmss(window_end_ms)}。优先选择事件中心落在核心范围内的内容;"
+            "两侧重叠只用于保住触发点和收尾,不要把重叠内容当成额外配额。"
+        )
+        shard_selected, diagnostics = select_semantic_session_candidates(
+            tuple(shard["cues"]),
+            llm_call=llm_call,
+            max_candidates=min(
+                max_candidates,
+                SEMANTIC_RECALL_CANDIDATES_PER_SHARD,
+            ),
+            min_talk_window_ms=min_talk_window_ms,
+            max_talk_window_ms=max_talk_window_ms,
+            danmaku_hints=danmaku_hints,
+            scope_note=scope_note,
+        )
+        recalled.extend(shard_selected)
+        hooks.update(
+            {
+                str(key): str(value)
+                for key, value in (diagnostics.get("hooks") or {}).items()
+            }
+        )
+        filler_proposals.update(
+            {
+                str(key): list(value)
+                for key, value in (diagnostics.get("filler_proposals") or {}).items()
+            }
+        )
+        merge_gaps.update(
+            {
+                str(key): list(value)
+                for key, value in (diagnostics.get("merge_gaps") or {}).items()
+            }
+        )
+        shard_diagnostics.append(
+            {
+                "index": int(shard["index"]),
+                "core_start_ms": core_start_ms,
+                "core_end_ms": core_end_ms,
+                "window_start_ms": window_start_ms,
+                "window_end_ms": window_end_ms,
+                "cue_count": len(shard["cues"]),
+                "raw_candidates": int(diagnostics.get("raw_candidates") or 0),
+                "selected": list(diagnostics.get("selected") or []),
+                "skipped": list(diagnostics.get("skipped") or []),
+            }
+        )
+
+    recalled.sort(
+        key=lambda candidate: -float(
+            getattr(candidate.boundary, "start_boundary_score", 0.0) or 0.0
+        )
+    )
+    selected: list[FullSessionCandidate] = []
+    for candidate in recalled:
+        if len(selected) >= max_candidates:
+            break
+        if _overlaps_selected(candidate, selected):
+            skipped.append(
+                {
+                    "candidate_id": candidate.anchor.candidate_id,
+                    "reason": "overlaps_cross_shard_selected",
+                }
+            )
+            continue
+        selected.append(candidate)
+
+    selected_ids = {candidate.anchor.candidate_id for candidate in selected}
+    return selected, {
+        "stage": SEMANTIC_RECALL_STAGE,
+        "mode": "sharded",
+        "coverage_end_ms": coverage_end_ms,
+        "shards": shard_diagnostics,
+        "raw_candidates": sum(
+            int(shard.get("raw_candidates") or 0) for shard in shard_diagnostics
+        ),
+        "selected": [candidate.anchor.candidate_id for candidate in selected],
+        "hooks": {key: value for key, value in hooks.items() if key in selected_ids},
+        "filler_proposals": {
+            key: value for key, value in filler_proposals.items() if key in selected_ids
+        },
+        "merge_gaps": {
+            key: value for key, value in merge_gaps.items() if key in selected_ids
+        },
+        "skipped": skipped,
+    }
 
 
 def _cue_position(value: object, cue_count: int) -> int | None:

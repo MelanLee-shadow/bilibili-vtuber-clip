@@ -122,7 +122,9 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
         select_full_session_candidates,
     )
     from src.autoslice.llm_client import LlmCallError, LlmConfig, build_llm_call
-    from src.autoslice.semantic_candidate_selector import select_semantic_session_candidates
+    from src.autoslice.semantic_candidate_selector import (
+        select_semantic_session_candidates_covered,
+    )
 
     cues = _parse_srt(srt_path)
     if not cues:
@@ -136,7 +138,7 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
         )
     )
     try:
-        candidates, diag = select_semantic_session_candidates(
+        candidates, diag = select_semantic_session_candidates_covered(
             cues, llm_call=llm, max_candidates=_runner.PER_SEGMENT_CANDIDATES, danmaku_hints=hints
         )
         hooks = diag.get("hooks") or {}
@@ -173,7 +175,12 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
                 continue  # overlaps a recall song → duplicate
             candidates.append(cand)
             extras[cand.anchor.candidate_id] = {"hook": "确定性歌检测补充(演唱段)", "confidence": 0.5}
-        return candidates, "semantic_recall", extras
+        lane = (
+            "semantic_recall_sharded"
+            if diag.get("mode") == "sharded"
+            else "semantic_recall"
+        )
+        return candidates, lane, extras
     except LlmCallError as exc:
         _runner.log(f"semantic recall failed ({exc}); falling back to deterministic lanes")
         primary = select_full_session_candidates(cues, max_candidates=_runner.PER_SEGMENT_CANDIDATES)

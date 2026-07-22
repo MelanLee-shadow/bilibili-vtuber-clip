@@ -8,7 +8,9 @@ from src.autoslice.llm_client import LlmCallError
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.semantic_candidate_selector import (
     build_semantic_recall_prompt,
+    plan_semantic_recall_shards,
     select_semantic_session_candidates,
+    select_semantic_session_candidates_covered,
 )
 
 
@@ -45,6 +47,54 @@ def test_prompt_is_viewer_perspective_and_lists_all_cues():
     assert "背景音乐都不是歌切" in prompt
     assert "#1 " in prompt and "#5 " in prompt
     assert "第5句话" in prompt
+
+
+def test_long_session_recall_is_sharded_with_overlap_and_covers_the_second_hour():
+    cues = _cues(count=360, cue_ms=20_000, gap_ms=0)  # exactly two hours
+    shards = plan_semantic_recall_shards(cues)
+
+    assert len(shards) == 4
+    assert [shard["core_start_ms"] for shard in shards] == [
+        0,
+        1_800_000,
+        3_600_000,
+        5_400_000,
+    ]
+    assert shards[1]["window_start_ms"] == 1_680_000
+    assert shards[1]["window_end_ms"] == 3_720_000
+    assert shards[-1]["window_end_ms"] == 7_200_000
+
+    calls: list[str] = []
+
+    def llm(prompt: str) -> str:
+        calls.append(prompt)
+        number = len(calls)
+        return _completion(
+            [
+                {
+                    "start_cue": 10,
+                    "end_cue": 13,
+                    "kind": "talk",
+                    "event_key": f"分窗事件{number}",
+                    "hook": f"分窗候选{number}",
+                    "confidence": 0.95 - number / 100,
+                }
+            ]
+        )
+
+    selected, diagnostics = select_semantic_session_candidates_covered(
+        cues,
+        llm_call=llm,
+        max_candidates=12,
+    )
+
+    assert len(calls) == 4
+    assert all("整场直播的一个覆盖窗" in prompt for prompt in calls)
+    assert len(selected) == 4
+    assert selected[-1].anchor.anchor_start_ms >= 5_400_000
+    assert diagnostics["mode"] == "sharded"
+    assert diagnostics["coverage_end_ms"] == 7_200_000
+    assert len(diagnostics["shards"]) == 4
 
 
 def test_default_profile_semantic_prompt_policy_fingerprint():

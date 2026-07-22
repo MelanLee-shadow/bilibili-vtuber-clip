@@ -253,7 +253,10 @@ SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
 # are self-repaired in produce_slice_package, and an unrepairable boundary is
 # boundary_unrepairable (no delivery; fingerprint-gated bounded self-heal).
 DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
-PER_SEGMENT_CANDIDATES = 4
+# Recall pool, not delivery quota. Long sessions are recalled in overlapping
+# 30-minute windows and need enough global slack for review gates before the
+# per-live-session top-5 delivery selection.
+PER_SEGMENT_CANDIDATES = 12
 MIN_SEGMENT_BYTES = 5_000_000  # blrec restart stubs are a few KB — dead on sight
 BCUT_MAX_ATTEMPTS = 2
 TITLE_MAX_ATTEMPTS = 3
