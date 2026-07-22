@@ -68,6 +68,9 @@ _LATIN_WORD_RX = re.compile(r"\b[A-Za-z]+(?:['’-][A-Za-z]+)?\b")
 _EMBEDDED_LATIN_WORD_RX = re.compile(
     r"(?<![A-Za-z])[A-Za-z]+(?:['’-][A-Za-z]+)?(?![A-Za-z])"
 )
+_CP_FORMULA_RX = re.compile(
+    r"(?i)(?<![A-Za-z])(?:[nlhb][\s._-]*){2,}(?![A-Za-z])"
+)
 _SAFE_CODE_SWITCH_PHRASE_RX = re.compile(
     r"(?i)(?<![A-Za-z0-9])3D\s*Live(?![A-Za-z0-9])"
 )
@@ -101,6 +104,11 @@ _SAFE_CODE_SWITCH_WORDS = frozenset(
 
 def _strip_non_text(value: str) -> str:
     return _NON_TEXT_RX.sub("", value)
+
+
+def _is_cp_formula_text(value: str) -> bool:
+    letters = "".join(re.findall(r"[A-Za-z]", value)).lower()
+    return len(letters) >= 2 and set(letters) <= set("nlhb")
 
 
 def _homophone_representative(char: str) -> str:
@@ -767,6 +775,7 @@ def apply_source_language_preservation_guard(
             # echo in the 2026-07-22 incident.
             or (
                 draft_cjk_count == 0
+                and not _is_cp_formula_text(draft_cue.text)
                 and len(draft_latin_words) >= 3
                 and len(final_latin_words) <= 1
             )
@@ -892,6 +901,9 @@ def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
     """Return whether one Chinese talk cue contains unsupported Latin word salad."""
 
     text = _SAFE_CODE_SWITCH_PHRASE_RX.sub("", text)
+    # CP-order formulas are spoken labels, not an accidentally decoded foreign
+    # sentence: NNLL / L L N N / NNLLHHB may coexist with one real Latin name.
+    text = _CP_FORMULA_RX.sub("", text)
     # Single letters inside Chinese talk are option/grade/label tokens
     # (\u9009A\u8fd8\u662f\u9009B, S\u7ea7), not words of a foreign phrase \u2014 2026-07-19 an A/B
     # game-choice readout blocked a whole delivery.

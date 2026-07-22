@@ -305,6 +305,17 @@ def test_source_language_guard_does_not_restore_mixed_cjk_latin_echo():
     assert audit["reverted_count"] == 0
 
 
+def test_source_language_guard_does_not_treat_cp_formula_as_english_passage():
+    draft = _srt("n n l l")
+    corrected = _srt("都是NNLL")
+
+    guarded, audit = apply_source_language_preservation_guard(draft, corrected)
+
+    assert "都是NNLL" in guarded
+    assert audit["status"] == "CLEAN"
+    assert audit["reverted_count"] == 0
+
+
 def test_source_language_guard_blocks_unproven_adjacent_kana_introduction():
     draft = _srt("都问那么多", "所有的都为我所用", "正常中文")
     corrected = _srt("どうも、どうも", "すべての、私のために", "正常中文")
@@ -440,6 +451,19 @@ def test_foreign_script_consistency_allows_registered_franchise_and_chat_terms()
     )
 
     assert audit["status"] == "CLEAN"
+
+
+def test_foreign_script_consistency_allows_cp_formulas_beside_one_latin_name():
+    audit = audit_foreign_script_consistency(
+        _srt(
+            "这不是最喜欢的南町nightin吗，LLNNHHB",
+            "NNL一般都是NNLL，是吗",
+            "一般不是NNLLLHHB或者NN吗",
+        )
+    )
+
+    assert audit["status"] == "CLEAN"
+    assert audit["mixed_cjk_latin_cues"] == []
 
 
 def test_foreign_script_consistency_blocks_unapproved_latin_phrase_inside_chinese_talk():
