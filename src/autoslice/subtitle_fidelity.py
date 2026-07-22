@@ -168,32 +168,44 @@ def _question_intent_signature(value: str) -> tuple[str, ...]:
     return tuple(match.group(0) for match in _QUESTION_INTENT_RX.finditer(value))
 
 
-def _name_like_homophone_rewrite(draft_text: str, final_text: str) -> bool:
-    """Detect orthographically ambiguous homophone edits in a name/address slot.
+def _revert_name_like_homophone_rewrites(
+    draft_text: str, final_text: str
+) -> tuple[str, list[dict[str, str]]]:
+    """Revert only ambiguous homophone edits in a name/address slot.
 
     Audio can distinguish ``liu xia`` from ``li dou sha`` but it cannot decide
     whether the same ``hui shen`` syllables are written 毁神 or 灰神.  Common
     address morphology bounds the conservative rule so ordinary lexical fixes
-    such as 季下→记下 remain eligible.
+    such as 季下→记下 remain eligible.  Other independently witnessed edits in
+    the same cue remain intact.
     """
 
     matcher = SequenceMatcher(None, draft_text, final_text, autojunk=False)
+    rebuilt: list[str] = []
+    reverted: list[dict[str, str]] = []
     for op, a1, a2, b1, b2 in matcher.get_opcodes():
-        if op != "replace":
+        if op == "equal":
+            rebuilt.append(final_text[b1:b2])
             continue
         before = draft_text[a1:a2]
         after = final_text[b1:b2]
-        if not before or not after or before == after:
+        if op != "replace" or not before or not after or before == after:
+            rebuilt.append(after)
             continue
         if not _homophone_equal(before, after):
+            rebuilt.append(after)
             continue
         left = final_text[max(0, b1 - 2) : b1]
         right = final_text[b2 : b2 + 3]
-        if any(left.endswith(prefix) for prefix in _NAME_LIKE_PREFIXES):
-            return True
-        if any(right.startswith(suffix) for suffix in _NAME_LIKE_SUFFIXES):
-            return True
-    return False
+        name_like = any(
+            left.endswith(prefix) for prefix in _NAME_LIKE_PREFIXES
+        ) or any(right.startswith(suffix) for suffix in _NAME_LIKE_SUFFIXES)
+        if not name_like:
+            rebuilt.append(after)
+            continue
+        rebuilt.append(before)
+        reverted.append({"draft_span": before, "final_span": after})
+    return "".join(rebuilt), reverted
 
 
 def digit_reading_equivalent(left: str, right: str) -> bool:
@@ -437,14 +449,36 @@ def apply_subtitle_fidelity_guard(
         kept = final_text
         if final_text != draft_text:
             sanctioned_cue = _sanctioned_cue_equal(draft_text, final_text, pairs)
+            candidate_text = final_text
+            name_orthography_reverts: list[dict[str, str]] = []
+            if not sanctioned_cue:
+                candidate_text, name_orthography_reverts = (
+                    _revert_name_like_homophone_rewrites(draft_text, final_text)
+                )
             question_intent_changed = (
                 _question_intent_signature(draft_text)
-                != _question_intent_signature(final_text)
+                != _question_intent_signature(candidate_text)
             )
-            ambiguous_name_orthography = _name_like_homophone_rewrite(
-                draft_text, final_text
-            )
-            if not final_text.strip():
+            kept = candidate_text
+            if name_orthography_reverts:
+                audit["reverted"].append(
+                    {
+                        "cue_index": index,
+                        "draft": draft_text,
+                        "attempted": final_text,
+                        "kept": candidate_text,
+                        "violations": [
+                            {
+                                "op": "replace",
+                                "draft_span": row["draft_span"],
+                                "final_span": row["final_span"],
+                                "reason": "HOMOPHONE_NAME_ORTHOGRAPHY_UNWITNESSED",
+                            }
+                            for row in name_orthography_reverts
+                        ],
+                    }
+                )
+            if not candidate_text.strip():
                 audit["hallucination_drops"].append({"cue_index": index, "draft": draft_text})
             elif question_intent_changed and not sanctioned_cue:
                 kept = draft_text
@@ -458,40 +492,24 @@ def apply_subtitle_fidelity_guard(
                             {
                                 "op": "replace",
                                 "draft_span": draft_text[:40],
-                                "final_span": final_text[:40],
+                                "final_span": candidate_text[:40],
                                 "reason": "QUESTION_INTENT_UNWITNESSED",
                             }
                         ],
                     }
                 )
-            elif ambiguous_name_orthography and not sanctioned_cue:
-                kept = draft_text
-                audit["reverted"].append(
-                    {
-                        "cue_index": index,
-                        "draft": draft_text,
-                        "attempted": final_text,
-                        "kept": kept,
-                        "violations": [
-                            {
-                                "op": "replace",
-                                "draft_span": draft_text[:40],
-                                "final_span": final_text[:40],
-                                "reason": "HOMOPHONE_NAME_ORTHOGRAPHY_UNWITNESSED",
-                            }
-                        ],
-                    }
-                )
-            elif agy_text is not None and _strip_non_text(final_text) == _strip_non_text(agy_text):
+            elif candidate_text == draft_text:
+                pass
+            elif agy_text is not None and _strip_non_text(candidate_text) == _strip_non_text(agy_text):
                 pass  # 整句采信音频证人
-            elif _homophone_equal(draft_text, final_text):
+            elif _homophone_equal(draft_text, candidate_text):
                 pass
             elif sanctioned_cue:
                 pass
             else:
                 violations: list[dict[str, str]] = []
                 rebuilt: list[str] = []
-                matcher = SequenceMatcher(None, draft_text, final_text, autojunk=False)
+                matcher = SequenceMatcher(None, draft_text, candidate_text, autojunk=False)
                 for op, a1, a2, b1, b2 in matcher.get_opcodes():
                     if op == "equal":
                         rebuilt.append(draft_text[a1:a2])
@@ -499,7 +517,7 @@ def apply_subtitle_fidelity_guard(
                     verdict = _span_verdict(
                         op,
                         draft_text[a1:a2],
-                        final_text[b1:b2],
+                        candidate_text[b1:b2],
                         agy_cue_text=agy_text,
                         corroborating_cue_text=corroborating_text,
                         corroborating_texts=(
@@ -513,12 +531,12 @@ def apply_subtitle_fidelity_guard(
                             {
                                 "op": op,
                                 "draft_span": draft_text[a1:a2][:40],
-                                "final_span": final_text[b1:b2][:40],
+                                "final_span": candidate_text[b1:b2][:40],
                                 "reason": verdict,
                             }
                         )
                     else:
-                        rebuilt.append(final_text[b1:b2])
+                        rebuilt.append(candidate_text[b1:b2])
                 if violations:
                     kept = "".join(rebuilt)
                     audit["reverted"].append(

@@ -133,6 +133,19 @@ def test_agy_cannot_self_witness_homophone_name_orthography():
     )
 
 
+def test_name_orthography_guard_preserves_other_agy_edits_in_same_cue():
+    draft = _srt("毁神发了一句拯救理解成功")
+    refined = _srt("灰神发了一句“拯救李姐成功”")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft, refined, agy_srt=refined, sanctioned=()
+    )
+
+    assert "毁神发了一句“拯救李姐成功”" in guarded
+    assert "灰神" not in guarded
+    assert audit["reverted_count"] == 1
+
+
 def test_registered_mapping_can_authorize_homophone_name_orthography():
     draft = _srt("毁神应该也一样吧")
     corrected = _srt("灰神应该也一样吧")
