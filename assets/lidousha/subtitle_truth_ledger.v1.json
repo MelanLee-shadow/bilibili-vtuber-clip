@@ -791,6 +791,27 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-opening-mixed-name",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 663100,
+      "source_end_ms": 665900,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "南町nighting",
+          "canonical": "南町nightin"
+        },
+        {
+          "surface": "南町Nighting",
+          "canonical": "南町nightin"
+        }
+      ],
+      "required_text": "南町nightin",
+      "authority": "Ivan-stated-20260722-conversation(南町nightin为连续混合专名；同切片邻近未列点复查发现nighting多生尾音)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-silent-prefix",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 678040,

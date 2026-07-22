@@ -607,3 +607,40 @@ def test_unrelated_neighbor_cue_never_overwritten_by_pin(tmp_path):
     assert "今天晚饭吃番茄炒蛋" in corrected
     assert "只有kmx会这样称呼李豆沙" in corrected
     assert audit["status"] == "APPLIED"
+
+
+def test_committed_ledger_canonicalizes_opening_nancho_mixed_name():
+    """同一已确认专名在未逐点列出的邻近 cue 也必须落成统一词面。"""
+
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    srt = _srt_ms(
+        (0, 2_800, "这不是主播最最最最喜欢的南町nighting吗，LLNNHHB"),
+    )
+    spec = {
+        "pieces": [
+            {
+                "remote_media": "/recordings/22966160_20260722-19-35-15.mp4",
+                "start_ms": 663_100,
+                "end_ms": 665_900,
+            }
+        ]
+    }
+
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec=spec,
+        durations=[2_800],
+        ledger_path=ledger,
+    )
+
+    assert "南町nightin吗" in corrected
+    assert "nighting" not in corrected.lower()
+    assert audit["status"] == "APPLIED"
+    assert [row["truth_id"] for row in audit["applied"]] == [
+        "20260722-nancho-confrontation-opening-mixed-name"
+    ]
