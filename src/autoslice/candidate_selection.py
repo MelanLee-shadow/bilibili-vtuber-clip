@@ -638,6 +638,7 @@ def prioritize(state: dict) -> None:
     pending_talk = state.get("pending_talk", [])
     selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
     pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
+    repair_sessions = {_item_session_id(item) for item in selected_repairs}
     below_threshold = [
         item
         for item in pending_talk
@@ -668,11 +669,19 @@ def prioritize(state: dict) -> None:
     deferred: list[dict] = []
     sessions = list(dict.fromkeys(_item_session_id(item) for item in pending_talk))
     for session_id in sessions:
-        slots = _talk_slots_for_session(state, session_id)
         ranked = sorted(
             (item for item in pending_talk if _item_session_id(item) == session_id),
             key=lambda x: -(x.get("confidence") or 0.0),
         )
+        # A selected retry owns a provisional seat until its result is known.
+        # Producing its ordinary reserves in the same concurrent batch can make
+        # both succeed (exceeding top-5) or assign the reserves visual slots that
+        # later collide when the retry is rejected.  Defer only this session;
+        # prioritize() runs again immediately after a deterministic rejection.
+        if session_id in repair_sessions:
+            deferred.extend(ranked)
+            continue
+        slots = _talk_slots_for_session(state, session_id)
         session_keep: list[dict] = []
         session_deferred: list[dict] = []
         per_seg: dict[str, int] = {}

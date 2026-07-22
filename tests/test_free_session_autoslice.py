@@ -5718,6 +5718,60 @@ def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
     assert [item["cid"] for item in state["pending_talk"]] == ["repair"]
 
 
+def test_selected_repair_defers_same_session_backfill_until_result(monkeypatch):
+    monkeypatch.setattr(runner, "MAX_TALK_PICKS", 2)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    state = {
+        "picks": [
+            {
+                "candidate_id": "delivered",
+                "status": "review_ready",
+                "session_id": "session-a",
+                "cover_diversity_slot": 0,
+            }
+        ],
+        "pending_talk": [
+            {
+                "cid": "repair",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 1,
+                "end_ms": 2,
+                "selected_repair": True,
+                "confidence": 0.99,
+                "session_id": "session-a",
+                "cover_diversity_slot": 1,
+            },
+            {
+                "cid": "reserve",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 3,
+                "end_ms": 4,
+                "confidence": 0.98,
+                "session_id": "session-a",
+            },
+        ],
+    }
+
+    runner.prioritize(state)
+
+    assert [item["cid"] for item in state["pending_talk"]] == ["repair"]
+    assert [item["cid"] for item in state["talk_backlog"]] == ["reserve"]
+
+    state["picks"].append(
+        {
+            "candidate_id": "repair",
+            "status": "candidate_rejected",
+            "session_id": "session-a",
+            "cover_diversity_slot": 1,
+        }
+    )
+    state["pending_talk"] = []
+    runner.prioritize(state)
+
+    assert [item["cid"] for item in state["pending_talk"]] == ["reserve"]
+    assert state["pending_talk"][0]["cover_diversity_slot"] == 1
+
+
 def test_talk_fingerprint_scopes_speaker_override_and_withholds_truth(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
