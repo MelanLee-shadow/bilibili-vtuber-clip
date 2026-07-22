@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice.chat_authority import ReferentEntity, ReferentGroup
 
@@ -480,3 +482,55 @@ def test_ledger_owned_cue_skips_entity_arbitration(tmp_path):
     assert result.srt_text == source
     audit = result.chat_authority_audit["transcript_entity_audit"]
     assert audit["ledger_excluded_cue_indexes"] == [1]
+
+
+def test_missing_substring_truth_defers_only_with_redelivery_baseline(tmp_path):
+    path = tmp_path / "chat-authority.json"
+    audit = {
+        "status": "FAILED",
+        "failures": [
+            {
+                "action": "replace_substring",
+                "reason_code": "REQUIRED_SOURCE_TRUTH_NOT_SATISFIED",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ],
+    }
+    chat = {"source_subtitle_truth_audit": audit}
+
+    pipeline._defer_source_truth_failure_for_redelivery(
+        spec={"subtitle_redelivery_baseline": {"schema_version": "test"}},
+        source_truth_audit=audit,
+        chat_authority_audit=chat,
+        chat_authority_path=path,
+    )
+
+    assert audit["status"] == "DEFERRED_TO_REDELIVERY_BASELINE"
+    assert json.loads(path.read_text(encoding="utf-8"))[
+        "source_subtitle_truth_audit"
+    ]["pre_redelivery_status"] == "FAILED"
+
+
+def test_structural_source_truth_failure_never_defers_to_baseline(tmp_path):
+    path = tmp_path / "chat-authority.json"
+    audit = {
+        "status": "FAILED",
+        "failures": [
+            {
+                "action": "drop_cue",
+                "reason_code": "DROP_CUE_STRADDLES_TRUTH_INTERVAL",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ],
+    }
+
+    with pytest.raises(SystemExit, match="SOURCE_SUBTITLE_TRUTH_REQUIRED"):
+        pipeline._defer_source_truth_failure_for_redelivery(
+            spec={"subtitle_redelivery_baseline": {"schema_version": "test"}},
+            source_truth_audit=audit,
+            chat_authority_audit={"source_subtitle_truth_audit": audit},
+            chat_authority_path=path,
+        )
+
+    assert audit["status"] == "FAILED"
+    assert not path.exists()

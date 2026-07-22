@@ -8,7 +8,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice.chat_authority import (
     ChatEvidence,
@@ -794,6 +794,48 @@ def _run_final_review(
     return srt_text, final_review_audit
 
 
+def _defer_source_truth_failure_for_redelivery(
+    *,
+    spec: Mapping[str, object],
+    source_truth_audit: dict[str, Any],
+    chat_authority_audit: dict[str, Any],
+    chat_authority_path: Path,
+) -> None:
+    if source_truth_audit["status"] != "FAILED":
+        return
+    failures = source_truth_audit.get("failures") or []
+    recoverable_missing_substrings = bool(failures) and all(
+        isinstance(row, Mapping)
+        and row.get("action") == "replace_substring"
+        and row.get("reason_code") == "REQUIRED_SOURCE_TRUTH_NOT_SATISFIED"
+        and bool(row.get("local_windows"))
+        for row in failures
+    )
+    if (
+        spec.get("subtitle_redelivery_baseline") is None
+        or not recoverable_missing_substrings
+    ):
+        raise SystemExit(
+            f"SOURCE_SUBTITLE_TRUTH_REQUIRED: {chat_authority_path}"
+        )
+    source_truth_audit["pre_redelivery_status"] = "FAILED"
+    source_truth_audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
+    source_truth_audit["deferred_reason"] = (
+        "fresh text did not retain the reviewed correction target; "
+        "restore hash-bound prior delivery before reapplying source truth"
+    )
+    chat_authority_path.write_text(
+        json.dumps(
+            chat_authority_audit,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _finalize_text_evidence(
     *,
     spec: dict,
@@ -1058,10 +1100,15 @@ def _finalize_text_evidence(
         + "\n",
         encoding="utf-8",
     )
-    if source_truth_audit["status"] == "FAILED":
-        raise SystemExit(
-            f"SOURCE_SUBTITLE_TRUTH_REQUIRED: {chat_authority_path}"
-        )
+    # In a hash-bound subtitle redelivery only, a missing substring target can
+    # be restored from the reviewed baseline and the higher source truth then
+    # reapplied.  Every other mode still stops here.
+    _defer_source_truth_failure_for_redelivery(
+        spec=spec,
+        source_truth_audit=source_truth_audit,
+        chat_authority_audit=chat_authority_audit,
+        chat_authority_path=chat_authority_path,
+    )
     if (
         final_title_mark_balance_audit["status"]
         == "UNRESOLVED_COMPLEX_IMBALANCE"

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from src.autoslice.chat_authority import (
     reconcile_pending_text_overrides,
@@ -26,6 +27,8 @@ from src.autoslice.redelivery_subtitle_baseline import (
 )
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
+from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
+from src.autoslice.subtitle_fidelity import apply_title_mark_balance_guard
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
 from src.autoslice.talk_filler import bind_final_filler_audit_to_burn
 
@@ -86,6 +89,73 @@ class StagedRecord:
     record: dict
     staging: dict
     record_path: Path
+
+
+def _trim_spec_to_final_timeline(
+    spec: Mapping[str, object], *, final_start: int, final_end: int
+) -> tuple[dict[str, object], list[int]]:
+    """Project a concatenated padded-piece spec onto the final recut timeline."""
+
+    pieces_raw = spec.get("pieces")
+    if not isinstance(pieces_raw, list) or final_start < 0 or final_end <= final_start:
+        raise RuntimeError("REDELIVERY_SOURCE_TRUTH_TIMELINE_INVALID")
+    cursor = 0
+    retained: list[dict[str, object]] = []
+    durations: list[int] = []
+    for raw_piece in pieces_raw:
+        if not isinstance(raw_piece, Mapping):
+            raise RuntimeError("REDELIVERY_SOURCE_TRUTH_PIECE_INVALID")
+        source_start = raw_piece.get("start_ms")
+        source_end = raw_piece.get("end_ms")
+        if (
+            isinstance(source_start, bool)
+            or not isinstance(source_start, int)
+            or isinstance(source_end, bool)
+            or not isinstance(source_end, int)
+            or source_end <= source_start
+        ):
+            raise RuntimeError("REDELIVERY_SOURCE_TRUTH_PIECE_RANGE_INVALID")
+        duration = source_end - source_start
+        overlap_start = max(final_start, cursor)
+        overlap_end = min(final_end, cursor + duration)
+        if overlap_start < overlap_end:
+            clipped = dict(raw_piece)
+            clipped["start_ms"] = source_start + overlap_start - cursor
+            clipped["end_ms"] = source_start + overlap_end - cursor
+            retained.append(clipped)
+            durations.append(overlap_end - overlap_start)
+        cursor += duration
+    if not retained or final_end > cursor:
+        raise RuntimeError("REDELIVERY_SOURCE_TRUTH_FINAL_RANGE_UNMAPPED")
+    return {"pieces": retained}, durations
+
+
+def _rebase_source_truth_audit_to_padded(
+    audit: dict[str, object], *, final_start: int
+) -> dict[str, object]:
+    """Return a verifier-facing copy whose local windows use padded time."""
+
+    rebased = deepcopy(audit)
+    for key in ("applied", "satisfied", "failures"):
+        rows = rebased.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for window in row.get("local_windows") or []:
+                if isinstance(window, dict):
+                    window["start_ms"] = int(window["start_ms"]) + final_start
+                    window["end_ms"] = int(window["end_ms"]) + final_start
+            timing_pin = row.get("timing_pin")
+            if isinstance(timing_pin, dict):
+                for field in ("before_start_ms", "after_start_ms"):
+                    if field in timing_pin:
+                        timing_pin[field] = int(timing_pin[field]) + final_start
+    rebased["timeline_basis"] = "padded_candidate"
+    rebased["final_recut_offset_ms"] = final_start
+    rebased["reapplied_after_redelivery_baseline"] = True
+    return rebased
 
 
 def _materialize_final_recut(
@@ -171,7 +241,14 @@ def _materialize_final_recut(
         truth_audit = (
             (chat_authority_audit or {}).get("source_subtitle_truth_audit") or {}
         )
+        truth_deferred = (
+            truth_audit.get("status") == "DEFERRED_TO_REDELIVERY_BASELINE"
+        )
         protected_windows: list[tuple[int, int]] = []
+        # Successfully applied truth stays newer than the baseline.  Failed
+        # truth windows are deliberately *not* protected: the old reviewed
+        # delivery must first restore the stable lexical surface, after which
+        # the ledger is reapplied below as the final authority.
         for key in ("applied", "satisfied"):
             for row in truth_audit.get(key) or []:
                 for window in row.get("local_windows") or []:
@@ -194,6 +271,59 @@ def _materialize_final_recut(
         redelivery_baseline_audit_path = (
             recut_dir / f"{cid}.redelivery-baseline.json"
         )
+        final_truth_failed = False
+        final_title_failed = False
+        if redelivery_baseline_audit["status"] != "FAILED" and truth_deferred:
+            ledger_raw = truth_audit.get("ledger_path")
+            if not isinstance(ledger_raw, str) or not ledger_raw:
+                raise SystemExit("REDELIVERY_SOURCE_TRUTH_LEDGER_PATH_MISSING")
+            trimmed_spec, trimmed_durations = _trim_spec_to_final_timeline(
+                spec,
+                final_start=final_start,
+                final_end=final_end,
+            )
+            output_text, post_baseline_truth_audit = apply_source_subtitle_truth(
+                output_text,
+                spec=trimmed_spec,
+                durations=trimmed_durations,
+                ledger_path=Path(ledger_raw),
+            )
+            post_baseline_truth_audit["timeline_basis"] = "final_delivery"
+            post_baseline_truth_audit["reapplied_after_redelivery_baseline"] = True
+            redelivery_baseline_audit["source_truth_reapplication"] = (
+                post_baseline_truth_audit
+            )
+            final_truth_failed = post_baseline_truth_audit["status"] == "FAILED"
+            if chat_authority_audit is not None:
+                chat_authority_audit[
+                    "source_subtitle_truth_pre_redelivery_audit"
+                ] = deepcopy(truth_audit)
+                chat_authority_audit[
+                    "source_subtitle_truth_post_redelivery_audit"
+                ] = deepcopy(post_baseline_truth_audit)
+                chat_authority_audit["source_subtitle_truth_audit"] = (
+                    _rebase_source_truth_audit_to_padded(
+                        post_baseline_truth_audit,
+                        final_start=final_start,
+                    )
+                )
+            output_text, final_title_audit = apply_title_mark_balance_guard(
+                output_text
+            )
+            final_title_failed = (
+                final_title_audit["status"]
+                == "UNRESOLVED_COMPLEX_IMBALANCE"
+            )
+            if chat_authority_audit is not None:
+                chat_authority_audit["final_title_mark_balance_audit"] = (
+                    final_title_audit
+                )
+                chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
+                    output_text.encode("utf-8")
+                ).hexdigest()
+            redelivery_baseline_audit["post_source_truth_output_sha256"] = (
+                hashlib.sha256(output_text.encode("utf-8")).hexdigest()
+            )
         redelivery_baseline_audit_path.write_text(
             json.dumps(
                 redelivery_baseline_audit,
@@ -208,11 +338,21 @@ def _materialize_final_recut(
             chat_authority_audit["redelivery_subtitle_baseline_audit"] = (
                 redelivery_baseline_audit
             )
+        subtitle_path.write_text(output_text, encoding="utf-8")
         if redelivery_baseline_audit["status"] == "FAILED":
             raise SystemExit(
                 f"REDELIVERY_SUBTITLE_BASELINE_FAILED: {redelivery_baseline_audit_path}"
             )
-        subtitle_path.write_text(output_text, encoding="utf-8")
+        if final_truth_failed:
+            raise SystemExit(
+                f"SOURCE_SUBTITLE_TRUTH_REQUIRED_AFTER_REDELIVERY: "
+                f"{redelivery_baseline_audit_path}"
+            )
+        if final_title_failed:
+            raise SystemExit(
+                f"TITLE_MARK_BALANCE_REQUIRED_AFTER_REDELIVERY: "
+                f"{redelivery_baseline_audit_path}"
+            )
     (recut_dir / f"{cid}.recut.timing_qa.json").write_text(
         json.dumps(timing_qa, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
