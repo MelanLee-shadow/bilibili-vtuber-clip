@@ -5,6 +5,7 @@ import pytest
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
+from src.autoslice.subtitle_fidelity import resolve_deferred_foreign_introductions
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,74 @@ def test_source_alias_requires_exact_piece_hash_and_projects_offset(tmp_path):
             "alias_source_sha256": alias_sha256,
             "alias_timeline_offset_ms": 2_000,
         }
+    ]
+    assert audit["applied"][0]["declared_output_contract"] == {
+        "schema_version": "source-truth-declared-output.v1",
+        "action": "replace_cue",
+        "canonical_texts": ["审定文本"],
+        "required_text": "",
+    }
+
+
+def test_real_source_truth_audit_row_positively_witnesses_kana_name(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "structured-sc-sender",
+                "revision_id": "r1",
+                "assertion_state": "VERIFIED_ACTIVE",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 10_000,
+                "source_end_ms": 14_000,
+                "action": "replace_cue",
+                "text": "谢谢小凑るう子的钢镚",
+                "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_SENDER",
+                "authority": "hash-bound structured SC sender",
+                "required": True,
+            }
+        ],
+    )
+    corrected, truth_audit = apply_source_subtitle_truth(
+        _srt((10, 14, "谢谢小路路口的钢棒")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 0,
+                    "end_ms": 20_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+
+    resolution = resolve_deferred_foreign_introductions(
+        {
+            "unproven_foreign_introductions": [
+                {
+                    "cue_index": 1,
+                    "start_ms": 10_000,
+                    "end_ms": 14_000,
+                    "draft": "谢谢小路路口的钢棒",
+                    "attempted": "谢谢小凑るう子的钢镚",
+                }
+            ]
+        },
+        corrected,
+        authority_rows=[
+            *(truth_audit.get("applied") or []),
+            *(truth_audit.get("satisfied") or []),
+        ],
+        authority_kind="source_subtitle_truth",
+    )
+
+    assert truth_audit["status"] == "APPLIED"
+    assert resolution["status"] == "PASS"
+    assert resolution["findings"][0]["positive_witness_authority_ids"] == [
+        "structured-sc-sender"
     ]
 
 

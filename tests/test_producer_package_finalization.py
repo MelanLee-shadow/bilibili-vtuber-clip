@@ -6,6 +6,70 @@ from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
 
 
+def _deferred_exact_truth_audit() -> dict:
+    return {
+        "status": "DEFERRED_TO_REDELIVERY_BASELINE",
+        "deferred_strategy": (
+            "exact_reviewed_interval_replay_then_reapply_source_truth"
+        ),
+        "failures": [{"truth_id": "reviewed-cue-shape"}],
+    }
+
+
+def test_deferred_exact_replay_requires_same_truth_id_reverification() -> None:
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=_deferred_exact_truth_audit(),
+        baseline_audit={
+            "status": "APPLIED",
+            "application_strategy": "exact_reviewed_interval_replay",
+        },
+        post_truth_audit={
+            "status": "ALREADY_SATISFIED",
+            "applied": [],
+            "satisfied": [{"truth_id": "reviewed-cue-shape"}],
+        },
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["missing_truth_ids"] == []
+
+
+def test_deferred_exact_replay_rejects_generic_baseline_fallback() -> None:
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=_deferred_exact_truth_audit(),
+        baseline_audit={
+            "status": "APPLIED",
+            "application_strategy": "absolute_source_alignment",
+        },
+        post_truth_audit={
+            "status": "ALREADY_SATISFIED",
+            "satisfied": [{"truth_id": "reviewed-cue-shape"}],
+        },
+    )
+
+    assert audit["status"] == "FAILED"
+    assert audit["reason_code"] == (
+        "EXACT_REPLAY_OR_POST_TRUTH_AUTHORITY_MISSING"
+    )
+
+
+def test_deferred_exact_replay_rejects_missing_truth_id() -> None:
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=_deferred_exact_truth_audit(),
+        baseline_audit={
+            "status": "APPLIED",
+            "application_strategy": "exact_reviewed_interval_replay",
+        },
+        post_truth_audit={
+            "status": "ALREADY_SATISFIED",
+            "satisfied": [{"truth_id": "different-truth"}],
+        },
+    )
+
+    assert audit["status"] == "FAILED"
+    assert audit["missing_truth_ids"] == ["reviewed-cue-shape"]
+
+
 def test_delivery_summary_uses_persisted_boundary_audit(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

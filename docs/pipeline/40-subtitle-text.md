@@ -56,7 +56,10 @@
   起止区间全部逐字相同时，整份人工审定 SRT（含 cue 时间）才可直接重放。这防止同源重跑因
   ASR 随机漏 cue 而删除已审字幕；随后仍必须重放 source-truth。只要区间发生裁切或扩展，就
   回到上面的逐 cue 绝对时间映射，缺失、合并、拆分或漂移继续 fail closed，不能把审定时间轴
-  宽松套用到另一段素材。
+  宽松套用到另一段素材。fresh cue 形状导致的 `replace_cue / REPLACE_CUE_TARGET_NOT_UNIQUE`
+  只能在这条 exact 路径延后；结构冲突、timing pin、postcondition 等失败仍立即阻断。finalizer
+  还必须证明实际策略确为 `exact_reviewed_interval_replay`，并把每个延后 `truth_id` 在重放后的
+  `applied+satisfied` 中逐个复证，不能只看总状态非 FAILED。
 - 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
   path/SHA-256、JSONL 自身 origin epoch、alias timeline offset 与 `source_alias_id` 缺一不可；
   JSONL 的事件时钟不得从另一份官方媒体 basename 猜。已知 alias 但 sidecar 缺失、哈希漂移、
@@ -68,7 +71,14 @@
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
   `acoustic_drop_cue`。局部静音绝不授权删除后半段真实口播；不确定时保留/留空并阻断，
-  不为语句顺滑补词。
+  不为语句顺滑补词。语义校正模型漏掉 cue 或返回空 cue **不构成**删除证据：fidelity 层必须
+  恢复 draft 并记 `CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY`；即使没有第二路 ASR 也不能
+  静默删除，有同时间键 AGY/独立听写非空时还要把该反证写入审计。
+- source-language 门区分“模型凭空引入外语口播”与“高权威专名含外文字形”。只有
+  `VERIFIED_ACTIVE` 且 entry hash 合法的 source-truth 声明输出可以正向见证其精确 kana run；
+  不能从整条 post-edit `after` 循环自证。`replace_substring` 仅在 canonical 实际应用，或显式
+  `required_text` postcondition 已满足时可见证；部分窗口、部分 surface、generic redelivery
+  baseline 继续拒发。
 - source-language 整 cue 回退只适用于无中文的 Latin-language cue；中文口播里的 NN/L、NNLL、LLNNHHB 等 CP 顺序公式以及大写 `TA` 代词是标签/中文代词，不是外语段落，不得触发 mixed-language 拒发，也不得因 token 数下降把已删除的跨 cue 回声整句恢复。
 - 交付 `.srt`/`.ass` 走内容时间轴；片头偏移只记录在 `burned_preview.branding_intro.intro_offset_ms`（见 [80-package-delivery.md](80-package-delivery.md)）。
 - 说话人统一李豆沙色（数据积累期，Ivan 2026-07-13），说话人不确定绝不拒发。

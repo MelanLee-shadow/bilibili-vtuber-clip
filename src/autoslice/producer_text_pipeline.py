@@ -886,6 +886,7 @@ def _defer_source_truth_failure_for_redelivery(
     if source_truth_audit["status"] != "FAILED":
         return
     failures = source_truth_audit.get("failures") or []
+    baseline_config = spec.get("subtitle_redelivery_baseline")
     recoverable_missing_substrings = bool(failures) and all(
         isinstance(row, Mapping)
         and row.get("action") == "replace_substring"
@@ -893,19 +894,56 @@ def _defer_source_truth_failure_for_redelivery(
         and bool(row.get("local_windows"))
         for row in failures
     )
+    # An exact-interval replay is a total, hash-bound late text authority: the
+    # fresh ASR timeline is disposable and may split/merge/omit cues before the
+    # reviewed SRT is restored.  Do not let cue-shape failures on that
+    # disposable input prevent the authority from running.  This remains
+    # fail-closed: package finalization validates the v2 baseline source hash,
+    # basename and exact interval, then reapplies every source-truth rule and
+    # blocks if any rule is still unsatisfied.  A generic/trimmed baseline does
+    # not receive this exemption.
+    recoverable_exact_cue_shape = bool(failures) and all(
+        isinstance(row, Mapping)
+        and row.get("action") == "replace_cue"
+        and row.get("reason_code") == "REPLACE_CUE_TARGET_NOT_UNIQUE"
+        and bool(row.get("local_windows"))
+        for row in failures
+    )
+    exact_interval_replay_pending = (
+        isinstance(baseline_config, Mapping)
+        and baseline_config.get("schema_version")
+        == "subtitle-redelivery-baseline.v2"
+        and baseline_config.get("exact_interval_replay") is True
+        and recoverable_exact_cue_shape
+    )
     if (
-        spec.get("subtitle_redelivery_baseline") is None
-        or not recoverable_missing_substrings
+        baseline_config is None
+        or not (
+            recoverable_missing_substrings or exact_interval_replay_pending
+        )
     ):
         raise SystemExit(
             f"SOURCE_SUBTITLE_TRUTH_REQUIRED: {chat_authority_path}"
         )
     source_truth_audit["pre_redelivery_status"] = "FAILED"
     source_truth_audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
-    source_truth_audit["deferred_reason"] = (
-        "fresh text did not retain the reviewed correction target; "
-        "restore hash-bound prior delivery before reapplying source truth"
-    )
+    if exact_interval_replay_pending:
+        source_truth_audit["deferred_strategy"] = (
+            "exact_reviewed_interval_replay_then_reapply_source_truth"
+        )
+        source_truth_audit["deferred_reason"] = (
+            "fresh ASR cue shape is not authoritative for this exact source "
+            "interval; replay the hash-bound reviewed timeline, then reapply "
+            "and verify every source-truth rule"
+        )
+    else:
+        source_truth_audit["deferred_strategy"] = (
+            "reviewed_text_restore_then_reapply_source_truth"
+        )
+        source_truth_audit["deferred_reason"] = (
+            "fresh text did not retain the reviewed correction target; "
+            "restore hash-bound prior delivery before reapplying source truth"
+        )
     chat_authority_path.write_text(
         json.dumps(
             chat_authority_audit,
@@ -963,14 +1001,38 @@ def _windows_fully_cover(
 def _valid_redelivery_baseline_config(value: object) -> bool:
     if not isinstance(value, Mapping):
         return False
+    schema_version = value.get("schema_version")
     expected_sha = str(value.get("sha256") or "").removeprefix("sha256:")
-    return (
-        value.get("schema_version") == "subtitle-redelivery-baseline.v1"
+    base_valid = (
+        schema_version
+        in {
+            "subtitle-redelivery-baseline.v1",
+            "subtitle-redelivery-baseline.v2",
+        }
         and value.get("mode") == "preserve_text_outside_source_truth"
         and bool(str(value.get("path") or "").strip())
         and len(expected_sha) == 64
         and all(char in "0123456789abcdef" for char in expected_sha)
         and bool(str(value.get("authority") or "").strip())
+    )
+    if not base_valid or schema_version == "subtitle-redelivery-baseline.v1":
+        return base_valid
+    source_basename = str(value.get("source_recording_basename") or "")
+    source_sha = str(value.get("source_sha256") or "").removeprefix("sha256:")
+    start = value.get("absolute_source_start_ms")
+    end = value.get("absolute_source_end_ms")
+    replay = value.get("exact_interval_replay", False)
+    return (
+        bool(source_basename)
+        and Path(source_basename).name == source_basename
+        and len(source_sha) == 64
+        and all(char in "0123456789abcdef" for char in source_sha)
+        and isinstance(start, int)
+        and not isinstance(start, bool)
+        and isinstance(end, int)
+        and not isinstance(end, bool)
+        and 0 <= start < end
+        and isinstance(replay, bool)
     )
 
 

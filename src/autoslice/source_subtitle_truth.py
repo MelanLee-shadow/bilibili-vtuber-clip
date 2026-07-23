@@ -609,6 +609,15 @@ def _source_truth_audit_row(
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+    canonical_texts: list[str] = []
+    required_text = ""
+    if action == "replace_cue":
+        replacement = str(entry.get("text") or "")
+        if replacement:
+            canonical_texts.append(replacement)
+    elif action == "replace_substring":
+        required_text = str(entry.get("required_text") or "")
+
     return {
         "truth_id": truth_id,
         "revision_id": entry.get("revision_id"),
@@ -621,6 +630,17 @@ def _source_truth_audit_row(
         "source_start_ms": int(entry["source_start_ms"]),
         "source_end_ms": int(entry["source_end_ms"]),
         "action": action,
+        # Typed, ledger-derived positive output authority.  Downstream guards
+        # may use these exact canonical surfaces as witnesses (for example a
+        # structured-chat username containing kana).  They must never infer a
+        # witness from the whole post-edit ``after`` cue, which can include
+        # unrelated text merely sharing this interval.
+        "declared_output_contract": {
+            "schema_version": "source-truth-declared-output.v1",
+            "action": action,
+            "canonical_texts": canonical_texts,
+            "required_text": required_text,
+        },
         "cue_indexes": [index + 1 for index in target_indexes],
         "local_windows": [
             {"start_ms": int(window["start_ms"]), "end_ms": int(window["end_ms"])}

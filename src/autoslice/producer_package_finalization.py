@@ -239,6 +239,66 @@ def _rebase_source_truth_audit_to_padded(
     return rebased
 
 
+def _audit_deferred_exact_replay_reverification(
+    *,
+    pre_truth_audit: Mapping[str, object],
+    baseline_audit: Mapping[str, object],
+    post_truth_audit: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Prove an early cue-shape deferral reached its promised late authority."""
+
+    strategy = pre_truth_audit.get("deferred_strategy")
+    result: dict[str, object] = {
+        "schema_version": "deferred-exact-replay-reverification.v1",
+        "status": "NOT_REQUIRED",
+        "deferred_strategy": strategy,
+        "required_truth_ids": [],
+        "reverified_truth_ids": [],
+        "missing_truth_ids": [],
+    }
+    if strategy != "exact_reviewed_interval_replay_then_reapply_source_truth":
+        return result
+
+    required_ids = sorted(
+        {
+            str(row.get("truth_id"))
+            for row in (pre_truth_audit.get("failures") or [])
+            if isinstance(row, Mapping) and str(row.get("truth_id") or "")
+        }
+    )
+    result["required_truth_ids"] = required_ids
+    if (
+        not required_ids
+        or baseline_audit.get("application_strategy")
+        != "exact_reviewed_interval_replay"
+        or not isinstance(post_truth_audit, Mapping)
+        or post_truth_audit.get("status") == "FAILED"
+    ):
+        result["status"] = "FAILED"
+        result["reason_code"] = (
+            "EXACT_REPLAY_OR_POST_TRUTH_AUTHORITY_MISSING"
+        )
+        return result
+
+    reverified_ids = sorted(
+        {
+            str(row.get("truth_id"))
+            for key in ("applied", "satisfied")
+            for row in (post_truth_audit.get(key) or [])
+            if isinstance(row, Mapping) and str(row.get("truth_id") or "")
+        }
+    )
+    missing_ids = sorted(set(required_ids) - set(reverified_ids))
+    result["reverified_truth_ids"] = reverified_ids
+    result["missing_truth_ids"] = missing_ids
+    if missing_ids:
+        result["status"] = "FAILED"
+        result["reason_code"] = "DEFERRED_TRUTH_ID_NOT_REVERIFIED"
+    else:
+        result["status"] = "PASS"
+    return result
+
+
 def _materialize_final_recut(
     *,
     spec: dict,
@@ -389,6 +449,7 @@ def _materialize_final_recut(
         )
         final_truth_failed = False
         final_title_failed = False
+        post_baseline_truth_audit: Mapping[str, object] | None = None
         if redelivery_baseline_audit["status"] != "FAILED" and truth_reapply:
             ledger_raw = truth_audit.get("ledger_path")
             if not isinstance(ledger_raw, str) or not ledger_raw:
@@ -440,6 +501,16 @@ def _materialize_final_recut(
             redelivery_baseline_audit["post_source_truth_output_sha256"] = (
                 hashlib.sha256(output_text.encode("utf-8")).hexdigest()
             )
+        deferred_exact_replay_audit = (
+            _audit_deferred_exact_replay_reverification(
+                pre_truth_audit=truth_audit,
+                baseline_audit=redelivery_baseline_audit,
+                post_truth_audit=post_baseline_truth_audit,
+            )
+        )
+        redelivery_baseline_audit[
+            "deferred_exact_replay_reverification"
+        ] = deferred_exact_replay_audit
         redelivery_baseline_audit_path.write_text(
             json.dumps(
                 redelivery_baseline_audit,
@@ -462,6 +533,11 @@ def _materialize_final_recut(
         if final_truth_failed:
             raise SystemExit(
                 f"SOURCE_SUBTITLE_TRUTH_REQUIRED_AFTER_REDELIVERY: "
+                f"{redelivery_baseline_audit_path}"
+            )
+        if deferred_exact_replay_audit["status"] == "FAILED":
+            raise SystemExit(
+                "DEFERRED_EXACT_REPLAY_TRUTH_NOT_REVERIFIED: "
                 f"{redelivery_baseline_audit_path}"
             )
         if final_title_failed:

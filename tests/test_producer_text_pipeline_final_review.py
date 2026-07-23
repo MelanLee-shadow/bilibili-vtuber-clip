@@ -511,6 +511,66 @@ def test_missing_substring_truth_defers_only_with_redelivery_baseline(tmp_path):
     ]["pre_redelivery_status"] == "FAILED"
 
 
+def test_exact_interval_replay_defers_fresh_cue_shape_failure(tmp_path):
+    """Reviewed exact replay owns the timeline; fresh ASR cue splits do not."""
+
+    path = tmp_path / "chat-authority.json"
+    audit = {
+        "status": "FAILED",
+        "failures": [
+            {
+                "action": "replace_cue",
+                "reason_code": "REPLACE_CUE_TARGET_NOT_UNIQUE",
+                "local_windows": [{"start_ms": 34_640, "end_ms": 36_520}],
+            }
+        ],
+    }
+
+    pipeline._defer_source_truth_failure_for_redelivery(
+        spec={
+            "subtitle_redelivery_baseline": {
+                "schema_version": "subtitle-redelivery-baseline.v2",
+                "exact_interval_replay": True,
+            }
+        },
+        source_truth_audit=audit,
+        chat_authority_audit={"source_subtitle_truth_audit": audit},
+        chat_authority_path=path,
+    )
+
+    assert audit["status"] == "DEFERRED_TO_REDELIVERY_BASELINE"
+    assert audit["deferred_strategy"] == (
+        "exact_reviewed_interval_replay_then_reapply_source_truth"
+    )
+
+
+def test_exact_interval_replay_grant_must_be_literal_boolean(tmp_path):
+    path = tmp_path / "chat-authority.json"
+    audit = {
+        "status": "FAILED",
+        "failures": [
+            {
+                "action": "replace_cue",
+                "reason_code": "REPLACE_CUE_TARGET_NOT_UNIQUE",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ],
+    }
+
+    with pytest.raises(SystemExit, match="SOURCE_SUBTITLE_TRUTH_REQUIRED"):
+        pipeline._defer_source_truth_failure_for_redelivery(
+            spec={
+                "subtitle_redelivery_baseline": {
+                    "schema_version": "subtitle-redelivery-baseline.v2",
+                    "exact_interval_replay": "true",
+                }
+            },
+            source_truth_audit=audit,
+            chat_authority_audit={"source_subtitle_truth_audit": audit},
+            chat_authority_path=path,
+        )
+
+
 def test_structural_source_truth_failure_never_defers_to_baseline(tmp_path):
     path = tmp_path / "chat-authority.json"
     audit = {
@@ -536,6 +596,35 @@ def test_structural_source_truth_failure_never_defers_to_baseline(tmp_path):
     assert not path.exists()
 
 
+def test_exact_replay_does_not_defer_structural_source_truth_failure(tmp_path):
+    path = tmp_path / "chat-authority.json"
+    audit = {
+        "status": "FAILED",
+        "failures": [
+            {
+                "action": "drop_cue",
+                "reason_code": "DROP_CUE_STRADDLES_TRUTH_INTERVAL",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ],
+    }
+
+    with pytest.raises(SystemExit, match="SOURCE_SUBTITLE_TRUTH_REQUIRED"):
+        pipeline._defer_source_truth_failure_for_redelivery(
+            spec={
+                "subtitle_redelivery_baseline": {
+                    "schema_version": "subtitle-redelivery-baseline.v2",
+                    "exact_interval_replay": True,
+                }
+            },
+            source_truth_audit=audit,
+            chat_authority_audit={"source_subtitle_truth_audit": audit},
+            chat_authority_path=path,
+        )
+
+    assert audit["status"] == "FAILED"
+
+
 def _unproven_foreign_audit() -> dict:
     return {
         "status": "BLOCKED_UNPROVEN_FOREIGN_SPEAKER",
@@ -558,6 +647,18 @@ def _redelivery_baseline_config() -> dict:
         "path": "/reviewed/prior.srt",
         "sha256": "a" * 64,
         "authority": "hash-bound reviewed prior delivery",
+    }
+
+
+def _redelivery_baseline_config_v2() -> dict:
+    return {
+        **_redelivery_baseline_config(),
+        "schema_version": "subtitle-redelivery-baseline.v2",
+        "source_recording_basename": "recording.mp4",
+        "source_sha256": "b" * 64,
+        "absolute_source_start_ms": 10_000,
+        "absolute_source_end_ms": 20_000,
+        "exact_interval_replay": True,
     }
 
 
@@ -661,6 +762,18 @@ def test_partial_source_truth_can_defer_to_hash_bound_redelivery_baseline():
         audit,
         source_truth_windows=[(86_680, 102_020)],
         redelivery_baseline_config=_redelivery_baseline_config(),
+    )
+
+    assert audit["status"] == "DEFERRED_TO_REDELIVERY_BASELINE"
+
+
+def test_partial_source_truth_can_defer_to_valid_v2_redelivery_baseline():
+    audit = _unproven_foreign_audit()
+
+    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+        audit,
+        source_truth_windows=[(86_680, 102_020)],
+        redelivery_baseline_config=_redelivery_baseline_config_v2(),
     )
 
     assert audit["status"] == "DEFERRED_TO_REDELIVERY_BASELINE"

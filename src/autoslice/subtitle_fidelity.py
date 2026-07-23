@@ -390,6 +390,7 @@ def apply_subtitle_fidelity_guard(
         "corroborating_audio_available": corroborating_srt is not None,
         "reverted": [],
         "hallucination_drops": [],
+        "unauthorized_drops_reverted": [],
         "alignment_gaps": [],
         "ignored_final_cues": [],
     }
@@ -454,16 +455,17 @@ def apply_subtitle_fidelity_guard(
                     }
                 )
             else:
-                # An intentionally dropped hallucination/filler cue is an
-                # allowed empty-cue decision.  Keep the draft timing key so
-                # downstream indices remain stable.
+                # A correction model omitting a cue is not acoustic evidence
+                # that the source is silent.  Keep the draft timing key; the
+                # later acoustic_drop_cue lane is the only authority allowed
+                # to delete a whole audible/inaudible cue.
                 final_text = ""
                 audit["alignment_gaps"].append(
                     {
                         "cue_index": index,
                         "start_ms": draft_cue.start_ms,
                         "end_ms": draft_cue.end_ms,
-                        "reason_code": "FINAL_CUE_DROPPED",
+                        "reason_code": "FINAL_CUE_MISSING_UNAUTHORIZED",
                     }
                 )
         draft_text = draft_cue.text
@@ -508,7 +510,32 @@ def apply_subtitle_fidelity_guard(
                     }
                 )
             if not candidate_text.strip():
-                audit["hallucination_drops"].append({"cue_index": index, "draft": draft_text})
+                kept = draft_text
+                drop_reversion = {
+                    "cue_index": index,
+                    "draft": draft_text,
+                    "attempted": final_text,
+                    "kept": kept,
+                    "agy_same_timing_text": agy_text,
+                    "corroborating_same_timing_text": corroborating_text,
+                    "reason_code": "CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY",
+                }
+                audit["unauthorized_drops_reverted"].append(drop_reversion)
+                audit["reverted"].append(
+                    {
+                        **drop_reversion,
+                        "violations": [
+                            {
+                                "op": "delete",
+                                "draft_span": draft_text[:40],
+                                "final_span": "",
+                                "reason": (
+                                    "CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY"
+                                ),
+                            }
+                        ],
+                    }
+                )
             elif question_intent_changed and not sanctioned_cue:
                 kept = draft_text
                 audit["reverted"].append(
@@ -1072,14 +1099,16 @@ def resolve_deferred_foreign_introductions(
     authority_kind: str,
     timeline_offset_ms: int = 0,
 ) -> dict[str, Any]:
-    """Prove a late, deterministic text authority removed blocked kana.
+    """Prove a late, deterministic text authority resolved blocked kana.
 
     This is deliberately narrower than re-running the generic source-language
     guard: reviewed source truth may itself contain legitimate code-switch
     names.  We only revisit the exact kana runs that an earlier correction
     introduced without a source witness.  Each finding must be fully owned by
-    one authority row, and every introduced run must be absent from the final
-    text inside that row's windows.
+    one authority row.  An introduced run must either be absent from the final
+    text or be explicitly present in the committed canonical surface of an
+    applied/satisfied source-truth row.  Merely surviving in the row's broad
+    output window is never a witness.
     """
 
     result: dict[str, Any] = {
@@ -1200,10 +1229,90 @@ def resolve_deferred_foreign_introductions(
         joined = "\n".join(owned_texts)
         unresolved = [surface for surface in introduced_surfaces if surface in joined]
         if unresolved:
-            row_result["unresolved_surfaces"] = unresolved
-            row_result["reason_code"] = "INTRODUCED_FOREIGN_SURFACE_SURVIVED"
-            result["failures"].append(dict(row_result))
-            continue
+            # Source-interval truth can positively authorize a mixed-script
+            # proper name (for example a hash-bound SC sender).  Only canonical
+            # fields declared by the authority itself count.  Do not inspect
+            # ``after``: it is the whole post-edit cue and could contain an
+            # unrelated unproven foreign run that happened to share a window.
+            witnessed_by: dict[str, set[str]] = {
+                surface: set() for surface in unresolved
+            }
+            for owner, _windows in owners:
+                declared_texts: list[str] = []
+                contract = owner.get("declared_output_contract")
+                if (
+                    authority_kind == "source_subtitle_truth"
+                    and isinstance(contract, Mapping)
+                    and owner.get("assertion_state") == "VERIFIED_ACTIVE"
+                    and re.fullmatch(
+                        r"sha256:[0-9a-f]{64}",
+                        str(owner.get("entry_sha256") or ""),
+                    )
+                    is not None
+                    and contract.get("schema_version")
+                    == "source-truth-declared-output.v1"
+                    and contract.get("action") == owner.get("action")
+                ):
+                    canonical_texts = contract.get("canonical_texts")
+                    if isinstance(canonical_texts, list) and all(
+                        isinstance(text, str) for text in canonical_texts
+                    ):
+                        if owner.get("action") == "replace_cue":
+                            declared_texts.extend(canonical_texts)
+                        elif owner.get("action") == "replace_substring":
+                            required_text = contract.get("required_text")
+                            if isinstance(required_text, str) and required_text:
+                                declared_texts.append(required_text)
+                            # A configured replacement is not proof that it
+                            # matched.  Only canonicals recorded as actually
+                            # applied may additionally witness a foreign run.
+                            for replacement in owner.get("replacements") or []:
+                                if isinstance(replacement, Mapping):
+                                    canonical = replacement.get("canonical")
+                                    if isinstance(canonical, str) and canonical:
+                                        declared_texts.append(canonical)
+                declared_surfaces = {
+                    run
+                    for text in declared_texts
+                    for run in kana_run_rx.findall(text)
+                }
+                authority_id = str(
+                    owner.get("truth_id")
+                    or owner.get("authority_id")
+                    or owner.get("current_cue_index")
+                    or "unnamed-authority"
+                )
+                for surface in unresolved:
+                    if surface in declared_surfaces:
+                        witnessed_by[surface].add(authority_id)
+
+            still_unresolved = [
+                surface for surface in unresolved if not witnessed_by[surface]
+            ]
+            if still_unresolved:
+                row_result["unresolved_surfaces"] = still_unresolved
+                row_result["reason_code"] = (
+                    "INTRODUCED_FOREIGN_SURFACE_SURVIVED"
+                )
+                if any(witnessed_by.values()):
+                    row_result["witnessed_surfaces"] = sorted(
+                        surface
+                        for surface, witnesses in witnessed_by.items()
+                        if witnesses
+                    )
+                result["failures"].append(dict(row_result))
+                continue
+            row_result["witnessed_surfaces"] = sorted(unresolved)
+            row_result["positive_witness_authority_ids"] = sorted(
+                {
+                    authority_id
+                    for witnesses in witnessed_by.values()
+                    for authority_id in witnesses
+                }
+            )
+            row_result["reason_code"] = (
+                "INTRODUCED_FOREIGN_SURFACE_WITNESSED_BY_SOURCE_TRUTH"
+            )
         row_result["resolved"] = True
 
     if result["findings"] and not result["failures"]:

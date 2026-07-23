@@ -57,6 +57,138 @@ def test_late_authority_resolves_only_fully_owned_introduced_kana():
     assert resolution["findings"][0]["introduced_surfaces"] == ["やさしい"]
 
 
+def test_source_truth_can_positively_witness_declared_kana_name():
+    audit = {
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 78,
+                "start_ms": 145_860,
+                "end_ms": 148_020,
+                "draft": "谢谢小路路口的钢棒",
+                "attempted": "谢谢小凑るう子的钢镚",
+            }
+        ]
+    }
+    final_srt = (
+        "1\n00:02:25,860 --> 00:02:28,020\n谢谢小凑るう子的钢镚\n"
+    )
+
+    resolution = resolve_deferred_foreign_introductions(
+        audit,
+        final_srt,
+        authority_rows=[
+            {
+                "truth_id": "structured-sc-sender",
+                "assertion_state": "VERIFIED_ACTIVE",
+                "entry_sha256": "sha256:" + "a" * 64,
+                "action": "replace_cue",
+                "declared_output_contract": {
+                    "schema_version": "source-truth-declared-output.v1",
+                    "action": "replace_cue",
+                    "canonical_texts": ["谢谢小凑るう子的钢镚"],
+                },
+                "local_windows": [
+                    {"start_ms": 145_860, "end_ms": 148_020}
+                ],
+                # Whole-cue output is evidence only; authorization comes from
+                # the committed ``text`` field above.
+                "after": ["谢谢小凑るう子的钢镚"],
+            }
+        ],
+        authority_kind="source_subtitle_truth",
+    )
+
+    assert resolution["status"] == "PASS"
+    finding = resolution["findings"][0]
+    assert finding["resolved"] is True
+    assert finding["witnessed_surfaces"] == ["るう"]
+    assert finding["positive_witness_authority_ids"] == [
+        "structured-sc-sender"
+    ]
+
+
+def test_unrelated_source_truth_canonical_does_not_witness_kana():
+    audit = {
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 78,
+                "start_ms": 145_860,
+                "end_ms": 148_020,
+                "attempted": "谢谢小凑るう子的钢镚",
+            }
+        ]
+    }
+    final_srt = (
+        "1\n00:02:25,860 --> 00:02:28,020\n谢谢小凑るう子的钢镚\n"
+    )
+
+    resolution = resolve_deferred_foreign_introductions(
+        audit,
+        final_srt,
+        authority_rows=[
+            {
+                "truth_id": "unrelated-truth",
+                "assertion_state": "VERIFIED_ACTIVE",
+                "entry_sha256": "sha256:" + "b" * 64,
+                "action": "replace_cue",
+                "declared_output_contract": {
+                    "schema_version": "source-truth-declared-output.v1",
+                    "action": "replace_cue",
+                    "canonical_texts": ["这里是邪恶守宫"],
+                },
+                "local_windows": [
+                    {"start_ms": 145_000, "end_ms": 149_000}
+                ],
+                # A broad post-edit cue must not become a positive witness.
+                "after": ["谢谢小凑るう子的钢镚"],
+            }
+        ],
+        authority_kind="source_subtitle_truth",
+    )
+
+    assert resolution["status"] == "FAILED"
+    assert resolution["failures"][0]["reason_code"] == (
+        "INTRODUCED_FOREIGN_SURFACE_SURVIVED"
+    )
+
+
+def test_non_source_truth_authority_cannot_positive_witness_kana():
+    audit = {
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 1,
+                "start_ms": 5_000,
+                "end_ms": 9_000,
+                "attempted": "谢谢小凑るう子的钢镚",
+            }
+        ]
+    }
+    resolution = resolve_deferred_foreign_introductions(
+        audit,
+        _srt("谢谢小凑るう子的钢镚"),
+        authority_rows=[
+            {
+                "truth_id": "not-source-truth",
+                "assertion_state": "VERIFIED_ACTIVE",
+                "entry_sha256": "sha256:" + "c" * 64,
+                "action": "replace_cue",
+                "declared_output_contract": {
+                    "schema_version": "source-truth-declared-output.v1",
+                    "action": "replace_cue",
+                    "canonical_texts": ["谢谢小凑るう子的钢镚"],
+                },
+                "local_windows": [{"start_ms": 5_000, "end_ms": 9_000}],
+            }
+        ],
+        authority_kind="hash_bound_redelivery_baseline",
+    )
+
+    assert resolution["status"] == "FAILED"
+    assert resolution["failures"][0]["reason_code"] == (
+        "INTRODUCED_FOREIGN_SURFACE_SURVIVED"
+    )
+
+
 def test_late_authority_blocks_partial_ownership_or_surviving_kana():
     audit = {
         "unproven_foreign_introductions": [
@@ -162,18 +294,20 @@ def test_sanctioned_table_and_homophone_sets_pass():
     assert audit["status"] == "CLEAN"
 
 
-def test_hallucination_drop_and_small_particle_trim_allowed():
+def test_unacoustically_authorized_drop_reverts_but_particle_trim_is_allowed():
     draft = _srt("虫儿飞虫儿飞", "就是呢那个她们要去彩排了")
     final = _srt("", "就是那个她们要去彩排了")
 
     guarded, audit = apply_subtitle_fidelity_guard(draft, final, agy_srt=None, sanctioned=())
 
-    assert audit["hallucination_drops"][0]["cue_index"] == 1
-    assert "虫儿飞" not in guarded.split("\n\n")[0].split("\n")[-1]
-    assert audit["status"] == "CLEAN"
+    assert audit["hallucination_drops"] == []
+    assert audit["unauthorized_drops_reverted"][0]["cue_index"] == 1
+    assert "虫儿飞虫儿飞" in guarded
+    assert "就是那个她们要去彩排了" in guarded
+    assert audit["status"] == "APPLIED"
 
 
-def test_question_intent_guard_does_not_resurrect_a_dropped_hallucination():
+def test_empty_question_cue_without_acoustic_authority_is_restored():
     draft = _srt("这是什么")
     corrected = _srt("")
 
@@ -181,8 +315,30 @@ def test_question_intent_guard_does_not_resurrect_a_dropped_hallucination():
         draft, corrected, agy_srt=None, sanctioned=()
     )
 
-    assert "这是什么" not in guarded
-    assert audit["hallucination_drops"][0]["cue_index"] == 1
+    assert "这是什么" in guarded
+    assert audit["hallucination_drops"] == []
+    assert audit["unauthorized_drops_reverted"][0]["reason_code"] == (
+        "CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY"
+    )
+
+
+def test_missing_final_cue_with_agy_audio_witness_is_restored():
+    draft = _srt("情切意不")
+    agy = _srt("情切意不")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft,
+        "",
+        agy_srt=agy,
+        sanctioned=(),
+    )
+
+    assert "情切意不" in guarded
+    restored = audit["unauthorized_drops_reverted"][0]
+    assert restored["agy_same_timing_text"] == "情切意不"
+    assert audit["alignment_gaps"][0]["reason_code"] == (
+        "FINAL_CUE_MISSING_UNAUTHORIZED"
+    )
 
 
 def test_pinyin_homophone_respell_passes_without_witness():
