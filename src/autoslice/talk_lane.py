@@ -719,6 +719,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     candidate_subtitle_regression = _runner.candidate_subtitle_regression_path(cid)
     if candidate_subtitle_regression is not None:
         spec["subtitle_regression"] = str(candidate_subtitle_regression)
+    if (reviewed := _runner.candidate_reviewed_subtitle_baseline(cid)) is not None:
+        spec["subtitle_redelivery_baseline"] = reviewed.config
     candidate_speaker_override = _runner.candidate_speaker_override_path(cid)
     if candidate_speaker_override is not None:
         spec["speaker_overrides"] = str(candidate_speaker_override)

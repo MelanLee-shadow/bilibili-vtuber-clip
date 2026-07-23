@@ -7,7 +7,7 @@
 
 | # | 子阶段 | 模块 | 作用 |
 |---|---|---|---|
-| 1 | `_collect_timeline_chat` | `producer_chat_input.py` | 弹幕/SC 证据装载（XML 优先，jsonl 降级） |
+| 1 | `_collect_timeline_chat` | `producer_chat_input.py` | 弹幕/SC/礼物/上舰证据装载（XML 与显式绑定 JSONL 各守其权威） |
 | 2 | `_transcribe_draft` | ASR 适配器 + `session_topic_authority.py` + `term_boundary.py` | 转写草稿 + 场级话题实体吸收 + 词边界统一 |
 | 3 | `_build_entity_verification_context` | `read_aloud_llm_verifier.py`、`entity_audio_verifier.py` | 实体仲裁闭包（人工 override → 朗读 LLM → 音频仲裁） |
 | 4 | `_apply_entity_authority` | `self_reference_absorption.py`、`chat_proposals.py`、`subtitle_fidelity.py`、`chat_repair.py` | 自称吸收、弹幕权威修复、数字事实门、音频实体落地 |
@@ -44,7 +44,21 @@
   掩盖另一 mention 仍错误。fresh ASR 把两个 mention 合进同一 cue 而无法分别归因时，
   `MENTION_POSTCONDITION_TARGET_NOT_ISOLATED` fail closed，禁止假阳性通过。
 - `replace_cue` 可附带经人工/黑屏纯音频听证确认的绝对源时间轴 `spoken_start_ms`：用于删除幻听前缀后把保留口播的字幕起点同步收紧。目标必须唯一；真值宽窗擦到的前句仅在其结束早于审定起点时排除，fresh ASR 的目标 cue 起点最多可比审定起点晚 500ms（随后回钉到绝对起点），若仍有后续重叠 cue、前句跨过起点、越界或非整型则 fail closed。VAD 未检出本身仍不得推导这个起点。
-- 已审字幕的重交付可在 spec 中声明哈希绑定的 `subtitle_redelivery_baseline`（仅 `--reuse-cover`）：本轮 BCUT 时间保留，文本先逐 cue 恢复旧版，再统一重放更高权威的全部源真值；只有已由 `drop_cue` 删除、无法与旧稿一一配对的静音窗会从两边同时排除。不能把一个宽真值窗因“任一 cue 已出现 required_text”就整体保护，否则同窗其他 cue 的新误听会漏进终稿。若 fresh ASR 把 `replace_substring` 的目标整段漏掉，文本阶段只可暂缓该失败，终稿仍须按上述顺序恢复并重放。哈希漂移、漏 cue、合并/拆分、歧义映射或二次真值失败一律拒发，禁止靠重掷模型碰运气。
+- 已审字幕是独立于封面的文本权威。候选级资产放在 profile 的 `reviewed_subtitle_baselines`
+  目录，由 runner 自动发现并写入候选指纹/spec；不得再以 `--reuse-cover` 作为是否保留人工字幕的
+  条件。`subtitle-redelivery-baseline.v2` 同时绑定 SRT 哈希、源录像 basename/SHA-256 与绝对
+  source coverage：本轮 BCUT 时间保留，文本按绝对源时间逐 cue 恢复旧版，再统一重放更高权威
+  的全部源真值；新切点可在干净 cue 边界裁短或扩展，未审扩展区明确记账。哈希/源 identity
+  漂移、覆盖边界切半 cue、漏 cue、合并/拆分、歧义映射或二次真值失败一律拒发，禁止靠重掷
+  模型碰运气。只有已由 `drop_cue` 删除、无法与旧稿一一配对的静音窗会从两边同时排除；不能
+  因宽真值窗内“任一 cue 已出现 required_text”就掩盖同窗其他新误听。
+- 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
+  path/SHA-256、JSONL 自身 origin epoch、alias timeline offset 与 `source_alias_id` 缺一不可；
+  JSONL 的事件时钟不得从另一份官方媒体 basename 猜。已知 alias 但 sidecar 缺失、哈希漂移、
+  无可解析事件时必须阻断，不能退化成误导性的 `evidence_considered=0 / NO_MATCH`。仅没有 alias
+  authority 的旧录播可显式 `structured_chat_required=false`。`GUARD_BUY` 是独立 `guard`
+  证据，按 username/uid/guard level 装载，并使用 300 秒上舰答谢因果窗；多事件无法唯一对应时
+  保留原字幕而非猜名。
 - 书名号结构门在所有文本 authority（含源真值）之后再跑一次；合法跨 cue 配对单独记账，真正的 `UNRESOLVED_COMPLEX_IMBALANCE` 必须阻断 `review_ready`。
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可

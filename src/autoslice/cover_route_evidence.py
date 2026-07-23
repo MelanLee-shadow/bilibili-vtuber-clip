@@ -8,6 +8,7 @@ authorization to generate a different cover.
 
 from __future__ import annotations
 
+import re
 from typing import Mapping
 
 
@@ -17,6 +18,15 @@ ROUTE_TREATMENTS = (
     "screenshot_direct",
     "screenshot_polish",
     "cpa_redraw",
+)
+FINAL_PARTICIPANT_VERIFICATION_SCHEMA = (
+    "lidousha-cover-final-participant-verification.v1"
+)
+_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
+_RELATION_VISUAL_RX = re.compile(
+    r"联动|连麦|连线|搭档|当面对质|当面追问|追问|互相|两人|双方|"
+    r"对方|她们|他们|左边的人|右边的人|霸凌|让给|"
+    r"请[^，。！？]{0,12}(?:吃|喝)|脑瓜崩|收集"
 )
 
 
@@ -38,17 +48,149 @@ def story_participant_ids(story_contract: object) -> list[str]:
     return values
 
 
+def is_hash_bound_reference_authority(reference_authority: object) -> bool:
+    """Do not upgrade a bare participant list into source-frame authority."""
+
+    return bool(
+        isinstance(reference_authority, Mapping)
+        and str(reference_authority.get("candidate_id") or "").strip()
+        and _SHA256_RX.fullmatch(
+            str(reference_authority.get("source_sha256") or "")
+        )
+        is not None
+        and _SHA256_RX.fullmatch(
+            str(reference_authority.get("reference_png_sha256") or "")
+        )
+        is not None
+    )
+
+
 def source_visible_participant_ids(reference_authority: object) -> list[str]:
     """Return only identities attested by the hash-bound frame authority."""
 
-    if not isinstance(reference_authority, Mapping):
+    if not is_hash_bound_reference_authority(reference_authority):
         return []
+    assert isinstance(reference_authority, Mapping)
     values: list[str] = []
     for raw in reference_authority.get("visible_participant_ids") or []:
         value = str(raw or "").strip()
         if value and value not in values:
             values.append(value)
     return values
+
+
+def relationship_semantic_evidence(
+    story_contract: object,
+    *,
+    title: str = "",
+    cover_text: str = "",
+) -> list[str]:
+    """Explain why this cover must visually preserve a multi-person relation.
+
+    Geometry and motion are intentionally absent here.  They can rank a
+    composition only after source-bound identity evidence establishes who is
+    actually present.
+    """
+
+    if (
+        not isinstance(story_contract, Mapping)
+        or story_contract.get("relation_state") != "CONFIRMED"
+        or len(story_participant_ids(story_contract)) < 2
+    ):
+        return []
+    participant_surfaces: list[list[str]] = []
+    for row in story_contract.get("participants") or []:
+        if not isinstance(row, Mapping):
+            continue
+        raw_aliases = row.get("surfaces")
+        aliases = (
+            raw_aliases
+            if isinstance(raw_aliases, (list, tuple, set))
+            else []
+        )
+        surfaces: list[str] = []
+        for raw in (
+            row.get("canonical_id"),
+            row.get("display_name"),
+            *aliases,
+        ):
+            value = str(raw or "").strip()
+            if value and value not in surfaces:
+                surfaces.append(value)
+        if surfaces:
+            participant_surfaces.append(surfaces)
+    texts = (
+        ("selection_hook", str(story_contract.get("selection_hook") or "")),
+        ("title", str(title or "")),
+        ("cover_text", str(cover_text or "")),
+    )
+    evidence: list[str] = []
+    for label, text in texts:
+        if not text:
+            continue
+        if _RELATION_VISUAL_RX.search(text):
+            evidence.append(f"{label}:EXPLICIT_RELATION_LANGUAGE")
+        participant_mentions = sum(
+            any(surface in text for surface in surfaces)
+            for surfaces in participant_surfaces
+        )
+        if participant_mentions >= 2:
+            evidence.append(f"{label}:MULTI_PARTICIPANT_CO_MENTION")
+    return list(dict.fromkeys(evidence))
+
+
+def relationship_source_participants_verified(
+    route_decision: object,
+) -> bool:
+    """Return whether every relationship participant has source authority."""
+
+    if not isinstance(route_decision, Mapping):
+        return False
+    required = route_decision.get("required_participant_ids")
+    visible = route_decision.get("source_visible_participant_ids")
+    return bool(
+        isinstance(required, list)
+        and len(required) >= 2
+        and isinstance(visible, list)
+        and set(required) == set(visible)
+        and route_decision.get("source_visibility_authority")
+        == "HASH_BOUND_COVER_REFERENCE"
+    )
+
+
+def validate_final_participant_verification(
+    cover_generation: Mapping[str, object],
+) -> bool:
+    """Validate an independent, final-cover-hash-bound identity verdict."""
+
+    verification = cover_generation.get("final_participant_verification")
+    if not isinstance(verification, Mapping):
+        return False
+    visible = verification.get("visible_participant_ids")
+    required = (
+        cover_generation.get("route_decision", {}).get(
+            "required_participant_ids"
+        )
+        if isinstance(cover_generation.get("route_decision"), Mapping)
+        else None
+    )
+    return bool(
+        verification.get("schema_version")
+        == FINAL_PARTICIPANT_VERIFICATION_SCHEMA
+        and verification.get("status") == "PASS"
+        and str(verification.get("authority") or "").strip()
+        and isinstance(visible, list)
+        and len(visible) == len(set(visible))
+        and all(isinstance(value, str) and value.strip() for value in visible)
+        and isinstance(required, list)
+        and set(required) == set(visible)
+        and _SHA256_RX.fullmatch(
+            str(verification.get("final_cover_sha256") or "")
+        )
+        is not None
+        and verification.get("final_cover_sha256")
+        == cover_generation.get("final_cover_sha256")
+    )
 
 
 def _alternatives(
@@ -133,6 +275,8 @@ def build_cover_route_decision(
     story_contract: object,
     reference_authority: object,
     decision_inputs: Mapping[str, object],
+    title: str = "",
+    cover_text: str = "",
 ) -> dict[str, object]:
     if selected_treatment not in ROUTE_TREATMENTS:
         raise ValueError(f"unsupported cover treatment: {selected_treatment}")
@@ -144,6 +288,14 @@ def build_cover_route_decision(
         "screenshot_polish",
         "cpa_redraw",
     }
+    semantic_evidence = relationship_semantic_evidence(
+        story_contract,
+        title=title,
+        cover_text=cover_text,
+    )
+    reference_is_hash_bound = is_hash_bound_reference_authority(
+        reference_authority
+    )
     return {
         "schema_version": ROUTE_SCHEMA_V2,
         "selection_policy": "lidousha-cover-treatment-router.v2",
@@ -159,8 +311,16 @@ def build_cover_route_decision(
         ),
         "source_visibility_authority": (
             "HASH_BOUND_COVER_REFERENCE"
-            if isinstance(reference_authority, Mapping)
+            if reference_is_hash_bound
             else "NO_IDENTITY_AUTHORITY"
+        ),
+        "relationship_visual_required": bool(semantic_evidence),
+        "relationship_semantic_evidence": semantic_evidence,
+        "final_visible_participant_ids": [],
+        "final_visibility_authority": (
+            "PENDING_RELATION_VISUAL_VERIFICATION"
+            if semantic_evidence
+            else "NOT_REQUIRED"
         ),
         "image_generation_planned": generation_planned,
         "image_generation_attempted": False,
@@ -188,6 +348,7 @@ def record_cover_route_execution(
     image_generation_attempted: bool,
     image_generation_used: bool,
     detail: str | None = None,
+    final_participant_verification: Mapping[str, object] | None = None,
 ) -> None:
     """Record the actual lane without changing the selected authorization."""
 
@@ -203,6 +364,29 @@ def record_cover_route_execution(
         )
         if detail:
             route["execution_detail"] = str(detail)
+        if (
+            actual_treatment in {"screenshot_direct", "screenshot_polish"}
+            and execution_status in {"READY", "READY_DEGRADED"}
+        ):
+            route["final_visible_participant_ids"] = list(
+                route.get("source_visible_participant_ids") or []
+            )
+            route["final_visibility_authority"] = (
+                "SOURCE_PRESERVING_SCREENSHOT_PIPELINE"
+            )
+        elif isinstance(final_participant_verification, Mapping):
+            cover_generation["final_participant_verification"] = dict(
+                final_participant_verification
+            )
+            route["final_visible_participant_ids"] = list(
+                final_participant_verification.get(
+                    "visible_participant_ids"
+                )
+                or []
+            )
+            route["final_visibility_authority"] = str(
+                final_participant_verification.get("authority") or ""
+            )
     planned = bool(
         isinstance(route, Mapping) and route.get("image_generation_planned") is True
     )
@@ -305,7 +489,31 @@ def validate_cover_route_decision(
             or not all(isinstance(value, str) and value.strip() for value in values)
         ):
             return False
+    final_visible = route.get("final_visible_participant_ids")
+    semantic_evidence = route.get("relationship_semantic_evidence")
+    if (
+        not isinstance(route.get("relationship_visual_required"), bool)
+        or not isinstance(semantic_evidence, list)
+        or len(semantic_evidence) != len(set(semantic_evidence))
+        or not all(
+            isinstance(value, str) and value.strip()
+            for value in semantic_evidence
+        )
+        or not isinstance(final_visible, list)
+        or len(final_visible) != len(set(final_visible))
+        or not all(
+            isinstance(value, str) and value.strip()
+            for value in final_visible
+        )
+        or not str(route.get("final_visibility_authority") or "").strip()
+    ):
+        return False
     story_contract = cover_generation.get("story_contract")
+    if (
+        route.get("required_participant_ids")
+        or route.get("relationship_visual_required") is True
+    ) and not isinstance(story_contract, Mapping):
+        return False
     if isinstance(story_contract, Mapping):
         if route.get("required_participant_ids") != story_participant_ids(
             story_contract
@@ -316,6 +524,25 @@ def validate_cover_route_decision(
             "source_visible_participant_ids"
         ) != source_visible_participant_ids(authority):
             return False
+        expected_semantic_evidence = relationship_semantic_evidence(
+            story_contract,
+            title=str(cover_generation.get("title") or ""),
+            cover_text=str(cover_generation.get("cover_text") or ""),
+        )
+        if (
+            route.get("relationship_semantic_evidence")
+            != expected_semantic_evidence
+            or route.get("relationship_visual_required")
+            is not bool(expected_semantic_evidence)
+        ):
+            return False
+    relationship_required = (
+        route.get("relationship_visual_required") is True
+    )
+    if relationship_required and not relationship_source_participants_verified(
+        route
+    ):
+        return False
     actual = route.get("actual_treatment")
     execution_status = str(route.get("execution_status") or "")
     method = str(cover_generation.get("method") or "")
@@ -325,6 +552,20 @@ def validate_cover_route_decision(
     if used and not attempted:
         return False
     if actual == "cpa_redraw":
+        if relationship_required and (
+            not validate_final_participant_verification(cover_generation)
+            or not set(route["required_participant_ids"])
+            <= set(route["final_visible_participant_ids"])
+            or route.get("final_visibility_authority")
+            != str(
+                (
+                    cover_generation.get("final_participant_verification")
+                    or {}
+                ).get("authority")
+                or ""
+            )
+        ):
+            return False
         return bool(
             selected == "cpa_redraw"
             and execution_status == "READY"
@@ -333,6 +574,10 @@ def validate_cover_route_decision(
             and used
         )
     if actual == "screenshot_polish":
+        if relationship_required and not set(
+            route["required_participant_ids"]
+        ) <= set(route["final_visible_participant_ids"]):
+            return False
         return bool(
             selected == "screenshot_polish"
             and execution_status == "READY"
@@ -341,6 +586,10 @@ def validate_cover_route_decision(
             and used
         )
     if actual == "screenshot_direct":
+        if relationship_required and not set(
+            route["required_participant_ids"]
+        ) <= set(route["final_visible_participant_ids"]):
+            return False
         if (
             method != "screenshot_direct"
             or origin != "SOURCE_SCREENSHOT"

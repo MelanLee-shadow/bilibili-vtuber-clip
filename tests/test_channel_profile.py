@@ -95,6 +95,9 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
     )
     assert profile.asset_directory("fonts") == REPO_ROOT / "assets/lidousha/fonts"
+    assert profile.asset_directory("reviewed_subtitle_baselines") == (
+        REPO_ROOT / "assets/lidousha/reviewed_subtitle_baselines"
+    )
     assert profile.voiceprint_reference_subdirectory == "lidousha"
     assert profile.song_title_prefix == "【李豆沙】豆沙歌，"
     assert profile.talk_title_prefix == "【李豆沙】"

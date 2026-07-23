@@ -1189,10 +1189,10 @@
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-hotpot-dan-bullying-r1",
-      "revision_id": "r1",
+      "revision_id": "r2",
       "assertion_state": "VERIFIED_ACTIVE",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
-      "source_start_ms": 2001770,
+      "source_start_ms": 2001780,
       "source_end_ms": 2003390,
       "action": "replace_cue",
       "text": "小李又被大N霸凌了",
@@ -1202,7 +1202,7 @@
         "大恩霸凌"
       ],
       "evidence_class": "DUAL_ASR_PARTIAL_PLUS_IMMEDIATE_PARALLEL_REPEAT",
-      "authority": "BCUT同源草稿保留小李又被大…了句式但把槽位误成大哥骂赢；AGY同窗为小李又被大恩霸凌了；后文立即平行复述小李被大N霸凌；本场关系权威确认南町别名大N（只钉此source interval，不全局替换大哥）",
+      "authority": "BCUT同源草稿保留小李又被大…了句式但把槽位误成大哥骂赢；AGY同窗为小李又被大恩霸凌了；后文立即平行复述小李被大N霸凌；本场关系权威确认南町别名大N。r2按最终recut cue把起点校正到2001780，避免与上一条小凑るう子答谢重叠10ms",
       "required": true
     },
     {
@@ -1227,20 +1227,21 @@
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-chair-bullying-phrase-r1",
-      "revision_id": "r1",
+      "revision_id": "r2",
       "assertion_state": "VERIFIED_ACTIVE",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 1597960,
       "source_end_ms": 1600440,
       "action": "replace_cue",
-      "text": "感觉像被霸凌了",
+      "text": "感觉像被豆沙霸凌",
       "before_span": "感觉像被留了像霸凌",
       "forbidden_tokens": [
         "感觉像被留了",
-        "像霸凌"
+        "像霸凌",
+        "感觉像被霸凌了"
       ],
-      "evidence_class": "PRIOR_ASR_POSITIVE_PLUS_LOCAL_STORY_SEMANTICS",
-      "authority": "同源前轮AGY在该窗已正确转写感觉像被霸凌了；当前两cue被错误切成被留了/像霸凌，且本片椅子让位后缩在一边的完整语义与后文霸凌回指一致。只钉此source interval",
+      "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_LOCAL_STORY_SEMANTICS",
+      "authority": "r2 corrects the earlier shortened paraphrase: Ivan-approved delivery SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 preserves 感觉像被豆沙霸凌, matching the chair-yield story and later 李豆沙霸凌 callback",
       "required": true
     },
     {
@@ -1577,19 +1578,53 @@
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-chair-190-rumor-r1",
-      "revision_id": "r1",
+      "revision_id": "r2",
       "assertion_state": "VERIFIED_ACTIVE",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
-      "source_start_ms": 1623040,
-      "source_end_ms": 1625380,
+      "source_start_ms": 1619250,
+      "source_end_ms": 1623040,
       "action": "replace_cue",
-      "text": "190，190是谣言啊",
+      "text": "哈哈哈哈，190，190是谣言啊",
       "before_span": "一瞅1190是谣言啊",
       "forbidden_tokens": [
         "1190"
       ],
       "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_HUMAN_PACKAGE_ACCEPTANCE",
-      "authority": "Ivan-stated-20260722(该切片可上传，唯一缺点是封面)+reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and redelivery audit sha256=3334a5898ca989fd43e7d249ad2f2623f104314ed7e4dd59b20d6d1011cb6593",
+      "authority": "Ivan-stated-20260722(该切片可上传，唯一缺点是封面)+reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and BCUT cues 715-716; r2 corrects the source anchor from the following 粉毛 cue to the merged laughter-plus-190 cue that fresh ASR hallucinated as 1190",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-chair-pink-hair-history-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1623040,
+      "source_end_ms": 1625120,
+      "action": "replace_cue",
+      "text": "粉毛是我之前染过粉毛啊",
+      "before_span": "190，190是谣言啊",
+      "forbidden_tokens": [],
+      "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_DUAL_ASR",
+      "authority": "reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and v8 ASR/AGY independently preserve 粉毛是我之前染过粉毛啊; the previous truth anchor accidentally overwrote this next cue",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-brainflick-give-up-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1510740,
+      "source_end_ms": 1512620,
+      "action": "replace_cue",
+      "text": "算了，好了，我弹了啊",
+      "before_span": "算好了，我弹了啊",
+      "forbidden_tokens": [
+        "算好了，我弹了啊"
+      ],
+      "evidence_class": "HASH_BOUND_PRIOR_TRANSCRIPT_PLUS_LOCAL_DISCOURSE",
+      "authority": "v7 final SRT sha256=61566dd4d1bd2596f79e98e52312615f7e3b3be64e0eaf4cce9179913427e245 preserves 算了好了我弹了啊; the two preceding speakers remain unable to resolve mirrored left/right, so 算了 is the discourse turn that abandons the argument, while fresh v8 collapsed it into 算好",
       "required": true
     },
     {
@@ -1626,6 +1661,119 @@
       ],
       "evidence_class": "WHOLE_CLIP_CALLBACK_PLUS_SOURCE_CUE_REVIEW",
       "authority": "Codex source-cue closure review 2026-07-22; callback repeats the earlier hash-bound reviewed phrase 硬弹一弹",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-commanded-worker-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3625860,
+      "source_end_ms": 3627420,
+      "action": "replace_cue",
+      "text": "就是她使唤的打工人",
+      "before_span": "就是她喜欢打工人",
+      "forbidden_tokens": [
+        "她喜欢打工人"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_FORCED_CHOICE",
+      "authority": "Gemini 3.6 Flash High forced-choice on exact recut audio: proposed 就是她使唤的打工人 supported confidence=1.0, current incompatible=0; request sha256=ad9a56667031864a1f69f4bd8dadac27081a442abf8e059e744feb68dd598ff1, audio sha256=ed94e1cfb03a07103d758462b4be988e308a0a0c24b244af432329bd5d4b50a1, response sha256=7ca6eb379b45f1950b08e31b126b5c6c39dbc34cf801847ace88ebea18bdfe2a",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-nancho-house-xingyao-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1911690,
+      "source_end_ms": 1913880,
+      "action": "replace_cue",
+      "text": "谢谢南町家的星耀的SC",
+      "before_span": "谢谢南家星耀的SC",
+      "forbidden_tokens": [
+        "南家星耀"
+      ],
+      "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_SENDER",
+      "authority": "bound bilive JSONL sha256=656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef identifies the nearby SC sender as 南町家的星耀; output pins only the username-bearing thanks cue",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-panoja-guard-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1942140,
+      "source_end_ms": 1946210,
+      "action": "replace_cue",
+      "text": "谢谢刚刚panoja的舰长",
+      "before_span": "谢谢刚刚 PANJA 的舰长",
+      "forbidden_tokens": [
+        "PANJA"
+      ],
+      "evidence_class": "HASH_BOUND_STRUCTURED_GUARD_EVENT",
+      "authority": "bound bilive JSONL sha256=656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef contains the earlier GUARD_BUY username panoja and 舰长 level; this cue is the unique later guard thanks",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-minato-ruuko-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1999620,
+      "source_end_ms": 2001780,
+      "action": "replace_cue",
+      "text": "谢谢小凑るう子的钢镚",
+      "before_span": "谢谢小路路口的钢镚",
+      "forbidden_tokens": [
+        "小路路口",
+        "谢谢小凑的钢镚"
+      ],
+      "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_SENDER",
+      "authority": "bound bilive JSONL sha256=656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef identifies the nearby sender as 小凑るう子; kana must not be truncated by generic Han-prefix aliasing",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-evil-gecko-nickname-first-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 2062300,
+      "source_end_ms": 2064990,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "香香烧烤",
+          "canonical": "邪恶守宫"
+        }
+      ],
+      "required_text": "邪恶守宫",
+      "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(这里说的是邪恶守宫；邪恶守宫是南町nightin的昵称指代); only the nickname surface is pinned because the rest of the danmaku-derived line is partially occluded",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-evil-gecko-nickname-callback-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 2080360,
+      "source_end_ms": 2084520,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "香香烧烤",
+          "canonical": "邪恶守宫"
+        }
+      ],
+      "required_text": "邪恶守宫",
+      "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(两句原版弹幕指代均为邪恶守宫); only the recurring nickname surface is pinned",
       "required": true
     },
     {

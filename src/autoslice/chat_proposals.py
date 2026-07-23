@@ -18,7 +18,6 @@ from src.autoslice.chat_evidence import (
     _render_srt,
     _request_sha256,
     _validated_entity_verdict,
-    _validated_read_aloud_verdict,
     canonicalize_hard_surfaces,
     normalize_chat_text,
     sanitize_chat_display_text,
@@ -474,7 +473,7 @@ def _discover_chat_proposals(
     near_queue: list[tuple[ChatEvidence, dict[str, Any]]] = []
     high_confidence_arbitration_attempts = 0
     for item in evidence:
-        if item.kind == "gift":
+        if item.kind in {"gift", "guard"}:
             continue
         authority_norm = normalize_chat_text(item.text)
         if len(authority_norm) < 4:
@@ -782,7 +781,68 @@ def _apply_chat_proposals(
             }
         )
     return result
-
+_GUARD_THANK = re.compile(
+    r"(?P<prefix>(?:谢谢|感谢|谢)(?:一下)?(?:刚刚)?)(?P<name>[^，。！？!?\s]{1,32}?)"
+    r"的(?P<guard>舰长|提督|总督)", re.IGNORECASE)
+GUARD_THANK_WINDOW_AFTER_MS = 300_000
+_GENERIC_GUARD_NAMES = frozenset({"你", "您", "你的", "您的", "大家", "刚刚"})
+def _apply_guard_sender_repairs(
+    evidence: Sequence[ChatEvidence], cues: Sequence[Any], texts: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Match GUARD_BUY thanks in a causal 300s window; ambiguity changes nothing."""
+    events = [item for item in evidence if item.kind == "guard" and item.sender and item.text]
+    repairs: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for index, cue in enumerate(cues):
+        match = _GUARD_THANK.search(texts[index])
+        if match is None or normalize_chat_text(match["name"]) in _GENERIC_GUARD_NAMES:
+            continue
+        choices = []
+        for item in events:
+            delay = cue.start_ms - item.offset_ms
+            if item.evidence_id in used or not 2_000 <= delay <= GUARD_THANK_WINDOW_AFTER_MS:
+                continue
+            if normalize_chat_text(match["guard"]) not in normalize_chat_text(item.text):
+                continue
+            alias = _spoken_sender_alias(item.sender)
+            score, _ratio, coverage, _precision, _common = _match_metrics(alias, match["name"])
+            exact = normalize_chat_text(alias) == normalize_chat_text(match["name"])
+            strength = 3 if exact else (2 if score >= 0.48 or coverage >= 0.60 else 1)
+            choices.append((item, alias, strength, delay))
+        if not choices:
+            continue
+        strong = [row for row in choices if row[2] >= 2]
+        pool = strong or choices
+        senders = {row[1].lower() for row in pool if row[1]}
+        if len(senders) > 1:
+            blocked.append({
+                "kind": "guard", "thank_cue_index": index + 1,
+                "matched_start_ms": cue.start_ms, "matched_end_ms": cue.end_ms,
+                "before": texts[index], "heard_sender": match["name"], "guard_name": match["guard"],
+                "reason_code": "GUARD_BUY_SENDER_AMBIGUOUS",
+                "candidate_event_ids": sorted(str(row[0].source_event_id or row[0].evidence_id) for row in pool),
+                "candidate_spoken_senders": sorted(senders),
+            })
+            continue
+        item, alias, strength, delay = min(pool, key=lambda row: row[3])
+        used.add(item.evidence_id)
+        if not alias or normalize_chat_text(alias) == normalize_chat_text(match["name"]):
+            continue
+        before = texts[index]
+        after = before[:match.start("name")] + alias + before[match.end("name"):]
+        texts[index] = after
+        repairs.append({
+            "kind": "guard", "evidence_id": item.evidence_id,
+            "source_event_id": item.source_event_id, "sender": item.sender,
+            "spoken_sender": alias, "heard_sender": match["name"],
+            "guard_name": match["guard"], "cue_index": index + 1,
+            "matched_start_ms": cue.start_ms, "matched_end_ms": cue.end_ms,
+            "delay_ms": delay, "name_match_strength": strength,
+            "before": before, "after": after,
+            "alignment_basis": "guard-buy-plus-thank-action-anchor.v1",
+        })
+    return repairs, blocked
 
 def _apply_sc_sender_repairs(
     *,
@@ -1045,7 +1105,13 @@ def _finalize_chat_authority_output(
         row["survived"] for row in parts.entity_repairs
     ):
         status = "FAILED"
-    elif parts.applied or parts.entity_repairs:
+    elif (
+        parts.applied
+        or parts.entity_repairs
+        or parts.sender_repairs
+        or parts.coreference_repairs
+        or gift_text_changed
+    ):
         status = "APPLIED_AND_VERIFIED"
     else:
         status = "NO_MATCH"
@@ -1145,6 +1211,13 @@ def apply_authoritative_chat_evidence(
         cues=cues,
         texts=texts,
     )
+    guard_sender_repairs, guard_sender_verdict_required = _apply_guard_sender_repairs(
+        evidence,
+        cues,
+        texts,
+    )
+    sender_repairs.extend(guard_sender_repairs)
+    sender_verdict_required.extend(guard_sender_verdict_required)
 
     gift_repairs = _apply_gift_name_repairs(evidence, cues, texts, entity_verifier=entity_verifier)
 

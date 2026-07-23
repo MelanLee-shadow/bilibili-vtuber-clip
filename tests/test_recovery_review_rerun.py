@@ -35,6 +35,19 @@ class _Runner:
     def find_chat_jsonl(_segment: Path):
         return None
 
+    @staticmethod
+    def resolve_structured_chat_binding(
+        _segment: Path,
+        *,
+        source_sha256: str | None = None,
+    ):
+        del source_sha256
+        return {
+            "chat_jsonl": None,
+            "structured_chat_required": False,
+            "chat_binding_status": "OPTIONAL_ABSENT",
+        }
+
 
 def _fixture(tmp_path: Path, monkeypatch):
     runner = _Runner(tmp_path)
@@ -108,6 +121,8 @@ def test_current_delivery_moves_to_hash_bound_recovery_queue(
     assert item["merge_gap_removals"]
     assert item["cover_diversity_slot"] == 3
     assert item["bcut_srt_path"].endswith("official.bcut.srt")
+    assert item["structured_chat_required"] is False
+    assert item["chat_binding_status"] == "OPTIONAL_ABSENT"
     assert item.get("reuse_cover") is None
     archived = state["talk_superseded_attempts"][0]
     assert archived["title"] == "【李豆沙】旧标题"
@@ -116,6 +131,61 @@ def test_current_delivery_moves_to_hash_bound_recovery_queue(
     assert archived["source_state_sha256"] == STATE_SHA
     assert state["status"] == "recovery_rerun_queued"
     assert state["delivery_rerun_plan"] == plan
+
+
+def test_recovery_queue_preserves_hash_bound_structured_chat_binding(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    chat = tmp_path / "canonical.jsonl"
+    chat.write_text('{"cmd":"DANMU_MSG"}\n', encoding="utf-8")
+    binding = {
+        "chat_jsonl": str(chat),
+        "chat_jsonl_sha256": "sha256:" + "a" * 64,
+        "chat_origin_epoch_ms": 1_750_000_000_000,
+        "chat_timeline_offset_ms": 37,
+        "structured_chat_required": True,
+        "chat_source_alias_id": "official-replay-alias",
+        "chat_canonical_recording_basename": "canonical.mp4",
+        "chat_binding_status": "BOUND_SOURCE_ALIAS",
+        "chat_binding_authority": "hash-bound test authority",
+    }
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "resolve_structured_chat_binding",
+        lambda *_args, **_kwargs: binding,
+    )
+
+    _plan(date, state)
+
+    item = state["pending_talk"][0]
+    assert {
+        key: item[key] for key in binding
+    } == binding
+
+
+def test_recovery_queue_fails_closed_when_chat_alias_cannot_bind(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+
+    def fail_binding(*_args, **_kwargs):
+        raise RuntimeError("STRUCTURED_CHAT_ALIAS_CANONICAL_JSONL_MISSING")
+
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "resolve_structured_chat_binding",
+        fail_binding,
+    )
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match=(
+            "RECOVERY_RERUN_CHAT_AUTHORITY_MISSING:auto_current:"
+            "STRUCTURED_CHAT_ALIAS_CANONICAL_JSONL_MISSING"
+        ),
+    ):
+        _plan(date, state)
 
 
 @pytest.mark.parametrize(

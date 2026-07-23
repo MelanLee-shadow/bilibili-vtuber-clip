@@ -291,6 +291,107 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     assert recut.redelivery_baseline_audit_path.is_file()
 
 
+def test_final_recut_v2_projects_reviewed_text_by_absolute_source_time(
+    tmp_path: Path,
+) -> None:
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"padded")
+    (tmp_path / "out").mkdir()
+    padded_provenance = tmp_path / "padded.provenance.json"
+    padded_provenance.write_text("{}\n", encoding="utf-8")
+    baseline = tmp_path / "reviewed.srt"
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n裁掉的旧开头\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n人工审定甲\n\n"
+        "3\n00:00:02,000 --> 00:00:03,000\n人工审定乙\n",
+        encoding="utf-8",
+    )
+
+    def run_command(command: list[str], **_kwargs) -> None:
+        Path(command[-1]).write_bytes(b"recut")
+
+    def write_source_range_srt(
+        _cues, _start_ms: int, _end_ms: int, output: Path
+    ) -> None:
+        output.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n随机甲\n\n"
+            "2\n00:00:01,000 --> 00:00:02,000\n随机乙\n\n"
+            "3\n00:00:02,000 --> 00:00:03,000\n新延长尾句\n",
+            encoding="utf-8",
+        )
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated finalization adapter was called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=lambda **kwargs: [
+            "recut",
+            str(kwargs["output_media"]),
+        ],
+        run_command=run_command,
+        write_source_range_srt=write_source_range_srt,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=lambda: tmp_path / "delivery",
+    )
+    source_sha256 = "a" * 64
+    spec = {
+        "pieces": [
+            {
+                "remote_media": "/recordings/recording.mp4",
+                "start_ms": 100_000,
+                "end_ms": 104_000,
+            }
+        ],
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v2",
+            "mode": "preserve_text_outside_source_truth",
+            "path": str(baseline),
+            "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+            "authority": "Ivan reviewed delivery",
+            "source_recording_basename": "recording.mp4",
+            "source_sha256": source_sha256,
+            "absolute_source_start_ms": 100_000,
+            "absolute_source_end_ms": 103_000,
+        },
+    }
+
+    recut = finalization._materialize_final_recut(
+        spec=spec,
+        cid="candidate-v2",
+        out_root=tmp_path / "out",
+        padded=padded,
+        padded_provenance_path=padded_provenance,
+        piece_provenance_rows=[
+            {
+                "source_path": "/recordings/recording.mp4",
+                "source_sha256": source_sha256,
+            }
+        ],
+        final_start=1_000,
+        final_end=4_000,
+        sanitized=[],
+        timing_qa={},
+        text_override_path=None,
+        adapters=adapters,
+        spec_parent=tmp_path,
+        chat_authority_audit={},
+    )
+
+    output = recut.subtitle_path.read_text(encoding="utf-8")
+    assert "人工审定甲" in output
+    assert "人工审定乙" in output
+    assert "裁掉的旧开头" not in output
+    assert "新延长尾句" in output
+    assert recut.redelivery_baseline_audit is not None
+    assert recut.redelivery_baseline_audit["status"] == "APPLIED"
+    assert recut.redelivery_baseline_audit["uncovered_current_cue_count"] == 1
+    assert recut.redelivery_baseline_audit["omitted_baseline_cue_count"] == 1
+
+
 def test_final_recut_replays_truth_after_broad_window_was_satisfied(
     tmp_path: Path,
 ) -> None:

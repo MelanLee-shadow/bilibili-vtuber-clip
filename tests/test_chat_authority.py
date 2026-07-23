@@ -32,6 +32,12 @@ from src.autoslice.chat_authority import (
     _strip_interjections_once,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.producer_chat_input import StructuredChatEvidenceError
+from src.autoslice.chat_repair import (
+    _aligned_span_replacements,
+    _repair_sc_sender,
+    _spoken_sender_alias,
+)
 
 
 def _srt(*texts: str) -> str:
@@ -1008,6 +1014,106 @@ def test_healthy_xml_is_hashed_and_kept_as_danmaku_authority(tmp_path):
     assert evidence[0].source_sha256 == hashlib.sha256(xml.read_bytes()).hexdigest()
 
 
+def test_hash_bound_chat_uses_jsonl_origin_and_declared_alias_offset(tmp_path):
+    remote = tmp_path / "22966160_20260722-19-34-50.mp4"
+    remote.write_bytes(b"official replay")
+    jsonl = tmp_path / "22966160_20260722-19-35-15.jsonl"
+    canonical_start_ms = int(
+        datetime(
+            2026,
+            7,
+            22,
+            19,
+            35,
+            15,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ).timestamp()
+        * 1000
+    )
+    jsonl.write_text(
+        json.dumps(
+            {
+                "cmd": "DANMU_MSG",
+                "info": [
+                    [0, 0, 0, 0, (canonical_start_ms + 60_000) / 1000],
+                    "南町nightin",
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    digest = "sha256:" + hashlib.sha256(jsonl.read_bytes()).hexdigest()
+
+    evidence = _piece_chat_evidence(
+        {
+            "remote_media": str(remote),
+            "chat_jsonl_local": str(jsonl),
+            "chat_jsonl_sha256": digest,
+            "chat_origin_epoch_ms": canonical_start_ms,
+            "chat_timeline_offset_ms": 37,
+            "structured_chat_required": True,
+            "chat_binding_status": "BOUND_SOURCE_ALIAS",
+        }
+    )
+
+    assert [(item.kind, item.offset_ms, item.text) for item in evidence] == [
+        ("danmaku", 60_037, "南町nightin")
+    ]
+
+
+def test_hash_bound_chat_rejects_missing_or_drifted_sidecar(tmp_path):
+    missing = tmp_path / "missing.jsonl"
+    with pytest.raises(
+        StructuredChatEvidenceError,
+        match="STRUCTURED_CHAT_BINDING_PATH_MISSING",
+    ):
+        _piece_chat_evidence(
+            {
+                "remote_media": str(tmp_path / "source.mp4"),
+                "chat_jsonl_local": str(missing),
+                "chat_jsonl_sha256": "sha256:" + "a" * 64,
+                "chat_origin_epoch_ms": 1_750_000_000_000,
+                "chat_timeline_offset_ms": 0,
+                "structured_chat_required": True,
+            }
+        )
+
+    jsonl = tmp_path / "22966160_20260722-19-35-15.jsonl"
+    jsonl.write_text(
+        '{"cmd":"DANMU_MSG","info":[[0,0,0,0,1750000000],"证据"]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        StructuredChatEvidenceError,
+        match="STRUCTURED_CHAT_BINDING_SHA256_MISMATCH",
+    ):
+        _piece_chat_evidence(
+            {
+                "remote_media": str(tmp_path / "source.mp4"),
+                "chat_jsonl_local": str(jsonl),
+                "chat_jsonl_sha256": "sha256:" + "b" * 64,
+                "chat_origin_epoch_ms": 1_750_000_000_000,
+                "chat_timeline_offset_ms": 0,
+                "structured_chat_required": True,
+            }
+        )
+
+
+def test_optional_legacy_piece_without_chat_sidecar_stays_compatible(tmp_path):
+    assert (
+        _piece_chat_evidence(
+            {
+                "remote_media": str(tmp_path / "legacy.mp4"),
+                "structured_chat_required": False,
+                "chat_binding_status": "OPTIONAL_ABSENT",
+            }
+        )
+        == []
+    )
+
+
 def test_exact_danmaku_read_replaces_asr_span():
     source = _srt("等小室什么时候来看恋死呢", "恋死我自己有看了")
     evidence = [ChatEvidence("danmaku", -8_000, "等小李什么时候来看恋青呢")]
@@ -1288,6 +1394,122 @@ def test_matched_sc_repairs_only_the_explicit_thank_name_slot():
     assert audit["sender_repairs"][0]["source_event_id"] == "17439760"
 
 
+def test_structured_sender_alias_preserves_punctuation_and_mixed_scripts():
+    assert _spoken_sender_alias("寒-歌") == "寒-歌"
+    assert _spoken_sender_alias("小凑るう子") == "小凑るう子"
+    # This known display tag remains non-spoken for backward compatibility.
+    assert _spoken_sender_alias("十麻乃orient") == "十麻乃"
+
+    assert _repair_sc_sender("谢谢韩歌的钢镚", "寒-歌") == "谢谢寒-歌的钢镚"
+    assert _repair_sc_sender("谢谢小路路口的钢镚", "小凑るう子") == (
+        "谢谢小凑るう子的钢镚"
+    )
+
+
+def test_sc_sender_slot_covers_double_eye_gangbeng_action_without_eating_it():
+    assert _repair_sc_sender("谢谢野菊的双目钢镚", "野橘未霜") == (
+        "谢谢野橘未霜的双目钢镚"
+    )
+    assert _repair_sc_sender("谢谢波浪的光棒", "步汪汪") == "谢谢步汪汪的光棒"
+
+
+def test_sc_body_splice_preserves_preceding_thank_sender_action_head():
+    result = _aligned_span_replacements(
+        "姐姐大人，晚上好，晚上好",
+        ["谢谢波浪的光棒，姐大人", "晚上好，晚上好"],
+    )
+
+    assert result is not None
+    replacements, alignment = result
+    joined = "".join(replacements)
+    assert joined.startswith("谢谢波浪的光棒")
+    assert "姐姐大人，晚上好，晚上好" in joined
+    assert alignment["preserved_thank_sender_action_head"].startswith(
+        "谢谢波浪的光棒"
+    )
+
+
+def test_guard_buy_repairs_thank_sender_after_232140ms():
+    source = (
+        "1\n"
+        "00:03:52,140 --> 00:03:55,000\n"
+        "谢谢刚刚PANJA的舰长\n"
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence(
+                "guard",
+                0,
+                "舰长",
+                "panoja",
+                source_event_id="guard-101",
+            )
+        ],
+    )
+
+    assert "谢谢刚刚panoja的舰长" in output
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+    assert audit["sender_repairs"][0]["alignment_basis"] == (
+        "guard-buy-plus-thank-action-anchor.v1"
+    )
+    assert audit["sender_repairs"][0]["delay_ms"] == 232_140
+
+
+def test_unique_guard_event_restores_full_mixed_script_sender_after_severe_asr_miss():
+    source = "1\n00:00:50,000 --> 00:00:53,000\n谢谢小路路口的舰长\n"
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence(
+                "guard",
+                10_000,
+                "舰长",
+                "小凑るう子",
+                source_event_id="guard-102",
+            )
+        ],
+    )
+
+    assert "谢谢小凑るう子的舰长" in output
+    assert audit["sender_repairs"][0]["name_match_strength"] == 1
+
+
+def test_guard_buy_ambiguous_sender_fails_closed():
+    source = (
+        "1\n"
+        "00:03:52,140 --> 00:03:55,000\n"
+        "谢谢刚刚听不清的舰长\n"
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("guard", 0, "舰长", "甲", source_event_id="guard-a"),
+            ChatEvidence(
+                "guard",
+                1_000,
+                "舰长",
+                "乙",
+                source_event_id="guard-b",
+            ),
+        ],
+    )
+
+    assert output == source
+    assert audit["status"] == "SC_SENDER_VERDICT_REQUIRED"
+    assert audit["sender_repairs"] == []
+    assert audit["sender_verdict_required"][0]["reason_code"] == (
+        "GUARD_BUY_SENDER_AMBIGUOUS"
+    )
+    assert audit["sender_verdict_required"][0]["candidate_spoken_senders"] == [
+        "乙",
+        "甲",
+    ]
+
+
 def test_matched_sc_body_makes_platform_sender_authoritative_for_thank_name_slot():
     source = _srt(
         "谢谢甲送的",
@@ -1426,6 +1648,105 @@ def test_jsonl_yields_gift_events_with_masked_sender_and_unmasked_gift_name(tmp_
         ("gift", 60_000, "流星雨", "有***"),
         ("gift", 65_000, "流星雨", "有***"),
     ]
+
+
+def test_jsonl_yields_guard_buy_from_event_time_and_full_structured_fields(tmp_path):
+    """GUARD_BUY's data.start_time is the event clock; top-level send_time may
+    be a later recorder-ingestion clock and must not move the thanks window."""
+
+    start_ms = int(
+        datetime(2026, 7, 22, 19, 34, 50, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    jsonl = tmp_path / "22966160_20260722-19-34-50.jsonl"
+    jsonl.write_text(
+        json.dumps(
+            {
+                "cmd": "GUARD_BUY",
+                "send_time": (start_ms + 900_000) / 1000,
+                "data": {
+                    "start_time": (start_ms + 10_000) / 1000,
+                    "username": "小凑るう子",
+                    "gift_name": "舰长",
+                    "guard_level": 3,
+                    "uid": 101,
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    items = load_chat_jsonl(jsonl, recording_start_ms=start_ms)
+
+    assert [
+        (
+            item.kind,
+            item.offset_ms,
+            item.text,
+            item.sender,
+            item.source_event_id,
+        )
+        for item in items
+    ] == [("guard", 10_000, "舰长", "小凑るう子", "101")]
+
+    piece_items = _piece_chat_evidence(
+        {
+            "remote_media": str(
+                tmp_path / "22966160_20260722-19-34-50.mp4"
+            ),
+            "chat_jsonl_local": str(jsonl),
+        }
+    )
+    assert [
+        (item.kind, item.offset_ms, item.text, item.sender)
+        for item in piece_items
+    ] == [("guard", 10_000, "舰长", "小凑るう子")]
+
+
+def test_guard_buy_missing_identity_or_level_fails_closed(tmp_path):
+    start_ms = int(
+        datetime(2026, 7, 22, 19, 34, 50, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    jsonl = tmp_path / "22966160_20260722-19-34-50.jsonl"
+    rows = [
+        {
+            "cmd": "GUARD_BUY",
+            "data": {
+                "start_time": (start_ms + 10_000) / 1000,
+                "username": "无UID",
+                "gift_name": "舰长",
+                "guard_level": 3,
+            },
+        },
+        {
+            "cmd": "GUARD_BUY",
+            "data": {
+                "start_time": (start_ms + 20_000) / 1000,
+                "username": "无等级",
+                "gift_name": "舰长",
+                "uid": 102,
+            },
+        },
+        {
+            "cmd": "GUARD_BUY",
+            "send_time": (start_ms + 30_000) / 1000,
+            "data": {
+                "username": "无事件时间",
+                "gift_name": "舰长",
+                "guard_level": 3,
+                "uid": 103,
+            },
+        },
+    ]
+    jsonl.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    assert load_chat_jsonl(jsonl, recording_start_ms=start_ms) == []
 
 
 def test_gift_repair_replaces_asr_garbled_tail_on_resolved_verdict():

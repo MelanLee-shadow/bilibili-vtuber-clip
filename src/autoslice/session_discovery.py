@@ -432,7 +432,25 @@ def discover_segments(date: str, state: dict) -> None:
                 _runner.log(f"segment {segment.name}: BCUT failed {attempts[stem]}x → dead")
             continue
         xml = _runner.find_danmaku_xml(segment)
-        chat_jsonl = _runner.find_chat_jsonl(segment)
+        verified_source_sha256 = _verified_state_source_sha256(state, segment)
+        try:
+            chat_binding = _runner.resolve_structured_chat_binding(
+                segment,
+                source_sha256=verified_source_sha256,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            failures = state.setdefault("structured_chat_binding_failures", {})
+            if not isinstance(failures, dict):
+                failures = {}
+                state["structured_chat_binding_failures"] = failures
+            failures[stem] = str(exc)
+            _runner.log(
+                f"{segment.name}: structured chat binding BLOCKED ({exc})"
+            )
+            continue
+        failures = state.get("structured_chat_binding_failures")
+        if isinstance(failures, dict):
+            failures.pop(stem, None)
         candidates, lane, extras = _runner.recall_candidates(srt, _runner.danmaku_hints(xml))
         seg_dur = _runner.ffprobe_ms(segment)
         segment_durations_ms[stem] = seg_dur
@@ -486,7 +504,7 @@ def discover_segments(date: str, state: dict) -> None:
                 "segment_path": str(segment),
                 "seg_dur_ms": seg_dur,
                 "xml": str(xml) if xml else None,
-                "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
+                **chat_binding,
                 "hook": selection_hook,
                 "confidence": meta.get("confidence"),
                 "selection_scorecard": (
@@ -534,7 +552,8 @@ def discover_segments(date: str, state: dict) -> None:
             song_item.setdefault("segment_path", str(segment))
             song_item.setdefault("seg_dur_ms", seg_dur)
             song_item.setdefault("xml", str(xml) if xml else None)
-            song_item.setdefault("chat_jsonl", str(chat_jsonl) if chat_jsonl else None)
+            for key, value in chat_binding.items():
+                song_item.setdefault(key, value)
             song_item.setdefault("session_id", session_id)
             song_item.setdefault(
                 "danmaku",

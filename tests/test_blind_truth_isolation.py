@@ -1,6 +1,5 @@
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
@@ -14,19 +13,48 @@ def test_withheld_mode_hides_candidate_truth_and_changes_provenance(tmp_path, mo
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
     override = tmp_path / "assets/lidousha/subtitle_text_overrides/auto_blind.text.v1.json"
     regression = tmp_path / "assets/lidousha/subtitle_regressions/auto_blind.subtitle-regression.v1.json"
+    baseline_root = tmp_path / "assets/lidousha/reviewed_subtitle_baselines"
+    baseline = baseline_root / "auto_blind.reviewed.srt"
+    baseline_manifest = baseline_root / "auto_blind.subtitle-baseline.v1.json"
     override.parent.mkdir(parents=True)
     regression.parent.mkdir(parents=True)
+    baseline_root.mkdir(parents=True)
     override.write_text("{}\n", encoding="utf-8")
     regression.write_text("{}\n", encoding="utf-8")
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n人工真值\n",
+        encoding="utf-8",
+    )
+    baseline_manifest.write_text(
+        json.dumps(
+            {
+                "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+                "candidate_id": "auto_blind",
+                "schema_version": "subtitle-redelivery-baseline.v2",
+                "mode": "preserve_text_outside_source_truth",
+                "path": baseline.name,
+                "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+                "authority": "human review",
+                "source_recording_basename": "recording.mp4",
+                "source_sha256": "b" * 64,
+                "absolute_source_start_ms": 1_000,
+                "absolute_source_end_ms": 2_000,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery")
     delivery_fingerprint = runner.talk_pipeline_fingerprint("auto_blind")
     assert runner.candidate_text_override_path("auto_blind") == override
     assert runner.candidate_subtitle_regression_path("auto_blind") == regression
+    assert runner.candidate_reviewed_subtitle_baseline("auto_blind") is not None
 
     monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
     assert runner.candidate_text_override_path("auto_blind") is None
     assert runner.candidate_subtitle_regression_path("auto_blind") is None
+    assert runner.candidate_reviewed_subtitle_baseline("auto_blind") is None
     assert runner.talk_pipeline_fingerprint("auto_blind") != delivery_fingerprint
 
 

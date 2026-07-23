@@ -6,15 +6,17 @@ operator is fixing one known incident or merely re-burning media.  This module
 binds a previous delivered SRT by hash and projects only its text onto the new
 cue timing outside higher-authority source-truth windows.
 
-Timing is never copied from the baseline.  Every current cue and every prior
-cue must align one-to-one by strong timeline overlap; segmentation drift,
-missing cues, ambiguous matches, or a stale hash fail closed.
+Version 1 aligns two SRTs on the same local timeline.  Version 2 also binds the
+source recording identity and projects the reviewed baseline through absolute
+source time, so a new recut may trim or extend only at clean reviewed-coverage
+boundaries.  Timing is never copied from the baseline.  Missing, split, merged,
+ambiguous, drifted, or identity-mismatched cues fail closed.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
-import json
 import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -23,11 +25,41 @@ from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 
 
 SCHEMA_VERSION = "subtitle-redelivery-baseline.v1"
+SCHEMA_VERSION_V2 = "subtitle-redelivery-baseline.v2"
 AUDIT_SCHEMA_VERSION = "subtitle-redelivery-baseline-audit.v1"
+AUDIT_SCHEMA_VERSION_V2 = "subtitle-redelivery-baseline-audit.v2"
 MODE = "preserve_text_outside_source_truth"
 MIN_ALIGNMENT_OVERLAP_MS = 80
 MIN_ALIGNMENT_RATIO = 0.80
+MAX_ALIGNMENT_BOUNDARY_DRIFT_MS = 250
 _SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
+
+
+@dataclass(frozen=True)
+class _V2Timeline:
+    baseline_start_ms: int
+    baseline_end_ms: int
+    current_start_ms: int
+    current_end_ms: int
+    current_duration_ms: int
+    effective_start_ms: int
+    effective_end_ms: int
+    protected_windows: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class _V2CueRows:
+    baseline: dict[int, tuple[int, int]]
+    current: dict[int, tuple[int, int]]
+    protected_current_count: int
+
+
+@dataclass(frozen=True)
+class _V2Alignment:
+    strong_by_current: dict[int, list[tuple[int, int, float, int, int]]]
+    raw_by_current: dict[int, list[int]]
+    strong_by_baseline: dict[int, list[int]]
+    raw_by_baseline: dict[int, list[int]]
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -60,10 +92,33 @@ def _protected(cue: SrtCue, windows: Sequence[tuple[int, int]]) -> bool:
     )
 
 
+def _valid_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _read_sha256(value: object, *, reason_code: str) -> str:
+    match = _SHA256_RX.fullmatch(str(value or ""))
+    if match is None:
+        raise ValueError(reason_code)
+    return match.group(1)
+
+
+def _read_recording_basename(value: object, *, reason_code: str) -> str:
+    basename = str(value or "").strip()
+    if (
+        not basename
+        or basename in {".", ".."}
+        or Path(basename).name != basename
+    ):
+        raise ValueError(reason_code)
+    return basename
+
+
 def _read_config(
     config: Mapping[str, Any], *, spec_parent: Path
-) -> tuple[Path, str, str]:
-    if config.get("schema_version") != SCHEMA_VERSION:
+) -> tuple[str, Path, str, str]:
+    schema_version = config.get("schema_version")
+    if schema_version not in {SCHEMA_VERSION, SCHEMA_VERSION_V2}:
         raise ValueError("REDELIVERY_BASELINE_SCHEMA_INVALID")
     if config.get("mode") != MODE:
         raise ValueError("REDELIVERY_BASELINE_MODE_INVALID")
@@ -76,14 +131,662 @@ def _read_config(
     if not path.is_file() or path.is_symlink():
         raise ValueError("REDELIVERY_BASELINE_PATH_INVALID")
     path = path.resolve()
-    expected_match = _SHA256_RX.fullmatch(str(config.get("sha256") or ""))
-    if expected_match is None:
-        raise ValueError("REDELIVERY_BASELINE_SHA256_INVALID")
+    expected_sha256 = _read_sha256(
+        config.get("sha256"),
+        reason_code="REDELIVERY_BASELINE_SHA256_INVALID",
+    )
     authority = str(config.get("authority") or "").strip()
     if not authority:
         raise ValueError("REDELIVERY_BASELINE_AUTHORITY_MISSING")
-    return path, expected_match.group(1), authority
+    return str(schema_version), path, expected_sha256, authority
 
+
+def _fail(
+    current_srt: str,
+    audit: dict[str, Any],
+    reason_code: str,
+    **details: Any,
+) -> tuple[str, dict[str, Any]]:
+    audit["status"] = "FAILED"
+    audit["failures"].append({"reason_code": reason_code, **details})
+    audit["output_sha256"] = audit["current_input_sha256"]
+    return current_srt, audit
+
+
+def _absolute_overlap_ms(
+    left_start_ms: int,
+    left_end_ms: int,
+    right_start_ms: int,
+    right_end_ms: int,
+) -> int:
+    return max(
+        0,
+        min(left_end_ms, right_end_ms) - max(left_start_ms, right_start_ms),
+    )
+
+
+def _fully_protected_absolute(
+    start_ms: int,
+    end_ms: int,
+    windows: Sequence[tuple[int, int]],
+) -> bool:
+    return any(
+        window_start_ms <= start_ms and end_ms <= window_end_ms
+        for window_start_ms, window_end_ms in windows
+    )
+
+
+def _partially_protected_absolute(
+    start_ms: int,
+    end_ms: int,
+    windows: Sequence[tuple[int, int]],
+) -> bool:
+    return any(
+        _absolute_overlap_ms(start_ms, end_ms, window_start_ms, window_end_ms)
+        >= MIN_ALIGNMENT_OVERLAP_MS
+        and not (window_start_ms <= start_ms and end_ms <= window_end_ms)
+        for window_start_ms, window_end_ms in windows
+    )
+
+
+def _read_v2_timeline(
+    current_srt: str,
+    *,
+    config: Mapping[str, Any],
+    audit: dict[str, Any],
+    protected_windows: Sequence[tuple[int, int]],
+    current_source_start_ms: int | None,
+    current_source_end_ms: int | None,
+    current_source_recording_basename: str | None,
+    current_source_sha256: str | None,
+) -> _V2Timeline | None:
+    baseline_start_raw = config.get("absolute_source_start_ms")
+    baseline_end_raw = config.get("absolute_source_end_ms")
+    if not _valid_int(baseline_start_raw) or baseline_start_raw < 0:
+        _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_BASELINE_ABSOLUTE_SOURCE_START_INVALID",
+        )
+        return None
+    if (
+        not _valid_int(baseline_end_raw)
+        or baseline_end_raw <= baseline_start_raw
+    ):
+        _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_BASELINE_ABSOLUTE_SOURCE_END_INVALID",
+        )
+        return None
+    try:
+        expected_recording_basename = _read_recording_basename(
+            config.get("source_recording_basename"),
+            reason_code="REDELIVERY_BASELINE_SOURCE_RECORDING_BASENAME_INVALID",
+        )
+        expected_source_sha256 = _read_sha256(
+            config.get("source_sha256"),
+            reason_code="REDELIVERY_BASELINE_SOURCE_SHA256_INVALID",
+        )
+        actual_recording_basename = _read_recording_basename(
+            current_source_recording_basename,
+            reason_code="REDELIVERY_CURRENT_SOURCE_RECORDING_BASENAME_INVALID",
+        )
+        actual_source_sha256 = _read_sha256(
+            current_source_sha256,
+            reason_code="REDELIVERY_CURRENT_SOURCE_SHA256_INVALID",
+        )
+    except ValueError as exc:
+        _fail(current_srt, audit, str(exc))
+        return None
+
+    if not _valid_int(current_source_start_ms) or current_source_start_ms < 0:
+        _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_CURRENT_ABSOLUTE_SOURCE_START_INVALID",
+        )
+        return None
+    if (
+        not _valid_int(current_source_end_ms)
+        or current_source_end_ms <= current_source_start_ms
+    ):
+        _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_CURRENT_ABSOLUTE_SOURCE_END_INVALID",
+        )
+        return None
+
+    baseline_start_ms = int(baseline_start_raw)
+    baseline_end_ms = int(baseline_end_raw)
+    current_start_ms = int(current_source_start_ms)
+    current_end_ms = int(current_source_end_ms)
+    audit.update(
+        {
+            "reviewed_coverage": {
+                "absolute_source_start_ms": baseline_start_ms,
+                "absolute_source_end_ms": baseline_end_ms,
+            },
+            "current_source_interval": {
+                "absolute_source_start_ms": current_start_ms,
+                "absolute_source_end_ms": current_end_ms,
+            },
+            "source_recording_identity": {
+                "expected_basename": expected_recording_basename,
+                "current_basename": actual_recording_basename,
+                "expected_sha256": expected_source_sha256,
+                "current_sha256": actual_source_sha256,
+            },
+            "uncovered_current_intervals": [],
+            "uncovered_current_cues": [],
+            "omitted_by_new_boundary": [],
+            "protected_absolute_intervals": [],
+        }
+    )
+    if actual_recording_basename != expected_recording_basename:
+        _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_SOURCE_RECORDING_BASENAME_MISMATCH",
+            expected=expected_recording_basename,
+            current=actual_recording_basename,
+        )
+        return None
+    if actual_source_sha256 != expected_source_sha256:
+        _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_SOURCE_RECORDING_SHA256_MISMATCH",
+            expected=expected_source_sha256,
+            current=actual_source_sha256,
+        )
+        return None
+
+    current_duration_ms = current_end_ms - current_start_ms
+    absolute_protected_windows: list[tuple[int, int]] = []
+    for start_ms, end_ms in protected_windows:
+        if (
+            not _valid_int(start_ms)
+            or not _valid_int(end_ms)
+            or start_ms < 0
+            or end_ms <= start_ms
+            or end_ms > current_duration_ms
+        ):
+            _fail(
+                current_srt,
+                audit,
+                "REDELIVERY_PROTECTED_INTERVAL_INVALID",
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
+            return None
+        absolute_start_ms = current_start_ms + start_ms
+        absolute_end_ms = current_start_ms + end_ms
+        absolute_protected_windows.append((absolute_start_ms, absolute_end_ms))
+        audit["protected_absolute_intervals"].append(
+            {
+                "absolute_source_start_ms": absolute_start_ms,
+                "absolute_source_end_ms": absolute_end_ms,
+            }
+        )
+
+    effective_start_ms = max(baseline_start_ms, current_start_ms)
+    effective_end_ms = min(baseline_end_ms, current_end_ms)
+    audit["effective_reviewed_overlap"] = {
+        "absolute_source_start_ms": effective_start_ms,
+        "absolute_source_end_ms": effective_end_ms,
+    }
+    if current_start_ms < min(current_end_ms, baseline_start_ms):
+        absolute_end_ms = min(current_end_ms, baseline_start_ms)
+        audit["uncovered_current_intervals"].append(
+            {
+                "position": "prefix",
+                "absolute_source_start_ms": current_start_ms,
+                "absolute_source_end_ms": absolute_end_ms,
+                "local_start_ms": 0,
+                "local_end_ms": absolute_end_ms - current_start_ms,
+            }
+        )
+    if max(current_start_ms, baseline_end_ms) < current_end_ms:
+        absolute_start_ms = max(current_start_ms, baseline_end_ms)
+        audit["uncovered_current_intervals"].append(
+            {
+                "position": "tail",
+                "absolute_source_start_ms": absolute_start_ms,
+                "absolute_source_end_ms": current_end_ms,
+                "local_start_ms": absolute_start_ms - current_start_ms,
+                "local_end_ms": current_end_ms - current_start_ms,
+            }
+        )
+    if effective_start_ms >= effective_end_ms:
+        _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_REVIEWED_COVERAGE_DISJOINT",
+        )
+        return None
+    return _V2Timeline(
+        baseline_start_ms=baseline_start_ms,
+        baseline_end_ms=baseline_end_ms,
+        current_start_ms=current_start_ms,
+        current_end_ms=current_end_ms,
+        current_duration_ms=current_duration_ms,
+        effective_start_ms=effective_start_ms,
+        effective_end_ms=effective_end_ms,
+        protected_windows=tuple(absolute_protected_windows),
+    )
+
+
+def _classify_v2_cues(
+    *,
+    current: Sequence[SrtCue],
+    baseline: Sequence[SrtCue],
+    timeline: _V2Timeline,
+    audit: dict[str, Any],
+) -> _V2CueRows:
+    baseline_rows: dict[int, tuple[int, int]] = {}
+    baseline_duration_ms = (
+        timeline.baseline_end_ms - timeline.baseline_start_ms
+    )
+    for baseline_index, cue in enumerate(baseline):
+        absolute_start_ms = timeline.baseline_start_ms + cue.start_ms
+        absolute_end_ms = timeline.baseline_start_ms + cue.end_ms
+        if (
+            cue.start_ms < 0
+            or cue.end_ms <= cue.start_ms
+            or cue.end_ms > baseline_duration_ms
+        ):
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_BASELINE_CUE_OUTSIDE_REVIEWED_COVERAGE",
+                    "baseline_cue_index": baseline_index + 1,
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                }
+            )
+            continue
+        if (
+            absolute_end_ms <= timeline.effective_start_ms
+            or absolute_start_ms >= timeline.effective_end_ms
+        ):
+            audit["omitted_by_new_boundary"].append(
+                {
+                    "baseline_cue_index": baseline_index + 1,
+                    "absolute_source_start_ms": absolute_start_ms,
+                    "absolute_source_end_ms": absolute_end_ms,
+                    "text": cue.text,
+                }
+            )
+            continue
+        if (
+            absolute_start_ms < timeline.effective_start_ms
+            or absolute_end_ms > timeline.effective_end_ms
+        ):
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_BASELINE_CUE_CUT_BY_NEW_BOUNDARY",
+                    "baseline_cue_index": baseline_index + 1,
+                    "absolute_source_start_ms": absolute_start_ms,
+                    "absolute_source_end_ms": absolute_end_ms,
+                }
+            )
+            continue
+        if _partially_protected_absolute(
+            absolute_start_ms,
+            absolute_end_ms,
+            timeline.protected_windows,
+        ):
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_BASELINE_CUE_PARTIALLY_PROTECTED",
+                    "baseline_cue_index": baseline_index + 1,
+                }
+            )
+            continue
+        if _fully_protected_absolute(
+            absolute_start_ms,
+            absolute_end_ms,
+            timeline.protected_windows,
+        ):
+            continue
+        baseline_rows[baseline_index] = (absolute_start_ms, absolute_end_ms)
+
+    current_rows: dict[int, tuple[int, int]] = {}
+    protected_current_count = 0
+    for current_index, cue in enumerate(current):
+        absolute_start_ms = timeline.current_start_ms + cue.start_ms
+        absolute_end_ms = timeline.current_start_ms + cue.end_ms
+        if (
+            cue.start_ms < 0
+            or cue.end_ms <= cue.start_ms
+            or cue.end_ms > timeline.current_duration_ms
+        ):
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_CURRENT_CUE_OUTSIDE_SOURCE_INTERVAL",
+                    "current_cue_index": current_index + 1,
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                }
+            )
+            continue
+        if (
+            absolute_end_ms <= timeline.effective_start_ms
+            or absolute_start_ms >= timeline.effective_end_ms
+        ):
+            audit["uncovered_current_cues"].append(
+                {
+                    "current_cue_index": current_index + 1,
+                    "absolute_source_start_ms": absolute_start_ms,
+                    "absolute_source_end_ms": absolute_end_ms,
+                    "text": cue.text,
+                }
+            )
+            continue
+        if (
+            absolute_start_ms < timeline.effective_start_ms
+            or absolute_end_ms > timeline.effective_end_ms
+        ):
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_CURRENT_CUE_STRADDLES_REVIEWED_COVERAGE",
+                    "current_cue_index": current_index + 1,
+                    "absolute_source_start_ms": absolute_start_ms,
+                    "absolute_source_end_ms": absolute_end_ms,
+                }
+            )
+            continue
+        if _partially_protected_absolute(
+            absolute_start_ms,
+            absolute_end_ms,
+            timeline.protected_windows,
+        ):
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_CURRENT_CUE_PARTIALLY_PROTECTED",
+                    "current_cue_index": current_index + 1,
+                }
+            )
+            continue
+        if _fully_protected_absolute(
+            absolute_start_ms,
+            absolute_end_ms,
+            timeline.protected_windows,
+        ):
+            protected_current_count += 1
+            continue
+        current_rows[current_index] = (absolute_start_ms, absolute_end_ms)
+    return _V2CueRows(
+        baseline=baseline_rows,
+        current=current_rows,
+        protected_current_count=protected_current_count,
+    )
+
+
+def _build_v2_alignment(rows: _V2CueRows) -> _V2Alignment:
+    strong_by_current: dict[int, list[tuple[int, int, float, int, int]]] = {}
+    raw_by_current: dict[int, list[int]] = {}
+    strong_by_baseline: dict[int, list[int]] = {
+        baseline_index: [] for baseline_index in rows.baseline
+    }
+    raw_by_baseline: dict[int, list[int]] = {
+        baseline_index: [] for baseline_index in rows.baseline
+    }
+    for current_index, (current_abs_start, current_abs_end) in rows.current.items():
+        strong_candidates: list[tuple[int, int, float, int, int]] = []
+        raw_candidates: list[int] = []
+        current_duration = current_abs_end - current_abs_start
+        for baseline_index, (
+            baseline_abs_start,
+            baseline_abs_end,
+        ) in rows.baseline.items():
+            overlap = _absolute_overlap_ms(
+                current_abs_start,
+                current_abs_end,
+                baseline_abs_start,
+                baseline_abs_end,
+            )
+            if overlap < MIN_ALIGNMENT_OVERLAP_MS:
+                continue
+            raw_candidates.append(baseline_index)
+            raw_by_baseline[baseline_index].append(current_index)
+            baseline_duration = baseline_abs_end - baseline_abs_start
+            ratio = overlap / max(1, current_duration, baseline_duration)
+            start_drift = abs(current_abs_start - baseline_abs_start)
+            end_drift = abs(current_abs_end - baseline_abs_end)
+            if (
+                ratio >= MIN_ALIGNMENT_RATIO
+                and start_drift <= MAX_ALIGNMENT_BOUNDARY_DRIFT_MS
+                and end_drift <= MAX_ALIGNMENT_BOUNDARY_DRIFT_MS
+            ):
+                strong_candidates.append(
+                    (
+                        baseline_index,
+                        overlap,
+                        ratio,
+                        start_drift,
+                        end_drift,
+                    )
+                )
+                strong_by_baseline[baseline_index].append(current_index)
+        strong_by_current[current_index] = strong_candidates
+        raw_by_current[current_index] = raw_candidates
+    return _V2Alignment(
+        strong_by_current=strong_by_current,
+        raw_by_current=raw_by_current,
+        strong_by_baseline=strong_by_baseline,
+        raw_by_baseline=raw_by_baseline,
+    )
+
+
+def _append_v2_alignment_failures(
+    *,
+    current: Sequence[SrtCue],
+    baseline: Sequence[SrtCue],
+    timeline: _V2Timeline,
+    alignment: _V2Alignment,
+    audit: dict[str, Any],
+) -> None:
+    for current_index, candidates in alignment.strong_by_current.items():
+        cue = current[current_index]
+        if len(candidates) > 1:
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_CURRENT_CUE_ALIGNMENT_AMBIGUOUS",
+                    "current_cue_index": current_index + 1,
+                    "baseline_cue_indexes": [
+                        candidate[0] + 1 for candidate in candidates
+                    ],
+                }
+            )
+        elif not candidates:
+            raw_candidates = alignment.raw_by_current[current_index]
+            if len(raw_candidates) > 1:
+                reason_code = "REDELIVERY_CURRENT_CUE_MERGES_BASELINE_CUES"
+            elif raw_candidates:
+                reason_code = "REDELIVERY_CURRENT_CUE_ALIGNMENT_DRIFT"
+            else:
+                reason_code = "REDELIVERY_CURRENT_CUE_UNALIGNED"
+            audit["failures"].append(
+                {
+                    "reason_code": reason_code,
+                    "current_cue_index": current_index + 1,
+                    "baseline_cue_indexes": [
+                        baseline_index + 1
+                        for baseline_index in raw_candidates
+                    ],
+                    "absolute_source_start_ms": (
+                        timeline.current_start_ms + cue.start_ms
+                    ),
+                    "absolute_source_end_ms": (
+                        timeline.current_start_ms + cue.end_ms
+                    ),
+                }
+            )
+
+    for baseline_index, candidates in alignment.strong_by_baseline.items():
+        cue = baseline[baseline_index]
+        if len(candidates) > 1:
+            audit["failures"].append(
+                {
+                    "reason_code": "REDELIVERY_BASELINE_CUE_SPLIT_ACROSS_CURRENT_CUES",
+                    "baseline_cue_index": baseline_index + 1,
+                    "current_cue_indexes": [
+                        current_index + 1 for current_index in candidates
+                    ],
+                }
+            )
+        elif not candidates:
+            raw_candidates = alignment.raw_by_baseline[baseline_index]
+            if len(raw_candidates) > 1:
+                reason_code = "REDELIVERY_BASELINE_CUE_SPLIT_ACROSS_CURRENT_CUES"
+            elif raw_candidates:
+                reason_code = "REDELIVERY_BASELINE_CUE_ALIGNMENT_DRIFT"
+            else:
+                reason_code = "REDELIVERY_BASELINE_CUE_UNCONSUMED"
+            audit["failures"].append(
+                {
+                    "reason_code": reason_code,
+                    "baseline_cue_index": baseline_index + 1,
+                    "current_cue_indexes": [
+                        current_index + 1 for current_index in raw_candidates
+                    ],
+                    "absolute_source_start_ms": (
+                        timeline.baseline_start_ms + cue.start_ms
+                    ),
+                    "absolute_source_end_ms": (
+                        timeline.baseline_start_ms + cue.end_ms
+                    ),
+                }
+            )
+
+
+def _render_v2_output(
+    current_srt: str,
+    *,
+    current: Sequence[SrtCue],
+    baseline: Sequence[SrtCue],
+    rows: _V2CueRows,
+    alignment: _V2Alignment,
+    audit: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    texts = [cue.text for cue in current]
+    changed_count = 0
+    for current_index in sorted(rows.current):
+        (
+            baseline_index,
+            overlap,
+            ratio,
+            start_drift,
+            end_drift,
+        ) = alignment.strong_by_current[current_index][0]
+        current_cue = current[current_index]
+        baseline_cue = baseline[baseline_index]
+        before = texts[current_index]
+        after = baseline_cue.text
+        if before != after:
+            texts[current_index] = after
+            changed_count += 1
+        current_abs_start, current_abs_end = rows.current[current_index]
+        baseline_abs_start, baseline_abs_end = rows.baseline[baseline_index]
+        audit["mappings"].append(
+            {
+                "current_cue_index": current_index + 1,
+                "baseline_cue_index": baseline_index + 1,
+                "start_ms": current_cue.start_ms,
+                "end_ms": current_cue.end_ms,
+                "current_absolute_source_start_ms": current_abs_start,
+                "current_absolute_source_end_ms": current_abs_end,
+                "baseline_absolute_source_start_ms": baseline_abs_start,
+                "baseline_absolute_source_end_ms": baseline_abs_end,
+                "overlap_ms": overlap,
+                "overlap_ratio": round(ratio, 6),
+                "start_drift_ms": start_drift,
+                "end_drift_ms": end_drift,
+                "changed": before != after,
+                "before": before,
+                "after": after,
+            }
+        )
+        audit["owned_intervals"].append(
+            {"start_ms": current_cue.start_ms, "end_ms": current_cue.end_ms}
+        )
+
+    output = _render(current, texts)
+    audit.update(
+        {
+            "status": "APPLIED" if changed_count else "ALREADY_SATISFIED",
+            "mapped_cue_count": len(audit["mappings"]),
+            "changed_cue_count": changed_count,
+            "protected_cue_count": rows.protected_current_count,
+            "omitted_baseline_cue_count": len(
+                audit["omitted_by_new_boundary"]
+            ),
+            "uncovered_current_cue_count": len(audit["uncovered_current_cues"]),
+            "output_sha256": _sha256_bytes(output.encode("utf-8")),
+        }
+    )
+    return output, audit
+
+
+def _apply_v2(
+    current_srt: str,
+    *,
+    current: Sequence[SrtCue],
+    baseline: Sequence[SrtCue],
+    config: Mapping[str, Any],
+    audit: dict[str, Any],
+    protected_windows: Sequence[tuple[int, int]],
+    current_source_start_ms: int | None,
+    current_source_end_ms: int | None,
+    current_source_recording_basename: str | None,
+    current_source_sha256: str | None,
+) -> tuple[str, dict[str, Any]]:
+    timeline = _read_v2_timeline(
+        current_srt,
+        config=config,
+        audit=audit,
+        protected_windows=protected_windows,
+        current_source_start_ms=current_source_start_ms,
+        current_source_end_ms=current_source_end_ms,
+        current_source_recording_basename=current_source_recording_basename,
+        current_source_sha256=current_source_sha256,
+    )
+    if timeline is None:
+        return current_srt, audit
+
+    rows = _classify_v2_cues(
+        current=current,
+        baseline=baseline,
+        timeline=timeline,
+        audit=audit,
+    )
+    if audit["failures"]:
+        audit["status"] = "FAILED"
+        audit["output_sha256"] = audit["current_input_sha256"]
+        return current_srt, audit
+
+    alignment = _build_v2_alignment(rows)
+    _append_v2_alignment_failures(
+        current=current,
+        baseline=baseline,
+        timeline=timeline,
+        alignment=alignment,
+        audit=audit,
+    )
+    if audit["failures"]:
+        audit["status"] = "FAILED"
+        audit["output_sha256"] = audit["current_input_sha256"]
+        return current_srt, audit
+    return _render_v2_output(
+        current_srt,
+        current=current,
+        baseline=baseline,
+        rows=rows,
+        alignment=alignment,
+        audit=audit,
+    )
 
 def apply_redelivery_subtitle_baseline(
     current_srt: str,
@@ -91,8 +794,12 @@ def apply_redelivery_subtitle_baseline(
     config: Mapping[str, Any] | None,
     spec_parent: Path,
     protected_windows: Sequence[tuple[int, int]] = (),
+    current_source_start_ms: int | None = None,
+    current_source_end_ms: int | None = None,
+    current_source_recording_basename: str | None = None,
+    current_source_sha256: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Preserve baseline text outside reviewed source-truth windows."""
+    """Preserve hash-bound baseline text while retaining current cue timing."""
 
     audit: dict[str, Any] = {
         "schema_version": AUDIT_SCHEMA_VERSION,
@@ -118,9 +825,11 @@ def apply_redelivery_subtitle_baseline(
         audit["failures"].append({"reason_code": "REDELIVERY_BASELINE_CONFIG_INVALID"})
         audit["output_sha256"] = audit["current_input_sha256"]
         return current_srt, audit
+    if config.get("schema_version") == SCHEMA_VERSION_V2:
+        audit["schema_version"] = AUDIT_SCHEMA_VERSION_V2
 
     try:
-        path, expected_sha256, authority = _read_config(
+        baseline_schema_version, path, expected_sha256, authority = _read_config(
             config, spec_parent=spec_parent
         )
         raw = path.read_bytes()
@@ -137,6 +846,7 @@ def apply_redelivery_subtitle_baseline(
             "baseline_sha256": actual_sha256,
             "expected_baseline_sha256": expected_sha256,
             "authority": authority,
+            "baseline_schema_version": baseline_schema_version,
         }
     )
     if actual_sha256 != expected_sha256:
@@ -159,6 +869,19 @@ def apply_redelivery_subtitle_baseline(
         audit["failures"].append({"reason_code": "REDELIVERY_BASELINE_SRT_EMPTY"})
         audit["output_sha256"] = audit["current_input_sha256"]
         return current_srt, audit
+    if baseline_schema_version == SCHEMA_VERSION_V2:
+        return _apply_v2(
+            current_srt,
+            current=current,
+            baseline=baseline,
+            config=config,
+            audit=audit,
+            protected_windows=protected_windows,
+            current_source_start_ms=current_source_start_ms,
+            current_source_end_ms=current_source_end_ms,
+            current_source_recording_basename=current_source_recording_basename,
+            current_source_sha256=current_source_sha256,
+        )
 
     current_indexes = [
         index for index, cue in enumerate(current) if not _protected(cue, protected_windows)

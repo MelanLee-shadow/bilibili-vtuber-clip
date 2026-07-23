@@ -55,6 +55,7 @@ _REQUIRED_ASSET_FILES = frozenset(
 _REQUIRED_ASSET_DIRECTORIES = frozenset(
     {
         "fonts",
+        "reviewed_subtitle_baselines",
         "speaker_overrides",
         "subtitle_regressions",
         "subtitle_text_overrides",

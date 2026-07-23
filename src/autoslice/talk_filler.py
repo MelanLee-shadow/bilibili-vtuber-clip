@@ -808,6 +808,16 @@ def build_piece_specs(
     if not isinstance(retained, list) or not retained:
         raise ValueError("filler plan has no retained intervals")
     segment_duration_ms = int(item.get("seg_dur_ms") or 0)
+    structured_chat_fields = (
+        "chat_jsonl_sha256",
+        "chat_origin_epoch_ms",
+        "chat_timeline_offset_ms",
+        "structured_chat_required",
+        "chat_source_alias_id",
+        "chat_canonical_recording_basename",
+        "chat_binding_status",
+        "chat_binding_authority",
+    )
     pieces: list[dict[str, object]] = []
     for index, interval in enumerate(retained):
         if not isinstance(interval, Mapping):
@@ -833,6 +843,11 @@ def build_piece_specs(
                     if item.get("chat_jsonl")
                     else {}
                 ),
+                **{
+                    field: item[field]
+                    for field in structured_chat_fields
+                    if field in item
+                },
             }
         )
     return pieces

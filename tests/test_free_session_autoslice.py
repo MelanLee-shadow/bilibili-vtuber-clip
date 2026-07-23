@@ -10,6 +10,7 @@ import pytest
 
 import scripts.free_session_autoslice as runner
 import src.autoslice.speaker_session_router as speaker_router
+from src.autoslice.chat_authority import recording_start_epoch_ms
 from src.autoslice.visual_song_discovery import VisualSongCandidate, VisualSongDiscoveryResult
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from src.autoslice.cover_route_evidence import (
@@ -5288,6 +5289,49 @@ def test_talk_fingerprint_scopes_candidate_regression_add_edit_delete(tmp_path, 
     assert runner.talk_pipeline_fingerprint("auto_first") == first_before
 
 
+def test_talk_fingerprint_scopes_reviewed_subtitle_baseline_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    root = tmp_path / "assets/lidousha/reviewed_subtitle_baselines"
+    root.mkdir(parents=True)
+    first_before = runner.talk_pipeline_fingerprint("auto_first")
+    second_before = runner.talk_pipeline_fingerprint("auto_second")
+    baseline = root / "auto_first.reviewed.srt"
+    baseline.write_text("1\n00:00:00,000 --> 00:00:01,000\n原稿\n", encoding="utf-8")
+    manifest = root / "auto_first.subtitle-baseline.v1.json"
+
+    def write_manifest() -> None:
+        manifest.write_text(
+            json.dumps(
+                {
+                    "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+                    "candidate_id": "auto_first",
+                    "schema_version": "subtitle-redelivery-baseline.v2",
+                    "mode": "preserve_text_outside_source_truth",
+                    "path": baseline.name,
+                    "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+                    "authority": "Ivan reviewed delivery",
+                    "source_recording_basename": "recording.mp4",
+                    "source_sha256": "b" * 64,
+                    "absolute_source_start_ms": 10_000,
+                    "absolute_source_end_ms": 11_000,
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    write_manifest()
+    first_added = runner.talk_pipeline_fingerprint("auto_first")
+    assert first_added != first_before
+    assert runner.talk_pipeline_fingerprint("auto_second") == second_before
+
+    baseline.write_text("1\n00:00:00,000 --> 00:00:01,000\n修订稿\n", encoding="utf-8")
+    write_manifest()
+    assert runner.talk_pipeline_fingerprint("auto_first") != first_added
+
+
 def test_candidate_override_discovery_rejects_symlink(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     root = tmp_path / "assets/lidousha/subtitle_text_overrides"
@@ -5811,6 +5855,33 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
     regression = repo / "assets/lidousha/subtitle_regressions/auto_212005_163_311.subtitle-regression.v1.json"
     regression.parent.mkdir(parents=True)
     regression.write_text("{}\n", encoding="utf-8")
+    baseline_root = repo / "assets/lidousha/reviewed_subtitle_baselines"
+    baseline_root.mkdir(parents=True)
+    baseline = baseline_root / "auto_212005_163_311.reviewed.srt"
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n已审文本\n",
+        encoding="utf-8",
+    )
+    (baseline_root / "auto_212005_163_311.subtitle-baseline.v1.json").write_text(
+        json.dumps(
+            {
+                "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+                "candidate_id": "auto_212005_163_311",
+                "schema_version": "subtitle-redelivery-baseline.v2",
+                "mode": "preserve_text_outside_source_truth",
+                "path": baseline.name,
+                "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+                "authority": "Ivan reviewed delivery",
+                "source_recording_basename": "22966160_20260710-21-20-05.mp4",
+                "source_sha256": "c" * 64,
+                "absolute_source_start_ms": 163_000,
+                "absolute_source_end_ms": 164_000,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(runner, "BASE", base)
     monkeypatch.setattr(runner, "REPO_ROOT", repo)
     monkeypatch.setattr(runner, "child_env", lambda: {})
@@ -5861,6 +5932,10 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
     assert spec["boundary_repair_extend_cap_ms"] == 60_000
     assert spec["subtitle_text_overrides"] == str(override)
     assert spec["subtitle_regression"] == str(regression)
+    assert spec["subtitle_redelivery_baseline"]["schema_version"] == (
+        "subtitle-redelivery-baseline.v2"
+    )
+    assert spec["subtitle_redelivery_baseline"]["path"] == str(baseline.resolve())
 
 
 def test_talk_boundary_failure_does_not_retry_without_continuation_scope(tmp_path, monkeypatch):
@@ -6043,6 +6118,8 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
                 "segment": segment.name,
                 "start_ms": 163_000,
                 "end_ms": 311_000,
+                "given_end_ms": 318_000,
+                "given_end_authority": "Ivan reviewed complete closing sentence",
                 "status": "boundary_unrepairable",
                 "pipeline_fingerprint": "sha256:old",
                 "hook": "小李嘴硬",
@@ -6058,8 +6135,84 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
     assert state["pending_talk"][0]["selected_repair"] is True
     assert state["pending_talk"][0]["talk_repair_retry_count"] == 1
     assert state["pending_talk"][0]["session_id"] == "live-20260710T200000+0800"
+    assert state["pending_talk"][0]["given_end_ms"] == 318_000
+    assert state["pending_talk"][0]["given_end_authority"] == (
+        "Ivan reviewed complete closing sentence"
+    )
     assert state["talk_superseded_attempts"][0]["superseded_by"] == "sha256:new"
     assert state["talk_superseded_attempts"][0]["session_id"] == "live-20260710T200000+0800"
+
+
+def test_recoverable_talk_with_unbound_given_end_fails_closed(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-21-20-05.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "auto_212005_163_311",
+                "segment": segment.name,
+                "start_ms": 163_000,
+                "end_ms": 311_000,
+                "given_end_ms": 318_000,
+                "status": "failed",
+                "pipeline_fingerprint": "sha256:old",
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["pending_talk"] == []
+    assert state["picks"][0]["given_end_ms"] == 318_000
+
+
+def test_recoverable_talk_with_broken_chat_alias_stays_unqueued(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-21-20-05.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+
+    def fail_binding(*_args, **_kwargs):
+        raise runner.StructuredChatBindingError(
+            "STRUCTURED_CHAT_ALIAS_CANONICAL_JSONL_MISSING"
+        )
+
+    monkeypatch.setattr(runner, "resolve_structured_chat_binding", fail_binding)
+    state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "auto_212005_163_311",
+                "segment": segment.name,
+                "start_ms": 163_000,
+                "end_ms": 311_000,
+                "status": "failed",
+                "pipeline_fingerprint": "sha256:old",
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["pending_talk"] == []
+    assert state["picks"][0]["recovery_chat_binding_status"] == "BLOCKED"
+    assert "STRUCTURED_CHAT_ALIAS_CANONICAL_JSONL_MISSING" in state["picks"][0][
+        "recovery_chat_binding_error"
+    ]
 
 
 def test_selected_talk_transient_failure_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):
@@ -6108,6 +6261,7 @@ def test_selected_talk_relevant_fix_bypasses_exhausted_legacy_lifetime_cap(tmp_p
     segment.write_bytes(b"media")
     monkeypatch.setattr(runner, "REC_ROOT", rec_root)
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
     monkeypatch.setattr(runner, "TALK_REPAIR_LIFETIME_RETRY_CAP", 3)
     state = {
         "pending_talk": [],
@@ -6875,3 +7029,164 @@ def test_list_segments_dedupes_duplicate_fuse_dirents(tmp_path, monkeypatch):
 
     assert len(names) == 2
     assert names == sorted(names)
+
+
+def test_structured_chat_binding_resolves_hash_bound_source_alias(
+    tmp_path, monkeypatch
+):
+    alias_name = "22966160_20260722-19-34-50.mp4"
+    canonical_name = "22966160_20260722-19-35-15.mp4"
+    segment = tmp_path / "official-replay" / alias_name
+    segment.parent.mkdir()
+    segment.write_bytes(b"official replay bytes")
+    # A same-stem local file cannot bypass a committed alias: the canonical
+    # recorder sidecar and its declared timeline remain authoritative.
+    segment.with_suffix(".jsonl").write_text(
+        '{"cmd":"DANMU_MSG","info":[[0,0,0,0,1],"untrusted local"]}\n',
+        encoding="utf-8",
+    )
+    source_sha256 = "sha256:" + hashlib.sha256(segment.read_bytes()).hexdigest()
+
+    ledger = tmp_path / "subtitle-truth.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "schema_version": "source-subtitle-truth-ledger.v1",
+                "source_aliases": [
+                    {
+                        "alias_id": "20260722-official-replay",
+                        "alias_recording_basename": alias_name,
+                        "alias_source_sha256": source_sha256,
+                        "canonical_recording_basename": canonical_name,
+                        "alias_timeline_offset_ms": 37,
+                        "authority": "test hash and timeline authority",
+                    }
+                ],
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    canonical_root = tmp_path / "canonical"
+    sources = canonical_root / "2026-07-22" / "sources"
+    sources.mkdir(parents=True)
+    jsonl = sources / Path(canonical_name).with_suffix(".jsonl").name
+    jsonl.write_text(
+        '{"cmd":"DANMU_MSG","info":[[0,0,0,0,1784777715],"证据"]}\n',
+        encoding="utf-8",
+    )
+    jsonl.with_suffix(".meta.json").write_text(
+        json.dumps(
+            {
+                "description": {
+                    "RecordStartTime": "2026-07-22 19:35:15+08:00"
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    # A near timestamp is not an authority and must never be selected.
+    (sources / "22966160_20260722-19-35-16.jsonl").write_text(
+        '{"cmd":"DANMU_MSG"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "CANONICAL_REC_ROOT", canonical_root)
+    monkeypatch.setattr(
+        runner,
+        "profile_asset_file",
+        lambda key: ledger
+        if key == "subtitle_truth_ledger"
+        else (_ for _ in ()).throw(KeyError(key)),
+    )
+
+    binding = runner.resolve_structured_chat_binding(
+        segment,
+        source_sha256=source_sha256,
+    )
+
+    assert binding["chat_jsonl"] == str(jsonl)
+    assert binding["chat_jsonl_sha256"] == (
+        "sha256:" + hashlib.sha256(jsonl.read_bytes()).hexdigest()
+    )
+    assert binding["chat_origin_epoch_ms"] == recording_start_epoch_ms(jsonl)
+    assert binding["chat_timeline_offset_ms"] == 37
+    assert binding["structured_chat_required"] is True
+    assert binding["chat_source_alias_id"] == "20260722-official-replay"
+    assert binding["chat_canonical_recording_basename"] == canonical_name
+    assert binding["chat_binding_status"] == "BOUND_SOURCE_ALIAS"
+
+
+def test_structured_chat_alias_rejects_source_hash_drift(
+    tmp_path, monkeypatch
+):
+    segment = tmp_path / "22966160_20260722-19-34-50.mp4"
+    segment.write_bytes(b"drifted official replay")
+    ledger = tmp_path / "subtitle-truth.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "schema_version": "source-subtitle-truth-ledger.v1",
+                "source_aliases": [
+                    {
+                        "alias_id": "20260722-official-replay",
+                        "alias_recording_basename": segment.name,
+                        "alias_source_sha256": "sha256:" + "a" * 64,
+                        "canonical_recording_basename": (
+                            "22966160_20260722-19-35-15.mp4"
+                        ),
+                        "alias_timeline_offset_ms": 0,
+                        "authority": "test authority",
+                    }
+                ],
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runner,
+        "profile_asset_file",
+        lambda key: ledger
+        if key == "subtitle_truth_ledger"
+        else (_ for _ in ()).throw(KeyError(key)),
+    )
+
+    with pytest.raises(
+        runner.StructuredChatBindingError,
+        match="STRUCTURED_CHAT_ALIAS_SOURCE_SHA256_MISMATCH",
+    ):
+        runner.resolve_structured_chat_binding(
+            segment,
+            source_sha256="sha256:" + "b" * 64,
+        )
+
+
+def test_structured_chat_without_sidecar_or_alias_is_explicitly_optional(
+    tmp_path, monkeypatch
+):
+    segment = tmp_path / "legacy.mp4"
+    segment.write_bytes(b"legacy")
+    ledger = tmp_path / "subtitle-truth.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "schema_version": "source-subtitle-truth-ledger.v1",
+                "source_aliases": [],
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runner,
+        "profile_asset_file",
+        lambda key: ledger
+        if key == "subtitle_truth_ledger"
+        else (_ for _ in ()).throw(KeyError(key)),
+    )
+
+    assert runner.resolve_structured_chat_binding(segment) == {
+        "chat_jsonl": None,
+        "structured_chat_required": False,
+        "chat_binding_status": "OPTIONAL_ABSENT",
+    }

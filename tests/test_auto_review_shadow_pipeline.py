@@ -4608,11 +4608,13 @@ def test_screenshot_poster_materializes_six_distinct_background_families(tmp_pat
 def test_cover_treatment_router_by_moment_strength():
     from src.autoslice import publish_staging
 
-    sel = lambda score, emo=0.0, subject=True, dispersion=None: {
-        "candidates": [{"score": score, "emotion": emo}],
-        "subject_confident": subject,
-        "motion_dispersion_frac": dispersion,
-    }
+    def sel(score, emo=0.0, subject=True, dispersion=None):
+        return {
+            "candidates": [{"score": score, "emotion": emo}],
+            "subject_confident": subject,
+            "motion_dispersion_frac": dispersion,
+        }
+
     decide = publish_staging._decide_cover_treatment
     # 强名场面 → 直出；中等 → 轻微调；弱 → 全图重绘。
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=sel(5.2))[0] == "screenshot_direct"
@@ -4652,6 +4654,93 @@ def test_cover_treatment_router_by_moment_strength():
         "screenshot_direct",
         "hash-bound source frame verifies all required participants",
     )
+
+
+def test_relation_auto_route_blocks_before_host_only_ai_when_participants_unverified(
+    tmp_path, monkeypatch
+):
+    """Regression: 2026-07-22 dual-person hooks became one-person AI covers."""
+
+    from PIL import Image
+
+    from src.autoslice import publish_staging
+    from src.autoslice.story_contract import build_story_contract
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "auto")
+    media = _write_synthetic_performance_clip(tmp_path)
+    monkeypatch.setattr(
+        publish_staging,
+        "select_expressive_cover_frame",
+        lambda *_args, **_kwargs: {
+            "schema": "cover-frame-selection.v1",
+            "status": "SELECTED",
+            "best_ms": 1_000,
+            "candidates": [
+                {"ms": 1_000, "score": 4.6224, "emotion": 0.0}
+            ],
+            "subject_confident": False,
+            "motion_dispersion_frac": 0.4456,
+        },
+    )
+    contract = build_story_contract(
+        candidate_id="relation-no-authority",
+        selection_hook=(
+            "弹幕追问李豆沙为何请南町吃火锅，"
+            "一路嘴硬到最最最最喜欢，刚认识就互相霸凌"
+        ),
+        transcript_text="为什么请大N老师吃火锅呢？",
+        selection_scorecard={"status": "VALID"},
+        session_relation_authority={
+            "state": "CONFIRMED",
+            "participants": [
+                {"canonical_id": "lidousha", "display_name": "李豆沙"},
+                {"canonical_id": "nancho", "display_name": "南町"},
+            ],
+        },
+    )
+    calls = {"image_edit": 0}
+
+    def fake_host_only_ai(**kwargs):
+        calls["image_edit"] += 1
+        Image.new("RGB", (1920, 1080), (30, 40, 80)).save(
+            kwargs["output_path"]
+        )
+        return {
+            "status": "AI_BACKGROUND_READY",
+            "selected_model": "gpt-image-2",
+            "attempted_models": ["gpt-image-2"],
+        }
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media),
+            "story_contract": contract,
+        },
+        media_path=media,
+        candidate_id="relation-no-authority",
+        title="【李豆沙】为什么请南町吃火锅，刚认识就互相霸凌",
+        cover_text="为什么请南町吃火锅",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=fake_host_only_ai,
+        punch_allowed=True,
+    )
+
+    assert calls["image_edit"] == 0
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert "RELATION_COVER_SOURCE_PARTICIPANTS_UNVERIFIED" in result[
+        "reason_codes"
+    ]
+    route = result["cover_generation"]["route_decision"]
+    assert route["relationship_visual_required"] is True
+    assert route["source_visible_participant_ids"] == []
+    assert route["selected_treatment"] == "screenshot_direct"
+    assert route["actual_treatment"] is None
+    assert route["execution_status"] == "BLOCKED"
 
 
 def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):

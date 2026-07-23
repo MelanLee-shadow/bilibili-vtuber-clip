@@ -22,6 +22,7 @@ _runner = RunnerProxy()
 
 _PIPELINE_FINGERPRINT_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _SAFE_CANDIDATE_ID_RX = re.compile(r"[A-Za-z0-9_-]{1,96}")
+_SOURCE_SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})")
 
 
 class RecoveryReviewRerunError(ValueError):
@@ -42,6 +43,69 @@ def _candidate_id(record: dict) -> str:
     return str(record.get("candidate_id") or record.get("cid") or "")
 
 
+def _normalized_source_sha256(value: object) -> str | None:
+    match = _SOURCE_SHA256_RX.fullmatch(str(value or "").strip().lower())
+    if match is None:
+        return None
+    return "sha256:" + match.group(1)
+
+
+def _record_source_sha256(record: dict) -> str | None:
+    """Recover an already-bound official source hash without trusting labels."""
+
+    for value in (record.get("source_media_sha256"), record.get("source_sha256")):
+        normalized = _normalized_source_sha256(value)
+        if normalized is not None:
+            return normalized
+    relation = record.get("session_relation_authority")
+    if not isinstance(relation, dict):
+        return None
+    normalized = _normalized_source_sha256(relation.get("bound_source_sha256"))
+    if normalized is not None:
+        return normalized
+    evidence = relation.get("evidence")
+    if not isinstance(evidence, list):
+        return None
+    candidates = {
+        normalized
+        for row in evidence
+        if isinstance(row, dict)
+        and (
+            row.get("source_alias_id")
+            or row.get("evidence_class") == "HASH_BOUND_OFFICIAL_REPLAY"
+        )
+        if (normalized := _normalized_source_sha256(row.get("source_sha256")))
+        is not None
+    }
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _structured_chat_binding_for_record(
+    segment: Path,
+    record: dict,
+    *,
+    candidate_id: str,
+) -> dict[str, object]:
+    try:
+        binding = _runner.resolve_structured_chat_binding(
+            segment,
+            source_sha256=_record_source_sha256(record),
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise RecoveryReviewRerunError(
+            f"RECOVERY_RERUN_CHAT_AUTHORITY_MISSING:{candidate_id}:{exc}"
+        ) from exc
+    if (
+        not isinstance(binding, dict)
+        or not isinstance(binding.get("structured_chat_required"), bool)
+        or not str(binding.get("chat_binding_status") or "")
+    ):
+        raise RecoveryReviewRerunError(
+            f"RECOVERY_RERUN_CHAT_BINDING_INVALID:{candidate_id}"
+        )
+    return binding
+
+
 def _scorecard_rank_key(record: dict) -> tuple[int, float, str]:
     scorecard = record.get("selection_scorecard")
     tier = scorecard.get("tier") if isinstance(scorecard, dict) else None
@@ -56,6 +120,40 @@ def _scorecard_rank_key(record: dict) -> tuple[int, float, str]:
     ):
         return (999, float("inf"), _candidate_id(record))
     return (tier, -float(score), _candidate_id(record))
+
+
+def _validated_given_end_boundary(
+    *,
+    candidate_id: str,
+    start_ms: int,
+    end_ms: int,
+    seg_dur_ms: int,
+    given_end_ms: object,
+    given_end_authority: object,
+) -> tuple[int | None, str | None]:
+    """Validate a reviewed source-timeline end before any recovery requeue.
+
+    A selected record can keep a shorter semantic ``end_ms`` while carrying a
+    reviewed ``given_end_ms`` that closes the final sentence.  Dropping that
+    second boundary during automatic recovery silently reintroduces a cut in
+    mid-thought, so the value and its authority travel as one fail-closed pair.
+    """
+
+    if given_end_ms is None:
+        return None, None
+    authority = str(given_end_authority or "").strip()
+    if (
+        isinstance(given_end_ms, bool)
+        or not isinstance(given_end_ms, int)
+        or given_end_ms <= start_ms
+        or given_end_ms > seg_dur_ms
+        or abs(given_end_ms - end_ms) > 30_000
+        or not authority
+    ):
+        raise RecoveryReviewRerunError(
+            f"RECOVERY_RERUN_GIVEN_END_INVALID:{candidate_id}"
+        )
+    return given_end_ms, authority
 
 
 def _recovery_queue_item(
@@ -100,17 +198,19 @@ def _recovery_queue_item(
         raise RecoveryReviewRerunError(
             f"RECOVERY_RERUN_SOURCE_DURATION_INVALID:{candidate_id}"
         )
-    if given_end_ms is not None and (
-        isinstance(given_end_ms, bool)
-        or not isinstance(given_end_ms, int)
-        or given_end_ms <= start_ms
-        or given_end_ms > seg_dur
-        or abs(given_end_ms - end_ms) > 30_000
-        or not str(given_end_authority or "").strip()
-    ):
-        raise RecoveryReviewRerunError(
-            f"RECOVERY_RERUN_GIVEN_END_INVALID:{candidate_id}"
-        )
+    given_end_ms, normalized_given_end_authority = _validated_given_end_boundary(
+        candidate_id=candidate_id,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        seg_dur_ms=seg_dur,
+        given_end_ms=given_end_ms,
+        given_end_authority=given_end_authority,
+    )
+    chat_binding = _structured_chat_binding_for_record(
+        segment,
+        record,
+        candidate_id=candidate_id,
+    )
     retry_count = int(record.get("talk_repair_retry_count") or 0)
     item = {
         "cid": candidate_id,
@@ -119,9 +219,7 @@ def _recovery_queue_item(
         "start_ms": start_ms,
         "end_ms": end_ms,
         "xml": str(xml) if (xml := _runner.find_danmaku_xml(segment)) else None,
-        "chat_jsonl": (
-            str(chat) if (chat := _runner.find_chat_jsonl(segment)) else None
-        ),
+        **chat_binding,
         "hook": record.get("hook", ""),
         "confidence": record.get("confidence"),
         "selection_scorecard": record.get("selection_scorecard"),
@@ -144,7 +242,7 @@ def _recovery_queue_item(
     }
     if given_end_ms is not None:
         item["given_end_ms"] = given_end_ms
-        item["given_end_authority"] = str(given_end_authority).strip()
+        item["given_end_authority"] = normalized_given_end_authority
     return item
 
 
@@ -1031,6 +1129,37 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             kept.append(record)
             continue
         seg_dur = _runner.ffprobe_ms(segment)
+        if (
+            isinstance(seg_dur, bool)
+            or not isinstance(seg_dur, int)
+            or seg_dur <= 0
+            or end_ms > seg_dur
+        ):
+            kept.append(record)
+            continue
+        try:
+            given_end_ms, given_end_authority = _validated_given_end_boundary(
+                candidate_id=cid,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                seg_dur_ms=seg_dur,
+                given_end_ms=record.get("given_end_ms"),
+                given_end_authority=record.get("given_end_authority"),
+            )
+        except RecoveryReviewRerunError:
+            kept.append(record)
+            continue
+        try:
+            chat_binding = _structured_chat_binding_for_record(
+                segment,
+                record,
+                candidate_id=cid,
+            )
+        except RecoveryReviewRerunError as exc:
+            record["recovery_chat_binding_status"] = "BLOCKED"
+            record["recovery_chat_binding_error"] = str(exc)
+            kept.append(record)
+            continue
         item = {
             "cid": cid,
             "segment_path": str(segment),
@@ -1038,7 +1167,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "start_ms": start_ms,
             "end_ms": min(seg_dur, end_ms) if seg_dur else end_ms,
             "xml": str(xml) if (xml := _runner.find_danmaku_xml(segment)) else None,
-            "chat_jsonl": str(chat) if (chat := _runner.find_chat_jsonl(segment)) else None,
+            **chat_binding,
             "hook": record.get("hook", ""),
             "confidence": record.get("confidence"),
             "selection_scorecard": record.get("selection_scorecard"),
@@ -1062,7 +1191,12 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "filler_proposals": list(record.get("filler_proposals") or []),
             "filler_proposal_srt_sha256": record.get("filler_proposal_srt_sha256"),
             "merge_gap_removals": list(record.get("merge_gap_removals") or []),
+            "cover_diversity_slot": record.get("cover_diversity_slot"),
+            "recovery_source_record_sha256": _canonical_object_sha256(record),
         }
+        if given_end_ms is not None:
+            item["given_end_ms"] = given_end_ms
+            item["given_end_authority"] = given_end_authority
         requeued.append(item)
         existing_pending.add(cid)
         state.setdefault("talk_superseded_attempts", []).append(

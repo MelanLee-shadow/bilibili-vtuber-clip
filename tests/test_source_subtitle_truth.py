@@ -1026,24 +1026,57 @@ def test_committed_ledger_preserves_reviewed_chair_190_surface():
         / "subtitle_truth_ledger.v1.json"
     )
     corrected, audit = apply_source_subtitle_truth(
-        _srt_ms((0, 2_340, "哈哈，一瞅1190是谣言啊")),
+        _srt_ms(
+            (0, 3_790, "哈哈，一瞅1190是谣言啊"),
+            (3_790, 6_130, "190，190是谣言啊"),
+        ),
         spec={
             "pieces": [
                 {
                     "remote_media": (
                         "/recordings/22966160_20260722-19-35-15.mp4"
                     ),
-                    "start_ms": 1_623_040,
+                    "start_ms": 1_619_250,
                     "end_ms": 1_625_380,
                 }
             ]
         },
-        durations=[2_340],
+        durations=[6_130],
         ledger_path=ledger,
     )
 
-    assert "190，190是谣言啊" in corrected
+    assert "哈哈哈哈，190，190是谣言啊" in corrected
+    assert "粉毛是我之前染过粉毛啊" in corrected
     assert "1190" not in corrected
+    assert audit["status"] == "APPLIED"
+
+
+def test_committed_ledger_preserves_brainflick_give_up_turn():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 1_880, "算好了，我弹了啊")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 1_510_740,
+                    "end_ms": 1_512_620,
+                }
+            ]
+        },
+        durations=[1_880],
+        ledger_path=ledger,
+    )
+
+    assert "算了，好了，我弹了啊" in corrected
+    assert "算好了，我弹了啊" not in corrected
     assert audit["status"] == "APPLIED"
 
 
@@ -1144,19 +1177,19 @@ def test_committed_ledger_repairs_hotpot_parallel_repeat_entity_phrase():
         / "subtitle_truth_ledger.v1.json"
     )
     corrected, audit = apply_source_subtitle_truth(
-        _srt_ms((0, 1_620, "小李又被大哥骂赢了")),
+        _srt_ms((0, 1_610, "小李又被大哥骂赢了")),
         spec={
             "pieces": [
                 {
                     "remote_media": (
                         "/recordings/22966160_20260722-19-35-15.mp4"
                     ),
-                    "start_ms": 2_001_770,
+                    "start_ms": 2_001_780,
                     "end_ms": 2_003_390,
                 }
             ]
         },
-        durations=[1_620],
+        durations=[1_610],
         ledger_path=ledger,
     )
 
@@ -1223,12 +1256,51 @@ def test_committed_ledger_repairs_chair_bullying_phrase_across_bad_split():
         ledger_path=ledger,
     )
 
-    assert "".join(cue.text for cue in parse_srt_cues(corrected)) == "感觉像被霸凌了"
+    assert "".join(cue.text for cue in parse_srt_cues(corrected)) == "感觉像被豆沙霸凌"
     assert "被留了" not in corrected
     assert audit["status"] == "APPLIED"
     assert audit["applied"][0]["truth_id"] == (
         "20260722-nancho-chair-bullying-phrase-r1"
     )
+
+
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms", "draft", "expected"),
+    [
+        (3_625_860, 3_627_420, "就是她喜欢打工人", "就是她使唤的打工人"),
+        (1_911_690, 1_913_880, "谢谢南家星耀的SC", "谢谢南町家的星耀的SC"),
+        (1_942_140, 1_946_210, "谢谢刚刚 PANJA 的舰长", "谢谢刚刚panoja的舰长"),
+        (1_999_620, 2_001_780, "谢谢小路路口的钢镚", "谢谢小凑るう子的钢镚"),
+        (2_062_300, 2_064_990, "香香烧烤拿烟头烫的好", "邪恶守宫拿烟头烫的好"),
+    ],
+)
+def test_committed_ledger_preserves_new_acoustic_and_entity_truths(
+    start_ms, end_ms, draft, expected
+):
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, end_ms - start_ms, draft)),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/recordings/22966160_20260722-19-35-15.mp4",
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                }
+            ]
+        },
+        durations=[end_ms - start_ms],
+        ledger_path=ledger,
+    )
+
+    assert expected in corrected
+    assert draft not in corrected
+    assert audit["status"] == "APPLIED"
 
 
 def test_committed_ledger_drops_post_nightin_formula_hallucination():

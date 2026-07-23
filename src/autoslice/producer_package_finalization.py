@@ -350,12 +350,38 @@ def _materialize_final_recut(
                     if start_ms < end_ms:
                         protected_windows.append((start_ms, end_ms))
         current_text = subtitle_path.read_text(encoding="utf-8")
+        current_source_start_ms: int | None = None
+        current_source_end_ms: int | None = None
+        current_source_recording_basename: str | None = None
+        current_source_sha256: str | None = None
+        if baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2":
+            if len(spec.get("pieces") or []) != 1 or len(piece_provenance_rows) != 1:
+                raise SystemExit(
+                    "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE"
+                )
+            piece = spec["pieces"][0]
+            provenance = piece_provenance_rows[0]
+            source_path = str(provenance.get("source_path") or "").strip()
+            source_sha256 = str(provenance.get("source_sha256") or "").strip()
+            if not source_path or not source_sha256:
+                raise SystemExit(
+                    "REDELIVERY_BASELINE_V2_SOURCE_PROVENANCE_MISSING"
+                )
+            piece_start_ms = int(piece["start_ms"])
+            current_source_start_ms = piece_start_ms + final_start
+            current_source_end_ms = piece_start_ms + final_end
+            current_source_recording_basename = Path(source_path).name
+            current_source_sha256 = source_sha256
         output_text, redelivery_baseline_audit = (
             apply_redelivery_subtitle_baseline(
                 current_text,
                 config=baseline_config,
                 spec_parent=(spec_parent or Path.cwd()),
                 protected_windows=protected_windows,
+                current_source_start_ms=current_source_start_ms,
+                current_source_end_ms=current_source_end_ms,
+                current_source_recording_basename=current_source_recording_basename,
+                current_source_sha256=current_source_sha256,
             )
         )
         redelivery_baseline_audit_path = (
@@ -1111,10 +1137,6 @@ def finalize_producer_package(
     adapters: ProducerFinalizationAdapters,
     talk_filler_audit_path: Path | None = None,
 ) -> int:
-    if spec.get("subtitle_redelivery_baseline") is not None and not options.reuse_cover:
-        raise SystemExit(
-            "REDELIVERY_SUBTITLE_BASELINE_REQUIRES_REUSE_COVER"
-        )
     recut = _materialize_final_recut(
         spec=spec,
         cid=cid,

@@ -52,6 +52,7 @@
     },
     "directories": {
       "fonts": "fonts",
+      "reviewed_subtitle_baselines": "reviewed_subtitle_baselines",
       "speaker_overrides": "speaker_overrides",
       "subtitle_regressions": "subtitle_regressions",
       "subtitle_text_overrides": "subtitle_text_overrides"

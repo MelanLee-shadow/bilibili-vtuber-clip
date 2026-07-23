@@ -51,6 +51,7 @@ from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_obj
 from src.autoslice.producer_chat_input import (
     DANMAKU_PRE_CONTEXT_MS,
     GIFT_PRE_CONTEXT_MS,
+    GUARD_PRE_CONTEXT_MS,
     SC_PRE_CONTEXT_MS,
     _load_independent_chat_support_srts,
     _piece_chat_evidence,
@@ -167,6 +168,8 @@ def _collect_timeline_chat(
                 pre_context = SC_PRE_CONTEXT_MS
             elif item.kind == "gift":
                 pre_context = GIFT_PRE_CONTEXT_MS
+            elif item.kind == "guard":
+                pre_context = GUARD_PRE_CONTEXT_MS
             else:
                 pre_context = DANMAKU_PRE_CONTEXT_MS
             if not (-pre_context <= rel <= dur + 1_000):
@@ -176,6 +179,8 @@ def _collect_timeline_chat(
                 prefix = "【SC此前" if rel < 0 else "【SC"
             elif item.kind == "gift":
                 prefix = "【礼物此前" if rel < 0 else "【礼物"
+            elif item.kind == "guard":
+                prefix = "【上舰此前" if rel < 0 else "【上舰"
             else:
                 prefix = "【弹幕此前" if rel < 0 else "【弹幕"
             label = f"{prefix}{marker}】{sanitize_chat_display_text(item.text)}"
@@ -1455,6 +1460,36 @@ def run_text_pipeline(
         # 钉子能确定性解决的槽位 fail-closed 成整条不交付。
         source_truth_windows=source_truth_windows,
     )
+    retained_chat_counts: dict[str, int] = {}
+    for item in authoritative_chat:
+        retained_chat_counts[item.kind] = retained_chat_counts.get(item.kind, 0) + 1
+    binding_rows = []
+    for piece in spec["pieces"]:
+        binding_rows.append(
+            {
+                "status": piece.get("chat_binding_status", "LEGACY_UNDECLARED"),
+                "required": piece.get("structured_chat_required", False),
+                "jsonl_path": piece.get("chat_jsonl_local"),
+                "jsonl_sha256": piece.get("chat_jsonl_sha256"),
+                "origin_epoch_ms": piece.get("chat_origin_epoch_ms"),
+                "timeline_offset_ms": piece.get("chat_timeline_offset_ms"),
+                "source_alias_id": piece.get("chat_source_alias_id"),
+                "canonical_recording_basename": piece.get(
+                    "chat_canonical_recording_basename"
+                ),
+            }
+        )
+    authority.chat_authority_audit["structured_chat_binding_audit"] = {
+        "schema_version": "structured-chat-binding-audit.v1",
+        "status": "PASS",
+        "pieces": binding_rows,
+        "retained_clip_window_counts": retained_chat_counts,
+        "retained_clip_window_total": len(authoritative_chat),
+        "zero_retained_meaning": (
+            "bound source parsed successfully but no event survived the clip window; "
+            "binding failures raise before this audit"
+        ),
+    }
     last_piece = spec["pieces"][-1]
     boundary_source_end_ms = int(
         spec.get("given_end_ms")

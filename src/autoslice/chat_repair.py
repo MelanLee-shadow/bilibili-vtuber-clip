@@ -27,8 +27,22 @@ from src.autoslice.chat_evidence import (
     normalize_chat_text,
 )
 from src.autoslice.chat_span_alignment import (
-    strip_interjections_once as _strip_interjections_once,
+    strip_interjections_once as _strip_interjections_once,  # noqa: F401 - compatibility re-export
 )
+
+
+_THANK_PREFIX_PATTERN = r"(?:谢谢|感谢|谢)(?:一下)?"
+_THANK_ACTION_SUFFIX_PATTERN = (
+    r"(?:送的|的\s*SC|的醒目留言|的双目钢镚|的钢镚|的光棒)"
+)
+_LEADING_THANK_SENDER_ACTION = re.compile(
+    rf"^(?P<head>{_THANK_PREFIX_PATTERN}"
+    rf"(?P<name>[^，。！？!?\s]{{1,32}}?)"
+    rf"(?P<suffix>{_THANK_ACTION_SUFFIX_PATTERN}|的(?:舰长|提督|总督))"
+    r"[，,。！？!?\s]*)",
+    re.IGNORECASE,
+)
+
 
 def registered_entity_names(groups: Sequence[ReferentGroup | Sequence[str]]) -> set[str]:
     """Lower-cased canonicals+surfaces of every registered (graph/static) entity."""
@@ -313,6 +327,17 @@ def _aligned_span_replacements(
     """
     auth_norm, auth_map = _norm_with_map(authority)
     span_raw = "".join(before)
+    # A structured SC body never owns the acoustic “谢谢+发送者+动作” head that
+    # precedes it.  Aligning “姐姐大人…” against “…光棒，姐大人…” otherwise
+    # treats the missing first “姐” as an authority-head substitution and
+    # deletes the real thanks.  Remove this narrow grammar from the alignment
+    # domain, then prepend it unchanged after the body splice.
+    protected_thank_head = ""
+    acoustic_thank = _LEADING_THANK_SENDER_ACTION.match(span_raw)
+    authority_thank = _LEADING_THANK_SENDER_ACTION.match(authority)
+    if acoustic_thank is not None and authority_thank is None:
+        protected_thank_head = acoustic_thank.group("head")
+        span_raw = span_raw[len(protected_thank_head) :]
     span_norm, span_map = _norm_with_map(span_raw)
     if not auth_norm or not span_norm:
         return None
@@ -338,6 +363,8 @@ def _aligned_span_replacements(
     _spoken_nearby = _fragment_spoken_in
 
     audit: dict = {}
+    if protected_thank_head:
+        audit["preserved_thank_sender_action_head"] = protected_thank_head
     # raw 边界：对齐区两端顶到 raw 端点，normalize 后不可见的首尾字符
     # （空格、箭头等 sanitizer 产物）跟随对齐区，不算「未对齐头尾」。
     auth_raw_lo = 0 if a_lo == 0 else auth_map[a_lo]
@@ -415,7 +442,9 @@ def _aligned_span_replacements(
             if candidate.count("》") == candidate.count("《"):
                 tail = tail[surplus:]
                 audit["deduplicated_title_close_at_splice"] = surplus
-    desired = _strip_unrenderable_for_subtitle(f"{head}{aligned_raw}{tail}")
+    desired = _strip_unrenderable_for_subtitle(
+        f"{protected_thank_head}{head}{aligned_raw}{tail}"
+    )
     if not normalize_chat_text(desired):
         return None
     replacements = _shift_boundary_punct(_best_text_split(desired, list(before)))
@@ -532,14 +561,25 @@ def _authority_tail_continues_in_next_cue(
 
 
 def _spoken_sender_alias(sender: str) -> str:
-    cjk_prefix = re.match(r"[\u3400-\u9fff]+", sender)
-    return cjk_prefix.group(0) if cjk_prefix else sender.strip()
+    value = sender.strip()
+    if not value:
+        return ""
+    # Do not equate “first Han run” with “spoken name”: punctuation and kana
+    # are legitimate username characters (寒-歌、小凑るう子).  Only explicitly
+    # registered display tags are non-spoken; this preserves the historical
+    # 十麻乃orient behavior without truncating arbitrary mixed-script names.
+    for suffix in ("orient",):
+        if value.lower().endswith(suffix):
+            prefix = value[: -len(suffix)]
+            if re.fullmatch(r"[\u3400-\u9fff]+", prefix):
+                return prefix
+    return value
 
 
 _THANK_NAME = re.compile(
-    r"(?P<prefix>(?:谢谢|感谢|谢)(?:一下)?)"
-    r"(?P<name>[^，。！？!?\s]{1,24}?)"
-    r"(?P<suffix>送的|的\s*SC|的醒目留言|的钢镚)",
+    rf"(?P<prefix>{_THANK_PREFIX_PATTERN})"
+    r"(?P<name>[^，。！？!?\s]{1,32}?)"
+    rf"(?P<suffix>{_THANK_ACTION_SUFFIX_PATTERN})",
     re.IGNORECASE,
 )
 

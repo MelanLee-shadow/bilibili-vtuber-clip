@@ -22,8 +22,8 @@ from zoneinfo import ZoneInfo
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.surface_canon import (
-    canonicalize_hard_meme_surfaces,
-    normalize_hard_meme_surfaces,
+    canonicalize_hard_meme_surfaces as canonicalize_hard_meme_surfaces,
+    normalize_hard_meme_surfaces as normalize_hard_meme_surfaces,
 )
 
 
@@ -47,7 +47,7 @@ def canonicalize_hard_surfaces(text: str) -> str:
 
 @dataclass(frozen=True)
 class ChatEvidence:
-    kind: str  # danmaku | superchat | gift
+    kind: str  # danmaku | superchat | gift | guard
     offset_ms: int
     text: str
     sender: str = ""
@@ -1091,14 +1091,7 @@ def _validated_entity_verdict(
 
 
 def recording_start_epoch_ms(path: str | Path, *, timezone: str = "Asia/Shanghai") -> int | None:
-    """Derive recording t=0 from recorder metadata, then its segment filename.
-
-    The old implementation used the earliest event as t=0, shifting every
-    message when the event log began after recording.  ``RecordStartTime`` is
-    the recorder authority.  Its filenames use the stream's China wall clock,
-    regardless of the Mac/operator timezone; filename parsing is only fallback.
-    """
-
+    """Derive t=0 from RecordStartTime; China-wall-clock filename is fallback."""
     source = Path(path)
     meta_path = source.with_suffix(".meta.json")
     if meta_path.is_file():
@@ -1118,23 +1111,18 @@ def recording_start_epoch_ms(path: str | Path, *, timezone: str = "Asia/Shanghai
     parsed = datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=ZoneInfo(timezone))
     return int(parsed.timestamp() * 1000)
 
-
 def _event_epoch_ms(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    # Recorder sidecars have emitted both epoch seconds and epoch milliseconds.
     if value >= 100_000_000_000:
         return int(value)
     if value >= 100_000_000:
         return int(float(value) * 1000)
     return int(value)
 
-
 def _send_time_ms(payload: dict, command: str = "") -> int | None:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    # A recorder's top-level send_time can be an ingestion timestamp,
-    # not the live-event timestamp.  Bilibili carries the authoritative epoch
-    # in DANMU_MSG info[0][4] and SC data.ts/start_time.
+    # Prefer Bilibili event clocks over recorder-ingestion send_time.
     if command.startswith("DANMU_MSG"):
         info = payload.get("info") or data.get("info")
         if (
@@ -1148,19 +1136,19 @@ def _send_time_ms(payload: dict, command: str = "") -> int | None:
                 return event_ms
     if command.startswith("SUPER_CHAT_MESSAGE"):
         top_level = payload.get("send_time")
-        # CN SC events retain millisecond precision here.  JPN twins commonly
-        # omit it and fall back to second-precision data.ts/start_time.
+        # CN keeps ms here; JPN twins fall back to second-precision data fields.
         if isinstance(top_level, (int, float)) and top_level >= 100_000_000_000:
             return _event_epoch_ms(top_level)
         for key in ("ts", "start_time", "send_time"):
             event_ms = _event_epoch_ms(data.get(key))
             if event_ms is not None:
                 return event_ms
+    if command.startswith("GUARD_BUY"):
+        return _event_epoch_ms(data.get("start_time"))
     value = payload.get("send_time")
     if not isinstance(value, (int, float)):
         value = data.get("send_time")
     return _event_epoch_ms(value)
-
 
 def _danmaku_text(payload: dict) -> str:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
@@ -1173,15 +1161,12 @@ def _danmaku_text(payload: dict) -> str:
             return value.strip()
     return ""
 
-
 def load_chat_jsonl(
     path: str | Path,
     *,
     recording_start_ms: int | None = None,
 ) -> list[ChatEvidence]:
-    """Load exact DANMU_MSG, SUPER_CHAT, and SEND_GIFT/COMBO_SEND (gift name
-    only) evidence from a recorder JSONL sidecar."""
-
+    """Load exact danmaku, SC, gift, and guard evidence from recorder JSONL."""
     source = Path(path)
     if not source.is_file():
         return []
@@ -1226,21 +1211,37 @@ def load_chat_jsonl(
                     )
                 )
         elif command in ("SEND_GIFT", "COMBO_SEND"):
-            # SEND_GIFT/COMBO_SEND masks the sender uname (e.g. "有***", uid 0)
-            # so the sender cannot be reconstructed, but giftName is carried in
-            # the clear.  Ivan's rule: gift-thanks repair must copy giftName
-            # from this structured event, never rely on ASR for the gift name.
+            # Sender is masked, but giftName remains exact structured evidence.
             data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
             gift_name = data.get("giftName")
             sender = data.get("uname") or ""
             if isinstance(gift_name, str) and gift_name.strip():
                 parsed.append((event_ms, "gift", str(sender).strip(), gift_name.strip(), "", False))
+        elif command.startswith("GUARD_BUY"):
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            sender = data.get("username") or data.get("uname") or ""
+            uid = data.get("uid")
+            try:
+                guard_level = int(data.get("guard_level"))
+            except (TypeError, ValueError):
+                continue
+            level_name = {1: "总督", 2: "提督", 3: "舰长"}.get(guard_level, "")
+            gift_name = data.get("gift_name") or data.get("giftName") or level_name
+            valid_uid = (
+                not isinstance(uid, bool)
+                and isinstance(uid, (int, str))
+                and bool(str(uid).strip())
+            )
+            if not (
+                isinstance(sender, str) and sender.strip() and level_name and valid_uid
+                and isinstance(gift_name, str) and gift_name.strip()
+            ):
+                continue
+            parsed.append((event_ms, "guard", sender.strip(), gift_name.strip(), str(uid).strip(), False))
     base = recording_start_ms if recording_start_ms is not None else earliest
     if base is None:
         return []
-    # Deduplicate before materialization so a second-precision localized row
-    # that sorts first can be replaced by the later precise CN twin. Distinct
-    # nonempty event ids prove two real same-text SCs and are never collapsed.
+    # Prefer precise CN twins; distinct nonempty SC ids never collapse.
     deduped: list[tuple[int, str, str, str, str, bool]] = []
     for row in sorted(parsed):
         event_ms, kind, sender, text, event_id, precise = row
@@ -1282,13 +1283,11 @@ def load_chat_jsonl(
         )
     return out
 
-
 def _srt_timestamp(ms: int) -> str:
     hours, rem = divmod(max(0, int(ms)), 3_600_000)
     minutes, rem = divmod(rem, 60_000)
     seconds, millis = divmod(rem, 1_000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
-
 
 def _render_srt(cues: Sequence[object], texts: Sequence[str]) -> str:
     blocks = []

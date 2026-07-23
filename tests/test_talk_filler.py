@@ -163,6 +163,14 @@ def test_piece_specs_preserve_order_and_only_add_outer_context():
         "seg_dur_ms": 100_000,
         "xml": "/recording/source.xml",
         "chat_jsonl": "/recording/source.jsonl",
+        "chat_jsonl_sha256": "sha256:" + "a" * 64,
+        "chat_origin_epoch_ms": 1_750_000_000_000,
+        "chat_timeline_offset_ms": 37,
+        "structured_chat_required": True,
+        "chat_source_alias_id": "official-replay-alias",
+        "chat_canonical_recording_basename": "canonical.mp4",
+        "chat_binding_status": "BOUND_SOURCE_ALIAS",
+        "chat_binding_authority": "hash-bound test authority",
     }
     plan = {
         "retained_intervals": [
@@ -178,6 +186,42 @@ def test_piece_specs_preserve_order_and_only_add_outer_context():
         (40_000, 87_000),
     ]
     assert all(row["remote_media"] == "/recording/source.mp4" for row in pieces)
+    assert all(
+        row["chat_jsonl_local"] == "/recording/source.jsonl"
+        for row in pieces
+    )
+    for row in pieces:
+        assert row["chat_jsonl_sha256"] == "sha256:" + "a" * 64
+        assert row["chat_origin_epoch_ms"] == 1_750_000_000_000
+        assert row["chat_timeline_offset_ms"] == 37
+        assert row["structured_chat_required"] is True
+        assert row["chat_source_alias_id"] == "official-replay-alias"
+        assert row["chat_canonical_recording_basename"] == "canonical.mp4"
+        assert row["chat_binding_status"] == "BOUND_SOURCE_ALIAS"
+        assert row["chat_binding_authority"] == "hash-bound test authority"
+
+
+def test_piece_specs_preserve_explicit_optional_absent_chat_state():
+    pieces = build_piece_specs(
+        item={
+            "segment_path": "/recording/legacy.mp4",
+            "seg_dur_ms": 20_000,
+            "chat_jsonl": None,
+            "structured_chat_required": False,
+            "chat_binding_status": "OPTIONAL_ABSENT",
+        },
+        plan={
+            "retained_intervals": [
+                {"start_ms": 1_000, "end_ms": 10_000},
+            ]
+        },
+        pre_ms=0,
+        post_ms=0,
+    )
+
+    assert pieces[0]["structured_chat_required"] is False
+    assert pieces[0]["chat_binding_status"] == "OPTIONAL_ABSENT"
+    assert "chat_jsonl_local" not in pieces[0]
 
 
 def test_global_verifier_requires_every_invariant_to_be_explicitly_true():

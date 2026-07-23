@@ -32,6 +32,21 @@ def _relation():
     }
 
 
+def _hash_bound_dual_reference(
+    *, required_treatment: str = "screenshot_direct"
+) -> dict[str, object]:
+    return {
+        "candidate_id": "candidate",
+        "content_time_ms": 1_000,
+        "source_time_ms": 2_000,
+        "source_sha256": "sha256:" + "1" * 64,
+        "reference_png_sha256": "sha256:" + "2" * 64,
+        "visible_participant_ids": ["lidousha", "nancho"],
+        "required_treatment": required_treatment,
+        "authority": "reviewed source frame",
+    }
+
+
 def test_committed_chair_reference_is_hash_bound_and_survives_recut_suffix():
     reference = load_candidate_cover_reference(
         "auto_193450_1573_1672r4",
@@ -101,10 +116,7 @@ def test_reference_visible_participants_must_belong_to_story_contract():
 
 
 def test_route_v2_binds_required_and_source_visible_participants():
-    reference = {
-        "visible_participant_ids": ["lidousha", "nancho"],
-        "candidate_id": "candidate",
-    }
+    reference = _hash_bound_dual_reference()
     contract = build_story_contract(
         candidate_id="candidate",
         selection_hook="搭档把大椅子让给李豆沙",
@@ -114,10 +126,7 @@ def test_route_v2_binds_required_and_source_visible_participants():
         cover_reference_authority=reference,
     )
     generation = {
-        "story_contract": {
-            "participants": contract["participants"],
-            "cover_reference_authority": contract["cover_reference_authority"],
-        },
+        "story_contract": contract,
         "method": "screenshot_direct",
         "cover_origin": "SOURCE_SCREENSHOT",
     }
@@ -140,6 +149,126 @@ def test_route_v2_binds_required_and_source_visible_participants():
     assert route["required_participant_ids"] == ["lidousha", "nancho"]
     assert route["source_visible_participant_ids"] == ["lidousha", "nancho"]
     assert route["source_visibility_authority"] == "HASH_BOUND_COVER_REFERENCE"
+    assert validate_cover_route_decision(generation)
+
+
+def test_route_v2_does_not_upgrade_unhashed_participant_list_to_authority():
+    reference = {
+        "candidate_id": "candidate",
+        "visible_participant_ids": ["lidousha", "nancho"],
+    }
+    contract = build_story_contract(
+        candidate_id="candidate",
+        selection_hook="两人为了左右争论半天",
+        transcript_text="左边是我，右边是你。",
+        selection_scorecard={"status": "VALID"},
+        session_relation_authority=_relation(),
+        cover_reference_authority=reference,
+    )
+    generation = {
+        "story_contract": contract,
+        "method": "screenshot_direct",
+        "cover_origin": "SOURCE_SCREENSHOT",
+    }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="screenshot_direct",
+        selected_rationale="claimed dual frame",
+        story_contract=contract,
+        reference_authority=reference,
+        decision_inputs={"cover_mode": "auto"},
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
+
+    route = generation["route_decision"]
+    assert route["source_visible_participant_ids"] == []
+    assert route["source_visibility_authority"] == "NO_IDENTITY_AUTHORITY"
+    assert not validate_cover_route_decision(generation)
+
+
+def test_route_v2_rejects_dual_relation_ai_without_final_pixel_verification():
+    """A redraw may not erase the named counterpart and still report READY."""
+
+    reference = _hash_bound_dual_reference(required_treatment="cpa_redraw")
+    contract = build_story_contract(
+        candidate_id="candidate",
+        selection_hook="被南町当面追问为什么最最最最喜欢",
+        transcript_text="南町问她为什么最最最最喜欢。",
+        selection_scorecard={"status": "VALID"},
+        session_relation_authority=_relation(),
+        cover_reference_authority=reference,
+        source_media_sha256s=[reference["source_sha256"]],
+    )
+    generation = {
+        "title": "被坏女人南町问到最最最最喜欢的原因",
+        "cover_text": "最最最最喜欢？",
+        "story_contract": contract,
+        "method": "images.edit",
+        "cover_origin": "AI_REDRAW",
+    }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="cpa_redraw",
+        selected_rationale="forced redraw for regression reproduction",
+        story_contract=contract,
+        reference_authority=reference,
+        decision_inputs={"cover_mode": "cpa"},
+        title=generation["title"],
+        cover_text=generation["cover_text"],
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment="cpa_redraw",
+        execution_status="READY",
+        image_generation_attempted=True,
+        image_generation_used=True,
+    )
+
+    route = generation["route_decision"]
+    assert route["relationship_visual_required"] is True
+    assert route["source_visible_participant_ids"] == [
+        "lidousha",
+        "nancho",
+    ]
+    assert route["final_visible_participant_ids"] == []
+    assert not validate_cover_route_decision(generation)
+
+    generation["final_cover_sha256"] = "sha256:" + "3" * 64
+    verification = {
+        "schema_version": (
+            "lidousha-cover-final-participant-verification.v1"
+        ),
+        "status": "PASS",
+        "authority": "independent final-pixel review",
+        "final_cover_sha256": generation["final_cover_sha256"],
+        "visible_participant_ids": ["lidousha", "nancho"],
+    }
+    wrong_hash_verification = {
+        **verification,
+        "final_cover_sha256": "sha256:" + "4" * 64,
+    }
+    record_cover_route_execution(
+        generation,
+        actual_treatment="cpa_redraw",
+        execution_status="READY",
+        image_generation_attempted=True,
+        image_generation_used=True,
+        final_participant_verification=wrong_hash_verification,
+    )
+    assert not validate_cover_route_decision(generation)
+
+    record_cover_route_execution(
+        generation,
+        actual_treatment="cpa_redraw",
+        execution_status="READY",
+        image_generation_attempted=True,
+        image_generation_used=True,
+        final_participant_verification=verification,
+    )
     assert validate_cover_route_decision(generation)
 
 

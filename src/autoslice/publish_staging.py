@@ -40,7 +40,13 @@ from .cover_generation import (
 )
 from .cover_route_evidence import (
     build_cover_route_decision,
+    is_hash_bound_reference_authority,
+    relationship_semantic_evidence,
+    relationship_source_participants_verified,
     record_cover_route_execution,
+    source_visible_participant_ids,
+    story_participant_ids,
+    validate_final_participant_verification,
 )
 from .cover_screenshot_poster import _compose_screenshot_poster_background
 from .llm_client import LlmCall, extract_json_object
@@ -573,6 +579,9 @@ def _stage_cpa_redraw_cover(
     art_direction: LidoushaCoverArtDirection,
     cover_generation: dict[str, object],
     image_edit: Callable[..., dict[str, object]],
+    final_participant_verifier: (
+        Callable[..., Mapping[str, object]] | None
+    ),
     base_url: str,
     api_key: str,
 ) -> dict[str, object]:
@@ -743,12 +752,77 @@ def _stage_cpa_redraw_cover(
             **overlay,
         }
     )
+    route = cover_generation.get("route_decision")
+    relationship_visual_required = bool(
+        isinstance(route, Mapping)
+        and route.get("relationship_visual_required") is True
+    )
+    final_participant_verification = None
+    if relationship_visual_required:
+        assert final_participant_verifier is not None
+        try:
+            final_participant_verification = dict(
+                final_participant_verifier(
+                    final_cover_path=final_cover_path,
+                    final_cover_sha256=cover_generation[
+                        "final_cover_sha256"
+                    ],
+                    required_participant_ids=list(
+                        route.get("required_participant_ids") or []
+                    ),
+                    source_reference_authority=(
+                        story_contract.get("cover_reference_authority")
+                        if isinstance(story_contract, Mapping)
+                        else None
+                    ),
+                )
+            )
+        except Exception as exc:
+            detail = (
+                "final participant verification failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            record_cover_route_execution(
+                cover_generation,
+                actual_treatment=None,
+                execution_status="BLOCKED",
+                image_generation_attempted=True,
+                image_generation_used=True,
+                detail=detail,
+            )
+            return _blocked_ai_cover_result(
+                cover_generation,
+                ["RELATION_COVER_FINAL_PARTICIPANT_VERIFICATION_FAILED"],
+                detail,
+            )
+        cover_generation["final_participant_verification"] = (
+            final_participant_verification
+        )
+        if not validate_final_participant_verification(cover_generation):
+            detail = (
+                "AI redraw lacks a PASS verdict bound to the final cover hash "
+                "that verifies every required participant"
+            )
+            record_cover_route_execution(
+                cover_generation,
+                actual_treatment=None,
+                execution_status="BLOCKED",
+                image_generation_attempted=True,
+                image_generation_used=True,
+                detail=detail,
+            )
+            return _blocked_ai_cover_result(
+                cover_generation,
+                ["RELATION_COVER_FINAL_PARTICIPANTS_UNVERIFIED"],
+                detail,
+            )
     record_cover_route_execution(
         cover_generation,
         actual_treatment="cpa_redraw",
         execution_status="READY",
         image_generation_attempted=True,
         image_generation_used=True,
+        final_participant_verification=final_participant_verification,
     )
     return {
         "status": "AI_COVER_READY",
@@ -761,6 +835,103 @@ def _stage_cpa_redraw_cover(
     }
 
 
+def _build_lidousha_cover_route(
+    *,
+    cover_generation: dict[str, object],
+    story_contract: object,
+    title: str,
+    cover_text: str,
+    cover_mode: str,
+    art_direction: LidoushaCoverArtDirection,
+    punch_allowed: bool,
+    frame_selection: Mapping[str, object] | None,
+    reference_authority: Mapping[str, object] | None,
+) -> tuple[str, dict[str, object]]:
+    """Build the semantic-first route record before any cover materialization."""
+
+    semantic_evidence = relationship_semantic_evidence(
+        story_contract,
+        title=title,
+        cover_text=cover_text,
+    )
+    required_participant_ids = story_participant_ids(story_contract)
+    visible_participant_ids = source_visible_participant_ids(
+        reference_authority
+    )
+    relationship_source_verified = bool(
+        required_participant_ids
+        and set(required_participant_ids) == set(visible_participant_ids)
+    )
+    verified_stream_frame = is_hash_bound_reference_authority(
+        reference_authority
+    )
+    treatment, treatment_reason = _decide_cover_treatment(
+        cover_mode=cover_mode,
+        is_song=art_direction.is_song,
+        punch_allowed=punch_allowed,
+        frame_selection=frame_selection,
+        verified_stream_frame=verified_stream_frame,
+        relationship_visual_required=bool(semantic_evidence),
+        relationship_source_verified=relationship_source_verified,
+    )
+    cover_generation["cover_treatment"] = {
+        "treatment": treatment,
+        "reason": treatment_reason,
+    }
+    candidates = (
+        frame_selection.get("candidates")
+        if isinstance(frame_selection, Mapping)
+        else None
+    )
+    first_candidate = (
+        candidates[0]
+        if isinstance(candidates, list)
+        and candidates
+        and isinstance(candidates[0], Mapping)
+        else {}
+    )
+    route = build_cover_route_decision(
+        selected_treatment=treatment,
+        selected_rationale=treatment_reason,
+        story_contract=story_contract,
+        reference_authority=reference_authority,
+        title=title,
+        cover_text=cover_text,
+        decision_inputs={
+            "cover_mode": cover_mode,
+            "is_song": art_direction.is_song,
+            "manual_title_or_full_text_contract": not punch_allowed,
+            "frame_score": first_candidate.get("score"),
+            "frame_emotion": first_candidate.get("emotion"),
+            "subject_confident": (
+                frame_selection.get("subject_confident")
+                if isinstance(frame_selection, Mapping)
+                else None
+            ),
+            "motion_dispersion_frac": (
+                frame_selection.get("motion_dispersion_frac")
+                if isinstance(frame_selection, Mapping)
+                else None
+            ),
+            "verified_stream_frame": verified_stream_frame,
+            "reference_authority_id": (
+                reference_authority.get("candidate_id")
+                if reference_authority is not None
+                else None
+            ),
+        },
+    )
+    cover_generation["route_decision"] = route
+    record_cover_route_execution(
+        cover_generation,
+        actual_treatment=None,
+        execution_status="PENDING",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
+    return treatment, route
+
+
 def _stage_lidousha_ai_cover(
     materialized_recut: Mapping[str, object],
     *,
@@ -771,6 +942,9 @@ def _stage_lidousha_ai_cover(
     run_ffmpeg: bool,
     art_direction_llm_call: LlmCall | None = None,
     image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
+    final_participant_verifier: (
+        Callable[..., Mapping[str, object]] | None
+    ) = None,
     punch_allowed: bool = False,
     diversity_slot: int | None = None,
 ) -> dict[str, object]:
@@ -790,6 +964,7 @@ def _stage_lidousha_ai_cover(
     if isinstance(story_contract, Mapping):
         cover_generation["story_contract"] = {
             "schema_version": story_contract.get("schema_version"),
+            "selection_hook": story_contract.get("selection_hook"),
             "relation_state": story_contract.get("relation_state"),
             "participants": story_contract.get("participants"),
             "cover_counterpart_reference_available": story_contract.get(
@@ -876,62 +1051,17 @@ def _stage_lidousha_ai_cover(
         diversity_slot=diversity_slot,
     )
 
-    # 路由：每条切片自己决定走 直出 / 截图+轻微调 / 全图重绘。
-    treatment, treatment_reason = _decide_cover_treatment(
+    # 路由：语义/人物证据先行，几何只决定已经验真人物的构图处理。
+    treatment, route = _build_lidousha_cover_route(
+        cover_generation=cover_generation,
+        story_contract=story_contract,
+        title=title,
+        cover_text=cover_text,
         cover_mode=cover_mode,
-        is_song=art_direction.is_song,
+        art_direction=art_direction,
         punch_allowed=punch_allowed,
         frame_selection=frame_selection,
-        verified_stream_frame=reference_authority is not None,
-    )
-    cover_generation["cover_treatment"] = {"treatment": treatment, "reason": treatment_reason}
-    candidates = (
-        frame_selection.get("candidates")
-        if isinstance(frame_selection, Mapping)
-        else None
-    )
-    first_candidate = (
-        candidates[0]
-        if isinstance(candidates, list)
-        and candidates
-        and isinstance(candidates[0], Mapping)
-        else {}
-    )
-    cover_generation["route_decision"] = build_cover_route_decision(
-        selected_treatment=treatment,
-        selected_rationale=treatment_reason,
-        story_contract=story_contract,
         reference_authority=reference_authority,
-        decision_inputs={
-            "cover_mode": cover_mode,
-            "is_song": art_direction.is_song,
-            "manual_title_or_full_text_contract": not punch_allowed,
-            "frame_score": first_candidate.get("score"),
-            "frame_emotion": first_candidate.get("emotion"),
-            "subject_confident": (
-                frame_selection.get("subject_confident")
-                if isinstance(frame_selection, Mapping)
-                else None
-            ),
-            "motion_dispersion_frac": (
-                frame_selection.get("motion_dispersion_frac")
-                if isinstance(frame_selection, Mapping)
-                else None
-            ),
-            "verified_stream_frame": reference_authority is not None,
-            "reference_authority_id": (
-                reference_authority.get("candidate_id")
-                if reference_authority is not None
-                else None
-            ),
-        },
-    )
-    record_cover_route_execution(
-        cover_generation,
-        actual_treatment=None,
-        execution_status="PENDING",
-        image_generation_attempted=False,
-        image_generation_used=False,
     )
     if reference_authority is not None and treatment != reference_authority.get(
         "required_treatment"
@@ -951,6 +1081,29 @@ def _stage_lidousha_ai_cover(
         return _blocked_ai_cover_result(
             cover_generation,
             ["COVER_REFERENCE_REQUIRED_TREATMENT_NOT_SELECTED"],
+            detail,
+        )
+    if (
+        isinstance(route, Mapping)
+        and route.get("relationship_visual_required") is True
+        and not relationship_source_participants_verified(route)
+    ):
+        detail = (
+            "relationship cover requires a hash-bound source reference that "
+            "visibly verifies every required participant before composition "
+            "geometry or image generation can be considered"
+        )
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=False,
+            image_generation_used=False,
+            detail=detail,
+        )
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["RELATION_COVER_SOURCE_PARTICIPANTS_UNVERIFIED"],
             detail,
         )
     if isinstance(story_contract, Mapping):
@@ -980,6 +1133,28 @@ def _stage_lidousha_ai_cover(
             image_edit=image_edit,
             base_url=base_url,
             api_key=api_key,
+        )
+    if (
+        isinstance(route, Mapping)
+        and route.get("relationship_visual_required") is True
+        and final_participant_verifier is None
+    ):
+        detail = (
+            "relationship AI redraw requires an independent verifier bound "
+            "to the final cover hash and every required participant"
+        )
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=False,
+            image_generation_used=False,
+            detail=detail,
+        )
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["RELATION_COVER_FINAL_PARTICIPANT_VERIFIER_REQUIRED"],
+            detail,
         )
     if not base_url or not api_key:
         detail = (
@@ -1015,6 +1190,7 @@ def _stage_lidousha_ai_cover(
         art_direction=art_direction,
         cover_generation=cover_generation,
         image_edit=image_edit,
+        final_participant_verifier=final_participant_verifier,
         base_url=base_url,
         api_key=api_key,
     )
@@ -1053,6 +1229,8 @@ def _decide_cover_treatment(
     punch_allowed: bool,
     frame_selection: Mapping[str, object] | None,
     verified_stream_frame: bool = False,
+    relationship_visual_required: bool = False,
+    relationship_source_verified: bool = False,
 ) -> tuple[str, str]:
     """每条切片选封面路线（2026-07-21 Ivan：哪些适合全图 CPA 重做、哪些适合截图）。
 
@@ -1070,6 +1248,19 @@ def _decide_cover_treatment(
         return "cpa_redraw", "mode=cpa (forced)"
     if is_song:
         return "cpa_redraw", "song keeps the clean CPA aesthetic"
+    if relationship_visual_required:
+        if cover_mode == "polish":
+            return "screenshot_polish", "mode=polish (forced)"
+        if relationship_source_verified:
+            return (
+                "screenshot_direct",
+                "hash-bound source frame verifies all required participants",
+            )
+        return (
+            "screenshot_direct",
+            "relationship hook requires source-verified participants before "
+            "composition scoring",
+        )
     if verified_stream_frame:
         return (
             "screenshot_direct",

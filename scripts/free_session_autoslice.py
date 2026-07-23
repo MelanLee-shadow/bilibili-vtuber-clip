@@ -98,6 +98,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
+from src.autoslice.reviewed_subtitle_baseline_registry import (
+    ReviewedSubtitleBaseline,
+    load_candidate_reviewed_subtitle_baseline,
+)
 from src.autoslice.source_integrity import audit_finalized_recording_inventory
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
@@ -141,6 +145,10 @@ from src.autoslice.visual_song_discovery import (
     union_visual_song_candidates,
 )
 from src.autoslice.session_relation_authority import resolve_session_relation
+from src.autoslice.structured_chat_binding import (
+    StructuredChatBindingError,
+    resolve_structured_chat_binding as _resolve_structured_chat_binding,
+)
 
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
@@ -196,10 +204,22 @@ SPEAKER_MODE = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
 if SPEAKER_MODE not in {"uniform_host", "required", "auto"}:
     SPEAKER_MODE = "uniform_host"
 ROOM = os.environ.get("AUTOSLICE_ROOM", CHANNEL_PROFILE.room_id)
+_DEFAULT_REC_ROOT = Path(
+    f"/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/{ROOM}"
+)
 REC_ROOT = Path(
     os.environ.get(
         "AUTOSLICE_REC_ROOT",
-        f"/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/{ROOM}",
+        str(_DEFAULT_REC_ROOT),
+    )
+)
+# Recovery can temporarily point REC_ROOT at an official-replay staging tree.
+# Structured chat still belongs to the canonical recorder archive, so it gets
+# an independent root instead of accidentally following that override.
+CANONICAL_REC_ROOT = Path(
+    os.environ.get(
+        "AUTOSLICE_CANONICAL_REC_ROOT",
+        str(_DEFAULT_REC_ROOT),
     )
 )
 RECORDER_STATUS_PATH = Path(
@@ -576,6 +596,21 @@ def candidate_subtitle_regression_path(candidate_id: str) -> Path | None:
     return path
 
 
+def candidate_reviewed_subtitle_baseline(
+    candidate_id: str,
+) -> ReviewedSubtitleBaseline | None:
+    """Return the candidate's hash-bound reviewed text, independent of cover state."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
+        raise ValueError("unsafe candidate id for reviewed subtitle baseline")
+    if human_truth_mode() == "withheld":
+        return None
+    return load_candidate_reviewed_subtitle_baseline(
+        profile_asset_directory("reviewed_subtitle_baselines"),
+        candidate_id,
+    )
+
+
 def candidate_speaker_override_path(candidate_id: str) -> Path | None:
     """Return the candidate's hash-bound speaker truth, withheld during blind tests."""
 
@@ -598,6 +633,7 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
     """Base code/config proof plus only this talk's optional truth assets."""
 
     base = pipeline_fingerprint()
+    reviewed_baseline = candidate_reviewed_subtitle_baseline(candidate_id)
     truth_assets = [
         path
         for path in (
@@ -607,6 +643,8 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
         )
         if path is not None
     ]
+    if reviewed_baseline is not None:
+        truth_assets.extend(reviewed_baseline.fingerprint_paths)
     # Preserve the historical base fingerprint for the overwhelmingly common
     # no-override case.  Adding/removing this candidate's truth asset still
     # changes/reverts its fingerprint without waking every legacy talk once.
@@ -1358,31 +1396,47 @@ def find_chat_jsonl(segment: Path) -> Path | None:
     for folder in (segment.parent, segment.parent / "sources"):
         try:
             for jsonl in folder.glob("*.jsonl"):
-                if re.sub(r"\D", "", jsonl.stem) == digits and jsonl.stat().st_size > 0:
+                if (
+                    re.sub(r"\D", "", jsonl.stem) == digits
+                    and not jsonl.is_symlink()
+                    and jsonl.is_file()
+                    and jsonl.stat().st_size > 0
+                ):
                     return jsonl
         except OSError:
             continue
     return None
 
 
+def resolve_structured_chat_binding(
+    segment: Path,
+    *,
+    source_sha256: str | None = None,
+) -> dict[str, object]:
+    """Bind a segment to structured chat without timestamp-near guessing.
+
+    Legacy recordings with neither a sidecar nor a committed source alias keep
+    the explicit ``required=false`` compatibility state.  Once a source alias
+    exists, however, the exact alias media hash and canonical sidecar are
+    mandatory: silently dropping that evidence would recreate the subtitle
+    failures this binding is designed to prevent.
+    """
+
+    return _resolve_structured_chat_binding(
+        segment,
+        alias_ledger_path=profile_asset_file("subtitle_truth_ledger"),
+        canonical_rec_root=CANONICAL_REC_ROOT,
+        direct_jsonl=find_chat_jsonl(segment),
+        source_sha256=source_sha256,
+    )
+
+
 _DIAN_GE_RX = re.compile(r"^点歌\s*(.+)$")
 _TRAILING_PUNCT_RX = re.compile(r"[\s,.!?~～，。！？、·…\-_]+$")
-
-
-
-
-
 
 _SRT_TS_RX = re.compile(
     r"(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)"
 )
-
-
-
-
-
-
-
 
 def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
     """Produce ``items`` CONCURRENTLY (bounded by MAX_PARALLEL_PRODUCE), preserving
@@ -1894,7 +1948,7 @@ def main(argv: list[str] | None = None) -> int:
         if srt is None:
             return 1
         xml = find_danmaku_xml(segment)
-        chat_jsonl = find_chat_jsonl(segment)
+        chat_binding = resolve_structured_chat_binding(segment)
         candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
         talk = [c for c in candidates if getattr(c, "content_type_hint", "talk") != "song"]
         log(f"smoke: {len(candidates)} candidates via {lane}; producing first talk candidate")
@@ -1911,7 +1965,7 @@ def main(argv: list[str] | None = None) -> int:
             "start_ms": max(0, int(cand.boundary.resolved_start_ms)),
             "end_ms": int(cand.boundary.resolved_end_ms),
             "xml": str(xml) if xml else None,
-            "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
+            **chat_binding,
             "hook": meta.get("hook", ""),
             "confidence": meta.get("confidence"),
             "selection_scorecard": (
