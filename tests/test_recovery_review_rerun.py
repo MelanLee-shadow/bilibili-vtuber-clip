@@ -102,6 +102,163 @@ def _plan(date: str, state: dict):
     )
 
 
+def _bind_exact_contract(state: dict, candidate_ids: list[str]) -> None:
+    state["talk_selection_contract"] = {
+        "schema_version": "talk-selection-contract.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": candidate_ids,
+        "authority": "Ivan-stated recovery review exact set",
+        "source_state_sha256": STATE_SHA,
+    }
+
+
+def test_natural_recovery_tick_requeues_stale_current_success(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    record = state["picks"][0]
+    record["given_end_ms"] = 115_000
+    record["given_end_authority"] = "Ivan-reviewed semantic closure"
+    _bind_exact_contract(state, ["auto_current"])
+
+    count = delivery_recovery.requeue_stale_current_recovery_talks(
+        date, state
+    )
+
+    assert count == 1
+    assert state["picks"] == []
+    item = state["pending_talk"][0]
+    assert item["cid"] == "auto_current"
+    assert item["selected_repair"] is True
+    assert item["retry_reason"] == (
+        "current_delivery_pipeline_fingerprint_changed"
+    )
+    assert item["given_end_ms"] == 115_000
+    assert item["given_end_authority"].startswith("Ivan-reviewed")
+    assert item["selection_scorecard"]["tier"] == 1
+    assert item["session_relation_authority"]["state"] == "CONFIRMED"
+    assert item["filler_proposals"] and item["merge_gap_removals"]
+    assert item["cover_diversity_slot"] == 3
+    archived = state["talk_superseded_attempts"][0]
+    assert archived["title"] == "【李豆沙】旧标题"
+    assert archived["bundle_lifecycle"] == "SUPERSEDED"
+    assert archived["bundle_compliance"] == "STALE_PIPELINE"
+    assert archived["pipeline_fingerprint"] == OLD
+    assert archived["superseded_by"] == NEW
+
+
+def test_natural_recovery_tick_same_fingerprint_is_byte_stable(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    _bind_exact_contract(state, ["auto_current"])
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: OLD,
+    )
+    before = copy.deepcopy(state)
+
+    assert (
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+        == 0
+    )
+    assert state == before
+
+
+def test_natural_recovery_tick_does_not_refresh_ordinary_production(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    state["run_mode"] = "PRODUCTION"
+    before = copy.deepcopy(state)
+
+    assert (
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+        == 0
+    )
+    assert state == before
+
+
+def test_natural_recovery_tick_invalid_exact_contract_is_atomic(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    _bind_exact_contract(state, ["auto_current"])
+    state["upload_allowed"] = True
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="INVALID_EXACT_TALK_SELECTION_CONTRACT",
+    ):
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+    assert state == before
+
+
+def test_natural_recovery_tick_adds_only_three_stale_successes(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    first = state["picks"][0]
+    state["picks"] = []
+    for cid in ("auto_one", "auto_two", "auto_three"):
+        row = copy.deepcopy(first)
+        row["candidate_id"] = cid
+        state["picks"].append(row)
+    state["pending_talk"] = [
+        {"cid": "auto_four"},
+        {"cid": "auto_five"},
+    ]
+    expected = [
+        "auto_one",
+        "auto_two",
+        "auto_three",
+        "auto_four",
+        "auto_five",
+    ]
+    _bind_exact_contract(state, expected)
+
+    assert (
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+        == 3
+    )
+    active = [row["cid"] for row in state["pending_talk"]]
+    assert sorted(active) == sorted(expected)
+    assert len(active) == len(set(active)) == 5
+    assert state["picks"] == []
+
+
+def test_natural_recovery_tick_build_failure_keeps_all_current(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    second = copy.deepcopy(state["picks"][0])
+    second["candidate_id"] = "auto_second"
+    state["picks"].append(second)
+    _bind_exact_contract(state, ["auto_current", "auto_second"])
+    before = copy.deepcopy(state)
+    original = delivery_recovery._recovery_queue_item
+
+    def fail_second(*args, **kwargs):
+        if kwargs.get("candidate_id") == "auto_second":
+            raise delivery_recovery.RecoveryReviewRerunError(
+                "RECOVERY_RERUN_CHAT_AUTHORITY_MISSING:auto_second"
+            )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        delivery_recovery, "_recovery_queue_item", fail_second
+    )
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="CHAT_AUTHORITY_MISSING:auto_second",
+    ):
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+    assert state == before
+
+
 def test_current_delivery_moves_to_hash_bound_recovery_queue(
     tmp_path, monkeypatch
 ):

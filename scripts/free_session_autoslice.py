@@ -766,11 +766,11 @@ from src.autoslice.song_delivery import (  # noqa: E402
     _atomic_verified_song_delivery,
 )
 from src.autoslice.delivery_recovery import (  # noqa: E402
-    requeue_recoverable_songs,
     _song_delivery_recovery_authority,
     recover_bound_song_deliveries,
     bind_song_delivery_recovery_authority,
-    requeue_recoverable_talks,
+    requeue_recoverable_deliveries,
+    requeue_recoverable_songs, requeue_recoverable_talks,
 )
 from src.autoslice.candidate_selection import (  # noqa: E402
     session_sealed,
@@ -1621,17 +1621,23 @@ def process_date(date: str) -> None:
             "package(s) without selector/ASR/LRC rerun"
         )
     song_fingerprint_baseline_before = state.get("song_pipeline_fingerprint_baseline")
-    requeued_talks = requeue_recoverable_talks(date, state) if automatic_maintenance else 0
-    requeued_songs = requeue_recoverable_songs(date, state) if automatic_maintenance else 0
+    requeued_stale_talks, requeued_talks, requeued_songs = (
+        requeue_recoverable_deliveries(date, state)
+        if automatic_maintenance
+        else (0, 0, 0)
+    )
     song_fingerprint_baseline_changed = (
         state.get("song_pipeline_fingerprint_baseline")
         != song_fingerprint_baseline_before
     )
-    if requeued_talks or requeued_songs or song_fingerprint_baseline_changed:
+    if any((requeued_stale_talks, requeued_talks, requeued_songs)) or (
+        song_fingerprint_baseline_changed
+    ):
         write_state(date, state)
-    if requeued_talks or requeued_songs:
+    if requeued_stale_talks or requeued_talks or requeued_songs:
         log(
-            f"{date}: requeued {requeued_talks} boundary talk failure(s) and "
+            f"{date}: requeued {requeued_stale_talks} stale CURRENT talk package(s), "
+            f"{requeued_talks} recoverable talk failure(s), and "
             f"{requeued_songs} recoverable song BLOCK(s) for song pipeline "
             f"{song_pipeline_fingerprint()[:19]}…"
         )

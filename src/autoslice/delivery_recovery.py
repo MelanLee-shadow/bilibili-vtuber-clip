@@ -15,6 +15,7 @@ import re
 import time
 from pathlib import Path
 
+from src.autoslice.candidate_selection import _exact_talk_contract_ids
 from src.autoslice.runner_proxy import RunnerProxy
 
 
@@ -1221,3 +1222,127 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
     state["picks"] = kept
     state.setdefault("pending_talk", []).extend(requeued)
     return len(requeued)
+
+
+def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
+    """Refresh stale successful talks only inside an exact recovery contract.
+
+    Ordinary production packages deliberately remain stable across broad code
+    deploys.  A no-upload recovery review is different: its exact candidate set
+    is an explicit request to regenerate those packages with the current,
+    candidate-specific authorities.  Build the whole replacement transaction
+    before mutating state so one missing source, BCUT, or chat binding cannot
+    partially supersede the currently reviewable set.
+    """
+
+    try:
+        contract_ids = _exact_talk_contract_ids(state)
+    except ValueError as exc:
+        raise RecoveryReviewRerunError(
+            "INVALID_EXACT_TALK_SELECTION_CONTRACT"
+        ) from exc
+    if not contract_ids:
+        return 0
+    contract_set = set(contract_ids)
+    picks = state.get("picks")
+    pending = state.get("pending_talk")
+    if not isinstance(picks, list) or not isinstance(pending, list):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_REVIEW_TALK_STATE_INVALID"
+        )
+    pending_ids = [
+        _candidate_id(row)
+        for row in pending
+        if isinstance(row, dict) and _candidate_id(row)
+    ]
+    if len(pending_ids) != len(set(pending_ids)):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_REVIEW_PENDING_TALK_DUPLICATE"
+        )
+    pending_set = set(pending_ids)
+
+    current_rows = [
+        row
+        for row in picks
+        if isinstance(row, dict)
+        and row.get("status") in _runner.DELIVERED_TALK_STATUSES
+        and row.get("bundle_lifecycle") == "CURRENT"
+        and row.get("bundle_compliance") == "COMPLIANT"
+    ]
+    current_ids = [_candidate_id(row) for row in current_rows]
+    if (
+        any(_SAFE_CANDIDATE_ID_RX.fullmatch(cid) is None for cid in current_ids)
+        or len(current_ids) != len(set(current_ids))
+    ):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_REVIEW_CURRENT_TALK_INVALID"
+        )
+    if set(current_ids) - contract_set:
+        raise RecoveryReviewRerunError(
+            "RECOVERY_REVIEW_CURRENT_TALK_OUTSIDE_EXACT_CONTRACT"
+        )
+
+    queue: list[dict] = []
+    archives: list[dict] = []
+    stale_ids: set[str] = set()
+    for record in current_rows:
+        cid = _candidate_id(record)
+        if cid in pending_set:
+            continue
+        try:
+            current = _runner.talk_pipeline_fingerprint(cid)
+        except ValueError as exc:
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_REVIEW_TALK_FINGERPRINT_INVALID:{cid}"
+            ) from exc
+        recorded = str(record.get("pipeline_fingerprint") or "")
+        if recorded == current:
+            continue
+        item = _recovery_queue_item(
+            date,
+            record,
+            candidate_id=cid,
+            retry_reason="current_delivery_pipeline_fingerprint_changed",
+            selected_repair=True,
+            given_end_ms=record.get("given_end_ms"),
+            given_end_authority=record.get("given_end_authority"),
+        )
+        archived = copy.deepcopy(record)
+        archived["bundle_lifecycle"] = "SUPERSEDED"
+        archived["bundle_compliance"] = "STALE_PIPELINE"
+        archived["superseded_by"] = current
+        archived["retry_reason"] = item["retry_reason"]
+        archived["recovery_source_record_sha256"] = item[
+            "recovery_source_record_sha256"
+        ]
+        queue.append(item)
+        archives.append(archived)
+        stale_ids.add(cid)
+
+    if not queue:
+        return 0
+    state["picks"] = [
+        row
+        for row in picks
+        if not (
+            isinstance(row, dict)
+            and _candidate_id(row) in stale_ids
+            and row.get("status") in _runner.DELIVERED_TALK_STATUSES
+            and row.get("bundle_lifecycle") == "CURRENT"
+            and row.get("bundle_compliance") == "COMPLIANT"
+        )
+    ]
+    pending.extend(queue)
+    state.setdefault("talk_superseded_attempts", []).extend(archives)
+    return len(queue)
+
+
+def requeue_recoverable_deliveries(
+    date: str, state: dict
+) -> tuple[int, int, int]:
+    """Run the ordered talk/song maintenance transaction for one date."""
+
+    stale_talks = requeue_stale_current_recovery_talks(date, state)
+    failed_talks = requeue_recoverable_talks(date, state)
+    blocked_songs = requeue_recoverable_songs(date, state)
+    return stale_talks, failed_talks, blocked_songs

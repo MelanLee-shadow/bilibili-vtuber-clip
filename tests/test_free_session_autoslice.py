@@ -3023,6 +3023,7 @@ def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypat
     monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda _date, _state: 0)
     monkeypatch.setattr(runner, "requeue_recoverable_talks", lambda _date, _state: 0)
     monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda _date, _state: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_deliveries", lambda _date, _state: (0, 0, 0))
     monkeypatch.setattr(runner, "list_segments", lambda _date: [])
     monkeypatch.setattr(runner, "cover_repair_needed", lambda _date, _row: False)
     monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
@@ -6831,8 +6832,11 @@ def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatc
         value["picks"] = []
         return 1
 
-    monkeypatch.setattr(runner, "requeue_recoverable_talks", wake)
-    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda _date, _state: 0)
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_deliveries",
+        lambda tick_date, value: (0, wake(tick_date, value), 0),
+    )
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
     monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
     monkeypatch.setattr(runner, "list_segments", lambda _date: [])
@@ -6881,6 +6885,13 @@ def test_process_date_does_not_auto_maintain_pre_horizon_history(monkeypatch):
         ],
     }
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_deliveries",
+        lambda _date, _state: pytest.fail(
+            "pre-horizon maintenance must not auto-requeue"
+        ),
+    )
     monkeypatch.setattr(
         runner,
         "requeue_recoverable_talks",
