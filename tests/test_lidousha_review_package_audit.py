@@ -256,6 +256,100 @@ def test_audit_accepts_hashed_screenshot_cover_without_ai_evidence(tmp_path: Pat
     assert result["issues"] == []
 
 
+def test_audit_accepts_portable_delivered_cover_with_record_hash(tmp_path: Path):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    delivered_cover = _write(
+        root / "covers" / "human-readable-title.cover.png",
+        "portable-screenshot-cover",
+    )
+    final_hash = "sha256:" + hashlib.sha256(
+        delivered_cover.read_bytes()
+    ).hexdigest()
+    generation = {
+        "method": "screenshot_direct",
+        "reference_image": "/remote/cover_refs/auto.cover-ref.png",
+        "reference_sha256": "sha256:" + "2" * 64,
+        "final_cover": "/opt/runtime/covers/auto.screenshot-title.cover.png",
+        "final_cover_sha256": final_hash,
+        "rendered_lines": ["真实联动画面"],
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v1",
+            "selected_treatment": "screenshot_direct",
+            "reason": "hash-bound frame contains both participants",
+        },
+    }
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished",
+                "items": [
+                    {
+                        "stem": "talk",
+                        "title": "【李豆沙】真实联动画面",
+                        "cover": str(delivered_cover),
+                        "cover_generation": generation,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is True
+    assert result["issues"] == []
+
+
+def test_audit_rejects_portable_delivered_cover_with_wrong_bytes(tmp_path: Path):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    delivered_cover = _write(
+        root / "covers" / "human-readable-title.cover.png",
+        "wrong-cover-bytes",
+    )
+    generation = {
+        "method": "screenshot_direct",
+        "reference_image": "/remote/cover_refs/auto.cover-ref.png",
+        "reference_sha256": "sha256:" + "2" * 64,
+        "final_cover": "/opt/runtime/covers/auto.screenshot-title.cover.png",
+        "final_cover_sha256": "sha256:"
+        + hashlib.sha256(b"expected-cover-bytes").hexdigest(),
+        "rendered_lines": ["真实联动画面"],
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v1",
+            "selected_treatment": "screenshot_direct",
+            "reason": "hash-bound frame contains both participants",
+        },
+    }
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished",
+                "items": [
+                    {
+                        "stem": "talk",
+                        "title": "【李豆沙】真实联动画面",
+                        "cover": str(delivered_cover),
+                        "cover_generation": generation,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is False
+    assert {issue["code"] for issue in result["issues"]} == {
+        "SCREENSHOT_COVER_EVIDENCE_MISSING"
+    }
+
+
 def test_audit_rejects_cpa_model_defaults_without_materialized_ai(tmp_path: Path):
     root = tmp_path / "pkg"
     root.mkdir()

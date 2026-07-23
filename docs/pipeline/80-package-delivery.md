@@ -12,7 +12,9 @@
   boundary audit 精确一致，或完整 semantic review 为 PASS 且推荐 end 已实际 materialize。
 - 封面审计按 `cover_generation.route_decision.actual_treatment` 分支验真：截图只验 source reference/final 像素/文字，
   CPA 只认真实 AI 调用与资产 hash；任何共用默认字段都不能跨路线充当证据。最终 package audit
-  是上传 manifest/hash gate 的前置条件，不允许把“生成过 sidecar”当成合规。
+  是上传 manifest/hash gate 的前置条件，不允许把“生成过 sidecar”当成合规。可移植交付包若无法访问
+  record 中的远端 `final_cover` 路径，只允许回退到 manifest 明示的交付 `cover`，且该文件必须与
+  record 的 `final_cover_sha256` 完全一致；不能按相似文件名或任意现存图片替代。
 - 汇总表时长必须优先使用 producer 最终 record 打印进 summary 的 `duration_ms`（边界自修复后的内容时长），其次才是 candidate 的 `effective_duration_ms`；原始选片锚点 `end_ms-start_ms` 只作旧状态兜底，不能把已延长的 5:00 成片仍显示成 4:32。
 - 汇总中的封面路线必须从校验通过的 `lidousha-cover-route-decision.v2` 投影实际执行路线、是否调用/采用 AI、选中理由和两个未选路线的拒绝理由。内部兼容状态 `AI_COVER_READY` 仅表示封面 artifact 已就绪，绝不能被报告解释成 AI 生图；缺少有效 v2 证据时必须显示 UNKNOWN/缺证。
 - `reporting.py` 是从既有 state/record 生成只读审片报告的投影层，不属于会改变选片、字幕、边界、标题、封面或媒体 bytes 的 proof closure；内容与歌切流水线指纹都必须排除它。报告变化直接重写报告，不得唤醒成片重制或无关失败重试。

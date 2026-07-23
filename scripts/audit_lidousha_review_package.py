@@ -422,11 +422,21 @@ def _cover_artifact_path(
     generation: dict[str, Any],
     generation_key: str,
     *item_keys: str,
+    fallback_when_generation_unavailable: bool = False,
 ) -> Path | None:
     value = generation.get(generation_key)
-    if not value:
-        value = next((item.get(key) for key in item_keys if item.get(key)), None)
-    return _resolve(root, value)
+    generation_path = _resolve(root, value)
+    if generation_path is not None and (
+        generation_path.is_file()
+        or not fallback_when_generation_unavailable
+    ):
+        return generation_path
+
+    item_value = next(
+        (item.get(key) for key in item_keys if item.get(key)), None
+    )
+    item_path = _resolve(root, item_value)
+    return item_path if item_path is not None else generation_path
 
 
 def _artifact_matches_sha256(path: Path | None, expected: object) -> bool:
@@ -474,6 +484,7 @@ def _audit_finished_cover_evidence(
         "final_cover",
         "cover",
         "cover_path",
+        fallback_when_generation_unavailable=True,
     )
     final_hash = generation.get("final_cover_sha256") or item.get("cover_sha256")
     rendered_lines = generation.get("rendered_lines")
