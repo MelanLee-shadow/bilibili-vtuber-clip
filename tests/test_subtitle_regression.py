@@ -101,6 +101,38 @@ def test_candidate_truth_gate_accepts_reviewed_required_alternatives(tmp_path):
     ]
 
 
+def test_candidate_truth_gate_requires_every_reviewed_occurrence(tmp_path):
+    path = _asset(
+        tmp_path,
+        required_payload_min_occurrences={"姐感妹": 2},
+    )
+    complete = _srt(
+        "但是我确实很想跟大家看梦限大",
+        "恋死看吗",
+        "她是一个姐感妹",
+        "姐感妹",
+    )
+    one_missing = complete.replace("她是一个姐感妹", "她是一个桔梗妹")
+
+    passing = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id="auto_truth",
+        final_text_srt=complete,
+        final_speaker_srt=complete,
+    )
+    failing = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id="auto_truth",
+        final_text_srt=one_missing,
+        final_speaker_srt=one_missing,
+    )
+
+    assert passing["status"] == "PASS"
+    assert failing["surfaces"]["final_text_srt"][
+        "missing_required_min_occurrences"
+    ] == [{"text": "姐感妹", "required_count": 2, "found_count": 1}]
+
+
 def test_candidate_truth_gate_rejects_forbidden_substring_on_either_surface(tmp_path):
     path = _asset(tmp_path)
     text = _srt("但是我确实很想跟大家看梦限大", "恋死看吗")
@@ -201,8 +233,11 @@ def test_20260722_candidate_regressions_gate_both_surfaces(candidate_id, poison)
         / f"{candidate_id}.subtitle-regression.v1.json"
     )
     document, _ = load_subtitle_regression_document(path, candidate_id=candidate_id)
-    correct = _srt(*document["required_payload_substrings"])
-    correct_speaker = _srt(*document["required_payload_substrings"], speaker=True)
+    truth_texts = list(document["required_payload_substrings"])
+    for text, count in document["required_payload_min_occurrences"].items():
+        truth_texts.extend([text] * count)
+    correct = _srt(*truth_texts)
+    correct_speaker = _srt(*truth_texts, speaker=True)
     passing = verify_subtitle_regression_surfaces(
         path,
         candidate_id=candidate_id,
@@ -211,7 +246,7 @@ def test_20260722_candidate_regressions_gate_both_surfaces(candidate_id, poison)
     )
     assert passing["status"] == "PASS"
 
-    poisoned = _srt(*document["required_payload_substrings"], poison)
+    poisoned = _srt(*truth_texts, poison)
     failing = verify_subtitle_regression_surfaces(
         path,
         candidate_id=candidate_id,

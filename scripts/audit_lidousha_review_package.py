@@ -17,6 +17,9 @@ from src.autoslice.subtitle_rendering import (  # noqa: E402
     ASS_MAX_VISUAL_LINES,
 )
 from src.autoslice.cover_generation import COVER_MIN_TALK_FONT_SIZE  # noqa: E402
+from src.autoslice.cover_route_evidence import (  # noqa: E402
+    validate_cover_route_decision,
+)
 from src.autoslice.clip_context import (  # noqa: E402
     ClipContextError,
     validate_clip_context,
@@ -261,12 +264,9 @@ def _audit_story_bound_cover(
         )
     route_decision = generation.get("route_decision")
     if required and (
-        not isinstance(route_decision, dict)
-        or route_decision.get("schema_version")
-        != "lidousha-cover-route-decision.v1"
-        or route_decision.get("selected_treatment")
-        not in {"screenshot_direct", "screenshot_polish", "cpa_redraw"}
-        or not str(route_decision.get("reason") or "").strip()
+        not validate_cover_route_decision(
+            generation, allow_legacy_v1=True
+        )
     ):
         _add_issue(
             issues,
@@ -497,10 +497,9 @@ def _audit_finished_cover_evidence(
             generation.get("reference_sha256")
         )
         route_ready = (
-            isinstance(route_decision, dict)
-            and route_decision.get("schema_version")
-            == "lidousha-cover-route-decision.v1"
-            and bool(str(route_decision.get("reason") or "").strip())
+            validate_cover_route_decision(
+                generation, allow_legacy_v1=True
+            )
         )
         if not (
             valid_method
@@ -545,10 +544,9 @@ def _audit_finished_cover_evidence(
     )
     if treatment == "cpa_redraw":
         route_ready = (
-            isinstance(route_decision, dict)
-            and route_decision.get("schema_version")
-            == "lidousha-cover-route-decision.v1"
-            and bool(str(route_decision.get("reason") or "").strip())
+            validate_cover_route_decision(
+                generation, allow_legacy_v1=True
+            )
         )
         if not (route_ready and rendered_text_ready and actual_ai_ready):
             _add_issue(

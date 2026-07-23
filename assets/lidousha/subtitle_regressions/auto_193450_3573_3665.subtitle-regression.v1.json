@@ -10,8 +10,13 @@
     "其实是最包容异性恋的直播间"
   ],
   "required_any_substring_groups": [],
+  "required_payload_min_occurrences": {
+    "姐感妹": 2
+  },
   "forbidden_payload_substrings": [
     "拿下了黑色的有角",
+    "桔梗妹",
+    "秸秆妹",
     "晴，其实",
     "她就叫晴",
     "这个，这个是桔梗的妹妹",

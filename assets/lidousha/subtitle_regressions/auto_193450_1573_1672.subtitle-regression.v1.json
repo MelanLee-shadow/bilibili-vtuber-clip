@@ -2,7 +2,7 @@
   "schema_version": "lidousha-subtitle-regression.v1",
   "candidate_id": "auto_193450_1573_1672",
   "required_payload_substrings": [
-    "另外小N小N老师你别坐地上",
+    "你别坐地上可是我现在真的很像坐在地上",
     "她把她的那个大的椅子那个电脑椅给我了",
     "她就只能缩在一边",
     "感觉像被霸凌了",
@@ -15,7 +15,11 @@
   "forbidden_payload_substrings": [
     "1190",
     "一瞅1190",
-    "小恩老师"
+    "小恩老师",
+    "另外小N小N老师",
+    "另外小樱、小文老师",
+    "感觉像被留了",
+    "像霸凌"
   ],
   "forbidden_exact_cues": []
 }

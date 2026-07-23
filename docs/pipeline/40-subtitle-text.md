@@ -27,8 +27,13 @@
 - speech memory 只生成候选闭集，`mutation_authorized=false`；必须按 candidate/relation/date
   scope 检索并携带 `candidate_memory_id`。它不能冒充 source_surface，不能进入 glossary，
   即使与误听同音也必须走声学仲裁。片内另一个由同一 ASR 派生的 cue 同样只是相关候选，
-  不得作为独立文字证人直接改字。
+  不得作为独立文字证人直接改字。上下文展示用的 `id=` 不是 ID 本体；终审只可在去掉
+  **一个**该固定展示前缀后精确命中哈希绑定 ledger 时受控规范化，未知 ID 禁止模糊匹配。
 - 音频二听只证明读音，不证明同音人名/称呼的汉字写法：带「小/老/阿」前缀或「神/老师/姐/哥/酱/桑/君/总/宝」后缀的同音换字，没有词表/源真值等文字权威就只回退该换字跨度，同 cue 其余有见证修复仍保留。守卫同时检查 draft 改写跨度本身的人名形态，并只额外容忍 `-n/-ng` 鼻音尾漂移来识别近同音（如 `毁神→绘声`）；不得因改写把「神」一起吃掉就逃过相邻后缀检查。`什么/怎么/为什么/谁/哪里/多少` 等疑问意图族发生变化则整 cue 回退，禁止把逐字字幕改成解释性提问。
+- 字母昵称的规范词面与口播读音必须分层：已有 source-backed entity provenance、建议包含
+  字母、且**整条 current/proposed 的去标点拼音在折叠相邻口语重启后完全相同**时，声学层
+  听到字母名（如 `N→恩`）不得以 grapheme 不同否决 `大N`。该窄门不提供 provenance，
+  不适用于普通语义改写、未知专名或发音不等价候选。
 - 源真值支持 `replace_cue` / `replace_substring` / `drop_cue`；`drop_cue` 只允许删除被 source-timeline 真值半开区间完整包含的 cue（仅容忍 120ms 编码/SRT 边界漂移）。任何实质性跨界均记 `DROP_CUE_STRADDLES_TRUTH_INTERVAL` 并 fail closed，禁止按“有重叠”整条删除。
 - hash-bound 源真值拥有的 cue 在 `_run_final_review` 前即进入保护集，终审不得先把中文音译改成
   假名、也不得用声学对同音专名重新选字后再指望末尾钉子挽救。保护只容忍总计 `<=250ms`

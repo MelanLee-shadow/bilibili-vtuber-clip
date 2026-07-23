@@ -1189,6 +1189,7 @@ def _write_lyric_timeline_srt(
     return index - 1
 
 BOUNDARY_CLIPPED_CUE_MAX_VISIBLE_MS = 300
+BOUNDARY_CUE_START_TOLERANCE_MS = 50
 
 
 def _write_source_range_srt(cues: Sequence[SourceCue], start_ms: int, end_ms: int, output_path: Path) -> None:
@@ -1204,7 +1205,7 @@ def _write_source_range_srt(cues: Sequence[SourceCue], start_ms: int, end_ms: in
         # fragment is unreadable and often belongs to the prior topic; keep the
         # audio pre-roll while leaving that sliver intentionally unsubtitled.
         if (
-            cue.source_start_ms < start_ms
+            clipped_start_ms - start_ms <= BOUNDARY_CUE_START_TOLERANCE_MS
             and clipped_end_ms - clipped_start_ms
             <= BOUNDARY_CLIPPED_CUE_MAX_VISIBLE_MS
         ):

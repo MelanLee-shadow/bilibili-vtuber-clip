@@ -17,6 +17,7 @@ from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
 )
+from src.autoslice.cover_route_evidence import validate_cover_route_decision
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.producer_media import (
@@ -163,15 +164,10 @@ def _audit_story_bound_cover(
         reason_codes.add("COVER_STORY_TEXT_MISSING")
     if not rendered_text:
         reason_codes.add("COVER_RENDERED_TEXT_EVIDENCE_MISSING")
-    route_decision = generation.get("route_decision")
-    if (
-        not isinstance(route_decision, Mapping)
-        or route_decision.get("schema_version")
-        != "lidousha-cover-route-decision.v1"
-        or route_decision.get("selected_treatment")
-        not in {"screenshot_direct", "screenshot_polish", "cpa_redraw"}
-        or not str(route_decision.get("reason") or "").strip()
-    ):
+    # The delivery choke point only accepts the complete v2 evidence emitted
+    # by current staging.  Cover repair remains read-compatible with immutable
+    # v1 packages, but a fresh producer run cannot downgrade its audit schema.
+    if not validate_cover_route_decision(generation, allow_legacy_v1=False):
         reason_codes.add("COVER_ROUTE_DECISION_MISSING_OR_INVALID")
     return sorted(reason_codes), audits
 

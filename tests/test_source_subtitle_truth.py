@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
 
 
@@ -1167,6 +1168,69 @@ def test_committed_ledger_repairs_hotpot_parallel_repeat_entity_phrase():
     )
 
 
+def test_committed_ledger_repairs_hotpot_spoken_letter_name_to_canonical_entity():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 3_460, "哪里又变成小李被大大恩霸凌了")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/recordings/22966160_20260722-19-35-15.mp4",
+                    "start_ms": 2_009_220,
+                    "end_ms": 2_012_680,
+                }
+            ]
+        },
+        durations=[3_460],
+        ledger_path=ledger,
+    )
+
+    assert "哪里又变成小李被大N霸凌了" in corrected
+    assert "大大恩" not in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == (
+        "20260722-nancho-hotpot-dan-orthography-callback-r1"
+    )
+
+
+def test_committed_ledger_repairs_chair_bullying_phrase_across_bad_split():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (0, 1_240, "感觉像被留了"),
+            (1_240, 2_480, "像霸凌"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/recordings/22966160_20260722-19-35-15.mp4",
+                    "start_ms": 1_597_960,
+                    "end_ms": 1_600_440,
+                }
+            ]
+        },
+        durations=[2_480],
+        ledger_path=ledger,
+    )
+
+    assert "".join(cue.text for cue in parse_srt_cues(corrected)) == "感觉像被霸凌了"
+    assert "被留了" not in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == (
+        "20260722-nancho-chair-bullying-phrase-r1"
+    )
+
+
 def test_committed_ledger_drops_post_nightin_formula_hallucination():
     ledger = (
         Path(__file__).resolve().parents[1]
@@ -1175,7 +1239,7 @@ def test_committed_ledger_drops_post_nightin_formula_hallucination():
         / "subtitle_truth_ledger.v1.json"
     )
     corrected, audit = apply_source_subtitle_truth(
-        _srt_ms((0, 2_340, "嗯，LLNNHHB，是这个")),
+        _srt_ms((0, 4_140, "嗯，LLNNHHB，是这个")),
         spec={
             "pieces": [
                 {
@@ -1183,24 +1247,25 @@ def test_committed_ledger_drops_post_nightin_formula_hallucination():
                         "/recordings/22966160_20260722-19-35-15.mp4"
                     ),
                     "start_ms": 776_470,
-                    "end_ms": 778_810,
+                    "end_ms": 780_610,
                 }
             ]
         },
-        durations=[2_340],
+        durations=[4_140],
         ledger_path=ledger,
     )
 
     assert corrected == ""
     assert audit["status"] == "APPLIED"
     assert audit["applied"][0]["truth_id"] == (
-        "20260722-nancho-confrontation-drop-hallucinated-formula-r2"
+        "20260722-nancho-confrontation-drop-hallucinated-formula-r3"
     )
-    assert any(
-        row["truth_id"]
-        == "20260722-nancho-confrontation-latin-formula-positive-r1"
-        for row in audit["inactive"]
-    )
+    assert {
+        row["truth_id"] for row in audit["inactive"]
+    } >= {
+        "20260722-nancho-confrontation-latin-formula-positive-r1",
+        "20260722-nancho-confrontation-drop-hallucinated-formula-r2",
+    }
 
 
 def test_committed_ledger_repairs_qin_heterosexual_pun():
@@ -1230,6 +1295,38 @@ def test_committed_ledger_repairs_qin_heterosexual_pun():
     assert "其实是最包容异性恋的直播间" in corrected
     assert "一系列" not in corrected
     assert audit["status"] == "APPLIED"
+
+
+def test_committed_ledger_repairs_first_jieganmei_occurrence():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 2_620, "她是一个桔梗妹")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 3_594_460,
+                    "end_ms": 3_597_080,
+                }
+            ]
+        },
+        durations=[2_620],
+        ledger_path=ledger,
+    )
+
+    assert "她是一个姐感妹" in corrected
+    assert "桔梗妹" not in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == (
+        "20260722-qin-jieganmei-full-clause-r1"
+    )
 
 
 @pytest.mark.parametrize("asr_surface", ["陆医生", "露蒂丝", "露蒂斯"])

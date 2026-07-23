@@ -2,6 +2,21 @@
   "schema_version": "lidousha-cover-reference-overrides.v1",
   "overrides": [
     {
+      "candidate_id": "auto_193450_3573_3665",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "content_time_ms": 70000,
+      "source_time_ms": 3643070,
+      "reference_png_sha256": "sha256:53d32dd63928c800458cd020ab988703bf13c585f41b56789efa715d6b693b8c",
+      "visible_participant_ids": [
+        "lidousha",
+        "nancho"
+      ],
+      "required_treatment": "screenshot_direct",
+      "relation_action": "画面中央展示男性角色基利安，李豆沙与南町同框，对应看到男角色只能说不熟的反转",
+      "authority": "Ivan-stated-20260722(标题为最包容异性恋的直播间，看到男角色只能说出一句不熟)+Codex-visual-review-20260722(同源70.0s帧清楚显示男性角色基利安、角色名及李豆沙/南町双人；当前AI熊猫脸未承载故事信息，故选真实故事帧)"
+    },
+    {
       "candidate_id": "auto_193450_1573_1672",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",

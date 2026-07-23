@@ -428,6 +428,47 @@ def test_context_adjudication_keeps_current_when_semantics_conflict_with_audio()
     assert audit["policy_branch"] == "PROPOSED_INCOMPATIBLE_KEEP_CURRENT"
 
 
+def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
+    source = _srt("哪里又变成小李被大大恩霸凌了")
+    finding = {
+        "cue_index": 1,
+        "suspect": "大大恩",
+        "suggestion": "大N",
+        "proposed_full_cue": "哪里又变成小李被大N霸凌了",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "transcript_context",
+            "surface": "大N",
+        },
+        "why": "同一人物昵称已有来源见证",
+    }
+
+    def acoustics_reports_spoken_en(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "SUPPORTED",
+            "proposed_fit": "INCOMPATIBLE",
+            "heard_syllables": "na li you bian cheng xiao li bei da da en ba ling le",
+        }
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=acoustics_reports_spoken_en,
+    )
+
+    assert "大N霸凌" in output
+    assert "大大恩" not in output
+    assert audit["repaired"] is True
+    assert audit["policy_branch"] == (
+        "ACOUSTIC_ORTHOGRAPHY_NEUTRAL_CONTEXT_TIEBREAK_APPLY_PROPOSED"
+    )
+    assert audit["orthography_equivalence"]["matched"] is True
+
+
 def test_context_adjudication_rejects_unbound_verdict():
     source = _srt("还没有歌杂呢")
 
@@ -866,3 +907,43 @@ def test_candidate_only_memory_forces_acoustic_even_when_homophone():
     output, audit = route_findings(source, findings, protected_term_set=frozenset())
     assert "小的吧" in output
     assert audit["findings"][0]["routed"] == "disclosure"
+
+
+def test_candidate_memory_display_prefix_is_normalized_only_to_verified_id():
+    source = _srt("她是一个桔梗妹")
+    memory_id = "lidousha.idiolect.jieganmei.r1"
+    candidate_context = {
+        "speech_memory": {
+            "ledger_sha256": "sha256:" + "b" * 64,
+            "entries": [
+                {
+                    "memory_id": memory_id,
+                    "candidate_canonicals": ["姐感妹"],
+                }
+            ],
+        }
+    }
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "她是一个姐感妹",
+                    "repair_class": "phonetic",
+                    "candidate_memory_id": f"id={memory_id}",
+                    "why": "模型复制了上下文展示标签",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+        candidate_context_text=f"id={memory_id}",
+        candidate_context=candidate_context,
+    )
+
+    assert findings[0]["suggestion"] == "姐感"
+    assert findings[0]["candidate_memory_id"] == memory_id
+    assert findings[0]["candidate_memory_id_raw"] == f"id={memory_id}"
+    assert findings[0]["force_acoustic"] is True
+    assert findings[0]["candidate_provenance"]["memory_id"] == memory_id

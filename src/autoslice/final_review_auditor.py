@@ -79,6 +79,82 @@ def _pinyin_similarity(a: str, b: str) -> float:
     ).ratio()
 
 
+# Spoken Mandarin letter names.  This table is not an entity dictionary: it is
+# used only to compare the pronunciation of an already source-backed proposal
+# with the current cue.  In particular, 南町's canonical nickname ``大N`` is
+# normally spoken ``大恩``; an acoustic model must not veto the canonical
+# grapheme merely because it reports the spoken letter name.
+_LATIN_LETTER_PRONUNCIATION = {
+    "a": "ei", "b": "bi", "c": "xi", "d": "di", "e": "yi",
+    "f": "ai fu", "g": "ji", "h": "ei chi", "i": "ai", "j": "jie",
+    "k": "kei", "l": "ai le", "m": "ai mu", "n": "en", "o": "ou",
+    "p": "pi", "q": "kiu", "r": "a er", "s": "ai si", "t": "ti",
+    "u": "you", "v": "wei", "w": "da bu liu", "x": "ai ke si",
+    "y": "wai", "z": "zei",
+}
+
+
+def _orthography_pronunciation_key(text: str) -> tuple[str, ...]:
+    """Return a conservative toneless pronunciation key.
+
+    Punctuation is ignored and adjacent duplicate syllables are collapsed so
+    a harmless oral restart (``大大恩``) can compare equal to canonical
+    ``大N``.  This key is never sufficient provenance for a repair; the caller
+    additionally requires a source-backed entity candidate.
+    """
+
+    if not text or _lazy_pinyin is None:
+        return ()
+    tokens: list[str] = []
+    han_buffer: list[str] = []
+
+    def flush_han() -> None:
+        if han_buffer:
+            tokens.extend(str(value).casefold() for value in _lazy_pinyin("".join(han_buffer)))
+            han_buffer.clear()
+
+    for char in text:
+        if char.isascii() and char.isalpha():
+            flush_han()
+            tokens.extend(_LATIN_LETTER_PRONUNCIATION[char.casefold()].split())
+        elif char.isalnum():
+            han_buffer.append(char)
+        else:
+            flush_han()
+    flush_han()
+    collapsed: list[str] = []
+    for token in tokens:
+        normalized = re.sub(r"[^a-z0-9üv]", "", token.casefold())
+        if normalized and (not collapsed or collapsed[-1] != normalized):
+            collapsed.append(normalized)
+    return tuple(collapsed)
+
+
+def _source_backed_orthography_equivalent(
+    request: Mapping[str, Any],
+    finding: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any]]:
+    """Prove a source-backed entity proposal differs only in written form."""
+
+    proposed = str(request.get("proposed_cue") or "")
+    current = str(request.get("current_cue") or "")
+    provenance = finding.get("candidate_provenance")
+    if (
+        request.get("repair_class") != "source_backed_entity"
+        or not isinstance(provenance, Mapping)
+        or not re.search(r"[A-Za-z]", proposed)
+    ):
+        return False, {}
+    current_key = _orthography_pronunciation_key(current)
+    proposed_key = _orthography_pronunciation_key(proposed)
+    equivalent = bool(current_key and current_key == proposed_key)
+    return equivalent, {
+        "current_pronunciation_key": list(current_key),
+        "proposed_pronunciation_key": list(proposed_key),
+        "candidate_provenance_kind": str(provenance.get("kind") or ""),
+    }
+
+
 def _near_homophone_gate(row: Mapping[str, Any], base_text: str) -> dict[str, Any] | None:
     """Three-tier pinyin admissibility for the T1 witnessed lane.
 
@@ -141,6 +217,18 @@ def protected_terms() -> frozenset[str]:
     return _load()
 
 
+def _normalize_candidate_memory_id(
+    value: object,
+    memory_entries: Mapping[str, object],
+) -> tuple[str, str | None]:
+    """Strip one display-only ``id=`` prefix only after an exact ledger hit."""
+
+    raw = str(value or "").strip()
+    if raw.startswith("id=") and raw[3:] in memory_entries:
+        return raw[3:], "STRIPPED_VERIFIED_ID_LABEL"
+    return raw, None
+
+
 _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成品切片的最终字幕（观众将看到的原文）。
 你的任务是**只挑出可疑处，绝不改写**。可疑类别：
 - nonword：读起来不是词的胡话/生造词（如「季下」「苏人」——多为语音误听残留）；
@@ -195,7 +283,8 @@ authority，不能仅凭这里的词面填写 source_surface，也不能让建�
    **插入**该专名后的 proposed_full_cue（source_surface 从钩子/弹幕/词表原文
    引用），没把握就报 disclosure。插入建议最终由音频仲裁定夺，不会盲改。
 8. 若建议仅来自“候选级长程语境”，必须填写其中逐字给出的 candidate_memory_id，
-   不得把该候选冒充 source_surface。此类建议只会进入闭集声学仲裁，绝不会因同音
+   不得把该候选冒充 source_surface。上下文若显示 ``id=foo``，字段值只填 ``foo``，
+   不要把展示标签 ``id=`` 抄进 id。此类建议只会进入闭集声学仲裁，绝不会因同音
    或近音直接改字；没有对应 memory id 就不要声称来自长期记忆。
 9. 对“前半段没声、后半段有真实口播”只能用 acoustic_delete 提议删掉无声前缀并
    在 proposed_full_cue 保留后半段；禁止因局部静音把整 cue 删除。只有整条都没有
@@ -285,7 +374,8 @@ def audit_final_subtitles(
         contract_error: str | None = None
         scope_warnings: list[str] = []
         source_surface = str(row.get("source_surface") or "").strip()
-        candidate_memory_id = str(row.get("candidate_memory_id") or "").strip()
+        candidate_memory_id_raw = str(row.get("candidate_memory_id") or "").strip()
+        candidate_memory_id, candidate_memory_id_normalization = _normalize_candidate_memory_id(candidate_memory_id_raw, memory_entries)
         memory_entry = memory_entries.get(candidate_memory_id)
         memory_candidate_valid = False
         inferred_source_surface = False
@@ -499,6 +589,11 @@ def audit_final_subtitles(
                 "surface": source_surface,
                 "basis": "exact_replacement_repeated_in_local_authority",
             }
+        if candidate_memory_id_normalization:
+            finding["candidate_memory_id_raw"] = candidate_memory_id_raw
+            finding["candidate_memory_id_normalization"] = (
+                candidate_memory_id_normalization
+            )
         findings.append(finding)
         if len(findings) >= MAX_FINDINGS:
             break
@@ -864,6 +959,10 @@ def adjudicate_context_finding(
     repaired = False
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
     repair_class = str(request.get("repair_class") or "")
+    orthography_equivalent, orthography_audit = _source_backed_orthography_equivalent(
+        request,
+        finding,
+    )
     if (
         valid
         and repair_class == "acoustic_drop_cue"
@@ -879,6 +978,14 @@ def adjudicate_context_finding(
             policy_branch = "ACOUSTIC_PARTIAL_DELETE_STRICT_APPLY"
         else:
             policy_branch = "ACOUSTIC_PARTIAL_DELETE_NOT_PROVEN_KEEP_CURRENT"
+    elif valid and proposed_fit == "INCOMPATIBLE" and orthography_equivalent:
+        # Acoustic judges compare sounds, not house-style graphemes.  A
+        # hash-bound/source-backed entity proposal whose complete spoken form
+        # is identical may therefore win the spelling tie (大大恩 -> 大N).
+        # This branch is deliberately before the normal acoustic veto and is
+        # unavailable to ordinary semantic or unsupported entity rewrites.
+        repaired = True
+        policy_branch = "ACOUSTIC_ORTHOGRAPHY_NEUTRAL_CONTEXT_TIEBREAK_APPLY_PROPOSED"
     elif valid and proposed_fit == "INCOMPATIBLE":
         policy_branch = "PROPOSED_INCOMPATIBLE_KEEP_CURRENT"
     elif valid:
@@ -923,6 +1030,10 @@ def adjudicate_context_finding(
         "timing_immutable": True,
         "request": request,
         "verdict": verdict or raw_verdict,
+        "orthography_equivalence": {
+            "matched": orthography_equivalent,
+            **orthography_audit,
+        },
     }
 
 

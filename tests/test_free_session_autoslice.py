@@ -12,6 +12,10 @@ import scripts.free_session_autoslice as runner
 import src.autoslice.speaker_session_router as speaker_router
 from src.autoslice.visual_song_discovery import VisualSongCandidate, VisualSongDiscoveryResult
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
+from src.autoslice.cover_route_evidence import (
+    build_cover_route_decision,
+    record_cover_route_execution,
+)
 from tests.host_vocal_test_support import bind_ready_live_performance_report, make_ready_host_vocal_claim
 from scripts.free_session_autoslice import (
     COVER_REPAIR_MAX_ATTEMPTS,
@@ -1350,13 +1354,7 @@ def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
         "model": "none",
         "image_gen_model": "none",
         "cover_origin": "SOURCE_SCREENSHOT",
-        "image_generation_used": False,
         "fallback_used": False,
-        "route_decision": {
-            "schema_version": "lidousha-cover-route-decision.v1",
-            "selected_treatment": "screenshot_direct",
-            "reason": "hash-bound real stream frame has both participants",
-        },
         "reference_image": str(reference),
         "reference_sha256": fx["digest"](reference),
         "screenshot_frame": {"frame_ms": 21_500},
@@ -1364,6 +1362,20 @@ def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
         "final_cover": str(source_cover),
         "final_cover_sha256": expected_cover,
     }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="screenshot_direct",
+        selected_rationale="hash-bound real stream frame has both participants",
+        story_contract=None,
+        reference_authority=None,
+        decision_inputs={"cover_mode": "auto"},
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
     for record_path in (fx["delivery_record"], fx["source_record"]):
         record = json.loads(record_path.read_text(encoding="utf-8"))
         record["artifact_hashes"]["cover_sha256"] = expected_cover

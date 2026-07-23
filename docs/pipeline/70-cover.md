@@ -18,6 +18,10 @@ memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidous
 - screenshot 与 AI 都是一等路线；人工标题不等于禁用截图，截图 route 也不得因没有短梗字
   静默回退 AI。`auto` 必须落盘 `route + reason_codes + considered evidence`，从最终包可以回答
   “为何选截图/为何选 AI”。
+- 当前生产只接受 `lidousha-cover-route-decision.v2`：必须同时记录 `required_participant_ids`、
+  hash-bound `source_visible_participant_ids`、`image_generation_planned/attempted/used`、selected 与
+  actual treatment、执行结果，以及 screenshot_direct / screenshot_polish / cpa_redraw 三条路线中
+  两条逐项拒绝理由；旧 v1 只允许历史包读取兼容，不能作为新生产证据。
 - `screenshot_direct` / `screenshot_polish` 必须有官方源 SHA 绑定的 reference、实际 final cover
   文件与 SHA、逐字 rendered text；指定双人帧还必须匹配 reference override 的 candidate、
   source time、participant IDs 与 required treatment。截图路线不要求、也不得伪造 AI model 证据。

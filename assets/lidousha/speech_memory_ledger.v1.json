@@ -39,6 +39,12 @@
       "candidate_canonicals": ["姐感妹"],
       "evidence": [
         {
+          "evidence_class": "DUAL_ASR_PHONETIC_PLUS_WHOLE_CLIP_CALLBACK_EXPLANATION",
+          "authority": "BCUT秸秆妹/AGY桔梗妹同音分歧由后文姐姐感觉但其实是妹妹及整片回指消歧",
+          "source_start_ms": 3594460,
+          "source_end_ms": 3597080
+        },
+        {
           "evidence_class": "ATOMIC_HUMAN_SOURCE_TRUTH",
           "authority": "Ivan-stated-20260722(display 0:30 姐感妹)",
           "source_start_ms": 3597980,

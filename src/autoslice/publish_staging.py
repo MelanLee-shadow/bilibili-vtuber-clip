@@ -38,6 +38,10 @@ from .cover_generation import (
     _lidousha_cover_text,
     _overlay_lidousha_cover_title,
 )
+from .cover_route_evidence import (
+    build_cover_route_decision,
+    record_cover_route_execution,
+)
 from .cover_screenshot_poster import _compose_screenshot_poster_background
 from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
@@ -643,21 +647,49 @@ def _stage_cpa_redraw_cover(
     ai_background_path = ai_dir / f"{candidate_id}.ai-bg.cpa-image-edit.png"
     request_path = evidence_dir / f"{candidate_id}.cover-cpa-request.redacted.json"
     response_path = evidence_dir / f"{candidate_id}.cover-cpa-response.redacted.json"
-    cpa_result = image_edit(
-        base_url=base_url,
-        api_key=api_key,
-        reference_path=reference_path,
-        output_path=ai_background_path,
-        prompt=_lidousha_cover_prompt(
-            title=title,
-            cover_text=cover_text,
-            art_direction=art_direction,
-            emote=emote_entry,
-        )
-        + cover_relation_prompt(story_contract),
-        request_path=request_path,
-        response_path=response_path,
+    cover_generation.update(
+        {
+            "method": "images.edit",
+        }
     )
+    record_cover_route_execution(
+        cover_generation,
+        actual_treatment=None,
+        execution_status="IMAGE_GENERATION_IN_PROGRESS",
+        image_generation_attempted=True,
+        image_generation_used=False,
+    )
+    try:
+        cpa_result = image_edit(
+            base_url=base_url,
+            api_key=api_key,
+            reference_path=reference_path,
+            output_path=ai_background_path,
+            prompt=_lidousha_cover_prompt(
+                title=title,
+                cover_text=cover_text,
+                art_direction=art_direction,
+                emote=emote_entry,
+            )
+            + cover_relation_prompt(story_contract),
+            request_path=request_path,
+            response_path=response_path,
+        )
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=True,
+            image_generation_used=False,
+            detail=detail,
+        )
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["CPA_AI_COVER_REQUIRED", "CPA_IMAGE_EDIT_EXCEPTION"],
+            detail,
+        )
     cover_generation.update(
         {
             "reference_image": str(reference_path),
@@ -672,13 +704,24 @@ def _stage_cpa_redraw_cover(
         cover_generation["model"] = str(cpa_result["selected_model"])
     if cpa_result.get("status") != "AI_BACKGROUND_READY" or not ai_background_path.is_file():
         cover_generation["cpa_status"] = cpa_result.get("status")
+        detail = str(
+            cpa_result.get("detail") or "CPA image edit did not return an image"
+        )
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=True,
+            image_generation_used=False,
+            detail=detail,
+        )
         return _blocked_ai_cover_result(
             cover_generation,
             [
                 "CPA_AI_COVER_REQUIRED",
                 str(cpa_result.get("reason_code") or "CPA_IMAGE_EDIT_FAILED"),
             ],
-            str(cpa_result.get("detail") or "CPA image edit did not return an image"),
+            detail,
         )
 
     final_cover_path = covers_dir / f"{candidate_id}.ai-title.cover.png"
@@ -690,12 +733,22 @@ def _stage_cpa_redraw_cover(
     )
     cover_generation.update(
         {
+            "method": "images.edit",
+            "cover_origin": "AI_REDRAW",
+            "image_generation_used": True,
             "ai_background": str(ai_background_path),
             "ai_background_sha256": "sha256:" + _sha256(ai_background_path),
             "final_cover": str(final_cover_path),
             "final_cover_sha256": "sha256:" + _sha256(final_cover_path),
             **overlay,
         }
+    )
+    record_cover_route_execution(
+        cover_generation,
+        actual_treatment="cpa_redraw",
+        execution_status="READY",
+        image_generation_attempted=True,
+        image_generation_used=True,
     )
     return {
         "status": "AI_COVER_READY",
@@ -844,47 +897,61 @@ def _stage_lidousha_ai_cover(
         and isinstance(candidates[0], Mapping)
         else {}
     )
-    cover_generation["route_decision"] = {
-        "schema_version": "lidousha-cover-route-decision.v1",
-        "selected_treatment": treatment,
-        "reason": treatment_reason,
-        "cover_mode": cover_mode,
-        "is_song": art_direction.is_song,
-        "manual_title_or_full_text_contract": not punch_allowed,
-        "frame_score": first_candidate.get("score"),
-        "frame_emotion": first_candidate.get("emotion"),
-        "subject_confident": (
-            frame_selection.get("subject_confident")
-            if isinstance(frame_selection, Mapping)
-            else None
-        ),
-        "motion_dispersion_frac": (
-            frame_selection.get("motion_dispersion_frac")
-            if isinstance(frame_selection, Mapping)
-            else None
-        ),
-        "verified_stream_frame": reference_authority is not None,
-        "reference_authority_id": (
-            reference_authority.get("candidate_id")
-            if reference_authority is not None
-            else None
-        ),
-        "alternatives_considered": [
-            "screenshot_direct",
-            "screenshot_polish",
-            "cpa_redraw",
-        ],
-    }
+    cover_generation["route_decision"] = build_cover_route_decision(
+        selected_treatment=treatment,
+        selected_rationale=treatment_reason,
+        story_contract=story_contract,
+        reference_authority=reference_authority,
+        decision_inputs={
+            "cover_mode": cover_mode,
+            "is_song": art_direction.is_song,
+            "manual_title_or_full_text_contract": not punch_allowed,
+            "frame_score": first_candidate.get("score"),
+            "frame_emotion": first_candidate.get("emotion"),
+            "subject_confident": (
+                frame_selection.get("subject_confident")
+                if isinstance(frame_selection, Mapping)
+                else None
+            ),
+            "motion_dispersion_frac": (
+                frame_selection.get("motion_dispersion_frac")
+                if isinstance(frame_selection, Mapping)
+                else None
+            ),
+            "verified_stream_frame": reference_authority is not None,
+            "reference_authority_id": (
+                reference_authority.get("candidate_id")
+                if reference_authority is not None
+                else None
+            ),
+        },
+    )
+    record_cover_route_execution(
+        cover_generation,
+        actual_treatment=None,
+        execution_status="PENDING",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
     if reference_authority is not None and treatment != reference_authority.get(
         "required_treatment"
     ):
+        detail = (
+            f"authority requires {reference_authority.get('required_treatment')}, "
+            f"router selected {treatment}"
+        )
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=False,
+            image_generation_used=False,
+            detail=detail,
+        )
         return _blocked_ai_cover_result(
             cover_generation,
             ["COVER_REFERENCE_REQUIRED_TREATMENT_NOT_SELECTED"],
-            (
-                f"authority requires {reference_authority.get('required_treatment')}, "
-                f"router selected {treatment}"
-            ),
+            detail,
         )
     if isinstance(story_contract, Mapping):
         cover_generation["relation_cover_mode"] = (
@@ -896,7 +963,9 @@ def _stage_lidousha_ai_cover(
             else str(story_contract.get("cover_fallback_mode") or "HOST_ONLY_GENERIC")
         )
     if treatment in ("screenshot_direct", "screenshot_polish"):
-        screenshot_result = _stage_screenshot_direct_cover(
+        # The selected route is an authorization boundary.  A materialization
+        # failure blocks this cover; it never authorizes a silent CPA redraw.
+        return _stage_screenshot_direct_cover(
             media_path=media_path,
             candidate_id=candidate_id,
             cover_text=cover_text,
@@ -912,14 +981,22 @@ def _stage_lidousha_ai_cover(
             base_url=base_url,
             api_key=api_key,
         )
-        if screenshot_result is not None:
-            return screenshot_result
     if not base_url or not api_key:
-        # 截图路线失败落回 CPA 但凭据缺失 → 与 cpa 模式同语义地卡死。
+        detail = (
+            "CPA_BASE_URL/CPA_API_KEY missing for the selected cpa_redraw route"
+        )
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=False,
+            image_generation_used=False,
+            detail=detail,
+        )
         return _blocked_ai_cover_result(
             cover_generation,
             ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
-            "screenshot cover lane failed and CPA_BASE_URL/CPA_API_KEY missing",
+            detail,
         )
 
     return _stage_cpa_redraw_cover(
@@ -1052,17 +1129,25 @@ def _stage_screenshot_direct_cover(
     image_edit: Callable[..., dict[str, object]] | None = None,
     base_url: str = "",
     api_key: str = "",
-) -> dict[str, object] | None:
-    """截图路线封面：直出或 +CPA 轻微调；成功返回 READY，失败记证据返回 None。
+) -> dict[str, object]:
+    """截图路线封面：直出或 +CPA 轻微调；物化失败原路线内阻断。
 
     表现力选帧的最佳帧 → 裁切（吃掉弹幕栏/字幕带）→ [polish：CPA 逐像素保真
-    修图（清 UI 杂物+画质），失败降级直出] → 叠梗字。None 让调用方按 CPA
-    重绘路径继续（fail-open 到旧行为）。
+    修图（清 UI 杂物+画质），失败显式降级直出] → 叠梗字。截图/裁切/叠字
+    任一步失败都保留证据并 fail closed，绝不静默切换成全图 AI 重绘。
     """
 
     # 手定标题只锁文字 authority，不再偷偷决定视觉路线。自动标题有短梗字时
     # 仍用 punch 版式；手定标题没有 punch 时，复用成熟的完整 cover_text
     # banner 叠字器，确保所有成分一字不丢，同时保留真实截图。
+    cover_generation.update(
+        {
+            "method": "screenshot_polish" if polish else "screenshot_direct",
+            "model": "cpa" if polish else "none",
+            "image_gen_model": "cpa" if polish else "none",
+            "image_generation_used": False,
+        }
+    )
     try:
         screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
         # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版
@@ -1093,32 +1178,50 @@ def _stage_screenshot_direct_cover(
         method = "screenshot_direct"
         selected_model = "none"
         attempted_models: list[str] = []
+        polish_attempted = False
         if polish and image_edit is not None and base_url and api_key and evidence_dir is not None:
             polished_path = ai_dir / f"{candidate_id}.screenshot-polished.png"
-            cpa_result = image_edit(
-                base_url=base_url,
-                api_key=api_key,
-                reference_path=screenshot_base,
-                output_path=polished_path,
-                prompt=_cover_screenshot_polish_prompt(),
-                request_path=evidence_dir / f"{candidate_id}.cover-polish-request.redacted.json",
-                response_path=evidence_dir / f"{candidate_id}.cover-polish-response.redacted.json",
-            )
+            polish_attempted = True
+            try:
+                cpa_result = image_edit(
+                    base_url=base_url,
+                    api_key=api_key,
+                    reference_path=screenshot_base,
+                    output_path=polished_path,
+                    prompt=_cover_screenshot_polish_prompt(),
+                    request_path=evidence_dir / f"{candidate_id}.cover-polish-request.redacted.json",
+                    response_path=evidence_dir / f"{candidate_id}.cover-polish-response.redacted.json",
+                )
+            except Exception as exc:
+                cpa_result = {
+                    "status": "EXCEPTION",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
             attempted_models = list(cpa_result.get("attempted_models") or [])
             if cpa_result.get("status") == "AI_BACKGROUND_READY" and polished_path.is_file():
                 overlay_source = polished_path
                 method = "screenshot_polish"
                 selected_model = str(cpa_result.get("selected_model") or "cpa")
-                cover_generation["screenshot_polish"] = {"status": "POLISHED"}
+                cover_generation["screenshot_polish"] = {
+                    "status": "POLISHED",
+                    "image_generation_attempted": True,
+                    "image_generation_used": True,
+                }
             else:
                 cover_generation["screenshot_polish"] = {
                     "status": "DEGRADED_TO_DIRECT",
+                    "reason_code": "SCREENSHOT_POLISH_FAILED",
                     "detail": str(cpa_result.get("detail") or cpa_result.get("status") or "polish failed"),
+                    "image_generation_attempted": True,
+                    "image_generation_used": False,
                 }
         elif polish:
             cover_generation["screenshot_polish"] = {
                 "status": "DEGRADED_TO_DIRECT",
+                "reason_code": "SCREENSHOT_POLISH_ADAPTER_UNAVAILABLE",
                 "detail": "CPA credentials/adapter unavailable",
+                "image_generation_attempted": False,
+                "image_generation_used": False,
             }
         poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"
         poster_evidence = _compose_screenshot_poster_background(
@@ -1157,6 +1260,28 @@ def _stage_screenshot_direct_cover(
                 **overlay,
             }
         )
+        degraded = polish and method == "screenshot_direct"
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=method,
+            execution_status="READY_DEGRADED" if degraded else "READY",
+            image_generation_attempted=polish_attempted,
+            image_generation_used=method == "screenshot_polish",
+            detail=(
+                str(
+                    (
+                        cover_generation.get("screenshot_polish")
+                        if isinstance(
+                            cover_generation.get("screenshot_polish"), Mapping
+                        )
+                        else {}
+                    ).get("detail")
+                    or "screenshot polish failed; direct source screenshot retained"
+                )
+                if degraded
+                else None
+            ),
+        )
         return {
             "status": "AI_COVER_READY",
             "reason_codes": [],
@@ -1167,11 +1292,45 @@ def _stage_screenshot_direct_cover(
             "cover_reference_sha256": "sha256:" + _sha256(reference_path),
         }
     except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
         cover_generation["screenshot_direct"] = {
-            "status": "FALLBACK_TO_CPA",
-            "detail": f"{type(exc).__name__}: {exc}",
+            "status": "BLOCKED",
+            "reason_code": "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED",
+            "detail": detail,
         }
-        return None
+        route = cover_generation.get("route_decision")
+        selected = (
+            str(route.get("selected_treatment") or "")
+            if isinstance(route, Mapping)
+            else ""
+        )
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=bool(
+                isinstance(
+                    cover_generation.get("screenshot_polish"), Mapping
+                )
+                and cover_generation["screenshot_polish"].get(
+                    "image_generation_attempted"
+                )
+            ),
+            image_generation_used=False,
+            detail=detail,
+        )
+        return _blocked_ai_cover_result(
+            cover_generation,
+            [
+                "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED",
+                (
+                    "SCREENSHOT_POLISH_ROUTE_FAILED"
+                    if selected == "screenshot_polish"
+                    else "SCREENSHOT_DIRECT_ROUTE_FAILED"
+                ),
+            ],
+            detail,
+        )
 
 
 def _blocked_ai_cover_result(cover_generation: Mapping[str, object], reason_codes: Sequence[str], detail: str) -> dict[str, object]:

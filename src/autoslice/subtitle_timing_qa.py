@@ -36,7 +36,7 @@ from src.autoslice.review_evidence import SourceCue
 
 SpeechSpansProvider = Callable[[Path, int, int], "list[SpeechSpan]"]
 
-SUBTITLE_TIMING_QA_SCHEMA_VERSION = "subtitle-timing-qa.v2"
+SUBTITLE_TIMING_QA_SCHEMA_VERSION = "subtitle-timing-qa.v3"
 
 _PUNCT_RX = re.compile(r"[\s？?！!。，,．.…~～　]+")
 
@@ -49,6 +49,7 @@ class SpeechSpan:
 
 @dataclass(frozen=True)
 class TimingQaPolicy:
+    boundary_fragment_max_visible_ms: int = 300
     min_readable_ms: int = 1_000
     soft_max_ms: int = 6_000
     hard_max_ms: int = 12_000
@@ -85,6 +86,36 @@ def sanitize_cue_timing(
     for cue in ordered:
         if cue.source_end_ms <= window_start_ms or cue.source_start_ms >= window_end_ms:
             result.append(cue)
+            continue
+
+        visible_start_ms = max(cue.source_start_ms, window_start_ms)
+        visible_end_ms = min(cue.source_end_ms, window_end_ms)
+        visible_duration_ms = visible_end_ms - visible_start_ms
+        # Clip padding may expose only the final 0-300 ms of the previous
+        # topic.  Extending that sliver to the minimum readable duration turns
+        # it into a prominent false opening subtitle.  Drop the unreadable
+        # boundary text *before* flash extension while preserving its audio.
+        # This also catches a pre-clipped source cue starting exactly at the
+        # selected boundary, where provenance no longer says it straddled.
+        if (
+            visible_start_ms == window_start_ms
+            and 0 < visible_duration_ms <= policy.boundary_fragment_max_visible_ms
+        ):
+            duration_ms = max(1, cue.source_end_ms - cue.source_start_ms)
+            density_cps = _char_count(cue.text) / (duration_ms / 1000.0)
+            actions.append(
+                _action(
+                    cue,
+                    "drop_boundary_fragment",
+                    cue.source_start_ms,
+                    cue.source_end_ms,
+                    None,
+                    None,
+                    ["unreadable_leading_boundary_fragment"],
+                    0.0,
+                    density_cps,
+                )
+            )
             continue
 
         start_ms = cue.source_start_ms
@@ -153,6 +184,7 @@ def sanitize_cue_timing(
         "schema_version": SUBTITLE_TIMING_QA_SCHEMA_VERSION,
         "window": {"start_ms": window_start_ms, "end_ms": window_end_ms},
         "policy": {
+            "boundary_fragment_max_visible_ms": policy.boundary_fragment_max_visible_ms,
             "min_readable_ms": policy.min_readable_ms,
             "soft_max_ms": policy.soft_max_ms,
             "hard_max_ms": policy.hard_max_ms,
@@ -163,7 +195,11 @@ def sanitize_cue_timing(
         "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
         "actions": actions,
         "counts": {
-            "dropped": sum(1 for action in actions if action["action"] == "drop_stuck_segment"),
+            "dropped": sum(
+                1
+                for action in actions
+                if action["action"] in {"drop_stuck_segment", "drop_boundary_fragment"}
+            ),
             "retimed": sum(1 for action in actions if action["action"] == "retime"),
         },
     }

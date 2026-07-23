@@ -11,6 +11,12 @@ from src.autoslice.story_contract import (
     build_story_contract,
     cover_relation_prompt,
 )
+from src.autoslice.cover_route_evidence import (
+    build_cover_route_decision,
+    record_cover_route_execution,
+    validate_cover_route_decision,
+)
+from src.autoslice.producer_package_finalization import _audit_story_bound_cover
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +65,26 @@ def test_committed_chair_reference_is_hash_bound_and_survives_recut_suffix():
     assert "HOST-ONLY" not in prompt
 
 
+def test_committed_sumi_reference_uses_story_aligned_real_frame():
+    reference = load_candidate_cover_reference(
+        "auto_193450_3573_3665r8",
+        ledger_path=(
+            REPO_ROOT
+            / "assets/lidousha/cover_reference_overrides.v1.json"
+        ),
+    )
+
+    assert reference is not None
+    assert reference["content_time_ms"] == 70_000
+    assert reference["source_time_ms"] == 3_643_070
+    assert reference["visible_participant_ids"] == ["lidousha", "nancho"]
+    assert reference["required_treatment"] == "screenshot_direct"
+    assert "男性角色基利安" in reference["relation_action"]
+    assert reference["reference_png_sha256"] == (
+        "sha256:53d32dd63928c800458cd020ab988703bf13c585f41b56789efa715d6b693b8c"
+    )
+
+
 def test_reference_visible_participants_must_belong_to_story_contract():
     contract = build_story_contract(
         candidate_id="x",
@@ -72,6 +98,115 @@ def test_reference_visible_participants_must_belong_to_story_contract():
     )
     assert contract["cover_counterpart_reference_available"] is False
     assert contract["cover_fallback_mode"] == "HOST_ONLY_RELATION_EXPLICIT"
+
+
+def test_route_v2_binds_required_and_source_visible_participants():
+    reference = {
+        "visible_participant_ids": ["lidousha", "nancho"],
+        "candidate_id": "candidate",
+    }
+    contract = build_story_contract(
+        candidate_id="candidate",
+        selection_hook="搭档把大椅子让给李豆沙",
+        transcript_text="她把大椅子给我了。",
+        selection_scorecard={"status": "VALID"},
+        session_relation_authority=_relation(),
+        cover_reference_authority=reference,
+    )
+    generation = {
+        "story_contract": {
+            "participants": contract["participants"],
+            "cover_reference_authority": contract["cover_reference_authority"],
+        },
+        "method": "screenshot_direct",
+        "cover_origin": "SOURCE_SCREENSHOT",
+    }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="screenshot_direct",
+        selected_rationale="hash-bound source frame verifies all required participants",
+        story_contract=contract,
+        reference_authority=reference,
+        decision_inputs={"cover_mode": "auto"},
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
+
+    route = generation["route_decision"]
+    assert route["required_participant_ids"] == ["lidousha", "nancho"]
+    assert route["source_visible_participant_ids"] == ["lidousha", "nancho"]
+    assert route["source_visibility_authority"] == "HASH_BOUND_COVER_REFERENCE"
+    assert validate_cover_route_decision(generation)
+
+
+def test_route_v2_rejects_incomplete_new_evidence_but_keeps_v1_read_compatibility():
+    incomplete_v2 = {
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v2",
+            "selected_treatment": "screenshot_direct",
+            "reason": "real frame",
+        }
+    }
+    legacy_v1 = {
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v1",
+            "selected_treatment": "screenshot_direct",
+            "reason": "real frame",
+        }
+    }
+
+    assert not validate_cover_route_decision(incomplete_v2)
+    assert validate_cover_route_decision(legacy_v1)
+    assert not validate_cover_route_decision(
+        legacy_v1, allow_legacy_v1=False
+    )
+
+
+def test_fresh_producer_rejects_legacy_route_evidence_but_accepts_complete_v2():
+    contract = build_story_contract(
+        candidate_id="candidate",
+        selection_hook="真实画面",
+        transcript_text="真实画面",
+        selection_scorecard={"status": "VALID"},
+        session_relation_authority=None,
+    )
+    generation = {
+        "story_contract": contract,
+        "cover_text": "真实画面",
+        "rendered_lines": ["真实画面"],
+        "method": "screenshot_direct",
+        "cover_origin": "SOURCE_SCREENSHOT",
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v1",
+            "selected_treatment": "screenshot_direct",
+            "reason": "real frame",
+        },
+    }
+    staging = {"cover_generation": generation, "cover_text": "真实画面"}
+
+    reasons, _audits = _audit_story_bound_cover(staging, contract)
+    assert "COVER_ROUTE_DECISION_MISSING_OR_INVALID" in reasons
+
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="screenshot_direct",
+        selected_rationale="real frame",
+        story_contract=contract,
+        reference_authority=None,
+        decision_inputs={"cover_mode": "auto"},
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
+    reasons, _audits = _audit_story_bound_cover(staging, contract)
+    assert reasons == []
 
 
 def test_duplicate_reference_rows_fail_closed(tmp_path):

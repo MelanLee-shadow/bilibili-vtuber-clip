@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.cover_route_evidence import validate_cover_route_decision
 from src.autoslice.verified_io import (
     _matches_sha256,
     _read_json_object,
@@ -1182,6 +1183,10 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
         return False
     method = str(generation.get("method") or "")
     route_decision = generation.get("route_decision")
+    if isinstance(route_decision, dict) and not validate_cover_route_decision(
+        generation, allow_legacy_v1=True
+    ):
+        return False
     treatment = (
         str(route_decision.get("selected_treatment") or "")
         if isinstance(route_decision, dict)
@@ -1206,8 +1211,9 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
             return False
         if not (
             valid_method
-            and route_decision.get("schema_version")
-            == "lidousha-cover-route-decision.v1"
+            and validate_cover_route_decision(
+                generation, allow_legacy_v1=True
+            )
             and bool(str(route_decision.get("reason") or "").strip())
             and isinstance(rendered_lines, list)
             and bool("".join(str(value) for value in rendered_lines).strip())

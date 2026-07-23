@@ -2884,11 +2884,21 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
     assert Path(generation["reference_image"]).is_file()
     assert generation["workflow"] == "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
     assert generation["method"] == "images.edit"
+    assert generation["cover_origin"] == "AI_REDRAW"
+    assert generation["image_generation_planned"] is True
+    assert generation["image_generation_attempted"] is True
+    assert generation["image_generation_used"] is True
     assert generation["model"] == "gpt-image-2"
     assert generation["fallback_used"] is False
     assert generation["cover_text"] == "《旅行的意义》唱到伴奏卡住像在KTV录的"
     assert generation["font"] == "ZCOOLKuaiLe-Regular.ttf"
     assert generation["angle_degrees"] == -4.0
+    route = generation["route_decision"]
+    assert route["schema_version"] == "lidousha-cover-route-decision.v2"
+    assert route["selected_treatment"] == "cpa_redraw"
+    assert route["actual_treatment"] == "cpa_redraw"
+    assert route["execution_status"] == "READY"
+    assert route["image_generation_used"] is True
     assert "cover_sha256" in publish["artifact_hashes"]
 
 
@@ -4438,6 +4448,83 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
     assert Path(str(generation["ai_background"])).name == "shot-1.screenshot-poster.png"
     assert Path(str(result["cover_path"])).is_file()
     assert Image.open(str(result["cover_path"])).size == (1920, 1080)
+    route = generation["route_decision"]
+    assert route["schema_version"] == "lidousha-cover-route-decision.v2"
+    assert route["selected_rationale"] == "mode=screenshot (forced)"
+    assert route["required_participant_ids"] == []
+    assert route["source_visible_participant_ids"] == []
+    assert route["image_generation_planned"] is False
+    assert route["image_generation_attempted"] is False
+    assert route["image_generation_used"] is False
+    assert route["actual_treatment"] == "screenshot_direct"
+    assert route["execution_status"] == "READY"
+    assert {row["treatment"] for row in route["alternatives"]} == {
+        "screenshot_direct",
+        "screenshot_polish",
+        "cpa_redraw",
+    }
+    assert len(route["rejected_alternatives"]) == 2
+    assert all(
+        row["rejected_reason"] for row in route["rejected_alternatives"]
+    )
+    from src.autoslice.cover_route_evidence import (
+        validate_cover_route_decision,
+    )
+
+    assert validate_cover_route_decision(generation)
+
+
+def test_screenshot_materialization_failure_blocks_without_calling_ai(
+    tmp_path, monkeypatch
+):
+    """Once screenshot is selected, its failure cannot authorize a CPA redraw."""
+
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "screenshot")
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    media = _write_synthetic_performance_clip(tmp_path)
+    calls = {"image_edit": 0}
+
+    def fail_screenshot(*_args, **_kwargs):
+        raise RuntimeError("synthetic crop failure")
+
+    def forbidden_image_edit(**_kwargs):
+        calls["image_edit"] += 1
+        raise AssertionError("screenshot failure must not call CPA")
+
+    monkeypatch.setattr(
+        publish_staging, "extract_zoomed_cover_frame", fail_screenshot
+    )
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="shot-fails-closed",
+        title="【李豆沙】截图失败不能偷偷改画风",
+        cover_text="截图失败不能偷偷改画风",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=forbidden_image_edit,
+        punch_allowed=True,
+    )
+
+    assert calls["image_edit"] == 0
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" in result["reason_codes"]
+    generation = result["cover_generation"]
+    assert generation["screenshot_direct"]["status"] == "BLOCKED"
+    assert generation["method"] == "screenshot_direct"
+    assert generation["model"] == "none"
+    assert generation.get("cover_origin") != "AI_REDRAW"
+    route = generation["route_decision"]
+    assert route["selected_treatment"] == "screenshot_direct"
+    assert route["actual_treatment"] is None
+    assert route["execution_status"] == "BLOCKED"
+    assert route["image_generation_attempted"] is False
+    assert route["image_generation_used"] is False
+    assert "synthetic crop failure" in route["execution_detail"]
 
 
 def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(
@@ -4626,13 +4713,23 @@ def test_screenshot_polish_degrades_to_direct_on_cpa_failure(tmp_path, monkeypat
         cover_text="才，才不是熊猫呢！小李被kmx用两个字点名",
         run_ffmpeg=True,
         art_direction_llm_call=None,
-        image_edit=lambda **kwargs: {"status": "FAILED", "detail": "boom"},
+        image_edit=lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        ),
         punch_allowed=True,
     )
     assert result["status"] == "AI_COVER_READY"
     generation = result["cover_generation"]
     assert generation["method"] == "screenshot_direct"
     assert generation["screenshot_polish"]["status"] == "DEGRADED_TO_DIRECT"
+    route = generation["route_decision"]
+    assert route["selected_treatment"] == "screenshot_polish"
+    assert route["actual_treatment"] == "screenshot_direct"
+    assert route["execution_status"] == "READY_DEGRADED"
+    assert route["image_generation_planned"] is True
+    assert route["image_generation_attempted"] is True
+    assert route["image_generation_used"] is False
+    assert "RuntimeError: boom" in route["execution_detail"]
 
 
 def test_screenshot_mode_song_falls_back_to_cpa_gate(tmp_path, monkeypatch):

@@ -44,3 +44,21 @@ def test_source_range_keeps_substantial_clipped_opening(tmp_path: Path):
     )
 
     assert "仍有足够可读时长" in output.read_text(encoding="utf-8")
+
+
+def test_source_range_drops_preclipped_short_cue_at_exact_boundary(tmp_path: Path):
+    output = tmp_path / "clip.srt"
+
+    _write_source_range_srt(
+        [
+            _cue("previous_preclipped", 1_000, 1_250, "上一话题尾巴"),
+            _cue("opening", 1_250, 2_500, "本片开场"),
+        ],
+        1_000,
+        2_500,
+        output,
+    )
+
+    rendered = output.read_text(encoding="utf-8")
+    assert "上一话题尾巴" not in rendered
+    assert "本片开场" in rendered

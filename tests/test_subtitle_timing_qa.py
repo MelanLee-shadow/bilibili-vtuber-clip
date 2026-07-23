@@ -95,6 +95,23 @@ def test_flash_cue_extended_to_min_readable_but_not_into_next_cue():
     assert solo[0].source_end_ms == 11_000
 
 
+def test_unreadable_leading_boundary_fragment_is_dropped_before_flash_extension():
+    window = dict(window_start_ms=10_000, window_end_ms=20_000)
+    cues = [
+        _cue("previous", 9_900, 10_250, "上一话题尾巴"),
+        _cue("opening", 10_250, 12_000, "本片开场"),
+    ]
+
+    result, report = sanitize_cue_timing(cues, [], **window)
+
+    assert [cue.cue_id for cue in result] == ["opening"]
+    assert report["counts"]["dropped"] == 1
+    action = report["actions"][0]
+    assert action["action"] == "drop_boundary_fragment"
+    assert "flash_extended" not in action["reasons"]
+    assert report["policy"]["boundary_fragment_max_visible_ms"] == 300
+
+
 def test_normal_asr_cue_is_not_shortened_by_partial_vad_coverage():
     cues = [_cue("a", 10_000, 18_000, "这真的不是融了阿朵吗这也太像了吧")]
     spans = [SpeechSpan(10_100, 14_500)]
