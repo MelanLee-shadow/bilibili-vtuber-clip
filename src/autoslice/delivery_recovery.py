@@ -24,10 +24,86 @@ _runner = RunnerProxy()
 _PIPELINE_FINGERPRINT_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _SAFE_CANDIDATE_ID_RX = re.compile(r"[A-Za-z0-9_-]{1,96}")
 _SOURCE_SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})")
+TALK_RECOVERY_FAILURE_STATUSES = frozenset(
+    {
+        "boundary_unrepairable",
+        "speaker_review_required",
+        "speaker_evidence_insufficient",
+        "failed",
+    }
+)
 
 
 class RecoveryReviewRerunError(ValueError):
     """The explicit no-upload recovery rerun plan is not safely bound."""
+
+
+def backfillable_talk_rejection(result: dict) -> tuple[str, str] | None:
+    """Return the persisted rejection status/reason when a reserve may replace it."""
+
+    status = result.get("status")
+    if status in {
+        "boundary_unrepairable",
+        "speaker_review_required",
+        "speaker_evidence_insufficient",
+    }:
+        reason = (
+            "unsafe_boundary_backfilled"
+            if status == "boundary_unrepairable"
+            else "speaker_identity_unresolved_backfilled"
+        )
+        return str(status), reason
+    if (
+        status == "failed"
+        and result.get("failure_kind") in {"subtitle_authority", "story_contract"}
+        and result.get("failure_recoverable") is False
+    ):
+        return (
+            "failed",
+            "subtitle_authority_unresolved_backfilled"
+            if result.get("failure_kind") == "subtitle_authority"
+            else "story_contract_unresolved_backfilled",
+        )
+    return None
+
+
+def apply_talk_backfill_rejection_policy(
+    result: dict, *, exact_selected: bool
+) -> bool:
+    """Materialize a rejection only when this run is allowed to backfill it."""
+
+    backfill_rejection = backfillable_talk_rejection(result)
+    if backfill_rejection is None:
+        return result.get("status") == "candidate_rejected"
+    rejected_status, rejection_reason = backfill_rejection
+    if exact_selected:
+        result["backfill_suppressed_by_exact_contract"] = {
+            "schema_version": "exact-selection-backfill-suppression.v1",
+            "status": rejected_status,
+            "reason": rejection_reason,
+        }
+        return False
+    result["rejected_status"] = rejected_status
+    result["status"] = "candidate_rejected"
+    result["rejection_reason"] = rejection_reason
+    return True
+
+
+def _is_legacy_exact_backfill_rejection(record: dict) -> bool:
+    """Recognize only records emitted by the pre-suppression backfill policy."""
+
+    status = record.get("rejected_status")
+    reason = record.get("rejection_reason")
+    if status == "boundary_unrepairable":
+        return reason == "unsafe_boundary_backfilled"
+    if status in {"speaker_review_required", "speaker_evidence_insufficient"}:
+        return reason == "speaker_identity_unresolved_backfilled"
+    if status != "failed":
+        return False
+    return (record.get("failure_kind"), reason) in {
+        ("subtitle_authority", "subtitle_authority_unresolved_backfilled"),
+        ("story_contract", "story_contract_unresolved_backfilled"),
+    }
 
 
 def _canonical_object_sha256(value: object) -> str:
@@ -1066,17 +1142,26 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         for item in state.get("pending_talk", [])
         if isinstance(item, dict)
     }
+    exact_contract_ids = set(_exact_talk_contract_ids(state))
     kept: list[dict] = []
     requeued: list[dict] = []
     for record in state.get("picks", []):
-        if not isinstance(record, dict) or record.get("status") not in {
-            "boundary_unrepairable",
-            "speaker_review_required",
-            "failed",
-        }:
+        if not isinstance(record, dict):
             kept.append(record)
             continue
         cid = str(record.get("candidate_id") or record.get("cid") or "")
+        recoverable_status = record.get("status") in TALK_RECOVERY_FAILURE_STATUSES
+        # Migration for exact-recovery runs produced before backfill
+        # suppression existed: the selected terminal failure was mislabeled
+        # candidate_rejected even though the contract forbade replacement.
+        legacy_exact_rejection = (
+            record.get("status") == "candidate_rejected"
+            and cid in exact_contract_ids
+            and _is_legacy_exact_backfill_rejection(record)
+        )
+        if not (recoverable_status or legacy_exact_rejection):
+            kept.append(record)
+            continue
         try:
             current = _runner.talk_pipeline_fingerprint(cid)
             current_recovery = _runner.talk_failure_recovery_fingerprint(
@@ -1101,7 +1186,9 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             )
         )
         transient = (
-            record.get("status") == "failed" and transient_count < 1
+            record.get("status") == "failed"
+            and record.get("failure_recoverable") is not False
+            and transient_count < 1
         ) or infrastructure_retry
         if (
             not cid

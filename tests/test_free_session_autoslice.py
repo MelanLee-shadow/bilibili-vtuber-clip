@@ -3075,6 +3075,82 @@ def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypat
     assert state["pending_talk"] == []
 
 
+def test_process_date_exact_selection_preserves_speaker_evidence_failure(
+    monkeypatch, tmp_path
+):
+    date = "2026-07-11"
+    candidate = {
+        "segment_path": "/rec/session.mp4",
+        "seg_dur_ms": 2_000_000,
+        "start_ms": 1_367_000,
+        "end_ms": 1_407_000,
+        "hook": "speaker anchor shortage",
+        "confidence": 0.99,
+        "cid": "auto_154845_1367_1407",
+    }
+    state = {
+        "status": "processing",
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "talk_selection_contract": {
+            "schema_version": "talk-selection-contract.v1",
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": [candidate["cid"]],
+            "source_state_sha256": "sha256:" + "a" * 64,
+            "authority": "Ivan selected the exact recovery set",
+        },
+        "segments_done": ["session"],
+        "segments_dead": {},
+        "pending_talk": [candidate],
+        "pending_song": [],
+        "picks": [],
+        "songs": [],
+    }
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", date)
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_args: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_talks", lambda *_args: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda *_args: 0)
+    monkeypatch.setattr(
+        runner, "requeue_recoverable_deliveries", lambda *_args: (0, 0, 0)
+    )
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(runner, "cover_repair_needed", lambda *_args: False)
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
+    monkeypatch.setattr(runner, "discover_segments", lambda *_args: None)
+    monkeypatch.setattr(runner, "session_sealed", lambda *_args: True)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    monkeypatch.setattr(runner, "repair_covers", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_state", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_reports", lambda *_args: None)
+    monkeypatch.setattr(
+        runner,
+        "produce_batch",
+        lambda *_args: [
+            {
+                "candidate_id": candidate["cid"],
+                "status": "speaker_evidence_insufficient",
+                "failure_kind": "speaker_evidence",
+                "failure_stage": "speaker_finalization",
+                "failure_recoverable": False,
+            }
+        ],
+    )
+
+    runner.process_date(date)
+
+    assert len(state["picks"]) == 1
+    result = state["picks"][0]
+    assert result["status"] == "speaker_evidence_insufficient"
+    assert "rejected_status" not in result
+    assert result["backfill_suppressed_by_exact_contract"]["status"] == (
+        "speaker_evidence_insufficient"
+    )
+    assert state["status"] == "no_delivery"
+
+
 def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
     """A blocked/background song cannot be laundered as a sibling talk cut."""
 
@@ -5739,6 +5815,43 @@ def test_terminal_subtitle_authority_failure_backfills_without_weakening_gate():
     )
 
 
+def test_exact_selection_keeps_terminal_failure_requeueable():
+    result = {
+        "candidate_id": "blocked-subtitle",
+        "status": "failed",
+        "failure_kind": "subtitle_authority",
+        "failure_stage": "foreign_source_transcription",
+        "failure_recoverable": False,
+    }
+
+    rejected = runner.apply_talk_backfill_rejection_policy(
+        result, exact_selected=True
+    )
+
+    assert rejected is False
+    assert result["status"] == "failed"
+    assert result["backfill_suppressed_by_exact_contract"]["reason"] == (
+        "subtitle_authority_unresolved_backfilled"
+    )
+
+
+def test_ordinary_selection_materializes_backfillable_terminal_failure():
+    result = {
+        "candidate_id": "blocked-subtitle",
+        "status": "failed",
+        "failure_kind": "subtitle_authority",
+        "failure_recoverable": False,
+    }
+
+    rejected = runner.apply_talk_backfill_rejection_policy(
+        result, exact_selected=False
+    )
+
+    assert rejected is True
+    assert result["status"] == "candidate_rejected"
+    assert result["rejected_status"] == "failed"
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -6142,6 +6255,185 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
     )
     assert state["talk_superseded_attempts"][0]["superseded_by"] == "sha256:new"
     assert state["talk_superseded_attempts"][0]["session_id"] == "live-20260710T200000+0800"
+
+
+def test_pipeline_change_requeues_legacy_exact_candidate_rejection(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "segment.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(
+        runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:new"
+    )
+    current_recovery = {"value": "sha256:old-recovery"}
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: current_recovery["value"],
+    )
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda _segment, **_kwargs: {
+            "structured_chat_required": False,
+            "chat_binding_status": "NOT_REGISTERED",
+        },
+    )
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "talk_selection_contract": {
+            "schema_version": "talk-selection-contract.v1",
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": ["selected"],
+            "source_state_sha256": "sha256:" + "a" * 64,
+            "authority": "Ivan selected the exact recovery set",
+        },
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "selected",
+                "segment": segment.name,
+                "start_ms": 100_000,
+                "end_ms": 200_000,
+                "status": "candidate_rejected",
+                "rejected_status": "failed",
+                "rejection_reason": (
+                    "subtitle_authority_unresolved_backfilled"
+                ),
+                "failure_kind": "subtitle_authority",
+                "failure_recoverable": False,
+                "failure_recovery_fingerprint": "sha256:old-recovery",
+                "pipeline_fingerprint": "sha256:old",
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["picks"][0]["status"] == "candidate_rejected"
+
+    current_recovery["value"] = "sha256:new-recovery"
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["picks"] == []
+    assert state["pending_talk"][0]["cid"] == "selected"
+
+    assert state["pending_talk"][0]["retry_reason"] == (
+        "pipeline_fingerprint_changed"
+    )
+    assert state["talk_superseded_attempts"][0]["status"] == (
+        "candidate_rejected"
+    )
+
+
+def test_exact_terminal_failure_waits_for_relevant_fingerprint_change(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    date_dir = tmp_path / date
+    date_dir.mkdir()
+    segment = date_dir / "segment.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path)
+    current_recovery = {"value": "sha256:same-recovery"}
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _cid: "sha256:new",
+    )
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: current_recovery["value"],
+    )
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda *_args, **_kwargs: {
+            "structured_chat_required": False,
+            "chat_binding_status": "NOT_REGISTERED",
+        },
+    )
+    failed = {
+        "candidate_id": "selected",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 200_000,
+        "status": "failed",
+        "failure_kind": "subtitle_authority",
+        "failure_recoverable": False,
+        "failure_recovery_fingerprint": "sha256:same-recovery",
+        "pipeline_fingerprint": "sha256:old",
+    }
+    state = {"pending_talk": [], "picks": [failed]}
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["picks"] == [failed]
+
+    current_recovery["value"] = "sha256:changed-recovery"
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["picks"] == []
+    assert state["pending_talk"][0]["cid"] == "selected"
+
+    speaker_state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                **failed,
+                "candidate_id": "speaker-selected",
+                "status": "speaker_evidence_insufficient",
+                "failure_kind": "speaker_evidence",
+            }
+        ],
+    }
+    assert runner.requeue_recoverable_talks(date, speaker_state) == 1
+    assert speaker_state["pending_talk"][0]["cid"] == "speaker-selected"
+
+
+def test_ordinary_or_forged_candidate_rejection_is_not_requeued(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: pytest.fail("terminal rejection must not be fingerprinted"),
+    )
+    canonical_rejection = {
+        "candidate_id": "ordinary",
+        "status": "candidate_rejected",
+        "rejected_status": "failed",
+        "failure_kind": "subtitle_authority",
+        "rejection_reason": "subtitle_authority_unresolved_backfilled",
+    }
+    ordinary = {"pending_talk": [], "picks": [canonical_rejection]}
+
+    assert runner.requeue_recoverable_talks("2026-07-10", ordinary) == 0
+
+    forged = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "talk_selection_contract": {
+            "schema_version": "talk-selection-contract.v1",
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": ["ordinary"],
+            "source_state_sha256": "sha256:" + "a" * 64,
+            "authority": "Ivan selected the exact recovery set",
+        },
+        "pending_talk": [],
+        "picks": [
+            {
+                **canonical_rejection,
+                "rejection_reason": "handwritten_noncanonical_reason",
+            }
+        ],
+    }
+    assert runner.requeue_recoverable_talks("2026-07-10", forged) == 0
 
 
 def test_recoverable_talk_with_unbound_given_end_fails_closed(tmp_path, monkeypatch):

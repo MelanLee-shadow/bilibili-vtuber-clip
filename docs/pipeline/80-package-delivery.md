@@ -18,5 +18,10 @@
 - recovery plan 同时写入 exact-no-backfill selection contract；本地审片包只能从最终 state 的
   exact CURRENT+COMPLIANT 交集逐 stem 重建，不能整目录复制 inherited delivery 或旧 summary。
   缺封面、缺 regression/record、非终态、pending/backlog 补位或集合不等都必须阻止覆盖旧本地包。
+- exact-no-backfill 合同中的入选项失败时必须保留真实终态（`failed`、`boundary_unrepairable`、
+  `speaker_review_required` 或 `speaker_evidence_insufficient`），并记录“合同禁止补位”；不得把它改写成代表可由候补替换的
+  `candidate_rejected`。这样相关 failure-scoped fingerprint 变化后仍可自动重试。对于此规则上线前
+  已被误标的记录，只允许在同一有效 exact contract 内、且保留上述 `rejected_status` 时迁移重试；
+  普通 production 的 `candidate_rejected` 仍是终态，不能借此复活。
 - 上传路径 fail-closed：无 `AUTO_UPLOAD` manifest + artifact hash 门就没有发布（AGENTS.md 方向）。
 - tag 按成品字幕出（`upload_tag_policy.py`，Ivan 2026-07-13）。

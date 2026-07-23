@@ -766,13 +766,17 @@ from src.autoslice.song_delivery import (  # noqa: E402
     _atomic_verified_song_delivery,
 )
 from src.autoslice.delivery_recovery import (  # noqa: E402
+    TALK_RECOVERY_FAILURE_STATUSES,
     _song_delivery_recovery_authority,
+    apply_talk_backfill_rejection_policy,
+    backfillable_talk_rejection,
     recover_bound_song_deliveries,
     bind_song_delivery_recovery_authority,
     requeue_recoverable_deliveries,
     requeue_recoverable_songs, requeue_recoverable_talks,
 )
 from src.autoslice.candidate_selection import (  # noqa: E402
+    _exact_talk_contract_ids,
     session_sealed,
     song_delivery_budget,
     _remember_song_quarantine_interval,
@@ -1522,41 +1526,6 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
         return list(pool.map(_one, items))
 
 
-def backfillable_talk_rejection(result: dict) -> tuple[str, str] | None:
-    """Return the persisted rejection status/reason when a reserve may replace it.
-
-    Deterministic content/evidence failures are candidate-local: retaining them
-    as generic ``failed`` picks would occupy the top-five budget forever.  The
-    subtitle authority gate stays fail-closed; this function only permits the
-    selector to try the next already-ranked candidate.
-    """
-
-    status = result.get("status")
-    if status in {
-        "boundary_unrepairable",
-        "speaker_review_required",
-        "speaker_evidence_insufficient",
-    }:
-        reason = (
-            "unsafe_boundary_backfilled"
-            if status == "boundary_unrepairable"
-            else "speaker_identity_unresolved_backfilled"
-        )
-        return str(status), reason
-    if (
-        status == "failed"
-        and result.get("failure_kind") in {"subtitle_authority", "story_contract"}
-        and result.get("failure_recoverable") is False
-    ):
-        return (
-            "failed",
-            "subtitle_authority_unresolved_backfilled"
-            if result.get("failure_kind") == "subtitle_authority"
-            else "story_contract_unresolved_backfilled",
-        )
-    return None
-
-
 def process_date(date: str) -> None:
     state = read_state(date)
     state.setdefault("run_mode", "PRODUCTION")
@@ -1676,8 +1645,7 @@ def process_date(date: str) -> None:
             failures = [
                 record
                 for record in state.get("picks", []) + state.get("songs", [])
-                if record.get("status")
-                in ("failed", "boundary_unrepairable", "speaker_review_required")
+                if record.get("status") in TALK_RECOVERY_FAILURE_STATUSES
             ]
             state["status"] = (
                 "review_ready_with_failures" if failures else "review_ready"
@@ -1718,6 +1686,7 @@ def process_date(date: str) -> None:
         dict(item) for item in state.get("pending_talk", []) if isinstance(item, dict)
     ]
     prioritize(state)
+    exact_contract_ids = set(_exact_talk_contract_ids(state))
     routing_claim = prepare_speaker_routing(
         date, state["pending_talk"], state=state
     )
@@ -1750,14 +1719,10 @@ def process_date(date: str) -> None:
                     continue
                 result["status"] = "failed"
                 result["error"] = "title generation failed 3x"
-            backfill_rejection = backfillable_talk_rejection(result)
-            if backfill_rejection is not None:
-                rejected_status, rejection_reason = backfill_rejection
-                result["rejected_status"] = rejected_status
-                result["status"] = "candidate_rejected"
-                result["rejection_reason"] = rejection_reason
-                rejected += 1
-            elif result.get("status") == "candidate_rejected":
+            candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
+            if apply_talk_backfill_rejection_policy(
+                result, exact_selected=candidate_id in exact_contract_ids
+            ):
                 rejected += 1
             if result.get("failure_recoverable") is True:
                 recoverable_failure = True
@@ -1816,14 +1781,8 @@ def process_date(date: str) -> None:
     failures = [
         record
         for record in picks + songs
-        if record.get("status")
-        in (
-            "failed",
-            "boundary_unrepairable",
-            "speaker_review_required",
-            "candidate_rejected",
-            TALK_COVER_PENDING_STATUS,
-        )
+        if record.get("status") in TALK_RECOVERY_FAILURE_STATUSES
+        or record.get("status") in {"candidate_rejected", TALK_COVER_PENDING_STATUS}
     ]
     # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
     # 0 failures').  A batch is review_ready only when something REACHED review.
