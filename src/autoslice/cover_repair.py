@@ -1103,6 +1103,14 @@ def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Pat
                     "cover_integrity_status": "VALID_BOUND_RECOVERED",
                 }
             )
+            if tentative.get("status") == _runner.TALK_COVER_PENDING_STATUS:
+                tentative.update(
+                    {
+                        "status": "review_ready",
+                        "bundle_lifecycle": "CURRENT",
+                        "bundle_compliance": "COMPLIANT",
+                    }
+                )
             if binding.get("authority_type") == "verified_song_delivery":
                 manifest_path = Path(str(binding.get("delivery_manifest_path") or "")).resolve(strict=True)
                 tentative["delivery_manifest_path"] = str(manifest_path)
@@ -1302,7 +1310,11 @@ def cover_repair_needed(date: str, rec: dict) -> bool:
     # song_delivery_ok) — every delivered clip deserves a cover, regardless of
     # what the ADVISORY semantic judge said (Ivan 2026-07-10).  Blocked/failed
     # records have no delivery and never get covers.
-    delivered = rec.get("status") in _runner.DELIVERED_TALK_STATUSES or bool(rec.get("delivered"))
+    delivered = (
+        rec.get("status") in _runner.DELIVERED_TALK_STATUSES
+        or rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
+        or bool(rec.get("delivered"))
+    )
     if not delivered or not rec.get("title"):
         return False
     paths = _runner.delivered_paths(date, rec)

@@ -26,3 +26,7 @@ memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidous
 - 任一路线在最终像素、文字、安全区、人物关系或 route evidence 上失败都 fail closed，不得跨路线
   静默降级。双人联动要求双方在 hash-bound source reference 中真实可见；没有 counterpart
   reference 时禁止凭描述画第二位。
+- producer 只产出视频/字幕但封面缺失或 route proof 无效时，状态必须是
+  `media_ready_cover_pending + PENDING_COVER/COVER_REQUIRED`，不得标
+  `review_ready + CURRENT/COMPLIANT`。cover-only 维护成功做完像素/哈希/route 绑定后才原子晋级；
+  截图 repair 仍留在截图路线，不能用通用 AI 重绘把失败偷偷改道。

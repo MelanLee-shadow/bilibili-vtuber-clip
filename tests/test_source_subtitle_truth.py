@@ -988,6 +988,98 @@ def test_committed_ledger_repairs_huishen_nasal_final_spelling_drift():
     ]
 
 
+def test_committed_ledger_repairs_sumi_na_xiang_le_acoustic_verdict():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 4_620, "诶，怎么有点像礼墨Sumi拿下了黑色的有角")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 3_588_020,
+                    "end_ms": 3_592_640,
+                }
+            ]
+        },
+        durations=[4_620],
+        ledger_path=ledger,
+    )
+
+    assert "礼墨Sumi？哪像了，黑色的，有角" in corrected
+    assert "拿下了黑色的有角" not in corrected
+    assert audit["status"] == "APPLIED"
+
+
+def test_committed_ledger_preserves_reviewed_chair_190_surface():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 2_340, "哈哈，一瞅1190是谣言啊")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 1_623_040,
+                    "end_ms": 1_625_380,
+                }
+            ]
+        },
+        durations=[2_340],
+        ledger_path=ledger,
+    )
+
+    assert "190，190是谣言啊" in corrected
+    assert "1190" not in corrected
+    assert audit["status"] == "APPLIED"
+
+
+def test_committed_ledger_keeps_brainflick_callback_consistent():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (0, 2_670, "你弹一弹啊"),
+            (18_030, 22_610, "再弹，再，再一弹一弹"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 1_520_750,
+                    "end_ms": 1_543_360,
+                }
+            ]
+        },
+        durations=[22_610],
+        ledger_path=ledger,
+    )
+
+    assert "硬弹一弹啊" in corrected
+    assert "再弹，再，再硬弹一弹" in corrected
+    assert "你弹一弹啊" not in corrected
+    assert "再一弹一弹" not in corrected
+    assert audit["status"] == "APPLIED"
+
+
 def test_mention_postconditions_do_not_let_one_correct_name_hide_another(tmp_path):
     ledger = _ledger(
         tmp_path,

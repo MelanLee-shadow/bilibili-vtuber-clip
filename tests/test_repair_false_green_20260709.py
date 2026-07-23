@@ -79,9 +79,76 @@ def test_direct_script_bootstraps_repo_imports_from_an_unrelated_cwd(tmp_path):
 
 def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> list[str]:
     video = tmp_path / "lock-video.mp4"
-    cover = tmp_path / "lock-cover.png"
+    cover = tmp_path / "lock-video.cover.png"
     video.write_bytes(b"lock-video")
     cover.write_bytes(b"lock-cover")
+    subtitle = tmp_path / "lock-video.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n锁测试\n",
+        encoding="utf-8",
+    )
+    title = "lock integration"
+    tags = ["李豆沙", "虚拟主播", "直播切片"]
+    record = tmp_path / "lock-video.record.json"
+    record.write_text(
+        json.dumps(
+            {
+                "artifact_hashes": {
+                    "burned_video_sha256": "sha256:"
+                    + authorized_upload.sha256_file(video),
+                    "cover_sha256": "sha256:"
+                    + authorized_upload.sha256_file(cover),
+                    "delivery_subtitle_sha256": "sha256:"
+                    + authorized_upload.sha256_file(subtitle),
+                },
+                "publish_staging": {"title": title},
+                "story_contract": {
+                    "schema_version": "lidousha-story-contract.v1",
+                    "candidate_id": "lock-integration",
+                    "transcript_sha256": "sha256:" + "a" * 64,
+                },
+                "upload_tags": {
+                    "engine": "test",
+                    "status": "OK",
+                    "final_tags": tags,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    review = tmp_path / "review_manifest.json"
+    review.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "stem": video.stem,
+                        "media": video.name,
+                        "cover": cover.name,
+                        "record": record.name,
+                        "subtitle_srt": subtitle.name,
+                        "title": title,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    package_audit = tmp_path / "lock-video.package-audit.json"
+    package_audit.write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "root": str(tmp_path.resolve()),
+                "issues": [],
+                "issue_count": 0,
+                "blocking_issue_count": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
     manifest = tmp_path / "lock.upload_manifest.json"
     assert authorized_upload.main(
         [
@@ -90,17 +157,35 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
             str(video),
             "--cover",
             str(cover),
+            "--package-audit",
+            str(package_audit),
             "--title",
-            "lock integration",
+            title,
             "--quote",
             "test authorization",
             "--out",
             str(manifest),
         ]
     ) == 0
+    harness = tmp_path / "authorized-upload-lock-harness.py"
+    repo_root = Path(authorized_upload.__file__).resolve().parents[1]
+    harness.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(repo_root)!r})\n"
+        "from scripts import authorized_upload as au\n"
+        "def fake_build(_cookie):\n"
+        "    def http(url, data=None, is_json=False):\n"
+        "        if 'x/web/archives' in url:\n"
+        "            return {'code': 0, 'data': {'arc_audits': [], 'page': {'count': 0}}}\n"
+        "        raise AssertionError(url)\n"
+        "    return http, 'csrf-test'\n"
+        "au._build_season_http = fake_build\n"
+        "raise SystemExit(au.main(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
     return [
         sys.executable,
-        str(Path(authorized_upload.__file__).resolve()),
+        str(harness),
         "upload",
         "--manifest",
         str(manifest),
@@ -736,7 +821,9 @@ def test_active_authorized_uploader_makes_repair_refuse_busy_lock(tmp_path, caps
     finally:
         release.touch()
         stdout, stderr = process.communicate(timeout=5)
-    assert process.returncode == 0, (stdout, stderr)
+    # The lock holder intentionally emits no BVID; v3 correctly leaves an
+    # unresolved intent and returns 6 after proving the cross-process lock.
+    assert process.returncode == 6, (stdout, stderr)
 
 
 def test_raw_agy_evidence_must_cover_lyric_head_middle_tail(tmp_path, capsys):

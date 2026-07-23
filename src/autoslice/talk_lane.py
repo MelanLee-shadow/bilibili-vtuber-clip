@@ -229,6 +229,21 @@ def read_publish_meta(work_dir: Path) -> dict:
     return {}
 
 
+def _talk_cover_delivery_ready(date: str, result: dict) -> bool:
+    """Prove the copied talk package has a route-bound cover, not just video."""
+
+    if result.get("cover_status") != "AI_COVER_READY":
+        return False
+    paths = _runner.delivered_paths(date, result)
+    if paths is None:
+        return False
+    mp4, cover = paths
+    return bool(
+        cover.is_file()
+        and _runner._initial_cover_proof_valid(date, result, mp4, cover)
+    )
+
+
 def _speaker_review_manifest_state(work_dir: Path) -> dict[str, tuple[int, int, int, int]]:
     state: dict[str, tuple[int, int, int, int]] = {}
     for path in work_dir.glob("replacement_recuts/*.speaker-final.json"):
@@ -879,5 +894,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     summary = result.get("summary") or {}
     result["red_flags"] = list(summary.get("red_flags") or [])
     result["boundary_repairs"] = list(summary.get("boundary_repairs") or [])
+    if not _talk_cover_delivery_ready(date, result):
+        result["status"] = _runner.TALK_COVER_PENDING_STATUS
+        result["cover_integrity_status"] = "INVALID_OR_MISSING_INITIAL_COVER"
+        result["cover_pending_reason_codes"] = [
+            "TALK_DELIVERY_COVER_PROOF_REQUIRED"
+        ]
+        return result
     result["status"] = "review_ready"
     return result

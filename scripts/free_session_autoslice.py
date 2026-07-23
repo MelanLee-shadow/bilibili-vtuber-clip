@@ -278,6 +278,7 @@ SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
 # are self-repaired in produce_slice_package, and an unrepairable boundary is
 # boundary_unrepairable (no delivery; fingerprint-gated bounded self-heal).
 DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
+TALK_COVER_PENDING_STATUS = "media_ready_cover_pending"
 # Recall pool, not delivery quota. Long sessions are recalled in overlapping
 # 30-minute windows and need enough global slack for review gates before the
 # per-live-session top-5 delivery selection.
@@ -1703,6 +1704,9 @@ def process_date(date: str) -> None:
             if result.get("status") in DELIVERED_TALK_STATUSES:
                 result["bundle_lifecycle"] = "CURRENT"
                 result["bundle_compliance"] = "COMPLIANT"
+            elif result.get("status") == TALK_COVER_PENDING_STATUS:
+                result["bundle_lifecycle"] = "PENDING_COVER"
+                result["bundle_compliance"] = "COVER_REQUIRED"
             state["picks"].append(result)
         state["pending_talk"] = retry
         write_state(date, state)
@@ -1753,7 +1757,13 @@ def process_date(date: str) -> None:
         record
         for record in picks + songs
         if record.get("status")
-        in ("failed", "boundary_unrepairable", "speaker_review_required")
+        in (
+            "failed",
+            "boundary_unrepairable",
+            "speaker_review_required",
+            "candidate_rejected",
+            TALK_COVER_PENDING_STATUS,
+        )
     ]
     # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
     # 0 failures').  A batch is review_ready only when something REACHED review.

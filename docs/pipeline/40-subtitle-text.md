@@ -30,6 +30,10 @@
   不得作为独立文字证人直接改字。
 - 音频二听只证明读音，不证明同音人名/称呼的汉字写法：带「小/老/阿」前缀或「神/老师/姐/哥/酱/桑/君/总/宝」后缀的同音换字，没有词表/源真值等文字权威就只回退该换字跨度，同 cue 其余有见证修复仍保留。守卫同时检查 draft 改写跨度本身的人名形态，并只额外容忍 `-n/-ng` 鼻音尾漂移来识别近同音（如 `毁神→绘声`）；不得因改写把「神」一起吃掉就逃过相邻后缀检查。`什么/怎么/为什么/谁/哪里/多少` 等疑问意图族发生变化则整 cue 回退，禁止把逐字字幕改成解释性提问。
 - 源真值支持 `replace_cue` / `replace_substring` / `drop_cue`；`drop_cue` 只允许删除被 source-timeline 真值半开区间完整包含的 cue（仅容忍 120ms 编码/SRT 边界漂移）。任何实质性跨界均记 `DROP_CUE_STRADDLES_TRUTH_INTERVAL` 并 fail closed，禁止按“有重叠”整条删除。
+- hash-bound 源真值拥有的 cue 在 `_run_final_review` 前即进入保护集，终审不得先把中文音译改成
+  假名、也不得用声学对同音专名重新选字后再指望末尾钉子挽救。保护只容忍总计 `<=250ms`
+  且不超过 cue 10% 的**外边界**漂移；区间内部有空洞仍 fail closed。源真值随后照常重放并复验，
+  因此保护不是“跳过修复”，而是禁止低权威阶段抢写最高权威辖区。
 - 宽 `replace_substring` 窗若同一专名出现多次，必须用 `mention_postconditions` 为每一次
   绑定绝对 source interval、required text 与 forbidden tokens；窗口内“某一次写对”不能
   掩盖另一 mention 仍错误。fresh ASR 把两个 mention 合进同一 cue 而无法分别归因时，

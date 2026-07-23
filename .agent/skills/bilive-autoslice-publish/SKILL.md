@@ -57,8 +57,10 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
 
 ## 标题 / 封面 / 元数据（发布硬标准）
 
-- **标题**：风格规范与 few-shot 见 `.agent/skills/lidousha-title-style/SKILL.md`。发布标题一律带【李豆沙】前缀；**歌切完整前缀"【李豆沙】豆沙歌，"**；Ivan 给定的标题一字不改（只补前缀）。封面嵌字不带【李豆沙】。
-- **封面**：真 CPA gpt-image-2 出**无字背景**（fail-closed，禁抽帧冒充；CPA 在 Cloudflare 后必须带浏览器 UA；524/520 瞬时可重试），标题**永远由本地脚本手工叠字**。构图/表情/背景/配色改为**按条 persona 驱动的 art-direction**——`_lidousha_cover_art_direction` 用 `sha256(candidate_id)` 稳定轮换 + persona 关键词词表，确定性选出 {角色/表情/背景/版式/hook 色/hook 词}，可选 CPA judge 精修（fail-open + 护栏，永不吐舌/油滑/性感）；`_lidousha_cover_prompt` 出无字背景，`_overlay_lidousha_cover_title` 本地叠字（三者均在 `scripts/run_auto_review_shadow_pipeline.py`）。art-direction 是 **fail-OPEN**（挑不到就回落确定性 baseline），但封面**图像**仍 **fail-CLOSED**（只认真 CPA 出图）。AI 无字背景永存 `covers_ai_original/`——嵌字错了只本地重叠不重新出图。**主工作流真的调用它**：生产交付器 `scripts/produce_slice_package.py` → `_stage_publish_draft` → `_stage_lidousha_ai_cover` 就是这条链，art-direction LLM **恒开**（人工标题也精修封面表情/版式，fail-open），上传用的 `.cover.png` 就是它产出的那张；`run_auto_review_shadow_pipeline.py --publish-staging` / `run_full_session_selector_cpa_shadow.py` 同链。**一次性重做/单条出封面**用 `scripts/regenerate_lidousha_cover.py`（同一套函数的薄封装：给参考帧或 media + 标题 → 新封面；`--reuse-bg` 只重叠不重出图）。
+- **标题**：风格规范与 few-shot 见 `.agent/skills/lidousha-title-style/SKILL.md`。自动标题默认带【李豆沙】前缀；**歌切完整前缀固定为"【李豆沙】豆沙歌，"**。Ivan 给出的完整标题逐字是最高 authority，连前缀也不得擅自增删。封面嵌字不带【李豆沙】。
+- **封面必须逐条证据路由，截图与 AI 都是一等公民（Ivan 2026-07-22）**：生产必须落 `cover_route_decision`，至少记录 `selected_treatment`、完整 `reason`、参考帧/源媒体 hash、可见人物、模型与实际调用（无调用则 `model=none`、`image_generation_used=false`）。画面本身能清晰、准确展示人物关系/动作/游戏角色时优先 `screenshot_direct`；需要轻量去噪且仍保持源画面真实性时才 `screenshot_polish`；只有源画面运动模糊、主体过小/置信不足或无法表达 hook 时才选 AI。不得因为截图功能未部署、旧默认恒走 AI、或 AI 调用更方便就选 AI；也不得把抽帧伪称 AI。截图路线证明失效时只能重抽/重叠或阻断，禁止通用补封面任务静默改成 AI。AI 路线仍用真 CPA 图像调用出**无字背景**（Cloudflare 后带浏览器 UA；524/520 可按预算重试），标题一律本地叠字；失败不得用模板/烧录帧冒充完成。
+
+  AI 路线的构图/表情/背景/配色按条 persona 驱动：`_lidousha_cover_art_direction` 用稳定候选 identity + persona 关键词确定 {角色/表情/背景/版式/hook 色/hook 词}，CPA judge 只作有护栏的精修。AI 无字背景永久保留，嵌字错只重叠。截图路线保留 hash-bound source frame/reference；两条路线都必须经过中心 4:3 裁切视觉复核。一次性重做用 `scripts/regenerate_lidousha_cover.py`，但必须继承原 route；`--reuse-bg` 只重叠不重新出图。
 
   **李豆沙封面标题视觉样式（Ivan 2026-07-04 权威定稿，禁止发挥）**——底色/字体/描边是不可动的权威基线；版式/背景/hook 色按条轮换，避免每张封面一样：
   | 项 | 值 |
@@ -78,25 +80,25 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
   | **文字排版（Ivan 2026-07-05）** | **大字自适应填满分区**（`_fit_cover_lines` 试 1..max_lines 行取最大可容字号，上限~300px），**描边宽随字号按比例放大**（不固定，否则大字显描边细）；**钩子词 / 英文数字串(kmx/TPL/0.5) / 歌名《…》绝不断行**（`_wrap_even` 当原子），**歌名《…》独占完整一行**并作钩子高亮；**绝不把标题原文喂进出图 prompt**（否则 AI 会把标题画进背景=双重文字，`_lidousha_cover_prompt` 已去 title、强化 render-NO-text） |
 
   **废弃样式（禁用，会误导）**：`~/.codex/skills/lidousha-ai-cover/scripts/render_lidousha_ai_cover.py` 的旧色——黄字 `#FFF7AA`+青蓝描边 `#00648C`+黑阴影/高光；以及字幕的 sapphire `#0F52BA`（2026-07-04 曾误用）。都不是封面标题色。
-- **简介（两行，逐字）**：
+- **简介**：投稿时传入下列两行逐字；B 站 APP 投稿公开面会确定性在首行投影 `source=https://live.bilibili.com/`，所以公开/创作中心验收是“三行”，不能把这行服务器投影误判为漂移：
   ```
   李豆沙个人主页：https://space.bilibili.com/1703797642
   李豆沙直播间：https://live.bilibili.com/22966160
   ```
 - **标签（Ivan 2026-07-13 拍板口径，取代旧的固定 6 位）**：
   - **基础位只有 4 个**：`李豆沙,虚拟主播,虚拟UP主,直播切片`（VUP 与虚拟UP主全重复、VTuber 与虚拟主播近重复，已砍）；其余名额给内容位，**每稿封顶 12 个**（BV1EQNk6KErE 12 tag 编辑提交+读回实测），单 tag ≤20 字符、不得含逗号。
-  - **生成链（已全自动，端到端 live）**：producer 把 `suggest_upload_tags` 结果冻结进成品 `<stem>.record.json` 的 `upload_tags`（status=OK 才算）→ `authorized_upload.py make-manifest` 自动读取（`--tags` 可覆盖、`--no-tags` 退出）→ `do_upload.sh` 以 manifest 的完整 tag 行投稿；无 tags 的旧 manifest 回退基础 4 位。
+  - **生成链（已全自动，端到端 live）**：producer 把 `suggest_upload_tags` 结果冻结进成品 `<stem>.record.json` 的 `upload_tags`（status=OK 才算）→ `authorized_upload.py make-manifest` 自动读取。v3 中 `--tags` 只能逐项等于 record 的冻结结果，不能覆盖；`--no-tags` 与空 tag 都硬拒。`do_upload.sh` 只投稿 manifest 的完整 tag 行；旧 manifest 只能 verify/season-add，不得新投稿。
   - **两层来源**：Layer A 确定性专名层（glossary + psplive_roster 规则表，专名绝不让 LLM 发明）；Layer B CPA 内容层（标题+字幕全文出 3~6 个通用内容词，过长度/去重/防幻觉专名校验）。合并优先级：基础位 > 人工裁定 > 专名（标题命中优先）> 内容。
   - **口径红线**：专名 tag 只出可搜索**正主名**（南町/伊索尔/礼墨Sumi），梗形态（大N老师/142/lmsm/豆町）只作触发面不出 tag；内容词必须"贴内容 × 通用可搜"，过专没人搜的词硬毙（彩排/宠粉/玩梗/热情邀约/初次登场/脑补剧情/粉丝互动/线下合照类）；半梗半内容词（坏女人/宿敌恋人）放行。
   - **tag 按最终成品字幕出（铁律）**：换源/字幕修复后必须 `scripts/suggest_upload_tags.py` 重算 + 人工过目，再用 `scripts/bili_update_tags.py`（plan-driven，inspect→apply，title_expect 前缀守卫，tag-only 编辑）落到线上；已知误听的临时裁定走 batch 条目 `suppress_tags/add_tags` 人工通道。
   - **单稿人工元数据高于自动 tag 策略**：Ivan 在创作中心人工调整过的完整 tag 集，登记在 profile 可选资产 `manual_archive_metadata`（李豆沙现行为 `assets/lidousha/manual_archive_metadata.v1.json`）。登记项的 `preserve_on_metadata_edits=true` 时，封面/换源/标题/简介/合集等后续编辑必须从创作中心全量克隆并原样保留该 tag 集；不得因为它不含基础 4 位或与旧自动建议不同就判为漂移，也不得运行 tag 重算覆盖，除非 Ivan 明确授权替换该稿标签。
 - **分区/属性**：tid=21（日常），copyright=2（转载），source=`https://live.bilibili.com/`。
 - **片头（成片结构，投稿前最后一道结构门）**：**谈话/活字乱刷/重交付一律强制前置 2026-07-18 Z1 三句版**「李豆沙一直是零，不对，李豆沙一直是为爱做一」。画面契约：中间“不对”保留原画幅，前后两句为右下角李豆沙区域放大的 1080p 无广告画面。`assets/lidousha/intro/branding_intro.v1.json` 以 `intro_id=huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2`、SHA-256 `bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5` 绑定；`src/autoslice/branding_intro.py` 在最终 burn 内拼接并 fail-closed，成品 record.json 必须有 `branding_intro.status=PREPENDED` + `intro_offset_ms`。生产字节固定在 `free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4`（repo 树外，deploy 不得删）。**歌切一律不带片头直接进歌（Ivan 2026-07-14，commit cf09597）**——歌选择器唯一入口按政策忽略 intro manifest。审计口径：talk 无片头或绑定的 intro_id/hash 不是当前值=违规；歌切带片头=违规（需无片头重烧+换源）。`AUTOSLICE_BRANDING_INTRO=off` 仅测试/应急，生产禁用。
-- **合集（发布未入集 = 流程未完成；2026-07-20 起在上传工具链内强制）**：谈话 → `小李切片`；歌 → `小李歌唱`。合集 lane 由 `authorized_upload.py make-manifest` 按冻结标题确定性派生（歌切目录式前缀→歌合集，其余→切片合集）并写进 manifest（`--season none` 才可显式退出）；`upload` 投稿成功后自动等 state=0、现查 season/section ID、入集并**公开面复验**，rc=6=已投稿但入集未完成，用 `season-add --manifest` 幂等补挂/复验（证据落 `<stem>.season_verify.json`）。ID 永远现查不写死（工具即如此实现）；重复添加返回 20080=已在集，无害。
+- **合集（发布未入集 = 流程未完成；2026-07-20 起在上传工具链内强制）**：谈话 → `小李切片`；歌 → `小李歌唱`。合集 lane 由 `authorized_upload.py make-manifest` 按冻结标题确定性派生并写进 manifest；`upload` 投稿成功后等 state=0、按标题现查 season/section，再与频道当前已确认 ID 做双重匹配，任一漂移即阻断，禁止“查到同名就信”。随后入集并同时复验公开 view 与**精确 section API**；rc=6=已投稿但闭环未完成，只能 `season-add --manifest` 幂等补挂/复验，禁止重传。重复添加 20080=已在集，无害。
 
 ## 发布流程（每步都有实证，2026-07-04）
 
-0. **前提**：Ivan 对该条明确授权；成品与字幕已过审（人工或审批 manifest）。
+0. **前提**：Ivan 对该条明确授权；成品与字幕已过审。新投稿只认 `authorized-upload-manifest.v3`：必须先对扁平审片包运行 `audit_lidousha_review_package.py --json`，再由 `make-manifest --package-audit` 绑定同 stem 的视频、封面、record、SRT、review manifest、标题、tag、StoryContract 与授权原话；任一 hash 漂移拒传。
 1. **投稿通道**：`biliup-rs`（`free:/opt/bilive/bin/biliup` v0.2.4）。
    - cookie：从 `/opt/bilive/app/cookie.json` 的 `data{cookie_info,sso,token_info}` 组装 biliup cookies.json；
    - **`biliup renew` 会轮换 token——用后必须把新 cookie_info/token_info 写回 `/opt/bilive/app/cookie.json`**（先备份），否则生产端登录失效；
@@ -118,7 +120,7 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
      | 仅 tag | `scripts/bili_update_tags.py`（plan-driven，inspect→apply） | plan 带完整替换 tag 行 + `title_expect` 防错稿守卫；≤12，被拒自动 10 个重试探测 |
      | 标题/desc 等元数据 | `GET x/vupre/web/archive/view?bvid=` → `POST x/vu/web/edit?csrf=` 全量提交 | title/desc/tag/cover/videos（带 filename+cid）一起回填，漏字段=清空；改标题后合集条目标题可能滞留旧值，用 `season/section/episode/edit` 修 |
    - 每次编辑后都要**公开验证**（§4）并更新证据文件；编辑返回 code 0 ≠ 生效。
-4. **公开验证（完成判据）**：`GET api.bilibili.com/x/web-interface/view?bvid=` 确认 `state=0`、标题、desc、`ugc_season.title` 与 `is_season_display=true`；标签用 `x/tag/archive/tags?bvid=`。证据存 `<clip>.public_verify.json` + `<clip>.uploaded.json`（bvid/aid/时间/工具/授权来源）到切片的 replacement_recuts 目录。
+4. **公开验证（完成判据）**：只有 public view、public tags、Creator archive view 与精确 section API 四面同时匹配，才写 ledger `rc=0` 与 `<clip>.uploaded.json`；上传器自身 rc=0 只表示“可能已经创建稿件”。已拿到 BVID 但验证未闭环记 `posted_unverified`，只能 `season-add`，不得重传。无 BVID 的 rc=0 保留 unresolved intent 并全局阻断后续投稿，先去创作中心人工对账。上传前滚动 24h 门取 ledger 与 Creator 近期稿件估计的较大者，达到 10 条即停；B 站 code 21566 是最终权威信号。
 5. **证据入库（Ivan 规矩：授权上传的内容必须 commit，发布即快照）**：上传/换源/改封面/改 tag 的证据（`*.uploaded.json`、`*.public_verify.json`、results/manifest 文件）随批 commit（gitignore 已给 `*.uploaded.json` 留例外；媒体不入库）。幂等账本在 `free:/opt/bilive/autoslice/reports/upload_ledger.jsonl`（同一 artifact hash 重传=硬错误），launchd 镜像会拉回本地 `reports/slice_monitor/autoslice_free/`。
 
 ## 投稿后验收 checklist（每条发布/修正后过一遍；审计别人上传时逐项对抗式核对）
@@ -126,10 +128,10 @@ Canonical 命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md`。要点�
 以 B 站**公开面+创作中心读回**为真值（工具返回 code 0 不算数）：
 
 1. **稿件状态**：`state=0` 公开可见（-30=重审中可等；<0 其他值要查）；无同内容重复稿（同标题两个 BV=事故，报 Ivan 手动处理，headless 删不了）。
-2. **标题**：带【李豆沙】前缀（歌切="【李豆沙】豆沙歌，"完整前缀）；Ivan 手定标题一字不改；无机器味词（直接/当场/秒X）与空洞标题党词；作品讨论类带《作品名》。细则见 `.agent/skills/lidousha-title-style/SKILL.md`。
-3. **封面**：真 CPA 出图（非抽帧/模板）+ 本地叠字；样式表合规（奶油白字+深海军蓝描边、hook 词高亮、整张单字体、字号够大、feed 4:3 安全区 x∈[260,1660]）；表情不吐舌、不加当场没有的帽子/饰品/服装；多人场景主体=李豆沙；「自」字是否被 ZCOOL 渲成「白」形。
+2. **标题**：自动标题带【李豆沙】前缀（歌切="【李豆沙】豆沙歌，"完整前缀）；Ivan 给定的完整标题逐字不改；无机器味词（直接/当场/秒X）与空洞标题党词；作品讨论类带《作品名》。细则见 `.agent/skills/lidousha-title-style/SKILL.md`。
+3. **封面**：先核 `cover_route_decision`。截图路线必须是 hash-bound 源帧且理由/人物/关系与像素证明一致；AI 路线必须有真实模型调用、完整选择理由与无字背景资产。两者都要本地叠字、样式表合规、中心 4:3 安全、人物/动作不虚构；不允许全批默认 AI，也不允许截图功能只存在但未实际部署。
 4. **tag**：基础 4 位在位 + 内容位合口径（§标签），≤12；换源过的稿件 tag 已按新字幕重算。
-5. **简介**：两行逐字（主页+直播间）；tid=21、copyright=2、source。
+5. **简介**：投稿参数两行逐字；公开/创作中心为 source URL + 两行简介的确定性三行投影；tid=21、copyright=2、source 精确一致。
 6. **合集**：谈话在`小李切片`、歌在`小李歌唱`，`is_season_display=true`；改过标题的稿件合集条目标题未滞留旧值。
 7. **片头**：talk 有 2026-07-18 Z1 三句版固定片头（record.json `PREPENDED`，intro_id/hash 与本节一致）；**歌切无片头**（2026-07-14 起）。
 8. **修正方式**：所有修正走编辑通道（§修正总则），没有为修正新开 BV。

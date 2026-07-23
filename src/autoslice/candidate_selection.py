@@ -47,6 +47,43 @@ def _is_pinned_user_selection(item: dict) -> bool:
     )
 
 
+def _exact_talk_contract_ids(state: dict) -> tuple[str, ...]:
+    """Return a recovery-bound exact allowlist, or an empty tuple.
+
+    Ordinary production intentionally backfills deterministic rejections.
+    An explicit recovery review is different: the user selected the complete
+    set, so substituting an unrelated backlog candidate changes the task.
+    Once the contract key exists, malformed authority must fail closed instead
+    of silently restoring ordinary backfill behavior.
+    """
+
+    contract = state.get("talk_selection_contract")
+    if contract is None:
+        return ()
+    if (
+        state.get("run_mode") != "RECOVERY_REVIEW"
+        or state.get("upload_allowed") is not False
+        or not isinstance(contract, dict)
+        or contract.get("schema_version") != "talk-selection-contract.v1"
+        or contract.get("mode") != "EXACT_CANDIDATE_SET_NO_BACKFILL"
+        or not str(contract.get("authority") or "").strip()
+        or _SHA256_RX.fullmatch(
+            str(contract.get("source_state_sha256") or "")
+        )
+        is None
+    ):
+        raise ValueError("INVALID_EXACT_TALK_SELECTION_CONTRACT")
+    values = contract.get("candidate_ids")
+    if (
+        not isinstance(values, list)
+        or not values
+        or any(not isinstance(value, str) or not value for value in values)
+        or len(values) != len(set(values))
+    ):
+        raise ValueError("INVALID_EXACT_TALK_SELECTION_CONTRACT")
+    return tuple(values)
+
+
 def session_sealed(date: str, state: dict) -> bool:
     """The date's recordings are STABLE: same segment inventory (names+sizes)
     as the previous tick, with at least one segment.  Selecting before seal
@@ -98,6 +135,11 @@ def _talk_slots_for_session(state: dict, session_id: str) -> int:
     ]
     produced = sum(
         1 for item in records if item.get("status") in _runner.DELIVERED_TALK_STATUSES
+    )
+    produced += sum(
+        1
+        for item in records
+        if item.get("status") == _runner.TALK_COVER_PENDING_STATUS
     )
     reserved_for_revival = sum(
         1
@@ -161,7 +203,7 @@ def _assign_cover_diversity_slots(state: dict) -> None:
 def backlog_has_eligible_session_work(state: dict) -> bool:
     """Whether a backlog contains work for a session with quota remaining."""
 
-    if any(
+    if not _exact_talk_contract_ids(state) and any(
         _talk_slots_for_session(state, _item_session_id(item)) > 0
         for item in state.get("talk_backlog", [])
         if isinstance(item, dict)
@@ -660,6 +702,36 @@ def prioritize(state: dict) -> None:
     _runner.exclude_session_edge_bgm_candidates(state)
     _runner.quarantine_overlapping_talk_candidates(state)
     pending_talk = state.get("pending_talk", [])
+    exact_ids = _exact_talk_contract_ids(state)
+    if exact_ids:
+        order = {candidate_id: index for index, candidate_id in enumerate(exact_ids)}
+        exact_pending: list[dict] = []
+        non_exact_backlog: list[dict] = []
+        seen_exact: set[str] = set()
+        for item in list(pending_talk) + list(state.get("talk_backlog", [])):
+            candidate_id = str(
+                item.get("cid") or item.get("candidate_id") or ""
+            )
+            if candidate_id not in order:
+                non_exact_backlog.append(item)
+                continue
+            if candidate_id in seen_exact:
+                raise ValueError(
+                    "DUPLICATE_EXACT_TALK_SELECTION_CANDIDATE:"
+                    f"{candidate_id}"
+                )
+            seen_exact.add(candidate_id)
+            exact_pending.append(item)
+        exact_pending.sort(
+            key=lambda item: order[
+                str(item.get("cid") or item.get("candidate_id") or "")
+            ]
+        )
+        state["pending_talk"] = exact_pending
+        state["talk_backlog"] = non_exact_backlog
+        _assign_cover_diversity_slots(state)
+        _runner.refill_songs(state)
+        return
     pinned_selections = [
         item
         for item in pending_talk

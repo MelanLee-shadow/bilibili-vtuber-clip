@@ -244,7 +244,7 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
         },
     )
 
-    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v4"
+    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v5"
     assert plan["new_pipeline_fingerprint"] is None
     assert plan["new_pipeline_fingerprints_by_candidate"] == {
         "auto_brainflick": ALT_NEW,
@@ -266,6 +266,13 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
     assert override["selected_slot"] == 2
     assert override["displaced_baseline_candidate"] == "auto_higher_baseline"
     assert state["talk_selection_overrides"] == [override]
+    assert state["talk_selection_contract"]["mode"] == (
+        "EXACT_CANDIDATE_SET_NO_BACKFILL"
+    )
+    assert state["talk_selection_contract"]["candidate_ids"] == [
+        "auto_current",
+        "auto_brainflick",
+    ]
     assert [row["cid"] for row in state["talk_backlog"]] == [
         "auto_higher_baseline"
     ]

@@ -184,6 +184,57 @@ def _resolve_new_fingerprint_authority(
     return resolved
 
 
+def _recovery_rerun_plan(
+    *,
+    date: str,
+    requested: list[str],
+    suppressed: list[str],
+    replacements: list[str],
+    expected_source_state_sha256: str,
+    expected_old_fingerprint: str,
+    new_fingerprint_by_candidate: dict[str, str],
+    selection_authority: str,
+    selection_override_events: list[dict[str, object]],
+    selection_contract: dict,
+    suppression_authority: str,
+    boundary_overrides: dict[str, int],
+    given_end_authority: str | None,
+    queue: list[dict],
+) -> dict:
+    unique_new_fingerprints = set(new_fingerprint_by_candidate.values())
+    return {
+        "schema_version": "recovery-review-talk-rerun-plan.v5",
+        "date": date,
+        "upload_allowed": False,
+        "source_state_sha256": expected_source_state_sha256,
+        "old_pipeline_fingerprint": expected_old_fingerprint,
+        "new_pipeline_fingerprint": (
+            next(iter(unique_new_fingerprints))
+            if len(unique_new_fingerprints) == 1
+            else None
+        ),
+        "new_pipeline_fingerprints_by_candidate": dict(
+            sorted(new_fingerprint_by_candidate.items())
+        ),
+        "candidate_ids": requested,
+        "suppressed_candidate_ids": suppressed,
+        "replacement_candidate_ids": replacements,
+        "replacement_selection_authority": (
+            selection_authority if replacements else None
+        ),
+        "selection_override_events": selection_override_events,
+        "talk_selection_contract": copy.deepcopy(selection_contract),
+        "user_suppression_authority": (
+            suppression_authority if suppressed else None
+        ),
+        "given_end_ms_by_candidate": boundary_overrides,
+        "given_end_authority": (
+            str(given_end_authority).strip() if boundary_overrides else None
+        ),
+        "queued_count": len(queue),
+    }
+
+
 def plan_current_talk_recovery_rerun(
     date: str,
     state: dict,
@@ -450,38 +501,31 @@ def plan_current_talk_recovery_rerun(
     state.setdefault("talk_selection_overrides", []).extend(
         selection_override_events
     )
-    state["status"] = "recovery_rerun_queued"
-    unique_new_fingerprints = set(new_fingerprint_by_candidate.values())
-    plan = {
-        "schema_version": "recovery-review-talk-rerun-plan.v4",
-        "date": date,
-        "upload_allowed": False,
+    state["talk_selection_contract"] = {
+        "schema_version": "talk-selection-contract.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": [_candidate_id(row) for row in queue],
         "source_state_sha256": expected_source_state_sha256,
-        "old_pipeline_fingerprint": expected_old_fingerprint,
-        "new_pipeline_fingerprint": (
-            next(iter(unique_new_fingerprints))
-            if len(unique_new_fingerprints) == 1
-            else None
+        "authority": (
+            selection_authority
+            or given_end_authority
+            or "explicit recovery review rerun allowlist"
         ),
-        "new_pipeline_fingerprints_by_candidate": dict(
-            sorted(new_fingerprint_by_candidate.items())
-        ),
-        "candidate_ids": requested,
-        "suppressed_candidate_ids": suppressed,
-        "replacement_candidate_ids": replacements,
-        "replacement_selection_authority": (
-            selection_authority if replacements else None
-        ),
-        "selection_override_events": selection_override_events,
-        "user_suppression_authority": (
-            suppression_authority if suppressed else None
-        ),
-        "given_end_ms_by_candidate": boundary_overrides,
-        "given_end_authority": (
-            str(given_end_authority).strip() if boundary_overrides else None
-        ),
-        "queued_count": len(queue),
     }
+    state["status"] = "recovery_rerun_queued"
+    plan = _recovery_rerun_plan(
+        date=date, requested=requested, suppressed=suppressed,
+        replacements=replacements,
+        expected_source_state_sha256=expected_source_state_sha256,
+        expected_old_fingerprint=expected_old_fingerprint,
+        new_fingerprint_by_candidate=new_fingerprint_by_candidate,
+        selection_authority=selection_authority,
+        selection_override_events=selection_override_events,
+        selection_contract=state["talk_selection_contract"],
+        suppression_authority=suppression_authority,
+        boundary_overrides=boundary_overrides,
+        given_end_authority=given_end_authority, queue=queue,
+    )
     state["delivery_rerun_plan"] = plan
     return plan
 

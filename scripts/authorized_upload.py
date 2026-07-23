@@ -7,9 +7,9 @@ proof that the file Ivan REVIEWED is the file that got UPLOADED, no idempotency
 
 This tool binds the whole chain to one manifest file:
 
-    1. make-manifest   — at review time: records sha256 of the exact video and
-                         cover plus the verbatim title and Ivan's authorization
-                         quote.  The manifest IS the reviewed artifact's identity.
+    1. make-manifest   — at review time: requires a passing package audit and
+                         binds the exact video, cover, record, SRT, review
+                         manifest, title, tags, StoryContract and Ivan's quote.
                          The target season (合集) lane is derived from the frozen
                          title (song catalog prefix → 小李歌唱, else 小李切片) and
                          frozen into the manifest — season membership is part of
@@ -23,8 +23,9 @@ This tool binds the whole chain to one manifest file:
                          run without it).  After a successful post it completes
                          the manifest's season add (waits for state=0, live-
                          queries the season id by title, adds the episode, then
-                         PUBLICLY re-verifies) — exit 6 means "posted but season
-                         membership is not publicly verified yet: run season-add".
+                         verifies public view, public tags, Creator archive and
+                         the exact section API. Ledger rc=0 and the uploaded
+                         sidecar exist only after all four agree.
     3. season-add      — idempotently finish/re-verify the season step for an
                          already-posted manifest (bvid resolved from the ledger).
                          发布未入集 = 流程未完成; this subcommand is the retry path.
@@ -36,6 +37,7 @@ an authorization, it only makes the authorized artifact tamper-evident.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import fcntl
 import hashlib
 import json
@@ -60,7 +62,8 @@ DEFAULT_COOKIE_JSON = Path("/opt/bilive/app/cookie.json")
 # The LANE is a deterministic choke point on the frozen title: the song catalog
 # prefix is schema-enforced elsewhere (title_policy.canonicalize_song_catalog_title),
 # so title→lane cannot drift from content.  Season IDs are deliberately NOT
-# frozen: the skill requires live-querying them from 创作中心 before use.
+# selected by a live title query, then checked against the channel's committed
+# talk/song IDs so a renamed or wrong collection cannot silently become truth.
 SONG_TITLE_PREFIX = "【李豆沙】豆沙歌，"
 SEASON_TITLES = {"talk": "小李切片", "song": "小李歌唱"}
 SEASON_ADD_ALREADY_IN = 20080  # episodes/add: already in the season (idempotent OK)
@@ -68,6 +71,31 @@ VIEW_API = "https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
 TAGS_API = "https://api.bilibili.com/x/tag/archive/tags?bvid={bvid}"
 SEASONS_API = "https://member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30"
 EPISODES_ADD_API = "https://member.bilibili.com/x2/creative/web/season/section/episodes/add?csrf={csrf}"
+SECTION_VIEW_API = "https://member.bilibili.com/x2/creative/web/season/section?id={section_id}"
+MEMBER_ARCHIVE_VIEW_API = "https://member.bilibili.com/x/vupre/web/archive/view?bvid={bvid}"
+CREATOR_ARCHIVES_API = (
+    "https://member.bilibili.com/x/web/archives"
+    "?pn={page}&ps=30&status=is_pubing,pubed,not_pubed"
+)
+QUOTA_FREQUENCY_CODE = 21566
+ROLLING_UPLOAD_LIMIT = 10
+ROLLING_UPLOAD_WINDOW_SECONDS = 24 * 60 * 60
+EXPECTED_SEASON_IDS = {
+    "talk": {"season_id": 8383206, "section_id": 9320779},
+    "song": {"season_id": 8410735, "section_id": 9364628},
+}
+SUBMISSION_DESCRIPTION = (
+    "李豆沙个人主页：https://space.bilibili.com/1703797642\n"
+    "李豆沙直播间：https://live.bilibili.com/22966160"
+)
+EXPECTED_TID = 21
+EXPECTED_COPYRIGHT = 2
+EXPECTED_SOURCE = "https://live.bilibili.com/"
+# biliup's APP submission sends the two-line description above, while
+# Bilibili's public/member archive surfaces prepend the copyright source URL.
+# Freeze the observed public contract instead of treating that deterministic
+# server-side projection as metadata drift.
+DEFAULT_DESCRIPTION = EXPECTED_SOURCE + "\n" + SUBMISSION_DESCRIPTION
 _BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
@@ -104,6 +132,245 @@ def sidecar_record_path(video: Path) -> Path:
         if name.endswith(ext):
             return video.parent / (name[: -len(ext)] + ".record.json")
     return video.parent / (name + ".record.json")
+
+
+def sidecar_subtitle_path(video: Path) -> Path:
+    name = video.name
+    for ext in (".mp4", ".flv", ".mkv"):
+        if name.endswith(ext):
+            return video.parent / (name[: -len(ext)] + ".srt")
+    return video.parent / (name + ".srt")
+
+
+def _sha_entry(path: Path) -> dict:
+    return {
+        "path": str(path.resolve()),
+        "sha256": sha256_file(path),
+        "bytes": path.stat().st_size,
+    }
+
+
+def _strip_sha_prefix(value: object) -> str:
+    text = str(value or "")
+    return text.removeprefix("sha256:")
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _load_json_object(path: Path, label: str, problems: list[str]) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        problems.append(f"{label} unreadable: {path} ({exc})")
+        return {}
+    if not isinstance(value, dict):
+        problems.append(f"{label} must be a JSON object: {path}")
+        return {}
+    return value
+
+
+def _zero_blocking_issues(audit: dict) -> bool:
+    blocking = audit.get("blocking_issue_count")
+    issue_count = audit.get("issue_count")
+    issues = audit.get("issues")
+    return bool(
+        isinstance(blocking, int)
+        and not isinstance(blocking, bool)
+        and blocking == 0
+        and isinstance(issue_count, int)
+        and not isinstance(issue_count, bool)
+        and isinstance(issues, list)
+        and issue_count == len(issues)
+    )
+
+
+def _resolved_manifest_item_path(root: Path, value: object) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
+def _find_review_item(review_manifest: dict, root: Path, video: Path) -> dict | None:
+    expected = video.resolve()
+    for item in review_manifest.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        media = _resolved_manifest_item_path(root, item.get("media") or item.get("video"))
+        if media == expected:
+            return item
+    return None
+
+
+def _record_artifact_hash_problems(
+    record: dict,
+    *,
+    video: Path,
+    cover: Path,
+    subtitle: Path,
+    title: str,
+) -> list[str]:
+    problems: list[str] = []
+    artifact_hashes = record.get("artifact_hashes")
+    if not isinstance(artifact_hashes, dict):
+        return ["record.json has no artifact_hashes object"]
+
+    expected = {
+        "video": sha256_file(video),
+        "cover": sha256_file(cover),
+        "subtitle": sha256_file(subtitle),
+    }
+    accepted_video = {
+        _strip_sha_prefix(artifact_hashes.get("burned_video_sha256")),
+        _strip_sha_prefix(artifact_hashes.get("video_sha256")),
+    }
+    if expected["video"] not in accepted_video:
+        problems.append("record artifact hashes do not bind the reviewed video")
+    if expected["cover"] != _strip_sha_prefix(artifact_hashes.get("cover_sha256")):
+        problems.append("record artifact hashes do not bind the reviewed cover")
+    accepted_subtitle = {
+        _strip_sha_prefix(artifact_hashes.get("delivery_subtitle_sha256")),
+        _strip_sha_prefix(artifact_hashes.get("subtitle_sha256")),
+    }
+    if expected["subtitle"] not in accepted_subtitle:
+        problems.append("record artifact hashes do not bind the reviewed SRT")
+
+    publish_staging = record.get("publish_staging")
+    record_title = publish_staging.get("title") if isinstance(publish_staging, dict) else None
+    if record_title != title:
+        problems.append(
+            f"record publish title mismatch: record={record_title!r} manifest={title!r}"
+        )
+    story_contract = record.get("story_contract")
+    if not isinstance(story_contract, dict):
+        problems.append("record.json has no story_contract object")
+    else:
+        if not str(story_contract.get("schema_version") or "").strip():
+            problems.append("record story_contract has no schema_version")
+        if not str(story_contract.get("candidate_id") or "").strip():
+            problems.append("record story_contract has no candidate_id")
+        if not str(story_contract.get("transcript_sha256") or "").strip():
+            problems.append("record story_contract has no transcript_sha256")
+    return problems
+
+
+def _validate_v3_package_attestation(
+    manifest: dict,
+    *,
+    verify_hashes: bool,
+) -> list[str]:
+    problems: list[str] = []
+    attestation = manifest.get("package_attestation")
+    if not isinstance(attestation, dict):
+        return ["manifest v3 has no package_attestation object"]
+    if attestation.get("schema_version") != "authorized-upload-package-attestation.v1":
+        problems.append("package_attestation schema_version is invalid")
+
+    entries: dict[str, tuple[Path, dict]] = {}
+    for key in ("package_audit", "review_manifest", "record", "subtitle"):
+        entry = attestation.get(key)
+        if not isinstance(entry, dict):
+            problems.append(f"package_attestation.{key} is missing")
+            continue
+        path = Path(str(entry.get("path") or ""))
+        entries[key] = (path, entry)
+        if not path.is_file():
+            problems.append(f"package_attestation.{key} missing: {path}")
+            continue
+        if verify_hashes:
+            actual = sha256_file(path)
+            if actual != entry.get("sha256"):
+                problems.append(
+                    f"package_attestation.{key} HASH DRIFT: "
+                    f"manifest={str(entry.get('sha256'))[:12]} actual={actual[:12]} ({path})"
+                )
+
+    video_entry = manifest.get("video") or {}
+    cover_entry = manifest.get("cover") or {}
+    video = Path(str(video_entry.get("path") or ""))
+    cover = Path(str(cover_entry.get("path") or ""))
+    if not video.is_file() or not cover.is_file():
+        return problems
+    root_text = attestation.get("package_root")
+    root = Path(str(root_text or "")).resolve()
+    if not root_text or not root.is_dir():
+        problems.append(f"package root missing: {root}")
+        return problems
+    if video.parent.resolve() != root:
+        problems.append("reviewed video is not directly inside the audited package root")
+    if not _is_within(cover, root):
+        problems.append("reviewed cover is outside the audited package root")
+    expected_stem = video.stem
+    expected_paths = {
+        "record": root / f"{expected_stem}.record.json",
+        "subtitle": root / f"{expected_stem}.srt",
+    }
+    if cover.resolve() != (root / f"{expected_stem}.cover.png").resolve():
+        problems.append("cover is not the same-stem <stem>.cover.png")
+    for key, expected_path in expected_paths.items():
+        current = entries.get(key)
+        if current and current[0].resolve() != expected_path.resolve():
+            problems.append(f"{key} is not the same-stem {expected_path.name}")
+
+    audit_path = entries.get("package_audit", (Path(), {}))[0]
+    audit = _load_json_object(audit_path, "package audit", problems) if audit_path.is_file() else {}
+    audit_root = Path(str(audit.get("root") or "")).resolve()
+    if audit.get("passed") is not True:
+        problems.append("package audit did not pass")
+    if audit_root != root:
+        problems.append(f"package audit root mismatch: audit={audit_root} manifest={root}")
+    if not _zero_blocking_issues(audit):
+        problems.append("package audit reports blocking issues")
+
+    review_path = entries.get("review_manifest", (Path(), {}))[0]
+    review = _load_json_object(review_path, "review manifest", problems) if review_path.is_file() else {}
+    review_item = _find_review_item(review, root, video)
+    if review_item is None:
+        problems.append("review_manifest has no item for the reviewed video")
+    else:
+        expected_item_paths = {
+            "cover": cover.resolve(),
+            "record": expected_paths["record"].resolve(),
+            "subtitle": expected_paths["subtitle"].resolve(),
+        }
+        item_paths = {
+            "cover": _resolved_manifest_item_path(root, review_item.get("cover")),
+            "record": _resolved_manifest_item_path(
+                root, review_item.get("record") or review_item.get("record_json")
+            ),
+            "subtitle": _resolved_manifest_item_path(
+                root, review_item.get("subtitle_srt") or review_item.get("subtitle")
+            ),
+        }
+        for key, expected_path in expected_item_paths.items():
+            if item_paths[key] != expected_path:
+                problems.append(f"review_manifest {key} does not match the reviewed same-stem artifact")
+        if review_item.get("title") != manifest.get("title"):
+            problems.append("review_manifest title does not match the upload title")
+
+    record_path = entries.get("record", (Path(), {}))[0]
+    subtitle_path = entries.get("subtitle", (Path(), {}))[0]
+    if record_path.is_file() and subtitle_path.is_file():
+        record = _load_json_object(record_path, "record", problems)
+        problems.extend(
+            _record_artifact_hash_problems(
+                record,
+                video=video,
+                cover=cover,
+                subtitle=subtitle_path,
+                title=str(manifest.get("title") or ""),
+            )
+        )
+        record_tags = (record.get("upload_tags") or {}).get("final_tags")
+        if record_tags != manifest.get("tags"):
+            problems.append("manifest tags do not exactly match record.upload_tags.final_tags")
+    return problems
 
 
 def validate_tags(tags: list[str]) -> list[str]:
@@ -277,6 +544,15 @@ def season_add_flow(
     if not season_id or not section_id:
         result["status"] = "SEASON_NOT_FOUND"
         return result
+    expected_ids = EXPECTED_SEASON_IDS.get(str(block.get("lane") or ""))
+    if expected_ids and (
+        season_id != expected_ids["season_id"]
+        or section_id != expected_ids["section_id"]
+    ):
+        result["expected_season_id"] = expected_ids["season_id"]
+        result["expected_section_id"] = expected_ids["section_id"]
+        result["status"] = "SEASON_ID_MISMATCH"
+        return result
 
     add = http(
         EPISODES_ADD_API.format(csrf=csrf),
@@ -304,11 +580,6 @@ def season_add_flow(
             result["status"] = "PENDING_DISPLAY"
             return result
         sleeper(poll_seconds)
-    try:
-        tags = http(TAGS_API.format(bvid=bvid))
-        result["tags"] = [t.get("tag_name") for t in (tags.get("data") or [])]
-    except Exception as exc:  # tags are evidence garnish, not the completion gate
-        result["tags_error"] = str(exc)
     result["verified_at"] = now()
     result["status"] = "IN_SEASON_PUBLIC"
     return result
@@ -318,6 +589,282 @@ def season_verify_sidecar_path(manifest_path: Path) -> Path:
     name = manifest_path.name
     stem = name[: -len(".upload_manifest.json")] if name.endswith(".upload_manifest.json") else name
     return manifest_path.parent / (stem + ".season_verify.json")
+
+
+def public_verify_sidecar_path(manifest_path: Path) -> Path:
+    name = manifest_path.name
+    stem = name[: -len(".upload_manifest.json")] if name.endswith(".upload_manifest.json") else name
+    return manifest_path.parent / (stem + ".public_verify.json")
+
+
+def uploaded_sidecar_path(manifest_path: Path) -> Path:
+    name = manifest_path.name
+    stem = name[: -len(".upload_manifest.json")] if name.endswith(".upload_manifest.json") else name
+    return manifest_path.parent / (stem + ".uploaded.json")
+
+
+def _normalise_tags(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    if isinstance(value, list):
+        return [str(part).strip() for part in value if str(part).strip()]
+    return []
+
+
+def _section_episode_rows(payload: object) -> list[dict]:
+    rows: list[dict] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key == "episodes" and isinstance(value, list):
+                rows.extend(row for row in value if isinstance(row, dict))
+            else:
+                rows.extend(_section_episode_rows(value))
+    elif isinstance(payload, list):
+        for value in payload:
+            rows.extend(_section_episode_rows(value))
+    return rows
+
+
+def _section_ids(payload: object) -> set[int]:
+    ids: set[int] = set()
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in {"section_id", "sectionId"} and isinstance(value, int):
+                ids.add(value)
+            elif key == "id" and isinstance(value, int) and (
+                "episodes" in payload or "season_id" in payload or "seasonId" in payload
+            ):
+                ids.add(value)
+            ids.update(_section_ids(value))
+    elif isinstance(payload, list):
+        for value in payload:
+            ids.update(_section_ids(value))
+    return ids
+
+
+def public_verify_flow(
+    manifest: dict,
+    bvid: str,
+    *,
+    http,
+    season_result: dict,
+    wait_seconds: float = 240.0,
+    poll_seconds: float = 30.0,
+    sleeper=time.sleep,
+) -> dict:
+    """Verify the public/member/tag/EXACT-section surfaces as one contract."""
+    expected_tags = list(manifest.get("tags") or [])
+    result: dict = {
+        "schema_version": "authorized-upload-public-verify.v2",
+        "bvid": bvid,
+        "manifest_title": manifest.get("title"),
+        "expected": {
+            "title": manifest.get("title"),
+            "description": manifest.get("description"),
+            "tags": expected_tags,
+            "tid": EXPECTED_TID,
+            "copyright": EXPECTED_COPYRIGHT,
+            "source": EXPECTED_SOURCE,
+            "season_id": season_result.get("season_id"),
+            "section_id": season_result.get("section_id"),
+        },
+        "verified_at": now(),
+    }
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    while True:
+        problems: list[str] = []
+        public: dict = {}
+        public_data: dict = {}
+        public_tags: list[str] = []
+        archive: dict = {}
+        section: dict = {}
+        try:
+            public = http(VIEW_API.format(bvid=bvid))
+            public_data = public.get("data") or {}
+            tags_payload = http(TAGS_API.format(bvid=bvid))
+            public_tags = [
+                str(row.get("tag_name") or "").strip()
+                for row in (tags_payload.get("data") or [])
+                if isinstance(row, dict) and str(row.get("tag_name") or "").strip()
+            ]
+            member = http(MEMBER_ARCHIVE_VIEW_API.format(bvid=bvid))
+            member_data = member.get("data") or {}
+            archive = member_data.get("archive") or {}
+            section_id = season_result.get("section_id")
+            section = (
+                http(SECTION_VIEW_API.format(section_id=section_id))
+                if section_id
+                else {"code": 0, "data": {}}
+            )
+        except Exception as exc:
+            problems.append(f"verification API error: {exc}")
+
+        result["public_view"] = {
+            "code": public.get("code"),
+            "state": public_data.get("state"),
+            "aid": public_data.get("aid"),
+            "cid": public_data.get("cid"),
+            "title": public_data.get("title"),
+            "desc": public_data.get("desc"),
+            "tid": public_data.get("tid"),
+            "copyright": public_data.get("copyright"),
+            "ugc_season_id": (public_data.get("ugc_season") or {}).get("id"),
+            "ugc_season_title": (public_data.get("ugc_season") or {}).get("title"),
+            "is_season_display": public_data.get("is_season_display"),
+        }
+        result["public_tags"] = public_tags
+        result["member_archive"] = {
+            key: archive.get(key)
+            for key in ("aid", "bvid", "title", "desc", "tag", "tid", "copyright", "source")
+        }
+        result["section_api"] = {
+            "url": SECTION_VIEW_API.format(section_id=season_result.get("section_id")),
+            "code": section.get("code") if isinstance(section, dict) else None,
+        }
+
+        expected_title = manifest.get("title")
+        expected_desc = manifest.get("description")
+        if public_data.get("state") != 0:
+            problems.append(f"public state is {public_data.get('state')!r}, expected 0")
+        for field, expected in (
+            ("title", expected_title),
+            ("desc", expected_desc),
+            ("tid", EXPECTED_TID),
+            ("copyright", EXPECTED_COPYRIGHT),
+        ):
+            if public_data.get(field) != expected:
+                problems.append(f"public {field} mismatch")
+        if public_tags != expected_tags and set(public_tags) != set(expected_tags):
+            problems.append("public tags mismatch")
+        for field, expected in (
+            ("title", expected_title),
+            ("desc", expected_desc),
+            ("tid", EXPECTED_TID),
+            ("copyright", EXPECTED_COPYRIGHT),
+            ("source", EXPECTED_SOURCE),
+        ):
+            if archive.get(field) != expected:
+                problems.append(f"Creator archive {field} mismatch")
+        member_tags = _normalise_tags(archive.get("tag"))
+        if member_tags != expected_tags and set(member_tags) != set(expected_tags):
+            problems.append("Creator archive tags mismatch")
+        if archive.get("bvid") not in (None, bvid):
+            problems.append("Creator archive BVID mismatch")
+
+        block, _ = effective_season_block(manifest)
+        if block is not None:
+            season_id = season_result.get("season_id")
+            section_id = season_result.get("section_id")
+            if (public_data.get("ugc_season") or {}).get("id") != season_id:
+                problems.append("public season id mismatch")
+            if (public_data.get("ugc_season") or {}).get("title") != block.get("season_title"):
+                problems.append("public season title mismatch")
+            if public_data.get("is_season_display") is not True:
+                problems.append("public season is not displayed")
+            section_ids = _section_ids(section)
+            if section_ids and section_id not in section_ids:
+                problems.append("exact section API returned a different section")
+            aid = public_data.get("aid")
+            episodes = _section_episode_rows(section)
+            membership = [
+                row
+                for row in episodes
+                if row.get("aid") == aid or row.get("bvid") == bvid
+            ]
+            result["section_api"]["episode_match_count"] = len(membership)
+            result["section_api"]["section_ids_seen"] = sorted(section_ids)
+            if not membership:
+                problems.append("aid/BVID absent from exact section API")
+
+        result["problems"] = problems
+        if not problems:
+            result["status"] = "VERIFIED_PUBLIC"
+            result["verified_at"] = now()
+            return result
+        if time.monotonic() >= deadline:
+            result["status"] = "PUBLIC_VERIFY_FAILED"
+            result["verified_at"] = now()
+            return result
+        sleeper(poll_seconds)
+
+
+def _parse_ledger_time(value: object) -> float | None:
+    try:
+        return dt.datetime.fromisoformat(str(value)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _recent_ledger_success_count(entries: list[dict], since_epoch: float) -> int:
+    videos: set[str] = set()
+    for entry in entries:
+        if entry.get("rc") != 0:
+            continue
+        timestamp = _parse_ledger_time(entry.get("at"))
+        if timestamp is None or timestamp < since_epoch:
+            continue
+        video_sha = entry.get("video_sha256")
+        if isinstance(video_sha, str) and video_sha:
+            videos.add(video_sha)
+    return len(videos)
+
+
+def _recent_creator_archive_count(http, since_epoch: float) -> int:
+    archives: dict[str, dict] = {}
+    page = 1
+    while True:
+        payload = http(CREATOR_ARCHIVES_API.format(page=page))
+        if payload.get("code") != 0:
+            raise RuntimeError(
+                f"Creator archives query failed: {payload.get('code')} {payload.get('message')}"
+            )
+        data = payload.get("data") or {}
+        audits = data.get("arc_audits") or []
+        for row in audits:
+            if not isinstance(row, dict):
+                continue
+            archive = row.get("Archive") or row.get("archive") or {}
+            if not isinstance(archive, dict):
+                continue
+            ptime = archive.get("ptime")
+            if isinstance(ptime, (int, float)) and ptime >= since_epoch:
+                key = str(archive.get("bvid") or archive.get("aid") or id(archive))
+                archives[key] = archive
+        page_info = data.get("page") or {}
+        total = page_info.get("count") or page_info.get("total") or 0
+        if not audits or page * 30 >= int(total or 0):
+            break
+        page += 1
+    return len(archives)
+
+
+def rolling_quota_guard(ledger: Path, *, http, now_epoch: float | None = None) -> tuple[dict, list[str]]:
+    entries, problems = read_ledger(ledger)
+    if problems:
+        return {}, problems
+    current = time.time() if now_epoch is None else now_epoch
+    since = current - ROLLING_UPLOAD_WINDOW_SECONDS
+    local_count = _recent_ledger_success_count(entries, since)
+    try:
+        creator_count = _recent_creator_archive_count(http, since)
+    except Exception as exc:
+        return {}, [f"rolling quota Creator estimate unavailable: {exc}"]
+    estimate = max(local_count, creator_count)
+    evidence = {
+        "schema_version": "authorized-upload-rolling-quota.v1",
+        "window_seconds": ROLLING_UPLOAD_WINDOW_SECONDS,
+        "limit": ROLLING_UPLOAD_LIMIT,
+        "since_epoch": since,
+        "local_ledger_successes": local_count,
+        "creator_recent_archives": creator_count,
+        "estimated_used": estimate,
+    }
+    if estimate >= ROLLING_UPLOAD_LIMIT:
+        return evidence, [
+            f"rolling 24h upload estimate is {estimate}/{ROLLING_UPLOAD_LIMIT}; "
+            "stop before upload (Bilibili code 21566 remains authoritative)"
+        ]
+    return evidence, []
 
 
 def _run_season_step(manifest: dict, manifest_path: Path, bvid: str | None, args: argparse.Namespace) -> int:
@@ -358,43 +905,177 @@ def _run_season_step(manifest: dict, manifest_path: Path, bvid: str | None, args
     return 6
 
 
+def _write_json_sidecar(path: Path, payload: dict) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _run_postpublish_verification(
+    manifest: dict,
+    manifest_path: Path,
+    bvid: str | None,
+    args: argparse.Namespace,
+    *,
+    quota_evidence: dict | None = None,
+) -> tuple[int, dict | None]:
+    if not bvid:
+        print(
+            "POSTED BUT UNVERIFIED: uploader returned no BVID; reconcile through Creator "
+            "Center without re-uploading",
+            file=sys.stderr,
+        )
+        return 6, None
+    http, csrf = _build_season_http(Path(args.cookie_json))
+    block, provenance = effective_season_block(manifest)
+    if block is None:
+        season_result = {
+            "schema_version": "authorized-upload-season-verify.v1",
+            "status": "SEASON_OPTED_OUT",
+            "bvid": bvid,
+            "season_binding": None,
+            "season_binding_source": provenance,
+            "verified_at": now(),
+        }
+    else:
+        season_result = season_add_flow(
+            manifest,
+            bvid,
+            http=http,
+            csrf=csrf,
+            wait_seconds=args.season_wait,
+            poll_seconds=args.season_poll,
+            display_wait_seconds=args.public_wait,
+        )
+    _write_json_sidecar(season_verify_sidecar_path(manifest_path), season_result)
+    if block is not None and season_result.get("status") != "IN_SEASON_PUBLIC":
+        blocked = {
+            "schema_version": "authorized-upload-public-verify.v2",
+            "status": "BLOCKED_BY_SEASON",
+            "bvid": bvid,
+            "season_status": season_result.get("status"),
+            "verified_at": now(),
+        }
+        _write_json_sidecar(public_verify_sidecar_path(manifest_path), blocked)
+        return 6, blocked
+
+    public_result = public_verify_flow(
+        manifest,
+        bvid,
+        http=http,
+        season_result=season_result,
+        wait_seconds=args.public_wait,
+        poll_seconds=args.season_poll,
+    )
+    if quota_evidence is not None:
+        public_result["preupload_quota_evidence"] = quota_evidence
+    public_path = public_verify_sidecar_path(manifest_path)
+    _write_json_sidecar(public_path, public_result)
+    if public_result.get("status") != "VERIFIED_PUBLIC":
+        print(
+            f"PUBLIC VERIFY INCOMPLETE: {public_result.get('problems')}; evidence={public_path}",
+            file=sys.stderr,
+        )
+        return 6, public_result
+
+    attestation = manifest.get("package_attestation") or {}
+    uploaded = {
+        "schema_version": "authorized-upload-result.v3",
+        "status": "VERIFIED_PUBLIC",
+        "bvid": bvid,
+        "aid": (public_result.get("public_view") or {}).get("aid"),
+        "cid": (public_result.get("public_view") or {}).get("cid"),
+        "title": manifest.get("title"),
+        "uploaded_at": now(),
+        "video_sha256": (manifest.get("video") or {}).get("sha256"),
+        "cover_sha256": (manifest.get("cover") or {}).get("sha256"),
+        "record_sha256": (attestation.get("record") or {}).get("sha256"),
+        "subtitle_sha256": (attestation.get("subtitle") or {}).get("sha256"),
+        "package_audit_sha256": (attestation.get("package_audit") or {}).get("sha256"),
+        "review_manifest_sha256": (attestation.get("review_manifest") or {}).get("sha256"),
+        "manifest": str(manifest_path.resolve()),
+        "manifest_sha256": sha256_file(manifest_path.resolve()),
+        "public_verify": str(public_path.resolve()),
+        "public_verify_sha256": sha256_file(public_path),
+        "authorized_by": (manifest.get("authorization") or {}).get("by"),
+        "authorization_quote": (manifest.get("authorization") or {}).get("quote"),
+    }
+    _write_json_sidecar(uploaded_sidecar_path(manifest_path), uploaded)
+    return 0, public_result
+
+
 def make_manifest(args: argparse.Namespace) -> int:
     video, cover = Path(args.video), Path(args.cover)
-    for path in (video, cover):
+    package_audit = Path(args.package_audit)
+    for path in (video, cover, package_audit):
         if not path.is_file():
             print(f"REFUSE: missing artifact {path}", file=sys.stderr)
             return 2
     if not args.title.strip() or not args.quote.strip():
         print("REFUSE: --title and --quote (Ivan's authorization words) are required non-empty", file=sys.stderr)
         return 2
+    audit_problems: list[str] = []
+    audit = _load_json_object(package_audit, "package audit", audit_problems)
+    package_root = Path(str(audit.get("root") or "")).resolve()
+    if audit.get("passed") is not True:
+        audit_problems.append("package audit did not pass")
+    if not _zero_blocking_issues(audit):
+        audit_problems.append("package audit reports blocking issues")
+    if not package_root.is_dir():
+        audit_problems.append(f"package audit root missing: {package_root}")
+    if video.resolve().parent != package_root:
+        audit_problems.append("video must be directly inside package audit root")
+    record_sidecar = sidecar_record_path(video)
+    subtitle_sidecar = sidecar_subtitle_path(video)
+    review_manifest = package_root / "review_manifest.json"
+    for path, label in (
+        (record_sidecar, "same-stem record.json"),
+        (subtitle_sidecar, "same-stem SRT"),
+        (review_manifest, "review_manifest.json"),
+    ):
+        if not path.is_file():
+            audit_problems.append(f"{label} missing: {path}")
+    if audit_problems:
+        for problem in audit_problems:
+            print(f"REFUSE: {problem}", file=sys.stderr)
+        return 2
+
+    record = _load_json_object(record_sidecar, "record", audit_problems)
+    if audit_problems:
+        for problem in audit_problems:
+            print(f"REFUSE: {problem}", file=sys.stderr)
+        return 2
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
     tags_source = "cli" if tags else None
-    if not tags and not args.no_tags:
-        # Auto-pickup (Ivan 2026-07-13): produce_slice_package freezes generated
-        # tags into the delivered <stem>.record.json; make-manifest reads them so
-        # the unattended chain needs no hand-typed tag line. CLI --tags overrides;
-        # --no-tags opts out; a video without a record sidecar just gets no tags
-        # (uploader falls back to base-4).
-        record_sidecar = sidecar_record_path(video)
-        if record_sidecar.is_file():
-            try:
-                sidecar = json.loads(record_sidecar.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                print(f"REFUSE: tag sidecar unreadable: {record_sidecar} ({exc}); pass --tags or --no-tags", file=sys.stderr)
-                return 2
-            upload_tags = sidecar.get("upload_tags") or {}
-            if str(upload_tags.get("status") or "").startswith("OK") and upload_tags.get("final_tags"):
-                tags = [str(t).strip() for t in upload_tags["final_tags"]]
-                tags_source = f"record.json:{upload_tags.get('engine') or '?'}"
-    if tags:
-        tag_problems = validate_tags(tags)
-        if tag_problems:
-            for problem in tag_problems:
-                print(f"REFUSE: {problem}", file=sys.stderr)
-            return 2
-        print(f"tags: {len(tags)} from {tags_source}", file=sys.stderr)
-    else:
-        print("tags: none (uploader falls back to base tags)", file=sys.stderr)
+    upload_tags = record.get("upload_tags") or {}
+    record_tags = [
+        str(t).strip()
+        for t in (upload_tags.get("final_tags") or [])
+        if str(t).strip()
+    ]
+    if not tags:
+        tags = record_tags
+        tags_source = f"record.json:{upload_tags.get('engine') or '?'}"
+    if args.no_tags:
+        print("REFUSE: manifest v3 does not allow --no-tags", file=sys.stderr)
+        return 2
+    if not tags:
+        print("REFUSE: manifest v3 requires non-empty record-bound tags", file=sys.stderr)
+        return 2
+    if tags != record_tags:
+        print(
+            "REFUSE: --tags must exactly match record.upload_tags.final_tags; "
+            "update and re-audit the package instead of overriding reviewed metadata",
+            file=sys.stderr,
+        )
+        return 2
+    tag_problems = validate_tags(tags)
+    if tag_problems:
+        for problem in tag_problems:
+            print(f"REFUSE: {problem}", file=sys.stderr)
+        return 2
+    print(f"tags: {len(tags)} from {tags_source}", file=sys.stderr)
     try:
         season = season_block_for(args.title, args.season)
     except ValueError as exc:
@@ -406,18 +1087,37 @@ def make_manifest(args: argparse.Namespace) -> int:
         print(f"season: {season['season_title']} ({season['source']})", file=sys.stderr)
     video_sha = sha256_file(video)
     manifest = {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "schema_version": "authorized-upload-manifest.v3",
         "artifact_id": video_sha[:12],
         "video": {"path": str(video.resolve()), "sha256": video_sha, "bytes": video.stat().st_size},
         "cover": {"path": str(cover.resolve()), "sha256": sha256_file(cover), "bytes": cover.stat().st_size},
         "title": args.title,
+        "description": DEFAULT_DESCRIPTION,
+        "publish_policy": {
+            "tid": EXPECTED_TID,
+            "copyright": EXPECTED_COPYRIGHT,
+            "source": EXPECTED_SOURCE,
+        },
         "season": season,
+        "package_attestation": {
+            "schema_version": "authorized-upload-package-attestation.v1",
+            "package_root": str(package_root),
+            "package_audit": _sha_entry(package_audit),
+            "review_manifest": _sha_entry(review_manifest),
+            "record": _sha_entry(record_sidecar),
+            "subtitle": _sha_entry(subtitle_sidecar),
+        },
         "authorization": {"by": args.authorized_by, "quote": args.quote, "at": now()},
         "created_at": now(),
+        "tags": tags,
+        "tags_source": tags_source,
     }
-    if tags:
-        manifest["tags"] = tags
-        manifest["tags_source"] = tags_source
+    package_problems = _validate_v3_package_attestation(manifest, verify_hashes=True)
+    if package_problems:
+        for problem in package_problems:
+            print(f"REFUSE: {problem}", file=sys.stderr)
+        return 2
     out = Path(args.out) if args.out else video.with_suffix(".upload_manifest.json")
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"manifest": str(out), "artifact_id": manifest["artifact_id"]}, ensure_ascii=False))
@@ -440,6 +1140,20 @@ def load_and_verify(manifest_path: Path) -> tuple[dict | None, list[str]]:
         problems.extend(validate_season_block(manifest["season"]))
     if "tags" in manifest:
         problems.extend(validate_tags(manifest["tags"]))
+    if manifest.get("manifest_version") == 3:
+        if manifest.get("schema_version") != "authorized-upload-manifest.v3":
+            problems.append("manifest v3 schema_version is invalid")
+        if not manifest.get("tags"):
+            problems.append("manifest v3 requires non-empty tags")
+        if manifest.get("description") != DEFAULT_DESCRIPTION:
+            problems.append("manifest v3 description drifted from the uploader contract")
+        if manifest.get("publish_policy") != {
+            "tid": EXPECTED_TID,
+            "copyright": EXPECTED_COPYRIGHT,
+            "source": EXPECTED_SOURCE,
+        }:
+            problems.append("manifest v3 publish_policy is invalid")
+        problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
     for kind in ("video", "cover"):
         entry = manifest.get(kind) or {}
         path = Path(entry.get("path") or "")
@@ -501,6 +1215,7 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
         return None, None, problems
     started: dict[str, dict] = {}
     finished: set[str] = set()
+    posted_unverified: dict | None = None
     successful: dict | None = None
     for row_no, entry in enumerate(entries, start=1):
         event = entry.get("event")
@@ -541,13 +1256,62 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
                 "manifest",
                 "manifest_sha256",
                 "uploader",
+                "package_audit_sha256",
+                "record_sha256",
+                "subtitle_sha256",
+                "review_manifest_sha256",
             )
-            changed = [key for key in stable_keys if entry.get(key) != started[attempt_id].get(key)]
+            changed = [
+                key
+                for key in stable_keys
+                if key in started[attempt_id]
+                and entry.get(key) != started[attempt_id].get(key)
+            ]
             if changed:
                 problems.append(f"upload ledger attempt {attempt_id} changed bound fields: {changed}")
             if isinstance(entry.get("rc"), bool) or not isinstance(entry.get("rc"), int):
                 problems.append(f"upload ledger attempt {attempt_id} has no integer terminal rc")
             if entry.get("video_sha256") == video_sha256 and entry.get("rc") == 0:
+                successful = entry
+            elif (
+                entry.get("video_sha256") == video_sha256
+                and entry.get("uploader_rc") == 0
+                and entry.get("bvid")
+            ):
+                posted_unverified = entry
+        elif event == "UPLOAD_PUBLICATION_VERIFIED":
+            if attempt_id not in started or attempt_id not in finished:
+                problems.append(
+                    f"upload ledger attempt {attempt_id} has a publication verification "
+                    "without a completed upload attempt"
+                )
+                continue
+            origin = started[attempt_id]
+            changed = [
+                key
+                for key in (
+                    "artifact_id",
+                    "video_sha256",
+                    "cover_sha256",
+                    "manifest",
+                    "manifest_sha256",
+                    "uploader",
+                    "package_audit_sha256",
+                    "record_sha256",
+                    "subtitle_sha256",
+                    "review_manifest_sha256",
+                )
+                if key in origin and entry.get(key) != origin.get(key)
+            ]
+            if changed:
+                problems.append(
+                    f"upload ledger attempt {attempt_id} changed verified bound fields: {changed}"
+                )
+            if entry.get("rc") != 0:
+                problems.append(
+                    f"upload ledger attempt {attempt_id} publication verification is not rc=0"
+                )
+            if entry.get("video_sha256") == video_sha256:
                 successful = entry
         else:
             problems.append(f"upload ledger row {row_no} has unknown event {event!r}")
@@ -558,6 +1322,8 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
         return "unresolved", unresolved[0], []
     if successful is not None:
         return "uploaded", successful, []
+    if posted_unverified is not None:
+        return "posted_unverified", posted_unverified, []
     return None, None, []
 
 
@@ -629,6 +1395,13 @@ def upload(args: argparse.Namespace) -> int:
             for p in problems:
                 print(f"REFUSE: {p}", file=sys.stderr)
             return 2
+        if manifest.get("manifest_version") != 3:
+            print(
+                "REFUSE: upload requires authorized-upload-manifest.v3; legacy manifests "
+                "remain verify/season-add readable only",
+                file=sys.stderr,
+            )
+            return 2
         video_sha = manifest["video"]["sha256"]
         guard_status, guard_row, ledger_problems = ledger_guard(ledger, video_sha)
         if ledger_problems:
@@ -642,6 +1415,14 @@ def upload(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 5
+        if guard_status == "posted_unverified":
+            print(
+                "REFUSE: this exact video already created a Bilibili archive but public "
+                f"verification is incomplete (bvid={guard_row.get('bvid')}); run season-add, "
+                "never re-upload it",
+                file=sys.stderr,
+            )
+            return 6
         if guard_status == "uploaded":
             print(
                 f"REFUSE: this exact video was already uploaded at {guard_row.get('at')}"
@@ -649,12 +1430,16 @@ def upload(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 3
+        quota_http, _ = _build_season_http(Path(args.cookie_json))
+        quota_evidence, quota_problems = rolling_quota_guard(ledger, http=quota_http)
+        if quota_problems:
+            for problem in quota_problems:
+                print(f"REFUSE: {problem}", file=sys.stderr)
+            return 8
         cmd = [args.uploader, manifest["video"]["path"], manifest["cover"]["path"], manifest["title"]]
         manifest_tags = manifest.get("tags") or []
-        if manifest_tags:
-            # The uploader receives ONLY manifest-bound args; the tag line is
-            # frozen at review time exactly like title/hashes.
-            cmd.append(",".join(manifest_tags))
+        # v3 always has a reviewed, record-bound tag line.
+        cmd.append(",".join(manifest_tags))
         env = os.environ.copy()
         env["AUTHORIZED_UPLOAD"] = "1"
         attempt_id = uuid.uuid4().hex
@@ -671,9 +1456,14 @@ def upload(args: argparse.Namespace) -> int:
             "manifest": str(manifest_resolved),
             "manifest_sha256": manifest_sha,
             "uploader": args.uploader,
+            "manifest_version": manifest.get("manifest_version"),
+            "package_audit_sha256": manifest["package_attestation"]["package_audit"]["sha256"],
+            "record_sha256": manifest["package_attestation"]["record"]["sha256"],
+            "subtitle_sha256": manifest["package_attestation"]["subtitle"]["sha256"],
+            "review_manifest_sha256": manifest["package_attestation"]["review_manifest"]["sha256"],
+            "quota_evidence": quota_evidence,
         }
-        if manifest_tags:
-            common_ledger_fields["tags"] = ",".join(manifest_tags)
+        common_ledger_fields["tags"] = ",".join(manifest_tags)
         append_ledger(
             ledger,
             {
@@ -689,31 +1479,84 @@ def upload(args: argparse.Namespace) -> int:
         bvid = None
         for token in output.split():
             if token.startswith("BVID="):
-                bvid = token.removeprefix("BVID=")
+                bvid = token.removeprefix("BVID=").strip("\"' ,")
+        if completed.returncode != 0:
+            quota_code = QUOTA_FREQUENCY_CODE if str(QUOTA_FREQUENCY_CODE) in output else None
+            append_ledger(
+                ledger,
+                {
+                    "event": "UPLOAD_ATTEMPT_FINISHED",
+                    "at": now(),
+                    **common_ledger_fields,
+                    "uploader_rc": completed.returncode,
+                    "rc": completed.returncode,
+                    "bvid": bvid,
+                    "quota_frequency_code": quota_code,
+                },
+            )
+            if quota_code == QUOTA_FREQUENCY_CODE:
+                print(
+                    "BILIBILI QUOTA AUTHORITATIVE: code 21566; stop further uploads "
+                    "until the rolling window frees",
+                    file=sys.stderr,
+                )
+            print(
+                f"ledger += artifact {manifest['artifact_id']} rc={completed.returncode} "
+                f"bvid={bvid or '?'}"
+            )
+            return completed.returncode
+
+    # The STARTED row deliberately remains unresolved until every public surface
+    # passes.  Concurrent upload attempts therefore fail closed while this one
+    # waits for transcode/season propagation.
+    if args.skip_season:
+        post_rc, public_result = 6, {
+            "schema_version": "authorized-upload-public-verify.v2",
+            "status": "SKIPPED_BY_EMERGENCY_FLAG",
+            "bvid": bvid,
+            "verified_at": now(),
+        }
+        _write_json_sidecar(
+            public_verify_sidecar_path(manifest_path),
+            public_result,
+        )
+    else:
+        post_rc, public_result = _run_postpublish_verification(
+            manifest,
+            manifest_path,
+            bvid,
+            args,
+            quota_evidence=quota_evidence,
+        )
+    if completed.returncode == 0 and not bvid:
+        print(
+            "LEDGER LEFT UNRESOLVED: uploader succeeded without a BVID; all further "
+            "uploads stay blocked until Creator Center reconciliation",
+            file=sys.stderr,
+        )
+        return 6
+    with exclusive_upload_lock(lock_path):
         append_ledger(
             ledger,
             {
                 "event": "UPLOAD_ATTEMPT_FINISHED",
                 "at": now(),
                 **common_ledger_fields,
-                "rc": completed.returncode,
+                "uploader_rc": completed.returncode,
+                "rc": post_rc,
                 "bvid": bvid,
+                "public_verify_status": (
+                    public_result.get("status") if isinstance(public_result, dict) else None
+                ),
+                "public_verify_sha256": (
+                    sha256_file(public_verify_sidecar_path(manifest_path))
+                    if public_verify_sidecar_path(manifest_path).is_file()
+                    else None
+                ),
             },
         )
-        print(f"ledger += artifact {manifest['artifact_id']} rc={completed.returncode} bvid={bvid or '?'}")
-    if completed.returncode != 0:
-        return completed.returncode
-    # Season membership is part of the publish (发布未入集 = 流程未完成).  This
-    # runs OUTSIDE the shared upload lock: it is read-mostly plus an idempotent
-    # add, and the transcode wait must not serialize other transactions.
-    if args.skip_season:
-        print(
-            "SEASON SKIPPED (--skip-season): the publish is NOT complete until "
-            f"season-add succeeds for {manifest_path}",
-            file=sys.stderr,
-        )
-        return 0
-    return _run_season_step(manifest, manifest_path, bvid, args)
+    print(f"ledger += artifact {manifest['artifact_id']} rc={post_rc} bvid={bvid or '?'}")
+    return post_rc
 
 
 def verify(args: argparse.Namespace) -> int:
@@ -738,13 +1581,15 @@ def season_add(args: argparse.Namespace) -> int:
         if manifest is None:
             return 2
     bvid = args.bvid
+    ledger = Path(args.ledger)
+    guard_row: dict | None = None
     if not bvid:
-        status, row, ledger_problems = ledger_guard(Path(args.ledger), manifest["video"]["sha256"])
+        status, row, ledger_problems = ledger_guard(ledger, manifest["video"]["sha256"])
         if ledger_problems:
             for problem in ledger_problems:
                 print(f"REFUSE: {problem}", file=sys.stderr)
             return 5
-        if status != "uploaded" or not row or not row.get("bvid"):
+        if status not in {"uploaded", "posted_unverified"} or not row or not row.get("bvid"):
             print(
                 "REFUSE: ledger has no successful upload with a bvid for this manifest's video; "
                 "pass --bvid explicitly if the post exists",
@@ -752,6 +1597,46 @@ def season_add(args: argparse.Namespace) -> int:
             )
             return 5
         bvid = str(row["bvid"])
+        guard_row = row
+    if manifest.get("manifest_version") == 3:
+        rc, result = _run_postpublish_verification(manifest, manifest_path, bvid, args)
+        if rc == 0 and guard_row and guard_row.get("event") == "UPLOAD_ATTEMPT_FINISHED":
+            stable = {
+                key: guard_row.get(key)
+                for key in (
+                    "attempt_id",
+                    "artifact_id",
+                    "video_sha256",
+                    "cover_sha256",
+                    "manifest",
+                    "manifest_sha256",
+                    "uploader",
+                    "package_audit_sha256",
+                    "record_sha256",
+                    "subtitle_sha256",
+                    "review_manifest_sha256",
+                    "title",
+                    "authorized_by",
+                    "authorization_quote",
+                    "tags",
+                )
+                if guard_row.get(key) is not None
+            }
+            append_ledger(
+                ledger,
+                {
+                    "event": "UPLOAD_PUBLICATION_VERIFIED",
+                    "at": now(),
+                    **stable,
+                    "rc": 0,
+                    "bvid": bvid,
+                    "public_verify_status": result.get("status") if result else None,
+                    "public_verify_sha256": sha256_file(
+                        public_verify_sidecar_path(manifest_path)
+                    ),
+                },
+            )
+        return rc
     return _run_season_step(manifest, manifest_path, bvid, args)
 
 
@@ -762,17 +1647,25 @@ def main(argv: list[str] | None = None) -> int:
     mk = sub.add_parser("make-manifest", help="freeze the reviewed artifact's identity + authorization")
     mk.add_argument("--video", required=True)
     mk.add_argument("--cover", required=True)
+    mk.add_argument(
+        "--package-audit",
+        required=True,
+        help="machine-readable passed audit JSON for the package containing this same-stem bundle",
+    )
     mk.add_argument("--title", required=True)
     mk.add_argument("--authorized-by", default="Ivan")
     mk.add_argument("--quote", required=True, help="the verbatim authorization words")
     mk.add_argument(
         "--tags",
         default="",
-        help="comma-joined FULL tag line (base tags included), e.g. from scripts/suggest_upload_tags.py; "
-        "omitted → auto-pickup from the video's sibling <stem>.record.json (upload_tags), "
-        "else no tags and the uploader falls back to the base-4 line",
+        help="optional comma-joined FULL tag line; when present it must exactly match "
+        "the audited sibling record.json final_tags",
     )
-    mk.add_argument("--no-tags", action="store_true", help="skip record.json tag auto-pickup")
+    mk.add_argument(
+        "--no-tags",
+        action="store_true",
+        help="legacy spelling retained for a loud v3 refusal; v3 never permits missing tags",
+    )
     mk.add_argument(
         "--season",
         default="auto",
@@ -787,6 +1680,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON), help="bilibili login-API cookie file")
         p.add_argument("--season-wait", type=float, default=900.0, help="seconds to wait for state=0 (transcode)")
         p.add_argument("--season-poll", type=float, default=30.0, help="poll interval seconds")
+        p.add_argument(
+            "--public-wait",
+            type=float,
+            default=240.0,
+            help="seconds to wait for exact public/member/tags/section metadata convergence",
+        )
 
     up = sub.add_parser(
         "upload",

@@ -7,6 +7,8 @@
 - `semantic_start/end` 对准真实语音起止读 `padded.fresh.srt`；候选 start 含前置铺垫（memory `produce-slice-package-host-path-and-slow-mount`）。
 - 边界红旗 → quarantine（runner 规则），不许带伤交付。
 - CPA 判官的 `context_expand_before/after_ms` 扩窗建议在本步消费（自动扩窗后重审）。
+- 为保护开头音素而保留的 pre-roll 可以有声无字；若上一 cue 只因裁切重叠而露出
+  `<=300ms` 的不可读字幕残片，保留音频但删除该闪字。超过此阈值的实质内容不得靠这条规则吞掉。
 
 ## 四命题边界门
 

@@ -639,6 +639,7 @@ def _run_final_review(
     boundary_target_ms: int | None = None,
     selection_scorecard: object = None,
     human_boundary_authority: str = "",
+    source_truth_windows: Sequence[tuple[int, int]] = (),
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -716,6 +717,14 @@ def _run_final_review(
                         "reason_codes": [str(exc)],
                     }
             protected_review_cues = set(handled_entity_cues)
+            source_truth_protected_cues = {
+                int(cue.index)
+                for cue in parse_srt_cues(srt_text)
+                if _windows_fully_cover(
+                    cue.start_ms, cue.end_ms, source_truth_windows
+                )
+            }
+            protected_review_cues.update(source_truth_protected_cues)
             for row in chat_authority_audit.get("applied") or []:
                 for index in row.get("cue_indexes") or []:
                     protected_review_cues.add(int(index))
@@ -738,6 +747,9 @@ def _run_final_review(
                 entity_surface_set=entity_surfaces,
             )
             final_review_audit["boundary_semantic_review"] = boundary_semantic_review
+            final_review_audit["source_truth_protected_cue_indexes"] = sorted(
+                source_truth_protected_cues
+            )
             # 无人值守自定夺：非同音建议交专用的“完整 cue + 前后语境 +
             # 上下文音频”声学相容度检查，再由固定代码规则融合。验证器不能选择或
             # 生成文本；chat/词典权威 cue 已在 route 阶段被挡。UNCERTAIN 原样
@@ -906,18 +918,41 @@ def _windows_fully_cover(
     end_ms: int,
     windows: Sequence[tuple[int, int]],
 ) -> bool:
+    """Whether authority windows own a cue despite tiny boundary jitter.
+
+    Subtitle cue edges are model-generated and can drift by a few frames from
+    the hash-bound source-truth interval.  Treat only small *outer* slivers as
+    owned; an internal gap remains a hard failure so adjacent, unrelated truth
+    assertions cannot be joined into authority over intervening speech.
+    """
+
     if start_ms >= end_ms:
         return False
+    duration_ms = end_ms - start_ms
     cursor = start_ms
+    left_sliver_ms = 0
+    saw_overlap = False
     for window_start, window_end in sorted(windows):
-        if window_end <= cursor:
+        if window_end <= start_ms or window_start >= end_ms:
             continue
-        if window_start > cursor:
+        clipped_start = max(start_ms, window_start)
+        if not saw_overlap and clipped_start > start_ms:
+            left_sliver_ms = clipped_start - start_ms
+            cursor = clipped_start
+        elif saw_overlap and clipped_start > cursor:
             return False
+        saw_overlap = True
         cursor = max(cursor, window_end)
         if cursor >= end_ms:
-            return True
-    return False
+            break
+    if not saw_overlap:
+        return False
+    right_sliver_ms = max(0, end_ms - cursor)
+    uncovered_ms = left_sliver_ms + right_sliver_ms
+    return uncovered_ms == 0 or (
+        uncovered_ms <= 250
+        and uncovered_ms / duration_ms <= 0.1
+    )
 
 
 def _valid_redelivery_baseline_config(value: object) -> bool:
@@ -1399,6 +1434,11 @@ def run_text_pipeline(
     write_clip_context(clip_context_path, clip_context)
     from src.autoslice.source_subtitle_truth import ledger_local_windows
 
+    source_truth_windows = ledger_local_windows(
+        spec=spec,
+        durations=durations,
+        ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
+    )
     authority = _apply_entity_authority(
         srt_text=draft.srt_text,
         authoritative_chat=authoritative_chat,
@@ -1413,11 +1453,7 @@ def run_text_pipeline(
         # 钉子辖区先豁免（2026-07-20 七星 r6 零三案）：ledger 已拥有的
         # span 不进实体声学仲裁——省 key ladder，也不许 infra 失败把
         # 钉子能确定性解决的槽位 fail-closed 成整条不交付。
-        source_truth_windows=ledger_local_windows(
-            spec=spec,
-            durations=durations,
-            ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
-        ),
+        source_truth_windows=source_truth_windows,
     )
     last_piece = spec["pieces"][-1]
     boundary_source_end_ms = int(
@@ -1442,6 +1478,7 @@ def run_text_pipeline(
         boundary_target_ms=boundary_target_ms,
         selection_scorecard=spec.get("selection_scorecard"),
         human_boundary_authority=str(spec.get("given_end_authority") or ""),
+        source_truth_windows=source_truth_windows,
     )
     evidence = _finalize_text_evidence(
         spec=spec,

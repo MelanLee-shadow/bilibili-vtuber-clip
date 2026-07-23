@@ -15,5 +15,8 @@
   是上传 manifest/hash gate 的前置条件，不允许把“生成过 sidecar”当成合规。
 - 汇总表时长必须优先使用 producer 最终 record 打印进 summary 的 `duration_ms`（边界自修复后的内容时长），其次才是 candidate 的 `effective_duration_ms`；原始选片锚点 `end_ms-start_ms` 只作旧状态兜底，不能把已延长的 5:00 成片仍显示成 4:32。
 - 已为 `CURRENT + COMPLIANT` 的历史审片包不会因宽流水线指纹变化被 cron 自动重做。确需全量重出时，只能在新的 `RECOVERY_REVIEW` base 运行 `scripts/plan_recovery_review_rerun.py`：它要求源 state 字节 SHA-256、全部 CURRENT candidate allowlist、共同旧指纹和当前新指纹完全匹配，且 source/target 均无 `AUTO_UPLOAD`；旧 record 完整降为 `SUPERSEDED + STALE_PIPELINE`，新项以 `selected_repair` 入队，随后仍由正常 runner 生成 CURRENT 成品。禁止把旧 `review_ready` 手改成 failed，也禁止在旧 base 原地覆盖。
+- recovery plan 同时写入 exact-no-backfill selection contract；本地审片包只能从最终 state 的
+  exact CURRENT+COMPLIANT 交集逐 stem 重建，不能整目录复制 inherited delivery 或旧 summary。
+  缺封面、缺 regression/record、非终态、pending/backlog 补位或集合不等都必须阻止覆盖旧本地包。
 - 上传路径 fail-closed：无 `AUTO_UPLOAD` manifest + artifact hash 门就没有发布（AGENTS.md 方向）。
 - tag 按成品字幕出（`upload_tag_policy.py`，Ivan 2026-07-13）。

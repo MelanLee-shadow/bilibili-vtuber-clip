@@ -1929,6 +1929,14 @@ def test_committed_cover_binding_recovers_after_state_write_crash_without_regene
 ):
     fx = _cover_binding_fixture(tmp_path, monkeypatch, song=song)
     persistent_old_state = json.loads(json.dumps(fx["rec"]))
+    if not song:
+        persistent_old_state.update(
+            {
+                "status": runner.TALK_COVER_PENDING_STATUS,
+                "bundle_lifecycle": "PENDING_COVER",
+                "bundle_compliance": "COVER_REQUIRED",
+            }
+        )
     runner._bind_repaired_cover(
         fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
     )
@@ -1944,6 +1952,10 @@ def test_committed_cover_binding_recovers_after_state_write_crash_without_regene
             Path(persistent_old_state["delivery_manifest_path"]),
             persistent_old_state["delivery_manifest_sha256"],
         )
+    else:
+        assert persistent_old_state["status"] == "review_ready"
+        assert persistent_old_state["bundle_lifecycle"] == "CURRENT"
+        assert persistent_old_state["bundle_compliance"] == "COMPLIANT"
 
 
 def test_cover_repair_needed_for_delivered_song(tmp_path, monkeypatch):
@@ -3365,7 +3377,9 @@ def test_produce_talk_materializes_reviewed_july18_jump_pieces(
     spec = json.loads(
         (base / "out" / date / "spec_auto_235936_527_695.json").read_text()
     )
-    assert result["status"] == "review_ready"
+    # The fake producer writes no publish/cover proof.  Media may exist, but it
+    # must not be mislabeled review-ready until cover maintenance binds one.
+    assert result["status"] == runner.TALK_COVER_PENDING_STATUS
     assert result["effective_duration_ms"] == 137_500
     assert result["talk_filler_removal_count"] == 3
     assert [(row["start_ms"], row["end_ms"]) for row in spec["pieces"]] == [
@@ -5827,7 +5841,7 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
     )
 
     assert len(calls) == 2
-    assert result["status"] == "review_ready"
+    assert result["status"] == runner.TALK_COVER_PENDING_STATUS
     assert result["boundary_context_retries"] == 1
     spec = json.loads((base / "out" / date / "spec_auto_212005_163_311.json").read_text())
     assert spec["semantic_end_ms"] == 311_000
@@ -6206,6 +6220,98 @@ def test_selected_repair_defers_same_session_backfill_until_result(monkeypatch):
 
     assert [item["cid"] for item in state["pending_talk"]] == ["reserve"]
     assert state["pending_talk"][0]["cover_diversity_slot"] == 1
+
+
+def test_recovery_exact_selection_never_backfills_rejected_slot(monkeypatch):
+    monkeypatch.setattr(runner, "MAX_TALK_PICKS", 2)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "picks": [
+            {
+                "candidate_id": "delivered",
+                "status": "review_ready",
+                "session_id": "session-a",
+            },
+            {
+                "candidate_id": "repair",
+                "status": "candidate_rejected",
+                "session_id": "session-a",
+            },
+        ],
+        "pending_talk": [],
+        "talk_backlog": [
+            {
+                "cid": "reserve",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 3,
+                "end_ms": 4,
+                "confidence": 0.98,
+                "session_id": "session-a",
+            }
+        ],
+        "talk_selection_contract": {
+            "schema_version": "talk-selection-contract.v1",
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": ["repair"],
+            "source_state_sha256": "sha256:" + "a" * 64,
+            "authority": "Ivan selected the exact recovery set",
+        },
+    }
+
+    runner.prioritize(state)
+
+    assert state["pending_talk"] == []
+    assert [item["cid"] for item in state["talk_backlog"]] == ["reserve"]
+    assert runner.backlog_has_eligible_session_work(state) is False
+
+
+def test_recovery_exact_selection_recovers_selected_row_from_backlog(monkeypatch):
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    selected = {"cid": "selected", "session_id": "session-a"}
+    reserve = {"cid": "reserve", "session_id": "session-a"}
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "picks": [],
+        "pending_talk": [],
+        "talk_backlog": [reserve, selected],
+        "talk_selection_contract": {
+            "schema_version": "talk-selection-contract.v1",
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": ["selected"],
+            "source_state_sha256": "sha256:" + "a" * 64,
+            "authority": "Ivan selected the exact recovery set",
+        },
+    }
+
+    runner.prioritize(state)
+
+    assert state["pending_talk"] == [selected]
+    assert state["talk_backlog"] == [reserve]
+
+
+def test_recovery_malformed_exact_selection_contract_fails_closed(monkeypatch):
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "pending_talk": [],
+        "talk_backlog": [{"cid": "reserve", "session_id": "session-a"}],
+        "talk_selection_contract": {
+            "schema_version": "talk-selection-contract.v1",
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": [],
+            "source_state_sha256": "sha256:" + "a" * 64,
+            "authority": "Ivan selected the exact recovery set",
+        },
+    }
+
+    with pytest.raises(ValueError, match="INVALID_EXACT_TALK_SELECTION_CONTRACT"):
+        runner.prioritize(state)
+    with pytest.raises(ValueError, match="INVALID_EXACT_TALK_SELECTION_CONTRACT"):
+        runner.backlog_has_eligible_session_work(state)
 
 
 def test_user_selection_override_keeps_its_slot_alongside_repairs(monkeypatch):

@@ -573,6 +573,72 @@ def test_unproven_foreign_cue_defers_to_full_source_truth_ownership():
     assert audit["status"] == "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
 
 
+def test_unproven_foreign_cue_defers_across_tiny_timing_sliver():
+    """7/22 real shape: the reviewed window ends 30 ms before the ASR cue."""
+
+    audit = {
+        "status": "BLOCKED_UNPROVEN_FOREIGN_SPEAKER",
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 36,
+                "start_ms": 81_070,
+                "end_ms": 82_850,
+                "draft": "非常亚撒西雅",
+                "attempted": "非常やさしい呀",
+            }
+        ],
+    }
+
+    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+        audit,
+        source_truth_windows=[(81_020, 82_820)],
+        redelivery_baseline_config=None,
+    )
+
+    assert audit["status"] == "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+
+
+def test_source_truth_owned_cue_is_not_mutated_by_final_review(monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "build_llm_call",
+        lambda config: lambda prompt: json.dumps(
+            {
+                "findings": [
+                    {
+                        "cue": 1,
+                        "kind": "nonword",
+                        "proposed_full_cue": "非常やさしい呀",
+                        "repair_class": "phonetic",
+                        "why": "model prefers source script",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+    calls = []
+
+    def verifier(request):
+        calls.append(request)
+        raise AssertionError("source-truth-owned cue must not reach acoustics")
+
+    output, audit = pipeline._run_final_review(
+        srt_text=_srt("非常亚撒西雅"),
+        chat_authority_audit={"applied": []},
+        handled_entity_cues=set(),
+        verify_confusable_entity=verifier,
+        adapters=_adapters(),
+        source_truth_windows=[(4_950, 8_970)],
+    )
+
+    assert calls == []
+    assert "非常亚撒西雅" in output
+    assert "やさしい" not in output
+    assert audit["source_truth_protected_cue_indexes"] == [1]
+    assert audit["findings"][0]["routed"] == "disclosure_protected"
+
+
 def test_unproven_foreign_cue_does_not_defer_to_partial_source_truth():
     audit = _unproven_foreign_audit()
 

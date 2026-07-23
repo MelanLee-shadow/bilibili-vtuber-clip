@@ -135,7 +135,11 @@ def repair_covers(
         _runner.write_state(date, state)
     fingerprint = _runner.pipeline_fingerprint()
     for record in records:
-        if (record.get("status") in _runner.DELIVERED_TALK_STATUSES or record.get("delivered")) and record.get("title"):
+        if (
+            record.get("status") in _runner.DELIVERED_TALK_STATUSES
+            or record.get("status") == _runner.TALK_COVER_PENDING_STATUS
+            or record.get("delivered")
+        ) and record.get("title"):
             _runner._refresh_cover_repair_budget(record, fingerprint)
     needed = [r for r in records if _runner.cover_repair_needed(date, r)]
     exhausted = [r for r in needed if not _runner._cover_repair_eligible(r)]
@@ -284,6 +288,10 @@ def repair_covers(
             else:
                 bound = True
                 rec["cover_integrity_status"] = "VALID_BOUND"
+                if rec.get("status") == _runner.TALK_COVER_PENDING_STATUS:
+                    rec["status"] = "review_ready"
+                    rec["bundle_lifecycle"] = "CURRENT"
+                    rec["bundle_compliance"] = "COMPLIANT"
                 _runner.log(f"cover repaired and hash-bound → {cover.name}")
         if not bound:
             if (

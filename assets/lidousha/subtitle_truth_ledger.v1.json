@@ -1306,6 +1306,24 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-sumi-na-xiang-le-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3588020,
+      "source_end_ms": 3592640,
+      "action": "replace_cue",
+      "text": "诶，怎么有点像礼墨Sumi？哪像了，黑色的，有角",
+      "before_span": "诶，怎么有点像礼墨Sumi拿下了黑色的有角",
+      "forbidden_tokens": [
+        "拿下了黑色的有角"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_VERDICT",
+      "authority": "Gemini-3.6-Flash-High acoustic verdict request=0ac2e71af595286aa51f399e5e41968c7c1fca511cdecfa6a40a2beb788fde55 response=2c97d5ee6c24834946c4afaba23bd3485c40a2ccb4843494d403ed7c2f7e3d1c source_media_sha256=6e39c0b1d889b09d76eecda6e00c2f88345a71ade9be8bb3bd7861a08e2e5589 heard_syllables exact 哪像了; Codex independent evidence review 2026-07-23",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-yasashii-continuation-r1",
       "revision_id": "r1",
       "assertion_state": "VERIFIED_ACTIVE",
@@ -1474,6 +1492,60 @@
       ],
       "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
       "authority": "Ivan-stated-20260722-conversation(火锅切片2:43；露医生为露蒂斯在咕咕诊所医生形象的昵称，只钉此mention)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-chair-190-rumor-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1623040,
+      "source_end_ms": 1625380,
+      "action": "replace_cue",
+      "text": "190，190是谣言啊",
+      "before_span": "一瞅1190是谣言啊",
+      "forbidden_tokens": [
+        "1190"
+      ],
+      "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_HUMAN_PACKAGE_ACCEPTANCE",
+      "authority": "Ivan-stated-20260722(该切片可上传，唯一缺点是封面)+reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and redelivery audit sha256=3334a5898ca989fd43e7d249ad2f2623f104314ed7e4dd59b20d6d1011cb6593",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-brainflick-hard-flick-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1520750,
+      "source_end_ms": 1523420,
+      "action": "replace_cue",
+      "text": "硬弹一弹啊",
+      "before_span": "你弹一弹啊",
+      "forbidden_tokens": [
+        "你弹一弹啊"
+      ],
+      "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+      "authority": "Ivan-requested brainflick clip 2026-07-22 + prior reviewed subtitle retains 硬弹一弹; source closure review confirmed recurring phrase",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-brainflick-hard-flick-callback-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1538780,
+      "source_end_ms": 1543360,
+      "action": "replace_cue",
+      "text": "再弹，再，再硬弹一弹",
+      "before_span": "再弹，再，再一弹一弹",
+      "forbidden_tokens": [
+        "再一弹一弹"
+      ],
+      "evidence_class": "WHOLE_CLIP_CALLBACK_PLUS_SOURCE_CUE_REVIEW",
+      "authority": "Codex source-cue closure review 2026-07-22; callback repeats the earlier hash-bound reviewed phrase 硬弹一弹",
       "required": true
     },
     {

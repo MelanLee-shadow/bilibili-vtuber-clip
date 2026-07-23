@@ -2,6 +2,7 @@
   "schema_version": "lidousha-subtitle-regression.v1",
   "candidate_id": "auto_193450_3573_3665",
   "required_payload_substrings": [
+    "诶怎么有点像礼墨Sumi哪像了黑色的有角",
     "姐感妹秦秦秦她是一个非常闹腾的小朋友",
     "这是姐感的妹妹",
     "男的咋了",
@@ -10,6 +11,7 @@
   ],
   "required_any_substring_groups": [],
   "forbidden_payload_substrings": [
+    "拿下了黑色的有角",
     "晴，其实",
     "她就叫晴",
     "这个，这个是桔梗的妹妹",

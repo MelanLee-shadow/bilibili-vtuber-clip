@@ -1188,6 +1188,9 @@ def _write_lyric_timeline_srt(
     output_path.write_text("\n".join(rows).rstrip() + ("\n" if rows else ""), encoding="utf-8")
     return index - 1
 
+BOUNDARY_CLIPPED_CUE_MAX_VISIBLE_MS = 300
+
+
 def _write_source_range_srt(cues: Sequence[SourceCue], start_ms: int, end_ms: int, output_path: Path) -> None:
     rows: list[str] = []
     index = 1
@@ -1195,6 +1198,16 @@ def _write_source_range_srt(cues: Sequence[SourceCue], start_ms: int, end_ms: in
         clipped_start_ms = max(cue.source_start_ms, start_ms)
         clipped_end_ms = min(cue.source_end_ms, end_ms)
         if clipped_end_ms <= clipped_start_ms:
+            continue
+        # Boundary padding protects the first phoneme of the selected opening,
+        # but it can also expose only 250 ms of the previous subtitle.  A flash
+        # fragment is unreadable and often belongs to the prior topic; keep the
+        # audio pre-roll while leaving that sliver intentionally unsubtitled.
+        if (
+            cue.source_start_ms < start_ms
+            and clipped_end_ms - clipped_start_ms
+            <= BOUNDARY_CLIPPED_CUE_MAX_VISIBLE_MS
+        ):
             continue
         relative_start_ms = clipped_start_ms - start_ms
         relative_end_ms = clipped_end_ms - start_ms

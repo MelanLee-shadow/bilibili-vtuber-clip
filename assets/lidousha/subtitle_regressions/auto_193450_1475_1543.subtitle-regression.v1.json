@@ -1,0 +1,19 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_193450_1475_1543",
+  "required_payload_substrings": [
+    "请坐在左边的弹右边的一个脑瓜崩",
+    "你看我们现在是镜面的",
+    "算了好了我弹了啊",
+    "硬弹一弹啊",
+    "你的观众太了解你了",
+    "再弹再再硬弹一弹"
+  ],
+  "required_any_substring_groups": [],
+  "forbidden_payload_substrings": [
+    "你弹一弹啊",
+    "再一弹一弹",
+    "刘冰"
+  ],
+  "forbidden_exact_cues": []
+}
