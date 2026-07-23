@@ -109,6 +109,18 @@ _SELECTION_HOOK_MEANINGLESS_RE = re.compile(
     + ")"
 )
 
+_TITLE_MARK_PAIRS = {
+    "（": "）",
+    "(": ")",
+    "【": "】",
+    "[": "]",
+    "《": "》",
+    "“": "”",
+    "‘": "’",
+}
+_TITLE_MARK_OPENERS = frozenset(_TITLE_MARK_PAIRS)
+_TITLE_MARK_CLOSERS = frozenset(_TITLE_MARK_PAIRS.values())
+
 
 _CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
 
@@ -162,6 +174,20 @@ def _title_policy_violations(title: str) -> list[str]:
         violations.append("banned_filler_word")
     if any(pattern.search(title) for pattern in _TITLE_BANNED_REGEXES):
         violations.append("banned_filler_word")
+    stack: list[str] = []
+    for char in title:
+        if char in _TITLE_MARK_OPENERS:
+            stack.append(char)
+            continue
+        if char not in _TITLE_MARK_CLOSERS:
+            continue
+        if not stack or _TITLE_MARK_PAIRS[stack[-1]] != char:
+            violations.append("unbalanced_title_marks")
+            break
+        stack.pop()
+    else:
+        if stack:
+            violations.append("unbalanced_title_marks")
     return violations
 
 

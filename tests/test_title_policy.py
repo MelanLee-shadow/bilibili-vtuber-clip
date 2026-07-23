@@ -63,3 +63,42 @@ def test_canonicalize_song_catalog_title_passes_talk_titles_through():
 def test_canonicalize_song_catalog_title_no_song_name_untouched():
     weird = "【李豆沙】豆沙歌，没有书名号的标题"
     assert title_policy.canonicalize_song_catalog_title(weird) == weird
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "【李豆沙】搭档把大椅子让给小李（误",
+        "【李豆沙】搭档说《这也太像了》》",
+        "【李豆沙】搭档说“最喜欢’",
+        "【李豆沙】搭档说[最喜欢）",
+    ],
+)
+def test_title_policy_rejects_unbalanced_or_mismatched_marks(title):
+    assert "unbalanced_title_marks" in title_policy._title_policy_violations(
+        title
+    )
+
+
+def test_title_policy_accepts_nested_balanced_marks():
+    title = "【李豆沙】搭档问“你最喜欢《哪一个》？（认真）”"
+    assert title_policy._title_policy_violations(title) == []
+
+
+@pytest.mark.parametrize(
+    ("candidate_id", "expected"),
+    [
+        (
+            "auto_193450_3573_3665",
+            "最包容异性恋的直播间，看到男角色只能说出一句不熟",
+        ),
+        (
+            "auto_193450_672_945r3",
+            "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+        ),
+    ],
+)
+def test_july_22_ivan_titles_are_exact_and_survive_recut_suffix(
+    candidate_id, expected
+):
+    assert title_policy.manual_title_override(candidate_id) == expected

@@ -121,6 +121,7 @@ def test_runtime_cover_story_gate_catches_rendered_alias_drift() -> None:
             "schema_version",
             "relation_state",
             "participants",
+            "source_media_sha256s",
             "cover_fallback_mode",
         )
     }

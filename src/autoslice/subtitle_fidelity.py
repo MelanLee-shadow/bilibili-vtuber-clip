@@ -162,6 +162,29 @@ def _homophone_equal(left: str, right: str) -> bool:
     return False
 
 
+def _near_homophone_equal(left: str, right: str) -> bool:
+    """Allow only the common ``-n``/``-ng`` ASR boundary drift.
+
+    This is deliberately narrower than a general pinyin-similarity score.  It
+    exists for name/address orthography protection: an audio refiner cannot
+    turn a draft spelling such as ``毁神`` into ``绘声`` merely because both
+    renderings fit nearly identical syllables.
+    """
+
+    left_syllables = _toneless_syllables(left)
+    right_syllables = _toneless_syllables(right)
+    if not left_syllables or len(left_syllables) != len(right_syllables):
+        return False
+
+    def collapse_nasal_final(syllable: str) -> str:
+        return syllable[:-1] if syllable.endswith("ng") else syllable
+
+    return all(
+        collapse_nasal_final(a) == collapse_nasal_final(b)
+        for a, b in zip(left_syllables, right_syllables)
+    )
+
+
 def _question_intent_signature(value: str) -> tuple[str, ...]:
     """Meaning-bearing interrogatives; changing the family changes the question."""
 
@@ -192,15 +215,21 @@ def _revert_name_like_homophone_rewrites(
         if op != "replace" or not before or not after or before == after:
             rebuilt.append(after)
             continue
-        if not _homophone_equal(before, after):
-            rebuilt.append(after)
-            continue
         left = final_text[max(0, b1 - 2) : b1]
         right = final_text[b2 : b2 + 3]
         name_like = any(
             left.endswith(prefix) for prefix in _NAME_LIKE_PREFIXES
-        ) or any(right.startswith(suffix) for suffix in _NAME_LIKE_SUFFIXES)
-        if not name_like:
+        ) or any(
+            right.startswith(suffix) for suffix in _NAME_LIKE_SUFFIXES
+        ) or any(
+            before.startswith(prefix) for prefix in _NAME_LIKE_PREFIXES
+        ) or any(
+            before.endswith(suffix) for suffix in _NAME_LIKE_SUFFIXES
+        )
+        if not name_like or not (
+            _homophone_equal(before, after)
+            or _near_homophone_equal(before, after)
+        ):
             rebuilt.append(after)
             continue
         rebuilt.append(before)

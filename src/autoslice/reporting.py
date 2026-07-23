@@ -60,7 +60,24 @@ def write_reports(date: str, state: dict) -> None:
     delivery.mkdir(parents=True, exist_ok=True)
 
     def fmt_dur(pick: dict) -> str:
-        secs = max(0, (pick.get("end_ms", 0) - pick.get("start_ms", 0)) // 1000)
+        summary = pick.get("summary")
+        summary_duration = (
+            summary.get("duration_ms") if isinstance(summary, dict) else None
+        )
+        effective_duration = pick.get("effective_duration_ms")
+        if isinstance(summary_duration, int) and not isinstance(
+            summary_duration, bool
+        ):
+            duration_ms = summary_duration
+        elif isinstance(effective_duration, int) and not isinstance(
+            effective_duration, bool
+        ):
+            duration_ms = effective_duration
+        else:
+            duration_ms = int(pick.get("end_ms") or 0) - int(
+                pick.get("start_ms") or 0
+            )
+        secs = max(0, duration_ms // 1000)
         return f"{secs // 60}:{secs % 60:02d}"
 
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]

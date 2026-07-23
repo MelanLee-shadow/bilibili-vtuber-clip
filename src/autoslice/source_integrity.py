@@ -143,8 +143,9 @@ def audit_finalized_recording_inventory(
     """Fail closed when recorder output never reached the runner's MP4 lane.
 
     The unattended runner consumes only root-level ``<room>_*.mp4`` files. A
-    finalized HLS playlist or raw fMP4 sidecar without that sibling therefore
-    represents real source bytes which selection cannot see.  The 2026-07-22
+    finalized HLS playlist, raw fMP4, or closed BililiveRecorder FLV without
+    that sibling therefore represents real source bytes which selection cannot
+    see.  The 2026-07-22
     incident had exactly this shape: segment two ended cleanly as m3u8/m4s but
     never became MP4, so the first 30 minutes were falsely reported as the
     whole session.
@@ -181,7 +182,7 @@ def audit_finalized_recording_inventory(
         if not path.is_file() or not path.name.startswith(prefix):
             continue
         suffix = path.suffix.lower()
-        if suffix not in {".mp4", ".m4s", ".m3u8"}:
+        if suffix not in {".mp4", ".flv", ".m4s", ".m3u8"}:
             continue
         stems.setdefault(path.stem, {})[suffix] = path
 
@@ -194,7 +195,7 @@ def audit_finalized_recording_inventory(
             continue
 
         playlist = siblings.get(".m3u8")
-        raw_media = siblings.get(".m4s")
+        raw_media = siblings.get(".m4s") or siblings.get(".flv")
         playlist_finalized = False
         if playlist is not None:
             try:
@@ -225,8 +226,16 @@ def audit_finalized_recording_inventory(
                 "session processing gate."
             )
         elif raw_media is not None:
-            code = "RAW_MEDIA_WITHOUT_MP4"
-            message = "Recorder raw media exists without the MP4 consumed by autoslice."
+            code = (
+                "CLOSED_FLV_WITHOUT_MP4"
+                if raw_media.suffix.lower() == ".flv"
+                else "RAW_MEDIA_WITHOUT_MP4"
+            )
+            message = (
+                "Closed BililiveRecorder FLV exists without the MP4 consumed by autoslice."
+                if raw_media.suffix.lower() == ".flv"
+                else "Recorder raw media exists without the MP4 consumed by autoslice."
+            )
         else:
             continue
         issues.append(

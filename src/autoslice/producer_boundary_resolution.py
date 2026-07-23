@@ -19,6 +19,7 @@ from src.autoslice.producer_boundary import (
     repair_start_for_straddler,
     snap_end_to_sentence,
     snap_start_to_sentence,
+    syntactic_tail_audit,
     tail_requires_forward_extension,
 )
 from src.autoslice.review_evidence import SourceCue
@@ -41,7 +42,8 @@ class InitialBoundary:
     snapped_end: int
     closure_cue: object
     refinement_used: bool
-    manual_end_authority: bool
+    manual_end_authority: str | None
+    semantic_review: dict | None
 
 
 @dataclass(frozen=True)
@@ -88,10 +90,37 @@ def _select_initial_boundary(
     # 衔接，续讲红旗永远拦截）。spec.given_end_ms = Ivan 人工授权的绝对终点：
     # 仍贴到最近的字幕句尾（±1.5s），仍走其余全部审计，仅豁免尾侧续讲红旗；
     # 出处记入 boundary audit（boundary_authority=ivan_manual_end）。
-    manual_end_authority = False
+    manual_end_authority: str | None = None
     if spec.get("given_end_ms") is not None:
-        manual_end_authority = True
+        manual_end_authority = str(spec.get("given_end_authority") or "").strip()
+        if not manual_end_authority:
+            raise SystemExit("MANUAL_END_AUTHORITY_MISSING")
         target_rel = sum(durations[:-1]) + (int(spec["given_end_ms"]) - last_piece["start_ms"])
+    semantic_review = (
+        dict(spec["boundary_semantic_review"])
+        if isinstance(spec.get("boundary_semantic_review"), dict)
+        else None
+    )
+    if manual_end_authority is None:
+        if semantic_review is None or semantic_review.get("status") != "PASS":
+            reason_codes = (
+                semantic_review.get("reason_codes")
+                if isinstance(semantic_review, dict)
+                else ["BOUNDARY_SEMANTIC_REVIEW_MISSING"]
+            )
+            raise SystemExit(
+                "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+                + json.dumps(reason_codes, ensure_ascii=False)
+            )
+        recommended_end_ms = semantic_review.get("recommended_end_ms")
+        if (
+            isinstance(recommended_end_ms, bool)
+            or not isinstance(recommended_end_ms, int)
+            or recommended_end_ms < semantic_target_rel
+            or recommended_end_ms > semantic_target_rel + 30_000
+        ):
+            raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
+        target_rel = max(target_rel, recommended_end_ms)
     snapped = snap_end_to_sentence([c.end_ms for c in cues], target_rel)
     refinement_used = False
     if needs_tail_refinement(cues, snapped_end=snapped, target_ms=target_rel):
@@ -128,6 +157,7 @@ def _select_initial_boundary(
         closure_cue=closure_cue,
         refinement_used=refinement_used,
         manual_end_authority=manual_end_authority,
+        semantic_review=semantic_review,
     )
 
 def _repair_boundary(
@@ -144,7 +174,8 @@ def _repair_boundary(
     snapped: int,
     closure_cue: object,
     refinement_used: bool,
-    manual_end_authority: bool,
+    manual_end_authority: str | None,
+    semantic_review: dict | None,
     boundary_repair_extend_cap_ms: int,
 ) -> BoundaryResolution:
     audit_path = out_root / f"{cid}.boundary_audit.json"
@@ -188,6 +219,7 @@ def _repair_boundary(
                 "snapped_sentence_end_ms": snapped,
                 "final_end_ms": final_end,
                 "closure_sentence": closure_cue.text,
+                "syntactic_tail_audit": syntactic_tail_audit(closure_cue.text),
                 "tail_adjustment": tail_adjustment,
                 "tail_refinement_used": refinement_used,
                 "boundary_repair_search_origin_ms": target_rel,
@@ -198,6 +230,14 @@ def _repair_boundary(
                 "boundary_repairs": boundary_repairs,
             }
         )
+        if manual_end_authority:
+            audit["boundary_authority"] = "human_source_reviewed_end"
+            audit["manual_end_authority"] = manual_end_authority
+        elif semantic_review is not None:
+            audit["boundary_authority"] = (
+                "correlated_semantic_review_plus_deterministic_guards"
+            )
+            audit["boundary_semantic_review"] = semantic_review
         audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if audit["verdict"] != "ok_sentence_boundary_cut":
             raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
@@ -216,18 +256,27 @@ def _repair_boundary(
             snapped_end_ms=snapped,
             closure_text=closure_cue.text,
         )
-        if manual_end_authority:
+        if manual_end_authority or (
+            semantic_review is not None and semantic_review.get("status") == "PASS"
+        ):
             waived = [flag for flag in red_flags if flag.startswith("speech_continues_")]
             if waived:
-                audit["manual_end_waived_flags"] = waived
-                audit["boundary_authority"] = "ivan_manual_end"
+                audit["physical_continuity_nonsemantic_flags"] = waived
                 red_flags = [flag for flag in red_flags if not flag.startswith("speech_continues_")]
         if not red_flags:
             break
-        forward_extension_eligible = tail_requires_forward_extension(
-            cues, spans, snapped_end_ms=snapped, cut_ms=final_end
+        semantic_review_conflict = any(
+            flag.startswith("syntactically_incomplete_closure:")
+            for flag in red_flags
+        )
+        forward_extension_eligible = (
+            not semantic_review_conflict
+            and tail_requires_forward_extension(
+                cues, spans, snapped_end_ms=snapped, cut_ms=final_end
+            )
         )
         audit["forward_extension_eligible"] = forward_extension_eligible
+        audit["semantic_review_conflict"] = semantic_review_conflict
         repair: dict = {}
         flagged_repair_count = sum(1 for item in boundary_repairs if "flags" in item)
         if flagged_repair_count < MAX_BOUNDARY_REPAIRS:
@@ -313,5 +362,6 @@ def resolve_producer_boundary(
         closure_cue=initial.closure_cue,
         refinement_used=initial.refinement_used,
         manual_end_authority=initial.manual_end_authority,
+        semantic_review=initial.semantic_review,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
     )

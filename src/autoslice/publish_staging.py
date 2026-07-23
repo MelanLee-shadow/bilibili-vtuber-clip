@@ -18,6 +18,7 @@ from .auto_review import DecisionAction, ReviewDecision
 from .channel_profile import load_channel_profile
 from .chat_authority import canonicalize_hard_surfaces
 from .cover_emote import (
+    EmoteLibrary,
     compose_companion_reference,
     load_emote_library,
     resolve_emote_reference,
@@ -28,6 +29,7 @@ from .cover_frame_selection import (
     select_expressive_cover_frame,
 )
 from .cover_generation import (
+    LidoushaCoverArtDirection,
     _call_cpa_image_edit as _cover_call_cpa_image_edit,
     _cover_screenshot_polish_prompt,
     _cpa_image_model_candidates,
@@ -167,6 +169,7 @@ def _stage_publish_draft(
     title_policy_violations: list[str] = []
     title_authority_error: str | None = None
     title_authority_status = "RESOLVED_MANUAL" if title_llm_call is None else "UNRESOLVED_AUTO"
+    story_contract = record.get("story_contract")
     # Ivan 手定标题按 candidate 注入（2026-07-19）：命中即定稿，LLM 不再跑。
     manual_override = manual_title_override(candidate_id)
     if manual_override is not None:
@@ -182,6 +185,14 @@ def _stage_publish_draft(
         persona_asset = profile_asset_text("persona")
         selection_hook_contract = ""
         output_contract = '{"title": "标题"}'
+        clip_context_contract = ""
+        if isinstance(story_contract, Mapping):
+            context_prompt = str(story_contract.get("clip_context_prompt") or "").strip()
+            if context_prompt:
+                clip_context_contract = (
+                    "\n同一份 hash-bound 长程语境（用于整片回指、口癖和专名候选；"
+                    "它本身不授权改字幕）：\n" + context_prompt + "\n"
+                )
         if selection_hook:
             selection_hook_contract = (
                 f"\n选片主钩子（这是为什么选中本片，权威高于后续陪衬话题）: {selection_hook}\n"
@@ -199,6 +210,7 @@ def _stage_publish_draft(
             f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
             f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
             f"{selection_hook_contract}"
+            f"{clip_context_contract}"
             f"硬性要求：含{CHANNEL_PROFILE.talk_title_prefix}前缀后 {_TITLE_MIN_LEN}–{_TITLE_MAX_LEN} 字"
             "（Ivan 手定语料的主力带是 25–45 字的三拍叙事，不要为了凑短把梗压没；"
             "只有梗足够硬的短爆点才走 20 字以下）；"
@@ -216,9 +228,10 @@ def _stage_publish_draft(
             if attempt > 0:
                 prompt = (
                     base_prompt
-                    + "\n注意：上一次标题违反了硬约束（违禁词，或没有保留选片第一分句的具体核心短语），已被否决。"
+                    + "\n注意：上一次标题违反了硬约束（违禁词、成对符号未闭合，或没有保留选片第一分句的具体核心短语），已被否决。"
                     "不要用任何万能强调词，也不要把后续陪衬话题改成主标题；"
-                    "写她具体做了/说了什么，并按要求重新只输出 JSON。"
+                    "书名号、引号、括号必须左右成对；写她具体做了/说了什么，"
+                    "并按要求重新只输出 JSON。"
                 )
             try:
                 payload = extract_json_object(title_llm_call(prompt))
@@ -276,7 +289,6 @@ def _stage_publish_draft(
     # 手定标题（title_llm_call=None）保持一字不改的铁律，不进此函数。
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
-    story_contract = record.get("story_contract")
     title_story_audit = None
     if isinstance(story_contract, dict):
         title_story_audit = audit_story_artifact(
@@ -384,77 +396,63 @@ def _stage_publish_draft(
     }
     return record
 
-def _stage_lidousha_ai_cover(
+
+def _prepare_lidousha_cover_reference(
     materialized_recut: Mapping[str, object],
     *,
     media_path: Path,
     candidate_id: str,
-    title: str,
-    cover_text: str,
-    run_ffmpeg: bool,
-    art_direction_llm_call: LlmCall | None = None,
-    image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
-    punch_allowed: bool = False,
-    diversity_slot: int | None = None,
-) -> dict[str, object]:
-    cover_generation: dict[str, object] = {
-        "workflow": LIDOUSHA_COVER_WORKFLOW,
-        "method": "images.edit",
-        "model": _cpa_image_model_candidates()[0],
-        "image_gen_model": "cpa",
-        "fallback_used": False,
-        "model_fallback_used": False,
-        "cover_text": cover_text,
-        "cover_punch_allowed": punch_allowed,
-        "cover_diversity_slot": diversity_slot,
-        "title": title,
-    }
-    story_contract = materialized_recut.get("story_contract")
-    if isinstance(story_contract, Mapping):
-        cover_generation["story_contract"] = {
-            "schema_version": story_contract.get("schema_version"),
-            "relation_state": story_contract.get("relation_state"),
-            "participants": story_contract.get("participants"),
-            "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
-        }
-    # 封面路线（2026-07-21 Ivan："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
-    # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
-    # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
-    # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
-    cover_mode = (os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "auto")
-    if cover_mode not in ("auto", "screenshot", "polish", "cpa"):
-        cover_mode = "auto"
-    cover_generation["cover_mode"] = cover_mode
-    base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
-    api_key = os.environ.get("CPA_API_KEY", "").strip()
-    if (not base_url or not api_key) and cover_mode == "cpa":
-        return _blocked_ai_cover_result(
-            cover_generation,
-            ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
-            "CPA_BASE_URL/CPA_API_KEY missing; deterministic frame covers are not publish-grade",
-        )
-    if not run_ffmpeg:
-        return _blocked_ai_cover_result(
-            cover_generation,
-            ["CPA_AI_COVER_REQUIRED", "COVER_REFERENCE_EXTRACTION_DISABLED"],
-            "ffmpeg disabled, so no identity/reference frame can be extracted for CPA images.edit",
-        )
-
-    artifact_root = _materialized_artifact_root(materialized_recut, media_path)
-    cover_refs_dir = artifact_root / "cover_refs"
-    ai_dir = artifact_root / "covers_ai_original"
-    covers_dir = artifact_root / "covers"
-    evidence_dir = artifact_root / "evidence"
-    for directory in (cover_refs_dir, ai_dir, covers_dir, evidence_dir):
-        directory.mkdir(parents=True, exist_ok=True)
+    story_contract: Mapping[str, object] | None,
+    cover_refs_dir: Path,
+    cover_generation: dict[str, object],
+) -> tuple[
+    Path | None,
+    dict[str, object] | None,
+    Mapping[str, object] | None,
+    dict[str, object] | None,
+]:
+    """Select, extract, and verify the source-bound cover reference frame."""
 
     reference_path = cover_refs_dir / f"{candidate_id}.cover-ref.png"
     # 受监督重产时可指定封面参考帧（内容时间轴毫秒，Ivan 点名画面用）；
     # 未设置则先跑表现力选帧（2026-07-21：动作能量×人声响度×字幕情绪×清晰度，
     # 跳过片头/结尾），失败才落回 thumbnail 代表帧。
     cover_ref_override = os.environ.get("AUTOSLICE_COVER_REF_MS", "").strip()
+    reference_authority = (
+        story_contract.get("cover_reference_authority")
+        if isinstance(story_contract, Mapping)
+        and isinstance(story_contract.get("cover_reference_authority"), Mapping)
+        else None
+    )
+    authority_ref_ms = (
+        int(reference_authority["content_time_ms"])
+        if reference_authority is not None
+        else None
+    )
+    if (
+        cover_ref_override.isdigit()
+        and authority_ref_ms is not None
+        and int(cover_ref_override) != authority_ref_ms
+    ):
+        return (
+            None,
+            None,
+            reference_authority,
+            _blocked_ai_cover_result(
+                cover_generation,
+                ["COVER_REFERENCE_AUTHORITY_CONFLICT"],
+                "AUTOSLICE_COVER_REF_MS conflicts with the hash-bound candidate authority",
+            ),
+        )
+    selected_override_ms = (
+        authority_ref_ms
+        if authority_ref_ms is not None
+        else (int(cover_ref_override) if cover_ref_override.isdigit() else None)
+    )
+    if reference_authority is not None:
+        cover_generation["reference_authority"] = dict(reference_authority)
     frame_selection: dict[str, object] | None = None
-    if not cover_ref_override.isdigit():
+    if selected_override_ms is None:
         srt_value = materialized_recut.get("subtitle_path")
         # 片头跳过的权威来源=burn 阶段记录的 intro_offset_ms（片头版本轮换、
         # 时长不一，z1-budui=5749ms 曾越过固定 skip 造成过渡假峰）；record 缺失
@@ -482,10 +480,28 @@ def _stage_lidousha_ai_cover(
                 "status": "FALLBACK_THUMBNAIL",
                 "detail": f"{type(exc).__name__}: {exc}",
             }
+    else:
+        frame_selection = {
+            "schema": "cover-frame-selection.v1",
+            "status": (
+                "HASH_BOUND_AUTHORITY_OVERRIDE"
+                if reference_authority is not None
+                else "OPERATOR_OVERRIDE"
+            ),
+            "best_ms": selected_override_ms,
+            "candidates": [{"ms": selected_override_ms, "score": None}],
+            "subject_confident": False,
+            "authority_override": (
+                dict(reference_authority)
+                if reference_authority is not None
+                else None
+            ),
+        }
+        cover_generation["reference_selection"] = frame_selection
     ref_command = _cover_reference_command(
         media_path=media_path,
         reference_path=reference_path,
-        override_ms=int(cover_ref_override) if cover_ref_override.isdigit() else None,
+        override_ms=selected_override_ms,
         selected_ms=(
             int(frame_selection["best_ms"]) if frame_selection is not None else None
         ),
@@ -493,66 +509,70 @@ def _stage_lidousha_ai_cover(
     completed = subprocess.run(ref_command, check=False, capture_output=True, text=True)
     if completed.returncode != 0 or not reference_path.is_file():
         cover_generation["reference_command"] = ref_command
-        return _blocked_ai_cover_result(
-            cover_generation,
-            ["CPA_AI_COVER_REQUIRED", "COVER_REFERENCE_EXTRACTION_FAILED"],
-            completed.stderr[-500:] or "reference frame extraction failed",
+        return (
+            None,
+            frame_selection,
+            reference_authority,
+            _blocked_ai_cover_result(
+                cover_generation,
+                ["CPA_AI_COVER_REQUIRED", "COVER_REFERENCE_EXTRACTION_FAILED"],
+                completed.stderr[-500:] or "reference frame extraction failed",
+            ),
         )
+    if reference_authority is not None:
+        actual_reference_sha256 = "sha256:" + _sha256(reference_path)
+        expected_reference_sha256 = str(
+            reference_authority["reference_png_sha256"]
+        )
+        if str(reference_authority["source_sha256"]) not in (
+            story_contract.get("source_media_sha256s") or []
+        ):
+            return (
+                None,
+                frame_selection,
+                reference_authority,
+                _blocked_ai_cover_result(
+                    cover_generation,
+                    ["COVER_REFERENCE_SOURCE_BINDING_MISSING"],
+                    "the producer-verified source bytes do not match the cover authority",
+                ),
+            )
+        if actual_reference_sha256 != expected_reference_sha256:
+            return (
+                None,
+                frame_selection,
+                reference_authority,
+                _blocked_ai_cover_result(
+                    cover_generation,
+                    ["COVER_REFERENCE_AUTHORITY_HASH_MISMATCH"],
+                    (
+                        f"expected {expected_reference_sha256}, got "
+                        f"{actual_reference_sha256}"
+                    ),
+                ),
+            )
+    return reference_path, frame_selection, reference_authority, None
 
-    # Art direction is picked AFTER the fail-closed gates (creds/ffmpeg/ref frame)
-    # so a blocked cover never spends an LLM call. It is fail-OPEN (deterministic
-    # baseline) while the cover IMAGE stays fail-closed.
-    emote_library = load_emote_library(ROOT)
-    art_direction = _lidousha_cover_art_direction(
-        candidate_id=candidate_id,
-        title=title,
-        cover_text=cover_text,
-        art_direction_llm_call=art_direction_llm_call,
-        emote_library=emote_library,
-        allow_punch=punch_allowed,
-        diversity_slot=diversity_slot,
-    )
 
-    # 路由：每条切片自己决定走 直出 / 截图+轻微调 / 全图重绘。
-    treatment, treatment_reason = _decide_cover_treatment(
-        cover_mode=cover_mode,
-        is_song=art_direction.is_song,
-        punch_allowed=punch_allowed,
-        frame_selection=frame_selection,
-    )
-    cover_generation["cover_treatment"] = {"treatment": treatment, "reason": treatment_reason}
-    if isinstance(story_contract, Mapping):
-        cover_generation["relation_cover_mode"] = (
-            "VERIFIED_STREAM_FRAME"
-            if treatment in ("screenshot_direct", "screenshot_polish")
-            else str(story_contract.get("cover_fallback_mode") or "HOST_ONLY_GENERIC")
-        )
-    if treatment in ("screenshot_direct", "screenshot_polish"):
-        screenshot_result = _stage_screenshot_direct_cover(
-            media_path=media_path,
-            candidate_id=candidate_id,
-            cover_text=cover_text,
-            art_direction=art_direction,
-            frame_selection=frame_selection,
-            reference_path=reference_path,
-            ai_dir=ai_dir,
-            covers_dir=covers_dir,
-            evidence_dir=evidence_dir,
-            cover_generation=cover_generation,
-            polish=(treatment == "screenshot_polish"),
-            image_edit=image_edit,
-            base_url=base_url,
-            api_key=api_key,
-        )
-        if screenshot_result is not None:
-            return screenshot_result
-    if not base_url or not api_key:
-        # 截图路线失败落回 CPA 但凭据缺失 → 与 cpa 模式同语义地卡死。
-        return _blocked_ai_cover_result(
-            cover_generation,
-            ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
-            "screenshot cover lane failed and CPA_BASE_URL/CPA_API_KEY missing",
-        )
+def _stage_cpa_redraw_cover(
+    *,
+    candidate_id: str,
+    title: str,
+    cover_text: str,
+    story_contract: Mapping[str, object] | None,
+    cover_refs_dir: Path,
+    ai_dir: Path,
+    covers_dir: Path,
+    evidence_dir: Path,
+    reference_path: Path,
+    emote_library: EmoteLibrary,
+    art_direction: LidoushaCoverArtDirection,
+    cover_generation: dict[str, object],
+    image_edit: Callable[..., dict[str, object]],
+    base_url: str,
+    api_key: str,
+) -> dict[str, object]:
+    """Resolve optional emote direction and materialize the CPA redraw lane."""
 
     # Strong-reason emote pick (Ivan 2026-07-19): "replace" swaps the CPA
     # reference from the live frame to the official sticker (subject swap,
@@ -564,7 +584,11 @@ def _stage_lidousha_ai_cover(
     if art_direction.emote_id:
         entry = emote_library.get(art_direction.emote_id)
         resolved, resolve_detail = (
-            resolve_emote_reference(entry, repo_root=ROOT, runtime_roots=emote_library.runtime_roots)
+            resolve_emote_reference(
+                entry,
+                repo_root=ROOT,
+                runtime_roots=emote_library.runtime_roots,
+            )
             if entry is not None
             else (None, "EMOTE_ID_UNKNOWN")
         )
@@ -575,7 +599,9 @@ def _stage_lidousha_ai_cover(
             "reason": art_direction.emote_reason,
         }
         if resolved is None:
-            emote_evidence.update({"status": "FALLBACK_DEFAULT_REDRAW", "detail": resolve_detail})
+            emote_evidence.update(
+                {"status": "FALLBACK_DEFAULT_REDRAW", "detail": resolve_detail}
+            )
             art_direction = dataclasses_replace(
                 art_direction, emote_id="", emote_mode="", emote_reason=""
             )
@@ -601,7 +627,10 @@ def _stage_lidousha_ai_cover(
                 emote_evidence.update(
                     {
                         "status": "FALLBACK_DEFAULT_REDRAW",
-                        "detail": f"EMOTE_COMPANION_COMPOSE_FAILED: {type(exc).__name__}: {exc}",
+                        "detail": (
+                            "EMOTE_COMPANION_COMPOSE_FAILED: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
                     }
                 )
                 reference_path = cover_refs_dir / f"{candidate_id}.cover-ref.png"
@@ -645,12 +674,20 @@ def _stage_lidousha_ai_cover(
         cover_generation["cpa_status"] = cpa_result.get("status")
         return _blocked_ai_cover_result(
             cover_generation,
-            ["CPA_AI_COVER_REQUIRED", str(cpa_result.get("reason_code") or "CPA_IMAGE_EDIT_FAILED")],
+            [
+                "CPA_AI_COVER_REQUIRED",
+                str(cpa_result.get("reason_code") or "CPA_IMAGE_EDIT_FAILED"),
+            ],
             str(cpa_result.get("detail") or "CPA image edit did not return an image"),
         )
 
     final_cover_path = covers_dir / f"{candidate_id}.ai-title.cover.png"
-    overlay = _overlay_lidousha_cover_title(ai_background_path, final_cover_path, cover_text=cover_text, art_direction=art_direction)
+    overlay = _overlay_lidousha_cover_title(
+        ai_background_path,
+        final_cover_path,
+        cover_text=cover_text,
+        art_direction=art_direction,
+    )
     cover_generation.update(
         {
             "ai_background": str(ai_background_path),
@@ -669,6 +706,241 @@ def _stage_lidousha_ai_cover(
         "ai_background_sha256": "sha256:" + _sha256(ai_background_path),
         "cover_reference_sha256": "sha256:" + _sha256(reference_path),
     }
+
+
+def _stage_lidousha_ai_cover(
+    materialized_recut: Mapping[str, object],
+    *,
+    media_path: Path,
+    candidate_id: str,
+    title: str,
+    cover_text: str,
+    run_ffmpeg: bool,
+    art_direction_llm_call: LlmCall | None = None,
+    image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
+    punch_allowed: bool = False,
+    diversity_slot: int | None = None,
+) -> dict[str, object]:
+    cover_generation: dict[str, object] = {
+        "workflow": LIDOUSHA_COVER_WORKFLOW,
+        "method": "images.edit",
+        "model": _cpa_image_model_candidates()[0],
+        "image_gen_model": "cpa",
+        "fallback_used": False,
+        "model_fallback_used": False,
+        "cover_text": cover_text,
+        "cover_punch_allowed": punch_allowed,
+        "cover_diversity_slot": diversity_slot,
+        "title": title,
+    }
+    story_contract = materialized_recut.get("story_contract")
+    if isinstance(story_contract, Mapping):
+        cover_generation["story_contract"] = {
+            "schema_version": story_contract.get("schema_version"),
+            "relation_state": story_contract.get("relation_state"),
+            "participants": story_contract.get("participants"),
+            "cover_counterpart_reference_available": story_contract.get(
+                "cover_counterpart_reference_available"
+            ),
+            "cover_reference_authority": story_contract.get(
+                "cover_reference_authority"
+            ),
+            "source_media_sha256s": story_contract.get(
+                "source_media_sha256s"
+            ),
+            "clip_context_binding": story_contract.get(
+                "clip_context_binding"
+            ),
+            "boundary_semantic_review": story_contract.get(
+                "boundary_semantic_review"
+            ),
+            "human_boundary_authority": story_contract.get(
+                "human_boundary_authority"
+            ),
+            "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
+        }
+    # 封面路线（2026-07-21 Ivan："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
+    # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
+    # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
+    # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
+    cover_mode = (os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "auto")
+    if cover_mode not in ("auto", "screenshot", "polish", "cpa"):
+        cover_mode = "auto"
+    cover_generation["cover_mode"] = cover_mode
+    base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
+    api_key = os.environ.get("CPA_API_KEY", "").strip()
+    if (not base_url or not api_key) and cover_mode == "cpa":
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
+            "CPA_BASE_URL/CPA_API_KEY missing; deterministic frame covers are not publish-grade",
+        )
+    if not run_ffmpeg:
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["CPA_AI_COVER_REQUIRED", "COVER_REFERENCE_EXTRACTION_DISABLED"],
+            "ffmpeg disabled, so no identity/reference frame can be extracted for CPA images.edit",
+        )
+
+    artifact_root = _materialized_artifact_root(materialized_recut, media_path)
+    cover_refs_dir = artifact_root / "cover_refs"
+    ai_dir = artifact_root / "covers_ai_original"
+    covers_dir = artifact_root / "covers"
+    evidence_dir = artifact_root / "evidence"
+    for directory in (cover_refs_dir, ai_dir, covers_dir, evidence_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    (
+        reference_path,
+        frame_selection,
+        reference_authority,
+        reference_block,
+    ) = _prepare_lidousha_cover_reference(
+        materialized_recut,
+        media_path=media_path,
+        candidate_id=candidate_id,
+        story_contract=(
+            story_contract if isinstance(story_contract, Mapping) else None
+        ),
+        cover_refs_dir=cover_refs_dir,
+        cover_generation=cover_generation,
+    )
+    if reference_block is not None:
+        return reference_block
+    assert reference_path is not None
+
+    # Art direction is picked AFTER the fail-closed gates (creds/ffmpeg/ref frame)
+    # so a blocked cover never spends an LLM call. It is fail-OPEN (deterministic
+    # baseline) while the cover IMAGE stays fail-closed.
+    emote_library = load_emote_library(ROOT)
+    art_direction = _lidousha_cover_art_direction(
+        candidate_id=candidate_id,
+        title=title,
+        cover_text=cover_text,
+        art_direction_llm_call=art_direction_llm_call,
+        emote_library=emote_library,
+        allow_punch=punch_allowed,
+        diversity_slot=diversity_slot,
+    )
+
+    # 路由：每条切片自己决定走 直出 / 截图+轻微调 / 全图重绘。
+    treatment, treatment_reason = _decide_cover_treatment(
+        cover_mode=cover_mode,
+        is_song=art_direction.is_song,
+        punch_allowed=punch_allowed,
+        frame_selection=frame_selection,
+        verified_stream_frame=reference_authority is not None,
+    )
+    cover_generation["cover_treatment"] = {"treatment": treatment, "reason": treatment_reason}
+    candidates = (
+        frame_selection.get("candidates")
+        if isinstance(frame_selection, Mapping)
+        else None
+    )
+    first_candidate = (
+        candidates[0]
+        if isinstance(candidates, list)
+        and candidates
+        and isinstance(candidates[0], Mapping)
+        else {}
+    )
+    cover_generation["route_decision"] = {
+        "schema_version": "lidousha-cover-route-decision.v1",
+        "selected_treatment": treatment,
+        "reason": treatment_reason,
+        "cover_mode": cover_mode,
+        "is_song": art_direction.is_song,
+        "manual_title_or_full_text_contract": not punch_allowed,
+        "frame_score": first_candidate.get("score"),
+        "frame_emotion": first_candidate.get("emotion"),
+        "subject_confident": (
+            frame_selection.get("subject_confident")
+            if isinstance(frame_selection, Mapping)
+            else None
+        ),
+        "motion_dispersion_frac": (
+            frame_selection.get("motion_dispersion_frac")
+            if isinstance(frame_selection, Mapping)
+            else None
+        ),
+        "verified_stream_frame": reference_authority is not None,
+        "reference_authority_id": (
+            reference_authority.get("candidate_id")
+            if reference_authority is not None
+            else None
+        ),
+        "alternatives_considered": [
+            "screenshot_direct",
+            "screenshot_polish",
+            "cpa_redraw",
+        ],
+    }
+    if reference_authority is not None and treatment != reference_authority.get(
+        "required_treatment"
+    ):
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["COVER_REFERENCE_REQUIRED_TREATMENT_NOT_SELECTED"],
+            (
+                f"authority requires {reference_authority.get('required_treatment')}, "
+                f"router selected {treatment}"
+            ),
+        )
+    if isinstance(story_contract, Mapping):
+        cover_generation["relation_cover_mode"] = (
+            "VERIFIED_DUAL_STREAM_FRAME"
+            if reference_authority is not None
+            and treatment in ("screenshot_direct", "screenshot_polish")
+            else "VERIFIED_STREAM_FRAME"
+            if treatment in ("screenshot_direct", "screenshot_polish")
+            else str(story_contract.get("cover_fallback_mode") or "HOST_ONLY_GENERIC")
+        )
+    if treatment in ("screenshot_direct", "screenshot_polish"):
+        screenshot_result = _stage_screenshot_direct_cover(
+            media_path=media_path,
+            candidate_id=candidate_id,
+            cover_text=cover_text,
+            art_direction=art_direction,
+            frame_selection=frame_selection,
+            reference_path=reference_path,
+            ai_dir=ai_dir,
+            covers_dir=covers_dir,
+            evidence_dir=evidence_dir,
+            cover_generation=cover_generation,
+            polish=(treatment == "screenshot_polish"),
+            image_edit=image_edit,
+            base_url=base_url,
+            api_key=api_key,
+        )
+        if screenshot_result is not None:
+            return screenshot_result
+    if not base_url or not api_key:
+        # 截图路线失败落回 CPA 但凭据缺失 → 与 cpa 模式同语义地卡死。
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["CPA_AI_COVER_REQUIRED", "CPA_CREDENTIALS_MISSING"],
+            "screenshot cover lane failed and CPA_BASE_URL/CPA_API_KEY missing",
+        )
+
+    return _stage_cpa_redraw_cover(
+        candidate_id=candidate_id,
+        title=title,
+        cover_text=cover_text,
+        story_contract=(
+            story_contract if isinstance(story_contract, Mapping) else None
+        ),
+        cover_refs_dir=cover_refs_dir,
+        ai_dir=ai_dir,
+        covers_dir=covers_dir,
+        evidence_dir=evidence_dir,
+        reference_path=reference_path,
+        emote_library=emote_library,
+        art_direction=art_direction,
+        cover_generation=cover_generation,
+        image_edit=image_edit,
+        base_url=base_url,
+        api_key=api_key,
+    )
 
 def _cover_reference_command(
     *,
@@ -703,11 +975,12 @@ def _decide_cover_treatment(
     is_song: bool,
     punch_allowed: bool,
     frame_selection: Mapping[str, object] | None,
+    verified_stream_frame: bool = False,
 ) -> tuple[str, str]:
     """每条切片选封面路线（2026-07-21 Ivan：哪些适合全图 CPA 重做、哪些适合截图）。
 
     判据=表现力选帧最高分（"这条片有没有值得原样示人的真名场面"）：
-    - 歌切 / 手定标题 / 选帧失败 → cpa_redraw（唱歌净美学 / 成分不丢铁律 / 无帧可用）
+    - 歌切 / 选帧失败 → cpa_redraw（唱歌净美学 / 无帧可用）
     - 强名场面（≥4.5，或 ≥3.2 且命中情绪字幕段）→ screenshot_direct：真表情就是
       封面，重绘反而丢梗
     - 中等瞬间（≥2.6）→ screenshot_polish：保真帧构图，CPA 只清杂物修画质
@@ -720,8 +993,11 @@ def _decide_cover_treatment(
         return "cpa_redraw", "mode=cpa (forced)"
     if is_song:
         return "cpa_redraw", "song keeps the clean CPA aesthetic"
-    if not punch_allowed:
-        return "cpa_redraw", "manual title keeps the illustrated cover"
+    if verified_stream_frame:
+        return (
+            "screenshot_direct",
+            "hash-bound source frame verifies all required participants",
+        )
     if frame_selection is None:
         return "cpa_redraw", "frame selection unavailable"
     if cover_mode == "screenshot":
@@ -784,14 +1060,9 @@ def _stage_screenshot_direct_cover(
     重绘路径继续（fail-open 到旧行为）。
     """
 
-    # 截图路线必须有梗字：整条标题叠在未为文字区构图的截图上是最差形态
-    # （2026-07-21 二期实测）。四级兜底后仍无 punch → 交回 CPA 重绘路线。
-    if not art_direction.cover_punch:
-        cover_generation["screenshot_direct"] = {
-            "status": "FALLBACK_TO_CPA",
-            "detail": "no cover punch available for the screenshot lane",
-        }
-        return None
+    # 手定标题只锁文字 authority，不再偷偷决定视觉路线。自动标题有短梗字时
+    # 仍用 punch 版式；手定标题没有 punch 时，复用成熟的完整 cover_text
+    # banner 叠字器，确保所有成分一字不丢，同时保留真实截图。
     try:
         screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
         # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版

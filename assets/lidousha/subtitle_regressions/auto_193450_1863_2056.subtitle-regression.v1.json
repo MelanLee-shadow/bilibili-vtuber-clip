@@ -1,0 +1,27 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_193450_1863_2056",
+  "required_payload_substrings": [
+    "现在还没到时间",
+    "谢谢你的素菜",
+    "大姐姐心里没有李豆沙的位置了",
+    "就是霸凌的那种，晓得吧",
+    "小李又被大N霸凌了",
+    "哪里是，这不是一直说的是小李在霸凌大N吗",
+    "哪里又变成小李被大N霸凌了",
+    "对哇，你说这句话跟露医生好像啊",
+    "就是刚认识暂时不太熟"
+  ],
+  "required_any_substring_groups": [],
+  "forbidden_payload_substrings": [
+    "我还没落实呢",
+    "谢谢你的素材",
+    "大姐姐心里没有小李的位置了",
+    "就是霸凌的那种小的吧",
+    "小李又被大哥骂赢了",
+    "大恩霸凌",
+    "饿了吗",
+    "陆医生"
+  ],
+  "forbidden_exact_cues": []
+}

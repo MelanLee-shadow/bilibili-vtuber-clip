@@ -128,6 +128,7 @@ from src.autoslice.producer_boundary import (
     repair_start_for_straddler,
     snap_end_to_sentence,
     snap_start_to_sentence,
+    syntactic_tail_audit,
     tail_requires_forward_extension,
 )
 from src.autoslice.producer_boundary_resolution import (
@@ -348,6 +349,11 @@ def main(argv: list[str] | None = None) -> int:
     cues = text_result.cues
     chat_authority_audit = text_result.chat_authority_audit
     chat_authority_path = text_result.chat_authority_path
+    # The same immutable context digest must reach subtitle adjudication,
+    # StoryContract, title, and cover.  Keep it on the in-memory spec only;
+    # the full artifact is already persisted beside the producer evidence.
+    spec["clip_context"] = text_result.clip_context
+    spec["clip_context_path"] = str(text_result.clip_context_path)
 
     # 4a. Sentence-snap the START (the clip must open on a sentence).
     last_piece = spec["pieces"][-1]
@@ -367,6 +373,13 @@ def main(argv: list[str] | None = None) -> int:
         ),
         default=None,
     )
+    final_review_audit = chat_authority_audit.get("final_review_audit") or {}
+    if isinstance(final_review_audit, dict):
+        boundary_semantic_review = final_review_audit.get(
+            "boundary_semantic_review"
+        )
+        if isinstance(boundary_semantic_review, dict):
+            spec["boundary_semantic_review"] = boundary_semantic_review
     boundary = resolve_producer_boundary(
         spec=spec,
         durations=durations,

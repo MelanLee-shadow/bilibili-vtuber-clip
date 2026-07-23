@@ -1,0 +1,290 @@
+{
+  "schema_version": "lidousha-speech-memory-ledger.v1",
+  "entries": [
+    {
+      "memory_id": "lidousha.idiolect.xiaodeba.r1",
+      "kind": "idiolect",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2024-01-01",
+        "date_end": "2027-12-31"
+      },
+      "surfaces": ["晓得吧"],
+      "candidate_canonicals": ["晓得吧"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_SPEECH_MEMORY",
+          "authority": "Ivan-stated-20260722(李豆沙自己也说过晓得吧这种话)"
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.sumi.jieganmei.r1",
+      "kind": "recurring_callback",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_3573_3665",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["姐感妹"],
+      "candidate_canonicals": ["姐感妹"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_SOURCE_TRUTH",
+          "authority": "Ivan-stated-20260722(display 0:30 姐感妹)",
+          "source_start_ms": 3597980,
+          "source_end_ms": 3599860
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.sumi.jiegan-de-meimei.r1",
+      "kind": "recurring_callback",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_3573_3665",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["姐感的妹妹"],
+      "candidate_canonicals": ["姐感的妹妹"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_SOURCE_TRUTH",
+          "authority": "Ivan-stated-20260722(display 1:19 这是姐感的妹妹)",
+          "source_start_ms": 3644420,
+          "source_end_ms": 3646900
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.sumi.qin.r1",
+      "kind": "alias",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_3573_3665",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["秦"],
+      "candidate_canonicals": ["秦"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_SCREEN_TRUTH",
+          "authority": "Ivan-stated-20260722(画面角色名为秦)",
+          "source_start_ms": 3601250,
+          "source_end_ms": 3602690
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.sumi.qinqin.r1",
+      "kind": "alias",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_3573_3665",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["秦秦"],
+      "candidate_canonicals": ["秦秦"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_SCREEN_TRUTH",
+          "authority": "Ivan-stated-20260722(画面角色名为秦，display 0:32 秦秦)",
+          "source_start_ms": 3599860,
+          "source_end_ms": 3601100
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.collab.nancho-nightin.r1",
+      "kind": "alias",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["南町nightin"],
+      "candidate_canonicals": ["南町nightin"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_PROPER_NAME_TRUTH",
+          "authority": "Ivan-stated-20260722(南町和nightin是相似音节而非复读)"
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.collab.dan.r1",
+      "kind": "nickname",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["大N"],
+      "candidate_canonicals": ["大N"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_ALIAS_TRUTH",
+          "authority": "Ivan-stated-20260722(南町别名可以叫小N，也可以叫大N)"
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.collab.xiaon.r1",
+      "kind": "nickname",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["小N"],
+      "candidate_canonicals": ["小N"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_ALIAS_TRUTH",
+          "authority": "Ivan-stated-20260722(南町别名可以叫小N，也可以叫大N)"
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.confrontation.huishen.r1",
+      "kind": "nickname",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_672_945",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["毁神"],
+      "candidate_canonicals": ["毁神"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_PHONETIC_TRUTH",
+          "authority": "Ivan-stated-20260722(从读音看应该是毁神)",
+          "source_start_ms": 748620,
+          "source_end_ms": 752400
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.confrontation.sumi.r1",
+      "kind": "alias",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_672_945",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["礼墨Sumi"],
+      "candidate_canonicals": ["礼墨Sumi"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_PROPER_NAME_TRUTH",
+          "authority": "Ivan-stated-20260722(display 4:32 只会猜礼墨Sumi)",
+          "source_start_ms": 943650,
+          "source_end_ms": 948630
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.hotpot.luyisheng.r1",
+      "kind": "nickname",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_1863_2056",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["露医生"],
+      "candidate_canonicals": ["露医生"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+          "authority": "Ivan-stated-20260722(露医生指代露蒂斯，咕咕诊所医生)",
+          "source_start_ms": 2016790,
+          "source_end_ms": 2020810
+        }
+      ],
+      "supersedes": []
+    },
+    {
+      "memory_id": "20260722.hotpot.xieeshougong.r1",
+      "kind": "nickname",
+      "action": "CANDIDATE_ONLY",
+      "status": "ACTIVE",
+      "scope": {
+        "speaker_id": "lidousha",
+        "channel_id": "lidousha",
+        "date_start": "2026-07-22",
+        "date_end": "2026-07-22",
+        "candidate_id": "auto_193450_1863_2056",
+        "relation_id": "20260722-lidousha-nancho-live-collaboration"
+      },
+      "surfaces": ["邪恶守宫"],
+      "candidate_canonicals": ["邪恶守宫"],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+          "authority": "Ivan-stated-20260722(邪恶守宫是南町nightin昵称；原弹幕当前缺失)"
+        }
+      ],
+      "supersedes": []
+    }
+  ]
+}

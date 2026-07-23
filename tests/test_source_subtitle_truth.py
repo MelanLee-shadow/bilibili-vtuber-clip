@@ -943,3 +943,133 @@ def test_committed_ledger_projects_nancho_truth_to_hash_bound_official_replay():
     assert audit["satisfied"][0]["source_aliases"][0]["alias_id"] == (
         "20260722-official-replay-bv1fjg16xex6"
     )
+
+
+def test_committed_ledger_repairs_huishen_nasal_final_spelling_drift():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (0, 1_370, "好像是毁神吧"),
+            (1_370, 3_530, "毁神说救救李姐"),
+            (5_980, 8_600, "然后绘声什么都没有做"),
+            (11_560, 14_120, "毁神发了一句"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 748_620,
+                    "end_ms": 762_740,
+                }
+            ]
+        },
+        durations=[14_120],
+        ledger_path=ledger,
+    )
+
+    assert "然后毁神什么都没有做" in corrected
+    assert "绘声" not in corrected
+    assert audit["status"] == "APPLIED"
+    row = next(
+        row
+        for row in audit["applied"]
+        if row["truth_id"]
+        == "20260722-nancho-confrontation-huishen-surface"
+    )
+    assert row["replacements"] == [
+        {"cue_index": 3, "surface": "绘声", "canonical": "毁神"}
+    ]
+
+
+def test_mention_postconditions_do_not_let_one_correct_name_hide_another(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "same-name-twice",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 100_000,
+                "source_end_ms": 104_000,
+                "action": "replace_substring",
+                "replacements": [{"surface": "绘声", "canonical": "毁神"}],
+                "required_text": "毁神",
+                "mention_postconditions": [
+                    {
+                        "source_start_ms": 100_000,
+                        "source_end_ms": 102_000,
+                        "required_text": "毁神",
+                        "forbidden_tokens": [],
+                    },
+                    {
+                        "source_start_ms": 102_000,
+                        "source_end_ms": 104_000,
+                        "required_text": "毁神",
+                        "forbidden_tokens": [],
+                    },
+                ],
+                "required": True,
+            }
+        ],
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 2_000, "毁神来了"), (2_000, 4_000, "神秘没做事")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/recordings/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 104_000,
+                }
+            ]
+        },
+        durations=[4_000],
+        ledger_path=ledger,
+    )
+
+    assert "毁神来了" in corrected
+    assert audit["status"] == "FAILED"
+    assert any(
+        row["reason_code"] == "MENTION_REQUIRED_TEXT_MISSING"
+        and row["mention_ordinal"] == 2
+        for row in audit["failures"]
+    )
+
+
+def test_committed_ledger_repairs_hotpot_parallel_repeat_entity_phrase():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 1_620, "小李又被大哥骂赢了")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 2_001_770,
+                    "end_ms": 2_003_390,
+                }
+            ]
+        },
+        durations=[1_620],
+        ledger_path=ledger,
+    )
+
+    assert "小李又被大N霸凌了" in corrected
+    assert "大哥骂赢" not in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == (
+        "20260722-nancho-hotpot-dan-bullying-r1"
+    )

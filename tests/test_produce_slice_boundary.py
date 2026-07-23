@@ -19,6 +19,7 @@ from scripts.produce_slice_package import (
     repair_start_for_straddler,
     snap_end_to_sentence,
     snap_start_to_sentence,
+    syntactic_tail_audit,
     tail_requires_forward_extension,
 )
 from src.autoslice.jingting_chunker import SrtCue
@@ -149,6 +150,10 @@ def test_structured_read_payoff_extends_semantic_tail_before_sentence_snap(tmp_p
             "pieces": [{"start_ms": 0, "end_ms": 20_000}],
             "semantic_start_ms": 0,
             "semantic_end_ms": 9_000,
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "recommended_end_ms": 12_000,
+            },
         },
         durations=[20_000],
         padded=tmp_path / "unused.mp4",
@@ -168,6 +173,62 @@ def test_structured_read_payoff_extends_semantic_tail_before_sentence_snap(tmp_p
     assert initial.closure_cue.text == "念完弹幕中的完整名字。"
 
 
+def test_human_reviewed_end_is_exact_authority_not_forward_topic_search(tmp_path):
+    cues = [
+        _cue(0, 3_000, "开场。"),
+        _cue(3_200, 9_000, "故事在这里完整收束。"),
+        _cue(9_100, 15_000, "紧接着开始下一条SC。"),
+    ]
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 100_000, "end_ms": 120_000}],
+            "semantic_start_ms": 100_000,
+            "semantic_end_ms": 115_000,
+            "given_end_ms": 109_000,
+            "given_end_authority": "Ivan-reviewed source closure",
+        },
+        durations=[20_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=20_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        required_tail_end_ms=None,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    assert initial.target_rel == 9_000
+    assert initial.snapped_end == 9_000
+    assert initial.closure_cue.text == "故事在这里完整收束。"
+    assert initial.manual_end_authority == "Ivan-reviewed source closure"
+
+
+def test_manual_end_without_authority_fails_closed(tmp_path):
+    with pytest.raises(SystemExit, match="MANUAL_END_AUTHORITY_MISSING"):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 20_000}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 15_000,
+                "given_end_ms": 9_000,
+            },
+            durations=[20_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=20_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[_cue(0, 9_000, "完整收束。")],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+        )
+
+
 def test_boundary_audit_requires_both_snapped_boundaries():
     spans = [SpeechSpan(85_000, 95_000)]
     ok = boundary_audit(spans, start_ms=250, cut_ms=90_000, start_snapped=True, end_snapped=True)
@@ -177,6 +238,13 @@ def test_boundary_audit_requires_both_snapped_boundaries():
 
     bad_start = boundary_audit(spans, start_ms=0, cut_ms=90_000, start_snapped=False, end_snapped=True)
     assert bad_start["verdict"] == "start_not_on_sentence_boundary"
+
+
+def test_syntactic_tail_guard_blocks_only_obvious_half_sentences():
+    assert syntactic_tail_audit("跟他们说要跟第")["status"] == "INCOMPLETE"
+    assert syntactic_tail_audit("因为")["status"] == "INCOMPLETE"
+    assert syntactic_tail_audit("就是刚认识暂时不太熟啊")["status"] == "UNKNOWN"
+    assert syntactic_tail_audit("故事到这里结束。")["status"] == "COMPLETE"
 
 
 # ---------------------------------------------------------------------------

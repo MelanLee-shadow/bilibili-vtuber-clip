@@ -10,12 +10,12 @@
 
 | 步 | 文件 | 职责 | 代码入口 |
 |---|---|---|---|
-| 10 | [10-source-recording.md](10-source-recording.md) | 录制、源健康、mount 看门狗 | `scripts/free_session_autoslice.py`（源门）、`src/autoslice/source_integrity.py` |
+| 10 | [10-source-recording.md](10-source-recording.md) | 录制、源健康、mount 看门狗 | `ops/recording/bililive_recorder_adapter.py`、`scripts/free_session_autoslice.py`（源门）、`src/autoslice/source_integrity.py` |
 | 20 | [20-selection.md](20-selection.md) | 候选召回、选题 metric、语义审查、**同主题合并** | `src/autoslice/semantic_candidate_selector.py`、`full_session_candidate_selector.py`、`scripts/cpa_semantic_qa_llm.py` |
-| 30 | [30-boundary.md](30-boundary.md) | 边界解析、源语境扩窗 | `src/autoslice/boundary_resolver.py`、`source_context_planner.py`、`live_source_review.py` |
+| 30 | [30-boundary.md](30-boundary.md) | 边界解析、源语境扩窗 | `src/autoslice/boundary_resolver.py`、`boundary_semantic_review.py`、`producer_boundary_resolution.py` |
 | 40 | [40-subtitle-text.md](40-subtitle-text.md) | 字幕文本链：ASR→专名→弹幕→语义修复→终审 | `src/autoslice/producer_text_pipeline.py` |
 | 50 | [50-song-lane.md](50-song-lane.md) | 歌切专线：识别、LRC 对齐、host-vocal 证明、完整性 | `src/autoslice/song_lane.py`、`song_alignment.py`、`song_completion.py` |
 | 60 | [60-title.md](60-title.md) | 标题（谈话 + 歌切铁律） | `src/autoslice/title_policy.py`、`publish_staging.py` |
-| 70 | [70-cover.md](70-cover.md) | 封面生成与验字形 | `src/autoslice/cover_generation.py` |
+| 70 | [70-cover.md](70-cover.md) | 封面路由、生成与验字形 | `src/autoslice/cover_generation.py`、`cover_reference_authority.py`、`publish_staging.py` |
 | 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、hash 绑定、审计 | `src/autoslice/producer_package_finalization.py`、`branding_intro.py`、`scripts/audit_lidousha_review_package.py` |
 | 90 | [90-publish.md](90-publish.md) | 授权上传、tag、合集、公开验证 | `.agent/skills/bilive-autoslice-publish/SKILL.md`（该步权威在 skill） |

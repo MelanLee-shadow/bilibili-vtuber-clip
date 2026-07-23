@@ -229,6 +229,26 @@ def test_name_orthography_guard_preserves_other_agy_edits_in_same_cue():
     assert audit["reverted_count"] == 1
 
 
+def test_agy_cannot_drop_name_suffix_into_near_homophone_common_word():
+    """毁神→绘声 changes the whole two-character span, so the suffix is no
+    longer adjacent to SequenceMatcher's edit.  The draft name morphology and
+    the bounded shen/sheng nasal-final drift must still keep its spelling."""
+
+    draft = _srt("然后毁神什么都没有做")
+    refined = _srt("然后绘声什么都没有做")
+
+    guarded, audit = apply_subtitle_fidelity_guard(
+        draft, refined, agy_srt=refined, sanctioned=()
+    )
+
+    assert "然后毁神什么都没有做" in guarded
+    assert "绘声" not in guarded
+    assert audit["reverted_count"] == 1
+    assert audit["reverted"][0]["violations"][0]["reason"] == (
+        "HOMOPHONE_NAME_ORTHOGRAPHY_UNWITNESSED"
+    )
+
+
 def test_registered_mapping_can_authorize_homophone_name_orthography():
     draft = _srt("毁神应该也一样吧")
     corrected = _srt("灰神应该也一样吧")

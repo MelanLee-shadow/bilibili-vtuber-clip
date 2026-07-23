@@ -679,6 +679,14 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "pieces": pieces,
         "talk_filler_plan": filler_plan,
     }
+    if item.get("given_end_ms") is not None:
+        given_end_ms = item["given_end_ms"]
+        if isinstance(given_end_ms, bool) or not isinstance(given_end_ms, int):
+            raise ValueError("given_end_ms must be an integer source timestamp")
+        spec["given_end_ms"] = given_end_ms
+        spec["given_end_authority"] = str(
+            item.get("given_end_authority") or ""
+        ).strip()
     if (
         isinstance(item.get("cover_diversity_slot"), int)
         and not isinstance(item.get("cover_diversity_slot"), bool)
@@ -789,6 +797,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_filler_plan_path": str(filler_plan_path),
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
+    if item.get("given_end_ms") is not None:
+        result["given_end_ms"] = item["given_end_ms"]
+        result["given_end_authority"] = item.get("given_end_authority")
     if "cover_diversity_slot" in item:
         result["cover_diversity_slot"] = item["cover_diversity_slot"]
     # Classify only bytes written by this subprocess attempt.  The log is

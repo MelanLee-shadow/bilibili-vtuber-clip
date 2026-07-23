@@ -13,6 +13,10 @@ from src.autoslice.chat_authority import (
     reconcile_pending_text_overrides,
     reconcile_reviewed_text_override_conflicts,
 )
+from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.cover_reference_authority import (
+    load_candidate_cover_reference,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.producer_media import (
@@ -38,6 +42,11 @@ from src.autoslice.story_contract import (
     audit_story_artifact,
     build_story_contract,
 )
+from src.autoslice.clip_context import validate_clip_context
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CHANNEL_PROFILE = load_channel_profile(ROOT)
 
 
 @dataclass(frozen=True)
@@ -135,6 +144,14 @@ def _audit_story_bound_cover(
         "schema_version": story_contract.get("schema_version"),
         "relation_state": story_contract.get("relation_state"),
         "participants": story_contract.get("participants"),
+        "cover_counterpart_reference_available": story_contract.get(
+            "cover_counterpart_reference_available"
+        ),
+        "cover_reference_authority": story_contract.get(
+            "cover_reference_authority"
+        ),
+        "source_media_sha256s": story_contract.get("source_media_sha256s"),
+        "clip_context_binding": story_contract.get("clip_context_binding"),
         "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
     }
     binding = generation.get("story_contract")
@@ -146,6 +163,16 @@ def _audit_story_bound_cover(
         reason_codes.add("COVER_STORY_TEXT_MISSING")
     if not rendered_text:
         reason_codes.add("COVER_RENDERED_TEXT_EVIDENCE_MISSING")
+    route_decision = generation.get("route_decision")
+    if (
+        not isinstance(route_decision, Mapping)
+        or route_decision.get("schema_version")
+        != "lidousha-cover-route-decision.v1"
+        or route_decision.get("selected_treatment")
+        not in {"screenshot_direct", "screenshot_polish", "cpa_redraw"}
+        or not str(route_decision.get("reason") or "").strip()
+    ):
+        reason_codes.add("COVER_ROUTE_DECISION_MISSING_OR_INVALID")
     return sorted(reason_codes), audits
 
 
@@ -833,12 +860,53 @@ def _stage_record(
         if cue.text.strip()
     ]
     transcript_text = "\n".join(cue.text for cue in final_title_cues)
+    clip_context_path: Path | None = None
+    clip_context = spec.get("clip_context")
+    if isinstance(clip_context, Mapping):
+        raw_context_path = spec.get("clip_context_path")
+        if not isinstance(raw_context_path, str) or not raw_context_path:
+            raise RuntimeError("CLIP_CONTEXT_PATH_MISSING")
+        clip_context_path = Path(raw_context_path)
+        if clip_context_path.is_symlink() or not clip_context_path.is_file():
+            raise RuntimeError("CLIP_CONTEXT_FILE_INVALID")
+        try:
+            file_context = json.loads(clip_context_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("CLIP_CONTEXT_FILE_INVALID") from exc
+        if file_context != clip_context:
+            raise RuntimeError("CLIP_CONTEXT_FILE_PAYLOAD_MISMATCH")
+        validate_clip_context(
+            file_context,
+            candidate_id=cid,
+            recording_date=str(spec.get("date") or ""),
+            source_media_sha256s=[
+                str(piece.get("source_media_sha256"))
+                for piece in (spec.get("pieces") or [])
+                if isinstance(piece, Mapping) and piece.get("source_media_sha256")
+            ],
+        )
+    cover_reference_authority = load_candidate_cover_reference(
+        cid,
+        ledger_path=CHANNEL_PROFILE.asset_file(
+            "cover_reference_overrides", repo_root=ROOT
+        ),
+    )
     story_contract = build_story_contract(
         candidate_id=cid,
         selection_hook=str(spec.get("selection_hook") or ""),
         transcript_text=transcript_text,
         selection_scorecard=spec.get("selection_scorecard"),
         session_relation_authority=spec.get("session_relation_authority"),
+        cover_reference_authority=cover_reference_authority,
+        source_media_sha256s=[
+            str(piece.get("source_media_sha256"))
+            for piece in (spec.get("pieces") or [])
+            if isinstance(piece, Mapping) and piece.get("source_media_sha256")
+        ],
+        clip_context=spec.get("clip_context"),
+        recording_date=str(spec.get("date") or ""),
+        boundary_semantic_review=spec.get("boundary_semantic_review"),
+        human_boundary_authority=str(spec.get("given_end_authority") or ""),
     )
     story_contract["input_audits"] = [
         audit_story_artifact(
@@ -855,6 +923,14 @@ def _stage_record(
     record["selection_scorecard"] = spec.get("selection_scorecard")
     record["session_relation_authority"] = spec.get("session_relation_authority")
     record["story_contract"] = story_contract
+    if clip_context_path is not None:
+        record["clip_context_path"] = str(clip_context_path)
+        record["clip_context_payload_sha256"] = clip_context.get(
+            "context_sha256"
+        )
+        record.setdefault("artifact_hashes", {})[
+            "clip_context_file_sha256"
+        ] = "sha256:" + _sha256(clip_context_path)
     input_violations = [
         violation
         for audit in story_contract["input_audits"]
@@ -946,6 +1022,11 @@ def _deliver_staged_record(
     speaker_manifest_path = speaker.manifest_path
     subtitle_regression_audit_path = authority.subtitle_regression_audit_path
     subtitle_regression_audit = authority.subtitle_regression_audit
+    clip_context_path = (
+        Path(str(record.get("clip_context_path")))
+        if record.get("clip_context_path")
+        else None
+    )
     delivery = adapters.delivery_root() / spec["date"]
     delivery.mkdir(parents=True, exist_ok=True)
     name = spec.get("delivery_name") or cid
@@ -963,6 +1044,7 @@ def _deliver_staged_record(
         (subtitle_regression_audit_path, ".subtitle-regression.json"),
         (talk_filler_audit_path, ".filler-audit.json"),
         (text_manifest_path, ".text-finalization.json"),
+        (clip_context_path, ".clip-context.json"),
         (record_path, ".record.json"),
     ):
         if source is not None and source.is_file():
@@ -975,6 +1057,7 @@ def _deliver_staged_record(
         {
             "candidate_id": cid,
             "final_end_ms": final_end,
+            "duration_ms": int(record["duration_ms"]),
             "closure_sentence": audit["closure_sentence"],
             "boundary_verdict": audit["verdict"],
             "red_flags": audit.get("red_flags", []),

@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-cover-reference-overrides.v1",
+  "overrides": [
+    {
+      "candidate_id": "auto_193450_1573_1672",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "content_time_ms": 21500,
+      "source_time_ms": 1594410,
+      "reference_png_sha256": "sha256:0fc276abc083eef63a79adf6c4ba43462dd6759df1de63a5f0c6928b5f2ebe73",
+      "visible_participant_ids": [
+        "lidousha",
+        "nancho"
+      ],
+      "required_treatment": "screenshot_direct",
+      "relation_action": "李豆沙占大椅子，南町在旁边被调侃遭霸凌",
+      "authority": "Ivan-stated-20260722(封面必须李豆沙和南町双人并表现李豆沙霸凌南町)+Codex-visual-review-20260722(同源21.5s帧清晰展示两位完整角色且面部足够大)"
+    }
+  ]
+}

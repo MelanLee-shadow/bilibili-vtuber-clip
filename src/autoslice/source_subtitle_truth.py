@@ -419,6 +419,181 @@ def _forbidden_token_failure(
     }
 
 
+def _mention_postcondition_failures(
+    *,
+    entry: Mapping[str, object],
+    pieces: Sequence[Mapping[str, object]],
+    durations: Sequence[int],
+    source_aliases: Sequence[Mapping[str, object]],
+    cues: Sequence[SrtCue],
+    texts: Sequence[str],
+    row: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Verify exact source mentions instead of a window-existential string.
+
+    A broad repair interval may contain the same name several times.  Merely
+    finding the canonical spelling once in that interval allowed one correct
+    mention to hide another wrong one (the 2026-07-22 毁神/绘声 incident).
+    Optional ``mention_postconditions`` bind every required occurrence to its
+    own absolute source interval.  If fresh ASR merges two mentions into one
+    cue, their text can no longer be attributed independently and the check
+    fails closed rather than pretending both landed.
+    """
+
+    raw_conditions = entry.get("mention_postconditions")
+    if raw_conditions is None:
+        return []
+    if not isinstance(raw_conditions, list) or not raw_conditions:
+        return [{**row, "reason_code": "MENTION_POSTCONDITIONS_INVALID"}]
+
+    parent_start = int(entry["source_start_ms"])
+    parent_end = int(entry["source_end_ms"])
+    resolved: list[tuple[int, Mapping[str, object], list[int], list[str]]] = []
+    failures: list[dict[str, Any]] = []
+    for ordinal, condition in enumerate(raw_conditions, start=1):
+        if not isinstance(condition, Mapping):
+            failures.append(
+                {
+                    **row,
+                    "reason_code": "MENTION_POSTCONDITION_INVALID",
+                    "mention_ordinal": ordinal,
+                }
+            )
+            continue
+        start = condition.get("source_start_ms")
+        end = condition.get("source_end_ms")
+        required_text = str(condition.get("required_text") or "")
+        forbidden = condition.get("forbidden_tokens", [])
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not parent_start <= start < end <= parent_end
+            or not required_text
+            or not isinstance(forbidden, list)
+            or any(not isinstance(token, str) or not token for token in forbidden)
+        ):
+            failures.append(
+                {
+                    **row,
+                    "reason_code": "MENTION_POSTCONDITION_INVALID",
+                    "mention_ordinal": ordinal,
+                }
+            )
+            continue
+        mention_entry = {
+            **entry,
+            "source_start_ms": start,
+            "source_end_ms": end,
+        }
+        mention_windows = _entry_local_windows(
+            mention_entry,
+            pieces=pieces,
+            durations=durations,
+            source_aliases=source_aliases,
+        )
+        mention_targets = _target_indexes(cues, mention_windows)
+        if (
+            _source_coverage_ms(mention_windows) != end - start
+            or not mention_targets
+        ):
+            failures.append(
+                {
+                    **row,
+                    "reason_code": "MENTION_POSTCONDITION_TARGET_MISSING",
+                    "mention_ordinal": ordinal,
+                    "source_start_ms": start,
+                    "source_end_ms": end,
+                }
+            )
+            continue
+        resolved.append((ordinal, condition, mention_targets, forbidden))
+
+    cue_owners: dict[int, set[int]] = {}
+    for ordinal, _condition, mention_targets, _forbidden in resolved:
+        for cue_index in mention_targets:
+            cue_owners.setdefault(cue_index, set()).add(ordinal)
+    overlapping_ordinals = {
+        ordinal
+        for owners in cue_owners.values()
+        if len(owners) > 1
+        for ordinal in owners
+    }
+
+    for ordinal, condition, mention_targets, forbidden in resolved:
+        audit_row = {
+            **row,
+            "mention_ordinal": ordinal,
+            "mention_source_start_ms": int(condition["source_start_ms"]),
+            "mention_source_end_ms": int(condition["source_end_ms"]),
+            "mention_cue_indexes": [index + 1 for index in mention_targets],
+        }
+        if ordinal in overlapping_ordinals:
+            failures.append(
+                {
+                    **audit_row,
+                    "reason_code": "MENTION_POSTCONDITION_TARGET_NOT_ISOLATED",
+                }
+            )
+            continue
+        joined = "".join(texts[index] for index in mention_targets)
+        required_text = str(condition["required_text"])
+        if _normalize_truth_surface(required_text) not in _normalize_truth_surface(joined):
+            failures.append(
+                {
+                    **audit_row,
+                    "reason_code": "MENTION_REQUIRED_TEXT_MISSING",
+                    "required_text": required_text,
+                    "actual_text": joined,
+                }
+            )
+            continue
+        hits = [token for token in forbidden if token.casefold() in joined.casefold()]
+        if hits:
+            failures.append(
+                {
+                    **audit_row,
+                    "reason_code": "MENTION_FORBIDDEN_TOKEN_SURVIVED",
+                    "forbidden_token_hits": hits,
+                }
+            )
+    return failures
+
+
+def _source_truth_postcondition_failures(
+    entry: Mapping[str, object],
+    pieces: Sequence[Mapping[str, object]],
+    durations: Sequence[int],
+    source_aliases: Sequence[Mapping[str, object]],
+    cues: Sequence[SrtCue],
+    texts: Sequence[str],
+    target_indexes: Sequence[int],
+    row: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    forbidden = _forbidden_token_failure(
+        entry=entry,
+        texts=texts,
+        target_indexes=target_indexes,
+        row=dict(row),
+    )
+    if forbidden is not None:
+        failures.append(forbidden)
+    failures.extend(
+        _mention_postcondition_failures(
+            entry=entry,
+            pieces=pieces,
+            durations=durations,
+            source_aliases=source_aliases,
+            cues=cues,
+            texts=texts,
+            row=row,
+        )
+    )
+    return failures
+
+
 def _source_truth_audit_row(
     *,
     entry: Mapping[str, object],
@@ -778,14 +953,12 @@ def apply_source_subtitle_truth(
 
         row["before"] = before
         row["after"] = [texts[index] for index in target_indexes]
-        forbidden_failure = _forbidden_token_failure(
-            entry=raw_entry,
-            texts=texts,
-            target_indexes=target_indexes,
-            row=row,
+        failures = _source_truth_postcondition_failures(
+            raw_entry, pieces, durations, source_aliases, cues, texts,
+            target_indexes, row,
         )
-        if forbidden_failure is not None:
-            audit["failures"].append(forbidden_failure)
+        if failures:
+            audit["failures"].extend(failures)
             continue
         if changed:
             audit["applied"].append(row)

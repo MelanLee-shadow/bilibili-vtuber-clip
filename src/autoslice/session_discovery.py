@@ -19,6 +19,50 @@ from src.autoslice.story_contract import canonicalize_relation_summary
 
 
 _runner = RunnerProxy()
+_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _verified_state_source_sha256(state: dict, segment: Path) -> str | None:
+    """Return a persisted whole-source hash only under its recovery authority.
+
+    Ordinary recorder state has no whole-file hash and must keep the relation
+    binding basename-only.  Recovery state may name the official complete
+    replay, but only after the source-inventory gate has passed and the same
+    recording basename remains in that audited inventory.
+    """
+
+    value = str(state.get("source_sha256") or "")
+    if _SHA256_RX.fullmatch(value) is None:
+        return None
+    if state.get("source_authority") != "OFFICIAL_COMPLETE_REPLAY":
+        return None
+    inventory = state.get("source_integrity")
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("status") != "PASS"
+        or inventory.get("can_select") is not True
+        or inventory.get("issues") not in ([], None)
+    ):
+        return None
+    consumer_segments = inventory.get("consumer_segments")
+    if not isinstance(consumer_segments, list) or segment.name not in {
+        Path(str(path)).name for path in consumer_segments
+    }:
+        return None
+    return value
+
+
+def _session_relation_for_state(
+    date: str, segment: Path, state: dict
+) -> dict[str, object] | None:
+    source_sha256 = _verified_state_source_sha256(state, segment)
+    if source_sha256 is None:
+        return _runner.session_relation_for_segment(date, segment)
+    return _runner.session_relation_for_segment(
+        date,
+        segment,
+        source_sha256=source_sha256,
+    )
 
 
 def _normalized_live_start_id(raw: object) -> str | None:
@@ -105,7 +149,7 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
             session_id = recording_session_id(segment, date)
             mapping[segment.stem] = session_id
             changed = True
-        relation = _runner.session_relation_for_segment(date, segment)
+        relation = _session_relation_for_state(date, segment, state)
         if relation is not None and relation_mapping.get(segment.stem) != relation:
             relation_mapping[segment.stem] = relation
             changed = True
@@ -429,7 +473,7 @@ def discover_segments(date: str, state: dict) -> None:
         if not session_id:
             session_id = recording_session_id(segment, date)
             state["segment_sessions"][stem] = session_id
-        session_relation = _runner.session_relation_for_segment(date, segment)
+        session_relation = _session_relation_for_state(date, segment, state)
         if session_relation is not None:
             state["session_relation_authority"] = session_relation
         for cand in candidates:

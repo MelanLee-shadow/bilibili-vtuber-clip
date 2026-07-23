@@ -70,6 +70,57 @@ ISLAND_CONTINUES_FLAG_MS = 1_500
 def _norm_cue_text(text: str) -> str:
     return "".join(str(text).split())
 
+
+_UNFINISHED_TAIL_SUFFIXES = (
+    "然后",
+    "但是",
+    "因为",
+    "所以",
+    "如果",
+    "虽然",
+    "而且",
+    "不过",
+    "就是",
+    "比如",
+    "包括",
+    "关于",
+    "对于",
+    "要跟",
+    "跟第",
+    "第",
+    "把",
+    "被",
+    "给",
+)
+
+
+def syntactic_tail_audit(text: str) -> dict[str, object]:
+    """Conservative deterministic guard against obvious half-sentence cuts.
+
+    It deliberately returns ``UNKNOWN`` for ordinary punctuation-free speech;
+    the independent semantic reviewer must prove that case.  Only hard lexical
+    continuations are blocked here, so this guard cannot invent missing words.
+    """
+
+    normalized = _norm_cue_text(text).rstrip("，,。.!！?？~～")
+    if not normalized:
+        return {"status": "INCOMPLETE", "reason": "empty_closure_text"}
+    suffix = next(
+        (value for value in _UNFINISHED_TAIL_SUFFIXES if normalized.endswith(value)),
+        None,
+    )
+    if suffix is not None:
+        return {
+            "status": "INCOMPLETE",
+            "reason": "unfinished_function_tail",
+            "matched_suffix": suffix,
+        }
+    if str(text).rstrip().endswith(("……", "...", "…")):
+        return {"status": "INCOMPLETE", "reason": "trailing_ellipsis"}
+    if str(text).rstrip().endswith(("。", "！", "!", "？", "?")):
+        return {"status": "COMPLETE", "reason": "terminal_punctuation"}
+    return {"status": "UNKNOWN", "reason": "punctuation_free_spoken_clause"}
+
 def boundary_red_flags(
     *,
     audit: dict,
@@ -100,6 +151,9 @@ def boundary_red_flags(
         flags.append("next_sentence_enters_tail_pad")
     if sanitized and _norm_cue_text(sanitized[-1].text) != _norm_cue_text(closure_text):
         flags.append("closure_not_final_subtitle")
+    syntax = syntactic_tail_audit(closure_text)
+    if syntax["status"] == "INCOMPLETE":
+        flags.append(f"syntactically_incomplete_closure:{syntax['reason']}")
     return flags
 
 BOUNDARY_REPAIR_EXTEND_CAP_MS = 30_000

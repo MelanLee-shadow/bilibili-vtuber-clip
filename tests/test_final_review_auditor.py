@@ -241,6 +241,56 @@ def test_auditor_rejects_reviewer_only_proper_name():
     assert findings[0]["suggestion_rejected_reason"] == "ENTITY_SOURCE_SURFACE_UNWITNESSED"
 
 
+def test_parallel_repeat_recovers_misclassified_entity_provenance_but_keeps_audio_gate():
+    """7/22 大哥骂赢案：终审已经发现同槽重复，却因模型把 entity
+    标成 phonetic 且漏 source_surface 而只披露。完整替换词面在后文逐字
+    重复时可恢复 provenance，但引入注册实体仍不得走纯文本自动改写。"""
+
+    source = _srt(
+        "小李又被大哥骂赢了",
+        "哪里又变成小李被大N霸凌了",
+    )
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "entity",
+                    "proposed_full_cue": "小李又被大N霸凌了",
+                    "repair_class": "phonetic",
+                    "evidence_cue_ids": [2],
+                    "why": "后文立即平行复述同一句式",
+                }
+            ]
+        ),
+        extract_json=_extract,
+    )
+
+    finding = findings[0]
+    assert finding["suspect"] == "哥骂赢"
+    assert finding["suggestion"] == "N霸凌"
+    assert finding["repair_class"] == "source_backed_entity"
+    assert finding["candidate_provenance"] == {
+        "kind": "transcript_context",
+        "surface": "N霸凌",
+        "nearest_cue_distance": 1,
+    }
+    assert finding["source_surface_inference"]["basis"] == (
+        "exact_replacement_repeated_in_local_authority"
+    )
+
+    output, audit = route_findings(
+        source,
+        findings,
+        protected_term_set=frozenset(),
+        entity_surface_set=frozenset({"大N"}),
+    )
+    assert "小李又被大哥骂赢了" in output
+    assert audit["findings"][0]["routed"] == "disclosure"
+    assert audit["findings"][0]["entity_surface_conflict"] is True
+
+
 def test_auditor_cannot_bypass_entity_provenance_by_mislabeling_latin_name():
     source = _srt("那群 P 7赖我的群绝对不止有我一个人")
     findings = audit_final_subtitles(
@@ -525,6 +575,83 @@ def test_plain_insertion_without_source_provenance_still_rejected():
     )
 
 
+def test_acoustic_partial_delete_removes_only_unspoken_prefix():
+    source = _srt("我草，乱说的啊")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "乱说的啊",
+                    "repair_class": "acoustic_delete",
+                    "why": "前缀疑似无声，后半句有口播",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+    )
+    assert findings[0]["suggestion"] == ""
+    routed, route_audit = route_findings(source, findings)
+    assert routed == source
+    assert route_audit["findings"][0]["routed"] == "disclosure"
+
+    def strict_delete(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "INCOMPATIBLE",
+            "proposed_fit": "SUPPORTED",
+        }
+
+    repaired, audit = adjudicate_context_finding(
+        source, findings[0], entity_verifier=strict_delete
+    )
+    assert "我草" not in repaired
+    assert "乱说的啊" in repaired
+    assert audit["policy_branch"] == "ACOUSTIC_PARTIAL_DELETE_STRICT_APPLY"
+
+
+def test_acoustic_drop_cue_requires_whole_target_inaudible():
+    source = _srt("我草")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "",
+                    "repair_class": "acoustic_drop_cue",
+                    "why": "整条疑似无声幻听",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+    )
+    assert findings[0]["suspect"] == "我草"
+
+    def inaudible(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": False,
+            "current_fit": "UNRESOLVED",
+            "proposed_fit": "UNRESOLVED",
+        }
+
+    repaired, audit = adjudicate_context_finding(
+        source, findings[0], entity_verifier=inaudible
+    )
+    assert repaired == ""
+    assert audit["repaired"] is True
+    assert audit["policy_branch"] == "TARGET_INAUDIBLE_DROP_CUE"
+
+
 def test_witnessed_near_homophone_applies_without_audio():
     """T1 车道（2026-07-19 额度事故重构）：词表见证 + 拼音近音 + 非实体选边
     → 纯文本应用，零外部调用（核酸天下→和成天下案型）。"""
@@ -617,9 +744,8 @@ def test_witnessed_but_phonetically_distant_stays_disclosure():
     assert audit["findings"][0]["routed"] == "disclosure"
 
 
-def test_widened_span_admits_syllable_count_change():
-    """醉堆→这一堆案：裸 span（醉/这一 0.44）被量法冤枉——有界扩窗带上
-    共享锚字「堆」后 ~0.71 过 0.65 档，纯文本修复。"""
+def test_same_derived_transcript_witness_requires_acoustic_confirmation():
+    """醉堆→这一堆可以由前文召回，但同一 ASR 派生文本不能自证落字。"""
     srt = _srt("旁边这一堆都是新来的", "醉堆小李好可爱哦")
     findings = audit_final_subtitles(
         srt,
@@ -639,12 +765,13 @@ def test_widened_span_admits_syllable_count_change():
     )
     assert findings[0]["candidate_provenance"]["kind"] == "transcript_context"
     assert findings[0]["candidate_provenance"]["nearest_cue_distance"] == 1
+    assert findings[0]["force_acoustic"] is True
+    assert findings[0]["correlated_text_witness"] is True
 
     output, audit = route_findings(srt, findings)
-    assert "这一堆小李好可爱哦" in output
+    assert "醉堆小李好可爱哦" in output
     row = audit["findings"][0]
-    assert row["routed"] == "witnessed_near_homophone_fix"
-    assert row["near_homophone_gate"]["tier"] in {"widened_span", "nearby_transcript_witness"}
+    assert row["routed"] == "disclosure"
 
 
 def test_widened_span_does_not_admit_absurd_shared_tail():
@@ -670,4 +797,72 @@ def test_widened_span_does_not_admit_absurd_shared_tail():
     )
     output, audit = route_findings(srt, findings)
     assert "苹果天下" in output
+    assert audit["findings"][0]["routed"] == "disclosure"
+
+
+def test_candidate_only_memory_cannot_be_promoted_to_source_witness():
+    source = _srt("就是霸凌的那种小的吧")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "就是霸凌的那种晓得吧",
+                    "repair_class": "source_backed_entity",
+                    "source_surface": "晓得吧",
+                    "why": "长期口癖候选",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+        candidate_context_text="idiolect candidate only: 晓得吧",
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["suggestion"] is None
+    assert (
+        findings[0]["suggestion_rejected_reason"]
+        == "ENTITY_SOURCE_SURFACE_UNWITNESSED"
+    )
+
+
+def test_candidate_only_memory_forces_acoustic_even_when_homophone():
+    source = _srt("就是霸凌的那种小的吧")
+    memory_id = "lidousha.idiolect.xiaodeba.r1"
+    candidate_context = {
+        "speech_memory": {
+            "ledger_sha256": "sha256:" + "a" * 64,
+            "entries": [
+                {
+                    "memory_id": memory_id,
+                    "candidate_canonicals": ["晓得吧"],
+                }
+            ],
+        }
+    }
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "就是霸凌的那种晓得吧",
+                    "repair_class": "phonetic",
+                    "candidate_memory_id": memory_id,
+                    "why": "长期口癖候选",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+        candidate_context_text="candidate only",
+        candidate_context=candidate_context,
+    )
+    assert findings[0]["force_acoustic"] is True
+    assert findings[0]["candidate_provenance"]["kind"] == "speech_memory_candidate"
+
+    output, audit = route_findings(source, findings, protected_term_set=frozenset())
+    assert "小的吧" in output
     assert audit["findings"][0]["routed"] == "disclosure"

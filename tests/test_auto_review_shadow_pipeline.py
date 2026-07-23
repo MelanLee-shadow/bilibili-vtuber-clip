@@ -3465,6 +3465,69 @@ def test_publish_staging_retries_banned_hype_word_then_accepts_clean_rewrite(tmp
     assert "已被否决" not in calls[0]
 
 
+def test_publish_staging_retries_unbalanced_title_before_cover(
+    tmp_path, monkeypatch
+):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"placeholder video")
+    srt = tmp_path / "clip.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n搭档把椅子让给小李\n",
+        encoding="utf-8",
+    )
+    record = {
+        "status": "MATERIALIZED",
+        "media_path": str(media),
+        "subtitle_path": str(srt),
+        "artifact_hashes": {},
+    }
+    calls: list[str] = []
+    responses = [
+        '{"title": "看着像不良帅姐的搭档把大椅子让给小李（误"}',
+        '{"title": "看着像不良帅姐的搭档把大椅子让给小李，自己缩角落假哭"}',
+    ]
+
+    def retry_llm(prompt: str) -> str:
+        calls.append(prompt)
+        return responses[min(len(calls) - 1, len(responses) - 1)]
+
+    cover_calls: list[str] = []
+
+    def stage_cover(_record, **kwargs):
+        cover_calls.append(str(kwargs["title"]))
+        cover_path = tmp_path / "cover.png"
+        cover_path.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover_path),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    monkeypatch.setattr(
+        shadow_pipeline, "_stage_lidousha_ai_cover", stage_cover
+    )
+
+    staged = shadow_pipeline._stage_publish_draft(
+        record,
+        candidate_id="talk-unbalanced-title",
+        title="原始job标题",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=retry_llm,
+    )
+
+    staging = staged["publish_staging"]
+    assert len(calls) == 2
+    assert "成对符号未闭合" in calls[1]
+    assert staging["title"] == (
+        "【李豆沙】看着像不良帅姐的搭档把大椅子让给小李，自己缩角落假哭"
+    )
+    assert staging["title_policy_violations"] == []
+    assert staging["cover_status"] == "AI_COVER_READY"
+    assert cover_calls == [staging["title"]]
+
+
 def test_publish_staging_binds_title_to_selected_main_hook_and_self_heals_mismatch(tmp_path):
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
@@ -4377,6 +4440,42 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
     assert Image.open(str(result["cover_path"])).size == (1920, 1080)
 
 
+def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(
+    tmp_path, monkeypatch
+):
+    """手定标题锁的是完整文字，不得再通过 no-punch 间接强制 AI 重绘。"""
+
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.delenv("CPA_BASE_URL", raising=False)
+    monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "screenshot")
+    media = _write_synthetic_performance_clip(tmp_path)
+    manual_cover_text = "最包容异性恋的直播间，看到男角色只能说出一句不熟"
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="manual-shot",
+        title="【李豆沙】" + manual_cover_text,
+        cover_text=manual_cover_text,
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("manual screenshot must not call CPA redraw")
+        ),
+        punch_allowed=False,
+    )
+
+    assert result["status"] == "AI_COVER_READY", result
+    generation = result["cover_generation"]
+    assert generation["method"] == "screenshot_direct"
+    assert generation["cover_text"] == manual_cover_text
+    assert generation["cover_text_mode"] == "full"
+    assert generation["route_decision"]["reason"] == "mode=screenshot (forced)"
+
+
 def test_screenshot_poster_materializes_six_distinct_background_families(tmp_path):
     """The diversity slot must change pixels, not only metadata."""
 
@@ -4449,13 +4548,23 @@ def test_cover_treatment_router_by_moment_strength():
         punch_allowed=True,
         frame_selection=sel(4.35, dispersion=0.42),
     )[0] == "screenshot_polish"
-    # 铁律分支：歌切 / 手定标题 / 无选帧 → 全图重绘；强制模式直通。
+    # 歌切 / 无选帧 → 全图重绘；手定标题只锁文字，不得偷偷决定视觉路线。
     assert decide(cover_mode="auto", is_song=True, punch_allowed=True, frame_selection=sel(9.0))[0] == "cpa_redraw"
-    assert decide(cover_mode="auto", is_song=False, punch_allowed=False, frame_selection=sel(9.0))[0] == "cpa_redraw"
+    assert decide(cover_mode="auto", is_song=False, punch_allowed=False, frame_selection=sel(9.0))[0] == "screenshot_direct"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=None)[0] == "cpa_redraw"
     assert decide(cover_mode="screenshot", is_song=False, punch_allowed=True, frame_selection=sel(0.5))[0] == "screenshot_direct"
     assert decide(cover_mode="polish", is_song=False, punch_allowed=True, frame_selection=sel(9.0))[0] == "screenshot_polish"
     assert decide(cover_mode="cpa", is_song=False, punch_allowed=True, frame_selection=sel(9.0))[0] == "cpa_redraw"
+    assert decide(
+        cover_mode="auto",
+        is_song=False,
+        punch_allowed=True,
+        frame_selection=sel(7.2, subject=False),
+        verified_stream_frame=True,
+    ) == (
+        "screenshot_direct",
+        "hash-bound source frame verifies all required participants",
+    )
 
 
 def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):

@@ -4,7 +4,7 @@
 Ivan's goal (2026-07-05): when a 李豆沙 stream ends, free starts the FULL
 canonical pipeline by itself — no human kick-off:
 
-    stream end (blrec live_status via API)
+    stream end (fresh recorder-neutral status from BililiveRecorder adapter)
       → per new segment: BCUT aggregate ASR transcript (ms timeline)
       → semantic recall candidate selection (CPA, viewer-perspective, with the
         curated slice-selection metric; deterministic fallback lanes if the
@@ -28,7 +28,7 @@ HARD LESSONS BAKED IN (first real run, 2026-07-06):
   clips are never produced with cid titles / cid-text covers.
 - **Title is part of the product**: a pick whose title generation failed is
   NOT delivered; it stays pending and is retried on resume (bounded).
-- **Dead segments**: blrec restart stubs (a few KB of mp4) and segments whose
+- **Dead segments**: recorder restart stubs (a few KB of mp4) and segments whose
   BCUT transcription fails twice are marked dead and never retried again (the
   first run retried a 2.9KB stub every 10 minutes forever).
 - **Subtitle fonts**: the sapphire72 ASS names "Microsoft YaHei"; Linux needs
@@ -151,13 +151,19 @@ PROFILE_GUEST_SPEAKER_LABEL = CHANNEL_PROFILE.guest_speaker_label
 HOST_VOCAL_PRESENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_present")
 
 
-def session_relation_for_segment(date: str, segment: Path) -> dict[str, object] | None:
+def session_relation_for_segment(
+    date: str,
+    segment: Path,
+    *,
+    source_sha256: str | None = None,
+) -> dict[str, object] | None:
     """Resolve the committed relation ledger independently of capture sidecars."""
 
     return resolve_session_relation(
         ledger_path=CHANNEL_PROFILE.asset_file("session_relation_ledger"),
         date=date,
         recording_path=segment,
+        source_sha256=source_sha256,
     )
 HOST_VOCAL_ABSENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_absent")
 VERIFIED_HOST_SINGING_DECISION = CHANNEL_PROFILE.decision("verified_host_singing")
@@ -196,7 +202,15 @@ REC_ROOT = Path(
         f"/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/{ROOM}",
     )
 )
-BLREC_PORT = int(os.environ.get("AUTOSLICE_BLREC_PORT", "22333"))
+RECORDER_STATUS_PATH = Path(
+    os.environ.get(
+        "AUTOSLICE_RECORDER_STATUS_PATH",
+        "/opt/bilive/recording/status.json",
+    )
+)
+RECORDER_STATUS_MAX_AGE_SECONDS = int(
+    os.environ.get("AUTOSLICE_RECORDER_STATUS_MAX_AGE_SECONDS", "180")
+)
 BILIVE_ENV = Path("/opt/bilive/.env")
 CPA_ENV = BASE / "cpa.env"
 HOST_VOCAL_PYTHON = Path(os.environ.get("AUTOSLICE_HOST_VOCAL_PYTHON", str(BASE / "venv-diar/bin/python")))
@@ -268,7 +282,7 @@ DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
 # 30-minute windows and need enough global slack for review gates before the
 # per-live-session top-5 delivery selection.
 PER_SEGMENT_CANDIDATES = 12
-MIN_SEGMENT_BYTES = 5_000_000  # blrec restart stubs are a few KB — dead on sight
+MIN_SEGMENT_BYTES = 5_000_000  # recorder restart stubs are a few KB — dead on sight
 BCUT_MAX_ATTEMPTS = 2
 TITLE_MAX_ATTEMPTS = 3
 COVER_REPAIR_MAX_ATTEMPTS = 3  # one attempt per tick → retries spread ~10min apart
@@ -1128,21 +1142,33 @@ def cjk_font_present() -> bool:
     return bool(re.search(r"CJK|WenQuan|LXGW|YaHei|PingFang", completed.stdout))
 
 
-def blrec_live_status() -> bool | None:
-    """True=live, False=not live, None=unknown (API down → fail-safe skip)."""
-    key = load_env_file(BILIVE_ENV).get("RECORD_KEY", "")
-    if not key:
-        return None
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{BLREC_PORT}/api/v1/tasks/{ROOM}/data",
-        headers={"x-api-key": key},
-    )
+def recorder_live_status() -> bool | None:
+    """True=active, False=sealed, None=unknown (stale/down → fail-safe skip)."""
+
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
-        return int(data.get("room_info", {}).get("live_status", 0)) == 1
-    except Exception as exc:  # noqa: BLE001 — any API failure means "unknown"
-        log(f"blrec API unavailable: {exc}")
+        if RECORDER_STATUS_PATH.is_symlink() or not RECORDER_STATUS_PATH.is_file():
+            raise ValueError("status file missing or symlinked")
+        data = json.loads(RECORDER_STATUS_PATH.read_text(encoding="utf-8"))
+        if data.get("schema_version") != "recorder-neutral-status.v1":
+            raise ValueError("status schema mismatch")
+        if str(data.get("room_id")) != str(ROOM):
+            raise ValueError("status room mismatch")
+        generated = float(data["generated_at_epoch"])
+        age = time.time() - generated
+        if age < -300 or age > RECORDER_STATUS_MAX_AGE_SECONDS:
+            raise ValueError(f"status stale ({age:.0f}s)")
+        if data.get("service_reachable") is not True or data.get("error"):
+            raise ValueError(str(data.get("error") or "recorder service unreachable"))
+        if data.get("finalizing") is True:
+            return True
+        if data.get("streaming") is True or data.get("recording") is True:
+            return True
+        live_status = data.get("live_status")
+        if live_status not in (0, 1, False, True):
+            raise ValueError("live status is unknown")
+        return bool(live_status)
+    except Exception as exc:  # noqa: BLE001 — any status failure means "unknown"
+        log(f"recorder status unavailable: {exc}")
         return None
 
 
@@ -1813,10 +1839,10 @@ def tick() -> int:
         write_heartbeat(f"SOURCE_UNAVAILABLE({source_err}) dates=(skipped)")
         log(f"recordings source UNAVAILABLE: {source_err} — tick aborted, alert written")
         return 0
-    live = blrec_live_status()
+    live = recorder_live_status()
     if _live_hold_active(live):
         if live is None:
-            write_heartbeat("live=? source=ok (blrec API unavailable — fail-safe skip)")
+            write_heartbeat("live=? source=ok (recorder status unavailable — fail-safe skip)")
             log("live status unknown — fail-safe skip this tick")
         else:
             write_heartbeat("live=True source=ok (waiting for stream end)")

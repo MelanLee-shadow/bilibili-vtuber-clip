@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_193450_3573_3665",
+  "required_payload_substrings": [
+    "姐感妹秦秦秦她是一个非常闹腾的小朋友",
+    "这是姐感的妹妹",
+    "男的咋了",
+    "这个直播间就是不熟啊",
+    "其实是最包容异性恋的直播间"
+  ],
+  "required_any_substring_groups": [],
+  "forbidden_payload_substrings": [
+    "晴，其实",
+    "她就叫晴",
+    "这个，这个是桔梗的妹妹",
+    "真是傻啊",
+    "这直播间就是男的不熟啊"
+  ],
+  "forbidden_exact_cues": []
+}

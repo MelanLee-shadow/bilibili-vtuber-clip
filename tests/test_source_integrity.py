@@ -46,6 +46,40 @@ def test_recording_inventory_accepts_raw_sidecars_with_consumable_mp4(tmp_path):
     assert audit["consumer_segments"] == [str(date_dir / f"{stem}.mp4")]
 
 
+def test_recording_inventory_blocks_closed_bililive_recorder_flv_without_mp4(
+    tmp_path,
+):
+    date_dir = tmp_path / "2026-07-23"
+    date_dir.mkdir()
+    stem = "22966160_20260723-19-35-15"
+    (date_dir / f"{stem}.flv").write_bytes(b"closed-official-recorder-source")
+    (date_dir / f"{stem}.xml").write_text(
+        '<i><BililiveRecorder version="2.18.0"/></i>',
+        encoding="utf-8",
+    )
+
+    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+
+    assert audit["status"] == "BLOCKED"
+    assert audit["can_select"] is False
+    assert [issue["code"] for issue in audit["issues"]] == [
+        "CLOSED_FLV_WITHOUT_MP4"
+    ]
+
+
+def test_recording_inventory_accepts_flv_with_atomic_adapter_mp4(tmp_path):
+    date_dir = tmp_path / "2026-07-23"
+    date_dir.mkdir()
+    stem = "22966160_20260723-19-35-15"
+    (date_dir / f"{stem}.flv").write_bytes(b"source")
+    (date_dir / f"{stem}.mp4").write_bytes(b"consumer")
+
+    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+
+    assert audit["status"] == "PASS"
+    assert audit["consumer_segments"] == [str(date_dir / f"{stem}.mp4")]
+
+
 def test_danmaku_outruns_tiny_media_requires_replay_compensation():
     ledger = build_source_range_ledger(
         room_id="22966160",

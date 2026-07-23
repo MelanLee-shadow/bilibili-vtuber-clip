@@ -2404,6 +2404,71 @@ def test_session_relation_authority_does_not_bleed_into_solo_stream_same_date(
     assert "session_relation_authority" not in state["pending_talk"][1]
 
 
+def test_session_relation_binds_verified_official_replay_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    segment = tmp_path / "22966160_20260722-19-34-50.mp4"
+    segment.write_bytes(b"official replay fixture")
+    source_sha256 = "sha256:" + "a" * 64
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [segment])
+    monkeypatch.setattr(
+        runner,
+        "session_relation_for_segment",
+        lambda date, path, **kwargs: calls.append(
+            {"date": date, "path": path, **kwargs}
+        )
+        or {
+            "schema_version": "session-relation-authority.v1",
+            "relation_id": "lidousha-nancho",
+            "state": "CONFIRMED",
+            "bound_source_sha256": kwargs.get("source_sha256"),
+        },
+    )
+    state = {
+        "source_sha256": source_sha256,
+        "source_authority": "OFFICIAL_COMPLETE_REPLAY",
+        "source_integrity": {
+            "status": "PASS",
+            "can_select": True,
+            "consumer_segments": [str(segment)],
+            "issues": [],
+        }
+    }
+
+    assert runner.annotate_state_sessions("2026-07-22", state) is True
+    assert calls[0]["source_sha256"] == source_sha256
+    assert state["session_relation_authority"]["bound_source_sha256"] == source_sha256
+
+
+def test_session_relation_does_not_bind_unverified_declared_source_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    segment = tmp_path / "22966160_20260722-19-34-50.mp4"
+    segment.write_bytes(b"unverified fixture")
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [segment])
+    monkeypatch.setattr(
+        runner,
+        "session_relation_for_segment",
+        lambda date, path, **kwargs: calls.append(kwargs) or None,
+    )
+    state = {
+        "source_sha256": "sha256:" + "b" * 64,
+        "source_authority": "RECORDER",
+        "source_integrity": {
+            "status": "PASS",
+            "can_select": True,
+            "consumer_segments": [str(segment)],
+            "issues": [],
+        },
+    }
+
+    runner.annotate_state_sessions("2026-07-22", state)
+    assert calls == [{}]
+
+
 def test_session_annotation_recovers_state_segment_missing_from_inventory(tmp_path, monkeypatch):
     segment = tmp_path / "22966160_20260716-20-30-03.mp4"
     segment.write_bytes(b"media")
@@ -4373,7 +4438,7 @@ def test_tick_source_unavailable_is_loud_and_fail_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "cjk_font_present", lambda: True)
     monkeypatch.setattr(runner, "source_health_error", lambda: "Transport endpoint is not connected")
     touched = []
-    monkeypatch.setattr(runner, "blrec_live_status", lambda: touched.append(1) or False)
+    monkeypatch.setattr(runner, "recorder_live_status", lambda: touched.append(1) or False)
     assert runner.tick() == 0
     heartbeat = (tmp_path / "reports" / "heartbeat.txt").read_text(encoding="utf-8")
     assert "SOURCE_UNAVAILABLE" in heartbeat
@@ -4400,6 +4465,45 @@ def test_live_hold_ignored_only_for_closed_date_isolated_base(tmp_path, monkeypa
     today_cst = _t.strftime("%Y-%m-%d", _t.gmtime(_t.time() + 8 * 3600))
     (tmp_path / today_cst).mkdir()
     assert runner._live_hold_active(True) is True
+
+
+def test_recorder_live_status_is_freshness_bound_and_holds_during_finalize(
+    tmp_path, monkeypatch
+):
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(runner, "RECORDER_STATUS_PATH", status_path)
+    monkeypatch.setattr(runner, "RECORDER_STATUS_MAX_AGE_SECONDS", 180)
+    monkeypatch.setattr(runner.time, "time", lambda: 1_800_000_000.0)
+
+    base = {
+        "schema_version": "recorder-neutral-status.v1",
+        "backend": "BililiveRecorder",
+        "generated_at_epoch": 1_799_999_950.0,
+        "room_id": runner.ROOM,
+        "service_reachable": True,
+        "error": None,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "live_status": 0,
+    }
+    status_path.write_text(json.dumps(base), encoding="utf-8")
+    assert runner.recorder_live_status() is False
+
+    status_path.write_text(json.dumps({**base, "finalizing": True}), encoding="utf-8")
+    assert runner.recorder_live_status() is True
+
+    status_path.write_text(
+        json.dumps({**base, "generated_at_epoch": 1_799_999_000.0}),
+        encoding="utf-8",
+    )
+    assert runner.recorder_live_status() is None
+
+    status_path.write_text(
+        json.dumps({**base, "service_reachable": False, "live_status": None}),
+        encoding="utf-8",
+    )
+    assert runner.recorder_live_status() is None
 
 
 def test_session_sealed_requires_stable_inventory(tmp_path, monkeypatch):

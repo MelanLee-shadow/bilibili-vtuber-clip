@@ -16,8 +16,8 @@
 
 - 权威：`assets/lidousha/title_style.md`（结构谱系、词库、违禁词）+ `assets/lidousha/title_policy.json`（违禁词/长度的确定性门，`title_policy.py` 加载）。
 - 核心原则：标题围绕李豆沙本人；替换成任何别的主播还成立的标题就是失败。
-- Ivan 手定标题一字不改（`title_llm_call=None` 直通，不过任何门）。
-- 自动标题强制【李豆沙】前缀、12–30 字（含前缀）、违禁词门 + selection hook 锚点校验（`publish_staging.py`）。
+- Ivan 手定标题一字不改（`title_llm_call=None` 直通内容策略）；结构安全门仍只做 fail-closed 校验，不擅自改写标题。
+- 自动标题强制【李豆沙】前缀、12–48 字（含前缀）、违禁词门 + selection hook 锚点校验（`publish_staging.py`）。`（）()/【】[]/《》/“”/‘’` 必须按栈正确成对；多余右符号、交叉闭合或缺右符号均记 `unbalanced_title_marks`，在任何封面调用前否决并进入有界重写，重试仍错则标题权威失败关闭。
 
 ## 封面嵌字与标题的关系
 

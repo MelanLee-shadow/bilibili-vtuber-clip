@@ -1,0 +1,96 @@
+services:
+  bilive:
+    image: ghcr.io/timerring/bilive:0.3.1@sha256:0650e490c713622a33abc8ba3a2bf9d07feb768f3e8e599b4d51ffa7ec3a7b2b
+    container_name: bilive_record
+    init: true
+    restart: unless-stopped
+    working_dir: /app
+    env_file:
+      - /opt/bilive/.env
+    volumes:
+      - /opt/bilive/app:/app
+      - /opt/bilive/config/bilive.toml:/app/bilive.toml:ro
+      - /opt/bilive/config/settings.toml:/app/settings.toml:ro
+      - /opt/bilive/logs:/app/logs
+      - /opt/bilive/recording:/app/recording-state:ro
+      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/app/Videos:rshared
+    command:
+      - /bin/bash
+      - -lc
+      - exec tail -f /dev/null
+
+  bililive-adapter:
+    image: ghcr.io/timerring/bilive:0.3.1@sha256:0650e490c713622a33abc8ba3a2bf9d07feb768f3e8e599b4d51ffa7ec3a7b2b
+    container_name: bililive_adapter
+    init: true
+    restart: unless-stopped
+    working_dir: /state
+    read_only: true
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      TZ: Asia/Shanghai
+    tmpfs:
+      - /tmp
+    volumes:
+      - /opt/bilive/recording:/state:rw
+      - /opt/bilive/recorder.env:/run/secrets/brec_http_env:ro
+      - /opt/bilive/bililive-recorder/config.json:/run/secrets/brec_config.json:ro
+      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/adapter/Videos:rshared
+    command:
+      - python3
+      - /state/bililive_recorder_adapter.py
+      - --serve
+      - --webhook-bind
+      - 0.0.0.0
+      - --endpoint
+      - http://bililive-recorder:2356/graphql
+      - --record-root
+      - /adapter/Videos/22966160
+      - --status-path
+      - /state/status.json
+      - --state-path
+      - /state/adapter-state.json
+      - --webhook-journal
+      - /state/webhook-events.jsonl
+      - --env-file
+      - /run/secrets/brec_http_env
+      - --recorder-config
+      - /run/secrets/brec_config.json
+      - --inactive-grace-seconds
+      - "360"
+      - --poll-interval
+      - "60"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import socket; socket.create_connection(("127.0.0.1", 18080), 2).close()
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+
+  bililive-recorder:
+    image: ghcr.io/bililiverecorder/bililiverecorder:2.18.0@sha256:f33bb4e53fe8dd6d725d49385a8b6b339e512b5b8eee46728f9cdadca189f061
+    container_name: bililive_recorder
+    init: true
+    restart: unless-stopped
+    env_file:
+      - /opt/bilive/recorder.env
+    environment:
+      TZ: Asia/Shanghai
+      UMASK: "077"
+    ports:
+      - "127.0.0.1:23566:2356"
+    volumes:
+      - /opt/bilive/bililive-recorder:/rec
+      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/rec/Videos:rshared
+    depends_on:
+      bililive-adapter:
+        condition: service_healthy
+    command:
+      - run
+      - --http-bind
+      - http://0.0.0.0:2356
+      - /rec

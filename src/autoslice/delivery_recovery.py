@@ -8,6 +8,9 @@ execution modes.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import re
 import time
 from pathlib import Path
@@ -16,6 +19,428 @@ from src.autoslice.runner_proxy import RunnerProxy
 
 
 _runner = RunnerProxy()
+
+_PIPELINE_FINGERPRINT_RX = re.compile(r"sha256:[0-9a-f]{64}")
+_SAFE_CANDIDATE_ID_RX = re.compile(r"[A-Za-z0-9_-]{1,96}")
+
+
+class RecoveryReviewRerunError(ValueError):
+    """The explicit no-upload recovery rerun plan is not safely bound."""
+
+
+def _canonical_object_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _candidate_id(record: dict) -> str:
+    return str(record.get("candidate_id") or record.get("cid") or "")
+
+
+def _scorecard_rank_key(record: dict) -> tuple[int, float, str]:
+    scorecard = record.get("selection_scorecard")
+    tier = scorecard.get("tier") if isinstance(scorecard, dict) else None
+    score = (
+        scorecard.get("effective_score") if isinstance(scorecard, dict) else None
+    )
+    if (
+        isinstance(tier, bool)
+        or not isinstance(tier, int)
+        or isinstance(score, bool)
+        or not isinstance(score, (int, float))
+    ):
+        return (999, float("inf"), _candidate_id(record))
+    return (tier, -float(score), _candidate_id(record))
+
+
+def _recovery_queue_item(
+    date: str,
+    record: dict,
+    *,
+    candidate_id: str,
+    retry_reason: str,
+    selected_repair: bool,
+    given_end_ms: int | None,
+    given_end_authority: str | None,
+) -> dict:
+    segment_name = Path(
+        str(record.get("segment") or record.get("segment_path") or "")
+    ).name
+    segment = _runner.REC_ROOT / date / segment_name
+    start_ms, end_ms = record.get("start_ms"), record.get("end_ms")
+    if (
+        not segment_name
+        or not segment.is_file()
+        or segment.is_symlink()
+        or isinstance(start_ms, bool)
+        or not isinstance(start_ms, int)
+        or isinstance(end_ms, bool)
+        or not isinstance(end_ms, int)
+        or start_ms >= end_ms
+    ):
+        raise RecoveryReviewRerunError(
+            f"RECOVERY_RERUN_SOURCE_INTERVAL_INVALID:{candidate_id}"
+        )
+    bcut_srt = _runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"
+    if (
+        not bcut_srt.is_file()
+        or bcut_srt.is_symlink()
+        or bcut_srt.stat().st_size <= 0
+    ):
+        raise RecoveryReviewRerunError(
+            f"RECOVERY_RERUN_BCUT_AUTHORITY_MISSING:{candidate_id}"
+        )
+    seg_dur = _runner.ffprobe_ms(segment)
+    if not isinstance(seg_dur, int) or seg_dur <= 0 or end_ms > seg_dur:
+        raise RecoveryReviewRerunError(
+            f"RECOVERY_RERUN_SOURCE_DURATION_INVALID:{candidate_id}"
+        )
+    if given_end_ms is not None and (
+        isinstance(given_end_ms, bool)
+        or not isinstance(given_end_ms, int)
+        or given_end_ms <= start_ms
+        or given_end_ms > seg_dur
+        or abs(given_end_ms - end_ms) > 30_000
+        or not str(given_end_authority or "").strip()
+    ):
+        raise RecoveryReviewRerunError(
+            f"RECOVERY_RERUN_GIVEN_END_INVALID:{candidate_id}"
+        )
+    retry_count = int(record.get("talk_repair_retry_count") or 0)
+    item = {
+        "cid": candidate_id,
+        "segment_path": str(segment),
+        "seg_dur_ms": seg_dur,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "xml": str(xml) if (xml := _runner.find_danmaku_xml(segment)) else None,
+        "chat_jsonl": (
+            str(chat) if (chat := _runner.find_chat_jsonl(segment)) else None
+        ),
+        "hook": record.get("hook", ""),
+        "confidence": record.get("confidence"),
+        "selection_scorecard": record.get("selection_scorecard"),
+        "session_relation_authority": record.get("session_relation_authority"),
+        "lane": record.get("lane", ""),
+        "preview": record.get("preview", ""),
+        "selected_repair": selected_repair,
+        "talk_repair_retry_count": retry_count + (1 if selected_repair else 0),
+        "talk_transient_retry_count": 0,
+        "retry_reason": retry_reason,
+        "bcut_srt_path": str(bcut_srt),
+        "session_id": _recording_session_id(record),
+        "filler_proposals": list(record.get("filler_proposals") or []),
+        "filler_proposal_srt_sha256": record.get(
+            "filler_proposal_srt_sha256"
+        ),
+        "merge_gap_removals": list(record.get("merge_gap_removals") or []),
+        "cover_diversity_slot": record.get("cover_diversity_slot"),
+        "recovery_source_record_sha256": _canonical_object_sha256(record),
+    }
+    if given_end_ms is not None:
+        item["given_end_ms"] = given_end_ms
+        item["given_end_authority"] = str(given_end_authority).strip()
+    return item
+
+
+def plan_current_talk_recovery_rerun(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: list[str] | tuple[str, ...],
+    expected_source_state_sha256: str,
+    expected_old_fingerprint: str,
+    expected_new_fingerprint: str,
+    suppressed_candidate_ids: list[str] | tuple[str, ...] = (),
+    replacement_candidate_ids: list[str] | tuple[str, ...] = (),
+    user_suppression_authority: str | None = None,
+    replacement_selection_authority: str | None = None,
+    given_end_ms_by_candidate: dict[str, int] | None = None,
+    given_end_authority: str | None = None,
+) -> dict:
+    """Move explicitly selected CURRENT talks into a fresh recovery queue.
+
+    This is intentionally not called by cron.  A policy/code change should not
+    silently regenerate every historical delivery.  An operator first clones
+    a recovery evidence surface, then invokes the narrow CLI with the exact
+    source-state hash, old/new talk fingerprints and complete CURRENT-delivery
+    allowlist.  Old records are retained as SUPERSEDED evidence; only the
+    normal runner may create the replacement CURRENT records.
+    """
+
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date or "")):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_DATE_INVALID")
+    if (
+        state.get("run_mode") != "RECOVERY_REVIEW"
+        or state.get("upload_allowed") is not False
+    ):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_REQUIRES_NO_UPLOAD_REVIEW_STATE"
+        )
+    if state.get("pending_talk"):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_PENDING_TALK_NOT_EMPTY")
+    if not _PIPELINE_FINGERPRINT_RX.fullmatch(
+        expected_source_state_sha256
+    ):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_SOURCE_STATE_SHA_INVALID")
+    if not _PIPELINE_FINGERPRINT_RX.fullmatch(expected_old_fingerprint):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_OLD_FINGERPRINT_INVALID")
+    if not _PIPELINE_FINGERPRINT_RX.fullmatch(expected_new_fingerprint):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_NEW_FINGERPRINT_INVALID")
+    if expected_old_fingerprint == expected_new_fingerprint:
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_FINGERPRINT_UNCHANGED")
+
+    requested = [str(candidate_id or "") for candidate_id in candidate_ids]
+    suppressed = [
+        str(candidate_id or "") for candidate_id in suppressed_candidate_ids
+    ]
+    replacements = [
+        str(candidate_id or "") for candidate_id in replacement_candidate_ids
+    ]
+    all_requested = [*requested, *suppressed, *replacements]
+    if (
+        not requested and not replacements
+        or len(all_requested) != len(set(all_requested))
+        or any(
+            _SAFE_CANDIDATE_ID_RX.fullmatch(value) is None
+            for value in all_requested
+        )
+    ):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_ALLOWLIST_INVALID")
+    requested_set = set(requested)
+    suppressed_set = set(suppressed)
+    replacement_set = set(replacements)
+    suppression_authority = str(user_suppression_authority or "").strip()
+    if suppressed and not suppression_authority:
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_SUPPRESSION_AUTHORITY_REQUIRED"
+        )
+    selection_authority = str(replacement_selection_authority or "").strip()
+    if replacements and not selection_authority:
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_REPLACEMENT_SELECTION_AUTHORITY_REQUIRED"
+        )
+    boundary_overrides = dict(given_end_ms_by_candidate or {})
+    queued_ids = requested_set | replacement_set
+    if set(boundary_overrides) - queued_ids:
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_GIVEN_END_CANDIDATE_NOT_QUEUED"
+        )
+    if boundary_overrides and not str(given_end_authority or "").strip():
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_GIVEN_END_AUTHORITY_REQUIRED"
+        )
+    picks = state.get("picks")
+    if not isinstance(picks, list):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_PICKS_INVALID")
+    current_deliveries = [
+        row
+        for row in picks
+        if isinstance(row, dict)
+        and row.get("status") in _runner.DELIVERED_TALK_STATUSES
+        and row.get("bundle_lifecycle") == "CURRENT"
+        and row.get("bundle_compliance") == "COMPLIANT"
+    ]
+    current_ids = [
+        _candidate_id(row) for row in current_deliveries
+    ]
+    if (
+        len(current_ids) != len(set(current_ids))
+        or set(current_ids) != requested_set | suppressed_set
+    ):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_ALLOWLIST_MUST_EQUAL_ALL_CURRENT_DELIVERIES"
+        )
+
+    by_id = {
+        _candidate_id(row): row for row in current_deliveries
+    }
+    for cid in current_ids:
+        if by_id[cid].get("pipeline_fingerprint") != expected_old_fingerprint:
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_RERUN_OLD_FINGERPRINT_MISMATCH:{cid}"
+            )
+
+    backlog = state.get("talk_backlog") or []
+    if not isinstance(backlog, list):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_TALK_BACKLOG_INVALID")
+    backlog_by_id = {
+        _candidate_id(row): row
+        for row in backlog
+        if isinstance(row, dict) and _candidate_id(row)
+    }
+    if len(backlog_by_id) != len(
+        [row for row in backlog if isinstance(row, dict) and _candidate_id(row)]
+    ):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_TALK_BACKLOG_DUPLICATE_ID"
+        )
+    if any(cid not in backlog_by_id for cid in replacements):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_REPLACEMENT_NOT_IN_BACKLOG"
+        )
+
+    queue: list[dict] = []
+    superseded: list[dict] = []
+    for cid in requested:
+        record = by_id[cid]
+        try:
+            current = _runner.talk_pipeline_fingerprint(cid)
+        except ValueError as exc:
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_RERUN_NEW_FINGERPRINT_UNAVAILABLE:{cid}"
+            ) from exc
+        if current != expected_new_fingerprint:
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_RERUN_NEW_FINGERPRINT_MISMATCH:{cid}"
+            )
+
+        queue.append(
+            _recovery_queue_item(
+                date,
+                record,
+                candidate_id=cid,
+                retry_reason="explicit_recovery_review_pipeline_rerun",
+                selected_repair=True,
+                given_end_ms=boundary_overrides.get(cid),
+                given_end_authority=given_end_authority,
+            )
+        )
+        archived = copy.deepcopy(record)
+        archived["bundle_lifecycle"] = "SUPERSEDED"
+        archived["bundle_compliance"] = "STALE_PIPELINE"
+        archived["superseded_by"] = expected_new_fingerprint
+        archived["retry_reason"] = "explicit_recovery_review_pipeline_rerun"
+        archived["source_state_sha256"] = expected_source_state_sha256
+        superseded.append(archived)
+
+    ranked_backlog = sorted(
+        (
+            row
+            for row in backlog_by_id.values()
+            if isinstance(row.get("selection_scorecard"), dict)
+            and row["selection_scorecard"].get("status") == "VALID"
+        ),
+        key=_scorecard_rank_key,
+    )
+    baseline_rank_by_id = {
+        _candidate_id(row): index
+        for index, row in enumerate(ranked_backlog, start=1)
+    }
+    displaced_pool = [
+        row for row in ranked_backlog if _candidate_id(row) not in replacement_set
+    ]
+    selection_override_events: list[dict[str, object]] = []
+    for replacement_ordinal, cid in enumerate(replacements, start=1):
+        record = backlog_by_id[cid]
+        try:
+            current = _runner.talk_pipeline_fingerprint(cid)
+        except ValueError as exc:
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_RERUN_NEW_FINGERPRINT_UNAVAILABLE:{cid}"
+            ) from exc
+        if current != expected_new_fingerprint:
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_RERUN_NEW_FINGERPRINT_MISMATCH:{cid}"
+            )
+        scorecard = record.get("selection_scorecard")
+        if not isinstance(scorecard, dict) or scorecard.get("status") != "VALID":
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_RERUN_REPLACEMENT_SCORECARD_INVALID:{cid}"
+            )
+        displaced = (
+            displaced_pool[replacement_ordinal - 1]
+            if replacement_ordinal <= len(displaced_pool)
+            else None
+        )
+        selection_override = {
+            "schema_version": "talk-selection-override.v1",
+            "event_type": "USER_SELECTION_OVERRIDE",
+            "candidate_id": cid,
+            "baseline_rank": baseline_rank_by_id.get(cid),
+            "selected_slot": len(requested) + replacement_ordinal,
+            "displaced_baseline_candidate": (
+                _candidate_id(displaced) if displaced is not None else None
+            ),
+            "authority": selection_authority,
+            "scorecard_sha256": _canonical_object_sha256(scorecard),
+        }
+        queue_item = _recovery_queue_item(
+            date,
+            record,
+            candidate_id=cid,
+            retry_reason="explicit_user_selection_override",
+            selected_repair=False,
+            given_end_ms=boundary_overrides.get(cid),
+            given_end_authority=given_end_authority,
+        )
+        queue_item["selection_override"] = selection_override
+        queue.append(queue_item)
+        selection_override_events.append(selection_override)
+
+    suppressed_records: list[dict] = []
+    for cid in suppressed:
+        archived = copy.deepcopy(by_id[cid])
+        archived["bundle_lifecycle"] = "SUPERSEDED"
+        archived["bundle_compliance"] = "USER_SUPPRESSED"
+        archived["disposition"] = "EXCLUDE_FROM_DELIVERY"
+        archived["reason_codes"] = [
+            "IVAN_SUPPRESSED_ALREADY_UPLOADED_ELSEWHERE_UNVERIFIED"
+        ]
+        archived["suppression_authority"] = suppression_authority
+        archived["source_state_sha256"] = expected_source_state_sha256
+        suppressed_records.append(archived)
+
+    state["picks"] = [
+        row
+        for row in picks
+        if not (
+            isinstance(row, dict)
+            and _candidate_id(row) in requested_set | suppressed_set
+        )
+    ]
+    state["talk_backlog"] = [
+        row
+        for row in backlog
+        if not (isinstance(row, dict) and _candidate_id(row) in replacement_set)
+    ]
+    state["pending_talk"] = queue
+    state.setdefault("talk_superseded_attempts", []).extend(superseded)
+    state.setdefault("talk_user_suppressions", []).extend(suppressed_records)
+    state.setdefault("talk_selection_overrides", []).extend(
+        selection_override_events
+    )
+    state["status"] = "recovery_rerun_queued"
+    plan = {
+        "schema_version": "recovery-review-talk-rerun-plan.v3",
+        "date": date,
+        "upload_allowed": False,
+        "source_state_sha256": expected_source_state_sha256,
+        "old_pipeline_fingerprint": expected_old_fingerprint,
+        "new_pipeline_fingerprint": expected_new_fingerprint,
+        "candidate_ids": requested,
+        "suppressed_candidate_ids": suppressed,
+        "replacement_candidate_ids": replacements,
+        "replacement_selection_authority": (
+            selection_authority if replacements else None
+        ),
+        "selection_override_events": selection_override_events,
+        "user_suppression_authority": (
+            suppression_authority if suppressed else None
+        ),
+        "given_end_ms_by_candidate": boundary_overrides,
+        "given_end_authority": (
+            str(given_end_authority).strip() if boundary_overrides else None
+        ),
+        "queued_count": len(queue),
+    }
+    state["delivery_rerun_plan"] = plan
+    return plan
 
 
 def _recording_session_id(record: dict) -> str:

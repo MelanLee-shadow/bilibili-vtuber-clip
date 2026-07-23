@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 from scripts.audit_lidousha_review_package import audit_package
+from src.autoslice.clip_context import build_clip_context
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from src.autoslice.story_contract import build_story_contract
 
@@ -191,7 +193,12 @@ def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Pa
                             "image_gen_model": "cpa",
                             "fallback_used": False,
                             "ai_background": str(ai_bg),
+                            "ai_background_sha256": "sha256:"
+                            + hashlib.sha256(ai_bg.read_bytes()).hexdigest(),
                             "final_cover": str(cover),
+                            "final_cover_sha256": "sha256:"
+                            + hashlib.sha256(cover.read_bytes()).hexdigest(),
+                            "attempted_models": ["gpt-image-2"],
                         },
                     }
                 ]
@@ -207,9 +214,85 @@ def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Pa
     assert result["issues"] == []
 
 
+def test_audit_accepts_hashed_screenshot_cover_without_ai_evidence(tmp_path: Path):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    cover = _write(root / "covers" / "talk.cover.png", "screenshot-cover")
+    generation = {
+        "method": "screenshot_direct",
+        "reference_image": "/remote/cover_refs/talk.cover-ref.png",
+        "reference_sha256": "sha256:" + "2" * 64,
+        "final_cover": str(cover),
+        "final_cover_sha256": "sha256:"
+        + hashlib.sha256(cover.read_bytes()).hexdigest(),
+        "rendered_lines": ["真实联动画面"],
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v1",
+            "selected_treatment": "screenshot_direct",
+            "reason": "hash-bound frame contains both participants",
+        },
+    }
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished",
+                "items": [
+                    {
+                        "stem": "talk",
+                        "title": "【李豆沙】真实联动画面",
+                        "cover": str(cover),
+                        "cover_generation": generation,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is True
+    assert result["issues"] == []
+
+
+def test_audit_rejects_cpa_model_defaults_without_materialized_ai(tmp_path: Path):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished",
+                "items": [
+                    {
+                        "stem": "talk",
+                        "cover_generation": {
+                            "method": "images.edit",
+                            "model": "gpt-image-2",
+                            "image_gen_model": "cpa",
+                            "fallback_used": False,
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is False
+    assert {issue["code"] for issue in result["issues"]} == {
+        "AI_COVER_EVIDENCE_MISSING"
+    }
+
+
 def test_audit_blocks_known_too_small_talk_cover_title(tmp_path: Path):
     root = tmp_path / "pkg"
     root.mkdir()
+    ai_bg = _write(root / "covers_ai_original" / "talk.ai-bg.png", "ai")
+    cover = _write(root / "covers" / "talk.cover.png", "cover")
     record = root / "talk.record.json"
     record.write_text(
         json.dumps(
@@ -219,6 +302,13 @@ def test_audit_blocks_known_too_small_talk_cover_title(tmp_path: Path):
                     "model": "gpt-image-2",
                     "fallback_used": False,
                     "font_size": 91,
+                    "ai_background": str(ai_bg),
+                    "ai_background_sha256": "sha256:"
+                    + hashlib.sha256(ai_bg.read_bytes()).hexdigest(),
+                    "final_cover": str(cover),
+                    "final_cover_sha256": "sha256:"
+                    + hashlib.sha256(cover.read_bytes()).hexdigest(),
+                    "attempted_models": ["gpt-image-2"],
                 }
             },
             ensure_ascii=False,
@@ -270,6 +360,7 @@ def test_audit_accepts_explicit_bounded_sapphire72_visual_contract(tmp_path: Pat
         "[Events]\n"
         f"Dialogue: 0,0:00:00.00,0:00:06.00,Default,,0,0,0,,{line}\n",
     )
+    cover = _write(root / "covers" / f"{stem}.cover.png", "cover")
     (root / "review_manifest.json").write_text(
         json.dumps(
             {
@@ -286,6 +377,21 @@ def test_audit_accepts_explicit_bounded_sapphire72_visual_contract(tmp_path: Pat
                         "subtitle_srt": str(srt),
                         "ass_path": str(ass),
                         "ai_cover_generated": True,
+                        "cover": str(cover),
+                        "cover_generation": {
+                            "method": "screenshot_direct",
+                            "reference_image": "source-bound-frame.png",
+                            "reference_sha256": "sha256:" + "1" * 64,
+                            "final_cover": str(cover),
+                            "final_cover_sha256": "sha256:"
+                            + hashlib.sha256(cover.read_bytes()).hexdigest(),
+                            "rendered_lines": ["测试"],
+                            "route_decision": {
+                                "schema_version": "lidousha-cover-route-decision.v1",
+                                "selected_treatment": "screenshot_direct",
+                                "reason": "fixture preserves a strong real moment",
+                            },
+                        },
                     }
                 ],
             },
@@ -359,6 +465,39 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         end_cue=2,
     )
     assert scorecard is not None
+    source_sha256 = "sha256:" + "1" * 64
+    clip_context = build_clip_context(
+        candidate_id=stem,
+        spec={
+            "date": "2026-07-22",
+            "selection_hook": "南町当面追问李豆沙最喜欢谁",
+            "pieces": [
+                {
+                    "start_ms": 0,
+                    "end_ms": 4_000,
+                    "remote_media": "/recordings/collab.mp4",
+                    "source_media_sha256": source_sha256,
+                }
+            ],
+            "session_relation_authority": {
+                "state": "CONFIRMED",
+                "relation_id": "20260722-lidousha-nancho-live-collaboration",
+            },
+        },
+        draft_srt=srt.read_text(encoding="utf-8"),
+        authoritative_chat=(),
+        topic_resolution={"status": "NO_GRAPH"},
+        session_topic_authorities=(),
+        speech_memory_ledger_path=(
+            Path(__file__).resolve().parents[1]
+            / "assets/lidousha/speech_memory_ledger.v1.json"
+        ),
+    )
+    clip_context_path = root / f"{stem}.clip-context.json"
+    clip_context_path.write_text(
+        json.dumps(clip_context, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     contract = build_story_contract(
         candidate_id=stem,
         selection_hook="南町当面追问李豆沙最喜欢谁",
@@ -368,26 +507,64 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
             "state": "CONFIRMED",
             "participants": ["lidousha", "nancho"],
         },
-    )
+        source_media_sha256s=[source_sha256],
+            clip_context=clip_context,
+            recording_date="2026-07-22",
+            human_boundary_authority="fixture source-reviewed closure",
+        )
     record = root / f"{stem}.record.json"
+    ai_bg = _write(root / "covers_ai_original" / f"{stem}.ai-bg.png", "ai")
+    cover = _write(root / "covers" / f"{stem}.cover.png", "cover")
     cover_text = "南町当面追问最最最最喜欢"
     cover_binding = {
         "schema_version": contract["schema_version"],
         "relation_state": contract["relation_state"],
         "participants": contract["participants"],
-        "cover_fallback_mode": contract["cover_fallback_mode"],
+        "cover_counterpart_reference_available": contract[
+            "cover_counterpart_reference_available"
+        ],
+        "cover_reference_authority": contract["cover_reference_authority"],
+        "source_media_sha256s": contract["source_media_sha256s"],
+            "clip_context_binding": contract["clip_context_binding"],
+            "boundary_semantic_review": contract["boundary_semantic_review"],
+            "human_boundary_authority": contract["human_boundary_authority"],
+            "cover_fallback_mode": contract["cover_fallback_mode"],
     }
     record.write_text(
         json.dumps(
-            {
-                "story_contract": contract,
-                "publish_staging": {
-                    "cover_text": cover_text,
-                    "cover_generation": {
-                        "cover_text": cover_text,
-                        "rendered_lines": ["南町当面追问", "最最最最喜欢"],
-                        "story_contract": cover_binding,
+                {
+                        "story_contract": contract,
+                        "boundary_audit": {
+                            "boundary_authority": "human_source_reviewed_end",
+                            "manual_end_authority": "fixture source-reviewed closure",
+                        },
+                    "clip_context_path": clip_context_path.name,
+                    "clip_context_payload_sha256": clip_context["context_sha256"],
+                    "artifact_hashes": {
+                        "clip_context_file_sha256": "sha256:"
+                        + hashlib.sha256(clip_context_path.read_bytes()).hexdigest()
                     },
+                    "publish_staging": {
+                    "cover_text": cover_text,
+                        "cover_generation": {
+                            "cover_text": cover_text,
+                            "rendered_lines": ["南町当面追问", "最最最最喜欢"],
+                            "method": "images.edit",
+                            "model": "gpt-image-2",
+                            "attempted_models": ["gpt-image-2"],
+                            "ai_background": str(ai_bg),
+                            "ai_background_sha256": "sha256:"
+                            + hashlib.sha256(ai_bg.read_bytes()).hexdigest(),
+                            "final_cover": str(cover),
+                            "final_cover_sha256": "sha256:"
+                            + hashlib.sha256(cover.read_bytes()).hexdigest(),
+                            "story_contract": cover_binding,
+                            "route_decision": {
+                                "schema_version": "lidousha-cover-route-decision.v1",
+                                "selected_treatment": "cpa_redraw",
+                                "reason": "fixture has no verified real-frame authority",
+                            },
+                        },
                 },
             },
             ensure_ascii=False,
@@ -396,8 +573,9 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     )
     (root / "review_manifest.json").write_text(
         json.dumps(
-            {
-                "status": "finished_review_package_no_upload_pending_human_review",
+                {
+                    "date": "2026-07-22",
+                    "status": "finished_review_package_no_upload_pending_human_review",
                 "story_contract_required": True,
                 "run_mode": "RECOVERY_REVIEW",
                 "upload_allowed": False,
@@ -494,6 +672,7 @@ def test_story_contract_is_mandatory_by_date_and_cover_alias_cannot_drift(
             "schema_version",
             "relation_state",
             "participants",
+            "source_media_sha256s",
             "cover_fallback_mode",
         )
     }

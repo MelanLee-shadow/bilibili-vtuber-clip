@@ -14,6 +14,18 @@
 3. CPA 观众视角审查：每个候选无条件过 `scripts/cpa_semantic_qa_llm.py` 判官（`viewer_context_ok` 语境自足性 + 自动扩窗建议），失败即 BLOCK（`live_source_review.py::_merge_cpa_semantic_review_into_decision`）。
 4. 候选是内容锚点不是最终边界；边界由 [30-boundary.md](30-boundary.md) 决定。
 
+## 候选状态与人工点选
+
+- `picks`、`pending_talk`、`talk_backlog`、拒绝记录必须互斥投影；已经成为
+  `CURRENT + COMPLIANT` 成品或终态拒绝的 candidate 不得再次出现在“当前候补”。
+  `not_selected` 是历史 prose，不是状态 authority，也不得参与补位。
+- 每次拒绝必须保留 `failure_stage + rejection_reason + failure_evidence`；报告把它放在
+  “候选门禁拒绝”，不能混进成品表只显示一个无解释的 `candidate_rejected`。
+- 用户点名候补不篡改分数：追加 `USER_SELECTION_OVERRIDE`，记录原始 scorecard、
+  baseline rank、实际 slot、被越过的基线候选与人工 authority。用户说外部已有重复但
+  没有 BV 时，可直接 `SUPPRESSED_BY_USER`，但重复 claim 只能是
+  `USER_ASSERTED_UNVERIFIED`，不得伪装成已验证站外重复。
+
 ## 同主题合并（Ivan 2026-07-18 切片案 → 2026-07-19 新规）
 
 - **主题一致的候选尽量合并成一个切片**，不许把同一话题在源时间轴上相邻/交错的两段切成两条成品（案例：kmx 称呼两条切片同主题被分开切）。
@@ -25,3 +37,5 @@
 - 七维权重固定为 25/20/15/15/10/10/5；先验收 Tier 证据，再按有效分排序，最后才以 confidence 破同分。
 - 围绕本人（含态度/立场/情绪，不只名字梗）；观点强度与受众兴趣（百合/GL）是硬维度；高语义分不许因 niche 压低。
 - 报告必须同时显示 Tier 与有效分；缺 scorecard 的旧候选只能作为显式“未量化”候补，不能挤掉有效的 Tier 1/2。
+- scorecard 的 cue 证据必须落在候选窗内；模型只填 0–4 档和证据，固定代码复算
+  `raw_score`、罚分与 Tier 准入。任何手改后的算术不一致都使 scorecard 无效。

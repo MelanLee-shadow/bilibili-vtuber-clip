@@ -1091,7 +1091,7 @@ def _validated_entity_verdict(
 
 
 def recording_start_epoch_ms(path: str | Path, *, timezone: str = "Asia/Shanghai") -> int | None:
-    """Derive recording t=0 from blrec metadata, then its segment filename.
+    """Derive recording t=0 from recorder metadata, then its segment filename.
 
     The old implementation used the earliest event as t=0, shifting every
     message when the event log began after recording.  ``RecordStartTime`` is
@@ -1122,8 +1122,7 @@ def recording_start_epoch_ms(path: str | Path, *, timezone: str = "Asia/Shanghai
 def _event_epoch_ms(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    # blrec deployments have emitted both epoch seconds (current production)
-    # and epoch milliseconds (older fixtures/exports).
+    # Recorder sidecars have emitted both epoch seconds and epoch milliseconds.
     if value >= 100_000_000_000:
         return int(value)
     if value >= 100_000_000:
@@ -1133,7 +1132,7 @@ def _event_epoch_ms(value: object) -> int | None:
 
 def _send_time_ms(payload: dict, command: str = "") -> int | None:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    # blrec's top-level send_time is an ingestion timestamp on current files,
+    # A recorder's top-level send_time can be an ingestion timestamp,
     # not the live-event timestamp.  Bilibili carries the authoritative epoch
     # in DANMU_MSG info[0][4] and SC data.ts/start_time.
     if command.startswith("DANMU_MSG"):
@@ -1181,7 +1180,7 @@ def load_chat_jsonl(
     recording_start_ms: int | None = None,
 ) -> list[ChatEvidence]:
     """Load exact DANMU_MSG, SUPER_CHAT, and SEND_GIFT/COMBO_SEND (gift name
-    only) evidence from a blrec JSONL sidecar."""
+    only) evidence from a recorder JSONL sidecar."""
 
     source = Path(path)
     if not source.is_file():

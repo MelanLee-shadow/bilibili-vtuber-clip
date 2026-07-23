@@ -868,13 +868,16 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
-      "truth_id": "20260722-nancho-confrontation-mixed-name",
+      "truth_id": "20260722-nancho-confrontation-favorite-mixed-name-r2",
+      "revision_id": "r2",
+      "assertion_state": "VERIFIED_ACTIVE",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
-      "source_start_ms": 714440,
+      "source_start_ms": 712520,
       "source_end_ms": 715560,
       "action": "replace_cue",
-      "text": "南町nightin哦",
-      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "text": "最最最最喜欢的南町nightin",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(当面对质切片复审：此处不是只报名字，而是完整说最最最最喜欢的南町nightin；r2取代旧窄窗)",
       "required": true
     },
     {
@@ -919,17 +922,56 @@
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-huishen-surface",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
-      "source_start_ms": 747400,
+      "source_start_ms": 748620,
       "source_end_ms": 762740,
       "action": "replace_substring",
       "replacements": [
         {
           "surface": "灰神",
           "canonical": "毁神"
+        },
+        {
+          "surface": "绘声",
+          "canonical": "毁神"
+        },
+        {
+          "surface": "毁声",
+          "canonical": "毁神"
         }
       ],
       "required_text": "毁神",
-      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；按读音最小落字，不主张身份)",
+      "forbidden_tokens": [
+        "灰神",
+        "绘声",
+        "毁声"
+      ],
+      "mention_postconditions": [
+        {
+          "source_start_ms": 748620,
+          "source_end_ms": 749990,
+          "required_text": "毁神",
+          "forbidden_tokens": ["灰神", "绘声", "毁声"]
+        },
+        {
+          "source_start_ms": 749990,
+          "source_end_ms": 752150,
+          "required_text": "毁神",
+          "forbidden_tokens": ["灰神", "绘声", "毁声"]
+        },
+        {
+          "source_start_ms": 754600,
+          "source_end_ms": 757220,
+          "required_text": "毁神",
+          "forbidden_tokens": ["灰神", "绘声", "毁声"]
+        },
+        {
+          "source_start_ms": 760180,
+          "source_end_ms": 762740,
+          "required_text": "毁神",
+          "forbidden_tokens": ["灰神", "绘声", "毁声"]
+        }
+      ],
+      "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；按读音最小落字，不主张身份)+BCUT同源草稿逐字为毁神(防AGY把shen鼻音漂成sheng后改写为绘声)",
       "required": true
     },
     {
@@ -1098,6 +1140,293 @@
       "action": "replace_cue",
       "text": "那个时候你是什么",
       "authority": "Ivan-stated-20260722-conversation(逐字口播；语义为CP前后位，不作解释性改写)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-hotpot-dan-bullying-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 2001770,
+      "source_end_ms": 2003390,
+      "action": "replace_cue",
+      "text": "小李又被大N霸凌了",
+      "before_span": "小李又被大哥骂赢了",
+      "forbidden_tokens": [
+        "大哥骂赢",
+        "大恩霸凌"
+      ],
+      "evidence_class": "DUAL_ASR_PARTIAL_PLUS_IMMEDIATE_PARALLEL_REPEAT",
+      "authority": "BCUT同源草稿保留小李又被大…了句式但把槽位误成大哥骂赢；AGY同窗为小李又被大恩霸凌了；后文立即平行复述小李被大N霸凌；本场关系权威确认南町别名大N（只钉此source interval，不全局替换大哥）",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-jieganmei-term-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3597980,
+      "source_end_ms": 3599860,
+      "action": "replace_cue",
+      "text": "姐感妹",
+      "before_span": "晴，其实",
+      "forbidden_tokens": [
+        "晴，其实",
+        "犄角妹"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_WHOLE_CLIP_CALLBACK",
+      "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片0:30；后文再次调侃姐感的妹妹，整片回指见证)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-name-repeat-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3599860,
+      "source_end_ms": 3601100,
+      "action": "replace_cue",
+      "text": "秦秦",
+      "before_span": "她就叫晴",
+      "forbidden_tokens": [
+        "晴"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_SOURCE_FRAME",
+      "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片0:32；同窗画面角色名为秦)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-name-single-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3601250,
+      "source_end_ms": 3602690,
+      "action": "replace_cue",
+      "text": "秦",
+      "before_span": "她是一个犄角妹",
+      "forbidden_tokens": [
+        "晴",
+        "犄角妹"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_SOURCE_FRAME",
+      "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片0:34；同窗画面角色名为秦)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-jiegan-callback-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3644420,
+      "source_end_ms": 3646900,
+      "action": "replace_cue",
+      "text": "这是姐感的妹妹",
+      "before_span": "这个，这个是桔梗的妹妹",
+      "forbidden_tokens": [
+        "桔梗的妹妹"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_WHOLE_CLIP_CALLBACK",
+      "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片1:19；回指前文姐感妹)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-male-what-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3651760,
+      "source_end_ms": 3653000,
+      "action": "replace_cue",
+      "text": "男的咋了？",
+      "before_span": "真是傻啊",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片1:25)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-room-unfamiliar-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3654960,
+      "source_end_ms": 3659800,
+      "action": "replace_cue",
+      "text": "这个直播间就是不熟啊",
+      "before_span": "这直播间就是男的不熟啊，哈哈",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片1:31)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-yasashii-continuation-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 745940,
+      "source_end_ms": 748620,
+      "action": "replace_cue",
+      "text": "非常亚撒西",
+      "before_span": "分牙三四关就毁神",
+      "forbidden_tokens": [
+        "分牙三四关"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_IMMEDIATE_REPEAT",
+      "authority": "Ivan-stated-20260722-conversation(当面对质切片1:21；前句与本句为亚撒西重复，不得从噪声造词)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-first-incomplete-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 929840,
+      "source_end_ms": 930940,
+      "action": "replace_cue",
+      "text": "跟他们说要跟第",
+      "before_span": "跟他们说要跟弟",
+      "forbidden_tokens": [
+        "跟弟"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_SENTENCE_COMPLETION",
+      "authority": "Ivan-stated-20260722-conversation(当面对质切片4:24；第为后文第一次的未完成开头，不补写未说完部分)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-sumi-guess-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 943650,
+      "source_end_ms": 948630,
+      "action": "replace_cue",
+      "text": "确实很难想象到，我的观众只会猜礼墨Sumi",
+      "before_span": "确实很难想象到，我的观众只会猜指纹",
+      "forbidden_tokens": [
+        "指纹"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_NEARBY_REPEAT",
+      "authority": "Ivan-stated-20260722-conversation(当面对质切片4:32/4:42；只会猜礼墨Sumi，未说指纹；后文立即再次说礼墨Sumi家)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-hotpot-not-time-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1869900,
+      "source_end_ms": 1871500,
+      "action": "replace_cue",
+      "text": "现在还没到时间",
+      "before_span": "我还没落实呢",
+      "forbidden_tokens": [
+        "落实"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_LOCAL_CONTEXT",
+      "authority": "Ivan-stated-20260722-conversation(火锅切片0:14；前句问几点，落实与上下文无关；不确定时禁止凭空实词)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-hotpot-vegetable-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1921100,
+      "source_end_ms": 1922620,
+      "action": "replace_cue",
+      "text": "谢谢你的素菜",
+      "before_span": "谢谢你的素材",
+      "forbidden_tokens": [
+        "素材"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_SAME_SC_TEXT",
+      "authority": "Ivan-stated-20260722-conversation(火锅切片1:05；同一SC原文为给你们加盘素菜)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-hotpot-lidousha-position-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1967870,
+      "source_end_ms": 1970230,
+      "action": "replace_cue",
+      "text": "大姐姐心里没有李豆沙的位置了",
+      "before_span": "大姐姐心里没有小李的位置了",
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(火锅切片1:53；此mention为李豆沙，不泛化替换小李)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-hotpot-xiaodeba-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1986550,
+      "source_end_ms": 1988970,
+      "action": "replace_cue",
+      "text": "就是霸凌的那种，晓得吧",
+      "before_span": "就是霸凌的那种小的吧",
+      "forbidden_tokens": [
+        "小的吧"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_SPEAKER_IDIOLECT",
+      "authority": "Ivan-stated-20260722-conversation(火锅切片2:11；晓得吧为李豆沙既有口癖，仅钉此source interval)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-hotpot-bully-dan-question-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 2008510,
+      "source_end_ms": 2009220,
+      "action": "replace_cue",
+      "text": "大N吗",
+      "before_span": "饿了吗",
+      "forbidden_tokens": [
+        "饿了吗"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_SENTENCE_COMPLETION",
+      "authority": "Ivan-stated-20260722-conversation(火锅切片2:31；承接上句小李在霸凌，问的是大N吗)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-hotpot-lu-doctor-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 2016790,
+      "source_end_ms": 2020810,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "陆医生",
+          "canonical": "露医生"
+        }
+      ],
+      "required_text": "露医生",
+      "forbidden_tokens": [
+        "陆医生"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(火锅切片2:43；露医生为露蒂斯在咕咕诊所医生形象的昵称，只钉此mention)",
       "required": true
     },
     {

@@ -3,14 +3,15 @@
 #
 # 2026-07-09 incident: the clouddrive process died mid-read and restarted, but
 # the HOST mountpoint stayed a dead "Transport endpoint is not connected" stub
-# (mount propagation only happens at mount time).  bilive_record bind-mounts
-# that path into /app/Videos, so the RECORDER's write path was broken for hours
-# while every monitor read the outage as "no new recordings" (green).
+# (mount propagation only happens at mount time).  bililive_recorder,
+# bililive_adapter, and the bilive_record tooling container all bind-mount that
+# path, so recorder ingestion or finalization can stay broken after the host
+# mount itself has recovered.
 #
 # This watchdog probes the mount with a timeout (a hung FUSE blocks plain
 # stat() forever), and on failure runs the validated repair sequence:
 #   lazy-unmount stale stub → restart clouddrive2 → wait for host-side health
-#   → restart bilive_record (its bind is rprivate; it must re-bind) → verify.
+#   → restart all bind-mount consumers (they must re-bind) → verify.
 # Every action is appended to an ALERT report file that the Mac launchd pull
 # picks up (Ivan's rule: alerts travel via report files).
 #
@@ -71,24 +72,39 @@ if [ "$healthy" -ne 1 ]; then
     alert "repair FAILED: mount still unreadable after clouddrive2 restart + 120s — NEEDS HUMAN"
     exit 1
 fi
-alert "host mount recovered; restarting bilive_record to re-bind /app/Videos"
+alert "host mount recovered; restarting adapter, recorder and tooling to re-bind"
 
-if ! "$DOCKER_BIN" restart bilive_record > /dev/null 2>&1; then
-    # Docker can stop the old container successfully and still return non-zero
-    # when the immediate start loses a mount race.  July 22 left the recorder
-    # Exited(137) here while the host mount was already healthy.  A bounded
-    # explicit start closes that partial-repair hole.
-    alert "bilive_record restart returned non-zero; entering bounded start fallback"
-fi
+for container in bililive_adapter bililive_recorder bilive_record; do
+    if ! "$DOCKER_BIN" restart "$container" > /dev/null 2>&1; then
+        # Docker can stop the old container successfully and still return
+        # non-zero when the immediate start loses a mount race.  A bounded
+        # explicit start closes that partial-repair hole.
+        alert "$container restart returned non-zero; entering bounded start fallback"
+    fi
+done
 sleep "$RECORDER_SETTLE_S"
 for attempt in $(seq 1 "$RECORDER_RETRIES"); do
+    recorder_ok=0
+    adapter_ok=0
+    tooling_ok=0
+    if "$TIMEOUT_BIN" 25 "$DOCKER_BIN" exec bililive_recorder ls /rec/Videos > /dev/null 2>&1; then
+        recorder_ok=1
+    fi
     if "$TIMEOUT_BIN" 25 "$DOCKER_BIN" exec bilive_record ls /app/Videos > /dev/null 2>&1; then
-        alert "repair COMPLETE: recorder running and write path verified inside container"
+        tooling_ok=1
+    fi
+    if "$TIMEOUT_BIN" 25 "$DOCKER_BIN" exec bililive_adapter ls /adapter/Videos > /dev/null 2>&1; then
+        adapter_ok=1
+    fi
+    if [ "$recorder_ok" -eq 1 ] && [ "$adapter_ok" -eq 1 ] && [ "$tooling_ok" -eq 1 ]; then
+        alert "repair COMPLETE: recorder, adapter and tooling all see the recovered write path"
         exit 0
     fi
+    "$DOCKER_BIN" start bililive_adapter > /dev/null 2>&1 || true
+    "$DOCKER_BIN" start bililive_recorder > /dev/null 2>&1 || true
     "$DOCKER_BIN" start bilive_record > /dev/null 2>&1 || true
     sleep "$RETRY_SLEEP_S"
-    say "bilive_record verification retry $attempt/$RECORDER_RETRIES"
+    say "container mount verification retry $attempt/$RECORDER_RETRIES"
 done
-alert "repair PARTIAL: host mount ok but recorder could not be started with readable /app/Videos — NEEDS HUMAN"
+alert "repair PARTIAL: host mount ok but one or more consumers lack a readable recording mount — NEEDS HUMAN"
 exit 1

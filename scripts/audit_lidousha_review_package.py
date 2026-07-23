@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -16,6 +17,10 @@ from src.autoslice.subtitle_rendering import (  # noqa: E402
     ASS_MAX_VISUAL_LINES,
 )
 from src.autoslice.cover_generation import COVER_MIN_TALK_FONT_SIZE  # noqa: E402
+from src.autoslice.clip_context import (  # noqa: E402
+    ClipContextError,
+    validate_clip_context,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
 from src.autoslice.selection_scorecard import (  # noqa: E402
     selection_scorecard_is_valid,
@@ -223,6 +228,20 @@ def _audit_story_bound_cover(
         "schema_version": story_contract.get("schema_version"),
         "relation_state": story_contract.get("relation_state"),
         "participants": story_contract.get("participants"),
+        "cover_counterpart_reference_available": story_contract.get(
+            "cover_counterpart_reference_available"
+        ),
+        "cover_reference_authority": story_contract.get(
+            "cover_reference_authority"
+        ),
+        "source_media_sha256s": story_contract.get("source_media_sha256s"),
+        "clip_context_binding": story_contract.get("clip_context_binding"),
+        "boundary_semantic_review": story_contract.get(
+            "boundary_semantic_review"
+        ),
+        "human_boundary_authority": story_contract.get(
+            "human_boundary_authority"
+        ),
         "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
     }
     if required and (
@@ -239,6 +258,21 @@ def _audit_story_bound_cover(
                 ensure_ascii=False,
                 sort_keys=True,
             ),
+        )
+    route_decision = generation.get("route_decision")
+    if required and (
+        not isinstance(route_decision, dict)
+        or route_decision.get("schema_version")
+        != "lidousha-cover-route-decision.v1"
+        or route_decision.get("selected_treatment")
+        not in {"screenshot_direct", "screenshot_polish", "cpa_redraw"}
+        or not str(route_decision.get("reason") or "").strip()
+    ):
+        _add_issue(
+            issues,
+            "COVER_ROUTE_DECISION_MISSING_OR_INVALID",
+            stem=stem,
+            path=record_path,
         )
 
     for surface_name, surface in (
@@ -261,6 +295,69 @@ def _audit_story_bound_cover(
                     path=record_path,
                     detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
                 )
+
+
+def _audit_boundary_contract(
+    *,
+    issues: list[dict[str, Any]],
+    stem: str,
+    record_path: Path | None,
+    record: dict[str, Any],
+    story_contract: dict[str, Any],
+    required: bool,
+    is_song: bool,
+) -> None:
+    if not required or is_song:
+        return
+    audit = record.get("boundary_audit")
+    if not isinstance(audit, dict):
+        _add_issue(issues, "BOUNDARY_AUDIT_MISSING", stem=stem, path=record_path)
+        return
+    human_authority = str(story_contract.get("human_boundary_authority") or "").strip()
+    if human_authority:
+        if (
+            audit.get("boundary_authority") != "human_source_reviewed_end"
+            or str(audit.get("manual_end_authority") or "").strip()
+            != human_authority
+        ):
+            _add_issue(
+                issues,
+                "HUMAN_BOUNDARY_AUTHORITY_DRIFT",
+                stem=stem,
+                path=record_path,
+            )
+        return
+    review = story_contract.get("boundary_semantic_review")
+    audit_review = audit.get("boundary_semantic_review")
+    if not isinstance(review, dict) or review.get("status") != "PASS":
+        _add_issue(
+            issues,
+            "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS",
+            stem=stem,
+            path=record_path,
+        )
+        return
+    if audit.get("boundary_authority") != "multi_witness_semantic_review":
+        _add_issue(
+            issues,
+            "BOUNDARY_MULTI_WITNESS_AUTHORITY_MISSING",
+            stem=stem,
+            path=record_path,
+        )
+    if audit_review != review:
+        _add_issue(
+            issues,
+            "BOUNDARY_SEMANTIC_REVIEW_BINDING_DRIFT",
+            stem=stem,
+            path=record_path,
+        )
+    if review.get("recommended_end_ms") != audit.get("snapped_sentence_end_ms"):
+        _add_issue(
+            issues,
+            "BOUNDARY_RECOMMENDED_END_NOT_MATERIALIZED",
+            stem=stem,
+            path=record_path,
+        )
 
 
 def _contains_japanese(text: str) -> bool:
@@ -314,23 +411,169 @@ def _has_alignment_evidence(root: Path, item: dict[str, Any]) -> bool:
     return bool(candidates)
 
 
-def _has_ai_cover_evidence(root: Path, item: dict[str, Any]) -> bool:
-    if item.get("ai_cover_generated") is True:
-        return True
-    for key in ["source_ai_background", "ai_background", "ai_cover", "ai_background_sha256"]:
-        if item.get(key):
-            return True
-    cover_generation = item.get("cover_generation")
-    if isinstance(cover_generation, dict):
-        if cover_generation.get("ai_background") or cover_generation.get("model") or cover_generation.get("method"):
-            return True
-    stem = str(item.get("stem") or "")
-    if (root / "covers_ai_original").exists():
-        if stem and list((root / "covers_ai_original").glob(f"{stem}*")):
-            return True
-        if not stem and list((root / "covers_ai_original").glob("*")):
-            return True
-    return False
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and bool(
+        re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", value)
+    )
+
+
+def _cover_artifact_path(
+    root: Path,
+    item: dict[str, Any],
+    generation: dict[str, Any],
+    generation_key: str,
+    *item_keys: str,
+) -> Path | None:
+    value = generation.get(generation_key)
+    if not value:
+        value = next((item.get(key) for key in item_keys if item.get(key)), None)
+    return _resolve(root, value)
+
+
+def _artifact_matches_sha256(path: Path | None, expected: object) -> bool:
+    if path is None or not path.is_file() or not _is_sha256(expected):
+        return False
+    expected_hex = str(expected).removeprefix("sha256:")
+    return hashlib.sha256(path.read_bytes()).hexdigest() == expected_hex
+
+
+def _audit_finished_cover_evidence(
+    *,
+    root: Path,
+    item: dict[str, Any],
+    generation: dict[str, Any] | None,
+    issues: list[dict[str, Any]],
+    stem: str,
+    record_path: Path | None,
+) -> None:
+    """Audit the materialized route instead of treating model defaults as proof.
+
+    Screenshot covers and CPA redraws are both finished routes.  A route label,
+    ``model`` default, or ``ai_cover_generated`` boolean cannot prove that the
+    selected route actually produced its required artifacts.
+    """
+
+    if not isinstance(generation, dict):
+        _add_issue(
+            issues,
+            "AI_COVER_EVIDENCE_MISSING",
+            stem=stem,
+            path=record_path,
+            detail="No route-aware cover generation evidence found",
+        )
+        return
+    route_decision = generation.get("route_decision")
+    treatment = (
+        str(route_decision.get("selected_treatment") or "")
+        if isinstance(route_decision, dict)
+        else ""
+    )
+    final_path = _cover_artifact_path(
+        root,
+        item,
+        generation,
+        "final_cover",
+        "cover",
+        "cover_path",
+    )
+    final_hash = generation.get("final_cover_sha256") or item.get("cover_sha256")
+    rendered_lines = generation.get("rendered_lines")
+    rendered_text_ready = (
+        isinstance(rendered_lines, list)
+        and bool("".join(str(value) for value in rendered_lines).strip())
+    )
+
+    if treatment in {"screenshot_direct", "screenshot_polish"}:
+        method = str(generation.get("method") or "")
+        degraded_polish = (
+            treatment == "screenshot_polish"
+            and method == "screenshot_direct"
+            and isinstance(generation.get("screenshot_polish"), dict)
+            and generation["screenshot_polish"].get("status")
+            == "DEGRADED_TO_DIRECT"
+        )
+        valid_method = method == treatment or degraded_polish
+        reference_ready = bool(generation.get("reference_image")) and _is_sha256(
+            generation.get("reference_sha256")
+        )
+        route_ready = (
+            isinstance(route_decision, dict)
+            and route_decision.get("schema_version")
+            == "lidousha-cover-route-decision.v1"
+            and bool(str(route_decision.get("reason") or "").strip())
+        )
+        if not (
+            valid_method
+            and route_ready
+            and reference_ready
+            and rendered_text_ready
+            and _artifact_matches_sha256(final_path, final_hash)
+        ):
+            _add_issue(
+                issues,
+                "SCREENSHOT_COVER_EVIDENCE_MISSING",
+                stem=stem,
+                path=record_path,
+                detail=(
+                    "screenshot route requires route decision, materialized "
+                    "method, reference/final hashes, and rendered title text"
+                ),
+            )
+        return
+
+    ai_background_path = _cover_artifact_path(
+        root,
+        item,
+        generation,
+        "ai_background",
+        "source_ai_background",
+        "ai_background",
+        "ai_cover",
+    )
+    ai_background_hash = generation.get("ai_background_sha256") or item.get(
+        "ai_background_sha256"
+    )
+    attempted_models = generation.get("attempted_models")
+    model = str(generation.get("model") or "")
+    actual_ai_ready = (
+        _artifact_matches_sha256(ai_background_path, ai_background_hash)
+        and _artifact_matches_sha256(final_path, final_hash)
+        and isinstance(attempted_models, list)
+        and bool(attempted_models)
+        and model not in {"", "none"}
+        and model in {str(value) for value in attempted_models}
+    )
+    if treatment == "cpa_redraw":
+        route_ready = (
+            isinstance(route_decision, dict)
+            and route_decision.get("schema_version")
+            == "lidousha-cover-route-decision.v1"
+            and bool(str(route_decision.get("reason") or "").strip())
+        )
+        if not (route_ready and rendered_text_ready and actual_ai_ready):
+            _add_issue(
+                issues,
+                "CPA_COVER_EVIDENCE_MISSING",
+                stem=stem,
+                path=record_path,
+                detail=(
+                    "CPA route requires route decision, actual hashed AI/final "
+                    "artifacts, attempted/selected model evidence, and rendered text"
+                ),
+            )
+        return
+
+    # Legacy, non-story-contract packages have no route decision.  Keep them
+    # auditable only when real hashed AI bytes and model-attempt evidence exist;
+    # method/model defaults or a boolean flag alone are deliberately insufficient.
+    if not actual_ai_ready:
+        _add_issue(
+            issues,
+            "AI_COVER_EVIDENCE_MISSING",
+            stem=stem,
+            path=record_path,
+            detail="No materialized hashed AI background/final cover and model-attempt evidence",
+        )
 
 
 def _add_issue(issues: list[dict[str, Any]], code: str, *, stem: str = "", path: Path | None = None, detail: str = "", severity: str = "BLOCK") -> None:
@@ -390,6 +633,191 @@ def _subtitle_visual_contract(
         )
         return DEFAULT_MAX_VISUAL_LINES, DEFAULT_MAX_VISUAL_LINE_CHARS
     return max_lines, max_chars
+
+
+def _audit_item_story_contract(
+    *,
+    root: Path,
+    manifest: dict[str, Any],
+    item: dict[str, Any],
+    issues: list[dict[str, Any]],
+    stem: str,
+    subtitle_path: Path | None,
+    publish_path: Path | None,
+    title_txt_path: Path | None,
+    publish_title: str,
+    title_txt: str,
+    record_path: Path | None,
+    record: dict[str, Any],
+    story_contract: object,
+    story_contract_required: bool,
+    is_song: bool,
+) -> None:
+    """Audit all story/context/boundary bindings for one manifest item."""
+
+    if story_contract_required and not record:
+        _add_issue(
+            issues,
+            "STORY_CONTRACT_RECORD_MISSING",
+            stem=stem,
+            path=record_path,
+        )
+    if story_contract_required and not isinstance(story_contract, dict):
+        _add_issue(
+            issues,
+            "STORY_CONTRACT_MISSING",
+            stem=stem,
+            path=record_path,
+        )
+    if not isinstance(story_contract, dict):
+        return
+    if story_contract.get("schema_version") != STORY_CONTRACT_SCHEMA:
+        _add_issue(
+            issues,
+            "STORY_CONTRACT_SCHEMA_STALE",
+            stem=stem,
+            path=record_path,
+            detail=str(story_contract.get("schema_version")),
+        )
+    clip_binding = story_contract.get("clip_context_binding")
+    clip_context_path = _resolve(
+        root,
+        item.get("clip_context_json")
+        or item.get("clip_context")
+        or record.get("clip_context_path"),
+    )
+    if story_contract_required and not isinstance(clip_binding, dict):
+        _add_issue(
+            issues,
+            "CLIP_CONTEXT_BINDING_MISSING",
+            stem=stem,
+            path=record_path,
+        )
+    elif isinstance(clip_binding, dict):
+        if clip_context_path is None or not clip_context_path.is_file():
+            _add_issue(
+                issues,
+                "CLIP_CONTEXT_FILE_MISSING",
+                stem=stem,
+                path=clip_context_path,
+            )
+        else:
+            clip_context = _load_json(clip_context_path)
+            try:
+                validate_clip_context(
+                    clip_context,
+                    candidate_id=str(story_contract.get("candidate_id") or ""),
+                    recording_date=str(manifest.get("date") or ""),
+                    source_media_sha256s=[
+                        str(value)
+                        for value in (
+                            story_contract.get("source_media_sha256s") or []
+                        )
+                    ],
+                )
+            except ClipContextError as exc:
+                _add_issue(
+                    issues,
+                    str(exc),
+                    stem=stem,
+                    path=clip_context_path,
+                )
+            file_sha256 = "sha256:" + hashlib.sha256(
+                clip_context_path.read_bytes()
+            ).hexdigest()
+            artifact_hashes = record.get("artifact_hashes") or {}
+            if clip_context.get("context_sha256") != clip_binding.get(
+                "context_sha256"
+            ) or record.get("clip_context_payload_sha256") != clip_binding.get(
+                "context_sha256"
+            ):
+                _add_issue(
+                    issues,
+                    "CLIP_CONTEXT_PAYLOAD_BINDING_DRIFT",
+                    stem=stem,
+                    path=clip_context_path,
+                )
+            if (
+                not isinstance(artifact_hashes, dict)
+                or artifact_hashes.get("clip_context_file_sha256")
+                != file_sha256
+            ):
+                _add_issue(
+                    issues,
+                    "CLIP_CONTEXT_FILE_HASH_DRIFT",
+                    stem=stem,
+                    path=clip_context_path,
+                )
+    transcript = _story_transcript(subtitle_path)
+    subtitle_story_audit = audit_story_artifact(
+        transcript,
+        story_contract=story_contract,
+        artifact_kind="subtitle",
+    )
+    if transcript and subtitle_story_audit.get("text_sha256") != story_contract.get(
+        "transcript_sha256"
+    ):
+        _add_issue(
+            issues,
+            "STORY_CONTRACT_SUBTITLE_HASH_DRIFT",
+            stem=stem,
+            path=subtitle_path,
+            detail=(
+                f"contract={story_contract.get('transcript_sha256')}; "
+                f"current={subtitle_story_audit.get('text_sha256')}"
+            ),
+        )
+    for violation in subtitle_story_audit.get("violations") or []:
+        if isinstance(violation, dict):
+            _add_issue(
+                issues,
+                str(violation.get("reason_code") or "STORY_CONTRACT_SUBTITLE_FAILED"),
+                stem=stem,
+                path=subtitle_path,
+                detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
+            )
+    artifact_title = publish_title or title_txt or str(item.get("title") or "")
+    title_story_audit = audit_story_artifact(
+        artifact_title,
+        story_contract=story_contract,
+        artifact_kind="title",
+    )
+    for violation in title_story_audit.get("violations") or []:
+        if isinstance(violation, dict):
+            _add_issue(
+                issues,
+                str(violation.get("reason_code") or "STORY_CONTRACT_TITLE_FAILED"),
+                stem=stem,
+                path=publish_path or title_txt_path,
+                detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
+            )
+    _audit_story_bound_cover(
+        issues=issues,
+        stem=stem,
+        record_path=record_path,
+        record=record,
+        story_contract=story_contract,
+        required=story_contract_required,
+    )
+    _audit_boundary_contract(
+        issues=issues,
+        stem=stem,
+        record_path=record_path,
+        record=record,
+        story_contract=story_contract,
+        required=story_contract_required,
+        is_song=is_song,
+    )
+    scorecard = story_contract.get("selection_scorecard")
+    if story_contract_required and not is_song and (
+        not selection_scorecard_is_valid(scorecard)
+    ):
+        _add_issue(
+            issues,
+            "SELECTION_SCORECARD_MISSING_OR_STALE",
+            stem=stem,
+            path=record_path,
+        )
 
 
 def audit_package(root: str | Path) -> dict[str, Any]:
@@ -500,90 +928,23 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         record_path = _resolve(root, item.get("record") or item.get("record_json"))
         record = _load_json(record_path) if record_path else {}
         story_contract = record.get("story_contract")
-        if story_contract_required and not record:
-            _add_issue(
-                issues,
-                "STORY_CONTRACT_RECORD_MISSING",
-                stem=stem,
-                path=record_path,
-            )
-        if story_contract_required and not isinstance(story_contract, dict):
-            _add_issue(
-                issues,
-                "STORY_CONTRACT_MISSING",
-                stem=stem,
-                path=record_path,
-            )
-        if isinstance(story_contract, dict):
-            if story_contract.get("schema_version") != STORY_CONTRACT_SCHEMA:
-                _add_issue(
-                    issues,
-                    "STORY_CONTRACT_SCHEMA_STALE",
-                    stem=stem,
-                    path=record_path,
-                    detail=str(story_contract.get("schema_version")),
-                )
-            transcript = _story_transcript(subtitle_path)
-            subtitle_story_audit = audit_story_artifact(
-                transcript,
-                story_contract=story_contract,
-                artifact_kind="subtitle",
-            )
-            if transcript and subtitle_story_audit.get("text_sha256") != story_contract.get(
-                "transcript_sha256"
-            ):
-                _add_issue(
-                    issues,
-                    "STORY_CONTRACT_SUBTITLE_HASH_DRIFT",
-                    stem=stem,
-                    path=subtitle_path,
-                    detail=(
-                        f"contract={story_contract.get('transcript_sha256')}; "
-                        f"current={subtitle_story_audit.get('text_sha256')}"
-                    ),
-                )
-            for violation in subtitle_story_audit.get("violations") or []:
-                if isinstance(violation, dict):
-                    _add_issue(
-                        issues,
-                        str(violation.get("reason_code") or "STORY_CONTRACT_SUBTITLE_FAILED"),
-                        stem=stem,
-                        path=subtitle_path,
-                        detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
-                    )
-            artifact_title = publish_title or title_txt or str(item.get("title") or "")
-            title_story_audit = audit_story_artifact(
-                artifact_title,
-                story_contract=story_contract,
-                artifact_kind="title",
-            )
-            for violation in title_story_audit.get("violations") or []:
-                if isinstance(violation, dict):
-                    _add_issue(
-                        issues,
-                        str(violation.get("reason_code") or "STORY_CONTRACT_TITLE_FAILED"),
-                        stem=stem,
-                        path=publish_path or title_txt_path,
-                        detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
-                    )
-            _audit_story_bound_cover(
-                issues=issues,
-                stem=stem,
-                record_path=record_path,
-                record=record,
-                story_contract=story_contract,
-                required=story_contract_required,
-            )
-            scorecard = story_contract.get("selection_scorecard")
-            if story_contract_required and not is_song and (
-                not selection_scorecard_is_valid(scorecard)
-            ):
-                _add_issue(
-                    issues,
-                    "SELECTION_SCORECARD_MISSING_OR_STALE",
-                    stem=stem,
-                    path=record_path,
-                )
+        _audit_item_story_contract(
+            root=root,
+            manifest=manifest,
+            item=item,
+            issues=issues,
+            stem=stem,
+            subtitle_path=subtitle_path,
+            publish_path=publish_path,
+            title_txt_path=title_txt_path,
+            publish_title=publish_title,
+            title_txt=title_txt,
+            record_path=record_path,
+            record=record,
+            story_contract=story_contract,
+            story_contract_required=story_contract_required,
+            is_song=is_song,
+        )
         record_generation = record.get("cover_generation")
         if not isinstance(record_generation, dict):
             publish_staging = record.get("publish_staging")
@@ -592,13 +953,13 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 if isinstance(publish_staging, dict)
                 else None
             )
-        size_generation = (
+        finished_generation = (
             record_generation
             if isinstance(record_generation, dict)
             else cover_generation
         )
-        if not is_song and isinstance(size_generation, dict):
-            font_size = size_generation.get("font_size")
+        if not is_song and isinstance(finished_generation, dict):
+            font_size = finished_generation.get("font_size")
             if (
                 isinstance(font_size, bool)
                 or (isinstance(font_size, (int, float)) and font_size < COVER_MIN_TALK_FONT_SIZE)
@@ -613,9 +974,16 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                         f"{COVER_MIN_TALK_FONT_SIZE}px"
                     ),
                 )
-        cover_generation_text = json.dumps(cover_generation, ensure_ascii=False) if isinstance(cover_generation, dict) else str(cover_generation or "")
-        if isinstance(cover_generation, dict):
-            fallback_cover = bool(item.get("cover_regenerated_from_burn_frame")) or cover_generation.get("fallback_used") is True
+        cover_generation_text = (
+            json.dumps(finished_generation, ensure_ascii=False)
+            if isinstance(finished_generation, dict)
+            else str(cover_generation or "")
+        )
+        if isinstance(finished_generation, dict):
+            fallback_cover = (
+                bool(item.get("cover_regenerated_from_burn_frame"))
+                or finished_generation.get("fallback_used") is True
+            )
         else:
             fallback_cover = bool(item.get("cover_regenerated_from_burn_frame")) or any(
                 marker in cover_generation_text.lower()
@@ -623,8 +991,18 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             )
         if fallback_cover:
             _add_issue(issues, "COVER_FALLBACK_NOT_FINISHED", stem=stem, detail=cover_generation_text)
-        if not _has_ai_cover_evidence(root, item):
-            _add_issue(issues, "AI_COVER_EVIDENCE_MISSING", stem=stem, detail="No AI background/reference/model evidence found")
+        _audit_finished_cover_evidence(
+            root=root,
+            item=item,
+            generation=(
+                finished_generation
+                if isinstance(finished_generation, dict)
+                else None
+            ),
+            issues=issues,
+            stem=stem,
+            record_path=record_path,
+        )
 
     blocking = [issue for issue in issues if issue.get("severity") != "INFO"]
     return {"passed": not blocking, "root": str(root), "issues": issues, "issue_count": len(issues), "blocking_issue_count": len(blocking)}

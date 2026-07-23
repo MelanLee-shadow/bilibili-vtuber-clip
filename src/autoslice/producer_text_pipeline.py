@@ -29,6 +29,15 @@ from src.autoslice.chat_authority import (
     sanitize_chat_display_text,
     witness_disagreement_cues,
 )
+from src.autoslice.boundary_semantic_review import (
+    BoundarySemanticReviewError,
+    review_talk_boundary_semantics,
+)
+from src.autoslice.clip_context import (
+    build_clip_context,
+    clip_context_prompt_text,
+    write_clip_context,
+)
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.final_review_auditor import (
     MAX_CONTEXT_ADJUDICATIONS,
@@ -105,6 +114,8 @@ class TextPipelineResult:
     transcriber: Callable
     chat_authority_audit: dict
     chat_authority_path: Path
+    clip_context: dict
+    clip_context_path: Path
 
 
 @dataclass(frozen=True)
@@ -125,6 +136,7 @@ class TranscriptionDraft:
 class EntityVerificationContext:
     verify_confusable_entity: Callable
     referent_groups: list[ReferentGroup]
+    topic_resolution_audit: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -376,6 +388,7 @@ def _build_entity_verification_context(
     return EntityVerificationContext(
         verify_confusable_entity=verify_confusable_entity,
         referent_groups=referent_groups,
+        topic_resolution_audit=topic_resolution_audit,
     )
 
 
@@ -621,6 +634,11 @@ def _run_final_review(
     authoritative_chat: list[ChatEvidence] | tuple[ChatEvidence, ...] = (),
     selection_hook: str = "",
     referent_groups: Sequence[object] = (),
+    clip_context: Mapping[str, object] | None = None,
+    candidate_id: str = "",
+    boundary_target_ms: int | None = None,
+    selection_scorecard: object = None,
+    human_boundary_authority: str = "",
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -632,29 +650,71 @@ def _run_final_review(
                     timeout_seconds=300.0,
                 )
             )
+            structured_context_text = "\n".join(
+                (
+                    # 选片钩子进入审片员视野（2026-07-18 kmx 漏听案）：钩子
+                    # 点名的专名是漏听检查（prompt 规则7）的第一线索。
+                    [f"selection_hook: {selection_hook.strip()}"]
+                    if selection_hook.strip()
+                    else []
+                )
+                + [
+                    (
+                        f"{item.kind} @{item.offset_ms}ms"
+                        f"{(' sender=' + item.sender) if item.sender else ''}: "
+                        f"{sanitize_chat_display_text(item.text)}"
+                    )
+                    for item in authoritative_chat[:160]
+                ]
+            )
+            candidate_context_text = (
+                clip_context_prompt_text(clip_context)
+                if isinstance(clip_context, Mapping)
+                else ""
+            )
             review_findings = audit_final_subtitles(
                 srt_text,
                 llm_call=review_llm_call,
                 extract_json=extract_json_object,
                 glossary_text=adapters.review_glossary(),
-                structured_context_text="\n".join(
-                    (
-                        # 选片钩子进入审片员视野（2026-07-18 kmx 漏听案）：钩子
-                        # 点名的专名是漏听检查（prompt 规则7）的第一线索。
-                        [f"selection_hook: {selection_hook.strip()}"]
-                        if selection_hook.strip()
-                        else []
-                    )
-                    + [
-                        (
-                            f"{item.kind} @{item.offset_ms}ms"
-                            f"{(' sender=' + item.sender) if item.sender else ''}: "
-                            f"{sanitize_chat_display_text(item.text)}"
-                        )
-                        for item in authoritative_chat[:160]
-                    ]
-                ),
+                structured_context_text=structured_context_text,
+                candidate_context_text=candidate_context_text,
+                candidate_context=clip_context,
             )
+            boundary_semantic_review: dict[str, object]
+            if human_boundary_authority.strip():
+                boundary_semantic_review = {
+                    "schema_version": "talk-boundary-semantic-review.v1",
+                    "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW",
+                    "candidate_id": candidate_id,
+                    "reason_codes": [],
+                }
+            elif boundary_target_ms is None:
+                boundary_semantic_review = {
+                    "schema_version": "talk-boundary-semantic-review.v1",
+                    "status": "BLOCK",
+                    "reason_codes": ["BOUNDARY_TARGET_MISSING"],
+                }
+            else:
+                try:
+                    boundary_semantic_review = review_talk_boundary_semantics(
+                        cues=parse_srt_cues(srt_text),
+                        target_ms=boundary_target_ms,
+                        candidate_id=candidate_id,
+                        selection_hook=selection_hook,
+                        selection_scorecard=selection_scorecard,
+                        structured_context=structured_context_text,
+                        candidate_context=candidate_context_text,
+                        llm_call=review_llm_call,
+                        extract_json=extract_json_object,
+                    )
+                except BoundarySemanticReviewError as exc:
+                    boundary_semantic_review = {
+                        "schema_version": "talk-boundary-semantic-review.v1",
+                        "status": "BLOCK",
+                        "candidate_id": candidate_id,
+                        "reason_codes": [str(exc)],
+                    }
             protected_review_cues = set(handled_entity_cues)
             for row in chat_authority_audit.get("applied") or []:
                 for index in row.get("cue_indexes") or []:
@@ -677,6 +737,7 @@ def _run_final_review(
                 protected_cue_indexes=protected_review_cues,
                 entity_surface_set=entity_surfaces,
             )
+            final_review_audit["boundary_semantic_review"] = boundary_semantic_review
             # 无人值守自定夺：非同音建议交专用的“完整 cue + 前后语境 +
             # 上下文音频”声学相容度检查，再由固定代码规则融合。验证器不能选择或
             # 生成文本；chat/词典权威 cue 已在 route 阶段被挡。UNCERTAIN 原样
@@ -685,8 +746,7 @@ def _run_final_review(
                 row
                 for row in (final_review_audit.get("findings") or [])
                 if row.get("routed") == "disclosure"
-                and row.get("suggestion")
-                and str(row.get("suggestion")) != str(row.get("suspect"))
+                and row.get("proposed_full_cue") is not None
             ]
             adjudicated_cues: set[int] = set()
             adjudication_count = 0
@@ -733,6 +793,7 @@ def _run_final_review(
                     srt_text,
                     entity_verifier=verify_confusable_entity,
                     finding=row,
+                    clip_context=clip_context,
                 )
                 repaired = bool(adj_audit.get("repaired"))
                 row["context_audio_adjudication"] = adj_audit
@@ -1323,6 +1384,19 @@ def run_text_pipeline(
         authoritative_chat=authoritative_chat,
         adapters=adapters,
     )
+    clip_context = build_clip_context(
+        candidate_id=cid,
+        spec=spec,
+        draft_srt=draft.srt_text,
+        authoritative_chat=authoritative_chat,
+        topic_resolution=entity_context.topic_resolution_audit,
+        session_topic_authorities=draft.session_topic_authorities,
+        speech_memory_ledger_path=adapters.profile_asset_file(
+            "speech_memory_ledger"
+        ),
+    )
+    clip_context_path = out_root / f"{cid}.clip-context.json"
+    write_clip_context(clip_context_path, clip_context)
     from src.autoslice.source_subtitle_truth import ledger_local_windows
 
     authority = _apply_entity_authority(
@@ -1345,6 +1419,15 @@ def run_text_pipeline(
             ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
         ),
     )
+    last_piece = spec["pieces"][-1]
+    boundary_source_end_ms = int(
+        spec.get("given_end_ms")
+        if spec.get("given_end_ms") is not None
+        else spec["semantic_end_ms"]
+    )
+    boundary_target_ms = sum(durations[:-1]) + (
+        boundary_source_end_ms - int(last_piece["start_ms"])
+    )
     reviewed_srt, final_review_audit = _run_final_review(
         srt_text=authority.srt_text,
         chat_authority_audit=authority.chat_authority_audit,
@@ -1354,6 +1437,11 @@ def run_text_pipeline(
         adapters=adapters,
         selection_hook=str(spec.get("selection_hook") or ""),
         referent_groups=entity_context.referent_groups,
+        clip_context=clip_context,
+        candidate_id=cid,
+        boundary_target_ms=boundary_target_ms,
+        selection_scorecard=spec.get("selection_scorecard"),
+        human_boundary_authority=str(spec.get("given_end_authority") or ""),
     )
     evidence = _finalize_text_evidence(
         spec=spec,
@@ -1399,4 +1487,6 @@ def run_text_pipeline(
         transcriber=draft.transcriber,
         chat_authority_audit=authority.chat_authority_audit,
         chat_authority_path=evidence.chat_authority_path,
+        clip_context=clip_context,
+        clip_context_path=clip_context_path,
     )

@@ -184,3 +184,62 @@ def test_all_committed_subtitle_regression_assets_are_loadable():
         )
         assert document["candidate_id"] == candidate_id
         assert len(digest) == 64
+
+
+@pytest.mark.parametrize(
+    ("candidate_id", "poison"),
+    [
+        ("auto_193450_3573_3665", "她就叫晴"),
+        ("auto_193450_672_945", "分牙三四关"),
+        ("auto_193450_1863_2056", "谢谢你的素材"),
+    ],
+)
+def test_20260722_candidate_regressions_gate_both_surfaces(candidate_id, poison):
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_regressions"
+        / f"{candidate_id}.subtitle-regression.v1.json"
+    )
+    document, _ = load_subtitle_regression_document(path, candidate_id=candidate_id)
+    correct = _srt(*document["required_payload_substrings"])
+    correct_speaker = _srt(*document["required_payload_substrings"], speaker=True)
+    passing = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id=candidate_id,
+        final_text_srt=correct,
+        final_speaker_srt=correct_speaker,
+    )
+    assert passing["status"] == "PASS"
+
+    poisoned = _srt(*document["required_payload_substrings"], poison)
+    failing = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id=candidate_id,
+        final_text_srt=poisoned,
+        final_speaker_srt=poisoned,
+    )
+    assert poison in failing["surfaces"]["final_text_srt"]["found_forbidden"]
+
+
+def test_sumi_regression_requires_the_third_qin_surface():
+    candidate_id = "auto_193450_3573_3665"
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_regressions"
+        / f"{candidate_id}.subtitle-regression.v1.json"
+    )
+    document, _ = load_subtitle_regression_document(path, candidate_id=candidate_id)
+    wrong_required = [
+        value.replace("姐感妹秦秦秦她", "姐感妹秦秦她")
+        for value in document["required_payload_substrings"]
+    ]
+    wrong = _srt(*wrong_required)
+    audit = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id=candidate_id,
+        final_text_srt=wrong,
+        final_speaker_srt=wrong,
+    )
+    assert "姐感妹秦秦秦她是一个非常闹腾的小朋友" in audit[
+        "surfaces"
+    ]["final_text_srt"]["missing_required"]

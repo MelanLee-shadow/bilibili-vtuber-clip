@@ -38,6 +38,8 @@ def test_report_projects_products_rejects_and_reserves_exclusively(
                 "bundle_compliance": "COMPLIANT",
                 "start_ms": 0,
                 "end_ms": 60_000,
+                "effective_duration_ms": 272_000,
+                "summary": {"duration_ms": 300_400},
                 "hook": "已交付",
                 "title": "【李豆沙】已交付",
                 "cover_status": "AI_COVER_READY",
@@ -103,3 +105,4 @@ def test_report_projects_products_rejects_and_reserves_exclusively(
     assert "已交付旧落选字符串" not in summary
     assert "NO_TRIGGER 仅表示开发旁路未触发，绝不等于非联动" in summary
     assert "会话关系权威: **CONFIRMED**" in summary
+    assert "| 5:00 |" in summary

@@ -6,7 +6,7 @@
 
 ## Project direction
 
-- The autoslice production source of truth is the committed deployment at `free:/opt/bilive/autoslice/repo` plus its live `state/`, `out/`, and `reports/` directories. The recorder source remains `free:/opt/bilive/app` and the `bilive_record` container path `/app`. The local macOS workspace is source staging/docs/tests plus review mirrors, not the final runtime or artifact store.
+- The autoslice production source of truth is the committed deployment at `free:/opt/bilive/autoslice/repo` plus its live `state/`, `out/`, and `reports/` directories. The sole recorder is official BililiveRecorder at `free:/opt/bilive/bililive-recorder` and container `bililive_recorder:/rec`; `free:/opt/bilive/app` and `bilive_record:/app` remain tooling/legacy-app authority only and must not start blrec. The local macOS workspace is source staging/docs/tests plus review mirrors, not the final runtime or artifact store.
 - The product goal is unattended automatic slicing. Early-phase manual audit is allowed for validation/forensics, but do not introduce workflows that require Ivan to routinely trim timelines, pick release clips one by one, or babysit uploads.
 - Treat generated local media/reports (`lidousha/YYYY-MM-DD/**`, most `reports/**`, `.hermes/**`, `*.mp4`, `*.flv`, `*.m4s`, `*.bak-*`) as disposable unless a task explicitly names them as evidence.
 - Upload/publish paths must fail closed: no `AUTO_UPLOAD` manifest + artifact hash gate means no publish.

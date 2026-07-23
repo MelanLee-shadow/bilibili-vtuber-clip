@@ -17,9 +17,10 @@
 3. **裁决分层（Ivan 2026-07-19「不能绑死 Gemini 额度、也不能老用付费key」）**：
    - **T0 确定性**：hard canon / 源真值 ledger / 弹幕逐字——零模型。
    - **T0.5 同音自动应用**：拼音无调全等（`homophone_fix`）——零外部调用；但音频不能证明同音专名的汉字写法，带常见人名/称呼形态的换字必须有词表/源真值等文字权威，否则只把该跨度还原为 draft，同 cue 其他有见证修复继续保留。疑问意图族（什么/怎么/为什么/谁/哪里/多少等）也不可由二听结果自行改写。
-   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有词表/本片转写/结构化弹幕见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **suspect 不是注册实体词面** → 纯文本应用，零外部调用。7/18 六案有五案属此层。
+   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有独立词表或结构化弹幕/SC 见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **改写既不替换也不引入注册实体词面** → 纯文本应用，零外部调用。同片其他 cue 可用于召回 callback/平行复述，但它和目标通常来自同一 ASR 派生链，不能循环自证；此类 `transcript_context` 强制进入 T3 声学仲裁。终审若正确给出完整 entity 修正句、但错标成 `phonetic` 且漏写 `source_surface`，只有在整个最小替换词面于本片其他 cue/词表/结构化证据逐字重复时，代码才恢复候选 provenance；凡引入注册实体仍走 T3，不直接改字。
    - **T3 声学仲裁**：只剩实体 vs 实体选边（kmx/乒乓球、梦限大/Mujica 保向铁律）与拼音强变形（醉堆→这一堆型）。量级 ~1/10。
    - T2 备选未实施：免费 BCUT 对争议 span 重转写+拼音距离比对（「穷人声学见证」），T3 仍嫌贵时再上。
+   - **删除专线**：`acoustic_delete` 仅删一个有界疑似幻听 span，必须保留 cue 的真实后半段；`acoustic_drop_cue` 仅用于整条无声。两者都不能走 T0.5/T1，严格声学 postcondition 不成立就保留原文并披露。
 4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。
 5. **付费兜底**：同项失败≥3轮即可触发（额度类失败可同 run 连续补轮，`quota_exhausted_round`），每笔入帐。**Ivan 2026-07-19 明确否决冷却期类附加门**——控制付费用量靠 T1 分层缩减声学仲裁需求本身，不靠拖延付费。
 6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。

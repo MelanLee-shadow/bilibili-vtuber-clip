@@ -3,18 +3,18 @@
 李豆沙 自动切片监控 (lidousha auto-slice monitor)
 
 Runs locally on Ivan's Mac (cron), SSHes into the `free` host, and checks the
-health of the bilive auto-slice pipeline for room 22966160 (李豆沙). 23222837
-(礼墨sumi) is probed too, only as a secondary signal / test subject.
+health of the bilive auto-slice pipeline for room 22966160 (李豆沙). A former
+secondary test-room probe was removed with the recorder migration.
 
 What it watches
   - bilive_record container reachable
-  - blrec recorders alive
+  - official BililiveRecorder adapter status is fresh
   - whether 22966160 is currently live/recording
   - whether the auto-slice loop (`src.burn.scan`) is running
   - whether the publish loop (`src.upload.upload`) is running  <-- must be OFF
   - whether finished recordings are actually producing slices + covers
   - scan log error bursts
-  - disk headroom + recorder source-format regression (flv chain)
+  - disk headroom + recorder quality/IPv4/source-retention policy
 
 Safe auto-rescue ("能自动救的就救")
   - kill any running `src.upload.upload`  (publishing is explicitly forbidden)
@@ -42,8 +42,7 @@ from datetime import datetime, timezone, timedelta
 SSH_HOST = "free"
 CONTAINER = "bilive_record"
 PRIMARY_ROOM = "22966160"      # 李豆沙  (the production target)
-TEST_ROOM = "23222837"         # 礼墨sumi (secondary / test only)
-ROOMS = [PRIMARY_ROOM, TEST_ROOM]
+ROOMS = [PRIMARY_ROOM]
 
 REPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                           "reports", "slice_monitor")
@@ -77,31 +76,49 @@ ROOMS = ["__ROOMS__"]
 VIDEOS = "/app/Videos"
 NOW = time.time()
 
-# blrec HTTP API (inside the container): room -> port.  The key comes from the
-# container environment (compose env_file) — never hardcoded (repo goes public).
-BLREC_PORT = {"22966160": 2233, "23222837": 2234}
-BLREC_KEY = os.environ.get("RECORD_KEY", "")
+# BililiveRecorder's host-side adapter atomically publishes this normalized
+# document and compose mounts it read-only into the tooling container.
+RECORDER_STATUS = "/app/recording-state/status.json"
+RECORDER_STATUS_MAX_AGE = 180
 
-def blrec_status(room):
-    port = BLREC_PORT.get(room)
-    if not port:
+def recorder_status(room):
+    if room != ROOMS[0]:
         return None
     try:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/v1/tasks/{room}/data",
-            headers={"X-API-KEY": BLREC_KEY})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            d = json.load(r)
-        t = d.get("task_status", d) or {}
-        ri = d.get("room_info", {}) or {}
+        with open(RECORDER_STATUS, "r", encoding="utf-8") as fh:
+            d = json.load(fh)
+        if d.get("schema_version") != "recorder-neutral-status.v1":
+            raise ValueError("schema mismatch")
+        if str(d.get("room_id")) != room:
+            raise ValueError("room mismatch")
+        age = NOW - float(d["generated_at_epoch"])
+        if age < -300 or age > RECORDER_STATUS_MAX_AGE:
+            raise ValueError(f"stale status ({age:.0f}s)")
+        if d.get("service_reachable") is not True or d.get("error"):
+            raise ValueError(str(d.get("error") or "recorder unreachable"))
         return {
-            "live_status": ri.get("live_status"),
-            "running_status": t.get("running_status"),
-            "rec_total": t.get("rec_total"),
-            "rec_rate": t.get("rec_rate"),
-            "real_stream_format": t.get("real_stream_format"),
-            "real_quality_number": t.get("real_quality_number"),
-            "recording_path": t.get("recording_path"),
+            "backend": d.get("backend"),
+            "live_status": d.get("live_status"),
+            "running_status": d.get("running_status"),
+            "streaming": d.get("streaming"),
+            "recording": d.get("recording"),
+            "danmaku_connected": d.get("danmaku_connected"),
+            "rec_total": d.get("rec_total"),
+            "total_input_bytes": d.get("total_input_bytes"),
+            "total_output_bytes": d.get("total_output_bytes"),
+            "rec_rate": d.get("rec_rate"),
+            "real_stream_format": d.get("real_stream_format"),
+            "requested_quality_priority": d.get("requested_quality_priority"),
+            "requested_quality_number": d.get("requested_quality_number"),
+            "actual_quality_number": d.get("actual_quality_number"),
+            "active_media": (d.get("latest_source") or {}).get("media"),
+            "latest_source_size": (d.get("latest_source") or {}).get("size_bytes"),
+            "cookie_configured": (d.get("bilibili_cookie") or {}).get("configured"),
+            "cookie_login_valid": (d.get("bilibili_cookie") or {}).get("login_valid"),
+            "cookie_health_error": (d.get("bilibili_cookie") or {}).get("error"),
+            "recording_path": d.get("recording_path"),
+            "finalizing": d.get("finalizing"),
+            "status_age_sec": int(age),
         }
     except Exception as e:
         return {"error": str(e)[:120]}
@@ -122,8 +139,9 @@ def count_live(pat):
     rx = re.compile(pat)
     return sum(1 for l in LINES if rx.search(l) and "grep" not in l and "<defunct>" not in l)
 
+primary_recorder_status = recorder_status(ROOMS[0])
 procs = {
-    "blrec": count_live(r"/blrec\s+-c\b"),   # real recorder invocation only (skip zombies/watchdog)
+    "recorder": int(bool(primary_recorder_status and not primary_recorder_status.get("error"))),
     "scan": count_live(r"src\.burn\.scan"),
     "local_prepare": count_live(r"src\.upload\.local_prepare"),  # no-publish title/cover staging
     "upload": count_live(r"src\.upload\.upload"),                # OLD publishing daemon (must be OFF)
@@ -132,9 +150,9 @@ procs = {
 
 ORIG_RX = lambda room: re.compile(r"^%s_\d{8}-\d\d-\d\d-\d\d\.(mp4|flv|m4s)$" % room)
 # The FINISHED, remuxed recording (dashed date + trailing dash) — ffprobe reads
-# its moov in a few seconds. The raw blrec `.m4s` fragment (compact date) is 1GB+
-# fMP4 and ffprobe TIMES OUT scanning it over the slow mount → false audio_missing.
-# Audio health must be checked on this readable file, not the raw fragment.
+# its moov in a few seconds. Historical raw `.m4s` fragments can be 1GB+ fMP4
+# and ffprobe may time out over the slow mount → false audio_missing. Audio
+# health must be checked on a finalized readable file, not an active fragment.
 FINISHED_MP4_RX = lambda room: re.compile(r"^%s_\d{4}-\d\d-\d\d-\d\d-\d\d-\d\d-\.mp4$" % room)
 SLICE_RX = lambda room: re.compile(r"\d+s_.*%s.*\.(flv|mp4)$" % room)
 
@@ -207,7 +225,9 @@ for room in ROOMS:
         if cnt:
             dirty.append({"dir": d, "originals": cnt})
     info["dirty_backlog"] = dirty
-    info["blrec_api"] = blrec_status(room)
+    info["recorder_status"] = (
+        primary_recorder_status if room == ROOMS[0] else recorder_status(room)
+    )
     rooms[room] = info
 
 # ---- audio health on the newest FINISHED recording of the primary room ----
@@ -217,7 +237,7 @@ AUDIO_LAST = "__LAST_AUDIO__"
 audio = {}
 proom = ROOMS[0]
 pinfo = rooms.get(proom, {})
-active_bn = os.path.basename(((pinfo.get("blrec_api") or {}).get("recording_path") or ""))
+active_bn = os.path.basename(((pinfo.get("recorder_status") or {}).get("recording_path") or ""))
 ld = pinfo.get("latest_date_dir")
 # Prefer the finished remuxed .mp4 (ffprobe-readable); only fall back to a raw
 # ORIG_RX match (.m4s) if no remuxed file exists yet.
@@ -300,17 +320,13 @@ try:
 except Exception as e:
     disk = {"error": str(e)}
 
-# recorder source-format regression check
-flags = {}
-try:
-    with open("/app/settings.toml", "r", errors="replace") as fh:
-        txt = fh.read()
-    m = re.search(r'stream_format\s*=\s*"([^"]+)"', txt)
-    flags["stream_format"] = m.group(1) if m else None
-    m = re.search(r'delete_source\s*=\s*"([^"]+)"', txt)
-    flags["delete_source"] = m.group(1) if m else None
-except Exception as e:
-    flags["error"] = str(e)
+# Recorder-policy projection from the normalized adapter status.
+flags = {
+    "stream_format": (primary_recorder_status or {}).get("real_stream_format"),
+    "delete_source": "never",
+    "quality_priority": (primary_recorder_status or {}).get("requested_quality_priority"),
+    "address_family": "ipv4",
+}
 
 # no-upload auto-review shadow state
 auto_review_shadow = {"state_file": "/app/reports/auto_review_shadow/lidousha_auto_review_shadow_state.json"}
@@ -527,29 +543,23 @@ def kill_upload():
     return rc == 0
 
 
-# blrec API exposed on the host: room -> mapped port.  The API key never
-# leaves the free host: the ssh'd command reads it from /opt/bilive/.env at
-# run time (repo goes public; no credentials in source).
-BLREC_HOST_PORT = {"22966160": 22333, "23222837": 22334}
-
-
 def restart_recorder(room):
-    """Disable then re-enable the recorder for one room (resets blrec's stuck qn fallback).
-    Safe: only ever applied when the room is live but capturing nothing."""
-    port = BLREC_HOST_PORT.get(room)
-    if not port:
+    """Restart official BililiveRecorder after two live no-growth observations."""
+    if room != PRIMARY_ROOM:
         return False
-    base = f"http://127.0.0.1:{port}/api/v1/tasks/{room}/recorder"
-    cmd = (
-        "KEY=$(grep -m1 '^RECORD_KEY=' /opt/bilive/.env | cut -d= -f2); "
-        f"curl -s -m 10 -X POST '{base}/disable' -H \"X-API-KEY: $KEY\" "
-        f"-H 'content-type: application/json' -d '{{\"force\":true}}' >/dev/null; "
-        f"sleep 5; "
-        f"curl -s -m 10 -X POST '{base}/enable' -H \"X-API-KEY: $KEY\" >/dev/null; echo done"
-    )
     try:
         p = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes", SSH_HOST, cmd],
+            [
+                "ssh",
+                "-o",
+                "ConnectTimeout=15",
+                "-o",
+                "BatchMode=yes",
+                SSH_HOST,
+                "docker",
+                "restart",
+                "bililive_recorder",
+            ],
             capture_output=True, text=True, timeout=40)
         return p.returncode == 0
     except Exception:
@@ -584,15 +594,18 @@ def evaluate(probe, state):
     sl = primary.get("slices", {})
     dirty = primary.get("dirty_backlog", [])
     flags = probe.get("flags", {})
-    api = primary.get("blrec_api") or {}
-    # authoritative live state from blrec API; fall back to file-freshness if API down
+    api = primary.get("recorder_status") or {}
+    # Authoritative live state from the normalized recorder status; fall back
+    # to file freshness only when the status document is unavailable.
     live_status = api.get("live_status")
     if live_status is not None:
-        live = (live_status == 1)
+        live = (live_status == 1) or api.get("finalizing") is True
     else:
         live = bool(rec.get("active"))
     rec_rate = api.get("rec_rate")
-    rec_total = api.get("rec_total")
+    rec_total = api.get("total_output_bytes")
+    if rec_total is None:
+        rec_total = api.get("rec_total")
     # cloud-mounted Videos doesn't update mtime live, so file-freshness can't tell the in-progress
     # recording from backlog. When the API says she's live, the latest date dir is the live session,
     # not dirty backlog — drop it from the dirty set.
@@ -600,7 +613,7 @@ def evaluate(probe, state):
     if live and latest_dir:
         dirty = [d for d in dirty if d.get("dir") != latest_dir]
 
-    notes.append(f"blrec={procs['blrec']} scan={procs['scan']} "
+    notes.append(f"recorder={procs['recorder']} scan={procs['scan']} "
                  f"local_prepare={procs.get('local_prepare', 0)} upload={procs['upload']} "
                  f"auto_review_shadow={procs.get('auto_review_shadow', 0)}")
     notes.append(f"李豆沙 live={'YES' if live else 'no'} "
@@ -639,13 +652,40 @@ def evaluate(probe, state):
                      f"auto_upload={counts.get('auto_upload')} block={counts.get('block')} "
                      f"gaps={gaps}")
     if api:
-        notes.append(f"blrec API: live_status={live_status} run={api.get('running_status')} "
-                     f"fmt={api.get('real_stream_format')} qn={api.get('real_quality_number')} "
+        active_media = api.get("active_media") or {}
+        notes.append(f"recorder: live_status={live_status} run={api.get('running_status')} "
+                     f"fmt={api.get('real_stream_format')} requested_qn={api.get('requested_quality_number')} "
+                     f"actual={active_media.get('width')}x{active_media.get('height')} "
                      f"rec_rate={rec_rate} rec_total={rec_total}")
+        width = int(active_media.get("width") or 0)
+        height = int(active_media.get("height") or 0)
+        if live and width and height and not (
+            max(width, height) >= 1920 and min(width, height) >= 1080
+        ):
+            problems.append({
+                "id": "recorder_quality_below_1080",
+                "sev": "WARN",
+                "msg": f"录播姬当前实际视频为 {width}x{height}，低于 1080p；配置优先 10000 不能证明实际拿到 1080p。",
+                "fix": "检查 B 站账号/Cookie 当时可用画质和录播姬 CurrentQn；保留录制但按质量降级告警。"
+            })
+        if api.get("cookie_login_valid") is False:
+            problems.append({
+                "id": "recorder_cookie_not_logged_in",
+                "sev": "WARN",
+                "msg": "录播姬的 B 站 Cookie 未登录，10000 仍会优先请求但实际可能只能取得较低画质。",
+                "fix": "更新 free 上权限 0600 的录播姬 Cookie；不要把 Cookie 写进仓库或日志。"
+            })
+        elif api.get("cookie_health_error"):
+            problems.append({
+                "id": "recorder_cookie_health_unknown",
+                "sev": "WARN",
+                "msg": "暂时无法验证录播姬 Cookie 登录状态。",
+                "fix": "检查 adapter 状态中的 cookie health 网络错误；保持实际分辨率验收。"
+            })
 
     # ---- CRITICAL: live but capturing nothing (the 90-min gap that slipped today) ----
-    # blrec can get stuck after a one-way qn fallback. Decide via rec_total growth between two
-    # checks (~5 min apart) — instantaneous rec_rate is often 0 at the sampling instant.
+    # Decide via byte growth between two checks (~5 min apart);
+    # instantaneous rec_rate is often 0 at the sampling instant.
     rec_seen = state.get("rec_total_seen", {})
     key = str(PRIMARY_ROOM)
     if live and rec_total is not None and key in rec_seen:
@@ -655,11 +695,11 @@ def evaluate(probe, state):
             ok = restart_recorder(PRIMARY_ROOM)
             actions.append(("restarted_recorder",
                             f"李豆沙在播但录制无增长(上轮 {rec_seen[key]} → 本轮 {rec_total} 字节)，"
-                            f"已{'成功' if ok else '尝试'}重启录制器(disable→enable，重置 blrec 卡死的 qn 回退)。"))
+                            f"已{'成功' if ok else '尝试'}重启官方录播姬。"))
             problems.append({"id": "live_not_recording", "sev": "DOWN",
-                             "msg": "李豆沙在播但 blrec 没在抓流(两轮无增长)——已自动重启录制器。",
-                             "fix": "若反复发生，多为开播瞬间高清档没就绪导致 blrec 单向回退卡死；"
-                                    "已锁 stream_format=flv(音频已验证正常)以尽量规避。"})
+                             "msg": "李豆沙在播但录播姬两轮无字节增长——已自动重启录制器。",
+                             "fix": "检查录播姬日志中的 CDN/画质回退；生产配置已强制 IPv4，"
+                                    "若仍反复发生则保留原始 FLV 并人工检查源端可用性。"})
     if rec_total is not None:
         rec_seen[key] = rec_total
     state["rec_total_seen"] = rec_seen
@@ -674,21 +714,22 @@ def evaluate(probe, state):
                          "fix": "确认没有人/脚本启动 upload.sh；只跑 scan。"})
 
     # ---- recorder config regression ----
-    # flv@250 is the chosen, audio-verified format for this room. The dangerous setting is
-    # delete_source=auto (a bad remux would then delete the only good source, the 6/20 trap).
+    # The dangerous setting is source deletion: a bad remux must never remove
+    # the only original recording.
     if flags.get("delete_source") == "auto":
         problems.append({"id": "delete_source_auto", "sev": "DEGRADED",
                          "msg": "delete_source=auto 危险：remux 坏了会把原始源删掉(6/20 无声那次的元凶之一)。",
                          "fix": "改回 delete_source=never，保留原始 flv。"})
 
     # ---- container reachable but recorders gone ----
-    if procs.get("blrec", 0) == 0:
-        problems.append({"id": "blrec_down", "sev": "DOWN",
-                         "msg": "容器在跑但没有 blrec 录制进程。",
-                         "fix": "进容器执行 ./record.sh 重新拉起 blrec（录制链路，需人工确认）。"})
+    if procs.get("recorder", 0) == 0:
+        problems.append({"id": "recorder_down", "sev": "DOWN",
+                         "msg": "官方录播姬状态缺失、过期或不可达。",
+                         "fix": "检查 free 上 bililive_recorder 容器、"
+                                "/opt/bilive/recording/status.json 与 bililive_adapter 服务。"})
 
     # ---- OLD control plane RETIRED (2026-07-10, Ivan) ----
-    # blrec records; the autoslice runner (free cron, /opt/bilive/autoslice)
+    # BililiveRecorder records; the autoslice runner (free cron, /opt/bilive/autoslice)
     # slices.  scan/local_prepare/shadow-daemon must NOT run: they double-
     # produce, burn AI-cover money on full segments, and their full-tree FUSE
     # rescans destabilized the CloudDrive mount (the 7/9 outage).  This monitor
@@ -961,5 +1002,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

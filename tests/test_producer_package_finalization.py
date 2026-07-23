@@ -45,7 +45,9 @@ def test_delivery_summary_uses_persisted_boundary_audit(
     speaker = finalization.SpeakerArtifacts(None, None, None, None)
     authority = finalization.AuthorityArtifacts(None, None)
     staged = finalization.StagedRecord(
-        record={}, staging={"title": "标题"}, record_path=record_path
+        record={"duration_ms": 12_345},
+        staging={"title": "标题"},
+        record_path=record_path,
     )
     audit = {
         "closure_sentence": "这是落点",
@@ -70,6 +72,7 @@ def test_delivery_summary_uses_persisted_boundary_audit(
 
     assert result == 0
     summary = json.loads(capsys.readouterr().out)
+    assert summary["duration_ms"] == 12_345
     assert summary["closure_sentence"] == "这是落点"
     assert summary["red_flags"] == []
     assert summary["boundary_repairs"] == [{"reason": "tail_clamped"}]
