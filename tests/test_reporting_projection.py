@@ -1,6 +1,10 @@
 from pathlib import Path
 
 import src.autoslice.reporting as reporting
+from src.autoslice.cover_route_evidence import (
+    build_cover_route_decision,
+    record_cover_route_execution,
+)
 
 
 class _Runner:
@@ -18,6 +22,39 @@ class _Runner:
     @staticmethod
     def safe_name(text: str, fallback: str) -> str:
         return text or fallback
+
+
+def _screenshot_direct_generation() -> dict[str, object]:
+    story_contract = {
+        "schema_version": "story-contract.v1",
+        "selection_hook": "真实画面已经表达当面对质",
+        "relation_state": "UNKNOWN",
+        "participants": [],
+    }
+    generation: dict[str, object] = {
+        "story_contract": story_contract,
+        "title": "【李豆沙】当面对质",
+        "cover_text": "当面对质",
+        "method": "screenshot_direct",
+        "cover_origin": "SOURCE_SCREENSHOT",
+    }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="screenshot_direct",
+        selected_rationale="真实来源帧已经同时表达人物关系和冲突钩子",
+        story_contract=story_contract,
+        reference_authority={},
+        decision_inputs={"composition_strength": "STRONG"},
+        title=str(generation["title"]),
+        cover_text=str(generation["cover_text"]),
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
+    return generation
 
 
 def test_report_projects_products_rejects_and_reserves_exclusively(
@@ -43,6 +80,7 @@ def test_report_projects_products_rejects_and_reserves_exclusively(
                 "hook": "已交付",
                 "title": "【李豆沙】已交付",
                 "cover_status": "AI_COVER_READY",
+                "cover_generation": _screenshot_direct_generation(),
             },
             {
                 "candidate_id": "rejected",
@@ -106,3 +144,38 @@ def test_report_projects_products_rejects_and_reserves_exclusively(
     assert "NO_TRIGGER 仅表示开发旁路未触发，绝不等于非联动" in summary
     assert "会话关系权威: **CONFIRMED**" in summary
     assert "| 5:00 |" in summary
+    assert "截图直出（AI未调用）" in summary
+    assert "真实来源帧已经同时表达人物关系和冲突钩子" in summary
+    assert "未选 截图轻调" in summary
+    assert "未选 AI 重绘" in summary
+
+
+def test_report_does_not_infer_ai_route_from_legacy_ready_status(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(reporting, "_runner", _Runner(tmp_path))
+    state = {
+        "status": "review_ready",
+        "picks": [
+            {
+                "candidate_id": "legacy-ready",
+                "status": "review_ready",
+                "bundle_lifecycle": "CURRENT",
+                "bundle_compliance": "COMPLIANT",
+                "start_ms": 0,
+                "end_ms": 30_000,
+                "hook": "旧包",
+                "cover_status": "AI_COVER_READY",
+            }
+        ],
+        "songs": [],
+    }
+
+    reporting.write_reports("2026-07-22", state)
+    summary = (
+        tmp_path / "delivery/2026-07-22/AUTOSLICE_SUMMARY.md"
+    ).read_text(encoding="utf-8")
+
+    assert "旧就绪状态：AI_COVER_READY" in summary
+    assert "不能据此判断是否使用 AI" in summary
+    assert "证据=MISSING_OR_INVALID" in summary

@@ -344,6 +344,11 @@ SESSION_OUTRO_BGM_MAX_REMAINING_MS = 240_000
 SONG_ANCHOR_TRIM_MIN_MS = 20_000  # only retry on the danmaku-dense core when the
                                   # trim drops ≥20s of talk padding off an end
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Read-only presentation modules must not invalidate media/content evidence or
+# wake recoverable production work. Their output is regenerated from state.
+PIPELINE_FINGERPRINT_EXCLUSIONS = {
+    "src/autoslice/reporting.py",
+}
 # Per-stage CPA model chains (2026-07-10, Ivan): sol ONLY where open-ended
 # judgment is load-bearing — semantic recall (editorial pick over a 30-min
 # transcript) and the single brand-critical title call (high effort, short
@@ -397,7 +402,12 @@ def pipeline_fingerprint() -> str:
     paths.append(profile_tool("cover_regenerator"))
     paths.extend(CHANNEL_PROFILE.fingerprint_paths(repo_root=REPO_ROOT))
     autoslice_src = REPO_ROOT / "src" / "autoslice"
-    paths.extend(autoslice_src.rglob("*.py") if autoslice_src.is_dir() else [])
+    paths.extend(
+        path
+        for path in (autoslice_src.rglob("*.py") if autoslice_src.is_dir() else [])
+        if path.relative_to(REPO_ROOT).as_posix()
+        not in PIPELINE_FINGERPRINT_EXCLUSIONS
+    )
 
     def path_label(path: Path) -> str:
         try:
@@ -472,7 +482,6 @@ def song_pipeline_fingerprint() -> str:
         "src/autoslice/publish_staging.py",
         "src/autoslice/published_song_history.py",
         "src/autoslice/render_qa.py",
-        "src/autoslice/reporting.py",
         "src/autoslice/review_evidence.py",
         "src/autoslice/semantic_candidate_selector.py",
         "src/autoslice/source_context_executor.py",

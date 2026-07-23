@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
+from src.autoslice.cover_route_evidence import validate_cover_route_decision
 from src.autoslice.runner_proxy import RunnerProxy
 
 
@@ -53,6 +55,93 @@ def _score_label(row: dict) -> str:
         return f"T{scorecard.get('tier')} / {scorecard.get('effective_score')}"
     confidence = row.get("confidence")
     return f"未量化 / conf={confidence if confidence is not None else '—'}"
+
+
+def _report_cell(value: object) -> str:
+    """Keep evidence readable without corrupting the Markdown table."""
+
+    return " ".join(str(value or "").split()).replace("|", "／")
+
+
+def _cover_route_projection(row: dict) -> dict[str, object]:
+    """Project the executed cover route instead of the legacy readiness flag.
+
+    ``AI_COVER_READY`` is an old publish-protocol status meaning that a cover
+    artifact is ready.  It does not prove that image generation was selected,
+    attempted, or used.  Human reports must derive those facts from the
+    validated v2 route document and fail visibly back to the legacy status when
+    that evidence is absent or malformed.
+    """
+
+    summary = row.get("summary") if isinstance(row.get("summary"), Mapping) else {}
+    generation = row.get("cover_generation")
+    if not isinstance(generation, Mapping):
+        publish_staging = (
+            row.get("publish_staging")
+            if isinstance(row.get("publish_staging"), Mapping)
+            else {}
+        )
+        generation = publish_staging.get("cover_generation")
+    fallback = str(row.get("cover_status") or summary.get("cover_status") or "?")
+    if not isinstance(generation, Mapping) or not validate_cover_route_decision(
+        generation, allow_legacy_v1=False
+    ):
+        return {
+            "label": f"旧就绪状态：{fallback}",
+            "reason": "缺少可验证的 lidousha-cover-route-decision.v2；不能据此判断是否使用 AI",
+            "selected": "UNKNOWN",
+            "actual": "UNKNOWN",
+            "execution_status": "UNKNOWN",
+            "image_generation_attempted": None,
+            "image_generation_used": None,
+            "alternatives": [],
+            "evidence_status": "MISSING_OR_INVALID",
+        }
+
+    route = generation["route_decision"]
+    assert isinstance(route, Mapping)
+    selected = str(route.get("selected_treatment") or "")
+    actual = str(route.get("actual_treatment") or "")
+    attempted = route.get("image_generation_attempted") is True
+    used = route.get("image_generation_used") is True
+    route_labels = {
+        "screenshot_direct": "截图直出",
+        "screenshot_polish": "截图轻调",
+        "cpa_redraw": "AI 重绘",
+    }
+    if used:
+        ai_label = "AI已调用并用于最终图"
+    elif attempted:
+        ai_label = "AI已调用但未用于最终图"
+    else:
+        ai_label = "AI未调用"
+    selected_label = route_labels.get(selected, selected or "UNKNOWN")
+    actual_label = route_labels.get(actual, actual or "UNKNOWN")
+    if selected == actual:
+        label = f"{actual_label}（{ai_label}）"
+    else:
+        label = f"{actual_label}（原选{selected_label}；{ai_label}）"
+    alternatives = []
+    for alternative in route.get("rejected_alternatives") or []:
+        if not isinstance(alternative, Mapping):
+            continue
+        alternatives.append(
+            {
+                "treatment": str(alternative.get("treatment") or "UNKNOWN"),
+                "reason": str(alternative.get("rejected_reason") or ""),
+            }
+        )
+    return {
+        "label": label,
+        "reason": str(route.get("selected_rationale") or route.get("reason") or ""),
+        "selected": selected,
+        "actual": actual,
+        "execution_status": str(route.get("execution_status") or ""),
+        "image_generation_attempted": attempted,
+        "image_generation_used": used,
+        "alternatives": alternatives,
+        "evidence_status": "VALID_V2",
+    }
 
 
 def write_reports(date: str, state: dict) -> None:
@@ -138,13 +227,14 @@ def write_reports(date: str, state: dict) -> None:
         "",
         "## 谈话成品（仅当前合规交付）",
         "",
-        "| 成品 | 时长 | 标题 | 选片理由(hook) | 量化分 | 收束句 | 边界 | 封面 |",
-        "|---|---|---|---|---|---|---|---|",
+        "| 成品 | 时长 | 标题 | 选片理由(hook) | 量化分 | 收束句 | 边界 | 封面实际路线 | 路由理由 |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for pick in current_deliveries:
         s = pick.get("summary") or {}
         repairs = pick.get("boundary_repairs") or []
         status_mark = f"（边界自修复×{len(repairs)}）" if repairs else ""
+        cover_route = _cover_route_projection(pick)
         lines.append(
             f"| `{_runner.safe_name(pick.get('hook',''), pick.get('candidate_id','?'))}`{status_mark} "
             f"| {fmt_dur(pick)} "
@@ -153,10 +243,42 @@ def write_reports(date: str, state: dict) -> None:
             f"| {_score_label(pick)} "
             f"| {s.get('closure_sentence') or '?'} "
             f"| {s.get('boundary_verdict') or '?'} "
-            f"| {pick.get('cover_status') or s.get('cover_status') or '?'} |"
+            f"| {_report_cell(cover_route['label'])} "
+            f"| {_report_cell(cover_route['reason'])} |"
         )
     if not current_deliveries:
-        lines.append("| — | — | （无当前合规交付） | — | — | — | — | — |")
+        lines.append("| — | — | （无当前合规交付） | — | — | — | — | — | — |")
+
+    if current_deliveries:
+        lines += [
+            "",
+            "## 封面路线审计（以实际执行证据为准）",
+            "",
+            "> 内部兼容状态 `AI_COVER_READY` 只表示封面文件已就绪，不表示使用了 AI。"
+            "以下结论只来自通过校验的 `lidousha-cover-route-decision.v2`；缺证时会显式显示 UNKNOWN。",
+            "",
+        ]
+        route_labels = {
+            "screenshot_direct": "截图直出",
+            "screenshot_polish": "截图轻调",
+            "cpa_redraw": "AI 重绘",
+            "UNKNOWN": "UNKNOWN",
+        }
+        for pick in current_deliveries:
+            cover_route = _cover_route_projection(pick)
+            lines.append(
+                f"- `{_candidate_id(pick) or '?'}`：**{_report_cell(cover_route['label'])}**；"
+                f"证据={cover_route['evidence_status']}；执行状态="
+                f"{_report_cell(cover_route['execution_status'])}；选中理由："
+                f"{_report_cell(cover_route['reason'])}"
+            )
+            for alternative in cover_route["alternatives"]:
+                assert isinstance(alternative, Mapping)
+                treatment = str(alternative.get("treatment") or "UNKNOWN")
+                lines.append(
+                    f"  - 未选 {route_labels.get(treatment, treatment)}："
+                    f"{_report_cell(alternative.get('reason'))}"
+                )
 
     if stale_deliveries:
         lines += [

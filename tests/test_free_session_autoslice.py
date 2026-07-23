@@ -5258,6 +5258,9 @@ def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"base:{relative}\n", encoding="utf-8")
+    report_only = tmp_path / "src/autoslice/reporting.py"
+    report_only.parent.mkdir(parents=True, exist_ok=True)
+    report_only.write_text("base:report projection\n", encoding="utf-8")
     baseline = runner.pipeline_fingerprint()
 
     for relative in load_bearing:
@@ -5272,6 +5275,9 @@ def test_pipeline_fingerprint_covers_song_proof_closure(tmp_path, monkeypatch):
     unrelated.write_text("unrelated\n", encoding="utf-8")
     assert runner.pipeline_fingerprint() == baseline
 
+    report_only.write_text("changed:report projection\n", encoding="utf-8")
+    assert runner.pipeline_fingerprint() == baseline
+
 
 def test_song_pipeline_fingerprint_excludes_talk_entity_authority(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
@@ -5283,6 +5289,7 @@ def test_song_pipeline_fingerprint_excludes_talk_entity_authority(tmp_path, monk
         "assets/lidousha/voiceprint_profile.v1.json",
     ]
     talk_only_paths = [
+        "src/autoslice/reporting.py",
         "src/autoslice/chat_evidence.py",
         "src/autoslice/chat_proposals.py",
         "src/autoslice/chat_repair.py",
