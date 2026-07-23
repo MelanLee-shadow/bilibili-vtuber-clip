@@ -20,6 +20,7 @@
 - recovery plan 同时写入 exact-no-backfill selection contract；本地审片包只能从最终 state 的
   exact CURRENT+COMPLIANT 交集逐 stem 重建，不能整目录复制 inherited delivery 或旧 summary。
   缺封面、缺 regression/record、非终态、pending/backlog 补位或集合不等都必须阻止覆盖旧本地包。
+- exact recovery 重跑结束后必须用 `scripts/build_lidousha_recovery_review_manifest.py` 从最终 state 与 record **整份重建** `review_manifest.json`，禁止复用/手补上一轮清单。审计器必须比较 manifest item 与 record 的 candidate/title，并在存在 `cover_route_attestations` 时重验 reference/final hash、method、完整 route decision 与 reference authority；任一旧标题、旧封面 hash 或旧路由证据都要阻断上传。
 - exact-no-backfill 合同中的入选项失败时必须保留真实终态（`failed`、`boundary_unrepairable`、
   `speaker_review_required` 或 `speaker_evidence_insufficient`），并记录“合同禁止补位”；不得把它改写成代表可由候补替换的
   `candidate_rejected`。这样相关 failure-scoped fingerprint 变化后仍可自动重试。对于此规则上线前

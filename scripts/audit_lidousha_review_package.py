@@ -262,7 +262,6 @@ def _audit_story_bound_cover(
                 sort_keys=True,
             ),
         )
-    route_decision = generation.get("route_decision")
     if required and (
         not validate_cover_route_decision(
             generation, allow_legacy_v1=True
@@ -871,6 +870,23 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 detail=f"run_mode={manifest.get('run_mode')!r}",
             )
 
+    cover_attestations = manifest.get("cover_route_attestations")
+    attestations_by_candidate: dict[str, dict[str, Any]] = {}
+    if isinstance(cover_attestations, list):
+        for attestation in cover_attestations:
+            if not isinstance(attestation, dict):
+                continue
+            candidate_id = str(attestation.get("candidate_id") or "")
+            if not candidate_id or candidate_id in attestations_by_candidate:
+                _add_issue(
+                    issues,
+                    "MANIFEST_COVER_ATTESTATION_ID_INVALID",
+                    path=manifest_path,
+                    detail=f"candidate_id={candidate_id!r}",
+                )
+                continue
+            attestations_by_candidate[candidate_id] = attestation
+
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -926,6 +942,42 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         record_path = _resolve(root, item.get("record") or item.get("record_json"))
         record = _load_json(record_path) if record_path else {}
         story_contract = record.get("story_contract")
+        item_title = str(item.get("title") or "")
+        publish_staging = (
+            record.get("publish_staging")
+            if isinstance(record.get("publish_staging"), dict)
+            else {}
+        )
+        record_title = str(publish_staging.get("title") or "")
+        if item_title and record_title and item_title != record_title:
+            _add_issue(
+                issues,
+                "MANIFEST_ITEM_TITLE_DRIFT",
+                stem=stem,
+                path=manifest_path,
+                detail=f"manifest={item_title!r}; record={record_title!r}",
+            )
+        story_candidate_id = (
+            str(story_contract.get("candidate_id") or "")
+            if isinstance(story_contract, dict)
+            else ""
+        )
+        item_candidate_id = str(item.get("candidate_id") or "")
+        if (
+            item_candidate_id
+            and story_candidate_id
+            and item_candidate_id != story_candidate_id
+        ):
+            _add_issue(
+                issues,
+                "MANIFEST_ITEM_CANDIDATE_ID_DRIFT",
+                stem=stem,
+                path=manifest_path,
+                detail=(
+                    f"manifest={item_candidate_id!r}; "
+                    f"record_story_contract={story_candidate_id!r}"
+                ),
+            )
         _audit_item_story_contract(
             root=root,
             manifest=manifest,
@@ -945,7 +997,6 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         )
         record_generation = record.get("cover_generation")
         if not isinstance(record_generation, dict):
-            publish_staging = record.get("publish_staging")
             record_generation = (
                 publish_staging.get("cover_generation")
                 if isinstance(publish_staging, dict)
@@ -981,7 +1032,48 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             fallback_cover = (
                 bool(item.get("cover_regenerated_from_burn_frame"))
                 or finished_generation.get("fallback_used") is True
-            )
+                )
+            attestation_candidate_id = story_candidate_id or item_candidate_id
+            if attestations_by_candidate and attestation_candidate_id:
+                attestation = attestations_by_candidate.get(
+                    attestation_candidate_id
+                )
+                if not isinstance(attestation, dict):
+                    _add_issue(
+                        issues,
+                        "MANIFEST_COVER_ATTESTATION_MISSING",
+                        stem=stem,
+                        path=manifest_path,
+                        detail=f"candidate_id={attestation_candidate_id}",
+                    )
+                else:
+                    expected_attestation = {
+                        "reference_sha256": finished_generation.get(
+                            "reference_sha256"
+                        ),
+                        "final_cover_sha256": finished_generation.get(
+                            "final_cover_sha256"
+                        ),
+                        "method": finished_generation.get("method"),
+                        "route_decision": finished_generation.get(
+                            "route_decision"
+                        ),
+                        "reference_authority": finished_generation.get(
+                            "reference_authority"
+                        ),
+                    }
+                    for key, expected in expected_attestation.items():
+                        if attestation.get(key) != expected:
+                            _add_issue(
+                                issues,
+                                "MANIFEST_COVER_ATTESTATION_DRIFT",
+                                stem=stem,
+                                path=manifest_path,
+                                detail=(
+                                    f"candidate_id={attestation_candidate_id}; "
+                                    f"field={key}"
+                                ),
+                            )
         else:
             fallback_cover = bool(item.get("cover_regenerated_from_burn_frame")) or any(
                 marker in cover_generation_text.lower()

@@ -545,6 +545,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                         + hashlib.sha256(clip_context_path.read_bytes()).hexdigest()
                     },
                     "publish_staging": {
+                    "title": "【李豆沙】南町当面追问最最最最喜欢",
                     "cover_text": cover_text,
                         "cover_generation": {
                             "cover_text": cover_text,
@@ -571,6 +572,9 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         ),
         encoding="utf-8",
     )
+    recorded_generation = json.loads(record.read_text(encoding="utf-8"))[
+        "publish_staging"
+    ]["cover_generation"]
     (root / "review_manifest.json").write_text(
         json.dumps(
                 {
@@ -579,9 +583,28 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                 "story_contract_required": True,
                 "run_mode": "RECOVERY_REVIEW",
                 "upload_allowed": False,
+                "cover_route_attestations": [
+                    {
+                        "candidate_id": stem,
+                        "reference_sha256": recorded_generation.get(
+                            "reference_sha256"
+                        ),
+                        "final_cover_sha256": recorded_generation.get(
+                            "final_cover_sha256"
+                        ),
+                        "method": recorded_generation.get("method"),
+                        "route_decision": recorded_generation.get(
+                            "route_decision"
+                        ),
+                        "reference_authority": recorded_generation.get(
+                            "reference_authority"
+                        ),
+                    }
+                ],
                 "items": [
                     {
                         "stem": stem,
+                        "candidate_id": stem,
                         "title": "【李豆沙】南町当面追问最最最最喜欢",
                         "subtitle_srt": srt.name,
                         "record": record.name,
@@ -595,6 +618,36 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     )
 
     assert audit_package(root)["passed"] is True
+
+    manifest_path = root / "review_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["cover_route_attestations"][0]["final_cover_sha256"] = (
+        "sha256:" + "0" * 64
+    )
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    cover_result = audit_package(root)
+    assert cover_result["passed"] is False
+    assert "MANIFEST_COVER_ATTESTATION_DRIFT" in {
+        issue["code"] for issue in cover_result["issues"]
+    }
+    manifest["cover_route_attestations"][0]["final_cover_sha256"] = (
+        recorded_generation["final_cover_sha256"]
+    )
+    manifest["items"][0]["title"] = "【李豆沙】旧标题"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    title_result = audit_package(root)
+    assert title_result["passed"] is False
+    assert "MANIFEST_ITEM_TITLE_DRIFT" in {
+        issue["code"] for issue in title_result["issues"]
+    }
+    manifest["items"][0]["title"] = "【李豆沙】南町当面追问最最最最喜欢"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
 
     srt.write_text(
         "1\n00:00:00,000 --> 00:00:04,000\n大恩老师说非常亚撒西\n",
