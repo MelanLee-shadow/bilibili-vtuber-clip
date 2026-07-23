@@ -15,6 +15,7 @@ from src.autoslice.subtitle_rendering import (  # noqa: E402
     ASS_MAX_CHARS_PER_LINE,
     ASS_MAX_VISUAL_LINES,
 )
+from src.autoslice.cover_generation import COVER_MIN_TALK_FONT_SIZE  # noqa: E402
 
 
 DEFAULT_MAX_VISUAL_LINES = 2
@@ -323,6 +324,37 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             _add_issue(issues, "PUBLISH_TITLE_TXT_MISMATCH", stem=stem, detail=f"title_txt={title_txt!r}; publish.title={publish_title!r}")
 
         cover_generation = item.get("cover_generation")
+        record_path = _resolve(root, item.get("record") or item.get("record_json"))
+        record = _load_json(record_path) if record_path else {}
+        record_generation = record.get("cover_generation")
+        if not isinstance(record_generation, dict):
+            publish_staging = record.get("publish_staging")
+            record_generation = (
+                publish_staging.get("cover_generation")
+                if isinstance(publish_staging, dict)
+                else None
+            )
+        size_generation = (
+            record_generation
+            if isinstance(record_generation, dict)
+            else cover_generation
+        )
+        if not is_song and isinstance(size_generation, dict):
+            font_size = size_generation.get("font_size")
+            if (
+                isinstance(font_size, bool)
+                or (isinstance(font_size, (int, float)) and font_size < COVER_MIN_TALK_FONT_SIZE)
+            ):
+                _add_issue(
+                    issues,
+                    "COVER_TITLE_TOO_SMALL",
+                    stem=stem,
+                    path=record_path,
+                    detail=(
+                        f"talk cover emphasis is {font_size}px; minimum is "
+                        f"{COVER_MIN_TALK_FONT_SIZE}px"
+                    ),
+                )
         cover_generation_text = json.dumps(cover_generation, ensure_ascii=False) if isinstance(cover_generation, dict) else str(cover_generation or "")
         if isinstance(cover_generation, dict):
             fallback_cover = bool(item.get("cover_regenerated_from_burn_frame")) or cover_generation.get("fallback_used") is True

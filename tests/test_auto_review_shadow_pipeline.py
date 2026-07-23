@@ -4308,6 +4308,34 @@ def test_overlay_renders_punch_instead_of_full_text(tmp_path):
     assert meta["font_size"] >= 120
 
 
+def test_overlay_rejects_talk_title_that_repeats_the_known_91px_failure(tmp_path):
+    """2026-07-22 regression: a technically intact 91px split title was still
+    unreadably small next to the character and must never become a cover."""
+    from PIL import Image
+
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1920, 1080), (20, 90, 210)).save(bg)
+    out = tmp_path / "cover.png"
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="witty_smug",
+        expression_en="mischievous smirk",
+        background_style="cobalt-comic-burst",
+        layout="left-split",
+        hook_color="yellow",
+        is_song=False,
+        hook_word="最最最喜欢",
+    )
+
+    with pytest.raises(ValueError, match="COVER_TITLE_TOO_SMALL"):
+        shadow_pipeline._overlay_lidousha_cover_title(
+            bg,
+            out,
+            cover_text="为什么提到我\n就要“最最最喜欢”？",
+            art_direction=art_direction,
+        )
+    assert not out.exists()
+
+
 def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypatch):
     """AUTOSLICE_COVER_MODE=screenshot：表现力帧+梗字直出，全程零 CPA 调用。"""
 

@@ -205,6 +205,55 @@ def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Pa
     assert result["issues"] == []
 
 
+def test_audit_blocks_known_too_small_talk_cover_title(tmp_path: Path):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    record = root / "talk.record.json"
+    record.write_text(
+        json.dumps(
+            {
+                "cover_generation": {
+                    "method": "images.edit",
+                    "model": "gpt-image-2",
+                    "fallback_used": False,
+                    "font_size": 91,
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished_review_package_no_upload_pending_human_review",
+                "items": [
+                    {
+                        "stem": "talk",
+                        "title": "【李豆沙】南町当面追问",
+                        "record": record.name,
+                        "ai_cover_generated": True,
+                        "cover_generation": {
+                            "method": "images.edit",
+                            "model": "gpt-image-2",
+                            "fallback_used": False,
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is False
+    assert {issue["code"] for issue in result["issues"]} == {
+        "COVER_TITLE_TOO_SMALL"
+    }
+
+
 def test_audit_accepts_explicit_bounded_sapphire72_visual_contract(tmp_path: Path):
     root = tmp_path / "pkg"
     stem = "autoslice-talk"

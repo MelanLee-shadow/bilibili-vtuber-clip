@@ -9,5 +9,6 @@ memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidous
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
 - 自动 talk 封面按 2026-07-20 生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；完整长标题不是默认封面文案。Ivan 定稿标题仍按人工权威保留其要求的全部成分；歌切恒为 `《歌名》`。
+- talk 封面强调字号必须 `>=120px`；渲染低于该线直接报 `COVER_TITLE_TOO_SMALL`，交付包审计也必须阻断。不得用“文件完整/没有裁字”代替缩略图可读性验收；应缩短封面梗字或换更宽版式，禁止继续缩字（2026-07-22 当面对质封面 91px 回归案）。
 - 经审阅的封面返修可用 `regenerate_lidousha_cover.py --cover-text` 锁定短梗字；该文案必须由 hash-bound repair plan 提供并逐字验收，不得让返修入口擅自改写。
 - 字体：全链验字形 + Noto CJK 兜底 + `glyph_risk` 披露（memory `cover-font-zi-renders-as-bai`，a74520b）。

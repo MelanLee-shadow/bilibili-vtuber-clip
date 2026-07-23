@@ -1189,7 +1189,8 @@ _COVER_OUTLINE_WHITE_RATIO = 0.042
 # fitter 在打包前把任何在 _COVER_MIN_EMPH 下都放不进 zone 的原子按词内安全点
 # 再分（hook/《歌名》/ASCII 串不拆；开标点绑后、闭标点绑前，顺带满足
 # 行首禁闭标点/行末禁开标点）。
-_COVER_MIN_EMPH = 120
+COVER_MIN_TALK_FONT_SIZE = 120
+_COVER_MIN_EMPH = COVER_MIN_TALK_FONT_SIZE
 _COVER_OPENING_PUNCT = "“‘《〈「『（(【[｛{"
 _COVER_CLOSING_PUNCT = "”’》〉」』）)】]｝}，,、；;：:！!？?。…"
 
@@ -1691,7 +1692,8 @@ def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill,
 
     主梗字整行 hook 色、越大越好；副行奶油色半号。不走通用 fitter 的候选竞争
     （它会把整行梗字当不可拆 hook 原子钉死字号），直接对固定行结构解最大字号：
-    宽度 ≤ zone、总高 ≤ zone，下限 72px 兜底渲染永不失败。
+    宽度 ≤ zone、总高 ≤ zone。搜索可下探到 72px 以便给出确定性排版结果，但 talk
+    成品低于 COVER_MIN_TALK_FONT_SIZE 会在写盘前 fail closed。
     """
 
     from PIL import Image, ImageDraw
@@ -1917,6 +1919,13 @@ def _overlay_lidousha_cover_title(
         _cover_draw_layered(layer_draw, x, y, line["segs"], fonts, outlines, outlines[0][0])
         y += height + line["gap"]
     font_size = max(line["size"] for line in lines)
+    if not art_direction.is_song and font_size < COVER_MIN_TALK_FONT_SIZE:
+        raise ValueError(
+            "COVER_TITLE_TOO_SMALL: "
+            f"talk cover emphasis is {font_size}px; minimum is "
+            f"{COVER_MIN_TALK_FONT_SIZE}px. Shorten the cover hook or use a "
+            "wider layout instead of shrinking the title."
+        )
 
     # Text backing: default "outline" (none) — the thick navy+white outline alone
     # separates the text from a bright pop background, like the reference covers.
@@ -1947,6 +1956,7 @@ def _overlay_lidousha_cover_title(
         "font": font_path.name if font_path is not None else "PIL-default",
         "font_selection": font_selection,
         "font_size": font_size,
+        "min_talk_font_size": COVER_MIN_TALK_FONT_SIZE,
         "angle_degrees": angle,
         "overlay_position": {"x": paste_x, "y": paste_y},
         "title_band": art_direction.layout,

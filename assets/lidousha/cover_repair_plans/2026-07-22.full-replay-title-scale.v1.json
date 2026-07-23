@@ -1,0 +1,62 @@
+{
+  "schema_version": "reviewed-cover-text-reoverlay-plan.v1",
+  "date": "2026-07-22",
+  "authority": "Ivan 2026-07-22: the latest talk cover title is far too small relative to the frame; reuse the already-approved no-text AI background, replace only the local text overlay with the reviewed large banner copy, and do not upload",
+  "upload_enabled": false,
+  "candidate_id": "auto_193450_670_909",
+  "title": "【李豆沙】南町当面追问：为什么提到我就要“最最最喜欢”？越解释越像海王",
+  "expected_state_record_sha256": "bff4aeac7046f379302cf0d707bb4fdfd97af175c9b659818fe0419107fa8699",
+  "media": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.mp4",
+    "sha256": "1cbc05943ef24ebb248810028cb25b03ae668bb09fbfb17e9659d9d898f1007d"
+  },
+  "active_cover": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.cover.png",
+    "sha256": "969b7efdf6cf244a25b0f6add1e2e041cb46c72e5a808264a7b9e7a2d0578e42",
+    "font_size": 91,
+    "layout": "left-split"
+  },
+  "source_generation": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/reviewed-rebind-1cbc05943ef24ebb/final.cover.cover_generation.json",
+    "sha256": "ab603160098a06d04ca6ac4fc41da3fc2959ad7328644349ac9640003e2270fb",
+    "binding_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/reviewed-rebind-1cbc05943ef24ebb/final.cover.cover-binding.json",
+    "binding_sha256": "3f6c6208e7db17e11f264bb24f3cb4bfb7f79c5880d3ffabb82cb20492c43cc6",
+    "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/a1e651e64348-01-1784755690803808345/ai-background.png",
+    "ai_background_sha256": "3a2cd039572d2f2b1de391078b749926a6c81e974fd7fef74873272ab3b803ba"
+  },
+  "reviewed_overlay": {
+    "cover_text": "提到我就要\n最最最喜欢？",
+    "rendered_lines": [
+      "提到我就要",
+      "最最最喜欢？"
+    ],
+    "layout": "banner",
+    "hook_word": "最最最喜欢",
+    "minimum_font_size": 120,
+    "reviewed_preview_font_size": 241,
+    "require_feed_center_4x3_qa": true,
+    "require_320x180_thumbnail_qa": true
+  },
+  "active_documents": [
+    {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.record.json",
+      "sha256": "5d66f63427ccad26279d1de5935eb025b85fe74ce0b76715ec3a44d4933f1808"
+    },
+    {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/replacement_recuts/auto_193450_670_909.record.json",
+      "sha256": "e2246ccc4bc9cb6dbd2a390510bd56c17fa02073d8d4f687f7d00f1756decfa3"
+    },
+    {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/replacement_recuts/auto_193450_670_909.recut.publish.json",
+      "sha256": "51e0eb0f39003c481b3920419f61fa90161ad12bce17a7dc6c31c3d5c9414444"
+    }
+  ],
+  "review_manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/review_manifest.json",
+    "sha256": "bd2fb6ae6dc65c641212381ace0734cbccfe13acc95916e13ce6aaac34f24a9f"
+  },
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/reports/upload_ledger.jsonl",
+    "sha256": "f3775e2e56cf78707fc249a159a0e97ad394c15854076e7f9315f445535ab225"
+  }
+}
