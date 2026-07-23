@@ -12,7 +12,7 @@ Updated: 2026-07-23
 标题、封面和最终产物审计；用当前能力在隔离 recovery base 重跑、复核并覆盖本地旧审片包。
 已发稿只允许同 BV 修复，不新建重复 BV。
 
-## 本地工作树已实现（尚不等于部署/成片）
+## 已实现并通过本地验收（部署/成片仍须 live readback）
 
 - stable candidate ID 后再执行严格 reviewed calibration；无效/漂移资产 fail closed；
 - exact contract closure 与统一 terminal projection，candidate 不再同时出现在成品和候补；
@@ -34,8 +34,9 @@ Updated: 2026-07-23
   journal、append-at-most-once、固定 CID swap retry 和四面终态验证；专项测试与
   authorized/member API 合并测试已通过。
 
-以上项目仍在共享 dirty worktree 中，最新一轮全部改动后的定向/全量测试尚未完成；不保留
-旧的固定“通过 N 项测试”数字。
+本轮整合后的全量测试为 `1967 passed`；定向回归、`git diff --check`、关键模块编译和
+Markdown 链接检查均通过。当前审片包按新 policy epoch 做负向 canary 得到 83 个 BLOCK，
+证明旧 v8 不会被误判成可发布成品；以后代码再变更仍须重跑这些门，不能沿用本段结果。
 
 ## 当前恢复事实
 
@@ -49,17 +50,17 @@ Updated: 2026-07-23
 
 ## 进行中
 
-1. 运行整合后的定向测试、全量 pytest、`git diff --check`、旧包负向 audit canary；
-2. commit/deploy 到 `free`，读回 `DEPLOYED_COMMIT` 与实际文件 hash；
-3. 在新 recovery base exact 重跑五条，closure COMPLETE 后重建 review manifest 和扁平包；
-4. 对最终视频逐条复核字幕、边界、标题、封面、StoryContract 和 package audit，再覆盖本地旧包。
+1. 从 clean commit 部署到 `free`，读回 `DEPLOYED_COMMIT` 与实际文件 hash；
+2. 在新 recovery base exact 重跑五条，closure COMPLETE 后重建 review manifest 和扁平包；
+3. 对最终视频逐条复核字幕、边界、标题、封面、StoryContract 和 package audit，再覆盖本地旧包；
+4. 以最终包生成同 BV dry plan；只有四面 live preflight 仍通过才执行修复并闭环验证。
 
 ## 当前约束
 
-- same-BV 状态机当前只在共享本地 worktree 得到测试证明，**尚未因此自动部署，也没有修复
-  五条线上稿件**。必须等本轮整体测试、commit/deploy/live smoke、五个合规最终包和真实 dry
-  plan 完成后，才按 [pipeline/90-publish.md](pipeline/90-publish.md) 执行；legacy
-  append/swap/replace 入口仍禁止。
+- same-BV 状态机已有本地测试证明，但这本身**不证明当前 production 已部署，也不证明五条
+  线上稿件已经修复**。执行前必须 live 读回 `DEPLOYED_COMMIT` 与 `repair-plan --help`，并等
+  五个合规最终包和真实 dry plan 就绪，才按 [pipeline/90-publish.md](pipeline/90-publish.md)
+  执行；legacy append/swap/replace 入口仍禁止。
 - 新 Pro 补充请求曾失败；可读的既有 Pro 回答已经用于设计，但不能把失败请求写成成功复核。
 
 ## 完成判据
