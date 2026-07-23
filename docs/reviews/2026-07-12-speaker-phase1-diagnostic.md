@@ -1,5 +1,9 @@
 # 2026-07-12 人声二分离第一阶段诊断
 
+> **历史诊断快照。** 本文保存当时样本与设计证据，不声明当前 production 已部署/受阻。
+> 现行 talk speaker gate 见
+> [../pipeline/40-subtitle-text.md](../pipeline/40-subtitle-text.md)。
+
 ## 目标
 
 在不改变 production、不启用上传或 cron 的前提下，建立一份不含模型预测的李豆沙/非李豆沙人耳真值包；同时确认当前生产是否会在独播时浪费资源，并定义保守的整场独播快速放行边界。

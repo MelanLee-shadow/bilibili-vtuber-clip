@@ -1,5 +1,8 @@
 # 2026-06-29 李豆沙合唱直播切片工作流校正 Spark Spec
 
+> **SUPERSEDED design snapshot，禁止照抄命令。** 本文只保存当时事故与方案；当前
+> song/package 规则从 [../pipeline/README.md](../pipeline/README.md) 进入。
+
 ## 目标
 
 重新校正 2026-06-29 李豆沙合唱直播的自动切片/本地 review 工作流，避免上一轮把“候选包补齐成可播放文件”误报为“按项目成品工作流交付”。

@@ -34,12 +34,15 @@ def test_deferred_exact_replay_requires_same_truth_id_reverification() -> None:
     assert audit["missing_truth_ids"] == []
 
 
-def test_deferred_exact_replay_rejects_generic_baseline_fallback() -> None:
+def test_deferred_reviewed_restore_requires_same_truth_id_reverification() -> None:
+    pre = _deferred_exact_truth_audit()
+    pre["deferred_strategy"] = (
+        "reviewed_text_restore_then_reapply_source_truth"
+    )
     audit = finalization._audit_deferred_exact_replay_reverification(
-        pre_truth_audit=_deferred_exact_truth_audit(),
+        pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",
-            "application_strategy": "absolute_source_alignment",
         },
         post_truth_audit={
             "status": "ALREADY_SATISFIED",
@@ -47,10 +50,8 @@ def test_deferred_exact_replay_rejects_generic_baseline_fallback() -> None:
         },
     )
 
-    assert audit["status"] == "FAILED"
-    assert audit["reason_code"] == (
-        "EXACT_REPLAY_OR_POST_TRUTH_AUTHORITY_MISSING"
-    )
+    assert audit["status"] == "PASS"
+    assert audit["reverified_truth_ids"] == ["reviewed-cue-shape"]
 
 
 def test_deferred_exact_replay_rejects_missing_truth_id() -> None:

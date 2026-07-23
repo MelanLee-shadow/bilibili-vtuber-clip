@@ -7,7 +7,7 @@ import pytest
 
 import scripts.authorized_upload as au
 
-TALK_TITLE = "【李豆沙】谈话切片标题"
+TALK_TITLE = "【李豆沙】这是一个足够长度的谈话切片标题"
 SONG_TITLE = "【李豆沙】豆沙歌，《暖暖》"
 TEST_TAGS = ["李豆沙", "虚拟主播", "直播切片"]
 
@@ -114,7 +114,13 @@ class FakeBili:
                     "data": {
                         "id": section_id,
                         "season_id": self._season_id_by_section[section_id],
-                        "episodes": [{"aid": self._aid, "bvid": "BV1TEST"}],
+                        "episodes": [
+                            {
+                                "aid": self._aid,
+                                "bvid": "BV1TEST",
+                                "title": self._title,
+                            }
+                        ],
                     },
                 }
             if "tag/archive/tags" in url:
@@ -142,7 +148,19 @@ def _mk(tmp_path, title=TALK_TITLE, season_args=()):
         "story_contract": {
             "schema_version": "lidousha-story-contract.v1",
             "candidate_id": "candidate-test",
-            "transcript_sha256": "sha256:" + "a" * 64,
+            "transcript_sha256": "sha256:"
+            + au.hashlib.sha256("测试".encode("utf-8")).hexdigest(),
+        },
+        "cover_generation": {
+            "workflow": "test-image-cover",
+            "method": "images.edit",
+            "model": "test-image-model",
+            "attempted_models": ["test-image-model"],
+            "ai_background": str(cover),
+            "ai_background_sha256": "sha256:" + au.sha256_file(cover),
+            "final_cover": str(cover),
+            "final_cover_sha256": "sha256:" + au.sha256_file(cover),
+            "fallback_used": False,
         },
         "upload_tags": {"engine": "test", "status": "OK", "final_tags": TEST_TAGS},
     }, ensure_ascii=False), encoding="utf-8")
@@ -154,16 +172,21 @@ def _mk(tmp_path, title=TALK_TITLE, season_args=()):
             "record": record.name,
             "subtitle_srt": subtitle.name,
             "title": title,
+            **(
+                {
+                    "classification": "song",
+                    "lyrics_alignment_report": "test-fixture",
+                }
+                if title.startswith(au.SONG_TITLE_PREFIX)
+                else {}
+            ),
         }]
     }, ensure_ascii=False), encoding="utf-8")
     audit = tmp_path / "clip.package_audit.json"
-    audit.write_text(json.dumps({
-        "passed": True,
-        "root": str(tmp_path.resolve()),
-        "issues": [],
-        "issue_count": 0,
-        "blocking_issue_count": 0,
-    }), encoding="utf-8")
+    audit.write_text(
+        json.dumps(au.audit_package(tmp_path), ensure_ascii=False),
+        encoding="utf-8",
+    )
     manifest = tmp_path / "clip.upload_manifest.json"
     rc = au.main([
         "make-manifest", "--video", str(video), "--cover", str(cover),

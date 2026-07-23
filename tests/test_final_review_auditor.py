@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 from src.autoslice.final_review_auditor import (
+    FinalReviewAuditError,
     adjudicate_context_finding,
     audit_final_subtitles,
     build_context_adjudication_request,
@@ -110,12 +113,54 @@ def test_protected_meme_terms_never_auto_fixed():
     assert "做0.4" in real
 
 
-def test_auditor_llm_failure_returns_empty():
+def test_auditor_llm_failure_blocks_instead_of_becoming_clean():
     def broken(prompt):
         raise RuntimeError("cpa down")
 
+    with pytest.raises(FinalReviewAuditError) as raised:
+        audit_final_subtitles(
+            _srt("一句"), llm_call=broken, extract_json=_extract
+        )
+
     assert (
-        audit_final_subtitles(_srt("一句"), llm_call=broken, extract_json=_extract) == []
+        raised.value.reason_code
+        == "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason_code"),
+    [
+        ({}, "FINAL_REVIEW_RESPONSE_FINDINGS_MISSING"),
+        ({"findings": None}, "FINAL_REVIEW_RESPONSE_FINDINGS_INVALID"),
+        ({"findings": {}}, "FINAL_REVIEW_RESPONSE_FINDINGS_INVALID"),
+        (
+            {"findings": [{"cue": 99, "suspect": "不存在"}]},
+            "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID",
+        ),
+    ],
+)
+def test_auditor_malformed_response_never_collapses_to_empty_findings(
+    payload, reason_code
+):
+    with pytest.raises(FinalReviewAuditError) as raised:
+        audit_final_subtitles(
+            _srt("一句"),
+            llm_call=lambda _prompt: json.dumps(payload),
+            extract_json=_extract,
+        )
+
+    assert raised.value.reason_code == reason_code
+
+
+def test_auditor_only_explicit_empty_findings_is_clean_discovery():
+    assert (
+        audit_final_subtitles(
+            _srt("一句"),
+            llm_call=lambda _prompt: '{"findings":[]}',
+            extract_json=_extract,
+        )
+        == []
     )
 
 
@@ -593,26 +638,28 @@ def test_source_backed_entity_insertion_survives_contract(monkeypatch):
 def test_plain_insertion_without_source_provenance_still_rejected():
     """非 source_backed 的插入建议依旧被拒（防审片员自由加词）。"""
     srt = "1\n00:00:00,000 --> 00:00:04,000\n只有怎么会这样\n"
-    findings = audit_final_subtitles(
-        srt,
-        llm_call=lambda prompt: json.dumps(
-            {
-                "findings": [
-                    {
-                        "cue": 1,
-                        "kind": "context",
-                        "proposed_full_cue": "只有他怎么会这样",
-                        "repair_class": "phonetic",
-                        "why": "凭感觉加词",
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ),
-        extract_json=json.loads,
-    )
-    assert findings == [] or all(
-        row.get("suggestion") is None for row in findings
+    with pytest.raises(FinalReviewAuditError) as raised:
+        audit_final_subtitles(
+            srt,
+            llm_call=lambda prompt: json.dumps(
+                {
+                    "findings": [
+                        {
+                            "cue": 1,
+                            "kind": "context",
+                            "proposed_full_cue": "只有他怎么会这样",
+                            "repair_class": "phonetic",
+                            "why": "凭感觉加词",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            extract_json=json.loads,
+        )
+    assert (
+        raised.value.reason_code
+        == "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID"
     )
 
 

@@ -11,6 +11,12 @@ from __future__ import annotations
 import re
 from typing import Mapping
 
+from src.autoslice.cover_title_rendering import (
+    FEED_SAFE_X0,
+    FEED_SAFE_X1,
+    render_spec_sha256,
+)
+
 
 ROUTE_SCHEMA_V1 = "lidousha-cover-route-decision.v1"
 ROUTE_SCHEMA_V2 = "lidousha-cover-route-decision.v2"
@@ -21,6 +27,11 @@ ROUTE_TREATMENTS = (
 )
 FINAL_PARTICIPANT_VERIFICATION_SCHEMA = (
     "lidousha-cover-final-participant-verification.v1"
+)
+RENDERED_TEXT_PIXEL_SCHEMA = "lidousha-cover-rendered-text-pixels.v3"
+TITLE_RENDER_SPEC_SCHEMA = "lidousha-cover-title-render-spec.v1"
+NO_CROP_PARTICIPANT_AUTHORITY = (
+    "HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR"
 )
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _RELATION_VISUAL_RX = re.compile(
@@ -174,7 +185,7 @@ def validate_final_participant_verification(
         if isinstance(cover_generation.get("route_decision"), Mapping)
         else None
     )
-    return bool(
+    base_valid = bool(
         verification.get("schema_version")
         == FINAL_PARTICIPANT_VERIFICATION_SCHEMA
         and verification.get("status") == "PASS"
@@ -191,6 +202,281 @@ def validate_final_participant_verification(
         and verification.get("final_cover_sha256")
         == cover_generation.get("final_cover_sha256")
     )
+    if not base_valid:
+        return False
+    if verification.get("authority") != NO_CROP_PARTICIPANT_AUTHORITY:
+        return True
+
+    # A deterministic identity transfer is valid only for the exact,
+    # hash-bound reference frame, carried in full into the final cover without
+    # AI modification, crop, title occlusion, or loss in the centre 4:3 feed
+    # crop.  Merely copying the source participant list is never sufficient.
+    if (
+        cover_generation.get("method") != "screenshot_direct"
+        or cover_generation.get("cover_origin") != "SOURCE_SCREENSHOT"
+        or cover_generation.get("image_generation_used") is not False
+    ):
+        return False
+    poster = cover_generation.get("screenshot_graphic_poster")
+    if not isinstance(poster, Mapping):
+        return False
+    transfer = poster.get("source_frame_transform")
+    text_pixels = cover_generation.get("rendered_text_pixels")
+    if not isinstance(transfer, Mapping) or not isinstance(
+        text_pixels, Mapping
+    ):
+        return False
+    content_box = transfer.get("rendered_content_box")
+    text_box = text_pixels.get("text_pixel_bbox")
+    if not _valid_box(content_box) or not _valid_box(text_box):
+        return False
+    return bool(
+        poster.get("schema_version") == "screenshot-graphic-poster.v2"
+        and poster.get("status") == "COMPOSED"
+        and transfer.get("input_sha256")
+        == cover_generation.get("reference_sha256")
+        and transfer.get("crop_applied") is False
+        and transfer.get("full_frame_preserved") is True
+        and transfer.get("ai_modified") is False
+        and transfer.get("center_4_3_safe") is True
+        and text_pixels.get("schema_version")
+        == RENDERED_TEXT_PIXEL_SCHEMA
+        and text_pixels.get("status") == "PASS"
+        and text_pixels.get("final_cover_sha256")
+        == cover_generation.get("final_cover_sha256")
+        and not _boxes_overlap(content_box, text_box)
+        and verification.get("source_reference_sha256")
+        == cover_generation.get("reference_sha256")
+        and verification.get("source_frame_box") == content_box
+        and verification.get("title_pixel_bbox") == text_box
+        and verification.get("title_occludes_source") is False
+        and verification.get("center_4_3_safe") is True
+    )
+
+
+def _valid_box(value: object) -> bool:
+    return bool(
+        isinstance(value, list)
+        and len(value) == 4
+        and all(
+            isinstance(part, int) and not isinstance(part, bool)
+            for part in value
+        )
+        and value[0] >= 0
+        and value[1] >= 0
+        and value[2] > value[0]
+        and value[3] > value[1]
+        and value[2] <= 1920
+        and value[3] <= 1080
+    )
+
+
+def _boxes_overlap(first: object, second: object) -> bool:
+    if not _valid_box(first) or not _valid_box(second):
+        return True
+    assert isinstance(first, list) and isinstance(second, list)
+    return bool(
+        max(first[0], second[0]) < min(first[2], second[2])
+        and max(first[1], second[1]) < min(first[3], second[3])
+    )
+
+
+def validate_rendered_text_pixel_evidence(
+    cover_generation: Mapping[str, object],
+) -> bool:
+    """Validate renderer-produced glyph bounds against the final cover hash."""
+
+    evidence = cover_generation.get("rendered_text_pixels")
+    if not isinstance(evidence, Mapping):
+        return False
+    bbox = evidence.get("text_pixel_bbox")
+    canvas = evidence.get("canvas_size")
+    width = evidence.get("text_pixel_width")
+    height = evidence.get("text_pixel_height")
+    rendered_lines = cover_generation.get("rendered_lines")
+    rendered_text = (
+        "".join(str(value) for value in rendered_lines)
+        if isinstance(rendered_lines, list)
+        else ""
+    )
+    render_spec = evidence.get("render_spec")
+    overlay_position = evidence.get("overlay_position")
+    generation_position = cover_generation.get("overlay_position")
+    font_selection = cover_generation.get("font_selection")
+    font_size = evidence.get("font_size")
+    render_lines = (
+        render_spec.get("lines")
+        if isinstance(render_spec, Mapping)
+        else None
+    )
+    render_lines_valid = bool(
+        isinstance(render_lines, list)
+        and render_lines
+        and all(
+            isinstance(line, Mapping)
+            and isinstance(line.get("font_size"), int)
+            and not isinstance(line.get("font_size"), bool)
+            and isinstance(line.get("segments"), list)
+            and bool(line.get("segments"))
+            and all(
+                isinstance(segment, Mapping)
+                and isinstance(segment.get("text"), str)
+                and bool(segment.get("text"))
+                for segment in line.get("segments")
+            )
+            for line in render_lines
+        )
+    )
+    render_font_sizes = (
+        [line["font_size"] for line in render_lines]
+        if render_lines_valid
+        else []
+    )
+    spec_text = (
+        "".join(
+            segment["text"]
+            for line in render_lines
+            for segment in line["segments"]
+        )
+        if render_lines_valid
+        else ""
+    )
+    mask_nonzero = evidence.get("mask_nonzero_pixels")
+    changed_count = evidence.get("changed_pixel_count")
+    changed_ratio = evidence.get("changed_pixel_ratio")
+    return bool(
+        evidence.get("schema_version") == RENDERED_TEXT_PIXEL_SCHEMA
+        and evidence.get("status") == "PASS"
+        and evidence.get("final_cover_sha256")
+        == cover_generation.get("final_cover_sha256")
+        and canvas == [1920, 1080]
+        and _valid_box(bbox)
+        and isinstance(width, int)
+        and not isinstance(width, bool)
+        and isinstance(height, int)
+        and not isinstance(height, bool)
+        and isinstance(bbox, list)
+        and bbox[0] >= FEED_SAFE_X0
+        and bbox[2] <= FEED_SAFE_X1
+        and width == bbox[2] - bbox[0]
+        and height == bbox[3] - bbox[1]
+        and width > 0
+        and height > 0
+        and isinstance(font_size, int)
+        and not isinstance(font_size, bool)
+        and font_size == cover_generation.get("font_size")
+        and isinstance(mask_nonzero, int)
+        and not isinstance(mask_nonzero, bool)
+        and mask_nonzero >= 100
+        and isinstance(changed_count, int)
+        and not isinstance(changed_count, bool)
+        and changed_count >= 100
+        and isinstance(changed_ratio, (int, float))
+        and not isinstance(changed_ratio, bool)
+        and 0.10 <= float(changed_ratio) <= 1.0
+        and _SHA256_RX.fullmatch(str(evidence.get("mask_sha256") or ""))
+        is not None
+        and _SHA256_RX.fullmatch(
+            str(evidence.get("pre_overlay_sha256") or "")
+        )
+        is not None
+        and _SHA256_RX.fullmatch(
+            str(evidence.get("font_file_sha256") or "")
+        )
+        is not None
+        and _SHA256_RX.fullmatch(
+            str(evidence.get("render_spec_sha256") or "")
+        )
+        is not None
+        and isinstance(evidence.get("font_file_name"), str)
+        and bool(evidence.get("font_file_name"))
+        and isinstance(font_selection, Mapping)
+        and font_selection.get("glyph_risk") == []
+        and isinstance(font_selection.get("font"), str)
+        and str(font_selection.get("font")).split("#", 1)[0]
+        == evidence.get("font_file_name")
+        and isinstance(render_spec, Mapping)
+        and render_spec.get("schema_version") == TITLE_RENDER_SPEC_SCHEMA
+        and evidence.get("render_spec_sha256")
+        == render_spec_sha256(render_spec)
+        and render_spec.get("font_file_name")
+        == evidence.get("font_file_name")
+        and render_spec.get("font_file_sha256")
+        == evidence.get("font_file_sha256")
+        and render_spec.get("angle_degrees")
+        == cover_generation.get("angle_degrees")
+        and render_lines_valid
+        and bool(render_font_sizes)
+        and max(render_font_sizes) == font_size
+        and isinstance(overlay_position, Mapping)
+        and overlay_position == generation_position
+        and str(evidence.get("rendered_text") or "") == rendered_text
+        and spec_text == rendered_text
+    )
+
+
+def build_no_crop_participant_verification(
+    cover_generation: Mapping[str, object],
+) -> dict[str, object]:
+    """Build a final-pixel identity transfer only from provable geometry."""
+
+    route = cover_generation.get("route_decision")
+    poster = cover_generation.get("screenshot_graphic_poster")
+    text_pixels = cover_generation.get("rendered_text_pixels")
+    transfer = (
+        poster.get("source_frame_transform")
+        if isinstance(poster, Mapping)
+        else None
+    )
+    content_box = (
+        transfer.get("rendered_content_box")
+        if isinstance(transfer, Mapping)
+        else None
+    )
+    text_box = (
+        text_pixels.get("text_pixel_bbox")
+        if isinstance(text_pixels, Mapping)
+        else None
+    )
+    ready = bool(
+        isinstance(route, Mapping)
+        and isinstance(transfer, Mapping)
+        and isinstance(text_pixels, Mapping)
+        and _valid_box(content_box)
+        and _valid_box(text_box)
+        and transfer.get("input_sha256")
+        == cover_generation.get("reference_sha256")
+        and transfer.get("crop_applied") is False
+        and transfer.get("full_frame_preserved") is True
+        and transfer.get("ai_modified") is False
+        and transfer.get("center_4_3_safe") is True
+        and text_pixels.get("final_cover_sha256")
+        == cover_generation.get("final_cover_sha256")
+        and not _boxes_overlap(content_box, text_box)
+    )
+    return {
+        "schema_version": FINAL_PARTICIPANT_VERIFICATION_SCHEMA,
+        "status": "PASS" if ready else "FAIL",
+        "authority": NO_CROP_PARTICIPANT_AUTHORITY,
+        "final_cover_sha256": cover_generation.get("final_cover_sha256"),
+        "source_reference_sha256": cover_generation.get("reference_sha256"),
+        "visible_participant_ids": (
+            list(route.get("source_visible_participant_ids") or [])
+            if isinstance(route, Mapping)
+            else []
+        ),
+        "source_frame_box": content_box,
+        "title_pixel_bbox": text_box,
+        "title_occludes_source": (
+            _boxes_overlap(content_box, text_box)
+            if _valid_box(content_box) and _valid_box(text_box)
+            else True
+        ),
+        "center_4_3_safe": bool(
+            isinstance(transfer, Mapping)
+            and transfer.get("center_4_3_safe") is True
+        ),
+    }
 
 
 def _alternatives(
@@ -364,17 +650,7 @@ def record_cover_route_execution(
         )
         if detail:
             route["execution_detail"] = str(detail)
-        if (
-            actual_treatment in {"screenshot_direct", "screenshot_polish"}
-            and execution_status in {"READY", "READY_DEGRADED"}
-        ):
-            route["final_visible_participant_ids"] = list(
-                route.get("source_visible_participant_ids") or []
-            )
-            route["final_visibility_authority"] = (
-                "SOURCE_PRESERVING_SCREENSHOT_PIPELINE"
-            )
-        elif isinstance(final_participant_verification, Mapping):
+        if isinstance(final_participant_verification, Mapping):
             cover_generation["final_participant_verification"] = dict(
                 final_participant_verification
             )
@@ -551,21 +827,21 @@ def validate_cover_route_decision(
     attempted = route.get("image_generation_attempted") is True
     if used and not attempted:
         return False
+    if relationship_required and (
+        not validate_final_participant_verification(cover_generation)
+        or not set(route["required_participant_ids"])
+        <= set(route["final_visible_participant_ids"])
+        or route.get("final_visibility_authority")
+        != str(
+            (
+                cover_generation.get("final_participant_verification")
+                or {}
+            ).get("authority")
+            or ""
+        )
+    ):
+        return False
     if actual == "cpa_redraw":
-        if relationship_required and (
-            not validate_final_participant_verification(cover_generation)
-            or not set(route["required_participant_ids"])
-            <= set(route["final_visible_participant_ids"])
-            or route.get("final_visibility_authority")
-            != str(
-                (
-                    cover_generation.get("final_participant_verification")
-                    or {}
-                ).get("authority")
-                or ""
-            )
-        ):
-            return False
         return bool(
             selected == "cpa_redraw"
             and execution_status == "READY"
@@ -574,10 +850,6 @@ def validate_cover_route_decision(
             and used
         )
     if actual == "screenshot_polish":
-        if relationship_required and not set(
-            route["required_participant_ids"]
-        ) <= set(route["final_visible_participant_ids"]):
-            return False
         return bool(
             selected == "screenshot_polish"
             and execution_status == "READY"
@@ -586,10 +858,6 @@ def validate_cover_route_decision(
             and used
         )
     if actual == "screenshot_direct":
-        if relationship_required and not set(
-            route["required_participant_ids"]
-        ) <= set(route["final_visible_participant_ids"]):
-            return False
         if (
             method != "screenshot_direct"
             or origin != "SOURCE_SCREENSHOT"

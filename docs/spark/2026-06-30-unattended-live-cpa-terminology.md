@@ -1,5 +1,8 @@
 # 2026-06-30 Spark Spec: Unattended Li Dousha live slicing with terminology + CPA semantic QA
 
+> **SUPERSEDED design snapshot，禁止照抄命令或状态。** 当前术语/字幕/发布规则见
+> [../pipeline/README.md](../pipeline/README.md)，runtime 是否具备能力需实时读回。
+
 ## Goal
 
 Move vtuber-slice from no-upload proof-of-concept toward unattended live slicing for a future Li Dousha livestream:

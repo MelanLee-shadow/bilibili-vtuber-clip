@@ -104,9 +104,9 @@ def test_default_profile_semantic_prompt_policy_fingerprint():
         danmaku_hints="00:01 burst",
     )
 
-    # 2026-07-22：v5 七维固定量化表 + event_key 同主题合并规则的指纹。
+    # 2026-07-23：v5 七维量化表、可执行校准资产与 event_key 合并规则。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "3b7b544a8f8412d90434fc78ff3db9eafc0269bbd19d11809dae8181e7560c2c"
+        "35509373643f69736d9a0b88e5725da0ee658fa81b1553414def64b49fb8ab28"
     )
 
 

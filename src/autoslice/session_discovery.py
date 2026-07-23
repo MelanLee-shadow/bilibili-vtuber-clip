@@ -500,6 +500,35 @@ def discover_segments(date: str, state: dict) -> None:
                 str(meta.get("hook") or ""),
                 session_relation_authority=session_relation,
             )
+            raw_selection_scorecard = (
+                dict(meta["selection_scorecard"])
+                if isinstance(meta.get("selection_scorecard"), dict)
+                else None
+            )
+            is_song_candidate = getattr(cand, "content_type_hint", "talk") == "song"
+            if is_song_candidate:
+                a0 = int(cand.anchor.anchor_start_ms)
+                a1 = int(cand.anchor.anchor_end_ms)
+                final_candidate_id = f"song_{seg_tag}_{a0 // 1000}"
+            else:
+                boundary = cand.boundary
+                s0 = max(0, int(boundary.resolved_start_ms))
+                s1 = (
+                    min(seg_dur, int(boundary.resolved_end_ms))
+                    if seg_dur
+                    else int(boundary.resolved_end_ms)
+                )
+                final_candidate_id = (
+                    f"auto_{seg_tag}_{s0 // 1000}_{s1 // 1000}"
+                )
+            from src.autoslice.selection_scorecard import (
+                apply_reviewed_selection_calibration,
+            )
+
+            calibrated_selection_scorecard = apply_reviewed_selection_calibration(
+                final_candidate_id,
+                raw_selection_scorecard,
+            )
             base_item = {
                 "segment_path": str(segment),
                 "seg_dur_ms": seg_dur,
@@ -507,11 +536,7 @@ def discover_segments(date: str, state: dict) -> None:
                 **chat_binding,
                 "hook": selection_hook,
                 "confidence": meta.get("confidence"),
-                "selection_scorecard": (
-                    dict(meta["selection_scorecard"])
-                    if isinstance(meta.get("selection_scorecard"), dict)
-                    else None
-                ),
+                "selection_scorecard": calibrated_selection_scorecard,
                 "lane": lane,
                 "preview": cand.text_preview[:80],
                 "bcut_srt_path": str(srt),
@@ -523,23 +548,19 @@ def discover_segments(date: str, state: dict) -> None:
                 ),
                 "merge_gap_removals": list(meta.get("merge_gap_removals") or []),
             }
-            if getattr(cand, "content_type_hint", "talk") == "song":
-                a0, a1 = int(cand.anchor.anchor_start_ms), int(cand.anchor.anchor_end_ms)
+            if is_song_candidate:
                 song_item = {
                     **base_item,
-                    "cid": f"song_{seg_tag}_{a0 // 1000}",
+                    "cid": final_candidate_id,
                     "anchor_start_ms": a0,
                     "anchor_end_ms": a1,
                     "danmaku": _runner.danmaku_count_in(str(xml) if xml else None, a0, a1),
                 }
                 recalled_song_items.append(song_item)
             else:
-                b = cand.boundary
-                s0 = max(0, int(b.resolved_start_ms))
-                s1 = min(seg_dur, int(b.resolved_end_ms)) if seg_dur else int(b.resolved_end_ms)
                 pending_talk.append({
                     **base_item,
-                    "cid": f"auto_{seg_tag}_{s0 // 1000}_{s1 // 1000}",
+                    "cid": final_candidate_id,
                     "start_ms": s0,
                     "end_ms": s1,
                 })

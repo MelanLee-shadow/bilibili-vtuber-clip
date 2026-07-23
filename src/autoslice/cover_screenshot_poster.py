@@ -63,6 +63,8 @@ def _compose_screenshot_poster_background(
     output_path: Path,
     *,
     art_direction: LidoushaCoverArtDirection,
+    preserve_full_frame: bool = False,
+    source_ai_modified: bool = False,
 ) -> dict[str, object]:
     """Put a faithful real-moment screenshot on a visibly rotating poster.
 
@@ -159,27 +161,67 @@ def _compose_screenshot_poster_background(
         draw.ellipse((1600, 470, 2110, 980), fill=paper + (210,))
         draw.arc((1370, -80, 1880, 430), 0, 180, fill=accent + (240,), width=36)
 
-    # Preserve the selected real moment verbatim inside a big photographic card.
-    # The top graphic field remains exposed for the 2-12-character punch text.
-    source = Image.open(screenshot_path).convert("RGB")
-    source = ImageOps.fit(
-        source,
-        (1640, 700),
-        method=Image.Resampling.LANCZOS,
-        centering=(0.58, 0.38),
-    )
-    source = ImageEnhance.Contrast(source).enhance(1.04)
-    source = ImageEnhance.Color(source).enhance(1.05)
+    # Relationship covers may inherit participant identity only when the exact
+    # hash-bound source frame is transferred in full.  ``ImageOps.fit`` crops
+    # by design, so it is reserved for non-relationship aesthetic routes.
+    # The no-crop branch keeps the complete 16:9 frame inside the central 4:3
+    # feed-safe region and leaves a separate title band above it.
+    source_original = Image.open(screenshot_path).convert("RGB")
+    source_size = list(source_original.size)
+    if preserve_full_frame:
+        card_inner_size = (1400, 520)
+        contained = ImageOps.contain(
+            source_original,
+            card_inner_size,
+            method=Image.Resampling.LANCZOS,
+        )
+        source = Image.new("RGB", card_inner_size, paper)
+        contained_offset = (
+            (card_inner_size[0] - contained.width) // 2,
+            (card_inner_size[1] - contained.height) // 2,
+        )
+        source.paste(contained, contained_offset)
+        angle = 0.0
+        card_y = 505
+    else:
+        card_inner_size = (1640, 700)
+        contained_offset = (0, 0)
+        contained = ImageOps.fit(
+            source_original,
+            card_inner_size,
+            method=Image.Resampling.LANCZOS,
+            centering=(0.58, 0.38),
+        )
+        source = ImageEnhance.Contrast(contained).enhance(1.04)
+        source = ImageEnhance.Color(source).enhance(1.05)
+        angle = float(palette["rotation"])
+        card_y = 315
     card = ImageOps.expand(source, border=18, fill=paper).convert("RGBA")
-    angle = float(palette["rotation"])
     card = card.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
     alpha = card.getchannel("A")
     shadow = Image.new("RGBA", card.size, (6, 9, 22, 0))
     shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(24)).point(lambda value: int(value * 0.48)))
     x = int((_COVER_CANVAS[0] - card.width) / 2)
-    y = 315
+    y = card_y
     canvas.alpha_composite(shadow, (x + 18, y + 24))
     canvas.alpha_composite(card, (x, y))
+
+    if preserve_full_frame:
+        content_box = [
+            x + 18 + contained_offset[0],
+            y + 18 + contained_offset[1],
+            x + 18 + contained_offset[0] + contained.width,
+            y + 18 + contained_offset[1] + contained.height,
+        ]
+    else:
+        content_box = [x + 18, y + 18, x + 18 + source.width, y + 18 + source.height]
+    center_4_3_box = [240, 0, 1680, 1080]
+    center_4_3_safe = bool(
+        content_box[0] >= center_4_3_box[0]
+        and content_box[1] >= center_4_3_box[1]
+        and content_box[2] <= center_4_3_box[2]
+        and content_box[3] <= center_4_3_box[3]
+    )
 
     # One family-color rule under the card makes the batch palette readable even
     # in a tiny feed thumbnail.
@@ -189,7 +231,7 @@ def _compose_screenshot_poster_background(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.convert("RGB").save(output_path)
     return {
-        "schema_version": "screenshot-graphic-poster.v1",
+        "schema_version": "screenshot-graphic-poster.v2",
         "status": "COMPOSED",
         "background_style": style,
         "palette": {
@@ -198,7 +240,20 @@ def _compose_screenshot_poster_background(
             "accent": "#%02x%02x%02x" % accent,
             "paper": "#%02x%02x%02x" % paper,
         },
-        "screenshot_card": {"size": [1640, 700], "rotation_degrees": angle},
+        "screenshot_card": {
+            "size": list(card_inner_size),
+            "rotation_degrees": angle,
+        },
+        "source_frame_transform": {
+            "input_sha256": "sha256:" + _sha256(screenshot_path),
+            "source_size": source_size,
+            "rendered_content_box": content_box,
+            "crop_applied": not preserve_full_frame,
+            "full_frame_preserved": preserve_full_frame,
+            "ai_modified": bool(source_ai_modified),
+            "center_4_3_box": center_4_3_box,
+            "center_4_3_safe": center_4_3_safe,
+        },
         "output_path": str(output_path),
         "output_sha256": "sha256:" + _sha256(output_path),
     }

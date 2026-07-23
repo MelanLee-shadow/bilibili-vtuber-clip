@@ -1,5 +1,9 @@
 # 2026-06-30 Direct Takeover Spec: Full-live autonomous slicing test
 
+> **SUPERSEDED design snapshot — do not execute.** It preserves the 2026-06-30
+> test plan only. Current gates and commands start at
+> [../pipeline/README.md](../pipeline/README.md).
+
 ## Goal
 
 Drive vtuber-slice toward Ivan's target: unattended high-quality slicing that can take a full Li Dousha livestream source, generate/review/recut candidates automatically, fail closed on missing evidence, and stop before upload unless explicitly approved.

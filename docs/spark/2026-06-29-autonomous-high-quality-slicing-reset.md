@@ -1,5 +1,9 @@
 # Spark Spec — vtuber-slice autonomous high-quality slicing reset
 
+> **SUPERSEDED design snapshot — do not execute.** Runtime authority, paths,
+> commands and open work below are from 2026-06-29. Current workflow starts at
+> [../pipeline/README.md](../pipeline/README.md).
+
 Date: 2026-06-29 16:35 EDT
 Board: `vtuber-slice-auto-slicing`
 Authority boundary: production source of truth is `free:/opt/bilive/app` and container `/app`; local macOS workspace is staging/docs/tests/spec evidence.

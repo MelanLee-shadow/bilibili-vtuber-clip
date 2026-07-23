@@ -24,6 +24,7 @@ from src.autoslice.chat_evidence import (
 )
 from src.autoslice.read_aloud_arbitration import (
     _arbitrate_read_aloud_near_match as _arbitrate_read_aloud_near_match,
+    proposal_alignment_basis,
 )
 from src.autoslice.chat_repair import (
     _aligned_span_replacements,
@@ -766,12 +767,7 @@ def _apply_chat_proposals(
                 "audio_transcript_support_scores": [
                     round(score, 4) for score in proposal.get("support_scores") or []
                 ],
-                "alignment_basis": (
-                    "raw-audio-forced-choice.v1"
-                    if proposal.get("entity_verdict") is not None
-                    or proposal.get("read_aloud_verdict") is not None
-                    else "audio-derived-transcript-proxy.v1"
-                ),
+                "alignment_basis": proposal_alignment_basis(proposal),
                 "entity_verdict": proposal.get("entity_verdict"),
                 "read_aloud_verdict": proposal.get("read_aloud_verdict"),
                 "span_alignment": proposal.get("span_alignment"),

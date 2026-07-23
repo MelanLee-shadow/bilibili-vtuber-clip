@@ -1,5 +1,8 @@
 {
   "schema_version": "reviewed-cover-repair-plan.v1",
+  "artifact_lifecycle": "HISTORICAL_EVIDENCE_ONLY",
+  "do_not_execute": true,
+  "historical_note": "Superseded recovery cover repair evidence. It must not be applied to a current recovery target.",
   "date": "2026-07-22",
   "authority": "Ivan 2026-07-22: rewrite the ambiguous 南町/最最最喜欢 title and cover, and move the duplicate cobalt cover to a distinct violet-neon family; isolated official-replay recovery only, no upload",
   "upload_enabled": false,

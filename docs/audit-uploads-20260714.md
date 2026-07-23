@@ -1,6 +1,9 @@
 # 2026-07-14 当日上传全量对抗式审计(成片之后全步骤)
 
-> 历史快照说明：本文的 4288ms/2026-07-12 片头观察只描述 7/14 当日稿件；当前固定谈话片头已于 2026-07-18 换为 Z1「李豆沙一直是零，不对，李豆沙一直是为爱做一」（5754ms）。不得用本文旧时长或旧片头判断未来交付。
+> **历史快照，禁止据此执行。** 本文只证明 2026-07-14 当日稿件与当时工具行为；
+> 下方片头、skill、API、ID、命令与验收口径可能已被替代。当前发布规则只读
+> [pipeline/90-publish.md](pipeline/90-publish.md)，片头与 package 规则只读
+> [pipeline/80-package-delivery.md](pipeline/80-package-delivery.md)。
 
 > 执行:Claude 审计会话(Ivan 指令:一小时后开工,对成片之后所有步骤对抗式复核,默认前序 agent 可能出错;修正一律编辑原视频,不新传、不删稿)。
 > 真值来源:B 站公开面 + 创作中心读回(证据 `reports/lidousha-uploads-20260714/`,每 BV 一份 `*.public_verify.json`),free 上传账本、staging manifest、成品 record.json。

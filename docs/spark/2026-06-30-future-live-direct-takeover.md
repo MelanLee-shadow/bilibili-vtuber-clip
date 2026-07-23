@@ -1,5 +1,8 @@
 # 2026-06-30 future-live E2E direct takeover plan
 
+> **SUPERSEDED design snapshot，禁止照抄。** “future/current”、路径、命令与验收状态都属于
+> 2026-06-30；当前入口见 [../pipeline/README.md](../pipeline/README.md)。
+
 ## 目标
 
 为下一场“将来发生的真实直播”准备一条**无人值守、no-upload、从录制开始到最终切片结束**的完整 live E2E 路线，且所有关键节点都 fail-closed：

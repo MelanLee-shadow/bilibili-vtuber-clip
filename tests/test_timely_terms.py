@@ -121,9 +121,9 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
         song_name_candidates=["歌"],
     )
 
-    # 2026-07-22 加入南町nightin/大N/小N 与逐 mention 音频复核规则后的指纹。
+    # 2026-07-23：专名逐 mention 复核、不确定不猜、局部静音和最终 owner 门。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "66202fa286f015019e6905044ec157dc781fef150a2b3e8ccc5824a590f34ed2"
+        "670d89a1aeef80c91c20b1227c6d30cce77058b0e6c31d17d6128c93bcaa8773"
     )
 
 

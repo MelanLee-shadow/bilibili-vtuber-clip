@@ -117,7 +117,7 @@ def test_natural_recovery_tick_requeues_stale_current_success(
 ):
     date, state = _fixture(tmp_path, monkeypatch)
     record = state["picks"][0]
-    record["given_end_ms"] = 115_000
+    record["given_end_ms"] = 125_000
     record["given_end_authority"] = "Ivan-reviewed semantic closure"
     _bind_exact_contract(state, ["auto_current"])
 
@@ -133,7 +133,7 @@ def test_natural_recovery_tick_requeues_stale_current_success(
     assert item["retry_reason"] == (
         "current_delivery_pipeline_fingerprint_changed"
     )
-    assert item["given_end_ms"] == 115_000
+    assert item["given_end_ms"] == 125_000
     assert item["given_end_authority"].startswith("Ivan-reviewed")
     assert item["selection_scorecard"]["tier"] == 1
     assert item["session_relation_authority"]["state"] == "CONFIRMED"
@@ -193,6 +193,25 @@ def test_natural_recovery_tick_invalid_exact_contract_is_atomic(
         match="INVALID_EXACT_TALK_SELECTION_CONTRACT",
     ):
         delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+    assert state == before
+
+
+def test_natural_recovery_tick_rejects_truncating_given_end_atomically(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    _bind_exact_contract(state, ["auto_current"])
+    record = state["picks"][0]
+    record["given_end_ms"] = 115_000
+    record["given_end_authority"] = "Ivan-reviewed source closure"
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_RERUN_GIVEN_END_INVALID:auto_current",
+    ):
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+
     assert state == before
 
 
@@ -461,7 +480,7 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
         replacement_selection_authority=(
             "Ivan-stated-20260722: 明确要求制作脑瓜崩切片"
         ),
-        given_end_ms_by_candidate={"auto_current": 115_000},
+        given_end_ms_by_candidate={"auto_current": 125_000},
         given_end_authority="Ivan-reviewed semantic closure 2026-07-22",
         expected_source_state_sha256=STATE_SHA,
         expected_old_fingerprint=OLD,
@@ -482,7 +501,7 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
         "auto_current",
         "auto_brainflick",
     ]
-    assert state["pending_talk"][0]["given_end_ms"] == 115_000
+    assert state["pending_talk"][0]["given_end_ms"] == 125_000
     assert state["pending_talk"][0]["given_end_authority"].startswith(
         "Ivan-reviewed"
     )

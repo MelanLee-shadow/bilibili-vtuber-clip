@@ -25,6 +25,30 @@
 5. **付费兜底**：同项失败≥3轮即可触发（额度类失败可同 run 连续补轮，`quota_exhausted_round`），每笔入帐。**Ivan 2026-07-19 明确否决冷却期类附加门**——控制付费用量靠 T1 分层缩减声学仲裁需求本身，不靠拖延付费。
 6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
 7. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁（插入永远走 T3，不进 T1）。**已知盲区（2026-07-19 合并条实证）**：专名在片内它处出现过时零出现触发器不响，单句漏听无人怀疑（kmx 0:49 案，最终走 Ivan 审定 ledger 钉子）。改成逐句怀疑会假阳性爆炸；候选方向是「称呼/接话/突击等强语境句位 + 专名句位模板」的窄触发，进欠账。
+8. **长程呼应属于片级语境**：检测器和审片员必须看到整片 cue 链，显式枚举
+   `earlier_claim → later_callback / parody / correction`。后文对前文原句的调侃可用于定位“这里
+   在复述哪句话”，但同源 ASR 仍不是独立文字权威；具体词面必须由音频、source truth、
+   画面角色名或结构化弹幕/SC 见证。日期、联动对象、当场游戏/活动/公告只作为 scoped
+   候选上下文，禁止变成无条件全局替换。
+9. **别名按 mention 裁决**：`南町 / nightin`、`大N / 小N / 南町nightin` 等相似音节
+   不能做整窗“统一词面”。每一次 mention 都绑定自己的 source interval、required text 与
+   forbidden tokens；窗口内另一处写对，不能替当前 mention 通过。
+10. **结构化聊天的上下文命中不等于整句听见**：SC/弹幕只有通过近完整文本跨度的
+    `exact_span` 门，或得到 hash-bound、逐字覆盖整句的 audio verdict，才可整句复制进字幕。
+    “她大概在念这条 SC”的 context-only verdict、低 coverage 或只命中几个词槽时，必须记
+    `PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY` 并保留原句；已证实的昵称/实体
+    槽仍可由 entity 或 source truth 单独修复，不能把未说出的 SC 余文一并补入。
+
+## 两次审查不可合并
+
+- correction pass 输出 `final-review-audit.v1`，用途是发现问题、决定是否需要同音修复或声学
+  仲裁。它在 source truth、reviewed baseline 和全部 finalizer 之前/之中运行，因此不是发布证明。
+- 全部 authority 和确定性 guard 落地后，必须对精确最终 SRT 再跑一次 discovery，输出
+  `final-review-audit.v2`。该回执绑定最终 SRT SHA-256；只有 discovery 完整、显式合法的空
+  findings、零未决项、release gate PASS 且 boundary semantic PASS 才能交付。
+- provider 异常、JSON 不可解析、根结构错误、`findings` 缺失/null/非列表、返回项全部无效，
+  都是“没有完成发现”，不是“没有发现问题”；必须 fail closed。package auditor 还会用包内
+  最终 SRT 重验 v2 回执，禁止复用 correction pass 或上一轮 SRT 的回执。
 
 ## 模块指针
 
@@ -34,6 +58,7 @@
 | 弹幕/SC 证据修复 | `chat_proposals.py`、`chat_repair.py`（阈值 score≥0.68/coverage≥0.60/precision≥0.52） |
 | 见证人规则 | `subtitle_fidelity.py`（glossary/拼音同音/音频见证/重复见证四选一，否则 revert） |
 | 终审审片员 | `final_review_auditor.py`（发现器；同音自动应用+声学仲裁路由+插入契约） |
+| 最终字节放行 | `final_review_contract.py`（只验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding 与 boundary PASS） |
 | 声学仲裁 | `entity_audio_verifier.py`（黑帧片段强制选边；quota 轮次+付费兜底） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |
 | 付费兜底政策 | `gemini_backup_policy.py`（≥3轮 strikes + 日帽 + 入帐） |
@@ -74,9 +99,16 @@ Ivan 指正=该句整体替换的锚，不是插入片段：钉子文本必须�
 4. ~~专名零召回无修复通道~~（同上已修：source-backed 插入）
 5. ~~专名匹配纯精确~~（2026-07-19 已落地拼音候选发现层，见上节；已知边界：比实体少一个音节的短回声面——零三/流沙型——不在滑窗射程，靠注册面精确匹配兜）
 6. **本地可疑度粗筛缺失**：调研结论第一优先级（PPL/pycorrector 漏斗），把昂贵 LLM/音频调用集中到高可疑行。当前每片全量过审片员，成本可接受，暂缓。7/19 追加动机：3Dlive 乱码段（「三丢下我怎么办」）这类重度 garble 需要先被粗筛点名，才轮得到带话题提示的音频重听。
-7. **语义QA评审文本≠最终交付文本**（选题阶段 vs 文本终稿时间线分离）——审片员已覆盖终稿面，风险有限，记录在案。
+7. ~~**语义 QA 评审文本≠最终交付文本**~~（2026-07-23 已闭环）：finalizer 现在逐项验证
+   source-truth owner 与 reviewed-baseline owner 在最终 clean/speaker SRT 的原时间窗真实存活，
+   package audit 重新验收这些 attestation。选题 QA 仍不是文字权威，只提供 StoryContract 与
+   callback 上下文。
 8. **歌词正文绕过词表链**（LRC 是歌词权威，影响面小，记录在案）。
-9. **幻听插入词的确定性检测**（2026-07-18 七星「为什么/偶像脸」案）：整句通顺但某词无声学证据。prompt 规则已加（principles §八）；确定性方案=双源 ASR 差集（BCUT vs 剪映）+ 见证要求，插入词无双源支持→送仲裁。需先评估剪映备源在生产窗口的可用率，暂记欠账。
+9. **幻听插入词的全量自动发现仍未完成**（2026-07-18 七星「为什么/偶像脸」案）：
+   整句通顺但某词无声学证据。当前已能用 `acoustic_delete` / `acoustic_drop_cue` 对已发现
+   项 fail closed 落地，并在最终 owner/SRT 门复验；尚欠的是覆盖所有 cue 的确定性发现器。
+   候选方案仍是双源 ASR 差集 + 见证要求，插入词无双源支持则送声学仲裁。不得把“已有删除
+   通道”误写成“所有幻听都会自动被发现”。
 10. **称呼串跨 cue 续行**（kmx 2:18「…姐姐吗｜宝宝？主人？」形态）：句尾单字 + 下一 cue 以成员词开头的续行不在顿号规则射程，本轮由钉子修；类解需要跨 cue 枚举检测器（编成候选组送仲裁，不确定性改写）。
 11. **动态候选的 phase 2 裁决通道**（2026-07-20 立希/祥子回归案）：披露专用的两条扫描 lane 要重新获得改写权，必须配「多证人门」——本句音节独立复核（非回声）、结构化弹幕/SC 佐证、或双源 ASR 一致中的至少两项；单次黑帧强制二选一永远不够。设计时同读 e46d36a 的 AGY 回声防御。
 12. **expected_entity 为空的修复绕过未注册回退守卫**（91_291 cue43 发生→发现案）：`revert_unregistered_entity_repairs` 对 expected 为空的行直接放行——句级重复分歧仲裁产生的无实体改写不受该守卫约束。补法：空 expected 的文本改写同样要求注册面或见证，否则回退披露。

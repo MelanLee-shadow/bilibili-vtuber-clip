@@ -629,6 +629,7 @@ def _source_truth_audit_row(
         "recording_basename": entry.get("recording_basename"),
         "source_start_ms": int(entry["source_start_ms"]),
         "source_end_ms": int(entry["source_end_ms"]),
+        "required": entry.get("required") is not False,
         "action": action,
         # Typed, ledger-derived positive output authority.  Downstream guards
         # may use these exact canonical surfaces as witnesses (for example a
@@ -1036,3 +1037,90 @@ def ledger_local_windows(
         return out
     except Exception:
         return []
+
+
+def ledger_required_owner_contracts(
+    *,
+    spec: Mapping[str, object],
+    durations: Sequence[int],
+    ledger_path: Path | None,
+) -> list[dict[str, object]]:
+    """Freeze every required reviewed truth covered by the padded candidate.
+
+    Unlike :func:`ledger_local_windows`, this is a release/boundary authority
+    and therefore never degrades to an empty set on malformed input.  A truth
+    that intersects the padded source must be fully covered; otherwise the
+    candidate cannot silently turn it into ``NOT_REQUIRED`` by trimming.
+    """
+
+    if ledger_path is None:
+        return []
+    if not ledger_path.is_file() or ledger_path.is_symlink():
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_LEDGER_INVALID")
+    document = json.loads(ledger_path.read_bytes().decode("utf-8"))
+    if (
+        not isinstance(document, Mapping)
+        or document.get("schema_version") != SCHEMA_VERSION
+        or not isinstance(document.get("entries"), list)
+    ):
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_LEDGER_SCHEMA_INVALID")
+    pieces = [
+        piece
+        for piece in (spec.get("pieces") or [])
+        if isinstance(piece, Mapping)
+    ]
+    if len(pieces) != len(durations):
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_PIECE_MAPPING_INVALID")
+    source_aliases = _load_source_aliases(document)
+    contracts: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for entry in document["entries"]:
+        if (
+            not isinstance(entry, Mapping)
+            or entry.get("knowledge_type") != "SOURCE_INTERVAL_TRUTH"
+            or _assertion_state(entry) != "VERIFIED_ACTIVE"
+            or entry.get("required") is False
+        ):
+            continue
+        truth_id = str(entry.get("truth_id") or "")
+        if not truth_id:
+            raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ID_MISSING")
+        windows = _entry_local_windows(
+            entry,
+            pieces=pieces,
+            durations=durations,
+            source_aliases=source_aliases,
+        )
+        if not windows:
+            continue
+        source_start = int(entry["source_start_ms"])
+        source_end = int(entry["source_end_ms"])
+        if (
+            source_end <= source_start
+            or _source_coverage_ms(windows) != source_end - source_start
+        ):
+            raise RuntimeError(
+                f"SOURCE_TRUTH_REQUIRED_OWNER_PARTIAL: {truth_id}"
+            )
+        if truth_id in seen:
+            raise RuntimeError(
+                f"SOURCE_TRUTH_REQUIRED_OWNER_AMBIGUOUS: {truth_id}"
+            )
+        seen.add(truth_id)
+        contracts.append(
+            {
+                "owner_kind": "source_subtitle_truth",
+                "owner_id": truth_id,
+                "required": True,
+                "source_start_ms": source_start,
+                "source_end_ms": source_end,
+                "local_windows": [
+                    {
+                        "start_ms": int(window["start_ms"]),
+                        "end_ms": int(window["end_ms"]),
+                    }
+                    for window in windows
+                ],
+            }
+        )
+    return contracts

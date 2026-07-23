@@ -17,6 +17,7 @@ from pathlib import Path
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
 
 
 _runner = RunnerProxy()
@@ -71,6 +72,28 @@ def apply_talk_backfill_rejection_policy(
     result: dict, *, exact_selected: bool
 ) -> bool:
     """Materialize a rejection only when this run is allowed to backfill it."""
+
+    if exact_selected and result.get("status") == "candidate_rejected":
+        # A direct gate rejection is still a failed selected delivery.  Leaving
+        # it as candidate_rejected made the exact slot look intentionally
+        # discarded and, because exact mode forbids a reserve, allowed an empty
+        # queue to masquerade as review_ready.
+        rejection_reason = str(
+            result.get("rejection_reason")
+            or result.get("failure_kind")
+            or "exact_selected_candidate_rejected"
+        )
+        result["rejected_status"] = "candidate_rejected"
+        result["status"] = "failed"
+        result.setdefault("failure_kind", "candidate_gate")
+        result.setdefault("failure_stage", "candidate_admission")
+        result.setdefault("failure_recoverable", False)
+        result["backfill_suppressed_by_exact_contract"] = {
+            "schema_version": "exact-selection-backfill-suppression.v1",
+            "status": "candidate_rejected",
+            "reason": rejection_reason,
+        }
+        return False
 
     backfill_rejection = backfillable_talk_rejection(result)
     if backfill_rejection is None:
@@ -223,6 +246,7 @@ def _validated_given_end_boundary(
         isinstance(given_end_ms, bool)
         or not isinstance(given_end_ms, int)
         or given_end_ms <= start_ms
+        or given_end_ms < end_ms
         or given_end_ms > seg_dur_ms
         or abs(given_end_ms - end_ms) > 30_000
         or not authority
@@ -299,7 +323,10 @@ def _recovery_queue_item(
         **chat_binding,
         "hook": record.get("hook", ""),
         "confidence": record.get("confidence"),
-        "selection_scorecard": record.get("selection_scorecard"),
+        "selection_scorecard": apply_reviewed_selection_calibration(
+            candidate_id,
+            record.get("selection_scorecard"),
+        ),
         "session_relation_authority": record.get("session_relation_authority"),
         "lane": record.get("lane", ""),
         "preview": record.get("preview", ""),
@@ -1258,7 +1285,10 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             **chat_binding,
             "hook": record.get("hook", ""),
             "confidence": record.get("confidence"),
-            "selection_scorecard": record.get("selection_scorecard"),
+            "selection_scorecard": apply_reviewed_selection_calibration(
+                cid,
+                record.get("selection_scorecard"),
+            ),
             "session_relation_authority": record.get("session_relation_authority"),
             "lane": record.get("lane", ""),
             "preview": record.get("preview", ""),

@@ -1,5 +1,9 @@
 # 2026-06-30 Gemini 3.5 Flash skill cleanup
 
+> **SUPERSEDED model-migration snapshot.** Do not choose a current model or
+> workflow from this file; use the deployed profile/runtime and
+> [../pipeline/README.md](../pipeline/README.md).
+
 ## Trigger
 
 Ivan corrected the workflow: the available audio model route for this repo should be agy `Gemini 3.5 Flash`, not exploratory Gemini 3.1/2.5 names. Song lyric alignment must be recorded in skills and old/wrong/stale workflow references must be removed.

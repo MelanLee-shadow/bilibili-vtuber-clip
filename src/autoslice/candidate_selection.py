@@ -84,6 +84,109 @@ def _exact_talk_contract_ids(state: dict) -> tuple[str, ...]:
     return tuple(values)
 
 
+def exact_talk_contract_closure(state: dict) -> dict[str, object]:
+    """Project one mutually exclusive lifecycle row for every exact candidate.
+
+    ``review_ready`` is a release claim, not a synonym for "the work queue is
+    empty".  Exact recovery therefore closes only when each contract id has
+    exactly one CURRENT+COMPLIANT delivered record (including ``rc == 0``), no
+    selected id remains queued, and no outside-contract attempt is mixed into
+    the active pick set.
+    """
+
+    candidate_ids = _exact_talk_contract_ids(state)
+    if not candidate_ids:
+        return {
+            "schema_version": "exact-talk-contract-closure.v1",
+            "mode": "ORDINARY",
+            "status": "NOT_APPLICABLE",
+            "candidate_ids": [],
+            "rows": [],
+            "outside_contract_attempt_ids": [],
+        }
+
+    picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
+    pending = [
+        row for row in state.get("pending_talk", []) if isinstance(row, dict)
+    ]
+    contract_set = set(candidate_ids)
+    rows: list[dict[str, object]] = []
+    for candidate_id in candidate_ids:
+        attempts = [
+            row
+            for row in picks
+            if str(row.get("candidate_id") or row.get("cid") or "")
+            == candidate_id
+        ]
+        queued = [
+            row
+            for row in pending
+            if str(row.get("candidate_id") or row.get("cid") or "")
+            == candidate_id
+        ]
+        if len(attempts) > 1 or len(queued) > 1 or (attempts and queued):
+            disposition = "DUPLICATE_OR_CONFLICTING"
+        elif queued:
+            disposition = "SELECTED_PENDING"
+        elif not attempts:
+            disposition = "MISSING"
+        else:
+            attempt = attempts[0]
+            if (
+                attempt.get("status") in _runner.DELIVERED_TALK_STATUSES
+                and attempt.get("bundle_lifecycle") == "CURRENT"
+                and attempt.get("bundle_compliance") == "COMPLIANT"
+                and attempt.get("rc") == 0
+            ):
+                disposition = "CURRENT_COMPLIANT_DELIVERY"
+            else:
+                disposition = "FAILED_OR_NONCOMPLIANT"
+        row: dict[str, object] = {
+            "candidate_id": candidate_id,
+            "disposition": disposition,
+            "attempt_count": len(attempts),
+            "pending_count": len(queued),
+        }
+        if len(attempts) == 1:
+            row.update(
+                {
+                    "status": attempts[0].get("status"),
+                    "bundle_lifecycle": attempts[0].get("bundle_lifecycle"),
+                    "bundle_compliance": attempts[0].get("bundle_compliance"),
+                    "rc": attempts[0].get("rc"),
+                    "failure_kind": attempts[0].get("failure_kind"),
+                    "failure_stage": attempts[0].get("failure_stage"),
+                    "rejection_reason": attempts[0].get("rejection_reason"),
+                }
+            )
+        rows.append(row)
+
+    outside_contract_attempt_ids = sorted(
+        {
+            str(row.get("candidate_id") or row.get("cid") or "")
+            for row in picks
+            if str(row.get("candidate_id") or row.get("cid") or "")
+            and str(row.get("candidate_id") or row.get("cid") or "")
+            not in contract_set
+        }
+    )
+    complete = (
+        all(
+            row["disposition"] == "CURRENT_COMPLIANT_DELIVERY"
+            for row in rows
+        )
+        and not outside_contract_attempt_ids
+    )
+    return {
+        "schema_version": "exact-talk-contract-closure.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "status": "COMPLETE" if complete else "INCOMPLETE",
+        "candidate_ids": list(candidate_ids),
+        "rows": rows,
+        "outside_contract_attempt_ids": outside_contract_attempt_ids,
+    }
+
+
 def session_sealed(date: str, state: dict) -> bool:
     """The date's recordings are STABLE: same segment inventory (names+sizes)
     as the previous tick, with at least one segment.  Selecting before seal

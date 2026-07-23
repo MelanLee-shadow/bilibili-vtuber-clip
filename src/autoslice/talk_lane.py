@@ -450,6 +450,12 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "title_fact_consistency",
             False,
         )
+    elif "FINAL_REVIEW_RELEASE_BLOCKED" in tail:
+        kind, stage, recoverable = (
+            "provider_transient",
+            "final_review_discovery",
+            True,
+        )
     elif "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED" in tail:
         # 审片员修复提案因 provider 失败未决——文本本身可修，等 provider
         # 恢复（或付费兜底额度）后重试即可，不是内容缺陷。
@@ -575,8 +581,17 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
 
 def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
     lane = str(item.get("lane") or "")
+    from src.autoslice.selection_scorecard import (
+        selection_calibration_violations,
+    )
+
+    calibration_violations = selection_calibration_violations(
+        str(item.get("cid") or item.get("candidate_id") or ""),
+        item.get("selection_scorecard"),
+    )
     if lane not in {"semantic_recall", "semantic_recall_sharded"} or (
         selection_scorecard_is_valid(item.get("selection_scorecard"))
+        and not calibration_violations
     ):
         return None
     cid = str(item["cid"])
@@ -593,13 +608,22 @@ def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
         "rc": 0,
         "status": "candidate_rejected",
         "failure_stage": "selection_scorecard_gate",
-        "rejection_reason": "selection_scorecard_missing_or_invalid",
-        "reason_codes": ["SELECTION_SCORECARD_MISSING_OR_INVALID"],
+        "rejection_reason": (
+            "selection_scorecard_calibration_failed"
+            if calibration_violations
+            else "selection_scorecard_missing_or_invalid"
+        ),
+        "reason_codes": calibration_violations
+        or ["SELECTION_SCORECARD_MISSING_OR_INVALID"],
         "failure_evidence": {
             "schema_version": "candidate-gate-violation.v1",
             "gate": "SELECTION_SCORECARD_REQUIRED",
             "lane": lane,
-            "reason_code": "SELECTION_SCORECARD_MISSING_OR_INVALID",
+            "reason_code": (
+                calibration_violations[0]
+                if calibration_violations
+                else "SELECTION_SCORECARD_MISSING_OR_INVALID"
+            ),
         },
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }

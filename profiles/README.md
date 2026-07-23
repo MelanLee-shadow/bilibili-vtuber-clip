@@ -39,6 +39,7 @@ The asset directory is the customization surface:
 | Time-sensitive names/topics and discovery inputs | `timely_terms`, `timely_term_seeds`, `timely_term_sources`, `topic_entity_graph` |
 | Known songs and lyric hints | `known_songs` |
 | Subtitle decisions | `subtitle_correction_principles`, override/regression directories |
+| Selection rubric calibration anchors | `selection_score_calibration` |
 | Title voice and deterministic gates | `title_style`, `title_policy` |
 | Upload tags and proper-noun search mappings | `upload_tag_policy` |
 | Per-archive manual metadata that later edits must preserve | `manual_archive_metadata` (optional profile asset) |

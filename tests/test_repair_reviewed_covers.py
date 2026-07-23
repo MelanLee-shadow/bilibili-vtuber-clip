@@ -1,6 +1,5 @@
 import copy
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
@@ -206,49 +205,24 @@ def test_invalidation_transaction_rejects_blob_drift_and_target_escape(tmp_path,
         )
 
 
-def test_checked_in_july10_plan_is_well_formed():
+@pytest.mark.parametrize(
+    "name",
+    [
+        "2026-07-10.reviewed.v1.json",
+        "2026-07-22.background-diversity-and-title.v1.json",
+        "2026-07-22.full-replay-rerun-reviewed.v1.json",
+        "2026-07-22.full-replay-title-scale.v1.json",
+    ],
+)
+def test_checked_in_historical_cover_plans_cannot_be_executed(name):
     path = (
         Path(__file__).resolve().parents[1]
-        / "assets/lidousha/cover_repair_plans/2026-07-10.reviewed.v1.json"
-    )
-    plan, digest = reviewed.load_plan(path)
-    assert len(digest) == 64
-    assert {row["candidate_id"] for row in plan["repair_candidates"]} == {
-        "auto_193009_1539_1637",
-        "auto_200009_524_545",
-        "song_212005_1444",
-    }
-
-
-def test_checked_in_july22_background_diversity_plan_is_well_formed():
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "assets/lidousha/cover_repair_plans/2026-07-22.background-diversity-and-title.v1.json"
+        / "assets/lidousha/cover_repair_plans/history"
+        / name
     )
 
-    plan, digest = reviewed.load_plan(path)
-
-    assert len(digest) == 64
-    assert [row["cover_diversity_slot"] for row in plan["invalidations"]] == [
-        3,
-        4,
-        0,
-        5,
-    ]
-    assert [row["expected_cover_text"] for row in plan["invalidations"][:3]] == [
-        "帅气不良\n被豆沙霸凌",
-        "熟悉的中毒感\n像回家了一样",
-        "左右分不清\n反正都弹了",
-    ]
-    target = next(
-        row
-        for row in plan["invalidations"]
-        if row["candidate_id"] == "auto_193515_672_909"
-    )
-    assert target["title"] == (
-        "【李豆沙】南町当面追问：为什么提到我就要“最最最喜欢”？越解释越像海王"
-    )
-    assert target["expected_cover_text"].splitlines() == [
-        "为什么提到我",
-        "就要“最最最喜欢”？",
-    ]
+    with pytest.raises(
+        reviewed.ReviewedCoverRepairError,
+        match="historical evidence only",
+    ):
+        reviewed.load_plan(path)

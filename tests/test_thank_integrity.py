@@ -191,7 +191,23 @@ class TestSourceTruthSupersedesDecisionSurfaces:
                  "after": "十麻乃SC得了一种听到\"是侄女\"就想笑的病。"}
             ],
             "source_subtitle_truth_audit": {
-                "applied": [{"cue_indexes": [1]}],
+                "applied": [
+                    {
+                        "truth_id": "reviewed-final-sentence",
+                        "action": "replace_cue",
+                        "cue_indexes": [1],
+                        "local_windows": [
+                            {"start_ms": 9_750, "end_ms": 12_000}
+                        ],
+                        "declared_output_contract": {
+                            "action": "replace_cue",
+                            "canonical_texts": [
+                                "谢谢十麻乃的SC，得了一种听到“是侄女”就想笑的病"
+                            ],
+                            "required_text": "",
+                        },
+                    }
+                ],
             },
         }
         assert self._verify(audit) is True
@@ -218,8 +234,8 @@ class TestSourceTruthSupersedesDecisionSurfaces:
 
         # 终稿被 layout 拆成两条,ledger 时的 cue 1 序号已不可靠
         final = _srt(
-            (9_750, 10_800, "谢谢十麻乃的SC，"),
-            (10_800, 12_000, "得了一种听到“是侄女”就想笑的病"),
+            (96_950, 98_000, "谢谢十麻乃的SC，"),
+            (98_000, 100_970, "得了一种听到“是侄女”就想笑的病"),
         )
         # 决策行 matched_* 与钉子 local_windows 同锚 padded 轴——
         # delivery_start 非零时同轴直比仍必须命中（kmx r4 案）。
@@ -230,8 +246,17 @@ class TestSourceTruthSupersedesDecisionSurfaces:
             ],
             "source_subtitle_truth_audit": {
                 "applied": [{
+                    "truth_id": "layout-independent-reviewed-final",
+                    "action": "replace_cue",
                     "cue_indexes": [99],
                     "local_windows": [{"start_ms": 106_700, "end_ms": 110_720}],
+                    "declared_output_contract": {
+                        "action": "replace_cue",
+                        "canonical_texts": [
+                            "谢谢十麻乃的SC，得了一种听到“是侄女”就想笑的病"
+                        ],
+                        "required_text": "",
+                    },
                 }],
             },
         }
@@ -261,7 +286,15 @@ def test_redelivery_baseline_supersedes_stochastic_decision_outside_truth() -> N
         ],
         "redelivery_subtitle_baseline_audit": {
             "status": "APPLIED",
-            "owned_intervals": [{"start_ms": 1_000, "end_ms": 2_000}],
+            "owned_intervals": [{"start_ms": 0, "end_ms": 3_000}],
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 3_000,
+                    "after": "上一版已审定口播",
+                }
+            ],
         },
     }
 
@@ -276,3 +309,137 @@ def test_redelivery_baseline_supersedes_stochastic_decision_outside_truth() -> N
         "SUPERSEDED_BY_REDELIVERY_BASELINE"
     )
     assert audit["final_superseded_by_redelivery_baseline_count"] == 1
+
+
+def test_redelivery_baseline_cannot_overwrite_story_bound_supported_repair() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 3_000, "这直播间这很非常包容"))
+    audit = {
+        "entity_repairs": [
+            {
+                "matched_start_ms": 11_000,
+                "matched_end_ms": 12_500,
+                "expected_entity": "还是非常包容",
+                "boundary_required": True,
+                "boundary_owner_id": "supported-acoustic-repair",
+            }
+        ],
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 3_000,
+                    "after": "这直播间这很非常包容",
+                }
+            ],
+        },
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=10_000,
+        delivery_end_ms=13_000,
+    )
+    repair = audit["entity_repairs"][0]
+    assert repair["final_verification_scope"] == "DELIVERY"
+    assert repair["survived_final_text_srt"] is False
+    assert audit["final_superseded_by_redelivery_baseline_count"] == 0
+
+
+def test_story_bound_repair_cannot_escape_as_outside_delivery() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 2_000, "现有成片"))
+    audit = {
+        "entity_repairs": [
+            {
+                "matched_start_ms": 20_000,
+                "matched_end_ms": 22_000,
+                "expected_entity": "邪恶守宫",
+                "boundary_required": True,
+                "boundary_owner_id": "late-story-repair",
+            }
+        ]
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
+    )
+    assert audit["entity_repairs"][0]["final_verification_scope"] == (
+        "BOUNDARY_REQUIRED_OWNER_EXCLUDED"
+    )
+    assert audit["final_boundary_required_exclusion_count"] == 1
+
+
+def test_source_truth_owner_mismatch_cannot_pass_with_zero_required_rows() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 2_000, "好像是灰神吧"))
+    audit = {
+        "source_subtitle_truth_audit": {
+            "satisfied": [
+                {
+                    "truth_id": "huishen-pronunciation",
+                    "action": "replace_substring",
+                    "local_windows": [{"start_ms": 0, "end_ms": 2_000}],
+                    "declared_output_contract": {
+                        "action": "replace_substring",
+                        "canonical_texts": [],
+                        "required_text": "毁神",
+                    },
+                }
+            ]
+        }
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=2_000,
+    )
+    assert audit["final_source_truth_owner_verification"]["status"] == "FAIL"
+    assert audit["final_verification_failure"] == (
+        "SOURCE_TRUTH_FINAL_OWNER_NOT_VERIFIED"
+    )
+
+
+def test_bare_baseline_interval_is_not_final_owner_evidence() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 2_000, "上一版文字"))
+    audit = {
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "owned_intervals": [{"start_ms": 0, "end_ms": 2_000}],
+            "mappings": [],
+        }
+    }
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=2_000,
+    )
+    assert audit["final_redelivery_baseline_owner_verification"]["status"] == (
+        "FAIL"
+    )

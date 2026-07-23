@@ -22,6 +22,7 @@ from scripts.produce_slice_package import (
     syntactic_tail_audit,
     tail_requires_forward_extension,
 )
+from src.autoslice import producer_boundary_resolution as boundary_resolution
 from src.autoslice.jingting_chunker import SrtCue
 from src.autoslice.producer_boundary_resolution import (
     BoundaryResolutionAdapters,
@@ -173,7 +174,7 @@ def test_structured_read_payoff_extends_semantic_tail_before_sentence_snap(tmp_p
     assert initial.closure_cue.text == "念完弹幕中的完整名字。"
 
 
-def test_human_reviewed_end_is_exact_authority_not_forward_topic_search(tmp_path):
+def test_human_reviewed_end_is_lower_bound_and_semantic_review_still_required(tmp_path):
     cues = [
         _cue(0, 3_000, "开场。"),
         _cue(3_200, 9_000, "故事在这里完整收束。"),
@@ -183,9 +184,13 @@ def test_human_reviewed_end_is_exact_authority_not_forward_topic_search(tmp_path
         spec={
             "pieces": [{"start_ms": 100_000, "end_ms": 120_000}],
             "semantic_start_ms": 100_000,
-            "semantic_end_ms": 115_000,
+            "semantic_end_ms": 109_000,
             "given_end_ms": 109_000,
             "given_end_authority": "Ivan-reviewed source closure",
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "recommended_end_ms": 9_000,
+            },
         },
         durations=[20_000],
         padded=tmp_path / "unused.mp4",
@@ -204,6 +209,410 @@ def test_human_reviewed_end_is_exact_authority_not_forward_topic_search(tmp_path
     assert initial.snapped_end == 9_000
     assert initial.closure_cue.text == "故事在这里完整收束。"
     assert initial.manual_end_authority == "Ivan-reviewed source closure"
+
+
+def test_human_reviewed_end_preserves_later_structured_chat_payoff(tmp_path):
+    cues = [
+        _cue(0, 9_000, "语义候选先收束。"),
+        _cue(9_100, 12_000, "人工下限到这里。"),
+        _cue(12_100, 15_000, "弹幕原文的回收在这里完成。"),
+    ]
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 100_000, "end_ms": 120_000}],
+            "semantic_start_ms": 100_000,
+            "semantic_end_ms": 109_000,
+            "given_end_ms": 112_000,
+            "given_end_authority": "Ivan-reviewed source closure",
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "recommended_end_ms": 9_000,
+            },
+        },
+        durations=[20_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=20_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        required_tail_end_ms=15_000,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    assert initial.target_rel == 15_000
+    assert initial.snapped_end == 15_000
+    assert initial.closure_cue.text == "弹幕原文的回收在这里完成。"
+
+
+def test_required_truth_owner_extends_boundary_and_cannot_become_not_required(
+    tmp_path,
+):
+    cues = [
+        _cue(0, 9_000, "原本准备收束。"),
+        _cue(9_100, 14_000, "必需真值在更晚的位置。"),
+        _cue(14_100, 18_000, "真值所属故事在这里完整闭环。"),
+    ]
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 100_000, "end_ms": 120_000}],
+            "semantic_start_ms": 100_000,
+            "semantic_end_ms": 109_000,
+            "given_end_ms": 109_000,
+            "given_end_authority": "Ivan-reviewed lower bound",
+            "required_boundary_owners": [
+                {
+                    "owner_kind": "source_subtitle_truth",
+                    "owner_id": "evil-gecko-tail",
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": 12_000, "end_ms": 14_000}
+                    ],
+                }
+            ],
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "recommended_end_ms": 18_000,
+            },
+        },
+        durations=[20_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=20_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        required_tail_end_ms=None,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    assert initial.target_rel == 18_000
+    assert initial.snapped_end == 18_000
+    assert initial.required_boundary_owners[0]["owner_id"] == (
+        "evil-gecko-tail"
+    )
+
+
+def test_required_owner_snap_never_selects_closer_sentence_before_truth(
+    tmp_path,
+):
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 0, "end_ms": 20_000}],
+            "semantic_start_ms": 0,
+            "semantic_end_ms": 10_000,
+            "required_boundary_owners": [
+                {
+                    "owner_kind": "source_subtitle_truth",
+                    "owner_id": "late-truth",
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": 12_000, "end_ms": 14_000}
+                    ],
+                }
+            ],
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "recommended_end_ms": 14_000,
+            },
+        },
+        durations=[20_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=20_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=[
+            _cue(0, 13_900, "更近但仍在真值结束之前。"),
+            _cue(14_000, 15_000, "真值之后的完整句尾。"),
+        ],
+        required_tail_end_ms=None,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+    )
+    assert initial.snapped_end == 15_000
+
+
+def test_required_owner_uses_hotpot_lower_bound_without_moving_repair_cap(
+    tmp_path,
+):
+    """7/22 hotpot: the truth owner raises the legal closure floor to 230760,
+    while the original 202720 semantic target still owns the 232720 cap."""
+
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 0, "end_ms": 250_000}],
+            "semantic_start_ms": 0,
+            "semantic_end_ms": 202_720,
+            "required_boundary_owners": [
+                {
+                    "owner_kind": "source_subtitle_truth",
+                    "owner_id": "evil-gecko-tail",
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": 229_000, "end_ms": 230_760}
+                    ],
+                }
+            ],
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "recommended_end_ms": 202_720,
+            },
+        },
+        durations=[250_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=250_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=[
+            _cue(200_000, 230_700, "更近，但仍在必需真值结束之前。"),
+            _cue(230_700, 231_000, "真值之后的合法完整收束。"),
+            _cue(231_000, 233_000, "超过原始语义目标三十秒上限。"),
+        ],
+        required_tail_end_ms=None,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+        boundary_repair_extend_cap_ms=30_000,
+    )
+
+    assert initial.repair_search_origin_ms == 202_720
+    assert initial.target_rel == 230_760
+    assert initial.repair_max_end_ms == 232_720
+    assert initial.snapped_end == 231_000
+
+
+def test_required_owner_fails_when_only_closure_is_beyond_original_cap(
+    tmp_path,
+):
+    with pytest.raises(
+        SystemExit,
+        match="BOUNDARY_REQUIRED_OWNER_EXCLUDED.*\\[230760,232720\\]",
+    ):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 250_000}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 202_720,
+                "required_boundary_owners": [
+                    {
+                        "owner_kind": "source_subtitle_truth",
+                        "owner_id": "evil-gecko-tail",
+                        "required": True,
+                        "local_windows": [
+                            {"start_ms": 229_000, "end_ms": 230_760}
+                        ],
+                    }
+                ],
+                "boundary_semantic_review": {
+                    "status": "PASS",
+                    "recommended_end_ms": 202_720,
+                },
+            },
+            durations=[250_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=250_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[
+                _cue(200_000, 230_700, "真值结束之前的句尾。"),
+                _cue(230_700, 233_000, "唯一完整收束已经超过上限。"),
+            ],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+            boundary_repair_extend_cap_ms=30_000,
+        )
+
+
+def test_required_owner_before_semantic_start_expands_clip_start(tmp_path):
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 0, "end_ms": 30_000}],
+            "semantic_start_ms": 10_000,
+            "semantic_end_ms": 20_000,
+            "required_boundary_owners": [
+                {
+                    "owner_kind": "source_subtitle_truth",
+                    "owner_id": "opening-truth",
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": 2_000, "end_ms": 4_000}
+                    ],
+                }
+            ],
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "recommended_end_ms": 20_000,
+            },
+        },
+        durations=[30_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=30_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=[
+            _cue(10_000, 20_000, "语义主体完整收束。"),
+        ],
+        required_tail_end_ms=None,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    assert initial.final_start == 2_000
+    assert initial.required_owner_start_ms == 2_000
+
+
+def test_required_owner_repair_passes_original_origin_to_clean_closure_search(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    def _no_clean_closure(*_args, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        boundary_resolution,
+        "next_clean_closure",
+        _no_clean_closure,
+    )
+    monkeypatch.setattr(
+        boundary_resolution,
+        "sanitize_cue_timing",
+        lambda *_args, **_kwargs: ([_Txt("初次句尾。")], {}),
+    )
+    monkeypatch.setattr(
+        boundary_resolution,
+        "boundary_red_flags",
+        lambda **_kwargs: ["closure_not_final_subtitle"],
+    )
+    monkeypatch.setattr(
+        boundary_resolution,
+        "tail_requires_forward_extension",
+        lambda *_args, **_kwargs: True,
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="BOUNDARY_REQUIRED_OWNER_EXCLUDED.*\\[230760,232720\\]",
+    ):
+        boundary_resolution._repair_boundary(
+            cid="hotpot",
+            out_root=tmp_path,
+            padded_dur=250_000,
+            spans=[],
+            cues=[
+                _cue(200_000, 231_000, "初次句尾。"),
+                _cue(231_000, 233_000, "上限以后的收束。"),
+            ],
+            target_start_rel=0,
+            snapped_start=0,
+            final_start=0,
+            target_rel=230_760,
+            repair_search_origin_ms=202_720,
+            repair_max_end_ms=232_720,
+            snapped=231_000,
+            closure_cue=_cue(200_000, 231_000, "初次句尾。"),
+            refinement_used=False,
+            manual_end_authority=None,
+            semantic_review={
+                "status": "PASS",
+                "recommended_end_ms": 202_720,
+            },
+            required_boundary_owners=[
+                {
+                    "owner_kind": "source_subtitle_truth",
+                    "owner_id": "evil-gecko-tail",
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": 229_000, "end_ms": 230_760}
+                    ],
+                }
+            ],
+            required_owner_start_ms=229_000,
+            required_owner_end_ms=230_760,
+            boundary_repair_extend_cap_ms=30_000,
+        )
+
+    assert calls == [
+        {
+            "after_ms": 231_000,
+            "padded_dur_ms": 250_000,
+            "cap_ms": 30_000,
+            "search_origin_ms": 202_720,
+        }
+    ]
+    audit = json.loads((tmp_path / "hotpot.boundary_audit.json").read_text())
+    assert audit["boundary_repair_search_origin_ms"] == 202_720
+    assert audit["boundary_repair_max_end_ms"] == 232_720
+    assert audit["required_boundary_owner_verification"]["status"] == "FAIL"
+
+
+def test_manual_end_cannot_replace_semantic_review(tmp_path):
+    with pytest.raises(SystemExit, match="BOUNDARY_SEMANTIC_REVIEW_REQUIRED"):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 100_000, "end_ms": 120_000}],
+                "semantic_start_ms": 100_000,
+                "semantic_end_ms": 109_000,
+                "given_end_ms": 109_000,
+                "given_end_authority": "generic prose is not a second witness",
+            },
+            durations=[20_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=20_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[_cue(0, 9_000, "完整收束。")],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+        )
+
+
+def test_manual_end_cannot_truncate_semantic_target_with_authority(tmp_path):
+    with pytest.raises(
+        SystemExit,
+        match="MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET",
+    ):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 20_000}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 15_000,
+                "given_end_ms": 9_000,
+                "given_end_authority": "reviewed but invalid lower bound",
+                "boundary_semantic_review": {
+                    "status": "PASS",
+                    "recommended_end_ms": 15_000,
+                },
+            },
+            durations=[20_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=20_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[_cue(0, 15_000, "完整收束。")],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+        )
 
 
 def test_manual_end_without_authority_fails_closed(tmp_path):

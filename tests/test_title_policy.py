@@ -102,3 +102,32 @@ def test_july_22_ivan_titles_are_exact_and_survive_recut_suffix(
     candidate_id, expected
 ):
     assert title_policy.manual_title_override(candidate_id) == expected
+
+
+def test_publish_title_policy_applies_one_envelope_to_manual_and_auto_titles():
+    body = "最包容异性恋的直播间，看到男角色只能说出一句不熟"
+    canonical = title_policy.canonicalize_publish_title(body, lane="talk")
+
+    assert canonical == "【李豆沙】" + body
+    assert title_policy.publish_title_policy_violations(
+        canonical, lane="talk"
+    ) == []
+    assert "talk_title_prefix_missing" in title_policy.publish_title_policy_violations(
+        body, lane="talk"
+    )
+
+
+def test_publish_title_policy_requires_exact_song_catalog_form():
+    canonical = "【李豆沙】豆沙歌，《暖暖》"
+
+    assert title_policy.publish_title_policy_violations(
+        canonical, lane="song"
+    ) == []
+    assert "song_catalog_title_not_exact" in (
+        title_policy.publish_title_policy_violations(
+            canonical + "｜温柔哄睡", lane="song"
+        )
+    )
+    assert title_policy.canonicalize_publish_title(
+        "温柔唱《暖暖》｜哄睡", lane="song"
+    ) == canonical

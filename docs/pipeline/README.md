@@ -1,21 +1,25 @@
-# 流水线分步权威索引（Ivan 2026-07-19 定）
+# 流水线分步权威索引（Ivan 2026-07-19 定，2026-07-23 收敛）
 
 **本目录是切片流水线的分步文档权威。** 结构规则：
 
-1. **每一步的规则只写在该步的 step 文件里**（或 step 文件明确指向的更强权威：代码 schema、profile 资产、项目 skill）。
-2. **其他任何文档（AGENTS.md、HANDOFF、workflow 文档、skill、memory）只允许放指针，不允许复制规则正文。** 复制即债——2026-07-19 歌切标题事故的根因就是同一规则散落 4+ 处、改了一处漏三处。
+1. **每一步的规则只写在该步的 step 文件里**（或 step 文件明确指向的更强机器权威：
+   code/schema/profile asset）。skill 只能是操作配方，不能反向覆盖 step。
+2. **其他任何文档（AGENTS.md、HANDOFF、workflow 文档、skill、memory）只允许放入口、操作方法或历史证据，不允许另立规则正文。** 复制即债——2026-07-19 歌切标题事故与 2026-07-22 人工标题/歌切 skill 漂移都证明，改一处漏三处会直接进入成品。
 3. **进行到某一步时只读该步文件**；总索引（本文件）只是指针表。
-4. 改某步规则 = 改对应 step 文件 + 它指向的代码/资产强制层；不需要全局扫描。
-5. 新纠偏落地顺序：先落**代码强制层**（schema 校验/choke point/测试），再改 step 文件，最后确认没有别处复制过旧规则。
+4. 改某步规则 = 改对应 step 文件 + 它指向的代码/资产强制层；随后必须扫描 README、skills、workflows、assets 与历史 runbook 中的冲突措辞。历史事实可以保留，但必须有醒目的历史快照标记和当前入口。
+5. 新纠偏落地顺序：先落**代码强制层**（schema 校验/choke point/负向 canary），再改 step 文件，最后运行陈旧规则扫描、文档链接检查、定向/全量测试。只改文案而没有机器门不算修复；只改机器门而留下旧操作说明同样不算完成。
+6. runtime 状态不固化进本目录。部署版本、任务状态、产物字节和公开稿件必须实时读取
+   `free:/opt/bilive/autoslice/{repo,state,out,reports}` 与 B 站公开/创作中心面。
 
 | 步 | 文件 | 职责 | 代码入口 |
 |---|---|---|---|
 | 10 | [10-source-recording.md](10-source-recording.md) | 录制、源健康、mount 看门狗 | `ops/recording/bililive_recorder_adapter.py`、`scripts/free_session_autoslice.py`（源门）、`src/autoslice/source_integrity.py` |
-| 20 | [20-selection.md](20-selection.md) | 候选召回、选题 metric、语义审查、**同主题合并** | `src/autoslice/semantic_candidate_selector.py`、`full_session_candidate_selector.py`、`scripts/cpa_semantic_qa_llm.py` |
+| 20 | [20-selection.md](20-selection.md) | 候选召回、Tier/量化校准、exact 状态、**同主题合并** | `src/autoslice/semantic_candidate_selector.py`、`selection_scorecard.py`、`candidate_selection.py`、`batch_terminal_state.py` |
 | 30 | [30-boundary.md](30-boundary.md) | 边界解析、源语境扩窗 | `src/autoslice/boundary_resolver.py`、`boundary_semantic_review.py`、`producer_boundary_resolution.py` |
-| 40 | [40-subtitle-text.md](40-subtitle-text.md) | 字幕文本链：ASR→专名→弹幕→语义修复→终审 | `src/autoslice/producer_text_pipeline.py` |
+| 40 | [40-subtitle-text.md](40-subtitle-text.md) | 字幕文本链：ASR→专名→弹幕→语义修复→最终字节终审 | `src/autoslice/producer_text_pipeline.py`、`clip_context.py`、`topic_entity_graph.py`、`final_review_contract.py` |
+| 41 | [41-semantic-repair.md](41-semantic-repair.md) | 语义修复、专名/幻听/长程呼应与权威裁决 | `src/autoslice/producer_text_finalization.py`、`source_subtitle_truth.py` |
 | 50 | [50-song-lane.md](50-song-lane.md) | 歌切专线：识别、LRC 对齐、host-vocal 证明、完整性 | `src/autoslice/song_lane.py`、`song_alignment.py`、`song_completion.py` |
 | 60 | [60-title.md](60-title.md) | 标题（谈话 + 歌切铁律） | `src/autoslice/title_policy.py`、`publish_staging.py` |
-| 70 | [70-cover.md](70-cover.md) | 封面路由、生成与验字形 | `src/autoslice/cover_generation.py`、`cover_reference_authority.py`、`publish_staging.py` |
-| 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、hash 绑定、审计 | `src/autoslice/producer_package_finalization.py`、`branding_intro.py`、`scripts/audit_lidousha_review_package.py` |
-| 90 | [90-publish.md](90-publish.md) | 授权上传、tag、合集、公开验证 | `.agent/skills/bilive-autoslice-publish/SKILL.md`（该步权威在 skill） |
+| 70 | [70-cover.md](70-cover.md) | 封面路由、最终像素、人物与真实字形 | `src/autoslice/cover_generation.py`、`cover_title_rendering.py`、`cover_text_pixel_evidence.py`、`cover_route_evidence.py` |
+| 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、严格 SRT、audit v2 输入闭包 | `src/autoslice/producer_package_finalization.py`、`subtitle_validation.py`、`scripts/audit_lidousha_review_package.py` |
+| 90 | [90-publish.md](90-publish.md) | authorized upload、durable 同 BV 修复、合集与公开验证 | `scripts/authorized_upload.py`、`src/autoslice/same_bv_repair.py` |

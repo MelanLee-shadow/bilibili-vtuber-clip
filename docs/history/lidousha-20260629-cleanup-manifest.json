@@ -1,4 +1,8 @@
 {
+  "schema_version": "historical-cleanup-evidence.v1",
+  "artifact_lifecycle": "HISTORICAL_EVIDENCE_ONLY",
+  "do_not_execute": true,
+  "historical_note": "Completed 2026-06-30 cleanup evidence. Paths and actions are not a current workflow or executable plan.",
   "created_at": "2026-06-30T19:52:58.534156+00:00",
   "local_operations": [
     {

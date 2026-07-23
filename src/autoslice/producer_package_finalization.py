@@ -17,7 +17,15 @@ from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
 )
-from src.autoslice.cover_route_evidence import validate_cover_route_decision
+from src.autoslice.cover_font_paths import resolve_trusted_cover_font
+from src.autoslice.cover_route_evidence import (
+    validate_cover_route_decision,
+    validate_rendered_text_pixel_evidence,
+)
+from src.autoslice.cover_text_pixel_evidence import (
+    verify_pre_overlay_route_background,
+    verify_rendered_text_pixel_artifacts,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.producer_media import (
@@ -169,6 +177,55 @@ def _audit_story_bound_cover(
     # v1 packages, but a fresh producer run cannot downgrade its audit schema.
     if not validate_cover_route_decision(generation, allow_legacy_v1=False):
         reason_codes.add("COVER_ROUTE_DECISION_MISSING_OR_INVALID")
+    if not validate_rendered_text_pixel_evidence(generation):
+        reason_codes.add("COVER_RENDERED_TEXT_PIXELS_MISSING_OR_INVALID")
+    pixel_evidence = generation.get("rendered_text_pixels")
+    if isinstance(pixel_evidence, Mapping):
+        try:
+            trusted_font = resolve_trusted_cover_font(
+                file_name=str(
+                    pixel_evidence.get("font_file_name") or ""
+                ),
+                expected_sha256=str(
+                    pixel_evidence.get("font_file_sha256") or ""
+                ),
+                channel_profile=CHANNEL_PROFILE,
+                root=ROOT,
+            )
+            artifacts_valid = verify_rendered_text_pixel_artifacts(
+                pixel_evidence,
+                final_cover_path=Path(
+                    str(generation.get("final_cover") or "")
+                ),
+                pre_overlay_path=Path(
+                    str(generation.get("pre_overlay_path") or "")
+                ),
+                mask_path=Path(
+                    str(pixel_evidence.get("mask_path") or "")
+                ),
+                font_path=trusted_font,
+                expected_pre_overlay_sha256=generation.get(
+                    "pre_overlay_sha256"
+                ),
+            ) and verify_pre_overlay_route_background(
+                route_background_path=Path(
+                    str(generation.get("ai_background") or "")
+                ),
+                pre_overlay_path=Path(
+                    str(generation.get("pre_overlay_path") or "")
+                ),
+                expected_route_background_sha256=generation.get(
+                    "ai_background_sha256"
+                ),
+                text_backing=generation.get("text_backing"),
+                scrim=generation.get("scrim"),
+            )
+        except (OSError, RuntimeError, ValueError):
+            artifacts_valid = False
+    else:
+        artifacts_valid = False
+    if not artifacts_valid:
+        reason_codes.add("COVER_RENDERED_TEXT_PIXEL_ARTIFACT_MISMATCH")
     return sorted(reason_codes), audits
 
 
@@ -256,7 +313,11 @@ def _audit_deferred_exact_replay_reverification(
         "reverified_truth_ids": [],
         "missing_truth_ids": [],
     }
-    if strategy != "exact_reviewed_interval_replay_then_reapply_source_truth":
+    supported_strategies = {
+        "exact_reviewed_interval_replay_then_reapply_source_truth",
+        "reviewed_text_restore_then_reapply_source_truth",
+    }
+    if strategy not in supported_strategies:
         return result
 
     required_ids = sorted(
@@ -267,10 +328,20 @@ def _audit_deferred_exact_replay_reverification(
         }
     )
     result["required_truth_ids"] = required_ids
+    exact_strategy = (
+        strategy
+        == "exact_reviewed_interval_replay_then_reapply_source_truth"
+    )
+    baseline_strategy_ok = (
+        baseline_audit.get("application_strategy")
+        == "exact_reviewed_interval_replay"
+        if exact_strategy
+        else baseline_audit.get("status")
+        in {"APPLIED", "ALREADY_SATISFIED"}
+    )
     if (
         not required_ids
-        or baseline_audit.get("application_strategy")
-        != "exact_reviewed_interval_replay"
+        or not baseline_strategy_ok
         or not isinstance(post_truth_audit, Mapping)
         or post_truth_audit.get("status") == "FAILED"
     ):
@@ -932,15 +1003,11 @@ def _stage_record(
     recut_dir = recut.recut_dir
     subtitle_path = recut.subtitle_path
     given_title = spec.get("given_title")
-    # Title LLM only when no manual title (iron rule: manual titles pass through
-    # untouched). Cover art-direction LLM ALWAYS runs (Ivan 2026-07-04): even with
-    # a hand-given title the cover still benefits from persona-fit expression /
-    # layout / background; it is fail-open, so it never blocks.
-    # Per-stage CPA chains (2026-07-10, Ivan): title is a single brand-critical
-    # short call → gpt-5.6-sol at high effort; art direction is a structured
-    # pick with a known good shape, deterministic fallback and judge guardrails
-    # → gpt-5.6-luna at medium (the doc-exact luna lane).  Both fall back
-    # 5.5 → 5.4.
+    # Title LLM runs only when no manual body exists. A manual body is not
+    # rewritten, but it still passes the shared archive-envelope/structure gate.
+    # Cover art direction remains independent of title authorship and uses the
+    # current configured adapter plus deterministic fallback; do not pin model
+    # names here because runtime/provider selection is live configuration.
     title_llm = None
     if not given_title:
         title_llm = build_llm_call(
@@ -1125,6 +1192,28 @@ def _deliver_staged_record(
         if record.get("clip_context_path")
         else None
     )
+    cover_generation = (
+        staging.get("cover_generation")
+        if isinstance(staging.get("cover_generation"), dict)
+        else {}
+    )
+    rendered_text_pixels = cover_generation.get("rendered_text_pixels")
+    cover_title_mask_path = (
+        Path(str(rendered_text_pixels.get("mask_path")))
+        if isinstance(rendered_text_pixels, dict)
+        and rendered_text_pixels.get("mask_path")
+        else None
+    )
+    cover_pre_overlay_path = (
+        Path(str(cover_generation.get("pre_overlay_path")))
+        if cover_generation.get("pre_overlay_path")
+        else None
+    )
+    cover_route_background_path = (
+        Path(str(cover_generation.get("ai_background")))
+        if cover_generation.get("ai_background")
+        else None
+    )
     delivery = adapters.delivery_root() / spec["date"]
     delivery.mkdir(parents=True, exist_ok=True)
     name = spec.get("delivery_name") or cid
@@ -1143,6 +1232,9 @@ def _deliver_staged_record(
         (talk_filler_audit_path, ".filler-audit.json"),
         (text_manifest_path, ".text-finalization.json"),
         (clip_context_path, ".clip-context.json"),
+        (cover_title_mask_path, ".cover.title-mask.png"),
+        (cover_pre_overlay_path, ".cover.pre-overlay.png"),
+        (cover_route_background_path, ".cover.route-background.png"),
         (record_path, ".record.json"),
     ):
         if source is not None and source.is_file():

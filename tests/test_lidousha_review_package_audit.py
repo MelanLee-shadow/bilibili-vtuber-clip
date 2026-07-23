@@ -4,16 +4,119 @@ import json
 import hashlib
 from pathlib import Path
 
+from PIL import Image
+
 from scripts.audit_lidousha_review_package import audit_package
 from src.autoslice.clip_context import build_clip_context
+from src.autoslice.cover_route_evidence import (
+    build_cover_route_decision,
+    record_cover_route_execution,
+)
+from src.autoslice.cover_text_pixel_evidence import (
+    materialize_rendered_text_pixel_evidence,
+)
+from src.autoslice.cover_title_rendering import (
+    SCHEMA_VERSION as COVER_TITLE_RENDER_SPEC_SCHEMA,
+    render_title_layer,
+    sha256_file,
+)
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from src.autoslice.story_contract import build_story_contract
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+COVER_FONT = (
+    REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
+)
+
+
+def _materialize_test_title(
+    *,
+    pre_overlay: Path,
+    final_cover: Path,
+    rendered_text: str,
+    font_size: int = 120,
+) -> dict[str, object]:
+    split_at = max(1, len(rendered_text) // 2)
+    line_texts = [
+        rendered_text[:split_at],
+        rendered_text[split_at:],
+    ]
+    render_spec: dict[str, object] = {
+        "schema_version": COVER_TITLE_RENDER_SPEC_SCHEMA,
+        "font_file_name": COVER_FONT.name,
+        "font_file_sha256": sha256_file(COVER_FONT),
+        "font_face_index": 0,
+        "layer_size": [1200, 420],
+        "rendered_layer_size": [1200, 420],
+        "angle_degrees": 0,
+        "lines": [
+            {
+                "x": 20,
+                "y": 20 + index * 190,
+                "font_size": font_size,
+                "segment_pad": 10,
+                "segments": [
+                    {"text": line_text, "fill": [255, 198, 41]}
+                ],
+                "outlines": [
+                    {"width": 10, "color": [18, 36, 79]},
+                    {"width": 5, "color": [255, 255, 255]},
+                ],
+            }
+            for index, line_text in enumerate(line_texts)
+        ],
+    }
+    layer = render_title_layer(render_spec, font_path=COVER_FONT)
+    with Image.open(pre_overlay) as source:
+        final_image = source.convert("RGB")
+    final_image.paste(layer, (360, 100), layer)
+    final_image.save(final_cover)
+    return materialize_rendered_text_pixel_evidence(
+        final_cover_path=final_cover,
+        pre_overlay_path=pre_overlay,
+        font_path=COVER_FONT,
+        render_spec=render_spec,
+        paste_xy=(360, 100),
+        font_size=font_size,
+        rendered_text=rendered_text,
+    )
 
 
 def _write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def _passing_boundary_review(
+    candidate_id: str,
+    *,
+    end_ms: int,
+) -> dict[str, object]:
+    return {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "candidate_id": candidate_id,
+        "target_ms": end_ms,
+        "target_cue_index": 1,
+        "recommended_end_cue_index": 1,
+        "recommended_end_ms": end_ms,
+        "syntax_complete": True,
+        "story_closed": True,
+        "next_topic_separated": True,
+        "content_anchor_covered": True,
+        "selector_story_witness": {
+            "status": "PASS",
+            "independence_group": "semantic-llm:gpt-5.6",
+        },
+        "evidence_cue_indexes": [1],
+        "reviewer_independence_group": "semantic-llm:gpt-5.6",
+        "semantic_independence_groups": ["semantic-llm:gpt-5.6"],
+        "independent_semantic_vote_count": 1,
+        "correlated_reviewer_disclosure": True,
+        "reason_codes": [],
+    }
 
 
 def _minimal_package(tmp_path: Path) -> Path:
@@ -98,7 +201,7 @@ def test_audit_blocks_song_package_without_lyric_alignment_ai_cover_and_title_sy
     assert result["passed"] is False
     assert "SONG_LYRIC_SOURCE_MISSING" in codes
     assert "SONG_ALIGNMENT_REPORT_MISSING" in codes
-    assert "SONG_TITLE_FORMAT_INVALID" in codes
+    assert "SONG_CATALOG_TITLE_NOT_EXACT" in codes
     assert "PUBLISH_TITLE_TXT_MISMATCH" in codes
     assert "AI_COVER_EVIDENCE_MISSING" in codes
     assert "COVER_FALLBACK_NOT_FINISHED" in codes
@@ -150,7 +253,7 @@ def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Pa
         root / "ass" / f"{stem}.ass",
         "[Events]\nDialogue: 0,0:00:00.00,0:00:06.00,Default,,0,0,0,,却说不出你欣赏我哪一种表情\n",
     )
-    title = "【李豆沙】豆沙歌，《旅行的意义》唱到伴奏卡住像在KTV录的"
+    title = "【李豆沙】豆沙歌，《旅行的意义》"
     publish = _write(root / "publish" / f"{stem}.publish.json", json.dumps({"title": title}, ensure_ascii=False))
     title_txt = _write(root / "publish" / f"{stem}.title.txt", title + "\n")
     evidence = _write(
@@ -560,6 +663,16 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     )
     assert scorecard is not None
     source_sha256 = "sha256:" + "1" * 64
+    cover_reference_authority = {
+        "candidate_id": stem,
+        "content_time_ms": 1_000,
+        "source_time_ms": 1_000,
+        "source_sha256": source_sha256,
+        "reference_png_sha256": "sha256:" + "2" * 64,
+        "visible_participant_ids": ["lidousha", "nancho"],
+        "required_treatment": "cpa_redraw",
+        "authority": "fixture reviewed source frame",
+    }
     clip_context = build_clip_context(
         candidate_id=stem,
         spec={
@@ -592,6 +705,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         json.dumps(clip_context, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    boundary_review = _passing_boundary_review(stem, end_ms=4_000)
     contract = build_story_contract(
         candidate_id=stem,
         selection_hook="南町当面追问李豆沙最喜欢谁",
@@ -602,16 +716,27 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
             "participants": ["lidousha", "nancho"],
         },
         source_media_sha256s=[source_sha256],
-            clip_context=clip_context,
-            recording_date="2026-07-22",
-            human_boundary_authority="fixture source-reviewed closure",
-        )
+        cover_reference_authority=cover_reference_authority,
+        clip_context=clip_context,
+        recording_date="2026-07-22",
+        boundary_semantic_review=boundary_review,
+        human_boundary_authority="fixture source-reviewed closure",
+    )
     record = root / f"{stem}.record.json"
-    ai_bg = _write(root / "covers_ai_original" / f"{stem}.ai-bg.png", "ai")
-    cover = _write(root / "covers" / f"{stem}.cover.png", "cover")
+    ai_bg = root / "covers_ai_original" / f"{stem}.ai-bg.png"
+    ai_bg.parent.mkdir(parents=True)
+    Image.new("RGB", (1920, 1080), (244, 238, 220)).save(ai_bg)
+    cover = root / "covers" / f"{stem}.cover.png"
+    cover.parent.mkdir(parents=True)
     cover_text = "南町当面追问最最最最喜欢"
+    rendered_text_pixels = _materialize_test_title(
+        pre_overlay=ai_bg,
+        final_cover=cover,
+        rendered_text=cover_text,
+    )
     cover_binding = {
         "schema_version": contract["schema_version"],
+        "selection_hook": contract["selection_hook"],
         "relation_state": contract["relation_state"],
         "participants": contract["participants"],
         "cover_counterpart_reference_available": contract[
@@ -619,47 +744,145 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         ],
         "cover_reference_authority": contract["cover_reference_authority"],
         "source_media_sha256s": contract["source_media_sha256s"],
-            "clip_context_binding": contract["clip_context_binding"],
-            "boundary_semantic_review": contract["boundary_semantic_review"],
-            "human_boundary_authority": contract["human_boundary_authority"],
-            "cover_fallback_mode": contract["cover_fallback_mode"],
+        "clip_context_binding": contract["clip_context_binding"],
+        "boundary_semantic_review": contract["boundary_semantic_review"],
+        "human_boundary_authority": contract["human_boundary_authority"],
+        "cover_fallback_mode": contract["cover_fallback_mode"],
     }
+    final_cover_sha256 = "sha256:" + hashlib.sha256(
+        cover.read_bytes()
+    ).hexdigest()
+    generation = {
+        "title": "【李豆沙】南町当面追问最最最最喜欢",
+        "cover_text": cover_text,
+        "rendered_lines": ["南町当面追问", "最最最最喜欢"],
+        "rendered_text_pixels": rendered_text_pixels,
+        "font_size": 120,
+        "font_selection": {
+            "font": COVER_FONT.name,
+            "glyph_risk": [],
+        },
+        "angle_degrees": 0,
+        "method": "images.edit",
+        "cover_origin": "AI_REDRAW",
+        "model": "gpt-image-2",
+        "attempted_models": ["gpt-image-2"],
+        "ai_background": str(ai_bg),
+        "ai_background_sha256": "sha256:"
+        + hashlib.sha256(ai_bg.read_bytes()).hexdigest(),
+        "pre_overlay_path": str(ai_bg),
+        "pre_overlay_sha256": rendered_text_pixels[
+            "pre_overlay_sha256"
+        ],
+        "overlay_position": rendered_text_pixels["overlay_position"],
+        "text_backing": "outline",
+        "scrim": False,
+        "final_cover": str(cover),
+        "final_cover_sha256": final_cover_sha256,
+        "reference_sha256": cover_reference_authority[
+            "reference_png_sha256"
+        ],
+        "reference_authority": cover_reference_authority,
+        "story_contract": cover_binding,
+    }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="cpa_redraw",
+        selected_rationale=(
+            "fixture redraw with independent final-pixel verification"
+        ),
+        story_contract=cover_binding,
+        reference_authority=cover_reference_authority,
+        decision_inputs={"cover_mode": "cpa"},
+        title=generation["title"],
+        cover_text=cover_text,
+    )
+    final_participant_verification = {
+        "schema_version": (
+            "lidousha-cover-final-participant-verification.v1"
+        ),
+        "status": "PASS",
+        "authority": "fixture independent final-pixel review",
+        "final_cover_sha256": final_cover_sha256,
+        "visible_participant_ids": ["lidousha", "nancho"],
+    }
+    record_cover_route_execution(
+        generation,
+        actual_treatment="cpa_redraw",
+        execution_status="READY",
+        image_generation_attempted=True,
+        image_generation_used=True,
+        final_participant_verification=final_participant_verification,
+    )
+    chat_authority = root / f"{stem}.chat-authority.json"
+    final_srt_sha256 = "sha256:" + hashlib.sha256(
+        srt.read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+    chat_authority.write_text(
+        json.dumps(
+            {
+                "schema_version": "fixture-chat-authority.v1",
+                "status": "PASS",
+                "frozen_boundary_owner_contract": {
+                    "schema_version": "frozen-boundary-owner-contract.v1",
+                    "status": "FROZEN",
+                    "story_start_ms": 0,
+                    "story_end_ms": 4_000,
+                    "required_owner_count": 0,
+                    "owners": [],
+                },
+                "final_boundary_required_exclusion_count": 0,
+                "final_review_audit": {
+                    "schema_version": "final-review-audit.v2",
+                    "status": "CLEAN",
+                    "release_gate": "PASS",
+                    "reviewed_srt_sha256": final_srt_sha256,
+                    "discovery": {
+                        "status": "COMPLETE",
+                        "explicit_empty_findings": True,
+                    },
+                    "findings": [],
+                    "validated_finding_count": 0,
+                    "boundary_semantic_review": boundary_review,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     record.write_text(
         json.dumps(
-                {
-                        "story_contract": contract,
-                        "boundary_audit": {
-                            "boundary_authority": "human_source_reviewed_end",
-                            "manual_end_authority": "fixture source-reviewed closure",
-                        },
-                    "clip_context_path": clip_context_path.name,
-                    "clip_context_payload_sha256": clip_context["context_sha256"],
-                    "artifact_hashes": {
-                        "clip_context_file_sha256": "sha256:"
-                        + hashlib.sha256(clip_context_path.read_bytes()).hexdigest()
+            {
+                "story_contract": contract,
+                "boundary_audit": {
+                    "boundary_authority": (
+                        "human_source_reviewed_lower_bound_plus_semantic_review"
+                    ),
+                    "manual_end_authority": "fixture source-reviewed closure",
+                    "boundary_semantic_review": boundary_review,
+                    "snapped_sentence_end_ms": 4_000,
+                    "final_end_ms": 4_000,
+                    "frozen_required_boundary_owner_count": 0,
+                    "frozen_required_boundary_owners": [],
+                    "required_boundary_owner_verification": {
+                        "status": "PASS",
+                        "failures": [],
                     },
-                    "publish_staging": {
+                },
+                "clip_context_path": clip_context_path.name,
+                "clip_context_payload_sha256": clip_context["context_sha256"],
+                "artifact_hashes": {
+                    "clip_context_file_sha256": "sha256:"
+                    + hashlib.sha256(
+                        clip_context_path.read_bytes()
+                    ).hexdigest(),
+                    "chat_authority_audit_sha256": "sha256:"
+                    + hashlib.sha256(
+                        chat_authority.read_bytes()
+                    ).hexdigest(),
+                },
+                "publish_staging": {
                     "title": "【李豆沙】南町当面追问最最最最喜欢",
                     "cover_text": cover_text,
-                        "cover_generation": {
-                            "cover_text": cover_text,
-                            "rendered_lines": ["南町当面追问", "最最最最喜欢"],
-                            "method": "images.edit",
-                            "model": "gpt-image-2",
-                            "attempted_models": ["gpt-image-2"],
-                            "ai_background": str(ai_bg),
-                            "ai_background_sha256": "sha256:"
-                            + hashlib.sha256(ai_bg.read_bytes()).hexdigest(),
-                            "final_cover": str(cover),
-                            "final_cover_sha256": "sha256:"
-                            + hashlib.sha256(cover.read_bytes()).hexdigest(),
-                            "story_contract": cover_binding,
-                            "route_decision": {
-                                "schema_version": "lidousha-cover-route-decision.v1",
-                                "selected_treatment": "cpa_redraw",
-                                "reason": "fixture has no verified real-frame authority",
-                            },
-                        },
+                    "cover_generation": generation,
                 },
             },
             ensure_ascii=False,
@@ -700,9 +923,23 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                         "stem": stem,
                         "candidate_id": stem,
                         "title": "【李豆沙】南町当面追问最最最最喜欢",
-                        "subtitle_srt": srt.name,
-                        "record": record.name,
-                        "ai_cover_generated": True,
+                            "subtitle_srt": srt.name,
+                            "record": record.name,
+                            "chat_authority": chat_authority.name,
+                            "cover": cover.relative_to(root).as_posix(),
+                            "cover_title_mask": Path(
+                                rendered_text_pixels["mask_path"]
+                            ).relative_to(root).as_posix(),
+                            "cover_pre_overlay": ai_bg.relative_to(
+                                root
+                            ).as_posix(),
+                            "cover_route_background": ai_bg.relative_to(
+                                root
+                            ).as_posix(),
+                            "source_ai_background": ai_bg.relative_to(
+                                root
+                            ).as_posix(),
+                            "ai_cover_generated": True,
                     }
                 ],
             },
@@ -711,9 +948,215 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         encoding="utf-8",
     )
 
-    assert audit_package(root)["passed"] is True
+    initial_audit = audit_package(root)
+    assert initial_audit["passed"] is True, json.dumps(
+        initial_audit["issues"], ensure_ascii=False, indent=2
+    )
+    portable_record_text = record.read_text(encoding="utf-8")
+    stale_external_cover = tmp_path / "stale-external-cover.png"
+    stale_external_background = tmp_path / "stale-external-background.png"
+    Image.new("RGB", (1920, 1080), (1, 2, 3)).save(
+        stale_external_cover
+    )
+    Image.new("RGB", (1920, 1080), (4, 5, 6)).save(
+        stale_external_background
+    )
+    portable_record = json.loads(portable_record_text)
+    portable_generation = portable_record["publish_staging"][
+        "cover_generation"
+    ]
+    portable_generation["final_cover"] = str(stale_external_cover)
+    portable_generation["ai_background"] = str(
+        stale_external_background
+    )
+    record.write_text(
+        json.dumps(portable_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    portable_audit = audit_package(root)
+    assert portable_audit["passed"] is True, json.dumps(
+        portable_audit["issues"], ensure_ascii=False, indent=2
+    )
+    record.write_text(portable_record_text, encoding="utf-8")
+
+    valid_chat_authority = chat_authority.read_text(encoding="utf-8")
+    valid_record_before_final_review_tamper = record.read_text(encoding="utf-8")
+    tampered_chat = json.loads(valid_chat_authority)
+    tampered_chat["final_review_audit"]["status"] = "AUDITOR_UNAVAILABLE"
+    tampered_chat["final_review_audit"]["release_gate"] = "BLOCK"
+    tampered_chat["final_review_audit"]["discovery"] = {
+        "status": "AUDITOR_UNAVAILABLE"
+    }
+    chat_authority.write_text(
+        json.dumps(tampered_chat, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    rebound_record = json.loads(record.read_text(encoding="utf-8"))
+    rebound_record["artifact_hashes"]["chat_authority_audit_sha256"] = (
+        "sha256:" + hashlib.sha256(chat_authority.read_bytes()).hexdigest()
+    )
+    record.write_text(
+        json.dumps(rebound_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    final_review_result = audit_package(root)
+    assert final_review_result["passed"] is False
+    assert "FINAL_REVIEW_DISCOVERY_INCOMPLETE" in {
+        row["code"] for row in final_review_result["issues"]
+    }
+    chat_authority.write_text(valid_chat_authority, encoding="utf-8")
+    record.write_text(
+        valid_record_before_final_review_tamper,
+        encoding="utf-8",
+    )
+
+    # A producer cannot make required source truth disappear by forging a
+    # smaller frozen-boundary contract that happens to agree with the final
+    # boundary audit.  The package auditor independently binds required truth
+    # IDs to source_subtitle_truth owners.
+    missing_owner_chat = json.loads(valid_chat_authority)
+    missing_owner_chat["source_subtitle_truth_audit"] = {
+        "status": "SATISFIED",
+        "applied": [],
+        "satisfied": [
+            {
+                "truth_id": "fixture-required-truth-r1",
+                "required": True,
+                "action": "replace_substring",
+                "required_text": "南町nightin",
+                "local_windows": [{"start_ms": 0, "end_ms": 4_000}],
+            }
+        ],
+        "failures": [],
+    }
+    missing_owner_chat["final_source_truth_owner_verification"] = {
+        "status": "PASS",
+        "required_window_count": 1,
+        "failures": [],
+    }
+    missing_owner_chat["final_required_decision_count"] = 1
+    chat_authority.write_text(
+        json.dumps(missing_owner_chat, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    missing_owner_record = json.loads(
+        valid_record_before_final_review_tamper
+    )
+    missing_owner_record["artifact_hashes"][
+        "chat_authority_audit_sha256"
+    ] = "sha256:" + hashlib.sha256(chat_authority.read_bytes()).hexdigest()
+    record.write_text(
+        json.dumps(missing_owner_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    missing_owner_result = audit_package(root)
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in {
+        row["code"] for row in missing_owner_result["issues"]
+    }
+    chat_authority.write_text(valid_chat_authority, encoding="utf-8")
+    record.write_text(
+        valid_record_before_final_review_tamper,
+        encoding="utf-8",
+    )
+
+    prompt_tampered_record = json.loads(
+        valid_record_before_final_review_tamper
+    )
+    prompt_tampered_record["story_contract"]["clip_context_prompt"] += (
+        "\nforged prompt"
+    )
+    record.write_text(
+        json.dumps(prompt_tampered_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    prompt_binding_result = audit_package(root)
+    assert "CLIP_CONTEXT_PROMPT_BINDING_DRIFT" in {
+        row["code"] for row in prompt_binding_result["issues"]
+    }
+    record.write_text(
+        valid_record_before_final_review_tamper,
+        encoding="utf-8",
+    )
 
     manifest_path = root / "review_manifest.json"
+    valid_record = record.read_text(encoding="utf-8")
+    valid_manifest = manifest_path.read_text(encoding="utf-8")
+    valid_cover_bytes = cover.read_bytes()
+    Image.open(ai_bg).save(cover)
+    no_text_pixels = dict(rendered_text_pixels)
+    no_text_pixels["final_cover_sha256"] = (
+        "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
+    )
+    with (
+        Image.open(cover) as no_text_cover,
+        Image.open(Path(rendered_text_pixels["mask_path"])) as title_mask,
+    ):
+        rgb = no_text_cover.convert("RGB")
+        masked = Image.composite(
+            rgb,
+            Image.new("RGB", rgb.size),
+            title_mask.convert("L"),
+        )
+    no_text_pixels["masked_final_pixels_sha256"] = (
+        "sha256:" + hashlib.sha256(masked.tobytes()).hexdigest()
+    )
+    no_text_record = json.loads(valid_record)
+    no_text_generation = no_text_record["publish_staging"][
+        "cover_generation"
+    ]
+    no_text_generation["final_cover_sha256"] = no_text_pixels[
+        "final_cover_sha256"
+    ]
+    no_text_generation["rendered_text_pixels"] = no_text_pixels
+    no_text_generation["final_participant_verification"][
+        "final_cover_sha256"
+    ] = no_text_pixels["final_cover_sha256"]
+    record.write_text(
+        json.dumps(no_text_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    no_text_manifest = json.loads(valid_manifest)
+    no_text_attestation = no_text_manifest[
+        "cover_route_attestations"
+    ][0]
+    no_text_attestation["final_cover_sha256"] = no_text_pixels[
+        "final_cover_sha256"
+    ]
+    no_text_attestation["route_decision"] = no_text_generation[
+        "route_decision"
+    ]
+    manifest_path.write_text(
+        json.dumps(no_text_manifest, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    no_text_result = audit_package(root)
+    assert "COVER_RENDERED_TEXT_PIXEL_ARTIFACT_MISMATCH" in {
+        issue["code"] for issue in no_text_result["issues"]
+    }
+    cover.write_bytes(valid_cover_bytes)
+    record.write_text(valid_record, encoding="utf-8")
+    manifest_path.write_text(valid_manifest, encoding="utf-8")
+
+    invalid_boundary_record = json.loads(valid_record)
+    invalid_boundary_record["story_contract"][
+        "boundary_semantic_review"
+    ] = None
+    invalid_boundary_record["boundary_audit"] = {
+        "boundary_authority": "human_source_reviewed_end",
+        "manual_end_authority": "fixture source-reviewed closure",
+    }
+    record.write_text(
+        json.dumps(invalid_boundary_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    boundary_result = audit_package(root)
+    boundary_codes = {
+        issue["code"] for issue in boundary_result["issues"]
+    }
+    assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in boundary_codes
+    assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" in boundary_codes
+    record.write_text(valid_record, encoding="utf-8")
+
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["cover_route_attestations"][0]["final_cover_sha256"] = (
         "sha256:" + "0" * 64

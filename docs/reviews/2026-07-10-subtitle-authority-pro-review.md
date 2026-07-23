@@ -1,5 +1,10 @@
 # 2026-07-10 subtitle authority / self-healing review
 
+> **Historical consultation result.** Preserve it as evidence; do not treat its
+> old code paths, open findings or model/runtime claims as current. Current
+> rules live in [../pipeline/40-subtitle-text.md](../pipeline/40-subtitle-text.md)
+> and [../pipeline/41-semantic-repair.md](../pipeline/41-semantic-repair.md).
+
 ## Consultation provenance
 
 - Visible model label: `Pro`

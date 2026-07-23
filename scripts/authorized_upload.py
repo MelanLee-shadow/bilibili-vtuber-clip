@@ -1,38 +1,10 @@
 #!/usr/bin/env python3
-"""Manifest-bound manual upload channel (2026-07-09 external audit).
+"""Manifest-bound Li Dousha publish and existing-BV repair entry point.
 
-Problem: `do_upload.sh <video> <cover> <title>` took free-form arguments — no
-proof that the file Ivan REVIEWED is the file that got UPLOADED, no idempotency
-(the 充电器 clip was double-posted once), authorization lived only in chat.
-
-This tool binds the whole chain to one manifest file:
-
-    1. make-manifest   — at review time: requires a passing package audit and
-                         binds the exact video, cover, record, SRT, review
-                         manifest, title, tags, StoryContract and Ivan's quote.
-                         The target season (合集) lane is derived from the frozen
-                         title (song catalog prefix → 小李歌唱, else 小李切片) and
-                         frozen into the manifest — season membership is part of
-                         the publish, not an afterthought (Ivan 2026-07-20).
-    2. upload          — at upload time: RECOMPUTES the hashes; any drift since
-                         review refuses loudly.  A ledger (jsonl, pulled to the
-                         Mac with the other reports) makes re-uploading the same
-                         video a hard error.  The uploader command receives the
-                         manifest's paths/title — never hand-typed ones — and
-                         runs with AUTHORIZED_UPLOAD=1 (do_upload.sh refuses to
-                         run without it).  After a successful post it completes
-                         the manifest's season add (waits for state=0, live-
-                         queries the season id by title, adds the episode, then
-                         verifies public view, public tags, Creator archive and
-                         the exact section API. Ledger rc=0 and the uploaded
-                         sidecar exist only after all four agree.
-    3. season-add      — idempotently finish/re-verify the season step for an
-                         already-posted manifest (bvid resolved from the ledger).
-                         发布未入集 = 流程未完成; this subcommand is the retry path.
-    4. verify          — hash re-check only (pre-flight).
-
-Upload authorization remains per-clip and human (Ivan): this tool cannot invent
-an authorization, it only makes the authorized artifact tamper-evident.
+``make-manifest`` freezes reviewed bytes and Ivan's authorization; ``upload``
+and ``season-add`` enforce hashes, idempotency, metadata, public, Creator, and
+exact-section readback.  ``repair-*`` uses a separate crash-safe journal and
+can only append/edit an explicitly named existing BV; it cannot create one.
 """
 from __future__ import annotations
 
@@ -52,15 +24,43 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.audit_lidousha_review_package import (  # noqa: E402
+    AUDIT_POLICY_EPOCH,
+    AUDIT_SCHEMA_VERSION,
+    audit_package,
+)
+from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
+from src.autoslice.same_bv_repair import (  # noqa: E402
+    BilibiliRepairAdapter,
+    PlanInvalid,
+    RepairError,
+    assert_bvid_unowned as assert_same_bv_unowned,
+    create_plan as create_same_bv_repair_plan,
+    initialise_journal as initialise_same_bv_repair_journal,
+    load_plan as load_same_bv_repair_plan,
+    preview_repair as preview_same_bv_repair,
+    repair_status as same_bv_repair_status,
+    run_repair as run_same_bv_repair,
+    write_plan as write_same_bv_repair_plan,
+)
+from src.autoslice.title_policy import (  # noqa: E402
+    publish_title_policy_violations,
+)
+
 DEFAULT_BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 DEFAULT_LEDGER = DEFAULT_BASE / "reports" / "upload_ledger.jsonl"
+DEFAULT_REPAIR_LEDGER = DEFAULT_BASE / "reports" / "same_bv_repair_ledger.jsonl"
 DEFAULT_UPLOAD_LOCK = DEFAULT_BASE / "upload.lock"
 DEFAULT_UPLOADER = "/opt/bilive/app/tmp_manual_upload/do_upload.sh"
 DEFAULT_COOKIE_JSON = Path("/opt/bilive/app/cookie.json")
 
 # Season (合集) policy — membership is part of the publish (Ivan 2026-07-20).
 # The LANE is a deterministic choke point on the frozen title: the song catalog
-# prefix is schema-enforced elsewhere (title_policy.canonicalize_song_catalog_title),
+# prefix/catalog form is enforced by the shared publish-title validator,
 # so title→lane cannot drift from content.  Season IDs are deliberately NOT
 # selected by a live title query, then checked against the channel's committed
 # talk/song IDs so a renamed or wrong collection cannot silently become truth.
@@ -188,6 +188,26 @@ def _zero_blocking_issues(audit: dict) -> bool:
         and isinstance(issues, list)
         and issue_count == len(issues)
     )
+
+
+def _audit_binding(audit: dict) -> dict:
+    """The canonical fields that make an audit replayable, not self-asserted."""
+
+    return {
+        key: audit.get(key)
+        for key in (
+            "schema_version",
+            "policy_epoch",
+            "policy_fingerprint",
+            "auditor_source_sha256",
+            "passed",
+            "root",
+            "audited_inputs",
+            "issues",
+            "issue_count",
+            "blocking_issue_count",
+        )
+    }
 
 
 def _resolved_manifest_item_path(root: Path, value: object) -> Path | None:
@@ -321,12 +341,25 @@ def _validate_v3_package_attestation(
     audit_path = entries.get("package_audit", (Path(), {}))[0]
     audit = _load_json_object(audit_path, "package audit", problems) if audit_path.is_file() else {}
     audit_root = Path(str(audit.get("root") or "")).resolve()
+    if audit.get("schema_version") != AUDIT_SCHEMA_VERSION:
+        problems.append("package audit schema_version is stale or invalid")
+    if audit.get("policy_epoch") != AUDIT_POLICY_EPOCH:
+        problems.append("package audit policy_epoch is stale or invalid")
     if audit.get("passed") is not True:
         problems.append("package audit did not pass")
     if audit_root != root:
         problems.append(f"package audit root mismatch: audit={audit_root} manifest={root}")
     if not _zero_blocking_issues(audit):
         problems.append("package audit reports blocking issues")
+    if root.is_dir():
+        current_audit = audit_package(root)
+        if current_audit.get("passed") is not True:
+            problems.append("canonical package auditor currently rejects the package")
+        if _audit_binding(audit) != _audit_binding(current_audit):
+            problems.append(
+                "package audit is not the canonical current-policy result for the "
+                "current package input closure"
+            )
 
     review_path = entries.get("review_manifest", (Path(), {}))[0]
     review = _load_json_object(review_path, "review manifest", problems) if review_path.is_file() else {}
@@ -357,6 +390,16 @@ def _validate_v3_package_attestation(
     record_path = entries.get("record", (Path(), {}))[0]
     subtitle_path = entries.get("subtitle", (Path(), {}))[0]
     if record_path.is_file() and subtitle_path.is_file():
+        subtitle_verdict = validate_srt_file(subtitle_path)
+        if subtitle_verdict.get("status") != "PASS":
+            codes = [
+                str(row.get("code") or "SRT_RELEASE_VALIDATION_FAILED")
+                for row in subtitle_verdict.get("errors") or []
+                if isinstance(row, dict)
+            ]
+            problems.append(
+                "reviewed SRT fails release validation: " + ",".join(codes)
+            )
         record = _load_json_object(record_path, "record", problems)
         problems.extend(
             _record_artifact_hash_problems(
@@ -625,6 +668,20 @@ def _section_episode_rows(payload: object) -> list[dict]:
     return rows
 
 
+def _section_episode_title(row: dict) -> str:
+    """Read the title from the known exact-section response shapes."""
+
+    for key in ("title", "episode_title"):
+        value = row.get(key)
+        if isinstance(value, str):
+            return value
+    for key in ("archive", "arc"):
+        nested = row.get(key)
+        if isinstance(nested, dict) and isinstance(nested.get("title"), str):
+            return str(nested["title"])
+    return ""
+
+
 def _section_ids(payload: object) -> set[int]:
     ids: set[int] = set()
     if isinstance(payload, dict):
@@ -773,8 +830,15 @@ def public_verify_flow(
             ]
             result["section_api"]["episode_match_count"] = len(membership)
             result["section_api"]["section_ids_seen"] = sorted(section_ids)
+            result["section_api"]["episode_titles"] = [
+                _section_episode_title(row) for row in membership
+            ]
             if not membership:
                 problems.append("aid/BVID absent from exact section API")
+            elif len(membership) != 1:
+                problems.append("aid/BVID appears more than once in exact section API")
+            elif _section_episode_title(membership[0]) != expected_title:
+                problems.append("exact section episode title mismatch")
 
         result["problems"] = problems
         if not problems:
@@ -1134,10 +1198,19 @@ def load_and_verify(manifest_path: Path) -> tuple[dict | None, list[str]]:
     auth = manifest.get("authorization") or {}
     if not str(auth.get("quote") or "").strip() or not str(auth.get("by") or "").strip():
         problems.append("manifest carries no authorization (by+quote required)")
-    if not str(manifest.get("title") or "").strip():
+    title = str(manifest.get("title") or "")
+    if not title.strip():
         problems.append("manifest has no title")
+    else:
+        title_lane = derive_season_lane(title)
+        for code in publish_title_policy_violations(title, lane=title_lane):
+            problems.append(f"manifest publish title violates {code}")
     if "season" in manifest:
         problems.extend(validate_season_block(manifest["season"]))
+        if isinstance(manifest.get("season"), dict) and manifest["season"].get(
+            "lane"
+        ) != derive_season_lane(title):
+            problems.append("manifest season lane contradicts the frozen title")
     if "tags" in manifest:
         problems.extend(validate_tags(manifest["tags"]))
     if manifest.get("manifest_version") == 3:
@@ -1640,6 +1713,166 @@ def season_add(args: argparse.Namespace) -> int:
     return _run_season_step(manifest, manifest_path, bvid, args)
 
 
+def _same_bv_adapter(cookie_json: Path) -> BilibiliRepairAdapter:
+    """Build the repair adapter from the same authenticated read surfaces."""
+
+    from src.autoslice.bilibili_member_api import BiliSession
+
+    http, _csrf = _build_season_http(cookie_json)
+    return BilibiliRepairAdapter(
+        session=BiliSession(cookie_path=cookie_json),
+        http=http,
+        view_url=VIEW_API,
+        tags_url=TAGS_API,
+        section_url=SECTION_VIEW_API,
+    )
+
+
+def repair_plan(args: argparse.Namespace) -> int:
+    """Freeze one exact existing-BV repair without changing remote state."""
+
+    manifest_path = Path(args.manifest).resolve()
+    manifest, problems = load_and_verify(manifest_path)
+    if problems:
+        for problem in problems:
+            print(f"REFUSE: {problem}", file=sys.stderr)
+        return 2
+    if manifest is None or manifest.get("manifest_version") != 3:
+        print(
+            "REFUSE: same-BV repair requires authorized-upload-manifest.v3",
+            file=sys.stderr,
+        )
+        return 2
+    lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
+    with exclusive_upload_lock(lock_path):
+        adapter = _same_bv_adapter(Path(args.cookie_json))
+        season = manifest.get("season") or {}
+        section_id = season.get("section_id")
+        if not isinstance(section_id, int):
+            print(
+                "REFUSE: repair manifest has no exact season section_id",
+                file=sys.stderr,
+            )
+            return 2
+        snapshot = adapter.observe(args.bvid, section_id)
+        plan = create_same_bv_repair_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            bvid=args.bvid,
+            snapshot=snapshot,
+        )
+        journal = Path(args.journal).resolve()
+        assert_same_bv_unowned(
+            journal,
+            bvid=args.bvid,
+            plan_id=str(plan["plan_id"]),
+        )
+        if args.dry_run:
+            print(json.dumps(plan, ensure_ascii=False, indent=2))
+            return 0
+        plan_path = Path(args.out).resolve()
+        write_same_bv_repair_plan(plan_path, plan)
+        initialise_same_bv_repair_journal(journal, plan_path, plan)
+    print(
+        json.dumps(
+            {
+                "status": "PLANNED",
+                "bvid": args.bvid,
+                "plan": str(plan_path),
+                "journal": str(journal),
+                "remote_mutation": False,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _load_repair_manifest(plan_path: Path) -> tuple[dict | None, dict | None, list[str]]:
+    try:
+        plan = load_same_bv_repair_plan(plan_path)
+    except PlanInvalid as exc:
+        return None, None, [str(exc)]
+    manifest_path = Path(str((plan.get("manifest") or {}).get("path") or ""))
+    manifest, problems = load_and_verify(manifest_path)
+    return plan, manifest, problems
+
+
+def repair_run(args: argparse.Namespace) -> int:
+    """Resume a journaled same-BV transaction; never creates another BV."""
+
+    plan_path = Path(args.plan).resolve()
+    journal = Path(args.journal).resolve()
+    _plan, manifest, problems = _load_repair_manifest(plan_path)
+    if problems or manifest is None:
+        for problem in problems:
+            print(f"REFUSE: {problem}", file=sys.stderr)
+        return 2
+    if args.dry_run:
+        result = preview_same_bv_repair(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+        )
+    else:
+        lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
+        with exclusive_upload_lock(lock_path):
+            result = run_same_bv_repair(
+                plan_path=plan_path,
+                journal=journal,
+                manifest=manifest,
+                adapter=_same_bv_adapter(Path(args.cookie_json)),
+                wait_seconds=args.wait,
+                poll_seconds=args.poll,
+            )
+    print(
+        json.dumps(
+            {
+                "state": result.state,
+                "changed": result.changed,
+                "message": result.message,
+                "details": result.details,
+                "dry_run": bool(args.dry_run),
+            },
+            ensure_ascii=False,
+        )
+    )
+    if result.state == "VERIFIED":
+        return 0
+    if result.state == "BLOCKED_DRIFT":
+        return 5
+    return 6
+
+
+def repair_status(args: argparse.Namespace) -> int:
+    """Read and validate the local repair authority without remote writes."""
+
+    plan_path = Path(args.plan).resolve()
+    journal = Path(args.journal).resolve()
+    _plan, manifest, problems = _load_repair_manifest(plan_path)
+    if problems or manifest is None:
+        for problem in problems:
+            print(f"REFUSE: {problem}", file=sys.stderr)
+        return 2
+    result = same_bv_repair_status(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+    )
+    print(
+        json.dumps(
+            {
+                "state": result.state,
+                "message": result.message,
+                "details": result.details,
+                "remote_mutation": False,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0 if result.state == "VERIFIED" else (5 if result.state == "BLOCKED_DRIFT" else 6)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1710,10 +1943,52 @@ def main(argv: list[str] | None = None) -> int:
     ve.add_argument("--manifest", required=True)
     ve.set_defaults(func=verify)
 
+    rp = sub.add_parser(
+        "repair-plan",
+        help="read live single-P truth and freeze a manifest-bound existing-BV repair; no remote mutation",
+    )
+    rp.add_argument("--manifest", required=True)
+    rp.add_argument("--bvid", required=True)
+    rp.add_argument("--out", required=True)
+    rp.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
+    rp.add_argument("--lock", default=None, help="shared upload/repair lock")
+    rp.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON))
+    rp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the proposed plan; write no plan/journal and perform no remote mutation",
+    )
+    rp.set_defaults(func=repair_plan)
+
+    rr = sub.add_parser(
+        "repair-run",
+        help="resume one durable append-at-most-once same-BV replacement transaction",
+    )
+    rr.add_argument("--plan", required=True)
+    rr.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
+    rr.add_argument("--lock", default=None, help="shared upload/repair lock")
+    rr.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON))
+    rr.add_argument("--wait", type=float, default=900.0)
+    rr.add_argument("--poll", type=float, default=15.0)
+    rr.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate and report the next action with no local or remote mutation",
+    )
+    rr.set_defaults(func=repair_run)
+
+    rs = sub.add_parser(
+        "repair-status",
+        help="validate and print the local same-BV repair state; no remote access",
+    )
+    rs.add_argument("--plan", required=True)
+    rs.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
+    rs.set_defaults(func=repair_status)
+
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except UploadLockBusy as exc:
+    except (UploadLockBusy, RepairError) as exc:
         print(f"REFUSE: {exc}", file=sys.stderr)
         return 4
 

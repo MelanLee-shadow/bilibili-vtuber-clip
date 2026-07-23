@@ -1,5 +1,8 @@
 {
   "schema_version": "reviewed-cover-repair-plan.v1",
+  "artifact_lifecycle": "HISTORICAL_EVIDENCE_ONLY",
+  "do_not_execute": true,
+  "historical_note": "Superseded 2026-07-22 cover repair evidence. Current authority comes from the new exact recovery state and docs/pipeline/70-cover.md.",
   "date": "2026-07-22",
   "authority": "Ivan 2026-07-22: make the batch backgrounds materially different and rewrite the ambiguous 最最最喜欢 cover/title without changing video or subtitles",
   "upload_enabled": false,

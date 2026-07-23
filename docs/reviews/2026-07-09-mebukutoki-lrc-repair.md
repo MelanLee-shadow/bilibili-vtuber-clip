@@ -1,5 +1,9 @@
 # 2026-07-09《芽吹くとき》LRC 假绿修复审查
 
+> **日期化事故证据，不是当前歌切正例或操作手册。** 当前 song/package 规则见
+> [../pipeline/50-song-lane.md](../pipeline/50-song-lane.md) 与
+> [../pipeline/80-package-delivery.md](../pipeline/80-package-delivery.md)。
+
 > **SUPERSEDED / REJECTED（2026-07-10）**：本文后半段的
 > `ACCEPTED_NO_UPLOAD` 只验了“歌曲录音与 LRC 完整对齐”，遗漏了
 > “李豆沙本人正在唱”这一产品前提。Ivan 已确认这段是下播画面播放的

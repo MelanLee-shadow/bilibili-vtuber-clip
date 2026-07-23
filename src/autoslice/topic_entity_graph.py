@@ -93,6 +93,84 @@ class TopicResolution:
         }
 
 
+def build_scoped_topic_context(
+    graph: Mapping[str, object],
+    resolution: TopicResolution,
+) -> dict[str, object]:
+    """Project source-backed selected nodes for downstream whole-clip review."""
+
+    topic_ids = set(resolution.selected_topic_ids)
+    work_ids = set(resolution.selected_work_ids)
+    entity_ids = set(resolution.scoped_entity_ids)
+    topic_fields = (
+        "topic_id",
+        "canonical",
+        "aliases",
+        "active_from",
+        "active_until",
+        "sources",
+    )
+    work_fields = (
+        "work_id",
+        "canonical",
+        "aliases",
+        "aired_from",
+        "sources",
+    )
+    entity_fields = (
+        "entity_id",
+        "canonical_zh",
+        "native_names",
+        "aliases",
+        "readings",
+        "role",
+        "sources",
+    )
+
+    def selected_rows(
+        rows: object,
+        *,
+        id_field: str,
+        selected_ids: set[str],
+        fields: Sequence[str],
+    ) -> list[dict[str, object]]:
+        return [
+            {field: row.get(field) for field in fields}
+            for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, Mapping)
+            and str(row.get(id_field) or "") in selected_ids
+        ]
+
+    return {
+        "schema_version": "topic-scoped-context.v1",
+        "status": (
+            "SCOPED"
+            if topic_ids or work_ids or entity_ids
+            else "NO_SELECTED_NODES"
+        ),
+        "recording_date": resolution.recording_date,
+        "graph_sha256": resolution.graph_sha256,
+        "topics": selected_rows(
+            graph.get("topics"),
+            id_field="topic_id",
+            selected_ids=topic_ids,
+            fields=topic_fields,
+        ),
+        "works": selected_rows(
+            graph.get("works"),
+            id_field="work_id",
+            selected_ids=work_ids,
+            fields=work_fields,
+        ),
+        "entities": selected_rows(
+            graph.get("entities"),
+            id_field="entity_id",
+            selected_ids=entity_ids,
+            fields=entity_fields,
+        ),
+    }
+
+
 def _identity(value: object) -> str:
     return _NON_IDENTITY.sub("", unicodedata.normalize("NFKC", str(value))).casefold()
 

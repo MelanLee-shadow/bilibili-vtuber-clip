@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from src.autoslice.cover_reference_authority import (
     CoverReferenceAuthorityError,
@@ -12,14 +13,108 @@ from src.autoslice.story_contract import (
     cover_relation_prompt,
 )
 from src.autoslice.cover_route_evidence import (
+    build_no_crop_participant_verification,
     build_cover_route_decision,
     record_cover_route_execution,
     validate_cover_route_decision,
+)
+from src.autoslice.cover_text_pixel_evidence import (
+    materialize_rendered_text_pixel_evidence,
+)
+from src.autoslice.cover_title_rendering import (
+    SCHEMA_VERSION as COVER_TITLE_RENDER_SPEC_SCHEMA,
+    render_spec_sha256,
+    render_title_layer,
+    sha256_file,
 )
 from src.autoslice.producer_package_finalization import _audit_story_bound_cover
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+COVER_FONT = (
+    REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
+)
+
+
+def _structural_pixel_evidence(
+    text: str,
+    *,
+    final_cover_sha256: str,
+) -> dict[str, object]:
+    render_spec: dict[str, object] = {
+        "schema_version": COVER_TITLE_RENDER_SPEC_SCHEMA,
+        "font_file_name": COVER_FONT.name,
+        "font_file_sha256": sha256_file(COVER_FONT),
+        "font_face_index": 0,
+        "layer_size": [1300, 410],
+        "rendered_layer_size": [1300, 410],
+        "angle_degrees": 0,
+        "lines": [
+            {
+                "x": 30,
+                "y": 30,
+                "font_size": 180,
+                "segment_pad": 10,
+                "segments": [{"text": text, "fill": [255, 198, 41]}],
+                "outlines": [
+                    {"width": 15, "color": [18, 36, 79]},
+                    {"width": 8, "color": [255, 255, 255]},
+                ],
+            }
+        ],
+    }
+    return {
+        "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+        "status": "PASS",
+        "final_cover_sha256": final_cover_sha256,
+        "pre_overlay_sha256": "sha256:" + "4" * 64,
+        "canvas_size": [1920, 1080],
+        "text_pixel_bbox": [300, 20, 1600, 430],
+        "text_pixel_width": 1300,
+        "text_pixel_height": 410,
+        "font_size": 180,
+        "font_file_name": COVER_FONT.name,
+        "font_file_sha256": sha256_file(COVER_FONT),
+        "rendered_text": text,
+        "render_spec": render_spec,
+        "render_spec_sha256": render_spec_sha256(render_spec),
+        "overlay_position": {"x": 300, "y": 20},
+        "mask_sha256": "sha256:" + "5" * 64,
+        "mask_nonzero_pixels": 1000,
+        "changed_pixel_count": 900,
+        "changed_pixel_ratio": 0.9,
+        "masked_final_pixels_sha256": "sha256:" + "6" * 64,
+    }
+
+
+def _materialize_pixel_evidence(
+    tmp_path: Path,
+    text: str,
+) -> tuple[Path, Path, dict[str, object]]:
+    pre_overlay = tmp_path / "pre-overlay.png"
+    final_cover = tmp_path / "cover.png"
+    Image.new("RGB", (1920, 1080), (244, 238, 220)).save(
+        pre_overlay
+    )
+    render_spec = _structural_pixel_evidence(
+        text, final_cover_sha256="sha256:" + "0" * 64
+    )["render_spec"]
+    assert isinstance(render_spec, dict)
+    layer = render_title_layer(render_spec, font_path=COVER_FONT)
+    with Image.open(pre_overlay) as source:
+        final = source.convert("RGB")
+    final.paste(layer, (300, 20), layer)
+    final.save(final_cover)
+    evidence = materialize_rendered_text_pixel_evidence(
+        final_cover_path=final_cover,
+        pre_overlay_path=pre_overlay,
+        font_path=COVER_FONT,
+        render_spec=render_spec,
+        paste_xy=(300, 20),
+        font_size=180,
+        rendered_text=text,
+    )
+    return pre_overlay, final_cover, evidence
 
 
 def _relation():
@@ -149,6 +244,50 @@ def test_route_v2_binds_required_and_source_visible_participants():
     assert route["required_participant_ids"] == ["lidousha", "nancho"]
     assert route["source_visible_participant_ids"] == ["lidousha", "nancho"]
     assert route["source_visibility_authority"] == "HASH_BOUND_COVER_REFERENCE"
+    assert not validate_cover_route_decision(generation)
+
+    generation.update(
+        {
+            "image_generation_used": False,
+            "reference_sha256": reference["reference_png_sha256"],
+            "final_cover_sha256": "sha256:" + "3" * 64,
+            "font_size": 180,
+            "font_selection": {
+                "font": COVER_FONT.name,
+                "glyph_risk": [],
+            },
+            "angle_degrees": 0,
+            "overlay_position": {"x": 300, "y": 20},
+            "rendered_lines": ["真实联动画面"],
+            "rendered_text_pixels": _structural_pixel_evidence(
+                "真实联动画面",
+                final_cover_sha256="sha256:" + "3" * 64,
+            ),
+            "screenshot_graphic_poster": {
+                "schema_version": "screenshot-graphic-poster.v2",
+                "status": "COMPOSED",
+                "source_frame_transform": {
+                    "input_sha256": reference[
+                        "reference_png_sha256"
+                    ],
+                    "rendered_content_box": [480, 520, 1440, 1060],
+                    "crop_applied": False,
+                    "full_frame_preserved": True,
+                    "ai_modified": False,
+                    "center_4_3_safe": True,
+                },
+            },
+        }
+    )
+    verification = build_no_crop_participant_verification(generation)
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+        final_participant_verification=verification,
+    )
     assert validate_cover_route_decision(generation)
 
 
@@ -295,7 +434,9 @@ def test_route_v2_rejects_incomplete_new_evidence_but_keeps_v1_read_compatibilit
     )
 
 
-def test_fresh_producer_rejects_legacy_route_evidence_but_accepts_complete_v2():
+def test_fresh_producer_rejects_legacy_route_and_accepts_replayable_v3(
+    tmp_path: Path,
+):
     contract = build_story_contract(
         candidate_id="candidate",
         selection_hook="真实画面",
@@ -333,6 +474,33 @@ def test_fresh_producer_rejects_legacy_route_evidence_but_accepts_complete_v2():
         execution_status="READY",
         image_generation_attempted=False,
         image_generation_used=False,
+    )
+    pre_overlay, final_cover, pixel_evidence = (
+        _materialize_pixel_evidence(tmp_path, "真实画面")
+    )
+    generation.update(
+        {
+            "font_size": 180,
+            "font_selection": {
+                "font": COVER_FONT.name,
+                "glyph_risk": [],
+            },
+            "angle_degrees": 0,
+            "overlay_position": pixel_evidence["overlay_position"],
+            "rendered_text_pixels": pixel_evidence,
+            "pre_overlay_path": str(pre_overlay),
+            "pre_overlay_sha256": pixel_evidence[
+                "pre_overlay_sha256"
+            ],
+            "ai_background": str(pre_overlay),
+            "ai_background_sha256": sha256_file(pre_overlay),
+            "text_backing": "outline",
+            "scrim": False,
+            "final_cover": str(final_cover),
+            "final_cover_sha256": pixel_evidence[
+                "final_cover_sha256"
+            ],
+        }
     )
     reasons, _audits = _audit_story_bound_cover(staging, contract)
     assert reasons == []

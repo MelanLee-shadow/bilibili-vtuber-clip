@@ -6,7 +6,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -19,14 +19,35 @@ from src.autoslice.subtitle_rendering import (  # noqa: E402
 from src.autoslice.cover_generation import COVER_MIN_TALK_FONT_SIZE  # noqa: E402
 from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
+    validate_rendered_text_pixel_evidence,
+)
+from src.autoslice.cover_text_pixel_evidence import (  # noqa: E402
+    verify_pre_overlay_route_background,
+    verify_rendered_text_pixel_artifacts,
+)
+from src.autoslice.cover_font_paths import (  # noqa: E402
+    resolve_trusted_cover_font,
 )
 from src.autoslice.clip_context import (  # noqa: E402
     ClipContextError,
+    clip_context_prompt_text,
     validate_clip_context,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
+from src.autoslice.final_review_contract import (  # noqa: E402
+    FinalReviewContractError,
+    validate_final_review_release,
+)
 from src.autoslice.selection_scorecard import (  # noqa: E402
+    SelectionCalibrationPolicyError,
+    load_selected_selection_calibration_policy,
+    selection_calibration_violations,
     selection_scorecard_is_valid,
+)
+from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
+from src.autoslice.title_policy import (  # noqa: E402
+    CHANNEL_PROFILE,
+    publish_title_policy_violations,
 )
 from src.autoslice.story_contract import (  # noqa: E402
     SCHEMA_VERSION as STORY_CONTRACT_SCHEMA,
@@ -38,6 +59,37 @@ DEFAULT_MAX_VISUAL_LINES = 2
 DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
 STORY_CONTRACT_ENFORCED_FROM_DATE = "2026-07-22"
+AUDIT_SCHEMA_VERSION = "lidousha-review-package-audit.v2"
+AUDIT_POLICY_EPOCH = "2026-07-23.final-artifact-gates.v3"
+_DYNAMIC_ATTESTATION_SUFFIXES = (
+    ".upload_manifest.json",
+    ".uploaded.json",
+    ".public_verify.json",
+    ".season_verify.json",
+)
+_PORTABLE_ARTIFACT_SUFFIXES = (
+    ".mp4",
+    ".flv",
+    ".mkv",
+    ".mov",
+    ".cover.png",
+    ".cover.pre-overlay.png",
+    ".cover.route-background.png",
+    ".cover.title-mask.png",
+    ".srt",
+    ".ass",
+    ".record.json",
+    ".clip-context.json",
+    ".subtitle-regression.json",
+    ".chat-authority.json",
+    ".redelivery-baseline.json",
+    ".publish.json",
+    ".title.txt",
+    ".cover-generation.json",
+    ".cover-route-evidence.json",
+    ".selection-scorecard.json",
+    ".story-contract.json",
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -47,6 +99,157 @@ def _load_json(path: Path) -> dict[str, Any]:
         return {}
     except json.JSONDecodeError:
         return {}
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_dynamic_attestation(path: Path) -> bool:
+    name = path.name
+    return (
+        "package-audit" in name
+        or "package_audit" in name
+        or any(name.endswith(suffix) for suffix in _DYNAMIC_ATTESTATION_SUFFIXES)
+    )
+
+
+def _manifest_referenced_inputs(root: Path) -> set[Path]:
+    """Return existing in-package files explicitly named by the review manifest."""
+
+    manifest_path = root / "review_manifest.json"
+    referenced: set[Path] = set()
+    if not manifest_path.is_file():
+        return referenced
+
+    try:
+        payload: object = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return referenced
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+            return
+        if isinstance(value, list):
+            for child in value:
+                visit(child)
+            return
+        if not isinstance(value, str) or not value.strip():
+            return
+
+        candidate = Path(value)
+        candidates: list[Path] = []
+        if candidate.is_absolute():
+            # A portable package may retain the producer's absolute path.  Only
+            # bind it when the corresponding basename is actually packaged.
+            candidates.extend(root.rglob(candidate.name))
+        else:
+            candidates.append(root / candidate)
+
+        for path in candidates:
+            try:
+                resolved = path.resolve(strict=True)
+                resolved.relative_to(root.resolve())
+            except (OSError, ValueError):
+                continue
+            if resolved.is_file() and not resolved.is_symlink():
+                referenced.add(resolved)
+
+    visit(payload)
+    return referenced
+
+
+def _audited_inputs(root: Path) -> list[dict[str, Any]]:
+    """Hash the complete portable delivery contract, not operational sidecars.
+
+    Upload manifests, ledgers, locks and uploader binaries are intentionally
+    outside the review package.  Binding them would make the attestation drift
+    merely because an upload was attempted.  Conversely, every manifest-
+    referenced artifact and every standard deliverable sidecar is included so
+    title/subtitle/cover/baseline mutations invalidate the audit.
+    """
+
+    rows: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return rows
+    resolved_root = root.resolve()
+    referenced = _manifest_referenced_inputs(root)
+    package_files = {
+        path.resolve()
+        for path in root.rglob("*")
+        if path.is_file()
+        and not path.is_symlink()
+        and (
+            path.name == "review_manifest.json"
+            or any(path.name.endswith(suffix) for suffix in _PORTABLE_ARTIFACT_SUFFIXES)
+        )
+    }
+    for path in sorted(referenced | package_files):
+        if _is_dynamic_attestation(path):
+            continue
+        rows.append(
+            {
+                "path": path.relative_to(resolved_root).as_posix(),
+                "sha256": _sha256_file(path),
+                "bytes": path.stat().st_size,
+            }
+        )
+    return rows
+
+
+def _audit_policy_fingerprint() -> str:
+    sources = [
+        Path(__file__),
+        ROOT / "src/autoslice/subtitle_validation.py",
+        ROOT / "src/autoslice/final_review_contract.py",
+        ROOT / "src/autoslice/title_policy.py",
+        ROOT / "src/autoslice/selection_scorecard.py",
+        ROOT / "src/autoslice/cover_route_evidence.py",
+        ROOT / "src/autoslice/cover_text_pixel_evidence.py",
+        ROOT / "src/autoslice/cover_title_rendering.py",
+        ROOT / "src/autoslice/cover_font_paths.py",
+        ROOT / "src/autoslice/cover_generation.py",
+        ROOT / "src/autoslice/cover_screenshot_poster.py",
+        CHANNEL_PROFILE.asset_file("title_policy"),
+        CHANNEL_PROFILE.asset_file("selection_score_calibration"),
+    ]
+    digest = hashlib.sha256()
+    digest.update(AUDIT_POLICY_EPOCH.encode("utf-8"))
+    for path in sources:
+        try:
+            label = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            label = str(path.resolve())
+        digest.update(label.encode("utf-8"))
+        try:
+            digest.update(path.read_bytes())
+        except OSError as exc:
+            digest.update(
+                f"<unreadable:{type(exc).__name__}>".encode("utf-8")
+            )
+    return "sha256:" + digest.hexdigest()
+
+
+def _audit_result(root: Path, issues: list[dict[str, Any]]) -> dict[str, Any]:
+    blocking = [issue for issue in issues if issue.get("severity") != "INFO"]
+    return {
+        "schema_version": AUDIT_SCHEMA_VERSION,
+        "policy_epoch": AUDIT_POLICY_EPOCH,
+        "policy_fingerprint": _audit_policy_fingerprint(),
+        "auditor_source_sha256": "sha256:" + _sha256_file(Path(__file__)),
+        "passed": not blocking,
+        "root": str(root.resolve()),
+        "audited_inputs": _audited_inputs(root),
+        "issues": issues,
+        "issue_count": len(issues),
+        "blocking_issue_count": len(blocking),
+    }
 
 
 def _resolve(root: Path, value: object) -> Path | None:
@@ -264,7 +467,7 @@ def _audit_story_bound_cover(
         )
     if required and (
         not validate_cover_route_decision(
-            generation, allow_legacy_v1=True
+            generation, allow_legacy_v1=False
         )
     ):
         _add_issue(
@@ -272,6 +475,17 @@ def _audit_story_bound_cover(
             "COVER_ROUTE_DECISION_MISSING_OR_INVALID",
             stem=stem,
             path=record_path,
+        )
+    if required and not validate_rendered_text_pixel_evidence(generation):
+        _add_issue(
+            issues,
+            "COVER_RENDERED_TEXT_PIXELS_MISSING_OR_INVALID",
+            stem=stem,
+            path=record_path,
+            detail=(
+                "current packages require renderer-produced glyph bounds "
+                "bound to the final cover hash"
+            ),
         )
 
     for surface_name, surface in (
@@ -312,11 +526,57 @@ def _audit_boundary_contract(
     if not isinstance(audit, dict):
         _add_issue(issues, "BOUNDARY_AUDIT_MISSING", stem=stem, path=record_path)
         return
+    review = story_contract.get("boundary_semantic_review")
+    audit_review = audit.get("boundary_semantic_review")
+    review_valid = (
+        isinstance(review, dict)
+        and review.get("schema_version")
+        == "talk-boundary-semantic-review.v1"
+        and review.get("status") == "PASS"
+        and all(
+            review.get(field) is True
+            for field in (
+                "syntax_complete",
+                "story_closed",
+                "next_topic_separated",
+                "content_anchor_covered",
+            )
+        )
+        and isinstance(review.get("recommended_end_ms"), int)
+        and not isinstance(review.get("recommended_end_ms"), bool)
+        and isinstance(review.get("recommended_end_cue_index"), int)
+        and not isinstance(review.get("recommended_end_cue_index"), bool)
+        and bool(review.get("evidence_cue_indexes"))
+        and isinstance(review.get("selector_story_witness"), dict)
+        and review["selector_story_witness"].get("status") == "PASS"
+    )
+    if not review_valid:
+        _add_issue(
+            issues,
+            "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS",
+            stem=stem,
+            path=record_path,
+        )
     human_authority = str(story_contract.get("human_boundary_authority") or "").strip()
+    expected_authority = (
+        "human_source_reviewed_lower_bound_plus_semantic_review"
+        if human_authority
+        else "correlated_semantic_review_plus_deterministic_guards"
+    )
+    if audit.get("boundary_authority") != expected_authority:
+        _add_issue(
+            issues,
+            (
+                "HUMAN_BOUNDARY_AUTHORITY_DRIFT"
+                if human_authority
+                else "BOUNDARY_MULTI_WITNESS_AUTHORITY_MISSING"
+            ),
+            stem=stem,
+            path=record_path,
+        )
     if human_authority:
         if (
-            audit.get("boundary_authority") != "human_source_reviewed_end"
-            or str(audit.get("manual_end_authority") or "").strip()
+            str(audit.get("manual_end_authority") or "").strip()
             != human_authority
         ):
             _add_issue(
@@ -325,24 +585,6 @@ def _audit_boundary_contract(
                 stem=stem,
                 path=record_path,
             )
-        return
-    review = story_contract.get("boundary_semantic_review")
-    audit_review = audit.get("boundary_semantic_review")
-    if not isinstance(review, dict) or review.get("status") != "PASS":
-        _add_issue(
-            issues,
-            "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS",
-            stem=stem,
-            path=record_path,
-        )
-        return
-    if audit.get("boundary_authority") != "multi_witness_semantic_review":
-        _add_issue(
-            issues,
-            "BOUNDARY_MULTI_WITNESS_AUTHORITY_MISSING",
-            stem=stem,
-            path=record_path,
-        )
     if audit_review != review:
         _add_issue(
             issues,
@@ -350,7 +592,23 @@ def _audit_boundary_contract(
             stem=stem,
             path=record_path,
         )
-    if review.get("recommended_end_ms") != audit.get("snapped_sentence_end_ms"):
+    recommended_end_ms = (
+        review.get("recommended_end_ms")
+        if isinstance(review, dict)
+        else None
+    )
+    snapped_end_ms = audit.get("snapped_sentence_end_ms")
+    final_end_ms = audit.get("final_end_ms")
+    if (
+        not isinstance(recommended_end_ms, int)
+        or isinstance(recommended_end_ms, bool)
+        or not isinstance(snapped_end_ms, int)
+        or isinstance(snapped_end_ms, bool)
+        or snapped_end_ms < recommended_end_ms
+        or not isinstance(final_end_ms, int)
+        or isinstance(final_end_ms, bool)
+        or final_end_ms < snapped_end_ms
+    ):
         _add_issue(
             issues,
             "BOUNDARY_RECOMMENDED_END_NOT_MATERIALIZED",
@@ -364,6 +622,10 @@ def _contains_japanese(text: str) -> bool:
 
 
 def _looks_song_like(item: dict[str, Any], evidence: dict[str, Any]) -> bool:
+    if str(item.get("classification") or "").lower() == "song":
+        return True
+    if str(item.get("title") or "").startswith(CHANNEL_PROFILE.song_title_prefix):
+        return True
     joined = " ".join(
         str(value)
         for value in [
@@ -439,6 +701,30 @@ def _cover_artifact_path(
     return item_path if item_path is not None else generation_path
 
 
+def _portable_item_artifact_path(
+    root: Path,
+    item: Mapping[str, Any],
+    key: str,
+) -> Path | None:
+    """Resolve a current-package artifact without trusting host paths."""
+
+    value = item.get(key)
+    if not isinstance(value, str) or not value:
+        return None
+    raw = Path(value)
+    if raw.is_absolute():
+        return None
+    resolved_root = root.resolve()
+    candidate = (root / raw).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError:
+        return None
+    if not candidate.is_file() or candidate.is_symlink():
+        return None
+    return candidate
+
+
 def _artifact_matches_sha256(path: Path | None, expected: object) -> bool:
     if path is None or not path.is_file() or not _is_sha256(expected):
         return False
@@ -454,6 +740,7 @@ def _audit_finished_cover_evidence(
     issues: list[dict[str, Any]],
     stem: str,
     record_path: Path | None,
+    require_rendered_pixel_artifacts: bool,
 ) -> None:
     """Audit the materialized route instead of treating model defaults as proof.
 
@@ -492,6 +779,81 @@ def _audit_finished_cover_evidence(
         isinstance(rendered_lines, list)
         and bool("".join(str(value) for value in rendered_lines).strip())
     )
+    current_final_path: Path | None = None
+    route_background_path: Path | None = None
+    if require_rendered_pixel_artifacts:
+        pixel_evidence = generation.get("rendered_text_pixels")
+        current_final_path = _portable_item_artifact_path(
+            root, item, "cover"
+        )
+        mask_path = _portable_item_artifact_path(
+            root, item, "cover_title_mask"
+        )
+        pre_overlay_path = _portable_item_artifact_path(
+            root, item, "cover_pre_overlay"
+        )
+        route_background_path = _portable_item_artifact_path(
+            root, item, "cover_route_background"
+        )
+        trusted_font = None
+        if isinstance(pixel_evidence, Mapping):
+            try:
+                trusted_font = resolve_trusted_cover_font(
+                    file_name=str(
+                        pixel_evidence.get("font_file_name") or ""
+                    ),
+                    expected_sha256=str(
+                        pixel_evidence.get("font_file_sha256") or ""
+                    ),
+                    channel_profile=CHANNEL_PROFILE,
+                    root=ROOT,
+                )
+            except RuntimeError:
+                trusted_font = None
+        if not (
+            isinstance(pixel_evidence, Mapping)
+            and current_final_path is not None
+            and pre_overlay_path is not None
+            and route_background_path is not None
+            and mask_path is not None
+            and trusted_font is not None
+            and generation.get("pre_overlay_sha256")
+            == pixel_evidence.get("pre_overlay_sha256")
+            and verify_rendered_text_pixel_artifacts(
+                pixel_evidence,
+                final_cover_path=current_final_path,
+                pre_overlay_path=pre_overlay_path,
+                mask_path=mask_path,
+                font_path=trusted_font,
+                expected_pre_overlay_sha256=generation.get(
+                    "pre_overlay_sha256"
+                ),
+            )
+            and verify_pre_overlay_route_background(
+                route_background_path=route_background_path,
+                pre_overlay_path=pre_overlay_path,
+                expected_route_background_sha256=generation.get(
+                    "ai_background_sha256"
+                ),
+                text_backing=generation.get("text_backing"),
+                scrim=generation.get("scrim"),
+            )
+        ):
+            _add_issue(
+                issues,
+                "COVER_RENDERED_TEXT_PIXEL_ARTIFACT_MISMATCH",
+                stem=stem,
+                path=record_path,
+                detail=(
+                    "package-internal final cover/pre-overlay/mask and the "
+                    "committed font cannot independently replay the exact "
+                    "title layer and final composition"
+                ),
+            )
+        # Every later route check in a current package must use the same
+        # package-internal bytes.  Existing staging paths are provenance
+        # strings, not portable audit authority.
+        final_path = current_final_path
 
     if treatment in {"screenshot_direct", "screenshot_polish"}:
         method = str(generation.get("method") or "")
@@ -530,14 +892,18 @@ def _audit_finished_cover_evidence(
             )
         return
 
-    ai_background_path = _cover_artifact_path(
-        root,
-        item,
-        generation,
-        "ai_background",
-        "source_ai_background",
-        "ai_background",
-        "ai_cover",
+    ai_background_path = (
+        route_background_path
+        if require_rendered_pixel_artifacts
+        else _cover_artifact_path(
+            root,
+            item,
+            generation,
+            "ai_background",
+            "source_ai_background",
+            "ai_background",
+            "ai_cover",
+        )
     )
     ai_background_hash = generation.get("ai_background_sha256") or item.get(
         "ai_background_sha256"
@@ -730,6 +1096,18 @@ def _audit_item_story_contract(
                     stem=stem,
                     path=clip_context_path,
                 )
+            else:
+                expected_prompt = clip_context_prompt_text(clip_context)
+                if (
+                    story_contract.get("clip_context_prompt")
+                    != expected_prompt
+                ):
+                    _add_issue(
+                        issues,
+                        "CLIP_CONTEXT_PROMPT_BINDING_DRIFT",
+                        stem=stem,
+                        path=clip_context_path,
+                    )
             file_sha256 = "sha256:" + hashlib.sha256(
                 clip_context_path.read_bytes()
             ).hexdigest()
@@ -826,6 +1204,416 @@ def _audit_item_story_contract(
             stem=stem,
             path=record_path,
         )
+    if story_contract_required and not is_song:
+        for code in selection_calibration_violations(
+            str(story_contract.get("candidate_id") or ""),
+            scorecard,
+        ):
+            _add_issue(
+                issues,
+                code,
+                stem=stem,
+                path=record_path,
+                detail=f"effective_score={(scorecard or {}).get('effective_score') if isinstance(scorecard, dict) else None}",
+            )
+
+
+def _audit_source_truth_owner_attestations(
+    *,
+    issues: list[dict[str, Any]],
+    stem: str,
+    chat_authority_path: Path | None,
+    chat_authority: dict[str, Any],
+    record_path: Path | None,
+    record: dict[str, Any],
+) -> None:
+    truth_audit = (
+        chat_authority.get("source_subtitle_truth_audit")
+        if isinstance(
+            chat_authority.get("source_subtitle_truth_audit"), dict
+        )
+        else {}
+    )
+    truth_owner = chat_authority.get(
+        "final_source_truth_owner_verification"
+    )
+    truth_rows = [
+        row
+        for key in ("applied", "satisfied")
+        for row in truth_audit.get(key) or []
+        if isinstance(row, dict)
+    ]
+    if truth_rows and (
+        not isinstance(truth_owner, dict)
+        or truth_owner.get("status") != "PASS"
+        or int(truth_owner.get("required_window_count") or 0) <= 0
+    ):
+        _add_issue(
+            issues,
+            "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING",
+            stem=stem,
+            path=chat_authority_path,
+        )
+    baseline_owner = chat_authority.get(
+        "final_redelivery_baseline_owner_verification"
+    )
+    baseline_audit = chat_authority.get(
+        "redelivery_subtitle_baseline_audit"
+    )
+    if (
+        isinstance(baseline_audit, dict)
+        and baseline_audit.get("status")
+        in {"APPLIED", "ALREADY_SATISFIED"}
+        and (
+            not isinstance(baseline_owner, dict)
+            or baseline_owner.get("status") != "PASS"
+            or int(
+                baseline_owner.get("required_mapping_count") or 0
+            )
+            <= 0
+        )
+    ):
+        _add_issue(
+            issues,
+            "REDELIVERY_BASELINE_FINAL_OWNER_ATTESTATION_MISSING",
+            stem=stem,
+            path=chat_authority_path,
+        )
+    if (truth_rows or isinstance(baseline_audit, dict)) and (
+        not isinstance(
+            chat_authority.get("final_required_decision_count"), int
+        )
+        or int(
+            chat_authority.get("final_required_decision_count") or 0
+        )
+        <= 0
+    ):
+        _add_issue(
+            issues,
+            "FINAL_AUTHORITY_DECISION_COVERAGE_EMPTY",
+            stem=stem,
+            path=chat_authority_path,
+        )
+    frozen = chat_authority.get("frozen_boundary_owner_contract")
+    boundary_audit = record.get("boundary_audit")
+    frozen_owners = (
+        frozen.get("owners") if isinstance(frozen, dict) else None
+    )
+    boundary_owners = (
+        boundary_audit.get("frozen_required_boundary_owners")
+        if isinstance(boundary_audit, dict)
+        else None
+    )
+    boundary_owner_verification = (
+        boundary_audit.get("required_boundary_owner_verification")
+        if isinstance(boundary_audit, dict)
+        else None
+    )
+    frozen_owner_keys = [
+        (
+            str(owner.get("owner_kind") or ""),
+            str(owner.get("owner_id") or ""),
+        )
+        for owner in (frozen_owners or [])
+        if isinstance(owner, dict)
+    ]
+    required_truth_ids = {
+        str(row.get("truth_id") or "")
+        for row in truth_rows
+        if row.get("required") is True
+    }
+    frozen_truth_ids = {
+        owner_id
+        for owner_kind, owner_id in frozen_owner_keys
+        if owner_kind == "source_subtitle_truth"
+    }
+    baseline_owner_required = bool(
+        isinstance(baseline_audit, dict)
+        and baseline_audit.get("status")
+        in {"APPLIED", "ALREADY_SATISFIED"}
+    )
+    frozen_story_owner_ids = {
+        owner_id
+        for owner_kind, owner_id in frozen_owner_keys
+        if owner_kind
+        in {
+            "exact_read",
+            "sc_sender",
+            "gift_name",
+            "reply_coreference",
+            "entity_repair",
+        }
+    }
+    required_story_owner_ids = {
+        str(row.get("boundary_owner_id") or "")
+        for key in (
+            "applied",
+            "sender_repairs",
+            "gift_repairs",
+            "coreference_repairs",
+            "entity_repairs",
+        )
+        for row in (chat_authority.get(key) or [])
+        if isinstance(row, dict) and row.get("boundary_required") is True
+    }
+    owner_windows_valid = all(
+        isinstance(window, dict)
+        and isinstance(window.get("start_ms"), int)
+        and not isinstance(window.get("start_ms"), bool)
+        and isinstance(window.get("end_ms"), int)
+        and not isinstance(window.get("end_ms"), bool)
+        and int(window["start_ms"]) >= 0
+        and int(window["end_ms"]) > int(window["start_ms"])
+        for owner in (frozen_owners or [])
+        if isinstance(owner, dict)
+        for window in (owner.get("local_windows") or [])
+    )
+    frozen_valid = bool(
+        isinstance(frozen, dict)
+        and frozen.get("schema_version")
+        == "frozen-boundary-owner-contract.v1"
+        and frozen.get("status") == "FROZEN"
+        and isinstance(frozen_owners, list)
+        and frozen.get("required_owner_count") == len(frozen_owners)
+        and all(
+            isinstance(owner, dict)
+            and owner.get("required") is True
+            and str(owner.get("owner_kind") or "")
+            and str(owner.get("owner_id") or "")
+            and isinstance(owner.get("local_windows"), list)
+            and bool(owner.get("local_windows"))
+            for owner in frozen_owners
+        )
+        and owner_windows_valid
+        and len(frozen_owner_keys) == len(set(frozen_owner_keys))
+        and required_truth_ids == frozen_truth_ids
+        and required_story_owner_ids <= frozen_story_owner_ids
+        and (
+            not baseline_owner_required
+            or (
+                "reviewed_redelivery_baseline",
+                "exact-reviewed-interval",
+            )
+            in frozen_owner_keys
+        )
+    )
+    boundary_valid = bool(
+        isinstance(boundary_audit, dict)
+        and boundary_audit.get("frozen_required_boundary_owner_count")
+        == len(frozen_owners or [])
+        and boundary_owners == frozen_owners
+        and isinstance(boundary_owner_verification, dict)
+        and boundary_owner_verification.get("status") == "PASS"
+        and boundary_owner_verification.get("failures") == []
+        and int(
+            chat_authority.get(
+                "final_boundary_required_exclusion_count", 0
+            )
+            or 0
+        )
+        == 0
+    )
+    if not frozen_valid:
+        _add_issue(
+            issues,
+            "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID",
+            stem=stem,
+            path=chat_authority_path,
+        )
+    if not boundary_valid:
+        _add_issue(
+            issues,
+            "REQUIRED_BOUNDARY_OWNER_ATTESTATION_MISSING",
+            stem=stem,
+            path=record_path or chat_authority_path,
+        )
+
+
+def _audit_final_review_attestation(
+    *,
+    issues: list[dict[str, Any]],
+    stem: str,
+    subtitle_path: Path | None,
+    chat_authority_path: Path | None,
+    chat_authority: dict[str, Any],
+    record_path: Path | None,
+    record: dict[str, Any],
+) -> None:
+    if (
+        subtitle_path is None
+        or not subtitle_path.is_file()
+        or chat_authority_path is None
+        or not chat_authority_path.is_file()
+        or not chat_authority
+    ):
+        return
+    actual_chat_sha256 = "sha256:" + _sha256_file(chat_authority_path)
+    artifact_hashes = record.get("artifact_hashes")
+    declared_chat_sha256 = (
+        artifact_hashes.get("chat_authority_audit_sha256")
+        if isinstance(artifact_hashes, dict)
+        else None
+    )
+    if declared_chat_sha256 != actual_chat_sha256:
+        _add_issue(
+            issues,
+            "CHAT_AUTHORITY_RECORD_HASH_MISMATCH",
+            stem=stem,
+            path=record_path or chat_authority_path,
+            detail=(
+                f"record={declared_chat_sha256!r}; "
+                f"actual={actual_chat_sha256}"
+            ),
+        )
+    expected_srt_sha256 = "sha256:" + hashlib.sha256(
+        subtitle_path.read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+    try:
+        validate_final_review_release(
+            chat_authority.get("final_review_audit"),
+            expected_srt_sha256=expected_srt_sha256,
+        )
+    except FinalReviewContractError as exc:
+        _add_issue(
+            issues,
+            exc.reason_code,
+            stem=stem,
+            path=chat_authority_path,
+        )
+
+
+def _audit_finished_item_cover(
+    *,
+    root: Path,
+    item: dict[str, Any],
+    issues: list[dict[str, Any]],
+    stem: str,
+    record_path: Path | None,
+    record: dict[str, Any],
+    publish_staging: dict[str, Any],
+    cover_generation: object,
+    is_song: bool,
+    story_contract_required: bool,
+    story_candidate_id: str,
+    item_candidate_id: str,
+    attestations_by_candidate: dict[str, dict[str, Any]],
+    manifest_path: Path,
+) -> None:
+    record_generation = record.get("cover_generation")
+    if not isinstance(record_generation, dict):
+        record_generation = publish_staging.get("cover_generation")
+    finished_generation = (
+        record_generation
+        if isinstance(record_generation, dict)
+        else cover_generation
+    )
+    if not is_song and isinstance(finished_generation, dict):
+        font_size = finished_generation.get("font_size")
+        if (
+            isinstance(font_size, bool)
+            or (
+                isinstance(font_size, (int, float))
+                and font_size < COVER_MIN_TALK_FONT_SIZE
+            )
+            or (
+                story_contract_required
+                and not isinstance(font_size, (int, float))
+            )
+        ):
+            _add_issue(
+                issues,
+                "COVER_TITLE_TOO_SMALL",
+                stem=stem,
+                path=record_path,
+                detail=(
+                    f"talk cover emphasis is {font_size}px; minimum is "
+                    f"{COVER_MIN_TALK_FONT_SIZE}px"
+                ),
+            )
+    cover_generation_text = (
+        json.dumps(finished_generation, ensure_ascii=False)
+        if isinstance(finished_generation, dict)
+        else str(cover_generation or "")
+    )
+    if isinstance(finished_generation, dict):
+        fallback_cover = (
+            bool(item.get("cover_regenerated_from_burn_frame"))
+            or finished_generation.get("fallback_used") is True
+        )
+        attestation_candidate_id = story_candidate_id or item_candidate_id
+        if attestations_by_candidate and attestation_candidate_id:
+            attestation = attestations_by_candidate.get(
+                attestation_candidate_id
+            )
+            if not isinstance(attestation, dict):
+                _add_issue(
+                    issues,
+                    "MANIFEST_COVER_ATTESTATION_MISSING",
+                    stem=stem,
+                    path=manifest_path,
+                    detail=f"candidate_id={attestation_candidate_id}",
+                )
+            else:
+                expected_attestation = {
+                    "reference_sha256": finished_generation.get(
+                        "reference_sha256"
+                    ),
+                    "final_cover_sha256": finished_generation.get(
+                        "final_cover_sha256"
+                    ),
+                    "method": finished_generation.get("method"),
+                    "route_decision": finished_generation.get(
+                        "route_decision"
+                    ),
+                    "reference_authority": finished_generation.get(
+                        "reference_authority"
+                    ),
+                }
+                for key, expected in expected_attestation.items():
+                    if attestation.get(key) != expected:
+                        _add_issue(
+                            issues,
+                            "MANIFEST_COVER_ATTESTATION_DRIFT",
+                            stem=stem,
+                            path=manifest_path,
+                            detail=(
+                                f"candidate_id={attestation_candidate_id}; "
+                                f"field={key}"
+                            ),
+                        )
+    else:
+        fallback_cover = bool(
+            item.get("cover_regenerated_from_burn_frame")
+        ) or any(
+            marker in cover_generation_text.lower()
+            for marker in [
+                "deterministic",
+                "burn-frame",
+                "burned-frame",
+                "fallback",
+                "frame cover",
+            ]
+        )
+    if fallback_cover:
+        _add_issue(
+            issues,
+            "COVER_FALLBACK_NOT_FINISHED",
+            stem=stem,
+            detail=cover_generation_text,
+        )
+    _audit_finished_cover_evidence(
+        root=root,
+        item=item,
+        generation=(
+            finished_generation
+            if isinstance(finished_generation, dict)
+            else None
+        ),
+        issues=issues,
+        stem=stem,
+        record_path=record_path,
+        require_rendered_pixel_artifacts=story_contract_required,
+    )
 
 
 def audit_package(root: str | Path) -> dict[str, Any]:
@@ -834,9 +1622,22 @@ def audit_package(root: str | Path) -> dict[str, Any]:
     manifest = _load_json(manifest_path)
     issues: list[dict[str, Any]] = []
 
+    try:
+        load_selected_selection_calibration_policy()
+    except SelectionCalibrationPolicyError as exc:
+        _add_issue(
+            issues,
+            "SELECTION_CALIBRATION_POLICY_INVALID",
+            path=exc.path,
+            detail=f"{exc.reason_code}: {exc.detail}",
+        )
+        if not manifest:
+            _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
+        return _audit_result(root, issues)
+
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
-        return {"passed": False, "root": str(root), "issues": issues, "issue_count": len(issues)}
+        return _audit_result(root, issues)
 
     max_visual_lines, max_visual_line_chars = _subtitle_visual_contract(
         manifest, issues, manifest_path
@@ -917,11 +1718,19 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             if not _has_alignment_evidence(root, item):
                 _add_issue(issues, "SONG_LYRIC_SOURCE_MISSING", stem=stem, detail="No external timed lyric source evidence found")
                 _add_issue(issues, "SONG_ALIGNMENT_REPORT_MISSING", stem=stem, detail="No first/last lyric anchor offset/tail report found")
-            title = str(item.get("title") or "")
-            if not (title.startswith("【李豆沙】豆沙歌，") and "《" in title and "》" in title):
-                _add_issue(issues, "SONG_TITLE_FORMAT_INVALID", stem=stem, detail=title)
-
         if subtitle_path and subtitle_path.exists():
+            if story_contract_required:
+                srt_release = validate_srt_file(subtitle_path)
+                for error in srt_release.get("errors") or []:
+                    if not isinstance(error, dict):
+                        continue
+                    _add_issue(
+                        issues,
+                        str(error.get("code") or "SRT_RELEASE_VALIDATION_FAILED"),
+                        stem=stem,
+                        path=subtitle_path,
+                        detail=json.dumps(error, ensure_ascii=False, sort_keys=True),
+                    )
             for cue in _parse_srt(subtitle_path):
                 duration = cue["end"] - cue["start"]
                 lines = [line.strip() for line in cue["lines"] if line.strip()]
@@ -952,8 +1761,36 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         cover_generation = item.get("cover_generation")
         record_path = _resolve(root, item.get("record") or item.get("record_json"))
         record = _load_json(record_path) if record_path else {}
+        chat_authority_path = _resolve(root, item.get("chat_authority"))
+        chat_authority = (
+            _load_json(chat_authority_path) if chat_authority_path else {}
+        )
+        if story_contract_required and (
+            chat_authority_path is None
+            or not chat_authority_path.is_file()
+            or not chat_authority
+        ):
+            _add_issue(
+                issues,
+                "CHAT_AUTHORITY_AUDIT_MISSING_OR_INVALID",
+                stem=stem,
+                path=chat_authority_path or manifest_path,
+            )
         story_contract = record.get("story_contract")
         item_title = str(item.get("title") or "")
+        final_publish_title = publish_title or title_txt or item_title
+        if story_contract_required or is_song:
+            for code in publish_title_policy_violations(
+                final_publish_title,
+                lane="song" if is_song else "talk",
+            ):
+                _add_issue(
+                    issues,
+                    code.upper(),
+                    stem=stem,
+                    path=publish_path or title_txt_path or manifest_path,
+                    detail=final_publish_title,
+                )
         publish_staging = (
             record.get("publish_staging")
             if isinstance(record.get("publish_staging"), dict)
@@ -967,6 +1804,24 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 stem=stem,
                 path=manifest_path,
                 detail=f"manifest={item_title!r}; record={record_title!r}",
+            )
+        if story_contract_required and not is_song:
+            _audit_source_truth_owner_attestations(
+                issues=issues,
+                stem=stem,
+                chat_authority_path=chat_authority_path,
+                chat_authority=chat_authority,
+                record_path=record_path,
+                record=record,
+            )
+            _audit_final_review_attestation(
+                issues=issues,
+                stem=stem,
+                subtitle_path=subtitle_path,
+                chat_authority_path=chat_authority_path,
+                chat_authority=chat_authority,
+                record_path=record_path,
+                record=record,
             )
         story_candidate_id = (
             str(story_contract.get("candidate_id") or "")
@@ -1006,107 +1861,24 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             story_contract_required=story_contract_required,
             is_song=is_song,
         )
-        record_generation = record.get("cover_generation")
-        if not isinstance(record_generation, dict):
-            record_generation = (
-                publish_staging.get("cover_generation")
-                if isinstance(publish_staging, dict)
-                else None
-            )
-        finished_generation = (
-            record_generation
-            if isinstance(record_generation, dict)
-            else cover_generation
-        )
-        if not is_song and isinstance(finished_generation, dict):
-            font_size = finished_generation.get("font_size")
-            if (
-                isinstance(font_size, bool)
-                or (isinstance(font_size, (int, float)) and font_size < COVER_MIN_TALK_FONT_SIZE)
-            ):
-                _add_issue(
-                    issues,
-                    "COVER_TITLE_TOO_SMALL",
-                    stem=stem,
-                    path=record_path,
-                    detail=(
-                        f"talk cover emphasis is {font_size}px; minimum is "
-                        f"{COVER_MIN_TALK_FONT_SIZE}px"
-                    ),
-                )
-        cover_generation_text = (
-            json.dumps(finished_generation, ensure_ascii=False)
-            if isinstance(finished_generation, dict)
-            else str(cover_generation or "")
-        )
-        if isinstance(finished_generation, dict):
-            fallback_cover = (
-                bool(item.get("cover_regenerated_from_burn_frame"))
-                or finished_generation.get("fallback_used") is True
-                )
-            attestation_candidate_id = story_candidate_id or item_candidate_id
-            if attestations_by_candidate and attestation_candidate_id:
-                attestation = attestations_by_candidate.get(
-                    attestation_candidate_id
-                )
-                if not isinstance(attestation, dict):
-                    _add_issue(
-                        issues,
-                        "MANIFEST_COVER_ATTESTATION_MISSING",
-                        stem=stem,
-                        path=manifest_path,
-                        detail=f"candidate_id={attestation_candidate_id}",
-                    )
-                else:
-                    expected_attestation = {
-                        "reference_sha256": finished_generation.get(
-                            "reference_sha256"
-                        ),
-                        "final_cover_sha256": finished_generation.get(
-                            "final_cover_sha256"
-                        ),
-                        "method": finished_generation.get("method"),
-                        "route_decision": finished_generation.get(
-                            "route_decision"
-                        ),
-                        "reference_authority": finished_generation.get(
-                            "reference_authority"
-                        ),
-                    }
-                    for key, expected in expected_attestation.items():
-                        if attestation.get(key) != expected:
-                            _add_issue(
-                                issues,
-                                "MANIFEST_COVER_ATTESTATION_DRIFT",
-                                stem=stem,
-                                path=manifest_path,
-                                detail=(
-                                    f"candidate_id={attestation_candidate_id}; "
-                                    f"field={key}"
-                                ),
-                            )
-        else:
-            fallback_cover = bool(item.get("cover_regenerated_from_burn_frame")) or any(
-                marker in cover_generation_text.lower()
-                for marker in ["deterministic", "burn-frame", "burned-frame", "fallback", "frame cover"]
-            )
-        if fallback_cover:
-            _add_issue(issues, "COVER_FALLBACK_NOT_FINISHED", stem=stem, detail=cover_generation_text)
-        _audit_finished_cover_evidence(
+        _audit_finished_item_cover(
             root=root,
             item=item,
-            generation=(
-                finished_generation
-                if isinstance(finished_generation, dict)
-                else None
-            ),
             issues=issues,
             stem=stem,
             record_path=record_path,
+            record=record,
+            publish_staging=publish_staging,
+            cover_generation=cover_generation,
+            is_song=is_song,
+            story_contract_required=story_contract_required,
+            story_candidate_id=story_candidate_id,
+            item_candidate_id=item_candidate_id,
+            attestations_by_candidate=attestations_by_candidate,
+            manifest_path=manifest_path,
         )
 
-    blocking = [issue for issue in issues if issue.get("severity") != "INFO"]
-    return {"passed": not blocking, "root": str(root), "issues": issues, "issue_count": len(issues), "blocking_issue_count": len(blocking)}
+    return _audit_result(root, issues)
 
 
 def main() -> int:

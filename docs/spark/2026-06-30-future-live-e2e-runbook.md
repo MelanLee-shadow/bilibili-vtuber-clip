@@ -1,5 +1,10 @@
 # Future Li Dousha live E2E no-upload runbook
 
+> **SUPERSEDED RUNBOOK — DO NOT EXECUTE THE COMMANDS BELOW.** Provider models,
+> paths, flags and acceptance artifacts are a 2026-06-30/07-03 snapshot.
+> Reconstruct the current invocation from the deployed runner/profile and
+> [../pipeline/README.md](../pipeline/README.md).
+
 Generated: 2026-06-30
 
 ## Purpose

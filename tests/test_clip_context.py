@@ -153,3 +153,144 @@ def test_clip_context_rejects_payload_candidate_date_and_source_drift():
         validate_clip_context(
             context, source_media_sha256s=["sha256:" + "4" * 64]
         )
+
+
+def test_prompt_preserves_mandatory_authorities_middle_callback_and_sc():
+    source_sha = "sha256:" + "5" * 64
+    cues = []
+    for index in range(1, 122):
+        text = f"第{index}句" + ("很长的上下文" * 20)
+        if index == 61:
+            text = "MID_CALLBACK_这是姐感的妹妹"
+        if index == 121:
+            text = "TAIL_CALLBACK_男的咋了这个直播间就是不熟啊"
+        cues.append(
+            f"{index}\n00:00:00,000 --> 00:00:01,000\n{text}"
+        )
+    chat = [
+        ChatEvidence(
+            "danmaku",
+            index * 10,
+            f"普通弹幕{index}",
+            "",
+            "chat.jsonl",
+            "sha256:" + "6" * 64,
+            f"dm-{index}",
+        )
+        for index in range(300)
+    ]
+    chat.append(
+        ChatEvidence(
+            "superchat",
+            99_999,
+            "SC_她叫秦",
+            "viewer",
+            "chat.jsonl",
+            "sha256:" + "6" * 64,
+            "sc-qin",
+        )
+    )
+    context = build_clip_context(
+        candidate_id="auto_193450_3573_3665",
+        spec={
+            "date": "2026-07-22",
+            "selection_hook": "李豆沙展示秦并被南町nightin调侃",
+            "pieces": [
+                {
+                    "start_ms": 0,
+                    "end_ms": 200_000,
+                    "remote_media": "/recordings/source.mp4",
+                    "source_media_sha256": source_sha,
+                }
+            ],
+            "session_relation_authority": {
+                "state": "CONFIRMED",
+                "relation_id": "20260722-lidousha-nancho-live-collaboration",
+                "participants": ["lidousha", "nancho"],
+            },
+        },
+        draft_srt="\n\n".join(cues) + "\n",
+        authoritative_chat=chat,
+        topic_resolution={
+            "status": "RESOLVED",
+            "selected_topic_ids": ["qin-character"],
+        },
+        session_topic_authorities=(
+            {"canonical": "秦", "source": "screen_text"},
+        ),
+        speech_memory_ledger_path=MEMORY_LEDGER,
+    )
+
+    prompt = clip_context_prompt_text(context)
+
+    assert len(prompt) <= 18_000
+    assert "recording_date: 2026-07-22" in prompt
+    assert "20260722-lidousha-nancho-live-collaboration" in prompt
+    assert "qin-character" in prompt
+    assert '"canonical":"秦"' in prompt
+    assert "MID_CALLBACK_这是姐感的妹妹" in prompt
+    assert "TAIL_CALLBACK_男的咋了这个直播间就是不熟啊" in prompt
+    assert "SC_她叫秦" in prompt
+    assert context["retrieval_budget"]["structured_chat_truncated"] is True
+
+
+def test_context_rejects_lossy_whole_clip_transcript_and_hash_drift():
+    with pytest.raises(
+        ClipContextError,
+        match="WHOLE_CLIP_TRANSCRIPT_TOO_LARGE",
+    ):
+        build_clip_context(
+            candidate_id="candidate",
+            spec={
+                "date": "2026-07-22",
+                "pieces": [
+                    {
+                        "start_ms": 0,
+                        "end_ms": 1_000,
+                        "remote_media": "/recordings/source.mp4",
+                        "source_media_sha256": "sha256:" + "7" * 64,
+                    }
+                ],
+            },
+            draft_srt="字" * 60_001,
+            authoritative_chat=(),
+            topic_resolution={"status": "NO_GRAPH"},
+            session_topic_authorities=(),
+            speech_memory_ledger_path=MEMORY_LEDGER,
+        )
+
+    context = build_clip_context(
+        candidate_id="candidate",
+        spec={
+            "date": "2026-07-22",
+            "pieces": [
+                {
+                    "start_ms": 0,
+                    "end_ms": 1_000,
+                    "remote_media": "/recordings/source.mp4",
+                    "source_media_sha256": "sha256:" + "8" * 64,
+                }
+            ],
+        },
+        draft_srt="1\n00:00:00,000 --> 00:00:01,000\n原文\n",
+        authoritative_chat=(),
+        topic_resolution={"status": "NO_GRAPH"},
+        session_topic_authorities=(),
+        speech_memory_ledger_path=MEMORY_LEDGER,
+    )
+    tampered = dict(context)
+    tampered["whole_clip_draft_srt_sha256"] = "sha256:" + "0" * 64
+    payload = dict(tampered)
+    payload.pop("context_sha256")
+    import hashlib
+
+    tampered["context_sha256"] = "sha256:" + hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(ClipContextError, match="WHOLE_CLIP_TRANSCRIPT_INVALID"):
+        validate_clip_context(tampered)

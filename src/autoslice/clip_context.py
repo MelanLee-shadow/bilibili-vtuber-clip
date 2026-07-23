@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TypeVar
 
 from src.autoslice.chat_authority import ChatEvidence, sanitize_chat_display_text
 from src.autoslice.speech_memory_ledger import load_scoped_speech_memory
@@ -17,10 +18,17 @@ MAX_TRANSCRIPT_CHARS = 60_000
 MAX_CHAT_ROWS = 240
 MAX_PROMPT_CHARS = 18_000
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
+_T = TypeVar("_T")
 
 
 class ClipContextError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class ClipContextPromptRender:
+    text: str
+    section_chars: Mapping[str, int]
 
 
 def _canonical_json_sha256(value: Mapping[str, object]) -> str:
@@ -30,11 +38,52 @@ def _canonical_json_sha256(value: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
-def _bounded_text(value: str, cap: int) -> tuple[str, bool]:
-    if len(value) <= cap:
-        return value, False
-    half = max(1, cap // 2)
-    return value[:half] + "\n…[context middle omitted by explicit budget]…\n" + value[-half:], True
+def _temporal_sample(values: Sequence[_T], cap: int) -> list[_T]:
+    if cap <= 0 or not values:
+        return []
+    if len(values) <= cap:
+        return list(values)
+    if cap == 1:
+        return [values[len(values) // 2]]
+    indexes = {
+        round(index * (len(values) - 1) / (cap - 1))
+        for index in range(cap)
+    }
+    return [values[index] for index in sorted(indexes)]
+
+
+def select_context_chat(
+    evidence: Sequence[ChatEvidence],
+    *,
+    cap: int = MAX_CHAT_ROWS,
+) -> list[ChatEvidence]:
+    """Keep source-bound high-value events before sampling ordinary danmaku."""
+
+    ordered = sorted(
+        evidence,
+        key=lambda item: (
+            int(item.offset_ms),
+            str(item.kind),
+            str(item.source_event_id or ""),
+        ),
+    )
+    strong = [item for item in ordered if item.kind != "danmaku"]
+    ordinary = [item for item in ordered if item.kind == "danmaku"]
+    if len(strong) >= cap:
+        selected = _temporal_sample(strong, cap)
+    else:
+        selected = [
+            *strong,
+            *_temporal_sample(ordinary, cap - len(strong)),
+        ]
+    return sorted(
+        selected,
+        key=lambda item: (
+            int(item.offset_ms),
+            str(item.kind),
+            str(item.source_event_id or ""),
+        ),
+    )
 
 
 def build_clip_context(
@@ -48,9 +97,8 @@ def build_clip_context(
     speech_memory_ledger_path: Path,
 ) -> dict[str, object]:
     recording_date = str(spec.get("date") or "")
-    transcript, transcript_truncated = _bounded_text(
-        draft_srt, MAX_TRANSCRIPT_CHARS
-    )
+    if len(draft_srt) > MAX_TRANSCRIPT_CHARS:
+        raise ClipContextError("CLIP_CONTEXT_WHOLE_CLIP_TRANSCRIPT_TOO_LARGE")
     scoped_memory = load_scoped_speech_memory(
         speech_memory_ledger_path,
         speaker_id="lidousha",
@@ -65,6 +113,7 @@ def build_clip_context(
             else None
         ),
     )
+    selected_chat = select_context_chat(authoritative_chat)
     chat_rows = [
         {
             "kind": item.kind,
@@ -75,7 +124,7 @@ def build_clip_context(
             "source_sha256": item.source_sha256,
             "source_event_id": item.source_event_id,
         }
-        for item in authoritative_chat[:MAX_CHAT_ROWS]
+        for item in selected_chat
     ]
     pieces = [
         {
@@ -94,7 +143,7 @@ def build_clip_context(
         "selection_hook": str(spec.get("selection_hook") or ""),
         "pieces": pieces,
         "session_relation_authority": spec.get("session_relation_authority"),
-        "whole_clip_draft_srt": transcript,
+        "whole_clip_draft_srt": draft_srt,
         "whole_clip_draft_srt_sha256": "sha256:"
         + hashlib.sha256(draft_srt.encode("utf-8")).hexdigest(),
         "structured_chat": chat_rows,
@@ -103,10 +152,14 @@ def build_clip_context(
         "speech_memory": scoped_memory,
         "retrieval_budget": {
             "whole_clip_transcript_char_cap": MAX_TRANSCRIPT_CHARS,
-            "whole_clip_transcript_truncated": transcript_truncated,
+            "whole_clip_transcript_truncated": False,
             "structured_chat_row_cap": MAX_CHAT_ROWS,
             "structured_chat_total_rows": len(authoritative_chat),
-            "structured_chat_truncated": len(authoritative_chat) > MAX_CHAT_ROWS,
+            "structured_chat_selected_rows": len(selected_chat),
+            "structured_chat_truncated": len(selected_chat) < len(authoritative_chat),
+            "structured_chat_selection_policy": (
+                "all_sc_gift_guard_then_temporal_danmaku_sampling"
+            ),
         },
         "mutation_authorized": False,
     }
@@ -135,6 +188,17 @@ def validate_clip_context(
         raise ClipContextError("CLIP_CONTEXT_DATE_MISMATCH")
     if context.get("mutation_authorized") is not False:
         raise ClipContextError("CLIP_CONTEXT_MUTATION_AUTHORITY_INVALID")
+    transcript = context.get("whole_clip_draft_srt")
+    retrieval_budget = context.get("retrieval_budget")
+    if (
+        not isinstance(transcript, str)
+        or not isinstance(retrieval_budget, Mapping)
+        or retrieval_budget.get("whole_clip_transcript_truncated") is not False
+        or len(transcript) > MAX_TRANSCRIPT_CHARS
+        or context.get("whole_clip_draft_srt_sha256")
+        != "sha256:" + hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+    ):
+        raise ClipContextError("CLIP_CONTEXT_WHOLE_CLIP_TRANSCRIPT_INVALID")
     pieces = context.get("pieces")
     if not isinstance(pieces, list) or not pieces:
         raise ClipContextError("CLIP_CONTEXT_PIECES_INVALID")
@@ -152,42 +216,191 @@ def validate_clip_context(
     return dict(context)
 
 
-def clip_context_prompt_text(context: Mapping[str, object]) -> str:
-    """Compact reviewer context; every line remains tied to context_sha256."""
+def _render_selected_blocks(blocks: Sequence[str], budget: int) -> str:
+    if budget <= 0 or not blocks:
+        return ""
+
+    def render(indexes: set[int]) -> str:
+        chunks: list[str] = []
+        previous = -1
+        for index in sorted(indexes):
+            if index > previous + 1:
+                chunks.append(
+                    f"…[omitted blocks {previous + 2}-{index}]…"
+                )
+            chunks.append(blocks[index])
+            previous = index
+        if previous < len(blocks) - 1:
+            chunks.append(
+                f"…[omitted blocks {previous + 2}-{len(blocks)}]…"
+            )
+        return "\n".join(chunks)
+
+    full = "\n".join(blocks)
+    if len(full) <= budget:
+        return full
+    anchors = {0, len(blocks) // 2, len(blocks) - 1}
+    selected: set[int] = set()
+    for index in sorted(anchors):
+        proposal = {*selected, index}
+        if len(render(proposal)) <= budget:
+            selected = proposal
+    if not selected:
+        raise ClipContextError("CLIP_CONTEXT_PROMPT_SECTION_TOO_LARGE")
+    while True:
+        missing_runs: list[tuple[int, int]] = []
+        start: int | None = None
+        for index in range(len(blocks)):
+            if index not in selected and start is None:
+                start = index
+            if index in selected and start is not None:
+                missing_runs.append((start, index - 1))
+                start = None
+        if start is not None:
+            missing_runs.append((start, len(blocks) - 1))
+        candidates = [
+            (end - start + 1, (start + end) // 2)
+            for start, end in missing_runs
+        ]
+        added = False
+        for _span, index in sorted(candidates, reverse=True):
+            proposal = {*selected, index}
+            if len(render(proposal)) <= budget:
+                selected = proposal
+                added = True
+                break
+        if not added:
+            break
+    return render(selected)
+
+
+def _json_line(label: str, value: object) -> str:
+    return f"{label}: " + json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def render_clip_context_prompt(
+    context: Mapping[str, object],
+    *,
+    max_chars: int = MAX_PROMPT_CHARS,
+) -> ClipContextPromptRender:
+    """Render mandatory authority plus cue-aware bounded evidence sections."""
+
+    validate_clip_context(context)
+    mandatory = "\n".join(
+        [
+            f"clip_context_sha256: {context.get('context_sha256')}",
+            f"candidate_id: {context.get('candidate_id')}",
+            f"recording_date: {context.get('recording_date')}",
+            f"selection_hook: {context.get('selection_hook') or ''}",
+            _json_line("source_pieces", context.get("pieces")),
+            _json_line(
+                "session_relation_authority",
+                context.get("session_relation_authority"),
+            ),
+            _json_line("topic_resolution", context.get("topic_resolution")),
+            _json_line(
+                "session_topic_authorities",
+                context.get("session_topic_authorities"),
+            ),
+        ]
+    )
+    if len(mandatory) + 96 >= max_chars:
+        raise ClipContextError("CLIP_CONTEXT_PROMPT_MANDATORY_TOO_LARGE")
+    available = max_chars - len(mandatory) - 32
+    transcript_budget = int(available * 0.60)
+    chat_budget = int(available * 0.25)
+    memory_budget = available - transcript_budget - chat_budget
+
+    transcript = str(context.get("whole_clip_draft_srt") or "")
+    transcript_blocks = [
+        block.strip()
+        for block in re.split(r"\n\s*\n", transcript)
+        if block.strip()
+    ]
+    transcript_section = _render_selected_blocks(
+        [
+            "整片初稿（用于回指、复现和后文调侃；不是文字 authority）：",
+            *transcript_blocks,
+        ],
+        transcript_budget,
+    )
+    unused_transcript = max(0, transcript_budget - len(transcript_section))
+
+    chat_rows = [
+        row
+        for row in (context.get("structured_chat") or [])
+        if isinstance(row, Mapping)
+    ]
+    chat_blocks = ["结构化弹幕/SC（保留 source binding）："]
+    chat_blocks.extend(
+        (
+            f"- {row.get('kind')} @{row.get('offset_ms')}ms"
+            f" event={row.get('source_event_id')}: {row.get('text')}"
+        )
+        for row in chat_rows
+    )
+    chat_section = _render_selected_blocks(
+        chat_blocks,
+        chat_budget + unused_transcript // 2,
+    )
+    unused_chat = max(
+        0, chat_budget + unused_transcript // 2 - len(chat_section)
+    )
 
     memory = context.get("speech_memory")
     memory_rows = memory.get("entries") if isinstance(memory, Mapping) else []
-    chunks = [
-        f"clip_context_sha256: {context.get('context_sha256')}",
-        f"selection_hook: {context.get('selection_hook') or ''}",
-        "以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：",
+    memory_blocks = [
+        "以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth："
     ]
     for row in memory_rows or []:
-        if not isinstance(row, Mapping):
-            continue
-        chunks.append(
-            "- "
-            + f"id={row.get('memory_id')}; "
-            + str(row.get("kind") or "memory")
-            + ": surfaces="
-            + "/".join(str(value) for value in (row.get("surfaces") or []))
-            + "; candidates="
-            + "/".join(
-                str(value) for value in (row.get("candidate_canonicals") or [])
-            )
-        )
-    chunks.append("整片初稿（用于回指、复现和后文调侃；不是文字 authority）：")
-    chunks.append(str(context.get("whole_clip_draft_srt") or ""))
-    chat_rows = context.get("structured_chat") or []
-    if chat_rows:
-        chunks.append("结构化弹幕/SC（保留 source binding）：")
-        for row in chat_rows:
-            if isinstance(row, Mapping):
-                chunks.append(
-                    f"- {row.get('kind')} @{row.get('offset_ms')}ms: {row.get('text')}"
+        if isinstance(row, Mapping):
+            memory_blocks.append(
+                "- "
+                + f"id={row.get('memory_id')}; "
+                + str(row.get("kind") or "memory")
+                + ": surfaces="
+                + "/".join(
+                    str(value) for value in (row.get("surfaces") or [])
                 )
-    bounded, _ = _bounded_text("\n".join(chunks), MAX_PROMPT_CHARS)
-    return bounded
+                + "; candidates="
+                + "/".join(
+                    str(value)
+                    for value in (
+                        row.get("candidate_canonicals") or []
+                    )
+                )
+            )
+    memory_section = _render_selected_blocks(
+        memory_blocks,
+        memory_budget + unused_transcript - unused_transcript // 2 + unused_chat,
+    )
+    text = "\n".join(
+        section
+        for section in (
+            mandatory,
+            memory_section,
+            transcript_section,
+            chat_section,
+        )
+        if section
+    )
+    if len(text) > max_chars:
+        raise ClipContextError("CLIP_CONTEXT_PROMPT_BUDGET_EXCEEDED")
+    return ClipContextPromptRender(
+        text=text,
+        section_chars={
+            "mandatory": len(mandatory),
+            "memory": len(memory_section),
+            "transcript": len(transcript_section),
+            "chat": len(chat_section),
+        },
+    )
+
+
+def clip_context_prompt_text(context: Mapping[str, object]) -> str:
+    return render_clip_context_prompt(context).text
 
 
 def write_clip_context(path: Path, context: Mapping[str, object]) -> None:

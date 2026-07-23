@@ -1,5 +1,9 @@
 # Independent review request: July 10 autoslice repeated failures
 
+> **Historical consultation input.** It records the 2026-07-10 question, not
+> current pipeline behavior or an executable specification. Current subtitle
+> authority is [../pipeline/40-subtitle-text.md](../pipeline/40-subtitle-text.md).
+
 Act as an adversarial systems reviewer. I am fixing an unattended Bilibili VTuber slicing pipeline. Please challenge the proposed root causes and give a concrete, implementation-ready design. Do not merely restate the incidents.
 
 ## User-visible incidents

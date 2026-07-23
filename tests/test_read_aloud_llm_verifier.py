@@ -155,7 +155,7 @@ def test_no_cpa_and_no_audio_preserves_the_preexisting_no_verdict_behavior():
 # --------------------------------------------------------------------------- #
 # integration: CPA drives the real restoration through chat_authority (no audio)
 # --------------------------------------------------------------------------- #
-def test_cpa_read_aloud_restores_garbled_cue_end_to_end_without_audio():
+def test_cpa_read_aloud_context_cannot_expand_partial_span_without_audio():
     source = _srt(_GARBLE, "可以呀")
     verify = verifier_module.build_cpa_read_aloud_verifier(
         lambda _p: json.dumps(
@@ -172,10 +172,38 @@ def test_cpa_read_aloud_restores_garbled_cue_end_to_end_without_audio():
     )
 
     texts = [cue.text for cue in parse_srt_cues(output)]
-    assert texts[0] == _DANMU, texts  # garble replaced by the danmaku she read, no audio used
+    assert texts[0] == _GARBLE, texts
+    assert _DANMU not in output
     row = audit["read_aloud_arbitrations"][0]
-    assert row["outcome"] == "authority_confirmed_by_audio"
+    assert row["outcome"] == "partial_evidence_no_whole_line_copy"
     assert row["verdict"]["reason_code"] == "READ_ALOUD_CONFIRMED_BY_CONTEXT"
+    assert row["whole_line_exact_copy_gate"]["status"] == "BLOCKED_PARTIAL_EVIDENCE"
+
+
+def test_cpa_context_can_resolve_near_complete_span_without_claiming_raw_audio():
+    exact = "soyo就是妈"
+    source = _srt("soyo是真妈", "已经超越妈感")
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _p: json.dumps(
+            {"is_read_aloud": True, "confidence": 0.98, "reason": "逐句近完整回声"},
+            ensure_ascii=False,
+        )
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, exact)],
+        entity_verifier=verify,
+    )
+
+    assert parse_srt_cues(output)[0].text == exact
+    row = audit["read_aloud_arbitrations"][0]
+    assert row["whole_line_exact_copy_gate"]["proof_basis"] == (
+        "near_complete_transcript_span"
+    )
+    assert audit["applied"][0]["alignment_basis"] == (
+        "structured-chat-context-plus-near-complete-transcript.v1"
+    )
 
 
 def test_cpa_uncertain_falls_back_to_audio_that_keeps_asr():

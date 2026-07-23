@@ -78,18 +78,20 @@ def test_direct_script_bootstraps_repo_imports_from_an_unrelated_cwd(tmp_path):
 
 
 def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> list[str]:
-    video = tmp_path / "lock-video.mp4"
-    cover = tmp_path / "lock-video.cover.png"
+    package_root = tmp_path / "lock-upload-package"
+    package_root.mkdir()
+    video = package_root / "lock-video.mp4"
+    cover = package_root / "lock-video.cover.png"
     video.write_bytes(b"lock-video")
     cover.write_bytes(b"lock-cover")
-    subtitle = tmp_path / "lock-video.srt"
+    subtitle = package_root / "lock-video.srt"
     subtitle.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n锁测试\n",
         encoding="utf-8",
     )
-    title = "lock integration"
+    title = "【李豆沙】锁竞争集成测试标题"
     tags = ["李豆沙", "虚拟主播", "直播切片"]
-    record = tmp_path / "lock-video.record.json"
+    record = package_root / "lock-video.record.json"
     record.write_text(
         json.dumps(
             {
@@ -105,7 +107,21 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
                 "story_contract": {
                     "schema_version": "lidousha-story-contract.v1",
                     "candidate_id": "lock-integration",
-                    "transcript_sha256": "sha256:" + "a" * 64,
+                    "transcript_sha256": "sha256:"
+                    + hashlib.sha256("锁测试".encode("utf-8")).hexdigest(),
+                },
+                "cover_generation": {
+                    "workflow": "test-image-cover",
+                    "method": "images.edit",
+                    "model": "test-image-model",
+                    "attempted_models": ["test-image-model"],
+                    "ai_background": str(cover),
+                    "ai_background_sha256": "sha256:"
+                    + authorized_upload.sha256_file(cover),
+                    "final_cover": str(cover),
+                    "final_cover_sha256": "sha256:"
+                    + authorized_upload.sha256_file(cover),
+                    "fallback_used": False,
                 },
                 "upload_tags": {
                     "engine": "test",
@@ -117,10 +133,11 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
         ),
         encoding="utf-8",
     )
-    review = tmp_path / "review_manifest.json"
+    review = package_root / "review_manifest.json"
     review.write_text(
         json.dumps(
             {
+                "date": "2026-07-09",
                 "items": [
                     {
                         "stem": video.stem,
@@ -136,20 +153,14 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
         ),
         encoding="utf-8",
     )
-    package_audit = tmp_path / "lock-video.package-audit.json"
+    package_audit = package_root / "lock-video.package-audit.json"
+    audit_result = authorized_upload.audit_package(package_root)
+    assert audit_result["passed"], audit_result["issues"]
     package_audit.write_text(
-        json.dumps(
-            {
-                "passed": True,
-                "root": str(tmp_path.resolve()),
-                "issues": [],
-                "issue_count": 0,
-                "blocking_issue_count": 0,
-            }
-        ),
+        json.dumps(audit_result, ensure_ascii=False),
         encoding="utf-8",
     )
-    manifest = tmp_path / "lock.upload_manifest.json"
+    manifest = package_root / "lock.upload_manifest.json"
     assert authorized_upload.main(
         [
             "make-manifest",

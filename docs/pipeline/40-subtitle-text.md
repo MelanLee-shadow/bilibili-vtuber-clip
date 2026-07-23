@@ -11,8 +11,9 @@
 | 2 | `_transcribe_draft` | ASR 适配器 + `session_topic_authority.py` + `term_boundary.py` | 转写草稿 + 场级话题实体吸收 + 词边界统一 |
 | 3 | `_build_entity_verification_context` | `read_aloud_llm_verifier.py`、`entity_audio_verifier.py` | 实体仲裁闭包（人工 override → 朗读 LLM → 音频仲裁） |
 | 4 | `_apply_entity_authority` | `self_reference_absorption.py`、`chat_proposals.py`、`subtitle_fidelity.py`、`chat_repair.py` | 自称吸收、弹幕权威修复、数字事实门、音频实体落地 |
-| 5 | `_run_final_review` | `final_review_auditor.py` | LLM 终审 + 逐条声学复核路由 |
+| 5 | `_run_final_review` | `final_review_auditor.py` | correction pass：发现问题、路由修复和逐条声学复核；产物为 `final-review-audit.v1`，不是放行回执 |
 | 6 | `_finalize_text_evidence` | `subtitle_fidelity.py` 各 guard、`surface_canon.py`、`song_name_pin.py`、`source_subtitle_truth.py` | 语言保持/书名号/标点门、梗词定形、歌名钉、源真值投影（FAILED 即 SystemExit） |
+| 7 | `_run_exact_final_release_review` | `final_review_auditor.py` + `final_review_contract.py` | 对所有 authority 落地后的**精确最终 SRT 字节**重新发现问题，签发 hash-bound `final-review-audit.v2` 放行回执 |
 
 语义修复引擎（专名/方言/语境不合适度）的设计与规则见
 [41-semantic-repair.md](41-semantic-repair.md)——那是本步的核心子权威。
@@ -24,6 +25,21 @@
   官方源 SHA、整片 draft、selection hook、relation/topic、结构化弹幕/SC 与 scoped speech
   memory。终审、声学请求、StoryContract、record 和交付包只能引用验证过的同一 digest；
   payload、candidate、日期、源 hash 或 ledger hash 漂移立即阻断。
+- `.clip-context.json` 必须保存未截断的整片 draft，硬上限 60,000 字；超过即阻断，不能用
+  “前后各一段”伪装整片语境。给模型的 supplemental prompt 另有 18,000 字硬上限：它从整片
+  cue、优先保留的 SC/礼物/上舰与按时间均匀采样的普通弹幕中做 cue-aware 选取，并显式标出
+  omitted blocks。StoryContract 保存的 `clip_context_prompt` 必须由当前 sidecar 重新渲染后
+  逐字相等；context、预算或 renderer 漂移一律 `CLIP_CONTEXT_PROMPT_BINDING_DRIFT`。
+- 话题图只负责把当前日期/作品/活动节点和其子实体缩成候选闭集：
+  `topic-resolution.v1` 必须披露 `RESOLVED`、`NO_MATCH`、`AMBIGUOUS`、`NO_GRAPH`、
+  `GRAPH_EXPIRED` 或 `GRAPH_INVALID` 及 graph SHA（若已读取）。它不能直接授权改字；最终
+  专名仍须音频、画面、结构化聊天或 source truth 见证。topic resolution 与 scoped graph
+  context 一并进入 clip-context digest，不能在终审后偷换。
+- “语境”默认是**整个切片和当前场次**，不是争议 cue 前后几句。clip-context 必须让审片员
+  看见片内开头到结尾的 callback/复述/调侃链，也可携带与该日期和话题直接相关的结构化
+  直播标题、联动对象、游戏/活动/公告实体；这些只能扩大候选与解释空间，不能在没有音频/
+  画面/弹幕/source truth 见证时直接改字。前句说“姐感的妹妹”、后句拿同一句调侃，属于同一
+  语义链；逐 cue 独立校正会丢掉这种证据，禁止作为生产默认。
 - speech memory 只生成候选闭集，`mutation_authorized=false`；必须按 candidate/relation/date
   scope 检索并携带 `candidate_memory_id`。它不能冒充 source_surface，不能进入 glossary，
   即使与误听同音也必须走声学仲裁。片内另一个由同一 ASR 派生的 cue 同样只是相关候选，
@@ -60,6 +76,17 @@
   只能在这条 exact 路径延后；结构冲突、timing pin、postcondition 等失败仍立即阻断。finalizer
   还必须证明实际策略确为 `exact_reviewed_interval_replay`，并把每个延后 `truth_id` 在重放后的
   `applied+satisfied` 中逐个复证，不能只看总状态非 FAILED。
+- 最终裁决顺序固定为：**先按最终边界恢复 reviewed baseline → 再重放更高权威 source truth
+  → 对每个 baseline mapping 与 source-truth declared output 在最终 clean SRT 和 speaker SRT
+  上逐项验活 → 才允许低权威 repair 记为 `SUPERSEDED_*`**。owner 自己未通过时，不能用
+  “低权威项已被覆盖”制造 `final_required_decision_count=0` 的假绿。审计字段
+  `final_source_truth_owner_verification` 与
+  `final_redelivery_baseline_owner_verification` 在对应 owner 存在时必须为 PASS，且该类
+  required count 非零。
+- 所有 required source-truth/baseline/story-chat owner 还必须在裁切前冻结并由最终边界完整
+  覆盖；finalizer 发现任一 owner 被裁掉或只剩残片时必须记
+  `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 并拒发，不能因成片外已“不可见”就把它降级为
+  `NOT_REQUIRED` / `OUTSIDE_DELIVERY`。完整边界契约见 [30-boundary.md](30-boundary.md)。
 - 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
   path/SHA-256、JSONL 自身 origin epoch、alias timeline offset 与 `source_alias_id` 缺一不可；
   JSONL 的事件时钟不得从另一份官方媒体 basename 猜。已知 alias 但 sidecar 缺失、哈希漂移、
@@ -68,6 +95,18 @@
   证据，按 username/uid/guard level 装载，并使用 300 秒上舰答谢因果窗；多事件无法唯一对应时
   保留原字幕而非猜名。
 - 书名号结构门在所有文本 authority（含源真值）之后再跑一次；合法跨 cue 配对单独记账，真正的 `UNRESOLVED_COMPLEX_IMBALANCE` 必须阻断 `review_ready`。
+- 最终 clean/speaker SRT 在 burn 前必须经过
+  `src/autoslice/subtitle_validation.py::validate_srt_file`：每个非空 block 都必须被消费，
+  cue 编号连续、时间戳合法、`end > start`、最短 300ms、单调且无重叠、文本非空、不以孤立
+  标点或单个汉字充当 cue、不得越过媒体尾部。解析器静默跳过坏 block 一律视为失败。
+  package audit 与 authorized upload 会各自重新运行同一 validator，不能信 producer 自报。
+- `final-review-audit.v1` 只描述 correction pass 的发现、路由与修复结果；即使它显示
+  `CLEAN`/`APPLIED`，也不能证明后续 source truth、baseline 或 finalizer 没有引入回归。
+  放行只认 `final-review-audit.v2`：它必须绑定最终 SRT SHA-256，discovery 明确
+  `COMPLETE`，`findings` 是合法列表且 validated count 精确相等，状态 `CLEAN`、
+  `release_gate=PASS`、零 finding，并携带 PASS 的 boundary semantic review。provider/JSON
+  失败、缺失或 null/non-list findings、全部 finding 无效、任何剩余 finding、SRT hash 漂移
+  或 boundary 非 PASS 都阻断。
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
   `acoustic_drop_cue`。局部静音绝不授权删除后半段真实口播；不确定时保留/留空并阻断，
@@ -81,4 +120,6 @@
   baseline 继续拒发。
 - source-language 整 cue 回退只适用于无中文的 Latin-language cue；中文口播里的 NN/L、NNLL、LLNNHHB 等 CP 顺序公式以及大写 `TA` 代词是标签/中文代词，不是外语段落，不得触发 mixed-language 拒发，也不得因 token 数下降把已删除的跨 cue 回声整句恢复。
 - 交付 `.srt`/`.ass` 走内容时间轴；片头偏移只记录在 `burned_preview.branding_intro.intro_offset_ms`（见 [80-package-delivery.md](80-package-delivery.md)）。
-- 说话人统一李豆沙色（数据积累期，Ivan 2026-07-13），说话人不确定绝不拒发。
+- talk 成品 `speaker_mode=required`。说话人未决或证据不足进入
+  `speaker_review_required` / `speaker_evidence_insufficient` 并 fail closed；不得为了
+  “统一李豆沙色”把不确定来宾涂成主播后放行。歌切不进入 talk speaker 链。

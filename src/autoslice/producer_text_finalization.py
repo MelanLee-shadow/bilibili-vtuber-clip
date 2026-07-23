@@ -101,6 +101,8 @@ def _source_truth_pinned_intervals(
     indexes: set[int] = set()
     for key in ("applied", "satisfied"):
         for row in truth.get(key) or []:
+            if row.get("final_owner_verified") is not True:
+                continue
             windows = row.get("local_windows") or []
             if windows:
                 # 首选：ledger 落刀时记录的交付时间轴辖区（layout 重排后
@@ -126,8 +128,206 @@ def _redelivery_baseline_intervals(audit: dict) -> list[tuple[int, int]]:
         return []
     return [
         (int(row["start_ms"]), int(row["end_ms"]))
-        for row in baseline.get("owned_intervals") or []
+        for row in baseline.get("mappings") or []
+        if row.get("final_owner_verified") is True
     ]
+
+
+def _window_payload(
+    srt_text: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    strip_speaker_labels: bool = False,
+) -> str:
+    return normalize_chat_text(
+        normalize_srt_payload_window(
+            srt_text,
+            start_ms=max(0, start_ms),
+            end_ms=max(start_ms + 1, end_ms),
+            strip_speaker_labels=strip_speaker_labels,
+        )
+    )
+
+
+def _verify_source_truth_owners(
+    audit: dict,
+    *,
+    final_text_srt: str,
+    final_speaker_srt: str,
+    delivery_start_ms: int,
+) -> tuple[bool, int]:
+    truth = audit.get("source_subtitle_truth_audit") or {}
+    rows: list[dict] = [
+        row
+        for key in ("applied", "satisfied")
+        for row in truth.get(key) or []
+        if isinstance(row, dict)
+    ]
+    required_count = 0
+    failures: list[dict] = []
+    for row in rows:
+        contract = row.get("declared_output_contract") or {}
+        action = str(contract.get("action") or row.get("action") or "")
+        canonical_texts = contract.get("canonical_texts")
+        if not isinstance(canonical_texts, list):
+            canonical_texts = row.get("after") or []
+        expected_exact = normalize_chat_text(
+            "".join(str(value) for value in canonical_texts)
+        )
+        required_text = normalize_chat_text(
+            str(contract.get("required_text") or "")
+        )
+        windows = row.get("local_windows") or []
+        if not windows:
+            row["final_owner_verified"] = False
+            failures.append(
+                {
+                    "truth_id": row.get("truth_id"),
+                    "reason_code": "SOURCE_TRUTH_FINAL_WINDOW_MISSING",
+                }
+            )
+            continue
+        window_results: list[dict] = []
+        for window in windows:
+            relative_start = int(window["start_ms"]) - delivery_start_ms
+            relative_end = int(window["end_ms"]) - delivery_start_ms
+            text_payload = _window_payload(
+                final_text_srt,
+                start_ms=relative_start,
+                end_ms=relative_end,
+            )
+            speaker_payload = _window_payload(
+                final_speaker_srt,
+                start_ms=relative_start,
+                end_ms=relative_end,
+                strip_speaker_labels=True,
+            )
+            if action == "drop_cue":
+                text_ok = not text_payload
+                speaker_ok = not speaker_payload
+            elif action == "replace_cue":
+                text_ok = bool(expected_exact) and text_payload == expected_exact
+                speaker_ok = (
+                    bool(expected_exact) and speaker_payload == expected_exact
+                )
+            elif action == "replace_substring":
+                expected = required_text or expected_exact
+                text_ok = bool(expected) and expected in text_payload
+                speaker_ok = bool(expected) and expected in speaker_payload
+            else:
+                text_ok = speaker_ok = False
+            required_count += 1
+            result = {
+                "start_ms": relative_start,
+                "end_ms": relative_end,
+                "action": action,
+                "expected_exact": expected_exact,
+                "required_text": required_text,
+                "text_payload": text_payload,
+                "speaker_payload": speaker_payload,
+                "text_ok": text_ok,
+                "speaker_ok": speaker_ok,
+            }
+            window_results.append(result)
+            if not (text_ok and speaker_ok):
+                failures.append(
+                    {
+                        "truth_id": row.get("truth_id"),
+                        "reason_code": "SOURCE_TRUTH_FINAL_OWNER_MISMATCH",
+                        **result,
+                    }
+                )
+        row["final_owner_windows"] = window_results
+        row["final_owner_verified"] = bool(window_results) and all(
+            item["text_ok"] and item["speaker_ok"] for item in window_results
+        )
+    audit["final_source_truth_owner_verification"] = {
+        "status": "FAIL" if failures else "PASS",
+        "required_window_count": required_count,
+        "failures": failures,
+    }
+    return not failures, required_count
+
+
+def _verify_redelivery_baseline_owners(
+    audit: dict,
+    *,
+    final_text_srt: str,
+    final_speaker_srt: str,
+    source_truth_intervals: list[tuple[int, int]],
+) -> tuple[bool, int]:
+    baseline = audit.get("redelivery_subtitle_baseline_audit") or {}
+    if baseline.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
+        audit["final_redelivery_baseline_owner_verification"] = {
+            "status": "NOT_APPLICABLE",
+            "required_mapping_count": 0,
+            "failures": [],
+        }
+        return True, 0
+    mappings = [
+        row for row in baseline.get("mappings") or [] if isinstance(row, dict)
+    ]
+    failures: list[dict] = []
+    required_count = 0
+    for row in mappings:
+        start_ms = int(row.get("start_ms") or 0)
+        end_ms = int(row.get("end_ms") or 0)
+        if any(
+            min(end_ms, truth_end) - max(start_ms, truth_start) >= 200
+            for truth_start, truth_end in source_truth_intervals
+        ):
+            row["final_owner_scope"] = "SUPERSEDED_BY_SOURCE_TRUTH_OWNER"
+            row["final_owner_verified"] = False
+            continue
+        expected = normalize_chat_text(
+            str(row.get("text") or row.get("after") or "")
+        )
+        text_payload = _window_payload(
+            final_text_srt, start_ms=start_ms, end_ms=end_ms
+        )
+        speaker_payload = _window_payload(
+            final_speaker_srt,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            strip_speaker_labels=True,
+        )
+        text_ok = bool(expected) and text_payload == expected
+        speaker_ok = bool(expected) and speaker_payload == expected
+        required_count += 1
+        row.update(
+            {
+                "final_owner_scope": "DELIVERY",
+                "final_owner_expected": expected,
+                "final_owner_text_payload": text_payload,
+                "final_owner_speaker_payload": speaker_payload,
+                "final_owner_verified": text_ok and speaker_ok,
+            }
+        )
+        if not (text_ok and speaker_ok):
+            failures.append(
+                {
+                    "baseline_cue_index": row.get("baseline_cue_index"),
+                    "reason_code": "REDELIVERY_BASELINE_FINAL_OWNER_MISMATCH",
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "expected": expected,
+                    "text_payload": text_payload,
+                    "speaker_payload": speaker_payload,
+                }
+            )
+    if not mappings:
+        failures.append(
+            {
+                "reason_code": "REDELIVERY_BASELINE_FINAL_MAPPINGS_MISSING",
+            }
+        )
+    audit["final_redelivery_baseline_owner_verification"] = {
+        "status": "FAIL" if failures else "PASS",
+        "required_mapping_count": required_count,
+        "failures": failures,
+    }
+    return not failures, required_count
 
 
 def verify_chat_authority_final_surfaces(
@@ -155,6 +355,35 @@ def verify_chat_authority_final_surfaces(
     if hard_meme_failures:
         audit["final_verification_failure"] = (
             "UNBYPASSABLE_HARD_MEME_SURFACE_PRESENT"
+        )
+        return False
+
+    source_owner_ok, source_owner_count = _verify_source_truth_owners(
+        audit,
+        final_text_srt=final_text_srt,
+        final_speaker_srt=final_speaker_srt,
+        delivery_start_ms=delivery_start_ms,
+    )
+    if not source_owner_ok:
+        audit["final_verification_failure"] = (
+            "SOURCE_TRUTH_FINAL_OWNER_NOT_VERIFIED"
+        )
+        return False
+    pinned_intervals = _source_truth_pinned_intervals(audit, final_text_srt)
+    baseline_owner_ok, baseline_owner_count = (
+        _verify_redelivery_baseline_owners(
+            audit,
+            final_text_srt=final_text_srt,
+            final_speaker_srt=final_speaker_srt,
+            source_truth_intervals=[
+                (start - delivery_start_ms, end - delivery_start_ms)
+                for start, end in pinned_intervals
+            ],
+        )
+    )
+    if not baseline_owner_ok:
+        audit["final_verification_failure"] = (
+            "REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED"
         )
         return False
 
@@ -195,7 +424,6 @@ def verify_chat_authority_final_surfaces(
     ):
         audit["final_verification_failure"] = "PENDING_TEXT_OVERRIDE_NOT_RECONCILED"
         return False
-    pinned_intervals = _source_truth_pinned_intervals(audit, final_text_srt)
     redelivery_intervals = _redelivery_baseline_intervals(audit)
     superseded_by_truth = 0
     superseded_by_redelivery = 0
@@ -216,7 +444,7 @@ def verify_chat_authority_final_surfaces(
             continue
         relative_matched_start = matched_start - delivery_start_ms
         relative_matched_end = matched_end - delivery_start_ms
-        if any(
+        if not row.get("boundary_required") and any(
             min(relative_matched_end, pin_end)
             - max(relative_matched_start, pin_start)
             >= 200
@@ -241,11 +469,19 @@ def verify_chat_authority_final_surfaces(
             and overlap_ratio < FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
         )
         if overlap_ms == 0 or boundary_sliver:
-            row["final_verification_scope"] = "OUTSIDE_DELIVERY"
-            if boundary_sliver:
-                row["final_verification_scope_reason"] = (
-                    "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
+            if row.get("boundary_required") is True:
+                row["final_verification_scope"] = (
+                    "BOUNDARY_REQUIRED_OWNER_EXCLUDED"
                 )
+                row["survived_final_text_srt"] = False
+                row["survived_final_speaker_srt"] = False
+                required_rows.append(row)
+            else:
+                row["final_verification_scope"] = "OUTSIDE_DELIVERY"
+                if boundary_sliver:
+                    row["final_verification_scope_reason"] = (
+                        "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
+                    )
             continue
         row["final_verification_scope"] = "DELIVERY"
         relative_start = max(0, matched_start - delivery_start_ms)
@@ -316,7 +552,14 @@ def verify_chat_authority_final_surfaces(
         row["survived_final_text_srt"] = bool(span_expected and span_expected in text_check) and dropped_ok
         row["survived_final_speaker_srt"] = bool(span_expected and span_expected in speaker_check) and dropped_ok
         required_rows.append(row)
-    audit["final_required_decision_count"] = len(required_rows)
+    audit["final_required_legacy_decision_count"] = len(required_rows)
+    audit["final_required_source_truth_owner_count"] = source_owner_count
+    audit["final_required_redelivery_baseline_owner_count"] = (
+        baseline_owner_count
+    )
+    audit["final_required_decision_count"] = (
+        len(required_rows) + source_owner_count + baseline_owner_count
+    )
     audit["final_superseded_by_source_truth_count"] = superseded_by_truth
     audit["final_superseded_by_redelivery_baseline_count"] = (
         superseded_by_redelivery
@@ -326,6 +569,11 @@ def verify_chat_authority_final_surfaces(
         - len(required_rows)
         - superseded_by_truth
         - superseded_by_redelivery
+    )
+    audit["final_boundary_required_exclusion_count"] = sum(
+        row.get("final_verification_scope")
+        == "BOUNDARY_REQUIRED_OWNER_EXCLUDED"
+        for row in required_rows
     )
     return all(
         row.get("survived_final_text_srt") and row.get("survived_final_speaker_srt")

@@ -1,171 +1,31 @@
 {
-  "schema_version": "vtuber-slice-autoslice-capability-status.v1",
-  "updated_at": "2026-07-10T10:50:29Z",
-  "updated_by": "Codex",
-  "scope": "no-upload shadow/review automation; publishing still requires AUTO_UPLOAD manifest plus artifact hash gate",
+  "schema_version": "vtuber-slice-autoslice-capability-map.v2",
+  "updated_on": "2026-07-23",
+  "runtime_status": "LIVE_READBACK_REQUIRED",
+  "runtime_authority": [
+    "free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT",
+    "free:/opt/bilive/autoslice/state",
+    "free:/opt/bilive/autoslice/out",
+    "free:/opt/bilive/autoslice/reports",
+    "bilibili:public+creator+exact-section"
+  ],
+  "pipeline_authority": "docs/pipeline/README.md",
   "capabilities": {
-    "auto_song_slicing": {
-      "status": "joint_live_performance_plus_lidousha_vocal_gate_deployed_accepted_cron_enabled_no_upload",
-      "source_implementation_updated_at": "2026-07-10T10:50:29Z",
-      "summary": "A song delivery requires a complete current-audio/LRC proof plus two performer subclaims on the same evidence. AGY v4 requires Li Dousha to be the same live performer across all canonical rows, with first and final rows sung, at least seven and at least 80 percent of rows sung, and only one tightly bounded in-song theatrical-spoken block; other singers, harmony, recorded/playback vocal, background-only music, ordinary speech over music, and replay/offscreen ambiguity fail closed. host-vocal-proof.v2 runs CAM++ only on distinct SINGING_THIS_LYRIC rows and rebinds all row assertions. Only their AND result is VERIFIED_LIDOUSHA_SINGING. Commit f64cd29494fdc0d2b37d249e659897514fd701dc is deployed, the six-file incident repair is COMMITTED, and guarded no-upload acceptance is complete: real singing was materialized, same-audio static replay was blocked, and the current Meibukutoki background original was blocked 0/7 by the independent host-vocal proof even though this AGY run overcalled it as live. The exact cron entrypoint smoke returned 0 without state, summary, or upload-ledger drift; DISABLED is removed. This is not an upload grant.",
-      "implemented_front_door": [
-        "full-session selector classifies song-like windows as content_type_hint=song",
-        "song candidates carry requires_full_source_song_boundary_redo=true",
-        "free-session song-lane anchors seed every tight/core/full selector attempt instead of relying on a second semantic-recall classification",
-        "only the expanded full-source retry enables agy audio plus canonical-LRC alignment",
-        "lrc-provider=auto searches NetEase, LRCLIB, and Kugou and groups same-song provider variants before audio proof; manual recovery may use Google/public-web discovery but must retain the direct timed-LRC source",
-        "Japanese language and sparse or garbled singing ASR are not terminal failure reasons",
-        "song anchors remain incomplete until lyric completion, AGY v4 same-live-Li-Dousha performance evidence, and host-vocal-proof.v2 are all available",
-        "semantic recall explicitly excludes original-track playback, ending-card music, other background music, guest/duet/harmony, and offscreen/static replay",
-        "known song source intervals persistently quarantine every overlapping talk candidate so a song BLOCK cannot be laundered through another lane"
-      ],
-      "required_machine_evidence": [
-        "song_boundary.status=FULL_SONG_READY",
-        "lyrics_alignment.status=READY",
-        "one sufficiently supported canonical LRC identity with provider and source URL recorded",
-        "current media, canonical LRC, prompt, raw observation, and run manifest bound by SHA-256",
-        "clean agy Gemini 3.5 Flash (High) run with every canonical line heard, one global shift, five named lyric spot checks, and post-song boundary",
-        "AGY v4 live_performance mode=LIVE_STREAMER_SINGING, confidence >=0.85, continuous_live_song_performance=true, same_lidousha_live_performer_across_all_lyrics=true, background_recording_likelihood <=0.20, and exactly three evidence timestamps in lyric head/middle/tail, all bound to SINGING_THIS_LYRIC rows",
-        "first and final canonical rows are SINGING_THIS_LYRIC; at least seven and at least 80 percent of rows are sung; at most one contiguous PERFORMING_THIS_LYRIC_SPOKEN theatrical passage is allowed, bounded to six rows, 12000ms summed voiced duration, 20 percent of total canonical voiced duration, and 15000ms wall-clock span",
-        "every canonical-LRC row has lyric_vocal_subject=LIDOUSHA, same_live_vocal_source_as_lidousha=true, other_singer_or_harmony_audible=false, and recorded_or_playback_vocal_audible=false, with role limited to SINGING_THIS_LYRIC or the bounded theatrical-spoken exception; aggregates are recomputed from rows and raw/report projections must match",
-        "a 4-8 second post-song host speech anchor whose median against three hash-pinned Li Dousha enrollments is >=0.60",
-        "host-vocal-proof.v2 status=READY and decision=LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
-        "seven distinct actual aligned SINGING_THIS_LYRIC cues of duration >=2.5 seconds, sampled for 2.5-4 seconds; theatrical-spoken rows are ineligible; each pass requires both three-enrollment median >=0.31 and same-session host-anchor score >=0.31; >=5/7 passes and every bucket covered",
-        "only the AGY-live AND CAM++-identity result mints joint_singing_decision=VERIFIED_LIDOUSHA_SINGING",
-        "source media, alignment report, voiceprint profile, model tree, references, session anchor, seven distinct decoded-PCM checkpoint WAVs, recorded scores, medians, aggregate decision, required SINGING_THIS_LYRIC role, and all five AGY row assertions are hash-bound and recomputed; the verifier does not rerun ML inference",
-        "external_lrc_global_shift subtitle, accurate rerender, passing render QA, and current SRT/burned-video hashes"
-      ],
-      "fail_closed_without": [
-        "full-source song boundary",
-        "unique and sufficiently supported LRC identity",
-        "current-audio lyrics alignment readiness",
-        "AGY v4 positive same-live-Li-Dousha performance evidence satisfying the sung-row floor, bounded single theatrical-spoken passage, sung head/middle/tail evidence, and no guest/duet/harmony or replay vocal",
-        "positive Li Dousha vocal identity across head/middle/tail and against a verified same-session host anchor",
-        "available hash-matching CAM++ runtime and three private enrollments",
-        "a usable 4-8 second post-song host speech anchor",
-        "complete hash-bound song range and render evidence"
-      ],
-      "code_paths": [
-        "scripts/free_session_autoslice.py::produce_song",
-        "scripts/run_full_session_selector_cpa_shadow.py::_seeded_song_candidate",
-        "src/autoslice/song_repair.py::attempt_song_repair",
-        "src/autoslice/agy_lrc_alignment.py::run_agy_audio_lrc_alignment",
-        "src/autoslice/host_vocal_proof.py::generate_host_vocal_proof",
-        "src/autoslice/host_vocal_proof.py::verify_host_vocal_proof_claim",
-        "scripts/run_auto_review_shadow_pipeline.py::_resolve_song_boundary",
-        "scripts/run_auto_review_shadow_pipeline.py::_apply_live_source_machine_evidence"
-      ],
-      "tests": [
-        "tests/test_full_session_selector_cpa_shadow_runner.py::test_seeded_song_cli_bypasses_empty_semantic_recall",
-        "tests/test_free_session_autoslice.py::test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc",
-        "tests/test_song_repair.py::test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof",
-        "tests/test_song_repair.py::test_audio_lrc_alignment_mutations_fail_closed",
-        "tests/test_host_vocal_proof.py",
-        "tests/test_free_session_autoslice.py::test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization",
-        "tests/test_auto_review_shadow_pipeline.py::test_complete_lrc_without_lidousha_vocal_proof_stays_blocked",
-        "tests/test_auto_review_shadow_pipeline.py::test_live_source_song_window_blocks_without_full_song_proof",
-        "tests/test_auto_review_shadow_pipeline.py::test_live_source_song_window_auto_recuts_to_full_song_boundary_when_alignment_proof_present"
-      ],
-      "live_acceptance": {
-        "record_scope": "historical_lrc_only_run_superseded",
-        "run_id": "song_223019_166_mebukutoki_rerun_v4",
-        "deployed_commit": "1e8818c1ed457273c38697b54d4cc6dd4e79e4a0",
-        "current_joint_gate_deployed_commit": "f64cd29494fdc0d2b37d249e659897514fd701dc",
-        "post_acceptance_hardening_commit": "c847325ce43e7e3914e8921c3f27c1254a6beffa",
-        "report": "free:/opt/bilive/autoslice/reports/manual_rerun_2026-07-09_mebukutoki_v4.json",
-        "status": "SUPERSEDED_REJECTED_BACKGROUND_PLAYBACK",
-        "result_status": "blocked",
-        "decision": "BLOCK",
-        "reason_codes": [
-          "SONG_BACKGROUND_PLAYBACK_ONLY",
-          "SONG_NOT_LIDOUSHA_SINGING"
-        ],
-        "cover_release_gate_satisfied_in_selector_result": false,
-        "song": "yonige - 芽吹くとき",
-        "external_lrc": "https://lrclib.net/api/get/33542202",
-        "evidence": "The old 25/25 LRC proof established only that yonige's recording was audible. User correction plus the static goodbye-card timeline established background playback, not Li Dousha singing. In the fresh current joint-gate run, automatic LRCLIB discovery and 25/25 timing succeeded; AGY v4 overcalled the playback as live, but host-vocal-proof.v2 scored 0/7 and the final AND returned SONG_NOT_LIDOUSHA_SINGING. A confirmed live Li Dousha v5 run passed 6/7 against both pinned enrollments and its same-session host anchor. A loud Li-Dousha-speech-over-BGM adversarial mix can make CAM++ alone pass, while same-audio static replay requires AGY's non-live veto, so neither layer is sufficient alone.",
-        "report_sha256": "bcf0500829d6802bc4d6397ea7b48c8ab79edc2d00656d766ecf314a63241e85",
-        "manual_no_upload": true,
-        "rerun_state_write": false,
-        "post_acceptance_state_repaired": true,
-        "incident_six_file_repair_status": "COMMITTED",
-        "runner_paused_at_acceptance": true,
-        "joint_gate_deployment_status": "DEPLOYED_F64CD29",
-        "joint_gate_state_repair_status": "COMMITTED_SIX_FILE_REPAIR",
-        "positive_live_singing_v5": {
-          "status": "READY_MATERIALIZED_NO_UPLOAD",
-          "run_root": "free:/opt/bilive/autoslice/out/acceptance/host-vocal-positive-20260710T101624Z",
-          "agy_rows": "52 heard; 48 SINGING_THIS_LYRIC; one four-row bounded PERFORMING_THIS_LYRIC_SPOKEN block",
-          "host_vocal_proof": "READY; 6/7 passed; all seven checkpoints bound to SINGING_THIS_LYRIC",
-          "wrapper_summary_sha256": "542328c872a2cf77c74b0a7b1e5db5e231213f0eddecc832e86e7cc938c4a043",
-          "recut_media_sha256": "fa130beb209bbc8cafa3d7c6556baa39f7a42930d35e1f2b3ed61c7e9da5fbc8"
-        },
-        "same_audio_static_replay_negative": {
-          "status": "BLOCKED_NO_MATERIALIZED_RECUT",
-          "run_root": "free:/opt/bilive/autoslice/out/acceptance/host-vocal-static-replay-20260710T103213Z",
-          "agy_mode": "ORIGINAL_OR_BACKGROUND_PLAYBACK",
-          "agy_recorded_or_playback_vocal_present": true,
-          "reason_code": "SONG_LIVE_PERFORMANCE_UNPROVEN",
-          "wrapper_summary_sha256": "b43fea718e22a944f503c0c96bc30d9b854ff76115365143197c62bf1c763bb8"
-        },
-        "fresh_current_mebukutoki_negative": {
-          "status": "BLOCKED_NO_MATERIALIZED_RECUT",
-          "run_root": "free:/opt/bilive/autoslice/out/acceptance/host-vocal-negative-20260710T103814Z",
-          "lrc_provider": "lrclib",
-          "external_lrc": "https://lrclib.net/api/get/33542202",
-          "canonical_rows_heard": "25/25",
-          "agy_observed_mode": "LIVE_STREAMER_SINGING_FALSE_POSITIVE_CONTAINED_BY_AND_GATE",
-          "host_vocal_proof": "BLOCKED; NO_LIDOUSHA_VOCAL_DETECTED; 0/7",
-          "reason_code": "SONG_NOT_LIDOUSHA_SINGING",
-          "wrapper_summary_sha256": "57d139cf584cefc7788856978419385c64fd7d06784d0303dd6ad1e3d7ba31d9",
-          "host_vocal_proof_sha256": "149b52444e82138d22b584a788c945d263a712faa8d9c58cd27a0a90c6b1b7bc"
-        },
-        "guarded_acceptance_status": "COMPLETED_NO_UPLOAD",
-        "cron_smoke": {
-          "at": "2026-07-10T10:50:29Z",
-          "return_code": 0,
-          "live": false,
-          "state_digest_unchanged": true,
-          "review_summary_digest_unchanged": true,
-          "upload_ledger_sha256": "c95ee0690a5755b1971bd3dd5165b4bbccefdf4326ddd3736294f43dcc1adfb5",
-          "upload_ledger_size": 32015,
-          "runner_lock_free": true
-        },
-        "natural_cron_tick": {
-          "at": "2026-07-10T11:00:02Z",
-          "result": "tick done",
-          "live": false,
-          "date_2026_07_09_state": "review_ready"
-        },
-        "kill_switch_status": "DISABLED_REMOVED_CRON_ENABLED"
-      },
-      "remaining_fail_closed_not_claimed_complete": [
-        "automatic success for Japanese songs without a reliable unique synchronized-LRC identity",
-        "exhaustive real-media guest, duet, harmony, or other-singer ROC calibration or formal performer proof",
-        "repeated-run variance calibration for AGY live-vs-playback classification; the observed fresh Meibukutoki AGY false positive is contained by the mandatory CAM++ AND and remains explicit evidence",
-        "automatic waveform/spectrogram artifact generation for song redo jobs",
-        "review-package audit expansion for spectrogram/waveform/probe/approved-cover-style finished gates"
-      ]
-    },
-    "auto_talk_slicing": {
-      "status": "full_session_selector_fallback_connected_no_upload_shadow",
-      "summary": "When a date has no prepared slices but full source media+SRT exists, the daemon now runs the full-session selector and routes selected setup-payoff-closure candidates through the live-source shadow pipeline instead of skipping as no_prepared_slices.",
-      "code_paths": [
-        "scripts/lidousha_auto_review_shadow_daemon.py::_full_session_live_source_routes",
-        "src/autoslice/full_session_candidate_selector.py::select_full_session_candidates",
-        "scripts/run_auto_review_shadow_pipeline.py::_resolve_live_source_boundary"
-      ],
-      "tests": [
-        "tests/test_lidousha_auto_review_shadow_daemon.py::test_run_once_uses_full_session_selector_when_no_prepared_slices_exist",
-        "tests/test_full_session_candidate_selector.py",
-        "tests/test_auto_review_shadow_pipeline.py::test_live_source_dialogue_boundary_auto_recuts_and_records_source_context_metadata"
-      ]
-    }
+    "source_recording": "docs/pipeline/10-source-recording.md",
+    "selection": "docs/pipeline/20-selection.md",
+    "boundary": "docs/pipeline/30-boundary.md",
+    "subtitle_text": "docs/pipeline/40-subtitle-text.md",
+    "semantic_repair": "docs/pipeline/41-semantic-repair.md",
+    "song_lane": "docs/pipeline/50-song-lane.md",
+    "title": "docs/pipeline/60-title.md",
+    "cover": "docs/pipeline/70-cover.md",
+    "package_delivery": "docs/pipeline/80-package-delivery.md",
+    "publish": "docs/pipeline/90-publish.md"
   },
-  "non_goals": [
-    "No automatic upload was enabled by this status file.",
-    "No Bilibili publishing path may bypass AUTO_UPLOAD manifest and artifact hash gates.",
-    "This status does not claim every future live recording or every Japanese song can be processed end-to-end; it records one superseded sparse-ASR LRC recovery incident plus a deployed no-upload joint gate accepted on real singing, same-audio static replay, the current Meibukutoki background original, and the cron entrypoint.",
-    "Missing or ambiguous synchronized lyrics, mismatching audio, malformed evidence, or failed render proof remains fail-closed."
+  "non_claims": [
+    "This file does not prove a commit is deployed.",
+    "This file does not prove a runner or recorder is healthy.",
+    "This file does not prove any artifact is current or publishable.",
+    "This file does not grant upload authorization."
   ]
 }

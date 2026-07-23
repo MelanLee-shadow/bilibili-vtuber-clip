@@ -5,6 +5,10 @@ import pytest
 
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice.chat_authority import ReferentEntity, ReferentGroup
+from src.autoslice.final_review_contract import (
+    FinalReviewContractError,
+    validate_final_review_release,
+)
 
 
 def _srt(*texts: str) -> str:
@@ -48,6 +52,104 @@ def _resolved_entity_verdict(request, canonical):
         "prompt_sha256": "c" * 64,
         "response_sha256": "d" * 64,
     }
+
+
+def _boundary_pass() -> dict:
+    return {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "reason_codes": [],
+    }
+
+
+def test_exact_final_release_review_binds_explicit_clean_response(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: '{"findings":[]}'),
+    )
+    srt = _srt("第一句", "第二句", "第三句")
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt,
+        correction_audit={"boundary_semantic_review": _boundary_pass()},
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="完整回指",
+        clip_context={},
+    )
+
+    assert receipt["status"] == "CLEAN"
+    assert receipt["release_gate"] == "PASS"
+    validate_final_review_release(
+        receipt,
+        expected_srt_sha256=receipt["reviewed_srt_sha256"],
+    )
+
+
+def test_exact_final_release_review_provider_failure_is_a_block(monkeypatch):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    def broken(_prompt):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: broken
+    )
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"),
+        correction_audit={"boundary_semantic_review": _boundary_pass()},
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+    )
+
+    assert receipt["status"] == "AUDITOR_UNAVAILABLE"
+    assert receipt["release_gate"] == "BLOCK"
+    with pytest.raises(FinalReviewContractError):
+        validate_final_review_release(receipt)
+
+
+def test_exact_final_release_review_unresolved_finding_is_a_block(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (
+            lambda _prompt: json.dumps(
+                {
+                    "findings": [
+                        {
+                            "cue": 1,
+                            "kind": "context",
+                            "suspect": "第一句",
+                            "repair_class": "disclosure_only",
+                            "why": "still suspicious",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        ),
+    )
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"),
+        correction_audit={"boundary_semantic_review": _boundary_pass()},
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+    )
+
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["reason_codes"] == ["FINAL_REVIEW_UNRESOLVED_FINDINGS"]
+    with pytest.raises(FinalReviewContractError):
+        validate_final_review_release(receipt)
 
 
 def test_post_semantic_entity_stage_never_reverts_name_to_draft_witness(tmp_path):

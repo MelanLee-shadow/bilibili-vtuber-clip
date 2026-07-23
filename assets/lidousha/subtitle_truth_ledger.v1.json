@@ -1778,6 +1778,61 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-room-still-inclusive-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3659910,
+      "source_end_ms": 3662830,
+      "action": "replace_cue",
+      "text": "这直播间还是非常包容",
+      "before_span": "这直播间这很非常包容",
+      "forbidden_tokens": [
+        "这很非常包容"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_VERDICT",
+      "authority": "Gemini 3.6 Flash High exact-span acoustic verdict supports 这直播间还是非常包容 and marks current 这直播间这很非常包容 incompatible; request sha256=d2c82a7c0d3fffa1c7b12b756c893968e663b4a984fac4cdd3a725f5cb8915a3, response sha256=62c5dd381a77d17431558d0d3ef3fb860527adc957da159dc9f08a0e8edf3b4d, audio sha256=58450f3f172ec1e96eda0b9b7c220a4b8a2da463718b4f3d50458289d6bc5406, source media sha256=6e39c0b1d889b09d76eecda6e00c2f88345a71ade9be8bb3bd7861a08e2e5589, prompt sha256=128e77658fa805c725b83c85189c0ea506196a13b4da83708aadae94efdca2b8",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-fountain-gratitude-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 732210,
+      "source_end_ms": 735610,
+      "action": "replace_cue",
+      "text": "泉水之恩就是之前1V1的时候",
+      "before_span": "泉水之，就是之前1V1的时候",
+      "forbidden_tokens": [
+        "泉水之，就是",
+        "泉水直就是"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_VERDICT_PLUS_IMMEDIATE_REPEAT",
+      "authority": "Gemini 3.6 Flash High exact-span acoustic verdict supports 泉水之恩就是之前1V1的时候 and marks 泉水直就是之前1V1的时候 incompatible; request sha256=22f1bef63946e4aabf9384ca728c61958e7820c8667d436f233d20f0e5423e75, response sha256=daa21ff4167b0c7df29468807e185e89725cd4da0691ed25e1f36867bde232dc, audio sha256=4e823f3324c7b4b5f12b6eec84ce6608d8a4936746f413209143f276b5ba43ba, source media sha256=30eb53d493c0580cf52c18fa1bf5752017d3103e5b5b330c7c7ac4c801f0223b, prompt sha256=3e570cb6270458ca6a3afa19e051df442dc9c910dfe33cc8e29f6d28ce10e3e2; immediate prior cues repeat 滴水之恩/泉水之恩",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-evil-gecko-guard-thanks-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1961200,
+      "source_end_ms": 1962320,
+      "action": "replace_cue",
+      "text": "邪恶守宫",
+      "before_span": "谢哥不互动",
+      "forbidden_tokens": [
+        "谢哥不互动"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_VERDICT",
+      "authority": "Gemini 3.6 Flash High exact-span acoustic verdict hears xie e shou gong, supports 邪恶守宫 with confidence 1.0, and marks 谢哥不互动 incompatible with confidence 0.0; request sha256=032c4cc89bba043f038053e08912e0d614a2ebe44fff1e8ed18ad76c04f9f0e5, response sha256=0af97290609ff953a41d48b68c79627e42e03683156a49f0c646c11b79969e7c, audio sha256=d6d30dd524bb8e676dcdc3152eeb58b75b3325295c42a0ed3060644cb7f67167, source media sha256=d888451779bac9c6c11c032735ca65d1a40220f7a8a6807b13f0e5c412c4b5d7, prompt sha256=bb3f178498134db4abe9d2aaa4819b89641dbc5f04826d40387e9a2d6a955f97",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-signoff-dan-alias-r1",
       "revision_id": "r1",
       "assertion_state": "VERIFIED_ACTIVE",

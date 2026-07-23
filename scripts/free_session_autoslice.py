@@ -103,6 +103,11 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
 )
 from src.autoslice.source_integrity import audit_finalized_recording_inventory
+from src.autoslice.batch_terminal_state import project_terminal_batch_state
+from src.autoslice.selection_scorecard import (
+    SelectionCalibrationPolicyError,
+    load_selected_selection_calibration_policy,
+)
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
     LYRIC_VOCAL_ASSERTION_KEYS,
@@ -786,6 +791,7 @@ from src.autoslice.delivery_recovery import (  # noqa: E402
 )
 from src.autoslice.candidate_selection import (  # noqa: E402
     _exact_talk_contract_ids,
+    exact_talk_contract_closure,
     session_sealed,
     song_delivery_budget,
     _remember_song_quarantine_interval,
@@ -1336,6 +1342,13 @@ def runtime_health_error() -> str | None:
         return f"invalid speaker profile {tracked_speaker_profile}: {type(exc).__name__}: {exc}"
     if not isinstance(profile, dict):
         return f"invalid speaker profile {tracked_speaker_profile}: root must be an object"
+    try:
+        load_selected_selection_calibration_policy()
+    except SelectionCalibrationPolicyError as exc:
+        return (
+            "SELECTION_CALIBRATION_POLICY_INVALID: "
+            f"{exc.reason_code}: {exc.path}"
+        )
     return None
 
 
@@ -1535,6 +1548,48 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
         return list(pool.map(_one, items))
 
 
+def _date_work_flags(
+    date: str, state: dict, *, automatic_maintenance: bool
+) -> tuple[bool, bool, bool]:
+    done = set(state.get("segments_done", []))
+    dead = state.get("segments_dead", {})
+    has_new = any(
+        segment.stem not in done and segment.stem not in dead
+        for segment in list_segments(date)
+    )
+    has_pending = bool(
+        state.get("pending_talk")
+        or state.get("pending_song")
+        or backlog_has_eligible_session_work(state)
+    )
+    needs_cover = automatic_maintenance and any(
+        cover_repair_needed(date, record)
+        for record in state.get("picks", []) + state.get("songs", [])
+    )
+    return has_new, has_pending, needs_cover
+
+
+def _project_terminal_batch_state(state: dict) -> dict[str, object]:
+    """Project one honest terminal status from closure, delivery, and retry state.
+
+    Retry scheduling is metadata, not completion authority.  In particular, an
+    exact recovery contract must remain ``recovery_incomplete`` while any
+    selected candidate is missing or noncompliant even when another record has
+    a future retry timestamp.
+    """
+
+    exact_closure = exact_talk_contract_closure(state)
+    retry_epoch = scheduled_retry_epoch(state)
+    return project_terminal_batch_state(
+        state,
+        delivered_talk_statuses=DELIVERED_TALK_STATUSES,
+        talk_failure_statuses=TALK_RECOVERY_FAILURE_STATUSES,
+        cover_pending_status=TALK_COVER_PENDING_STATUS,
+        exact_closure=exact_closure,
+        retry_epoch=retry_epoch,
+    )
+
+
 def process_date(date: str) -> None:
     state = read_state(date)
     state.setdefault("run_mode", "PRODUCTION")
@@ -1619,51 +1674,24 @@ def process_date(date: str) -> None:
             f"{requeued_songs} recoverable song BLOCK(s) for song pipeline "
             f"{song_pipeline_fingerprint()[:19]}…"
         )
-    has_new = any(
-        s.stem not in set(state.get("segments_done", [])) and s.stem not in state.get("segments_dead", {})
-        for s in list_segments(date)
-    )
-    has_pending = bool(
-        state.get("pending_talk")
-        or state.get("pending_song")
-        or backlog_has_eligible_session_work(state)
-    )
-    needs_cover = automatic_maintenance and any(
-        cover_repair_needed(date, r)
-        for r in state.get("picks", []) + state.get("songs", [])
+    has_new, has_pending, needs_cover = _date_work_flags(
+        date,
+        state,
+        automatic_maintenance=automatic_maintenance,
     )
     if not has_new and not has_pending and not needs_cover:
-        retry_epoch = scheduled_retry_epoch(state)
-        if retry_epoch is not None:
-            delivered = any(
-                pick.get("status") in DELIVERED_TALK_STATUSES for pick in state.get("picks", [])
-            ) or any(song.get("delivered") for song in state.get("songs", []))
-            state["status"] = "review_ready_retry_wait" if delivered else "retry_wait"
-            state["next_retry_at_epoch"] = retry_epoch
-            state["next_retry_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch))
-            write_state(date, state)
-            write_reports(date, state)
-            return
+        terminal = _project_terminal_batch_state(state)
+        write_state(date, state)
+        write_reports(date, state)
         if recovered_song_deliveries:
-            delivered_talk = [
-                pick
-                for pick in state.get("picks", [])
-                if pick.get("status") in DELIVERED_TALK_STATUSES
-            ]
-            delivered_songs = [song for song in state.get("songs", []) if song.get("delivered")]
-            failures = [
-                record
-                for record in state.get("picks", []) + state.get("songs", [])
-                if record.get("status") in TALK_RECOVERY_FAILURE_STATUSES
-            ]
-            state["status"] = (
-                "review_ready_with_failures" if failures else "review_ready"
-            ) if delivered_talk or delivered_songs else "no_delivery"
-            write_state(date, state)
-            write_reports(date, state)
             log(
                 f"{date}: finalized {recovered_song_deliveries} recovered song "
                 "package(s) without requiring CPA"
+            )
+        if terminal["retry_epoch"] is not None:
+            log(
+                f"{date}: terminal state {state['status']} with next retry at "
+                f"{state['next_retry_at']}"
             )
         return
     # CPA gate: recall, reconcile, titles and covers all need the chat lane.
@@ -1782,30 +1810,14 @@ def process_date(date: str) -> None:
     if automatic_maintenance:
         repair_covers(date, state)
 
-    picks, songs = state["picks"], state["songs"]
-    delivered_talk = [p for p in picks if p.get("status") in DELIVERED_TALK_STATUSES]
-    repaired = [p for p in delivered_talk if p.get("boundary_repairs")]
-    delivered_songs = [s for s in songs if s.get("delivered")]
-    blocked_songs = [s for s in songs if s.get("status") == "blocked"]
-    failures = [
-        record
-        for record in picks + songs
-        if record.get("status") in TALK_RECOVERY_FAILURE_STATUSES
-        or record.get("status") in {"candidate_rejected", TALK_COVER_PENDING_STATUS}
-    ]
-    # Honest batch vocabulary (2026-07-09 audit: BLOCK+0 deliveries read 'done /
-    # 0 failures').  A batch is review_ready only when something REACHED review.
-    retry_epoch = scheduled_retry_epoch(state)
-    if retry_epoch is not None:
-        state["status"] = (
-            "review_ready_retry_wait" if delivered_talk or delivered_songs else "retry_wait"
-        )
-        state["next_retry_at_epoch"] = retry_epoch
-        state["next_retry_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch))
-    elif delivered_talk or delivered_songs:
-        state["status"] = "review_ready_with_failures" if failures else "review_ready"
-    else:
-        state["status"] = "no_delivery"
+    terminal = _project_terminal_batch_state(state)
+    picks = terminal["picks"]
+    songs = terminal["songs"]
+    delivered_talk = terminal["delivered_talk"]
+    repaired = terminal["repaired"]
+    delivered_songs = terminal["delivered_songs"]
+    blocked_songs = terminal["blocked_songs"]
+    failures = terminal["failures"]
     write_state(date, state)
     write_reports(date, state)
     log(

@@ -1,6 +1,8 @@
 # 2026-06-30 CPA semantic QA JSON lane
 
-> **状态更新 (2026-07-03)**：真实 CPA judge 已落地——`scripts/cpa_semantic_qa_llm.py --transport direct --model gpt-5.4-mini --api-base $CPA_BASE_URL --api-key-env CPA_API_KEY`。按 Ivan 指令，工作流/e2e 测试也必须走真实 CPA；本文的 mock-local wrapper 仅保留给 pytest 单测。已验证的完整命令见 `docs/spark/2026-06-30-future-live-e2e-runbook.md` § "Canonical validated song e2e command"。
+> **SUPERSEDED protocol snapshot，禁止据此选择当前模型或命令。** 本文只记录 2026-06/07
+> 的 CPA JSON 设计；当前入口与 provider 从
+> [../pipeline/README.md](../pipeline/README.md) 和 live profile/runtime 读取。
 
 ## 目标
 

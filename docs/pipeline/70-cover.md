@@ -1,8 +1,11 @@
 # 70 封面
 
-本文件是封面步骤的**分步权威**。工艺细节强权威：
-`docs/workflows/lidousha-song-finished-package-workflow.md` §5（CPA 路线）+
-memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidousha-cover-no-extra-accessories`。
+本文件是封面步骤的**分步权威**。`docs/workflows/*` 与 cover skill 只提供操作方法；
+memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 schema。
+
+`assets/lidousha/cover_repair_plans/history/` 只保存已完成或已取代的 hash-bound
+证据，全部带 `do_not_execute=true`；repair CLI 会 fail-closed 拒绝。当前修复计划必须从
+当前 state/artifact hashes 新建，不能复制历史候选、标题或路径。
 
 - 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动或人物关系梗则先看**关系语义证据**，hash-bound 源帧同时清楚出现双方且画面直接承载标题关系时，即使运动分数不高，也优先保留真实互动。游戏运动高分但 `subject_confident=false`，或累计动作热区超过半屏，即使局部运动块误判为主体，也不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
@@ -10,8 +13,22 @@ memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidous
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
 - 自动 talk 封面按 2026-07-20 生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；完整长标题不是默认封面文案。Ivan 定稿标题仍按人工权威保留其要求的全部成分；歌切恒为 `《歌名》`。
 - talk 封面强调字号必须 `>=120px`；渲染低于该线直接报 `COVER_TITLE_TOO_SMALL`，交付包审计也必须阻断。不得用“文件完整/没有裁字”代替缩略图可读性验收；应缩短封面梗字或换更宽版式，禁止继续缩字（2026-07-22 当面对质封面 91px 回归案）。
+- renderer 必须记录 `lidousha-cover-rendered-text-pixels.v3`，并内嵌
+  `lidousha-cover-title-render-spec.v1`。render spec 逐字绑定分行/分段文本、位置、字号、颜色、
+  描边、角度、字体文件名/SHA-256/face index 与输出尺寸；所有数值必须有限且在边界内，
+  每个 glyph 都不得裁切。独立复验只从 profile 的 committed font asset 按文件名+hash 取字体，
+  禁止 package 自选路径、宿主机系统字体或历史 fallback 参与放行。
+- 最终包必须同时携带 final cover、叠字前 `pre-overlay`、真实 alpha `title-mask` 与原始
+  `route-background`。auditor 只用 package-internal 文件：先从 route background 确定性重放
+  1920×1080 background fit，再按 trusted render spec 重绘 title layer，重算 mask/bbox、文字区
+  changed pixels/ratio 与 hash，并要求对 pre-overlay 做同一 alpha composite 后与最终 PNG
+  **逐像素完全相等**。文字 bbox 还必须落在 feed 安全区 `x∈[260,1660]`；只在 JSON 自报字号、
+  bbox、文字或 hash 均不算通过。
 - 经审阅的封面返修可用 `regenerate_lidousha_cover.py --cover-text` 锁定短梗字；该文案必须由 hash-bound repair plan 提供并逐字验收，不得让返修入口擅自改写。
-- 字体：全链验字形 + Noto CJK 兜底 + `glyph_risk` 披露（memory `cover-font-zi-renders-as-bai`，a74520b）。
+- 字体：全链验字形；选中字体必须完整覆盖标题且 `glyph_risk=[]`，否则
+  `COVER_FONT_GLYPH_COVERAGE_MISSING` 阻断。生产可在 committed profile fonts 内选择完整字体，
+  但放行复验不接受系统字体或未提交路径；实际选择、render spec 和像素证据由
+  `cover_generation.py`、`cover_title_rendering.py` 与 `cover_text_pixel_evidence.py` 强制。
 
 ## 路由证据与审计
 
@@ -29,10 +46,17 @@ memory `lidousha-cover-redesign-halfbody` / `cpa-real-ai-cover-always` / `lidous
 - `screenshot_direct` / `screenshot_polish` 必须有官方源 SHA 绑定的 reference、实际 final cover
   文件与 SHA、逐字 rendered text；指定双人帧还必须匹配 reference override 的 candidate、
   source time、participant IDs 与 required treatment。截图路线不要求、也不得伪造 AI model 证据。
+- 关系型 `screenshot_direct` 只允许
+  `HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR`：reference 必须整帧、未裁切、未旋转、
+  未 AI 修改，使用 deterministic `ImageOps.contain` 进入海报，人物落在中央 4:3 安全区，
+  标题真实 glyph bbox 不遮关键 source content，并把 source transform 与最终 cover SHA
+  一起绑定。只有这条可复验 no-crop 链成立时，source participant IDs 才能转移为 final
+  participant proof；禁止简单复制 JSON 字段。
 - CPA 路线必须有真实 on-disk AI background/final cover hash、attempted/selected model 与调用证据；
   `model`/`method` 默认字符串或 `ai_cover_generated=true` 不能冒充生图成功。
-- 强制使用 AI 表达双人关系时，除了调用证据，还必须有独立的最终像素复核，逐个确认双方可见、身份正确、
-  关系动作符合叙事，并把复核结果绑定到最终 cover SHA；否则即使模型调用成功也不得发布。
+- **所有关系型路线**都必须有最终人物 proof。`screenshot_polish` 与 CPA/AI 因像素已被修改，
+  绝不能继承 source participant 声明，必须由独立 final-pixel verifier 逐个确认双方可见、
+  身份正确、关系动作符合叙事，并绑定最终 cover SHA；没有 verifier 就阻断。
 - 任一路线在最终像素、文字、安全区、人物关系或 route evidence 上失败都 fail closed，不得跨路线
   静默降级。双人联动要求双方在 hash-bound source reference 中真实可见；没有 counterpart
   reference 时禁止凭描述画第二位。

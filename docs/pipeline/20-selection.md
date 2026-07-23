@@ -2,7 +2,12 @@
 
 本文件是选题步骤的**分步权威**。metric 细则的强权威是
 `assets/lidousha/slice_selection_metric.md`（当前 v5）。模型只给档位和 cue 证据；
-`src/autoslice/selection_scorecard.py` 负责 Tier 准入、固定算术与最终排序，禁止用 confidence 代替价值分。
+`src/autoslice/selection_scorecard.py` 负责 Tier 准入、固定算术、绝对分校准与最终排序，
+禁止用 confidence 代替价值分。可执行校准资产是
+`assets/lidousha/selection_score_calibration.v1.json`；profile 未注册、资产漂移、锚点越界
+或锚点顺序颠倒都必须 fail closed，不能只在 prompt 里写“应该大约多少分”。
+候选必须先由最终 resolved start/end 生成稳定 `candidate_id`，再以该 ID 查校准锚点；
+禁止拿临时召回 ID 校准后再改名，否则同一内容会在重跑时随机失去 reviewed anchor。
 
 ## 链路
 
@@ -19,8 +24,10 @@
 
 ## 候选状态与人工点选
 
-- `picks`、`pending_talk`、`talk_backlog`、拒绝记录必须互斥投影；已经成为
-  `CURRENT + COMPLIANT` 成品或终态拒绝的 candidate 不得再次出现在“当前候补”。
+- `picks`、`pending_talk`、`talk_backlog`、拒绝记录必须互斥投影；一个 candidate
+  只能处于 `CURRENT`、`PENDING`、`PENDING_COVER`、`FAILURE`、`MISSING` 或
+  `OUTSIDE_EXACT_CONTRACT` 之一。已经成为 `CURRENT + COMPLIANT` 成品或终态拒绝的
+  candidate 不得再次出现在“当前候补”。
   `not_selected` 是历史 prose，不是状态 authority，也不得参与补位。
 - 每次拒绝必须保留 `failure_stage + rejection_reason + failure_evidence`；报告把它放在
   “候选门禁拒绝”，不能混进成品表只显示一个无解释的 `candidate_rejected`。
@@ -28,8 +35,20 @@
   baseline rank、实际 slot、被越过的基线候选与人工 authority。用户说外部已有重复但
   没有 BV 时，可直接 `SUPPRESSED_BY_USER`，但重复 claim 只能是
   `USER_ASSERTED_UNVERIFIED`，不得伪装成已验证站外重复。
-- 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；终态验收要求
-  CURRENT+COMPLIANT candidate 集合与契约集合严格相等，不能用“仍有五条”掩盖换片。
+- 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
+  在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
+- `src/autoslice/candidate_selection.py::exact_talk_contract_closure` 是 exact 状态的共同
+  判定器。终态验收要求：每个 contract ID 恰有一条 `rc=0 + CURRENT + COMPLIANT`
+  delivery；没有 pending、failure、missing、重复/冲突记录或 outside-contract active pick。
+  任一条件不成立都只能是 `recovery_incomplete`，不得保留/生成 `review_ready`。
+- `src/autoslice/batch_terminal_state.py::project_terminal_batch_state` 是普通/恢复批次唯一
+  终态投影器。retry 时间只是元数据，不能覆盖 exact closure；有 future retry 但 exact 集合
+  未闭合时仍为 `recovery_incomplete`。`review_ready`、`review_ready_with_failures`、
+  `review_ready_retry_wait`、`retry_wait` 与 `no_delivery` 只能由该投影器按当前 delivery、
+  failure、cover-pending、exact closure 和 retry state 共同得出，报告层不得自行猜状态。
+- exact contract 中的直接 gate 拒绝必须规范化为带 `failure_stage + failure_kind +
+  failure_evidence + fingerprint` 的可重试失败，并标记合同禁止补位；不能留下永远唤不醒的
+  `candidate_rejected`。
 
 ## 同主题合并（Ivan 2026-07-18 切片案 → 2026-07-19 新规）
 
@@ -40,7 +59,11 @@
 ## metric 硬维度（详见 metric 资产）
 
 - 七维权重固定为 25/20/15/15/10/10/5；先验收 Tier 证据，再按有效分排序，最后才以 confidence 破同分。
+- 有效分 = 固定七维 raw score − uncertainty penalty − same-session fatigue penalty。
+  多样性只能在同一 Tier 内参与，不能让低 Tier 候选跨层超车。
 - 围绕本人（含态度/立场/情绪，不只名字梗）；观点强度与受众兴趣（百合/GL）是硬维度；高语义分不许因 niche 压低。
 - 报告必须同时显示 Tier 与有效分；缺 scorecard 的旧候选只能作为显式“未量化”候补，不能挤掉有效的 Tier 1/2。
 - scorecard 的 cue 证据必须落在候选窗内；模型只填 0–4 档和证据，固定代码复算
   `raw_score`、罚分与 Tier 准入。任何手改后的算术不一致都使 scorecard 无效。
+- 7/22 executable anchors：`auto_193450_3573_3665` 必须 Tier 1、有效分 75–85；
+  `auto_193450_5341_5459` 必须 Tier 2、有效分 50–60；前者必须稳定高于后者。

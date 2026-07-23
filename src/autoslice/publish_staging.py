@@ -39,6 +39,7 @@ from .cover_generation import (
     _overlay_lidousha_cover_title,
 )
 from .cover_route_evidence import (
+    build_no_crop_participant_verification,
     build_cover_route_decision,
     is_hash_bound_reference_authority,
     relationship_semantic_evidence,
@@ -58,8 +59,10 @@ from .title_policy import (
     _TITLE_MAX_LEN,
     _TITLE_MIN_LEN,
     _ensure_lidousha_prefix,
+    canonicalize_publish_title,
     canonicalize_song_catalog_title,
     manual_title_override,
+    publish_title_policy_violations,
     _selection_hook_anchor_valid,
     _selection_hook_fallback_title,
     _selection_hook_first_clause,
@@ -171,16 +174,17 @@ def _stage_publish_draft(
     media_path = Path(str(record["media_path"]))
     publish_json_path = media_path.with_suffix(".publish.json")
 
-    # Iron rule: Ivan's manual title (title_llm_call=None) is final and passes
-    # through a字不改 — no prefix forcing, no length gate, no policy check.
-    # Prefix / length / banned-word enforcement applies ONLY to auto titles.
+    # Ivan's manual title owns its body. It does not bypass the shared archive
+    # envelope: every title receives the channel prefix and the same structural
+    # postcondition before cover generation or delivery.
     staged_title = title
     title_source = "job_title"
     title_policy_violations: list[str] = []
     title_authority_error: str | None = None
     title_authority_status = "RESOLVED_MANUAL" if title_llm_call is None else "UNRESOLVED_AUTO"
     story_contract = record.get("story_contract")
-    # Ivan 手定标题按 candidate 注入（2026-07-19）：命中即定稿，LLM 不再跑。
+    # Ivan 手定标题正文按 candidate 注入：命中后 LLM 不再改正文，但共享
+    # publication envelope / structure gate 仍在后面运行。
     manual_override = manual_title_override(candidate_id)
     if manual_override is not None:
         staged_title = manual_override
@@ -291,14 +295,41 @@ def _stage_publish_draft(
             title_source = f"job_title(llm_failed: {llm_error})"
             title_authority_error = llm_error
 
-    # Ivan 2026-07-13 梗词铁律的标题/封面确定性兜底（字幕面在
-    # normalize_code_switch_surfaces；LLM 标题若仍写出「直女」这里回正）。
-    staged_title = canonicalize_hard_surfaces(staged_title)
+    # Automatic titles receive deterministic surface canon. A human title body
+    # is not silently rewritten; only the channel-owned publish envelope below
+    # may be added.
+    if title_llm_call is not None:
+        staged_title = canonicalize_hard_surfaces(staged_title)
     # Ivan 2026-07-14/19 歌切标题铁律 choke point：自动标题只要带歌切前缀就
     # 折叠成「前缀《歌名》」，任何「｜副标题」/hook 尾巴在这里被最终清除。
-    # 手定标题（title_llm_call=None）保持一字不改的铁律，不进此函数。
+    # This automatic-title helper is retained for the retry path; the common
+    # publish canonicalizer below applies to manual and automatic titles alike.
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
+    explicit_lane = (
+        "song"
+        if (
+            staged_title.startswith(CHANNEL_PROFILE.song_title_prefix)
+            or str(record.get("classification") or "").lower() == "song"
+        )
+        else "talk"
+    )
+    staged_title = canonicalize_publish_title(staged_title, lane=explicit_lane)
+    common_title_violations = publish_title_policy_violations(
+        staged_title,
+        lane=explicit_lane,
+        enforce_automatic_style=title_llm_call is not None,
+    )
+    title_policy_violations.extend(
+        code
+        for code in common_title_violations
+        if code not in title_policy_violations
+    )
+    if common_title_violations:
+        title_authority_error = "publish_title_policy_violation:" + ",".join(
+            common_title_violations
+        )
+        title_authority_status = "BLOCKED_PUBLISH_TITLE_POLICY"
     title_story_audit = None
     if isinstance(story_contract, dict):
         title_story_audit = audit_story_artifact(
@@ -1131,6 +1162,7 @@ def _stage_lidousha_ai_cover(
             cover_generation=cover_generation,
             polish=(treatment == "screenshot_polish"),
             image_edit=image_edit,
+            final_participant_verifier=final_participant_verifier,
             base_url=base_url,
             api_key=api_key,
         )
@@ -1304,6 +1336,97 @@ def _decide_cover_treatment(
     return "cpa_redraw", f"no strong real moment (score={best:.2f})"
 
 
+def _materialize_screenshot_polish(
+    *,
+    screenshot_base: Path,
+    candidate_id: str,
+    ai_dir: Path,
+    evidence_dir: Path | None,
+    polish: bool,
+    image_edit: Callable[..., dict[str, object]] | None,
+    base_url: str,
+    api_key: str,
+    cover_generation: dict[str, object],
+) -> tuple[Path, str, str, list[str], bool]:
+    """Optionally polish a screenshot without changing the selected route."""
+
+    overlay_source = screenshot_base
+    method = "screenshot_direct"
+    selected_model = "none"
+    attempted_models: list[str] = []
+    polish_attempted = False
+    if (
+        polish
+        and image_edit is not None
+        and base_url
+        and api_key
+        and evidence_dir is not None
+    ):
+        polished_path = ai_dir / f"{candidate_id}.screenshot-polished.png"
+        polish_attempted = True
+        try:
+            cpa_result = image_edit(
+                base_url=base_url,
+                api_key=api_key,
+                reference_path=screenshot_base,
+                output_path=polished_path,
+                prompt=_cover_screenshot_polish_prompt(),
+                request_path=(
+                    evidence_dir
+                    / f"{candidate_id}.cover-polish-request.redacted.json"
+                ),
+                response_path=(
+                    evidence_dir
+                    / f"{candidate_id}.cover-polish-response.redacted.json"
+                ),
+            )
+        except Exception as exc:
+            cpa_result = {
+                "status": "EXCEPTION",
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+        attempted_models = list(cpa_result.get("attempted_models") or [])
+        if (
+            cpa_result.get("status") == "AI_BACKGROUND_READY"
+            and polished_path.is_file()
+        ):
+            overlay_source = polished_path
+            method = "screenshot_polish"
+            selected_model = str(cpa_result.get("selected_model") or "cpa")
+            cover_generation["screenshot_polish"] = {
+                "status": "POLISHED",
+                "image_generation_attempted": True,
+                "image_generation_used": True,
+            }
+        else:
+            cover_generation["screenshot_polish"] = {
+                "status": "DEGRADED_TO_DIRECT",
+                "reason_code": "SCREENSHOT_POLISH_FAILED",
+                "detail": str(
+                    cpa_result.get("detail")
+                    or cpa_result.get("status")
+                    or "polish failed"
+                ),
+                "image_generation_attempted": True,
+                "image_generation_used": False,
+            }
+    elif polish:
+        cover_generation["screenshot_polish"] = {
+            "status": "DEGRADED_TO_DIRECT",
+            "reason_code": "SCREENSHOT_POLISH_ADAPTER_UNAVAILABLE",
+            "detail": "CPA credentials/adapter unavailable",
+            "image_generation_attempted": False,
+            "image_generation_used": False,
+        }
+    return (
+        overlay_source,
+        method,
+        selected_model,
+        attempted_models,
+        polish_attempted,
+    )
+
+
 def _stage_screenshot_direct_cover(
     *,
     media_path: Path,
@@ -1318,6 +1441,9 @@ def _stage_screenshot_direct_cover(
     evidence_dir: Path | None = None,
     polish: bool = False,
     image_edit: Callable[..., dict[str, object]] | None = None,
+    final_participant_verifier: (
+        Callable[..., Mapping[str, object]] | None
+    ) = None,
     base_url: str = "",
     api_key: str = "",
 ) -> dict[str, object]:
@@ -1340,85 +1466,79 @@ def _stage_screenshot_direct_cover(
         }
     )
     try:
-        screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
+        route = cover_generation.get("route_decision")
+        relationship_visual_required = bool(
+            isinstance(route, Mapping)
+            and route.get("relationship_visual_required") is True
+        )
+        if relationship_visual_required:
+            # A relationship cover cannot inherit the reference frame's
+            # participant verdict through a zoom crop.  Keep the exact,
+            # hash-bound full reference and reserve a separate banner for text.
+            art_direction = dataclasses_replace(
+                art_direction,
+                layout="banner",
+            )
+            screenshot_base = reference_path
+            crop_evidence = {
+                "schema": "cover-frame-transfer.v1",
+                "status": "HASH_BOUND_FULL_FRAME",
+                "source_path": str(reference_path),
+                "source_sha256": "sha256:" + _sha256(reference_path),
+                "crop_applied": False,
+                "zoom": 1.0,
+            }
+        else:
+            screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
         # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版
         # 手游列（都窄而高），真正的脸部识别放大要等 CPA 视觉裁判。v1 保守：
         # 默认 1.16x 顶部锚定——恰好裁掉底部烧录字幕带、微裁两侧，任何场景都
         # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
-        confident = bool(frame_selection.get("subject_confident"))
-        crop_evidence = extract_zoomed_cover_frame(
-            media_path,
-            int(frame_selection["best_ms"]),
-            screenshot_base,
-            zoom=1.32 if confident else 1.16,
-            anchor_x_frac=(
-                float(frame_selection["subject_anchor_x_frac"])
-                if confident and frame_selection.get("subject_anchor_x_frac") is not None
-                # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
-                # 优先吃掉左侧弹幕栏。
-                else 0.58
-            ),
-            head_top_frac=(
-                float(frame_selection["subject_head_top_frac"])
-                if confident and frame_selection.get("subject_head_top_frac") is not None
-                else 0.0
-            ),
-        )
+        if not relationship_visual_required:
+            confident = bool(frame_selection.get("subject_confident"))
+            crop_evidence = extract_zoomed_cover_frame(
+                media_path,
+                int(frame_selection["best_ms"]),
+                screenshot_base,
+                zoom=1.32 if confident else 1.16,
+                anchor_x_frac=(
+                    float(frame_selection["subject_anchor_x_frac"])
+                    if confident and frame_selection.get("subject_anchor_x_frac") is not None
+                    # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
+                    # 优先吃掉左侧弹幕栏。
+                    else 0.58
+                ),
+                head_top_frac=(
+                    float(frame_selection["subject_head_top_frac"])
+                    if confident and frame_selection.get("subject_head_top_frac") is not None
+                    else 0.0
+                ),
+            )
         # polish：CPA 保真修图（清 UI 杂物+画质），任何失败降级为直出。
-        overlay_source = screenshot_base
-        method = "screenshot_direct"
-        selected_model = "none"
-        attempted_models: list[str] = []
-        polish_attempted = False
-        if polish and image_edit is not None and base_url and api_key and evidence_dir is not None:
-            polished_path = ai_dir / f"{candidate_id}.screenshot-polished.png"
-            polish_attempted = True
-            try:
-                cpa_result = image_edit(
-                    base_url=base_url,
-                    api_key=api_key,
-                    reference_path=screenshot_base,
-                    output_path=polished_path,
-                    prompt=_cover_screenshot_polish_prompt(),
-                    request_path=evidence_dir / f"{candidate_id}.cover-polish-request.redacted.json",
-                    response_path=evidence_dir / f"{candidate_id}.cover-polish-response.redacted.json",
-                )
-            except Exception as exc:
-                cpa_result = {
-                    "status": "EXCEPTION",
-                    "detail": f"{type(exc).__name__}: {exc}",
-                }
-            attempted_models = list(cpa_result.get("attempted_models") or [])
-            if cpa_result.get("status") == "AI_BACKGROUND_READY" and polished_path.is_file():
-                overlay_source = polished_path
-                method = "screenshot_polish"
-                selected_model = str(cpa_result.get("selected_model") or "cpa")
-                cover_generation["screenshot_polish"] = {
-                    "status": "POLISHED",
-                    "image_generation_attempted": True,
-                    "image_generation_used": True,
-                }
-            else:
-                cover_generation["screenshot_polish"] = {
-                    "status": "DEGRADED_TO_DIRECT",
-                    "reason_code": "SCREENSHOT_POLISH_FAILED",
-                    "detail": str(cpa_result.get("detail") or cpa_result.get("status") or "polish failed"),
-                    "image_generation_attempted": True,
-                    "image_generation_used": False,
-                }
-        elif polish:
-            cover_generation["screenshot_polish"] = {
-                "status": "DEGRADED_TO_DIRECT",
-                "reason_code": "SCREENSHOT_POLISH_ADAPTER_UNAVAILABLE",
-                "detail": "CPA credentials/adapter unavailable",
-                "image_generation_attempted": False,
-                "image_generation_used": False,
-            }
+        (
+            overlay_source,
+            method,
+            selected_model,
+            attempted_models,
+            polish_attempted,
+        ) = _materialize_screenshot_polish(
+            screenshot_base=screenshot_base,
+            candidate_id=candidate_id,
+            ai_dir=ai_dir,
+            evidence_dir=evidence_dir,
+            polish=polish,
+            image_edit=image_edit,
+            base_url=base_url,
+            api_key=api_key,
+            cover_generation=cover_generation,
+        )
         poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"
         poster_evidence = _compose_screenshot_poster_background(
             overlay_source,
             poster_path,
             art_direction=art_direction,
+            preserve_full_frame=relationship_visual_required,
+            source_ai_modified=method == "screenshot_polish",
         )
         overlay_source = poster_path
         cover_generation["screenshot_graphic_poster"] = poster_evidence
@@ -1451,6 +1571,62 @@ def _stage_screenshot_direct_cover(
                 **overlay,
             }
         )
+        final_participant_verification = None
+        if relationship_visual_required:
+            if method == "screenshot_direct":
+                final_participant_verification = (
+                    build_no_crop_participant_verification(
+                        cover_generation
+                    )
+                )
+            elif final_participant_verifier is not None:
+                final_participant_verification = dict(
+                    final_participant_verifier(
+                        final_cover_path=final_cover_path,
+                        final_cover_sha256=cover_generation[
+                            "final_cover_sha256"
+                        ],
+                        required_participant_ids=list(
+                            route.get("required_participant_ids") or []
+                        ),
+                        source_reference_authority=(
+                            cover_generation.get("story_contract", {}).get(
+                                "cover_reference_authority"
+                            )
+                            if isinstance(
+                                cover_generation.get("story_contract"),
+                                Mapping,
+                            )
+                            else None
+                        ),
+                    )
+                )
+            if final_participant_verification is not None:
+                cover_generation["final_participant_verification"] = (
+                    final_participant_verification
+                )
+            if not validate_final_participant_verification(
+                cover_generation
+            ):
+                detail = (
+                    "relationship screenshot lacks a PASS final-pixel "
+                    "participant verdict bound to the final cover hash"
+                )
+                record_cover_route_execution(
+                    cover_generation,
+                    actual_treatment=None,
+                    execution_status="BLOCKED",
+                    image_generation_attempted=polish_attempted,
+                    image_generation_used=method == "screenshot_polish",
+                    detail=detail,
+                )
+                return _blocked_ai_cover_result(
+                    cover_generation,
+                    [
+                        "RELATION_COVER_FINAL_PARTICIPANTS_UNVERIFIED"
+                    ],
+                    detail,
+                )
         degraded = polish and method == "screenshot_direct"
         record_cover_route_execution(
             cover_generation,
@@ -1458,6 +1634,7 @@ def _stage_screenshot_direct_cover(
             execution_status="READY_DEGRADED" if degraded else "READY",
             image_generation_attempted=polish_attempted,
             image_generation_used=method == "screenshot_polish",
+            final_participant_verification=final_participant_verification,
             detail=(
                 str(
                     (

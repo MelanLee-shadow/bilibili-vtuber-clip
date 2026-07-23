@@ -7,6 +7,10 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from src.autoslice.cover_route_evidence import validate_cover_route_decision
+from src.autoslice.candidate_selection import (
+    _exact_talk_contract_ids,
+    exact_talk_contract_closure,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 
 
@@ -29,6 +33,7 @@ def _current_talk_reserves(state: dict, attempts: list[dict]) -> list[dict]:
     """Project current reserves; never replay append-only selection prose."""
 
     terminal_ids = {_candidate_id(row) for row in attempts if _candidate_id(row)}
+    exact_ids = set(_exact_talk_contract_ids(state))
     seen: set[str] = set()
     reserves: list[dict] = []
     for queue, disposition in (
@@ -41,6 +46,8 @@ def _current_talk_reserves(state: dict, attempts: list[dict]) -> list[dict]:
                 continue
             cid = _candidate_id(raw)
             if not cid or cid in terminal_ids or cid in seen:
+                continue
+            if exact_ids and cid not in exact_ids:
                 continue
             row = dict(raw)
             row["candidate_disposition"] = disposition
@@ -144,34 +151,41 @@ def _cover_route_projection(row: dict) -> dict[str, object]:
     }
 
 
+def _format_delivery_duration(pick: Mapping[str, object]) -> str:
+    summary = pick.get("summary")
+    summary_duration = (
+        summary.get("duration_ms") if isinstance(summary, dict) else None
+    )
+    effective_duration = pick.get("effective_duration_ms")
+    if isinstance(summary_duration, int) and not isinstance(
+        summary_duration, bool
+    ):
+        duration_ms = summary_duration
+    elif isinstance(effective_duration, int) and not isinstance(
+        effective_duration, bool
+    ):
+        duration_ms = effective_duration
+    else:
+        duration_ms = int(pick.get("end_ms") or 0) - int(
+            pick.get("start_ms") or 0
+        )
+    secs = max(0, duration_ms // 1000)
+    return f"{secs // 60}:{secs % 60:02d}"
+
+
 def write_reports(date: str, state: dict) -> None:
     delivery = _runner.profile_delivery_root() / date
     delivery.mkdir(parents=True, exist_ok=True)
 
-    def fmt_dur(pick: dict) -> str:
-        summary = pick.get("summary")
-        summary_duration = (
-            summary.get("duration_ms") if isinstance(summary, dict) else None
-        )
-        effective_duration = pick.get("effective_duration_ms")
-        if isinstance(summary_duration, int) and not isinstance(
-            summary_duration, bool
-        ):
-            duration_ms = summary_duration
-        elif isinstance(effective_duration, int) and not isinstance(
-            effective_duration, bool
-        ):
-            duration_ms = effective_duration
-        else:
-            duration_ms = int(pick.get("end_ms") or 0) - int(
-                pick.get("start_ms") or 0
-            )
-        secs = max(0, duration_ms // 1000)
-        return f"{secs // 60}:{secs % 60:02d}"
-
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
+    exact_ids = set(_exact_talk_contract_ids(state))
     songs = state.get("songs", [])
-    current_deliveries = [row for row in picks if _current_compliant_delivery(row)]
+    current_deliveries = [
+        row
+        for row in picks
+        if _current_compliant_delivery(row)
+        and (not exact_ids or _candidate_id(row) in exact_ids)
+    ]
     stale_deliveries = [
         row
         for row in picks
@@ -186,8 +200,11 @@ def write_reports(date: str, state: dict) -> None:
             "candidate_rejected",
             "boundary_unrepairable",
             "speaker_review_required",
+            "speaker_evidence_insufficient",
+            "failed",
             "quarantine",  # read-only compatibility for pre-2026-07-10 state
         }
+        and (not exact_ids or _candidate_id(row) in exact_ids)
     ]
     reserves = _current_talk_reserves(state, picks)
     delivered_talk = len(current_deliveries)
@@ -237,7 +254,7 @@ def write_reports(date: str, state: dict) -> None:
         cover_route = _cover_route_projection(pick)
         lines.append(
             f"| `{_runner.safe_name(pick.get('hook',''), pick.get('candidate_id','?'))}`{status_mark} "
-            f"| {fmt_dur(pick)} "
+            f"| {_format_delivery_duration(pick)} "
             f"| {pick.get('title') or '(未生成)'} "
             f"| {pick.get('hook') or '(兜底lane无理由)'} "
             f"| {_score_label(pick)} "
@@ -248,6 +265,33 @@ def write_reports(date: str, state: dict) -> None:
         )
     if not current_deliveries:
         lines.append("| — | — | （无当前合规交付） | — | — | — | — | — | — |")
+
+    if exact_ids:
+        closure = exact_talk_contract_closure(state)
+        lines += [
+            "",
+            "## 精确恢复契约闭环（发布真值）",
+            "",
+            f"- 闭环状态: **{closure['status']}**；只有 COMPLETE 才允许批次为 `review_ready`。",
+            "",
+            "| candidate | 唯一处置 | 尝试 | 待处理 | 当前状态 | 合规 |",
+            "|---|---|---|---|---|---|",
+        ]
+        for row in closure["rows"]:
+            assert isinstance(row, dict)
+            lines.append(
+                f"| `{row.get('candidate_id')}` | {row.get('disposition')} | "
+                f"{row.get('attempt_count')} | {row.get('pending_count')} | "
+                f"{row.get('status') or '—'} | "
+                f"{row.get('bundle_lifecycle') or '—'} / "
+                f"{row.get('bundle_compliance') or '—'} |"
+            )
+        outside = closure.get("outside_contract_attempt_ids") or []
+        if outside:
+            lines.append(
+                "- 阻塞：活跃 picks 混入契约外 candidate："
+                + "、".join(f"`{value}`" for value in outside)
+            )
 
     if current_deliveries:
         lines += [
@@ -398,6 +442,11 @@ def write_reports(date: str, state: dict) -> None:
         ]
     if state.get("status") == "no_delivery":
         lines += ["", "> ⚠ 本场 0 条交付（候选被门拦截/失败/耗尽）。这不是成功状态，需人工过目落选与拦截原因。"]
+    if state.get("status") == "recovery_incomplete":
+        lines += [
+            "",
+            "> ⚠ 精确恢复契约尚未闭环：至少一个指定候选缺失、失败、重复或不是 CURRENT+COMPLIANT；不得称为 review_ready。",
+        ]
     (delivery / "AUTOSLICE_SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     report = _runner.BASE / "reports" / "latest.md"

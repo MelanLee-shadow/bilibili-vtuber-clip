@@ -40,11 +40,17 @@ from src.autoslice.clip_context import (
 )
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.final_review_auditor import (
+    FinalReviewAuditError,
     MAX_CONTEXT_ADJUDICATIONS,
     adjudicate_context_finding,
     audit_final_subtitles,
     persist_review_audit,
     route_findings,
+)
+from src.autoslice.final_review_contract import (
+    FinalReviewContractError,
+    SCHEMA_VERSION as FINAL_REVIEW_SCHEMA_VERSION,
+    validate_final_review_release,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
@@ -71,6 +77,7 @@ from src.autoslice.session_topic_authority import (
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
     ledger_local_windows,
+    ledger_required_owner_contracts,
 )
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.subtitle_fidelity import (
@@ -86,6 +93,7 @@ from src.autoslice.subtitle_fidelity import (
 from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
     TopicEvidence,
+    build_scoped_topic_context,
     dynamic_referent_groups,
     load_topic_entity_graph,
     merge_referent_groups,
@@ -347,6 +355,14 @@ def _build_entity_verification_context(
         "selected_work_ids": [],
         "scoped_entity_ids": [],
         "evidence": [],
+        "scoped_graph_context": {
+            "schema_version": "topic-scoped-context.v1",
+            "status": "NO_GRAPH",
+            "recording_date": str(spec.get("date") or ""),
+            "topics": [],
+            "works": [],
+            "entities": [],
+        },
     }
     if not adapters.topic_graph_disabled():
         graph_path = adapters.topic_graph_path()
@@ -377,13 +393,25 @@ def _build_entity_verification_context(
                         graph_sha256=graph_sha,
                     )
                     topic_resolution_audit = resolution.as_dict()
+                    topic_resolution_audit["scoped_graph_context"] = (
+                        build_scoped_topic_context(graph, resolution)
+                    )
                     dynamic_groups = dynamic_referent_groups(graph, resolution, srt_text)
                 else:
                     topic_resolution_audit["status"] = "GRAPH_EXPIRED"
                     topic_resolution_audit["graph_sha256"] = graph_sha
+                    topic_resolution_audit["scoped_graph_context"][
+                        "status"
+                    ] = "GRAPH_EXPIRED"
+                    topic_resolution_audit["scoped_graph_context"][
+                        "graph_sha256"
+                    ] = graph_sha
             except (OSError, ValueError) as exc:
                 topic_resolution_audit["status"] = "GRAPH_INVALID"
                 topic_resolution_audit["error"] = f"{type(exc).__name__}: {exc}"
+                topic_resolution_audit["scoped_graph_context"][
+                    "status"
+                ] = "GRAPH_INVALID"
     topic_resolution_path = out_root / f"{cid}.topic-resolution.json"
     topic_resolution_path.write_text(
         json.dumps(topic_resolution_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -629,6 +657,38 @@ def _apply_entity_authority(
     )
 
 
+def _build_final_review_llm_call() -> Callable[[str], str]:
+    return build_llm_call(
+        LlmConfig(
+            transport="command",
+            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium",
+            timeout_seconds=300.0,
+        )
+    )
+
+
+def _final_review_structured_context(
+    *,
+    selection_hook: str,
+    authoritative_chat: Sequence[ChatEvidence],
+) -> str:
+    return "\n".join(
+        (
+            [f"selection_hook: {selection_hook.strip()}"]
+            if selection_hook.strip()
+            else []
+        )
+        + [
+            (
+                f"{item.kind} @{item.offset_ms}ms"
+                f"{(' sender=' + item.sender) if item.sender else ''}: "
+                f"{sanitize_chat_display_text(item.text)}"
+            )
+            for item in authoritative_chat[:160]
+        ]
+    )
+
+
 def _run_final_review(
     *,
     srt_text: str,
@@ -649,29 +709,10 @@ def _run_final_review(
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
         try:
-            review_llm_call = build_llm_call(
-                LlmConfig(
-                    transport="command",
-                    command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium",
-                    timeout_seconds=300.0,
-                )
-            )
-            structured_context_text = "\n".join(
-                (
-                    # 选片钩子进入审片员视野（2026-07-18 kmx 漏听案）：钩子
-                    # 点名的专名是漏听检查（prompt 规则7）的第一线索。
-                    [f"selection_hook: {selection_hook.strip()}"]
-                    if selection_hook.strip()
-                    else []
-                )
-                + [
-                    (
-                        f"{item.kind} @{item.offset_ms}ms"
-                        f"{(' sender=' + item.sender) if item.sender else ''}: "
-                        f"{sanitize_chat_display_text(item.text)}"
-                    )
-                    for item in authoritative_chat[:160]
-                ]
+            review_llm_call = _build_final_review_llm_call()
+            structured_context_text = _final_review_structured_context(
+                selection_hook=selection_hook,
+                authoritative_chat=authoritative_chat,
             )
             candidate_context_text = (
                 clip_context_prompt_text(clip_context)
@@ -688,14 +729,7 @@ def _run_final_review(
                 candidate_context=clip_context,
             )
             boundary_semantic_review: dict[str, object]
-            if human_boundary_authority.strip():
-                boundary_semantic_review = {
-                    "schema_version": "talk-boundary-semantic-review.v1",
-                    "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW",
-                    "candidate_id": candidate_id,
-                    "reason_codes": [],
-                }
-            elif boundary_target_ms is None:
+            if boundary_target_ms is None:
                 boundary_semantic_review = {
                     "schema_version": "talk-boundary-semantic-review.v1",
                     "status": "BLOCK",
@@ -874,6 +908,110 @@ def _run_final_review(
                 "error_type": type(exc).__name__,
             }
     return srt_text, final_review_audit
+
+
+def _run_exact_final_release_review(
+    *,
+    srt_text: str,
+    correction_audit: Mapping[str, object],
+    adapters: TextPipelineAdapters,
+    authoritative_chat: Sequence[ChatEvidence],
+    selection_hook: str,
+    clip_context: Mapping[str, object],
+) -> dict[str, object]:
+    """Review the exact post-authority bytes and issue a fail-closed receipt."""
+
+    reviewed_srt_sha256 = "sha256:" + hashlib.sha256(
+        srt_text.encode("utf-8")
+    ).hexdigest()
+    boundary_semantic_review = correction_audit.get(
+        "boundary_semantic_review"
+    )
+    base: dict[str, object] = {
+        "schema_version": FINAL_REVIEW_SCHEMA_VERSION,
+        "reviewed_srt_sha256": reviewed_srt_sha256,
+        "boundary_semantic_review": (
+            dict(boundary_semantic_review)
+            if isinstance(boundary_semantic_review, Mapping)
+            else {
+                "schema_version": "talk-boundary-semantic-review.v1",
+                "status": "BLOCK",
+                "reason_codes": ["BOUNDARY_SEMANTIC_REVIEW_MISSING"],
+            }
+        ),
+        "correction_pass": dict(correction_audit),
+    }
+    if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1":
+        return {
+            **base,
+            "status": "SKIPPED_TEST_ONLY",
+            "release_gate": "BLOCK",
+            "reason_codes": ["FINAL_REVIEW_DISABLED"],
+            "discovery": {"status": "SKIPPED_TEST_ONLY"},
+            "findings": [],
+            "validated_finding_count": 0,
+        }
+    try:
+        findings = audit_final_subtitles(
+            srt_text,
+            llm_call=_build_final_review_llm_call(),
+            extract_json=extract_json_object,
+            glossary_text=adapters.review_glossary(),
+            structured_context_text=_final_review_structured_context(
+                selection_hook=selection_hook,
+                authoritative_chat=authoritative_chat,
+            ),
+            candidate_context_text=clip_context_prompt_text(clip_context),
+            candidate_context=clip_context,
+        )
+    except FinalReviewAuditError as exc:
+        return {
+            **base,
+            "status": "AUDITOR_UNAVAILABLE",
+            "release_gate": "BLOCK",
+            "reason_codes": [exc.reason_code],
+            "discovery": {
+                "status": "AUDITOR_UNAVAILABLE",
+                "detail": exc.detail,
+            },
+            "findings": [],
+            "validated_finding_count": 0,
+        }
+    except Exception as exc:
+        return {
+            **base,
+            "status": "AUDITOR_UNAVAILABLE",
+            "release_gate": "BLOCK",
+            "reason_codes": ["FINAL_REVIEW_UNEXPECTED_ERROR"],
+            "discovery": {
+                "status": "AUDITOR_UNAVAILABLE",
+                "detail": type(exc).__name__,
+            },
+            "findings": [],
+            "validated_finding_count": 0,
+        }
+    boundary_passed = (
+        isinstance(base["boundary_semantic_review"], Mapping)
+        and base["boundary_semantic_review"].get("status") == "PASS"
+    )
+    reason_codes: list[str] = []
+    if findings:
+        reason_codes.append("FINAL_REVIEW_UNRESOLVED_FINDINGS")
+    if not boundary_passed:
+        reason_codes.append("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
+    passed = not reason_codes
+    return {
+        **base,
+        "status": "CLEAN" if passed else "FLAGGED",
+        "release_gate": "PASS" if passed else "BLOCK",
+        "reason_codes": reason_codes,
+        "discovery": {
+            "status": "COMPLETE",
+            "explicit_empty_findings": not findings,
+        },
+        "findings": findings,
+        "validated_finding_count": len(findings),
+    }
 
 
 def _defer_source_truth_failure_for_redelivery(
@@ -1447,6 +1585,127 @@ def _finalize_text_evidence(
     )
 
 
+def _redelivery_baseline_boundary_owner(
+    spec: Mapping[str, object],
+    durations: Sequence[int],
+) -> list[dict[str, object]]:
+    """Project a hash-bound v2 reviewed baseline onto the padded timeline."""
+
+    config = spec.get("subtitle_redelivery_baseline")
+    if not isinstance(config, Mapping):
+        return []
+    if (
+        config.get("schema_version") != "subtitle-redelivery-baseline.v2"
+        or config.get("exact_interval_replay") is not True
+    ):
+        return []
+    start = config.get("absolute_source_start_ms")
+    end = config.get("absolute_source_end_ms")
+    expected_sha = str(config.get("source_sha256") or "").removeprefix(
+        "sha256:"
+    )
+    if (
+        isinstance(start, bool)
+        or not isinstance(start, int)
+        or isinstance(end, bool)
+        or not isinstance(end, int)
+        or end <= start
+        or len(expected_sha) != 64
+    ):
+        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_OWNER_INVALID")
+    pieces = [
+        piece
+        for piece in (spec.get("pieces") or [])
+        if isinstance(piece, Mapping)
+    ]
+    if len(pieces) != len(durations):
+        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_MAPPING_INVALID")
+    offset = 0
+    windows: list[dict[str, int]] = []
+    coverage = 0
+    for piece, duration in zip(pieces, durations):
+        piece_sha = str(
+            piece.get("source_media_sha256") or ""
+        ).removeprefix("sha256:")
+        piece_start = int(piece["start_ms"])
+        piece_end = int(piece["end_ms"])
+        overlap_start = max(start, piece_start)
+        overlap_end = min(end, piece_end)
+        if piece_sha == expected_sha and overlap_start < overlap_end:
+            windows.append(
+                {
+                    "start_ms": offset + overlap_start - piece_start,
+                    "end_ms": offset + overlap_end - piece_start,
+                }
+            )
+            coverage += overlap_end - overlap_start
+        offset += int(duration)
+    if coverage != end - start:
+        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_OWNER_PARTIAL")
+    return [
+        {
+            "owner_kind": "reviewed_redelivery_baseline",
+            "owner_id": "exact-reviewed-interval",
+            "required": True,
+            "source_start_ms": start,
+            "source_end_ms": end,
+            "local_windows": windows,
+        }
+    ]
+
+
+def _freeze_story_chat_boundary_owners(
+    audit: dict,
+    *,
+    story_start_ms: int,
+    story_end_ms: int,
+) -> list[dict[str, object]]:
+    """Mark already-applied story decisions as unable to escape by trimming."""
+
+    groups = (
+        ("exact_read", "applied"),
+        ("sc_sender", "sender_repairs"),
+        ("gift_name", "gift_repairs"),
+        ("reply_coreference", "coreference_repairs"),
+        ("entity_repair", "entity_repairs"),
+    )
+    contracts: list[dict[str, object]] = []
+    for kind, key in groups:
+        for ordinal, row in enumerate(audit.get(key) or [], start=1):
+            if not isinstance(row, dict) or row.get("reconciliation"):
+                continue
+            start = row.get("matched_start_ms")
+            end = row.get("matched_end_ms")
+            if (
+                isinstance(start, bool)
+                or not isinstance(start, int)
+                or isinstance(end, bool)
+                or not isinstance(end, int)
+                or end <= start
+                or min(end, story_end_ms) - max(start, story_start_ms)
+                <= 0
+            ):
+                continue
+            owner_id = str(
+                row.get("finding_id")
+                or row.get("verdict_id")
+                or f"{kind}:{ordinal}:{start}:{end}"
+            )
+            row["boundary_required"] = True
+            row["boundary_owner_id"] = owner_id
+            contracts.append(
+                {
+                    "owner_kind": kind,
+                    "owner_id": owner_id,
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": start, "end_ms": end}
+                    ],
+                }
+            )
+    return contracts
+
+
 def run_text_pipeline(
     *,
     spec: dict,
@@ -1499,13 +1758,20 @@ def run_text_pipeline(
     )
     clip_context_path = out_root / f"{cid}.clip-context.json"
     write_clip_context(clip_context_path, clip_context)
-    from src.autoslice.source_subtitle_truth import ledger_local_windows
-
     source_truth_windows = ledger_local_windows(
         spec=spec,
         durations=durations,
         ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
     )
+    required_boundary_owners = ledger_required_owner_contracts(
+        spec=spec,
+        durations=durations,
+        ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
+    )
+    required_boundary_owners.extend(
+        _redelivery_baseline_boundary_owner(spec, durations)
+    )
+    spec["required_boundary_owners"] = required_boundary_owners
     authority = _apply_entity_authority(
         srt_text=draft.srt_text,
         authoritative_chat=authoritative_chat,
@@ -1561,6 +1827,15 @@ def run_text_pipeline(
     boundary_target_ms = sum(durations[:-1]) + (
         boundary_source_end_ms - int(last_piece["start_ms"])
     )
+    required_owner_tail_ms = max(
+        (
+            int(window["end_ms"])
+            for owner in required_boundary_owners
+            for window in owner.get("local_windows") or []
+        ),
+        default=boundary_target_ms,
+    )
+    boundary_target_ms = max(boundary_target_ms, required_owner_tail_ms)
     reviewed_srt, final_review_audit = _run_final_review(
         srt_text=authority.srt_text,
         chat_authority_audit=authority.chat_authority_audit,
@@ -1614,6 +1889,61 @@ def run_text_pipeline(
             f"(cues {[row.get('cue_index') for row in still_unresolved]}); "
             "refusing to deliver known-suspect text — runner will retry"
         )
+    final_release_review = _run_exact_final_release_review(
+        srt_text=evidence.srt_text,
+        correction_audit=final_review_audit,
+        adapters=adapters,
+        authoritative_chat=authoritative_chat,
+        selection_hook=str(spec.get("selection_hook") or ""),
+        clip_context=clip_context,
+    )
+    authority.chat_authority_audit["final_review_audit"] = final_release_review
+    story_start_ms = max(
+        0,
+        int(spec.get("semantic_start_ms", spec["pieces"][0]["start_ms"]))
+        - int(spec["pieces"][0]["start_ms"]),
+    )
+    story_chat_owners = _freeze_story_chat_boundary_owners(
+        authority.chat_authority_audit,
+        story_start_ms=story_start_ms,
+        story_end_ms=boundary_target_ms,
+    )
+    required_boundary_owners.extend(story_chat_owners)
+    spec["required_boundary_owners"] = required_boundary_owners
+    authority.chat_authority_audit["frozen_boundary_owner_contract"] = {
+        "schema_version": "frozen-boundary-owner-contract.v1",
+        "status": "FROZEN",
+        "story_start_ms": story_start_ms,
+        "story_end_ms": boundary_target_ms,
+        "required_owner_count": len(required_boundary_owners),
+        "owners": required_boundary_owners,
+    }
+    persist_review_audit(
+        out_root / f"{cid}.review-flags.json", final_release_review
+    )
+    evidence.chat_authority_path.write_text(
+        json.dumps(
+            authority.chat_authority_audit,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    expected_srt_sha256 = "sha256:" + hashlib.sha256(
+        evidence.srt_text.encode("utf-8")
+    ).hexdigest()
+    try:
+        validate_final_review_release(
+            final_release_review,
+            expected_srt_sha256=expected_srt_sha256,
+        )
+    except FinalReviewContractError as exc:
+        raise SystemExit(
+            f"FINAL_REVIEW_RELEASE_BLOCKED: {exc.reason_code}: "
+            f"{evidence.chat_authority_path}"
+        ) from exc
     return TextPipelineResult(
         srt_text=evidence.srt_text,
         cues=evidence.cues,

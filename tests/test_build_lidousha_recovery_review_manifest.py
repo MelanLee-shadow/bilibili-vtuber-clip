@@ -26,6 +26,9 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
     for suffix, payload in (
         ("mp4", b"video"),
         ("cover.png", b"cover"),
+        ("cover.title-mask.png", b"mask"),
+        ("cover.pre-overlay.png", b"pre-overlay"),
+        ("cover.route-background.png", b"route-background"),
         ("srt", b"1\n00:00:00,000 --> 00:00:01,000\nhello\n"),
         ("clip-context.json", b"{}\n"),
         ("subtitle-regression.json", b"{}\n"),
@@ -52,6 +55,16 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
         "reference_sha256": "sha256:" + "1" * 64,
         "reference_authority": {},
         "final_cover_sha256": _sha(files["cover.png"]),
+        "pre_overlay_sha256": _sha(files["cover.pre-overlay.png"]),
+        "ai_background_sha256": _sha(
+            files["cover.route-background.png"]
+        ),
+        "rendered_text_pixels": {
+            "mask_sha256": _sha(files["cover.title-mask.png"]),
+            "pre_overlay_sha256": _sha(
+                files["cover.pre-overlay.png"]
+            ),
+        },
     }
     generation["route_decision"] = build_cover_route_decision(
         selected_treatment="screenshot_direct",

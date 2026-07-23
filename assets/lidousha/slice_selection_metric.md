@@ -1,9 +1,12 @@
-# 李豆沙切片选题 metric（单一权威）
+# 李豆沙切片选题 metric（通用 rubric 权威）
 
 > v5，2026-07-22 Ivan 校准 + Pro 独立复核：本文件继续定义偏好；
 > `selection_scorecard.v1` 把偏好变成**硬分层 + 七维固定算术 + 证据准入**。模型只提交
 > 0–4 档位与 cue 证据，`src/autoslice/selection_scorecard.py` 确定性验收、复算并排序；
 > `confidence` 只表示模型把握，不再代替内容价值。
+> 具体 reviewed candidate 的绝对分区间与顺序约束由
+> `selection_score_calibration.v1.json` 承载并纳入 profile/policy fingerprint；本文件与
+> 该资产必须一起更新，不能只改 prompt prose。
 >
 > v4，2026-07-13 Ivan 校准（学猫叫案：**装可爱表演 + 与观众互动感**必须更高分——
 > 「弹幕让她学猫叫，从喵喵、哈气演到嗷呜，最后急着强调自己是能一掌拍飞猫的熊」
@@ -56,11 +59,13 @@
 `fatigue_penalty(0..10)` 得 `effective_score`。最终排序键为 `(Tier, -effective_score, -confidence)`；
 分层优先于分数，分数优先于 confidence。自足性或喜剧落点 ≤1 时一律降第三层。
 
-7.22 对照锚点：
+7.22 executable 对照锚点（机器值见 `selection_score_calibration.v1.json`）：
 
-- 「展示最喜欢的金发有角妹妹→被说像礼墨Sumi立刻否认→看到男性角色又秒变『低才对』」具备
+- `auto_193450_3573_3665`「展示最喜欢的金发有角妹妹→被说像礼墨Sumi立刻否认→
+  看到男性角色又秒变『低才对』」具备
   关系人物、品味立场、连续反转与清晰 payoff，应是第一层，预期约 75–85 分。
-- 「两人争论下播时没人挽留谁更可怜→李豆沙坦白留搭档只是因为东西没下好」若没有更强的
+- `auto_193450_5341_5459`「两人争论下播时没人挽留谁更可怜→李豆沙坦白留搭档只是
+  因为东西没下好」若没有更强的
   关系升级或反转证据，只是第二层，预期约 50–60 分；高 confidence 也不得反超前者。
 
 ## 歌切偏好（历史 7 首）

@@ -1,5 +1,8 @@
 {
   "schema_version": "reviewed-cover-repair-plan.v1",
+  "artifact_lifecycle": "HISTORICAL_EVIDENCE_ONLY",
+  "do_not_execute": true,
+  "historical_note": "Hash-bound evidence from a completed repair. It is not current cover authority.",
   "date": "2026-07-10",
   "authority": "Ivan 2026-07-11 review: correct the 上下摇 title/topic, preserve the 彩排 question mark and exact wording, and finish the verified recovered song cover without rerunning its selector",
   "upload_enabled": false,

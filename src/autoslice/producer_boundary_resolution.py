@@ -5,19 +5,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.producer_boundary import (
+    BOUNDARY_REPAIR_EXTEND_CAP_MS,
     LEAD_AIR_MS,
     MAX_BOUNDARY_REPAIRS,
+    SNAP_AFTER_MS,
     adaptive_tail_cut,
     boundary_audit,
     boundary_red_flags,
     needs_tail_refinement,
     next_clean_closure,
     repair_start_for_straddler,
-    snap_end_to_sentence,
     snap_start_to_sentence,
     syntactic_tail_audit,
     tail_requires_forward_extension,
@@ -39,11 +40,16 @@ class InitialBoundary:
     snapped_start: int | None
     final_start: int
     target_rel: int
+    repair_search_origin_ms: int
+    repair_max_end_ms: int
     snapped_end: int
     closure_cue: object
     refinement_used: bool
     manual_end_authority: str | None
     semantic_review: dict | None
+    required_boundary_owners: list[dict[str, object]]
+    required_owner_start_ms: int | None
+    required_owner_end_ms: int | None
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,88 @@ class BoundaryResolution:
     audit: dict
     sanitized_cues: list[SourceCue]
     timing_qa: dict
+
+
+def _required_boundary_owner_contract(
+    spec: Mapping[str, object],
+    *,
+    padded_dur: int,
+) -> tuple[list[dict[str, object]], int | None, int | None]:
+    raw_owners = spec.get("required_boundary_owners")
+    if raw_owners is None:
+        return [], None, None
+    if not isinstance(raw_owners, list):
+        raise SystemExit("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+    owners: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    starts: list[int] = []
+    ends: list[int] = []
+    for raw_owner in raw_owners:
+        if not isinstance(raw_owner, Mapping):
+            raise SystemExit("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+        kind = str(raw_owner.get("owner_kind") or "").strip()
+        owner_id = str(raw_owner.get("owner_id") or "").strip()
+        windows = raw_owner.get("local_windows")
+        key = (kind, owner_id)
+        if (
+            raw_owner.get("required") is not True
+            or not kind
+            or not owner_id
+            or key in seen
+            or not isinstance(windows, list)
+            or not windows
+        ):
+            raise SystemExit("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+        normalized_windows: list[dict[str, int]] = []
+        for window in windows:
+            if not isinstance(window, Mapping):
+                raise SystemExit("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+            start = window.get("start_ms")
+            end = window.get("end_ms")
+            if (
+                isinstance(start, bool)
+                or not isinstance(start, int)
+                or isinstance(end, bool)
+                or not isinstance(end, int)
+                or not 0 <= start < end <= padded_dur
+            ):
+                raise SystemExit("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+            starts.append(start)
+            ends.append(end)
+            normalized_windows.append(
+                {"start_ms": start, "end_ms": end}
+            )
+        seen.add(key)
+        owners.append(
+            {
+                **dict(raw_owner),
+                "owner_kind": kind,
+                "owner_id": owner_id,
+                "local_windows": normalized_windows,
+            }
+        )
+    return owners, min(starts), max(ends)
+
+
+def _snap_end_at_or_after(
+    cue_ends_ms: list[int],
+    lower_bound_ms: int,
+    *,
+    upper_bound_ms: int | None = None,
+) -> int | None:
+    """A hard owner/lower-bound can never snap backward out of scope."""
+
+    upper_bound = (
+        lower_bound_ms + SNAP_AFTER_MS
+        if upper_bound_ms is None
+        else min(lower_bound_ms + SNAP_AFTER_MS, upper_bound_ms)
+    )
+    candidates = [
+        end
+        for end in cue_ends_ms
+        if lower_bound_ms <= end <= upper_bound
+    ]
+    return min(candidates) if candidates else None
 
 
 def _select_initial_boundary(
@@ -66,11 +154,19 @@ def _select_initial_boundary(
     cues: list[object],
     required_tail_end_ms: int | None,
     adapters: BoundaryResolutionAdapters,
+    boundary_repair_extend_cap_ms: int = BOUNDARY_REPAIR_EXTEND_CAP_MS,
 ) -> InitialBoundary:
+    (
+        required_boundary_owners,
+        required_owner_start_ms,
+        required_owner_end_ms,
+    ) = _required_boundary_owner_contract(spec, padded_dur=padded_dur)
     first_piece = spec["pieces"][0]
     target_start_rel = spec.get("semantic_start_ms", first_piece["start_ms"]) - first_piece["start_ms"]
     snapped_start = snap_start_to_sentence([c.start_ms for c in cues], target_start_rel)
     final_start = max(0, (snapped_start if snapped_start is not None else target_start_rel) - LEAD_AIR_MS)
+    if required_owner_start_ms is not None:
+        final_start = min(final_start, required_owner_start_ms)
 
     # 4b. Sentence-snap the END; a run-on cue near the closure triggers a
     #     fine-grained micro re-transcription of the tail so the closure
@@ -86,47 +182,82 @@ def _select_initial_boundary(
         # transcript proves she finished reading it just after the semantic
         # target.  The read is the event payoff, not the next topic.
         target_rel = required_tail_end_ms
-    # 受监督硬切（Ivan 2026-07-13 MUA 案：故事有语义落点但与下一话题零停顿
-    # 衔接，续讲红旗永远拦截）。spec.given_end_ms = Ivan 人工授权的绝对终点：
-    # 仍贴到最近的字幕句尾（±1.5s），仍走其余全部审计，仅豁免尾侧续讲红旗；
-    # 出处记入 boundary audit（boundary_authority=ivan_manual_end）。
+    # 受监督终点只能扩展、不能截短语义候选，也不能代替独立语义终审。
+    # given_end_ms 是人工审过的 source-timeline 下限；semantic review 仍须
+    # PASS，最终取二者较晚者再贴句尾。这样一段自由文字 authority 不会
+    # 再单独豁免续讲或把某句话切在中间。
     manual_end_authority: str | None = None
     if spec.get("given_end_ms") is not None:
         manual_end_authority = str(spec.get("given_end_authority") or "").strip()
         if not manual_end_authority:
             raise SystemExit("MANUAL_END_AUTHORITY_MISSING")
-        target_rel = sum(durations[:-1]) + (int(spec["given_end_ms"]) - last_piece["start_ms"])
+        manual_end_ms = int(spec["given_end_ms"])
+        if manual_end_ms < int(spec["semantic_end_ms"]):
+            raise SystemExit("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
+        manual_rel = sum(durations[:-1]) + (
+            manual_end_ms - last_piece["start_ms"]
+        )
+        # The reviewed endpoint is a lower bound, not a replacement target.
+        # Preserve a later structured-chat payoff already proven above.
+        target_rel = max(target_rel, manual_rel)
     semantic_review = (
         dict(spec["boundary_semantic_review"])
         if isinstance(spec.get("boundary_semantic_review"), dict)
         else None
     )
-    if manual_end_authority is None:
-        if semantic_review is None or semantic_review.get("status") != "PASS":
-            reason_codes = (
-                semantic_review.get("reason_codes")
-                if isinstance(semantic_review, dict)
-                else ["BOUNDARY_SEMANTIC_REVIEW_MISSING"]
-            )
-            raise SystemExit(
-                "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
-                + json.dumps(reason_codes, ensure_ascii=False)
-            )
-        recommended_end_ms = semantic_review.get("recommended_end_ms")
-        if (
-            isinstance(recommended_end_ms, bool)
-            or not isinstance(recommended_end_ms, int)
-            or recommended_end_ms < semantic_target_rel
-            or recommended_end_ms > semantic_target_rel + 30_000
-        ):
-            raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
-        target_rel = max(target_rel, recommended_end_ms)
-    snapped = snap_end_to_sentence([c.end_ms for c in cues], target_rel)
+    if semantic_review is None or semantic_review.get("status") != "PASS":
+        reason_codes = (
+            semantic_review.get("reason_codes")
+            if isinstance(semantic_review, dict)
+            else ["BOUNDARY_SEMANTIC_REVIEW_MISSING"]
+        )
+        raise SystemExit(
+            "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+            + json.dumps(reason_codes, ensure_ascii=False)
+        )
+    recommended_end_ms = semantic_review.get("recommended_end_ms")
+    if (
+        isinstance(recommended_end_ms, bool)
+        or not isinstance(recommended_end_ms, int)
+        or recommended_end_ms < semantic_target_rel
+        or recommended_end_ms > semantic_target_rel + 30_000
+    ):
+        raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
+    target_rel = max(target_rel, recommended_end_ms)
+    # Keep the semantic/manual/structured target as the immutable origin of the
+    # forward-repair budget.  A required owner is a delivery lower bound, not
+    # authority to move the 30s cap forward.
+    repair_search_origin_ms = target_rel
+    repair_max_end_ms = min(
+        padded_dur,
+        repair_search_origin_ms + boundary_repair_extend_cap_ms,
+    )
+    if (
+        required_owner_end_ms is not None
+        and required_owner_end_ms > repair_max_end_ms
+    ):
+        raise SystemExit(
+            "BOUNDARY_REQUIRED_OWNER_EXCLUDED: "
+            f"required_end={required_owner_end_ms}ms exceeds "
+            f"repair_max_end={repair_max_end_ms}ms "
+            f"(origin={repair_search_origin_ms}ms)"
+        )
+    if required_owner_end_ms is not None:
+        target_rel = max(target_rel, required_owner_end_ms)
+    snapped = _snap_end_at_or_after(
+        [c.end_ms for c in cues],
+        target_rel,
+        upper_bound_ms=repair_max_end_ms,
+    )
     refinement_used = False
     if needs_tail_refinement(cues, snapped_end=snapped, target_ms=target_rel):
         refinement_used = True
         refine_start = max(0, target_rel - 20_000)
-        refine_end = min(padded_dur, target_rel + 15_000)
+        refine_end = min(
+            padded_dur,
+            target_rel + 15_000,
+            repair_max_end_ms,
+        )
         tail_clip = out_root / "tail_refine.mp4"
         adapters.run_command(adapters.accurate_recut_command(source_video=padded, output_media=tail_clip, start_ms=refine_start, duration_ms=refine_end - refine_start))
         tail_srt = transcriber(tail_clip, None)
@@ -136,12 +267,25 @@ def _select_initial_boundary(
             type(c)(index=c.index, start_ms=c.start_ms + refine_start, end_ms=c.end_ms + refine_start, text=c.text)
             for c in fine
         ]
-        snapped = snap_end_to_sentence([c.end_ms for c in fine_lifted], target_rel)
+        snapped = _snap_end_at_or_after(
+            [c.end_ms for c in fine_lifted],
+            target_rel,
+            upper_bound_ms=repair_max_end_ms,
+        )
         if snapped is not None:
             # Splice: fine cues replace coarse cues inside the refined window.
             cues = [c for c in cues if c.end_ms <= refine_start or c.start_ms >= refine_end] + fine_lifted
             cues.sort(key=lambda c: c.start_ms)
     if snapped is None:
+        if (
+            required_owner_end_ms is not None
+            and required_owner_end_ms > repair_search_origin_ms
+        ):
+            raise SystemExit(
+                "BOUNDARY_REQUIRED_OWNER_EXCLUDED: "
+                "no sentence boundary in required-owner closure window "
+                f"[{required_owner_end_ms},{repair_max_end_ms}]ms"
+            )
         raise SystemExit(
             f"NO_SENTENCE_BOUNDARY_NEAR_TARGET: target={target_rel}ms; nearest cue ends="
             f"{sorted((c.end_ms for c in cues), key=lambda e: abs(e - target_rel))[:3]}"
@@ -153,11 +297,16 @@ def _select_initial_boundary(
         snapped_start=snapped_start,
         final_start=final_start,
         target_rel=target_rel,
+        repair_search_origin_ms=repair_search_origin_ms,
+        repair_max_end_ms=repair_max_end_ms,
         snapped_end=snapped,
         closure_cue=closure_cue,
         refinement_used=refinement_used,
         manual_end_authority=manual_end_authority,
         semantic_review=semantic_review,
+        required_boundary_owners=required_boundary_owners,
+        required_owner_start_ms=required_owner_start_ms,
+        required_owner_end_ms=required_owner_end_ms,
     )
 
 def _repair_boundary(
@@ -171,11 +320,16 @@ def _repair_boundary(
     snapped_start: int | None,
     final_start: int,
     target_rel: int,
+    repair_search_origin_ms: int,
+    repair_max_end_ms: int,
     snapped: int,
     closure_cue: object,
     refinement_used: bool,
     manual_end_authority: str | None,
     semantic_review: dict | None,
+    required_boundary_owners: list[dict[str, object]],
+    required_owner_start_ms: int | None,
+    required_owner_end_ms: int | None,
     boundary_repair_extend_cap_ms: int,
 ) -> BoundaryResolution:
     audit_path = out_root / f"{cid}.boundary_audit.json"
@@ -189,6 +343,19 @@ def _repair_boundary(
             padded_dur_ms=padded_dur,
         )
         final_end = tail_adjustment["final_end_ms"]
+        owner_failures = [
+            {
+                "owner_kind": owner["owner_kind"],
+                "owner_id": owner["owner_id"],
+                "window": window,
+            }
+            for owner in required_boundary_owners
+            for window in owner["local_windows"]
+            if (
+                int(window["start_ms"]) < final_start
+                or int(window["end_ms"]) > final_end
+            )
+        ]
         clamp_key = (snapped, final_end)
         if tail_adjustment["reason"] and clamp_key not in recorded_tail_clamps:
             boundary_repairs.append(
@@ -215,30 +382,49 @@ def _repair_boundary(
                 "snapped_sentence_start_ms": snapped_start,
                 "final_start_ms": final_start,
                 "opening_sentence": next((c.text for c in cues if c.start_ms == snapped_start), None),
-                "semantic_target_rel_ms": target_rel,
+                "semantic_target_rel_ms": repair_search_origin_ms,
+                "boundary_selection_lower_bound_ms": target_rel,
                 "snapped_sentence_end_ms": snapped,
                 "final_end_ms": final_end,
                 "closure_sentence": closure_cue.text,
                 "syntactic_tail_audit": syntactic_tail_audit(closure_cue.text),
                 "tail_adjustment": tail_adjustment,
                 "tail_refinement_used": refinement_used,
-                "boundary_repair_search_origin_ms": target_rel,
+                "boundary_repair_search_origin_ms": repair_search_origin_ms,
                 "boundary_repair_extend_cap_ms": boundary_repair_extend_cap_ms,
-                "boundary_repair_max_end_ms": min(
-                    padded_dur, target_rel + boundary_repair_extend_cap_ms
-                ),
+                "boundary_repair_max_end_ms": repair_max_end_ms,
+                "required_boundary_owner_start_ms": required_owner_start_ms,
+                "required_boundary_owner_end_ms": required_owner_end_ms,
                 "boundary_repairs": boundary_repairs,
+                "frozen_required_boundary_owner_count": len(
+                    required_boundary_owners
+                ),
+                "frozen_required_boundary_owners": (
+                    required_boundary_owners
+                ),
+                "required_boundary_owner_verification": {
+                    "status": "FAIL" if owner_failures else "PASS",
+                    "failures": owner_failures,
+                },
             }
         )
         if manual_end_authority:
-            audit["boundary_authority"] = "human_source_reviewed_end"
+            audit["boundary_authority"] = (
+                "human_source_reviewed_lower_bound_plus_semantic_review"
+            )
             audit["manual_end_authority"] = manual_end_authority
+            audit["boundary_semantic_review"] = semantic_review
         elif semantic_review is not None:
             audit["boundary_authority"] = (
                 "correlated_semantic_review_plus_deterministic_guards"
             )
             audit["boundary_semantic_review"] = semantic_review
         audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if owner_failures:
+            raise SystemExit(
+                "BOUNDARY_REQUIRED_OWNER_EXCLUDED: "
+                + json.dumps(owner_failures, ensure_ascii=False)
+            )
         if audit["verdict"] != "ok_sentence_boundary_cut":
             raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
         source_cues = [
@@ -291,7 +477,7 @@ def _repair_boundary(
                     after_ms=snapped,
                     padded_dur_ms=padded_dur,
                     cap_ms=boundary_repair_extend_cap_ms,
-                    search_origin_ms=target_rel,
+                    search_origin_ms=repair_search_origin_ms,
                 )
                 if new_end is not None:
                     repair["snapped_end_ms"] = new_end
@@ -299,6 +485,31 @@ def _repair_boundary(
             audit["red_flags"] = red_flags
             retry_scope = "same_topic_continues" if forward_extension_eligible else "none"
             audit["boundary_context_retry_scope"] = retry_scope
+            if (
+                required_owner_end_ms is not None
+                and required_owner_end_ms > repair_search_origin_ms
+            ):
+                audit["required_boundary_owner_verification"] = {
+                    "status": "FAIL",
+                    "failures": [
+                        {
+                            "reason": "NO_CLEAN_CLOSURE_WITHIN_REPAIR_CAP",
+                            "required_end_ms": required_owner_end_ms,
+                            "repair_search_origin_ms": repair_search_origin_ms,
+                            "repair_max_end_ms": repair_max_end_ms,
+                            "red_flags": red_flags,
+                        }
+                    ],
+                }
+                audit_path.write_text(
+                    json.dumps(audit, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                raise SystemExit(
+                    "BOUNDARY_REQUIRED_OWNER_EXCLUDED: "
+                    "no clean closure in required-owner window "
+                    f"[{required_owner_end_ms},{repair_max_end_ms}]ms"
+                )
             audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             raise SystemExit(
                 f"BOUNDARY_UNREPAIRABLE: {','.join(red_flags)} after {flagged_repair_count} repair(s); "
@@ -309,6 +520,8 @@ def _repair_boundary(
         if "snapped_start_ms" in repair:
             snapped_start = repair["snapped_start_ms"]
             final_start = max(0, snapped_start - LEAD_AIR_MS)
+            if required_owner_start_ms is not None:
+                final_start = min(final_start, required_owner_start_ms)
         if "snapped_end_ms" in repair:
             snapped = repair["snapped_end_ms"]
             closure_cue = next(c for c in cues if c.end_ms == snapped)
@@ -347,6 +560,7 @@ def resolve_producer_boundary(
         cues=cues,
         required_tail_end_ms=required_tail_end_ms,
         adapters=adapters,
+        boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
     )
     return _repair_boundary(
         cid=cid,
@@ -358,10 +572,15 @@ def resolve_producer_boundary(
         snapped_start=initial.snapped_start,
         final_start=initial.final_start,
         target_rel=initial.target_rel,
+        repair_search_origin_ms=initial.repair_search_origin_ms,
+        repair_max_end_ms=initial.repair_max_end_ms,
         snapped=initial.snapped_end,
         closure_cue=initial.closure_cue,
         refinement_used=initial.refinement_used,
         manual_end_authority=initial.manual_end_authority,
         semantic_review=initial.semantic_review,
+        required_boundary_owners=initial.required_boundary_owners,
+        required_owner_start_ms=initial.required_owner_start_ms,
+        required_owner_end_ms=initial.required_owner_end_ms,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
     )

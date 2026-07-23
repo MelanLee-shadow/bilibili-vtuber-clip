@@ -117,7 +117,10 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="CANDIDATE_ID=ABSOLUTE_MS",
-        help="human-reviewed source-timeline end; repeat per candidate",
+        help=(
+            "human-reviewed source-timeline lower-bound end; must be >= the "
+            "candidate end; repeat per candidate"
+        ),
     )
     parser.add_argument("--given-end-authority")
     return parser

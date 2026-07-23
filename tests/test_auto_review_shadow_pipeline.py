@@ -2835,7 +2835,9 @@ def test_publish_staging_blocks_without_cpa_ai_cover_and_never_extracts_frame_co
     assert "CPA_AI_COVER_REQUIRED" in record["publish_staging"]["reason_codes"]
     assert publish["cover_path"] is None
     assert publish["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
-    assert publish["cover_text"] == "《旅行的意义》唱到伴奏卡住像在KTV录的"
+    # Song titles are a fixed catalog form; the old hook tail must not leak
+    # into either the publish title or its coupled cover text.
+    assert publish["cover_text"] == "《旅行的意义》"
     assert publish["cover_generation"]["workflow"] == "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
     assert publish["cover_generation"]["model"] == "gpt-image-2"
     assert publish["cover_generation"]["method"] == "images.edit"
@@ -2890,7 +2892,7 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
     assert generation["image_generation_used"] is True
     assert generation["model"] == "gpt-image-2"
     assert generation["fallback_used"] is False
-    assert generation["cover_text"] == "《旅行的意义》唱到伴奏卡住像在KTV录的"
+    assert generation["cover_text"] == "《旅行的意义》"
     assert generation["font"] == "ZCOOLKuaiLe-Regular.ttf"
     assert generation["angle_degrees"] == -4.0
     route = generation["route_decision"]
@@ -3348,13 +3350,11 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     }
     cues = [shadow_pipeline.SourceCue("c1", 0, 2_000, "粗轴旧文本不应被采样")]
 
+    title_prompts: list[str] = []
+
     def fake_title_llm(prompt: str) -> str:
+        title_prompts.append(prompt)
         assert "价格有点贵哈哈哈" in prompt
-        # Prompt freeze includes the title_style asset; 2026-07-20 标题风格
-        # 大修与 2026-07-21 遮字体/题材规则追加后哈希随之更新（资产变即更新）。
-        assert hashlib.sha256(prompt.encode()).hexdigest() == (
-            "fa4ed24f4aa032602f3290b2ce531c0e1b9c5a3f28d3ab8ae794d97220907c21"
-        )
         return '{"title": "主播吐槽游戏价格贵，笑场三连"}'
 
     staged = shadow_pipeline._stage_publish_draft(
@@ -3367,6 +3367,13 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     )
 
     staging = staged["publish_staging"]
+    assert len(title_prompts) == 1
+    # Prompt freeze includes the current title_style authority.  Keep this
+    # outside the fake callback so an asset drift fails as a fingerprint
+    # assertion instead of being swallowed by the production LLM error gate.
+    assert hashlib.sha256(title_prompts[0].encode()).hexdigest() == (
+        "2fab14cdfc06d8c3141346571860dc00b4b36ed6615e6f5b516e88b58ba1dfbc"
+    )
     assert staging["status"] == "STAGED"
     assert staging["upload_enabled"] is False
     # Auto title gets the 【李豆沙】 publish prefix forced on (length counted with it).
@@ -3412,7 +3419,7 @@ def test_publish_staging_fails_before_cover_when_title_llm_fails(tmp_path, monke
     )
 
     staging = staged["publish_staging"]
-    assert staging["title"] == "原始job标题"
+    assert staging["title"] == "【李豆沙】原始job标题"
     assert staging["title_source"].startswith("job_title(llm_failed")
     assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
     assert staging["title_authority_status"] == "UNRESOLVED_AUTO"
@@ -3655,8 +3662,9 @@ def test_publish_staging_length_gate_blocks_before_cover(tmp_path, monkeypatch):
     )
 
     staging = staged["publish_staging"]
-    # Length gate rejects the auto title → job title kept untouched (no prefix forced).
-    assert staging["title"] == "原始job标题"
+    # Length gate rejects the auto title; even the blocked diagnostic fallback
+    # is canonicalized so a later stage cannot accidentally publish it bare.
+    assert staging["title"] == "【李豆沙】原始job标题"
     assert staging["title_source"].startswith("job_title(llm_length_out_of_bounds")
     assert staging["title_policy_violations"] == []
     assert staging["status"] == "BLOCKED_TITLE_AUTHORITY"
@@ -3718,10 +3726,10 @@ def test_selection_hook_fallback_preserves_terminal_question_mark():
     assert title == "【李豆沙】你们还要来找我玩，好不好？"
 
 
-def test_publish_staging_manual_title_bypasses_prefix_and_policy_enforcement(tmp_path):
-    # Iron rule: title_llm_call=None → Ivan's title is final, 一字不改. Even a
-    # prefix-less title that contains a banned word passes through completely
-    # untouched — no prefix forced, no length gate, no policy flag.
+def test_publish_staging_manual_title_keeps_body_but_gets_publish_envelope(tmp_path):
+    # Ivan owns the body; the shared publish layer owns the channel prefix.
+    # Automatic-style banned words are not applied retroactively to a human
+    # title, but structural rules are never bypassed.
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"placeholder video")
     srt = tmp_path / "clip.srt"
@@ -3738,7 +3746,7 @@ def test_publish_staging_manual_title_bypasses_prefix_and_policy_enforcement(tmp
     )
 
     staging = staged["publish_staging"]
-    assert staging["title"] == "李豆沙唱到炸裂现场"  # unchanged: not prefixed, not rewritten
+    assert staging["title"] == "【李豆沙】李豆沙唱到炸裂现场"
     assert staging["title_source"] == "job_title"
     assert staging["title_policy_violations"] == []
 
@@ -5020,12 +5028,12 @@ def test_cover_font_swaps_whole_cover_on_wrong_shape_glyph():
     assert shadow_pipeline._cover_font_for_text("电脑要造反小皇帝拒绝更新").path == zcool
 
 
-def test_cover_font_checks_every_chain_member_never_silent_notdef(monkeypatch):
+def test_cover_font_checks_every_chain_member_and_blocks_notdef(monkeypatch):
     """2026-07-16 《怪獣の花唄》 published-cover case: ZCOOL lacks 獣, the cover
     swapped to SmileySans — and SmileySans ALSO lacks 獣, so its stylised .notdef
     shipped on a live B站 cover.  Only ZCOOL was ever glyph-checked.  Now every
-    chain member is checked; when nothing fully covers, the residual risk must be
-    DISCLOSED in the selection audit instead of silently shipping a .notdef."""
+    chain member is checked; when nothing fully covers, generation must block
+    instead of shipping a disclosed-but-still-visible .notdef."""
     zcool = shadow_pipeline._find_cover_font()
     smiley = shadow_pipeline._cover_fallback_font_path()
     assert smiley is not None and "SmileySans" in smiley.name
@@ -5033,8 +5041,8 @@ def test_cover_font_checks_every_chain_member_never_silent_notdef(monkeypatch):
     assert shadow_pipeline._cover_missing_checker(smiley)("獣") is True
     assert shadow_pipeline._cover_missing_checker(smiley)("怪") is False
 
-    # Constrain the chain to the two repo fonts: neither covers 獣 → the choice
-    # must carry a non-empty glyph_risk (disclosure), never a silent pick.
+    # Constrain the chain to the two repo fonts: neither covers 獣, so selection
+    # records the evidence and fails closed.
     from src.autoslice import cover_generation
 
     limited = [
@@ -5045,17 +5053,22 @@ def test_cover_font_checks_every_chain_member_never_silent_notdef(monkeypatch):
         cover_generation, "_cover_font_chain", lambda *, prefer_jp: limited
     )
     audit: dict = {}
-    choice = shadow_pipeline._cover_font_for_text("怪獣の花唄", selection_audit=audit)
+    with pytest.raises(
+        RuntimeError, match="COVER_FONT_GLYPH_COVERAGE_MISSING"
+    ):
+        shadow_pipeline._cover_font_for_text(
+            "怪獣の花唄", selection_audit=audit
+        )
     assert "獣" in audit["glyph_risk"]
     assert len(audit["rejected"]) == 2
-    assert choice in limited
 
-    # With the real chain (adds complete system CJK fonts when present): either a
-    # font that truly renders 獣 is chosen, or the risk is still disclosed.
+    # The real production chain is also committed-only and therefore portable.
     monkeypatch.undo()
     audit2: dict = {}
-    choice2 = shadow_pipeline._cover_font_for_text("怪獣の花唄", selection_audit=audit2)
-    if not audit2["glyph_risk"]:
-        assert shadow_pipeline._cover_missing_checker(choice2)("獣") is False
-    else:
-        assert "獣" in audit2["glyph_risk"]
+    with pytest.raises(
+        RuntimeError, match="COVER_FONT_GLYPH_COVERAGE_MISSING"
+    ):
+        shadow_pipeline._cover_font_for_text(
+            "怪獣の花唄", selection_audit=audit2
+        )
+    assert "獣" in audit2["glyph_risk"]

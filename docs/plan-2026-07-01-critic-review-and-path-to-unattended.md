@@ -1,6 +1,8 @@
 # Critic review + plan to unattended (2026-07-01)
 
-> **SUPERSEDED / 历史计划**：本文保留 2026-07-01 的缺口与攻防记录；其中 NetEase-only、audio fingerprint “下一杆”、自动 LRC/audio probe 未完成等状态已被后续实现取代，不应作为当前操作说明。当前 song/LRC 能力与 fail-closed 边界见 `docs/autoslice-capability-status.md`、`.agent/skills/song-lyrics-timeline-aligner/SKILL.md` 和 `docs/reviews/2026-07-09-mebukutoki-lrc-repair.md`。
+> **SUPERSEDED / 历史计划。** 本文只保留 2026-07-01 的缺口与攻防记录；所有“open/done/
+> next”、命令、模型和路径都不得当作当前状态。现行入口是
+> [pipeline/README.md](pipeline/README.md)，能力是否部署必须 live readback。
 
 Scope: independent critic review of the whole local workspace (docs, src, scripts, tests, workflow/skill docs), followed by a consolidated plan. Six parallel reviewers + one adversarial verifier were run over the repo; every claim below was verified against the actual files.
 

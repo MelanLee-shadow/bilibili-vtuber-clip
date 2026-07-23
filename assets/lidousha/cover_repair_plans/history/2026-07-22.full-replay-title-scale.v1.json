@@ -1,5 +1,8 @@
 {
   "schema_version": "reviewed-cover-text-reoverlay-plan.v1",
+  "artifact_lifecycle": "HISTORICAL_EVIDENCE_ONLY",
+  "do_not_execute": true,
+  "historical_note": "Superseded title re-overlay evidence. Current title and cover must be rebuilt from the exact recovery package.",
   "date": "2026-07-22",
   "authority": "Ivan 2026-07-22: the latest talk cover title is far too small relative to the frame; reuse the already-approved no-text AI background, replace only the local text overlay with the reviewed large banner copy, and do not upload",
   "upload_enabled": false,

@@ -600,6 +600,14 @@ def test_discover_segments_unions_visual_songs_and_attaches_title_hint(tmp_path,
     monkeypatch.setattr(runner, "bcut_transcribe", lambda *_args: srt)
     monkeypatch.setattr(runner, "find_danmaku_xml", lambda _segment: None)
     monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda *_args, **_kwargs: {
+            "structured_chat_required": False,
+            "chat_binding_status": "NOT_REGISTERED",
+        },
+    )
     monkeypatch.setattr(runner, "danmaku_hints", lambda _xml: None)
     monkeypatch.setattr(runner, "danmaku_count_in", lambda *_args: 0)
     monkeypatch.setattr(runner, "ffprobe_ms", lambda _segment: 700_000)
@@ -638,6 +646,106 @@ def test_discover_segments_unions_visual_songs_and_attaches_title_hint(tmp_path,
     assert visual_only["title_hint"] == "太阳系disco"
     assert len(state["song_quarantine_intervals"]) == 2
     assert state["visual_song_seen_entries"] == ["list:10:晴る", "list:15:太阳系disco"]
+
+
+def test_discover_segments_calibrates_with_final_stable_candidate_id(
+    tmp_path, monkeypatch
+):
+    segment = tmp_path / "22966160_20260722-19-34-50.mp4"
+    with segment.open("wb") as target:
+        target.seek(runner.MIN_SEGMENT_BYTES)
+        target.write(b"x")
+    srt = tmp_path / "segment.srt"
+    srt.write_text(
+        "1\n00:59:33,000 --> 00:59:35,000\n金发有角妹妹\n\n"
+        "2\n01:01:03,000 --> 01:01:05,000\n男角色不熟\n",
+        encoding="utf-8",
+    )
+    original = normalize_selection_scorecard(
+        {
+            "tier": 1,
+            "tier_basis": "cp_positioning",
+            "tier_reason": "金发有角妹妹与礼墨联想、男性角色反转",
+            "tier_evidence_cues": [1, 2],
+            "dimensions": {
+                "lidousha_centrality": 4,
+                "stance_intensity": 4,
+                "audience_salience": 4,
+                "relationship_interaction": 3,
+                "persona_reversal": 4,
+                "comedic_payoff": 4,
+                "self_contained": 4,
+            },
+            "uncertainty_penalty": 1,
+            "fatigue_penalty": 0,
+        },
+        start_cue=1,
+        end_cue=2,
+    )
+    assert original is not None and original["effective_score"] == 95.25
+    candidate = SimpleNamespace(
+        anchor=SimpleNamespace(
+            candidate_id="semantictalk_3573000_3665000",
+            anchor_start_ms=3_573_000,
+            anchor_end_ms=3_665_000,
+        ),
+        boundary=SimpleNamespace(
+            resolved_start_ms=3_573_000,
+            resolved_end_ms=3_665_000,
+        ),
+        content_type_hint="talk",
+        text_preview="金发有角妹妹",
+    )
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [segment])
+    monkeypatch.setattr(runner, "bcut_transcribe", lambda *_args: srt)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _segment: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda *_args, **_kwargs: {
+            "structured_chat_required": False,
+            "chat_binding_status": "NOT_REGISTERED",
+        },
+    )
+    monkeypatch.setattr(runner, "danmaku_hints", lambda _xml: None)
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _segment: 4_000_000)
+    monkeypatch.setattr(
+        runner,
+        "recall_candidates",
+        lambda *_args: (
+            [candidate],
+            "semantic_recall",
+            {
+                candidate.anchor.candidate_id: {
+                    "hook": "金发有角妹妹与男角色反转",
+                    "confidence": 0.99,
+                    "selection_scorecard": original,
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "discover_visual_songs",
+        lambda *_args, **_kwargs: VisualSongDiscoveryResult(
+            status="READY",
+            candidates=(),
+            cache_path=str(tmp_path / "visual.json"),
+            content_fingerprint="a" * 64,
+            config_sha256="b" * 64,
+        ),
+    )
+    monkeypatch.setattr(runner, "BASE", tmp_path / "base")
+    state = {}
+
+    runner.discover_segments("2026-07-22", state)
+
+    assert state["pending_talk"][0]["cid"] == "auto_193450_3573_3665"
+    assert (
+        state["pending_talk"][0]["selection_scorecard"]["effective_score"]
+        == 80.25
+    )
 
 
 # --- song_name_candidates (Ivan 2026-07-13, talk-lane pinning) --------------
@@ -3148,7 +3256,7 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
     assert result["backfill_suppressed_by_exact_contract"]["status"] == (
         "speaker_evidence_insufficient"
     )
-    assert state["status"] == "no_delivery"
+    assert state["status"] == "recovery_incomplete"
 
 
 def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
@@ -5894,6 +6002,41 @@ def test_runtime_health_rejects_missing_tracked_speaker_profile(tmp_path, monkey
     assert runner.runtime_health_error() is None
 
 
+def test_runtime_health_rejects_invalid_selection_calibration_before_work(
+    tmp_path, monkeypatch
+):
+    from src.autoslice.selection_scorecard import SelectionCalibrationPolicyError
+
+    speaker_profile = tmp_path / "assets/lidousha/voiceprint_profile.v1.json"
+    speaker_profile.parent.mkdir(parents=True)
+    speaker_profile.write_text("{}\n", encoding="utf-8")
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / "scripts/produce_slice_package.py").write_text(
+        "# producer\n", encoding="utf-8"
+    )
+    (tmp_path / "src/autoslice").mkdir(parents=True)
+    (tmp_path / "src/autoslice/source_context_executor.py").write_text(
+        "# executor\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "HOST_VOCAL_PROFILE", speaker_profile)
+
+    def invalid_policy():
+        raise SelectionCalibrationPolicyError(
+            "SELECTION_CALIBRATION_POLICY_JSON_INVALID",
+            tmp_path / "selection.json",
+        )
+
+    monkeypatch.setattr(
+        runner, "load_selected_selection_calibration_policy", invalid_policy
+    )
+
+    assert runner.runtime_health_error() == (
+        "SELECTION_CALIBRATION_POLICY_INVALID: "
+        f"SELECTION_CALIBRATION_POLICY_JSON_INVALID: {tmp_path / 'selection.json'}"
+    )
+
+
 def test_invalid_audio_lrc_observation_gets_one_same_fingerprint_retry(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"
@@ -6780,6 +6923,95 @@ def test_recovery_malformed_exact_selection_contract_fails_closed(monkeypatch):
         runner.backlog_has_eligible_session_work(state)
 
 
+def _exact_terminal_state(*candidate_ids: str) -> dict:
+    return {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "pending_talk": [],
+        "picks": [],
+        "songs": [],
+        "talk_selection_contract": {
+            "schema_version": "talk-selection-contract.v1",
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": list(candidate_ids),
+            "source_state_sha256": "sha256:" + "a" * 64,
+            "authority": "Ivan selected the exact recovery set",
+        },
+    }
+
+
+def test_exact_terminal_projection_beats_future_retry_metadata(monkeypatch):
+    state = _exact_terminal_state("delivered", "waiting")
+    state["picks"] = [
+        {
+            "candidate_id": "delivered",
+            "status": "review_ready",
+            "bundle_lifecycle": "CURRENT",
+            "bundle_compliance": "COMPLIANT",
+            "rc": 0,
+        },
+        {
+            "candidate_id": "waiting",
+            "status": "failed",
+            "failure_recoverable": True,
+            "next_retry_at_epoch": 12_345,
+        },
+    ]
+
+    terminal = runner._project_terminal_batch_state(state)
+
+    assert terminal["retry_epoch"] == 12_345
+    assert state["status"] == "recovery_incomplete"
+    assert state["next_retry_at_epoch"] == 12_345
+    assert state["exact_talk_contract_closure"]["status"] == "INCOMPLETE"
+
+
+def test_exact_complete_projection_ignores_unrelated_retry_for_release_status():
+    state = _exact_terminal_state("delivered")
+    state["picks"] = [
+        {
+            "candidate_id": "delivered",
+            "status": "review_ready",
+            "bundle_lifecycle": "CURRENT",
+            "bundle_compliance": "COMPLIANT",
+            "rc": 0,
+        }
+    ]
+    state["songs"] = [
+        {
+            "candidate_id": "song",
+            "status": "blocked",
+            "reason_codes": ["AGY_SOURCE_CONTEXT_RUNNER_FAILED"],
+            "transient_retry_count": 1,
+            "next_retry_at_epoch": 12_345,
+        }
+    ]
+
+    runner._project_terminal_batch_state(state)
+
+    assert state["status"] == "review_ready"
+    assert state["next_retry_at_epoch"] == 12_345
+    assert state["exact_talk_contract_closure"]["status"] == "COMPLETE"
+
+
+def test_ordinary_terminal_projection_clears_stale_closure_and_retry_metadata():
+    state = {
+        "picks": [{"candidate_id": "delivered", "status": "review_ready"}],
+        "songs": [],
+        "pending_talk": [],
+        "exact_talk_contract_closure": {"status": "INCOMPLETE"},
+        "next_retry_at_epoch": 9_999,
+        "next_retry_at": "stale",
+    }
+
+    runner._project_terminal_batch_state(state)
+
+    assert state["status"] == "review_ready"
+    assert "exact_talk_contract_closure" not in state
+    assert "next_retry_at_epoch" not in state
+    assert "next_retry_at" not in state
+
+
 def test_user_selection_override_keeps_its_slot_alongside_repairs(monkeypatch):
     monkeypatch.setattr(runner, "MAX_TALK_PICKS", 5)
     monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
@@ -7202,6 +7434,8 @@ def test_process_date_does_not_auto_maintain_pre_horizon_history(monkeypatch):
         lambda _date, _state: pytest.fail("pre-horizon song must not auto-requeue"),
     )
     monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    monkeypatch.setattr(runner, "write_reports", lambda _date, _state: None)
     monkeypatch.setattr(
         runner,
         "cover_repair_needed",

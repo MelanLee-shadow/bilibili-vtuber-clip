@@ -2459,6 +2459,57 @@ def test_sender_anchored_sc_near_miss_goes_to_audio_arbitration():
     row = audit["read_aloud_arbitrations"][0]
     assert row["sender_anchored"] is True
     assert row["outcome"] == "authority_confirmed_by_audio"
+    assert row["whole_line_exact_copy_gate"]["proof_basis"] == (
+        "hash_bound_full_span_audio_verdict"
+    )
+
+
+def test_partial_sc_context_verdict_cannot_inject_unspoken_message_remainder():
+    """2026-07-22 火锅实案：0.4 coverage 只覆盖 SC 的少量词槽。
+
+    “她在念这条 SC”的上下文判断不能把未听见的其余正文整句写进字幕；只有
+    hash-bound 且逐字听出整句的音频 verdict，或近完整的转写跨度，才有权做
+    whole-line exact copy。具体昵称可继续由 entity/source-truth 槽位修复。
+    """
+
+    exact = "大N老师能别躲在后面拿烟头偷偷烫我麻麻吗；；"
+    source = _srt(
+        "谢谢邪恶守宫的SC",
+        "大N老师拿烟头烫的好",
+    )
+
+    def context_only_verifier(request):
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "canonical_entity": exact,
+            "confidence": 0.93,
+            "reason_code": "READ_ALOUD_CONFIRMED_BY_CONTEXT",
+            "verifier_id": "lidousha-cpa-read-aloud-context-v1",
+            "prompt_sha256": "sha256:" + "a" * 64,
+            "completion_sha256": "sha256:" + "b" * 64,
+        }
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact, "邪恶守宫")],
+        support_srt_texts=[source],
+        entity_verifier=context_only_verifier,
+    )
+
+    assert output == source
+    assert "能别躲在后面" not in output
+    row = audit["read_aloud_arbitrations"][0]
+    assert row["coverage"] == 0.4
+    assert row["outcome"] == "partial_evidence_no_whole_line_copy"
+    assert row["whole_line_exact_copy_gate"]["status"] == "BLOCKED_PARTIAL_EVIDENCE"
+    assert row["whole_line_exact_copy_gate"]["proof_basis"] == "partial_evidence"
+    rejected = audit["superseded_chat_proposals"][0]
+    assert rejected["reason_code"] == (
+        "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY"
+    )
+    assert rejected["allowed_followup"] == "entity_or_source_truth_slot_only"
 
 
 def test_sc_thread_danmaku_reply_is_verbatim_authority():

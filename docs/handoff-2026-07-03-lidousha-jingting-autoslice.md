@@ -1,6 +1,8 @@
 # Handoff 2026-07-03：李豆沙 7/2 录播自动切片（含二次精听）——已跑完，结果在下
 
-> **SUPERSEDED / 历史证据，勿照抄命令**：本文保留 2026-07-03 当时的作业状态和失败复盘。尤其下方 NetEase-only、手工清目录/pkill、长段 AGY 与 no-upload acceptance 命令不再是当前运行手册。当前 song/LRC 权威请读 `.agent/skills/song-lyrics-timeline-aligner/SKILL.md`、`docs/spark/2026-06-30-future-live-e2e-runbook.md` 与 `docs/reviews/2026-07-09-mebukutoki-lrc-repair.md`。
+> **SUPERSEDED / 历史证据，勿照抄命令。** 本文保留 2026-07-03 当时的状态与失败复盘；
+> NetEase-only、手工清目录/pkill、旧模型和 acceptance 命令都不是现行流程。当前入口只读
+> [pipeline/README.md](pipeline/README.md)；日期化 spark/review 同样只作证据。
 
 ## 2026-07-03 下午续篇：误诊纠正 + 工作流改造（语义召回 / 观众视角审查 / 分块精听）
 

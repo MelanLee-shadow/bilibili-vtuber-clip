@@ -299,6 +299,39 @@ authority，不能仅凭这里的词面填写 source_surface，也不能让建�
 """
 
 
+class FinalReviewAuditError(RuntimeError):
+    """The final-review discovery pass did not produce a trustworthy result."""
+
+    def __init__(self, reason_code: str, detail: str = "") -> None:
+        self.reason_code = reason_code
+        self.detail = detail
+        super().__init__(
+            reason_code if not detail else f"{reason_code}: {detail}"
+        )
+
+
+def _request_final_review_findings(
+    prompt: str,
+    *,
+    llm_call: Callable[[str], str],
+    extract_json: Callable[[str], Any],
+) -> list[object]:
+    try:
+        payload = extract_json(llm_call(prompt))
+    except Exception as exc:
+        raise FinalReviewAuditError(
+            "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE", type(exc).__name__
+        ) from exc
+    if not isinstance(payload, dict):
+        raise FinalReviewAuditError("FINAL_REVIEW_RESPONSE_ROOT_INVALID")
+    if "findings" not in payload:
+        raise FinalReviewAuditError("FINAL_REVIEW_RESPONSE_FINDINGS_MISSING")
+    raw = payload.get("findings")
+    if not isinstance(raw, list):
+        raise FinalReviewAuditError("FINAL_REVIEW_RESPONSE_FINDINGS_INVALID")
+    return raw
+
+
 def audit_final_subtitles(
     srt_text: str,
     *,
@@ -310,10 +343,9 @@ def audit_final_subtitles(
     candidate_context: Mapping[str, object] | None = None,
 ) -> list[dict[str, Any]]:
     """One reviewer pass over the final SRT; returns validated findings only."""
-
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     if not cues:
-        return []
+        raise FinalReviewAuditError("FINAL_REVIEW_INPUT_EMPTY")
     numbered = "\n".join(f"{index}. {cue.text}" for index, cue in enumerate(cues, start=1))
     prompt = _AUDIT_PROMPT.format(
         max_findings=MAX_FINDINGS,
@@ -322,11 +354,9 @@ def audit_final_subtitles(
         structured_context=(structured_context_text.strip() or "（无）"),
         candidate_context=(candidate_context_text.strip() or "（无）"),
     )
-    try:
-        payload = extract_json(llm_call(prompt))
-    except Exception:
-        return []
-    raw = payload.get("findings") if isinstance(payload, dict) else None
+    raw = _request_final_review_findings(
+        prompt, llm_call=llm_call, extract_json=extract_json
+    )
     speech_memory = (
         candidate_context.get("speech_memory")
         if isinstance(candidate_context, Mapping)
@@ -348,7 +378,7 @@ def audit_final_subtitles(
         if isinstance(entry, Mapping) and str(entry.get("memory_id") or "")
     }
     findings: list[dict[str, Any]] = []
-    for row in raw if isinstance(raw, list) else []:
+    for row in raw:
         if not isinstance(row, dict):
             continue
         try:
@@ -482,7 +512,6 @@ def audit_final_subtitles(
                     contract_error = "SPEECH_MEMORY_CANDIDATE_INVALID"
                 else:
                     memory_candidate_valid = True
-
         provenance: dict[str, Any] | None = None
         if proposed_supplied and not contract_error and source_surface:
             # 见证解析对所有自动修复类开放（2026-07-19 T1 车道）：词面在本片
@@ -534,8 +563,8 @@ def audit_final_subtitles(
                 "mutation_authorized": False,
             }
 
-        # Another cue from the same derived transcript is useful recall
-        # context, but not an independent textual authority.  Let it propose a
+        # Another cue from the same transcript is recall context, not authority.
+        # Let it propose a
         # closed candidate, then require the acoustic lane; otherwise one ASR
         # spelling can circularly certify the same error elsewhere in the
         # clip.  Glossary and structured-chat witnesses retain their existing
@@ -597,6 +626,11 @@ def audit_final_subtitles(
         findings.append(finding)
         if len(findings) >= MAX_FINDINGS:
             break
+    if raw and not findings:
+        raise FinalReviewAuditError(
+            "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID",
+            f"raw_count={len(raw)}",
+        )
     return findings
 
 

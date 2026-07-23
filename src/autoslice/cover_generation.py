@@ -25,6 +25,19 @@ from src.autoslice.cover_emote import (
     emote_catalog_prompt_block,
     normalize_emote_choice,
 )
+from src.autoslice.cover_font_paths import (
+    cover_fallback_font_candidates,
+    resolve_cover_fonts_dir,
+    resolve_primary_cover_font,
+)
+from src.autoslice.cover_text_pixel_evidence import (
+    materialize_rendered_text_pixel_evidence,
+)
+from src.autoslice.cover_title_rendering import (
+    FEED_SAFE_X0,
+    FEED_SAFE_X1,
+    materialize_title_layer_spec,
+)
 from src.autoslice.llm_client import LlmCall, extract_json_object
 
 
@@ -51,32 +64,7 @@ def _sha256(path: Path) -> str:
 
 
 def _lidousha_fontsdir(media_path: Path | None = None) -> Path | None:
-    """Resolve selected-profile fonts while retaining legacy runtime fallbacks."""
-
-    candidates: list[Path] = []
-    env_value = os.environ.get("AUTOSLICE_FONTS_DIR") or os.environ.get(
-        "LIDOUSHA_FONTS_DIR"
-    )
-    if env_value:
-        candidates.append(Path(env_value))
-    if media_path is not None:
-        for parent in [media_path.parent, *media_path.parents]:
-            candidates.append(parent / "fonts")
-    candidates.extend(
-        [
-            CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT),
-            ROOT / "assets" / "fonts",
-            ROOT / "assets",
-            Path("/app/assets/fonts"),
-            Path("/opt/bilive/app/assets/fonts"),
-            Path("/app/assets"),
-            Path("/opt/bilive/app/assets"),
-        ]
-    )
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    return None
+    return resolve_cover_fonts_dir(media_path, channel_profile=CHANNEL_PROFILE, root=ROOT)
 
 
 # --------------------------------------------------------------------------
@@ -1167,7 +1155,7 @@ _COVER_SCRIM_SOFT = {"color": (6, 12, 34), "alpha": 140, "pad": 58, "feather": 3
 # title text must stay inside the central ~1280-wide safe band x∈[320,1600]
 # (matches Bilibili's recommended 中央 1280×720 safe area, with buffer over the
 # 240px 4:3 crop). Every layout's text zone is clamped to that band.
-_COVER_SAFE_X0, _COVER_SAFE_X1 = 260, 1660  # feed 4:3 crop = 240px/side; +20 buffer
+_COVER_SAFE_X0, _COVER_SAFE_X1 = FEED_SAFE_X0, FEED_SAFE_X1
 _COVER_LAYOUT_RENDER = {
     # zone the text block fills, tilt, dark-card params (unused when backing=outline),
     # max_lines (wrap budget — MORE lines ⇒ shorter lines ⇒ BIGGER font in the narrow
@@ -1231,23 +1219,13 @@ class _CoverFontChoice(NamedTuple):
 
 
 def _cover_fallback_font_path():
-    """A cute CJK font used for the WHOLE cover when ZCOOL fails glyph coverage
-    (Ivan 2026-07-05: one cover = one uniform font — never mix fonts in a cover).
-    得意黑/SmileySans preferred; the chain below adds truly complete tails."""
+    """Return the first committed whole-cover fallback (never mix fonts)."""
     candidates = _cover_fallback_font_candidates()
     return candidates[0] if candidates else None
 
 
 def _cover_fallback_font_candidates() -> list[Path]:
-    return [
-        candidate
-        for candidate in (
-            CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT) / "SmileySans-Oblique.ttf",
-            Path("/System/Library/Fonts/Hiragino Sans GB.ttc"),
-            CHANNEL_PROFILE.delivery_root_for(ROOT) / "2026-06-29/redone_fullsong_433_travel_meaning/fonts/msyh.ttf",
-        )
-        if candidate.is_file()
-    ]
+    return cover_fallback_font_candidates(channel_profile=CHANNEL_PROFILE, root=ROOT)
 
 
 # Fonts that render specific glyphs as the WRONG SHAPE — a real glyph, not
@@ -1284,19 +1262,10 @@ def _noto_cjk_faces(collection_path: Path, *, prefer_jp: bool) -> list["_CoverFo
 def _cover_font_chain(*, prefer_jp: bool) -> list["_CoverFontChoice"]:
     """Whole-cover font candidates, cutest first, completest last.
 
-    2026-07-16 《怪獣の花唄》 published-cover case: ZCOOL lacked 獣, the cover
-    swapped to SmileySans, and SmileySans ALSO lacks 獣 — its stylised .notdef
-    glyph shipped on a live cover because only ZCOOL was ever glyph-checked.
-    Every chain member is now checked, and the tail members are plain but
-    complete system CJK fonts (Noto CJK on free/Linux)."""
+    Every member is glyph-checked. Current packages accept only committed
+    profile fonts: a host-dependent render cannot be replayed and must fail."""
     chain: list[_CoverFontChoice] = [_CoverFontChoice(_find_cover_font())]
     chain.extend(_CoverFontChoice(path) for path in _cover_fallback_font_candidates())
-    for collection in (
-        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
-        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-    ):
-        if collection.is_file():
-            chain.extend(_noto_cjk_faces(collection, prefer_jp=prefer_jp))
     unique: list[_CoverFontChoice] = []
     seen: set[tuple[str, int]] = set()
     for choice in chain:
@@ -1335,12 +1304,16 @@ def _cover_font_for_text(cover_text, selection_audit: dict | None = None):
         badness = len(wrong_hits) + len(missing_hits)
         if best is None or badness < best[0]:
             best = (badness, choice, [*wrong_hits, *missing_hits])
-    _badness, choice, risk = best  # chain always has >=1 member (ZCOOL fail-closed)
+    _badness, choice, risk = best  # chain always has >=1 member
     if selection_audit is not None:
         selection_audit.update(
             {"font": choice.name, "rejected": rejected, "glyph_risk": risk}
         )
-    return choice
+    raise RuntimeError(
+        "COVER_FONT_GLYPH_COVERAGE_MISSING: "
+        + "".join(risk)
+        + f" (best committed font: {choice.name})"
+    )
 
 
 def _cover_missing_checker(font_choice):
@@ -1911,13 +1884,40 @@ def _overlay_lidousha_cover_title(
         max_w = max(max_w, width)
         total_h += height + line["gap"]
     pad = 90
-    layer = Image.new("RGBA", (int(max(1, max_w + pad * 2)), int(max(1, total_h + pad))), (0, 0, 0, 0))
-    layer_draw = ImageDraw.Draw(layer)
-    y = pad // 2
-    for line, (fonts, outlines, width, height) in zip(lines, meta):
-        x = (layer.width - width) / 2
-        _cover_draw_layered(layer_draw, x, y, line["segs"], fonts, outlines, outlines[0][0])
-        y += height + line["gap"]
+    layer_size = (
+        int(max(1, max_w + pad * 2)),
+        int(max(1, total_h + pad)),
+    )
+    font_file_path, font_face_index = (
+        (font_path.path, font_path.face_index)
+        if isinstance(font_path, _CoverFontChoice)
+        else (Path(font_path), 0)
+    )
+    render_lines = [
+        {
+            "font_size": line["size"],
+            "gap": line["gap"],
+            "width": width,
+            "height": height,
+            "segments": [
+                {"text": text, "fill": list(fill)}
+                for text, fill in line["segs"]
+            ],
+            "outlines": [
+                {"width": int(stroke_width), "color": list(color)}
+                for stroke_width, color in outlines
+            ],
+        }
+        for line, (_fonts, outlines, width, height) in zip(lines, meta)
+    ]
+    layer, title_render_spec = materialize_title_layer_spec(
+        font_path=font_file_path,
+        font_face_index=font_face_index,
+        layer_size=layer_size,
+        angle_degrees=angle,
+        render_lines=render_lines,
+        top_pad=pad // 2,
+    )
     font_size = max(line["size"] for line in lines)
     if not art_direction.is_song and font_size < COVER_MIN_TALK_FONT_SIZE:
         raise ValueError(
@@ -1937,11 +1937,6 @@ def _overlay_lidousha_cover_title(
         )
     elif _COVER_TEXT_BACKING == "glow" and bbox:
         backing = _build_cover_glow(layer)
-    if angle:
-        layer = layer.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
-        if backing is not None:
-            backing = backing.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
-
     x0, y0, x1, y1 = zone
     paste_x = int(x0 + (x1 - x0 - layer.width) / 2)
     paste_y = int(y0 + (y1 - y0 - layer.height) / 2)
@@ -1949,9 +1944,25 @@ def _overlay_lidousha_cover_title(
         canvas = Image.new("RGBA", image.size, (0, 0, 0, 0))
         canvas.paste(backing, (paste_x, paste_y), backing)
         image = Image.alpha_composite(image.convert("RGBA"), canvas).convert("RGB")
-    image.paste(layer, (paste_x, paste_y), layer)
+    pre_overlay_path = final_cover_path.with_name(
+        final_cover_path.name.removesuffix(".png") + ".pre-overlay.png"
+    )
     final_cover_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(pre_overlay_path)
+    image.paste(layer, (paste_x, paste_y), layer)
     image.save(final_cover_path)
+    rendered_text = "".join(
+        "".join(seg[0] for seg in line["segs"]) for line in lines
+    )
+    rendered_text_pixels = materialize_rendered_text_pixel_evidence(
+        final_cover_path=final_cover_path,
+        pre_overlay_path=pre_overlay_path,
+        font_path=font_file_path,
+        render_spec=title_render_spec,
+        paste_xy=(paste_x, paste_y),
+        font_size=font_size,
+        rendered_text=rendered_text,
+    )
     return {
         "font": font_path.name if font_path is not None else "PIL-default",
         "font_selection": font_selection,
@@ -1974,27 +1985,15 @@ def _overlay_lidousha_cover_title(
         "cover_text_mode": "punch" if punch_lines else "full",
         "cover_punch": list(punch_lines),
         "rendered_lines": ["".join(seg[0] for seg in line["segs"]) for line in lines],
+        "rendered_text_pixels": rendered_text_pixels,
+        "pre_overlay_path": str(pre_overlay_path),
+        "pre_overlay_sha256": rendered_text_pixels["pre_overlay_sha256"],
         "text_backing": _COVER_TEXT_BACKING,
         "scrim": backing is not None,
     }
 
 
 def _find_cover_font() -> Path:
-    """Use the selected profile's ZCOOL cover title font. Fail closed:
-    a silently substituted default font shipped wrong-font covers once
-    (2026-07-04); a missing font must block the cover, not degrade it."""
-
-    candidates = [
-        CHANNEL_PROFILE.asset_directory("fonts", repo_root=ROOT) / "ZCOOLKuaiLe-Regular.ttf",
-        Path("/opt/bilive/app/assets/fonts/ZCOOLKuaiLe-Regular.ttf"),
-        Path("/app/assets/fonts/ZCOOLKuaiLe-Regular.ttf"),
-    ]
-    fontsdir = _lidousha_fontsdir(None)
-    if fontsdir is not None:
-        candidates.insert(0, fontsdir / "ZCOOLKuaiLe-Regular.ttf")
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError(
-        "COVER_FONT_MISSING: ZCOOLKuaiLe-Regular.ttf not found in the selected profile fonts"
+    return resolve_primary_cover_font(
+        channel_profile=CHANNEL_PROFILE, root=ROOT, fontsdir=_lidousha_fontsdir(None)
     )

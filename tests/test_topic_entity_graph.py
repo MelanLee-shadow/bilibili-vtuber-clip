@@ -26,6 +26,7 @@ from src.autoslice.topic_entity_crawler import (
 from src.autoslice.topic_entity_graph import (
     TopicEntityGraphError,
     TopicEvidence,
+    build_scoped_topic_context,
     dynamic_referent_groups,
     merge_referent_groups,
     render_scoped_entity_context,
@@ -167,6 +168,18 @@ def test_family_topic_routes_to_only_its_child_subgraph():
     assert set(result.selected_work_ids) == {"work:mygo", "work:ave"}
     assert "character:other" not in result.scoped_entity_ids
     assert {"character:taki", "character:uika"} <= set(result.scoped_entity_ids)
+
+    scoped = build_scoped_topic_context(graph, result)
+    assert scoped["graph_sha256"] == "a" * 64
+    assert scoped["topics"][0]["canonical"] == "BanG Dream!"
+    assert {row["canonical"] for row in scoped["works"]} == {
+        "BanG Dream! It's MyGO!!!!!",
+        "BanG Dream! Ave Mujica",
+    }
+    assert "无关角色" not in {
+        row["canonical_zh"] for row in scoped["entities"]
+    }
+    assert all(row["sources"] for row in scoped["entities"])
 
 
 def test_explicit_work_routes_without_sibling_character_leakage():

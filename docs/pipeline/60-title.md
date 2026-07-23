@@ -3,21 +3,35 @@
 本文件是标题步骤的**分步权威**。LLM few-shot 语料与完整风格规范的强权威是
 `assets/lidousha/title_style.md`（prompt 注入用的就是它）；本文件记录硬规则与强制层位置。
 
-## 歌切标题（铁律，Ivan 2026-07-14 定、2026-07-19 重申并三层强制）
+## 共享发布标题门
+
+- 人工标题与自动标题都必须经过
+  `title_policy.canonicalize_publish_title` 和
+  `title_policy.publish_title_policy_violations`。同一门由
+  `publish_staging.py`、package auditor 与 `authorized_upload.py` 分别调用；任何入口都
+  不能靠 `title_llm_call=None` 或手工 JSON 绕过。
+- Ivan 手定标题拥有**正文 authority**：正文逐字保留，不送 LLM 改写，也不套自动标题的
+  selection-hook/机器味重写；它不拥有绕过频道 archive envelope 的权限。talk 最终统一补
+  `【李豆沙】`，song 统一成精确目录式；两者都验 12–48 字、外层空白与括号/引号栈。
+- `assets/lidousha/manual_title_overrides.v1.json` 存正文，不存一条可免检的“最终发布标题”。
+
+## 歌切标题（铁律，Ivan 2026-07-14 定、2026-07-19 重申）
 
 - 格式固定：`【李豆沙】豆沙歌，《歌名》`。《歌名》前后**不加任何字**——禁止 `｜副标题`、hook 尾巴（"《宝贝》哄你睡觉"式）、"直播间唱"衬词。
 - 《歌名》用边界/LRC 验证过的 canonical 歌名，不用 ASR 拼写。
-- 强制层（三层，改规则先改这里）：
+- 主要强制层：
   1. profile 模板 schema 校验：`src/autoslice/channel_profile.py`（`song_plain_template` 必须恰为 `song_prefix + 《{song_title}》`，违规模板加载即报错）；
-  2. 自动标题 choke point：`src/autoslice/title_policy.py::canonicalize_song_catalog_title`（带歌切前缀的自动标题一律折叠成目录式，`publish_staging._stage_publish_draft` 调用）；
-  3. song lane canonical override：`src/autoslice/song_lane.py::_apply_canonical_song_title`（完整歌切最终以 canonical 歌名定形，覆盖记录 `title_before_canonical_override` 留审计）。
+  2. song lane canonical override：`src/autoslice/song_lane.py::_apply_canonical_song_title`；
+  3. 上述共享 publication choke point、package audit 与 uploader 复验。
 
 ## 谈话标题
 
 - 权威：`assets/lidousha/title_style.md`（结构谱系、词库、违禁词）+ `assets/lidousha/title_policy.json`（违禁词/长度的确定性门，`title_policy.py` 加载）。
 - 核心原则：标题围绕李豆沙本人；替换成任何别的主播还成立的标题就是失败。
-- Ivan 手定标题一字不改（`title_llm_call=None` 直通内容策略）；结构安全门仍只做 fail-closed 校验，不擅自改写标题。
-- 自动标题强制【李豆沙】前缀、12–48 字（含前缀）、违禁词门 + selection hook 锚点校验（`publish_staging.py`）。`（）()/【】[]/《》/“”/‘’` 必须按栈正确成对；多余右符号、交叉闭合或缺右符号均记 `unbalanced_title_marks`，在任何封面调用前否决并进入有界重写，重试仍错则标题权威失败关闭。
+- 自动标题除共享门外，还受违禁词与 selection-hook 锚点约束；失败可做有界重写。
+  人工正文不自动重写，但结构/长度不合规仍 fail closed 并要求修正文档 authority。
+- `（）()/【】[]/《》/“”/‘’` 必须按栈正确成对；多余右符号、交叉闭合或缺右符号均记
+  `unbalanced_title_marks`，并在任何封面调用前否决。
 
 ## 封面嵌字与标题的关系
 

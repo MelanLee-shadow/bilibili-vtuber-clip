@@ -4,7 +4,10 @@ from pathlib import Path
 import pytest
 
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
+from src.autoslice.source_subtitle_truth import (
+    apply_source_subtitle_truth,
+    ledger_required_owner_contracts,
+)
 from src.autoslice.subtitle_fidelity import resolve_deferred_foreign_introductions
 
 
@@ -694,6 +697,51 @@ def test_required_included_truth_fails_closed_when_timeline_has_no_cue(tmp_path)
     assert audit["failures"][0]["reason_code"] == "REPLACE_CUE_TARGET_NOT_UNIQUE"
 
 
+def test_required_owner_contract_freezes_truth_beyond_semantic_end(
+    tmp_path,
+):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "late-required-truth",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 118_000,
+                "source_end_ms": 120_000,
+                "action": "replace_cue",
+                "text": "邪恶守宫",
+                "required": True,
+            }
+        ],
+    )
+    contracts = ledger_required_owner_contracts(
+        spec={
+            "semantic_end_ms": 110_000,
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 125_000,
+                }
+            ],
+        },
+        durations=[25_000],
+        ledger_path=ledger,
+    )
+
+    assert contracts == [
+        {
+            "owner_kind": "source_subtitle_truth",
+            "owner_id": "late-required-truth",
+            "required": True,
+            "source_start_ms": 118_000,
+            "source_end_ms": 120_000,
+            "local_windows": [{"start_ms": 18_000, "end_ms": 20_000}],
+        }
+    ]
+
+
 def test_required_truth_fails_closed_when_candidate_cuts_through_interval(tmp_path):
     ledger = _ledger(
         tmp_path,
@@ -1341,6 +1389,13 @@ def test_committed_ledger_repairs_chair_bullying_phrase_across_bad_split():
         (1_942_140, 1_946_210, "谢谢刚刚 PANJA 的舰长", "谢谢刚刚panoja的舰长"),
         (1_999_620, 2_001_780, "谢谢小路路口的钢镚", "谢谢小凑るう子的钢镚"),
         (2_062_300, 2_064_990, "香香烧烤拿烟头烫的好", "邪恶守宫拿烟头烫的好"),
+        (
+            732_210,
+            735_610,
+            "泉水之，就是之前1V1的时候",
+            "泉水之恩就是之前1V1的时候",
+        ),
+        (1_961_200, 1_962_320, "谢哥不互动", "邪恶守宫"),
     ],
 )
 def test_committed_ledger_preserves_new_acoustic_and_entity_truths(
@@ -1417,22 +1472,27 @@ def test_committed_ledger_repairs_qin_heterosexual_pun():
         / "subtitle_truth_ledger.v1.json"
     )
     corrected, audit = apply_source_subtitle_truth(
-        _srt_ms((0, 3_040, "其实是最包容一系列的直播间")),
+        _srt_ms(
+            (0, 2_920, "这直播间这很非常包容"),
+            (2_900, 5_940, "其实是最包容一系列的直播间"),
+        ),
         spec={
             "pieces": [
                 {
                     "remote_media": (
                         "/recordings/22966160_20260722-19-35-15.mp4"
                     ),
-                    "start_ms": 3_662_810,
+                    "start_ms": 3_659_910,
                     "end_ms": 3_665_850,
                 }
             ]
         },
-        durations=[3_040],
+        durations=[5_940],
         ledger_path=ledger,
     )
 
+    assert "这直播间还是非常包容" in corrected
+    assert "这很非常包容" not in corrected
     assert "其实是最包容异性恋的直播间" in corrected
     assert "一系列" not in corrected
     assert audit["status"] == "APPLIED"

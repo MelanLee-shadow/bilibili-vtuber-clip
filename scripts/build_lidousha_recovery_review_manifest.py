@@ -176,6 +176,13 @@ def build_manifest(
     picks = state.get("picks")
     if not isinstance(picks, list):
         raise ManifestBuildError("state picks missing")
+    pick_ids = [
+        str(row.get("candidate_id") or "")
+        for row in picks
+        if isinstance(row, dict) and row.get("candidate_id")
+    ]
+    if len(pick_ids) != len(set(pick_ids)):
+        raise ManifestBuildError("duplicate candidate pick in exact recovery state")
     picks_by_id = {
         str(row.get("candidate_id") or ""): row
         for row in picks
@@ -216,6 +223,15 @@ def build_manifest(
         stem, record_path, record = records_by_id[candidate_id]
         video = _required_file(package_root, f"{stem}.mp4")
         cover = _required_file(package_root, f"{stem}.cover.png")
+        cover_title_mask = _required_file(
+            package_root, f"{stem}.cover.title-mask.png"
+        )
+        cover_pre_overlay = _required_file(
+            package_root, f"{stem}.cover.pre-overlay.png"
+        )
+        cover_route_background = _required_file(
+            package_root, f"{stem}.cover.route-background.png"
+        )
         subtitle = _required_file(package_root, f"{stem}.srt")
         clip_context = _required_file(package_root, f"{stem}.clip-context.json")
         regression = _required_file(
@@ -231,6 +247,21 @@ def build_manifest(
         if generation.get("final_cover_sha256") != _sha256(cover):
             raise ManifestBuildError(
                 f"cover_generation final hash drift: {candidate_id}"
+            )
+        rendered_text_pixels = generation.get("rendered_text_pixels")
+        if (
+            not isinstance(rendered_text_pixels, dict)
+            or rendered_text_pixels.get("mask_sha256")
+            != _sha256(cover_title_mask)
+            or rendered_text_pixels.get("pre_overlay_sha256")
+            != _sha256(cover_pre_overlay)
+            or generation.get("pre_overlay_sha256")
+            != _sha256(cover_pre_overlay)
+            or generation.get("ai_background_sha256")
+            != _sha256(cover_route_background)
+        ):
+            raise ManifestBuildError(
+                f"cover title replay artifact hash drift: {candidate_id}"
             )
         title = _record_title(record)
         burned_preview = record.get("burned_preview")
@@ -248,6 +279,9 @@ def build_manifest(
             "mp4": video.name,
             "video": video.name,
             "cover": cover.name,
+            "cover_title_mask": cover_title_mask.name,
+            "cover_pre_overlay": cover_pre_overlay.name,
+            "cover_route_background": cover_route_background.name,
             "subtitle_srt": subtitle.name,
             "record": record_path.name,
             "clip_context": clip_context.name,

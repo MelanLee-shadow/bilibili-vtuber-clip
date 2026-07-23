@@ -126,20 +126,14 @@ python3 scripts/huozi_luanshua.py bundle \
   --output /tmp/huozi/comparison.manifest.json
 ```
 
-## 当前定版片头（2026-07-18）
+## 当前片头 roster
 
-Ivan 选定 Z1 三句版「李豆沙一直是零，不对，李豆沙一直是为爱做一」为固定谈话片头，取代
-2026-07-12 的候选 2。画面顺序也是定版契约：第一句和第三句使用右下角李豆沙区域放大的
-1920×1080 无广告画面；中间“不对”使用原始完整画幅，不做裁剪。绑定与出处都在
-`assets/lidousha/intro/branding_intro.v1.json`（`intro_id=huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2`，
-成片 SHA-256 `bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5`，时长 5754ms，
-含逐 piece 来源与 render manifest 副本）。生产媒体字节固定在
-`free:/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4`
-（repo 树之外，部署不得删除）。
-
-谈话、活字乱刷、frozen-resume 与字幕修正重交付由 `src/autoslice/branding_intro.py` 在最终烧录处
-强制前置；歌切继续按 2026-07-14 政策豁免片头。运行时找不到当前路径、intro_id 或 hash 漂移时
-fail closed，不允许回退到旧候选 2。
+谈话、活字乱刷、frozen-resume 与字幕修正重交付由
+`src/autoslice/branding_intro.py` 在最终烧录处强制前置；歌切不加片头。当前 authority 是
+`assets/lidousha/intro/branding_intro.v1.json` 内的
+`lidousha-branding-intro.v2` roster：Z1/Z2 按主片 SHA-256 稳定选择，实际 intro id、hash、
+时长与 offset 从 manifest/record 读取。文档和命令不得把 Z1 的 id/hash/时长写成唯一当前值；
+任一在册媒体缺失或漂移均 fail closed。
 
 ## 首个片头验收目标（2026-07-12 历史记录，已被当前定版替代）
 

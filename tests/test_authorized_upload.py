@@ -11,6 +11,7 @@ import pytest
 import scripts.authorized_upload as au
 
 TEST_TAGS = ["李豆沙", "虚拟主播", "直播切片"]
+VALID_TITLE = "【李豆沙】这是一个足够长度的测试标题"
 
 
 @pytest.fixture(autouse=True)
@@ -99,7 +100,19 @@ def _write_v3_package(video, cover, title, tags=None):
                 "story_contract": {
                     "schema_version": "lidousha-story-contract.v1",
                     "candidate_id": "candidate-test",
-                    "transcript_sha256": "sha256:" + "a" * 64,
+                    "transcript_sha256": "sha256:"
+                    + au.hashlib.sha256("测试".encode("utf-8")).hexdigest(),
+                },
+                "cover_generation": {
+                    "workflow": "test-image-cover",
+                    "method": "images.edit",
+                    "model": "test-image-model",
+                    "attempted_models": ["test-image-model"],
+                    "ai_background": str(cover),
+                    "ai_background_sha256": "sha256:" + au.sha256_file(cover),
+                    "final_cover": str(cover),
+                    "final_cover_sha256": "sha256:" + au.sha256_file(cover),
+                    "fallback_used": False,
                 },
                 "upload_tags": {
                     "engine": "test",
@@ -122,6 +135,14 @@ def _write_v3_package(video, cover, title, tags=None):
                         "record": record.name,
                         "subtitle_srt": subtitle.name,
                         "title": title,
+                        **(
+                            {
+                                "classification": "song",
+                                "lyrics_alignment_report": "test-fixture",
+                            }
+                            if title.startswith(au.SONG_TITLE_PREFIX)
+                            else {}
+                        ),
                     }
                 ]
             },
@@ -130,21 +151,13 @@ def _write_v3_package(video, cover, title, tags=None):
         encoding="utf-8",
     )
     audit.write_text(
-        json.dumps(
-            {
-                "passed": True,
-                "root": str(video.parent.resolve()),
-                "issues": [],
-                "issue_count": 0,
-                "blocking_issue_count": 0,
-            }
-        ),
+        json.dumps(au.audit_package(video.parent), ensure_ascii=False),
         encoding="utf-8",
     )
     return audit
 
 
-def _mk(tmp_path, title="【李豆沙】标题", quote="可以上传了"):
+def _mk(tmp_path, title=VALID_TITLE, quote="可以上传了"):
     tmp_path.mkdir(parents=True, exist_ok=True)
     video = tmp_path / "clip.mp4"
     cover = tmp_path / "clip.cover.png"
@@ -225,9 +238,9 @@ def test_make_manifest_requires_authorization_quote(tmp_path):
     cover = tmp_path / "v.cover.png"
     video.write_bytes(b"v")
     cover.write_bytes(b"c")
-    audit = _write_v3_package(video, cover, "t")
+    audit = _write_v3_package(video, cover, VALID_TITLE)
     rc = au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
-                  "--package-audit", str(audit), "--title", "t", "--quote", "   "])
+                  "--package-audit", str(audit), "--title", VALID_TITLE, "--quote", "   "])
     assert rc == 2
 
 
@@ -237,11 +250,11 @@ def _mk_with_tags(tmp_path, tags: str):
     video.write_bytes(b"v")
     cover.write_bytes(b"c")
     tag_list = [part.strip() for part in tags.split(",") if part.strip()]
-    audit = _write_v3_package(video, cover, "【李豆沙】标题", tag_list)
+    audit = _write_v3_package(video, cover, VALID_TITLE, tag_list)
     manifest = tmp_path / "v.upload_manifest.json"
     rc = au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
                   "--package-audit", str(audit),
-                  "--title", "【李豆沙】标题", "--quote", "可以上传了",
+                  "--title", VALID_TITLE, "--quote", "可以上传了",
                   "--tags", tags, "--out", str(manifest)])
     return rc, manifest
 
@@ -288,12 +301,12 @@ def test_make_manifest_auto_picks_tags_from_record_sidecar(tmp_path):
     video.write_bytes(b"v")
     cover.write_bytes(b"c")
     audit = _write_v3_package(
-        video, cover, "t", ["李豆沙", "虚拟主播", "侄女", "百合"]
+        video, cover, VALID_TITLE, ["李豆沙", "虚拟主播", "侄女", "百合"]
     )
     manifest = tmp_path / "m.json"
     assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
                     "--package-audit", str(audit),
-                    "--title", "t", "--quote", "q", "--out", str(manifest)]) == 0
+                    "--title", VALID_TITLE, "--quote", "q", "--out", str(manifest)]) == 0
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["tags"] == ["李豆沙", "虚拟主播", "侄女", "百合"]
     assert data["tags_source"].startswith("record.json:")
@@ -303,14 +316,14 @@ def test_make_manifest_cli_tags_must_match_record_and_no_tags_refuses(tmp_path):
     video, cover = tmp_path / "clip.mp4", tmp_path / "clip.cover.png"
     video.write_bytes(b"v")
     cover.write_bytes(b"c")
-    audit = _write_v3_package(video, cover, "t", ["李豆沙", "记录里的"])
+    audit = _write_v3_package(video, cover, VALID_TITLE, ["李豆沙", "记录里的"])
     m1 = tmp_path / "m1.json"
     assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
-                    "--package-audit", str(audit), "--title", "t", "--quote", "q",
+                    "--package-audit", str(audit), "--title", VALID_TITLE, "--quote", "q",
                     "--tags", "李豆沙,手给的", "--out", str(m1)]) == 2
     m2 = tmp_path / "m2.json"
     assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
-                    "--package-audit", str(audit), "--title", "t", "--quote", "q",
+                    "--package-audit", str(audit), "--title", VALID_TITLE, "--quote", "q",
                     "--no-tags", "--out", str(m2)]) == 2
 
 
@@ -318,19 +331,19 @@ def test_make_manifest_refuses_missing_or_unreadable_record_tags(tmp_path, capsy
     video, cover = tmp_path / "clip.mp4", tmp_path / "clip.cover.png"
     video.write_bytes(b"v")
     cover.write_bytes(b"c")
-    audit = _write_v3_package(video, cover, "t", [])
+    audit = _write_v3_package(video, cover, VALID_TITLE, [])
     record = sidecar = video.parent / "clip.record.json"
     data = json.loads(sidecar.read_text())
     data["upload_tags"] = {"engine": "test", "status": "FAILED", "final_tags": []}
     sidecar.write_text(json.dumps(data), encoding="utf-8")
     m1 = tmp_path / "m1.json"
     assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
-                    "--package-audit", str(audit), "--title", "t", "--quote", "q",
+                    "--package-audit", str(audit), "--title", VALID_TITLE, "--quote", "q",
                     "--out", str(m1)]) == 2
     record.write_text("{not-json", encoding="utf-8")
     m2 = tmp_path / "m2.json"
     rc = au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
-                  "--package-audit", str(audit), "--title", "t", "--quote", "q",
+                  "--package-audit", str(audit), "--title", VALID_TITLE, "--quote", "q",
                   "--out", str(m2)])
     assert rc == 2  # 坏 sidecar 必须响, 不许静默无tag
     assert "unreadable" in capsys.readouterr().err
@@ -400,7 +413,7 @@ def test_upload_runs_uploader_with_manifest_args_and_ledgers(tmp_path, capsys):
                   "--uploader", str(_stub_uploader(tmp_path))])
     assert rc == 0
     out = capsys.readouterr().out
-    assert f"got: {video.resolve()} | {cover.resolve()} | 【李豆沙】标题" in out
+    assert f"got: {video.resolve()} | {cover.resolve()} | {VALID_TITLE}" in out
     rows = _ledger_rows(ledger)
     assert [row["event"] for row in rows] == ["UPLOAD_ATTEMPT_STARTED", "UPLOAD_ATTEMPT_FINISHED"]
     assert rows[0]["attempt_id"] == rows[1]["attempt_id"]
@@ -468,7 +481,7 @@ def test_upload_holds_shared_lock_through_uploader_and_ledger_append(tmp_path, c
     probe.chmod(0o755)
     cover = tmp_path / "probe_lock.cover.png"
     cover.write_bytes(b"cover")
-    audit = _write_v3_package(probe, cover, "lock probe")
+    audit = _write_v3_package(probe, cover, VALID_TITLE)
     manifest = tmp_path / "lock-probe.upload_manifest.json"
     assert au.main(
         [
@@ -480,7 +493,7 @@ def test_upload_holds_shared_lock_through_uploader_and_ledger_append(tmp_path, c
             "--package-audit",
             str(audit),
             "--title",
-            "lock probe",
+            VALID_TITLE,
             "--quote",
             "test only",
             "--out",

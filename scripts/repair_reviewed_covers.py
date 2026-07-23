@@ -122,7 +122,16 @@ def load_plan(path: Path) -> tuple[dict[str, Any], str]:
         raise ReviewedCoverRepairError(f"reviewed cover plan path is invalid: {exc}") from exc
     raw = resolved.read_bytes()
     plan = json.loads(raw)
-    if not isinstance(plan, dict) or plan.get("schema_version") != PLAN_SCHEMA:
+    if not isinstance(plan, dict):
+        raise ReviewedCoverRepairError("reviewed cover plan must be a JSON object")
+    if (
+        plan.get("do_not_execute") is True
+        or plan.get("artifact_lifecycle") == "HISTORICAL_EVIDENCE_ONLY"
+    ):
+        raise ReviewedCoverRepairError(
+            "reviewed cover plan is historical evidence only and may not be executed"
+        )
+    if plan.get("schema_version") != PLAN_SCHEMA:
         raise ReviewedCoverRepairError(f"plan schema must be {PLAN_SCHEMA}")
     date = str(plan.get("date") or "")
     if DATE_RE.fullmatch(date) is None or plan.get("upload_enabled") is not False:
