@@ -3,6 +3,7 @@
   "candidate_id": "auto_193450_3573_3665",
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
   "path": "auto_193450_3573_3665.reviewed.srt",
   "sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
   "authority": "Ivan-reviewed 2026-07-22 rerun plus hash-bound acoustic forced-choice adjudication",

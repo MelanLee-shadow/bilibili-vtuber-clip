@@ -397,6 +397,99 @@ def test_v2_fails_closed_when_covered_baseline_cue_is_missing(tmp_path):
     )
 
 
+def test_v2_exact_interval_replays_reviewed_missing_cues_when_authorized(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt((0, 1_000, "第一句"), (1_000, 2_000, "第二句")),
+        encoding="utf-8",
+    )
+    current = _srt((0, 1_000, "随机第一句"))
+    config = _config_v2(baseline)
+    config["exact_interval_replay"] = True
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+    )
+
+    assert output == baseline.read_text(encoding="utf-8")
+    assert audit["status"] == "APPLIED"
+    assert audit["application_strategy"] == "exact_reviewed_interval_replay"
+    assert audit["timing_authority"] == (
+        "hash_bound_reviewed_srt_exact_source_interval"
+    )
+    assert audit["current_cue_count"] == 1
+    assert audit["replayed_cue_count"] == 2
+    assert audit["changed_cue_count"] == 2
+    assert audit["failures"] == []
+
+
+def test_v2_exact_interval_flag_falls_back_when_current_interval_is_trimmed(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt(
+            (0, 1_000, "旧首句"),
+            (1_000, 2_000, "旧第二句"),
+            (2_000, 3_000, "旧第三句"),
+        ),
+        encoding="utf-8",
+    )
+    config = _config_v2(
+        baseline,
+        absolute_source_start_ms=100_000,
+        absolute_source_end_ms=103_000,
+    )
+    config["exact_interval_replay"] = True
+    current = _srt(
+        (0, 1_000, "随机第二句"),
+        (1_000, 2_000, "随机第三句"),
+    )
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_start_ms=101_000,
+        current_source_end_ms=103_000,
+    )
+
+    assert "旧首句" not in output
+    assert "旧第二句" in output and "旧第三句" in output
+    assert audit["status"] == "APPLIED"
+    assert audit.get("application_strategy") is None
+
+
+def test_v2_exact_interval_replay_flag_must_be_boolean(tmp_path):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(_srt((0, 1_000, "第一句")), encoding="utf-8")
+    config = _config_v2(baseline)
+    config["exact_interval_replay"] = "yes"
+
+    output, audit = _run_v2(
+        _srt((0, 1_000, "随机第一句")),
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+    )
+
+    assert "随机第一句" in output
+    assert audit["status"] == "FAILED"
+    assert audit["failures"] == [
+        {
+            "reason_code": (
+                "REDELIVERY_BASELINE_EXACT_INTERVAL_REPLAY_INVALID"
+            )
+        }
+    ]
+
+
 def test_v2_fails_closed_on_ambiguous_alignment(tmp_path):
     baseline = tmp_path / "baseline.srt"
     baseline.write_text(

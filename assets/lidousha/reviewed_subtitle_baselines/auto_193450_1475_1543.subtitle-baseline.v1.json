@@ -3,6 +3,7 @@
   "candidate_id": "auto_193450_1475_1543",
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
   "path": "auto_193450_1475_1543.reviewed.srt",
   "sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
   "authority": "Ivan-requested 2026-07-22 clip with source-truth corrected give-up turn, bound to the current reviewed cue segmentation",

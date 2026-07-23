@@ -52,6 +52,11 @@
   漂移、覆盖边界切半 cue、漏 cue、合并/拆分、歧义映射或二次真值失败一律拒发，禁止靠重掷
   模型碰运气。只有已由 `drop_cue` 删除、无法与旧稿一一配对的静音窗会从两边同时排除；不能
   因宽真值窗内“任一 cue 已出现 required_text”就掩盖同窗其他新误听。
+- v2 manifest 只有显式声明 `exact_interval_replay=true`，且源文件 basename、SHA-256、绝对
+  起止区间全部逐字相同时，整份人工审定 SRT（含 cue 时间）才可直接重放。这防止同源重跑因
+  ASR 随机漏 cue 而删除已审字幕；随后仍必须重放 source-truth。只要区间发生裁切或扩展，就
+  回到上面的逐 cue 绝对时间映射，缺失、合并、拆分或漂移继续 fail closed，不能把审定时间轴
+  宽松套用到另一段素材。
 - 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
   path/SHA-256、JSONL 自身 origin epoch、alias timeline offset 与 `source_alias_id` 缺一不可；
   JSONL 的事件时钟不得从另一份官方媒体 basename 猜。已知 alias 但 sidecar 缺失、哈希漂移、

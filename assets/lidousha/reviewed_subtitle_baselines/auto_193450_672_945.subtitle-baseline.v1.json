@@ -3,6 +3,7 @@
   "candidate_id": "auto_193450_672_945",
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
   "path": "auto_193450_672_945.reviewed.srt",
   "sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
   "authority": "Ivan-reviewed 2026-07-22 corrections plus prior reviewed lexical and structured-chat repairs, bound to the current reviewed cue segmentation",

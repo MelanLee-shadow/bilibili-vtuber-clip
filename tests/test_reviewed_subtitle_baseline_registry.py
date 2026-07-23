@@ -25,6 +25,7 @@ def _write_asset(root: Path, candidate_id: str = "auto_1_2_3") -> tuple[Path, Pa
                 "candidate_id": candidate_id,
                 "schema_version": "subtitle-redelivery-baseline.v2",
                 "mode": "preserve_text_outside_source_truth",
+                "exact_interval_replay": True,
                 "path": baseline.name,
                 "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
                 "authority": "Ivan reviewed delivery",
@@ -56,6 +57,7 @@ def test_loads_hash_bound_v2_and_resolves_only_sibling_path(tmp_path):
     assert loaded.baseline_path == baseline.resolve()
     assert loaded.config["path"] == str(baseline.resolve())
     assert loaded.config["schema_version"] == "subtitle-redelivery-baseline.v2"
+    assert loaded.config["exact_interval_replay"] is True
     assert "registry_schema_version" not in loaded.config
     assert "candidate_id" not in loaded.config
     assert loaded.fingerprint_paths == (manifest.resolve(), baseline.resolve())
@@ -73,6 +75,10 @@ def test_loads_hash_bound_v2_and_resolves_only_sibling_path(tmp_path):
             "must not contain a path",
         ),
         (lambda doc: doc.update(source_sha256="bad"), "source sha256 is invalid"),
+        (
+            lambda doc: doc.update(exact_interval_replay="yes"),
+            "replay flag must be boolean",
+        ),
         (
             lambda doc: doc.update(absolute_source_end_ms=10_000),
             "source interval is invalid",

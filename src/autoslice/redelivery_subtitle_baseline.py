@@ -9,8 +9,11 @@ cue timing outside higher-authority source-truth windows.
 Version 1 aligns two SRTs on the same local timeline.  Version 2 also binds the
 source recording identity and projects the reviewed baseline through absolute
 source time, so a new recut may trim or extend only at clean reviewed-coverage
-boundaries.  Timing is never copied from the baseline.  Missing, split, merged,
-ambiguous, drifted, or identity-mismatched cues fail closed.
+boundaries.  Timing normally remains current.  A manifest may explicitly make
+the whole reviewed SRT authoritative when both the source identity and exact
+source interval match; this prevents a fresh ASR pass from deleting already
+reviewed cues.  Other missing, split, merged, ambiguous, drifted, or
+identity-mismatched cues still fail closed.
 """
 
 from __future__ import annotations
@@ -730,6 +733,98 @@ def _render_v2_output(
     return output, audit
 
 
+def _replay_exact_v2_interval(
+    current_srt: str,
+    *,
+    current: Sequence[SrtCue],
+    baseline: Sequence[SrtCue],
+    timeline: _V2Timeline,
+    config: Mapping[str, Any],
+    audit: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Replay reviewed cue timing only under an explicit exact-source grant."""
+
+    replay = config.get("exact_interval_replay", False)
+    if not isinstance(replay, bool):
+        return _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_BASELINE_EXACT_INTERVAL_REPLAY_INVALID",
+        )
+    if not replay or (
+        timeline.current_start_ms != timeline.baseline_start_ms
+        or timeline.current_end_ms != timeline.baseline_end_ms
+    ):
+        return None
+    duration_ms = timeline.baseline_end_ms - timeline.baseline_start_ms
+    invalid = [
+        index + 1
+        for index, cue in enumerate(baseline)
+        if cue.start_ms < 0
+        or cue.end_ms <= cue.start_ms
+        or cue.end_ms > duration_ms
+    ]
+    if invalid:
+        return _fail(
+            current_srt,
+            audit,
+            "REDELIVERY_BASELINE_EXACT_REPLAY_CUE_OUTSIDE_INTERVAL",
+            baseline_cue_indexes=invalid,
+        )
+
+    output = _render(baseline, [cue.text for cue in baseline])
+    mismatches = sum(
+        left.start_ms != right.start_ms
+        or left.end_ms != right.end_ms
+        or left.text != right.text
+        for left, right in zip(current, baseline)
+    ) + abs(len(current) - len(baseline))
+    for index, cue in enumerate(baseline, start=1):
+        absolute_start_ms = timeline.baseline_start_ms + cue.start_ms
+        absolute_end_ms = timeline.baseline_start_ms + cue.end_ms
+        audit["mappings"].append(
+            {
+                "mapping_kind": "exact_reviewed_interval_replay",
+                "baseline_cue_index": index,
+                "output_cue_index": index,
+                "start_ms": cue.start_ms,
+                "end_ms": cue.end_ms,
+                "baseline_absolute_source_start_ms": absolute_start_ms,
+                "baseline_absolute_source_end_ms": absolute_end_ms,
+                "text": cue.text,
+            }
+        )
+        audit["owned_intervals"].append(
+            {"start_ms": cue.start_ms, "end_ms": cue.end_ms}
+        )
+    audit.update(
+        {
+            "status": "APPLIED" if output != current_srt else "ALREADY_SATISFIED",
+            "application_strategy": "exact_reviewed_interval_replay",
+            "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+            "current_cue_count": len(current),
+            "replayed_cue_count": len(baseline),
+            "mapped_cue_count": len(baseline),
+            "changed_cue_count": mismatches,
+            "protected_cue_count": sum(
+                _fully_protected_absolute(
+                    timeline.baseline_start_ms + cue.start_ms,
+                    timeline.baseline_start_ms + cue.end_ms,
+                    timeline.protected_windows,
+                )
+                for cue in baseline
+            ),
+            "protected_windows_replayed_for_later_source_truth": bool(
+                timeline.protected_windows
+            ),
+            "omitted_baseline_cue_count": 0,
+            "uncovered_current_cue_count": 0,
+            "output_sha256": _sha256_bytes(output.encode("utf-8")),
+        }
+    )
+    return output, audit
+
+
 def _apply_v2(
     current_srt: str,
     *,
@@ -755,6 +850,17 @@ def _apply_v2(
     )
     if timeline is None:
         return current_srt, audit
+
+    exact_replay = _replay_exact_v2_interval(
+        current_srt,
+        current=current,
+        baseline=baseline,
+        timeline=timeline,
+        config=config,
+        audit=audit,
+    )
+    if exact_replay is not None:
+        return exact_replay
 
     rows = _classify_v2_cues(
         current=current,

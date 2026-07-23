@@ -3,6 +3,7 @@
   "candidate_id": "auto_193450_1863_2056",
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
   "path": "auto_193450_1863_2056.reviewed.srt",
   "sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
   "authority": "Ivan-reviewed 2026-07-22 rerun plus canonical structured-chat names",

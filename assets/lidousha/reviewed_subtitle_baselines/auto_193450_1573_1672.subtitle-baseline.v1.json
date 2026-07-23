@@ -3,6 +3,7 @@
   "candidate_id": "auto_193450_1573_1672",
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
   "path": "auto_193450_1573_1672.reviewed.srt",
   "sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
   "authority": "Ivan-approved 2026-07-22 delivery plus source-truth and structured-chat corrections, bound to the current reviewed cue segmentation",

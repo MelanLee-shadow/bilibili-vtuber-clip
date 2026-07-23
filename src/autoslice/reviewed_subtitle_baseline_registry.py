@@ -137,6 +137,10 @@ def load_candidate_reviewed_subtitle_baseline(
     _required_text(document.get("authority"), label="baseline authority")
 
     if schema_version == "subtitle-redelivery-baseline.v2":
+        if not isinstance(document.get("exact_interval_replay", False), bool):
+            raise ReviewedSubtitleBaselineRegistryError(
+                "baseline exact interval replay flag must be boolean"
+            )
         basename = _required_text(
             document.get("source_recording_basename"),
             label="baseline source recording basename",
