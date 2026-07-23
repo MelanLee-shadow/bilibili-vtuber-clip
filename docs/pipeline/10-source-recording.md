@@ -85,10 +85,22 @@
 
 ## 源健康与恢复
 
-- `scripts/free_mount_watchdog.sh` 是 CloudDrive FUSE 恢复权威：挂载失败时
-  lazy-unmount → 重启 `clouddrive2` → 等宿主恢复 → 同时重启
-  `bililive_recorder` 与 `bilive_record` 重新 bind mount → 分别验证
-  `/rec/Videos` 与 `/app/Videos` 可读。任一消费者未恢复都只能报 PARTIAL。
+- `scripts/free_mount_watchdog.sh` 是 CloudDrive FUSE 与录制消费者的唯一启动/
+  恢复门。健康判定必须同时满足：`findmnt -T` 的精确 TARGET 是 CloudDrive
+  根、FSTYPE 是 `fuse*`、SOURCE 是 `CloudFS`，并且录制目录可读；普通 ext4
+  目录即使 `ls` 成功也必须判失败。
+- `bilive_record`、`bililive_adapter`、`bililive_recorder` 固定使用
+  `restart: on-failure:5`，不得用 `always`/`unless-stopped` 在 Docker daemon
+  重启时抢在 CloudDrive 前启动。宿主
+  `bilive-recording-consumers.service` 在开机时运行 watchdog；只有真实 CloudFS
+  挂载通过后才 `docker compose up --force-recreate`；该 unit 以
+  `PartOf=docker.service` 跟随显式 Docker service restart，并逐容器用
+  `stat -f` 验证 `/app/Videos`、`/adapter/Videos`、`/rec/Videos` 都是 FUSE。
+- 挂载失败时顺序固定为：先停三个消费者 → lazy-unmount → 将未挂载目录中的
+  系统盘残件移动到 `/opt/bilive/mount-fallback-quarantine/` 保留 → 重启
+  `clouddrive2` → 等真实 CloudFS → recreate 三个消费者 → 逐容器验证。不得
+  删除残件，也不得在 ext4 目录上继续录制。`bilive-record-health` cron 也须先
+  通过同一 `--probe-only` 门，避免健康报告反过来制造非空挂载点。
 - 活着的容器不等于健康录制。直播中两轮无字节增长、状态过期、弹幕/录制长期
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行

@@ -1,0 +1,21 @@
+[Unit]
+Description=Start bilive recording consumers after a verified CloudDrive mount
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+PartOf=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+Environment=AUTOSLICE_WATCHDOG_COOLDOWN_S=0
+Environment=AUTOSLICE_WATCHDOG_MOUNT_RETRIES=60
+Environment=AUTOSLICE_WATCHDOG_RETRY_SLEEP_S=2
+ExecStart=/usr/bin/flock -w 300 /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh
+TimeoutStartSec=300
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
