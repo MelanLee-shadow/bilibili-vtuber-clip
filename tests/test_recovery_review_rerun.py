@@ -8,6 +8,7 @@ from src.autoslice import delivery_recovery
 
 OLD = "sha256:" + "1" * 64
 NEW = "sha256:" + "2" * 64
+ALT_NEW = "sha256:" + "4" * 64
 STATE_SHA = "sha256:" + "3" * 64
 
 
@@ -215,6 +216,11 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
         },
     }
     state["talk_backlog"] = [higher_baseline, brainflick]
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "talk_pipeline_fingerprint",
+        lambda cid: ALT_NEW if cid == "auto_brainflick" else NEW,
+    )
 
     plan = delivery_recovery.plan_current_talk_recovery_rerun(
         date,
@@ -232,10 +238,18 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
         given_end_authority="Ivan-reviewed semantic closure 2026-07-22",
         expected_source_state_sha256=STATE_SHA,
         expected_old_fingerprint=OLD,
-        expected_new_fingerprint=NEW,
+        expected_new_fingerprints_by_candidate={
+            "auto_current": NEW,
+            "auto_brainflick": ALT_NEW,
+        },
     )
 
-    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v3"
+    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v4"
+    assert plan["new_pipeline_fingerprint"] is None
+    assert plan["new_pipeline_fingerprints_by_candidate"] == {
+        "auto_brainflick": ALT_NEW,
+        "auto_current": NEW,
+    }
     assert plan["queued_count"] == 2
     assert [row["cid"] for row in state["pending_talk"]] == [
         "auto_current",

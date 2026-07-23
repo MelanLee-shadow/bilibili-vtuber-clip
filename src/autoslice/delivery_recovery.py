@@ -155,7 +155,8 @@ def plan_current_talk_recovery_rerun(
     candidate_ids: list[str] | tuple[str, ...],
     expected_source_state_sha256: str,
     expected_old_fingerprint: str,
-    expected_new_fingerprint: str,
+    expected_new_fingerprint: str | None = None,
+    expected_new_fingerprints_by_candidate: dict[str, str] | None = None,
     suppressed_candidate_ids: list[str] | tuple[str, ...] = (),
     replacement_candidate_ids: list[str] | tuple[str, ...] = (),
     user_suppression_authority: str | None = None,
@@ -190,11 +191,6 @@ def plan_current_talk_recovery_rerun(
         raise RecoveryReviewRerunError("RECOVERY_RERUN_SOURCE_STATE_SHA_INVALID")
     if not _PIPELINE_FINGERPRINT_RX.fullmatch(expected_old_fingerprint):
         raise RecoveryReviewRerunError("RECOVERY_RERUN_OLD_FINGERPRINT_INVALID")
-    if not _PIPELINE_FINGERPRINT_RX.fullmatch(expected_new_fingerprint):
-        raise RecoveryReviewRerunError("RECOVERY_RERUN_NEW_FINGERPRINT_INVALID")
-    if expected_old_fingerprint == expected_new_fingerprint:
-        raise RecoveryReviewRerunError("RECOVERY_RERUN_FINGERPRINT_UNCHANGED")
-
     requested = [str(candidate_id or "") for candidate_id in candidate_ids]
     suppressed = [
         str(candidate_id or "") for candidate_id in suppressed_candidate_ids
@@ -227,6 +223,39 @@ def plan_current_talk_recovery_rerun(
         )
     boundary_overrides = dict(given_end_ms_by_candidate or {})
     queued_ids = requested_set | replacement_set
+    explicit_new_fingerprints = dict(
+        expected_new_fingerprints_by_candidate or {}
+    )
+    if expected_new_fingerprint is not None and explicit_new_fingerprints:
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_NEW_FINGERPRINT_AUTHORITY_AMBIGUOUS"
+        )
+    if expected_new_fingerprint is not None:
+        if not _PIPELINE_FINGERPRINT_RX.fullmatch(expected_new_fingerprint):
+            raise RecoveryReviewRerunError(
+                "RECOVERY_RERUN_NEW_FINGERPRINT_INVALID"
+            )
+        new_fingerprint_by_candidate = {
+            cid: expected_new_fingerprint for cid in queued_ids
+        }
+    else:
+        new_fingerprint_by_candidate = explicit_new_fingerprints
+        if set(new_fingerprint_by_candidate) != queued_ids:
+            raise RecoveryReviewRerunError(
+                "RECOVERY_RERUN_NEW_FINGERPRINT_MAP_MUST_EQUAL_QUEUE"
+            )
+        if any(
+            _PIPELINE_FINGERPRINT_RX.fullmatch(value) is None
+            for value in new_fingerprint_by_candidate.values()
+        ):
+            raise RecoveryReviewRerunError(
+                "RECOVERY_RERUN_NEW_FINGERPRINT_INVALID"
+            )
+    if any(
+        value == expected_old_fingerprint
+        for value in new_fingerprint_by_candidate.values()
+    ):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_FINGERPRINT_UNCHANGED")
     if set(boundary_overrides) - queued_ids:
         raise RecoveryReviewRerunError(
             "RECOVERY_RERUN_GIVEN_END_CANDIDATE_NOT_QUEUED"
@@ -289,13 +318,14 @@ def plan_current_talk_recovery_rerun(
     superseded: list[dict] = []
     for cid in requested:
         record = by_id[cid]
+        expected_new = new_fingerprint_by_candidate[cid]
         try:
             current = _runner.talk_pipeline_fingerprint(cid)
         except ValueError as exc:
             raise RecoveryReviewRerunError(
                 f"RECOVERY_RERUN_NEW_FINGERPRINT_UNAVAILABLE:{cid}"
             ) from exc
-        if current != expected_new_fingerprint:
+        if current != expected_new:
             raise RecoveryReviewRerunError(
                 f"RECOVERY_RERUN_NEW_FINGERPRINT_MISMATCH:{cid}"
             )
@@ -314,7 +344,7 @@ def plan_current_talk_recovery_rerun(
         archived = copy.deepcopy(record)
         archived["bundle_lifecycle"] = "SUPERSEDED"
         archived["bundle_compliance"] = "STALE_PIPELINE"
-        archived["superseded_by"] = expected_new_fingerprint
+        archived["superseded_by"] = expected_new
         archived["retry_reason"] = "explicit_recovery_review_pipeline_rerun"
         archived["source_state_sha256"] = expected_source_state_sha256
         superseded.append(archived)
@@ -338,13 +368,14 @@ def plan_current_talk_recovery_rerun(
     selection_override_events: list[dict[str, object]] = []
     for replacement_ordinal, cid in enumerate(replacements, start=1):
         record = backlog_by_id[cid]
+        expected_new = new_fingerprint_by_candidate[cid]
         try:
             current = _runner.talk_pipeline_fingerprint(cid)
         except ValueError as exc:
             raise RecoveryReviewRerunError(
                 f"RECOVERY_RERUN_NEW_FINGERPRINT_UNAVAILABLE:{cid}"
             ) from exc
-        if current != expected_new_fingerprint:
+        if current != expected_new:
             raise RecoveryReviewRerunError(
                 f"RECOVERY_RERUN_NEW_FINGERPRINT_MISMATCH:{cid}"
             )
@@ -416,13 +447,21 @@ def plan_current_talk_recovery_rerun(
         selection_override_events
     )
     state["status"] = "recovery_rerun_queued"
+    unique_new_fingerprints = set(new_fingerprint_by_candidate.values())
     plan = {
-        "schema_version": "recovery-review-talk-rerun-plan.v3",
+        "schema_version": "recovery-review-talk-rerun-plan.v4",
         "date": date,
         "upload_allowed": False,
         "source_state_sha256": expected_source_state_sha256,
         "old_pipeline_fingerprint": expected_old_fingerprint,
-        "new_pipeline_fingerprint": expected_new_fingerprint,
+        "new_pipeline_fingerprint": (
+            next(iter(unique_new_fingerprints))
+            if len(unique_new_fingerprints) == 1
+            else None
+        ),
+        "new_pipeline_fingerprints_by_candidate": dict(
+            sorted(new_fingerprint_by_candidate.items())
+        ),
         "candidate_ids": requested,
         "suppressed_candidate_ids": suppressed,
         "replacement_candidate_ids": replacements,

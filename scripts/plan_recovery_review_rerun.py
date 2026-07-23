@@ -73,7 +73,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--date", required=True)
     parser.add_argument("--expected-source-state-sha256", required=True)
     parser.add_argument("--expected-old-fingerprint", required=True)
-    parser.add_argument("--expected-new-fingerprint", required=True)
+    parser.add_argument("--expected-new-fingerprint")
+    parser.add_argument(
+        "--expected-new-fingerprint-by-candidate",
+        action="append",
+        default=[],
+        metavar="CANDIDATE_ID=SHA256",
+        help=(
+            "candidate-scoped current fingerprint; repeat for every queued "
+            "candidate when fingerprints differ"
+        ),
+    )
     parser.add_argument(
         "--candidate-id", action="append", required=True, dest="candidate_ids"
     )
@@ -122,6 +132,23 @@ def _given_end_overrides(values: list[str]) -> dict[str, int]:
     return parsed
 
 
+def _fingerprint_overrides(values: list[str]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for value in values:
+        candidate_id, separator, fingerprint = str(value).partition("=")
+        if (
+            separator != "="
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate_id) is None
+            or FINGERPRINT_RX.fullmatch(fingerprint) is None
+            or candidate_id in parsed
+        ):
+            raise SystemExit(
+                f"invalid --expected-new-fingerprint-by-candidate: {value}"
+            )
+        parsed[candidate_id] = fingerprint
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date) is None:
@@ -129,10 +156,23 @@ def main(argv: list[str] | None = None) -> int:
     for label, value in (
         ("source state", args.expected_source_state_sha256),
         ("old pipeline", args.expected_old_fingerprint),
-        ("new pipeline", args.expected_new_fingerprint),
     ):
         if FINGERPRINT_RX.fullmatch(value) is None:
             raise SystemExit(f"invalid {label} fingerprint")
+    if args.expected_new_fingerprint is not None and (
+        FINGERPRINT_RX.fullmatch(args.expected_new_fingerprint) is None
+    ):
+        raise SystemExit("invalid new pipeline fingerprint")
+    new_fingerprints_by_candidate = _fingerprint_overrides(
+        args.expected_new_fingerprint_by_candidate
+    )
+    if bool(args.expected_new_fingerprint) == bool(
+        new_fingerprints_by_candidate
+    ):
+        raise SystemExit(
+            "provide exactly one of --expected-new-fingerprint or "
+            "--expected-new-fingerprint-by-candidate"
+        )
 
     source_base = args.source_base.resolve()
     target_base = args.target_base.resolve()
@@ -189,6 +229,9 @@ def main(argv: list[str] | None = None) -> int:
             expected_source_state_sha256=args.expected_source_state_sha256,
             expected_old_fingerprint=args.expected_old_fingerprint,
             expected_new_fingerprint=args.expected_new_fingerprint,
+            expected_new_fingerprints_by_candidate=(
+                new_fingerprints_by_candidate
+            ),
             suppressed_candidate_ids=args.suppressed_candidate_ids,
             replacement_candidate_ids=args.replacement_candidate_ids,
             user_suppression_authority=args.suppression_authority,
