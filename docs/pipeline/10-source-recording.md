@@ -63,8 +63,9 @@
   + fsync 写入 0600 journal，再快速返回 204。Webhook 不到、路径复用、
   `FileOpening` 未关闭、事件大小不符或事件账本损坏都只能 fail closed。
 - 只有 `streaming=false` 且 `recording=false` 时才允许封口。adapter 只处理
-  迁移水位之后的文件，或带官方 `BililiveRecorder` XML 签名的文件，避免误扫
-  历史 blrec 残件。
+  迁移水位之后的文件，或已进入严格校验 Webhook 账本的精确相对路径，避免
+  误扫历史 blrec 残件。空闲状态不得为了识别生产者而逐个读取历史 XML，也
+  不得反复 ffprobe 历史 FLV；CloudDrive 冷文件读取会阻塞状态心跳。
 - 封口顺序固定为：
 
   1. FLV stream-copy 到同文件系统隐藏 staging 的 UUID `.mp4`；

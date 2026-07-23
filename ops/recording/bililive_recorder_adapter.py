@@ -19,7 +19,7 @@ import argparse
 import base64
 import errno
 import fcntl
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -895,28 +895,40 @@ def load_or_initialize_state(
     return payload
 
 
-def _is_official_xml(path: Path) -> bool:
-    try:
-        with path.open("rb") as handle:
-            prefix = handle.read(128 * 1024)
-    except OSError:
-        return False
-    return b"<BililiveRecorder" in prefix and b"<BililiveRecorderRecordInfo" in prefix
-
-
 def discover_managed_flvs(
     record_root: Path,
     *,
     room_id: int,
     managed_since_epoch: float,
+    explicit_relative_paths: Iterable[str] = (),
 ) -> list[Path]:
+    """Find post-migration FLVs plus exact paths already owned by the webhook ledger.
+
+    Do not inspect every historical XML file to identify its producer. On
+    CloudDrive an uncached 9 KiB XML read can block for minutes, making the
+    recorder status stale. FileOpening/FileClosed paths have already passed
+    strict room/date/filename validation, so they are the bounded authority for
+    official files whose remote mtime is unexpectedly old.
+    """
+
     filename_rx = re.compile(FILENAME_RX_TEMPLATE.format(room=re.escape(str(room_id))))
+    # Recorder directories use Asia/Shanghai dates. A one-day UTC lookback is
+    # deliberately conservative around timezone/midnight boundaries while
+    # bounding CloudDrive metadata traversal to the migration window.
+    managed_date_floor = (
+        datetime.fromtimestamp(managed_since_epoch, tz=timezone.utc).date()
+        - timedelta(days=1)
+    ).isoformat()
     candidates: list[Path] = []
     try:
         date_dirs = sorted(
             path
             for path in record_root.iterdir()
-            if path.is_dir() and re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.name)
+            if (
+                path.name >= managed_date_floor
+                and re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.name)
+                and path.is_dir()
+            )
         )
     except OSError as exc:
         raise AdapterError(f"recording root unreadable: {record_root}: {exc}") from exc
@@ -930,8 +942,26 @@ def discover_managed_flvs(
                     new_enough = flv.stat().st_mtime >= managed_since_epoch
                 except OSError:
                     continue
-                if new_enough or _is_official_xml(flv.with_suffix(".xml")):
+                if new_enough:
                     candidates.append(flv)
+        except OSError:
+            continue
+
+    for relative in explicit_relative_paths:
+        path = PurePosixPath(str(relative))
+        parts = path.parts
+        if (
+            path.is_absolute()
+            or ".." in parts
+            or len(parts) != 2
+            or not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", parts[0])
+            or not filename_rx.fullmatch(parts[1])
+        ):
+            raise AdapterError(f"webhook ledger path is invalid: {relative}")
+        source = record_root / parts[0] / parts[1]
+        try:
+            if source.is_file():
+                candidates.append(source)
         except OSError:
             continue
     return sorted(set(candidates))
@@ -942,10 +972,20 @@ def _newest_source_probe(
     room_id: int,
     *,
     ffprobe_bin: str = "ffprobe",
+    include_media: bool = True,
 ) -> dict[str, Any] | None:
     try:
+        date_dirs = sorted(
+            path
+            for path in record_root.iterdir()
+            if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.name) and path.is_dir()
+        )[-2:]
         sources = sorted(
-            record_root.glob(f"20??-??-??/{room_id}_*.flv"),
+            (
+                source
+                for date_dir in date_dirs
+                for source in date_dir.glob(f"{room_id}_*.flv")
+            ),
             key=lambda path: path.stat().st_mtime_ns,
             reverse=True,
         )
@@ -963,7 +1003,7 @@ def _newest_source_probe(
         "size_bytes": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
     }
-    if stat.st_size >= 256 * 1024:
+    if include_media and stat.st_size >= 256 * 1024:
         try:
             result["media"] = probe_stream_shape(source, ffprobe_bin=ffprobe_bin)
         except AdapterError as exc:
@@ -992,7 +1032,20 @@ def build_status(
     current_size = int(recording_stats.get("currentFileSize") or 0)
     total_input_bytes = int(recording_stats.get("totalInputBytes") or 0)
     total_output_bytes = int(recording_stats.get("totalOutputBytes") or 0)
-    newest = _newest_source_probe(record_root, room_id, ffprobe_bin=ffprobe_bin)
+    # An idle adapter must not traverse or pull historical CloudDrive files
+    # merely to refresh a status heartbeat. During recording, inspect only the
+    # two newest date directories; the current source is local/hot and objective
+    # codec/resolution telemetry is worth the bounded probe.
+    newest = (
+        _newest_source_probe(
+            record_root,
+            room_id,
+            ffprobe_bin=ffprobe_bin,
+            include_media=True,
+        )
+        if recording
+        else None
+    )
     if newest and current_size <= 0 and recording:
         current_size = int(newest["size_bytes"])
     network_mbps = float(io_stats.get("networkMbps") or 0.0)
@@ -1177,12 +1230,15 @@ def run_once(args: argparse.Namespace) -> int:
         print(json.dumps(status, ensure_ascii=False))
         return 0
 
+    closed_files = state.get("webhook_files") or {}
     candidates = discover_managed_flvs(
         args.record_root,
         room_id=args.room,
         managed_since_epoch=float(state["managed_since_epoch"]),
+        explicit_relative_paths=(
+            closed_files.keys() if isinstance(closed_files, dict) else ()
+        ),
     )
-    closed_files = state.get("webhook_files") or {}
     eligible: list[Path] = []
     for source in candidates:
         relative = str(source.relative_to(args.record_root))

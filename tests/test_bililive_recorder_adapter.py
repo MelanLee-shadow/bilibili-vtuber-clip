@@ -247,7 +247,7 @@ def test_inactive_room_must_stay_inactive_before_finalization(
     assert state["inactive_since_epoch"] == 1000.0
 
 
-def test_discovery_excludes_old_non_recorder_flv_but_accepts_official_xml(
+def test_discovery_does_not_read_old_xml_without_webhook_ownership(
     tmp_path: Path,
 ) -> None:
     date_dir = tmp_path / "2026-07-23"
@@ -264,7 +264,57 @@ def test_discovery_excludes_old_non_recorder_flv_but_accepts_official_xml(
         managed_since_epoch=max(legacy.stat().st_mtime, official.stat().st_mtime) + 60,
     )
 
+    assert found == []
+
+
+def test_discovery_accepts_old_file_from_validated_webhook_ledger(
+    tmp_path: Path,
+) -> None:
+    date_dir = tmp_path / "2026-07-23"
+    date_dir.mkdir()
+    official = date_dir / "22966160_20260723-11-00-00.flv"
+    official.write_bytes(b"official")
+
+    found = adapter.discover_managed_flvs(
+        tmp_path,
+        room_id=22966160,
+        managed_since_epoch=official.stat().st_mtime + 60,
+        explicit_relative_paths=[
+            "2026-07-23/22966160_20260723-11-00-00.flv"
+        ],
+    )
+
     assert found == [official]
+
+
+def test_idle_status_does_not_probe_historical_flv_bytes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    date_dir = tmp_path / "2026-07-23"
+    date_dir.mkdir()
+    (date_dir / "22966160_20260723-11-00-00.flv").write_bytes(b"x" * 300_000)
+    monkeypatch.setattr(
+        adapter,
+        "probe_stream_shape",
+        lambda *_args, **_kwargs: pytest.fail(
+            "idle status must not read historical media through FUSE"
+        ),
+    )
+
+    status = adapter.build_status(
+        room_id=22966160,
+        room={
+            "streaming": False,
+            "recording": False,
+            "ioStats": {},
+            "recordingStats": {},
+        },
+        now_epoch=1.0,
+        record_root=tmp_path,
+    )
+
+    assert status["latest_source"] is None
 
 
 def test_closed_source_finalization_error_keeps_downstream_fail_closed(
