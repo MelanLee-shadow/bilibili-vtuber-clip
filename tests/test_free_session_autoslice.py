@@ -1334,6 +1334,116 @@ def test_initial_producer_cover_accepts_hash_bound_source_to_delivery_copy(tmp_p
     assert not cover_repair_needed(fx["date"], rec)
 
 
+def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
+    tmp_path, monkeypatch
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    source_cover = fx["generated_cover"]
+    fx["cover"].write_bytes(source_cover.read_bytes())
+    reference = source_cover.with_name("screenshot-reference.png")
+    reference.write_bytes(b"source-frame")
+    expected_cover = fx["digest"](fx["cover"])
+    video_sha = fx["digest"](fx["mp4"])
+    generation = {
+        "title": fx["title"],
+        "method": "screenshot_direct",
+        "model": "none",
+        "image_gen_model": "none",
+        "cover_origin": "SOURCE_SCREENSHOT",
+        "image_generation_used": False,
+        "fallback_used": False,
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v1",
+            "selected_treatment": "screenshot_direct",
+            "reason": "hash-bound real stream frame has both participants",
+        },
+        "reference_image": str(reference),
+        "reference_sha256": fx["digest"](reference),
+        "screenshot_frame": {"frame_ms": 21_500},
+        "rendered_lines": ["双人截图"],
+        "final_cover": str(source_cover),
+        "final_cover_sha256": expected_cover,
+    }
+    for record_path in (fx["delivery_record"], fx["source_record"]):
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["artifact_hashes"]["cover_sha256"] = expected_cover
+        record["publish_staging"].update(
+            {
+                "cover_status": "AI_COVER_READY",
+                "cover_path": str(source_cover),
+                "cover_generation": generation,
+            }
+        )
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+    publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
+    publish["artifact_hashes"]["cover_sha256"] = expected_cover
+    publish.update(
+        {
+            "cover_status": "AI_COVER_READY",
+            "cover_path": str(source_cover),
+            "cover_generation": generation,
+        }
+    )
+    fx["publish_path"].write_text(json.dumps(publish), encoding="utf-8")
+    rec = {
+        **fx["rec"],
+        "cover_status": "AI_COVER_READY",
+        "cover_path": str(source_cover),
+        "cover_sha256": expected_cover,
+        "video_sha256": video_sha,
+        "cover_generation": generation,
+        "delivered": str(fx["mp4"]),
+    }
+
+    assert not cover_repair_needed(fx["date"], rec)
+    reference.write_bytes(b"tampered")
+    assert cover_repair_needed(fx["date"], rec)
+
+
+def test_invalid_screenshot_cover_fails_closed_before_generic_ai_repair(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64
+    )
+    mp4 = tmp_path / "clip.mp4"
+    cover = tmp_path / "clip.cover.png"
+    mp4.write_bytes(b"video")
+    cover.write_bytes(b"cover")
+    rec = {
+        "candidate_id": "auto_screenshot",
+        "status": "review_ready",
+        "title": "【李豆沙】截图路线",
+        "cover_status": "AI_COVER_READY",
+        "cover_generation": {
+            "method": "screenshot_direct",
+            "route_decision": {
+                "schema_version": "lidousha-cover-route-decision.v1",
+                "selected_treatment": "screenshot_direct",
+                "reason": "real stream frame",
+            },
+        },
+    }
+    state = {"picks": [rec], "songs": []}
+    monkeypatch.setattr(
+        runner, "delivered_paths", lambda _date, _rec: (mp4, cover)
+    )
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+
+    def forbidden_run(*_args, **_kwargs):
+        raise AssertionError("screenshot drift must never call an AI repair tool")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden_run)
+    runner.repair_covers("2026-07-22", state)
+
+    assert rec.get("cover_repair_attempts", 0) == 0
+    assert rec["cover_status"] == "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
+    assert rec["cover_integrity_status"] == (
+        "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
+    )
+
+
 def test_cover_binding_prevalidation_leaves_everything_unchanged_on_bad_active_record(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch)
     fx["source_record"].write_text("not-json", encoding="utf-8")

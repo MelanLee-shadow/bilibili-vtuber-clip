@@ -1162,7 +1162,6 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
         or not _matches_sha256(cover, expected_cover)
         or not _matches_sha256(mp4, expected_video)
         or generation.get("title") != rec.get("title")
-        or generation.get("method") != "images.edit"
         or generation.get("fallback_used") is not False
         or generation.get("final_cover_sha256") != expected_cover
     ):
@@ -1172,6 +1171,47 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
     except OSError:
         return False
     if not _matches_sha256(source_cover, expected_cover):
+        return False
+    method = str(generation.get("method") or "")
+    route_decision = generation.get("route_decision")
+    treatment = (
+        str(route_decision.get("selected_treatment") or "")
+        if isinstance(route_decision, dict)
+        else ""
+    )
+    if treatment in {"screenshot_direct", "screenshot_polish"}:
+        degraded_polish = (
+            treatment == "screenshot_polish"
+            and method == "screenshot_direct"
+            and isinstance(generation.get("screenshot_polish"), dict)
+            and generation["screenshot_polish"].get("status")
+            == "DEGRADED_TO_DIRECT"
+        )
+        valid_method = method == treatment or degraded_polish
+        rendered_lines = generation.get("rendered_lines")
+        screenshot_frame = generation.get("screenshot_frame")
+        try:
+            reference = Path(
+                str(generation.get("reference_image") or "")
+            ).resolve(strict=True)
+        except OSError:
+            return False
+        if not (
+            valid_method
+            and route_decision.get("schema_version")
+            == "lidousha-cover-route-decision.v1"
+            and bool(str(route_decision.get("reason") or "").strip())
+            and isinstance(rendered_lines, list)
+            and bool("".join(str(value) for value in rendered_lines).strip())
+            and isinstance(screenshot_frame, dict)
+            and isinstance(screenshot_frame.get("frame_ms"), int)
+            and not isinstance(screenshot_frame.get("frame_ms"), bool)
+            and _matches_sha256(
+                reference, str(generation.get("reference_sha256") or "")
+            )
+        ):
+            return False
+    elif method != "images.edit":
         return False
     try:
         documents = _active_cover_documents(

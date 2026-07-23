@@ -1128,7 +1128,7 @@ def _stage_screenshot_direct_cover(
         )
         overlay_source = poster_path
         cover_generation["screenshot_graphic_poster"] = poster_evidence
-        final_cover_path = covers_dir / f"{candidate_id}.ai-title.cover.png"
+        final_cover_path = covers_dir / f"{candidate_id}.screenshot-title.cover.png"
         overlay = _overlay_lidousha_cover_title(
             overlay_source, final_cover_path, cover_text=cover_text, art_direction=art_direction
         )
@@ -1140,6 +1140,12 @@ def _stage_screenshot_direct_cover(
                 "method": method,
                 "model": selected_model,
                 "image_gen_model": selected_model,
+                "cover_origin": (
+                    "SOURCE_SCREENSHOT"
+                    if method == "screenshot_direct"
+                    else "SOURCE_SCREENSHOT_AI_POLISH"
+                ),
+                "image_generation_used": method == "screenshot_polish",
                 "screenshot_frame": crop_evidence,
                 "reference_image": str(reference_path),
                 "reference_sha256": "sha256:" + _sha256(reference_path),

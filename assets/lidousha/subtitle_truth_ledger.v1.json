@@ -999,7 +999,9 @@
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-latin-formula-positive-r1",
       "revision_id": "r1",
-      "assertion_state": "VERIFIED_ACTIVE",
+      "assertion_state": "SUPERSEDED",
+      "superseded_by": "20260722-nancho-confrontation-drop-hallucinated-formula-r2",
+      "supersession_reason": "Ivan's later atomic review identifies this entire post-nightin interval as silence; ASR agreement cannot override a reviewed acoustic absence.",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 776470,
       "source_end_ms": 778810,
@@ -1008,6 +1010,25 @@
       "before_span": "NLL，嗯嗯",
       "evidence_class": "DUAL_INDEPENDENT_ASR_POSITIVE",
       "authority": "BCUT跨cue正向公式+Jianying同时间窗正向LLNNHHB(20260722复审)；本条不反推开场也说过该公式",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-drop-hallucinated-formula-r2",
+      "revision_id": "r2",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "supersedes": [
+        "20260722-nancho-confrontation-latin-formula-positive-r1"
+      ],
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 776470,
+      "source_end_ms": 778810,
+      "action": "drop_cue",
+      "forbidden_tokens": [
+        "LLNNHHB，是这个"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_ACOUSTIC_ABSENCE_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(最最最最喜欢的南町nightin之后该区间没有说话；LLNNHHB是对前句听不清造成的幻听)",
       "required": true
     },
     {
@@ -1267,6 +1288,24 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-heterosexual-pun-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3662810,
+      "source_end_ms": 3665850,
+      "action": "replace_cue",
+      "text": "其实是最包容异性恋的直播间",
+      "before_span": "其实是最包容一系列的直播间",
+      "forbidden_tokens": [
+        "一系列"
+      ],
+      "evidence_class": "CONTEXTUAL_PUN_RESOLUTION_PLUS_HUMAN_TITLE_ANCHOR",
+      "authority": "Ivan-stated-20260722 exact title(最包容异性恋的直播间)+whole-clip callback(男的咋了/男的不熟/非常包容) resolves the homophone as 异性恋, not semantically unrelated 一系列",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-yasashii-continuation-r1",
       "revision_id": "r1",
       "assertion_state": "VERIFIED_ACTIVE",
@@ -1418,6 +1457,14 @@
       "replacements": [
         {
           "surface": "陆医生",
+          "canonical": "露医生"
+        },
+        {
+          "surface": "露蒂丝",
+          "canonical": "露医生"
+        },
+        {
+          "surface": "露蒂斯",
           "canonical": "露医生"
         }
       ],

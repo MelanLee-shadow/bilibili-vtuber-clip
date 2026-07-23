@@ -152,6 +152,36 @@ def repair_covers(
         return
     for rec in todo:
         mp4, cover = _runner.delivered_paths(date, rec)
+        generation = rec.get("cover_generation")
+        route_decision = (
+            generation.get("route_decision")
+            if isinstance(generation, dict)
+            else None
+        )
+        selected_treatment = (
+            str(route_decision.get("selected_treatment") or "")
+            if isinstance(route_decision, dict)
+            else ""
+        )
+        if selected_treatment in {"screenshot_direct", "screenshot_polish"}:
+            # The generic repair tool is an image-generation workflow.  A
+            # screenshot package that fails its hash/document proof must stay
+            # on the screenshot route (local rerender or explicit review), not
+            # silently mutate into AI character art merely because the legacy
+            # READY status shares a name with the AI lane.
+            rec["cover_integrity_status"] = (
+                "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
+            )
+            rec["cover_status"] = "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
+            rec["cover_route_preservation_error"] = (
+                "screenshot proof is invalid; generic AI repair is forbidden"
+            )
+            _runner.log(
+                f"cover repair {rec.get('candidate_id', '?')}: blocked before "
+                "image request to preserve screenshot route"
+            )
+            _runner.write_state(date, state)
+            continue
         try:
             _runner._cover_authority_preflight(date, rec, mp4)
         except (OSError, ValueError) as exc:

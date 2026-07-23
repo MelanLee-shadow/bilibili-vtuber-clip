@@ -1073,3 +1073,98 @@ def test_committed_ledger_repairs_hotpot_parallel_repeat_entity_phrase():
     assert audit["applied"][0]["truth_id"] == (
         "20260722-nancho-hotpot-dan-bullying-r1"
     )
+
+
+def test_committed_ledger_drops_post_nightin_formula_hallucination():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 2_340, "嗯，LLNNHHB，是这个")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 776_470,
+                    "end_ms": 778_810,
+                }
+            ]
+        },
+        durations=[2_340],
+        ledger_path=ledger,
+    )
+
+    assert corrected == ""
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == (
+        "20260722-nancho-confrontation-drop-hallucinated-formula-r2"
+    )
+    assert any(
+        row["truth_id"]
+        == "20260722-nancho-confrontation-latin-formula-positive-r1"
+        for row in audit["inactive"]
+    )
+
+
+def test_committed_ledger_repairs_qin_heterosexual_pun():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 3_040, "其实是最包容一系列的直播间")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 3_662_810,
+                    "end_ms": 3_665_850,
+                }
+            ]
+        },
+        durations=[3_040],
+        ledger_path=ledger,
+    )
+
+    assert "其实是最包容异性恋的直播间" in corrected
+    assert "一系列" not in corrected
+    assert audit["status"] == "APPLIED"
+
+
+@pytest.mark.parametrize("asr_surface", ["陆医生", "露蒂丝", "露蒂斯"])
+def test_committed_ledger_repairs_hotpot_lu_doctor_surface_family(asr_surface):
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 4_020, f"对哇，你说这句话跟{asr_surface}好像啊")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 2_016_790,
+                    "end_ms": 2_020_810,
+                }
+            ]
+        },
+        durations=[4_020],
+        ledger_path=ledger,
+    )
+
+    assert "跟露医生好像啊" in corrected
+    assert asr_surface not in corrected or asr_surface == "露医生"
+    assert audit["status"] == "APPLIED"
