@@ -148,6 +148,42 @@ def _recovery_queue_item(
     return item
 
 
+def _resolve_new_fingerprint_authority(
+    queued_ids: set[str],
+    *,
+    expected_old_fingerprint: str,
+    expected_new_fingerprint: str | None,
+    expected_new_fingerprints_by_candidate: dict[str, str] | None,
+) -> dict[str, str]:
+    explicit = dict(expected_new_fingerprints_by_candidate or {})
+    if expected_new_fingerprint is not None and explicit:
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_NEW_FINGERPRINT_AUTHORITY_AMBIGUOUS"
+        )
+    if expected_new_fingerprint is not None:
+        if not _PIPELINE_FINGERPRINT_RX.fullmatch(expected_new_fingerprint):
+            raise RecoveryReviewRerunError(
+                "RECOVERY_RERUN_NEW_FINGERPRINT_INVALID"
+            )
+        resolved = {cid: expected_new_fingerprint for cid in queued_ids}
+    else:
+        resolved = explicit
+        if set(resolved) != queued_ids:
+            raise RecoveryReviewRerunError(
+                "RECOVERY_RERUN_NEW_FINGERPRINT_MAP_MUST_EQUAL_QUEUE"
+            )
+        if any(
+            _PIPELINE_FINGERPRINT_RX.fullmatch(value) is None
+            for value in resolved.values()
+        ):
+            raise RecoveryReviewRerunError(
+                "RECOVERY_RERUN_NEW_FINGERPRINT_INVALID"
+            )
+    if any(value == expected_old_fingerprint for value in resolved.values()):
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_FINGERPRINT_UNCHANGED")
+    return resolved
+
+
 def plan_current_talk_recovery_rerun(
     date: str,
     state: dict,
@@ -164,14 +200,9 @@ def plan_current_talk_recovery_rerun(
     given_end_ms_by_candidate: dict[str, int] | None = None,
     given_end_authority: str | None = None,
 ) -> dict:
-    """Move explicitly selected CURRENT talks into a fresh recovery queue.
+    """Plan an explicit, hash-bound CURRENT-talk rerun outside cron.
 
-    This is intentionally not called by cron.  A policy/code change should not
-    silently regenerate every historical delivery.  An operator first clones
-    a recovery evidence surface, then invokes the narrow CLI with the exact
-    source-state hash, old/new talk fingerprints and complete CURRENT-delivery
-    allowlist.  Old records are retained as SUPERSEDED evidence; only the
-    normal runner may create the replacement CURRENT records.
+    Old records remain SUPERSEDED; only the normal runner creates replacements.
     """
 
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date or "")):
@@ -220,42 +251,17 @@ def plan_current_talk_recovery_rerun(
     if replacements and not selection_authority:
         raise RecoveryReviewRerunError(
             "RECOVERY_RERUN_REPLACEMENT_SELECTION_AUTHORITY_REQUIRED"
-        )
+    )
     boundary_overrides = dict(given_end_ms_by_candidate or {})
     queued_ids = requested_set | replacement_set
-    explicit_new_fingerprints = dict(
-        expected_new_fingerprints_by_candidate or {}
+    new_fingerprint_by_candidate = _resolve_new_fingerprint_authority(
+        queued_ids,
+        expected_old_fingerprint=expected_old_fingerprint,
+        expected_new_fingerprint=expected_new_fingerprint,
+        expected_new_fingerprints_by_candidate=(
+            expected_new_fingerprints_by_candidate
+        ),
     )
-    if expected_new_fingerprint is not None and explicit_new_fingerprints:
-        raise RecoveryReviewRerunError(
-            "RECOVERY_RERUN_NEW_FINGERPRINT_AUTHORITY_AMBIGUOUS"
-        )
-    if expected_new_fingerprint is not None:
-        if not _PIPELINE_FINGERPRINT_RX.fullmatch(expected_new_fingerprint):
-            raise RecoveryReviewRerunError(
-                "RECOVERY_RERUN_NEW_FINGERPRINT_INVALID"
-            )
-        new_fingerprint_by_candidate = {
-            cid: expected_new_fingerprint for cid in queued_ids
-        }
-    else:
-        new_fingerprint_by_candidate = explicit_new_fingerprints
-        if set(new_fingerprint_by_candidate) != queued_ids:
-            raise RecoveryReviewRerunError(
-                "RECOVERY_RERUN_NEW_FINGERPRINT_MAP_MUST_EQUAL_QUEUE"
-            )
-        if any(
-            _PIPELINE_FINGERPRINT_RX.fullmatch(value) is None
-            for value in new_fingerprint_by_candidate.values()
-        ):
-            raise RecoveryReviewRerunError(
-                "RECOVERY_RERUN_NEW_FINGERPRINT_INVALID"
-            )
-    if any(
-        value == expected_old_fingerprint
-        for value in new_fingerprint_by_candidate.values()
-    ):
-        raise RecoveryReviewRerunError("RECOVERY_RERUN_FINGERPRINT_UNCHANGED")
     if set(boundary_overrides) - queued_ids:
         raise RecoveryReviewRerunError(
             "RECOVERY_RERUN_GIVEN_END_CANDIDATE_NOT_QUEUED"
@@ -275,9 +281,7 @@ def plan_current_talk_recovery_rerun(
         and row.get("bundle_lifecycle") == "CURRENT"
         and row.get("bundle_compliance") == "COMPLIANT"
     ]
-    current_ids = [
-        _candidate_id(row) for row in current_deliveries
-    ]
+    current_ids = [_candidate_id(row) for row in current_deliveries]
     if (
         len(current_ids) != len(set(current_ids))
         or set(current_ids) != requested_set | suppressed_set
