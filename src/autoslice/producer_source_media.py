@@ -18,6 +18,30 @@ from src.autoslice.recut_materialization import _accurate_reencode_recut_command
 from src.autoslice.shadow_review import _sha256
 
 
+def _bind_piece_source_media_sha256(
+    piece: dict,
+    *,
+    source_sha256: str,
+) -> str:
+    """Bind a producer piece to the exact source bytes that were inspected.
+
+    Candidate construction only knows a source path.  The producer is the first
+    layer that hashes the bytes on the execution host, so it owns this binding.
+    Downstream source-truth aliases must consume this verified value instead of
+    trusting an optional caller declaration.
+    """
+
+    binding = f"sha256:{source_sha256}"
+    declared = piece.get("source_media_sha256")
+    if declared is not None and declared != binding:
+        raise RuntimeError(
+            "SOURCE_MEDIA_DECLARED_SHA256_MISMATCH: "
+            f"declared={declared!r} actual={binding}"
+        )
+    piece["source_media_sha256"] = binding
+    return binding
+
+
 @dataclass(frozen=True)
 class PreparedSourceMedia:
     durations: list[int]
@@ -41,10 +65,15 @@ def prepare_source_media(
         source_path, source_sha256 = _source_media_sha256(
             host, Path(piece["remote_media"])
         )
+        source_media_binding = _bind_piece_source_media_sha256(
+            piece,
+            source_sha256=source_sha256,
+        )
         piece_provenance_path = local.with_suffix(".provenance.json")
         expected_piece = {
             "source_path": source_path,
             "source_sha256": source_sha256,
+            "source_media_binding": source_media_binding,
             "start_ms": int(piece["start_ms"]),
             "end_ms": int(piece["end_ms"]),
             "output_path": str(local.resolve()),
