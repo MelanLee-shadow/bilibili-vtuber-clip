@@ -34,6 +34,10 @@ from src.autoslice.subtitle_fidelity import (
 )
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
 from src.autoslice.talk_filler import bind_final_filler_audit_to_burn
+from src.autoslice.story_contract import (
+    audit_story_artifact,
+    build_story_contract,
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,57 @@ class StagedRecord:
     record: dict
     staging: dict
     record_path: Path
+
+
+def _audit_story_bound_cover(
+    staging: Mapping[str, object], story_contract: Mapping[str, object]
+) -> tuple[list[str], list[dict[str, object]]]:
+    """Recheck model-selected cover words before any delivery copy occurs."""
+
+    generation = staging.get("cover_generation")
+    if not isinstance(generation, Mapping):
+        return ["COVER_STORY_CONTRACT_BINDING_MISSING_OR_STALE"], []
+    cover_text = str(staging.get("cover_text") or generation.get("cover_text") or "")
+    rendered_lines = generation.get("rendered_lines")
+    rendered_text = (
+        "".join(str(value) for value in rendered_lines)
+        if isinstance(rendered_lines, list)
+        else ""
+    )
+    audits = [
+        audit_story_artifact(
+            surface,
+            story_contract=story_contract,
+            artifact_kind=kind,
+        )
+        for kind, surface in (
+            ("cover_text", cover_text),
+            ("cover_rendered_text", rendered_text),
+        )
+        if surface
+    ]
+    reason_codes = {
+        str(violation.get("reason_code") or "STORY_CONTRACT_COVER_FAILED")
+        for audit in audits
+        for violation in audit.get("violations", [])
+        if isinstance(violation, Mapping)
+    }
+    expected_binding = {
+        "schema_version": story_contract.get("schema_version"),
+        "relation_state": story_contract.get("relation_state"),
+        "participants": story_contract.get("participants"),
+        "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
+    }
+    binding = generation.get("story_contract")
+    if not isinstance(binding, Mapping) or any(
+        binding.get(key) != value for key, value in expected_binding.items()
+    ):
+        reason_codes.add("COVER_STORY_CONTRACT_BINDING_MISSING_OR_STALE")
+    if not cover_text:
+        reason_codes.add("COVER_STORY_TEXT_MISSING")
+    if not rendered_text:
+        reason_codes.add("COVER_RENDERED_TEXT_EVIDENCE_MISSING")
+    return sorted(reason_codes), audits
 
 
 def _trim_spec_to_final_timeline(
@@ -777,6 +832,42 @@ def _stage_record(
         for index, cue in enumerate(parse_srt_cues(subtitle_path.read_text(encoding="utf-8")), start=1)
         if cue.text.strip()
     ]
+    transcript_text = "\n".join(cue.text for cue in final_title_cues)
+    story_contract = build_story_contract(
+        candidate_id=cid,
+        selection_hook=str(spec.get("selection_hook") or ""),
+        transcript_text=transcript_text,
+        selection_scorecard=spec.get("selection_scorecard"),
+        session_relation_authority=spec.get("session_relation_authority"),
+    )
+    story_contract["input_audits"] = [
+        audit_story_artifact(
+            str(spec.get("selection_hook") or ""),
+            story_contract=story_contract,
+            artifact_kind="selection_hook",
+        ),
+        audit_story_artifact(
+            transcript_text,
+            story_contract=story_contract,
+            artifact_kind="subtitle",
+        ),
+    ]
+    record["selection_scorecard"] = spec.get("selection_scorecard")
+    record["session_relation_authority"] = spec.get("session_relation_authority")
+    record["story_contract"] = story_contract
+    input_violations = [
+        violation
+        for audit in story_contract["input_audits"]
+        for violation in audit.get("violations", [])
+        if isinstance(violation, dict)
+    ]
+    if input_violations:
+        reason_codes = sorted(
+            {str(row.get("reason_code") or "STORY_CONTRACT_INPUT_INVALID") for row in input_violations}
+        )
+        raise SystemExit(
+            "STORY_CONTRACT_INPUT_INVALID: " + ",".join(reason_codes)
+        )
     record = adapters.stage_publish_draft(
         record,
         candidate_id=cid,
@@ -790,6 +881,20 @@ def _stage_record(
         cover_diversity_slot=spec.get("cover_diversity_slot"),
     )
     staging = record.get("publish_staging") or {}
+    if staging.get("title_authority_status") == "BLOCKED_STORY_CONTRACT":
+        raise SystemExit(
+            "STORY_CONTRACT_TITLE_FAILED: "
+            + str(staging.get("title_authority_error") or "unknown")
+        )
+    if staging.get("cover_status") == "AI_COVER_READY":
+        cover_reason_codes, cover_story_audits = _audit_story_bound_cover(
+            staging, story_contract
+        )
+        story_contract["cover_output_audits"] = cover_story_audits
+        if cover_reason_codes:
+            raise SystemExit(
+                "STORY_CONTRACT_COVER_FAILED: " + ",".join(cover_reason_codes)
+            )
     # 7. Upload tags (Ivan 2026-07-13): generated at package time against the
     # FINAL title + FINAL delivered subtitles (tag 必须按成品字幕出), frozen
     # into the record so make-manifest picks them up without re-running any

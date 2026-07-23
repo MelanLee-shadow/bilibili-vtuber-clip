@@ -140,6 +140,7 @@ from src.autoslice.visual_song_discovery import (
     normalize_visual_title,
     union_visual_song_candidates,
 )
+from src.autoslice.session_relation_authority import resolve_session_relation
 
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
@@ -148,6 +149,16 @@ PROFILE_OUTPUT_DIRECTORY = CHANNEL_PROFILE.output_directory
 PROFILE_HOST_SPEAKER_LABEL = CHANNEL_PROFILE.host_speaker_label
 PROFILE_GUEST_SPEAKER_LABEL = CHANNEL_PROFILE.guest_speaker_label
 HOST_VOCAL_PRESENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_present")
+
+
+def session_relation_for_segment(date: str, segment: Path) -> dict[str, object] | None:
+    """Resolve the committed relation ledger independently of capture sidecars."""
+
+    return resolve_session_relation(
+        ledger_path=CHANNEL_PROFILE.asset_file("session_relation_ledger"),
+        date=date,
+        recording_path=segment,
+    )
 HOST_VOCAL_ABSENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_absent")
 VERIFIED_HOST_SINGING_DECISION = CHANNEL_PROFILE.decision("verified_host_singing")
 HOST_NOT_SINGING_REASON = CHANNEL_PROFILE.decision("host_not_singing_reason")
@@ -1389,6 +1400,8 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
                     for key in (
                         "hook",
                         "confidence",
+                        "selection_scorecard",
+                        "session_relation_authority",
                         "danmaku",
                         "preview",
                         "segment_path",
@@ -1451,15 +1464,23 @@ def backfillable_talk_rejection(result: dict) -> tuple[str, str] | None:
         return str(status), reason
     if (
         status == "failed"
-        and result.get("failure_kind") == "subtitle_authority"
+        and result.get("failure_kind") in {"subtitle_authority", "story_contract"}
         and result.get("failure_recoverable") is False
     ):
-        return "failed", "subtitle_authority_unresolved_backfilled"
+        return (
+            "failed",
+            "subtitle_authority_unresolved_backfilled"
+            if result.get("failure_kind") == "subtitle_authority"
+            else "story_contract_unresolved_backfilled",
+        )
     return None
 
 
 def process_date(date: str) -> None:
     state = read_state(date)
+    state.setdefault("run_mode", "PRODUCTION")
+    state.setdefault("source_authority", "RECORDER")
+    state.setdefault("upload_allowed", False)
     if state.get("status") == "state_corrupt_blocked":
         write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
@@ -1653,6 +1674,9 @@ def process_date(date: str) -> None:
                 rejected += 1
             if result.get("failure_recoverable") is True:
                 recoverable_failure = True
+            if result.get("status") in DELIVERED_TALK_STATUSES:
+                result["bundle_lifecycle"] = "CURRENT"
+                result["bundle_compliance"] = "COMPLIANT"
             state["picks"].append(result)
         state["pending_talk"] = retry
         write_state(date, state)
@@ -1854,6 +1878,11 @@ def main(argv: list[str] | None = None) -> int:
             "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
             "hook": meta.get("hook", ""),
             "confidence": meta.get("confidence"),
+            "selection_scorecard": (
+                dict(meta["selection_scorecard"])
+                if isinstance(meta.get("selection_scorecard"), dict)
+                else None
+            ),
             "lane": lane,
             "bcut_srt_path": str(srt),
             "filler_proposals": list(meta.get("filler_proposals") or []),

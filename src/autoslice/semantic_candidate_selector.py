@@ -37,6 +37,10 @@ from src.autoslice.full_session_candidate_selector import (
 )
 from src.autoslice.llm_client import LlmCall, LlmCallError, extract_json_object
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.selection_scorecard import (
+    normalize_selection_scorecard,
+    selection_rank_key,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
@@ -140,17 +144,80 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
   meaning_or_stance_changed。只要有一项为 true 或不确定,就不要提议。
 - 没有十分把握就返回空数组,让成品保持连续。confidence 是对“这段可安全删除”的信心。
 
+选片量化表（talk 必填，song 可省略）：
+- tier 是硬层级 1/2/3；Tier 1 不是“出现了人名”就算，必须由至少两个本候选 cue 组成可核验的
+  关系/CP/GL 立场链，或“观众起哄→她照做→人设反差”的完整互动链。把证据 cue 编号放入
+  tier_evidence_cues；系统会拒绝候选窗外编号并确定性复算分数。
+- tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
+  audience_driven_performance / personal_stance / generic_event。
+- dimensions 七项都打 0..4 整数：lidousha_centrality（李豆沙不可替代性）、stance_intensity、
+  audience_salience（频道受众/人物题材显著度）、relationship_interaction、persona_reversal、
+  comedic_payoff、self_contained。不要把 ASR/证据可靠性混进内容质量分。
+- uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
+- 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
+
 约束:
 - talk 片段有效内容必须长于 45 秒且不超过 5 分钟;song 不限。
 - 按有趣程度从高到低排序。confidence 是你对"路人观众会觉得有趣"的信心(0-1)。
 - hook 用一句中文概括这个片段的看点。
 
 只输出一个 JSON 对象,不要任何其他文字:
-{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "filler_removals": [{{"mode": "remove_cues"或"gap_only", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"welcome_chatter"或"dead_pause"或"unrelated_aside", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
+{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10}}, "filler_removals": [{{"mode": "remove_cues"或"gap_only", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"welcome_chatter"或"dead_pause"或"unrelated_aside", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
 
 字幕时间轴:
 {transcript}
 """
+
+
+def _parse_filler_removals(
+    item: dict[str, object], *, item_index: int, cue_count: int, kind: str
+) -> list[dict[str, object]]:
+    if kind != "talk" or not isinstance(item.get("filler_removals"), list):
+        return []
+    proposals: list[dict[str, object]] = []
+    for removal_index, removal in enumerate(item["filler_removals"][:3]):
+        if not isinstance(removal, dict):
+            continue
+        removal_start = _cue_position(removal.get("start_cue"), cue_count)
+        removal_end = _cue_position(removal.get("end_cue"), cue_count)
+        if (
+            removal_start is None
+            or removal_end is None
+            or removal_start > removal_end
+        ):
+            continue
+        confidence = removal.get("confidence")
+        proposals.append(
+            {
+                "proposal_id": f"semantic_{item_index + 1}_{removal_index + 1}",
+                "mode": str(removal.get("mode") or "remove_cues"),
+                "start_cue": removal_start,
+                "end_cue": removal_end,
+                "reason": str(removal.get("reason") or ""),
+                "bridge_coherent": removal.get("bridge_coherent") is True,
+                "bridge": str(removal.get("bridge") or "").strip()[:240],
+                "topic_relation": str(removal.get("topic_relation") or ""),
+                "contains_setup": removal.get("contains_setup"),
+                "contains_cause": removal.get("contains_cause"),
+                "contains_answer": removal.get("contains_answer"),
+                "contains_punchline": removal.get("contains_punchline"),
+                "contains_referent_intro": removal.get("contains_referent_intro"),
+                "contains_correction": removal.get("contains_correction"),
+                "contains_resolution": removal.get("contains_resolution"),
+                "later_dependency": removal.get("later_dependency"),
+                "interaction_relevant": removal.get("interaction_relevant"),
+                "meaning_or_stance_changed": removal.get(
+                    "meaning_or_stance_changed"
+                ),
+                "confidence": (
+                    min(1.0, max(0.0, float(confidence)))
+                    if isinstance(confidence, (int, float))
+                    and not isinstance(confidence, bool)
+                    else 0.0
+                ),
+            }
+        )
+    return proposals
 
 
 def select_semantic_session_candidates(
@@ -214,58 +281,20 @@ def select_semantic_session_candidates(
                 start_cue = trigger_cue
         confidence = item.get("confidence")
         confidence_value = float(confidence) if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) else 0.5
+        selection_scorecard = (
+            normalize_selection_scorecard(
+                item.get("selection_scorecard"),
+                start_cue=start_cue,
+                end_cue=end_cue,
+            )
+            if kind == "talk"
+            else None
+        )
         raw_event_key = str(item.get("event_key") or "").strip()
         event_key = " ".join(raw_event_key.split())[:80]
-        filler_removals: list[dict[str, object]] = []
-        if kind == "talk" and isinstance(item.get("filler_removals"), list):
-            for removal_index, removal in enumerate(item["filler_removals"][:3]):
-                if not isinstance(removal, dict):
-                    continue
-                removal_start = _cue_position(removal.get("start_cue"), len(ordered))
-                removal_end = _cue_position(removal.get("end_cue"), len(ordered))
-                if (
-                    removal_start is None
-                    or removal_end is None
-                    or removal_start > removal_end
-                ):
-                    continue
-                removal_confidence = removal.get("confidence")
-                filler_removals.append(
-                    {
-                        "proposal_id": f"semantic_{item_index + 1}_{removal_index + 1}",
-                        "mode": str(removal.get("mode") or "remove_cues"),
-                        "start_cue": removal_start,
-                        "end_cue": removal_end,
-                        "reason": str(removal.get("reason") or ""),
-                        "bridge_coherent": removal.get("bridge_coherent") is True,
-                        "bridge": str(removal.get("bridge") or "").strip()[:240],
-                        "topic_relation": str(
-                            removal.get("topic_relation") or ""
-                        ),
-                        "contains_setup": removal.get("contains_setup"),
-                        "contains_cause": removal.get("contains_cause"),
-                        "contains_answer": removal.get("contains_answer"),
-                        "contains_punchline": removal.get("contains_punchline"),
-                        "contains_referent_intro": removal.get(
-                            "contains_referent_intro"
-                        ),
-                        "contains_correction": removal.get("contains_correction"),
-                        "contains_resolution": removal.get("contains_resolution"),
-                        "later_dependency": removal.get("later_dependency"),
-                        "interaction_relevant": removal.get(
-                            "interaction_relevant"
-                        ),
-                        "meaning_or_stance_changed": removal.get(
-                            "meaning_or_stance_changed"
-                        ),
-                        "confidence": (
-                            min(1.0, max(0.0, float(removal_confidence)))
-                            if isinstance(removal_confidence, (int, float))
-                            and not isinstance(removal_confidence, bool)
-                            else 0.0
-                        ),
-                    }
-                )
+        filler_removals = _parse_filler_removals(
+            item, item_index=item_index, cue_count=len(ordered), kind=kind
+        )
         parsed.append(
             (
                 min(1.0, max(0.0, confidence_value)),
@@ -276,6 +305,7 @@ def select_semantic_session_candidates(
                     "event_key": event_key,
                     "hook": str(item.get("hook") or ""),
                     "context_inferable": bool(item.get("context_inferable", True)),
+                    "selection_scorecard": selection_scorecard,
                     "filler_removals": filler_removals,
                 },
             )
@@ -302,7 +332,16 @@ def select_semantic_session_candidates(
         if len(rows) == 1:
             merged_parsed.append(rows[0])
             continue
-        winner_confidence, winner_spec = max(rows, key=lambda row: row[0])
+        winner_confidence, winner_spec = min(
+            rows,
+            key=lambda row: selection_rank_key(
+                {
+                    "candidate_id": str(row[1].get("event_key") or ""),
+                    "confidence": row[0],
+                    "selection_scorecard": row[1].get("selection_scorecard"),
+                }
+            ),
+        )
         merged_spec = dict(winner_spec)
         input_ranges = [
             [int(row[1]["start_cue"]), int(row[1]["end_cue"])] for row in rows
@@ -372,9 +411,18 @@ def select_semantic_session_candidates(
         merged_parsed.append((winner_confidence, merged_spec))
         merged_events.append(event_audit)
     parsed = merged_parsed
-    parsed.sort(key=lambda entry: entry[0], reverse=True)
+    parsed.sort(
+        key=lambda entry: selection_rank_key(
+            {
+                "candidate_id": str(entry[1].get("event_key") or ""),
+                "confidence": entry[0],
+                "selection_scorecard": entry[1].get("selection_scorecard"),
+            }
+        )
+    )
     selected: list[FullSessionCandidate] = []
     hooks: dict[str, str] = {}
+    scorecards: dict[str, dict[str, object]] = {}
     filler_proposals: dict[str, list[dict[str, object]]] = {}
     merge_gap_plans: dict[str, list[dict[str, object]]] = {}
     for confidence_value, spec in parsed:
@@ -429,6 +477,9 @@ def select_semantic_session_candidates(
             continue
         selected.append(candidate)
         hooks[anchor.candidate_id] = spec["hook"]
+        scorecard = spec.get("selection_scorecard")
+        if isinstance(scorecard, dict):
+            scorecards[anchor.candidate_id] = dict(scorecard)
         if spec_merge_gaps:
             merge_gap_plans[anchor.candidate_id] = [dict(gap) for gap in spec_merge_gaps]
         raw_filler_proposals = spec.get("filler_removals")
@@ -446,6 +497,7 @@ def select_semantic_session_candidates(
         "merged_events": merged_events,
         "selected": [candidate.anchor.candidate_id for candidate in selected],
         "hooks": hooks,
+        "scorecards": scorecards,
         "filler_proposals": filler_proposals,
         "merge_gaps": merge_gap_plans,
         "skipped": skipped,
@@ -547,6 +599,7 @@ def select_semantic_session_candidates_covered(
             "shards": [],
             "selected": [],
             "hooks": {},
+            "scorecards": {},
             "filler_proposals": {},
             "merge_gaps": {},
             "skipped": [],
@@ -584,6 +637,7 @@ def select_semantic_session_candidates_covered(
 
     recalled: list[FullSessionCandidate] = []
     hooks: dict[str, str] = {}
+    scorecards: dict[str, dict[str, object]] = {}
     filler_proposals: dict[str, list[dict[str, object]]] = {}
     merge_gaps: dict[str, list[dict[str, object]]] = {}
     shard_diagnostics: list[dict[str, object]] = []
@@ -618,6 +672,13 @@ def select_semantic_session_candidates_covered(
                 for key, value in (diagnostics.get("hooks") or {}).items()
             }
         )
+        scorecards.update(
+            {
+                str(key): dict(value)
+                for key, value in (diagnostics.get("scorecards") or {}).items()
+                if isinstance(value, dict)
+            }
+        )
         filler_proposals.update(
             {
                 str(key): list(value)
@@ -645,8 +706,17 @@ def select_semantic_session_candidates_covered(
         )
 
     recalled.sort(
-        key=lambda candidate: -float(
-            getattr(candidate.boundary, "start_boundary_score", 0.0) or 0.0
+        key=lambda candidate: selection_rank_key(
+            {
+                "candidate_id": candidate.anchor.candidate_id,
+                "confidence": float(
+                    getattr(candidate.boundary, "start_boundary_score", 0.0)
+                    or 0.0
+                ),
+                "selection_scorecard": scorecards.get(
+                    candidate.anchor.candidate_id
+                ),
+            }
         )
     )
     selected: list[FullSessionCandidate] = []
@@ -674,6 +744,9 @@ def select_semantic_session_candidates_covered(
         ),
         "selected": [candidate.anchor.candidate_id for candidate in selected],
         "hooks": {key: value for key, value in hooks.items() if key in selected_ids},
+        "scorecards": {
+            key: value for key, value in scorecards.items() if key in selected_ids
+        },
         "filler_proposals": {
             key: value for key, value in filler_proposals.items() if key in selected_ids
         },

@@ -11,6 +11,7 @@ import pytest
 import scripts.free_session_autoslice as runner
 import src.autoslice.speaker_session_router as speaker_router
 from src.autoslice.visual_song_discovery import VisualSongCandidate, VisualSongDiscoveryResult
+from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from tests.host_vocal_test_support import bind_ready_live_performance_report, make_ready_host_vocal_claim
 from scripts.free_session_autoslice import (
     COVER_REPAIR_MAX_ATTEMPTS,
@@ -2256,6 +2257,90 @@ def test_prioritize_global_confidence_ranking_beats_arrival_order():
     assert "全局排序" in state["not_selected"][0]
 
 
+def test_prioritize_hard_tier_beats_confidence_for_722_calibration_pair():
+    """7/22: 礼墨反转是 Tier 1；下播挽留只是 Tier 2。"""
+
+    def scorecard(tier: int) -> dict:
+        normalized = normalize_selection_scorecard(
+            {
+                "tier": tier,
+                "tier_basis": (
+                    "relationship_chain" if tier == 1 else "personal_stance"
+                ),
+                "tier_reason": "7/22 calibrated pair",
+                "tier_evidence_cues": [1, 2],
+                "dimensions": {
+                    "lidousha_centrality": 4,
+                    "stance_intensity": 3,
+                    "audience_salience": 4,
+                    "relationship_interaction": 4 if tier == 1 else 2,
+                    "persona_reversal": 3,
+                    "comedic_payoff": 3,
+                    "self_contained": 4,
+                },
+                "uncertainty_penalty": 0,
+                "fatigue_penalty": 0,
+            },
+            start_cue=1,
+            end_cue=2,
+        )
+        assert normalized is not None
+        return normalized
+
+    state = {
+        "picks": [],
+        "songs": [],
+        "pending_song": [],
+        "pending_talk": [
+            {
+                "segment_path": "/rec/full.mp4",
+                "start_ms": 5_390_000,
+                "end_ms": 5_520_000,
+                "hook": "下播时没人挽留谁更可怜",
+                "confidence": 0.99,
+                "selection_scorecard": scorecard(2),
+                "cid": "signoff",
+            },
+            {
+                "segment_path": "/rec/full.mp4",
+                "start_ms": 670_000,
+                "end_ms": 910_000,
+                "hook": "最喜欢的金发有角妹妹像礼墨又秒改低才对",
+                "confidence": 0.81,
+                "selection_scorecard": scorecard(1),
+                "cid": "sumi-reversal",
+            },
+        ],
+    }
+
+    prioritize(state)
+
+    assert [item["cid"] for item in state["pending_talk"]] == [
+        "sumi-reversal",
+        "signoff",
+    ]
+
+
+def test_semantic_talk_cannot_produce_without_valid_quant_scorecard():
+    result = runner.produce_talk(
+        "2026-07-22",
+        {
+            "cid": "unscored",
+            "segment_path": "/rec/full.mp4",
+            "start_ms": 0,
+            "end_ms": 60_000,
+            "hook": "未量化候选",
+            "confidence": 0.99,
+            "lane": "semantic_recall_sharded",
+            "selection_scorecard": None,
+        },
+    )
+
+    assert result["status"] == "candidate_rejected"
+    assert result["rejection_reason"] == "selection_scorecard_missing_or_invalid"
+    assert result["failure_evidence"]["gate"] == "SELECTION_SCORECARD_REQUIRED"
+
+
 def test_recording_session_annotation_uses_live_start_metadata(tmp_path, monkeypatch):
     """Two streams on one date must be keyed by the recorder's live start,
     not collapsed into the date-level legacy quota."""
@@ -2282,6 +2367,41 @@ def test_recording_session_annotation_uses_live_start_metadata(tmp_path, monkeyp
     assert state["recording_sessions"] == [expected]
     assert state["picks"][0]["session_id"] == expected
     assert state["talk_backlog"][0]["session_id"] == expected
+
+
+def test_session_relation_authority_does_not_bleed_into_solo_stream_same_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    collab = tmp_path / "22966160_20260722-19-34-50.mp4"
+    solo = tmp_path / "22966160_20260722-23-00-00.mp4"
+    collab.write_bytes(b"collab")
+    solo.write_bytes(b"solo")
+    authority = {
+        "schema_version": "session-relation-authority.v1",
+        "relation_id": "lidousha-nancho",
+        "state": "CONFIRMED",
+    }
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [collab, solo])
+    monkeypatch.setattr(
+        runner,
+        "recording_session_id",
+        lambda segment, _date: f"live-{segment.stem}",
+    )
+    monkeypatch.setattr(
+        runner,
+        "session_relation_for_segment",
+        lambda _date, segment: authority if segment == collab else None,
+    )
+    state = {
+        "pending_talk": [
+            {"cid": "collab", "segment_path": str(collab)},
+            {"cid": "solo", "segment_path": str(solo)},
+        ]
+    }
+
+    assert runner.annotate_state_sessions("2026-07-22", state) is True
+    assert state["pending_talk"][0]["session_relation_authority"] == authority
+    assert "session_relation_authority" not in state["pending_talk"][1]
 
 
 def test_session_annotation_recovers_state_segment_missing_from_inventory(tmp_path, monkeypatch):
@@ -2744,7 +2864,12 @@ def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypat
             "rejected_status": "speaker_evidence_insufficient",
             "rejection_reason": "speaker_identity_unresolved_backfilled",
         },
-        {"candidate_id": reserve["cid"], "status": "review_ready"},
+        {
+            "candidate_id": reserve["cid"],
+            "status": "review_ready",
+            "bundle_lifecycle": "CURRENT",
+            "bundle_compliance": "COMPLIANT",
+        },
     ]
     assert state["pending_talk"] == []
 
@@ -4340,7 +4465,9 @@ def test_write_reports_boundary_repair_and_unrepairable(tmp_path, monkeypatch):
         "status": "review_ready", "segments_done": [], "segments_dead": {},
         "pending_talk": [], "pending_song": [], "songs": [],
         "picks": [
-            {"candidate_id": "auto_1", "status": "review_ready", "hook": "钩子A",
+            {"candidate_id": "auto_1", "status": "review_ready",
+             "bundle_lifecycle": "CURRENT", "bundle_compliance": "COMPLIANT",
+             "hook": "钩子A",
              "title": "【李豆沙】标题A", "confidence": 0.9,
              "boundary_repairs": [{"flags": ["speech_continues_1800ms_after_cut"], "snapped_end_ms": 65_000}],
              "start_ms": 0, "end_ms": 60_000, "summary": {}},
@@ -5215,6 +5342,101 @@ def test_talk_failure_classifies_foreign_source_transcription_as_terminal():
     assert classified["failure_kind"] == "subtitle_authority"
     assert classified["failure_stage"] == "foreign_source_transcription"
     assert classified["failure_recoverable"] is False
+
+
+def test_talk_failure_persists_exact_foreign_source_gate_witness(tmp_path: Path):
+    authority = tmp_path / "candidate.chat-authority.json"
+    authority.write_text(
+        json.dumps(
+            {
+                "input_srt_sha256": "sha256:input",
+                "output_srt_sha256": "sha256:output",
+                "foreign_script_consistency_audit": {
+                    "mixed_cjk_latin_cues": [
+                        {
+                            "cue_index": 7,
+                            "start_ms": 12_000,
+                            "end_ms": 13_400,
+                            "text": "错误 ll nn hhb",
+                            "latin_words": ["ll", "nn", "hhb"],
+                        }
+                    ],
+                    "audio_witness_rows": [
+                        {
+                            "cue_index": 7,
+                            "witnessed": False,
+                            "audio_sha256": "audio",
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    classified = runner.classify_talk_failure(
+        f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {authority}"
+    )
+
+    violation = classified["gate_violation"]
+    assert violation["token"] == "ll nn hhb"
+    assert violation["cue_index"] == 7
+    assert (violation["start_ms"], violation["end_ms"]) == (12_000, 13_400)
+    assert violation["missing_witnesses"] == ["positive_source_audio_transcription"]
+    assert violation["artifact_hashes"]["audio_sha256"] == "sha256:audio"
+
+
+def test_foreign_source_rejection_reports_unwitnessed_cue_not_first_valid_english(
+    tmp_path: Path,
+):
+    authority = tmp_path / "candidate.chat-authority.json"
+    authority.write_text(
+        json.dumps(
+            {
+                "foreign_script_consistency_audit": {
+                    "mixed_cjk_latin_cues": [
+                        {
+                            "cue_index": 70,
+                            "start_ms": 149_510,
+                            "end_ms": 152_390,
+                            "text": "我今天 I don't care",
+                            "latin_words": ["I", "don't", "care"],
+                        },
+                        {
+                            "cue_index": 95,
+                            "start_ms": 215_490,
+                            "end_ms": 217_850,
+                            "text": "最后有 staff 跑过来说李豆沙你 BGM",
+                            "latin_words": ["staff", "BGM"],
+                        },
+                    ],
+                    "audio_witness_rows": [
+                        {"cue_index": 70, "witnessed": True, "audio_sha256": "real"},
+                        {"cue_index": 95, "witnessed": False, "audio_sha256": "false"},
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    violation = runner.classify_talk_failure(
+        f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {authority}"
+    )["gate_violation"]
+
+    assert violation["token"] == "staff BGM"
+    assert violation["cue_index"] == 95
+    assert violation["unresolved_findings"] == [
+        {
+            "token": "staff BGM",
+            "cue_index": 95,
+            "start_ms": 215_490,
+            "end_ms": 217_850,
+            "text": "最后有 staff 跑过来说李豆沙你 BGM",
+        }
+    ]
 
 
 def test_terminal_subtitle_authority_failure_backfills_without_weakening_gate():

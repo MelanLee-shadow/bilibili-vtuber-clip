@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.selection_scorecard import selection_rank_key
 
 
 _runner = RunnerProxy()
@@ -620,9 +621,12 @@ def refill_songs(state: dict) -> None:
 
 
 def prioritize(state: dict) -> None:
-    """Phase B: GLOBAL talk ranking by recall confidence (the metric asset is
-    embedded in the recall prompt, so confidence carries its hard tiers), with
-    a soft per-segment diversity cap that yields when slots would go unfilled.
+    """Phase B: GLOBAL talk ranking by hard Tier and deterministic scorecard.
+
+    Recall confidence is only a tertiary signal.  The semantic model extracts
+    rubric levels and evidence cues; :func:`selection_rank_key` enforces Tier
+    admission and fixed arithmetic.  A soft per-segment diversity cap yields
+    when slots would otherwise go unfilled.
     Replaces the segment round-robin that let five early candidates claim the
     whole quota regardless of score.  Songs: top danmaku, budget = deliveries."""
     # Preserve confidence-ranked reserve candidates so a deterministic
@@ -671,7 +675,7 @@ def prioritize(state: dict) -> None:
     for session_id in sessions:
         ranked = sorted(
             (item for item in pending_talk if _item_session_id(item) == session_id),
-            key=lambda x: -(x.get("confidence") or 0.0),
+            key=selection_rank_key,
         )
         # A selected retry owns a provisional seat until its result is known.
         # Producing its ordinary reserves in the same concurrent batch can make
@@ -707,10 +711,11 @@ def prioritize(state: dict) -> None:
     state["talk_backlog"] = deferred
     _assign_cover_diversity_slots(state)
     for item in deferred:
-        _runner._note_not_selected(
-            state,
-            f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
-            f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
-            f"(候补:全场按信心分全局排序取{_runner.MAX_TALK_PICKS}席,同段软上限{_runner.TALK_PER_SEGMENT_CAP})",
-        )
+            _runner._note_not_selected(
+                state,
+                f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
+                f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
+                f"(候补:全场按Tier/量化分全局排序取{_runner.MAX_TALK_PICKS}席,"
+                f"confidence仅破同分,同段软上限{_runner.TALK_PER_SEGMENT_CAP})",
+            )
     _runner.refill_songs(state)

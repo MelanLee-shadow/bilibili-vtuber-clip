@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.story_contract import canonicalize_relation_summary
 
 
 _runner = RunnerProxy()
@@ -94,11 +95,45 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
         mapping = {}
         state["segment_sessions"] = mapping
         changed = True
+    relation_mapping = state.setdefault("segment_relation_authorities", {})
+    if not isinstance(relation_mapping, dict):
+        relation_mapping = {}
+        state["segment_relation_authorities"] = relation_mapping
+        changed = True
     for segment in _runner.list_segments(date):
-        if mapping.get(segment.stem):
-            continue
-        session_id = recording_session_id(segment, date)
-        mapping[segment.stem] = session_id
+        if not mapping.get(segment.stem):
+            session_id = recording_session_id(segment, date)
+            mapping[segment.stem] = session_id
+            changed = True
+        relation = _runner.session_relation_for_segment(date, segment)
+        if relation is not None and relation_mapping.get(segment.stem) != relation:
+            relation_mapping[segment.stem] = relation
+            changed = True
+        if relation is None and segment.stem in relation_mapping:
+            del relation_mapping[segment.stem]
+            changed = True
+
+    unique_relations = {
+        str(relation.get("relation_id") or ""): relation
+        for relation in relation_mapping.values()
+        if isinstance(relation, dict) and relation.get("relation_id")
+    }
+    relation_summary: dict[str, object] | None
+    if len(unique_relations) == 1:
+        relation_summary = next(iter(unique_relations.values()))
+    elif len(unique_relations) > 1:
+        relation_summary = {
+            "state": "MULTIPLE",
+            "relation_ids": sorted(unique_relations),
+        }
+    else:
+        relation_summary = None
+    if relation_summary is None:
+        if "session_relation_authority" in state:
+            del state["session_relation_authority"]
+            changed = True
+    elif state.get("session_relation_authority") != relation_summary:
+        state["session_relation_authority"] = relation_summary
         changed = True
 
     collections = (
@@ -113,12 +148,23 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
     )
     for collection in collections:
         for row in state.get(collection, []):
-            if not isinstance(row, dict) or row.get("session_id"):
+            if not isinstance(row, dict):
                 continue
             segment_value = row.get("segment_path") or row.get("segment")
             if not segment_value:
                 continue
             segment_path = Path(str(segment_value))
+            relation = relation_mapping.get(segment_path.stem)
+            if isinstance(relation, dict) and row.get(
+                "session_relation_authority"
+            ) != relation:
+                row["session_relation_authority"] = relation
+                changed = True
+            elif relation is None and "session_relation_authority" in row:
+                del row["session_relation_authority"]
+                changed = True
+            if row.get("session_id"):
+                continue
             session_id = mapping.get(segment_path.stem)
             if not session_id and segment_path.is_file():
                 session_id = recording_session_id(segment_path, date)
@@ -383,19 +429,32 @@ def discover_segments(date: str, state: dict) -> None:
         if not session_id:
             session_id = recording_session_id(segment, date)
             state["segment_sessions"][stem] = session_id
+        session_relation = _runner.session_relation_for_segment(date, segment)
+        if session_relation is not None:
+            state["session_relation_authority"] = session_relation
         for cand in candidates:
             meta = extras.get(cand.anchor.candidate_id, {})
+            selection_hook = canonicalize_relation_summary(
+                str(meta.get("hook") or ""),
+                session_relation_authority=session_relation,
+            )
             base_item = {
                 "segment_path": str(segment),
                 "seg_dur_ms": seg_dur,
                 "xml": str(xml) if xml else None,
                 "chat_jsonl": str(chat_jsonl) if chat_jsonl else None,
-                "hook": meta.get("hook", ""),
+                "hook": selection_hook,
                 "confidence": meta.get("confidence"),
+                "selection_scorecard": (
+                    dict(meta["selection_scorecard"])
+                    if isinstance(meta.get("selection_scorecard"), dict)
+                    else None
+                ),
                 "lane": lane,
                 "preview": cand.text_preview[:80],
                 "bcut_srt_path": str(srt),
                 "session_id": session_id,
+                "session_relation_authority": session_relation,
                 "filler_proposals": list(meta.get("filler_proposals") or []),
                 "filler_proposal_srt_sha256": meta.get(
                     "filler_proposal_srt_sha256"

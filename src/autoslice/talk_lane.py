@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.selection_scorecard import selection_scorecard_is_valid
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
@@ -113,8 +114,9 @@ def last_json_block(text: str) -> dict:
 def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dict]:
     """(candidates, lane, extras) — semantic lane first, deterministic fallback.
 
-    extras maps candidate_id → {"hook": 选片理由, "confidence": 打分} so the
-    review summary can show WHY each clip was picked (Ivan 2026-07-06).
+    extras maps candidate_id → hook/confidence plus the deterministic
+    selection_scorecard.  Confidence remains a recall signal; content value is
+    ranked by hard Tier then the fixed scorecard arithmetic.
     """
     from scripts.run_auto_review_shadow_pipeline import _parse_srt
     from src.autoslice.full_session_candidate_selector import (
@@ -142,6 +144,7 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
             cues, llm_call=llm, max_candidates=_runner.PER_SEGMENT_CANDIDATES, danmaku_hints=hints
         )
         hooks = diag.get("hooks") or {}
+        scorecards = diag.get("scorecards") or {}
         filler_proposals = diag.get("filler_proposals") or {}
         merge_gap_plans = diag.get("merge_gaps") or {}
         source_srt_sha256 = "sha256:" + hashlib.sha256(
@@ -153,6 +156,11 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
             extras[cid] = {
                 "hook": str(hooks.get(cid) or ""),
                 "confidence": round(float(getattr(cand.boundary, "start_boundary_score", 0.5) or 0.5), 2),
+                "selection_scorecard": (
+                    dict(scorecards[cid])
+                    if isinstance(scorecards.get(cid), dict)
+                    else None
+                ),
                 "filler_proposals": list(filler_proposals.get(cid) or []),
                 "filler_proposal_srt_sha256": source_srt_sha256,
                 # 同主题合并跳切缝隙（event_key 确定性合并，Ivan 2026-07-19）。
@@ -174,7 +182,11 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
             ):
                 continue  # overlaps a recall song → duplicate
             candidates.append(cand)
-            extras[cand.anchor.candidate_id] = {"hook": "确定性歌检测补充(演唱段)", "confidence": 0.5}
+            extras[cand.anchor.candidate_id] = {
+                "hook": "确定性歌检测补充(演唱段)",
+                "confidence": 0.5,
+                "selection_scorecard": None,
+            }
         lane = (
             "semantic_recall_sharded"
             if diag.get("mode") == "sharded"
@@ -290,6 +302,97 @@ def _speaker_evidence_insufficient_failure(attempt_output: str) -> bool:
     )
 
 
+def _foreign_source_gate_violation(attempt_output: str) -> dict[str, object] | None:
+    """Recover the exact cue/token witness that caused a foreign-text gate.
+
+    Older state stored only the final ``FOREIGN_SOURCE...`` exception.  The
+    chat-authority artifact already contains the useful evidence, so bind it
+    into the terminal candidate record while that immutable attempt still
+    exists.  Reporting can then explain a rejection without log archaeology.
+    """
+
+    matches = re.findall(
+        r"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED(?:_AFTER_REDELIVERY)?:\s*([^\s]+\.chat-authority\.json)",
+        attempt_output,
+    )
+    if not matches:
+        return None
+    path = Path(matches[-1])
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    audit = document.get("foreign_script_consistency_audit")
+    if not isinstance(audit, dict):
+        return None
+    findings = audit.get("mixed_cjk_latin_cues")
+    if not isinstance(findings, list) or not findings:
+        return None
+    valid_findings = [row for row in findings if isinstance(row, dict)]
+    if not valid_findings:
+        return None
+    all_witness_rows = [
+        row for row in (audit.get("audio_witness_rows") or []) if isinstance(row, dict)
+    ]
+
+    def witnesses_for(finding: dict[str, object]) -> list[dict[str, object]]:
+        return [
+            row
+            for row in all_witness_rows
+            if row.get("cue_index") == finding.get("cue_index")
+        ]
+
+    unresolved = [
+        finding
+        for finding in valid_findings
+        if not any(row.get("witnessed") is True for row in witnesses_for(finding))
+    ]
+    finding = unresolved[0] if unresolved else valid_findings[0]
+    cue_index = finding.get("cue_index")
+    witness_rows = witnesses_for(finding)
+    witnessed = any(row.get("witnessed") is True for row in witness_rows)
+    hashes = {
+        "chat_authority_sha256": "sha256:"
+        + hashlib.sha256(path.read_bytes()).hexdigest(),
+        "input_srt_sha256": document.get("input_srt_sha256"),
+        "output_srt_sha256": document.get("output_srt_sha256"),
+        "audio_sha256": next(
+            (
+                "sha256:" + str(row["audio_sha256"]).removeprefix("sha256:")
+                for row in witness_rows
+                if row.get("audio_sha256")
+            ),
+            None,
+        ),
+    }
+    return {
+        "schema_version": "candidate-gate-violation.v1",
+        "gate": "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED",
+        "token_class": "MIXED_CJK_MULTIWORD_LATIN",
+        "token": " ".join(str(word) for word in finding.get("latin_words") or []),
+        "cue_index": cue_index,
+        "start_ms": finding.get("start_ms"),
+        "end_ms": finding.get("end_ms"),
+        "text": finding.get("text"),
+        "available_witnesses": ["bounded_audio"] if witness_rows else [],
+        "missing_witnesses": [] if witnessed else ["positive_source_audio_transcription"],
+        "witness_rows": witness_rows,
+        "unresolved_findings": [
+            {
+                "token": " ".join(
+                    str(word) for word in unresolved_finding.get("latin_words") or []
+                ),
+                "cue_index": unresolved_finding.get("cue_index"),
+                "start_ms": unresolved_finding.get("start_ms"),
+                "end_ms": unresolved_finding.get("end_ms"),
+                "text": unresolved_finding.get("text"),
+            }
+            for unresolved_finding in unresolved
+        ],
+        "artifact_hashes": {key: value for key, value in hashes.items() if value},
+    }
+
+
 def classify_talk_failure(attempt_output: str) -> dict:
     """Persist a stable failure identity instead of a bare generic status."""
 
@@ -320,6 +423,18 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "chat_authority_finalization",
             False,
         )
+    elif "STORY_CONTRACT_INPUT_INVALID" in tail:
+        kind, stage, recoverable = (
+            "story_contract",
+            "subtitle_entity_consistency",
+            False,
+        )
+    elif "STORY_CONTRACT_TITLE_FAILED" in tail:
+        kind, stage, recoverable = (
+            "story_contract",
+            "title_fact_consistency",
+            False,
+        )
     elif "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED" in tail:
         # 审片员修复提案因 provider 失败未决——文本本身可修，等 provider
         # 恢复（或付费兜底额度）后重试即可，不是内容缺陷。
@@ -334,13 +449,18 @@ def classify_talk_failure(attempt_output: str) -> dict:
     normalized = re.sub(r"/[^\s:'\"]+", "<path>", message)
     normalized = re.sub(r"\b\d{8,}\b", "<n>", normalized)
     fingerprint = hashlib.sha256(f"{kind}\0{stage}\0{normalized}".encode("utf-8")).hexdigest()
-    return {
+    result = {
         "failure_kind": kind,
         "failure_stage": stage,
         "failure_message": message,
         "failure_fingerprint": "sha256:" + fingerprint,
         "failure_recoverable": recoverable,
     }
+    if kind == "subtitle_authority":
+        violation = _foreign_source_gate_violation(tail)
+        if violation is not None:
+            result["gate_violation"] = violation
+    return result
 
 
 def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
@@ -438,6 +558,38 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
     return filler_plan
 
 
+def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
+    lane = str(item.get("lane") or "")
+    if lane not in {"semantic_recall", "semantic_recall_sharded"} or (
+        selection_scorecard_is_valid(item.get("selection_scorecard"))
+    ):
+        return None
+    cid = str(item["cid"])
+    return {
+        "candidate_id": cid,
+        "segment": Path(item["segment_path"]).name,
+        "start_ms": item["start_ms"],
+        "end_ms": item["end_ms"],
+        "hook": item.get("hook", ""),
+        "confidence": item.get("confidence"),
+        "selection_scorecard": item.get("selection_scorecard"),
+        "session_relation_authority": item.get("session_relation_authority"),
+        "lane": lane,
+        "rc": 0,
+        "status": "candidate_rejected",
+        "failure_stage": "selection_scorecard_gate",
+        "rejection_reason": "selection_scorecard_missing_or_invalid",
+        "reason_codes": ["SELECTION_SCORECARD_MISSING_OR_INVALID"],
+        "failure_evidence": {
+            "schema_version": "candidate-gate-violation.v1",
+            "gate": "SELECTION_SCORECARD_REQUIRED",
+            "lane": lane,
+            "reason_code": "SELECTION_SCORECARD_MISSING_OR_INVALID",
+        },
+        "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
+    }
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -448,6 +600,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
     """
     cid = item["cid"]
+    scorecard_rejection = _selection_scorecard_rejection(item)
+    if scorecard_rejection is not None:
+        return scorecard_rejection
     filler_plan = _prepare_talk_filler_plan(item)
     # 合并候选的缝隙移除若被 plan 拒绝，绝不回退成整窗连续交付——那会把
     # 缝里的 8 分钟无关内容一起端出去（fail-closed，候选拒绝留审计）。
@@ -468,6 +623,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                 "end_ms": item["end_ms"],
                 "hook": item.get("hook", ""),
                 "confidence": item.get("confidence"),
+                "selection_scorecard": item.get("selection_scorecard"),
+                "session_relation_authority": item.get("session_relation_authority"),
                 "lane": item.get("lane", ""),
                 "talk_filler_plan": filler_plan,
                 "rc": 0,
@@ -486,6 +643,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             "effective_duration_ms": effective_duration_ms,
             "hook": item.get("hook", ""),
             "confidence": item.get("confidence"),
+            "selection_scorecard": item.get("selection_scorecard"),
+            "session_relation_authority": item.get("session_relation_authority"),
             "lane": item.get("lane", ""),
             "talk_filler_plan": filler_plan,
             "rc": 0,
@@ -509,6 +668,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "output_root": str(out_root),
         "delivery_name": delivery_name,
         "selection_hook": item.get("hook", ""),
+        "selection_scorecard": item.get("selection_scorecard"),
+        "session_relation_authority": item.get("session_relation_authority"),
         "given_title": None,
         "lead_pad_ms": 400,
         "semantic_start_ms": item["start_ms"],
@@ -608,6 +769,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "candidate_id": cid, "segment": Path(item["segment_path"]).name,
         "start_ms": item["start_ms"], "end_ms": item["end_ms"],
         "hook": item.get("hook", ""), "confidence": item.get("confidence"),
+        "selection_scorecard": item.get("selection_scorecard"),
+        "session_relation_authority": item.get("session_relation_authority"),
         "lane": item.get("lane", ""), "rc": completed.returncode, "log": str(log_path),
         "boundary_context_retries": boundary_context_retries,
         "talk_repair_retry_count": int(item.get("talk_repair_retry_count") or 0),

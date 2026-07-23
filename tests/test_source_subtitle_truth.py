@@ -866,8 +866,8 @@ def test_unrelated_neighbor_cue_never_overwritten_by_pin(tmp_path):
     assert audit["status"] == "APPLIED"
 
 
-def test_committed_ledger_restores_complete_opening_nancho_cue():
-    """已审定整句不能依赖误词仍存在；ASR 删掉专名时也必须完整恢复。"""
+def test_committed_ledger_supersedes_hallucinated_opening_suffix():
+    """旧错误钉子留审计历史，但不得再回放南町/LLNNHHB后缀。"""
 
     ledger = (
         Path(__file__).resolve().parents[1]
@@ -893,11 +893,16 @@ def test_committed_ledger_restores_complete_opening_nancho_cue():
         ledger_path=ledger,
     )
 
-    assert "这不是主播最最最最喜欢的南町nightin吗，llnnhhb" in corrected
-    assert audit["status"] == "APPLIED"
-    assert [row["truth_id"] for row in audit["applied"]] == [
-        "20260722-nancho-confrontation-opening-mixed-name"
+    assert "这不是主播最最最最喜欢" in corrected
+    assert "南町nightin" not in corrected
+    assert "llnnhhb" not in corrected.casefold()
+    assert audit["status"] == "ALREADY_SATISFIED"
+    assert [row["truth_id"] for row in audit["satisfied"]] == [
+        "20260722-nancho-confrontation-opening-human-r2"
     ]
+    assert audit["inactive"][0]["truth_id"] == (
+        "20260722-nancho-confrontation-opening-mixed-name"
+    )
 
 
 def test_committed_ledger_projects_nancho_truth_to_hash_bound_official_replay():
@@ -931,8 +936,10 @@ def test_committed_ledger_projects_nancho_truth_to_hash_bound_official_replay():
         ledger_path=ledger,
     )
 
-    assert "这不是主播最最最最喜欢的南町nightin吗，llnnhhb" in corrected
-    assert audit["status"] == "APPLIED"
-    assert audit["applied"][0]["source_aliases"][0]["alias_id"] == (
+    assert "这不是主播最最最最喜欢" in corrected
+    assert "南町nightin" not in corrected
+    assert "llnnhhb" not in corrected.casefold()
+    assert audit["status"] == "ALREADY_SATISFIED"
+    assert audit["satisfied"][0]["source_aliases"][0]["alias_id"] == (
         "20260722-official-replay-bv1fjg16xex6"
     )

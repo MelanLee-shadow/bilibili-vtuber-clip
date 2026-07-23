@@ -16,11 +16,20 @@ from src.autoslice.subtitle_rendering import (  # noqa: E402
     ASS_MAX_VISUAL_LINES,
 )
 from src.autoslice.cover_generation import COVER_MIN_TALK_FONT_SIZE  # noqa: E402
+from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
+from src.autoslice.selection_scorecard import (  # noqa: E402
+    selection_scorecard_is_valid,
+)
+from src.autoslice.story_contract import (  # noqa: E402
+    SCHEMA_VERSION as STORY_CONTRACT_SCHEMA,
+    audit_story_artifact,
+)
 
 
 DEFAULT_MAX_VISUAL_LINES = 2
 DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
+STORY_CONTRACT_ENFORCED_FROM_DATE = "2026-07-22"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -108,6 +117,150 @@ def _read_publish_title(path: Path | None) -> str:
     data = _load_json(path)
     title = data.get("title")
     return title.strip() if isinstance(title, str) else ""
+
+
+def _story_transcript(path: Path | None) -> str:
+    """Use the same SRT parser/normalization as package finalization."""
+
+    if path is None or not path.exists():
+        return ""
+    try:
+        cues = parse_srt_cues(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
+
+
+def _story_contract_is_required(manifest: dict[str, Any]) -> bool:
+    """Policy changes apply by package date, not by an optional producer flag."""
+
+    if manifest.get("story_contract_required") is True:
+        return True
+    package_date = manifest.get("date") or manifest.get("session_date")
+    return bool(
+        isinstance(package_date, str)
+        and re.fullmatch(r"\d{4}-\d{2}-\d{2}", package_date)
+        and package_date >= STORY_CONTRACT_ENFORCED_FROM_DATE
+    )
+
+
+def _compact_cover_text(value: str) -> str:
+    return re.sub(r"\s+", "", value)
+
+
+def _audit_story_bound_cover(
+    *,
+    issues: list[dict[str, Any]],
+    stem: str,
+    record_path: Path | None,
+    record: dict[str, Any],
+    story_contract: dict[str, Any],
+    required: bool,
+) -> None:
+    publish_staging = record.get("publish_staging")
+    if not isinstance(publish_staging, dict):
+        publish_staging = {}
+    generation = record.get("cover_generation")
+    if not isinstance(generation, dict):
+        generation = publish_staging.get("cover_generation")
+    if not isinstance(generation, dict):
+        generation = {}
+
+    staged_text = publish_staging.get("cover_text")
+    generation_text = generation.get("cover_text")
+    rendered_lines = generation.get("rendered_lines")
+    staged_text = staged_text if isinstance(staged_text, str) else ""
+    generation_text = generation_text if isinstance(generation_text, str) else ""
+    rendered_text = (
+        "".join(str(value) for value in rendered_lines)
+        if isinstance(rendered_lines, list) and rendered_lines
+        else ""
+    )
+
+    if required and not staged_text:
+        _add_issue(
+            issues,
+            "COVER_STORY_TEXT_MISSING",
+            stem=stem,
+            path=record_path,
+            detail="publish_staging.cover_text is absent",
+        )
+    if required and not rendered_text:
+        _add_issue(
+            issues,
+            "COVER_RENDERED_TEXT_EVIDENCE_MISSING",
+            stem=stem,
+            path=record_path,
+            detail="cover_generation.rendered_lines is absent",
+        )
+    if staged_text and generation_text and _compact_cover_text(staged_text) != _compact_cover_text(
+        generation_text
+    ):
+        _add_issue(
+            issues,
+            "COVER_TEXT_BINDING_DRIFT",
+            stem=stem,
+            path=record_path,
+            detail=f"staged={staged_text!r}; generation={generation_text!r}",
+        )
+    expected_text = staged_text or generation_text
+    if (
+        generation.get("cover_text_mode") != "punch"
+        and expected_text
+        and rendered_text
+        and _compact_cover_text(expected_text) != _compact_cover_text(rendered_text)
+    ):
+        _add_issue(
+            issues,
+            "COVER_RENDERED_TEXT_DRIFT",
+            stem=stem,
+            path=record_path,
+            detail=f"expected={expected_text!r}; rendered={rendered_text!r}",
+        )
+
+    binding = generation.get("story_contract")
+    expected_binding = {
+        "schema_version": story_contract.get("schema_version"),
+        "relation_state": story_contract.get("relation_state"),
+        "participants": story_contract.get("participants"),
+        "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
+    }
+    if required and (
+        not isinstance(binding, dict)
+        or any(binding.get(key) != value for key, value in expected_binding.items())
+    ):
+        _add_issue(
+            issues,
+            "COVER_STORY_CONTRACT_BINDING_MISSING_OR_STALE",
+            stem=stem,
+            path=record_path,
+            detail=json.dumps(
+                {"expected": expected_binding, "actual": binding},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+    for surface_name, surface in (
+        ("cover_text", expected_text),
+        ("cover_rendered_text", rendered_text),
+    ):
+        if not surface:
+            continue
+        story_audit = audit_story_artifact(
+            surface,
+            story_contract=story_contract,
+            artifact_kind=surface_name,
+        )
+        for violation in story_audit.get("violations") or []:
+            if isinstance(violation, dict):
+                _add_issue(
+                    issues,
+                    str(violation.get("reason_code") or "STORY_CONTRACT_COVER_FAILED"),
+                    stem=stem,
+                    path=record_path,
+                    detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
+                )
 
 
 def _contains_japanese(text: str) -> bool:
@@ -272,6 +425,26 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         _add_issue(issues, "MANIFEST_ITEMS_MISSING", path=manifest_path)
         items = []
 
+    story_contract_required = _story_contract_is_required(manifest)
+    if story_contract_required:
+        if manifest.get("upload_allowed") is not False:
+            _add_issue(
+                issues,
+                "REVIEW_PACKAGE_UPLOAD_POLICY_INVALID",
+                path=manifest_path,
+                detail="story-contract review packages must bind upload_allowed=false",
+            )
+        if str(manifest.get("run_mode") or "") not in {
+            "RECOVERY_REVIEW",
+            "PRODUCTION_REVIEW",
+        }:
+            _add_issue(
+                issues,
+                "REVIEW_PACKAGE_RUN_MODE_INVALID",
+                path=manifest_path,
+                detail=f"run_mode={manifest.get('run_mode')!r}",
+            )
+
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -326,6 +499,91 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         cover_generation = item.get("cover_generation")
         record_path = _resolve(root, item.get("record") or item.get("record_json"))
         record = _load_json(record_path) if record_path else {}
+        story_contract = record.get("story_contract")
+        if story_contract_required and not record:
+            _add_issue(
+                issues,
+                "STORY_CONTRACT_RECORD_MISSING",
+                stem=stem,
+                path=record_path,
+            )
+        if story_contract_required and not isinstance(story_contract, dict):
+            _add_issue(
+                issues,
+                "STORY_CONTRACT_MISSING",
+                stem=stem,
+                path=record_path,
+            )
+        if isinstance(story_contract, dict):
+            if story_contract.get("schema_version") != STORY_CONTRACT_SCHEMA:
+                _add_issue(
+                    issues,
+                    "STORY_CONTRACT_SCHEMA_STALE",
+                    stem=stem,
+                    path=record_path,
+                    detail=str(story_contract.get("schema_version")),
+                )
+            transcript = _story_transcript(subtitle_path)
+            subtitle_story_audit = audit_story_artifact(
+                transcript,
+                story_contract=story_contract,
+                artifact_kind="subtitle",
+            )
+            if transcript and subtitle_story_audit.get("text_sha256") != story_contract.get(
+                "transcript_sha256"
+            ):
+                _add_issue(
+                    issues,
+                    "STORY_CONTRACT_SUBTITLE_HASH_DRIFT",
+                    stem=stem,
+                    path=subtitle_path,
+                    detail=(
+                        f"contract={story_contract.get('transcript_sha256')}; "
+                        f"current={subtitle_story_audit.get('text_sha256')}"
+                    ),
+                )
+            for violation in subtitle_story_audit.get("violations") or []:
+                if isinstance(violation, dict):
+                    _add_issue(
+                        issues,
+                        str(violation.get("reason_code") or "STORY_CONTRACT_SUBTITLE_FAILED"),
+                        stem=stem,
+                        path=subtitle_path,
+                        detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
+                    )
+            artifact_title = publish_title or title_txt or str(item.get("title") or "")
+            title_story_audit = audit_story_artifact(
+                artifact_title,
+                story_contract=story_contract,
+                artifact_kind="title",
+            )
+            for violation in title_story_audit.get("violations") or []:
+                if isinstance(violation, dict):
+                    _add_issue(
+                        issues,
+                        str(violation.get("reason_code") or "STORY_CONTRACT_TITLE_FAILED"),
+                        stem=stem,
+                        path=publish_path or title_txt_path,
+                        detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
+                    )
+            _audit_story_bound_cover(
+                issues=issues,
+                stem=stem,
+                record_path=record_path,
+                record=record,
+                story_contract=story_contract,
+                required=story_contract_required,
+            )
+            scorecard = story_contract.get("selection_scorecard")
+            if story_contract_required and not is_song and (
+                not selection_scorecard_is_valid(scorecard)
+            ):
+                _add_issue(
+                    issues,
+                    "SELECTION_SCORECARD_MISSING_OR_STALE",
+                    stem=stem,
+                    path=record_path,
+                )
         record_generation = record.get("cover_generation")
         if not isinstance(record_generation, dict):
             publish_staging = record.get("publish_staging")

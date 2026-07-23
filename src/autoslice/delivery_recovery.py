@@ -529,6 +529,8 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "chat_jsonl": str(chat) if (chat := _runner.find_chat_jsonl(segment)) else None,
             "hook": record.get("hook", ""),
             "confidence": record.get("confidence"),
+            "selection_scorecard": record.get("selection_scorecard"),
+            "session_relation_authority": record.get("session_relation_authority"),
             "lane": record.get("lane", ""),
             "preview": record.get("preview", ""),
             "selected_repair": True,

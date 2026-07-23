@@ -808,6 +808,50 @@
       "action": "replace_cue",
       "text": "这不是主播最最最最喜欢的南町nightin吗，llnnhhb",
       "authority": "Ivan-stated-20260722-conversation(南町nightin为连续混合专名；同切片开场语义锚点复查发现nighting多生尾音)",
+      "assertion_state": "SUPERSEDED",
+      "superseded_by": "20260722-nancho-confrontation-opening-human-r2",
+      "supersession_reason": "A later atomic human review and two independent ASR drafts reject the added mixed name/formula suffix.",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-opening-human-r2",
+      "revision_id": "r2",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "supersedes": [
+        "20260722-nancho-confrontation-opening-mixed-name"
+      ],
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 672920,
+      "source_end_ms": 675480,
+      "action": "replace_cue",
+      "text": "这不是主播最最最最喜欢",
+      "before_span": "这不是主播最最最最喜欢的南町nightin吗，llnnhhb",
+      "forbidden_tokens": [
+        "南町nightin",
+        "llnnhhb"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(0:12只说到最最最最喜欢；后续南町nightin与LLNNHHB均未说)+BCUT/Jianying同时间窗均不支持新增后缀",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-no-cao-response-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 675480,
+      "source_end_ms": 678040,
+      "action": "replace_cue",
+      "text": "你为什么在说我的时候要最最最最喜欢",
+      "before_span": "你为什么在说我的时候要最最最最最最喜欢，草",
+      "forbidden_tokens": [
+        "草",
+        "llnnhhb"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(0:13没有说我草；后半段有声，禁止因前半段静音删掉真实话)+BCUT/Jianying均无草",
       "required": true
     },
     {
@@ -831,6 +875,44 @@
       "action": "replace_cue",
       "text": "南町nightin哦",
       "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-dan-teacher-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 741660,
+      "source_end_ms": 743980,
+      "action": "replace_cue",
+      "text": "然后大N老师就过来帮忙了",
+      "before_span": "然后大卫老师就过来帮忙了",
+      "forbidden_tokens": [
+        "大卫老师",
+        "大恩老师",
+        "大黄老师"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(1:18为南町别名大N；同片后续大N老师重复槽位)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-yasashii-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 743980,
+      "source_end_ms": 745780,
+      "action": "replace_cue",
+      "text": "非常亚撒西，亚撒西",
+      "before_span": "非常亚撒西亚",
+      "forbidden_tokens": [
+        "亚撒西亚"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(1:20逐字为非常亚撒西，亚撒西；只修本局部，不做全局替换)",
       "required": true
     },
     {
@@ -869,6 +951,21 @@
       "source_end_ms": 776410,
       "action": "drop_cue",
       "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；该区间无说话)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-latin-formula-positive-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 776470,
+      "source_end_ms": 778810,
+      "action": "replace_cue",
+      "text": "嗯，LLNNHHB，是这个",
+      "before_span": "NLL，嗯嗯",
+      "evidence_class": "DUAL_INDEPENDENT_ASR_POSITIVE",
+      "authority": "BCUT跨cue正向公式+Jianying同时间窗正向LLNNHHB(20260722复审)；本条不反推开场也说过该公式",
       "required": true
     },
     {
@@ -1001,6 +1098,26 @@
       "action": "replace_cue",
       "text": "那个时候你是什么",
       "authority": "Ivan-stated-20260722-conversation(逐字口播；语义为CP前后位，不作解释性改写)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-signoff-dan-alias-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 5393000,
+      "source_end_ms": 5397200,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "大恩",
+          "canonical": "大N"
+        }
+      ],
+      "required_text": "大N",
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+      "authority": "Ivan-stated-20260722-conversation(本场南町别名为大N；该逐mention字幕大恩为误写)",
       "required": true
     }
   ]

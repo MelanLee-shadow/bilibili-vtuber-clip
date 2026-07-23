@@ -1,0 +1,46 @@
+{
+  "schema_version": "session-relation-ledger.v1",
+  "sessions": [
+    {
+      "relation_id": "20260722-lidousha-nancho-live-collaboration",
+      "date": "2026-07-22",
+      "recording_basenames": [
+        "22966160_20260722-19-35-15.mp4",
+        "22966160_20260722-19-34-50.mp4"
+      ],
+      "source_sha256s": [
+        "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      ],
+      "state": "CONFIRMED",
+      "relation_type": "LIVE_COLLABORATION",
+      "participants": [
+        {
+          "canonical_id": "lidousha",
+          "display_name": "李豆沙",
+          "surfaces": ["李豆沙", "小李", "豆沙"]
+        },
+        {
+          "canonical_id": "nancho",
+          "display_name": "南町",
+          "surfaces": ["南町", "大N", "小N", "南町nightin"]
+        }
+      ],
+      "presence_intervals": [
+        {"start_ms": 0, "end_ms": 7200000, "kind": "SESSION_PRESENCE"}
+      ],
+      "evidence": [
+        {
+          "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+          "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+          "independence_group": "ivan-session-review"
+        },
+        {
+          "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+          "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+          "independence_group": "official-replay-source"
+        }
+      ]
+    }
+  ]
+}

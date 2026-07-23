@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from scripts.audit_lidousha_review_package import audit_package
+from src.autoslice.selection_scorecard import normalize_selection_scorecard
+from src.autoslice.story_contract import build_story_contract
 
 
 def _write(path: Path, text: str) -> Path:
@@ -322,6 +324,221 @@ def test_audit_rejects_visual_contract_looser_than_renderer(tmp_path: Path):
     assert {issue["code"] for issue in result["issues"]} == {
         "SUBTITLE_VISUAL_CONTRACT_INVALID"
     }
+
+
+def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_alias(
+    tmp_path: Path,
+):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    stem = "nancho-collab"
+    transcript = "南町nightin说非常亚撒西"
+    srt = _write(
+        root / f"{stem}.srt",
+        f"1\n00:00:00,000 --> 00:00:04,000\n{transcript}\n",
+    )
+    scorecard = normalize_selection_scorecard(
+        {
+            "tier": 1,
+            "tier_basis": "relationship_chain",
+            "tier_reason": "联动关系与反转",
+            "tier_evidence_cues": [1, 2],
+            "dimensions": {
+                "lidousha_centrality": 4,
+                "stance_intensity": 3,
+                "audience_salience": 4,
+                "relationship_interaction": 4,
+                "persona_reversal": 3,
+                "comedic_payoff": 3,
+                "self_contained": 4,
+            },
+            "uncertainty_penalty": 0,
+            "fatigue_penalty": 0,
+        },
+        start_cue=1,
+        end_cue=2,
+    )
+    assert scorecard is not None
+    contract = build_story_contract(
+        candidate_id=stem,
+        selection_hook="南町当面追问李豆沙最喜欢谁",
+        transcript_text=transcript,
+        selection_scorecard=scorecard,
+        session_relation_authority={
+            "state": "CONFIRMED",
+            "participants": ["lidousha", "nancho"],
+        },
+    )
+    record = root / f"{stem}.record.json"
+    cover_text = "南町当面追问最最最最喜欢"
+    cover_binding = {
+        "schema_version": contract["schema_version"],
+        "relation_state": contract["relation_state"],
+        "participants": contract["participants"],
+        "cover_fallback_mode": contract["cover_fallback_mode"],
+    }
+    record.write_text(
+        json.dumps(
+            {
+                "story_contract": contract,
+                "publish_staging": {
+                    "cover_text": cover_text,
+                    "cover_generation": {
+                        "cover_text": cover_text,
+                        "rendered_lines": ["南町当面追问", "最最最最喜欢"],
+                        "story_contract": cover_binding,
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished_review_package_no_upload_pending_human_review",
+                "story_contract_required": True,
+                "run_mode": "RECOVERY_REVIEW",
+                "upload_allowed": False,
+                "items": [
+                    {
+                        "stem": stem,
+                        "title": "【李豆沙】南町当面追问最最最最喜欢",
+                        "subtitle_srt": srt.name,
+                        "record": record.name,
+                        "ai_cover_generated": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert audit_package(root)["passed"] is True
+
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:04,000\n大恩老师说非常亚撒西\n",
+        encoding="utf-8",
+    )
+    result = audit_package(root)
+    codes = {issue["code"] for issue in result["issues"]}
+    assert result["passed"] is False
+    assert "STORY_CONTRACT_SUBTITLE_HASH_DRIFT" in codes
+    assert "NANCHO_ALIAS_UNRESOLVED" in codes
+
+
+def test_story_contract_is_mandatory_by_date_and_cover_alias_cannot_drift(
+    tmp_path: Path,
+):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "date": "2026-07-22",
+                "status": "finished_review_package_no_upload_pending_human_review",
+                "items": [{"stem": "legacy-without-contract"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = audit_package(root)
+    codes = {issue["code"] for issue in result["issues"]}
+    assert result["passed"] is False
+    assert "REVIEW_PACKAGE_UPLOAD_POLICY_INVALID" in codes
+    assert "REVIEW_PACKAGE_RUN_MODE_INVALID" in codes
+    assert "STORY_CONTRACT_RECORD_MISSING" in codes
+
+    transcript = "南町nightin说非常亚撒西"
+    srt = _write(
+        root / "cover-drift.srt",
+        f"1\n00:00:00,000 --> 00:00:04,000\n{transcript}\n",
+    )
+    scorecard = normalize_selection_scorecard(
+        {
+            "tier": 1,
+            "tier_basis": "relationship_chain",
+            "tier_reason": "联动关系与反转",
+            "tier_evidence_cues": [1],
+            "dimensions": {
+                "lidousha_centrality": 4,
+                "stance_intensity": 3,
+                "audience_salience": 4,
+                "relationship_interaction": 4,
+                "persona_reversal": 3,
+                "comedic_payoff": 3,
+                "self_contained": 4,
+            },
+            "uncertainty_penalty": 0,
+            "fatigue_penalty": 0,
+        },
+        start_cue=1,
+        end_cue=1,
+    )
+    contract = build_story_contract(
+        candidate_id="cover-drift",
+        selection_hook="南町当面追问李豆沙",
+        transcript_text=transcript,
+        selection_scorecard=scorecard,
+        session_relation_authority={
+            "state": "CONFIRMED",
+            "participants": ["lidousha", "nancho"],
+        },
+    )
+    binding = {
+        key: contract[key]
+        for key in (
+            "schema_version",
+            "relation_state",
+            "participants",
+            "cover_fallback_mode",
+        )
+    }
+    record = root / "cover-drift.record.json"
+    record.write_text(
+        json.dumps(
+            {
+                "story_contract": contract,
+                "publish_staging": {
+                    "cover_text": "大恩当面追问",
+                    "cover_generation": {
+                        "cover_text": "大恩当面追问",
+                        "rendered_lines": ["大恩当面追问"],
+                        "story_contract": binding,
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "date": "2026-07-22",
+                "run_mode": "RECOVERY_REVIEW",
+                "upload_allowed": False,
+                "items": [
+                    {
+                        "stem": "cover-drift",
+                        "title": "【李豆沙】南町当面追问",
+                        "subtitle_srt": srt.name,
+                        "record": record.name,
+                        "ai_cover_generated": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = audit_package(root)
+    codes = {issue["code"] for issue in result["issues"]}
+    assert result["passed"] is False
+    assert "NANCHO_ALIAS_UNRESOLVED" in codes
 
 
 def test_audit_blocks_package_with_extended_invalid_review_draft_status(tmp_path: Path):

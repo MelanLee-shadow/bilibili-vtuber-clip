@@ -121,9 +121,9 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
         song_name_candidates=["歌"],
     )
 
-    # 2026-07-22 加入南町nightin/L 人名串/公公又式式受限术语后的指纹。
+    # 2026-07-22 加入南町nightin/大N/小N 与逐 mention 音频复核规则后的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "cc31605672aa771d8bbbccedcce044e47cc2c9b031576c5b7165379bf6440bf1"
+        "66202fa286f015019e6905044ec157dc781fef150a2b3e8ccc5824a590f34ed2"
     )
 
 

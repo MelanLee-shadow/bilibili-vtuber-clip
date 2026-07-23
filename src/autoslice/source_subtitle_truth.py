@@ -28,6 +28,9 @@ MIN_CUE_OVERLAP_MS = 80
 DROP_CUE_BOUNDARY_EPSILON_MS = 120
 SPOKEN_START_CUE_LAG_TOLERANCE_MS = 500
 _SOURCE_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
+_ASSERTION_STATES = frozenset(
+    {"PROPOSED", "VERIFIED_ACTIVE", "REJECTED", "CONFLICTED", "SUPERSEDED"}
+)
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -347,6 +350,111 @@ def _audit_source_aliases(
     return list(used.values())
 
 
+def _assertion_state(entry: Mapping[str, object]) -> str:
+    """Legacy rows are active; revision-aware rows must name a valid state."""
+
+    state = entry.get("assertion_state")
+    if state is None:
+        return "VERIFIED_ACTIVE"
+    value = str(state)
+    if value not in _ASSERTION_STATES:
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ASSERTION_STATE_INVALID")
+    return value
+
+
+def _skip_inactive_assertion(
+    *,
+    audit: dict[str, Any],
+    entry: Mapping[str, object],
+    truth_id: str,
+    assertion_state: str,
+) -> bool:
+    if assertion_state in {"PROPOSED", "REJECTED", "SUPERSEDED"}:
+        audit.setdefault("inactive", []).append(
+            {
+                "truth_id": truth_id,
+                "assertion_state": assertion_state,
+                "superseded_by": entry.get("superseded_by"),
+            }
+        )
+        return True
+    if assertion_state == "CONFLICTED":
+        audit["failures"].append(
+            {
+                "truth_id": truth_id,
+                "assertion_state": assertion_state,
+                "reason_code": "SOURCE_TRUTH_ASSERTION_CONFLICTED",
+                "recording_basename": entry.get("recording_basename"),
+                "source_start_ms": int(entry["source_start_ms"]),
+                "source_end_ms": int(entry["source_end_ms"]),
+            }
+        )
+        return True
+    return False
+
+
+def _forbidden_token_failure(
+    *,
+    entry: Mapping[str, object],
+    texts: Sequence[str],
+    target_indexes: Sequence[int],
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    forbidden = entry.get("forbidden_tokens", [])
+    if not isinstance(forbidden, list) or any(
+        not isinstance(token, str) or not token for token in forbidden
+    ):
+        return {**row, "reason_code": "FORBIDDEN_TOKENS_INVALID"}
+    hits = [
+        token
+        for token in forbidden
+        if any(token.casefold() in texts[index].casefold() for index in target_indexes)
+    ]
+    if not hits:
+        return None
+    return {
+        **row,
+        "reason_code": "FORBIDDEN_TOKEN_SURVIVED_SOURCE_TRUTH",
+        "forbidden_token_hits": hits,
+    }
+
+
+def _source_truth_audit_row(
+    *,
+    entry: Mapping[str, object],
+    truth_id: str,
+    assertion_state: str,
+    action: str,
+    target_indexes: Sequence[int],
+    windows: Sequence[Mapping[str, object]],
+) -> dict[str, Any]:
+    entry_bytes = json.dumps(
+        entry,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "truth_id": truth_id,
+        "revision_id": entry.get("revision_id"),
+        "assertion_state": assertion_state,
+        "supersedes": entry.get("supersedes"),
+        "evidence_class": entry.get("evidence_class"),
+        "before_span": entry.get("before_span"),
+        "authority": entry.get("authority"),
+        "recording_basename": entry.get("recording_basename"),
+        "source_start_ms": int(entry["source_start_ms"]),
+        "source_end_ms": int(entry["source_end_ms"]),
+        "action": action,
+        "cue_indexes": [index + 1 for index in target_indexes],
+        "local_windows": [
+            {"start_ms": int(window["start_ms"]), "end_ms": int(window["end_ms"])}
+            for window in windows
+        ],
+        "entry_sha256": "sha256:" + _sha256_bytes(entry_bytes),
+    }
+
+
 def _resolve_spoken_start_target(
     cues: Sequence[SrtCue],
     target_indexes: Sequence[int],
@@ -448,6 +556,7 @@ def apply_source_subtitle_truth(
         truth_id = str(raw_entry.get("truth_id") or "")
         if not truth_id:
             raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ID_MISSING")
+        assertion_state = _assertion_state(raw_entry)
         windows = _entry_local_windows(
             raw_entry,
             pieces=pieces,
@@ -456,35 +565,27 @@ def apply_source_subtitle_truth(
         )
         if not windows:
             continue
+        if _skip_inactive_assertion(
+            audit=audit,
+            entry=raw_entry,
+            truth_id=truth_id,
+            assertion_state=assertion_state,
+        ):
+            continue
         target_indexes = _target_indexes(cues, windows)
         action = str(raw_entry.get("action") or "")
         source_start_ms = int(raw_entry["source_start_ms"])
         source_end_ms = int(raw_entry["source_end_ms"])
-        row: dict[str, Any] = {
-            "truth_id": truth_id,
-            "authority": raw_entry.get("authority"),
-            "recording_basename": raw_entry.get("recording_basename"),
-            "source_start_ms": source_start_ms,
-            "source_end_ms": source_end_ms,
-            "action": action,
-            "cue_indexes": [index + 1 for index in target_indexes],
-            # 交付时间轴上的钉子辖区（2026-07-20 kmx r3 案）：终稿校验器的
-            # 钉子豁免必须按时间比对——ledger 之后 layout 会重排 cue，序号
-            # 映射到终稿会漂移。
-            "local_windows": [
-                {"start_ms": int(window["start_ms"]), "end_ms": int(window["end_ms"])}
-                for window in windows
-            ],
-            "entry_sha256": "sha256:"
-            + _sha256_bytes(
-                json.dumps(
-                    raw_entry,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ),
-        }
+        # local_windows bind truth authority to delivery time; cue indexes may
+        # drift after layout and are kept only as operator evidence.
+        row = _source_truth_audit_row(
+            entry=raw_entry,
+            truth_id=truth_id,
+            assertion_state=assertion_state,
+            action=action,
+            target_indexes=target_indexes,
+            windows=windows,
+        )
         used_aliases = _audit_source_aliases(windows)
         if used_aliases:
             row["source_aliases"] = used_aliases
@@ -677,6 +778,15 @@ def apply_source_subtitle_truth(
 
         row["before"] = before
         row["after"] = [texts[index] for index in target_indexes]
+        forbidden_failure = _forbidden_token_failure(
+            entry=raw_entry,
+            texts=texts,
+            target_indexes=target_indexes,
+            row=row,
+        )
+        if forbidden_failure is not None:
+            audit["failures"].append(forbidden_failure)
+            continue
         if changed:
             audit["applied"].append(row)
         elif satisfied:
@@ -720,6 +830,7 @@ def ledger_local_windows(
             if (
                 not isinstance(raw_entry, Mapping)
                 or raw_entry.get("knowledge_type") != "SOURCE_INTERVAL_TRUTH"
+                or _assertion_state(raw_entry) != "VERIFIED_ACTIVE"
             ):
                 continue
             for window in _entry_local_windows(

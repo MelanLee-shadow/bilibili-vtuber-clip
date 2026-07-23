@@ -412,6 +412,35 @@
         "Hime",
         "Hina"
       ]
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "uncertain_keep_canonicals": [
+        "南町"
+      ],
+      "entities": [
+        {
+          "canonical": "南町",
+          "surfaces": [
+            "南町",
+            "大N",
+            "大N老师",
+            "小N",
+            "南町nightin",
+            "大恩老师",
+            "大卫老师",
+            "大黄老师",
+            "邓老师"
+          ],
+          "readings": [
+            "nan cho",
+            "nancho",
+            "da en",
+            "xiao en"
+          ]
+        }
+      ],
+      "reason": "Ivan 2026-07-22：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
     }
   ]
 }

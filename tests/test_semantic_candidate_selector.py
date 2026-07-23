@@ -104,9 +104,9 @@ def test_default_profile_semantic_prompt_policy_fingerprint():
         danmaku_hints="00:01 burst",
     )
 
-    # 2026-07-19：event_key 增补「同主题隔段再触发也用同一 key」规则后的指纹。
+    # 2026-07-22：v5 七维固定量化表 + event_key 同主题合并规则的指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "f4474d7898efc4dfc2aabf9a9fd618a81f3c97cb1d9c25b82eb9971fc013975d"
+        "3b7b544a8f8412d90434fc78ff3db9eafc0269bbd19d11809dae8181e7560c2c"
     )
 
 

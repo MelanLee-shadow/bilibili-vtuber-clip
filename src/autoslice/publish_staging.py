@@ -40,6 +40,7 @@ from .cover_screenshot_poster import _compose_screenshot_poster_background
 from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
 from .shadow_review import _sha256, _write_json_file
+from .story_contract import audit_story_artifact, cover_relation_prompt
 from .title_policy import (
     _TITLE_MAX_ATTEMPTS,
     _TITLE_MAX_LEN,
@@ -275,6 +276,27 @@ def _stage_publish_draft(
     # 手定标题（title_llm_call=None）保持一字不改的铁律，不进此函数。
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
+    story_contract = record.get("story_contract")
+    title_story_audit = None
+    if isinstance(story_contract, dict):
+        title_story_audit = audit_story_artifact(
+            staged_title,
+            story_contract=story_contract,
+            artifact_kind="title",
+        )
+        if title_story_audit["status"] != "PASS":
+            story_codes = sorted(
+                {
+                    str(row.get("reason_code") or "STORY_CONTRACT_TITLE_FAILED")
+                    for row in title_story_audit["violations"]
+                    if isinstance(row, dict)
+                }
+            )
+            title_policy_violations.extend(
+                code for code in story_codes if code not in title_policy_violations
+            )
+            title_authority_error = "story_contract_violation:" + ",".join(story_codes)
+            title_authority_status = "BLOCKED_STORY_CONTRACT"
     cover_text = _lidousha_cover_text(staged_title)
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail
@@ -333,6 +355,7 @@ def _stage_publish_draft(
         "title_authority_status": title_authority_status,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
+        "title_story_audit": title_story_audit,
         "video_path": str(media_path),
         "cover_text": cover_text,
         "cover_path": cover_path_value,
@@ -350,6 +373,7 @@ def _stage_publish_draft(
         "title_authority_status": title_authority_status,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
+        "title_story_audit": title_story_audit,
         "cover_status": cover_status,
         "cover_path": cover_path_value,
         "cover_text": cover_text,
@@ -385,6 +409,14 @@ def _stage_lidousha_ai_cover(
         "cover_diversity_slot": diversity_slot,
         "title": title,
     }
+    story_contract = materialized_recut.get("story_contract")
+    if isinstance(story_contract, Mapping):
+        cover_generation["story_contract"] = {
+            "schema_version": story_contract.get("schema_version"),
+            "relation_state": story_contract.get("relation_state"),
+            "participants": story_contract.get("participants"),
+            "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
+        }
     # 封面路线（2026-07-21 Ivan："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
     # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
     # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
@@ -489,6 +521,12 @@ def _stage_lidousha_ai_cover(
         frame_selection=frame_selection,
     )
     cover_generation["cover_treatment"] = {"treatment": treatment, "reason": treatment_reason}
+    if isinstance(story_contract, Mapping):
+        cover_generation["relation_cover_mode"] = (
+            "VERIFIED_STREAM_FRAME"
+            if treatment in ("screenshot_direct", "screenshot_polish")
+            else str(story_contract.get("cover_fallback_mode") or "HOST_ONLY_GENERIC")
+        )
     if treatment in ("screenshot_direct", "screenshot_polish"):
         screenshot_result = _stage_screenshot_direct_cover(
             media_path=media_path,
@@ -586,7 +624,8 @@ def _stage_lidousha_ai_cover(
             cover_text=cover_text,
             art_direction=art_direction,
             emote=emote_entry,
-        ),
+        )
+        + cover_relation_prompt(story_contract),
         request_path=request_path,
         response_path=response_path,
     )
