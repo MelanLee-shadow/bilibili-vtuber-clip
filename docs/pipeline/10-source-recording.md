@@ -44,9 +44,11 @@
   ffmpeg/ffprobe，因此 compose 用同一固定工具镜像启动独立
   `bililive_adapter` 服务；它只运行 adapter daemon，官方
   `bililive_recorder` 仍是唯一录制器，`bilive_record` 仍只是旧脚本工具
-  容器。adapter 先持久化 Webhook v2 事件，再通过 compose 内网且有 Basic
-  Auth 的 GraphQL 每分钟 reconciliation，原子写宿主
+  容器。adapter 先持久化 Webhook v2 事件，再通过 compose 私网 GraphQL
+  每分钟 reconciliation，原子写宿主
   `/opt/bilive/recording/status.json`。
+  `BREC_HTTP_OPEN_ACCESS=1` 只用于绕过录播姬对容器间源地址的局域网启发式；
+  宿主发布仍固定为 `127.0.0.1:23566`，不得把 2356 暴露到公网。
 - runner 只信 schema 正确、房间匹配、180 秒内生成且
   `service_reachable=true` 的状态。状态缺失、过期、报错或 adapter 正在
   finalizing 均保持 live hold；不得猜测为下播并开始切片。

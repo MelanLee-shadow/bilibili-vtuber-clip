@@ -81,6 +81,10 @@ services:
     environment:
       TZ: Asia/Shanghai
       UMASK: "077"
+      # The adapter reaches the recorder over the private Compose network.
+      # Host exposure remains loopback-only below; this disables brec's
+      # source-address heuristic for that container-to-container request.
+      BREC_HTTP_OPEN_ACCESS: "1"
     ports:
       - "127.0.0.1:23566:2356"
     volumes:
