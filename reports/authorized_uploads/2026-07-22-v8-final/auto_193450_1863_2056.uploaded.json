@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1xgg462Env",
+  "aid": 116969592326605,
+  "cid": 40230977891,
+  "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+  "uploaded_at": "2026-07-23T13:53:08+0000",
+  "video_sha256": "5895d08d5ce897bcfa97993b73d072a688a86706ea2403ec58fa7909f6762e83",
+  "cover_sha256": "54802a840b75cfdec7c1276bd63f0f52e8cc3091ed8f410719ac4202a12373e1",
+  "record_sha256": "3c9846a97aec1e75782e9ef92443016a4c54bfcc7e0971652b8526ed19d18f88",
+  "subtitle_sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+  "package_audit_sha256": "9513e38cd52d55f76bb509fe766bc28180f2f9400ccf1e2623c01f9f7dc39ff8",
+  "review_manifest_sha256": "1bcba0c2b6e5f37fe05dc58f3a305ce9438751ac7fdd89391747f682b6ac52ad",
+  "manifest": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1863_2056.upload_manifest.json",
+  "manifest_sha256": "0192c74673cafd762bf18b43a5843244543f2b869c8de252911e074aa6155b82",
+  "public_verify": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1863_2056.public_verify.json",
+  "public_verify_sha256": "b8479b4a979b36bd53e0ea8e947a1220dd54ac9b2e1d59943194e4df6df9f5a9",
+  "authorized_by": "Ivan",
+  "authorization_quote": "权宜上传指的是尽量上传，我醒来后再做修改，主要是为了抢占每24h只能上传10个的额度"
+}

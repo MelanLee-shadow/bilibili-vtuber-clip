@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "16fa0471a3cc",
+  "video": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/lidousha/2026-07-22/看着像不良帅姐的搭档把大椅子让给李豆.mp4",
+    "sha256": "16fa0471a3cc21b7faf146c5e22a94fde7ae024c14c044b9e0ff7cce8be480ed",
+    "bytes": 46909829
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/lidousha/2026-07-22/看着像不良帅姐的搭档把大椅子让给李豆.cover.png",
+    "sha256": "da1c9d10ef38e40ff166171508b9706ed183c45313e18049496449efc18c8d30",
+    "bytes": 1502297
+  },
+  "title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/lidousha/2026-07-22",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/package-audit-final-35d6fdf.json",
+      "sha256": "9513e38cd52d55f76bb509fe766bc28180f2f9400ccf1e2623c01f9f7dc39ff8",
+      "bytes": 191
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/lidousha/2026-07-22/review_manifest.json",
+      "sha256": "1bcba0c2b6e5f37fe05dc58f3a305ce9438751ac7fdd89391747f682b6ac52ad",
+      "bytes": 39313
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/lidousha/2026-07-22/看着像不良帅姐的搭档把大椅子让给李豆.record.json",
+      "sha256": "1397f291e983ffc935b1233eed8be676e6ef9ddd9020e97277534385836777fc",
+      "bytes": 78621
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/lidousha/2026-07-22/看着像不良帅姐的搭档把大椅子让给李豆.srt",
+      "sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+      "bytes": 3020
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "权宜上传指的是尽量上传，我醒来后再做修改，主要是为了抢占每24h只能上传10个的额度",
+    "at": "2026-07-23T13:35:56+0000"
+  },
+  "created_at": "2026-07-23T13:35:56+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "反差萌",
+    "假哭",
+    "搞笑",
+    "吐槽"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}

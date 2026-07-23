@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1acg46XEjx",
+  "aid": 116969625884294,
+  "cid": 40231177971,
+  "title": "【李豆沙】弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+  "uploaded_at": "2026-07-23T13:59:30+0000",
+  "video_sha256": "aa4e68b52408f15b124ae5093315c9d14a30f0eb9019515ccd01b7ffd53d6de1",
+  "cover_sha256": "eb2ed88dd1ef5618c25b3d9b9c055abfc9511c94dce8224e9ed708f30c4a1eac",
+  "record_sha256": "ba06da6c8c892648feb981d382feccc454d81502e584ec7533918d04679c5674",
+  "subtitle_sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+  "package_audit_sha256": "9513e38cd52d55f76bb509fe766bc28180f2f9400ccf1e2623c01f9f7dc39ff8",
+  "review_manifest_sha256": "1bcba0c2b6e5f37fe05dc58f3a305ce9438751ac7fdd89391747f682b6ac52ad",
+  "manifest": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1475_1543.upload_manifest.json",
+  "manifest_sha256": "4d024b0205df9b61745f0610881d4a91c87bd399a8fac67c7f4e0a7c325cdcea",
+  "public_verify": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1475_1543.public_verify.json",
+  "public_verify_sha256": "c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771",
+  "authorized_by": "Ivan",
+  "authorization_quote": "权宜上传指的是尽量上传，我醒来后再做修改，主要是为了抢占每24h只能上传10个的额度"
+}

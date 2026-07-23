@@ -1,0 +1,23 @@
+{
+  "schema_version": "authorized-upload-season-verify.v1",
+  "bvid": "BV1tTg46UE3y",
+  "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+  "season_binding": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "season_binding_source": "manifest",
+  "verified_at": "2026-07-23T13:47:31+0000",
+  "last_view_code": 0,
+  "state": 0,
+  "aid": 116969558771366,
+  "cid": 40230715805,
+  "season_id": 8383206,
+  "section_id": 9320779,
+  "season_add_code": 0,
+  "season_add_message": "0",
+  "ugc_season_title": "小李切片",
+  "is_season_display": true,
+  "status": "IN_SEASON_PUBLIC"
+}

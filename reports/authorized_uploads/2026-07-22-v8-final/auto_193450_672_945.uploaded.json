@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1tTg46UE3y",
+  "aid": 116969558771366,
+  "cid": 40230715805,
+  "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+  "uploaded_at": "2026-07-23T13:47:33+0000",
+  "video_sha256": "7da1949283d87b5d4d6cf7b7c0eeafedcf103d2465feef1efd160d6c859983dc",
+  "cover_sha256": "7876c1d65dfc799da8035c44f1453f55b67d36d383c984985f34d9c12034b360",
+  "record_sha256": "0ed2f0e736ce111b7da6db59f771970460839e6624e7d543c44d06b6b09cc221",
+  "subtitle_sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+  "package_audit_sha256": "9513e38cd52d55f76bb509fe766bc28180f2f9400ccf1e2623c01f9f7dc39ff8",
+  "review_manifest_sha256": "1bcba0c2b6e5f37fe05dc58f3a305ce9438751ac7fdd89391747f682b6ac52ad",
+  "manifest": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_672_945.upload_manifest.json",
+  "manifest_sha256": "396880ca8d1bf1a0030da82ef345582244ac00a6dd7378de05aee005e2ed6ae3",
+  "public_verify": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_672_945.public_verify.json",
+  "public_verify_sha256": "3b95501c30fa14c6f0747f55cffa6a5255f13ba41278d65b702f5c9a45fe1aef",
+  "authorized_by": "Ivan",
+  "authorization_quote": "权宜上传指的是尽量上传，我醒来后再做修改，主要是为了抢占每24h只能上传10个的额度"
+}

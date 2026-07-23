@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1DAg46HEXE",
+  "aid": 116969609172199,
+  "cid": 40231111679,
+  "title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了",
+  "uploaded_at": "2026-07-23T13:55:51+0000",
+  "video_sha256": "16fa0471a3cc21b7faf146c5e22a94fde7ae024c14c044b9e0ff7cce8be480ed",
+  "cover_sha256": "da1c9d10ef38e40ff166171508b9706ed183c45313e18049496449efc18c8d30",
+  "record_sha256": "1397f291e983ffc935b1233eed8be676e6ef9ddd9020e97277534385836777fc",
+  "subtitle_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+  "package_audit_sha256": "9513e38cd52d55f76bb509fe766bc28180f2f9400ccf1e2623c01f9f7dc39ff8",
+  "review_manifest_sha256": "1bcba0c2b6e5f37fe05dc58f3a305ce9438751ac7fdd89391747f682b6ac52ad",
+  "manifest": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1573_1672.upload_manifest.json",
+  "manifest_sha256": "26fa7fcf07000d918907af93a7cdea2c466ce664f20485bae555b49992b81320",
+  "public_verify": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1573_1672.public_verify.json",
+  "public_verify_sha256": "08fd268ea04878877014838a8925440a893affc972c292de17e464d62768dcfb",
+  "authorized_by": "Ivan",
+  "authorization_quote": "权宜上传指的是尽量上传，我醒来后再做修改，主要是为了抢占每24h只能上传10个的额度"
+}

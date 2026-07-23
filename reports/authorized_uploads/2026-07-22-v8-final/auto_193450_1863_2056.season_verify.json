@@ -1,0 +1,23 @@
+{
+  "schema_version": "authorized-upload-season-verify.v1",
+  "bvid": "BV1xgg462Env",
+  "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+  "season_binding": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "season_binding_source": "manifest",
+  "verified_at": "2026-07-23T13:53:07+0000",
+  "last_view_code": 0,
+  "state": 0,
+  "aid": 116969592326605,
+  "cid": 40230977891,
+  "season_id": 8383206,
+  "section_id": 9320779,
+  "season_add_code": 0,
+  "season_add_message": "0",
+  "ugc_season_title": "小李切片",
+  "is_season_display": true,
+  "status": "IN_SEASON_PUBLIC"
+}

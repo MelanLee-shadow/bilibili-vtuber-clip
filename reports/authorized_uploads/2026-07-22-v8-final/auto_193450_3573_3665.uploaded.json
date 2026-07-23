@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1Mug46EEQz",
+  "aid": 116969542128097,
+  "cid": 40230585584,
+  "title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
+  "uploaded_at": "2026-07-23T13:39:10+0000",
+  "video_sha256": "e17a0c42b1e74f1ebddf06500ecc1b057980a10e1a075fcf0b5570e655e7897c",
+  "cover_sha256": "e2a5a6bc7063d4a5f54058c6988ec52ec94b5a30d06bfe9f81a085b460285ab1",
+  "record_sha256": "16e94c6e4e77d54c2acc699581353a946365f52f5f4eeb3cd2c8c3687be63c61",
+  "subtitle_sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
+  "package_audit_sha256": "9513e38cd52d55f76bb509fe766bc28180f2f9400ccf1e2623c01f9f7dc39ff8",
+  "review_manifest_sha256": "1bcba0c2b6e5f37fe05dc58f3a305ce9438751ac7fdd89391747f682b6ac52ad",
+  "manifest": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_3573_3665.upload_manifest.json",
+  "manifest_sha256": "cdc3b4d8f2c0dfdffbf6ca61e67db69cae691db3578a0c4ff6e781578e0e904c",
+  "public_verify": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/reports/authorized_uploads/2026-07-22-v8-final/auto_193450_3573_3665.public_verify.json",
+  "public_verify_sha256": "0ea162e597ac43c0d0be8431be41a49a132f1856999f1f8e036addabed1af68f",
+  "authorized_by": "Ivan",
+  "authorization_quote": "权宜上传指的是尽量上传，我醒来后再做修改，主要是为了抢占每24h只能上传10个的额度"
+}
