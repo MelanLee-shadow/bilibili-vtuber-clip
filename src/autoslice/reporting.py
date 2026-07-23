@@ -276,7 +276,7 @@ def write_reports(date: str, state: dict) -> None:
                 assert isinstance(alternative, Mapping)
                 treatment = str(alternative.get("treatment") or "UNKNOWN")
                 lines.append(
-                    f"  - 未选 {route_labels.get(treatment, treatment)}："
+                    f"  - 决策时未选 {route_labels.get(treatment, treatment)}："
                     f"{_report_cell(alternative.get('reason'))}"
                 )
 
