@@ -21,10 +21,30 @@ _runner = RunnerProxy()
 _LEGACY_SESSION_ID = "legacy-date-session"
 _SESSION_ID_RX = re.compile(r"^live-(\d{8})T(\d{6})(?:[+-]\d{4})?$")
 _SEGMENT_TIME_RX = re.compile(r"_(\d{8})-(\d{2})-(\d{2})-(\d{2})$")
+_SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def _item_session_id(item: dict) -> str:
     return str(item.get("session_id") or _LEGACY_SESSION_ID)
+
+
+def _is_pinned_user_selection(item: dict) -> bool:
+    """Recognize a planner-bound human selection that owns its chosen slot."""
+
+    event = item.get("selection_override")
+    candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
+    selected_slot = event.get("selected_slot") if isinstance(event, dict) else None
+    return bool(
+        isinstance(event, dict)
+        and event.get("schema_version") == "talk-selection-override.v1"
+        and event.get("event_type") == "USER_SELECTION_OVERRIDE"
+        and str(event.get("candidate_id") or "") == candidate_id
+        and str(event.get("authority") or "").strip()
+        and _SHA256_RX.fullmatch(str(event.get("scorecard_sha256") or ""))
+        and isinstance(selected_slot, int)
+        and not isinstance(selected_slot, bool)
+        and 1 <= selected_slot <= _runner.MAX_TALK_PICKS
+    )
 
 
 def session_sealed(date: str, state: dict) -> bool:
@@ -640,9 +660,17 @@ def prioritize(state: dict) -> None:
     _runner.exclude_session_edge_bgm_candidates(state)
     _runner.quarantine_overlapping_talk_candidates(state)
     pending_talk = state.get("pending_talk", [])
-    selected_repairs = [item for item in pending_talk if item.get("selected_repair")]
-    pending_talk = [item for item in pending_talk if not item.get("selected_repair")]
-    repair_sessions = {_item_session_id(item) for item in selected_repairs}
+    pinned_selections = [
+        item
+        for item in pending_talk
+        if item.get("selected_repair") or _is_pinned_user_selection(item)
+    ]
+    pending_talk = [
+        item
+        for item in pending_talk
+        if not item.get("selected_repair") and not _is_pinned_user_selection(item)
+    ]
+    pinned_sessions = {_item_session_id(item) for item in pinned_selections}
     below_threshold = [
         item
         for item in pending_talk
@@ -682,7 +710,7 @@ def prioritize(state: dict) -> None:
         # both succeed (exceeding top-5) or assign the reserves visual slots that
         # later collide when the retry is rejected.  Defer only this session;
         # prioritize() runs again immediately after a deterministic rejection.
-        if session_id in repair_sessions:
+        if session_id in pinned_sessions:
             deferred.extend(ranked)
             continue
         slots = _talk_slots_for_session(state, session_id)
@@ -707,7 +735,7 @@ def prioritize(state: dict) -> None:
     # These candidates already won selection in an earlier generation and
     # failed without delivery.  Do not discard the retry merely because
     # successful siblings now fill the ordinary delivery quota.
-    state["pending_talk"] = selected_repairs + keep
+    state["pending_talk"] = pinned_selections + keep
     state["talk_backlog"] = deferred
     _assign_cover_diversity_slots(state)
     for item in deferred:

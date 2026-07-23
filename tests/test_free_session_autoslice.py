@@ -6098,6 +6098,60 @@ def test_selected_repair_defers_same_session_backfill_until_result(monkeypatch):
     assert state["pending_talk"][0]["cover_diversity_slot"] == 1
 
 
+def test_user_selection_override_keeps_its_slot_alongside_repairs(monkeypatch):
+    monkeypatch.setattr(runner, "MAX_TALK_PICKS", 5)
+    monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
+    override = {
+        "schema_version": "talk-selection-override.v1",
+        "event_type": "USER_SELECTION_OVERRIDE",
+        "candidate_id": "brainflick",
+        "selected_slot": 5,
+        "authority": "Ivan-stated: make this clip",
+        "scorecard_sha256": "sha256:" + "a" * 64,
+    }
+    state = {
+        "picks": [],
+        "pending_talk": [
+            {
+                "cid": "repair",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 1,
+                "end_ms": 2,
+                "selected_repair": True,
+                "confidence": 0.99,
+                "session_id": "session-a",
+            },
+            {
+                "cid": "brainflick",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 3,
+                "end_ms": 4,
+                "confidence": 0.87,
+                "session_id": "session-a",
+                "selection_override": override,
+            },
+            {
+                "cid": "higher-score-reserve",
+                "segment_path": "/recordings/segment.mp4",
+                "start_ms": 5,
+                "end_ms": 6,
+                "confidence": 0.99,
+                "session_id": "session-a",
+            },
+        ],
+    }
+
+    runner.prioritize(state)
+
+    assert [item["cid"] for item in state["pending_talk"]] == [
+        "repair",
+        "brainflick",
+    ]
+    assert [item["cid"] for item in state["talk_backlog"]] == [
+        "higher-score-reserve"
+    ]
+
+
 def test_talk_fingerprint_scopes_speaker_override_and_withholds_truth(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
