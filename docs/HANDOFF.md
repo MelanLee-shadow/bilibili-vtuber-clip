@@ -98,7 +98,7 @@ plan 为 v7 exact-no-backfill 五项、`6577` 已抑制、1475 为 replacement�
 | 3573 | 首轮 provider 抖动，重试后 `CLEAN/PASS`（零 finding），交付 |
 | 672 | provider 已消除；剩 cue85 `听到是吗`，声学裁定 current/proposed **双双 INCOMPATIBLE** |
 | 1863 | cue100 `这切哈哈`，终审提议 `这期哈哈`；BCUT 官方与 AGY 两独立引擎均写 `这切` |
-| 1573 | cue76 `谢谢梅杰克家的六更るり的SC` 含假名，音频证人 `audible_language=zh`、`kana_similarity=0.0` |
+| 1573 | cue76 假名门 —— **已定位为门缺陷并修复**（`d217a40`），见下 |
 
 **重要判定（两次自我推翻，勿再重犯）**：终审 `findings` 门**不是**过度限制，不要去放宽它。
 它校验的是**对最终字节的独立重扫**，此层不能再改字节，`repaired:true` 只是沙盘裁定。
@@ -106,6 +106,16 @@ plan 为 v7 exact-no-backfill 五项、`6577` 已抑制、1475 为 replacement�
 672 cue85 是现文本与提议**都不符音频**（闭合条件要求 current_fit∈{SUPPORTED,PLAUSIBLE}）。
 两次都是门在保护质量。剩余阻断是**真实字幕问题**，正解是修字幕（ledger 真值条目 / 重出），
 不是松门。
+
+### 1573 假名门（已修，`d217a40`）
+
+`梅杰克家的六更るり` 是 SC 打赏者真实用户名，逐字来自
+`clip_context.structured_chat[8].sender`。source-language 守卫只认草稿转写与音译两种证人，
+于是把"从平台记录恢复真实用户名"判成凭空引入外语。音频 `kana_similarity=0` 不构成反证——
+主播用中文腔念日文假名 ID 是常态，用户名字形归平台记录所有。已让结构化弹幕 sender/gift 名
+正向见证自身 kana（`structured_chat_name`），豁免精确且完全：cue 内每个假名都必须落在这类
+名字里，掺入臆造日语仍 fail-closed。注意 chat-authority.json 里搜不到该名字，绑定在
+clip-context.json —— 排查时别搜错文件。
 
 剩余步骤：
 
