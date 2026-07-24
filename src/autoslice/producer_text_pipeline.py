@@ -1392,6 +1392,29 @@ def _apply_source_truth_and_resolve_deferred_foreign(
     return srt_text, source_truth_audit
 
 
+def _structured_chat_names(
+    clip_context: Mapping[str, object] | None,
+) -> tuple[str, ...]:
+    """Sender/gift names bound to this candidate's structured chat record."""
+
+    rows = (
+        clip_context.get("structured_chat")
+        if isinstance(clip_context, Mapping)
+        else None
+    )
+    if not isinstance(rows, list):
+        return ()
+    names: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        for key in ("sender", "gift_name"):
+            value = str(row.get(key) or "").strip()
+            if value:
+                names.append(value)
+    return tuple(dict.fromkeys(names))
+
+
 def _finalize_text_evidence(
     *,
     spec: dict,
@@ -1409,9 +1432,12 @@ def _finalize_text_evidence(
     out_root: Path,
     cid: str,
     padded: Path | None = None,
+    clip_context: Mapping[str, object] | None = None,
 ) -> TextEvidenceResult:
     srt_text, final_source_language_audit = apply_source_language_preservation_guard(
-        source_language_witness_srt, srt_text
+        source_language_witness_srt,
+        srt_text,
+        structured_chat_names=_structured_chat_names(clip_context),
     )
     chat_authority_audit[
         "final_source_language_preservation_audit"
@@ -1849,6 +1875,7 @@ def run_text_pipeline(
         out_root=out_root,
         cid=cid,
         padded=padded,
+        clip_context=clip_context,
     )
     # 带伤交付闸（2026-07-18 醉堆/七夕/核酸天下案）：审片员的修复提案若因
     # provider 基础设施失败（而非证据裁决）未落地、且后续确定性 pass（如

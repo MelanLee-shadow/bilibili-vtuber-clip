@@ -223,6 +223,12 @@
   不能从整条 post-edit `after` 循环自证。`replace_substring` 仅在 canonical 实际应用，或显式
   `required_text` postcondition 已满足时可见证；部分窗口、部分 surface、generic redelivery
   baseline 继续拒发。
+- 逐字取自本候选**已绑定结构化弹幕记录**的 sender / gift 名（`clip_context.structured_chat`）
+  同样正向见证其自身 kana，见证类型 `structured_chat_name`。用户名的字形归平台记录所有，
+  不由主播读音决定——她用中文腔念日文假名 ID 是常态，音频 `kana_similarity=0` 不构成反证
+  （实例：2026-07-22 `auto_193450_1573_1672` cue76 `梅杰克家的六更るり`）。该豁免精确且完全：
+  cue 内**每一个**假名都必须落在这类名字里，名字旁边掺入任何臆造日语仍 fail-closed。此门
+  正是为了让"原版弹幕名字必须复制过来"成立，不得反过来惩罚正确复制。
 - source-language 整 cue 回退只适用于无中文的 Latin-language cue；中文口播里的 NN/L、NNLL、LLNNHHB 等 CP 顺序公式以及大写 `TA` 代词是标签/中文代词，不是外语段落，不得触发 mixed-language 拒发，也不得因 token 数下降把已删除的跨 cue 回声整句恢复。
 - 交付 `.srt`/`.ass` 走内容时间轴；片头偏移只记录在 `burned_preview.branding_intro.intro_offset_ms`（见 [80-package-delivery.md](80-package-delivery.md)）。
 - talk 成品 `speaker_mode=required`。说话人未决或证据不足进入

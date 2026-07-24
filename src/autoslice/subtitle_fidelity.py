@@ -844,11 +844,41 @@ def _phonetic_transliteration_witness(
     return None
 
 
+def _structured_chat_name_witness(
+    final_text: str,
+    names: Sequence[str],
+) -> dict[str, Any] | None:
+    """Witness kana that comes verbatim from a bound structured-chat name.
+
+    A superchat/gift sender's username is authoritative platform text, so its
+    script is not decidable from how the host pronounces it — she routinely
+    reads a kana handle with Chinese pronunciation.  A name copied verbatim
+    from the candidate's bound chat record therefore witnesses its own kana.
+    The exemption is exact and total: every kana in the cue must fall inside
+    such a name, so an invented Japanese clause riding alongside a real name
+    still fails closed.
+    """
+
+    matched: list[str] = []
+    remainder = final_text
+    for name in sorted({str(name) for name in names if str(name).strip()}, key=len, reverse=True):
+        if _JAPANESE_KANA_RX.search(name) and name in remainder:
+            matched.append(name)
+            remainder = remainder.replace(name, "")
+    if not matched or _JAPANESE_KANA_RX.search(remainder):
+        return None
+    return {
+        "kind": "structured_chat_name",
+        "names": sorted(matched),
+    }
+
+
 def apply_source_language_preservation_guard(
     draft_srt: str,
     final_srt: str,
     *,
     sanctioned: Iterable[tuple[str, str]] | None = None,
+    structured_chat_names: Sequence[str] = (),
 ) -> tuple[str, dict[str, Any]]:
     """Keep foreign-language speech in its spoken language during correction.
 
@@ -856,7 +886,8 @@ def apply_source_language_preservation_guard(
     lane.  In particular, an embedded Japanese game/anime voice must not become
     an invented Chinese paraphrase.  A whole-cue sanctioned proper-name
     respelling is still allowed because that is transcript normalization rather
-    than translation.
+    than translation.  Kana restored verbatim from a bound structured-chat
+    sender/gift name is likewise transcript fidelity, not translation.
     """
 
     pairs = (
@@ -899,16 +930,18 @@ def apply_source_language_preservation_guard(
             and _strip_non_text(source_text) != _strip_non_text(final_cue.text)
             and not _sanctioned_cue_equal(source_text, final_cue.text, pairs)
         ):
-            phonetic_witness = _phonetic_transliteration_witness(
+            witness = _phonetic_transliteration_witness(
                 source_text, final_cue.text
+            ) or _structured_chat_name_witness(
+                final_cue.text, structured_chat_names
             )
-            if phonetic_witness is not None:
+            if witness is not None:
                 audit.setdefault("witnessed_foreign_introductions", []).append(
                     {
                         "cue_index": index,
                         "draft": source_text,
                         "attempted": final_cue.text,
-                        "witness": phonetic_witness,
+                        "witness": witness,
                     }
                 )
                 continue

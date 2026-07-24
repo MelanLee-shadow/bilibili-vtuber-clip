@@ -1037,3 +1037,52 @@ class TestPhoneticTransliterationWitness:
 
         w = _phonetic_transliteration_witness("凌敢多收到了", "ありがとう，收到了。")
         assert w is not None and w["target"] == "ありがとう"
+
+
+def test_structured_chat_name_witnesses_its_own_kana():
+    """A superchat sender's kana handle copied verbatim from the bound chat
+    record is transcript fidelity, not an invented foreign introduction.
+    Live case 2026-07-22 auto_193450_1573_1672 cue 76: the host reads
+    梅杰克家的六更るり with Chinese pronunciation, so the audio witness reports
+    kana_similarity 0 — the platform record, not the pronunciation, owns the
+    spelling."""
+
+    draft = "1\n00:00:00,000 --> 00:00:03,000\n谢谢梅杰克家的六更露里的SC\n"
+    final = "1\n00:00:00,000 --> 00:00:03,000\n谢谢梅杰克家的六更るり的SC\n"
+
+    _guarded, blocked = apply_source_language_preservation_guard(draft, final)
+    assert blocked["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+
+    _guarded, audit = apply_source_language_preservation_guard(
+        draft, final, structured_chat_names=("梅杰克家的六更るり",)
+    )
+    assert audit["status"] == "CLEAN"
+    assert audit["unproven_foreign_introductions"] == []
+    assert audit["witnessed_foreign_introductions"][0]["witness"] == {
+        "kind": "structured_chat_name",
+        "names": ["梅杰克家的六更るり"],
+    }
+
+
+def test_invented_japanese_beside_a_real_chat_name_still_fails_closed():
+    draft = "1\n00:00:00,000 --> 00:00:03,000\n谢谢梅杰克家的六更露里的SC\n"
+    final = (
+        "1\n00:00:00,000 --> 00:00:03,000\n"
+        "谢谢梅杰克家的六更るり的SC、ありがとうございます\n"
+    )
+
+    _guarded, audit = apply_source_language_preservation_guard(
+        draft, final, structured_chat_names=("梅杰克家的六更るり",)
+    )
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+    assert len(audit["unproven_foreign_introductions"]) == 1
+
+
+def test_unrelated_chat_name_does_not_witness_foreign_introduction():
+    draft = "1\n00:00:00,000 --> 00:00:03,000\n她说这个角色很可爱\n"
+    final = "1\n00:00:00,000 --> 00:00:03,000\nこのキャラかわいいって\n"
+
+    _guarded, audit = apply_source_language_preservation_guard(
+        draft, final, structured_chat_names=("梅杰克家的六更るり",)
+    )
+    assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
