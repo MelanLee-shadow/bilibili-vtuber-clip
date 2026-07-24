@@ -1604,18 +1604,41 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
         recorded = str(record.get("pipeline_fingerprint") or "")
         if recorded == current:
             continue
-        item = _recovery_queue_item(
-            date,
-            record,
-            candidate_id=cid,
-            retry_reason="current_delivery_pipeline_fingerprint_changed",
-            selected_repair=True,
-            given_end_ms=record.get("given_end_ms"),
-            given_end_authority=record.get("given_end_authority"),
-            recovery_publication_authority=record.get(
-                "recovery_publication_authority"
-            ),
-        )
+        try:
+            item = _recovery_queue_item(
+                date,
+                record,
+                candidate_id=cid,
+                retry_reason="current_delivery_pipeline_fingerprint_changed",
+                selected_repair=True,
+                given_end_ms=record.get("given_end_ms"),
+                given_end_authority=record.get("given_end_authority"),
+                recovery_publication_authority=record.get(
+                    "recovery_publication_authority"
+                ),
+            )
+        except RecoveryReviewRerunError as exc:
+            if "CHAT_AUTHORITY_MISSING" not in str(exc):
+                raise
+            # This row is a delivered CURRENT+COMPLIANT package whose refresh
+            # is optional (a broad fingerprint change), and its own evidence
+            # is already frozen in the delivered sidecars.  A chat-record
+            # infrastructure failure here must not freeze the whole exact
+            # queue: keep the CURRENT package, disclose the deferral, and let
+            # the candidates that genuinely need a rerun proceed.  The final
+            # package audit still replays every contract against the current
+            # validators, so a stale package cannot silently pass closure.
+            state.setdefault("recovery_requeue_deferrals", []).append(
+                {
+                    "candidate_id": cid,
+                    "reason_code": "STALE_REFRESH_DEFERRED_CHAT_UNREADABLE",
+                    "detail": str(exc),
+                    "kept_bundle_lifecycle": "CURRENT",
+                    "recorded_pipeline_fingerprint": recorded,
+                    "current_pipeline_fingerprint": current,
+                }
+            )
+            continue
         archived = copy.deepcopy(record)
         archived["bundle_lifecycle"] = "SUPERSEDED"
         archived["bundle_compliance"] = "STALE_PIPELINE"

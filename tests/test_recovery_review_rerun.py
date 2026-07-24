@@ -636,9 +636,12 @@ def test_natural_recovery_tick_build_failure_keeps_all_current(
     original = delivery_recovery._recovery_queue_item
 
     def fail_second(*args, **kwargs):
+        # A contract/authority failure (unlike a chat-infrastructure read
+        # failure, which defers only that delivered row) must still abort
+        # the whole transaction without mutating state.
         if kwargs.get("candidate_id") == "auto_second":
             raise delivery_recovery.RecoveryReviewRerunError(
-                "RECOVERY_RERUN_CHAT_AUTHORITY_MISSING:auto_second"
+                "RECOVERY_RERUN_BCUT_AUTHORITY_MISSING:auto_second"
             )
         return original(*args, **kwargs)
 
@@ -648,7 +651,7 @@ def test_natural_recovery_tick_build_failure_keeps_all_current(
 
     with pytest.raises(
         delivery_recovery.RecoveryReviewRerunError,
-        match="CHAT_AUTHORITY_MISSING:auto_second",
+        match="BCUT_AUTHORITY_MISSING:auto_second",
     ):
         delivery_recovery.requeue_stale_current_recovery_talks(date, state)
     assert state == before
@@ -957,3 +960,86 @@ def test_recovery_suppression_requires_explicit_authority(tmp_path, monkeypatch)
             expected_old_fingerprint=OLD,
             expected_new_fingerprint=NEW,
         )
+
+
+def test_chat_unreadable_defers_delivered_refresh_without_freezing_queue(
+    tmp_path, monkeypatch
+):
+    """Live V15 case (2026-07-24): the bound chat jsonl of an already
+    delivered CURRENT package became unreadable on CloudFS.  Its optional
+    fingerprint refresh must be deferred with a typed disclosure instead of
+    aborting the whole exact-queue transaction."""
+
+    date, state = _fixture(tmp_path, monkeypatch)
+    runner = delivery_recovery._runner
+
+    keeper = state["picks"][0]
+    keeper["candidate_id"] = "auto_keeper"
+    segment2 = runner.REC_ROOT / date / "official2.mp4"
+    segment2.write_bytes(b"media2")
+    bcut2 = runner.BASE / "cache" / date / "official2.bcut.srt"
+    bcut2.write_text("1\n00:00:00,000 --> 00:00:01,000\n字幕\n")
+    rerunner = copy.deepcopy(keeper)
+    rerunner["candidate_id"] = "auto_rerunner"
+    rerunner["segment"] = segment2.name
+    state["picks"].append(rerunner)
+
+    def broken_binding(segment: Path, *, source_sha256=None):
+        del source_sha256
+        if Path(segment).name == "official.mp4":
+            raise OSError("STRUCTURED_CHAT_JSONL_UNREADABLE")
+        return {
+            "chat_jsonl": None,
+            "structured_chat_required": False,
+            "chat_binding_status": "OPTIONAL_ABSENT",
+        }
+
+    monkeypatch.setattr(
+        runner, "resolve_structured_chat_binding", broken_binding
+    )
+    _bind_exact_contract(state, ["auto_keeper", "auto_rerunner"])
+
+    count = delivery_recovery.requeue_stale_current_recovery_talks(
+        date, state
+    )
+
+    assert count == 1
+    queued = [row["cid"] for row in state["pending_talk"]]
+    assert queued == ["auto_rerunner"]
+    kept = [
+        row
+        for row in state["picks"]
+        if row.get("candidate_id") == "auto_keeper"
+    ]
+    assert len(kept) == 1
+    assert kept[0]["bundle_lifecycle"] == "CURRENT"
+    assert kept[0]["bundle_compliance"] == "COMPLIANT"
+    (deferral,) = state["recovery_requeue_deferrals"]
+    assert deferral["candidate_id"] == "auto_keeper"
+    assert deferral["reason_code"] == (
+        "STALE_REFRESH_DEFERRED_CHAT_UNREADABLE"
+    )
+    assert "STRUCTURED_CHAT_JSONL_UNREADABLE" in deferral["detail"]
+
+
+def test_non_infrastructure_queue_item_failure_still_fails_closed(
+    tmp_path, monkeypatch
+):
+    """Only the chat-infrastructure wrapper defers; a missing BCUT authority
+    is a contract failure and must abort the whole transaction."""
+
+    date, state = _fixture(tmp_path, monkeypatch)
+    runner = delivery_recovery._runner
+    record = state["picks"][0]
+    record["given_end_ms"] = 125_000
+    record["given_end_authority"] = "Ivan-reviewed semantic closure"
+    _bind_exact_contract(state, ["auto_current"])
+    (runner.BASE / "cache" / date / "official.bcut.srt").unlink()
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_RERUN_BCUT_AUTHORITY_MISSING",
+    ):
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+    assert state == before
