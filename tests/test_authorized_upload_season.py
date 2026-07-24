@@ -207,7 +207,12 @@ def _uploader(tmp_path, bvid="BV1TEST"):
     return stub
 
 
-def test_build_season_http_really_constructs_requests(tmp_path, monkeypatch):
+@pytest.mark.parametrize("schema", ["app", "biliup"])
+def test_build_season_http_really_constructs_requests(
+    tmp_path,
+    monkeypatch,
+    schema,
+):
     """Regression for the shadowed-import UnboundLocalError: exercise the REAL
     _build_season_http closure (both GET and JSON-POST branches) against a
     monkeypatched urlopen — mocking the builder wholesale hid a crash that only
@@ -216,12 +221,12 @@ def test_build_season_http_really_constructs_requests(tmp_path, monkeypatch):
     import urllib.request as _urlreq
 
     cookie_json = tmp_path / "cookie.json"
-    cookie_json.write_text(json.dumps({
-        "data": {"cookie_info": {"cookies": [
+    cookie_info = {"cookie_info": {"cookies": [
             {"name": "SESSDATA", "value": "sess-value"},
             {"name": "bili_jct", "value": "csrf-value"},
         ]}}
-    }), encoding="utf-8")
+    cookie_shape = {"data": cookie_info} if schema == "app" else cookie_info
+    cookie_json.write_text(json.dumps(cookie_shape), encoding="utf-8")
     seen = []
 
     def fake_urlopen(request, timeout=0):
@@ -242,6 +247,56 @@ def test_build_season_http_really_constructs_requests(tmp_path, monkeypatch):
 
     assert http("https://member.bilibili.com/form", data={"a": "b"})["code"] == 0
     assert seen[2].data == b"a=b"  # form 编码分支同样必须真的能构造请求
+
+
+def test_build_season_http_rejects_ambiguous_cookie_without_secret(tmp_path):
+    cookie_json = tmp_path / "cookie.json"
+    cookie_json.write_text(json.dumps({
+        "cookie_info": {
+            "cookies": [{"name": "bili_jct", "value": "top-secret-value"}]
+        },
+        "data": {
+            "cookie_info": {
+                "cookies": [
+                    {"name": "bili_jct", "value": "nested-secret-value"}
+                ]
+            }
+        },
+    }), encoding="utf-8")
+
+    with pytest.raises(au.CookieSchemaError, match="ambiguous") as raised:
+        au._build_season_http(cookie_json)
+
+    assert "top-secret-value" not in str(raised.value)
+    assert "nested-secret-value" not in str(raised.value)
+
+
+def test_same_bv_adapter_splits_api_and_biliup_cookie_files(tmp_path):
+    api_cookie = tmp_path / "app-cookie.json"
+    api_cookie.write_text(json.dumps({
+        "data": {
+            "cookie_info": {
+                "cookies": [
+                    {"name": "SESSDATA", "value": "sess-value"},
+                    {"name": "bili_jct", "value": "csrf-value"},
+                ]
+            }
+        }
+    }), encoding="utf-8")
+    biliup_cookie = tmp_path / "biliup-cookie.json"
+    biliup_cookie.write_text(json.dumps({
+        "cookie_info": {
+            "cookies": [
+                {"name": "SESSDATA", "value": "sess-value"},
+                {"name": "bili_jct", "value": "csrf-value"},
+            ]
+        }
+    }), encoding="utf-8")
+
+    adapter = au._same_bv_adapter(api_cookie, biliup_cookie)
+
+    assert adapter.session.cookie_path == api_cookie
+    assert adapter.session.biliup_cookie_path == biliup_cookie
 
 
 def test_lane_derivation_is_a_title_choke_point():

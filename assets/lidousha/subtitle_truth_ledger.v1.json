@@ -1144,6 +1144,19 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-no-duplicate-residence-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 820590,
+      "source_end_ms": 824090,
+      "action": "replace_cue",
+      "text": "确实要，要小心小N老师啊，",
+      "authority": "Gemini 3.6 Flash High exact-span acoustic verdict hears 确实要，要小心小N老师啊, supports deletion of duplicated 住她家了 with confidence=1.0 and marks current incompatible=1.0; request sha256=dc90ff50dfb37713e4b844942784fec2fe478c923e8271354df0a98bd346c177, response sha256=7a328761958814df3a2bd1aa49e5293753e46fedd7fe136c73dac07a8a34bcdd, audio sha256=3ab2027d171366188f3cbb595197de23529d7f3c24b79cf08b60395caa8cda22, source media sha256=30eb53d493c0580cf52c18fa1bf5752017d3103e5b5b330c7c7ac4c801f0223b, prompt sha256=30fc66408da40dfc0eb1d2931cfd2ba28e1e3702427eb4808be4bb249e0ca142; structured SC alignment had already spoken 住她家了 in the preceding cue",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-title-close",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 829520,
@@ -1155,6 +1168,21 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-xing-a-response-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 835950,
+      "source_end_ms": 836510,
+      "action": "replace_cue",
+      "text": "行啊",
+      "before_span": "行",
+      "evidence_class": "HASH_BOUND_ACOUSTIC_FORCED_CHOICE",
+      "authority": "Gemini 3.6 Flash High exact-span black-frame verdict on official replay sha256=0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a: 行 vs 行啊 hears xing a, current INCOMPATIBLE=0.95 and proposed SUPPORTED=0.95 (request sha256=6147802013ca208fb02814b6bdfa4785d4a82ca987bfd00ac15fef3a1dff37d9, response sha256=e42c12f2faf1f604ae18b96b51a11863f9cee8b1a36640de39ef7c1444329fff, audio sha256=cd60e9155d59cb0099e69a19363c1fabfef3c4a6fb4e4951d4b23f7c76708535, prompt sha256=8306d04f88adbec5b67a5a3b563c555cf34c17062bb35e7dc96a9270b2096ff1, manifest sha256=2aee21f23d49c6a1fa4d9a22d113a898a04dfb692e27fd86b0b505360e3d5804); independent 行啊 vs 行吧 verdict supports 行啊=0.95 and rejects 行吧=0.95 (request sha256=3ad03cf8f5e2b4fc37eb4c37b510d453dae8e3f79f6a1cb1483c4a030774b8d7, response sha256=24b61010dbae4dbd41eb1fc25b1c0ef4d15786fa9d3c3f45f5b6485a9f2f4399, prompt sha256=37001beee72ce7462ce2acdb2fec1a5058bb46f5ff9f58fe4f6b861229dfa4df, manifest sha256=4f0273ff2d873f900fc9d2433849af20129e3c22fbf4b003c090e6bbffa8a6a3)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-drop-latin-echo",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 867020,
@@ -1162,6 +1190,19 @@
       "action": "replace_cue",
       "text": "这个 NN 和 L 的排列是怎么排的",
       "authority": "Ivan-stated-20260722-conversation(h tb 属上一句 hhb 回声，不是本句口播)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-n-and-l-segmentation-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 871920,
+      "source_end_ms": 874980,
+      "action": "replace_cue",
+      "text": "N和L一般都是NNLL，是吗",
+      "authority": "Gemini 3.6 Flash High exact-span acoustic verdict hears N和L一般都是NNLL是吗, supports N和L and marks current NNL incompatible, both confidence=0.95; request sha256=bd715694b1e19e584ac80fd3ba8c0bb6ac12c8dc45da8609b0e81f145cd72341, response sha256=b5bb7f17c09c664e1b98bc3949338a9fe3b2ebf7a4861ea4680443fab45f1c35, audio sha256=2c1e8885f99645284b5b6cbffdf3ae74d695225a2c346462755ed908a17edf25, source media sha256=30eb53d493c0580cf52c18fa1bf5752017d3103e5b5b330c7c7ac4c801f0223b, prompt sha256=55e054201f260375d8b699dfe93964f136d9899379b06c1bee8d4818f27cb0d5",
       "required": true
     },
     {

@@ -223,6 +223,8 @@ def test_all_committed_subtitle_regression_assets_are_loadable():
     [
         ("auto_193450_3573_3665", "她就叫晴"),
         ("auto_193450_672_945", "分牙三四关"),
+        ("auto_193450_672_945", "确实要住她家了"),
+        ("auto_193450_672_945", "NNL一般"),
         ("auto_193450_1863_2056", "谢谢你的素材"),
     ],
 )
@@ -278,3 +280,34 @@ def test_sumi_regression_requires_the_third_qin_surface():
     assert "姐感妹秦秦秦她是一个非常闹腾的小朋友" in audit[
         "surfaces"
     ]["final_text_srt"]["missing_required"]
+
+
+def test_nancho_regression_rejects_old_exact_single_character_xing_cue():
+    candidate_id = "auto_193450_672_945"
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/subtitle_regressions"
+        / f"{candidate_id}.subtitle-regression.v1.json"
+    )
+    document, _ = load_subtitle_regression_document(path, candidate_id=candidate_id)
+    truth_texts = list(document["required_payload_substrings"])
+    correct = _srt(*truth_texts)
+    poisoned = _srt(*truth_texts, "行")
+
+    passing = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id=candidate_id,
+        final_text_srt=correct,
+        final_speaker_srt=correct,
+    )
+    failing = verify_subtitle_regression_surfaces(
+        path,
+        candidate_id=candidate_id,
+        final_text_srt=poisoned,
+        final_speaker_srt=poisoned,
+    )
+
+    assert passing["status"] == "PASS"
+    assert failing["surfaces"]["final_text_srt"][
+        "found_forbidden_exact_cues"
+    ] == ["行"]

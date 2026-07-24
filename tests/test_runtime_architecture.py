@@ -95,3 +95,25 @@ def test_extracted_domain_modules_stay_focused() -> None:
         if line_count > budget:
             violations.append(f"{relative} is {line_count} lines (budget {budget})")
     assert violations == [], "domain-module growth regressed:\n" + "\n".join(violations)
+
+
+def test_dynamic_boundary_context_cap_is_wired_to_final_review_only() -> None:
+    """The spec cap belongs to semantic review, never entity authority.
+
+    A previous refactor attached the new keyword to the adjacent
+    ``_apply_entity_authority`` call.  Unit tests of the two helpers stayed
+    green, while the real producer entry point would have raised ``TypeError``.
+    """
+
+    path = ROOT / "src/autoslice/producer_text_pipeline.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    calls = {
+        node.func.id: {keyword.arg for keyword in node.keywords}
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"_apply_entity_authority", "_run_final_review"}
+    }
+
+    assert "boundary_max_forward_ms" not in calls["_apply_entity_authority"]
+    assert "boundary_max_forward_ms" in calls["_run_final_review"]

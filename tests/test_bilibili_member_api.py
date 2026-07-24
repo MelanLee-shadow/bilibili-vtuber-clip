@@ -1,6 +1,7 @@
 """bilibili_member_api 离线测试：cookie 双形态、edit 载荷、配额/幂等语义。"""
 
 import json
+import subprocess
 import urllib.request
 
 import pytest
@@ -9,6 +10,7 @@ from src.autoslice.bilibili_member_api import (
     QUOTA_FREQUENCY_CODE,
     SEASON_ALREADY_IN_CODE,
     BiliSession,
+    CookieSchemaError,
     is_quota_rejection,
     load_cookie_pairs,
 )
@@ -53,10 +55,151 @@ def test_cookie_pairs_parse_both_real_shapes(cookie_file):
         assert {"name": "bili_jct", "value": "csrf-token"} in pairs
 
 
+def test_cookie_pairs_reject_ambiguous_shape_without_leaking_values(cookie_file):
+    path = cookie_file({
+        "cookie_info": {
+            "cookies": [{"name": "bili_jct", "value": "top-secret-value"}]
+        },
+        "data": {
+            "cookie_info": {
+                "cookies": [
+                    {"name": "bili_jct", "value": "nested-secret-value"}
+                ]
+            }
+        },
+    })
+
+    with pytest.raises(CookieSchemaError, match="ambiguous") as raised:
+        load_cookie_pairs(path)
+
+    assert "top-secret-value" not in str(raised.value)
+    assert "nested-secret-value" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("shape", "message"),
+    [
+        ([], "root must be an object"),
+        ({"data": "secret-data"}, "data must be an object"),
+        ({}, "no supported cookie_info path"),
+        ({"cookie_info": []}, "cookie_info must be an object"),
+        (
+            {"cookie_info": {"cookies": "secret-cookie-list"}},
+            "cookies must be a non-empty list",
+        ),
+        (
+            {"cookie_info": {"cookies": [{"name": "SESSDATA"}]}},
+            "has no non-empty string value",
+        ),
+        (
+            {
+                "cookie_info": {
+                    "cookies": [
+                        {"name": "SESSDATA", "value": "secret-one"},
+                        {"name": "SESSDATA", "value": "secret-two"},
+                    ]
+                }
+            },
+            "duplicates a name",
+        ),
+    ],
+)
+def test_cookie_pairs_reject_malformed_shapes_without_leaking_values(
+    cookie_file,
+    shape,
+    message,
+):
+    with pytest.raises(CookieSchemaError, match=message) as raised:
+        load_cookie_pairs(cookie_file(shape))
+
+    error = str(raised.value)
+    for secret in (
+        "secret-data",
+        "secret-cookie-list",
+        "secret-one",
+        "secret-two",
+    ):
+        assert secret not in error
+
+
 def test_session_requires_bili_jct(cookie_file):
     path = cookie_file({"cookie_info": {"cookies": [{"name": "SESSDATA", "value": "x"}]}})
-    with pytest.raises(ValueError, match="bili_jct"):
+    with pytest.raises(CookieSchemaError, match="bili_jct"):
         BiliSession(cookie_path=path)
+
+
+def test_biliup_append_uses_explicit_top_level_cookie(
+    tmp_path,
+    monkeypatch,
+):
+    api_cookie = tmp_path / "app-cookie.json"
+    api_cookie.write_text(json.dumps(APP_SHAPE), encoding="utf-8")
+    biliup_cookie = tmp_path / "biliup-cookie.json"
+    biliup_cookie.write_text(json.dumps(BILIUP_SHAPE), encoding="utf-8")
+    media = tmp_path / "new.mp4"
+    media.write_bytes(b"video")
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "src.autoslice.bilibili_member_api.subprocess.run",
+        fake_run,
+    )
+    session = BiliSession(
+        cookie_path=api_cookie,
+        biliup_cookie_path=biliup_cookie,
+    )
+
+    session.biliup_append("BV1TEST", media)
+
+    assert seen["command"][2] == biliup_cookie.name
+    assert seen["command"][-1] == str(media)
+    assert seen["kwargs"]["cwd"] == str(biliup_cookie.parent)
+
+
+def test_explicit_biliup_cookie_rejects_nested_app_shape(tmp_path):
+    api_cookie = tmp_path / "app-cookie.json"
+    api_cookie.write_text(json.dumps(APP_SHAPE), encoding="utf-8")
+    nested_biliup_cookie = tmp_path / "nested-biliup-cookie.json"
+    nested_biliup_cookie.write_text(json.dumps(APP_SHAPE), encoding="utf-8")
+
+    with pytest.raises(CookieSchemaError, match="top-level cookie_info"):
+        BiliSession(
+            cookie_path=api_cookie,
+            biliup_cookie_path=nested_biliup_cookie,
+        )
+
+
+def test_biliup_failure_does_not_echo_process_output(
+    tmp_path,
+    monkeypatch,
+):
+    cookie = tmp_path / "biliup-cookie.json"
+    cookie.write_text(json.dumps(BILIUP_SHAPE), encoding="utf-8")
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="top-secret-value",
+            stderr="nested-secret-value",
+        )
+
+    monkeypatch.setattr(
+        "src.autoslice.bilibili_member_api.subprocess.run",
+        fake_run,
+    )
+    session = BiliSession(cookie_path=cookie)
+
+    with pytest.raises(RuntimeError, match="rc=1") as raised:
+        session.biliup_append("BV1TEST", tmp_path / "new.mp4")
+
+    assert "top-secret-value" not in str(raised.value)
+    assert "nested-secret-value" not in str(raised.value)
 
 
 def test_cover_up_uses_form_urlencoded_body(cookie_file):

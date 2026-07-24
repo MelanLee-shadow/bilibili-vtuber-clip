@@ -16,10 +16,10 @@
 | 10 | [10-source-recording.md](10-source-recording.md) | 录制、源健康、mount 看门狗 | `ops/recording/bililive_recorder_adapter.py`、`scripts/free_session_autoslice.py`（源门）、`src/autoslice/source_integrity.py` |
 | 20 | [20-selection.md](20-selection.md) | 候选召回、Tier/量化校准、exact 状态、**同主题合并** | `src/autoslice/semantic_candidate_selector.py`、`selection_scorecard.py`、`candidate_selection.py`、`batch_terminal_state.py` |
 | 30 | [30-boundary.md](30-boundary.md) | 边界解析、源语境扩窗 | `src/autoslice/boundary_resolver.py`、`boundary_semantic_review.py`、`producer_boundary_resolution.py` |
-| 40 | [40-subtitle-text.md](40-subtitle-text.md) | 字幕文本链：ASR→专名→弹幕→语义修复→最终字节终审 | `src/autoslice/producer_text_pipeline.py`、`clip_context.py`、`topic_entity_graph.py`、`final_review_contract.py` |
+| 40 | [40-subtitle-text.md](40-subtitle-text.md) | 字幕文本链：ASR→专名→弹幕→语义修复→最终字节终审 | `src/autoslice/producer_text_pipeline.py`、`clip_context.py`、`topic_entity_graph.py`、`chat_alignment_context.py`、`final_review_contract.py` |
 | 41 | [41-semantic-repair.md](41-semantic-repair.md) | 语义修复、专名/幻听/长程呼应与权威裁决 | `src/autoslice/producer_text_finalization.py`、`source_subtitle_truth.py` |
 | 50 | [50-song-lane.md](50-song-lane.md) | 歌切专线：识别、LRC 对齐、host-vocal 证明、完整性 | `src/autoslice/song_lane.py`、`song_alignment.py`、`song_completion.py` |
 | 60 | [60-title.md](60-title.md) | 标题（谈话 + 歌切铁律） | `src/autoslice/title_policy.py`、`publish_staging.py` |
 | 70 | [70-cover.md](70-cover.md) | 封面路由、最终像素、人物与真实字形 | `src/autoslice/cover_generation.py`、`cover_title_rendering.py`、`cover_text_pixel_evidence.py`、`cover_route_evidence.py` |
-| 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、严格 SRT、audit v2 输入闭包 | `src/autoslice/producer_package_finalization.py`、`subtitle_validation.py`、`scripts/audit_lidousha_review_package.py` |
-| 90 | [90-publish.md](90-publish.md) | authorized upload、durable 同 BV 修复、合集与公开验证 | `scripts/authorized_upload.py`、`src/autoslice/same_bv_repair.py` |
+| 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、严格 SRT、audit v2 输入闭包 | `src/autoslice/producer_package_finalization.py`、`subtitle_validation.py`、`review_package_ass_audit.py`、`scripts/audit_lidousha_review_package.py` |
+| 90 | [90-publish.md](90-publish.md) | authorized upload、durable 同 BV 修复、合集与公开验证 | `scripts/authorized_upload.py`、`src/autoslice/same_bv_repair.py`、`bilibili_member_api.py` |

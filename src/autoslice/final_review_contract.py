@@ -38,6 +38,16 @@ def validate_final_review_release(
         or discovery.get("status") != "COMPLETE"
     ):
         raise FinalReviewContractError("FINAL_REVIEW_DISCOVERY_INCOMPLETE")
+    correction_mutations = audit.get("correction_mutation_authority")
+    if (
+        not isinstance(correction_mutations, Mapping)
+        or correction_mutations.get("schema_version")
+        != "subtitle-correction-mutation-audit.v1"
+        or correction_mutations.get("status") != "PASS"
+    ):
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
+        )
     findings = audit.get("findings")
     if not isinstance(findings, list):
         raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
@@ -48,11 +58,45 @@ def validate_final_review_release(
         or validated_count != len(findings)
     ):
         raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
-    if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
-        raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")
     if findings:
         raise FinalReviewContractError("FINAL_REVIEW_UNRESOLVED_FINDINGS")
     boundary = audit.get("boundary_semantic_review")
     if not isinstance(boundary, Mapping) or boundary.get("status") != "PASS":
         raise FinalReviewContractError("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
+    endpoint = boundary.get("final_endpoint_binding")
+    if (
+        not isinstance(endpoint, Mapping)
+        or endpoint.get("schema_version")
+        != "talk-boundary-final-endpoint-binding.v1"
+        or endpoint.get("status") != "PASS"
+    ):
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_BOUNDARY_ENDPOINT_BINDING_INVALID"
+        )
+    integer_fields = (
+        "recommended_end_cue_index",
+        "recommended_end_ms",
+        "final_closure_cue_index",
+        "final_snapped_end_ms",
+    )
+    if any(
+        isinstance(endpoint.get(field), bool)
+        or not isinstance(endpoint.get(field), int)
+        for field in integer_fields
+    ):
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_BOUNDARY_ENDPOINT_BINDING_INVALID"
+        )
+    if (
+        endpoint["recommended_end_cue_index"]
+        != endpoint["final_closure_cue_index"]
+        or endpoint["recommended_end_ms"]
+        != endpoint["final_snapped_end_ms"]
+        or endpoint.get("reason_codes") != []
+    ):
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_BOUNDARY_ENDPOINT_BINDING_MISMATCH"
+        )
+    if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
+        raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")
     return dict(audit)

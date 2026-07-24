@@ -178,6 +178,50 @@ def _ledger_rows(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+@pytest.mark.parametrize(
+    ("command", "handler_name", "required_args"),
+    [
+        (
+            "repair-plan",
+            "repair_plan",
+            ["--manifest", "manifest.json", "--bvid", "BV1TEST", "--out", "plan.json"],
+        ),
+        (
+            "repair-run",
+            "repair_run",
+            ["--plan", "plan.json"],
+        ),
+    ],
+)
+def test_repair_cli_routes_separate_api_and_biliup_cookie_files(
+    monkeypatch,
+    command,
+    handler_name,
+    required_args,
+):
+    seen = {}
+
+    def fake_handler(args):
+        seen["api"] = args.cookie_json
+        seen["biliup"] = args.biliup_cookie_json
+        return 0
+
+    monkeypatch.setattr(au, handler_name, fake_handler)
+
+    assert au.main([
+        command,
+        *required_args,
+        "--cookie-json",
+        "/cookies/member-api.json",
+        "--biliup-cookie-json",
+        "/cookies/biliup.json",
+    ]) == 0
+    assert seen == {
+        "api": "/cookies/member-api.json",
+        "biliup": "/cookies/biliup.json",
+    }
+
+
 def test_make_manifest_then_verify_ok(tmp_path, capsys):
     _, _, manifest = _mk(tmp_path)
     assert au.main(["verify", "--manifest", str(manifest)]) == 0

@@ -45,6 +45,12 @@ from src.autoslice.selection_scorecard import (  # noqa: E402
     selection_scorecard_is_valid,
 )
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
+from src.autoslice.review_package_ass_audit import (  # noqa: E402
+    audit_review_package_ass,
+)
+from src.autoslice.review_package_title_audit import (  # noqa: E402
+    audit_recovery_title_authority,
+)
 from src.autoslice.title_policy import (  # noqa: E402
     CHANNEL_PROFILE,
     publish_title_policy_violations,
@@ -292,24 +298,6 @@ def _parse_srt(path: Path) -> list[dict[str, Any]]:
             continue
         cues.append({"index": lines[0], "start": start, "end": end, "timing": lines[1], "lines": lines[2:]})
     return cues
-
-
-def _ass_dialogue_texts(path: Path) -> list[str]:
-    if not path.exists():
-        return []
-    texts: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("Dialogue:"):
-            continue
-        parts = line.split(",", 9)
-        if len(parts) == 10:
-            texts.append(parts[9])
-    return texts
-
-
-def _visual_lines(ass_text: str) -> list[str]:
-    # ASS manual line breaks are \N. Some test fixtures may contain an escaped double backslash.
-    return [part for part in re.split(r"\\+N", ass_text) if part != ""]
 
 
 def _read_title_txt(path: Path | None) -> str:
@@ -715,12 +703,24 @@ def _portable_item_artifact_path(
     if raw.is_absolute():
         return None
     resolved_root = root.resolve()
-    candidate = (root / raw).resolve()
+    unresolved = root / raw
+    # ``Path.resolve()`` follows the terminal symlink, after which
+    # ``candidate.is_symlink()`` can no longer detect that the manifest named
+    # a link.  Current review packages must carry their own regular bytes, not
+    # aliases to host state.  Reject every symlink component before resolving
+    # containment, including a final link whose target happens to stay inside
+    # the package.
+    cursor = root
+    for part in raw.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return None
+    candidate = unresolved.resolve()
     try:
         candidate.relative_to(resolved_root)
     except ValueError:
         return None
-    if not candidate.is_file() or candidate.is_symlink():
+    if not candidate.is_file():
         return None
     return candidate
 
@@ -1704,7 +1704,6 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             continue
         stem = str(item.get("stem") or item.get("id") or item.get("title") or "")
         subtitle_path = _resolve(root, item.get("subtitle_srt") or item.get("subtitle"))
-        ass_path = _resolve(root, item.get("ass_path") or item.get("ass"))
         evidence_path = _resolve(root, item.get("evidence_json") or item.get("evidence"))
         publish_path = _resolve(root, item.get("publish_json") or item.get("publish"))
         title_txt_path = _resolve(root, item.get("title_txt") or item.get("title_path"))
@@ -1743,16 +1742,6 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 if duration >= LONG_STATIC_CUE_SECONDS and lines:
                     _add_issue(issues, "SUBTITLE_LONG_STATIC_CUE", stem=stem, path=subtitle_path, detail=f"cue {cue['index']} lasts {duration:.2f}s")
 
-        if ass_path and ass_path.exists():
-            for idx, text in enumerate(_ass_dialogue_texts(ass_path), start=1):
-                visual_lines = _visual_lines(text)
-                if len(visual_lines) > max_visual_lines:
-                    _add_issue(issues, "SUBTITLE_ASS_TOO_MANY_VISUAL_LINES", stem=stem, path=ass_path, detail=f"dialogue {idx} has {len(visual_lines)} visual lines")
-                for line in visual_lines:
-                    n = _text_len(line)
-                    if n > max_visual_line_chars:
-                        _add_issue(issues, "SUBTITLE_ASS_LINE_TOO_LONG", stem=stem, path=ass_path, detail=f"dialogue {idx} line length {n}: {line}")
-
         title_txt = _read_title_txt(title_txt_path)
         publish_title = _read_publish_title(publish_path)
         if title_txt and publish_title and title_txt != publish_title:
@@ -1765,6 +1754,23 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         chat_authority = (
             _load_json(chat_authority_path) if chat_authority_path else {}
         )
+        ass_audit = audit_review_package_ass(
+            root=root,
+            item=item,
+            portable_required=story_contract_required and not is_song,
+            max_visual_lines=max_visual_lines,
+            max_visual_line_chars=max_visual_line_chars,
+            record=record,
+            chat_authority=chat_authority,
+        )
+        for ass_issue in ass_audit.issues:
+            _add_issue(
+                issues,
+                ass_issue.code,
+                stem=stem,
+                path=ass_issue.path,
+                detail=ass_issue.detail,
+            )
         if story_contract_required and (
             chat_authority_path is None
             or not chat_authority_path.is_file()
@@ -1829,6 +1835,22 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             else ""
         )
         item_candidate_id = str(item.get("candidate_id") or "")
+        for title_issue in audit_recovery_title_authority(
+            item=item,
+            item_candidate_id=item_candidate_id,
+            item_title=item_title,
+            publish_path=publish_path,
+            record_path=record_path,
+            record=record,
+            publish_staging=publish_staging,
+        ):
+            _add_issue(
+                issues,
+                title_issue.code,
+                stem=stem,
+                path=title_issue.path,
+                detail=title_issue.detail,
+            )
         if (
             item_candidate_id
             and story_candidate_id

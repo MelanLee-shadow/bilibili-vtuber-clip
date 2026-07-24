@@ -1,8 +1,9 @@
-# 权宜上传台账 — 2026-07-13 批次（仍未到最终质量，待修复后编辑替换）
+# [历史快照·非现行权威] 权宜上传台账 — 2026-07-13 批次
 
-> **历史且已决算的批次台账，不是当前待办。** 下方“仍未”“待修复”、当时固定片头与操作
-> 口径只属于 2026-07-13/14。当前发布/同 BV 修复状态必须从 live Creator/public/ledger 读取，
-> 当前规则见 [pipeline/90-publish.md](pipeline/90-publish.md)。
+> **HISTORICAL / NON-AUTHORITY：这是已决算批次的原始台账，不是当前待办、状态页或
+> 操作手册。** 下方未勾选项、“仍未”“待修复”“待发”、定时器和当时固定片头口径都只属于
+> 2026-07-13/14，不得据此判断今天仍需操作。当前状态必须从 live
+> Creator/public/ledger 读取，当前规则见 [pipeline/90-publish.md](pipeline/90-publish.md)。
 > 下文出现的 `bili_archive_tool replace`、裸 append/edit 或一次性脚本只是在记录当时发生过
 > 什么；它们不是当前可复制命令，现行修复只能走 `authorized_upload.py repair-*`。
 

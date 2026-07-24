@@ -52,6 +52,10 @@ from .cover_route_evidence import (
 from .cover_screenshot_poster import _compose_screenshot_poster_background
 from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
+from .recovery_title_authority import (
+    RecoveryTitleAuthorityError,
+    validate_recovery_title_authority,
+)
 from .shadow_review import _sha256, _write_json_file
 from .story_contract import audit_story_artifact, cover_relation_prompt
 from .title_policy import (
@@ -148,6 +152,43 @@ def _stage_publish_after_release_gate(
         staged["cover_release_gate"] = recut["cover_release_gate"]
     return staged
 
+
+def _recovery_title_staging_state(
+    *,
+    candidate_id: str,
+    title: str,
+    title_llm_call: LlmCall | None,
+    recovery_title_authority: Mapping[str, object] | None,
+) -> tuple[str, str, dict[str, object] | None]:
+    source = "job_title"
+    status = (
+        "RESOLVED_MANUAL"
+        if title_llm_call is None
+        else "UNRESOLVED_AUTO"
+    )
+    if recovery_title_authority is None:
+        return source, status, None
+    if title_llm_call is not None:
+        raise ValueError(
+            "recovery title authority requires a non-LLM title path"
+        )
+    try:
+        authority = validate_recovery_title_authority(
+            recovery_title_authority,
+            candidate_id=candidate_id,
+            expected_title=title,
+        )
+    except RecoveryTitleAuthorityError as exc:
+        raise ValueError(
+            f"recovery public title authority invalid: {exc}"
+        ) from exc
+    return (
+        "recovery_verified_same_bv_public_title",
+        "RESOLVED_RECOVERY_PUBLIC",
+        authority,
+    )
+
+
 def _stage_publish_draft(
     materialized_recut: dict[str, object] | None,
     *,
@@ -160,6 +201,7 @@ def _stage_publish_draft(
     skip_cover: bool = False,
     selection_hook: str | None = None,
     cover_diversity_slot: int | None = None,
+    recovery_title_authority: Mapping[str, object] | None = None,
     stage_cover: Callable[..., dict[str, object]] | None = None,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
@@ -178,10 +220,18 @@ def _stage_publish_draft(
     # envelope: every title receives the channel prefix and the same structural
     # postcondition before cover generation or delivery.
     staged_title = title
-    title_source = "job_title"
     title_policy_violations: list[str] = []
     title_authority_error: str | None = None
-    title_authority_status = "RESOLVED_MANUAL" if title_llm_call is None else "UNRESOLVED_AUTO"
+    (
+        title_source,
+        title_authority_status,
+        normalized_recovery_title_authority,
+    ) = _recovery_title_staging_state(
+        candidate_id=candidate_id,
+        title=title,
+        title_llm_call=title_llm_call,
+        recovery_title_authority=recovery_title_authority,
+    )
     story_contract = record.get("story_contract")
     # Ivan 手定标题正文按 candidate 注入：命中后 LLM 不再改正文，但共享
     # publication envelope / structure gate 仍在后面运行。
@@ -406,6 +456,7 @@ def _stage_publish_draft(
         "title": staged_title,
         "title_source": title_source,
         "title_authority_status": title_authority_status,
+        "recovery_title_authority": normalized_recovery_title_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,
@@ -424,6 +475,7 @@ def _stage_publish_draft(
         "title": staged_title,
         "title_source": title_source,
         "title_authority_status": title_authority_status,
+        "recovery_title_authority": normalized_recovery_title_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,
@@ -622,8 +674,9 @@ def _stage_cpa_redraw_cover(
     # reference from the live frame to the official sticker (subject swap,
     # mutually exclusive with the character redraw); "companion" keeps the
     # frame and insets the sticker (分身 / kmx stand-in).  Any resolution
-    # failure downgrades the ART DIRECTION back to the default character
-    # redraw with disclosed evidence — never a blocked cover.
+    # Once the router selected an emote-backed redraw, reference failure is a
+    # route failure.  Do not silently change the subject back to the character
+    # redraw after the decision receipt has already been issued.
     emote_entry = None
     if art_direction.emote_id:
         entry = emote_library.get(art_direction.emote_id)
@@ -644,10 +697,22 @@ def _stage_cpa_redraw_cover(
         }
         if resolved is None:
             emote_evidence.update(
-                {"status": "FALLBACK_DEFAULT_REDRAW", "detail": resolve_detail}
+                {"status": "BLOCKED_REFERENCE", "detail": resolve_detail}
             )
-            art_direction = dataclasses_replace(
-                art_direction, emote_id="", emote_mode="", emote_reason=""
+            cover_generation["emote"] = emote_evidence
+            cover_generation["art_direction"] = asdict(art_direction)
+            record_cover_route_execution(
+                cover_generation,
+                actual_treatment=None,
+                execution_status="BLOCKED",
+                image_generation_attempted=False,
+                image_generation_used=False,
+                detail=str(resolve_detail),
+            )
+            return _blocked_ai_cover_result(
+                cover_generation,
+                ["EMOTE_REFERENCE_REQUIRED", str(resolve_detail)],
+                str(resolve_detail),
             )
         else:
             try:
@@ -667,19 +732,36 @@ def _stage_cpa_redraw_cover(
                         "hd_sha256": "sha256:" + entry.hd_sha256,
                     }
                 )
-            except Exception as exc:  # companion composite failed → default redraw
+            except Exception as exc:
+                detail = (
+                    "EMOTE_COMPANION_COMPOSE_FAILED: "
+                    f"{type(exc).__name__}: {exc}"
+                )
                 emote_evidence.update(
                     {
-                        "status": "FALLBACK_DEFAULT_REDRAW",
-                        "detail": (
-                            "EMOTE_COMPANION_COMPOSE_FAILED: "
-                            f"{type(exc).__name__}: {exc}"
-                        ),
+                        "status": "BLOCKED_REFERENCE",
+                        "detail": detail,
                     }
                 )
-                reference_path = cover_refs_dir / f"{candidate_id}.cover-ref.png"
-                art_direction = dataclasses_replace(
-                    art_direction, emote_id="", emote_mode="", emote_reason=""
+                cover_generation["emote"] = emote_evidence
+                cover_generation["art_direction"] = asdict(
+                    art_direction
+                )
+                record_cover_route_execution(
+                    cover_generation,
+                    actual_treatment=None,
+                    execution_status="BLOCKED",
+                    image_generation_attempted=False,
+                    image_generation_used=False,
+                    detail=detail,
+                )
+                return _blocked_ai_cover_result(
+                    cover_generation,
+                    [
+                        "EMOTE_REFERENCE_REQUIRED",
+                        "EMOTE_COMPANION_COMPOSE_FAILED",
+                    ],
+                    detail,
                 )
         cover_generation["emote"] = emote_evidence
     cover_generation["art_direction"] = asdict(art_direction)

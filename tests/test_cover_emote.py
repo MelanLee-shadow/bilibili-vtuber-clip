@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice import cover_emote, publish_staging
-from src.autoslice.cover_emote import (
+from src.autoslice import cover_emote, publish_staging  # noqa: E402
+from src.autoslice.cover_emote import (  # noqa: E402
     EMPTY_EMOTE_LIBRARY,
     EmoteEntry,
     EmoteLibrary,
@@ -30,7 +30,7 @@ from src.autoslice.cover_emote import (
     normalize_emote_choice,
     resolve_emote_reference,
 )
-from src.autoslice.cover_generation import (
+from src.autoslice.cover_generation import (  # noqa: E402
     _lidousha_cover_art_direction,
     _lidousha_cover_prompt,
 )
@@ -553,7 +553,7 @@ def test_stage_cover_companion_composites_frame_plus_sticker(tmp_path, monkeypat
     assert "PRESERVE THE EXACT OUTFIT" in captured["prompt"]
 
 
-def test_stage_cover_downgrades_to_default_redraw_on_sha_mismatch(tmp_path, monkeypatch):
+def test_stage_cover_blocks_selected_emote_on_sha_mismatch(tmp_path, monkeypatch):
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     import dataclasses
@@ -574,11 +574,10 @@ def test_stage_cover_downgrades_to_default_redraw_on_sha_mismatch(tmp_path, monk
         image_edit=_fake_image_edit(captured),
     )
 
-    # The cover still ships — as the default character redraw, with disclosure.
-    assert result["status"] == "AI_COVER_READY"
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
     generation = result["cover_generation"]
-    assert generation["emote"]["status"] == "FALLBACK_DEFAULT_REDRAW"
+    assert generation["emote"]["status"] == "BLOCKED_REFERENCE"
     assert "EMOTE_MEDIA_SHA_MISMATCH" in generation["emote"]["detail"]
-    assert generation["art_direction"]["emote_id"] == ""
-    assert captured["reference_path"].name == "emote-drift.cover-ref.png"
-    assert "OFFICIAL chibi emote stickers" not in captured["prompt"]
+    assert generation["art_direction"]["emote_id"] == "09"
+    assert generation["route_decision"]["execution_status"] == "BLOCKED"
+    assert "reference_path" not in captured

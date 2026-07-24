@@ -14,6 +14,14 @@
   selection-hook/机器味重写；它不拥有绕过频道 archive envelope 的权限。talk 最终统一补
   `【李豆沙】`，song 统一成精确目录式；两者都验 12–48 字、外层空白与括号/引号栈。
 - `assets/lidousha/manual_title_overrides.v1.json` 存正文，不存一条可免检的“最终发布标题”。
+- 已发布 same-BV 的媒体恢复若要**保持现有公开标题**，不得把它补进上述 Ivan 手定资产，也
+  不得裸抄旧 record 的 `title`。唯一入口是
+  `recovery-public-title-authority.v1`：planner 读取 repo 内 regular、非 symlink 的
+  `authorized-upload-public-verify.v2`，校验显式 SHA-256，并要求 manifest / expected /
+  public view / member archive 四面标题逐字相等、稿件 `state=0`、BVID/AID/CID 一致且标题已
+  原样通过当前共享标题门。authority 随 queue→spec→record→publish draft→review manifest
+  传递并在每层重放源 receipt；任一 hash、身份或标题漂移都阻断。若该 candidate 另有 Ivan
+  manual override 且两者正文不同，直接报冲突，不静默选边。
 
 ## 歌切标题（铁律，Ivan 2026-07-14 定、2026-07-19 重申）
 
@@ -30,6 +38,10 @@
 - 核心原则：标题围绕李豆沙本人；替换成任何别的主播还成立的标题就是失败。
 - 自动标题除共享门外，还受违禁词与 selection-hook 锚点约束；失败可做有界重写。
   人工正文不自动重写，但结构/长度不合规仍 fail closed 并要求修正文档 authority。
+- recovery public-title authority 是“修媒体时保留已发布元数据”，不是人工正文、也不是自动
+  标题。命中后不调用标题 LLM，但仍必须通过 StoryContract 与共享发布标题门；staging 明确
+  写 `title_source=recovery_verified_same_bv_public_title` 和
+  `title_authority_status=RESOLVED_RECOVERY_PUBLIC`。
 - `（）()/【】[]/《》/“”/‘’` 必须按栈正确成对；多余右符号、交叉闭合或缺右符号均记
   `unbalanced_title_marks`，并在任何封面调用前否决。
 

@@ -17,10 +17,15 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from src.autoslice.clip_context import MAX_PROMPT_CHARS
+
 
 SCHEMA_VERSION = "talk-boundary-semantic-review.v1"
 MAX_FORWARD_MS = 30_000
 CONTEXT_CUES_EACH_SIDE = 8
+MAX_VISIBLE_CUES = 128
+MAX_VISIBLE_TEXT_CHARS = 16_000
+NEXT_TOPIC_WITNESS_CUES = 2
 SEMANTIC_LLM_INDEPENDENCE_GROUP = "cpa-gpt-5.6-semantic-family"
 
 
@@ -92,7 +97,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
-- 可以从目标 cue 向后寻找，最多 {MAX_FORWARD_MS}ms；不得提前删掉候选选择器已经圈定的内容。
+- 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；不得提前删掉候选选择器已经圈定的内容。
 - 若目标本身已闭环，即使后面无停顿继续说，也应选目标；若目标半句或包袱未落地，才向后选最早同时满足三项的 cue。
 - 结构化弹幕/SC 可证明话题触发或切换；长期记忆只能帮助理解指代，不能单独证明边界。
 - 任一项无法证明就给 false，不要为了产片凑结论。
@@ -103,6 +108,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 只输出 JSON：
 {{"syntax_complete":bool,"story_closed":bool,"next_topic_separated":bool,
 "recommended_end_cue_index":整数或null,"evidence_cue_indexes":[整数],
+"same_topic_continues_after_target":bool,"needs_more_context":bool,
 "reason_codes":[字符串],"summary":"一句中文结论"}}
 """
 
@@ -118,14 +124,45 @@ def review_talk_boundary_semantics(
     candidate_context: str,
     llm_call: Callable[[str], str],
     extract_json: Callable[[str], Any],
+    max_forward_ms: int = MAX_FORWARD_MS,
 ) -> dict[str, object]:
     """Return a validated, cue-grid-bound semantic boundary decision."""
 
+    if (
+        isinstance(max_forward_ms, bool)
+        or not isinstance(max_forward_ms, int)
+        or not 1_000 <= max_forward_ms <= 60_000
+    ):
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEMANTIC_REVIEW_FORWARD_CAP_INVALID"
+        )
     rows = _cue_rows(cues)
     target_pos = _target_index(rows, target_ms)
     lo = max(0, target_pos - CONTEXT_CUES_EACH_SIDE)
-    hi = min(len(rows), target_pos + CONTEXT_CUES_EACH_SIDE + 1)
-    visible_rows = rows[lo:hi]
+    cap_end_ms = target_ms + max_forward_ms
+    recommendation_hi = target_pos + 1
+    while (
+        recommendation_hi < len(rows)
+        and int(rows[recommendation_hi]["end_ms"]) <= cap_end_ms
+    ):
+        recommendation_hi += 1
+    witness_hi = min(
+        len(rows),
+        recommendation_hi + NEXT_TOPIC_WITNESS_CUES,
+    )
+    visible_rows = rows[lo:witness_hi]
+    visible_chars = sum(len(str(row["text"])) for row in visible_rows)
+    if (
+        len(visible_rows) > MAX_VISIBLE_CUES
+        or visible_chars > MAX_VISIBLE_TEXT_CHARS
+    ):
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEMANTIC_REVIEW_CONTEXT_OVERFLOW"
+        )
+    if len(candidate_context) > MAX_PROMPT_CHARS:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEMANTIC_REVIEW_CANDIDATE_CONTEXT_OVERFLOW"
+        )
     request = {
         "schema_version": "talk-boundary-semantic-request.v1",
         "candidate_id": candidate_id,
@@ -135,8 +172,16 @@ def review_talk_boundary_semantics(
         "selector_story_witness": _scorecard_story_witness(selection_scorecard),
         "cues": visible_rows,
         "structured_context": structured_context[:12_000],
-        "candidate_context": candidate_context[:12_000],
-        "max_forward_ms": MAX_FORWARD_MS,
+        "candidate_context": candidate_context,
+        "max_forward_ms": max_forward_ms,
+        "recommendation_cue_indexes": [
+            int(row["cue_index"])
+            for row in rows[target_pos:recommendation_hi]
+        ],
+        "next_topic_witness_cue_indexes": [
+            int(row["cue_index"])
+            for row in rows[recommendation_hi:witness_hi]
+        ],
     }
     request_sha256 = _canonical_sha256(request)
     try:
@@ -167,7 +212,7 @@ def review_talk_boundary_semantics(
     recommendation_valid = bool(
         recommended is not None
         and int(recommended["end_ms"]) >= target_end
-        and int(recommended["end_ms"]) <= target_ms + MAX_FORWARD_MS
+        and int(recommended["end_ms"]) <= target_ms + max_forward_ms
     )
     evidence_raw = payload.get("evidence_cue_indexes")
     evidence_indexes = sorted(
@@ -176,11 +221,57 @@ def review_talk_boundary_semantics(
             for value in evidence_raw if isinstance(value, int) and not isinstance(value, bool)
         }
     ) if isinstance(evidence_raw, list) else []
-    evidence_valid = bool(evidence_indexes) and all(index in by_index for index in evidence_indexes)
+    visible_indexes = {
+        int(row["cue_index"]) for row in visible_rows
+    }
+    evidence_valid = bool(evidence_indexes) and all(
+        index in visible_indexes for index in evidence_indexes
+    )
     selector_witness = request["selector_story_witness"]
     selector_pass = (
         isinstance(selector_witness, Mapping)
         and selector_witness.get("status") == "PASS"
+    )
+    post_target_evidence = [
+        index
+        for index in evidence_indexes
+        if index in by_index
+        and int(by_index[index]["end_ms"]) > target_end
+    ]
+    row_positions = {
+        int(row["cue_index"]): position
+        for position, row in enumerate(rows)
+    }
+    recommended_position = (
+        row_positions.get(recommended_index)
+        if recommended_index is not None
+        else None
+    )
+    next_topic_witness_valid = bool(
+        not booleans["next_topic_separated"]
+        or (
+            recommendation_valid
+            and recommended_position is not None
+            and any(
+                row_positions.get(index, -1) > recommended_position
+                for index in evidence_indexes
+            )
+        )
+    )
+    same_topic_reported = payload.get(
+        "same_topic_continues_after_target"
+    ) is True
+    more_context_reported = payload.get("needs_more_context") is True
+    same_topic_continues_after_target = bool(
+        same_topic_reported
+        and not booleans["story_closed"]
+        and not booleans["next_topic_separated"]
+        and recommended is None
+        and post_target_evidence
+        and selector_pass
+    )
+    needs_more_context = bool(
+        more_context_reported and same_topic_continues_after_target
     )
     # This is the fourth boundary proposition: every selected content anchor
     # must remain covered.  It is deterministic and must not be inferred from
@@ -189,7 +280,13 @@ def review_talk_boundary_semantics(
     dimensions_pass = all(booleans.values())
     status = (
         "PASS"
-        if selector_pass and dimensions_pass and recommendation_valid and evidence_valid
+        if (
+            selector_pass
+            and dimensions_pass
+            and recommendation_valid
+            and evidence_valid
+            and next_topic_witness_valid
+        )
         else "BLOCK"
     )
     reason_codes_raw = payload.get("reason_codes")
@@ -204,6 +301,10 @@ def review_talk_boundary_semantics(
         reason_codes.append("BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE")
     if not evidence_valid:
         reason_codes.append("BOUNDARY_EVIDENCE_CUES_INVALID")
+    if not next_topic_witness_valid:
+        reason_codes.append("BOUNDARY_NEXT_TOPIC_WITNESS_MISSING")
+    if needs_more_context:
+        reason_codes.append("BOUNDARY_CONTEXT_EXHAUSTED")
     for field, passed in booleans.items():
         if not passed:
             reason_codes.append(field.upper() + "_NOT_PROVEN")
@@ -215,6 +316,7 @@ def review_talk_boundary_semantics(
         "request_sha256": request_sha256,
         "target_ms": target_ms,
         "target_cue_index": rows[target_pos]["cue_index"],
+        "max_forward_ms": max_forward_ms,
         "recommended_end_cue_index": recommended_index,
         "recommended_end_ms": (
             int(recommended["end_ms"]) if recommendation_valid and recommended is not None else None
@@ -227,6 +329,14 @@ def review_talk_boundary_semantics(
         "independent_semantic_vote_count": 1,
         "correlated_reviewer_disclosure": True,
         "evidence_cue_indexes": evidence_indexes,
+        "next_topic_witness_valid": next_topic_witness_valid,
+        "same_topic_continues_after_target": (
+            same_topic_continues_after_target
+        ),
+        "needs_more_context": needs_more_context,
+        "retry_scope": (
+            "same_topic_continues" if needs_more_context else "none"
+        ),
         "reason_codes": sorted(set(reason_codes)),
         "summary": str(payload.get("summary") or "").strip(),
     }

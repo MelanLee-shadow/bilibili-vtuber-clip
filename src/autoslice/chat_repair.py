@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
-from functools import lru_cache
+from functools import lru_cache, partial
 import hashlib
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
+from src.autoslice.chat_alignment_context import (
+    context_owned_internal_gap_rebase,
+    fragment_spoken_in as _fragment_spoken_in,
+    normalize_with_map,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.cue_split_hygiene import (
     _shift_boundary_punct as _shift_boundary_punct,
@@ -30,6 +35,7 @@ from src.autoslice.chat_span_alignment import (
     strip_interjections_once as _strip_interjections_once,  # noqa: F401 - compatibility re-export
 )
 
+_norm_with_map = partial(normalize_with_map, normalize=normalize_chat_text)
 
 _THANK_PREFIX_PATTERN = r"(?:谢谢|感谢|谢)(?:一下)?"
 _THANK_ACTION_SUFFIX_PATTERN = (
@@ -227,18 +233,6 @@ def _best_text_split(authority: str, cue_texts: Sequence[str]) -> list[str]:
     return list(solve(0, 0)[1])
 
 
-def _norm_with_map(text: str) -> tuple[str, list[int]]:
-    """normalize_chat_text 的逐字版本：返回 (normalized, norm_index -> raw_index)。"""
-    norm_chars: list[str] = []
-    raw_indexes: list[int] = []
-    for raw_index, char in enumerate(text):
-        piece = normalize_chat_text(char)
-        for out_char in piece:
-            norm_chars.append(out_char)
-            raw_indexes.append(raw_index)
-    return "".join(norm_chars), raw_indexes
-
-
 _EMOTE_PLACEHOLDER_RUN = re.compile(r"[；;]{2,}")
 
 
@@ -297,15 +291,6 @@ def _excess_is_mid_read_interjection(authority: str, candidate: str) -> bool:
     return True
 
 
-def _fragment_spoken_in(fragment: str, context: str) -> bool:
-    """「这个片段她已在相邻字幕说过」的统一判定（apply 与自检必须同一把尺）。"""
-    fragment_norm = normalize_chat_text(fragment)
-    if len(fragment_norm) < 2 or not context:
-        return False
-    _score, _ratio, coverage, _precision, _common = _match_metrics(fragment, context)
-    return coverage >= 0.8
-
-
 def _aligned_span_replacements(
     authority: str,
     before: Sequence[str],
@@ -325,7 +310,7 @@ def _aligned_span_replacements(
       不重复注入。
     返回 (replacements, audit) 或 None（对齐太弱，调用方回退旧行为）。
     """
-    auth_norm, auth_map = _norm_with_map(authority)
+    auth_norm, auth_map = normalize_with_map(authority, normalize_chat_text)
     span_raw = "".join(before)
     # A structured SC body never owns the acoustic “谢谢+发送者+动作” head that
     # precedes it.  Aligning “姐姐大人…” against “…光棒，姐大人…” otherwise
@@ -338,7 +323,7 @@ def _aligned_span_replacements(
     if acoustic_thank is not None and authority_thank is None:
         protected_thank_head = acoustic_thank.group("head")
         span_raw = span_raw[len(protected_thank_head) :]
-    span_norm, span_map = _norm_with_map(span_raw)
+    span_norm, span_map = normalize_with_map(span_raw, normalize_chat_text)
     if not auth_norm or not span_norm:
         return None
     blocks = [
@@ -357,12 +342,29 @@ def _aligned_span_replacements(
     common = sum(block.size for block in blocks)
     if common / len(auth_norm) < 0.5:
         return None
+
+    # Fuzzy prefix ownership can silently lose polarity words such as “不是”.
+    context_head_rebase, context_owned_gap = (
+        context_owned_internal_gap_rebase(
+            authority,
+            auth_map,
+            blocks,
+            prev_context,
+            normalize=normalize_chat_text,
+            fragment_spoken_in=_fragment_spoken_in,
+        )
+    )
+    if context_head_rebase:
+        blocks = blocks[context_head_rebase:]
+
     a_lo, a_hi = blocks[0].a, blocks[-1].a + blocks[-1].size
     s_lo, s_hi = blocks[0].b, blocks[-1].b + blocks[-1].size
 
     _spoken_nearby = _fragment_spoken_in
 
     audit: dict = {}
+    if context_owned_gap:
+        audit["context_owned_internal_authority_gap"] = context_owned_gap
     if protected_thank_head:
         audit["preserved_thank_sender_action_head"] = protected_thank_head
     # raw 边界：对齐区两端顶到 raw 端点，normalize 后不可见的首尾字符
@@ -384,9 +386,9 @@ def _aligned_span_replacements(
     elif a_lo:
         if _spoken_nearby(auth_head_raw, prev_context):
             audit["dropped_duplicate_authority_head"] = auth_head_raw
-            # Keep an unmatched current reply (`当然`) when only the authority
-            # head (`那你今晚`) belongs to the previous cue.
-            if s_lo and len(normalize_chat_text(span_head_raw)) >= 2:
+            # Exact context ownership protects even a one-character hesitation.
+            min_span_head_length = 1 if context_head_rebase else 2
+            if s_lo and len(normalize_chat_text(span_head_raw)) >= min_span_head_length:
                 head = span_head_raw
                 audit["preserved_span_head"] = span_head_raw
         else:

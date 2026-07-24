@@ -26,6 +26,11 @@ from src.autoslice.cover_text_pixel_evidence import (
     verify_pre_overlay_route_background,
     verify_rendered_text_pixel_artifacts,
 )
+from src.autoslice.final_review_auditor import persist_review_audit
+from src.autoslice.final_review_contract import (
+    FinalReviewContractError,
+    validate_final_review_release,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.producer_media import (
@@ -37,6 +42,10 @@ from src.autoslice.producer_media import (
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
 from src.autoslice.redelivery_subtitle_baseline import (
     apply_redelivery_subtitle_baseline,
+)
+from src.autoslice.recovery_title_authority import (
+    RecoveryTitleAuthorityError,
+    validate_recovery_title_authority,
 )
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
@@ -82,6 +91,7 @@ class ProducerFinalizationAdapters:
     stage_publish_draft: Callable[..., dict]
     generate_upload_tags: Callable[..., dict]
     delivery_root: Callable[[], Path]
+    run_exact_final_review: Callable[..., dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -679,6 +689,57 @@ def _resolve_deferred_foreign_introductions_after_redelivery(
     )
     return False
 
+
+def _run_exact_final_review_gate(
+    *,
+    cid: str,
+    out_root: Path,
+    final_start: int,
+    recut: FinalRecutArtifacts,
+    chat_authority_audit: dict,
+    chat_authority_path: Path,
+    adapters: ProducerFinalizationAdapters,
+) -> None:
+    """Review and bind the actual post-boundary, post-authority SRT bytes."""
+
+    reviewer = adapters.run_exact_final_review
+    if reviewer is None:
+        raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
+    final_text = recut.subtitle_path.read_text(
+        encoding="utf-8",
+        errors="strict",
+    )
+    audit = reviewer(
+        final_text,
+        chat_authority_audit,
+        final_start,
+    )
+    chat_authority_audit["final_review_audit"] = audit
+    persist_review_audit(out_root / f"{cid}.review-flags.json", audit)
+    chat_authority_path.write_text(
+        json.dumps(
+            chat_authority_audit,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    expected_srt_sha256 = "sha256:" + hashlib.sha256(
+        final_text.encode("utf-8")
+    ).hexdigest()
+    try:
+        validate_final_review_release(
+            audit,
+            expected_srt_sha256=expected_srt_sha256,
+        )
+    except FinalReviewContractError as exc:
+        raise SystemExit(
+            f"FINAL_REVIEW_RELEASE_BLOCKED: {exc.reason_code}: "
+            f"{chat_authority_path}"
+        ) from exc
+
 def _finalize_speaker(
     *,
     options: ProducerFinalizationOptions,
@@ -1003,6 +1064,23 @@ def _stage_record(
     recut_dir = recut.recut_dir
     subtitle_path = recut.subtitle_path
     given_title = spec.get("given_title")
+    recovery_title_authority = spec.get("recovery_title_authority")
+    if bool(given_title) != bool(recovery_title_authority):
+        raise SystemExit("RECOVERY_PUBLIC_TITLE_AUTHORITY_PAIR_INVALID")
+    normalized_recovery_title_authority = None
+    if given_title:
+        try:
+            normalized_recovery_title_authority = (
+                validate_recovery_title_authority(
+                    recovery_title_authority,
+                    candidate_id=cid,
+                    expected_title=str(given_title),
+                )
+            )
+        except RecoveryTitleAuthorityError as exc:
+            raise SystemExit(
+                f"RECOVERY_PUBLIC_TITLE_AUTHORITY_INVALID:{exc}"
+            ) from exc
     # Title LLM runs only when no manual body exists. A manual body is not
     # rewritten, but it still passes the shared archive-envelope/structure gate.
     # Cover art direction remains independent of title authorship and uses the
@@ -1088,6 +1166,10 @@ def _stage_record(
     record["selection_scorecard"] = spec.get("selection_scorecard")
     record["session_relation_authority"] = spec.get("session_relation_authority")
     record["story_contract"] = story_contract
+    if normalized_recovery_title_authority is not None:
+        record["recovery_title_authority"] = (
+            normalized_recovery_title_authority
+        )
     if clip_context_path is not None:
         record["clip_context_path"] = str(clip_context_path)
         record["clip_context_payload_sha256"] = clip_context.get(
@@ -1120,8 +1202,19 @@ def _stage_record(
         skip_cover=options.reuse_cover,
         selection_hook=str(spec.get("selection_hook") or ""),
         cover_diversity_slot=spec.get("cover_diversity_slot"),
+        recovery_title_authority=normalized_recovery_title_authority,
     )
     staging = record.get("publish_staging") or {}
+    if (
+        normalized_recovery_title_authority is not None
+        and (
+            staging.get("title")
+            != normalized_recovery_title_authority["title"]
+            or staging.get("recovery_title_authority")
+            != normalized_recovery_title_authority
+        )
+    ):
+        raise SystemExit("RECOVERY_PUBLIC_TITLE_STAGING_BINDING_MISMATCH")
     if staging.get("title_authority_status") == "BLOCKED_STORY_CONTRACT":
         raise SystemExit(
             "STORY_CONTRACT_TITLE_FAILED: "
@@ -1145,6 +1238,17 @@ def _stage_record(
         record["upload_tags"] = adapters.generate_upload_tags(
             str(staging.get("title") or given_title or cid), subtitle_path, timeout=180.0
         )
+    publish_json_path = (
+        Path(str(staging.get("publish_json_path")))
+        if staging.get("publish_json_path")
+        else None
+    )
+    if publish_json_path is not None:
+        if publish_json_path.is_symlink() or not publish_json_path.is_file():
+            raise SystemExit("PUBLISH_DRAFT_FILE_INVALID")
+        record.setdefault("artifact_hashes", {})[
+            "publish_draft_sha256"
+        ] = "sha256:" + _sha256(publish_json_path)
     record_path = recut_dir / f"{cid}.record.json"
     with record_path.open("w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2, sort_keys=True)
@@ -1214,6 +1318,11 @@ def _deliver_staged_record(
         if cover_generation.get("ai_background")
         else None
     )
+    publish_json_path = (
+        Path(str(staging.get("publish_json_path")))
+        if staging.get("publish_json_path")
+        else None
+    )
     delivery = adapters.delivery_root() / spec["date"]
     delivery.mkdir(parents=True, exist_ok=True)
     name = spec.get("delivery_name") or cid
@@ -1235,6 +1344,7 @@ def _deliver_staged_record(
         (cover_title_mask_path, ".cover.title-mask.png"),
         (cover_pre_overlay_path, ".cover.pre-overlay.png"),
         (cover_route_background_path, ".cover.route-background.png"),
+        (publish_json_path, ".publish.json"),
         (record_path, ".record.json"),
     ):
         if source is not None and source.is_file():
@@ -1320,6 +1430,15 @@ def finalize_producer_package(
         adapters=adapters,
         spec_parent=options.spec.parent,
         chat_authority_audit=chat_authority_audit,
+    )
+    _run_exact_final_review_gate(
+        cid=cid,
+        out_root=out_root,
+        final_start=final_start,
+        recut=recut,
+        chat_authority_audit=chat_authority_audit,
+        chat_authority_path=chat_authority_path,
+        adapters=adapters,
     )
     speaker = _finalize_speaker(
         options=options,

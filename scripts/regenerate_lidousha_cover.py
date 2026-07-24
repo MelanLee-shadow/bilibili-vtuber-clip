@@ -150,8 +150,9 @@ def regenerate_cover(
 
     # Emote reference resolution: replace mode swaps the reference to the
     # sticker (no live frame needed at all); companion insets the sticker into
-    # the frame.  Judge picks degrade to the default redraw; an explicit
-    # --emote must fail loudly instead of shipping something Ivan didn't ask.
+    # the frame.  Once either a judge or Ivan selects an emote, resolution
+    # failure is terminal for this repair attempt; never silently swap the
+    # cover subject after route selection.
     emote_entry = None
     emote_meta: dict | None = None
     emote_reference: Path | None = None
@@ -163,14 +164,9 @@ def regenerate_cover(
             else (None, "EMOTE_ID_UNKNOWN")
         )
         if resolved is None:
-            if emote_id:
-                raise SystemExit(f"EMOTE_REFERENCE_UNAVAILABLE: {resolve_detail}")
-            emote_meta = {
-                "id": art_direction.emote_id,
-                "status": "FALLBACK_DEFAULT_REDRAW",
-                "detail": resolve_detail,
-            }
-            art_direction = dataclasses.replace(art_direction, emote_id="", emote_mode="", emote_reason="")
+            raise SystemExit(
+                f"EMOTE_REFERENCE_UNAVAILABLE: {resolve_detail}"
+            )
         else:
             emote_entry = entry
             emote_reference = resolved

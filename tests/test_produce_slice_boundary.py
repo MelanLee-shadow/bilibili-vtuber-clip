@@ -211,6 +211,101 @@ def test_human_reviewed_end_is_lower_bound_and_semantic_review_still_required(tm
     assert initial.manual_end_authority == "Ivan-reviewed source closure"
 
 
+def test_boundary_semantic_context_exhaustion_emits_retry_scope(tmp_path):
+    with pytest.raises(
+        SystemExit,
+        match=(
+            "BOUNDARY_CONTEXT_EXHAUSTED:.*"
+            "retry_scope=same_topic_continues"
+        ),
+    ):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 90_000}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 9_000,
+                "boundary_semantic_review": {
+                    "status": "BLOCK",
+                    "reason_codes": [
+                        "SAME_TOPIC_FOLLOWUP",
+                        "BOUNDARY_CONTEXT_EXHAUSTED",
+                    ],
+                    "needs_more_context": True,
+                    "retry_scope": "same_topic_continues",
+                    "max_forward_ms": 30_000,
+                },
+            },
+            durations=[90_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=90_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[
+                _cue(0, 9_000, "目标仍未回答完"),
+                _cue(9_100, 35_000, "同一回答继续"),
+            ],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+        )
+
+
+def test_boundary_semantic_recommendation_uses_retry_forward_cap(tmp_path):
+    cues = [
+        _cue(0, 9_000, "目标"),
+        _cue(57_000, 58_300, "四十九秒后的完整闭环"),
+    ]
+    spec = {
+        "pieces": [{"start_ms": 0, "end_ms": 90_000}],
+        "semantic_start_ms": 0,
+        "semantic_end_ms": 9_000,
+        "boundary_semantic_review": {
+            "status": "PASS",
+            "recommended_end_ms": 58_300,
+        },
+    }
+    with pytest.raises(
+        SystemExit,
+        match="BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID",
+    ):
+        _select_initial_boundary(
+            spec=spec,
+            durations=[90_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=90_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=cues,
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+            boundary_repair_extend_cap_ms=30_000,
+        )
+
+    initial = _select_initial_boundary(
+        spec=spec,
+        durations=[90_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=90_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        required_tail_end_ms=None,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+        boundary_repair_extend_cap_ms=60_000,
+    )
+
+    assert initial.target_rel == 58_300
+    assert initial.snapped_end == 58_300
+
+
 def test_human_reviewed_end_preserves_later_structured_chat_payoff(tmp_path):
     cues = [
         _cue(0, 9_000, "语义候选先收束。"),
@@ -876,3 +971,58 @@ def test_repair_start_opens_on_straddled_sentence_start():
     assert repair_start_for_straddler([_cue(400, 2_000)], final_start_ms=1_000) == 400
     # No straddler (previous sentence ends inside the lead air) → nothing to fix.
     assert repair_start_for_straddler([_cue(980, 2_000)], final_start_ms=1_000) is None
+
+
+def test_final_semantic_endpoint_binding_matches_exact_closure():
+    cues = [
+        _cue(0, 5_000, "故事铺垫。"),
+        _cue(5_100, 9_000, "包袱落地。"),
+        _cue(9_100, 11_000, "下一话题。"),
+    ]
+
+    review, reasons = boundary_resolution._bind_final_semantic_endpoint(
+        semantic_review={
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "PASS",
+            "request_sha256": "sha256:" + "a" * 64,
+            "recommended_end_cue_index": 2,
+            "recommended_end_ms": 9_000,
+        },
+        cues=cues,
+        closure_cue=cues[1],
+        snapped_end_ms=9_000,
+        final_start_ms=0,
+        final_end_ms=9_400,
+    )
+
+    assert reasons == []
+    binding = review["final_endpoint_binding"]
+    assert binding["status"] == "PASS"
+    assert binding["final_closure_cue_index"] == 2
+    assert binding["final_snapped_end_ms"] == 9_000
+    assert binding["final_end_ms"] == 9_400
+
+
+def test_final_semantic_endpoint_binding_blocks_later_repair_endpoint():
+    cues = [
+        _cue(0, 5_000, "原推荐终点。"),
+        _cue(5_100, 9_000, "修复后才切到这里。"),
+    ]
+
+    review, reasons = boundary_resolution._bind_final_semantic_endpoint(
+        semantic_review={
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "PASS",
+            "recommended_end_cue_index": 1,
+            "recommended_end_ms": 5_000,
+        },
+        cues=cues,
+        closure_cue=cues[1],
+        snapped_end_ms=9_000,
+        final_start_ms=0,
+        final_end_ms=9_400,
+    )
+
+    assert review["final_endpoint_binding"]["status"] == "BLOCK"
+    assert "BOUNDARY_SEMANTIC_ENDPOINT_MS_MISMATCH" in reasons
+    assert "BOUNDARY_SEMANTIC_ENDPOINT_CUE_MISMATCH" in reasons

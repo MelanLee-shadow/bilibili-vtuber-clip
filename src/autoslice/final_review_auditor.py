@@ -27,8 +27,15 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from src.autoslice.chat_evidence import (
+    normalize_chat_text,
+    normalize_srt_payload_window,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.subtitle_fidelity import _homophone_equal
+from src.autoslice.subtitle_fidelity import (
+    _homophone_equal,
+    _near_homophone_equal,
+)
 
 MAX_FINDINGS = 24
 MAX_CONTEXT_ADJUDICATIONS = 12
@@ -130,6 +137,67 @@ def _orthography_pronunciation_key(text: str) -> tuple[str, ...]:
     return tuple(collapsed)
 
 
+_BOUND_ORTHOGRAPHY_PROVENANCE_KINDS = frozenset(
+    {
+        "glossary",
+        "official_roster",
+        "source_truth",
+        "structured_chat_bound",
+        "verified_ocr",
+    }
+)
+
+
+def _orthography_text_authority(
+    finding: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return a fail-closed textual authority receipt for spelling changes."""
+
+    provenance = finding.get("candidate_provenance")
+    kind = (
+        str(provenance.get("kind") or "")
+        if isinstance(provenance, Mapping)
+        else ""
+    )
+    mutation_authorized = bool(
+        isinstance(provenance, Mapping)
+        and provenance.get("mutation_authorized") is True
+    )
+    passed = kind in _BOUND_ORTHOGRAPHY_PROVENANCE_KINDS or mutation_authorized
+    return {
+        "schema_version": "subtitle-orthography-authority.v1",
+        "status": "PASS" if passed else "BLOCK",
+        "provenance_kind": kind or None,
+        "reason_code": (
+            None if passed else "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED"
+        ),
+    }
+
+
+def _orthography_ambiguous(
+    *,
+    current_cue: str,
+    proposed_cue: str,
+    finding: Mapping[str, Any],
+) -> bool:
+    """Whether audio cannot determine the changed written surface."""
+
+    suspect = str(finding.get("suspect") or "")
+    suggestion = str(finding.get("suggestion") or "")
+    if (
+        suspect
+        and suggestion
+        and (
+            _homophone_equal(suspect, suggestion)
+            or _near_homophone_equal(suspect, suggestion)
+        )
+    ):
+        return True
+    current_key = _orthography_pronunciation_key(current_cue)
+    proposed_key = _orthography_pronunciation_key(proposed_cue)
+    return bool(current_key and current_key == proposed_key)
+
+
 def _source_backed_orthography_equivalent(
     request: Mapping[str, Any],
     finding: Mapping[str, Any],
@@ -142,6 +210,7 @@ def _source_backed_orthography_equivalent(
     if (
         request.get("repair_class") != "source_backed_entity"
         or not isinstance(provenance, Mapping)
+        or _orthography_text_authority(finding)["status"] != "PASS"
         or not re.search(r"[A-Za-z]", proposed)
     ):
         return False, {}
@@ -425,12 +494,7 @@ def audit_final_subtitles(
                 allow_deletion=repair_class
                 in {"acoustic_delete", "acoustic_drop_cue"},
             )
-            # `proposed_full_cue` is the authority input: code derives its one
-            # bounded minimal edit and the audio lane verifies that complete
-            # candidate.  The model's optional suspect/replacement fields are
-            # only explanatory metadata.  Rejecting an otherwise valid full
-            # cue when those advisory spans are too broad discarded obvious
-            # repairs such as 做刘翔→做流量 before audio was ever consulted.
+            # The full cue owns the bounded edit; advisory spans cannot veto it.
             if not contract_error and reported_suspect and reported_suspect != derived_suspect:
                 scope_warnings.append("REPORTED_SUSPECT_SCOPE_MISMATCH")
             if (
@@ -439,12 +503,7 @@ def audit_final_subtitles(
                 and reported_replacement != derived_replacement
             ):
                 scope_warnings.append("REPORTED_REPLACEMENT_SCOPE_MISMATCH")
-            # Review models sometimes correctly spot a parallel-repeat entity
-            # corruption but label it ``phonetic`` and omit source_surface.
-            # Recover only when the *entire derived replacement* is repeated
-            # verbatim in an independent local/text authority.  This does not
-            # apply the edit: it merely restores the source-backed contract so
-            # the normal entity/audio routing can adjudicate it.
+            # A verbatim repeated replacement may recover a candidate, not apply it.
             if (
                 not contract_error
                 and kind in {"entity", "self_ref"}
@@ -514,10 +573,7 @@ def audit_final_subtitles(
                     memory_candidate_valid = True
         provenance: dict[str, Any] | None = None
         if proposed_supplied and not contract_error and source_surface:
-            # 见证解析对所有自动修复类开放（2026-07-19 T1 车道）：词面在本片
-            # 其它字幕行 / 词表 / 结构化弹幕逐字出现即为见证。entity/self_ref
-            # 仍硬性要求见证（否则 contract error）；其余类见证是加分项——
-            # 有见证+近音的才有资格走 T1 纯文本应用，没有就照旧走声学仲裁。
+            # Resolve the candidate's textual provenance without authorizing it.
             other_cues = "\n".join(
                 cue.text for index, cue in enumerate(cues, start=1) if index != cue_index
             )
@@ -526,6 +582,16 @@ def audit_final_subtitles(
                     contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
                 else:
                     scope_warnings.append("SOURCE_SURFACE_NOT_IN_PROPOSED")
+            elif source_surface.casefold() in glossary_text.casefold():
+                provenance = {"kind": "glossary", "surface": source_surface}
+            elif source_surface.casefold() in structured_context_text.casefold():
+                # This context also contains the derived selection hook, so a
+                # substring hit is candidate provenance only.  It is not a
+                # cue-window/referent-bound spelling authority.
+                provenance = {
+                    "kind": "structured_context",
+                    "surface": source_surface,
+                }
             elif source_surface.casefold() in other_cues.casefold():
                 # 近邻重复见证强于词表见证一档（同一人几秒内说过同一短语，
                 # 几乎是声学证据的文本投影）——记录最近见证行距离，T1 车道
@@ -540,13 +606,6 @@ def audit_final_subtitles(
                     "kind": "transcript_context",
                     "surface": source_surface,
                     "nearest_cue_distance": min(distances) if distances else None,
-                }
-            elif source_surface.casefold() in glossary_text.casefold():
-                provenance = {"kind": "glossary", "surface": source_surface}
-            elif source_surface.casefold() in structured_context_text.casefold():
-                provenance = {
-                    "kind": "structured_context",
-                    "surface": source_surface,
                 }
             elif repair_class == "source_backed_entity":
                 contract_error = "ENTITY_SOURCE_SURFACE_UNWITNESSED"
@@ -696,14 +755,18 @@ def route_findings(
             )
             for surface in folded_entity_surfaces
         )
+        orthography_authority = _orthography_text_authority(row)
         if (
             applicable
+            and row.get("repair_class") != "source_backed_entity"
             and not row.get("force_acoustic")
             and not entity_surface_conflict
             and _homophone_equal(suspect, str(suggestion))
+            and orthography_authority["status"] == "PASS"
         ):
             texts[cue_index - 1] = candidate
             row["routed"] = "homophone_fix"
+            row["orthography_authority"] = orthography_authority
             applied += 1
             rows.append(row)
             continue
@@ -713,9 +776,11 @@ def route_findings(
         near_gate = (
             _near_homophone_gate(row, texts[cue_index - 1])
             if applicable
+            and row.get("repair_class") != "source_backed_entity"
             and row.get("candidate_provenance")
             and not row.get("force_acoustic")
             and not entity_surface_conflict
+            and orthography_authority["status"] == "PASS"
             else None
         )
         if near_gate is not None:
@@ -723,10 +788,21 @@ def route_findings(
             row["routed"] = "witnessed_near_homophone_fix"
             row["near_homophone_gate"] = near_gate
             row["pinyin_similarity"] = near_gate["pinyin_similarity"]
+            row["orthography_authority"] = orthography_authority
             applied += 1
         else:
             if applicable and entity_surface_conflict:
                 row["entity_surface_conflict"] = True
+            if (
+                applicable
+                and _orthography_ambiguous(
+                    current_cue=texts[cue_index - 1],
+                    proposed_cue=str(candidate or ""),
+                    finding=row,
+                )
+                and orthography_authority["status"] != "PASS"
+            ):
+                row["orthography_authority"] = orthography_authority
             row["routed"] = "disclosure" if cue_index not in protected else "disclosure_protected"
         rows.append(row)
     output_lines = []
@@ -993,6 +1069,12 @@ def adjudicate_context_finding(
     repaired = False
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
     repair_class = str(request.get("repair_class") or "")
+    orthography_ambiguous = _orthography_ambiguous(
+        current_cue=str(request.get("current_cue") or ""),
+        proposed_cue=str(request.get("proposed_cue") or ""),
+        finding=finding,
+    )
+    orthography_authority = _orthography_text_authority(finding)
     orthography_equivalent, orthography_audit = _source_backed_orthography_equivalent(
         request,
         finding,
@@ -1012,6 +1094,12 @@ def adjudicate_context_finding(
             policy_branch = "ACOUSTIC_PARTIAL_DELETE_STRICT_APPLY"
         else:
             policy_branch = "ACOUSTIC_PARTIAL_DELETE_NOT_PROVEN_KEEP_CURRENT"
+    elif (
+        valid
+        and orthography_ambiguous
+        and orthography_authority["status"] != "PASS"
+    ):
+        policy_branch = "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
     elif valid and proposed_fit == "INCOMPATIBLE" and orthography_equivalent:
         # Acoustic judges compare sounds, not house-style graphemes.  A
         # hash-bound/source-backed entity proposal whose complete spoken form
@@ -1056,6 +1144,27 @@ def adjudicate_context_finding(
                 f"{index}\n{_ms(cue.start_ms)} --> {_ms(cue.end_ms)}\n{text}\n"
                 for index, (cue, text) in enumerate(retained, start=1)
             )
+    mutation_authority = {
+        "schema_version": "subtitle-correction-mutation-authority.v1",
+        "status": (
+            "PASS"
+            if repaired
+            and (
+                not orthography_ambiguous
+                or orthography_authority["status"] == "PASS"
+            )
+            else ("BLOCK" if repaired else "NOT_APPLIED")
+        ),
+        "basis": (
+            "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+            if repaired and orthography_ambiguous
+            else (
+                "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                if repaired
+                else None
+            )
+        ),
+    }
     return output, {
         "schema_version": "subtitle-span-adjudication.v1",
         "status": "OBSERVED" if valid else "UNCERTAIN",
@@ -1068,7 +1177,356 @@ def adjudicate_context_finding(
             "matched": orthography_equivalent,
             **orthography_audit,
         },
+        "orthography_ambiguous": orthography_ambiguous,
+        "orthography_authority": orthography_authority,
+        "mutation_authority": mutation_authority,
     }
+
+
+def adjudicate_exact_release_findings(
+    srt_text: str,
+    findings: Iterable[Mapping[str, Any]],
+    *,
+    entity_verifier: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
+    clip_context: Mapping[str, object] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Separate unresolved findings from decisively disproven proposals.
+
+    The exact-byte reviewer is intentionally independent from the correction
+    pass and can rediscover a proposal that audio already rejects.  A finding
+    is closed only after a fresh, request-bound acoustic verdict says the
+    current audible cue fits and the proposed cue is incompatible.  Any
+    proposed mutation, uncertainty, invalid response, or budget overflow
+    remains an unresolved release blocker.
+    """
+
+    unresolved: list[dict[str, Any]] = []
+    resolved: list[dict[str, Any]] = []
+    for index, finding in enumerate(findings):
+        row = dict(finding)
+        if index >= MAX_CONTEXT_ADJUDICATIONS:
+            row["exact_release_adjudication"] = {
+                "schema_version": "subtitle-span-adjudication.v1",
+                "status": "SKIPPED_BUDGET",
+                "repaired": False,
+            }
+            unresolved.append(row)
+            continue
+        _unused_output, adjudication = adjudicate_context_finding(
+            srt_text,
+            row,
+            entity_verifier=entity_verifier,
+            clip_context=clip_context,
+        )
+        row["exact_release_adjudication"] = adjudication
+        verdict = adjudication.get("verdict")
+        request = adjudication.get("request")
+        current_cue = (
+            str(request.get("current_cue") or "")
+            if isinstance(request, Mapping)
+            else ""
+        )
+        proposed_cue = (
+            str(request.get("proposed_cue") or "")
+            if isinstance(request, Mapping)
+            else ""
+        )
+        suspect = str(row.get("suspect") or "")
+        suggestion = str(row.get("suggestion") or "")
+        orthography_ambiguous = _orthography_ambiguous(
+            current_cue=current_cue,
+            proposed_cue=proposed_cue,
+            finding={
+                **row,
+                "suspect": suspect,
+                "suggestion": suggestion,
+            },
+        )
+        decisively_disproven = bool(
+            adjudication.get("status") == "OBSERVED"
+            and adjudication.get("repaired") is False
+            and adjudication.get("policy_branch")
+            == "PROPOSED_INCOMPATIBLE_KEEP_CURRENT"
+            and isinstance(verdict, Mapping)
+            and verdict.get("target_audible") is True
+            and verdict.get("current_fit") in {"SUPPORTED", "PLAUSIBLE"}
+            and verdict.get("proposed_fit") == "INCOMPATIBLE"
+            and not orthography_ambiguous
+        )
+        if decisively_disproven:
+            row["resolution"] = (
+                "ACOUSTICALLY_DISPROVEN_FINAL_REVIEW_PROPOSAL"
+            )
+            resolved.append(row)
+        else:
+            if orthography_ambiguous:
+                row["exact_release_acoustic_closure_blocked_reason"] = (
+                    "ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO"
+                )
+            unresolved.append(row)
+    return unresolved, resolved
+
+
+def audit_correction_mutation_authority(
+    correction_audit: Mapping[str, object],
+) -> dict[str, object]:
+    """Verify every correction-pass mutation has a typed authority receipt."""
+
+    findings = correction_audit.get("findings")
+    applied_count = correction_audit.get("applied_count")
+    failures: list[dict[str, object]] = []
+    if not isinstance(findings, list):
+        return {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "BLOCK",
+            "applied_count": applied_count,
+            "validated_mutation_count": 0,
+            "failures": [
+                {"reason_code": "CORRECTION_FINDINGS_CONTRACT_INVALID"}
+            ],
+        }
+    applied_rows: list[tuple[Mapping[str, Any], object]] = []
+    for row in findings:
+        if not isinstance(row, Mapping):
+            continue
+        routed = row.get("routed")
+        if routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
+            applied_rows.append((row, row.get("orthography_authority")))
+            continue
+        adjudication = row.get("context_audio_adjudication")
+        if (
+            routed == "context_audio_adjudicated_fix"
+            and isinstance(adjudication, Mapping)
+            and adjudication.get("repaired") is True
+        ):
+            applied_rows.append(
+                (row, adjudication.get("mutation_authority"))
+            )
+    if (
+        isinstance(applied_count, bool)
+        or not isinstance(applied_count, int)
+        or applied_count != len(applied_rows)
+    ):
+        failures.append(
+            {
+                "reason_code": "CORRECTION_APPLIED_COUNT_MISMATCH",
+                "declared": applied_count,
+                "observed": len(applied_rows),
+            }
+        )
+    for row, receipt in applied_rows:
+        routed = row.get("routed")
+        receipt_valid = False
+        if routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
+            # Do not trust a producer-supplied PASS bit.  Recompute the typed
+            # textual authority from the finding's bound provenance and
+            # require the receipt to be the exact result.  This prevents a
+            # legacy/alternate producer from laundering an unsupported
+            # spelling mutation with {"status": "PASS"}.
+            expected = _orthography_text_authority(row)
+            receipt_valid = bool(
+                isinstance(receipt, Mapping)
+                and dict(receipt) == expected
+                and expected["status"] == "PASS"
+                and expected["provenance_kind"]
+                in _BOUND_ORTHOGRAPHY_PROVENANCE_KINDS
+            )
+        elif routed == "context_audio_adjudicated_fix":
+            adjudication = row.get("context_audio_adjudication")
+            orthography_ambiguous = (
+                adjudication.get("orthography_ambiguous")
+                if isinstance(adjudication, Mapping)
+                else None
+            )
+            expected_basis = (
+                "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+                if orthography_ambiguous is True
+                else "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+            )
+            orthography_valid = True
+            if orthography_ambiguous is True:
+                expected_orthography = _orthography_text_authority(row)
+                observed_orthography = (
+                    adjudication.get("orthography_authority")
+                    if isinstance(adjudication, Mapping)
+                    else None
+                )
+                orthography_valid = bool(
+                    isinstance(observed_orthography, Mapping)
+                    and dict(observed_orthography) == expected_orthography
+                    and expected_orthography["status"] == "PASS"
+                    and expected_orthography["provenance_kind"]
+                    in _BOUND_ORTHOGRAPHY_PROVENANCE_KINDS
+                )
+            receipt_valid = bool(
+                isinstance(receipt, Mapping)
+                and receipt.get("schema_version")
+                == "subtitle-correction-mutation-authority.v1"
+                and receipt.get("status") == "PASS"
+                and receipt.get("basis") == expected_basis
+                and set(receipt) == {"schema_version", "status", "basis"}
+                and orthography_valid
+            )
+        if not receipt_valid:
+            failures.append(
+                {
+                    "reason_code": "CORRECTION_MUTATION_AUTHORITY_INVALID",
+                    "cue_index": row.get("cue_index"),
+                    "routed": routed,
+                }
+            )
+    return {
+        "schema_version": "subtitle-correction-mutation-audit.v1",
+        "status": "BLOCK" if failures else "PASS",
+        "applied_count": applied_count,
+        "validated_mutation_count": len(applied_rows),
+        "failures": failures,
+    }
+
+
+def resolve_verified_source_truth_findings(
+    srt_text: str,
+    findings: Iterable[Mapping[str, Any]],
+    *,
+    source_truth_audit: Mapping[str, Any] | None,
+    timeline_offset_ms: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Close only findings that would contradict an active human truth owner.
+
+    Source-truth rows own time windows, not mutable cue indexes.  The exact
+    release review runs on the final recut timeline, while the ledger audit is
+    stored on the padded candidate timeline, so every comparison is rebased by
+    ``timeline_offset_ms``.  A finding is protected only when the current final
+    bytes satisfy the declared contract and either:
+
+    * the contract owns the complete cue and the reviewer supplied no valid
+      mutation, or
+    * applying the proposed mutation would make that contract fail.
+
+    This deliberately does not silence a concern elsewhere in a broad
+    substring window or an audit with unresolved source-truth failures.
+    """
+
+    pending = [dict(row) for row in findings]
+    resolved: list[dict[str, Any]] = []
+    audit = source_truth_audit if isinstance(source_truth_audit, Mapping) else {}
+    if (
+        audit.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}
+        or audit.get("failures")
+    ):
+        return pending, resolved
+    truth_rows = [
+        row
+        for key in ("applied", "satisfied")
+        for row in (audit.get(key) or [])
+        if isinstance(row, Mapping)
+    ]
+    if not truth_rows:
+        return pending, resolved
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+
+    def contract_satisfied(text: str, row: Mapping[str, Any]) -> bool:
+        contract = row.get("declared_output_contract")
+        if not isinstance(contract, Mapping):
+            return False
+        action = str(contract.get("action") or row.get("action") or "")
+        canonical = contract.get("canonical_texts")
+        if not isinstance(canonical, list):
+            return False
+        expected_exact = normalize_chat_text(
+            "".join(str(value) for value in canonical)
+        )
+        required_text = normalize_chat_text(
+            str(contract.get("required_text") or "")
+        )
+        windows = row.get("local_windows")
+        if not isinstance(windows, list) or not windows:
+            return False
+        checked = False
+        for window in windows:
+            if not isinstance(window, Mapping):
+                return False
+            try:
+                start_ms = int(window["start_ms"]) - timeline_offset_ms
+                end_ms = int(window["end_ms"]) - timeline_offset_ms
+            except (KeyError, TypeError, ValueError):
+                return False
+            if start_ms >= end_ms:
+                return False
+            payload = normalize_srt_payload_window(
+                text,
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
+            checked = True
+            if action == "drop_cue":
+                ok = not payload
+            elif action == "replace_cue":
+                ok = bool(expected_exact) and payload == expected_exact
+            elif action == "replace_substring":
+                expected = required_text or expected_exact
+                ok = bool(expected) and expected in payload
+            else:
+                ok = False
+            if not ok:
+                return False
+        return checked
+
+    unresolved: list[dict[str, Any]] = []
+    for finding in pending:
+        try:
+            cue_index = int(finding.get("cue_index") or 0)
+        except (TypeError, ValueError):
+            unresolved.append(finding)
+            continue
+        if not 1 <= cue_index <= len(cues):
+            unresolved.append(finding)
+            continue
+        cue = cues[cue_index - 1]
+        overlapping_rows: list[Mapping[str, Any]] = []
+        for row in truth_rows:
+            for window in row.get("local_windows") or []:
+                if not isinstance(window, Mapping):
+                    continue
+                try:
+                    start_ms = int(window["start_ms"]) - timeline_offset_ms
+                    end_ms = int(window["end_ms"]) - timeline_offset_ms
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if min(cue.end_ms, end_ms) > max(cue.start_ms, start_ms):
+                    overlapping_rows.append(row)
+                    break
+        protected_by: list[str] = []
+        for row in overlapping_rows:
+            if not contract_satisfied(srt_text, row):
+                continue
+            contract = row.get("declared_output_contract") or {}
+            proposed, _error = _candidate_from_finding(cue.text, finding)
+            if proposed is None:
+                invalidates = contract.get("action") == "replace_cue"
+            else:
+                rendered = "\n".join(
+                    f"{index}\n{_ms(item.start_ms)} --> {_ms(item.end_ms)}\n"
+                    f"{proposed if index == cue_index else item.text}\n"
+                    for index, item in enumerate(cues, start=1)
+                )
+                invalidates = not contract_satisfied(rendered, row)
+            if invalidates:
+                protected_by.append(str(row.get("truth_id") or ""))
+        if protected_by:
+            finding["resolution"] = (
+                "VERIFIED_SOURCE_TRUTH_SUPERSEDES_REVIEW_PROPOSAL"
+            )
+            finding["source_truth_resolution"] = {
+                "schema_version": "final-review-source-truth-resolution.v1",
+                "status": "RESOLVED",
+                "truth_ids": sorted(value for value in protected_by if value),
+                "timeline_offset_ms": timeline_offset_ms,
+            }
+            resolved.append(finding)
+        else:
+            unresolved.append(finding)
+    return unresolved, resolved
 
 
 def _ms(value_ms: int) -> str:

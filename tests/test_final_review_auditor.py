@@ -55,9 +55,8 @@ def test_auditor_validates_and_drops_unanchored_findings():
     assert findings[0]["suspect"] == "季"
 
 
-def test_router_applies_only_homophone_fixes():
-    """审片员是发现器不是改写器：同音建议(季下→记下)自动应用；非同音建议
-    (小雨→小李)只披露不落盘。"""
+def test_router_does_not_apply_ungrounded_homophone_spelling():
+    """A reviewer proposal is not textual authority for a homophone spelling."""
     source = _srt("欢迎季下", "今天小雨来了没")
     findings = [
         {"cue_index": 1, "suspect": "季下", "kind": "nonword", "suggestion": "记下", "why": "非词"},
@@ -66,11 +65,12 @@ def test_router_applies_only_homophone_fixes():
 
     output, audit = route_findings(source, findings, protected_term_set=frozenset())
 
-    assert "欢迎记下" in output
+    assert "欢迎季下" in output
     assert "小雨" in output  # 非同音建议不改写
-    assert audit["applied_count"] == 1
+    assert audit["applied_count"] == 0
     routed = {row["suspect"]: row["routed"] for row in audit["findings"]}
-    assert routed == {"季下": "homophone_fix", "小雨": "disclosure"}
+    assert routed == {"季下": "disclosure", "小雨": "disclosure"}
+    assert audit["findings"][0]["orthography_authority"]["status"] == "BLOCK"
 
 
 def test_router_never_touches_protected_chat_cues():
@@ -482,7 +482,7 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
         "proposed_full_cue": "哪里又变成小李被大N霸凌了",
         "repair_class": "source_backed_entity",
         "candidate_provenance": {
-            "kind": "transcript_context",
+            "kind": "glossary",
             "surface": "大N",
         },
         "why": "同一人物昵称已有来源见证",
@@ -512,6 +512,43 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
         "ACOUSTIC_ORTHOGRAPHY_NEUTRAL_CONTEXT_TIEBREAK_APPLY_PROPOSED"
     )
     assert audit["orthography_equivalence"]["matched"] is True
+
+
+def test_acoustics_cannot_authorize_ungrounded_homophone_orthography():
+    source = _srt("毁神来了")
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "毁神",
+        "suggestion": "绘声",
+        "proposed_full_cue": "绘声来了",
+        "repair_class": "phonetic",
+        "why": "模型猜测另一种写法",
+    }
+
+    def acoustics_claims_spelling_difference(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "INCOMPATIBLE",
+            "proposed_fit": "SUPPORTED",
+        }
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=acoustics_claims_spelling_difference,
+    )
+
+    assert output == source
+    assert audit["repaired"] is False
+    assert audit["orthography_ambiguous"] is True
+    assert audit["orthography_authority"]["status"] == "BLOCK"
+    assert audit["policy_branch"] == (
+        "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
+    )
 
 
 def test_context_adjudication_rejects_unbound_verdict():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -211,6 +212,18 @@ def _select_initial_boundary(
             if isinstance(semantic_review, dict)
             else ["BOUNDARY_SEMANTIC_REVIEW_MISSING"]
         )
+        if (
+            isinstance(semantic_review, dict)
+            and semantic_review.get("needs_more_context") is True
+            and semantic_review.get("retry_scope")
+            == "same_topic_continues"
+        ):
+            raise SystemExit(
+                "BOUNDARY_CONTEXT_EXHAUSTED: "
+                f"{json.dumps(reason_codes, ensure_ascii=False)} "
+                f"max_forward_ms={semantic_review.get('max_forward_ms')} "
+                "retry_scope=same_topic_continues"
+            )
         raise SystemExit(
             "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
             + json.dumps(reason_codes, ensure_ascii=False)
@@ -220,7 +233,8 @@ def _select_initial_boundary(
         isinstance(recommended_end_ms, bool)
         or not isinstance(recommended_end_ms, int)
         or recommended_end_ms < semantic_target_rel
-        or recommended_end_ms > semantic_target_rel + 30_000
+        or recommended_end_ms
+        > semantic_target_rel + boundary_repair_extend_cap_ms
     ):
         raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
     target_rel = max(target_rel, recommended_end_ms)
@@ -308,6 +322,60 @@ def _select_initial_boundary(
         required_owner_start_ms=required_owner_start_ms,
         required_owner_end_ms=required_owner_end_ms,
     )
+
+
+def _bind_final_semantic_endpoint(
+    *,
+    semantic_review: Mapping[str, object] | None,
+    cues: list[object],
+    closure_cue: object,
+    snapped_end_ms: int,
+    final_start_ms: int,
+    final_end_ms: int,
+) -> tuple[dict[str, object], list[str]]:
+    """Bind the semantic vote to the exact endpoint used by the recut."""
+
+    review = dict(semantic_review or {})
+    recommended_index = review.get("recommended_end_cue_index")
+    closure_positions = [
+        position
+        for position, cue in enumerate(cues, start=1)
+        if int(cue.end_ms) == int(snapped_end_ms)
+    ]
+    closure_index = (
+        closure_positions[0] if len(closure_positions) == 1 else None
+    )
+    reasons: list[str] = []
+    if review.get("status") != "PASS":
+        reasons.append("BOUNDARY_SEMANTIC_REVIEW_NOT_PASS")
+    if review.get("recommended_end_ms") != snapped_end_ms:
+        reasons.append("BOUNDARY_SEMANTIC_ENDPOINT_MS_MISMATCH")
+    if (
+        isinstance(recommended_index, bool)
+        or not isinstance(recommended_index, int)
+        or recommended_index != closure_index
+    ):
+        reasons.append("BOUNDARY_SEMANTIC_ENDPOINT_CUE_MISMATCH")
+    review["final_endpoint_binding"] = {
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "status": "BLOCK" if reasons else "PASS",
+        "semantic_request_sha256": review.get("request_sha256"),
+        "recommended_end_cue_index": recommended_index,
+        "recommended_end_ms": review.get("recommended_end_ms"),
+        "final_closure_cue_index": closure_index,
+        "final_snapped_end_ms": snapped_end_ms,
+        "final_start_ms": final_start_ms,
+        "final_end_ms": final_end_ms,
+        "closure_text_sha256": (
+            "sha256:"
+            + hashlib.sha256(
+                str(closure_cue.text).encode("utf-8")
+            ).hexdigest()
+        ),
+        "reason_codes": reasons,
+    }
+    return review, reasons
+
 
 def _repair_boundary(
     *,
@@ -525,6 +593,32 @@ def _repair_boundary(
         if "snapped_end_ms" in repair:
             snapped = repair["snapped_end_ms"]
             closure_cue = next(c for c in cues if c.end_ms == snapped)
+    semantic_review, binding_reasons = _bind_final_semantic_endpoint(
+        semantic_review=semantic_review,
+        cues=cues,
+        closure_cue=closure_cue,
+        snapped_end_ms=snapped,
+        final_start_ms=final_start,
+        final_end_ms=final_end,
+    )
+    audit["boundary_semantic_review"] = semantic_review
+    if binding_reasons:
+        audit["red_flags"] = sorted(
+            {
+                *(audit.get("red_flags") or []),
+                *binding_reasons,
+            }
+        )
+        audit_path.write_text(
+            json.dumps(audit, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        raise SystemExit(
+            "BOUNDARY_CONTEXT_EXHAUSTED: "
+            f"{json.dumps(binding_reasons, ensure_ascii=False)} "
+            f"max_forward_ms={boundary_repair_extend_cap_ms} "
+            "retry_scope=same_topic_continues"
+        )
     audit["red_flags"] = []
     audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return BoundaryResolution(

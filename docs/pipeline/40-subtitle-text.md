@@ -20,7 +20,10 @@
 
 ## 硬约束
 
-- 上传语义修复永不放行未见证改写：改动必须有 glossary/拼音同音/弹幕/音频见证其一（`subtitle_fidelity.py` verdict 逻辑），否则 revert。
+- 上传语义修复永不放行未见证改写：可听辨的发音/语义变化须过相应 fidelity/声学门；同音、
+  近同音或字母正字法变化还必须有 cue/referent-bound typed textual authority。拼音相同、
+  纯音频、同片 transcript 或宽泛 context 只能生成候选，不能单独授权选字；缺权威就 revert
+  并阻断。
 - 实体上下文构建完成后必须生成同一份 hash-bound `.clip-context.json`：绑定 candidate/date、
   官方源 SHA、整片 draft、selection hook、relation/topic、结构化弹幕/SC 与 scoped speech
   memory。终审、声学请求、StoryContract、record 和交付包只能引用验证过的同一 digest；
@@ -29,7 +32,11 @@
   “前后各一段”伪装整片语境。给模型的 supplemental prompt 另有 18,000 字硬上限：它从整片
   cue、优先保留的 SC/礼物/上舰与按时间均匀采样的普通弹幕中做 cue-aware 选取，并显式标出
   omitted blocks。StoryContract 保存的 `clip_context_prompt` 必须由当前 sidecar 重新渲染后
-  逐字相等；context、预算或 renderer 漂移一律 `CLIP_CONTEXT_PROMPT_BINDING_DRIFT`。
+  逐字相等；boundary/final reviewer 必须收到这份 hash-bound prompt 的完整字节，不能再把
+  合法的 18,000 字输入静默截成 12,000 字。超过 18,000 字必须以
+  `CLIP_CONTEXT_PROMPT_BUDGET_EXCEEDED` /
+  `BOUNDARY_SEMANTIC_REVIEW_CANDIDATE_CONTEXT_OVERFLOW` 阻断；context、预算或 renderer 漂移
+  一律 `CLIP_CONTEXT_PROMPT_BINDING_DRIFT`。
 - 话题图只负责把当前日期/作品/活动节点和其子实体缩成候选闭集：
   `topic-resolution.v1` 必须披露 `RESOLVED`、`NO_MATCH`、`AMBIGUOUS`、`NO_GRAPH`、
   `GRAPH_EXPIRED` 或 `GRAPH_INVALID` 及 graph SHA（若已读取）。它不能直接授权改字；最终
@@ -45,7 +52,12 @@
   即使与误听同音也必须走声学仲裁。片内另一个由同一 ASR 派生的 cue 同样只是相关候选，
   不得作为独立文字证人直接改字。上下文展示用的 `id=` 不是 ID 本体；终审只可在去掉
   **一个**该固定展示前缀后精确命中哈希绑定 ledger 时受控规范化，未知 ID 禁止模糊匹配。
-- 音频二听只证明读音，不证明同音人名/称呼的汉字写法：带「小/老/阿」前缀或「神/老师/姐/哥/酱/桑/君/总/宝」后缀的同音换字，没有词表/源真值等文字权威就只回退该换字跨度，同 cue 其余有见证修复仍保留。守卫同时检查 draft 改写跨度本身的人名形态，并只额外容忍 `-n/-ng` 鼻音尾漂移来识别近同音（如 `毁神→绘声`）；不得因改写把「神」一起吃掉就逃过相邻后缀检查。`什么/怎么/为什么/谁/哪里/多少` 等疑问意图族发生变化则整 cue 回退，禁止把逐字字幕改成解释性提问。
+- 音频二听只证明读音，不证明任何同音/近同音/字母写法；人名形态守卫还会特别检查带
+  「小/老/阿」前缀或「神/老师/姐/哥/酱/桑/君/总/宝」后缀的跨度。没有文字权威就只回退
+  该换字跨度，同 cue 其余有见证修复仍保留。守卫同时检查 draft 改写跨度本身的人名形态，
+  并只额外容忍 `-n/-ng` 鼻音尾漂移来识别近同音（如 `毁神→绘声`）；不得因改写把「神」
+  一起吃掉就逃过相邻后缀检查。`什么/怎么/为什么/谁/哪里/多少` 等疑问意图族发生变化则
+  整 cue 回退，禁止把逐字字幕改成解释性提问。
 - 字母昵称的规范词面与口播读音必须分层：已有 source-backed entity provenance、建议包含
   字母、且**整条 current/proposed 的去标点拼音在折叠相邻口语重启后完全相同**时，声学层
   听到字母名（如 `N→恩`）不得以 grapheme 不同否决 `大N`。该窄门不提供 provenance，
@@ -94,6 +106,10 @@
   authority 的旧录播可显式 `structured_chat_required=false`。`GUARD_BUY` 是独立 `guard`
   证据，按 username/uid/guard level 装载，并使用 300 秒上舰答谢因果窗；多事件无法唯一对应时
   保留原字幕而非猜名。
+- 结构化 SC 跨 cue 对齐时，只有 SC 从开头到当前 internal gap 的**完整规范化前缀**逐字包含
+  在上一 cue，才可声明该前缀由上一 cue ownership 并从当前 span 去重。`0.8` fuzzy coverage
+  只能辅助判断 gap 是否曾读过，不能替代完整前缀 exact containment；少了 `不/不是/没` 等
+  极性词时必须拒绝 rebase，禁止用高相似度把反向语义当成重复前缀丢掉。
 - 书名号结构门在所有文本 authority（含源真值）之后再跑一次；合法跨 cue 配对单独记账，真正的 `UNRESOLVED_COMPLEX_IMBALANCE` 必须阻断 `review_ready`。
 - 最终 clean/speaker SRT 在 burn 前必须经过
   `src/autoslice/subtitle_validation.py::validate_srt_file`：每个非空 block 都必须被消费，
@@ -104,9 +120,26 @@
   `CLEAN`/`APPLIED`，也不能证明后续 source truth、baseline 或 finalizer 没有引入回归。
   放行只认 `final-review-audit.v2`：它必须绑定最终 SRT SHA-256，discovery 明确
   `COMPLETE`，`findings` 是合法列表且 validated count 精确相等，状态 `CLEAN`、
-  `release_gate=PASS`、零 finding，并携带 PASS 的 boundary semantic review。provider/JSON
-  失败、缺失或 null/non-list findings、全部 finding 无效、任何剩余 finding、SRT hash 漂移
-  或 boundary 非 PASS 都阻断。
+  `release_gate=PASS`、零 finding，并携带 PASS 的 correction-mutation audit、boundary
+  semantic review 与 final endpoint binding。provider/JSON 失败、缺失或 null/non-list
+  findings、全部 finding 无效、任何剩余 finding、SRT hash 漂移或任一 typed receipt 非 PASS
+  都阻断。
+- exact-final 的声学复核只能关闭“当前读音支持且建议读音明确不兼容”的可听辨提案。若 finding
+  涉及同音、近同音、`repair_class=phonetic`、字母规范写法，或 current/proposed 的规范化
+  发音键相同（如 `毁神→绘声`、`大恩→大N`），纯音频不能决定字形；即使 verdict 报
+  current `SUPPORTED`、proposed `INCOMPATIBLE`，仍必须保留 finding、记录
+  `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断 v2 放行，直到独立文字权威解决。
+- correction pass 中所有已应用的同音/近同音/字母正字法 mutation，都必须携带与当前 cue
+  或 referent 精确绑定且 PASS 的 `subtitle-orthography-authority.v1` 文字权威回执。可授权的
+  typed provenance 仅包括 glossary、official roster、source truth、bound structured chat、
+  verified OCR，或另有强制层已显式标记 `mutation_authorized=true` 的来源。纯 acoustic、
+  同片 transcript recurrence、宽泛 `structured_context`（含 selection hook）和 speech-memory
+  命中都只能提出 candidate，不能授权选字。
+- `final-review-audit.v2` 必须携带 PASS 的
+  `subtitle-correction-mutation-audit.v1`，把 correction pass 的 `applied_count` 与所有实际
+  applied mutation 逐条对齐，并验证每条 typed authority receipt。缺回执或计数漂移均报
+  `FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID`；第二遍 exact discovery 即使返回空
+  findings，也不能洗白第一遍已经发生的无权 mutation。
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
   `acoustic_drop_cue`。局部静音绝不授权删除后半段真实口播；不确定时保留/留空并阻断，

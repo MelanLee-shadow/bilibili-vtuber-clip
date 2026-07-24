@@ -16,9 +16,9 @@
 2. **LLM 只报不改**（审片员）；改动按分层裁决落地（见下）；插入只对 source_backed_entity 放开（kmx 漏听案）。
 3. **裁决分层（Ivan 2026-07-19「不能绑死 Gemini 额度、也不能老用付费key」）**：
    - **T0 确定性**：hard canon / 源真值 ledger / 弹幕逐字——零模型。
-   - **T0.5 同音自动应用**：拼音无调全等（`homophone_fix`）——零外部调用；但音频不能证明同音专名的汉字写法，带常见人名/称呼形态的换字必须有词表/源真值等文字权威，否则只把该跨度还原为 draft，同 cue 其他有见证修复继续保留。疑问意图族（什么/怎么/为什么/谁/哪里/多少等）也不可由二听结果自行改写。
-   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有独立词表或结构化弹幕/SC 见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **改写既不替换也不引入注册实体词面** → 纯文本应用，零外部调用。同片其他 cue 可用于召回 callback/平行复述，但它和目标通常来自同一 ASR 派生链，不能循环自证；此类 `transcript_context` 强制进入 T3 声学仲裁。终审若正确给出完整 entity 修正句、但错标成 `phonetic` 且漏写 `source_surface`，只有在整个最小替换词面于本片其他 cue/词表/结构化证据逐字重复时，代码才恢复候选 provenance；凡引入注册实体仍走 T3，不直接改字。
-   - **T3 声学仲裁**：只剩实体 vs 实体选边（kmx/乒乓球、梦限大/Mujica 保向铁律）与拼音强变形（醉堆→这一堆型）。量级 ~1/10。
+   - **T0.5 同音候选**：拼音无调全等（`homophone_fix`）时可以零外部调用，但应用前仍必须取得 cue/referent-bound 的 typed textual authority receipt。纯音频、同片 transcript recurrence、宽泛 structured context/selection hook 都只负责提出候选，不能决定汉字写法；缺回执就保留 draft 并阻断。疑问意图族（什么/怎么/为什么/谁/哪里/多少等）也不可由二听结果自行改写。
+   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有独立、精确绑定的 glossary/official roster/source truth/structured chat/verified OCR 见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **改写既不替换也不引入注册实体词面** → 携带 PASS 的正字法回执后纯文本应用，零外部调用。同片其他 cue 可用于召回 callback/平行复述，但它和目标通常来自同一 ASR 派生链，不能循环自证；此类 `transcript_context` 强制进入 T3 声学仲裁，且声学结果本身仍不授权近同音选字。终审若正确给出完整 entity 修正句、但错标成 `phonetic` 且漏写 `source_surface`，代码最多恢复候选 provenance；没有上述 typed authority 时仍不得直接改字。
+   - **T3 声学仲裁**：只裁决声音上可区分的实体 vs 实体（kmx/乒乓球、梦限大/Mujica 保向铁律）与拼音强变形（醉堆→这一堆型）。同音/近同音/字母正字法即使也送入声学层，音频只提供读音证据，最终 mutation 仍须上述文字权威回执。量级 ~1/10。
    - T2 备选未实施：免费 BCUT 对争议 span 重转写+拼音距离比对（「穷人声学见证」），T3 仍嫌贵时再上。
    - **删除专线**：`acoustic_delete` 仅删一个有界疑似幻听 span，必须保留 cue 的真实后半段；`acoustic_drop_cue` 仅用于整条无声。两者都不能走 T0.5/T1，严格声学 postcondition 不成立就保留原文并披露。
 4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。
@@ -45,7 +45,9 @@
   仲裁。它在 source truth、reviewed baseline 和全部 finalizer 之前/之中运行，因此不是发布证明。
 - 全部 authority 和确定性 guard 落地后，必须对精确最终 SRT 再跑一次 discovery，输出
   `final-review-audit.v2`。该回执绑定最终 SRT SHA-256；只有 discovery 完整、显式合法的空
-  findings、零未决项、release gate PASS 且 boundary semantic PASS 才能交付。
+  findings、零未决项、release gate PASS、`subtitle-correction-mutation-audit.v1` PASS，
+  且 boundary semantic review 与 `talk-boundary-final-endpoint-binding.v1` 均 PASS 才能交付。
+  第二遍空 findings 不能洗白 correction pass 已经发生的无权 mutation。
 - provider 异常、JSON 不可解析、根结构错误、`findings` 缺失/null/非列表、返回项全部无效，
   都是“没有完成发现”，不是“没有发现问题”；必须 fail closed。package auditor 还会用包内
   最终 SRT 重验 v2 回执，禁止复用 correction pass 或上一轮 SRT 的回执。
@@ -56,9 +58,9 @@
 |---|---|
 | 词表/专名权威 | `term_authority.py`、`assets/lidousha/glossary.txt`（含方言节）、`entity_confusables.json` |
 | 弹幕/SC 证据修复 | `chat_proposals.py`、`chat_repair.py`（阈值 score≥0.68/coverage≥0.60/precision≥0.52） |
-| 见证人规则 | `subtitle_fidelity.py`（glossary/拼音同音/音频见证/重复见证四选一，否则 revert） |
-| 终审审片员 | `final_review_auditor.py`（发现器；同音自动应用+声学仲裁路由+插入契约） |
-| 最终字节放行 | `final_review_contract.py`（只验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding 与 boundary PASS） |
+| 见证人规则 | `subtitle_fidelity.py`（通用 mutation 的候选/fidelity 门；同音/近音正字法另须 `final_review_auditor.py` 的 typed textual authority receipt） |
+| 终审审片员 | `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约） |
+| 最终字节放行 | `final_review_contract.py`（验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding、correction mutation audit 与 final boundary endpoint binding） |
 | 声学仲裁 | `entity_audio_verifier.py`（黑帧片段强制选边；quota 轮次+付费兜底） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |
 | 付费兜底政策 | `gemini_backup_policy.py`（≥3轮 strikes + 日帽 + 入帐） |
@@ -88,7 +90,7 @@
 
 ## 钉子纪律（2026-07-19「只有kmx/十麻乃」拼贴病复盘）
 
-Ivan 指正=该句整体替换的锚，不是插入片段：钉子文本必须是**改正后的完整口播**（详见 principles §十三新增两条）。7/19 修复了两枚带病钉子并为四条片补 36 枚 review-round-2 钉子（生成器对本地终稿 dry-run 全过）。手定标题走 `manual_title_overrides` 资产按 candidate 家族注入（rN 后缀不敏感）。
+Ivan 指正=该句整体替换的锚，不是插入片段：钉子文本必须是**改正后的完整口播**（详见 principles §十三新增两条）。7/19 修复了两枚带病钉子并为四条片补 36 枚 review-round-2 钉子（生成器对本地终稿 dry-run 全过）。标题 authority 不属于本步骤；只读 [60-title.md](60-title.md)。
 
 ## 已知结构性欠账（按性价比排序，做前先读调研）
 

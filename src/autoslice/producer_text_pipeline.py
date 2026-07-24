@@ -43,14 +43,15 @@ from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     MAX_CONTEXT_ADJUDICATIONS,
     adjudicate_context_finding,
+    adjudicate_exact_release_findings,
+    audit_correction_mutation_authority,
     audit_final_subtitles,
     persist_review_audit,
+    resolve_verified_source_truth_findings,
     route_findings,
 )
 from src.autoslice.final_review_contract import (
-    FinalReviewContractError,
     SCHEMA_VERSION as FINAL_REVIEW_SCHEMA_VERSION,
-    validate_final_review_release,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
@@ -125,6 +126,9 @@ class TextPipelineResult:
     chat_authority_path: Path
     clip_context: dict
     clip_context_path: Path
+    review_exact_final_srt: Callable[
+        [str, Mapping[str, object], int], dict[str, object]
+    ]
 
 
 @dataclass(frozen=True)
@@ -705,6 +709,7 @@ def _run_final_review(
     selection_scorecard: object = None,
     human_boundary_authority: str = "",
     source_truth_windows: Sequence[tuple[int, int]] = (),
+    boundary_max_forward_ms: int = 30_000,
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -747,6 +752,7 @@ def _run_final_review(
                         candidate_context=candidate_context_text,
                         llm_call=review_llm_call,
                         extract_json=extract_json_object,
+                        max_forward_ms=boundary_max_forward_ms,
                     )
                 except BoundarySemanticReviewError as exc:
                     boundary_semantic_review = {
@@ -918,6 +924,9 @@ def _run_exact_final_release_review(
     authoritative_chat: Sequence[ChatEvidence],
     selection_hook: str,
     clip_context: Mapping[str, object],
+    verify_confusable_entity: Callable | None = None,
+    verified_authority_audit: Mapping[str, object] | None = None,
+    timeline_offset_ms: int = 0,
 ) -> dict[str, object]:
     """Review the exact post-authority bytes and issue a fail-closed receipt."""
 
@@ -926,6 +935,9 @@ def _run_exact_final_release_review(
     ).hexdigest()
     boundary_semantic_review = correction_audit.get(
         "boundary_semantic_review"
+    )
+    correction_mutation_audit = audit_correction_mutation_authority(
+        correction_audit
     )
     base: dict[str, object] = {
         "schema_version": FINAL_REVIEW_SCHEMA_VERSION,
@@ -940,6 +952,7 @@ def _run_exact_final_release_review(
             }
         ),
         "correction_pass": dict(correction_audit),
+        "correction_mutation_authority": correction_mutation_audit,
     }
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1":
         return {
@@ -990,13 +1003,38 @@ def _run_exact_final_release_review(
             "findings": [],
             "validated_finding_count": 0,
         }
+    authority_pending, authority_resolved = (
+        resolve_verified_source_truth_findings(
+            srt_text,
+            findings,
+            source_truth_audit=(
+                verified_authority_audit.get("source_subtitle_truth_audit")
+                if isinstance(verified_authority_audit, Mapping)
+                else None
+            ),
+            timeline_offset_ms=timeline_offset_ms,
+        )
+    )
+    unresolved_findings, acoustic_resolved = (
+        adjudicate_exact_release_findings(
+            srt_text,
+            authority_pending,
+            entity_verifier=verify_confusable_entity,
+            clip_context=clip_context,
+        )
+    )
+    resolved_findings = [*authority_resolved, *acoustic_resolved]
     boundary_passed = (
         isinstance(base["boundary_semantic_review"], Mapping)
         and base["boundary_semantic_review"].get("status") == "PASS"
     )
     reason_codes: list[str] = []
-    if findings:
+    if unresolved_findings:
         reason_codes.append("FINAL_REVIEW_UNRESOLVED_FINDINGS")
+    if correction_mutation_audit.get("status") != "PASS":
+        reason_codes.append(
+            "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
+        )
     if not boundary_passed:
         reason_codes.append("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
     passed = not reason_codes
@@ -1007,10 +1045,13 @@ def _run_exact_final_release_review(
         "reason_codes": reason_codes,
         "discovery": {
             "status": "COMPLETE",
-            "explicit_empty_findings": not findings,
+            "explicit_empty_findings": not unresolved_findings,
+            "raw_validated_finding_count": len(findings),
+            "resolved_finding_count": len(resolved_findings),
         },
-        "findings": findings,
-        "validated_finding_count": len(findings),
+        "findings": unresolved_findings,
+        "resolved_findings": resolved_findings,
+        "validated_finding_count": len(unresolved_findings),
     }
 
 
@@ -1851,6 +1892,9 @@ def run_text_pipeline(
         selection_scorecard=spec.get("selection_scorecard"),
         human_boundary_authority=str(spec.get("given_end_authority") or ""),
         source_truth_windows=source_truth_windows,
+        boundary_max_forward_ms=int(
+            spec.get("boundary_repair_extend_cap_ms", 30_000)
+        ),
     )
     evidence = _finalize_text_evidence(
         spec=spec,
@@ -1889,15 +1933,6 @@ def run_text_pipeline(
             f"(cues {[row.get('cue_index') for row in still_unresolved]}); "
             "refusing to deliver known-suspect text — runner will retry"
         )
-    final_release_review = _run_exact_final_release_review(
-        srt_text=evidence.srt_text,
-        correction_audit=final_review_audit,
-        adapters=adapters,
-        authoritative_chat=authoritative_chat,
-        selection_hook=str(spec.get("selection_hook") or ""),
-        clip_context=clip_context,
-    )
-    authority.chat_authority_audit["final_review_audit"] = final_release_review
     story_start_ms = max(
         0,
         int(spec.get("semantic_start_ms", spec["pieces"][0]["start_ms"]))
@@ -1919,7 +1954,7 @@ def run_text_pipeline(
         "owners": required_boundary_owners,
     }
     persist_review_audit(
-        out_root / f"{cid}.review-flags.json", final_release_review
+        out_root / f"{cid}.review-flags.json", final_review_audit
     )
     evidence.chat_authority_path.write_text(
         json.dumps(
@@ -1931,19 +1966,24 @@ def run_text_pipeline(
         + "\n",
         encoding="utf-8",
     )
-    expected_srt_sha256 = "sha256:" + hashlib.sha256(
-        evidence.srt_text.encode("utf-8")
-    ).hexdigest()
-    try:
-        validate_final_review_release(
-            final_release_review,
-            expected_srt_sha256=expected_srt_sha256,
+
+    def review_exact_final_srt(
+        final_srt_text: str,
+        verified_authority_audit: Mapping[str, object],
+        timeline_offset_ms: int,
+    ) -> dict[str, object]:
+        return _run_exact_final_release_review(
+            srt_text=final_srt_text,
+            correction_audit=final_review_audit,
+            adapters=adapters,
+            authoritative_chat=authoritative_chat,
+            selection_hook=str(spec.get("selection_hook") or ""),
+            clip_context=clip_context,
+            verify_confusable_entity=entity_context.verify_confusable_entity,
+            verified_authority_audit=verified_authority_audit,
+            timeline_offset_ms=timeline_offset_ms,
         )
-    except FinalReviewContractError as exc:
-        raise SystemExit(
-            f"FINAL_REVIEW_RELEASE_BLOCKED: {exc.reason_code}: "
-            f"{evidence.chat_authority_path}"
-        ) from exc
+
     return TextPipelineResult(
         srt_text=evidence.srt_text,
         cues=evidence.cues,
@@ -1953,4 +1993,5 @@ def run_text_pipeline(
         chat_authority_path=evidence.chat_authority_path,
         clip_context=clip_context,
         clip_context_path=clip_context_path,
+        review_exact_final_srt=review_exact_final_srt,
     )

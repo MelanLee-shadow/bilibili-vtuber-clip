@@ -5810,6 +5810,316 @@ def test_talk_failure_classifies_chat_authority_finalization_as_terminal():
     assert classified["failure_recoverable"] is False
 
 
+def _write_final_review_failure_surfaces(
+    root: Path,
+    candidate_id: str,
+    audit: dict,
+) -> Path:
+    candidate_dir = root / candidate_id
+    candidate_dir.mkdir(parents=True)
+    review_flags = candidate_dir / f"{candidate_id}.review-flags.json"
+    review_flags.write_text(
+        json.dumps(audit, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    chat_authority = candidate_dir / f"{candidate_id}.chat-authority.json"
+    chat_authority.write_text(
+        json.dumps(
+            {
+                "schema_version": "chat-authority-audit.v2",
+                "final_review_audit": audit,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return chat_authority
+
+
+def _final_review_failure_audit(
+    *,
+    finding_count: int,
+    boundary_status: str,
+) -> dict:
+    boundary_blocked = boundary_status != "PASS"
+    findings = [
+        {
+            "cue_index": index + 1,
+            "kind": "context",
+            "repair_class": "spoken_unit",
+            "suspect": f"误听{index + 1}",
+            "suggestion": f"正词{index + 1}",
+            "why": f"candidate-specific finding {index + 1}",
+        }
+        for index in range(finding_count)
+    ]
+    reason_codes = ["FINAL_REVIEW_UNRESOLVED_FINDINGS"] if findings else []
+    if boundary_blocked:
+        reason_codes.append("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
+    return {
+        "schema_version": "final-review-audit.v2",
+        "status": "FLAGGED",
+        "release_gate": "BLOCK",
+        "reason_codes": reason_codes,
+        "reviewed_srt_sha256": "sha256:" + "a" * 64,
+        "discovery": {
+            "status": "COMPLETE",
+            "explicit_empty_findings": not findings,
+        },
+        "findings": findings,
+        "validated_finding_count": len(findings),
+        "boundary_semantic_review": {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": boundary_status,
+            "reason_codes": (
+                ["TARGET_SENTENCE_COMPLETE"]
+                if not boundary_blocked
+                else [
+                    "NO_VALID_CLOSED_BOUNDARY_WITHIN_PROVIDED_CUES",
+                    "STORY_CLOSED_NOT_PROVEN",
+                ]
+            ),
+            "target_ms": 230_760,
+            "recommended_end_ms": None if boundary_blocked else 230_360,
+            "syntax_complete": not boundary_blocked,
+            "story_closed": not boundary_blocked,
+            "content_anchor_covered": not boundary_blocked,
+            "next_topic_separated": not boundary_blocked,
+            "summary": (
+                "clean closure"
+                if not boundary_blocked
+                else "same-topic answer continues after the target"
+            ),
+        },
+    }
+
+
+def test_v9_final_review_blocks_keep_deterministic_category_and_evidence(
+    tmp_path: Path,
+):
+    # 7/22 v9 produced three finding-only blocks and two finding+boundary
+    # blocks.  The old classifier collapsed all five into the same retryable
+    # provider failure and the same fingerprint.
+    cases = [
+        ("auto_193450_3573_3665", 1, "PASS", "subtitle_authority", "final_review_findings"),
+        ("auto_193450_672_945", 6, "PASS", "subtitle_authority", "final_review_findings"),
+        (
+            "auto_193450_1863_2056",
+            1,
+            "BLOCK",
+            "content_boundary",
+            "final_review_boundary_semantic",
+        ),
+        (
+            "auto_193450_1573_1672",
+            1,
+            "BLOCK",
+            "content_boundary",
+            "final_review_boundary_semantic",
+        ),
+        ("auto_193450_1475_1543", 4, "PASS", "subtitle_authority", "final_review_findings"),
+    ]
+    fingerprints = set()
+    for candidate_id, finding_count, boundary_status, kind, stage in cases:
+        authority = _write_final_review_failure_surfaces(
+            tmp_path,
+            candidate_id,
+            _final_review_failure_audit(
+                finding_count=finding_count,
+                boundary_status=boundary_status,
+            ),
+        )
+        classified = runner.classify_talk_failure(
+            "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_RELEASE_GATE_BLOCKED: "
+            f"{authority}"
+        )
+
+        assert classified["failure_kind"] == kind
+        assert classified["failure_stage"] == stage
+        assert classified["failure_recoverable"] is False
+        evidence = classified["failure_evidence"]
+        assert evidence["candidate_id"] == candidate_id
+        assert evidence["reason_codes"]
+        assert evidence["validated_finding_count"] == finding_count
+        assert len(evidence["findings"]) == finding_count
+        assert evidence["boundary_semantic_review"]["status"] == boundary_status
+        fingerprints.add(classified["failure_fingerprint"])
+
+    assert len(fingerprints) == len(cases)
+
+
+def test_final_review_discovery_unavailable_remains_retryable_with_evidence(
+    tmp_path: Path,
+):
+    candidate_id = "auto_provider_failure"
+    audit = {
+        "schema_version": "final-review-audit.v2",
+        "status": "AUDITOR_UNAVAILABLE",
+        "release_gate": "BLOCK",
+        "reason_codes": ["FINAL_REVIEW_RESPONSE_FINDINGS_MISSING"],
+        "reviewed_srt_sha256": "sha256:" + "b" * 64,
+        "discovery": {
+            "status": "AUDITOR_UNAVAILABLE",
+            "detail": "provider returned an object without findings",
+        },
+        "findings": [],
+        "validated_finding_count": 0,
+        "boundary_semantic_review": {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "PASS",
+        },
+    }
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        candidate_id,
+        audit,
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_DISCOVERY_INCOMPLETE: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == "final_review_discovery"
+    assert classified["failure_recoverable"] is True
+    assert classified["failure_evidence"]["discovery"] == audit["discovery"]
+    assert classified["failure_evidence"]["reason_codes"] == [
+        "FINAL_REVIEW_RESPONSE_FINDINGS_MISSING"
+    ]
+
+
+def test_final_review_v1_schema_failure_is_terminal_not_provider_retry(
+    tmp_path: Path,
+):
+    audit = _final_review_failure_audit(
+        finding_count=0,
+        boundary_status="PASS",
+    )
+    audit["schema_version"] = "final-review-audit.v1"
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        "legacy-v1",
+        audit,
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_AUDIT_SCHEMA_INVALID: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "final_review_contract"
+    assert classified["failure_recoverable"] is False
+    assert classified["failure_evidence"]["audit_loaded"] is False
+
+
+def test_final_review_missing_or_inconsistent_audit_is_terminal_contract(
+    tmp_path: Path,
+):
+    candidate_id = "auto_contract_failure"
+    audit = _final_review_failure_audit(
+        finding_count=0,
+        boundary_status="PASS",
+    )
+    del audit["boundary_semantic_review"]
+    authority = _write_final_review_failure_surfaces(
+        tmp_path / "missing-boundary",
+        candidate_id,
+        audit,
+    )
+
+    missing_boundary = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_RELEASE_GATE_BLOCKED: "
+        f"{authority}"
+    )
+
+    assert missing_boundary["failure_kind"] == "final_review_contract"
+    assert missing_boundary["failure_recoverable"] is False
+
+    unavailable_audit = {
+        "schema_version": "final-review-audit.v2",
+        "status": "AUDITOR_UNAVAILABLE",
+        "release_gate": "BLOCK",
+        "reason_codes": ["FINAL_REVIEW_RESPONSE_FINDINGS_MISSING"],
+        "discovery": {"status": "AUDITOR_UNAVAILABLE"},
+        "findings": [],
+        "validated_finding_count": 0,
+        "boundary_semantic_review": {"status": "PASS"},
+    }
+    inconsistent = _write_final_review_failure_surfaces(
+        tmp_path / "inconsistent",
+        candidate_id,
+        unavailable_audit,
+    )
+    chat_document = json.loads(inconsistent.read_text(encoding="utf-8"))
+    chat_document["final_review_audit"]["status"] = "FLAGGED"
+    inconsistent.write_text(
+        json.dumps(chat_document, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    surface_mismatch = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_RELEASE_GATE_BLOCKED: "
+        f"{inconsistent}"
+    )
+
+    assert surface_mismatch["failure_kind"] == "final_review_contract"
+    assert surface_mismatch["failure_recoverable"] is False
+    assert surface_mismatch["failure_evidence"]["audit_surfaces_consistent"] is False
+
+
+def test_final_review_failure_fingerprint_normalizes_run_root(
+    tmp_path: Path,
+):
+    candidate_id = "auto_same_candidate"
+    audit = _final_review_failure_audit(
+        finding_count=1,
+        boundary_status="PASS",
+    )
+    first_audit = json.loads(json.dumps(audit))
+    first_audit["discovery"]["detail"] = (
+        f"loaded from {tmp_path / 'run-a' / 'provider-response.json'}"
+    )
+    second_audit = json.loads(json.dumps(audit))
+    second_audit["discovery"]["detail"] = (
+        f"loaded from {tmp_path / 'run-b' / 'provider-response.json'}"
+    )
+    first_path = _write_final_review_failure_surfaces(
+        tmp_path / "run-a",
+        candidate_id,
+        first_audit,
+    )
+    second_path = _write_final_review_failure_surfaces(
+        tmp_path / "run-b",
+        candidate_id,
+        second_audit,
+    )
+    for chat_path, run_root in (
+        (first_path, tmp_path / "run-a"),
+        (second_path, tmp_path / "run-b"),
+    ):
+        chat_document = json.loads(chat_path.read_text(encoding="utf-8"))
+        chat_document["ledger_path"] = str(
+            run_root / "repo/assets/lidousha/subtitle_truth_ledger.v1.json"
+        )
+        chat_path.write_text(
+            json.dumps(chat_document, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    first = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_RELEASE_GATE_BLOCKED: "
+        f"{first_path}"
+    )
+    second = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_RELEASE_GATE_BLOCKED: "
+        f"{second_path}"
+    )
+
+    assert first["failure_fingerprint"] == second["failure_fingerprint"]
+
+
 def test_talk_failure_classifies_foreign_source_transcription_as_terminal():
     classified = runner.classify_talk_failure(
         "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: /tmp/candidate.chat-authority.json"
@@ -6161,8 +6471,9 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
         sink = kwargs["stdout"]
         if len(calls) == 1:
             sink.write(
-                "BOUNDARY_UNREPAIRABLE: no closure after 0 repair(s); "
-                "extend_cap=30000ms retry_scope=same_topic_continues\n"
+                "BOUNDARY_CONTEXT_EXHAUSTED: no closure in current source context; "
+                "reason_codes=STORY_CLOSED_NOT_PROVEN "
+                "retry_scope=same_topic_continues\n"
             )
             sink.flush()
             return Completed(1)
@@ -6200,6 +6511,75 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
         "subtitle-redelivery-baseline.v2"
     )
     assert spec["subtitle_redelivery_baseline"]["path"] == str(baseline.resolve())
+
+
+def test_talk_boundary_context_exhausted_retries_once_then_stops(
+    tmp_path,
+    monkeypatch,
+):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+    calls = []
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        kwargs["stdout"].write(
+            "BOUNDARY_CONTEXT_EXHAUSTED: no closed ending after expanded context; "
+            "reason_codes=STORY_CLOSED_NOT_PROVEN,"
+            "NEXT_TOPIC_SEPARATED_NOT_PROVEN "
+            "retry_scope=same_topic_continues\n"
+        )
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": "auto_context_exhausted",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 150_000,
+            "hook": "同一话题仍未收束",
+        },
+    )
+
+    assert len(calls) == 2
+    assert result["status"] == "boundary_unrepairable"
+    assert result["boundary_context_retries"] == 1
+    assert result["failure_kind"] == "content_boundary"
+    assert result["failure_stage"] == "boundary_semantic_review"
+    assert result["failure_recoverable"] is False
+    assert result["failure_evidence"]["retry_scope"] == "same_topic_continues"
+    assert result["failure_evidence"]["reason_codes"] == [
+        "STORY_CLOSED_NOT_PROVEN",
+        "NEXT_TOPIC_SEPARATED_NOT_PROVEN",
+    ]
+    assert "next_retry_at" not in result
+
+
+def test_boundary_context_failure_preserves_json_reason_codes():
+    classified = runner.classify_talk_failure(
+        'BOUNDARY_CONTEXT_EXHAUSTED: ["STORY_CLOSED_NOT_PROVEN", '
+        '"NEXT_TOPIC_SEPARATED_NOT_PROVEN"] max_forward_ms=60000 '
+        "retry_scope=same_topic_continues"
+    )
+
+    assert classified["failure_evidence"]["reason_codes"] == [
+        "STORY_CLOSED_NOT_PROVEN",
+        "NEXT_TOPIC_SEPARATED_NOT_PROVEN",
+    ]
 
 
 def test_talk_boundary_failure_does_not_retry_without_continuation_scope(tmp_path, monkeypatch):

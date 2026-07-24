@@ -67,26 +67,95 @@ EDIT_CLONE_FIELDS = (
 
 Transport = Callable[[urllib.request.Request], Mapping[str, Any]]
 
+COOKIE_SCHEMA_BILIUP = "cookie_info"
+COOKIE_SCHEMA_APP = "data.cookie_info"
+
+
+class CookieSchemaError(ValueError):
+    """Cookie file is unreadable, malformed, ambiguous, or unsafe for its use."""
+
 
 def _default_transport(request: urllib.request.Request) -> Mapping[str, Any]:
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.load(response)
 
 
-def load_cookie_pairs(cookie_path: Path) -> list[dict[str, str]]:
-    """两种真实 cookie 文件形态都解析成 [{name, value}, ...]。"""
+def _load_cookie_pairs_with_schema(
+    cookie_path: Path,
+) -> tuple[list[dict[str, str]], str]:
+    """Parse one exact supported cookie schema without exposing cookie values."""
 
-    raw = json.loads(Path(cookie_path).read_text(encoding="utf-8"))
-    info = raw.get("cookie_info") or (raw.get("data") or {}).get("cookie_info") or {}
-    cookies = info.get("cookies") or []
-    pairs = [
-        {"name": str(c["name"]), "value": str(c["value"])}
-        for c in cookies
-        if isinstance(c, Mapping) and c.get("name") is not None
-    ]
-    if not pairs:
-        raise ValueError(f"no cookies found in {cookie_path}")
+    path = Path(cookie_path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CookieSchemaError(f"cookie file is not readable JSON: {path}") from exc
+    if not isinstance(raw, Mapping):
+        raise CookieSchemaError(f"cookie file root must be an object: {path}")
+
+    top_level_present = "cookie_info" in raw
+    data = raw.get("data")
+    nested_present = isinstance(data, Mapping) and "cookie_info" in data
+    if top_level_present and nested_present:
+        raise CookieSchemaError(
+            f"ambiguous cookie schema has both supported cookie_info paths: {path}"
+        )
+    if top_level_present:
+        schema = COOKIE_SCHEMA_BILIUP
+        info = raw["cookie_info"]
+    elif nested_present:
+        schema = COOKIE_SCHEMA_APP
+        info = data["cookie_info"]
+    else:
+        if "data" in raw and not isinstance(data, Mapping):
+            raise CookieSchemaError(f"cookie file data must be an object: {path}")
+        raise CookieSchemaError(
+            f"cookie file has no supported cookie_info path: {path}"
+        )
+
+    if not isinstance(info, Mapping):
+        raise CookieSchemaError(f"cookie_info must be an object: {path}")
+    cookies = info.get("cookies")
+    if not isinstance(cookies, list) or not cookies:
+        raise CookieSchemaError(f"cookies must be a non-empty list: {path}")
+
+    pairs: list[dict[str, str]] = []
+    names: set[str] = set()
+    for index, cookie in enumerate(cookies):
+        if not isinstance(cookie, Mapping):
+            raise CookieSchemaError(f"cookie entry {index} must be an object: {path}")
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if not isinstance(name, str) or not name:
+            raise CookieSchemaError(
+                f"cookie entry {index} has no non-empty string name: {path}"
+            )
+        if not isinstance(value, str) or not value:
+            raise CookieSchemaError(
+                f"cookie entry {index} has no non-empty string value: {path}"
+            )
+        if name in names:
+            raise CookieSchemaError(f"cookie entry {index} duplicates a name: {path}")
+        names.add(name)
+        pairs.append({"name": name, "value": value})
+    return pairs, schema
+
+
+def load_cookie_pairs(cookie_path: Path) -> list[dict[str, str]]:
+    """两种真实 cookie 文件形态都严格解析成 [{name, value}, ...]。"""
+
+    pairs, _schema = _load_cookie_pairs_with_schema(cookie_path)
     return pairs
+
+
+def validate_biliup_cookie_file(cookie_path: Path) -> None:
+    """Require biliup's top-level cookie_info schema before invoking the CLI."""
+
+    _pairs, schema = _load_cookie_pairs_with_schema(cookie_path)
+    if schema != COOKIE_SCHEMA_BILIUP:
+        raise CookieSchemaError(
+            f"biliup cookie file must use top-level cookie_info schema: {cookie_path}"
+        )
 
 
 def is_quota_rejection(payload: Mapping[str, Any] | None) -> bool:
@@ -99,14 +168,21 @@ class BiliSession:
 
     cookie_path: Path = DEFAULT_BILIUP_COOKIES
     transport: Transport | None = None
+    biliup_cookie_path: Path | None = None
 
     def __post_init__(self) -> None:
+        self.cookie_path = Path(self.cookie_path)
+        if self.biliup_cookie_path is not None:
+            self.biliup_cookie_path = Path(self.biliup_cookie_path)
+            validate_biliup_cookie_file(self.biliup_cookie_path)
         pairs = load_cookie_pairs(self.cookie_path)
         self.cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in pairs)
         try:
             self.csrf = next(c["value"] for c in pairs if c["name"] == "bili_jct")
         except StopIteration as exc:
-            raise ValueError(f"bili_jct missing in {self.cookie_path}") from exc
+            raise CookieSchemaError(
+                f"bili_jct missing in cookie file: {self.cookie_path}"
+            ) from exc
         self._send = self.transport or _default_transport
 
     # ---- 传输原语 -------------------------------------------------------
@@ -235,18 +311,25 @@ class BiliSession:
     # ---- 子进程/等待类操作（不进单测） -----------------------------------
 
     def biliup_append(self, bvid: str, media_path: Path, *, timeout: int = 1800) -> None:
+        uploader_cookie = self.biliup_cookie_path or self.cookie_path
+        validate_biliup_cookie_file(uploader_cookie)
         completed = subprocess.run(
-            [str(BILIUP_BIN), "-u", self.cookie_path.name, "append", "-v", bvid, str(media_path)],
-            cwd=str(self.cookie_path.parent),
+            [
+                str(BILIUP_BIN),
+                "-u",
+                uploader_cookie.name,
+                "append",
+                "-v",
+                bvid,
+                str(media_path),
+            ],
+            cwd=str(uploader_cookie.parent),
             capture_output=True,
             text=True,
             timeout=timeout,
         )
         if completed.returncode != 0:
-            raise RuntimeError(
-                f"biliup append rc={completed.returncode}: "
-                f"{completed.stdout[-400:]}{completed.stderr[-200:]}"
-            )
+            raise RuntimeError(f"biliup append failed with rc={completed.returncode}")
 
     def wait_new_cid(
         self,

@@ -397,6 +397,17 @@ def main(argv: list[str] | None = None) -> int:
             run_command=run,
         ),
     )
+    resolved_boundary_semantic = boundary.audit.get(
+        "boundary_semantic_review"
+    )
+    correction_review = chat_authority_audit.get("final_review_audit")
+    if (
+        isinstance(correction_review, dict)
+        and isinstance(resolved_boundary_semantic, dict)
+    ):
+        correction_review["boundary_semantic_review"] = (
+            resolved_boundary_semantic
+        )
     minimum_effective_duration_ms = spec.get("minimum_effective_duration_ms")
     if minimum_effective_duration_ms is not None:
         if (
@@ -464,6 +475,7 @@ def main(argv: list[str] | None = None) -> int:
             stage_publish_draft=_stage_publish_draft,
             generate_upload_tags=generate_upload_tags,
             delivery_root=profile_delivery_root,
+            run_exact_final_review=text_result.review_exact_final_srt,
         ),
     )
 

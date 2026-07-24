@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
 
@@ -69,6 +71,194 @@ def test_deferred_exact_replay_rejects_missing_truth_id() -> None:
 
     assert audit["status"] == "FAILED"
     assert audit["missing_truth_ids"] == ["reviewed-cue-shape"]
+
+
+def test_exact_final_review_gate_binds_post_boundary_recut_bytes(
+    tmp_path: Path,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    final_text = (
+        "1\n00:00:00,000 --> 00:00:01,000\n最终边界内字幕\n\n"
+        "2\n00:00:01,100 --> 00:00:02,000\n完整收束\n"
+    )
+    subtitle.write_text(final_text, encoding="utf-8")
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    seen: dict = {}
+
+    def exact_review(text, authority, timeline_offset_ms):
+        seen.update(
+            {
+                "text": text,
+                "authority": authority,
+                "timeline_offset_ms": timeline_offset_ms,
+            }
+        )
+        return {
+            "schema_version": "final-review-audit.v2",
+            "status": "CLEAN",
+            "release_gate": "PASS",
+            "reason_codes": [],
+            "reviewed_srt_sha256": (
+                "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+            ),
+            "discovery": {
+                "status": "COMPLETE",
+                "explicit_empty_findings": True,
+            },
+            "correction_mutation_authority": {
+                "schema_version": "subtitle-correction-mutation-audit.v1",
+                "status": "PASS",
+                "applied_count": 0,
+                "validated_mutation_count": 0,
+                "failures": [],
+            },
+            "findings": [],
+            "validated_finding_count": 0,
+            "boundary_semantic_review": {
+                "schema_version": "talk-boundary-semantic-review.v1",
+                "status": "PASS",
+                "reason_codes": [],
+                "final_endpoint_binding": {
+                    "schema_version": "talk-boundary-final-endpoint-binding.v1",
+                    "status": "PASS",
+                    "recommended_end_cue_index": 1,
+                    "recommended_end_ms": 9_000,
+                    "final_closure_cue_index": 1,
+                    "final_snapped_end_ms": 9_000,
+                    "reason_codes": [],
+                },
+            },
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+    chat = {"source_subtitle_truth_audit": {"status": "APPLIED"}}
+    finalization._run_exact_final_review_gate(
+        cid="candidate",
+        out_root=tmp_path,
+        final_start=12_345,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.recut.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+        ),
+        chat_authority_audit=chat,
+        chat_authority_path=chat_path,
+        adapters=adapters,
+    )
+
+    assert seen["text"] == final_text
+    assert seen["authority"] is chat
+    assert seen["timeline_offset_ms"] == 12_345
+    assert chat["final_review_audit"]["status"] == "CLEAN"
+    assert (tmp_path / "candidate.review-flags.json").is_file()
+
+
+def test_exact_final_review_gate_persists_deterministic_block(
+    tmp_path: Path,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    final_text = (
+        "1\n00:00:00,000 --> 00:00:01,000\n仍有错误\n\n"
+        "2\n00:00:01,100 --> 00:00:02,000\n完整收束\n"
+    )
+    subtitle.write_text(final_text, encoding="utf-8")
+    chat_path = tmp_path / "candidate.chat-authority.json"
+
+    def exact_review(text, _authority, _timeline_offset_ms):
+        return {
+            "schema_version": "final-review-audit.v2",
+            "status": "FLAGGED",
+            "release_gate": "BLOCK",
+            "reason_codes": ["FINAL_REVIEW_UNRESOLVED_FINDINGS"],
+            "reviewed_srt_sha256": (
+                "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+            ),
+                "discovery": {
+                    "status": "COMPLETE",
+                    "explicit_empty_findings": False,
+                },
+                "correction_mutation_authority": {
+                    "schema_version": "subtitle-correction-mutation-audit.v1",
+                    "status": "PASS",
+                    "applied_count": 0,
+                    "validated_mutation_count": 0,
+                    "failures": [],
+                },
+                "findings": [{"cue_index": 1, "suspect": "错误"}],
+            "validated_finding_count": 1,
+            "boundary_semantic_review": {
+                    "schema_version": "talk-boundary-semantic-review.v1",
+                    "status": "PASS",
+                    "reason_codes": [],
+                    "final_endpoint_binding": {
+                        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+                        "status": "PASS",
+                        "recommended_end_cue_index": 1,
+                        "recommended_end_ms": 9_000,
+                        "final_closure_cue_index": 1,
+                        "final_snapped_end_ms": 9_000,
+                        "reason_codes": [],
+                    },
+                },
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+    with pytest.raises(
+        SystemExit,
+        match="FINAL_REVIEW_UNRESOLVED_FINDINGS",
+    ):
+        finalization._run_exact_final_review_gate(
+            cid="candidate",
+            out_root=tmp_path,
+            final_start=0,
+            recut=finalization.FinalRecutArtifacts(
+                recut_dir=tmp_path,
+                media_path=tmp_path / "candidate.recut.mp4",
+                subtitle_path=subtitle,
+                text_manifest_path=None,
+                text_manifest=None,
+            ),
+            chat_authority_audit={},
+            chat_authority_path=chat_path,
+            adapters=adapters,
+        )
+
+    persisted = json.loads(
+        (tmp_path / "candidate.review-flags.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted["findings"][0]["suspect"] == "错误"
 
 
 def test_delivery_summary_uses_persisted_boundary_audit(

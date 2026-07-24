@@ -8,6 +8,8 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaselineRegistryError,
     load_candidate_reviewed_subtitle_baseline,
 )
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.subtitle_validation import validate_srt_file
 
 
 def _write_asset(root: Path, candidate_id: str = "auto_1_2_3") -> tuple[Path, Path]:
@@ -103,3 +105,53 @@ def test_symlinked_baseline_fails_closed(tmp_path):
 
     with pytest.raises(ReviewedSubtitleBaselineRegistryError, match="non-symlink"):
         load_candidate_reviewed_subtitle_baseline(tmp_path, "auto_1_2_3")
+
+
+def test_committed_nancho_baseline_binds_new_truths_to_absolute_source_timeline():
+    root = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "reviewed_subtitle_baselines"
+    )
+    loaded = load_candidate_reviewed_subtitle_baseline(
+        root,
+        "auto_193450_672_945",
+    )
+
+    assert loaded is not None
+    assert loaded.config["source_recording_basename"] == (
+        "22966160_20260722-19-34-50.mp4"
+    )
+    assert loaded.config["source_sha256"] == (
+        "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    )
+    assert loaded.config["absolute_source_start_ms"] == 672_670
+    cues = parse_srt_cues(loaded.baseline_path.read_text(encoding="utf-8"))
+    by_text = {cue.text: cue for cue in cues}
+
+    residence = by_text["确实要，要小心小N老师啊，"]
+    assert (
+        loaded.config["absolute_source_start_ms"] + residence.start_ms,
+        loaded.config["absolute_source_start_ms"] + residence.end_ms,
+    ) == (820_590, 824_090)
+
+    formula = by_text["N和L一般都是NNLL，是吗"]
+    assert (
+        loaded.config["absolute_source_start_ms"] + formula.start_ms,
+        loaded.config["absolute_source_start_ms"] + formula.end_ms,
+    ) == (871_920, 874_980)
+
+    response = by_text["行啊"]
+    assert (
+        loaded.config["absolute_source_start_ms"] + response.start_ms,
+        loaded.config["absolute_source_start_ms"] + response.end_ms,
+    ) == (835_950, 836_510)
+
+    assert validate_srt_file(
+        loaded.baseline_path,
+        media_duration_ms=(
+            loaded.config["absolute_source_end_ms"]
+            - loaded.config["absolute_source_start_ms"]
+        ),
+    )["status"] == "PASS"

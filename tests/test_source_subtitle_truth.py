@@ -1063,6 +1063,73 @@ def test_committed_ledger_projects_nancho_truth_to_hash_bound_official_replay():
     )
 
 
+@pytest.mark.parametrize(
+    ("source_start_ms", "source_end_ms", "draft", "expected", "truth_id"),
+    [
+        (
+            820_590,
+            824_090,
+            "确实要住她家了，要小心小n老师啊，",
+            "确实要，要小心小N老师啊，",
+            "20260722-nancho-confrontation-no-duplicate-residence-r1",
+        ),
+        (
+            871_920,
+            874_980,
+            "NNL一般都是NNLL，是吗",
+            "N和L一般都是NNLL，是吗",
+            "20260722-nancho-confrontation-n-and-l-segmentation-r1",
+        ),
+        (
+            835_950,
+            836_510,
+            "行",
+            "行啊",
+            "20260722-nancho-confrontation-xing-a-response-r1",
+        ),
+    ],
+)
+def test_committed_ledger_repairs_new_nancho_acoustic_truths_on_official_replay(
+    source_start_ms, source_end_ms, draft, expected, truth_id
+):
+    """新声学钉子必须按 hash-bound 官方回放的绝对时间轴稳定重放。"""
+
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    duration_ms = source_end_ms - source_start_ms
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, duration_ms, draft)),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recovery/22966160_20260722-19-34-50.mp4"
+                    ),
+                    "source_media_sha256": (
+                        "sha256:"
+                        "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+                    ),
+                    "start_ms": source_start_ms,
+                    "end_ms": source_end_ms,
+                }
+            ]
+        },
+        durations=[duration_ms],
+        ledger_path=ledger,
+    )
+
+    assert [cue.text for cue in parse_srt_cues(corrected)] == [expected]
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == truth_id
+    assert audit["applied"][0]["source_aliases"][0]["alias_id"] == (
+        "20260722-official-replay-bv1fjg16xex6"
+    )
+
+
 def test_committed_ledger_repairs_huishen_nasal_final_spelling_drift():
     ledger = (
         Path(__file__).resolve().parents[1]

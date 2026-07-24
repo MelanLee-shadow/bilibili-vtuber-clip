@@ -21,6 +21,10 @@ from src.autoslice.cover_title_rendering import (
     sha256_file,
 )
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
+from src.autoslice.review_package_ass_audit import audit_review_package_ass
+from src.autoslice.recovery_title_authority import (
+    build_recovery_title_authority,
+)
 from src.autoslice.story_contract import build_story_contract
 
 
@@ -116,6 +120,17 @@ def _passing_boundary_review(
         "independent_semantic_vote_count": 1,
         "correlated_reviewer_disclosure": True,
         "reason_codes": [],
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "recommended_end_cue_index": 1,
+            "recommended_end_ms": end_ms,
+            "final_closure_cue_index": 1,
+            "final_snapped_end_ms": end_ms,
+            "final_start_ms": 0,
+            "final_end_ms": end_ms,
+            "reason_codes": [],
+        },
     }
 
 
@@ -240,6 +255,291 @@ Dialogue: 0,0:00:00.00,0:00:20.00,Default,,0,0,0,,剩女是一个组织对剩女
     codes = {issue["code"] for issue in result["issues"]}
     assert "SUBTITLE_ASS_TOO_MANY_VISUAL_LINES" in codes
     assert "SUBTITLE_ASS_LINE_TOO_LONG" in codes
+
+
+def test_recovery_public_title_authority_is_bound_across_package_surfaces(
+    tmp_path: Path,
+) -> None:
+    candidate_id = "auto_193450_1475_1543"
+    evidence = (
+        REPO_ROOT
+        / "reports/authorized_uploads/2026-07-22-v8-final"
+        / f"{candidate_id}.public_verify.json"
+    )
+    authority = build_recovery_title_authority(
+        candidate_id=candidate_id,
+        evidence_path=evidence,
+        expected_evidence_sha256=(
+            "sha256:"
+            "c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771"
+        ),
+    )
+    root = tmp_path / "pkg"
+    root.mkdir()
+    stem = "public-title"
+    publish = root / f"{stem}.publish.json"
+    publish.write_text(
+        json.dumps(
+            {
+                "title": authority["title"],
+                "recovery_title_authority": authority,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    record = {
+        "recovery_title_authority": authority,
+        "publish_staging": {
+            "title": authority["title"],
+            "recovery_title_authority": authority,
+        },
+        "artifact_hashes": {
+            "publish_draft_sha256": (
+                "sha256:" + hashlib.sha256(publish.read_bytes()).hexdigest()
+            )
+        },
+    }
+    record_path = root / f"{stem}.record.json"
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+    manifest = {
+        "status": "finished",
+        "items": [
+            {
+                "stem": stem,
+                "candidate_id": candidate_id,
+                "title": authority["title"],
+                "record": record_path.name,
+                "publish_json": publish.name,
+                "recovery_title_authority": authority,
+            }
+        ],
+    }
+    manifest_path = root / "review_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    clean_codes = {
+        issue["code"] for issue in audit_package(root)["issues"]
+    }
+    assert not any(
+        code.startswith("RECOVERY_PUBLIC_TITLE")
+        for code in clean_codes
+    )
+
+    del manifest["items"][0]["recovery_title_authority"]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    drift_codes = {
+        issue["code"] for issue in audit_package(root)["issues"]
+    }
+    assert "RECOVERY_PUBLIC_TITLE_AUTHORITY_SURFACE_MISSING" in (
+        drift_codes
+    )
+
+
+def test_current_review_ass_is_portable_hash_bound_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    stem = "portable-talk"
+    speaker_srt = _write(
+        root / f"{stem}.speaker.srt",
+        "1\n00:00:00,000 --> 00:00:01,000\n[李豆沙] 正常字幕\n",
+    )
+    ass = _write(
+        root / f"{stem}.speaker.ass",
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:01.00,LDS,,0,0,0,,正常字幕\n",
+    )
+    manifest_path = root / "review_manifest.json"
+    manifest = {
+        "date": "2026-07-22",
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "items": [
+            {
+                "stem": stem,
+                "speaker_srt": speaker_srt.name,
+                "speaker_srt_sha256": "sha256:"
+                + hashlib.sha256(speaker_srt.read_bytes()).hexdigest(),
+                "ass_path": f"/missing/remote/{ass.name}",
+                "ass_sha256": "sha256:"
+                + hashlib.sha256(ass.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+
+    manifest_path.write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    remote_path_result = audit_package(root)
+    assert "SUBTITLE_ASS_PATH_MISSING_OR_NONPORTABLE" in {
+        issue["code"] for issue in remote_path_result["issues"]
+    }
+
+    manifest["items"][0]["ass_path"] = "missing.speaker.ass"
+    manifest_path.write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    missing_result = audit_package(root)
+    assert "SUBTITLE_ASS_PATH_MISSING_OR_NONPORTABLE" in {
+        issue["code"] for issue in missing_result["issues"]
+    }
+
+    manifest["items"][0]["ass_path"] = ass.name
+    del manifest["items"][0]["ass_sha256"]
+    manifest_path.write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    missing_hash_result = audit_package(root)
+    assert "SUBTITLE_ASS_HASH_MISSING_OR_INVALID" in {
+        issue["code"] for issue in missing_hash_result["issues"]
+    }
+
+    manifest["items"][0]["ass_sha256"] = "sha256:" + "0" * 64
+    manifest_path.write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    hash_result = audit_package(root)
+    assert "SUBTITLE_ASS_HASH_MISMATCH" in {
+        issue["code"] for issue in hash_result["issues"]
+    }
+
+    ass.write_text("[Events]\n", encoding="utf-8")
+    manifest["items"][0]["ass_sha256"] = (
+        "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
+    )
+    manifest_path.write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    dialogue_result = audit_package(root)
+    dialogue_codes = {
+        issue["code"] for issue in dialogue_result["issues"]
+    }
+    assert "SUBTITLE_ASS_DIALOGUE_MISSING" in dialogue_codes
+    assert "SUBTITLE_ASS_HASH_MISMATCH" not in dialogue_codes
+
+
+def test_current_review_ass_rejects_package_internal_symlink(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    speaker_srt = _write(
+        root / "portable-talk.speaker.srt",
+        "1\n00:00:00,000 --> 00:00:01,000\n[李豆沙] 正常字幕\n",
+    )
+    target = _write(
+        root / "real.speaker.ass",
+        "[Events]\n"
+        "Dialogue: 0,0:00:00.00,0:00:01.00,LDS,,0,0,0,,正常字幕\n",
+    )
+    linked = root / "linked.speaker.ass"
+    linked.symlink_to(target.name)
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "date": "2026-07-22",
+                "run_mode": "RECOVERY_REVIEW",
+                "upload_allowed": False,
+                "items": [
+                    {
+                        "stem": "portable-talk",
+                        "speaker_srt": speaker_srt.name,
+                        "speaker_srt_sha256": "sha256:"
+                        + hashlib.sha256(
+                            speaker_srt.read_bytes()
+                        ).hexdigest(),
+                        "ass_path": linked.name,
+                        "ass_sha256": "sha256:"
+                        + hashlib.sha256(target.read_bytes()).hexdigest(),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert "SUBTITLE_ASS_PATH_MISSING_OR_NONPORTABLE" in {
+        issue["code"] for issue in result["issues"]
+    }
+
+
+def test_current_review_ass_replays_all_speaker_events_even_after_hash_rebinding(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    speaker_srt = _write(
+        root / "talk.speaker.srt",
+        "1\n00:00:00,000 --> 00:00:01,000\n[李豆沙] 第一句\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n[连线] 第二句\n",
+    )
+    ass = root / "talk.speaker.ass"
+    valid_events = (
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:01.00,LDS,,0,0,0,,第一句\n"
+        "Dialogue: 0,0:00:01.00,0:00:02.00,GUEST,,0,0,0,,第二句\n"
+    )
+
+    def audit_with_rebound_hashes(ass_text: str):
+        ass.write_text(ass_text, encoding="utf-8")
+        ass_hash = "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
+        srt_hash = (
+            "sha256:" + hashlib.sha256(speaker_srt.read_bytes()).hexdigest()
+        )
+        return audit_review_package_ass(
+            root=root,
+            item={
+                "ass_path": ass.name,
+                "ass_sha256": ass_hash,
+                "speaker_srt": speaker_srt.name,
+                "speaker_srt_sha256": srt_hash,
+            },
+            portable_required=True,
+            max_visual_lines=2,
+            max_visual_line_chars=28,
+            record={"artifact_hashes": {"ass_sha256": ass_hash}},
+            chat_authority={
+                "speaker_ass_sha256": ass_hash,
+                "final_speaker_srt_sha256": srt_hash,
+            },
+        )
+
+    assert audit_with_rebound_hashes(valid_events).issues == ()
+
+    cases = {
+        "SUBTITLE_ASS_SPEAKER_SRT_TEXT_MISMATCH": valid_events.replace(
+            "第一句\n", "伪造文字\n", 1
+        ),
+        "SUBTITLE_ASS_SPEAKER_SRT_TIMELINE_MISMATCH": valid_events.replace(
+            "0:00:01.00,0:00:02.00", "0:00:01.10,0:00:02.00"
+        ),
+        "SUBTITLE_ASS_SPEAKER_SRT_STYLE_MISMATCH": valid_events.replace(
+            "0:00:02.00,GUEST", "0:00:02.00,LDS"
+        ),
+        "SUBTITLE_ASS_SPEAKER_SRT_EVENT_COUNT_MISMATCH": (
+            valid_events.rsplit("Dialogue:", 1)[0]
+        ),
+    }
+    for expected_code, tampered_ass in cases.items():
+        codes = {
+            issue.code
+            for issue in audit_with_rebound_hashes(tampered_ass).issues
+        }
+        assert expected_code in codes
 
 
 def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Path):
@@ -640,6 +940,23 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         root / f"{stem}.srt",
         f"1\n00:00:00,000 --> 00:00:04,000\n{transcript}\n",
     )
+    speaker_srt = _write(
+        root / f"{stem}.speaker.srt",
+        f"1\n00:00:00,000 --> 00:00:04,000\n[李豆沙] {transcript}\n",
+    )
+    speaker_ass = _write(
+        root / f"{stem}.speaker.ass",
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+        f"Dialogue: 0,0:00:00.00,0:00:04.00,LDS,,0,0,0,,{transcript}\n",
+    )
+    speaker_ass_sha256 = "sha256:" + hashlib.sha256(
+        speaker_ass.read_bytes()
+    ).hexdigest()
+    speaker_srt_sha256 = "sha256:" + hashlib.sha256(
+        speaker_srt.read_bytes()
+    ).hexdigest()
     scorecard = normalize_selection_scorecard(
         {
             "tier": 1,
@@ -822,6 +1139,8 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
             {
                 "schema_version": "fixture-chat-authority.v1",
                 "status": "PASS",
+                "speaker_ass_sha256": speaker_ass_sha256,
+                "final_speaker_srt_sha256": speaker_srt_sha256,
                 "frozen_boundary_owner_contract": {
                     "schema_version": "frozen-boundary-owner-contract.v1",
                     "status": "FROZEN",
@@ -839,6 +1158,15 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                     "discovery": {
                         "status": "COMPLETE",
                         "explicit_empty_findings": True,
+                    },
+                    "correction_mutation_authority": {
+                        "schema_version": (
+                            "subtitle-correction-mutation-audit.v1"
+                        ),
+                        "status": "PASS",
+                        "applied_count": 0,
+                        "validated_mutation_count": 0,
+                        "failures": [],
                     },
                     "findings": [],
                     "validated_finding_count": 0,
@@ -878,6 +1206,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                     + hashlib.sha256(
                         chat_authority.read_bytes()
                     ).hexdigest(),
+                    "ass_sha256": speaker_ass_sha256,
                 },
                 "publish_staging": {
                     "title": "【李豆沙】南町当面追问最最最最喜欢",
@@ -924,6 +1253,10 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                         "candidate_id": stem,
                         "title": "【李豆沙】南町当面追问最最最最喜欢",
                             "subtitle_srt": srt.name,
+                            "speaker_srt": speaker_srt.name,
+                            "speaker_srt_sha256": speaker_srt_sha256,
+                            "ass_path": speaker_ass.name,
+                            "ass_sha256": speaker_ass_sha256,
                             "record": record.name,
                             "chat_authority": chat_authority.name,
                             "cover": cover.relative_to(root).as_posix(),

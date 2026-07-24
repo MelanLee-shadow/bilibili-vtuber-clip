@@ -4,12 +4,25 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import delivery_recovery
+from src.autoslice.recovery_title_authority import (
+    ROOT,
+    build_recovery_title_authority,
+)
 
 
 OLD = "sha256:" + "1" * 64
 NEW = "sha256:" + "2" * 64
 ALT_NEW = "sha256:" + "4" * 64
 STATE_SHA = "sha256:" + "3" * 64
+PUBLIC_TITLE_CANDIDATE = "auto_193450_1475_1543"
+PUBLIC_TITLE_EVIDENCE = (
+    ROOT
+    / "reports/authorized_uploads/2026-07-22-v8-final"
+    / f"{PUBLIC_TITLE_CANDIDATE}.public_verify.json"
+)
+PUBLIC_TITLE_EVIDENCE_SHA256 = (
+    "sha256:c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771"
+)
 
 
 class _Runner:
@@ -164,6 +177,64 @@ def test_natural_recovery_tick_same_fingerprint_is_byte_stable(
         == 0
     )
     assert state == before
+
+
+def test_explicit_recovery_carries_hash_bound_public_title(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    state["picks"][0]["candidate_id"] = PUBLIC_TITLE_CANDIDATE
+    authority = build_recovery_title_authority(
+        candidate_id=PUBLIC_TITLE_CANDIDATE,
+        evidence_path=PUBLIC_TITLE_EVIDENCE,
+        expected_evidence_sha256=PUBLIC_TITLE_EVIDENCE_SHA256,
+    )
+
+    plan = delivery_recovery.plan_current_talk_recovery_rerun(
+        date,
+        state,
+        candidate_ids=[PUBLIC_TITLE_CANDIDATE],
+        expected_source_state_sha256=STATE_SHA,
+        expected_old_fingerprint=OLD,
+        expected_new_fingerprint=NEW,
+        recovery_title_authorities_by_candidate={
+            PUBLIC_TITLE_CANDIDATE: authority
+        },
+    )
+
+    item = state["pending_talk"][0]
+    assert item["given_title"] == authority["title"]
+    assert item["recovery_title_authority"] == authority
+    assert plan["recovery_title_authorities_by_candidate"] == {
+        PUBLIC_TITLE_CANDIDATE: authority
+    }
+
+
+def test_explicit_recovery_rejects_public_title_for_unqueued_candidate(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    authority = build_recovery_title_authority(
+        candidate_id=PUBLIC_TITLE_CANDIDATE,
+        evidence_path=PUBLIC_TITLE_EVIDENCE,
+        expected_evidence_sha256=PUBLIC_TITLE_EVIDENCE_SHA256,
+    )
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_RERUN_PUBLIC_TITLE_CANDIDATE_NOT_QUEUED",
+    ):
+        delivery_recovery.plan_current_talk_recovery_rerun(
+            date,
+            state,
+            candidate_ids=["auto_current"],
+            expected_source_state_sha256=STATE_SHA,
+            expected_old_fingerprint=OLD,
+            expected_new_fingerprint=NEW,
+            recovery_title_authorities_by_candidate={
+                PUBLIC_TITLE_CANDIDATE: authority
+            },
+        )
 
 
 def test_natural_recovery_tick_does_not_refresh_ordinary_production(
@@ -490,7 +561,7 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
         },
     )
 
-    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v5"
+    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v6"
     assert plan["new_pipeline_fingerprint"] is None
     assert plan["new_pipeline_fingerprints_by_candidate"] == {
         "auto_brainflick": ALT_NEW,

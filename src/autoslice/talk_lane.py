@@ -17,6 +17,10 @@ import time
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.recovery_title_authority import (
+    RecoveryTitleAuthorityError,
+    validate_recovery_title_authority,
+)
 from src.autoslice.selection_scorecard import selection_scorecard_is_valid
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
@@ -408,14 +412,354 @@ def _foreign_source_gate_violation(attempt_output: str) -> dict[str, object] | N
     }
 
 
+_FINAL_REVIEW_ARTIFACT_RX = re.compile(
+    r"(/[^\r\n'\"<>]*?(?:\.chat-authority|\.review-flags)\.json)"
+)
+_FINAL_REVIEW_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _read_final_review_surface(path: Path) -> tuple[dict | None, str | None]:
+    try:
+        if (
+            not path.is_file()
+            or path.stat().st_size > _FINAL_REVIEW_ARTIFACT_MAX_BYTES
+        ):
+            return None, None
+        payload = path.read_bytes()
+        document = json.loads(payload)
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(document, dict):
+        return None, None
+    return document, "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _final_review_candidate_id(path: Path) -> str:
+    for suffix in (".chat-authority.json", ".review-flags.json"):
+        if path.name.endswith(suffix):
+            return path.name[: -len(suffix)]
+    return path.stem
+
+
+def _compact_final_review_finding(row: object) -> dict[str, object] | None:
+    if not isinstance(row, dict):
+        return None
+    summary = {
+        key: row.get(key)
+        for key in (
+            "cue_index",
+            "kind",
+            "repair_class",
+            "suspect",
+            "suggestion",
+            "proposed_full_cue",
+            "suggestion_rejected_reason",
+            "why",
+            "force_acoustic",
+            "correlated_text_witness",
+            "base_text_sha256",
+            "candidate_memory_id",
+            "evidence_cue_ids",
+            "reported_scope_warnings",
+            "span_start_codepoint",
+            "span_end_codepoint",
+        )
+        if row.get(key) is not None
+    }
+    provenance = row.get("candidate_provenance")
+    if isinstance(provenance, dict):
+        summary["candidate_provenance"] = {
+            key: provenance.get(key)
+            for key in (
+                "kind",
+                "surface",
+                "memory_id",
+                "mutation_authorized",
+                "ledger_sha256",
+                "nearest_cue_distance",
+            )
+            if provenance.get(key) is not None
+        }
+    return summary
+
+
+def _compact_boundary_semantic_review(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {"status": "MISSING"}
+    return {
+        key: value.get(key)
+        for key in (
+            "schema_version",
+            "status",
+            "reason_codes",
+            "target_ms",
+            "recommended_end_ms",
+            "syntax_complete",
+            "story_closed",
+            "content_anchor_covered",
+            "next_topic_separated",
+            "summary",
+            "request_sha256",
+        )
+        if value.get(key) is not None
+    }
+
+
+def _final_review_contract_reason_code(attempt_output: str) -> str | None:
+    match = re.search(
+        r"FINAL_REVIEW_RELEASE_BLOCKED:\s*([A-Z0-9_]+)",
+        attempt_output,
+    )
+    return match.group(1) if match else None
+
+
+def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
+    matches = _FINAL_REVIEW_ARTIFACT_RX.findall(attempt_output)
+    artifact_path = Path(matches[-1].strip()) if matches else None
+    evidence: dict[str, object] = {
+        "schema_version": "talk-final-review-failure-evidence.v1",
+        "candidate_id": (
+            _final_review_candidate_id(artifact_path)
+            if artifact_path is not None
+            else None
+        ),
+        "contract_reason_code": _final_review_contract_reason_code(attempt_output),
+        "audit_loaded": False,
+    }
+    if artifact_path is None:
+        return evidence
+
+    evidence["artifact_file"] = artifact_path.name
+    if artifact_path.name.endswith(".chat-authority.json"):
+        candidate_name = artifact_path.name[: -len(".chat-authority.json")]
+        review_path = artifact_path.with_name(candidate_name + ".review-flags.json")
+        chat_path = artifact_path
+    else:
+        candidate_name = artifact_path.name[: -len(".review-flags.json")]
+        review_path = artifact_path
+        chat_path = artifact_path.with_name(candidate_name + ".chat-authority.json")
+
+    review_document, review_sha = _read_final_review_surface(review_path)
+    chat_document, chat_sha = _read_final_review_surface(chat_path)
+    surface_files = []
+    if review_sha is not None:
+        surface_files.append(
+            {"role": "review_flags", "file": review_path.name, "sha256": review_sha}
+        )
+    if chat_sha is not None:
+        surface_files.append(
+            {
+                "role": "chat_authority",
+                "file": chat_path.name,
+                "sha256": chat_sha,
+            }
+        )
+    evidence["surface_files"] = surface_files
+
+    direct_audit = (
+        review_document
+        if isinstance(review_document, dict)
+        and review_document.get("schema_version") == "final-review-audit.v2"
+        else None
+    )
+    nested = (
+        chat_document.get("final_review_audit")
+        if isinstance(chat_document, dict)
+        else None
+    )
+    nested_audit = (
+        nested
+        if isinstance(nested, dict)
+        and nested.get("schema_version") == "final-review-audit.v2"
+        else None
+    )
+    if direct_audit is not None and nested_audit is not None:
+        evidence["audit_surfaces_consistent"] = direct_audit == nested_audit
+    audit = direct_audit or nested_audit
+    if audit is None:
+        return evidence
+
+    raw_findings = audit.get("findings")
+    raw_reason_codes = audit.get("reason_codes")
+    if isinstance(raw_reason_codes, str):
+        normalized_reason_codes = [raw_reason_codes] if raw_reason_codes else []
+    elif isinstance(raw_reason_codes, list):
+        normalized_reason_codes = [
+            str(code) for code in raw_reason_codes if str(code)
+        ]
+    else:
+        normalized_reason_codes = []
+    compact_findings = [
+        summary
+        for row in (raw_findings if isinstance(raw_findings, list) else [])
+        if (summary := _compact_final_review_finding(row)) is not None
+    ]
+    discovery = audit.get("discovery")
+    evidence.update(
+        {
+            "audit_loaded": True,
+            "audit_schema_version": audit.get("schema_version"),
+            "status": audit.get("status"),
+            "release_gate": audit.get("release_gate"),
+            "reason_codes": normalized_reason_codes,
+            "reviewed_srt_sha256": audit.get("reviewed_srt_sha256"),
+            "discovery": (
+                dict(discovery)
+                if isinstance(discovery, dict)
+                else {"status": "MISSING"}
+            ),
+            "findings_contract_valid": isinstance(raw_findings, list),
+            "validated_finding_count": audit.get("validated_finding_count"),
+            "findings": compact_findings[:20],
+            "findings_truncated": max(0, len(compact_findings) - 20),
+            "boundary_semantic_review": _compact_boundary_semantic_review(
+                audit.get("boundary_semantic_review")
+            ),
+        }
+    )
+    return evidence
+
+
+def _classify_final_review_release(
+    attempt_output: str,
+) -> tuple[str, str, bool, dict[str, object]]:
+    evidence = _final_review_failure_evidence(attempt_output)
+    contract_reason = str(evidence.get("contract_reason_code") or "")
+    reason_codes = {
+        str(code) for code in (evidence.get("reason_codes") or []) if str(code)
+    }
+    discovery = evidence.get("discovery")
+    discovery_status = (
+        str(discovery.get("status") or "")
+        if isinstance(discovery, dict)
+        else ""
+    )
+    if evidence.get("audit_surfaces_consistent") is False:
+        return "final_review_contract", "final_review_contract", False, evidence
+    if contract_reason in {
+        "FINAL_REVIEW_AUDIT_MISSING_OR_INVALID",
+        "FINAL_REVIEW_AUDIT_SCHEMA_INVALID",
+        "FINAL_REVIEW_SRT_BINDING_INVALID",
+        "FINAL_REVIEW_SRT_BINDING_MISMATCH",
+        "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID",
+    }:
+        return "final_review_contract", "final_review_contract", False, evidence
+    if (
+        contract_reason == "FINAL_REVIEW_DISCOVERY_INCOMPLETE"
+        and evidence.get("audit_loaded") is True
+        and evidence.get("status") == "AUDITOR_UNAVAILABLE"
+        and discovery_status == "AUDITOR_UNAVAILABLE"
+    ):
+        return "provider_transient", "final_review_discovery", True, evidence
+    if discovery_status != "COMPLETE":
+        return "final_review_contract", "final_review_contract", False, evidence
+    if evidence.get("audit_loaded") is not True:
+        return "final_review_contract", "final_review_contract", False, evidence
+    boundary = evidence.get("boundary_semantic_review")
+    boundary_status = (
+        str(boundary.get("status") or "")
+        if isinstance(boundary, dict)
+        else ""
+    )
+    if (
+        boundary_status == "BLOCK"
+        or "FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED" in reason_codes
+    ):
+        return (
+            "content_boundary",
+            "final_review_boundary_semantic",
+            False,
+            evidence,
+        )
+    if boundary_status != "PASS":
+        return "final_review_contract", "final_review_contract", False, evidence
+    finding_count = evidence.get("validated_finding_count")
+    if (
+        isinstance(finding_count, int)
+        and not isinstance(finding_count, bool)
+        and finding_count > 0
+    ) or "FINAL_REVIEW_UNRESOLVED_FINDINGS" in reason_codes:
+        return "subtitle_authority", "final_review_findings", False, evidence
+    return "final_review_contract", "final_review_contract", False, evidence
+
+
+def _boundary_context_failure_evidence(attempt_output: str) -> dict[str, object]:
+    lines = [
+        line.strip()
+        for line in attempt_output.splitlines()
+        if "BOUNDARY_CONTEXT_EXHAUSTED" in line
+    ]
+    marker = lines[-1] if lines else "BOUNDARY_CONTEXT_EXHAUSTED"
+    retry_scope = re.search(r"\bretry_scope=([a-z_]+)", marker)
+    legacy_reason_codes = re.search(
+        r"\breason_codes=([A-Z0-9_,]+)", marker
+    )
+    json_reason_codes: list[str] = []
+    json_match = re.search(
+        r"BOUNDARY_CONTEXT_EXHAUSTED:\s*(\[[^\r\n]*?\])"
+        r"(?=\s+(?:max_forward_ms|retry_scope)=|$)",
+        marker,
+    )
+    if json_match is not None:
+        try:
+            parsed = json.loads(json_match.group(1))
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, list):
+            json_reason_codes = [
+                str(code) for code in parsed if str(code)
+            ]
+    return {
+        "schema_version": "talk-boundary-context-failure-evidence.v1",
+        "gate": "BOUNDARY_CONTEXT_EXHAUSTED",
+        "retry_scope": retry_scope.group(1) if retry_scope else None,
+        "reason_codes": (
+            json_reason_codes
+            or (
+                [
+                    code
+                    for code in legacy_reason_codes.group(1).split(",")
+                    if code
+                ]
+                if legacy_reason_codes
+                else []
+            )
+        ),
+        "marker": re.sub(r"/[^\s:'\"]+", "<path>", marker)[:1200],
+    }
+
+
+def _normalize_failure_fingerprint_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_failure_fingerprint_value(nested)
+            for key, nested in value.items()
+            if key != "surface_files"
+        }
+    if isinstance(value, list):
+        return [_normalize_failure_fingerprint_value(item) for item in value]
+    if isinstance(value, str):
+        normalized = re.sub(r"/[^\s:'\"]+", "<path>", value)
+        return re.sub(r"\b\d{8,}\b", "<n>", normalized)
+    return value
+
+
 def classify_talk_failure(attempt_output: str) -> dict:
     """Persist a stable failure identity instead of a bare generic status."""
 
     tail = attempt_output[-8000:]
     nonempty = [line.strip() for line in tail.splitlines() if line.strip()]
     message = nonempty[-1][:1200] if nonempty else "producer exited without diagnostic"
+    failure_evidence: dict[str, object] | None = None
     if "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
         kind, stage, recoverable = "content_duration", "boundary_resolution", False
+    elif "BOUNDARY_CONTEXT_EXHAUSTED" in tail:
+        kind, stage, recoverable = (
+            "content_boundary",
+            "boundary_semantic_review",
+            False,
+        )
+        failure_evidence = _boundary_context_failure_evidence(tail)
     elif "BOUNDARY_UNREPAIRABLE" in tail:
         kind, stage, recoverable = "content_boundary", "boundary_resolution", False
     elif "voiceprint_profile.v1.json" in tail and (
@@ -451,10 +795,8 @@ def classify_talk_failure(attempt_output: str) -> dict:
             False,
         )
     elif "FINAL_REVIEW_RELEASE_BLOCKED" in tail:
-        kind, stage, recoverable = (
-            "provider_transient",
-            "final_review_discovery",
-            True,
+        kind, stage, recoverable, failure_evidence = (
+            _classify_final_review_release(tail)
         )
     elif "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED" in tail:
         # 审片员修复提案因 provider 失败未决——文本本身可修，等 provider
@@ -467,9 +809,25 @@ def classify_talk_failure(attempt_output: str) -> dict:
         kind, stage, recoverable = "provider_transient", "external_provider", True
     else:
         kind, stage, recoverable = "producer_error", "unknown", True
-    normalized = re.sub(r"/[^\s:'\"]+", "<path>", message)
-    normalized = re.sub(r"\b\d{8,}\b", "<n>", normalized)
-    fingerprint = hashlib.sha256(f"{kind}\0{stage}\0{normalized}".encode("utf-8")).hexdigest()
+    if failure_evidence is not None:
+        # Full chat-authority documents can embed run-root paths (for example
+        # ledger_path).  Keep their hashes as diagnostics, but derive failure
+        # identity only from the normalized substantive audit.
+        fingerprint_evidence = _normalize_failure_fingerprint_value(
+            failure_evidence
+        )
+        fingerprint_basis = json.dumps(
+            fingerprint_evidence,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        fingerprint_basis = re.sub(r"/[^\s:'\"]+", "<path>", message)
+        fingerprint_basis = re.sub(r"\b\d{8,}\b", "<n>", fingerprint_basis)
+    fingerprint = hashlib.sha256(
+        f"{kind}\0{stage}\0{fingerprint_basis}".encode("utf-8")
+    ).hexdigest()
     result = {
         "failure_kind": kind,
         "failure_stage": stage,
@@ -477,6 +835,8 @@ def classify_talk_failure(attempt_output: str) -> dict:
         "failure_fingerprint": "sha256:" + fingerprint,
         "failure_recoverable": recoverable,
     }
+    if failure_evidence is not None:
+        result["failure_evidence"] = failure_evidence
     if kind == "subtitle_authority":
         violation = _foreign_source_gate_violation(tail)
         if violation is not None:
@@ -629,6 +989,57 @@ def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
     }
 
 
+def _apply_optional_talk_spec_fields(
+    spec: dict[str, object],
+    item: dict,
+) -> None:
+    slot = item.get("cover_diversity_slot")
+    if (
+        isinstance(slot, int)
+        and not isinstance(slot, bool)
+        and slot >= 0
+    ):
+        spec["cover_diversity_slot"] = slot
+    song_names = item.get("song_name_candidates")
+    if song_names:
+        # Screen songlist + 点歌 + known-songs evidence for deterministic pin.
+        spec["song_name_candidates"] = list(song_names)
+
+
+def _apply_recovery_authorities_to_talk_spec(
+    spec: dict[str, object],
+    item: dict,
+    *,
+    candidate_id: str,
+) -> None:
+    if item.get("given_end_ms") is not None:
+        given_end_ms = item["given_end_ms"]
+        if isinstance(given_end_ms, bool) or not isinstance(given_end_ms, int):
+            raise ValueError("given_end_ms must be an integer source timestamp")
+        spec["given_end_ms"] = given_end_ms
+        spec["given_end_authority"] = str(
+            item.get("given_end_authority") or ""
+        ).strip()
+    authority = item.get("recovery_title_authority")
+    if item.get("given_title") is None and authority is None:
+        return
+    given_title = item["given_title"]
+    try:
+        authority = validate_recovery_title_authority(
+            authority,
+            candidate_id=candidate_id,
+            expected_title=(
+                given_title if isinstance(given_title, str) else None
+            ),
+        )
+    except RecoveryTitleAuthorityError as exc:
+        raise ValueError(
+            f"given_title requires verified public authority: {exc}"
+        ) from exc
+    spec["given_title"] = given_title
+    spec["recovery_title_authority"] = authority
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -709,7 +1120,6 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "selection_hook": item.get("hook", ""),
         "selection_scorecard": item.get("selection_scorecard"),
         "session_relation_authority": item.get("session_relation_authority"),
-        "given_title": None,
         "lead_pad_ms": 400,
         "semantic_start_ms": item["start_ms"],
         "semantic_end_ms": item["end_ms"],
@@ -718,25 +1128,10 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "pieces": pieces,
         "talk_filler_plan": filler_plan,
     }
-    if item.get("given_end_ms") is not None:
-        given_end_ms = item["given_end_ms"]
-        if isinstance(given_end_ms, bool) or not isinstance(given_end_ms, int):
-            raise ValueError("given_end_ms must be an integer source timestamp")
-        spec["given_end_ms"] = given_end_ms
-        spec["given_end_authority"] = str(
-            item.get("given_end_authority") or ""
-        ).strip()
-    if (
-        isinstance(item.get("cover_diversity_slot"), int)
-        and not isinstance(item.get("cover_diversity_slot"), bool)
-        and int(item["cover_diversity_slot"]) >= 0
-    ):
-        spec["cover_diversity_slot"] = int(item["cover_diversity_slot"])
-    song_name_candidates = item.get("song_name_candidates")
-    if song_name_candidates:
-        # Machine-evidence song-name pool (screen songlist + 点歌 + known-songs)
-        # for the deterministic pin — see src/autoslice/song_name_pin.py.
-        spec["song_name_candidates"] = list(song_name_candidates)
+    _apply_recovery_authorities_to_talk_spec(
+        spec, item, candidate_id=cid
+    )
+    _apply_optional_talk_spec_fields(spec, item)
     candidate_text_override = _runner.candidate_text_override_path(cid)
     if candidate_text_override is not None:
         spec["subtitle_text_overrides"] = str(candidate_text_override)
@@ -792,7 +1187,10 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     first_tail = attempt_output[-4000:]
     if (
         completed.returncode != 0
-        and "BOUNDARY_UNREPAIRABLE" in first_tail
+        and (
+            "BOUNDARY_UNREPAIRABLE" in first_tail
+            or "BOUNDARY_CONTEXT_EXHAUSTED" in first_tail
+        )
         and "retry_scope=same_topic_continues" in first_tail
     ):
         piece = spec["pieces"][-1]
@@ -841,6 +1239,11 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     if item.get("given_end_ms") is not None:
         result["given_end_ms"] = item["given_end_ms"]
         result["given_end_authority"] = item.get("given_end_authority")
+    if item.get("given_title") is not None:
+        result["given_title"] = item["given_title"]
+        result["recovery_title_authority"] = item.get(
+            "recovery_title_authority"
+        )
     if "cover_diversity_slot" in item:
         result["cover_diversity_slot"] = item["cover_diversity_slot"]
     # Classify only bytes written by this subprocess attempt.  The log is
@@ -896,10 +1299,15 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                 "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY"
             ]
             return result
-        # BOUNDARY_UNREPAIRABLE is deterministic for this pipeline generation;
+        # Boundary exhaustion is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.
         result["status"] = (
-            "boundary_unrepairable" if "BOUNDARY_UNREPAIRABLE" in tail else "failed"
+            "boundary_unrepairable"
+            if (
+                "BOUNDARY_UNREPAIRABLE" in tail
+                or "BOUNDARY_CONTEXT_EXHAUSTED" in tail
+            )
+            else "failed"
         )
         return result
     if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):

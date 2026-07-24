@@ -2599,7 +2599,12 @@ def test_sc_read_with_address_prefix_already_spoken_survives_self_check():
 
 
 def test_aligned_sc_keeps_current_reply_prefix_when_authority_head_was_previous():
-    """2026-07-22：SC 问句头在上一 cue，当前回答的「当然」不能一起被吞。"""
+    """2026-07-22：SC 问句跨上一 cue，内部 gap 不能倒灌进当前回答。
+
+    authority 的「住她家了」已在上一 cue 念过；若按当前 span 的两个匹配块
+    机械补 gap，会把「当然不是啦，确实要，要小心……」篡成自相矛盾的
+    「确实要住她家了」。当前回答和口吃都必须保留。
+    """
     from src.autoslice.chat_repair import _aligned_span_replacements
 
     result = _aligned_span_replacements(
@@ -2614,9 +2619,93 @@ def test_aligned_sc_keeps_current_reply_prefix_when_authority_head_was_previous(
 
     assert result is not None
     replacements, alignment = result
-    assert "".join(replacements).startswith("当然不是啦")
-    assert alignment["dropped_duplicate_authority_head"] == "那你今晚"
-    assert alignment["preserved_span_head"] == "当然"
+    joined = "".join(replacements)
+    assert joined.startswith("当然不是啦确实要，要小心")
+    assert "确实要住她家了" not in joined
+    assert joined.count("住她家了") == 0
+    assert alignment["context_owned_internal_authority_gap"] == "住她家了，"
+    assert (
+        alignment["dropped_duplicate_authority_head"]
+        == "那你今晚不是要住她家了，"
+    )
+    assert alignment["preserved_span_head"] == "当然不是啦确实要，"
+
+
+def test_context_owned_internal_gap_survives_full_chat_authority_self_check():
+    """完整 apply 路径必须既去重，又把分布在前 cue + 当前 span 的全文验绿。"""
+    exact = "那你今晚不是要住她家了，要小心小n老师啊，另外你俩的cp叫啥"
+    source = _srt(
+        "那你今晚不是要住她家了",
+        "当然不是啦",
+        "确实要，要小心小鹅老师啊",
+        "另外你俩CP叫啥",
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact, "南町nightin")],
+        support_srt_texts=[source],
+    )
+
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert "".join(texts).count("住她家了") == 1
+    assert "".join(texts[1:]).startswith("当然不是啦确实要，要小心")
+    assert audit["applied"][0]["survived"] is True
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+
+
+def test_context_owned_gap_rebase_rejects_fuzzy_prefix_missing_polarity():
+    """高覆盖不能替代 exact prefix；漏掉“不是”会反转 SC 原意。"""
+    exact = "那你今晚不是要住她家了，要小心小n老师啊"
+    source = _srt(
+        "那你今晚要住她家了",
+        "当然不是啦",
+        "确实要，要小心小鹅老师啊",
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact, "南町nightin")],
+        support_srt_texts=[source],
+    )
+
+    joined = "".join(cue.text for cue in parse_srt_cues(output))
+    assert "那你今晚不是要住她家了" in joined
+    assert "那你今晚要住她家了" not in joined
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+
+
+def test_aligned_sc_does_not_drop_real_missing_gap_for_incidental_nl_repeat():
+    """相邻句偶然出现短 N/L token，不足以声明整个 authority 前缀已念过。"""
+    from src.autoslice.chat_repair import _aligned_span_replacements
+
+    result = _aligned_span_replacements(
+        "一般不是LLNN吗",
+        ["一般不是NN吗"],
+        prev_context="刚才说的是NNLL",
+    )
+
+    assert result is not None
+    replacements, alignment = result
+    assert replacements == ["一般不是LLNN吗"]
+    assert "context_owned_internal_authority_gap" not in alignment
+
+
+def test_aligned_sc_preserves_nl_repetition_and_mid_read_interjections():
+    """N/L 公式本身会复读；无 authority 缺字时不得删错相同 token。"""
+    from src.autoslice.chat_repair import _aligned_span_replacements
+
+    before = ["都是NNLL一般不是", "NNLLHHB或者NN吗"]
+    result = _aligned_span_replacements(
+        "都是NNLL一般不是LLNN吗",
+        before,
+        prev_context="前一句也提过NNLL",
+    )
+
+    assert result is not None
+    replacements, alignment = result
+    assert replacements == before
+    assert alignment["preserved_span_interjections"] == ["NN", "HHB或者"]
 
 
 def test_aligned_sc_deduplicates_only_surplus_title_close_at_splice():

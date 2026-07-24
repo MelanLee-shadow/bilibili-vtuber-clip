@@ -28,7 +28,27 @@ hash-bound 人工 end 只表示“人工已确认至少要保留到这里”的*
 所有 talk 包——包括带人工 end 的恢复包——都必须运行并通过完整
 `boundary_semantic_review`，同时通过确定性 cue/syntax 门与上述四命题。人工下界与语义建议
 都必须原样绑定进 boundary audit 与 StoryContract；缺失、推荐 cue 不在原 cue grid、
-越过 30 秒上限、四命题任一不成立或最终字节没有 materialize 推荐终点均拒发。
+越过当前 spec 的 `boundary_repair_extend_cap_ms`、四命题任一不成立或最终字节没有
+materialize 推荐终点均拒发。正常首轮 cap 为 30 秒；只有有界重试才可把同一 spec 的 cap
+提升到 60 秒，不能另开无上限扩窗。
+
+reviewer 的 `evidence_cue_indexes` 必须是该次 hash-bound request 中实际展示的 `cues` 的非空
+子集；引用完整 cue grid 中未展示的行不构成证据并报 `BOUNDARY_EVIDENCE_CUES_INVALID`。
+当 reviewer 声明 `next_topic_separated=true` 时，至少一条 evidence cue 必须位于它推荐的
+endpoint **之后**，用于直接见证下一话题；只有推荐点之前的证据必须报
+`BOUNDARY_NEXT_TOPIC_WITNESS_MISSING`。候选的 hash-bound `clip_context_prompt` 按
+[40-subtitle-text.md](40-subtitle-text.md) 的完整 18,000 字预算原样展示，不能先截成 12,000
+字再让 reviewer 判断；超预算或可见 cue 窗超限均 fail closed。
+
+semantic PASS 只对它实际推荐的 endpoint 有效。最终 snap/repair 后必须生成 PASS 的
+`talk-boundary-final-endpoint-binding.v1`：`recommended_end_cue_index` 必须等于唯一的最终
+closure cue，`recommended_end_ms` 必须等于 `final_snapped_end_ms`，同时绑定 semantic request
+SHA、最终区间和 closure 文本 SHA。若 snap 或后续 repair 改变 endpoint，旧 PASS 不能沿用；
+只能在原有 cap 内有界重审/重试，仍不一致则以
+`BOUNDARY_SEMANTIC_ENDPOINT_CUE_MISMATCH` /
+`BOUNDARY_SEMANTIC_ENDPOINT_MS_MISMATCH` 阻断。实际生产入口必须把
+`boundary_repair_extend_cap_ms` 只接到边界/终审调用；接线缺失或误接到相邻实体 authority
+阶段属于架构失败，并由 production-entry seam test 固定。
 
 ## 冻结的 required owner
 
@@ -40,7 +60,8 @@ hash-bound 人工 end 只表示“人工已确认至少要保留到这里”的*
 旧候选边界若排除了 required owner，唯一合法结果是扩展边界、重新通过语义闭环和确定性门，
 或以 `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 阻断；不得把该 owner 在裁切后降级成
 `NOT_REQUIRED`、`OUTSIDE_DELIVERY` 或普通 superseded 项。边界扩展仍受原语义 search origin
-和 repair cap 约束；owner 下界本身不是把故事无限延长的授权，cap 内找不到干净闭环就拒发。
+和当前 spec 的 repair cap 约束；owner 下界本身不是把故事无限延长的授权，cap 内找不到干净
+闭环就拒发。
 
 VAD 只描述物理连续性：通过 source/语义闭环后，“切点后仍有人声”只记非语义告警，
 不得触发一直延到下一静音/下一 cue 的盲扩展；句法硬尾（如“因为”“跟第……”）仍阻断。

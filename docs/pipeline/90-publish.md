@@ -41,6 +41,16 @@
 执行前必须确认当前 source 已部署到 `free`，目标修复包通过本页发布准入，并先完成真实
 dry plan；本地存在代码/测试不等于 production 已可用，也不等于五条线上稿件已经修复。
 
+same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie_pairs`：
+`{cookie_info:{cookies:[…]}}` 与 `{data:{cookie_info:{cookies:[…]}}}` 两种真实形态都按
+唯一 schema 严格解析；根节点/字段/条目异常、两形态同时出现、空值、重复 cookie 名或缺
+`bili_jct` 都在网络请求前 fail closed，且错误不得回显 secret。`biliup append` 另由显式
+`--biliup-cookie-json` 提供 CLI 所需的 top-level `cookie_info` 文件，不能把 app 嵌套形态暗中
+改写后复用。当前默认分别是 API `--cookie-json /opt/bilive/app/cookie.json` 与 CLI
+`--biliup-cookie-json /opt/bilive/app/tmp_manual_upload/biliup_cookies.json`；通过 parser 只
+证明文件结构，执行前仍必须读回已部署 CLI/模块版本并验证当前登录态，本地双形态测试不能
+代替 production login。
+
 1. `repair-plan --manifest … --bvid … --out … --journal …` 先重跑 manifest/audit，再只读
    Creator/public/exact section；只接受同 BVID/aid、公开 state=0、Creator 恰一 P、public 与
    section CID 同一且 section membership 恰一条。plan 与初始 journal 都 create-only，绑定

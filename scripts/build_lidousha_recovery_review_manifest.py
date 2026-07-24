@@ -19,12 +19,17 @@ from pathlib import Path
 from typing import Any
 
 from src.autoslice.cover_route_evidence import validate_cover_route_decision
+from src.autoslice.recovery_title_authority import (
+    RecoveryTitleAuthorityError,
+    validate_recovery_title_authority,
+)
 
 
 MANIFEST_SCHEMA = "lidousha-review-package.v1"
 EXACT_CONTRACT_MODE = "EXACT_CANDIDATE_SET_NO_BACKFILL"
 DELIVERED_STATUSES = {"ok", "review_ready"}
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
+SHA256_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 
 
 class ManifestBuildError(ValueError):
@@ -47,6 +52,11 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
+
+
+def _matches_sha256(path: Path, expected: object) -> bool:
+    match = SHA256_RE.fullmatch(str(expected or ""))
+    return bool(match and _sha256(path).removeprefix("sha256:") == match.group(1))
 
 
 def _required_file(root: Path, name: str) -> Path:
@@ -99,7 +109,14 @@ def _story_candidate_id(record: dict[str, Any]) -> str:
 
 
 def _verify_artifact_hashes(
-    record: dict[str, Any], *, video: Path, cover: Path, subtitle: Path
+    record: dict[str, Any],
+    *,
+    video: Path,
+    cover: Path,
+    subtitle: Path,
+    speaker_srt: Path,
+    speaker_ass: Path,
+    chat_authority: dict[str, Any],
 ) -> None:
     artifact_hashes = record.get("artifact_hashes")
     if not isinstance(artifact_hashes, dict):
@@ -117,6 +134,20 @@ def _verify_artifact_hashes(
         artifact_hashes.get("subtitle_sha256"),
     }:
         raise ManifestBuildError(f"subtitle hash drift: {subtitle}")
+    if artifact_hashes.get("ass_sha256") != _sha256(speaker_ass):
+        raise ManifestBuildError(f"speaker ASS hash drift: {speaker_ass}")
+    if not _matches_sha256(
+        speaker_srt, chat_authority.get("final_speaker_srt_sha256")
+    ):
+        raise ManifestBuildError(
+            f"speaker SRT differs from chat authority: {speaker_srt}"
+        )
+    if not _matches_sha256(
+        speaker_ass, chat_authority.get("speaker_ass_sha256")
+    ):
+        raise ManifestBuildError(
+            f"speaker ASS differs from chat authority: {speaker_ass}"
+        )
 
 
 def _cover_route_summary(generation: dict[str, Any]) -> dict[str, Any]:
@@ -233,6 +264,12 @@ def build_manifest(
             package_root, f"{stem}.cover.route-background.png"
         )
         subtitle = _required_file(package_root, f"{stem}.srt")
+        speaker_srt = _required_file(
+            package_root, f"{stem}.speaker.srt"
+        )
+        speaker_ass = _required_file(
+            package_root, f"{stem}.speaker.ass"
+        )
         clip_context = _required_file(package_root, f"{stem}.clip-context.json")
         regression = _required_file(
             package_root, f"{stem}.subtitle-regression.json"
@@ -240,8 +277,17 @@ def build_manifest(
         chat_authority = _required_file(
             package_root, f"{stem}.chat-authority.json"
         )
+        chat_authority_payload = _load_json(chat_authority)
+        publish = _required_file(package_root, f"{stem}.publish.json")
+        publish_payload = _load_json(publish)
         _verify_artifact_hashes(
-            record, video=video, cover=cover, subtitle=subtitle
+            record,
+            video=video,
+            cover=cover,
+            subtitle=subtitle,
+            speaker_srt=speaker_srt,
+            speaker_ass=speaker_ass,
+            chat_authority=chat_authority_payload,
         )
         generation = _record_generation(record)
         if generation.get("final_cover_sha256") != _sha256(cover):
@@ -264,14 +310,58 @@ def build_manifest(
                 f"cover title replay artifact hash drift: {candidate_id}"
             )
         title = _record_title(record)
+        recovery_title_authority = record.get(
+            "recovery_title_authority"
+        )
+        if recovery_title_authority is not None:
+            try:
+                recovery_title_authority = (
+                    validate_recovery_title_authority(
+                        recovery_title_authority,
+                        candidate_id=candidate_id,
+                        expected_title=title,
+                    )
+                )
+            except RecoveryTitleAuthorityError as exc:
+                raise ManifestBuildError(
+                    f"recovery public title authority invalid: "
+                    f"{candidate_id}: {exc}"
+                ) from exc
+            publish_staging = record.get("publish_staging")
+            if (
+                not isinstance(publish_staging, dict)
+                or publish_staging.get("recovery_title_authority")
+                != recovery_title_authority
+                or publish_payload.get("recovery_title_authority")
+                != recovery_title_authority
+                or publish_payload.get("title") != title
+            ):
+                raise ManifestBuildError(
+                    f"recovery public title binding drift: {candidate_id}"
+                )
+        artifact_hashes = record.get("artifact_hashes")
+        if (
+            not isinstance(artifact_hashes, dict)
+            or artifact_hashes.get("publish_draft_sha256")
+            != _sha256(publish)
+        ):
+            raise ManifestBuildError(
+                f"publish draft hash drift: {candidate_id}"
+            )
         burned_preview = record.get("burned_preview")
-        ass_path = (
+        burned_ass_path = (
             Path(str(burned_preview.get("ass_path") or ""))
             if isinstance(burned_preview, dict)
             else Path()
         )
-        if not ass_path.is_file():
-            raise ManifestBuildError(f"record ASS path missing: {ass_path}")
+        if not burned_ass_path.is_file():
+            raise ManifestBuildError(
+                f"record ASS path missing: {burned_ass_path}"
+            )
+        if _sha256(burned_ass_path) != _sha256(speaker_ass):
+            raise ManifestBuildError(
+                f"packaged speaker ASS differs from burned ASS: {candidate_id}"
+            )
         item = {
             "stem": stem,
             "candidate_id": candidate_id,
@@ -284,12 +374,20 @@ def build_manifest(
             "cover_route_background": cover_route_background.name,
             "subtitle_srt": subtitle.name,
             "record": record_path.name,
+            "publish_json": publish.name,
             "clip_context": clip_context.name,
             "subtitle_regression_audit": regression.name,
             "chat_authority": chat_authority.name,
-            "ass_path": str(ass_path.resolve()),
+            "speaker_srt": speaker_srt.name,
+            "speaker_srt_sha256": _sha256(speaker_srt),
+            "ass_path": speaker_ass.name,
+            "ass_sha256": _sha256(speaker_ass),
             "cover_route_summary": _cover_route_summary(generation),
         }
+        if recovery_title_authority is not None:
+            item["recovery_title_authority"] = (
+                recovery_title_authority
+            )
         baseline = package_root / f"{stem}.redelivery-baseline.json"
         if baseline.is_file() and not baseline.is_symlink():
             item["redelivery_baseline"] = baseline.name

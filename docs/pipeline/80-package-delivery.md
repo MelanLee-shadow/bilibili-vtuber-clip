@@ -8,6 +8,16 @@
   所有 applied/satisfied source truth owner 与未被更高权威覆盖的 reviewed baseline mapping
   必须在最终 clean SRT 和 speaker SRT 的原时间窗逐项存活；文字/说话人 ASS 也必须绑定同一
   最终文本与 hash。低权威 repair 只有在 owner 已通过后才能记为 superseded。
+- current/story-contract 的 talk/recovery item 必须把 `speaker_srt`、`ass_path` 两份真实字节
+  连同 `speaker_srt_sha256`、`ass_sha256` 放进 package。两条路径都只能指向 package-relative
+  regular file；绝对路径、越界、缺文件以及路径任一层 symlink 都拒绝。song lane 不进入这条
+  talk speaker gate。
+- `review_package_ass_audit.py` 不能只看 ASS 存在或 hash：speaker SRT 还须匹配
+  chat-authority 的 `final_speaker_srt_sha256`，ASS 须同时匹配 record
+  `artifact_hashes.ass_sha256` 与 chat-authority `speaker_ass_sha256`。auditor 再从包内
+  speaker SRT 按生产同一 `_layout_cue_for_display`、speaker ASS escaping 与厘秒 rounding
+  重建全部 `Dialogue` events；event 数、start/end、完整文本和 LDS/GUEST style 必须逐项精确
+  相等，缺失/非法 Dialogue 或任一投影漂移都阻断。
 - 最终 SRT 先过 `lidousha-srt-release-policy.v1`：每个 block 必须被严格解析，连续编号、
   合法且正向的时间、至少 300ms、单调无 overlap、非空/非孤立标点/非单个汉字、媒体边界
   合法。producer、package auditor 与 uploader 各自重跑，不能复用一次自报结果。
@@ -24,18 +34,25 @@
 - talk 包还必须携带并重算 `.clip-context.json`；record 的 artifact hash、StoryContract
   `clip_context_binding` 与 sidecar 内容必须三方一致。整片 draft 在 sidecar 内完整保存
   （60,000 字硬上限、禁止截断）；18,000 字 supplemental prompt 必须从 sidecar 重新渲染并与
-  StoryContract 逐字相等。topic resolution/scoped graph context 也必须留在同一 digest 内。
+  StoryContract 逐字相等，并以完整字节送入 boundary/final review；任何 12,000 字兼容切片、
+  超预算或 prompt 重渲染漂移都拒发。topic resolution/scoped graph context 也必须留在同一
+  digest 内。
   边界同理：human source endpoint
   只作为下界并与 boundary audit 精确一致，**同时**完整 semantic review 必须为 PASS，
-  推荐 end 已实际 materialize，四命题与 cue/syntax 门全部通过。
+  推荐 end 已实际 materialize，四命题与 cue/syntax 门全部通过。最终 semantic review 还必须
+  携带 PASS 的 `talk-boundary-final-endpoint-binding.v1`，证明推荐 cue/ms 与最终唯一 closure
+  cue / snapped endpoint 完全一致；缺失、BLOCK 或 repair 后沿用旧 endpoint 回执均拒发。
 - chat authority 的 `frozen-boundary-owner-contract.v1` 与 record boundary audit 必须携带
   完全相同的 required owner 列表；所有 owner window 都在最终边界内，
   `required_boundary_owner_verification=PASS` 且
   `final_boundary_required_exclusion_count=0`。裁掉 owner 后把它标成成片外不构成通过。
 - correction pass 的 `final-review-audit.v1` 不是 package 放行证据。package 必须携带
   `final-review-audit.v2`，其 `reviewed_srt_sha256` 精确绑定包内最终 SRT，discovery 完整、
-  finding 合同合法且为空、release gate PASS、boundary semantic PASS；provider/JSON 失败、
-  null/non-list/all-invalid findings 或任何未决项都阻断。
+  finding 合同合法且为空、release gate PASS、boundary semantic PASS，并携带 PASS 的
+  `subtitle-correction-mutation-audit.v1` 与上述 final endpoint binding。后两项由 exact-final
+  contract 强制；因此“第二遍零 finding”不能替代 correction mutation authority，普通 semantic
+  PASS 也不能替代最终 endpoint 精确绑定。provider/JSON 失败、null/non-list/all-invalid
+  findings、任何未决项、缺失回执或 BLOCK 都阻断。
 - 封面审计按 `cover_generation.route_decision.actual_treatment` 分支验真：所有路线都验
   最终 cover SHA 与 `lidousha-cover-rendered-text-pixels.v3`。包内必须同时有 final cover、
   `.cover.pre-overlay.png`、`.cover.title-mask.png`、`.cover.route-background.png`；auditor
@@ -61,6 +78,13 @@
   部分 delivery 或报告层旧状态都不能盖过 incomplete exact closure。只有 closure COMPLETE
   才能投影 `review_ready` 并进入本地覆盖。
 - exact recovery 重跑结束后必须用 `scripts/build_lidousha_recovery_review_manifest.py` 从最终 state 与 record **整份重建** `review_manifest.json`，禁止复用/手补上一轮清单。审计器必须比较 manifest item 与 record 的 candidate/title，并在存在 `cover_route_attestations` 时重验 reference/final hash、method、完整 route decision 与 reference authority；任一旧标题、旧封面 hash 或旧路由证据都要阻断上传。
+- recovery 保留已发布 same-BV 标题时，包内必须额外携带 `.publish.json` regular file，并以
+  record `artifact_hashes.publish_draft_sha256` 绑定。record 顶层、record
+  `publish_staging`、publish draft 与 manifest item 必须携带同一个
+  `recovery-public-title-authority.v1`；auditor 会重新读取其 repo-relative
+  `authorized-upload-public-verify.v2`、复算源 SHA/authority SHA，并逐字比较 candidate、
+  title、BVID/AID/CID。只有其中一面有 authority、裸标题相等但缺 receipt、或 publish hash
+  漂移都拒发。Ivan manual title 和普通自动标题没有该 authority 时不伪造此字段。
 - exact-no-backfill 合同中的入选项失败时必须保留真实终态（`failed`、`boundary_unrepairable`、
   `speaker_review_required` 或 `speaker_evidence_insufficient`），并记录“合同禁止补位”；不得把它改写成代表可由候补替换的
   `candidate_rejected`。这样相关 failure-scoped fingerprint 变化后仍可自动重试。对于此规则上线前

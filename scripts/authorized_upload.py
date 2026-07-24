@@ -33,6 +33,7 @@ from scripts.audit_lidousha_review_package import (  # noqa: E402
     AUDIT_SCHEMA_VERSION,
     audit_package,
 )
+from src.autoslice import bilibili_member_api as member_api  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
     BilibiliRepairAdapter,
@@ -51,12 +52,14 @@ from src.autoslice.title_policy import (  # noqa: E402
     publish_title_policy_violations,
 )
 
+CookieSchemaError = member_api.CookieSchemaError
 DEFAULT_BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 DEFAULT_LEDGER = DEFAULT_BASE / "reports" / "upload_ledger.jsonl"
 DEFAULT_REPAIR_LEDGER = DEFAULT_BASE / "reports" / "same_bv_repair_ledger.jsonl"
 DEFAULT_UPLOAD_LOCK = DEFAULT_BASE / "upload.lock"
 DEFAULT_UPLOADER = "/opt/bilive/app/tmp_manual_upload/do_upload.sh"
 DEFAULT_COOKIE_JSON = Path("/opt/bilive/app/cookie.json")
+DEFAULT_REPAIR_BILIUP_COOKIE_JSON = member_api.DEFAULT_BILIUP_COOKIES
 
 # Season (合集) policy — membership is part of the publish (Ivan 2026-07-20).
 # The LANE is a deterministic choke point on the frozen title: the song catalog
@@ -495,10 +498,9 @@ def _build_season_http(cookie_json: Path):
     ``http(url, data=None, is_json=False) -> dict`` — member.* endpoints get the
     cookie jar; the public view/tags API only needs a browser UA.  Cookie values
     are never printed or embedded in results."""
-    raw = json.loads(Path(cookie_json).read_text(encoding="utf-8"))
-    cookies = raw["data"]["cookie_info"]["cookies"]
-    jar = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
-    csrf = next(c["value"] for c in cookies if c["name"] == "bili_jct")
+    session = member_api.BiliSession(cookie_path=cookie_json)
+    jar = session.cookie_header
+    csrf = session.csrf
 
     def http(url: str, data: dict | None = None, is_json: bool = False) -> dict:
         headers = {"User-Agent": _BROWSER_UA}
@@ -1713,14 +1715,12 @@ def season_add(args: argparse.Namespace) -> int:
     return _run_season_step(manifest, manifest_path, bvid, args)
 
 
-def _same_bv_adapter(cookie_json: Path) -> BilibiliRepairAdapter:
-    """Build the repair adapter from the same authenticated read surfaces."""
-
-    from src.autoslice.bilibili_member_api import BiliSession
+def _same_bv_adapter(cookie_json: Path, biliup_cookie_json: Path) -> BilibiliRepairAdapter:
+    """Build repair reads and biliup append from their explicit cookie files."""
 
     http, _csrf = _build_season_http(cookie_json)
     return BilibiliRepairAdapter(
-        session=BiliSession(cookie_path=cookie_json),
+        session=member_api.BiliSession(cookie_path=cookie_json, biliup_cookie_path=biliup_cookie_json),
         http=http,
         view_url=VIEW_API,
         tags_url=TAGS_API,
@@ -1745,7 +1745,7 @@ def repair_plan(args: argparse.Namespace) -> int:
         return 2
     lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
     with exclusive_upload_lock(lock_path):
-        adapter = _same_bv_adapter(Path(args.cookie_json))
+        adapter = _same_bv_adapter(Path(args.cookie_json), Path(args.biliup_cookie_json))
         season = manifest.get("season") or {}
         section_id = season.get("section_id")
         if not isinstance(section_id, int):
@@ -1821,7 +1821,7 @@ def repair_run(args: argparse.Namespace) -> int:
                 plan_path=plan_path,
                 journal=journal,
                 manifest=manifest,
-                adapter=_same_bv_adapter(Path(args.cookie_json)),
+                adapter=_same_bv_adapter(Path(args.cookie_json), Path(args.biliup_cookie_json)),
                 wait_seconds=args.wait,
                 poll_seconds=args.poll,
             )
@@ -1953,6 +1953,7 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
     rp.add_argument("--lock", default=None, help="shared upload/repair lock")
     rp.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON))
+    rp.add_argument("--biliup-cookie-json", default=str(DEFAULT_REPAIR_BILIUP_COOKIE_JSON), help="biliup CLI cookie file (must use top-level cookie_info schema)")
     rp.add_argument(
         "--dry-run",
         action="store_true",
@@ -1968,6 +1969,7 @@ def main(argv: list[str] | None = None) -> int:
     rr.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
     rr.add_argument("--lock", default=None, help="shared upload/repair lock")
     rr.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON))
+    rr.add_argument("--biliup-cookie-json", default=str(DEFAULT_REPAIR_BILIUP_COOKIE_JSON), help="biliup CLI cookie file (must use top-level cookie_info schema)")
     rr.add_argument("--wait", type=float, default=900.0)
     rr.add_argument("--poll", type=float, default=15.0)
     rr.add_argument(
@@ -1988,7 +1990,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (UploadLockBusy, RepairError) as exc:
+    except (UploadLockBusy, RepairError, CookieSchemaError) as exc:
         print(f"REFUSE: {exc}", file=sys.stderr)
         return 4
 

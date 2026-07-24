@@ -4,7 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from scripts.build_lidousha_recovery_review_manifest import build_manifest
+import pytest
+
+from scripts.build_lidousha_recovery_review_manifest import (
+    ManifestBuildError,
+    build_manifest,
+)
 from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
@@ -30,16 +35,44 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
         ("cover.pre-overlay.png", b"pre-overlay"),
         ("cover.route-background.png", b"route-background"),
         ("srt", b"1\n00:00:00,000 --> 00:00:01,000\nhello\n"),
+        (
+            "speaker.srt",
+            "1\n00:00:00,000 --> 00:00:01,000\n[李豆沙] hello\n".encode(),
+        ),
+        (
+            "speaker.ass",
+            b"[Events]\n"
+            b"Dialogue: 0,0:00:00.00,0:00:01.00,LDS,,0,0,0,,hello\n",
+        ),
         ("clip-context.json", b"{}\n"),
         ("subtitle-regression.json", b"{}\n"),
         ("chat-authority.json", b"{}\n"),
+        (
+            "publish.json",
+            json.dumps(
+                {
+                    "title": "新标题",
+                    "recovery_title_authority": None,
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+        ),
         ("redelivery-baseline.json", b"{}\n"),
     ):
         path = root / f"{stem}.{suffix}"
         path.write_bytes(payload)
         files[suffix] = path
+    files["chat-authority.json"].write_text(
+        json.dumps(
+            {
+                "final_speaker_srt_sha256": _sha(files["speaker.srt"]),
+                "speaker_ass_sha256": _sha(files["speaker.ass"]),
+            }
+        ),
+        encoding="utf-8",
+    )
     ass = tmp_path / "final.ass"
-    ass.write_text("[Events]\n", encoding="utf-8")
+    ass.write_bytes(files["speaker.ass"].read_bytes())
     story_contract = {
         "candidate_id": candidate_id,
         "selection_hook": "当面对质",
@@ -92,6 +125,8 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
             "burned_video_sha256": _sha(files["mp4"]),
             "cover_sha256": _sha(files["cover.png"]),
             "subtitle_sha256": _sha(files["srt"]),
+            "ass_sha256": _sha(files["speaker.ass"]),
+            "publish_draft_sha256": _sha(files["publish.json"]),
         },
         "burned_preview": {"ass_path": str(ass)},
     }
@@ -131,6 +166,39 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
     assert first["items"][0]["cover_route_summary"]["actual_treatment"] == (
         "screenshot_direct"
     )
+    assert first["items"][0]["ass_path"] == f"{stem}.speaker.ass"
+    assert first["items"][0]["ass_sha256"] == _sha(
+        files["speaker.ass"]
+    )
+    assert first["items"][0]["speaker_srt"] == f"{stem}.speaker.srt"
+    assert first["items"][0]["speaker_srt_sha256"] == _sha(
+        files["speaker.srt"]
+    )
+    assert first["items"][0]["publish_json"] == f"{stem}.publish.json"
+
+    original_ass = files["speaker.ass"].read_bytes()
+    files["speaker.ass"].write_bytes(original_ass + b"; drift\n")
+    with pytest.raises(ManifestBuildError, match="speaker ASS hash drift"):
+        build_manifest(
+            package_root=root,
+            state=state,
+            deployed_commit="a" * 40,
+            created_at="2026-07-23T00:30:00+00:00",
+        )
+    files["speaker.ass"].write_bytes(original_ass)
+
+    original_speaker_srt = files["speaker.srt"].read_bytes()
+    files["speaker.srt"].write_bytes(original_speaker_srt + b"\n")
+    with pytest.raises(
+        ManifestBuildError, match="speaker SRT differs from chat authority"
+    ):
+        build_manifest(
+            package_root=root,
+            state=state,
+            deployed_commit="a" * 40,
+            created_at="2026-07-23T00:45:00+00:00",
+        )
+    files["speaker.srt"].write_bytes(original_speaker_srt)
 
     record["publish_staging"]["title"] = "重跑后的标题"
     record_path.write_text(json.dumps(record), encoding="utf-8")

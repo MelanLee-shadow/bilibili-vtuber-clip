@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -59,6 +60,25 @@ def _boundary_pass() -> dict:
         "schema_version": "talk-boundary-semantic-review.v1",
         "status": "PASS",
         "reason_codes": [],
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "recommended_end_cue_index": 3,
+            "recommended_end_ms": 19_000,
+            "final_closure_cue_index": 3,
+            "final_snapped_end_ms": 19_000,
+            "reason_codes": [],
+        },
+    }
+
+
+def _correction_pass() -> dict:
+    return {
+        "schema_version": "final-review-audit.v1",
+        "status": "CLEAN",
+        "applied_count": 0,
+        "findings": [],
+        "boundary_semantic_review": _boundary_pass(),
     }
 
 
@@ -75,7 +95,7 @@ def test_exact_final_release_review_binds_explicit_clean_response(
 
     receipt = pipeline._run_exact_final_release_review(
         srt_text=srt,
-        correction_audit={"boundary_semantic_review": _boundary_pass()},
+        correction_audit=_correction_pass(),
         adapters=_adapters(),
         authoritative_chat=(),
         selection_hook="完整回指",
@@ -90,6 +110,103 @@ def test_exact_final_release_review_binds_explicit_clean_response(
     )
 
 
+def test_exact_release_blocks_legacy_ungrounded_correction_even_if_rescan_empty(
+    monkeypatch,
+):
+    """An empty second reviewer pass cannot launder an earlier spelling edit."""
+
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: '{"findings":[]}'),
+    )
+    correction = _correction_pass()
+    correction["status"] = "APPLIED"
+    correction["applied_count"] = 1
+    correction["findings"] = [
+        {
+            "cue_index": 1,
+            "kind": "context",
+            "suspect": "毁神",
+            "suggestion": "绘声",
+            "routed": "homophone_fix",
+        }
+    ]
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("绘声来了", "第二句", "第三句"),
+        correction_audit=correction,
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+    )
+
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["findings"] == []
+    assert receipt["correction_mutation_authority"]["status"] == "BLOCK"
+    assert "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID" in (
+        receipt["reason_codes"]
+    )
+    with pytest.raises(
+        FinalReviewContractError,
+        match="FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID",
+    ):
+        validate_final_review_release(receipt)
+
+
+def test_release_contract_requires_final_boundary_endpoint_binding(monkeypatch):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: '{"findings":[]}'),
+    )
+    correction = _correction_pass()
+    del correction["boundary_semantic_review"]["final_endpoint_binding"]
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"),
+        correction_audit=correction,
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+    )
+
+    with pytest.raises(
+        FinalReviewContractError,
+        match="FINAL_REVIEW_BOUNDARY_ENDPOINT_BINDING_INVALID",
+    ):
+        validate_final_review_release(receipt)
+
+
+def test_release_contract_recomputes_final_boundary_endpoint_equality():
+    receipt = {
+        "schema_version": "final-review-audit.v2",
+        "status": "CLEAN",
+        "release_gate": "PASS",
+        "reviewed_srt_sha256": "sha256:" + "a" * 64,
+        "discovery": {"status": "COMPLETE"},
+        "correction_mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+        },
+        "findings": [],
+        "validated_finding_count": 0,
+        "boundary_semantic_review": _boundary_pass(),
+    }
+    binding = receipt["boundary_semantic_review"]["final_endpoint_binding"]
+    binding["final_closure_cue_index"] = 4
+    binding["final_snapped_end_ms"] = 21_000
+
+    with pytest.raises(
+        FinalReviewContractError,
+        match="FINAL_REVIEW_BOUNDARY_ENDPOINT_BINDING_MISMATCH",
+    ):
+        validate_final_review_release(receipt)
+
+
 def test_exact_final_release_review_provider_failure_is_a_block(monkeypatch):
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
     def broken(_prompt):
@@ -100,7 +217,7 @@ def test_exact_final_release_review_provider_failure_is_a_block(monkeypatch):
     )
     receipt = pipeline._run_exact_final_release_review(
         srt_text=_srt("第一句", "第二句", "第三句"),
-        correction_audit={"boundary_semantic_review": _boundary_pass()},
+        correction_audit=_correction_pass(),
         adapters=_adapters(),
         authoritative_chat=(),
         selection_hook="",
@@ -139,7 +256,7 @@ def test_exact_final_release_review_unresolved_finding_is_a_block(
     )
     receipt = pipeline._run_exact_final_release_review(
         srt_text=_srt("第一句", "第二句", "第三句"),
-        correction_audit={"boundary_semantic_review": _boundary_pass()},
+        correction_audit=_correction_pass(),
         adapters=_adapters(),
         authoritative_chat=(),
         selection_hook="",
@@ -150,6 +267,306 @@ def test_exact_final_release_review_unresolved_finding_is_a_block(
     assert receipt["reason_codes"] == ["FINAL_REVIEW_UNRESOLVED_FINDINGS"]
     with pytest.raises(FinalReviewContractError):
         validate_final_review_release(receipt)
+
+
+def test_exact_final_release_review_closes_acoustically_disproven_proposal(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "entity",
+        "suspect": "和",
+        "suggestion": "洛",
+        "proposed_full_cue": "这个是洛天依的联动哦",
+        "repair_class": "source_backed_entity",
+        "base_text_sha256": hashlib.sha256(
+            "这个是和天依的联动哦".encode("utf-8")
+        ).hexdigest(),
+        "why": "下一句出现洛天依",
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+
+    def keep_current(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "SUPPORTED",
+            "proposed_fit": "INCOMPATIBLE",
+            "heard_syllables": "这个是和天依的联动哦",
+        }
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("这个是和天依的联动哦", "洛天依，对哦", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=keep_current,
+    )
+
+    assert receipt["status"] == "CLEAN"
+    assert receipt["findings"] == []
+    assert receipt["validated_finding_count"] == 0
+    assert receipt["resolved_findings"][0]["resolution"] == (
+        "ACOUSTICALLY_DISPROVEN_FINAL_REVIEW_PROPOSAL"
+    )
+    validate_final_review_release(receipt)
+
+
+@pytest.mark.parametrize(
+    ("current", "suspect", "suggestion", "proposed", "repair_class"),
+    [
+        ("毁神来了", "毁神", "绘声", "绘声来了", "phonetic"),
+        (
+            "大恩来了",
+            "大恩",
+            "大N",
+            "大N来了",
+            "source_backed_entity",
+        ),
+    ],
+)
+def test_exact_final_release_review_never_uses_audio_to_choose_orthography(
+    monkeypatch,
+    current,
+    suspect,
+    suggestion,
+    proposed,
+    repair_class,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "entity",
+        "suspect": suspect,
+        "suggestion": suggestion,
+        "proposed_full_cue": proposed,
+        "repair_class": repair_class,
+        "base_text_sha256": hashlib.sha256(
+            current.encode("utf-8")
+        ).hexdigest(),
+        "why": "同音或字母正字法争议",
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+
+    def acoustic_veto(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "SUPPORTED",
+            "proposed_fit": "INCOMPATIBLE",
+        }
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt(current, "第二句", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=acoustic_veto,
+    )
+
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["findings"][0][
+        "exact_release_acoustic_closure_blocked_reason"
+    ] == "ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO"
+    with pytest.raises(FinalReviewContractError):
+        validate_final_review_release(receipt)
+
+
+def test_exact_final_release_review_does_not_apply_new_mutation(monkeypatch):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "坏词",
+        "suggestion": "好词",
+        "proposed_full_cue": "好词留在这里",
+        "repair_class": "phonetic",
+        "base_text_sha256": hashlib.sha256(
+            "坏词留在这里".encode("utf-8")
+        ).hexdigest(),
+        "why": "仍需修改",
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+
+    def prefer_proposed(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "PLAUSIBLE",
+            "proposed_fit": "SUPPORTED",
+            "heard_syllables": "好词留在这里",
+        }
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("坏词留在这里", "第二句", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=prefer_proposed,
+    )
+
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["findings"][0]["exact_release_adjudication"][
+        "repaired"
+    ] is True
+    with pytest.raises(FinalReviewContractError):
+        validate_final_review_release(receipt)
+
+
+def test_exact_final_release_review_does_not_relitigate_verified_human_truth(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "李",
+        "suggestion": "礼",
+        "proposed_full_cue": "礼太多了哈",
+        "repair_class": "phonetic",
+        "base_text_sha256": hashlib.sha256(
+            "李太多了哈".encode("utf-8")
+        ).hexdigest(),
+        "why": "模型想按邻句改字",
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+
+    def verifier_must_not_run(_request):
+        raise AssertionError("verified human truth must win before acoustic review")
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("李太多了哈", "第二句", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=verifier_must_not_run,
+        verified_authority_audit={
+            "source_subtitle_truth_audit": {
+                "status": "APPLIED",
+                "failures": [],
+                "applied": [
+                    {
+                        "truth_id": "too-many-li",
+                        "action": "replace_cue",
+                        "local_windows": [
+                            {"start_ms": 5_000, "end_ms": 9_000}
+                        ],
+                        "declared_output_contract": {
+                            "action": "replace_cue",
+                            "canonical_texts": ["李太多了哈"],
+                            "required_text": "",
+                        },
+                    }
+                ],
+                "satisfied": [],
+            }
+        },
+        timeline_offset_ms=0,
+    )
+
+    assert receipt["status"] == "CLEAN"
+    assert receipt["findings"] == []
+    resolution = receipt["resolved_findings"][0]
+    assert resolution["resolution"] == (
+        "VERIFIED_SOURCE_TRUTH_SUPERSEDES_REVIEW_PROPOSAL"
+    )
+    assert resolution["source_truth_resolution"]["truth_ids"] == [
+        "too-many-li"
+    ]
+    validate_final_review_release(receipt)
+
+
+def test_exact_final_release_review_keeps_unrelated_substring_concern(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "后来",
+        "suggestion": "然后",
+        "proposed_full_cue": "毁神然后走了",
+        "repair_class": "phonetic",
+        "base_text_sha256": hashlib.sha256(
+            "毁神后来走了".encode("utf-8")
+        ).hexdigest(),
+        "why": "人名之外仍有可疑词",
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("毁神后来走了", "第二句", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=None,
+        verified_authority_audit={
+            "source_subtitle_truth_audit": {
+                "status": "APPLIED",
+                "failures": [],
+                "applied": [
+                    {
+                        "truth_id": "huishen-name",
+                        "action": "replace_substring",
+                        "local_windows": [
+                            {"start_ms": 5_000, "end_ms": 9_000}
+                        ],
+                        "declared_output_contract": {
+                            "action": "replace_substring",
+                            "canonical_texts": [],
+                            "required_text": "毁神",
+                        },
+                    }
+                ],
+                "satisfied": [],
+            }
+        },
+        timeline_offset_ms=0,
+    )
+
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["findings"][0]["suspect"] == "后来"
 
 
 def test_post_semantic_entity_stage_never_reverts_name_to_draft_witness(tmp_path):
