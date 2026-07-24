@@ -545,7 +545,10 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
         }
     ]
     kitchen = next(entry for entry in plan["entries"] if entry["candidate_id"] == "promo_220021_125_232")
-    assert kitchen["source_session_anchor_sha256"] == "da5a8b7f8a8a51bbf684f24f608d6ae3db2245e3d61233d0a2efff889d9c0b14"
+    # 2026-07-24: anchor doc re-pinned after the target/donor recut media was
+    # lost to an ENOSPC cleanup; targets now bind the manifest-witnessed
+    # delivered burned finals (audio bit-identical via -c:a copy).
+    assert kitchen["source_session_anchor_sha256"] == "12de048247fcda7c3f6f0006c1296282b6222ada120b1750929cf88a7719f812"
     anchor_path = Path(__file__).resolve().parents[1] / "assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json"
     assert hashlib.sha256(anchor_path.read_bytes()).hexdigest() == kitchen["source_session_anchor_sha256"]
     monologue = next(
@@ -579,24 +582,28 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
         assert source_document["profile_sha256"] == profile_sha256
     assert relay_anchor_document["source_session_id"] == "22966160_20260709-20-30-27"
     assert relay_anchor_document["donor"]["candidate_id"] == "promo_203027_314_479"
-    assert relay_anchor_document["allowed_targets"] == [
-        {
-            "candidate_id": "auto_203027_549_697",
-            "media_path": (
-                "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/"
-                "replacement_recuts/auto_203027_549_697.recut.mp4"
-            ),
-            "media_sha256": (
-                "58d405033a57c9eaeb0cd2f4591603b635d31508472d81e3b8b45e7b8b3f4331"
-            ),
-            "provenance_path": (
-                "/opt/bilive/autoslice/out/2026-07-09/spec_auto_203027_549_697.json"
-            ),
-            "provenance_sha256": (
-                "5d35c1236c0c0472209a66d6ea5c10ff7eb45e94fe77b0ed3644032ba80425a2"
-            ),
-        }
-    ]
+    (relay_target,) = relay_anchor_document["allowed_targets"]
+    assert relay_target["candidate_id"] == "auto_203027_549_697"
+    # 2026-07-24 substitution: the original recut bytes were lost to an
+    # ENOSPC cleanup; the target now binds the manifest-witnessed delivered
+    # burned final (audio bit-identical via -c:a copy), with the original
+    # identity retained inside media_substitution.
+    assert relay_target["media_path"] == (
+        "/opt/bilive/autoslice/repo/lidousha/2026-07-09/"
+        "李豆沙当“传话员”被哑人队友的扭头手.mp4"
+    )
+    assert relay_target["media_sha256"] == (
+        "15cb48e6ee4bd61284be9430d29bb75f36628e85c7a797788d999b74cd69016a"
+    )
+    assert relay_target["provenance_path"] == (
+        "/opt/bilive/autoslice/out/2026-07-09/spec_auto_203027_549_697.json"
+    )
+    assert relay_target["provenance_sha256"] == (
+        "5d35c1236c0c0472209a66d6ea5c10ff7eb45e94fe77b0ed3644032ba80425a2"
+    )
+    assert relay_target["media_substitution"]["original_media_sha256"] == (
+        "58d405033a57c9eaeb0cd2f4591603b635d31508472d81e3b8b45e7b8b3f4331"
+    )
     assert min(
         anchor["enroll_median_score"] for anchor in relay_anchor_document["anchors"]
     ) >= 0.68

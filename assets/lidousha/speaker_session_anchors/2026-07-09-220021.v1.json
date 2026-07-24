@@ -15,20 +15,40 @@
   "allowed_targets": [
     {
       "candidate_id": "promo_220021_125_232",
-      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.recut.mp4",
-      "media_sha256": "05425367920136fc5e91896e6547d728cddf347673426df99fb0cb4084ce38ef",
+      "media_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/奶p的弱项，对着着火的厨房对于如何灭.mp4",
+      "media_sha256": "008963e869e20d005ef7c653894192f50faf47394d51628839455b666e6fc738",
       "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_220021_125_232.json",
-      "provenance_sha256": "b175c55d117ad5fb876aa201ddf93d4361d037afd9e3a6d99c65803c04873ad7"
+      "provenance_sha256": "b175c55d117ad5fb876aa201ddf93d4361d037afd9e3a6d99c65803c04873ad7",
+      "media_substitution": {
+        "reason": "original recut media deleted 2026-07-24 during ENOSPC capacity recovery on free (deleted by Claude before checking anchor references); exact original bytes unrecoverable",
+        "original_media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.recut.mp4",
+        "original_media_sha256": "05425367920136fc5e91896e6547d728cddf347673426df99fb0cb4084ce38ef",
+        "replacement_kind": "delivered_burned_final",
+        "replacement_provenance": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_125_232/replacement_recuts/promo_220021_125_232.upload_manifest.json",
+        "audio_identity": "burn step used -c:a copy: replacement audio track is bit-identical to the original recut audio",
+        "substituted_at": "2026-07-24T18:00:00Z",
+        "substituted_by": "claude-fable-5"
+      }
     }
   ],
   "donor": {
     "candidate_id": "promo_220021_1091_1257",
-    "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.recut.mp4",
-    "media_sha256": "59563b942af7f1e1a534d8e84df1c5990396fc1f2fc9872655d9d70475882933",
+    "media_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/已经7月了，不会打麻将的小李只好给大.mp4",
+    "media_sha256": "6f6d7645fc1a17a4dabf0174c72539b14a5b77c551d211bcba98ae099ada396f",
     "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.recut.srt",
     "text_srt_sha256": "5cf52c08c2bdcebc4566f0eef2831da2063bbf74c3f51ceacdb65e42385b2448",
     "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_220021_1091_1257.json",
-    "provenance_sha256": "a70b9164a471f0c5ba814b2a47258bda5e217d9bc2fa9d230eb329eb7190ee8c"
+    "provenance_sha256": "a70b9164a471f0c5ba814b2a47258bda5e217d9bc2fa9d230eb329eb7190ee8c",
+    "media_substitution": {
+      "reason": "original donor recut media deleted 2026-07-24 during ENOSPC capacity recovery on free (deleted by Claude before checking anchor references); exact original bytes unrecoverable",
+      "original_media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.recut.mp4",
+      "original_media_sha256": "59563b942af7f1e1a534d8e84df1c5990396fc1f2fc9872655d9d70475882933",
+      "replacement_kind": "delivered_burned_final_v2",
+      "replacement_provenance": "/opt/bilive/autoslice/out/2026-07-09/promo_220021_1091_1257/replacement_recuts/promo_220021_1091_1257.upload_manifest.v2.json",
+      "audio_identity": "burn steps use -c:a copy; replacement audio track is bit-identical to the recut audio and duration matches exactly (167.650000s == recut 167650ms), so donor cue timings are unchanged",
+      "substituted_at": "2026-07-24T18:10:00Z",
+      "substituted_by": "claude-fable-5"
+    }
   },
   "anchors": [
     {

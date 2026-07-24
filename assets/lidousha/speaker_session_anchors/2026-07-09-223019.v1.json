@@ -15,10 +15,20 @@
   "allowed_targets": [
     {
       "candidate_id": "promo_223019_374_480",
-      "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.recut.mp4",
-      "media_sha256": "c3fa5252b36763514d6d5151daabe5157a527f7f33708cf5ae4981dda5673ca4",
+      "media_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/温情李姐下播后说肺腑之言，跳舞时自己.mp4",
+      "media_sha256": "1eea217665cc9d3c469cb4d639f6e71aa075d0d95b5561e873975677f2868b03",
       "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_223019_374_480.json",
-      "provenance_sha256": "8a346b7aa273a8eb47545a7d8c1264f3e75a46e166131959dfa51438051da54e"
+      "provenance_sha256": "8a346b7aa273a8eb47545a7d8c1264f3e75a46e166131959dfa51438051da54e",
+      "media_substitution": {
+        "reason": "original recut media deleted 2026-07-24 during ENOSPC capacity recovery on free (deleted by Claude before checking anchor references); exact original bytes unrecoverable",
+        "original_media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.recut.mp4",
+        "original_media_sha256": "c3fa5252b36763514d6d5151daabe5157a527f7f33708cf5ae4981dda5673ca4",
+        "replacement_kind": "delivered_burned_final",
+        "replacement_provenance": "/opt/bilive/autoslice/out/2026-07-09/promo_223019_374_480/replacement_recuts/promo_223019_374_480.upload_manifest.json",
+        "audio_identity": "burn step used -c:a copy: replacement audio track is bit-identical to the original recut audio",
+        "substituted_at": "2026-07-24T18:00:00Z",
+        "substituted_by": "claude-fable-5"
+      }
     }
   ],
   "anchors": [

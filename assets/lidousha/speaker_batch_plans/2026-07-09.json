@@ -44,7 +44,7 @@
       "text_revalidation": false,
       "text_final_srt_sha256": "9444fe0f62cb0a52cd5fa91f3c350d1303b82e98259e46bc3652103b4dc0d598",
       "source_session_anchor_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json",
-      "source_session_anchor_sha256": "da5a8b7f8a8a51bbf684f24f608d6ae3db2245e3d61233d0a2efff889d9c0b14"
+      "source_session_anchor_sha256": "12de048247fcda7c3f6f0006c1296282b6222ada120b1750929cf88a7719f812"
     },
     {
       "review_name": "04_哑人最难",
@@ -77,7 +77,7 @@
       "text_revalidation": false,
       "text_final_srt_sha256": "f96e72bec93d918b253874be36e7bbe945b4c7d2acf9c702a02267538354d07d",
       "source_session_anchor_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_session_anchors/2026-07-09-223019.v1.json",
-      "source_session_anchor_sha256": "1fdfd5c058fcc7b52908b24f517e49b66ec7ab1c429ecee7b2b625a7694e7987"
+      "source_session_anchor_sha256": "55274a66c5759e29c04ca456bc3e52ab9fdfe486790bd5902e5aa854dcc7bc38"
     },
     {
       "review_name": "07_无视灯",
@@ -149,7 +149,7 @@
       "text_revalidation": false,
       "text_final_srt_sha256": "5a257c673ab8a6527d99c6242770ecd51ad01b3baf2eada53529a3ade6a029e9",
       "source_session_anchor_path": "/opt/bilive/autoslice/repo/assets/lidousha/speaker_session_anchors/2026-07-09-203027.v1.json",
-      "source_session_anchor_sha256": "ce0e02ad08f402d22d9b2c4de2bdd3c57c5da528b8d2a3314cc8def46da2176e"
+      "source_session_anchor_sha256": "48e649182ee8358704307531456c302813d4d7dfd6e4ab2800dd95c655011f0c"
     }
   ]
 }

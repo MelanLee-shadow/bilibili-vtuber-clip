@@ -15,20 +15,40 @@
   "allowed_targets": [
     {
       "candidate_id": "auto_203027_549_697",
-      "media_path": "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/replacement_recuts/auto_203027_549_697.recut.mp4",
-      "media_sha256": "58d405033a57c9eaeb0cd2f4591603b635d31508472d81e3b8b45e7b8b3f4331",
+      "media_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/李豆沙当“传话员”被哑人队友的扭头手.mp4",
+      "media_sha256": "15cb48e6ee4bd61284be9430d29bb75f36628e85c7a797788d999b74cd69016a",
       "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_auto_203027_549_697.json",
-      "provenance_sha256": "5d35c1236c0c0472209a66d6ea5c10ff7eb45e94fe77b0ed3644032ba80425a2"
+      "provenance_sha256": "5d35c1236c0c0472209a66d6ea5c10ff7eb45e94fe77b0ed3644032ba80425a2",
+      "media_substitution": {
+        "reason": "original recut media deleted 2026-07-24 during ENOSPC capacity recovery on free (deleted by Claude before checking anchor references); exact original bytes unrecoverable",
+        "original_media_path": "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/replacement_recuts/auto_203027_549_697.recut.mp4",
+        "original_media_sha256": "58d405033a57c9eaeb0cd2f4591603b635d31508472d81e3b8b45e7b8b3f4331",
+        "replacement_kind": "delivered_burned_final",
+        "replacement_provenance": "/opt/bilive/autoslice/out/2026-07-09/auto_203027_549_697/replacement_recuts/auto_203027_549_697.upload_manifest.json",
+        "audio_identity": "burn step used -c:a copy: replacement audio track is bit-identical to the original recut audio",
+        "substituted_at": "2026-07-24T18:00:00Z",
+        "substituted_by": "claude-fable-5"
+      }
     }
   ],
   "donor": {
     "candidate_id": "promo_203027_314_479",
-    "media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.recut.mp4",
-    "media_sha256": "0666a2a366f94b8cb82f18391e96926d4bac98de60242787e2a0709e674eb8c8",
+    "media_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/吵闹熊猫头成为哑巴后顿感被吵到，发出.mp4",
+    "media_sha256": "7c99332efcd39e6b046769d0cb63b28010fb0e703ec0323b2b94ec5270c46042",
     "text_srt_path": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.recut.srt",
     "text_srt_sha256": "cb4b8bac386ce9d510128ecd6ba9bf586dd5483ad8c76172d2fbbab7a56911f1",
     "provenance_path": "/opt/bilive/autoslice/out/2026-07-09/spec_promo_203027_314_479.json",
-    "provenance_sha256": "0a7b3bb8ad5339477ba0d5f8c91b68905772e13ba5f6c699978a634af7e9eaae"
+    "provenance_sha256": "0a7b3bb8ad5339477ba0d5f8c91b68905772e13ba5f6c699978a634af7e9eaae",
+    "media_substitution": {
+      "reason": "original donor recut media deleted 2026-07-24 during ENOSPC capacity recovery on free (deleted by Claude before checking anchor references); exact original bytes unrecoverable",
+      "original_media_path": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.recut.mp4",
+      "original_media_sha256": "0666a2a366f94b8cb82f18391e96926d4bac98de60242787e2a0709e674eb8c8",
+      "replacement_kind": "delivered_burned_final_v2",
+      "replacement_provenance": "/opt/bilive/autoslice/out/2026-07-09/promo_203027_314_479/replacement_recuts/promo_203027_314_479.upload_manifest.v2.json",
+      "audio_identity": "burn steps use -c:a copy; replacement audio track is bit-identical to the recut audio and duration matches exactly (169.366667s == recut 169360ms), so donor cue timings are unchanged",
+      "substituted_at": "2026-07-24T18:10:00Z",
+      "substituted_by": "claude-fable-5"
+    }
   },
   "anchors": [
     {
