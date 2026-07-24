@@ -2050,6 +2050,54 @@
       "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
       "authority": "Ivan-stated-20260724-conversation(该处为李豆沙与南町快速来回问答：李豆沙“是吗？”南町“是啊”李豆沙“是吗？”；旧字幕“听到是吗”与终审提议“你那是吗”均为误听)",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-first-meet-danN-sentence-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 914630,
+      "source_end_ms": 919450,
+      "action": "replace_cue",
+      "text": "竟然就是第一次跟大N老师见面是在她家",
+      "evidence_class": "DUAL_ENGINE_PLUS_ACOUSTIC_ARBITRATION",
+      "authority": "机器证据裁定2026-07-24：BCUT该窗整体误听为喝丹丹（不构成连词证词）；本轮AGY直接转录为跟大N并通过exact-release声学复核；实体大N沿用Ivan既有大N裁定谱系。若Ivan后续听音改判连词，提revision。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-guess-who-de-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 925580,
+      "source_end_ms": 926660,
+      "action": "replace_cue",
+      "text": "他们都猜是谁的",
+      "evidence_class": "DUAL_ENGINE_CONSENSUS",
+      "authority": "机器证据裁定2026-07-24：BCUT与本轮AGY双引擎一致为他们都猜是谁的；此前entity修复将的改呢无任何证人且被exact-release声学裁定拒绝。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-tianlanqing-sc-id-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1955200,
+      "source_end_ms": 1958080,
+      "action": "replace_substring",
+      "replacements": [
+        {
+          "surface": "谢谢天蓝青",
+          "canonical": "谢谢-天蓝青-"
+        }
+      ],
+      "required_text": "-天蓝青-",
+      "evidence_class": "STRUCTURED_CHAT_RECORD",
+      "authority": "SC记录证词2026-07-24：SUPER_CHAT_MESSAGE uname=-天蓝青-（SC正文好漂亮的大姐姐，心里没有李豆沙的位置了，与该处口播完全对应）；打赏者ID写法归平台记录所有。 surface带上下文锚谢谢前缀以保幂等（canonical含surface的裸替换会在已正确文本上产生双连字符）。",
+      "required": true
     }
   ]
 }
