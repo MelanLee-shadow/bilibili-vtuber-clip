@@ -2036,6 +2036,20 @@
       "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
       "authority": "Ivan-stated-20260724-conversation(该处二琳娜皮草致谢为粉丝团灯牌；粉团灯牌为误写。仅此窗口，邻近其他致谢cue的粉丝灯牌未裁定不动)",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nnll-front-rapid-exchange-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 880110,
+      "source_end_ms": 881730,
+      "action": "replace_cue",
+      "text": "是吗？是啊。是吗？",
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+      "authority": "Ivan-stated-20260724-conversation(该处为李豆沙与南町快速来回问答：李豆沙“是吗？”南町“是啊”李豆沙“是吗？”；旧字幕“听到是吗”与终审提议“你那是吗”均为误听)",
+      "required": true
     }
   ]
 }
