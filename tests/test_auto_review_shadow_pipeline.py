@@ -4751,6 +4751,168 @@ def test_relation_auto_route_blocks_before_host_only_ai_when_participants_unveri
     assert route["execution_status"] == "BLOCKED"
 
 
+def test_3573_shaped_dual_route_blocks_without_proof_then_passes_no_crop(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    from src.autoslice import publish_staging
+    from src.autoslice.cover_route_evidence import (
+        validate_cover_route_decision,
+    )
+    from src.autoslice.story_contract import build_story_contract
+
+    reference_path = tmp_path / "3573-dual-reference.png"
+    Image.new("RGB", (1920, 1080), (52, 88, 126)).save(reference_path)
+    reference_sha256 = (
+        "sha256:" + hashlib.sha256(reference_path.read_bytes()).hexdigest()
+    )
+    reference_authority = {
+        "candidate_id": "auto_193450_3573_3665r8",
+        "content_time_ms": 70_000,
+        "source_time_ms": 3_643_070,
+        "source_sha256": "sha256:" + "1" * 64,
+        "reference_png_sha256": reference_sha256,
+        "visible_participant_ids": ["lidousha", "nancho"],
+        "required_treatment": "screenshot_direct",
+        "authority": "reviewed source frame",
+    }
+    contract = build_story_contract(
+        candidate_id="auto_193450_3573_3665r8",
+        selection_hook="李豆沙展示金发有角妹妹",
+        transcript_text="看到男角色只能说不熟。",
+        selection_scorecard={"status": "VALID"},
+        session_relation_authority={
+            "state": "CONFIRMED",
+            "participants": [
+                {
+                    "canonical_id": "lidousha",
+                    "display_name": "李豆沙",
+                },
+                {"canonical_id": "nancho", "display_name": "南町"},
+            ],
+        },
+        cover_reference_authority=reference_authority,
+    )
+    title = "【李豆沙】最包容异性恋的直播间，看到男角色只能说出一句不熟"
+    cover_text = "看到男角色只能说不熟"
+    frame_selection = {
+        "schema": "cover-frame-selection.v1",
+        "status": "SELECTED",
+        "best_ms": 70_000,
+        "candidates": [{"ms": 70_000, "score": 3.2, "emotion": 0.0}],
+        "subject_confident": False,
+        "motion_dispersion_frac": 0.2,
+    }
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="witty_smug",
+        expression_en="mischievous smirk",
+        background_style="cobalt-comic-burst",
+        layout="left-split",
+        hook_color="yellow",
+        is_song=False,
+    )
+
+    def build_generation() -> dict[str, object]:
+        generation: dict[str, object] = {
+            "title": title,
+            "cover_text": cover_text,
+            "story_contract": contract,
+        }
+        treatment, route = publish_staging._build_lidousha_cover_route(
+            cover_generation=generation,
+            story_contract=contract,
+            title=title,
+            cover_text=cover_text,
+            cover_mode="auto",
+            art_direction=art_direction,
+            punch_allowed=False,
+            frame_selection=frame_selection,
+            reference_authority=reference_authority,
+        )
+        assert treatment == "screenshot_direct"
+        assert route["relationship_semantic_evidence"] == []
+        assert route["relationship_visual_required"] is True
+        return generation
+
+    def forbidden_crop(*_args, **_kwargs):
+        raise AssertionError(
+            "confirmed multi-participant cover must preserve the full frame"
+        )
+
+    monkeypatch.setattr(
+        publish_staging, "extract_zoomed_cover_frame", forbidden_crop
+    )
+    real_verification_builder = (
+        publish_staging.build_no_crop_participant_verification
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "build_no_crop_participant_verification",
+        lambda _generation: {},
+    )
+    blocked_generation = build_generation()
+    blocked_ai_dir = tmp_path / "blocked" / "ai"
+    blocked_covers_dir = tmp_path / "blocked" / "covers"
+    blocked_ai_dir.mkdir(parents=True)
+    blocked_covers_dir.mkdir(parents=True)
+    blocked = publish_staging._stage_screenshot_direct_cover(
+        media_path=tmp_path / "unused.mp4",
+        candidate_id="auto_193450_3573_3665r8-blocked",
+        cover_text=cover_text,
+        art_direction=art_direction,
+        frame_selection=frame_selection,
+        reference_path=reference_path,
+        ai_dir=blocked_ai_dir,
+        covers_dir=blocked_covers_dir,
+        cover_generation=blocked_generation,
+    )
+    assert blocked["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert blocked["reason_codes"] == [
+        "RELATION_COVER_FINAL_PARTICIPANTS_UNVERIFIED"
+    ]
+    assert blocked_generation["screenshot_frame"]["crop_applied"] is False
+    assert blocked_generation["route_decision"]["execution_status"] == (
+        "BLOCKED"
+    )
+
+    monkeypatch.setattr(
+        publish_staging,
+        "build_no_crop_participant_verification",
+        real_verification_builder,
+    )
+    ready_generation = build_generation()
+    ready_ai_dir = tmp_path / "ready" / "ai"
+    ready_covers_dir = tmp_path / "ready" / "covers"
+    ready_ai_dir.mkdir(parents=True)
+    ready_covers_dir.mkdir(parents=True)
+    ready = publish_staging._stage_screenshot_direct_cover(
+        media_path=tmp_path / "unused.mp4",
+        candidate_id="auto_193450_3573_3665r8-ready",
+        cover_text=cover_text,
+        art_direction=art_direction,
+        frame_selection=frame_selection,
+        reference_path=reference_path,
+        ai_dir=ready_ai_dir,
+        covers_dir=ready_covers_dir,
+        cover_generation=ready_generation,
+    )
+
+    assert ready["status"] == "AI_COVER_READY", ready
+    assert ready_generation["screenshot_frame"]["crop_applied"] is False
+    assert ready_generation["screenshot_frame"]["zoom"] == 1.0
+    assert ready_generation["screenshot_graphic_poster"][
+        "source_frame_transform"
+    ]["full_frame_preserved"] is True
+    assert ready_generation["final_participant_verification"]["status"] == (
+        "PASS"
+    )
+    assert ready_generation["route_decision"][
+        "final_visible_participant_ids"
+    ] == ["lidousha", "nancho"]
+    assert validate_cover_route_decision(ready_generation)
+
+
 def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):
     """polish 路线：CPA 以裁切后的截图为参考做保真修图，成品用修图版叠梗字。"""
 

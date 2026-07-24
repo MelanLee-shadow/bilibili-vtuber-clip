@@ -7,7 +7,7 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 证据，全部带 `do_not_execute=true`；repair CLI 会 fail-closed 拒绝。当前修复计划必须从
 当前 state/artifact hashes 新建，不能复制历史候选、标题或路径。
 
-- 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动或人物关系梗则先看**关系语义证据**。hash-bound 源帧同时清楚出现双方，并能提供与故事有关的真实人物、物件、文字或情绪证据时，即使运动分数不高，也可优先保留真实互动；源帧没有直接拍到的动作或反转只能由封面文字/版式表达，不能倒推成像素事实。游戏运动高分但 `subject_confident=false`，或累计动作热区超过半屏，即使局部运动块误判为主体，也不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
+- 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动的安全门先读 **StoryContract 的 typed 参与者关系**，关系语义/标题词只解释叙事，不能关闭人物门。hash-bound 源帧同时清楚出现双方，并能提供与故事有关的真实人物、物件、文字或情绪证据时，即使运动分数不高，也可优先保留真实互动；源帧没有直接拍到的动作或反转只能由封面文字/版式表达，不能倒推成像素事实。游戏运动高分但 `subject_confident=false`，或累计动作热区超过半屏，即使局部运动块误判为主体，也不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
@@ -36,9 +36,12 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   静默回退 AI。`auto` 必须落盘 `route + reason_codes + considered evidence`，从最终包可以回答
   “为何选截图/为何选 AI”。
 - 路由证据必须先声明封面的叙事任务（单人表情、双人关系、物件/游戏画面等），再比较候选路线。
-  双人关系任务只有 hash-bound reference 同时看见全部 `required_participant_ids` 才能选择截图；
-  缺任一方时不能把单人图当“双人封面”，也不能静默调用 AI 补人。每条成片必须逐项记录截图直出、
-  截图轻修与 CPA 重绘的接受或拒绝理由，不能用“默认”“自动选择”或功能不可用充当理由。
+  `StoryContract relation_state=CONFIRMED` 且至少两个 `required_participant_ids` 时，typed
+  `lidousha-cover-relationship-visual-safety.v1` 必须独立判定为 `REQUIRED`；标题/hook 是否
+  命中“联动/搭档/霸凌”等关系词只解释叙事，绝不能关闭双人安全门。双人关系任务只有 hash-bound
+  reference 同时看见全部 required IDs 才能选择截图；缺任一方时不能把单人图当“双人封面”，
+  也不能静默调用 AI 补人。每条成片必须逐项记录截图直出、截图轻修与 CPA 重绘的接受或拒绝
+  理由，不能用“默认”“自动选择”或功能不可用充当理由。
 - reference authority 必须把 `source_visible_claims` 与 `narrative_presentation` 分开：
   前者只能列 exact hash-bound 源帧原分辨率人工可见的像素事实，并由
   `lidousha-cover-source-visual-verification.v1` 精确复核 reference hash、人物与逐条声明；

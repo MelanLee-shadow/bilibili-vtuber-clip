@@ -30,6 +30,23 @@ hash-bound 人工 end 只表示“人工已确认至少要保留到这里”的*
 cue/VAD guard 钳到下界之前，仍以 `BOUNDARY_REQUIRED_OWNER_EXCLUDED` /
 `BOUNDARY_DELIVERY_LOWER_BOUND_EXCLUDED` 阻断，不能靠理论 400ms 放行。
 
+source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SHA 绑定同一份
+`talk-boundary-search-scope.v1`，禁止各自从旧 candidate end 重新推导 cap：
+
+- `semantic_search_origin_ms = max(semantic_target_ms, manual_lower_bound_ms,
+  structured_payoff_ms)`；人工下界与已确认 payoff 属于语义搜索起点，可以把搜索原点向后移；
+- `delivery_lower_bound_ms = max(semantic_search_origin_ms, required_owner_end_ms)`；
+  required owner 只抬高交付/评审下界，不能移动搜索原点，也不能把 cap 滚动再加一次；
+- `max_recommended_end_ms = semantic_search_origin_ms + repair_cap_ms`。reviewer 的推荐 end 必须
+  同时不早于交付下界、不晚于该绝对 ceiling；
+- retry 的 source full window 至少覆盖
+  `max_recommended_end_ms + witness_reserve_ms`，再按 piece 映射回绝对 source 时间。reserve
+  只供 reviewer 观察终点后的下一话题，不能扩大合法推荐 endpoint。
+
+scope 缺失、SHA 漂移、resolver 重算不一致、source window 没覆盖 reserve，或 owner 下界已经
+越过绝对 ceiling，都必须 fail closed；不得用旧的 `semantic_target + 60s` 或
+`candidate end + 90s` 近似替代。
+
 所有 talk 包——包括带人工 end 的恢复包——都必须通过**两层不同作用域的语义回执**，同时
 通过确定性 cue/syntax 门与上述四命题。两层不能互相冒充，也不能把第一层的 cue ordinal
 平移后当成最终成片证据。
@@ -78,10 +95,15 @@ final-delivery 回执与 exact-final 放行回执失效，均须从相应层重�
 
 ## 冻结的 required owner
 
-字幕源真值、已审 baseline 覆盖区以及已应用的 story/chat 修复，只要声明
-`required=true`，都必须在定边界前冻结进 `frozen-boundary-owner-contract.v1`，逐项绑定
-`owner_kind + owner_id + local_windows`。最终 boundary audit 必须原样携带同一 owner 列表，
-且每个窗口完全落在最终 `[start,end)` 内。
+只有 `required=true` 的字幕源真值、已审 baseline 覆盖区，以及具备相应 typed ownership
+contract 的已应用 story/chat 修复，才可在定边界前冻结进
+`frozen-boundary-owner-contract.v1`，逐项绑定
+`owner_kind + owner_id + local_windows`。`required:false` source truth 只是 best-effort，
+partial/proxy chat support、context-only verdict 与被拒 proposal 都不得取得 ownership；
+其中整句 `exact_read` 还必须由 whole-line gate 明示 `owner_eligible=true`，缺失/False 即
+拒绝。sender/gift/coreference/entity 等窄槽修复不借用该整句字段，而按各自 slot-scoped typed
+contract 冻结。最终 boundary audit 必须原样携带同一 owner 列表，且每个窗口完全落在最终
+`[start,end)` 内。
 
 旧候选边界若排除了 required owner，唯一合法结果是扩展边界、重新通过语义闭环和确定性门，
 或以 `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 阻断；不得把该 owner 在裁切后降级成

@@ -1,3 +1,4 @@
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pytest
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
+    build_source_truth_preview_receipt,
     ledger_required_owner_contracts,
 )
 from src.autoslice.subtitle_fidelity import resolve_deferred_foreign_introductions
@@ -982,6 +984,382 @@ def test_unrelated_neighbor_cue_never_overwritten_by_pin(tmp_path):
     assert "今天晚饭吃番茄炒蛋" in corrected
     assert "只有kmx会这样称呼李豆沙" in corrected
     assert audit["status"] == "APPLIED"
+    projection = audit["applied"][0]["resolved_target_projection"]
+    assert [cue["cue_index"] for cue in projection["cues"]] == [1]
+
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    assert verify_chat_authority_final_surfaces(
+        {"source_subtitle_truth_audit": deepcopy(audit)},
+        final_text_srt=corrected,
+        final_speaker_srt=corrected,
+        delivery_start_ms=0,
+        delivery_end_ms=30_000,
+    )
+    tampered = corrected.replace(
+        "只有kmx会这样称呼李豆沙",
+        "只有kmx会这样称呼李豆沙多余内容",
+    )
+    assert not verify_chat_authority_final_surfaces(
+        {"source_subtitle_truth_audit": deepcopy(audit)},
+        final_text_srt=tampered,
+        final_speaker_srt=tampered,
+        delivery_start_ms=0,
+        delivery_end_ms=30_000,
+    )
+
+
+def test_projection_aggregates_one_truth_split_across_two_source_pieces(
+    tmp_path,
+):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "two-piece-truth",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 1_000,
+                "source_end_ms": 3_000,
+                "action": "replace_cue",
+                "text": "审定前审定后",
+                "required": True,
+            }
+        ],
+    )
+    final, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (1_000, 2_000, "审定前"),
+            (2_000, 3_000, "审定后"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/x/recording.mp4",
+                    "start_ms": 0,
+                    "end_ms": 2_000,
+                },
+                {
+                    "remote_media": "/x/recording.mp4",
+                    "start_ms": 2_000,
+                    "end_ms": 4_000,
+                },
+            ]
+        },
+        durations=[2_000, 2_000],
+        ledger_path=ledger,
+    )
+
+    assert audit["status"] == "ALREADY_SATISFIED"
+    projection = audit["satisfied"][0]["resolved_target_projection"]
+    assert [cue["after_text"] for cue in projection["cues"]] == [
+        "审定前",
+        "审定后",
+    ]
+
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    assert verify_chat_authority_final_surfaces(
+        {"source_subtitle_truth_audit": deepcopy(audit)},
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=4_000,
+    )
+    tampered = final.replace("审定后", "被篡改")
+    assert not verify_chat_authority_final_surfaces(
+        {"source_subtitle_truth_audit": deepcopy(audit)},
+        final_text_srt=tampered,
+        final_speaker_srt=tampered,
+        delivery_start_ms=0,
+        delivery_end_ms=4_000,
+    )
+
+
+def test_invalid_resolved_target_projection_fails_final_owner_closed(
+    tmp_path,
+):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "projection-integrity",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 1_000,
+                "source_end_ms": 2_000,
+                "action": "replace_cue",
+                "text": "审定文本",
+                "required": True,
+            }
+        ],
+    )
+    final, truth_audit = apply_source_subtitle_truth(
+        _srt_ms((1_000, 2_000, "误听文本")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/x/recording.mp4",
+                    "start_ms": 0,
+                    "end_ms": 3_000,
+                }
+            ]
+        },
+        durations=[3_000],
+        ledger_path=ledger,
+    )
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    broken_audits = []
+    wrong_threshold = deepcopy(truth_audit)
+    wrong_threshold["applied"][0]["resolved_target_projection"][
+        "min_overlap_ms"
+    ] = 79
+    broken_audits.append(wrong_threshold)
+
+    wrong_index = deepcopy(truth_audit)
+    wrong_index["applied"][0]["resolved_target_projection"]["cues"][0][
+        "cue_index"
+    ] = 2
+    broken_audits.append(wrong_index)
+
+    outside_window = deepcopy(truth_audit)
+    projected_cue = outside_window["applied"][0][
+        "resolved_target_projection"
+    ]["cues"][0]
+    projected_cue["start_ms"] = 2_100
+    projected_cue["end_ms"] = 2_900
+    broken_audits.append(outside_window)
+
+    for broken in broken_audits:
+        chat_audit = {"source_subtitle_truth_audit": broken}
+        assert not verify_chat_authority_final_surfaces(
+            chat_audit,
+            final_text_srt=final,
+            final_speaker_srt=final,
+            delivery_start_ms=0,
+            delivery_end_ms=3_000,
+        )
+        assert chat_audit["final_verification_failure"] == (
+            "SOURCE_TRUTH_FINAL_OWNER_NOT_VERIFIED"
+        )
+
+
+def _grazing_source_truth_preview_fixture(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "exact-target-after-graze",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 850,
+                "source_end_ms": 2_000,
+                "action": "replace_cue",
+                "text": "目标正确文本",
+                "required": True,
+            }
+        ],
+    )
+    draft = _srt_ms(
+        (0, 1_000, "完全无关邻句"),
+        (1_000, 2_000, "目标正确文木"),
+    )
+    _projected, audit = apply_source_subtitle_truth(
+        draft,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/x/recording.mp4",
+                    "start_ms": 0,
+                    "end_ms": 3_000,
+                }
+            ]
+        },
+        durations=[3_000],
+        ledger_path=ledger,
+    )
+    assert audit["status"] == "APPLIED"
+    return draft, audit
+
+
+def test_source_truth_preview_exact_projection_excludes_150ms_graze(
+    tmp_path,
+):
+    draft, audit = _grazing_source_truth_preview_fixture(tmp_path)
+
+    receipt = build_source_truth_preview_receipt(
+        input_srt_text=draft,
+        source_truth_audit=audit,
+        stage="pre_entity_authority",
+    )
+
+    assert receipt["status"] == "PASS"
+    assert receipt["exact_protected_cue_indexes"] == [2]
+    assert receipt["fallback_protected_cue_indexes"] == []
+    assert receipt["protected_cue_indexes"] == [2]
+    assert receipt["fallback_local_windows"] == []
+    assert receipt["exact_projection_owners"][0]["cue_indexes"] == [2]
+    # The preview exposes only target coordinates and hashes.  It never emits
+    # the projected correction as a replacement pipeline output.
+    serialized = json.dumps(receipt, ensure_ascii=False)
+    assert "目标正确文本" not in serialized
+    assert "目标正确文木" not in serialized
+
+
+def test_source_truth_preview_required_failure_ignores_projection_and_falls_back(
+    tmp_path,
+):
+    draft, successful_audit = _grazing_source_truth_preview_fixture(tmp_path)
+    failed_audit = deepcopy(successful_audit)
+    failed_row = failed_audit["applied"].pop()
+    failed_row["reason_code"] = "REQUIRED_SOURCE_TRUTH_NOT_SATISFIED"
+    # A failure must not inherit even a superficially precise projection.
+    failed_row["resolved_target_projection"] = {
+        "schema_version": "stale-or-tampered",
+        "cues": [{"cue_index": 2}],
+    }
+    failed_audit["failures"] = [failed_row]
+    failed_audit["status"] = "FAILED"
+
+    receipt = build_source_truth_preview_receipt(
+        input_srt_text=draft,
+        source_truth_audit=failed_audit,
+        stage="pre_entity_authority",
+    )
+
+    assert receipt["status"] == "UNRESOLVED_REQUIRED"
+    assert receipt["exact_protected_cue_indexes"] == []
+    # The raw 850..2000 discovery window overlaps cue 1 by 150 ms, exceeding
+    # the conservative 80 ms threshold, so unresolved fallback protects both.
+    assert receipt["fallback_protected_cue_indexes"] == [1, 2]
+    assert receipt["protected_cue_indexes"] == [1, 2]
+    assert receipt["fallback_local_windows"] == [
+        {"start_ms": 850, "end_ms": 2_000}
+    ]
+
+
+def test_source_truth_preview_optional_truth_never_protects_or_owns(
+    tmp_path,
+):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "best-effort-only",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 1_000,
+                "source_end_ms": 2_000,
+                "action": "replace_cue",
+                "text": "可选审定",
+                "required": False,
+            }
+        ],
+    )
+    draft = _srt_ms((1_000, 2_000, "可选误听"))
+    _projected, audit = apply_source_subtitle_truth(
+        draft,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/x/recording.mp4",
+                    "start_ms": 0,
+                    "end_ms": 3_000,
+                }
+            ]
+        },
+        durations=[3_000],
+        ledger_path=ledger,
+    )
+    assert audit["applied"][0]["required"] is False
+    # Even a broken optional projection is ignored rather than promoted into a
+    # protection or final-owner contract.
+    audit["applied"][0]["resolved_target_projection"] = {"invalid": True}
+
+    receipt = build_source_truth_preview_receipt(
+        input_srt_text=draft,
+        source_truth_audit=audit,
+        stage="pre_entity_authority",
+    )
+
+    assert receipt["status"] == "PASS"
+    assert receipt["ignored_optional_truth_ids"] == ["best-effort-only"]
+    assert receipt["exact_projection_owners"] == []
+    assert receipt["protected_cue_indexes"] == []
+    assert receipt["fallback_local_windows"] == []
+
+
+def test_source_truth_preview_success_projection_must_be_valid_and_grid_bound(
+    tmp_path,
+):
+    draft, audit = _grazing_source_truth_preview_fixture(tmp_path)
+    broken_audits = []
+
+    missing = deepcopy(audit)
+    del missing["applied"][0]["resolved_target_projection"]
+    broken_audits.append(missing)
+
+    wrong_threshold = deepcopy(audit)
+    wrong_threshold["applied"][0]["resolved_target_projection"][
+        "min_overlap_ms"
+    ] = 79
+    broken_audits.append(wrong_threshold)
+
+    wrong_grid_time = deepcopy(audit)
+    wrong_grid_time["applied"][0]["resolved_target_projection"]["cues"][0][
+        "start_ms"
+    ] = 1_050
+    broken_audits.append(wrong_grid_time)
+
+    for broken in broken_audits:
+        with pytest.raises(
+            RuntimeError,
+            match="SOURCE_TRUTH_PREVIEW_PROJECTION_INVALID",
+        ):
+            build_source_truth_preview_receipt(
+                input_srt_text=draft,
+                source_truth_audit=broken,
+                stage="pre_entity_authority",
+            )
+
+
+def test_source_truth_preview_receipt_hash_binds_grid_ledger_and_stage(
+    tmp_path,
+):
+    draft, audit = _grazing_source_truth_preview_fixture(tmp_path)
+    baseline = build_source_truth_preview_receipt(
+        input_srt_text=draft,
+        source_truth_audit=audit,
+        stage="pre_entity_authority",
+    )
+    other_stage = build_source_truth_preview_receipt(
+        input_srt_text=draft,
+        source_truth_audit=audit,
+        stage="pre_final_review",
+    )
+    other_grid = build_source_truth_preview_receipt(
+        input_srt_text=draft.replace("完全无关邻句", "另一条无关邻句"),
+        source_truth_audit=audit,
+        stage="pre_entity_authority",
+    )
+    other_ledger_audit = deepcopy(audit)
+    other_ledger_audit["ledger_sha256"] = "sha256:" + "b" * 64
+    other_ledger = build_source_truth_preview_receipt(
+        input_srt_text=draft,
+        source_truth_audit=other_ledger_audit,
+        stage="pre_entity_authority",
+    )
+
+    assert baseline["receipt_sha256"] != other_stage["receipt_sha256"]
+    assert baseline["receipt_sha256"] != other_grid["receipt_sha256"]
+    assert baseline["receipt_sha256"] != other_ledger["receipt_sha256"]
 
 
 def test_committed_ledger_supersedes_hallucinated_opening_suffix():
@@ -1264,7 +1642,7 @@ def test_committed_ledger_preserves_brainflick_give_up_turn():
     assert audit["status"] == "APPLIED"
 
 
-def test_committed_ledger_keeps_brainflick_callback_consistent():
+def test_committed_ledger_keeps_independently_adjudicated_brainflick_phrases():
     ledger = (
         Path(__file__).resolve().parents[1]
         / "assets"
@@ -1291,11 +1669,24 @@ def test_committed_ledger_keeps_brainflick_callback_consistent():
         ledger_path=ledger,
     )
 
-    assert "硬弹一弹啊" in corrected
+    assert "互相弹一弹啊" in corrected
     assert "再弹，再，再硬弹一弹" in corrected
+    assert "硬弹一弹啊" not in corrected
+    assert "再弹，再，再互相弹一弹" not in corrected
     assert "你弹一弹啊" not in corrected
     assert "再一弹一弹" not in corrected
     assert audit["status"] == "APPLIED"
+    assert {
+        row["truth_id"] for row in audit["applied"]
+    } >= {
+        "20260722-nancho-brainflick-mutual-flick-r2",
+        "20260722-nancho-brainflick-hard-flick-callback-r1",
+    }
+    assert {
+        row["truth_id"] for row in audit["inactive"]
+    } >= {
+        "20260722-nancho-brainflick-hard-flick-r1",
+    }
 
 
 def test_mention_postconditions_do_not_let_one_correct_name_hide_another(tmp_path):

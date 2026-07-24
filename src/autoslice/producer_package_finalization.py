@@ -49,7 +49,10 @@ from src.autoslice.recovery_title_authority import (
 )
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
-from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
+from src.autoslice.source_subtitle_truth import (
+    apply_source_subtitle_truth,
+    source_truth_owner_windows,
+)
 from src.autoslice.subtitle_fidelity import (
     apply_title_mark_balance_guard,
     resolve_deferred_foreign_introductions,
@@ -295,6 +298,12 @@ def _rebase_source_truth_audit_to_padded(
                 if isinstance(window, dict):
                     window["start_ms"] = int(window["start_ms"]) + final_start
                     window["end_ms"] = int(window["end_ms"]) + final_start
+            projection = row.get("resolved_target_projection")
+            if isinstance(projection, dict):
+                for cue in projection.get("cues") or []:
+                    if isinstance(cue, dict):
+                        cue["start_ms"] = int(cue["start_ms"]) + final_start
+                        cue["end_ms"] = int(cue["end_ms"]) + final_start
             timing_pin = row.get("timing_pin")
             if isinstance(timing_pin, dict):
                 for field in ("before_start_ms", "after_start_ms"):
@@ -482,11 +491,11 @@ def _materialize_final_recut(
             for row in truth_audit.get(key) or []:
                 if row.get("action") != "drop_cue":
                     continue
-                for window in row.get("local_windows") or []:
-                    start_ms = max(0, int(window["start_ms"]) - final_start)
+                for owner_start, owner_end in source_truth_owner_windows(row):
+                    start_ms = max(0, owner_start - final_start)
                     end_ms = min(
                         final_end - final_start,
-                        int(window["end_ms"]) - final_start,
+                        owner_end - final_start,
                     )
                     if start_ms < end_ms:
                         protected_windows.append((start_ms, end_ms))

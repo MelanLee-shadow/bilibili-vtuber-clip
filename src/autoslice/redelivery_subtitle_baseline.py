@@ -192,6 +192,52 @@ def _partially_protected_absolute(
     )
 
 
+def _uncovered_boundary_straddle(
+    *,
+    absolute_start_ms: int,
+    absolute_end_ms: int,
+    timeline: _V2Timeline,
+    reviewed_cue_support: Sequence[tuple[int, int]],
+) -> tuple[str, int] | None:
+    """Classify a cue crossing only reviewed leading or trailing air.
+
+    The v2 coverage envelope binds the source interval, but an SRT may leave
+    silence before its first cue or after its last cue.  A newly extended cue
+    may cross that envelope while remaining half-open disjoint from every
+    reviewed cue.  Preserve only that edge case; even one millisecond of actual
+    reviewed-cue overlap remains fail-closed.
+    """
+
+    if not reviewed_cue_support or any(
+        _absolute_overlap_ms(
+            absolute_start_ms,
+            absolute_end_ms,
+            reviewed_start_ms,
+            reviewed_end_ms,
+        )
+        > 0
+        for reviewed_start_ms, reviewed_end_ms in reviewed_cue_support
+    ):
+        return None
+    first_reviewed_start_ms = min(
+        start_ms for start_ms, _end_ms in reviewed_cue_support
+    )
+    last_reviewed_end_ms = max(
+        end_ms for _start_ms, end_ms in reviewed_cue_support
+    )
+    if (
+        absolute_start_ms < timeline.effective_start_ms
+        and absolute_end_ms <= first_reviewed_start_ms
+    ):
+        return "prefix", first_reviewed_start_ms
+    if (
+        absolute_end_ms > timeline.effective_end_ms
+        and absolute_start_ms >= last_reviewed_end_ms
+    ):
+        return "tail", last_reviewed_end_ms
+    return None
+
+
 def _read_v2_timeline(
     current_srt: str,
     *,
@@ -389,6 +435,7 @@ def _classify_v2_cues(
     audit: dict[str, Any],
 ) -> _V2CueRows:
     baseline_rows: dict[int, tuple[int, int]] = {}
+    reviewed_cue_support: list[tuple[int, int]] = []
     baseline_duration_ms = (
         timeline.baseline_end_ms - timeline.baseline_start_ms
     )
@@ -435,6 +482,7 @@ def _classify_v2_cues(
                 }
             )
             continue
+        reviewed_cue_support.append((absolute_start_ms, absolute_end_ms))
         if _partially_protected_absolute(
             absolute_start_ms,
             absolute_end_ms,
@@ -491,6 +539,30 @@ def _classify_v2_cues(
             absolute_start_ms < timeline.effective_start_ms
             or absolute_end_ms > timeline.effective_end_ms
         ):
+            uncovered_boundary = _uncovered_boundary_straddle(
+                absolute_start_ms=absolute_start_ms,
+                absolute_end_ms=absolute_end_ms,
+                timeline=timeline,
+                reviewed_cue_support=reviewed_cue_support,
+            )
+            if uncovered_boundary is not None:
+                boundary_position, support_boundary_ms = uncovered_boundary
+                audit["uncovered_current_cues"].append(
+                    {
+                        "current_cue_index": current_index + 1,
+                        "absolute_source_start_ms": absolute_start_ms,
+                        "absolute_source_end_ms": absolute_end_ms,
+                        "text": cue.text,
+                        "boundary_position": boundary_position,
+                        "classification": (
+                            "BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP"
+                        ),
+                        "reviewed_cue_support_boundary_ms": (
+                            support_boundary_ms
+                        ),
+                    }
+                )
+                continue
             audit["failures"].append(
                 {
                     "reason_code": "REDELIVERY_CURRENT_CUE_STRADDLES_REVIEWED_COVERAGE",

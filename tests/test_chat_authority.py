@@ -1319,6 +1319,13 @@ def test_high_confidence_danmaku_near_copy_uses_bounded_audio_arbitration():
     assert texts == ["soyo就是妈", "已经超越妈感"]
     row = audit["read_aloud_arbitrations"][0]
     assert row["outcome"] == "authority_confirmed_by_audio"
+    assert row["owner_eligible"] is True
+    assert row["whole_line_exact_copy_gate"]["proof_basis"] == (
+        "hash_bound_full_span_audio_verdict"
+    )
+    applied = audit["applied"][0]
+    assert applied["owner_eligible"] is True
+    assert applied["whole_line_exact_copy_gate"] == row["whole_line_exact_copy_gate"]
     assert audit["status"] == "APPLIED_AND_VERIFIED"
 
 
@@ -2512,6 +2519,74 @@ def test_partial_sc_context_verdict_cannot_inject_unspoken_message_remainder():
     assert rejected["allowed_followup"] == "entity_or_source_truth_slot_only"
 
 
+def test_direct_support_missing_prefix_cannot_authorize_whole_sc_copy():
+    source = _srt("躲在后面大N老师拿烟头烫我麻麻")
+    exact = "不要躲在后面大N老师拿烟头烫我麻麻"
+    evidence = ChatEvidence(
+        "superchat",
+        0,
+        exact,
+        "missing-prefix-sender",
+        source_event_id="sc://missing-prefix",
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [evidence],
+        support_srt_texts=[source],
+    )
+
+    assert output == source
+    assert audit["applied"] == []
+    rejected = next(
+        row
+        for row in audit["superseded_chat_proposals"]
+        if row["evidence_id"] == evidence.evidence_id
+    )
+    gate = rejected["whole_line_exact_copy_gate"]
+    assert gate["status"] == "BLOCKED_PARTIAL_EVIDENCE"
+    assert gate["owner_eligible"] is False
+    support = gate["independent_supports"][0]
+    assert support["owner_eligible"] is False
+    assert support["unsupported_authority_head"] == "不要"
+    assert support["unsupported_authority_tail"] == ""
+    assert support["unsupported_authority_interior"] == []
+    for key in (
+        "score",
+        "coverage",
+        "precision",
+        "extent",
+        "common",
+        "common_chars",
+    ):
+        assert key in support
+
+
+def test_direct_near_complete_independent_support_gets_typed_owner_receipt():
+    exact = "soyo就是妈"
+    source = _srt("soyo是真妈")
+    independent = _srt(exact)
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, exact)],
+        support_srt_texts=[independent],
+    )
+
+    assert parse_srt_cues(output)[0].text == exact
+    row = audit["applied"][0]
+    assert row["owner_eligible"] is True
+    gate = row["whole_line_exact_copy_gate"]
+    assert gate["status"] == "PASS"
+    assert gate["proof_basis"] == "near_complete_independent_transcript"
+    assert gate["independent_owner_support_count"] == 1
+    support = row["audio_transcript_supports"][0]
+    assert support["owner_eligible"] is True
+    assert support["unsupported_authority_head"] == ""
+    assert support["unsupported_authority_tail"] == ""
+    assert support["unsupported_authority_interior"] == []
+
+
 def test_sc_thread_danmaku_reply_is_verbatim_authority():
     """2026-07-13 利安/无马懿 实案：观众 SC 提问（诸葛亮谜题）后，同一人用
     普通弹幕接龙谜底「无马懿，无马懿」（弹幕名被打码成 -***）。她念这条弹幕
@@ -2529,6 +2604,8 @@ def test_sc_thread_danmaku_reply_is_verbatim_authority():
     assert texts[1] == "无马懿，无马懿", texts
     row = next(r for r in audit["applied"] if r["exact_text"] == "无马懿，无马懿")
     assert row["thread_anchored"] is True
+    assert row["owner_eligible"] is True
+    assert row["whole_line_exact_copy_gate"]["proof_basis"] == "strong_thread_anchor"
     assert audit["status"] == "APPLIED_AND_VERIFIED", audit["status"]
 
 

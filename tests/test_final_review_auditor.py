@@ -5,6 +5,7 @@ import pytest
 from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     adjudicate_context_finding,
+    adjudicate_exact_release_findings,
     audit_final_subtitles,
     build_context_adjudication_request,
     route_findings,
@@ -387,7 +388,98 @@ def test_context_request_uses_full_cue_candidates_and_adjacent_lines():
     assert request["context_start_ms"] < request["matched_start_ms"]
     assert request["context_end_ms"] > request["matched_end_ms"]
     assert request["context_end_ms"] < 20_000  # cue 4 text is context, its audio is excluded
+    assert request["source_media_timeline_offset_ms"] == 0
     assert len(request["request_sha256"]) == 64
+
+
+def test_context_request_hash_binds_source_media_timeline_offset():
+    source = (
+        "1\n"
+        "00:00:00,250 --> 00:00:02,810\n"
+        "就请坐在左边的弹\n"
+    )
+    finding = {
+        "cue_index": 1,
+        "suspect": "弹",
+        "suggestion": "互相弹",
+        "proposed_full_cue": "就请坐在左边的互相弹",
+        "repair_class": "phonetic",
+        "why": "exact-final release check",
+    }
+
+    delivery_local = build_context_adjudication_request(source, finding)
+    padded_source = build_context_adjudication_request(
+        source,
+        finding,
+        source_media_timeline_offset_ms=9_770,
+    )
+
+    assert delivery_local["matched_start_ms"] == padded_source["matched_start_ms"] == 250
+    assert delivery_local["matched_end_ms"] == padded_source["matched_end_ms"] == 2_810
+    assert delivery_local["source_media_timeline_offset_ms"] == 0
+    assert padded_source["source_media_timeline_offset_ms"] == 9_770
+    assert delivery_local["request_sha256"] != padded_source["request_sha256"]
+    assert delivery_local["evidence_id"] != padded_source["evidence_id"]
+
+
+@pytest.mark.parametrize("invalid_offset", [-1, True, 1.5, "9770"])
+def test_context_request_rejects_invalid_source_media_timeline_offset(
+    invalid_offset,
+):
+    source = _srt("还没有歌杂呢")
+    with pytest.raises(ValueError, match="SOURCE_MEDIA_TIMELINE_OFFSET_INVALID"):
+        build_context_adjudication_request(
+            source,
+            {
+                "cue_index": 1,
+                "suspect": "歌杂",
+                "suggestion": "歌债",
+                "proposed_full_cue": "还没有歌债呢",
+                "repair_class": "phonetic",
+            },
+            source_media_timeline_offset_ms=invalid_offset,
+        )
+
+
+def test_exact_release_adjudication_threads_source_media_timeline_offset():
+    source = (
+        "1\n"
+        "00:00:00,250 --> 00:00:02,810\n"
+        "就请坐在左边的弹\n"
+    )
+    seen_requests = []
+
+    def reject_proposal(request):
+        seen_requests.append(request)
+        return {
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "current_fit": "SUPPORTED",
+            "proposed_fit": "INCOMPATIBLE",
+        }
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [
+            {
+                "cue_index": 1,
+                "suspect": "弹",
+                "suggestion": "互相弹",
+                "proposed_full_cue": "就请坐在左边的互相弹",
+                "repair_class": "phonetic",
+            }
+        ],
+        entity_verifier=reject_proposal,
+        source_media_timeline_offset_ms=9_770,
+    )
+
+    assert not unresolved
+    assert len(resolved) == 1
+    assert seen_requests[0]["matched_start_ms"] == 250
+    assert seen_requests[0]["matched_end_ms"] == 2_810
+    assert seen_requests[0]["source_media_timeline_offset_ms"] == 9_770
 
 
 def test_context_request_builds_real_title_fix_without_duplicating_suffix():

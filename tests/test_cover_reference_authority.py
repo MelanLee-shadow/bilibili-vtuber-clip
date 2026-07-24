@@ -353,6 +353,63 @@ def test_route_v2_binds_required_and_source_visible_participants():
     assert validate_cover_route_decision(generation)
 
 
+def test_3573_shaped_story_forces_typed_visual_safety_without_relation_words():
+    reference = _hash_bound_dual_reference()
+    contract = build_story_contract(
+        candidate_id="auto_193450_3573_3665r8",
+        selection_hook="李豆沙展示金发有角妹妹",
+        transcript_text="看到男角色只能说不熟。",
+        selection_scorecard={"status": "VALID"},
+        session_relation_authority=_relation(),
+        cover_reference_authority=reference,
+    )
+    generation = {
+        "title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
+        "cover_text": "看到男角色只能说不熟",
+        "story_contract": contract,
+        "method": "screenshot_direct",
+        "cover_origin": "SOURCE_SCREENSHOT",
+    }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="screenshot_direct",
+        selected_rationale=(
+            "hash-bound source frame verifies all required participants"
+        ),
+        story_contract=contract,
+        reference_authority=reference,
+        decision_inputs={"cover_mode": "auto"},
+        title=generation["title"],
+        cover_text=generation["cover_text"],
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
+
+    route = generation["route_decision"]
+    assert route["required_participant_ids"] == ["lidousha", "nancho"]
+    assert route["relationship_semantic_evidence"] == []
+    assert route["relationship_visual_required"] is True
+    assert route["relationship_visual_safety_evidence"] == {
+        "schema_version": (
+            "lidousha-cover-relationship-visual-safety.v1"
+        ),
+        "status": "REQUIRED",
+        "relation_state": "CONFIRMED",
+        "required_participant_ids": ["lidousha", "nancho"],
+        "requirement_basis": [
+            "CONFIRMED_MULTI_PARTICIPANT_STORY_CONTRACT"
+        ],
+    }
+    assert route["final_visibility_authority"] == (
+        "PENDING_RELATION_VISUAL_VERIFICATION"
+    )
+    assert not validate_cover_route_decision(generation)
+
+
 def test_route_v2_does_not_upgrade_unhashed_participant_list_to_authority():
     reference = {
         "candidate_id": "candidate",

@@ -20,6 +20,9 @@ Updated: 2026-07-23
   时间采样聊天、topic graph scoped candidates 与 prompt 重渲染绑定；超预算 fail closed；
 - correction pass `final-review-audit.v1` 与精确最终 SRT 放行回执
   `final-review-audit.v2` 分离，provider/JSON/空结构失败不再假绿；
+- correction pass 已改为原子事务：mutation 先 staged，discovery/routing 异常恢复原 SRT 与
+  audit，保留 typed `AUDITOR_UNAVAILABLE`；exact-final 空扫描不能洗白，runner 只按
+  `provider_transient / final_review_correction_discovery` 有界重试；
 - correction pass 的同音/近同音/字母正字法 mutation 必须有 cue/referent-bound typed textual
   authority receipt；纯声学、同片 transcript、宽泛 context/selection hook 只生成 candidate。
   exact v2 强制核对全部 applied mutation，第二遍零 finding 不能洗白无权改写；
@@ -37,11 +40,17 @@ Updated: 2026-07-23
   首轮 30 秒、受控重试最高 60 秒，架构 seam test 固定其不得误接相邻 entity-authority 调用；
 - exact-final 不再用纯声学关闭同音/近同音/字母正字法 finding；结构化 SC 只有上一 cue
   exact 包含完整规范化前缀时才可去重，`0.8` fuzzy 不能吞掉极性词；
-- source truth / reviewed baseline / story-chat required owner 冻结，边界只能完整覆盖或 BLOCK；
-- 三条已确认字幕回归已进入 hash-bound source truth；partial structured-chat evidence 只能修复
-  有声学/画面见证的槽位，不能再把整条 SC 扩写进字幕；
-- required owner 只抬高合法结束下界，原 semantic/manual repair origin 与当前 spec 的有界
-  repair cap 保持不变；cap 内找不到完整收束即阻断；
+- source truth 的宽 `local_windows` 只作发现；实体/终审保护与最终 owner 都消费校验过的
+  post-apply 精确 cue projection。`required:false` 只作 best-effort，不进入 final owner；
+- reviewed baseline 与真实 required owner 冻结；story/chat 的**整句 exact-read** 只有 typed
+  whole-line support gate 明示 `owner_eligible=true` 才可冻结，sender/gift/coreference/entity
+  等窄槽修复仍按各自 typed slot contract 判断；partial/proxy/context-only 证据不能把整条 SC
+  扩写进字幕；
+- boundary source review、resolver 与 retry 共享一份 hash-bound
+  `talk-boundary-search-scope.v1`：manual/structured payoff 可移动搜索原点，required owner
+  只抬交付下界；绝对 cap 不滚动，retry 另保留 endpoint 后 witness reserve；
+- redelivery coverage edge 只有与每条 retained reviewed cue 都是半开区间零重叠才可保留；
+  任意 1ms 正重叠仍阻断；
 - package audit schema 仍为 `lidousha-review-package-audit.v2`，当前 policy epoch 已升为
   `2026-07-23.final-artifact-gates.v3`；
 - 封面已使用 `lidousha-cover-rendered-text-pixels.v3`、deterministic render spec、
@@ -76,19 +85,43 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
 - 隔离 v10
   `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v10-final-artifact-v6`
   已在真实 production path 复现两个确定性通病后主动终止，未生成可交付整包且没有上传，
-  **不得恢复、续跑、复制其回执或把它当作 v11 输入**：
+  **不得恢复、续跑、复制其回执或把它当作后续输入**：
   `3573` 的 reviewer 正确选择 cue 46 / `102610ms`，但旧 resolver 把媒体覆盖下界
   `103010ms` 错当成必须吞下一 cue 的语义下界；`672` 的 source full-window 回执使用 ordinal
   131，materialize 后三条 cue 被删除、最终 delivery ordinal 变为 128，旧链却把 source 回执
   继续当最终交付证明。扩到 30/60 秒都不能解决，不能放宽 endpoint binding。终止后已确认
   v10 专属进程组退出、target/global lock 可取得；磁盘余量上次观测约 19GB，重跑前必须 live
   复核。
-- 针对上述 v10 证据的双层回执/raw-byte/package 补丁仍在共享 dirty worktree 收敛；先前
-  `2134 passed` 发生在 fresh reviewer 揭示“materialize 后仍会改 cue”之前，**不是当前补丁的
-  最终验收数**。必须以最终定向/全量回归、fresh review、clean commit 和部署读回为准。
-- 下一次真实重跑必须新建 v11 隔离 base
-  `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v11-boundary-grid-final`；创建前确认路径
-  不存在、源 SHA/磁盘/进程/锁仍健康。不得复用 v10 state/out/receipt。
+- v11
+  `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v11-boundary-grid-final`
+  已在部署 commit `3327d48c9d35e34fbd661b62b0d08f28f5689d42` 上 exact 跑完五条，终态
+  `recovery_incomplete`、`talk 0/5 delivered`、五条均失败，且没有上传。它是失败证据，**不可
+  续跑，也不可把其 state/out/receipt 克隆进下一轮**：
+  - `3573` 暴露 source-truth 宽发现窗把相邻 cue 一并当 owner；
+  - `672` 暴露 correction discovery provider 失败后 mutation/audit 非事务性，以及宽窗 owner
+    假阳性；
+  - `1863` 暴露 resolver 仍用旧 semantic target 加 cap，人工下界移动搜索原点后仅差 610ms
+    被误拒；
+  - `1573` 暴露 reviewed coverage edge 与任一实际 reviewed cue 零重叠时仍被误判 straddle；
+  - `1475` 暴露 partial structured-chat support 灌入未证前缀；更严重的是 exact-final
+    delivery-local cue 时间被直接拿去裁 padded media，漏加 recut `+9770ms`，三份声学回执
+    实际听了错误位置。
+- 上述五类原因已有本地系统性补丁：精确 owner projection、事务性 correction/retry、统一
+  boundary scope、redelivery zero-overlap edge、whole-line `owner_eligible` gate，以及
+  exact-final `source_media_timeline_offset_ms` 的 request/hash/crop/receipt 全链绑定。1475
+  正确位置的独立声学复核证明 45.000–47.670s 是“互相弹一弹啊”，但 63.030–67.610s 的 callback
+  仍是“再弹，再，再硬弹一弹”；二者已分别写入 hash-bound baseline/regression，禁止再用
+  “后文复读所以应统一”循环推断。当前仍是 dirty worktree，必须以最终集成测试、clean commit
+  和 live deploy readback 为准。
+- 1475 首句仍保持 BLOCK：正确 recut 0–5.08s 上，BCUT/剪映都从“请坐在左边的弹……”起；
+  闭集 Gemini 却支持“李姐晚上好，请坐……”；无候选 Gemini 3.1 Pro 把开头低置信听成另一短句。
+  证据互相冲突，不能靠结构化弹幕把前缀灌回，也不能建立 active source truth。只有同一 exact
+  interval 的开放听写与无泄漏闭集仲裁一致后才能解除。
+- 下一次真实重跑必须新建 fresh v12
+  `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v12-screenshot-cover`，且只从 immutable
+  v2 source 由 v7 planner 重建，不得复用 v10/v11 state/out/receipt。该路径当前不存在；live
+  磁盘约 21GB 可用，低于 25GiB 容量门，创建前须先清理可重建的旧 recovery 媒体并再次验
+  source SHA、指纹、进程、锁与四处 `AUTO_UPLOAD` 均不存在。
 - 本轮五条封面都锁定 `screenshot_direct`，不是因为 AI 功能未部署：`3573` 的源帧同时给出
   男性游戏角色与李豆沙/南町，`672/1863/1573` 给出联动双方与互动情绪，`1475` 还给出双人大笑
   和“别管，先弹了再说”弹幕。未直接出现在源帧中的“不熟”反转、对质/被收集、火锅/霸凌、
@@ -106,7 +139,7 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
   authority map：`3573/672` 的模式是现有 Ivan manual-title 正文，`1863/1573/1475` 的模式
   是已验证 public title 原样保留。当前 asset SHA 是
   `sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118`；
-  它还逐项冻结五个 Ivan-reviewed `required_given_end_ms`。v11 planner 必须以该 SHA 覆盖
+  它还逐项冻结五个 Ivan-reviewed `required_given_end_ms`。v12 planner 必须以该 SHA 覆盖
   完整五项并从资产派生 end，plan schema 为 v7；record、publish draft、review/authorized
   manifest、package audit 与 same-BV repair plan 必须看到同一 authority。repair CLI 的 BVID
   还须在任何 adapter/observe 前与 authority 相等，live AID/CID 再与 authority 精确核对。
@@ -115,9 +148,11 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
 
 ## 进行中
 
-1. 收敛双层边界回执与 raw-byte/package 绑定，完成定向/全量/负向测试及 fresh review 后提交；
+1. 收敛当前精确 source-truth preview、whole-line support 与双人封面参与者门，完成定向/全量/
+   负向测试及集成 review 后提交；
 2. 从该 clean commit 部署到 `free`，读回 `DEPLOYED_COMMIT` 与实际文件 hash；
-3. 在全新 v11 recovery base exact 重跑五条，closure COMPLETE 后重建 review manifest 和扁平包；
+3. 清理可重建的旧 recovery 大文件达到容量门，在全新 v12 recovery base exact 重跑五条，
+   closure COMPLETE 后重建 review manifest 和扁平包；
 4. 对最终视频逐条复核字幕、边界、标题、封面、StoryContract 和 package audit，再覆盖本地旧包；
 5. 以最终包生成同 BV dry plan；只有四面 live preflight 仍通过才执行修复并闭环验证。
 

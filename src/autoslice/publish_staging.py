@@ -42,8 +42,8 @@ from .cover_route_evidence import (
     build_no_crop_participant_verification,
     build_cover_route_decision,
     is_hash_bound_reference_authority,
-    relationship_semantic_evidence,
     relationship_source_participants_verified,
+    relationship_visual_safety_required,
     record_cover_route_execution,
     source_visible_participant_ids,
     story_participant_ids,
@@ -868,9 +868,9 @@ def _stage_cpa_redraw_cover(
         }
     )
     route = cover_generation.get("route_decision")
-    relationship_visual_required = bool(
-        isinstance(route, Mapping)
-        and route.get("relationship_visual_required") is True
+    relationship_visual_required = relationship_visual_safety_required(
+        story_contract,
+        route_decision=route,
     )
     final_participant_verification = None
     if relationship_visual_required:
@@ -964,11 +964,6 @@ def _build_lidousha_cover_route(
 ) -> tuple[str, dict[str, object]]:
     """Build the semantic-first route record before any cover materialization."""
 
-    semantic_evidence = relationship_semantic_evidence(
-        story_contract,
-        title=title,
-        cover_text=cover_text,
-    )
     required_participant_ids = story_participant_ids(story_contract)
     visible_participant_ids = source_visible_participant_ids(
         reference_authority
@@ -986,7 +981,9 @@ def _build_lidousha_cover_route(
         punch_allowed=punch_allowed,
         frame_selection=frame_selection,
         verified_stream_frame=verified_stream_frame,
-        relationship_visual_required=bool(semantic_evidence),
+        relationship_visual_required=(
+            relationship_visual_safety_required(story_contract)
+        ),
         relationship_source_verified=relationship_source_verified,
     )
     cover_generation["cover_treatment"] = {
@@ -1198,10 +1195,12 @@ def _stage_lidousha_ai_cover(
             ["COVER_REFERENCE_REQUIRED_TREATMENT_NOT_SELECTED"],
             detail,
         )
-    if (
-        isinstance(route, Mapping)
-        and route.get("relationship_visual_required") is True
-        and not relationship_source_participants_verified(route)
+    relationship_visual_required = relationship_visual_safety_required(
+        story_contract,
+        route_decision=route,
+    )
+    if relationship_visual_required and not (
+        relationship_source_participants_verified(route)
     ):
         detail = (
             "relationship cover requires a hash-bound source reference that "
@@ -1250,11 +1249,7 @@ def _stage_lidousha_ai_cover(
             base_url=base_url,
             api_key=api_key,
         )
-    if (
-        isinstance(route, Mapping)
-        and route.get("relationship_visual_required") is True
-        and final_participant_verifier is None
-    ):
+    if relationship_visual_required and final_participant_verifier is None:
         detail = (
             "relationship AI redraw requires an independent verifier bound "
             "to the final cover hash and every required participant"
@@ -1551,9 +1546,9 @@ def _stage_screenshot_direct_cover(
     )
     try:
         route = cover_generation.get("route_decision")
-        relationship_visual_required = bool(
-            isinstance(route, Mapping)
-            and route.get("relationship_visual_required") is True
+        relationship_visual_required = relationship_visual_safety_required(
+            cover_generation.get("story_contract"),
+            route_decision=route,
         )
         if relationship_visual_required:
             # A relationship cover cannot inherit the reference frame's

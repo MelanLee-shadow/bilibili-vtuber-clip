@@ -10,7 +10,13 @@ import pytest
 
 import scripts.free_session_autoslice as runner
 import src.autoslice.speaker_session_router as speaker_router
+from src.autoslice.boundary_semantic_review import (
+    build_boundary_search_scope,
+)
 from src.autoslice.chat_authority import recording_start_epoch_ms
+from src.autoslice.talk_lane import (
+    _bound_boundary_retry_source_end_ms,
+)
 from src.autoslice.visual_song_discovery import VisualSongCandidate, VisualSongDiscoveryResult
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from src.autoslice.cover_route_evidence import (
@@ -5990,6 +5996,129 @@ def test_final_review_discovery_unavailable_remains_retryable_with_evidence(
     ]
 
 
+def test_correction_discovery_unavailable_is_bounded_retryable_before_findings(
+    tmp_path: Path,
+):
+    audit = _final_review_failure_audit(
+        finding_count=3,
+        boundary_status="PASS",
+    )
+    audit["reason_codes"].append(
+        "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
+    )
+    audit["correction_pass"] = {
+        "schema_version": "final-review-audit.v1",
+        "status": "AUDITOR_UNAVAILABLE",
+        "release_gate": "BLOCK",
+        "reason_codes": [
+            "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+        ],
+        "discovery": {
+            "status": "AUDITOR_UNAVAILABLE",
+            "detail": "provider timeout",
+        },
+        "findings": [],
+        "applied_count": 0,
+        "error_type": "FinalReviewAuditError",
+    }
+    audit["correction_mutation_authority"] = {
+        "schema_version": "subtitle-correction-mutation-audit.v1",
+        "status": "BLOCK",
+        "applied_count": 0,
+        "validated_mutation_count": 0,
+        "failures": [
+            {
+                "reason_code": "CORRECTION_DISCOVERY_INCOMPLETE",
+                "upstream_reason_codes": [
+                    "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+                ],
+            }
+        ],
+    }
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        "auto_correction_provider_failure",
+        audit,
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: "
+        "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == (
+        "final_review_correction_discovery"
+    )
+    assert classified["failure_recoverable"] is True
+    evidence = classified["failure_evidence"]
+    assert evidence["validated_finding_count"] == 3
+    assert evidence["correction_pass"] == {
+        "schema_version": "final-review-audit.v1",
+        "status": "AUDITOR_UNAVAILABLE",
+        "reason_codes": [
+            "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+        ],
+        "discovery": {
+            "status": "AUDITOR_UNAVAILABLE",
+            "detail": "provider timeout",
+        },
+        "error_type": "FinalReviewAuditError",
+        "applied_count": 0,
+    }
+    assert evidence["correction_mutation_authority"]["failures"] == [
+        {
+            "reason_code": "CORRECTION_DISCOVERY_INCOMPLETE",
+            "upstream_reason_codes": [
+                "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+            ],
+        }
+    ]
+
+
+def test_malformed_correction_contract_is_terminal_not_provider_retry(
+    tmp_path: Path,
+):
+    audit = _final_review_failure_audit(
+        finding_count=0,
+        boundary_status="PASS",
+    )
+    audit["reason_codes"] = [
+        "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
+    ]
+    audit["correction_pass"] = {
+        "schema_version": "final-review-audit.v1",
+        "status": "CLEAN",
+        "findings": [],
+        "applied_count": 0,
+    }
+    audit["correction_mutation_authority"] = {
+        "schema_version": "subtitle-correction-mutation-audit.v1",
+        "status": "BLOCK",
+        "applied_count": 0,
+        "validated_mutation_count": 0,
+        "failures": [
+            {"reason_code": "CORRECTION_MUTATION_AUTHORITY_INVALID"}
+        ],
+    }
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        "auto_correction_contract_failure",
+        audit,
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: "
+        "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "final_review_contract"
+    assert classified["failure_stage"] == "final_review_contract"
+    assert classified["failure_recoverable"] is False
+
+
 def test_final_review_v1_schema_failure_is_terminal_not_provider_retry(
     tmp_path: Path,
 ):
@@ -6511,6 +6640,43 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
         "subtitle-redelivery-baseline.v2"
     )
     assert spec["subtitle_redelivery_baseline"]["path"] == str(baseline.resolve())
+
+
+def test_boundary_retry_keeps_ceiling_plus_next_topic_witness(tmp_path):
+    """The 1863 manual origin needs more than semantic_end + 90s."""
+
+    cid = "auto_193450_1863_2056"
+    out_root = tmp_path / "out"
+    candidate_root = out_root / cid
+    candidate_root.mkdir(parents=True)
+    scope = build_boundary_search_scope(
+        semantic_target_ms=202_720,
+        manual_lower_bound_ms=230_760,
+        required_owner_end_ms=230_760,
+        repair_cap_ms=30_000,
+        last_piece_start_ms=1_853_760,
+    )
+    (candidate_root / f"{cid}.review-flags.json").write_text(
+        json.dumps(
+            {
+                "boundary_semantic_review": {
+                    "schema_version": (
+                        "talk-boundary-semantic-review.v1"
+                    ),
+                    "status": "BLOCK",
+                    "needs_more_context": True,
+                    "boundary_search_scope": scope,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _bound_boundary_retry_source_end_ms(
+        out_root=out_root,
+        candidate_id=cid,
+        repair_cap_ms=60_000,
+    ) == 2_159_520
 
 
 def test_talk_boundary_context_exhausted_retries_once_then_stops(

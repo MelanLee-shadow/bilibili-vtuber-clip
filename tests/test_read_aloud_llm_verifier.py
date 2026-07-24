@@ -180,7 +180,7 @@ def test_cpa_read_aloud_context_cannot_expand_partial_span_without_audio():
     assert row["whole_line_exact_copy_gate"]["status"] == "BLOCKED_PARTIAL_EVIDENCE"
 
 
-def test_cpa_context_can_resolve_near_complete_span_without_claiming_raw_audio():
+def test_cpa_context_cannot_own_near_complete_span_without_independent_support():
     exact = "soyo就是妈"
     source = _srt("soyo是真妈", "已经超越妈感")
     verify = verifier_module.build_cpa_read_aloud_verifier(
@@ -196,14 +196,16 @@ def test_cpa_context_can_resolve_near_complete_span_without_claiming_raw_audio()
         entity_verifier=verify,
     )
 
-    assert parse_srt_cues(output)[0].text == exact
+    assert parse_srt_cues(output)[0].text == "soyo是真妈"
     row = audit["read_aloud_arbitrations"][0]
-    assert row["whole_line_exact_copy_gate"]["proof_basis"] == (
-        "near_complete_transcript_span"
-    )
-    assert audit["applied"][0]["alignment_basis"] == (
-        "structured-chat-context-plus-near-complete-transcript.v1"
-    )
+    assert row["outcome"] == "partial_evidence_no_whole_line_copy"
+    gate = row["whole_line_exact_copy_gate"]
+    assert gate["status"] == "BLOCKED_PARTIAL_EVIDENCE"
+    assert gate["owner_eligible"] is False
+    assert gate["proof_basis"] == "partial_evidence"
+    assert gate["primary_transcript"]["near_complete_transcript"] is True
+    assert gate["independent_supports"] == []
+    assert audit["applied"] == []
 
 
 def test_cpa_uncertain_falls_back_to_audio_that_keeps_asr():

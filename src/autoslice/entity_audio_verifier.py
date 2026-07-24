@@ -596,6 +596,7 @@ def _subtitle_acoustic_verdict(
     audio_path: Path,
     start_ms: int,
     end_ms: int,
+    timeline_binding: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Validate a text-free acoustic-fit report and attach replay evidence."""
 
@@ -649,7 +650,381 @@ def _subtitle_acoustic_verdict(
         **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
         "audio_start_ms": start_ms,
         "audio_end_ms": end_ms,
+        "timeline_binding": dict(timeline_binding),
     }
+
+
+@dataclass(frozen=True)
+class _PreparedAudioSpan:
+    target_start_ms: int
+    target_end_ms: int
+    crop_start_ms: int
+    crop_end_ms: int
+    observed_request: dict[str, Any]
+    timeline_binding: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _LocalAudioVerifier:
+    source_media: Path
+    output_dir: Path
+    recording_date: str
+    source_duration_ms: int
+    source_sha256: str
+    binary: str
+    model: str
+    timeout: str
+    timely_context: str
+
+    def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return _verify_local_audio_request(verifier=self, request=request)
+
+
+def _prepare_audio_span(
+    *,
+    request: Mapping[str, Any],
+    context_mode: bool,
+    source_media_timeline_offset_ms: int,
+    source_duration_ms: int,
+) -> _PreparedAudioSpan | None:
+    try:
+        delivery_target_start_ms = int(request["matched_start_ms"])
+        delivery_target_end_ms = int(request["matched_end_ms"])
+        if context_mode:
+            delivery_context_start_ms = int(request["context_start_ms"])
+            delivery_context_end_ms = int(request["context_end_ms"])
+            target_start_ms = (
+                delivery_target_start_ms + source_media_timeline_offset_ms
+            )
+            target_end_ms = delivery_target_end_ms + source_media_timeline_offset_ms
+            source_context_start_ms = (
+                delivery_context_start_ms + source_media_timeline_offset_ms
+            )
+            source_context_end_ms = (
+                delivery_context_end_ms + source_media_timeline_offset_ms
+            )
+            crop_start_ms = max(0, min(target_start_ms, source_context_start_ms))
+            crop_end_ms = min(
+                source_duration_ms,
+                max(target_end_ms, source_context_end_ms),
+            )
+        else:
+            target_start_ms = delivery_target_start_ms
+            target_end_ms = delivery_target_end_ms
+            crop_start_ms = max(0, target_start_ms - 1_500)
+            crop_end_ms = min(source_duration_ms, target_end_ms + 1_500)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (
+        target_end_ms <= target_start_ms
+        or crop_end_ms <= crop_start_ms
+        or crop_end_ms - crop_start_ms > 30_000
+        or target_start_ms < crop_start_ms
+        or target_end_ms > crop_end_ms
+    ):
+        return None
+    observed_request = dict(request)
+    observed_request["target_audio_start_ms"] = target_start_ms - crop_start_ms
+    observed_request["target_audio_end_ms"] = target_end_ms - crop_start_ms
+    timeline_binding: dict[str, Any] = {}
+    if context_mode:
+        timeline_binding = {
+            "schema_version": "subtitle-audio-timeline-binding.v1",
+            "source_media_timeline_offset_ms": source_media_timeline_offset_ms,
+            "delivery_local": {
+                "target_start_ms": delivery_target_start_ms,
+                "target_end_ms": delivery_target_end_ms,
+                "context_start_ms": delivery_context_start_ms,
+                "context_end_ms": delivery_context_end_ms,
+            },
+            "source_media": {
+                "target_start_ms": target_start_ms,
+                "target_end_ms": target_end_ms,
+                "crop_start_ms": crop_start_ms,
+                "crop_end_ms": crop_end_ms,
+            },
+        }
+        observed_request["timeline_binding"] = timeline_binding
+    return _PreparedAudioSpan(
+        target_start_ms=target_start_ms,
+        target_end_ms=target_end_ms,
+        crop_start_ms=crop_start_ms,
+        crop_end_ms=crop_end_ms,
+        observed_request=observed_request,
+        timeline_binding=timeline_binding,
+    )
+
+
+def _crop_black_frame_audio(
+    *,
+    source_media: Path,
+    audio_path: Path,
+    start_ms: int,
+    end_ms: int,
+) -> tuple[bool, str]:
+    duration_s = (end_ms - start_ms) / 1000.0
+    completed = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{start_ms / 1000.0:.3f}",
+            "-t",
+            f"{duration_s:.3f}",
+            "-i",
+            str(source_media),
+            "-f",
+            "lavfi",
+            "-t",
+            f"{duration_s:.3f}",
+            "-i",
+            "color=c=black:s=320x240:r=10",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            str(audio_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if completed.returncode != 0 or not audio_path.is_file():
+        return False, completed.stderr
+    return True, ""
+
+
+def _verify_local_audio_request(
+    *,
+    verifier: _LocalAudioVerifier,
+    request: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    request_sha = str(request.get("request_sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", request_sha):
+        return _uncertain(request, "ENTITY_AUDIO_REQUEST_INVALID")
+    candidates = request.get("candidate_entities")
+    if not isinstance(candidates, list) or len(candidates) < 2:
+        return _uncertain(request, "ENTITY_AUDIO_CANDIDATES_INVALID")
+    context_mode = (
+        request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
+    )
+    source_media_timeline_offset_ms = 0
+    if context_mode:
+        raw_offset = request.get("source_media_timeline_offset_ms")
+        if (
+            isinstance(raw_offset, bool)
+            or not isinstance(raw_offset, int)
+            or raw_offset < 0
+        ):
+            return _uncertain(request, "ENTITY_AUDIO_TIMELINE_OFFSET_INVALID")
+        source_media_timeline_offset_ms = raw_offset
+        bound_payload = dict(request)
+        bound_payload.pop("request_sha256", None)
+        if _json_sha256(bound_payload) != request_sha:
+            return _uncertain(request, "ENTITY_AUDIO_REQUEST_HASH_MISMATCH")
+    job_dir = verifier.output_dir / "entity_verdicts" / request_sha[:20]
+    job_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = job_dir / "verdict.manifest.json"
+    audio_path = job_dir / "input.mp4"
+    if manifest_path.is_file() and audio_path.is_file():
+        try:
+            cached = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if (
+                cached.get("request_sha256") == request_sha
+                and cached.get("source_media_sha256") == verifier.source_sha256
+                and cached.get("audio_clip_sha256") == _sha256(audio_path)
+            ):
+                cached_verdict = cached["verdict"]
+                # Provider failures must be retried rather than poisoning cache.
+                if not (
+                    isinstance(cached_verdict, dict)
+                    and cached_verdict.get("reason_code")
+                    in {
+                        "ENTITY_AUDIO_PROVIDER_FAILED",
+                        "ENTITY_VERIFIER_ERROR",
+                        "ENTITY_AUDIO_RESPONSE_INVALID",
+                        "ENTITY_AUDIO_CROP_FAILED",
+                    }
+                ):
+                    return cached_verdict
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
+    span = _prepare_audio_span(
+        request=request,
+        context_mode=context_mode,
+        source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+        source_duration_ms=verifier.source_duration_ms,
+    )
+    if span is None:
+        return _uncertain(request, "ENTITY_AUDIO_SPAN_INVALID")
+    crop_succeeded, crop_error = _crop_black_frame_audio(
+        source_media=verifier.source_media,
+        audio_path=audio_path,
+        start_ms=span.crop_start_ms,
+        end_ms=span.crop_end_ms,
+    )
+    if not crop_succeeded:
+        return _uncertain(request, "ENTITY_AUDIO_CROP_FAILED", crop_error)
+
+    outcome = _observe_entity_audio(
+        request=span.observed_request,
+        candidates=candidates,
+        audio_path=audio_path,
+        job_dir=job_dir,
+        recording_date=verifier.recording_date,
+        timely_context=verifier.timely_context,
+        binary=verifier.binary,
+        model=verifier.model,
+        timeout=verifier.timeout,
+    )
+    observed = outcome.observed
+    provider_failures = outcome.provider_failures
+    if observed is None:
+        (job_dir / "provider-failures.json").write_text(
+            json.dumps(
+                {
+                    "reason_code": "ENTITY_AUDIO_PROVIDER_FAILED",
+                    "failures": provider_failures,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        categories = ";".join(
+            str(row.get("category")) for row in provider_failures[-4:]
+        )
+        return _uncertain(request, "ENTITY_AUDIO_PROVIDER_FAILED", categories)
+    canonicals = {
+        str(row.get("canonical") or "") for row in candidates if isinstance(row, dict)
+    }
+    status = observed.get("status") if isinstance(observed, dict) else None
+    confidence = observed.get("confidence") if isinstance(observed, dict) else None
+    heard = (
+        str(observed.get("heard_syllables") or "").strip()
+        if isinstance(observed, dict)
+        else ""
+    )
+    if context_mode:
+        verdict = _subtitle_acoustic_verdict(
+            request=request,
+            request_sha=request_sha,
+            observed=observed if isinstance(observed, dict) else {},
+            outcome=outcome,
+            source_sha256=verifier.source_sha256,
+            audio_path=audio_path,
+            start_ms=span.crop_start_ms,
+            end_ms=span.crop_end_ms,
+            timeline_binding=span.timeline_binding,
+        )
+        manifest = {
+            "schema_version": "entity-audio-verdict-manifest.v1",
+            "request_sha256": request_sha,
+            "request_payload_sha256": _json_sha256(dict(request)),
+            "source_media": str(verifier.source_media),
+            "source_media_sha256": verifier.source_sha256,
+            "audio_clip": str(audio_path),
+            "audio_clip_sha256": _sha256(audio_path),
+            "prompt_sha256": _sha256(outcome.prompt_path),
+            "response_sha256": _sha256(outcome.response_path),
+            "model": outcome.model,
+            "provider": outcome.provider,
+            **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
+            **(
+                {"paid_backup_policy": dict(outcome.paid_policy_stamp)}
+                if outcome.paid_policy_stamp
+                else {}
+            ),
+            **({"provider_failures": provider_failures} if provider_failures else {}),
+            "timeline_binding": span.timeline_binding,
+            "verdict": verdict,
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return verdict
+    canonical = observed.get("canonical_entity") if isinstance(observed, dict) else None
+    resolved = (
+        observed.get("schema_version") == "entity-audio-observation.v1"
+        and status == "RESOLVED"
+        and canonical in canonicals
+        and not isinstance(confidence, bool)
+        and isinstance(confidence, (int, float))
+        and confidence >= 0.80
+        and bool(heard)
+    )
+    verdict: dict[str, Any]
+    if resolved:
+        verdict = {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request_sha,
+            "status": "RESOLVED",
+            "canonical_entity": canonical,
+            "authority_kind": "audio_forced_choice",
+            "confidence": float(confidence),
+            "heard_syllables": heard,
+            "reason": str(observed.get("reason") or ""),
+            "source_media_sha256": verifier.source_sha256,
+            "audio_clip_sha256": _sha256(audio_path),
+            "prompt_sha256": _sha256(outcome.prompt_path),
+            "response_sha256": _sha256(outcome.response_path),
+            "model": outcome.model,
+            "provider": outcome.provider,
+            **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
+            "audio_start_ms": span.crop_start_ms,
+            "audio_end_ms": span.crop_end_ms,
+        }
+    else:
+        verdict = _uncertain(
+            request,
+            "ENTITY_AUDIO_UNCERTAIN",
+            str(observed.get("reason") or "") if isinstance(observed, dict) else "",
+        )
+    manifest = {
+        "schema_version": "entity-audio-verdict-manifest.v1",
+        "request_sha256": request_sha,
+        "request_payload_sha256": _json_sha256(dict(request)),
+        "source_media": str(verifier.source_media),
+        "source_media_sha256": verifier.source_sha256,
+        "audio_clip": str(audio_path),
+        "audio_clip_sha256": _sha256(audio_path),
+        "prompt_sha256": _sha256(outcome.prompt_path),
+        "response_sha256": _sha256(outcome.response_path),
+        "model": outcome.model,
+        "provider": outcome.provider,
+        **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
+        **(
+            {"paid_backup_policy": dict(outcome.paid_policy_stamp)}
+            if outcome.paid_policy_stamp
+            else {}
+        ),
+        **({"provider_failures": provider_failures} if provider_failures else {}),
+        "verdict": verdict,
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return verdict
 
 
 def build_local_audio_entity_verifier(
@@ -669,253 +1044,22 @@ def build_local_audio_entity_verifier(
     source_sha256 = _sha256(source_media)
     binary = agy_bin or os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
     try:
-        as_of = dt.datetime.combine(dt.date.fromisoformat(recording_date), dt.time(12), tzinfo=dt.timezone.utc)
+        as_of = dt.datetime.combine(
+            dt.date.fromisoformat(recording_date),
+            dt.time(12),
+            tzinfo=dt.timezone.utc,
+        )
         timely = timely_terms_context(as_of=as_of)
     except ValueError:
         timely = ""
-
-    def verify(request: Mapping[str, Any]) -> Mapping[str, Any]:
-        request_sha = str(request.get("request_sha256") or "")
-        if not re.fullmatch(r"[0-9a-f]{64}", request_sha):
-            return _uncertain(request, "ENTITY_AUDIO_REQUEST_INVALID")
-        candidates = request.get("candidate_entities")
-        if not isinstance(candidates, list) or len(candidates) < 2:
-            return _uncertain(request, "ENTITY_AUDIO_CANDIDATES_INVALID")
-        job_dir = output_dir / "entity_verdicts" / request_sha[:20]
-        job_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = job_dir / "verdict.manifest.json"
-        audio_path = job_dir / "input.mp4"
-        if manifest_path.is_file() and audio_path.is_file():
-            try:
-                cached = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if (
-                    cached.get("request_sha256") == request_sha
-                    and cached.get("source_media_sha256") == source_sha256
-                    and cached.get("audio_clip_sha256") == _sha256(audio_path)
-                ):
-                    cached_verdict = cached["verdict"]
-                    # 供应商级失败绝不缓存复用（2026-07-14 配额期中毒实证：
-                    # 断供期的 PROVIDER_FAILED 判决被 manifest 固化，之后每次
-                    # 重试都命中缓存不再真听）。RESOLVED 与真·声学 UNCERTAIN
-                    # 可复用；供应商/校验类失败必须重听。
-                    if not (
-                        isinstance(cached_verdict, dict)
-                        and cached_verdict.get("reason_code")
-                        in {
-                            "ENTITY_AUDIO_PROVIDER_FAILED",
-                            "ENTITY_VERIFIER_ERROR",
-                            "ENTITY_AUDIO_RESPONSE_INVALID",
-                            "ENTITY_AUDIO_CROP_FAILED",
-                        }
-                    ):
-                        return cached_verdict
-            except (OSError, ValueError, KeyError, TypeError):
-                pass
-
-        try:
-            target_start_ms = int(request["matched_start_ms"])
-            target_end_ms = int(request["matched_end_ms"])
-            if request.get("schema_version") == "subtitle-span-acoustic-check-request.v1":
-                start_ms = max(0, min(target_start_ms, int(request["context_start_ms"])))
-                end_ms = min(
-                    source_duration_ms,
-                    max(target_end_ms, int(request["context_end_ms"])),
-                )
-            else:
-                start_ms = max(0, target_start_ms - 1_500)
-                end_ms = min(source_duration_ms, target_end_ms + 1_500)
-        except (KeyError, TypeError, ValueError):
-            return _uncertain(request, "ENTITY_AUDIO_SPAN_INVALID")
-        if (
-            target_end_ms <= target_start_ms
-            or end_ms <= start_ms
-            or end_ms - start_ms > 30_000
-            or target_start_ms < start_ms
-            or target_end_ms > end_ms
-        ):
-            return _uncertain(request, "ENTITY_AUDIO_SPAN_INVALID")
-        observed_request = dict(request)
-        observed_request["target_audio_start_ms"] = target_start_ms - start_ms
-        observed_request["target_audio_end_ms"] = target_end_ms - start_ms
-        duration_s = (end_ms - start_ms) / 1000.0
-        ffmpeg = subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-ss",
-                f"{start_ms / 1000.0:.3f}",
-                "-t",
-                f"{duration_s:.3f}",
-                "-i",
-                str(source_media),
-                "-f",
-                "lavfi",
-                "-t",
-                f"{duration_s:.3f}",
-                "-i",
-                "color=c=black:s=320x240:r=10",
-                "-map",
-                "1:v:0",
-                "-map",
-                "0:a:0",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-shortest",
-                str(audio_path),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        if ffmpeg.returncode != 0 or not audio_path.is_file():
-            return _uncertain(request, "ENTITY_AUDIO_CROP_FAILED", ffmpeg.stderr)
-
-        outcome = _observe_entity_audio(
-            request=observed_request,
-            candidates=candidates,
-            audio_path=audio_path,
-            job_dir=job_dir,
-            recording_date=recording_date,
-            timely_context=timely,
-            binary=binary,
-            model=model,
-            timeout=timeout,
-        )
-        observed = outcome.observed
-        provider = outcome.provider
-        model_used = outcome.model
-        prompt_path = outcome.prompt_path
-        response_path = outcome.response_path
-        accepted_key_tier = outcome.accepted_key_tier
-        paid_policy_stamp = outcome.paid_policy_stamp
-        provider_failures = outcome.provider_failures
-
-        if observed is None:
-            (job_dir / "provider-failures.json").write_text(
-                json.dumps(
-                    {
-                        "reason_code": "ENTITY_AUDIO_PROVIDER_FAILED",
-                        "failures": provider_failures,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            categories = ";".join(str(row.get("category")) for row in provider_failures[-4:])
-            return _uncertain(request, "ENTITY_AUDIO_PROVIDER_FAILED", categories)
-        context_mode = request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
-        canonicals = {
-            str(row.get("canonical") or "") for row in candidates if isinstance(row, dict)
-        }
-        status = observed.get("status") if isinstance(observed, dict) else None
-        confidence = observed.get("confidence") if isinstance(observed, dict) else None
-        heard = str(observed.get("heard_syllables") or "").strip() if isinstance(observed, dict) else ""
-        if context_mode:
-            verdict = _subtitle_acoustic_verdict(
-                request=request,
-                request_sha=request_sha,
-                observed=observed if isinstance(observed, dict) else {},
-                outcome=outcome,
-                source_sha256=source_sha256,
-                audio_path=audio_path,
-                start_ms=start_ms,
-                end_ms=end_ms,
-            )
-            manifest = {
-                "schema_version": "entity-audio-verdict-manifest.v1",
-                "request_sha256": request_sha,
-                "request_payload_sha256": _json_sha256(dict(request)),
-                "source_media": str(source_media),
-                "source_media_sha256": source_sha256,
-                "audio_clip": str(audio_path),
-                "audio_clip_sha256": _sha256(audio_path),
-                "prompt_sha256": _sha256(prompt_path),
-                "response_sha256": _sha256(response_path),
-                "model": model_used,
-                "provider": provider,
-                **({"key_tier": accepted_key_tier} if accepted_key_tier else {}),
-                **({"paid_backup_policy": dict(paid_policy_stamp)} if paid_policy_stamp else {}),
-                **({"provider_failures": provider_failures} if provider_failures else {}),
-                "verdict": verdict,
-            }
-            manifest_path.write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            return verdict
-        canonical = observed.get("canonical_entity") if isinstance(observed, dict) else None
-        resolved = (
-            observed.get("schema_version") == "entity-audio-observation.v1"
-            and status == "RESOLVED"
-            and canonical in canonicals
-            and not isinstance(confidence, bool)
-            and isinstance(confidence, (int, float))
-            and confidence >= 0.80
-            and bool(heard)
-        )
-        verdict: dict[str, Any]
-        if resolved:
-            verdict = {
-                "schema_version": "chat-entity-verdict.v1",
-                "request_sha256": request_sha,
-                "status": "RESOLVED",
-                "canonical_entity": canonical,
-                "authority_kind": "audio_forced_choice",
-                "confidence": float(confidence),
-                "heard_syllables": heard,
-                "reason": str(observed.get("reason") or ""),
-                "source_media_sha256": source_sha256,
-                "audio_clip_sha256": _sha256(audio_path),
-                "prompt_sha256": _sha256(prompt_path),
-                "response_sha256": _sha256(response_path),
-                "model": model_used,
-                "provider": provider,
-                **({"key_tier": accepted_key_tier} if accepted_key_tier else {}),
-                "audio_start_ms": start_ms,
-                "audio_end_ms": end_ms,
-            }
-        else:
-            verdict = _uncertain(
-                request,
-                "ENTITY_AUDIO_UNCERTAIN",
-                str(observed.get("reason") or "") if isinstance(observed, dict) else "",
-            )
-        manifest = {
-            "schema_version": "entity-audio-verdict-manifest.v1",
-            "request_sha256": request_sha,
-            "request_payload_sha256": _json_sha256(dict(request)),
-            "source_media": str(source_media),
-            "source_media_sha256": source_sha256,
-            "audio_clip": str(audio_path),
-            "audio_clip_sha256": _sha256(audio_path),
-            "prompt_sha256": _sha256(prompt_path),
-            "response_sha256": _sha256(response_path),
-            "model": model_used,
-            "provider": provider,
-            **({"key_tier": accepted_key_tier} if accepted_key_tier else {}),
-            **({"paid_backup_policy": dict(paid_policy_stamp)} if paid_policy_stamp else {}),
-            **({"provider_failures": provider_failures} if provider_failures else {}),
-            "verdict": verdict,
-        }
-        manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        return verdict
-
-    return verify
+    return _LocalAudioVerifier(
+        source_media=source_media,
+        output_dir=output_dir,
+        recording_date=recording_date,
+        source_duration_ms=source_duration_ms,
+        source_sha256=source_sha256,
+        binary=binary,
+        model=model,
+        timeout=timeout,
+        timely_context=timely,
+    )

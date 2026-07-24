@@ -73,10 +73,15 @@
   `talk-boundary-source-separation-witness.v1` 继承 source 层的 post-end 分离证明，但仍须按
   当前最终文本重新判断 syntax/story。两层 request、cue ordinal、grid SHA 与坐标分别绑定，
   不得要求相等，也不得因 endpoint ms/text 碰巧相同而平移复用。
-- hash-bound 源真值拥有的 cue 在 `_run_final_review` 前即进入保护集，终审不得先把中文音译改成
-  假名、也不得用声学对同音专名重新选字后再指望末尾钉子挽救。保护只容忍总计 `<=250ms`
-  且不超过 cue 10% 的**外边界**漂移；区间内部有空洞仍 fail closed。源真值随后照常重放并复验，
-  因此保护不是“跳过修复”，而是禁止低权威阶段抢写最高权威辖区。
+- 源真值的 `local_windows` 是容忍 fresh-ASR 时间漂移的**发现窗口**，不是最终 cue ownership。
+  在实体仲裁与 `_run_final_review` 前，流水线先对当前 draft 做确定性 source-truth preview：
+  `applied/satisfied` row 只按校验通过的
+  `source-truth-resolved-target-projection.v1` 精确 cue index 进入保护集；宽窗仅擦到的邻 cue
+  不得被豁免。只有仍失败的 `required=true` truth 才可在 preview 中退回原始窗口作保守保护，
+  并须留下 typed unresolved-fallback receipt；`required:false` 不得成为最终 owner。源真值
+  随后仍在正式阶段重放并复验，因此 preview 不是“提前应用后跳过验证”，而是禁止低权威阶段
+  抢写已确定的最高权威目标。projection 缺失/非法、cue index/timing 不一致或 required truth
+  最终未满足均 fail closed。
 - 宽 `replace_substring` 窗若同一专名出现多次，必须用 `mention_postconditions` 为每一次
   绑定绝对 source interval、required text 与 forbidden tokens；窗口内“某一次写对”不能
   掩盖另一 mention 仍错误。fresh ASR 把两个 mention 合进同一 cue 而无法分别归因时，
@@ -90,6 +95,10 @@
   漂移、覆盖边界切半 cue、漏 cue、合并/拆分、歧义映射或二次真值失败一律拒发，禁止靠重掷
   模型碰运气。只有已由 `drop_cue` 删除、无法与旧稿一一配对的静音窗会从两边同时排除；不能
   因宽真值窗内“任一 cue 已出现 required_text”就掩盖同窗其他新误听。
+- redelivery v2 在 coverage prefix/tail 唯一允许保留的 edge straddler，必须与**每一条**
+  retained reviewed cue 都按半开区间零重叠；恰好边界相接的 0ms overlap 可披露为
+  `BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP`。任何正重叠，包括 1ms，仍须报
+  `REDELIVERY_CURRENT_CUE_STRADDLES_REVIEWED_COVERAGE` 并拒发，不能把“边缘 cue”当宽松豁免。
 - v2 manifest 只有显式声明 `exact_interval_replay=true`，且源文件 basename、SHA-256、绝对
   起止区间全部逐字相同时，整份人工审定 SRT（含 cue 时间）才可直接重放。这防止同源重跑因
   ASR 随机漏 cue 而删除已审字幕；随后仍必须重放 source-truth。只要区间发生裁切或扩展，就
@@ -105,8 +114,12 @@
   `final_source_truth_owner_verification` 与
   `final_redelivery_baseline_owner_verification` 在对应 owner 存在时必须为 PASS，且该类
   required count 非零。
-- 所有 required source-truth/baseline/story-chat owner 还必须在裁切前冻结并由最终边界完整
-  覆盖；finalizer 发现任一 owner 被裁掉或只剩残片时必须记
+- 所有 required source-truth/baseline owner，以及具备对应 typed ownership contract 的
+  applied story-chat owner，还必须在裁切前冻结并由最终边界完整覆盖。整句 `exact_read`
+  必须由 whole-line gate 明示 `owner_eligible=true`；sender/gift/coreference/entity 等窄槽
+  则按各自 slot contract，不借用整句字段。`required:false` truth、partial/proxy chat support
+  与 context-only verdict 不能进入 owner 列表。finalizer 发现任一真实 owner 被裁掉或只剩
+  残片时必须记
   `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 并拒发，不能因成片外已“不可见”就把它降级为
   `NOT_REQUIRED` / `OUTSIDE_DELIVERY`。完整边界契约见 [30-boundary.md](30-boundary.md)。
 - 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
@@ -120,6 +133,13 @@
   在上一 cue，才可声明该前缀由上一 cue ownership 并从当前 span 去重。`0.8` fuzzy coverage
   只能辅助判断 gap 是否曾读过，不能替代完整前缀 exact containment；少了 `不/不是/没` 等
   极性词时必须拒绝 rebase，禁止用高相似度把反向语义当成重复前缀丢掉。
+- 结构化 SC/弹幕整句复制必须另过 typed whole-line support gate。gate 要逐项保存每一路
+  support 的 score、coverage、precision、匹配范围和 unsupported head/interior/tail；主
+  transcript fuzzy 命中、partial span、context-only audio verdict 或只见证实体槽都不能把
+  未说出的前后缀补进字幕。只有 full-span hash-bound raw audio、owner-eligible 的近完整独立
+  transcript，或现行明示 strong-thread-anchor 窄例外，才可令 applied row
+  `owner_eligible=true`；失败时整句保持原口播，仅允许已独立见证的 entity/source-truth 槽位
+  修复。
 - 书名号结构门在所有文本 authority（含源真值）之后再跑一次；合法跨 cue 配对单独记账，真正的 `UNRESOLVED_COMPLEX_IMBALANCE` 必须阻断 `review_ready`。
 - 最终 clean/speaker SRT 在 burn 前必须经过
   `src/autoslice/subtitle_validation.py::validate_srt_file`：每个非空 block 都必须被消费，
@@ -137,15 +157,31 @@
   规范 SHA 绑定；它不能塞进 v2 冒充最终回执。provider/JSON 失败、缺失或 null/non-list
   findings、全部 finding 无效、任何剩余 finding、raw-byte SRT hash 漂移或任一 typed receipt
   非 PASS 都阻断。
+- correction pass 对 SRT 与 chat authority audit 是原子事务：所有 mutation 先 staged；任一
+  discovery/routing/provider 异常必须恢复原始 SRT 字节且不提交 staged audit，并输出 typed
+  `final-review-audit.v1 status=AUDITOR_UNAVAILABLE`、`release_gate=BLOCK`、原始
+  `reason_code/detail`、`findings=[]`、`applied_count=0`。exact-final 后续空 rescan 不能洗白
+  该失败；mutation audit 必须报 `CORRECTION_DISCOVERY_INCOMPLETE`。只有 typed
+  `AUDITOR_UNAVAILABLE` 可按有界
+  `provider_transient / final_review_correction_discovery` 重试；非法合同/状态仍是终态错误。
 - exact-final 的声学复核只能关闭“当前读音支持且建议读音明确不兼容”的可听辨提案。若 finding
   涉及同音、近同音、`repair_class=phonetic`、字母规范写法，或 current/proposed 的规范化
   发音键相同（如 `毁神→绘声`、`大恩→大N`），纯音频不能决定字形；即使 verdict 报
   current `SUPPORTED`、proposed `INCOMPATIBLE`，仍必须保留 finding、记录
   `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断 v2 放行，直到独立文字权威解决。
+- exact-final SRT 使用**交付局部时间轴**，而声学 verifier 绑定的通常是带前后 padding 的源
+  media。每个 `subtitle-span-acoustic-check-request.v1` 必须显式携带非负
+  `source_media_timeline_offset_ms`，并把它纳入 evidence/request hash；实际裁剪必须执行
+  `source_media_ms = delivery_local_ms + offset`。verdict/manifest 必须以
+  `subtitle-audio-timeline-binding.v1` 同时记录 delivery-local target/context 和 source-media
+  target/crop。字段缺失、负数、类型错误、请求重算 hash 不符、target 越界或旧 cache 未绑定
+  offset 都 fail closed；branding intro 不参与这个 pre-burn 时间轴。
 - correction pass 中所有已应用的同音/近同音/字母正字法 mutation，都必须携带与当前 cue
   或 referent 精确绑定且 PASS 的 `subtitle-orthography-authority.v1` 文字权威回执。可授权的
-  typed provenance 仅包括 glossary、official roster、source truth、bound structured chat、
-  verified OCR，或另有强制层已显式标记 `mutation_authorized=true` 的来源。纯 acoustic、
+  typed provenance 仅包括精确词面 glossary、official roster、source truth、bound structured
+  chat、verified OCR，或另有强制层已显式标记 `mutation_authorized=true` 的来源。raw
+  glossary prose 中单个规范化字符只能作为 `glossary_context` 召回候选，不能授权汉字选择；
+  单字正字法必须另有 referent-bound typed authority。纯 acoustic、
   同片 transcript recurrence、宽泛 `structured_context`（含 selection hook）和 speech-memory
   命中都只能提出 candidate，不能授权选字。
 - `final-review-audit.v2` 必须携带 PASS 的

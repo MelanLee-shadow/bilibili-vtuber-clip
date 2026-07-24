@@ -28,6 +28,12 @@ ROUTE_TREATMENTS = (
 FINAL_PARTICIPANT_VERIFICATION_SCHEMA = (
     "lidousha-cover-final-participant-verification.v1"
 )
+RELATIONSHIP_VISUAL_SAFETY_SCHEMA = (
+    "lidousha-cover-relationship-visual-safety.v1"
+)
+RELATIONSHIP_VISUAL_SAFETY_BASIS = (
+    "CONFIRMED_MULTI_PARTICIPANT_STORY_CONTRACT"
+)
 RENDERED_TEXT_PIXEL_SCHEMA = "lidousha-cover-rendered-text-pixels.v3"
 TITLE_RENDER_SPEC_SCHEMA = "lidousha-cover-title-render-spec.v1"
 NO_CROP_PARTICIPANT_AUTHORITY = (
@@ -96,11 +102,10 @@ def relationship_semantic_evidence(
     title: str = "",
     cover_text: str = "",
 ) -> list[str]:
-    """Explain why this cover must visually preserve a multi-person relation.
+    """Return optional text evidence that explains the relationship narrative.
 
-    Geometry and motion are intentionally absent here.  They can rank a
-    composition only after source-bound identity evidence establishes who is
-    actually present.
+    This evidence never decides whether multi-person visual safety is required.
+    A confirmed StoryContract owns that decision independently of wording.
     """
 
     if (
@@ -148,6 +153,60 @@ def relationship_semantic_evidence(
         if participant_mentions >= 2:
             evidence.append(f"{label}:MULTI_PARTICIPANT_CO_MENTION")
     return list(dict.fromkeys(evidence))
+
+
+def relationship_visual_safety_evidence(
+    story_contract: object,
+) -> dict[str, object]:
+    """Build the typed contract evidence that owns relationship visual safety."""
+
+    relation_state = (
+        str(story_contract.get("relation_state") or "UNKNOWN")
+        if isinstance(story_contract, Mapping)
+        else "UNKNOWN"
+    )
+    required_participant_ids = story_participant_ids(story_contract)
+    required = bool(
+        relation_state == "CONFIRMED"
+        and len(required_participant_ids) >= 2
+    )
+    return {
+        "schema_version": RELATIONSHIP_VISUAL_SAFETY_SCHEMA,
+        "status": "REQUIRED" if required else "NOT_REQUIRED",
+        "relation_state": relation_state,
+        "required_participant_ids": required_participant_ids,
+        "requirement_basis": (
+            [RELATIONSHIP_VISUAL_SAFETY_BASIS] if required else []
+        ),
+    }
+
+
+def relationship_visual_safety_required(
+    story_contract: object,
+    *,
+    route_decision: object = None,
+) -> bool:
+    """Fail safely when either the live contract or typed route requires it."""
+
+    if (
+        relationship_visual_safety_evidence(story_contract).get("status")
+        == "REQUIRED"
+    ):
+        return True
+    if not isinstance(route_decision, Mapping):
+        return False
+    route_evidence = route_decision.get(
+        "relationship_visual_safety_evidence"
+    )
+    return bool(
+        route_decision.get("relationship_visual_required") is True
+        or (
+            isinstance(route_evidence, Mapping)
+            and route_evidence.get("schema_version")
+            == RELATIONSHIP_VISUAL_SAFETY_SCHEMA
+            and route_evidence.get("status") == "REQUIRED"
+        )
+    )
 
 
 def relationship_source_participants_verified(
@@ -579,6 +638,12 @@ def build_cover_route_decision(
         title=title,
         cover_text=cover_text,
     )
+    visual_safety_evidence = relationship_visual_safety_evidence(
+        story_contract
+    )
+    relationship_visual_required = (
+        visual_safety_evidence["status"] == "REQUIRED"
+    )
     reference_is_hash_bound = is_hash_bound_reference_authority(
         reference_authority
     )
@@ -600,12 +665,13 @@ def build_cover_route_decision(
             if reference_is_hash_bound
             else "NO_IDENTITY_AUTHORITY"
         ),
-        "relationship_visual_required": bool(semantic_evidence),
+        "relationship_visual_required": relationship_visual_required,
+        "relationship_visual_safety_evidence": visual_safety_evidence,
         "relationship_semantic_evidence": semantic_evidence,
         "final_visible_participant_ids": [],
         "final_visibility_authority": (
             "PENDING_RELATION_VISUAL_VERIFICATION"
-            if semantic_evidence
+            if relationship_visual_required
             else "NOT_REQUIRED"
         ),
         "image_generation_planned": generation_planned,
@@ -767,8 +833,37 @@ def validate_cover_route_decision(
             return False
     final_visible = route.get("final_visible_participant_ids")
     semantic_evidence = route.get("relationship_semantic_evidence")
+    visual_safety_evidence = route.get(
+        "relationship_visual_safety_evidence"
+    )
     if (
         not isinstance(route.get("relationship_visual_required"), bool)
+        or not isinstance(visual_safety_evidence, Mapping)
+        or visual_safety_evidence.get("schema_version")
+        != RELATIONSHIP_VISUAL_SAFETY_SCHEMA
+        or visual_safety_evidence.get("status")
+        not in {"REQUIRED", "NOT_REQUIRED"}
+        or not isinstance(
+            visual_safety_evidence.get("relation_state"), str
+        )
+        or not isinstance(
+            visual_safety_evidence.get("required_participant_ids"), list
+        )
+        or visual_safety_evidence.get("required_participant_ids")
+        != route.get("required_participant_ids")
+        or not isinstance(
+            visual_safety_evidence.get("requirement_basis"), list
+        )
+        or (
+            visual_safety_evidence.get("requirement_basis")
+            != [RELATIONSHIP_VISUAL_SAFETY_BASIS]
+            if visual_safety_evidence.get("status") == "REQUIRED"
+            else visual_safety_evidence.get("requirement_basis") != []
+        )
+        or route.get("relationship_visual_required")
+        is not (
+            visual_safety_evidence.get("status") == "REQUIRED"
+        )
         or not isinstance(semantic_evidence, list)
         or len(semantic_evidence) != len(set(semantic_evidence))
         or not all(
@@ -805,11 +900,14 @@ def validate_cover_route_decision(
             title=str(cover_generation.get("title") or ""),
             cover_text=str(cover_generation.get("cover_text") or ""),
         )
+        expected_visual_safety_evidence = (
+            relationship_visual_safety_evidence(story_contract)
+        )
         if (
             route.get("relationship_semantic_evidence")
             != expected_semantic_evidence
-            or route.get("relationship_visual_required")
-            is not bool(expected_semantic_evidence)
+            or dict(visual_safety_evidence)
+            != expected_visual_safety_evidence
         ):
             return False
     relationship_required = (

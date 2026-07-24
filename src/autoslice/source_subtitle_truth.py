@@ -24,6 +24,7 @@ from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 
 SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
 AUDIT_SCHEMA_VERSION = "source-subtitle-truth-audit.v1"
+PREVIEW_SCHEMA_VERSION = "source-truth-deterministic-preview.v1"
 MIN_CUE_OVERLAP_MS = 80
 DROP_CUE_BOUNDARY_EPSILON_MS = 120
 SPOKEN_START_CUE_LAG_TOLERANCE_MS = 500
@@ -651,6 +652,440 @@ def _source_truth_audit_row(
     }
 
 
+def validated_source_truth_projection(
+    row: Mapping[str, object],
+) -> dict[str, Any] | None:
+    """Validate and return one post-apply cue projection, if present."""
+
+    projection = row.get("resolved_target_projection")
+    if not isinstance(projection, Mapping):
+        return None
+    action = str(row.get("action") or "")
+    status = projection.get("status")
+    raw_cues = projection.get("cues")
+    raw_indexes = row.get("cue_indexes")
+    raw_windows = row.get("local_windows")
+    if (
+        projection.get("schema_version")
+        != "source-truth-resolved-target-projection.v1"
+        or projection.get("selector")
+        != "half-open-overlap-gte-min-then-action-resolution"
+        or projection.get("min_overlap_ms") != MIN_CUE_OVERLAP_MS
+        or projection.get("action") != action
+        or status not in {"RESOLVED", "ALREADY_ABSENT"}
+        or not isinstance(raw_cues, list)
+        or not isinstance(raw_indexes, list)
+        or not isinstance(raw_windows, list)
+        or (status == "ALREADY_ABSENT" and (action != "drop_cue" or raw_cues))
+        or (status == "RESOLVED" and not raw_cues)
+    ):
+        return None
+    cue_indexes = [
+        value
+        for value in raw_indexes
+        if isinstance(value, int) and not isinstance(value, bool)
+    ]
+    if len(cue_indexes) != len(raw_indexes):
+        return None
+    local_windows: list[tuple[int, int]] = []
+    for raw_window in raw_windows:
+        if not isinstance(raw_window, Mapping):
+            return None
+        window_start = raw_window.get("start_ms")
+        window_end = raw_window.get("end_ms")
+        if (
+            isinstance(window_start, bool)
+            or not isinstance(window_start, int)
+            or isinstance(window_end, bool)
+            or not isinstance(window_end, int)
+            or window_start >= window_end
+        ):
+            return None
+        local_windows.append((window_start, window_end))
+    if not local_windows:
+        return None
+    cues: list[dict[str, Any]] = []
+    previous_index = 0
+    previous_start = -1
+    for raw in raw_cues:
+        if not isinstance(raw, Mapping):
+            return None
+        cue_index = raw.get("cue_index")
+        start_ms = raw.get("start_ms")
+        end_ms = raw.get("end_ms")
+        before_text = raw.get("before_text")
+        after_text = raw.get("after_text")
+        if (
+            isinstance(cue_index, bool)
+            or not isinstance(cue_index, int)
+            or cue_index <= previous_index
+            or isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or start_ms >= end_ms
+            or start_ms < previous_start
+            or not isinstance(before_text, str)
+            or not isinstance(after_text, str)
+        ):
+            return None
+        cues.append(
+            {
+                "cue_index": cue_index,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "before_text": before_text,
+                "after_text": after_text,
+            }
+        )
+        previous_index = cue_index
+        previous_start = start_ms
+    if [cue["cue_index"] for cue in cues] != cue_indexes:
+        return None
+    if status == "ALREADY_ABSENT" and cue_indexes:
+        return None
+    timing_pin = row.get("timing_pin")
+    timing_pin_index = cue_indexes[0] if len(cue_indexes) == 1 else None
+    if timing_pin is not None:
+        if (
+            not isinstance(timing_pin, Mapping)
+            or action != "replace_cue"
+            or timing_pin_index is None
+            or isinstance(timing_pin.get("before_start_ms"), bool)
+            or not isinstance(timing_pin.get("before_start_ms"), int)
+            or isinstance(timing_pin.get("after_start_ms"), bool)
+            or not isinstance(timing_pin.get("after_start_ms"), int)
+        ):
+            return None
+    for cue in cues:
+        selection_start = int(cue["start_ms"])
+        if timing_pin is not None and cue["cue_index"] == timing_pin_index:
+            if int(timing_pin["after_start_ms"]) != selection_start:
+                return None
+            if not any(
+                window_start <= selection_start < window_end
+                for window_start, window_end in local_windows
+            ):
+                return None
+            selection_start = int(timing_pin["before_start_ms"])
+        selection_end = int(cue["end_ms"])
+        if selection_start >= selection_end or not any(
+            min(selection_end, window_end)
+            - max(selection_start, window_start)
+            >= MIN_CUE_OVERLAP_MS
+            for window_start, window_end in local_windows
+        ):
+            return None
+    return {
+        "schema_version": projection["schema_version"],
+        "selector": projection["selector"],
+        "min_overlap_ms": MIN_CUE_OVERLAP_MS,
+        "action": action,
+        "status": status,
+        "cues": cues,
+    }
+
+
+def source_truth_owner_windows(
+    row: Mapping[str, object],
+) -> list[tuple[int, int]]:
+    """Return effective owner windows, preferring post-apply projection."""
+
+    if "resolved_target_projection" in row:
+        projection = validated_source_truth_projection(row)
+        if projection is None:
+            return []
+        if projection["status"] == "RESOLVED":
+            return [
+                (int(cue["start_ms"]), int(cue["end_ms"]))
+                for cue in projection["cues"]
+            ]
+        # An already-absent drop has no cue projection.  Its reviewed source
+        # span remains the only meaningful absence window.
+    raw_windows = row.get("local_windows")
+    if not isinstance(raw_windows, list):
+        return []
+    windows: list[tuple[int, int]] = []
+    for window in raw_windows:
+        if not isinstance(window, Mapping):
+            return []
+        start = window.get("start_ms")
+        end = window.get("end_ms")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or start >= end
+        ):
+            return []
+        windows.append((start, end))
+    return windows
+
+
+def _canonical_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + _sha256_bytes(encoded)
+
+
+def _preview_input_grid(cues: Sequence[SrtCue]) -> list[dict[str, object]]:
+    return [
+        {
+            "cue_index": index,
+            "srt_index": cue.index,
+            "start_ms": cue.start_ms,
+            "end_ms": cue.end_ms,
+            "text": cue.text,
+        }
+        for index, cue in enumerate(cues, start=1)
+    ]
+
+
+def _preview_raw_windows(
+    row: Mapping[str, object],
+    *,
+    truth_id: str,
+) -> list[tuple[int, int]]:
+    raw_windows = row.get("local_windows")
+    if not isinstance(raw_windows, list) or not raw_windows:
+        raise RuntimeError(
+            f"SOURCE_TRUTH_PREVIEW_FALLBACK_WINDOWS_INVALID: {truth_id}"
+        )
+    windows: list[tuple[int, int]] = []
+    for raw_window in raw_windows:
+        if not isinstance(raw_window, Mapping):
+            raise RuntimeError(
+                f"SOURCE_TRUTH_PREVIEW_FALLBACK_WINDOWS_INVALID: {truth_id}"
+            )
+        start_ms = raw_window.get("start_ms")
+        end_ms = raw_window.get("end_ms")
+        if (
+            isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or start_ms >= end_ms
+        ):
+            raise RuntimeError(
+                f"SOURCE_TRUTH_PREVIEW_FALLBACK_WINDOWS_INVALID: {truth_id}"
+            )
+        windows.append((start_ms, end_ms))
+    return windows
+
+
+def _projection_matches_preview_grid(
+    row: Mapping[str, object],
+    projection: Mapping[str, object],
+    cues: Sequence[SrtCue],
+) -> bool:
+    """Bind a validated post-apply projection back to its pre-apply cue grid.
+
+    Text may legitimately reflect an earlier truth row on the same cue, so the
+    binding uses cue ordinal and timing.  A reviewed ``spoken_start_ms`` pin is
+    the only permitted timing change.
+    """
+
+    projected_cues = projection.get("cues")
+    if not isinstance(projected_cues, list):
+        return False
+    timing_pin = row.get("timing_pin")
+    timing_pin_index: int | None = None
+    if isinstance(timing_pin, Mapping):
+        raw_indexes = row.get("cue_indexes")
+        if not isinstance(raw_indexes, list) or len(raw_indexes) != 1:
+            return False
+        timing_pin_index = int(raw_indexes[0])
+    for projected in projected_cues:
+        if not isinstance(projected, Mapping):
+            return False
+        cue_index = int(projected["cue_index"])
+        if cue_index < 1 or cue_index > len(cues):
+            return False
+        source_cue = cues[cue_index - 1]
+        if int(projected["end_ms"]) != source_cue.end_ms:
+            return False
+        if timing_pin_index == cue_index:
+            assert isinstance(timing_pin, Mapping)
+            if (
+                int(timing_pin["before_start_ms"]) != source_cue.start_ms
+                or int(timing_pin["after_start_ms"])
+                != int(projected["start_ms"])
+            ):
+                return False
+        elif int(projected["start_ms"]) != source_cue.start_ms:
+            return False
+    return True
+
+
+def build_source_truth_preview_receipt(
+    *,
+    input_srt_text: str,
+    source_truth_audit: Mapping[str, object],
+    stage: str,
+) -> dict[str, Any]:
+    """Build protection evidence without returning projected subtitle text.
+
+    The caller may run :func:`apply_source_subtitle_truth` on a draft solely to
+    discover deterministic targets, then discard that function's rendered SRT
+    and pass its audit here.  Required successful rows protect only exact,
+    validated post-apply cue projections.  Required failures deliberately
+    ignore any attached projection and fall back to their raw discovery
+    windows at the same 80 ms half-open overlap threshold.  Optional truths
+    never grant protection or ownership.
+    """
+
+    if not isinstance(stage, str) or not stage.strip():
+        raise RuntimeError("SOURCE_TRUTH_PREVIEW_STAGE_INVALID")
+    if (
+        source_truth_audit.get("schema_version") != AUDIT_SCHEMA_VERSION
+        or not isinstance(source_truth_audit.get("applied"), list)
+        or not isinstance(source_truth_audit.get("satisfied"), list)
+        or not isinstance(source_truth_audit.get("failures"), list)
+    ):
+        raise RuntimeError("SOURCE_TRUTH_PREVIEW_AUDIT_INVALID")
+
+    cues = parse_srt_cues(input_srt_text)
+    if any(cue.start_ms >= cue.end_ms for cue in cues):
+        raise RuntimeError("SOURCE_TRUTH_PREVIEW_INPUT_GRID_INVALID")
+    grid = _preview_input_grid(cues)
+    ledger_sha256 = source_truth_audit.get("ledger_sha256")
+    has_rows = any(
+        source_truth_audit.get(key)
+        for key in ("applied", "satisfied", "failures")
+    )
+    if (
+        ledger_sha256 is not None
+        and (
+            not isinstance(ledger_sha256, str)
+            or _SOURCE_SHA256_RX.fullmatch(ledger_sha256) is None
+        )
+    ) or (
+        has_rows and ledger_sha256 is None
+    ):
+        raise RuntimeError("SOURCE_TRUTH_PREVIEW_LEDGER_BINDING_INVALID")
+
+    exact_owners: list[dict[str, object]] = []
+    unresolved_fallbacks: list[dict[str, object]] = []
+    ignored_optional_truth_ids: set[str] = set()
+    exact_indexes: set[int] = set()
+    fallback_indexes: set[int] = set()
+    fallback_windows: set[tuple[int, int]] = set()
+
+    for bucket in ("applied", "satisfied"):
+        rows = source_truth_audit[bucket]
+        assert isinstance(rows, list)
+        for raw_row in rows:
+            if not isinstance(raw_row, Mapping):
+                raise RuntimeError("SOURCE_TRUTH_PREVIEW_AUDIT_ROW_INVALID")
+            truth_id = str(raw_row.get("truth_id") or "")
+            if not truth_id:
+                raise RuntimeError("SOURCE_TRUTH_PREVIEW_TRUTH_ID_MISSING")
+            if raw_row.get("required") is False:
+                ignored_optional_truth_ids.add(truth_id)
+                continue
+            projection = validated_source_truth_projection(raw_row)
+            if projection is None or not _projection_matches_preview_grid(
+                raw_row, projection, cues
+            ):
+                raise RuntimeError(
+                    f"SOURCE_TRUTH_PREVIEW_PROJECTION_INVALID: {truth_id}"
+                )
+            cue_indexes = [
+                int(cue["cue_index"])
+                for cue in projection["cues"]
+            ]
+            exact_indexes.update(cue_indexes)
+            exact_owners.append(
+                {
+                    "truth_id": truth_id,
+                    "entry_sha256": raw_row.get("entry_sha256"),
+                    "source_bucket": bucket,
+                    "projection_status": projection["status"],
+                    "cue_indexes": cue_indexes,
+                    # Bind the full validated projection without exposing its
+                    # before/after subtitle text as preview output.
+                    "projection_sha256": _canonical_sha256(projection),
+                }
+            )
+
+    for raw_row in source_truth_audit["failures"]:
+        if not isinstance(raw_row, Mapping):
+            raise RuntimeError("SOURCE_TRUTH_PREVIEW_AUDIT_ROW_INVALID")
+        truth_id = str(raw_row.get("truth_id") or "")
+        if not truth_id:
+            raise RuntimeError("SOURCE_TRUTH_PREVIEW_TRUTH_ID_MISSING")
+        if raw_row.get("required") is False:
+            ignored_optional_truth_ids.add(truth_id)
+            continue
+        windows = _preview_raw_windows(raw_row, truth_id=truth_id)
+        # Never inspect ``resolved_target_projection`` here.  A failed truth
+        # has no exact owner, even if a stale/tampered projection is attached.
+        window_rows = [
+            {"start_ms": start_ms, "end_ms": end_ms}
+            for start_ms, end_ms in windows
+        ]
+        cue_indexes = [
+            index + 1 for index in _target_indexes(cues, window_rows)
+        ]
+        fallback_indexes.update(cue_indexes)
+        fallback_windows.update(windows)
+        unresolved_fallbacks.append(
+            {
+                "truth_id": truth_id,
+                "entry_sha256": raw_row.get("entry_sha256"),
+                "reason_code": raw_row.get("reason_code"),
+                "local_windows": window_rows,
+                "cue_indexes": cue_indexes,
+            }
+        )
+
+    receipt: dict[str, Any] = {
+        "schema_version": PREVIEW_SCHEMA_VERSION,
+        "status": (
+            "UNRESOLVED_REQUIRED"
+            if unresolved_fallbacks
+            else "PASS"
+        ),
+        "stage": stage.strip(),
+        "min_overlap_ms": MIN_CUE_OVERLAP_MS,
+        "input_srt_sha256": (
+            "sha256:" + _sha256_bytes(input_srt_text.encode("utf-8"))
+        ),
+        "input_cue_grid_sha256": _canonical_sha256(
+            {
+                "schema_version": "source-truth-preview-input-grid.v1",
+                "cues": grid,
+            }
+        ),
+        "ledger_sha256": ledger_sha256,
+        "source_truth_audit_sha256": _canonical_sha256(
+            source_truth_audit
+        ),
+        "source_truth_audit_status": source_truth_audit.get("status"),
+        "exact_projection_owners": exact_owners,
+        "unresolved_fallbacks": unresolved_fallbacks,
+        "ignored_optional_truth_ids": sorted(
+            ignored_optional_truth_ids
+        ),
+        "exact_protected_cue_indexes": sorted(exact_indexes),
+        "fallback_protected_cue_indexes": sorted(fallback_indexes),
+        "protected_cue_indexes": sorted(
+            exact_indexes | fallback_indexes
+        ),
+        "fallback_local_windows": [
+            {"start_ms": start_ms, "end_ms": end_ms}
+            for start_ms, end_ms in sorted(fallback_windows)
+        ],
+    }
+    receipt["receipt_sha256"] = _canonical_sha256(receipt)
+    return receipt
+
+
 def _resolve_spoken_start_target(
     cues: Sequence[SrtCue],
     target_indexes: Sequence[int],
@@ -697,6 +1132,132 @@ def _resolve_spoken_start_binding(
         return None, None, "SPOKEN_START_OUTSIDE_TARGET_CUE"
     target, error = _resolve_spoken_start_target(cues, target_indexes, local_ms)
     return local_ms, target, error
+
+
+def _apply_replace_cue_action(
+    *,
+    entry: Mapping[str, object],
+    cues: list[SrtCue],
+    texts: list[str],
+    target_indexes: list[int],
+    before_by_index: Mapping[int, str],
+    before: list[str],
+    row: dict[str, Any],
+    spoken_start_raw: object,
+    spoken_start_local: int | None,
+) -> tuple[bool, bool, list[int], list[str]]:
+    """Apply one ``replace_cue`` row without changing orchestration order."""
+
+    changed = False
+    satisfied = False
+    replacement = str(entry.get("text") or "")
+    if not replacement:
+        row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
+    elif len(target_indexes) != 1:
+        from src.autoslice.chat_repair import (
+            _best_text_split,
+            _match_metrics,
+        )
+        from src.autoslice.cue_split_hygiene import (
+            _shift_boundary_punct,
+            _snap_split_to_punct,
+        )
+
+        # 2026-07-19 合并跳切实证：fresh 重转写会把同一源区间切成
+        # 两条 cue（或 bleed 进相邻 cue），时间锚定的目标不再唯一。
+        # 真值**内容**已在目标 cue 组里成立时按 satisfied 记账——
+        # 比对做去标点归一（「…事情，kmx」跨 cue 时逗号由边界停顿
+        # 表达，字符串级比对会被一个标点冤枉）。
+        joined_norm = _normalize_truth_surface(
+            "".join(texts[index] for index in target_indexes)
+        )
+        replacement_norm = _normalize_truth_surface(replacement)
+        kept = [
+            index
+            for index in target_indexes
+            if _match_metrics(replacement, texts[index])[4] >= 2
+        ]
+        contiguous = bool(kept) and kept == list(
+            range(kept[0], kept[0] + len(kept))
+        )
+        kept_joined_norm = _normalize_truth_surface(
+            "".join(texts[index] for index in kept)
+        )
+        if replacement_norm and replacement_norm in joined_norm:
+            satisfied = True
+            if contiguous and replacement_norm in kept_joined_norm:
+                target_indexes = kept
+                row["cue_indexes"] = [
+                    index + 1 for index in target_indexes
+                ]
+                before = [
+                    before_by_index[index] for index in target_indexes
+                ]
+        else:
+            # 多 cue 辖区重分配（2026-07-20 kmx r5 案：每轮 fresh 的
+            # cue 切分方差让单目标 fail-closed 变成无限重掷）。钉子
+            # 文本按与现文本的相似度分布到覆盖的连续 cue 上（断点
+            # 吸附标点，词不跨 cue）——内容全部来自 Ivan 审定文本，
+            # 零发明；时间轴与 cue 数不动。
+            # 辖区收缩：与钉文毫无字符共通的 cue 是被窗口误圈的
+            # 邻句（真实内容不许被钉文覆盖），从两端剔除后必须仍
+            # 连续；收缩集与钉文整体相似 ≥0.55 才允许重分配落刀。
+            joined_score = (
+                _match_metrics(
+                    replacement,
+                    "".join(texts[index] for index in kept),
+                )[0]
+                if kept
+                else 0.0
+            )
+            if contiguous and joined_score >= 0.55:
+                parts = _snap_split_to_punct(
+                    _shift_boundary_punct(
+                        _best_text_split(
+                            replacement,
+                            [texts[index] for index in kept],
+                        )
+                    )
+                )
+                if len(parts) == len(kept) and all(
+                    part.strip() for part in parts
+                ):
+                    for index, part in zip(kept, parts):
+                        texts[index] = part
+                    changed = True
+                    satisfied = True
+                    row["multi_cue_redistribution"] = parts
+                    target_indexes = kept
+                    row["cue_indexes"] = [
+                        index + 1 for index in target_indexes
+                    ]
+                    before = [
+                        before_by_index[index] for index in target_indexes
+                    ]
+                else:
+                    row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
+            else:
+                row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
+    else:
+        index = target_indexes[0]
+        satisfied = texts[index] == replacement
+        if not satisfied:
+            texts[index] = replacement
+            changed = True
+            satisfied = True
+        if spoken_start_local is not None:
+            before_start_ms = cues[index].start_ms
+            if before_start_ms != spoken_start_local:
+                cues[index] = replace(
+                    cues[index], start_ms=spoken_start_local
+                )
+                changed = True
+            row["timing_pin"] = {
+                "source_spoken_start_ms": spoken_start_raw,
+                "before_start_ms": before_start_ms,
+                "after_start_ms": spoken_start_local,
+            }
+    return changed, satisfied, target_indexes, before
 
 
 def apply_source_subtitle_truth(
@@ -795,7 +1356,8 @@ def apply_source_subtitle_truth(
             if raw_entry.get("required") is not False:
                 audit["failures"].append(row)
             continue
-        before = [texts[index] for index in target_indexes]
+        before_by_index = {index: texts[index] for index in target_indexes}
+        before = [before_by_index[index] for index in target_indexes]
         changed = False
         satisfied = False
 
@@ -830,96 +1392,19 @@ def apply_source_subtitle_truth(
         if timing_pin_error is not None:
             row["reason_code"] = timing_pin_error
         elif action == "replace_cue":
-            replacement = str(raw_entry.get("text") or "")
-            if not replacement:
-                row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
-            elif len(target_indexes) != 1:
-                # 2026-07-19 合并跳切实证：fresh 重转写会把同一源区间切成
-                # 两条 cue（或 bleed 进相邻 cue），时间锚定的目标不再唯一。
-                # 真值**内容**已在目标 cue 组里成立时按 satisfied 记账——
-                # 比对做去标点归一（「…事情，kmx」跨 cue 时逗号由边界停顿
-                # 表达，字符串级比对会被一个标点冤枉）。
-                joined_norm = _normalize_truth_surface(
-                    "".join(texts[index] for index in target_indexes)
+            changed, satisfied, target_indexes, before = (
+                _apply_replace_cue_action(
+                    entry=raw_entry,
+                    cues=cues,
+                    texts=texts,
+                    target_indexes=target_indexes,
+                    before_by_index=before_by_index,
+                    before=before,
+                    row=row,
+                    spoken_start_raw=spoken_start_raw,
+                    spoken_start_local=spoken_start_local,
                 )
-                replacement_norm = _normalize_truth_surface(replacement)
-                if replacement_norm and replacement_norm in joined_norm:
-                    satisfied = True
-                else:
-                    # 多 cue 辖区重分配（2026-07-20 kmx r5 案：每轮 fresh 的
-                    # cue 切分方差让单目标 fail-closed 变成无限重掷）。钉子
-                    # 文本按与现文本的相似度分布到覆盖的连续 cue 上（断点
-                    # 吸附标点，词不跨 cue）——内容全部来自 Ivan 审定文本，
-                    # 零发明；时间轴与 cue 数不动。
-                    from src.autoslice.cue_split_hygiene import (
-                        _shift_boundary_punct,
-                        _snap_split_to_punct,
-                    )
-                    from src.autoslice.chat_repair import (
-                        _best_text_split,
-                        _match_metrics,
-                    )
-
-                    # 辖区收缩：与钉文毫无字符共通的 cue 是被窗口误圈的
-                    # 邻句（真实内容不许被钉文覆盖），从两端剔除后必须仍
-                    # 连续；收缩集与钉文整体相似 ≥0.55 才允许重分配落刀。
-                    kept = [
-                        index
-                        for index in target_indexes
-                        if _match_metrics(replacement, texts[index])[4] >= 2
-                    ]
-                    contiguous = bool(kept) and kept == list(
-                        range(kept[0], kept[0] + len(kept))
-                    )
-                    joined_score = (
-                        _match_metrics(
-                            replacement,
-                            "".join(texts[index] for index in kept),
-                        )[0]
-                        if kept
-                        else 0.0
-                    )
-                    if contiguous and joined_score >= 0.55:
-                        parts = _snap_split_to_punct(
-                            _shift_boundary_punct(
-                                _best_text_split(
-                                    replacement,
-                                    [texts[index] for index in kept],
-                                )
-                            )
-                        )
-                        if len(parts) == len(kept) and all(
-                            part.strip() for part in parts
-                        ):
-                            for index, part in zip(kept, parts):
-                                texts[index] = part
-                            changed = True
-                            satisfied = True
-                            row["multi_cue_redistribution"] = parts
-                            row["cue_indexes"] = [index + 1 for index in kept]
-                        else:
-                            row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
-                    else:
-                        row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
-            else:
-                index = target_indexes[0]
-                satisfied = texts[index] == replacement
-                if not satisfied:
-                    texts[index] = replacement
-                    changed = True
-                    satisfied = True
-                if spoken_start_local is not None:
-                    before_start_ms = cues[index].start_ms
-                    if before_start_ms != spoken_start_local:
-                        cues[index] = replace(
-                            cues[index], start_ms=spoken_start_local
-                        )
-                        changed = True
-                    row["timing_pin"] = {
-                        "source_spoken_start_ms": spoken_start_raw,
-                        "before_start_ms": before_start_ms,
-                        "after_start_ms": spoken_start_local,
-                    }
+            )
         elif action == "replace_substring":
             replacements_raw = raw_entry.get("replacements")
             if not isinstance(replacements_raw, list) or not target_indexes:
@@ -949,6 +1434,42 @@ def apply_source_subtitle_truth(
                         or any(required_text in texts[index] for index in target_indexes)
                     )
                 )
+                replacement_indexes = sorted(
+                    {
+                        int(replacement["cue_index"]) - 1
+                        for replacement in row.get("replacements") or []
+                    }
+                )
+                required_indexes = [
+                    index
+                    for index in target_indexes
+                    if required_text and required_text in texts[index]
+                ]
+                owned_indexes = (
+                    replacement_indexes
+                    if replacement_indexes
+                    else required_indexes
+                    if len(required_indexes) == 1
+                    else []
+                )
+                if (
+                    not replacement_indexes
+                    and len(required_indexes) > 1
+                    and raw_entry.get("required") is not False
+                ):
+                    satisfied = False
+                    row["reason_code"] = (
+                        "REPLACE_SUBSTRING_OWNER_AMBIGUOUS"
+                    )
+                if owned_indexes:
+                    target_indexes = owned_indexes
+                    row["cue_indexes"] = [
+                        index + 1 for index in target_indexes
+                    ]
+                    before = [
+                        before_by_index.get(index, texts[index])
+                        for index in target_indexes
+                    ]
         elif action == "drop_cue":
             drop_indexes, conflicts = _drop_cue_targets(cues, windows)
             target_indexes = drop_indexes
@@ -972,6 +1493,37 @@ def apply_source_subtitle_truth(
         else:
             row["reason_code"] = "ACTION_UNSUPPORTED"
 
+        owner_indexes = [
+            int(index) - 1 for index in row.get("cue_indexes") or []
+        ]
+        projection_cues = [
+            {
+                "cue_index": index + 1,
+                "start_ms": cues[index].start_ms,
+                "end_ms": cues[index].end_ms,
+                "before_text": before_by_index.get(index, ""),
+                "after_text": texts[index],
+            }
+            for index in owner_indexes
+            if 0 <= index < len(cues)
+        ]
+        projection_status = (
+            "ALREADY_ABSENT"
+            if action == "drop_cue" and not projection_cues
+            else "RESOLVED"
+        )
+        row["resolved_target_projection"] = {
+            "schema_version": (
+                "source-truth-resolved-target-projection.v1"
+            ),
+            "selector": (
+                "half-open-overlap-gte-min-then-action-resolution"
+            ),
+            "min_overlap_ms": MIN_CUE_OVERLAP_MS,
+            "action": action,
+            "status": projection_status,
+            "cues": projection_cues,
+        }
         row["before"] = before
         row["after"] = [texts[index] for index in target_indexes]
         failures = _source_truth_postcondition_failures(
@@ -1004,11 +1556,12 @@ def ledger_local_windows(
     durations: Sequence[int],
     ledger_path: Path | None,
 ) -> list[tuple[int, int]]:
-    """本候选交付时间轴上所有钉子的辖区窗口（只算不改）。
+    """本候选交付时间轴上所有 required 钉子的辖区窗口（只算不改）。
 
     2026-07-20 七星 r6 案：实体声学仲裁抢在钉子落刀前对「零三」烧完整条
     key ladder 再 fail-closed——ledger 已拥有的 span 不该进任何后置仲裁。
-    加载失败返回空（豁免消失=门更严，安全方向）。"""
+    ``required:false`` 只作 best-effort，不能取得 defer/owner 权限。加载失败返回
+    空（豁免消失=门更严，安全方向）。"""
 
     try:
         if ledger_path is None or not ledger_path.is_file():
@@ -1025,6 +1578,7 @@ def ledger_local_windows(
                 not isinstance(raw_entry, Mapping)
                 or raw_entry.get("knowledge_type") != "SOURCE_INTERVAL_TRUTH"
                 or _assertion_state(raw_entry) != "VERIFIED_ACTIVE"
+                or raw_entry.get("required") is False
             ):
                 continue
             for window in _entry_local_windows(

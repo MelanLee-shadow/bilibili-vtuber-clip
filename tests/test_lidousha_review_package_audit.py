@@ -6,7 +6,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from scripts.audit_lidousha_review_package import audit_package
+from scripts.audit_lidousha_review_package import (
+    _audit_source_truth_owner_attestations,
+    audit_package,
+)
 from src.autoslice.boundary_semantic_review import (
     cue_grid_sha256,
     semantic_review_sha256,
@@ -38,6 +41,48 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 COVER_FONT = (
     REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 )
+
+
+def test_optional_source_truth_does_not_require_final_owner_attestation():
+    issues: list[dict] = []
+    chat = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "optional-mop-up",
+                    "required": False,
+                }
+            ],
+            "satisfied": [],
+        }
+    }
+
+    _audit_source_truth_owner_attestations(
+        issues=issues,
+        stem="optional",
+        chat_authority_path=None,
+        chat_authority=chat,
+        record_path=None,
+        record={},
+    )
+
+    assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" not in {
+        issue["code"] for issue in issues
+    }
+
+    chat["source_subtitle_truth_audit"]["applied"][0]["required"] = True
+    required_issues: list[dict] = []
+    _audit_source_truth_owner_attestations(
+        issues=required_issues,
+        stem="required",
+        chat_authority_path=None,
+        chat_authority=chat,
+        record_path=None,
+        record={},
+    )
+    assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" in {
+        issue["code"] for issue in required_issues
+    }
 
 
 def _materialize_test_title(

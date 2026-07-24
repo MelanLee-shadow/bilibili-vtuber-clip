@@ -5,9 +5,12 @@
 - talk 车道成品强制前置 manifest 在册片头（当前 Z1/Z2 按主片 SHA-256 稳定轮换，fail-closed，`branding_intro.py`，manifest `assets/lidousha/intro/branding_intro.v1.json`）；**歌切不带片头**。验收必须按 record 的 `intro_id` 对照 manifest 的 hash/时长，不得写死任一 variant 的时长。`AUTOSLICE_BRANDING_INTRO=off` 仅测试/应急。
 - 片头在最终烧录内拼接，下游 sha256 绑定 with-intro 字节；`.srt`/`.ass` sidecar 保持内容时间轴，偏移记 `burned_preview.branding_intro.intro_offset_ms`。
 - 终态跨面校验：`producer_text_finalization.py::verify_chat_authority_final_surfaces`。
-  所有 applied/satisfied source truth owner 与未被更高权威覆盖的 reviewed baseline mapping
-  必须在最终 clean SRT 和 speaker SRT 的原时间窗逐项存活；文字/说话人 ASS 也必须绑定同一
-  最终文本与 hash。低权威 repair 只有在 owner 已通过后才能记为 superseded。
+  所有 `required=true`、projection-bound 且通过 final-owner verification 的 source truth
+  owner，与未被更高权威覆盖的 reviewed baseline mapping，必须在最终 clean SRT 和 speaker
+  SRT 的精确投影时间窗逐项存活；`required:false` 只是 best-effort，不能计入 required owner
+  或用来制造 owner PASS。discovery `local_windows` 仅用于定位，最终 owner 必须来自有效
+  `source-truth-resolved-target-projection.v1`。文字/说话人 ASS 也必须绑定同一最终文本与
+  hash；低权威 repair 只有在真实 owner 已通过后才能记为 superseded。
 - current/story-contract 的 talk/recovery item 必须把 `speaker_srt`、`ass_path` 两份真实字节
   连同 `speaker_srt_sha256`、`ass_sha256` 放进 package。两条路径都只能指向 package-relative
   regular file；绝对路径、越界、缺文件以及路径任一层 symlink 都拒绝。song lane 不进入这条
@@ -51,8 +54,17 @@
   推荐 end、source final interval 与第一层回执完全一致。两层 grid/ordinal/坐标不同，不能要求
   SHA 相等；缺任一层、scope 错、把 source 回执复制成 final、witness 漂移或任一 endpoint
   binding 非 PASS 均拒发。
+- source review、resolver、retry 与 boundary audit 还必须逐字段携带并验证同 SHA 的
+  `talk-boundary-search-scope.v1`：人工下界/结构化 payoff 可移动 semantic search origin，
+  required owner 只抬 delivery floor，绝对 ceiling 固定为 `search_origin + repair_cap`；
+  retry source window 另须覆盖 ceiling 后的 witness reserve，但 reserve 不扩大 endpoint cap。
+  任一 surface 缺 scope、hash/重算漂移、从推荐 end 二次滚动加 cap，或 source witness 窗不足
+  都拒发。
 - chat authority 的 `frozen-boundary-owner-contract.v1` 与 record boundary audit 必须携带
-  完全相同的 required owner 列表；所有 owner window 都在最终边界内，
+  完全相同的 required owner 列表。source truth 仅 `required=true` 可入列；story/chat 必须
+  applied 且具备对应 typed ownership contract，其中整句 exact-read 另须 whole-line gate
+  明示 `owner_eligible=true`，窄 sender/gift/coreference/entity slot 不借用该整句字段。所有
+  owner window 都在最终边界内，
   `required_boundary_owner_verification=PASS` 且
   `delivery_coverage_verification=PASS` 且
   `final_boundary_required_exclusion_count=0`。owner end 若由已审 closure cue 后的固定尾气
@@ -69,6 +81,15 @@
   对齐；“第二遍零 finding”不能替代 correction mutation authority，source semantic PASS 也
   不能替代最终交付重审。provider/JSON 失败、null/non-list/all-invalid findings、任何未决项、
   raw-byte hash 漂移、缺失回执或 BLOCK 都阻断。
+- correction pass 若为 typed `AUDITOR_UNAVAILABLE`，必须证明输入 SRT/chat audit 原子回滚、
+  `findings=[]`、`applied_count=0`，并在 mutation audit 中保持
+  `CORRECTION_DISCOVERY_INCOMPLETE`；后续 exact-final 空 finding 不得把它投影为 PASS。该状态
+  只允许 runner 按 `provider_transient / final_review_correction_discovery` 有界重试。
+- exact-final 声学回执必须包含 `subtitle-audio-timeline-binding.v1`，逐项证明
+  delivery-local target/context 经 hash-bound `source_media_timeline_offset_ms` 映射到实际
+  source-media target/crop；request hash、verdict、manifest 与缓存身份都必须绑定同一 offset。
+  把 recut-local 时间直接裁 padded media、只在日志口头说明偏移、或复用未绑定 offset 的旧
+  verdict/cache，均视为错误音频证据并拒发。
 - 封面审计按 `cover_generation.route_decision.actual_treatment` 分支验真：所有路线都验
   最终 cover SHA 与 `lidousha-cover-rendered-text-pixels.v3`。包内必须同时有 final cover、
   `.cover.pre-overlay.png`、`.cover.title-mask.png`、`.cover.route-background.png`；auditor

@@ -67,7 +67,9 @@ Delivery
 
 ## 证据边界
 
-- 高权威 source truth / reviewed baseline 必须在最终 surfaces 存活，不能只证明“曾应用”。
+- `required=true` 的高权威 source truth 必须以有效 post-apply 精确 cue projection 在最终
+  surfaces 存活；`local_windows` 只用于发现，`required:false` 只作 best-effort，二者都不能
+  冒充 final owner。reviewed baseline 同样必须在最终 surfaces 存活，不能只证明“曾应用”。
 - 人工 boundary 是下界，不是绕过 semantic closure 的绝对终点。
 - 截图与 AI 都必须证明最终像素。hash-bound 源帧可见事实与由封面文字/版式表达的故事叙事
   必须分开；源帧没直接显示的动作、物件或反转不能倒推成像素事实，source reference 声明

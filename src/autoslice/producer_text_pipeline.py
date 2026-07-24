@@ -63,7 +63,15 @@ from src.autoslice.producer_boundary_review_stage import (
     exact_delivery_correction_audit,
     review_final_boundary_semantics,
 )
+from src.autoslice.producer_boundary_owner_contract import (
+    freeze_required_boundary_owner_contract,
+    redelivery_baseline_boundary_owner as _redelivery_baseline_boundary_owner,
+)
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
+from src.autoslice.producer_source_truth_authority import (
+    reconcile_required_source_truth_chat_authority,
+    verify_source_truth_preview_formal_binding,
+)
 from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.foreign_span_witness import (
     retranscribe_foreign_script_cluster,
@@ -77,6 +85,7 @@ from src.autoslice.session_topic_authority import (
 )
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
+    build_source_truth_preview_receipt,
     ledger_local_windows,
     ledger_required_owner_contracts,
 )
@@ -441,7 +450,7 @@ def _apply_entity_authority(
     padded: Path,
     adapters: TextPipelineAdapters,
     session_topic_absorption_audits: list[dict[str, Any]] | None = None,
-    source_truth_windows: Sequence[tuple[int, int]] = (),
+    source_truth_protected_cue_indexes: Sequence[int] = (),
 ) -> EntityAuthorityResult:
     draft_witness_path = padded.with_suffix(".asr_draft.srt")
     source_witness_srt = (
@@ -554,16 +563,20 @@ def _apply_entity_authority(
         *([opening_group] if opening_group is not None else []),
         *repetition_groups,
     ]
+    cue_count = len(
+        [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    )
     ledger_excluded_cues: set[int] = set()
-    if source_truth_windows:
-        for index, cue in enumerate(
-            (c for c in parse_srt_cues(srt_text) if c.text.strip()), start=1
+    for raw_index in source_truth_protected_cue_indexes:
+        if (
+            isinstance(raw_index, bool)
+            or not isinstance(raw_index, int)
+            or not 1 <= raw_index <= cue_count
         ):
-            if any(
-                min(cue.end_ms, win_end) - max(cue.start_ms, win_start) >= 80
-                for win_start, win_end in source_truth_windows
-            ):
-                ledger_excluded_cues.add(index)
+            raise RuntimeError(
+                "SOURCE_TRUTH_PREVIEW_PROTECTED_CUE_INVALID"
+            )
+        ledger_excluded_cues.add(raw_index)
     srt_text, transcript_entity_audit = apply_audio_entity_verification(
         srt_text,
         referent_groups=transcript_groups,
@@ -574,6 +587,9 @@ def _apply_entity_authority(
         transcript_entity_audit["ledger_excluded_cue_indexes"] = sorted(
             ledger_excluded_cues
         )
+        transcript_entity_audit[
+            "source_truth_preview_excluded_cue_indexes"
+        ] = sorted(ledger_excluded_cues)
     chat_authority_audit["transcript_entity_audit"] = transcript_entity_audit
     chat_authority_audit["post_semantic_entity_policy"] = {
         "schema_version": "post-semantic-entity-policy.v1",
@@ -704,9 +720,11 @@ def _run_final_review(
     selection_hook: str = "",
     referent_groups: Sequence[object] = (),
     clip_context: Mapping[str, object] | None = None,
-    source_truth_windows: Sequence[tuple[int, int]] = (),
+    source_truth_protected_cue_indexes: Sequence[int] = (),
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
+    original_srt_text = srt_text
+    staged_entity_repairs: list[dict[str, Any]] = []
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
         try:
             review_llm_call = _build_final_review_llm_call()
@@ -729,13 +747,24 @@ def _run_final_review(
                 candidate_context=clip_context,
             )
             protected_review_cues = set(handled_entity_cues)
-            source_truth_protected_cues = {
-                int(cue.index)
-                for cue in parse_srt_cues(srt_text)
-                if _windows_fully_cover(
-                    cue.start_ms, cue.end_ms, source_truth_windows
-                )
-            }
+            cue_count = len(
+                [
+                    cue
+                    for cue in parse_srt_cues(srt_text)
+                    if cue.text.strip()
+                ]
+            )
+            source_truth_protected_cues: set[int] = set()
+            for raw_index in source_truth_protected_cue_indexes:
+                if (
+                    isinstance(raw_index, bool)
+                    or not isinstance(raw_index, int)
+                    or not 1 <= raw_index <= cue_count
+                ):
+                    raise RuntimeError(
+                        "SOURCE_TRUTH_PREVIEW_PROTECTED_CUE_INVALID"
+                    )
+                source_truth_protected_cues.add(raw_index)
             protected_review_cues.update(source_truth_protected_cues)
             for row in chat_authority_audit.get("applied") or []:
                 for index in row.get("cue_indexes") or []:
@@ -832,7 +861,7 @@ def _run_final_review(
                     # 复证存活。无 expected_entity/resolved_canonical，故不会被
                     # 未注册回退或矛盾和解误伤。
                     request = adj_audit.get("request") or {}
-                    chat_authority_audit.setdefault("entity_repairs", []).append(
+                    staged_entity_repairs.append(
                         {
                             "mode": "final_review_context_adjudication",
                             "evidence_id": request.get("evidence_id"),
@@ -873,10 +902,46 @@ def _run_final_review(
                     )
             final_review_audit["infra_unresolved"] = infra_unresolved
             final_review_audit["infra_unresolved_count"] = len(infra_unresolved)
-        except Exception as exc:
+            if staged_entity_repairs:
+                existing_repairs = chat_authority_audit.get("entity_repairs")
+                if existing_repairs is None:
+                    chat_authority_audit["entity_repairs"] = list(
+                        staged_entity_repairs
+                    )
+                elif isinstance(existing_repairs, list):
+                    existing_repairs.extend(staged_entity_repairs)
+                else:
+                    raise TypeError(
+                        "CHAT_AUTHORITY_ENTITY_REPAIRS_CONTRACT_INVALID"
+                    )
+        except FinalReviewAuditError as exc:
+            srt_text = original_srt_text
             final_review_audit = {
                 "schema_version": "final-review-audit.v1",
                 "status": "AUDITOR_UNAVAILABLE",
+                "release_gate": "BLOCK",
+                "reason_codes": [exc.reason_code],
+                "discovery": {
+                    "status": "AUDITOR_UNAVAILABLE",
+                    "detail": exc.detail,
+                },
+                "findings": [],
+                "applied_count": 0,
+                "error_type": type(exc).__name__,
+            }
+        except Exception as exc:
+            srt_text = original_srt_text
+            final_review_audit = {
+                "schema_version": "final-review-audit.v1",
+                "status": "AUDITOR_UNAVAILABLE",
+                "release_gate": "BLOCK",
+                "reason_codes": ["FINAL_REVIEW_UNEXPECTED_ERROR"],
+                "discovery": {
+                    "status": "AUDITOR_UNAVAILABLE",
+                    "detail": type(exc).__name__,
+                },
+                "findings": [],
+                "applied_count": 0,
                 "error_type": type(exc).__name__,
             }
     return srt_text, final_review_audit
@@ -987,6 +1052,7 @@ def _run_exact_final_release_review(
             authority_pending,
             entity_verifier=verify_confusable_entity,
             clip_context=clip_context,
+            source_media_timeline_offset_ms=timeline_offset_ms,
         )
     )
     resolved_findings = [*authority_resolved, *acoustic_resolved]
@@ -1267,6 +1333,7 @@ def _apply_source_truth_and_resolve_deferred_foreign(
         for key in ("applied", "satisfied")
         for row in (source_truth_audit.get(key) or [])
         if isinstance(row, Mapping)
+        and row.get("required") is not False
     ]
     resolution = resolve_deferred_foreign_introductions(
         source_language_audit,
@@ -1505,6 +1572,10 @@ def _finalize_text_evidence(
         source_language_audit=final_source_language_audit,
     )
     chat_authority_audit["source_subtitle_truth_audit"] = source_truth_audit
+    verify_source_truth_preview_formal_binding(
+        chat_authority_audit,
+        source_truth_audit,
+    )
     # Re-run the structural guard after every text authority, including source
     # truth.  Earlier guards cannot protect against a later splice, and a
     # detected but unresolved title-mark imbalance must not reach review_ready.
@@ -1518,36 +1589,10 @@ def _finalize_text_evidence(
     # surfaces (authority #2) on the same cue: the guest may rephrase a danmaku
     # rather than read it verbatim (2026-07-19 HimeHina case, audio support 0).
     # Mirror of the reviewed-text-override reconciliation channel.
-    _truth_rows = [
-        row
-        for key in ("applied", "satisfied")
-        for row in (source_truth_audit.get(key) or [])
-    ]
-    _truth_cues = {
-        index for row in _truth_rows for index in (row.get("cue_indexes") or [])
-    }
-    if _truth_cues:
-        _reconciled = []
-        for _chat_row in chat_authority_audit.get("applied") or []:
-            if _chat_row.get("reconciliation"):
-                continue
-            _row_cues = set(_chat_row.get("cue_indexes") or [])
-            if _row_cues & _truth_cues:
-                _owners = sorted(
-                    str(row.get("truth_id"))
-                    for row in _truth_rows
-                    if set(row.get("cue_indexes") or []) & _row_cues
-                )
-                _chat_row["reconciliation"] = {
-                    "kind": "SOURCE_INTERVAL_TRUTH_SUPERSEDES",
-                    "truth_ids": _owners,
-                    "note": "Ivan source-interval truth owns this cue; read-aloud surface no longer a final requirement",
-                }
-                _reconciled.append(
-                    {"cue_indexes": sorted(_row_cues), "truth_ids": _owners}
-                )
-        if _reconciled:
-            chat_authority_audit["source_truth_reconciliations"] = _reconciled
+    reconcile_required_source_truth_chat_authority(
+        chat_authority_audit,
+        source_truth_audit,
+    )
     chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
         srt_text.encode("utf-8")
     ).hexdigest()
@@ -1592,127 +1637,6 @@ def _finalize_text_evidence(
     )
 
 
-def _redelivery_baseline_boundary_owner(
-    spec: Mapping[str, object],
-    durations: Sequence[int],
-) -> list[dict[str, object]]:
-    """Project a hash-bound v2 reviewed baseline onto the padded timeline."""
-
-    config = spec.get("subtitle_redelivery_baseline")
-    if not isinstance(config, Mapping):
-        return []
-    if (
-        config.get("schema_version") != "subtitle-redelivery-baseline.v2"
-        or config.get("exact_interval_replay") is not True
-    ):
-        return []
-    start = config.get("absolute_source_start_ms")
-    end = config.get("absolute_source_end_ms")
-    expected_sha = str(config.get("source_sha256") or "").removeprefix(
-        "sha256:"
-    )
-    if (
-        isinstance(start, bool)
-        or not isinstance(start, int)
-        or isinstance(end, bool)
-        or not isinstance(end, int)
-        or end <= start
-        or len(expected_sha) != 64
-    ):
-        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_OWNER_INVALID")
-    pieces = [
-        piece
-        for piece in (spec.get("pieces") or [])
-        if isinstance(piece, Mapping)
-    ]
-    if len(pieces) != len(durations):
-        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_MAPPING_INVALID")
-    offset = 0
-    windows: list[dict[str, int]] = []
-    coverage = 0
-    for piece, duration in zip(pieces, durations):
-        piece_sha = str(
-            piece.get("source_media_sha256") or ""
-        ).removeprefix("sha256:")
-        piece_start = int(piece["start_ms"])
-        piece_end = int(piece["end_ms"])
-        overlap_start = max(start, piece_start)
-        overlap_end = min(end, piece_end)
-        if piece_sha == expected_sha and overlap_start < overlap_end:
-            windows.append(
-                {
-                    "start_ms": offset + overlap_start - piece_start,
-                    "end_ms": offset + overlap_end - piece_start,
-                }
-            )
-            coverage += overlap_end - overlap_start
-        offset += int(duration)
-    if coverage != end - start:
-        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_OWNER_PARTIAL")
-    return [
-        {
-            "owner_kind": "reviewed_redelivery_baseline",
-            "owner_id": "exact-reviewed-interval",
-            "required": True,
-            "source_start_ms": start,
-            "source_end_ms": end,
-            "local_windows": windows,
-        }
-    ]
-
-
-def _freeze_story_chat_boundary_owners(
-    audit: dict,
-    *,
-    story_start_ms: int,
-    story_end_ms: int,
-) -> list[dict[str, object]]:
-    """Mark already-applied story decisions as unable to escape by trimming."""
-
-    groups = (
-        ("exact_read", "applied"),
-        ("sc_sender", "sender_repairs"),
-        ("gift_name", "gift_repairs"),
-        ("reply_coreference", "coreference_repairs"),
-        ("entity_repair", "entity_repairs"),
-    )
-    contracts: list[dict[str, object]] = []
-    for kind, key in groups:
-        for ordinal, row in enumerate(audit.get(key) or [], start=1):
-            if not isinstance(row, dict) or row.get("reconciliation"):
-                continue
-            start = row.get("matched_start_ms")
-            end = row.get("matched_end_ms")
-            if (
-                isinstance(start, bool)
-                or not isinstance(start, int)
-                or isinstance(end, bool)
-                or not isinstance(end, int)
-                or end <= start
-                or min(end, story_end_ms) - max(start, story_start_ms)
-                <= 0
-            ):
-                continue
-            owner_id = str(
-                row.get("finding_id")
-                or row.get("verdict_id")
-                or f"{kind}:{ordinal}:{start}:{end}"
-            )
-            row["boundary_required"] = True
-            row["boundary_owner_id"] = owner_id
-            contracts.append(
-                {
-                    "owner_kind": kind,
-                    "owner_id": owner_id,
-                    "required": True,
-                    "local_windows": [
-                        {"start_ms": start, "end_ms": end}
-                    ],
-                }
-            )
-    return contracts
-
-
 def run_text_pipeline(
     *,
     spec: dict,
@@ -1740,6 +1664,24 @@ def run_text_pipeline(
         merged=merged,
         adapters=adapters,
     )
+    source_truth_ledger_path = (
+        None
+        if str(spec.get("human_truth_mode") or "delivery") == "withheld"
+        else adapters.profile_asset_file("subtitle_truth_ledger")
+    )
+    _discarded_draft_truth_text, draft_source_truth_preview_audit = (
+        apply_source_subtitle_truth(
+            draft.srt_text,
+            spec=spec,
+            durations=durations,
+            ledger_path=source_truth_ledger_path,
+        )
+    )
+    draft_source_truth_preview = build_source_truth_preview_receipt(
+        input_srt_text=draft.srt_text,
+        source_truth_audit=draft_source_truth_preview_audit,
+        stage="pre_entity_arbitration",
+    )
     entity_context = _build_entity_verification_context(
         spec=spec,
         padded=padded,
@@ -1765,15 +1707,10 @@ def run_text_pipeline(
     )
     clip_context_path = out_root / f"{cid}.clip-context.json"
     write_clip_context(clip_context_path, clip_context)
-    source_truth_windows = ledger_local_windows(
-        spec=spec,
-        durations=durations,
-        ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
-    )
     required_boundary_owners = ledger_required_owner_contracts(
         spec=spec,
         durations=durations,
-        ledger_path=adapters.profile_asset_file("subtitle_truth_ledger"),
+        ledger_path=source_truth_ledger_path,
     )
     required_boundary_owners.extend(
         _redelivery_baseline_boundary_owner(spec, durations)
@@ -1790,11 +1727,18 @@ def run_text_pipeline(
         session_topic_absorption_audits=draft.session_topic_absorption_audits,
         padded=padded,
         adapters=adapters,
-        # 钉子辖区先豁免（2026-07-20 七星 r6 零三案）：ledger 已拥有的
-        # span 不进实体声学仲裁——省 key ladder，也不许 infra 失败把
-        # 钉子能确定性解决的槽位 fail-closed 成整条不交付。
-        source_truth_windows=source_truth_windows,
+        # Deterministic preview projects required truth onto the exact draft
+        # cue grid.  Raw discovery windows are used only for unresolved
+        # required failures; optional rows never become protection owners.
+        source_truth_protected_cue_indexes=(
+            draft_source_truth_preview["protected_cue_indexes"]
+        ),
     )
+    authority.chat_authority_audit[
+        "source_truth_preview_receipts"
+    ] = {
+        "pre_entity_arbitration": draft_source_truth_preview,
+    }
     retained_chat_counts: dict[str, int] = {}
     for item in authoritative_chat:
         retained_chat_counts[item.kind] = retained_chat_counts.get(item.kind, 0) + 1
@@ -1825,24 +1769,22 @@ def run_text_pipeline(
             "binding failures raise before this audit"
         ),
     }
-    last_piece = spec["pieces"][-1]
-    boundary_source_end_ms = int(
-        spec.get("given_end_ms")
-        if spec.get("given_end_ms") is not None
-        else spec["semantic_end_ms"]
+    _discarded_review_truth_text, review_source_truth_preview_audit = (
+        apply_source_subtitle_truth(
+            authority.srt_text,
+            spec=spec,
+            durations=durations,
+            ledger_path=source_truth_ledger_path,
+        )
     )
-    boundary_target_ms = sum(durations[:-1]) + (
-        boundary_source_end_ms - int(last_piece["start_ms"])
+    review_source_truth_preview = build_source_truth_preview_receipt(
+        input_srt_text=authority.srt_text,
+        source_truth_audit=review_source_truth_preview_audit,
+        stage="pre_correction_review",
     )
-    required_owner_tail_ms = max(
-        (
-            int(window["end_ms"])
-            for owner in required_boundary_owners
-            for window in owner.get("local_windows") or []
-        ),
-        default=boundary_target_ms,
-    )
-    boundary_target_ms = max(boundary_target_ms, required_owner_tail_ms)
+    authority.chat_authority_audit[
+        "source_truth_preview_receipts"
+    ]["pre_correction_review"] = review_source_truth_preview
     reviewed_srt, final_review_audit = _run_final_review(
         srt_text=authority.srt_text,
         chat_authority_audit=authority.chat_authority_audit,
@@ -1853,7 +1795,9 @@ def run_text_pipeline(
         selection_hook=str(spec.get("selection_hook") or ""),
         referent_groups=entity_context.referent_groups,
         clip_context=clip_context,
-        source_truth_windows=source_truth_windows,
+        source_truth_protected_cue_indexes=(
+            review_source_truth_preview["protected_cue_indexes"]
+        ),
     )
     evidence = _finalize_text_evidence(
         spec=spec,
@@ -1867,11 +1811,7 @@ def run_text_pipeline(
         session_topic_authorities=draft.session_topic_authorities,
         source_language_witness_srt=draft.source_language_witness_srt,
         text_override_path=text_override_path,
-        source_truth_ledger_path=(
-            None
-            if str(spec.get("human_truth_mode") or "delivery") == "withheld"
-            else adapters.profile_asset_file("subtitle_truth_ledger")
-        ),
+        source_truth_ledger_path=source_truth_ledger_path,
         out_root=out_root,
         cid=cid,
         padded=padded,
@@ -1892,6 +1832,14 @@ def run_text_pipeline(
             f"(cues {[row.get('cue_index') for row in still_unresolved]}); "
             "refusing to deliver known-suspect text — runner will retry"
         )
+    boundary_target_ms, boundary_search_scope = (
+        freeze_required_boundary_owner_contract(
+            spec=spec,
+            durations=durations,
+            chat_authority_audit=authority.chat_authority_audit,
+            required_boundary_owners=required_boundary_owners,
+        )
+    )
     final_review_audit["boundary_semantic_review"] = (
         review_final_boundary_semantics(
             cues=evidence.cues,
@@ -1905,35 +1853,16 @@ def run_text_pipeline(
             ),
             candidate_context=clip_context_prompt_text(clip_context),
             boundary_max_forward_ms=int(
-                spec.get("boundary_repair_extend_cap_ms", 30_000)
+                boundary_search_scope["recommendation_forward_ms"]
             ),
             llm_call=_build_final_review_llm_call(),
             extract_json=extract_json_object,
             disabled=(
                 os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
             ),
+            boundary_search_scope=boundary_search_scope,
         )
     )
-    story_start_ms = max(
-        0,
-        int(spec.get("semantic_start_ms", spec["pieces"][0]["start_ms"]))
-        - int(spec["pieces"][0]["start_ms"]),
-    )
-    story_chat_owners = _freeze_story_chat_boundary_owners(
-        authority.chat_authority_audit,
-        story_start_ms=story_start_ms,
-        story_end_ms=boundary_target_ms,
-    )
-    required_boundary_owners.extend(story_chat_owners)
-    spec["required_boundary_owners"] = required_boundary_owners
-    authority.chat_authority_audit["frozen_boundary_owner_contract"] = {
-        "schema_version": "frozen-boundary-owner-contract.v1",
-        "status": "FROZEN",
-        "story_start_ms": story_start_ms,
-        "story_end_ms": boundary_target_ms,
-        "required_owner_count": len(required_boundary_owners),
-        "owners": required_boundary_owners,
-    }
     persist_review_audit(
         out_root / f"{cid}.review-flags.json", final_review_audit
     )

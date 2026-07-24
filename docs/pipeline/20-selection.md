@@ -22,6 +22,12 @@
 3. CPA 观众视角审查：每个候选无条件过 `scripts/cpa_semantic_qa_llm.py` 判官（`viewer_context_ok` 语境自足性 + 自动扩窗建议），失败即 BLOCK（`live_source_review.py::_merge_cpa_semantic_review_into_decision`）。
 4. 候选是内容锚点不是最终边界；边界由 [30-boundary.md](30-boundary.md) 决定。
 
+场次联动关系的现行 authority 是
+`src/autoslice/session_relation_authority.py` +
+`assets/lidousha/session_relation_ledger.v1.json`：它以日期/官方源 SHA/参与者绑定关系，
+同时进入 selection、clip-context、StoryContract 与封面参与者门。开发旁路或历史报告中的
+`NO_TRIGGER` 只表示该旁路没有触发，**不等于非联动**，也不能覆盖 ledger 的 `CONFIRMED`。
+
 ## 候选状态与人工点选
 
 - `picks`、`pending_talk`、`talk_backlog`、拒绝记录必须互斥投影；一个 candidate

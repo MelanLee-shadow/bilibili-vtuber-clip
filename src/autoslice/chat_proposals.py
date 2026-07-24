@@ -9,7 +9,6 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.chat_evidence import (
-    READ_ALOUD_MIN_DELAY_MS,
     ChatEvidence,
     EntityVerifier,
     ReferentGroup,
@@ -22,257 +21,32 @@ from src.autoslice.chat_evidence import (
     normalize_chat_text,
     sanitize_chat_display_text,
 )
+from src.autoslice.chat_read_aloud_candidates import (
+    find_best_read_aloud_candidate as _find_best_read_aloud_candidate,
+    partial_whole_line_rejection as _partial_whole_line_rejection,
+    read_aloud_support_receipts as _read_aloud_support_receipts,
+    read_aloud_support_scores,
+)
 from src.autoslice.read_aloud_arbitration import (
     _arbitrate_read_aloud_near_match as _arbitrate_read_aloud_near_match,
     proposal_alignment_basis,
+    whole_line_exact_copy_gate,
 )
 from src.autoslice.chat_repair import (
     _aligned_span_replacements,
     _apply_gift_name_repairs,
-    _authority_tail_continues_in_next_cue,
     _best_text_split,
-    _excess_is_mid_read_interjection,
     _fragment_spoken_in,
-    _mask_compatible_sender,
     _match_metrics,
-    _matched_read_prefix,
-    _partial_question_patch,
     _repair_sc_action_sender,
     _repair_sc_sender,
-    _sender_thank_anchor,
     _shift_boundary_punct,
     _spoken_sender_alias,
     _strip_interjections_once,
     _strip_unrenderable_for_subtitle,
 )
 
-def _find_best_read_aloud_candidate(
-    item: ChatEvidence,
-    *,
-    evidence: Sequence[ChatEvidence],
-    cues: Sequence[Any],
-    texts: Sequence[str],
-    max_cues: int,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Find the safest exact span and the best audio-arbitration fallback."""
-
-    authority_norm = normalize_chat_text(item.text)
-    best: dict[str, Any] | None = None
-    best_near: dict[str, Any] | None = None
-    sender_anchor_indexes: set[int] = (
-        {
-            index
-            for index, text in enumerate(texts)
-            if _sender_thank_anchor(text, item.sender)
-        }
-        if item.kind == "superchat" and item.sender
-        else set()
-    )
-    # SC 线程延续（2026-07-13 利安/无马懿 实案）：观众先用 SC 提问，随后
-    # 同一人用普通弹幕接龙（弹幕名被打码，只能掩码兼容+时间窗联结）。
-    # 这类弹幕是高先验念读对象——她会直接念出来。
-    thread_anchor = bool(
-        item.kind == "danmaku"
-        and item.sender
-        and any(
-            other.kind == "superchat"
-            and _mask_compatible_sender(other.sender, item.sender)
-            and 0 <= item.offset_ms - other.offset_ms <= 600_000
-            for other in evidence
-        )
-    )
-    for start in range(len(cues)):
-        if item.kind == "danmaku":
-            if item.offset_ms >= 0:
-                delay = cues[start].start_ms - item.offset_ms
-                if delay < READ_ALOUD_MIN_DELAY_MS or delay > 90_000:
-                    continue
-            elif cues[start].start_ms > 90_000:
-                continue
-        elif item.offset_ms >= 0 and cues[start].start_ms < item.offset_ms + READ_ALOUD_MIN_DELAY_MS:
-            continue
-        for count in range(1, min(max_cues, len(cues) - start) + 1):
-            candidate_parts = texts[start : start + count]
-            candidate = "".join(candidate_parts)
-            cue_boundaries: set[int] = set()
-            cursor = 0
-            for part in candidate_parts[:-1]:
-                cursor += len(part)
-                cue_boundaries.add(cursor)
-            score, ratio, coverage, precision, common = _match_metrics(item.text, candidate)
-            preserved_suffix = _matched_read_prefix(
-                item.text,
-                candidate,
-                cue_boundaries=cue_boundaries,
-            )
-            if preserved_suffix is not None:
-                score, ratio, coverage, precision, common = _match_metrics(
-                    item.text, preserved_suffix[0]
-                )
-            matched_candidate = preserved_suffix[0] if preserved_suffix is not None else candidate
-            extent = len(normalize_chat_text(matched_candidate)) / max(1, len(authority_norm))
-            full = (
-                len(authority_norm) >= 4
-                and score >= 0.68
-                and coverage >= 0.60
-                and precision >= 0.52
-                and extent >= 0.82
-                and common >= min(6, len(authority_norm))
-            )
-            # SC 线程弹幕按念读处理（Ivan：这是她念的弹幕，不需要听出来）。
-            # 谐音梗让字符相似度结构性失效；线程、时间窗和长度构成直接支持。
-            thread_delay_ms = (
-                cues[start].start_ms - item.offset_ms if item.offset_ms >= 0 else None
-            )
-            thread_full = (
-                thread_anchor
-                and count <= 2
-                and len(authority_norm) >= 4
-                and thread_delay_ms is not None
-                and READ_ALOUD_MIN_DELAY_MS <= thread_delay_ms <= 45_000
-                and 0.7 <= extent <= 1.4
-                and common >= 2
-            )
-            if thread_full and not full:
-                full = True
-            if (
-                full
-                and len(normalize_chat_text(candidate)) > len(authority_norm) + 1
-                and preserved_suffix is None
-                and not _excess_is_mid_read_interjection(item.text, candidate)
-            ):
-                full = False
-            partial = None
-            if count == 1 and item.kind == "danmaku":
-                near = item.offset_ms < 0 or cues[start].start_ms - item.offset_ms <= 20_000
-                partial = _partial_question_patch(item.text, candidate) if near else None
-            if not full and partial is None:
-                # 文本 near-miss 交给原始音频二选一，不放宽 exact-span 本身。
-                sender_anchored = bool(
-                    item.kind == "superchat"
-                    and sender_anchor_indexes
-                    and any(0 <= start - index <= 4 for index in sender_anchor_indexes)
-                )
-                if (
-                    item.kind == "danmaku"
-                    and count <= 2
-                    and len(authority_norm) >= 6
-                    and score >= 0.55
-                    and coverage >= 0.50
-                    and common >= 4
-                ) or (
-                    sender_anchored
-                    and count <= 4
-                    and len(authority_norm) >= 4
-                    and score >= 0.40
-                    and coverage >= 0.35
-                    and common >= 3
-                ):
-                    near_candidate = {
-                        "evidence": item,
-                        "start": start,
-                        "count": count,
-                        "score": score,
-                        "ratio": ratio,
-                        "coverage": coverage,
-                        "precision": precision,
-                        "common_chars": common,
-                        "mode": "read_aloud_arbitration",
-                        "replacement": None,
-                        "preserved_suffix": None,
-                        "sender_anchored": sender_anchored,
-                    }
-                    if best_near is None or (count, -score) < (
-                        best_near["count"],
-                        -best_near["score"],
-                    ):
-                        best_near = near_candidate
-                continue
-            if (
-                full
-                and start + count < len(cues)
-                and _authority_tail_continues_in_next_cue(
-                    item.text,
-                    candidate,
-                    texts[start + count],
-                )
-            ):
-                continue
-            proposal = {
-                "evidence": item,
-                "start": start,
-                "count": count,
-                "score": score,
-                "ratio": ratio,
-                "coverage": coverage,
-                "precision": precision,
-                "common_chars": common,
-                "mode": "exact_span" if full else "question_particle_patch",
-                "replacement": partial,
-                "preserved_suffix": preserved_suffix,
-                "thread_anchored": thread_full,
-            }
-            # The first viable cue span is safest: adding a later cue can
-            # consume the beginning of an acoustic reply.
-            if best is None or (count, -score) < (best["count"], -best["score"]):
-                best = proposal
-    return best, best_near
-
-
-def _read_aloud_support_scores(
-    item: ChatEvidence,
-    *,
-    authority_norm: str,
-    support_srt_texts: Sequence[str],
-    max_cues: int,
-) -> list[float]:
-    """Collect independent transcript support for one structured chat item."""
-
-    support_scores: list[float] = []
-    for support_text in support_srt_texts:
-        support_cues = [cue for cue in parse_srt_cues(support_text) if cue.text.strip()]
-        best_support = 0.0
-        for support_start in range(len(support_cues)):
-            if item.kind == "danmaku" and item.offset_ms >= 0:
-                delay = support_cues[support_start].start_ms - item.offset_ms
-                if delay < READ_ALOUD_MIN_DELAY_MS or delay > 90_000:
-                    continue
-            for support_count in range(
-                1,
-                min(max_cues, len(support_cues) - support_start) + 1,
-            ):
-                support_candidate = "".join(
-                    cue.text
-                    for cue in support_cues[
-                        support_start : support_start + support_count
-                    ]
-                )
-                support_score, _ratio, support_coverage, _precision, support_common = (
-                    _match_metrics(item.text, support_candidate)
-                )
-                support_extent = len(normalize_chat_text(support_candidate)) / max(
-                    1,
-                    len(authority_norm),
-                )
-                # SCs are commonly paraphrased and degraded by ASR, so their
-                # coverage floor is slightly lower than ordinary danmaku.
-                support_coverage_floor = 0.65 if item.kind == "superchat" else 0.72
-                if (
-                    support_score >= 0.62
-                    and support_coverage >= support_coverage_floor
-                    and support_extent >= 0.82
-                    and support_common >= min(6, len(authority_norm))
-                ):
-                    best_support = max(best_support, support_score)
-                elif (
-                    support_count == 1
-                    and item.kind == "danmaku"
-                    and _partial_question_patch(item.text, support_candidate) is not None
-                ):
-                    best_support = max(best_support, 0.62)
-        if best_support:
-            support_scores.append(best_support)
-    return support_scores
+_read_aloud_support_scores = read_aloud_support_scores
 
 
 @dataclass
@@ -314,8 +88,7 @@ def _resolve_chat_entity_proposal(
         return False
 
     cue_indexes = [
-        index + 1
-        for index in range(proposal["start"], proposal["start"] + proposal["count"])
+        index + 1 for index in range(proposal["start"], proposal["start"] + proposal["count"])
     ]
     base_row = {
         "evidence_id": item.evidence_id,
@@ -353,12 +126,10 @@ def _resolve_chat_entity_proposal(
     # （如结构化 kmx、语义文本却命中乒乓球）仍进入音频仲裁。
     semantic_entity = acoustic_occurrences[0] if len(acoustic_occurrences) == 1 else None
     canonical_is_directionally_trusted = any(
-        value.lower() == chat_canonical.lower()
-        for value in group.uncertain_keep_canonicals
+        value.lower() == chat_canonical.lower() for value in group.uncertain_keep_canonicals
     )
     semantic_surface_is_canonical = bool(
-        semantic_entity
-        and str(semantic_entity["surface"]).lower() == chat_canonical.lower()
+        semantic_entity and str(semantic_entity["surface"]).lower() == chat_canonical.lower()
     )
     if (
         chat_surface.lower() == chat_canonical.lower()
@@ -383,7 +154,30 @@ def _resolve_chat_entity_proposal(
                 "authority_kind": "structured_chat_plus_semantic_text",
             }
         )
-        discovery.proposals.append(proposal)
+        if proposal.get("owner_eligible") is True:
+            discovery.proposals.append(proposal)
+            return True
+        discovery.superseded_chat_proposals.append(
+            {
+                **_partial_whole_line_rejection(
+                    item,
+                    proposal,
+                    cues=cues,
+                    matched_audio_text=acoustic_span,
+                ),
+                "structured_chat_canonical": chat_canonical,
+            }
+        )
+        if not semantic_surface_is_canonical:
+            proposal["mode"] = "entity_only"
+            proposal["entity_verdict"] = {
+                "schema_version": "chat-entity-verdict.v1",
+                "status": "RESOLVED",
+                "canonical_entity": chat_canonical,
+                "reason_code": reason_code,
+                "authority_kind": "structured_chat_plus_semantic_text",
+            }
+            discovery.proposals.append(proposal)
         return True
     request: dict[str, Any] = {
         "schema_version": "chat-entity-verification-request.v1",
@@ -418,9 +212,7 @@ def _resolve_chat_entity_proposal(
                 **base_row,
                 "request": request,
                 "verdict": verdict or raw_verdict,
-                "reason_code": str(
-                    (verdict or {}).get("reason_code") or "ENTITY_VERDICT_REQUIRED"
-                ),
+                "reason_code": str((verdict or {}).get("reason_code") or "ENTITY_VERDICT_REQUIRED"),
             }
         )
         return True
@@ -452,7 +244,29 @@ def _resolve_chat_entity_proposal(
                 "resolved_canonical": verdict["canonical_entity"],
             }
         )
-    discovery.proposals.append(proposal)
+        discovery.proposals.append(proposal)
+        return True
+    if proposal.get("owner_eligible") is True:
+        discovery.proposals.append(proposal)
+        return True
+    discovery.superseded_chat_proposals.append(
+        {
+            **_partial_whole_line_rejection(
+                item,
+                proposal,
+                cues=cues,
+                matched_audio_text=acoustic_span,
+            ),
+            "structured_chat_canonical": chat_canonical,
+            "resolved_canonical": verdict["canonical_entity"],
+        }
+    )
+    if (
+        len(acoustic_occurrences) == 1
+        and str(acoustic_occurrences[0]["surface"]).lower() != chat_canonical.lower()
+    ):
+        proposal["mode"] = "entity_only"
+        discovery.proposals.append(proposal)
     return True
 
 
@@ -486,15 +300,27 @@ def _discover_chat_proposals(
             texts=texts,
             max_cues=max_cues,
         )
+        support_receipts = _read_aloud_support_receipts(
+            item,
+            support_srt_texts=support_srt_texts,
+            max_cues=max_cues,
+        )
         if best is not None:
-            support_scores = _read_aloud_support_scores(
-                item,
-                authority_norm=authority_norm,
-                support_srt_texts=support_srt_texts,
-                max_cues=max_cues,
-            )
-            best["support_scores"] = support_scores
+            best["support_receipts"] = support_receipts
+            best["support_scores"] = [
+                float(receipt["score"])
+                for receipt in support_receipts
+                if receipt.get("owner_eligible") is True
+                or receipt.get("question_particle_patch_supported") is True
+            ]
             acoustic_span = "".join(texts[best["start"] : best["start"] + best["count"]])
+            whole_line_gate = whole_line_exact_copy_gate(
+                item,
+                best,
+                acoustic_span,
+            )
+            best["owner_eligible"] = bool(whole_line_gate["owner_eligible"])
+            best["whole_line_exact_copy_gate"] = whole_line_gate
             if _resolve_chat_entity_proposal(
                 item,
                 best,
@@ -505,11 +331,16 @@ def _discover_chat_proposals(
                 discovery=discovery,
             ):
                 continue
-            if support_scores or best.get("thread_anchored"):
+            if best["mode"] == "question_particle_patch" and (
+                best["support_scores"] or best.get("thread_anchored")
+            ):
+                discovery.proposals.append(best)
+            elif best.get("owner_eligible") is True:
                 discovery.proposals.append(best)
             elif (
                 entity_verifier is not None
                 and high_confidence_arbitration_attempts < 4
+                and best["mode"] == "exact_span"
                 and best["count"] <= 2
                 and best["score"] >= 0.80
                 and best["coverage"] >= 0.80
@@ -531,14 +362,40 @@ def _discover_chat_proposals(
                     entity_verifier=entity_verifier,
                     discovery=discovery,
                 )
+            elif best["mode"] == "exact_span" and support_receipts:
+                discovery.superseded_chat_proposals.append(
+                    _partial_whole_line_rejection(
+                        item,
+                        best,
+                        cues=cues,
+                        matched_audio_text=acoustic_span,
+                    )
+                )
+                if item.kind == "superchat" and any(
+                    receipt.get("source_truth_anchor_eligible") is True
+                    for receipt in support_receipts
+                ):
+                    discovery.proposals.append(
+                        {
+                            **best,
+                            "mode": "source_truth_anchor_only",
+                        }
+                    )
         elif best_near is not None and entity_verifier is not None:
+            best_near["support_receipts"] = support_receipts
+            best_near["support_scores"] = [
+                float(receipt["score"])
+                for receipt in support_receipts
+                if receipt.get("owner_eligible") is True
+            ]
             near_queue.append((item, best_near))
     best_by_span: dict[tuple[int, int], tuple[ChatEvidence, dict[str, Any]]] = {}
     for item, proposal in near_queue:
         span = (proposal["start"], proposal["count"])
         incumbent = best_by_span.get(span)
         if incumbent is None or (proposal["score"], proposal["precision"]) > (
-            incumbent[1]["score"], incumbent[1]["precision"]
+            incumbent[1]["score"],
+            incumbent[1]["precision"],
         ):
             best_by_span[span] = (item, proposal)
     ranked_near = sorted(
@@ -548,8 +405,12 @@ def _discover_chat_proposals(
     )
     for item, proposal in ranked_near[:3]:
         _arbitrate_read_aloud_near_match(
-            item, proposal, cues=cues, texts=texts,
-            entity_verifier=entity_verifier, discovery=discovery,
+            item,
+            proposal,
+            cues=cues,
+            texts=texts,
+            entity_verifier=entity_verifier,
+            discovery=discovery,
         )
     discovery.proposals.sort(
         key=lambda row: (row["score"], -row["count"]),
@@ -583,6 +444,9 @@ def _apply_chat_proposals(
             continue
         item = proposal["evidence"]
         before = texts[proposal["start"] : proposal["start"] + proposal["count"]]
+        if proposal["mode"] == "source_truth_anchor_only":
+            result.applied_proposals.append(proposal)
+            continue
         if proposal["mode"] == "entity_only":
             group: ReferentGroup = proposal["entity_group"]
             expected_canonical = str(proposal["entity_verdict"]["canonical_entity"])
@@ -608,9 +472,7 @@ def _apply_chat_proposals(
                         "exact_text": item.text,
                         "cue_indexes": [index + 1 for index in sorted(indexes)],
                         "matched_start_ms": cues[proposal["start"]].start_ms,
-                        "matched_end_ms": cues[
-                            proposal["start"] + proposal["count"] - 1
-                        ].end_ms,
+                        "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
                         "matched_audio_text": "".join(before),
                         "reason_code": "ENTITY_SLOT_AMBIGUOUS_FOR_MINIMAL_REPAIR",
                         "verdict": proposal["entity_verdict"],
@@ -657,9 +519,7 @@ def _apply_chat_proposals(
                         "exact_text": item.text,
                         "cue_indexes": [index + 1 for index in sorted(indexes)],
                         "matched_start_ms": cues[proposal["start"]].start_ms,
-                        "matched_end_ms": cues[
-                            proposal["start"] + proposal["count"] - 1
-                        ].end_ms,
+                        "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
                         "matched_audio_text": "".join(before),
                         "reason_code": "ENTITY_SLOT_NOT_FOUND_FOR_MINIMAL_REPAIR",
                         "verdict": proposal["entity_verdict"],
@@ -678,9 +538,7 @@ def _apply_chat_proposals(
                     "source_offset_ms": item.offset_ms,
                     "cue_indexes": [index + 1 for index in sorted(indexes)],
                     "matched_start_ms": cues[proposal["start"]].start_ms,
-                    "matched_end_ms": cues[
-                        proposal["start"] + proposal["count"] - 1
-                    ].end_ms,
+                    "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
                     "mode": "entity_only",
                     "expected_entity": expected_canonical,
                     "replaced_entity": replaced_canonical,
@@ -700,6 +558,16 @@ def _apply_chat_proposals(
             )
             continue
 
+        if proposal["mode"] == "exact_span" and proposal.get("owner_eligible") is not True:
+            discovery.superseded_chat_proposals.append(
+                _partial_whole_line_rejection(
+                    item,
+                    proposal,
+                    cues=cues,
+                    matched_audio_text="".join(before),
+                )
+            )
+            continue
         if proposal["mode"] == "question_particle_patch":
             replacements = [proposal["replacement"]]
         else:
@@ -707,9 +575,7 @@ def _apply_chat_proposals(
             aligned = _aligned_span_replacements(
                 item.text,
                 before,
-                prev_context="".join(
-                    texts[max(0, proposal["start"] - 2) : proposal["start"]]
-                ),
+                prev_context="".join(texts[max(0, proposal["start"] - 2) : proposal["start"]]),
                 next_context="".join(texts[span_end : span_end + 2]),
             )
             if aligned is not None:
@@ -755,18 +621,19 @@ def _apply_chat_proposals(
                 "exact_text": item.text,
                 "cue_indexes": [index + 1 for index in sorted(indexes)],
                 "matched_start_ms": cues[proposal["start"]].start_ms,
-                "matched_end_ms": cues[
-                    proposal["start"] + proposal["count"] - 1
-                ].end_ms,
+                "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
                 "mode": proposal["mode"],
                 "score": round(proposal["score"], 4),
                 "coverage": round(proposal["coverage"], 4),
-                "audio_transcript_support_count": len(
-                    proposal.get("support_scores") or []
-                ),
+                "audio_transcript_support_count": len(proposal.get("support_scores") or []),
                 "audio_transcript_support_scores": [
                     round(score, 4) for score in proposal.get("support_scores") or []
                 ],
+                "audio_transcript_supports": [
+                    dict(receipt) for receipt in proposal.get("support_receipts") or []
+                ],
+                "owner_eligible": bool(proposal.get("owner_eligible")),
+                "whole_line_exact_copy_gate": proposal.get("whole_line_exact_copy_gate"),
                 "alignment_basis": proposal_alignment_basis(proposal),
                 "entity_verdict": proposal.get("entity_verdict"),
                 "read_aloud_verdict": proposal.get("read_aloud_verdict"),
@@ -777,11 +644,17 @@ def _apply_chat_proposals(
             }
         )
     return result
+
+
 _GUARD_THANK = re.compile(
     r"(?P<prefix>(?:谢谢|感谢|谢)(?:一下)?(?:刚刚)?)(?P<name>[^，。！？!?\s]{1,32}?)"
-    r"的(?P<guard>舰长|提督|总督)", re.IGNORECASE)
+    r"的(?P<guard>舰长|提督|总督)",
+    re.IGNORECASE,
+)
 GUARD_THANK_WINDOW_AFTER_MS = 300_000
 _GENERIC_GUARD_NAMES = frozenset({"你", "您", "你的", "您的", "大家", "刚刚"})
+
+
 def _apply_guard_sender_repairs(
     evidence: Sequence[ChatEvidence], cues: Sequence[Any], texts: list[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -812,33 +685,51 @@ def _apply_guard_sender_repairs(
         pool = strong or choices
         senders = {row[1].lower() for row in pool if row[1]}
         if len(senders) > 1:
-            blocked.append({
-                "kind": "guard", "thank_cue_index": index + 1,
-                "matched_start_ms": cue.start_ms, "matched_end_ms": cue.end_ms,
-                "before": texts[index], "heard_sender": match["name"], "guard_name": match["guard"],
-                "reason_code": "GUARD_BUY_SENDER_AMBIGUOUS",
-                "candidate_event_ids": sorted(str(row[0].source_event_id or row[0].evidence_id) for row in pool),
-                "candidate_spoken_senders": sorted(senders),
-            })
+            blocked.append(
+                {
+                    "kind": "guard",
+                    "thank_cue_index": index + 1,
+                    "matched_start_ms": cue.start_ms,
+                    "matched_end_ms": cue.end_ms,
+                    "before": texts[index],
+                    "heard_sender": match["name"],
+                    "guard_name": match["guard"],
+                    "reason_code": "GUARD_BUY_SENDER_AMBIGUOUS",
+                    "candidate_event_ids": sorted(
+                        str(row[0].source_event_id or row[0].evidence_id) for row in pool
+                    ),
+                    "candidate_spoken_senders": sorted(senders),
+                }
+            )
             continue
         item, alias, strength, delay = min(pool, key=lambda row: row[3])
         used.add(item.evidence_id)
         if not alias or normalize_chat_text(alias) == normalize_chat_text(match["name"]):
             continue
         before = texts[index]
-        after = before[:match.start("name")] + alias + before[match.end("name"):]
+        after = before[: match.start("name")] + alias + before[match.end("name") :]
         texts[index] = after
-        repairs.append({
-            "kind": "guard", "evidence_id": item.evidence_id,
-            "source_event_id": item.source_event_id, "sender": item.sender,
-            "spoken_sender": alias, "heard_sender": match["name"],
-            "guard_name": match["guard"], "cue_index": index + 1,
-            "matched_start_ms": cue.start_ms, "matched_end_ms": cue.end_ms,
-            "delay_ms": delay, "name_match_strength": strength,
-            "before": before, "after": after,
-            "alignment_basis": "guard-buy-plus-thank-action-anchor.v1",
-        })
+        repairs.append(
+            {
+                "kind": "guard",
+                "evidence_id": item.evidence_id,
+                "source_event_id": item.source_event_id,
+                "sender": item.sender,
+                "spoken_sender": alias,
+                "heard_sender": match["name"],
+                "guard_name": match["guard"],
+                "cue_index": index + 1,
+                "matched_start_ms": cue.start_ms,
+                "matched_end_ms": cue.end_ms,
+                "delay_ms": delay,
+                "name_match_strength": strength,
+                "before": before,
+                "after": after,
+                "alignment_basis": "guard-buy-plus-thank-action-anchor.v1",
+            }
+        )
     return repairs, blocked
+
 
 def _apply_sc_sender_repairs(
     *,
@@ -905,9 +796,7 @@ def _apply_sc_sender_repairs(
                         )
                     ],
                     "matched_start_ms": cues[proposal["start"]].start_ms,
-                    "matched_end_ms": cues[
-                        proposal["start"] + proposal["count"] - 1
-                    ].end_ms,
+                    "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
                     "reason_code": "DUPLICATE_SC_BODY_SENDER_AMBIGUOUS",
                     "candidate_event_ids": sorted(event_identities),
                     "candidate_spoken_senders": sorted(spoken_senders),
@@ -976,13 +865,9 @@ def _apply_chat_coreference_repairs(
             expected_entity = next(
                 entity for entity in group.entities if entity.canonical == expected_canonical
             )
-            if (
-                any(
-                    surface.lower() in before_text.lower()
-                    for surface in expected_entity.surfaces
-                )
-                or any(marker in before_text for marker in contrast_markers)
-            ):
+            if any(
+                surface.lower() in before_text.lower() for surface in expected_entity.surfaces
+            ) or any(marker in before_text for marker in contrast_markers):
                 break
             found = next(
                 (alt for alt in alternatives if alt.lower() in before_text.lower()),
@@ -1097,9 +982,7 @@ def _finalize_chat_authority_output(
         status = "PENDING_TEXT_OVERRIDE"
     elif parts.applied and not all(row["survived"] for row in parts.applied):
         status = "FAILED"
-    elif parts.entity_repairs and not all(
-        row["survived"] for row in parts.entity_repairs
-    ):
+    elif parts.entity_repairs and not all(row["survived"] for row in parts.entity_repairs):
         status = "FAILED"
     elif (
         parts.applied

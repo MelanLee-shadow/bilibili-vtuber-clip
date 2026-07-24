@@ -29,9 +29,14 @@ from typing import Any, Callable, Iterable, Mapping
 
 from src.autoslice.chat_evidence import (
     normalize_chat_text,
-    normalize_srt_payload_window,
+    normalize_srt_owner_payload_window,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.source_subtitle_truth import (
+    MIN_CUE_OVERLAP_MS,
+    source_truth_owner_windows,
+    validated_source_truth_projection,
+)
 from src.autoslice.subtitle_fidelity import (
     _homophone_equal,
     _near_homophone_equal,
@@ -146,6 +151,23 @@ _BOUND_ORTHOGRAPHY_PROVENANCE_KINDS = frozenset(
         "verified_ocr",
     }
 )
+_COMPLETED_CORRECTION_STATUSES = frozenset(
+    {"CLEAN", "FLAGGED", "APPLIED", "PARTIAL"}
+)
+
+
+def _glossary_surface_can_authorize(surface: str) -> bool:
+    """Whether a raw glossary hit is specific enough to bind orthography.
+
+    A one-character substring can occur incidentally throughout glossary
+    prose (``礼墨的礼`` once made an unrelated ``李→礼`` proposal look
+    source-backed).  Single-character spellings need a referent-bound source
+    such as roster, source truth, chat, or verified OCR; prose membership is
+    context only.
+    """
+
+    normalized = "".join(char for char in surface if char.isalnum())
+    return len(normalized) >= 2
 
 
 def _orthography_text_authority(
@@ -583,7 +605,14 @@ def audit_final_subtitles(
                 else:
                     scope_warnings.append("SOURCE_SURFACE_NOT_IN_PROPOSED")
             elif source_surface.casefold() in glossary_text.casefold():
-                provenance = {"kind": "glossary", "surface": source_surface}
+                provenance = {
+                    "kind": (
+                        "glossary"
+                        if _glossary_surface_can_authorize(source_surface)
+                        else "glossary_context"
+                    ),
+                    "surface": source_surface,
+                }
             elif source_surface.casefold() in structured_context_text.casefold():
                 # This context also contains the derived selection hook, so a
                 # substring hit is candidate provenance only.  It is not a
@@ -920,9 +949,16 @@ def build_context_adjudication_request(
     finding: Mapping[str, Any],
     *,
     clip_context: Mapping[str, object] | None = None,
+    source_media_timeline_offset_ms: int = 0,
 ) -> dict[str, Any]:
     """Build a hash-bound, span-scoped acoustic compatibility request."""
 
+    if (
+        isinstance(source_media_timeline_offset_ms, bool)
+        or not isinstance(source_media_timeline_offset_ms, int)
+        or source_media_timeline_offset_ms < 0
+    ):
+        raise ValueError("SOURCE_MEDIA_TIMELINE_OFFSET_INVALID")
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     cue_index = int(finding.get("cue_index") or 0)
     if not 1 <= cue_index <= len(cues):
@@ -954,7 +990,8 @@ def build_context_adjudication_request(
     evidence_id = hashlib.sha256(
         (
             f"subtitle-span-acoustic\0{hashlib.sha256(srt_text.encode()).hexdigest()}\0"
-            f"{cue_index}\0{cue.start_ms}\0{cue.end_ms}\0{proposed}"
+            f"{cue_index}\0{cue.start_ms}\0{cue.end_ms}\0"
+            f"{source_media_timeline_offset_ms}\0{proposed}"
         ).encode("utf-8")
     ).hexdigest()
     request: dict[str, Any] = {
@@ -967,6 +1004,7 @@ def build_context_adjudication_request(
         "matched_end_ms": cue.end_ms,
         "context_start_ms": context_start_ms,
         "context_end_ms": context_end_ms,
+        "source_media_timeline_offset_ms": source_media_timeline_offset_ms,
         "matched_audio_text": cue.text,
         "suspect": suspect,
         "replacement": replacement,
@@ -1024,6 +1062,7 @@ def adjudicate_context_finding(
     *,
     entity_verifier: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
     clip_context: Mapping[str, object] | None = None,
+    source_media_timeline_offset_ms: int = 0,
 ) -> tuple[str, dict[str, Any]]:
     """Fuse a reviewer proposal with a closed-set acoustic compatibility report."""
 
@@ -1032,6 +1071,7 @@ def adjudicate_context_finding(
             srt_text,
             finding,
             clip_context=clip_context,
+            source_media_timeline_offset_ms=source_media_timeline_offset_ms,
         )
     except (TypeError, ValueError) as exc:
         return srt_text, {
@@ -1189,6 +1229,7 @@ def adjudicate_exact_release_findings(
     *,
     entity_verifier: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
     clip_context: Mapping[str, object] | None = None,
+    source_media_timeline_offset_ms: int = 0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Separate unresolved findings from decisively disproven proposals.
 
@@ -1217,6 +1258,7 @@ def adjudicate_exact_release_findings(
             row,
             entity_verifier=entity_verifier,
             clip_context=clip_context,
+            source_media_timeline_offset_ms=source_media_timeline_offset_ms,
         )
         row["exact_release_adjudication"] = adjudication
         verdict = adjudication.get("verdict")
@@ -1272,9 +1314,47 @@ def audit_correction_mutation_authority(
 ) -> dict[str, object]:
     """Verify every correction-pass mutation has a typed authority receipt."""
 
+    correction_status = str(correction_audit.get("status") or "")
     findings = correction_audit.get("findings")
     applied_count = correction_audit.get("applied_count")
     failures: list[dict[str, object]] = []
+    if correction_status == "AUDITOR_UNAVAILABLE":
+        raw_reason_codes = correction_audit.get("reason_codes")
+        if isinstance(raw_reason_codes, str):
+            upstream_reason_codes = (
+                [raw_reason_codes] if raw_reason_codes else []
+            )
+        elif isinstance(raw_reason_codes, list):
+            upstream_reason_codes = [
+                str(code) for code in raw_reason_codes if str(code)
+            ]
+        else:
+            upstream_reason_codes = []
+        return {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "BLOCK",
+            "applied_count": applied_count,
+            "validated_mutation_count": 0,
+            "failures": [
+                {
+                    "reason_code": "CORRECTION_DISCOVERY_INCOMPLETE",
+                    "upstream_reason_codes": upstream_reason_codes,
+                }
+            ],
+        }
+    if correction_status not in _COMPLETED_CORRECTION_STATUSES:
+        return {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "BLOCK",
+            "applied_count": applied_count,
+            "validated_mutation_count": 0,
+            "failures": [
+                {
+                    "reason_code": "CORRECTION_STATUS_INVALID",
+                    "observed_status": correction_status or None,
+                }
+            ],
+        }
     if not isinstance(findings, list):
         return {
             "schema_version": "subtitle-correction-mutation-audit.v1",
@@ -1420,12 +1500,18 @@ def resolve_verified_source_truth_findings(
         for key in ("applied", "satisfied")
         for row in (audit.get(key) or [])
         if isinstance(row, Mapping)
+        and row.get("required") is not False
     ]
     if not truth_rows:
         return pending, resolved
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
 
-    def contract_satisfied(text: str, row: Mapping[str, Any]) -> bool:
+    def contract_satisfied(
+        text: str,
+        row: Mapping[str, Any],
+        *,
+        enforce_projection_text: bool = True,
+    ) -> bool:
         contract = row.get("declared_output_contract")
         if not isinstance(contract, Mapping):
             return False
@@ -1439,38 +1525,52 @@ def resolve_verified_source_truth_findings(
         required_text = normalize_chat_text(
             str(contract.get("required_text") or "")
         )
-        windows = row.get("local_windows")
-        if not isinstance(windows, list) or not windows:
+        projection_present = "resolved_target_projection" in row
+        projection = validated_source_truth_projection(row)
+        if projection_present and projection is None:
             return False
-        checked = False
-        for window in windows:
-            if not isinstance(window, Mapping):
-                return False
-            try:
-                start_ms = int(window["start_ms"]) - timeline_offset_ms
-                end_ms = int(window["end_ms"]) - timeline_offset_ms
-            except (KeyError, TypeError, ValueError):
-                return False
-            if start_ms >= end_ms:
-                return False
-            payload = normalize_srt_payload_window(
+        if projection is not None and projection["status"] == "RESOLVED":
+            owned_rows = [
+                (
+                    int(cue["start_ms"]),
+                    int(cue["end_ms"]),
+                    str(cue["after_text"]),
+                )
+                for cue in projection["cues"]
+            ]
+        else:
+            owned_rows = [
+                (start_ms, end_ms, None)
+                for start_ms, end_ms in source_truth_owner_windows(row)
+            ]
+        if not owned_rows:
+            return False
+        payloads: list[str] = []
+        for owner_start, owner_end, expected_after in owned_rows:
+            start_ms = owner_start - timeline_offset_ms
+            end_ms = owner_end - timeline_offset_ms
+            payload = normalize_srt_owner_payload_window(
                 text,
                 start_ms=start_ms,
                 end_ms=end_ms,
+                min_overlap_ms=MIN_CUE_OVERLAP_MS,
             )
-            checked = True
-            if action == "drop_cue":
-                ok = not payload
-            elif action == "replace_cue":
-                ok = bool(expected_exact) and payload == expected_exact
-            elif action == "replace_substring":
-                expected = required_text or expected_exact
-                ok = bool(expected) and expected in payload
-            else:
-                ok = False
-            if not ok:
+            if (
+                enforce_projection_text
+                and expected_after is not None
+                and payload != normalize_chat_text(expected_after)
+            ):
                 return False
-        return checked
+            payloads.append(payload)
+        aggregate = "".join(payloads)
+        if action == "drop_cue":
+            return not aggregate
+        if action == "replace_cue":
+            return bool(expected_exact) and aggregate == expected_exact
+        if action == "replace_substring":
+            expected = required_text or expected_exact
+            return bool(expected) and expected in aggregate
+        return False
 
     unresolved: list[dict[str, Any]] = []
     for finding in pending:
@@ -1485,15 +1585,15 @@ def resolve_verified_source_truth_findings(
         cue = cues[cue_index - 1]
         overlapping_rows: list[Mapping[str, Any]] = []
         for row in truth_rows:
-            for window in row.get("local_windows") or []:
-                if not isinstance(window, Mapping):
-                    continue
-                try:
-                    start_ms = int(window["start_ms"]) - timeline_offset_ms
-                    end_ms = int(window["end_ms"]) - timeline_offset_ms
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if min(cue.end_ms, end_ms) > max(cue.start_ms, start_ms):
+            for owner_start, owner_end in source_truth_owner_windows(row):
+                start_ms = owner_start - timeline_offset_ms
+                end_ms = owner_end - timeline_offset_ms
+                overlap_ms = max(
+                    0,
+                    min(cue.end_ms, end_ms)
+                    - max(cue.start_ms, start_ms),
+                )
+                if overlap_ms >= MIN_CUE_OVERLAP_MS:
                     overlapping_rows.append(row)
                     break
         protected_by: list[str] = []
@@ -1510,7 +1610,13 @@ def resolve_verified_source_truth_findings(
                     f"{proposed if index == cue_index else item.text}\n"
                     for index, item in enumerate(cues, start=1)
                 )
-                invalidates = not contract_satisfied(rendered, row)
+                invalidates = not contract_satisfied(
+                    rendered,
+                    row,
+                    enforce_projection_text=(
+                        contract.get("action") != "replace_substring"
+                    ),
+                )
             if invalidates:
                 protected_by.append(str(row.get("truth_id") or ""))
         if protected_by:

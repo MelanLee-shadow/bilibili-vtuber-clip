@@ -10,6 +10,7 @@ from src.autoslice.boundary_endpoint_binding import (
 )
 from src.autoslice.boundary_semantic_review import (
     BoundarySemanticReviewError,
+    boundary_search_scope_is_valid,
     review_talk_boundary_semantics,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -31,6 +32,7 @@ def review_final_boundary_semantics(
     terminal_source_review: Mapping[str, object] | None = None,
     source_final_start_ms: int | None = None,
     source_final_end_ms: int | None = None,
+    boundary_search_scope: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority cue grid used by the resolver."""
 
@@ -48,6 +50,27 @@ def review_final_boundary_semantics(
             "candidate_id": candidate_id,
             "reason_codes": ["BOUNDARY_TARGET_MISSING"],
         }
+    if boundary_search_scope is not None:
+        scope = dict(boundary_search_scope)
+        if not boundary_search_scope_is_valid(scope):
+            return {
+                "schema_version": "talk-boundary-semantic-review.v1",
+                "status": "BLOCK",
+                "candidate_id": candidate_id,
+                "boundary_search_scope": scope,
+                "reason_codes": [
+                    "BOUNDARY_SEMANTIC_SEARCH_SCOPE_INVALID"
+                ],
+            }
+        if scope.get("status") != "PASS":
+            return {
+                "schema_version": "talk-boundary-semantic-review.v1",
+                "status": "BLOCK",
+                "candidate_id": candidate_id,
+                "boundary_search_scope": scope,
+                "reason_codes": list(scope.get("reason_codes") or [])
+                or ["BOUNDARY_SEMANTIC_SEARCH_SCOPE_BLOCKED"],
+            }
     try:
         return review_talk_boundary_semantics(
             cues=cues,
@@ -63,6 +86,7 @@ def review_final_boundary_semantics(
             terminal_source_review=terminal_source_review,
             source_final_start_ms=source_final_start_ms,
             source_final_end_ms=source_final_end_ms,
+            boundary_search_scope=boundary_search_scope,
         )
     except BoundarySemanticReviewError as exc:
         reason = str(exc)
@@ -72,6 +96,11 @@ def review_final_boundary_semantics(
         "schema_version": "talk-boundary-semantic-review.v1",
         "status": "BLOCK",
         "candidate_id": candidate_id,
+        **(
+            {"boundary_search_scope": dict(boundary_search_scope)}
+            if isinstance(boundary_search_scope, Mapping)
+            else {}
+        ),
         "reason_codes": [reason],
     }
 

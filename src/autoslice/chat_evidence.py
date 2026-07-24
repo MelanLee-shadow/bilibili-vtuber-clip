@@ -10,16 +10,20 @@ decides whether the exact source survived into the delivered subtitle.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from difflib import SequenceMatcher
 import hashlib
 import json
 from pathlib import Path
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
-from zoneinfo import ZoneInfo
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.chat_event_timing import (
+    danmaku_text as _danmaku_text,
+    event_epoch_ms,
+    recording_start_epoch_ms as recording_start_epoch_ms,
+    send_time_ms as _send_time_ms,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.surface_canon import (
     canonicalize_hard_meme_surfaces as canonicalize_hard_meme_surfaces,
@@ -31,7 +35,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
 _NON_TEXT = re.compile(r"[^0-9a-z\u3040-\u30ff\u3400-\u9fff]+", re.IGNORECASE)
-_SEGMENT_TIME = re.compile(r"(?P<date>20\d{6})[-_](?P<hour>\d{2})[-_](?P<minute>\d{2})[-_](?P<second>\d{2})")
 _QUESTION_TAIL = frozenset("吗呢吧嘛呀啊？?")
 _CANONICAL_SURFACE_RULES = CHANNEL_PROFILE.canonical_surface_rules
 
@@ -107,6 +110,7 @@ EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
 # 开口→推流 每环只加正延迟（繁忙房渲染实测 ~15s）。cue 早于发送+2s 的
 # "念读"物理不可能，确定性排除；弱界宁松勿枉，非渲染延迟估计。
 READ_ALOUD_MIN_DELAY_MS = 2_000
+_event_epoch_ms = event_epoch_ms
 
 
 def normalize_chat_text(text: str) -> str:
@@ -146,11 +150,51 @@ def normalize_srt_payload_window(
     strip_speaker_labels: bool = False,
     tolerance_ms: int = 250,
 ) -> str:
-    """Normalize payload only from cues overlapping one bound evidence span."""
+    """Normalize payload from a fuzzy evidence span.
+
+    The tolerance is intentional for discovery/evidence matching.  Exact
+    source-truth and reviewed-baseline ownership must instead use
+    :func:`normalize_srt_owner_payload_window`; otherwise a cue that merely
+    touches, or sits just outside, an owner boundary contaminates the payload.
+    """
 
     texts = []
     for cue in parse_srt_cues(srt_text):
         if cue.end_ms < start_ms - tolerance_ms or cue.start_ms > end_ms + tolerance_ms:
+            continue
+        text = _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
+        if text.strip():
+            texts.append(text)
+    return normalize_chat_text("".join(texts))
+
+
+def normalize_srt_owner_payload_window(
+    srt_text: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    min_overlap_ms: int,
+    strip_speaker_labels: bool = False,
+) -> str:
+    """Normalize cues materially owned by one exact half-open time window.
+
+    Exact ownership is deliberately not a fuzzy evidence lookup.  A cue is
+    included only when its real overlap with ``[start_ms, end_ms)`` reaches the
+    same minimum used when the owning authority selected its target cues.
+    Boundary-touching neighbours therefore contribute zero milliseconds and
+    cannot make an otherwise exact ``replace_cue`` or ``drop_cue`` contract
+    fail.
+    """
+
+    if isinstance(min_overlap_ms, bool) or min_overlap_ms <= 0:
+        raise ValueError("min_overlap_ms must be a positive integer")
+    texts = []
+    for cue in parse_srt_cues(srt_text):
+        overlap_ms = max(
+            0,
+            min(cue.end_ms, end_ms) - max(cue.start_ms, start_ms),
+        )
+        if overlap_ms < min_overlap_ms:
             continue
         text = _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
         if text.strip():
@@ -203,7 +247,9 @@ def sanitize_chat_display_text(text: str, *, max_chars: int = 500) -> str:
     """Render-safe chat data; never treat source text as prompt instructions."""
 
     value = str(text).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]", "", value)
+    value = re.sub(
+        r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]", "", value
+    )
     value = value.replace("-->", "→").replace("{", "｛").replace("}", "｝")
     return value[:max_chars].strip()
 
@@ -237,12 +283,15 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
             canonical = sanitize_chat_display_text(value.get("canonical", ""), max_chars=80)
             raw_surfaces = value.get("surfaces") or []
             raw_readings = value.get("readings") or []
-            if not canonical or not isinstance(raw_surfaces, list) or not isinstance(raw_readings, list):
+            if (
+                not canonical
+                or not isinstance(raw_surfaces, list)
+                or not isinstance(raw_readings, list)
+            ):
                 continue
             surfaces = [canonical]
             surfaces.extend(
-                sanitize_chat_display_text(surface, max_chars=80)
-                for surface in raw_surfaces
+                sanitize_chat_display_text(surface, max_chars=80) for surface in raw_surfaces
             )
             surfaces = list(dict.fromkeys(surface for surface in surfaces if surface))
             readings = tuple(
@@ -276,9 +325,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     if str(value) in {"clip_initial", "transcript_only", "witness_disagreement"}
                 )
             )
-            all_surfaces = {
-                surface.lower() for entity in parsed for surface in entity.surfaces
-            }
+            all_surfaces = {surface.lower() for entity in parsed for surface in entity.surfaces}
             raw_keep_surfaces = row.get("uncertain_keep_surfaces") or []
             keep_surfaces = tuple(
                 dict.fromkeys(
@@ -310,9 +357,7 @@ def _coerce_referent_groups(
             out.append(raw_group)
             continue
         parsed = tuple(
-            ReferentEntity(str(value), (str(value),))
-            for value in raw_group
-            if str(value)
+            ReferentEntity(str(value), (str(value),)) for value in raw_group if str(value)
         )
         if len(parsed) >= 2:
             out.append(ReferentGroup(parsed))
@@ -383,16 +428,12 @@ def clip_opening_address_group(
     if hit is None:
         return None
     connective = str(hit["surface"])
-    entities = [
-        ReferentEntity(connective, (connective,), tuple(hit.get("readings") or ()))
-    ]
+    entities = [ReferentEntity(connective, (connective,), tuple(hit.get("readings") or ()))]
     for row in config.get("addresses") or []:
         canonical = str(row["canonical"])
         if canonical.lower() == connective.lower():
             continue
-        entities.append(
-            ReferentEntity(canonical, (canonical,), tuple(row.get("readings") or ()))
-        )
+        entities.append(ReferentEntity(canonical, (canonical,), tuple(row.get("readings") or ())))
     if len(entities) < 2:
         return None
     return ReferentGroup(
@@ -483,9 +524,7 @@ def repetition_divergence_groups(
     return groups
 
 
-def witness_disagreement_cues(
-    draft_srt: str, final_srt: str, group: ReferentGroup
-) -> list[int]:
+def witness_disagreement_cues(draft_srt: str, final_srt: str, group: ReferentGroup) -> list[int]:
     """证人引入仲裁的怀疑编译器（2026-07-14 生日结婚「小李」案抽象）。
 
     返回 final 中出现组内形态、而同时轴 draft cue 无该形态的 cue_index
@@ -538,9 +577,7 @@ def introduced_term_cues(
         if cue.text.strip()
     }
     final_cues = [cue for cue in parse_srt_cues(final_srt) if cue.text.strip()]
-    terms = sorted(
-        {t for t in protected if t and len(str(t)) >= 2}, key=len, reverse=True
-    )
+    terms = sorted({t for t in protected if t and len(str(t)) >= 2}, key=len, reverse=True)
     rows: list[dict[str, Any]] = []
     for index, cue in enumerate(final_cues, start=1):
         draft_text = draft_by_span.get((cue.start_ms, cue.end_ms))
@@ -568,9 +605,7 @@ def introduced_term_cues(
             span = (span or "").strip("，。！？,.!? ")
             if len(span) < 2 or span == str(term):
                 continue
-            rows.append(
-                {"cue_index": index, "term": str(term), "draft_span": span[:10]}
-            )
+            rows.append({"cue_index": index, "term": str(term), "draft_span": span[:10]})
             break
         if len(rows) >= max_rows:
             break
@@ -611,7 +646,9 @@ def _entity_occurrences(text: str, group: ReferentGroup) -> list[dict[str, Any]]
 def _request_sha256(request: Mapping[str, Any]) -> str:
     payload = {key: value for key, value in request.items() if key != "request_sha256"}
     return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
 
@@ -648,9 +685,7 @@ def build_human_text_entity_verifier(
         binding_error = "text override must bind source and final SRT SHA256"
     else:
         binding = {
-            "source_cue_witness_sha256": str(
-                payload.get("source_cue_witness_sha256") or ""
-            ),
+            "source_cue_witness_sha256": str(payload.get("source_cue_witness_sha256") or ""),
             "decision_output_witness_sha256": str(
                 payload.get("decision_output_witness_sha256") or ""
             ),
@@ -728,9 +763,7 @@ def reconcile_pending_text_overrides(
         }
     elif override_schema_version in {2, 3}:
         manifest_binding = {
-            "source_cue_witness_sha256": str(
-                text_manifest.get("source_cue_witness_sha256") or ""
-            ),
+            "source_cue_witness_sha256": str(text_manifest.get("source_cue_witness_sha256") or ""),
             "decision_output_witness_sha256": str(
                 text_manifest.get("decision_output_witness_sha256") or ""
             ),
@@ -741,8 +774,7 @@ def reconcile_pending_text_overrides(
 
     def verdict_matches_manifest(verdict: Mapping[str, Any]) -> bool:
         return (
-            int(verdict.get("override_schema_version") or 1)
-            == override_schema_version
+            int(verdict.get("override_schema_version") or 1) == override_schema_version
             and verdict.get("override_document_sha256") == document_hash
             and all(verdict.get(key) == value for key, value in manifest_binding.items())
         )
@@ -794,12 +826,8 @@ def reconcile_pending_text_overrides(
             }
         else:
             document_binding = {
-                "source_cue_witness_sha256": document.get(
-                    "source_cue_witness_sha256"
-                ),
-                "decision_output_witness_sha256": document.get(
-                    "decision_output_witness_sha256"
-                ),
+                "source_cue_witness_sha256": document.get("source_cue_witness_sha256"),
+                "decision_output_witness_sha256": document.get("decision_output_witness_sha256"),
             }
         if document_binding != manifest_binding:
             return None
@@ -809,10 +837,7 @@ def reconcile_pending_text_overrides(
             for row in document.get("chat_entity_verdicts") or []
             if isinstance(row, dict) and str(row.get("evidence_id") or "") == evidence_id
         ]
-        if (
-            len(rows) != 1
-            or rows[0].get("canonical_entity") != verdict.get("canonical_entity")
-        ):
+        if len(rows) != 1 or rows[0].get("canonical_entity") != verdict.get("canonical_entity"):
             return None
         return {
             **verdict,
@@ -838,23 +863,17 @@ def reconcile_pending_text_overrides(
                     if isinstance(event, dict)
                     and event.get("evidence_id") == pending_row.get("evidence_id")
                     and isinstance(event.get("verdict"), dict)
-                    and event["verdict"].get("request_sha256")
-                    == verdict.get("request_sha256")
-                    and event["verdict"].get("canonical_entity")
-                    == verdict.get("canonical_entity")
+                    and event["verdict"].get("request_sha256") == verdict.get("request_sha256")
+                    and event["verdict"].get("canonical_entity") == verdict.get("canonical_entity")
                 ]
                 if len(event_matches) != 1:
                     return False
                 event_matches[0]["verdict"] = dict(rebound)
             pending_row["verdict_rebinding"] = {
                 "status": "UNCHANGED_ENTITY_REBOUND_TO_FROZEN_SOURCE",
-                "previous_override_document_sha256": verdict.get(
-                    "override_document_sha256"
-                ),
+                "previous_override_document_sha256": verdict.get("override_document_sha256"),
                 "previous_source_srt_sha256": verdict.get("source_srt_sha256"),
-                "previous_text_final_srt_sha256": verdict.get(
-                    "text_final_srt_sha256"
-                ),
+                "previous_text_final_srt_sha256": verdict.get("text_final_srt_sha256"),
                 "override_document_sha256": document_hash,
                 "override_schema_version": override_schema_version,
                 "source_srt_sha256": source_hash,
@@ -935,8 +954,7 @@ def reconcile_pending_text_overrides(
             )
             projected_normalized = normalize_chat_text(projected)
             chat_scaffold = bool(
-                projected_normalized
-                and projected_normalized in normalize_chat_text(exact_chat)
+                projected_normalized and projected_normalized in normalize_chat_text(exact_chat)
             )
             if chat_scaffold:
                 chat_entity = chat_occurrences[0]
@@ -1025,7 +1043,11 @@ def _validated_read_aloud_verdict(
     if row.get("canonical_entity") not in allowed:
         return None
     confidence = row.get("confidence")
-    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or confidence < 0.80:
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or confidence < 0.80
+    ):
         return None
     return row
 
@@ -1061,7 +1083,11 @@ def _validated_entity_verdict(
         if not all(_valid_sha256(row.get(key)) for key in required_hashes):
             return None
         confidence = row.get("confidence")
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or confidence < 0.80:
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or confidence < 0.80
+        ):
             return {**row, "status": "UNCERTAIN", "reason_code": "ENTITY_AUDIO_CONFIDENCE_LOW"}
     elif authority_kind == "ivan_text_override":
         if not row.get("defer_to_text_override"):
@@ -1079,8 +1105,7 @@ def _validated_entity_verdict(
             ),
         }.get(override_schema_version)
         if binding_keys is None or not all(
-            _valid_sha256(row.get(key))
-            for key in ("override_document_sha256", *binding_keys)
+            _valid_sha256(row.get(key)) for key in ("override_document_sha256", *binding_keys)
         ):
             return None
         if not str(row.get("candidate_id") or ""):
@@ -1089,77 +1114,6 @@ def _validated_entity_verdict(
         return None
     return row
 
-
-def recording_start_epoch_ms(path: str | Path, *, timezone: str = "Asia/Shanghai") -> int | None:
-    """Derive t=0 from RecordStartTime; China-wall-clock filename is fallback."""
-    source = Path(path)
-    meta_path = source.with_suffix(".meta.json")
-    if meta_path.is_file():
-        try:
-            payload = json.loads(meta_path.read_text(encoding="utf-8", errors="replace"))
-            description = payload.get("description") if isinstance(payload, dict) else None
-            value = description.get("RecordStartTime") if isinstance(description, dict) else None
-            parsed = datetime.fromisoformat(str(value))
-            if parsed.tzinfo is not None:
-                return int(parsed.timestamp() * 1000)
-        except (OSError, TypeError, ValueError):
-            pass
-    match = _SEGMENT_TIME.search(source.stem)
-    if match is None:
-        return None
-    value = match.group("date") + match.group("hour") + match.group("minute") + match.group("second")
-    parsed = datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=ZoneInfo(timezone))
-    return int(parsed.timestamp() * 1000)
-
-def _event_epoch_ms(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if value >= 100_000_000_000:
-        return int(value)
-    if value >= 100_000_000:
-        return int(float(value) * 1000)
-    return int(value)
-
-def _send_time_ms(payload: dict, command: str = "") -> int | None:
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    # Prefer Bilibili event clocks over recorder-ingestion send_time.
-    if command.startswith("DANMU_MSG"):
-        info = payload.get("info") or data.get("info")
-        if (
-            isinstance(info, list)
-            and info
-            and isinstance(info[0], list)
-            and len(info[0]) > 4
-        ):
-            event_ms = _event_epoch_ms(info[0][4])
-            if event_ms is not None:
-                return event_ms
-    if command.startswith("SUPER_CHAT_MESSAGE"):
-        top_level = payload.get("send_time")
-        # CN keeps ms here; JPN twins fall back to second-precision data fields.
-        if isinstance(top_level, (int, float)) and top_level >= 100_000_000_000:
-            return _event_epoch_ms(top_level)
-        for key in ("ts", "start_time", "send_time"):
-            event_ms = _event_epoch_ms(data.get(key))
-            if event_ms is not None:
-                return event_ms
-    if command.startswith("GUARD_BUY"):
-        return _event_epoch_ms(data.get("start_time"))
-    value = payload.get("send_time")
-    if not isinstance(value, (int, float)):
-        value = data.get("send_time")
-    return _event_epoch_ms(value)
-
-def _danmaku_text(payload: dict) -> str:
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    info = payload.get("info") or data.get("info")
-    if isinstance(info, list) and len(info) > 1 and isinstance(info[1], str):
-        return info[1].strip()
-    for key in ("message", "text", "content"):
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
 
 def load_chat_jsonl(
     path: str | Path,
@@ -1228,16 +1182,20 @@ def load_chat_jsonl(
             level_name = {1: "总督", 2: "提督", 3: "舰长"}.get(guard_level, "")
             gift_name = data.get("gift_name") or data.get("giftName") or level_name
             valid_uid = (
-                not isinstance(uid, bool)
-                and isinstance(uid, (int, str))
-                and bool(str(uid).strip())
+                not isinstance(uid, bool) and isinstance(uid, (int, str)) and bool(str(uid).strip())
             )
             if not (
-                isinstance(sender, str) and sender.strip() and level_name and valid_uid
-                and isinstance(gift_name, str) and gift_name.strip()
+                isinstance(sender, str)
+                and sender.strip()
+                and level_name
+                and valid_uid
+                and isinstance(gift_name, str)
+                and gift_name.strip()
             ):
                 continue
-            parsed.append((event_ms, "guard", sender.strip(), gift_name.strip(), str(uid).strip(), False))
+            parsed.append(
+                (event_ms, "guard", sender.strip(), gift_name.strip(), str(uid).strip(), False)
+            )
     base = recording_start_ms if recording_start_ms is not None else earliest
     if base is None:
         return []
@@ -1248,7 +1206,9 @@ def load_chat_jsonl(
         twin_index = None
         if kind == "superchat":
             for index in range(len(deduped) - 1, -1, -1):
-                prior_ms, prior_kind, prior_sender, prior_text, prior_id, prior_precise = deduped[index]
+                prior_ms, prior_kind, prior_sender, prior_text, prior_id, prior_precise = deduped[
+                    index
+                ]
                 if event_ms - prior_ms > 2_000:
                     break
                 sender_compatible = prior_sender == sender or not prior_sender or not sender
@@ -1283,11 +1243,13 @@ def load_chat_jsonl(
         )
     return out
 
+
 def _srt_timestamp(ms: int) -> str:
     hours, rem = divmod(max(0, int(ms)), 3_600_000)
     minutes, rem = divmod(rem, 60_000)
     seconds, millis = divmod(rem, 1_000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
 
 def _render_srt(cues: Sequence[object], texts: Sequence[str]) -> str:
     blocks = []

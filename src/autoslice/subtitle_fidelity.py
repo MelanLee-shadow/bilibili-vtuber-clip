@@ -33,6 +33,13 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.redelivery_subtitle_baseline import (
+    MIN_ALIGNMENT_OVERLAP_MS,
+)
+from src.autoslice.source_subtitle_truth import (
+    MIN_CUE_OVERLAP_MS,
+    source_truth_owner_windows,
+)
 
 try:  # 可选依赖（2026-07-14 季下/小丽冤杀案）：有 pypinyin 时同音判定是
     # 真声学等价；缺失时退回下方手写封闭组保守运行，绝不因缺依赖崩产线。
@@ -1119,6 +1126,15 @@ def resolve_deferred_foreign_introductions(
         "findings": [],
         "failures": [],
     }
+    owner_overlap_ms = {
+        "source_subtitle_truth": MIN_CUE_OVERLAP_MS,
+        "hash_bound_redelivery_baseline": MIN_ALIGNMENT_OVERLAP_MS,
+    }.get(authority_kind)
+    if owner_overlap_ms is None:
+        result["failures"].append(
+            {"reason_code": "UNSUPPORTED_DEFERRED_AUTHORITY_KIND"}
+        )
+        return result
     findings = audit.get("unproven_foreign_introductions")
     if not isinstance(findings, list) or not findings:
         result["failures"].append({"reason_code": "NO_DEFERRED_FINDINGS"})
@@ -1127,6 +1143,11 @@ def resolve_deferred_foreign_introductions(
     parsed_rows: list[tuple[Mapping[str, Any], list[tuple[int, int]]]] = []
     for row in authority_rows:
         if not isinstance(row, Mapping):
+            continue
+        if authority_kind == "source_subtitle_truth":
+            windows = source_truth_owner_windows(row)
+            if windows:
+                parsed_rows.append((row, windows))
             continue
         windows: list[tuple[int, int]] = []
         for window in row.get("local_windows") or []:
@@ -1217,7 +1238,12 @@ def resolve_deferred_foreign_introductions(
             cue.text
             for cue in final_cues
             if any(
-                cue.start_ms < window_end and cue.end_ms > window_start
+                max(
+                    0,
+                    min(cue.end_ms, window_end)
+                    - max(cue.start_ms, window_start),
+                )
+                >= owner_overlap_ms
                 for window_start, window_end in owned_windows
             )
         ]

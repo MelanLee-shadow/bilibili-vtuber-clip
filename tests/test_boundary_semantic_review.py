@@ -1,6 +1,11 @@
 import json
 
+import pytest
+
 from src.autoslice.boundary_semantic_review import (
+    BoundarySemanticReviewError,
+    boundary_search_scope_is_valid,
+    build_boundary_search_scope,
     cue_grid_sha256,
     review_talk_boundary_semantics,
 )
@@ -206,6 +211,88 @@ def test_boundary_review_sees_long_forward_window_and_next_topic_witness():
     assert result["max_forward_ms"] == 60_000
     assert '"cue_index": 18' in seen_prompt
     assert '"cue_index": 19' in seen_prompt
+
+
+def test_manual_lower_bound_moves_shared_scope_past_old_610ms_failure():
+    """1863 regression: 263330 is legal from the reviewed 230760 origin.
+
+    The old resolver incorrectly measured 60s from the stale 202720 selector
+    end and rejected this exact closure by 610ms.
+    """
+
+    scope = build_boundary_search_scope(
+        semantic_target_ms=202_720,
+        manual_lower_bound_ms=230_760,
+        required_owner_end_ms=230_760,
+        repair_cap_ms=60_000,
+        last_piece_start_ms=1_856_000,
+    )
+    cues = [
+        _cue(1, 227_640, 230_760, "觉得我看上去很像拿烟头烫人的人"),
+        _cue(2, 261_850, 263_330, "就是不会说这种话呀，一般人"),
+        _cue(3, 263_330, 268_480, "小时候衣服的下一段话题"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第二句结束原话题，第三句开始童年衣服话题。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=230_760,
+        candidate_id="auto_193450_1863_2056",
+        selection_hook="火锅与邪恶守宫",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=60_000,
+        boundary_search_scope=scope,
+    )
+
+    assert boundary_search_scope_is_valid(scope)
+    assert scope["semantic_search_origin_ms"] == 230_760
+    assert scope["max_recommended_end_ms"] == 290_760
+    assert review["status"] == "PASS"
+    assert review["recommended_end_ms"] == 263_330
+    assert review["boundary_search_scope"] == scope
+
+
+def test_boundary_review_rejects_tampered_search_scope_binding():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=9_000,
+        repair_cap_ms=30_000,
+    )
+    scope["max_recommended_end_ms"] = 90_000
+
+    with pytest.raises(
+        BoundarySemanticReviewError,
+        match="BOUNDARY_SEMANTIC_SEARCH_SCOPE_INVALID",
+    ):
+        review_talk_boundary_semantics(
+            cues=[_cue(1, 0, 9_000, "目标")],
+            target_ms=9_000,
+            candidate_id="tampered",
+            selection_hook="",
+            selection_scorecard=_scorecard(),
+            structured_context="",
+            candidate_context="",
+            llm_call=lambda _prompt: "{}",
+            extract_json=_extract,
+            max_forward_ms=30_000,
+            boundary_search_scope=scope,
+        )
 
 
 def test_boundary_review_requests_one_long_context_retry_fail_closed():

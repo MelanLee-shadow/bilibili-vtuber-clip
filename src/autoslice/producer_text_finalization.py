@@ -8,7 +8,13 @@ from .chat_authority import (
     canonicalize_hard_meme_surfaces,
     normalize_chat_text,
     normalize_srt_payload_window,
-    parse_srt_cues,
+)
+from .chat_evidence import normalize_srt_owner_payload_window
+from .redelivery_subtitle_baseline import MIN_ALIGNMENT_OVERLAP_MS
+from .source_subtitle_truth import (
+    MIN_CUE_OVERLAP_MS,
+    source_truth_owner_windows,
+    validated_source_truth_projection,
 )
 
 FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS = 250
@@ -87,39 +93,164 @@ def _render_cues_to_srt(cues) -> str:
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
-def _source_truth_pinned_intervals(
-    audit: dict, final_text_srt: str
-) -> list[tuple[int, int]]:
-    """已应用/已满足的 ledger 钉子在交付时间轴上的 cue 区间。
-
-    钉子是最高文本权威且最后落刀（2026-07-20 kmx r2 案：十麻乃钉子加了
-    「的」，把更早的 sender 修复面的子串校验打破）——被钉子辖区覆盖的
-    早期决策不再作为终稿存活要求。"""
-
+def _verified_source_truth_rows(audit: dict) -> list[dict]:
     truth = audit.get("source_subtitle_truth_audit") or {}
-    intervals: list[tuple[int, int]] = []
-    indexes: set[int] = set()
-    for key in ("applied", "satisfied"):
-        for row in truth.get(key) or []:
-            if row.get("final_owner_verified") is not True:
+    return [
+        row
+        for key in ("applied", "satisfied")
+        for row in truth.get(key) or []
+        if isinstance(row, dict) and row.get("final_owner_verified") is True
+    ]
+
+
+def _rebase_text_through_source_truth_substrings(
+    text: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    audit: dict,
+    timeline_offset_ms: int = 0,
+) -> tuple[str, list[dict[str, str]]]:
+    """Replay only typed substring changes that materially own this span."""
+
+    output = text
+    applied: list[dict[str, str]] = []
+    for row in _verified_source_truth_rows(audit):
+        if row.get("action") != "replace_substring":
+            continue
+        projection = validated_source_truth_projection(row)
+        if projection is None or projection["status"] != "RESOLVED":
+            continue
+        projection_by_index = {
+            int(cue["cue_index"]): cue for cue in projection["cues"]
+        }
+        for replacement in row.get("replacements") or []:
+            if not isinstance(replacement, dict):
                 continue
-            windows = row.get("local_windows") or []
-            if windows:
-                # 首选：ledger 落刀时记录的交付时间轴辖区（layout 重排后
-                # cue 序号会漂，时间不会——2026-07-20 kmx r3 案）。
-                for window in windows:
-                    intervals.append(
-                        (int(window["start_ms"]), int(window["end_ms"]))
-                    )
+            cue_index = replacement.get("cue_index")
+            if isinstance(cue_index, bool) or not isinstance(cue_index, int):
                 continue
-            for index in row.get("cue_indexes") or []:
-                indexes.add(int(index))
-    if indexes:
-        cues = [cue for cue in parse_srt_cues(final_text_srt)]
-        for index in sorted(indexes):
-            if 1 <= index <= len(cues):
-                intervals.append((cues[index - 1].start_ms, cues[index - 1].end_ms))
-    return intervals
+            owner = projection_by_index.get(cue_index)
+            if owner is None:
+                continue
+            owner_start = int(owner["start_ms"]) - timeline_offset_ms
+            owner_end = int(owner["end_ms"]) - timeline_offset_ms
+            if (
+                min(end_ms, owner_end) - max(start_ms, owner_start)
+                < MIN_CUE_OVERLAP_MS
+            ):
+                continue
+            surface = str(replacement.get("surface") or "")
+            canonical = str(replacement.get("canonical") or "")
+            if not surface or not canonical or surface not in output:
+                continue
+            output = output.replace(surface, canonical)
+            applied.append(
+                {
+                    "truth_id": str(row.get("truth_id") or ""),
+                    "surface": surface,
+                    "canonical": canonical,
+                }
+            )
+    return output, applied
+
+
+def _full_source_truth_projection_match(
+    *,
+    expected_before: str,
+    final_text_payload: str,
+    final_speaker_payload: str,
+    start_ms: int,
+    end_ms: int,
+    audit: dict,
+    timeline_offset_ms: int,
+) -> dict[str, object] | None:
+    """Prove one baseline cue was deterministically transformed by truth."""
+
+    expected_norm = normalize_chat_text(expected_before)
+    for row in _verified_source_truth_rows(audit):
+        if row.get("action") not in {"replace_cue", "drop_cue"}:
+            continue
+        projection = validated_source_truth_projection(row)
+        if projection is None or projection["status"] != "RESOLVED":
+            continue
+        selected = [
+            cue
+            for cue in projection["cues"]
+            if min(
+                end_ms,
+                int(cue["end_ms"]) - timeline_offset_ms,
+            )
+            - max(
+                start_ms,
+                int(cue["start_ms"]) - timeline_offset_ms,
+            )
+            >= MIN_CUE_OVERLAP_MS
+        ]
+        if not selected:
+            continue
+        before_payload = normalize_chat_text(
+            "".join(str(cue["before_text"]) for cue in selected)
+        )
+        after_payload = normalize_chat_text(
+            "".join(str(cue["after_text"]) for cue in selected)
+        )
+        if (
+            before_payload == expected_norm
+            and after_payload == final_text_payload
+            and after_payload == final_speaker_payload
+        ):
+            return {
+                "truth_id": str(row.get("truth_id") or ""),
+                "action": str(row.get("action") or ""),
+                "before_payload": before_payload,
+                "after_payload": after_payload,
+            }
+    return None
+
+
+def _full_source_truth_supersedes_decision(
+    *,
+    expected_text: str,
+    start_ms: int,
+    end_ms: int,
+    audit: dict,
+) -> dict[str, str] | None:
+    """Require a causal before/after proof before retiring an older surface."""
+
+    expected = normalize_chat_text(expected_text)
+    if not expected:
+        return None
+    for row in _verified_source_truth_rows(audit):
+        if row.get("action") not in {"replace_cue", "drop_cue"}:
+            continue
+        projection = validated_source_truth_projection(row)
+        if projection is None or projection["status"] != "RESOLVED":
+            continue
+        selected = [
+            cue
+            for cue in projection["cues"]
+            if min(end_ms, int(cue["end_ms"]))
+            - max(start_ms, int(cue["start_ms"]))
+            >= MIN_CUE_OVERLAP_MS
+        ]
+        if not selected:
+            continue
+        before_payload = normalize_chat_text(
+            "".join(str(cue["before_text"]) for cue in selected)
+        )
+        after_payload = normalize_chat_text(
+            "".join(str(cue["after_text"]) for cue in selected)
+        )
+        if expected in before_payload and expected not in after_payload:
+            return {
+                "truth_id": str(row.get("truth_id") or ""),
+                "action": str(row.get("action") or ""),
+                "before_payload": before_payload,
+                "after_payload": after_payload,
+                "superseded_surface": expected,
+            }
+    return None
 
 
 def _redelivery_baseline_intervals(audit: dict) -> list[tuple[int, int]]:
@@ -138,13 +269,15 @@ def _window_payload(
     *,
     start_ms: int,
     end_ms: int,
+    min_overlap_ms: int,
     strip_speaker_labels: bool = False,
 ) -> str:
     return normalize_chat_text(
-        normalize_srt_payload_window(
+        normalize_srt_owner_payload_window(
             srt_text,
             start_ms=max(0, start_ms),
             end_ms=max(start_ms + 1, end_ms),
+            min_overlap_ms=min_overlap_ms,
             strip_speaker_labels=strip_speaker_labels,
         )
     )
@@ -158,12 +291,13 @@ def _verify_source_truth_owners(
     delivery_start_ms: int,
 ) -> tuple[bool, int]:
     truth = audit.get("source_subtitle_truth_audit") or {}
-    rows: list[dict] = [
+    all_rows: list[dict] = [
         row
         for key in ("applied", "satisfied")
         for row in truth.get(key) or []
         if isinstance(row, dict)
     ]
+    rows = [row for row in all_rows if row.get("required") is not False]
     required_count = 0
     failures: list[dict] = []
     for row in rows:
@@ -178,8 +312,40 @@ def _verify_source_truth_owners(
         required_text = normalize_chat_text(
             str(contract.get("required_text") or "")
         )
-        windows = row.get("local_windows") or []
-        if not windows:
+        projection_present = "resolved_target_projection" in row
+        projection = validated_source_truth_projection(row)
+        if projection_present and projection is None:
+            row["final_owner_verified"] = False
+            failures.append(
+                {
+                    "truth_id": row.get("truth_id"),
+                    "reason_code": (
+                        "SOURCE_TRUTH_FINAL_PROJECTION_INVALID"
+                    ),
+                }
+            )
+            continue
+        if projection is not None and projection["status"] == "RESOLVED":
+            owned_rows = [
+                {
+                    "start_ms": int(cue["start_ms"]),
+                    "end_ms": int(cue["end_ms"]),
+                    "expected_after": str(cue["after_text"]),
+                    "cue_index": int(cue["cue_index"]),
+                }
+                for cue in projection["cues"]
+            ]
+        else:
+            owned_rows = [
+                {
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "expected_after": None,
+                    "cue_index": None,
+                }
+                for start_ms, end_ms in source_truth_owner_windows(row)
+            ]
+        if not owned_rows:
             row["final_owner_verified"] = False
             failures.append(
                 {
@@ -189,39 +355,38 @@ def _verify_source_truth_owners(
             )
             continue
         window_results: list[dict] = []
-        for window in windows:
-            relative_start = int(window["start_ms"]) - delivery_start_ms
-            relative_end = int(window["end_ms"]) - delivery_start_ms
+        for owned in owned_rows:
+            relative_start = int(owned["start_ms"]) - delivery_start_ms
+            relative_end = int(owned["end_ms"]) - delivery_start_ms
             text_payload = _window_payload(
                 final_text_srt,
                 start_ms=relative_start,
                 end_ms=relative_end,
+                min_overlap_ms=MIN_CUE_OVERLAP_MS,
             )
             speaker_payload = _window_payload(
                 final_speaker_srt,
                 start_ms=relative_start,
                 end_ms=relative_end,
+                min_overlap_ms=MIN_CUE_OVERLAP_MS,
                 strip_speaker_labels=True,
             )
-            if action == "drop_cue":
-                text_ok = not text_payload
-                speaker_ok = not speaker_payload
-            elif action == "replace_cue":
-                text_ok = bool(expected_exact) and text_payload == expected_exact
-                speaker_ok = (
-                    bool(expected_exact) and speaker_payload == expected_exact
-                )
-            elif action == "replace_substring":
-                expected = required_text or expected_exact
-                text_ok = bool(expected) and expected in text_payload
-                speaker_ok = bool(expected) and expected in speaker_payload
+            expected_after_raw = owned["expected_after"]
+            if expected_after_raw is None:
+                text_ok = speaker_ok = True
             else:
-                text_ok = speaker_ok = False
+                expected_after = normalize_chat_text(
+                    str(expected_after_raw)
+                )
+                text_ok = text_payload == expected_after
+                speaker_ok = speaker_payload == expected_after
             required_count += 1
             result = {
                 "start_ms": relative_start,
                 "end_ms": relative_end,
+                "cue_index": owned["cue_index"],
                 "action": action,
+                "expected_after": expected_after_raw,
                 "expected_exact": expected_exact,
                 "required_text": required_text,
                 "text_payload": text_payload,
@@ -238,12 +403,69 @@ def _verify_source_truth_owners(
                         **result,
                     }
                 )
+        aggregate_text = "".join(
+            str(item["text_payload"]) for item in window_results
+        )
+        aggregate_speaker = "".join(
+            str(item["speaker_payload"]) for item in window_results
+        )
+        if action == "drop_cue":
+            contract_text_ok = not aggregate_text
+            contract_speaker_ok = not aggregate_speaker
+        elif action == "replace_cue":
+            contract_text_ok = (
+                bool(expected_exact) and aggregate_text == expected_exact
+            )
+            contract_speaker_ok = (
+                bool(expected_exact) and aggregate_speaker == expected_exact
+            )
+        elif action == "replace_substring":
+            expected = required_text or expected_exact
+            contract_text_ok = bool(expected) and expected in aggregate_text
+            contract_speaker_ok = (
+                bool(expected) and expected in aggregate_speaker
+            )
+        else:
+            contract_text_ok = contract_speaker_ok = False
+        if not (contract_text_ok and contract_speaker_ok):
+            failures.append(
+                {
+                    "truth_id": row.get("truth_id"),
+                    "reason_code": (
+                        "SOURCE_TRUTH_FINAL_CONTRACT_MISMATCH"
+                    ),
+                    "action": action,
+                    "expected_exact": expected_exact,
+                    "required_text": required_text,
+                    "text_payload": aggregate_text,
+                    "speaker_payload": aggregate_speaker,
+                    "text_ok": contract_text_ok,
+                    "speaker_ok": contract_speaker_ok,
+                }
+            )
+        row["final_owner_contract"] = {
+            "action": action,
+            "expected_exact": expected_exact,
+            "required_text": required_text,
+            "text_payload": aggregate_text,
+            "speaker_payload": aggregate_speaker,
+            "text_ok": contract_text_ok,
+            "speaker_ok": contract_speaker_ok,
+        }
         row["final_owner_windows"] = window_results
-        row["final_owner_verified"] = bool(window_results) and all(
-            item["text_ok"] and item["speaker_ok"] for item in window_results
+        row["final_owner_verified"] = (
+            bool(window_results)
+            and all(
+                item["text_ok"] and item["speaker_ok"]
+                for item in window_results
+            )
+            and contract_text_ok
+            and contract_speaker_ok
         )
     audit["final_source_truth_owner_verification"] = {
         "status": "FAIL" if failures else "PASS",
+        "required_truth_row_count": len(rows),
+        "optional_truth_row_count": len(all_rows) - len(rows),
         "required_window_count": required_count,
         "failures": failures,
     }
@@ -255,7 +477,7 @@ def _verify_redelivery_baseline_owners(
     *,
     final_text_srt: str,
     final_speaker_srt: str,
-    source_truth_intervals: list[tuple[int, int]],
+    delivery_start_ms: int,
 ) -> tuple[bool, int]:
     baseline = audit.get("redelivery_subtitle_baseline_audit") or {}
     if baseline.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
@@ -273,37 +495,66 @@ def _verify_redelivery_baseline_owners(
     for row in mappings:
         start_ms = int(row.get("start_ms") or 0)
         end_ms = int(row.get("end_ms") or 0)
-        if any(
-            min(end_ms, truth_end) - max(start_ms, truth_start) >= 200
-            for truth_start, truth_end in source_truth_intervals
-        ):
-            row["final_owner_scope"] = "SUPERSEDED_BY_SOURCE_TRUTH_OWNER"
-            row["final_owner_verified"] = False
-            continue
-        expected = normalize_chat_text(
-            str(row.get("text") or row.get("after") or "")
+        expected_raw = str(row.get("text") or row.get("after") or "")
+        expected_rebased, substring_replacements = (
+            _rebase_text_through_source_truth_substrings(
+                expected_raw,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                audit=audit,
+                timeline_offset_ms=delivery_start_ms,
+            )
         )
+        expected = normalize_chat_text(expected_rebased)
         text_payload = _window_payload(
-            final_text_srt, start_ms=start_ms, end_ms=end_ms
+            final_text_srt,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            min_overlap_ms=MIN_ALIGNMENT_OVERLAP_MS,
         )
         speaker_payload = _window_payload(
             final_speaker_srt,
             start_ms=start_ms,
             end_ms=end_ms,
+            min_overlap_ms=MIN_ALIGNMENT_OVERLAP_MS,
             strip_speaker_labels=True,
         )
         text_ok = bool(expected) and text_payload == expected
         speaker_ok = bool(expected) and speaker_payload == expected
+        full_projection = None
+        if not (text_ok and speaker_ok):
+            full_projection = _full_source_truth_projection_match(
+                expected_before=expected_raw,
+                final_text_payload=text_payload,
+                final_speaker_payload=speaker_payload,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                audit=audit,
+                timeline_offset_ms=delivery_start_ms,
+            )
+            if full_projection is not None:
+                text_ok = speaker_ok = True
         required_count += 1
         row.update(
             {
-                "final_owner_scope": "DELIVERY",
+                "final_owner_scope": (
+                    "TRANSFORMED_BY_SOURCE_TRUTH_OWNER"
+                    if full_projection is not None
+                    or substring_replacements
+                    else "DELIVERY"
+                ),
                 "final_owner_expected": expected,
                 "final_owner_text_payload": text_payload,
                 "final_owner_speaker_payload": speaker_payload,
                 "final_owner_verified": text_ok and speaker_ok,
             }
         )
+        if substring_replacements:
+            row["final_owner_source_truth_substring_replacements"] = (
+                substring_replacements
+            )
+        if full_projection is not None:
+            row["final_owner_source_truth_projection"] = full_projection
         if not (text_ok and speaker_ok):
             failures.append(
                 {
@@ -369,16 +620,12 @@ def verify_chat_authority_final_surfaces(
             "SOURCE_TRUTH_FINAL_OWNER_NOT_VERIFIED"
         )
         return False
-    pinned_intervals = _source_truth_pinned_intervals(audit, final_text_srt)
     baseline_owner_ok, baseline_owner_count = (
         _verify_redelivery_baseline_owners(
             audit,
             final_text_srt=final_text_srt,
             final_speaker_srt=final_speaker_srt,
-            source_truth_intervals=[
-                (start - delivery_start_ms, end - delivery_start_ms)
-                for start, end in pinned_intervals
-            ],
+            delivery_start_ms=delivery_start_ms,
         )
     )
     if not baseline_owner_ok:
@@ -435,13 +682,31 @@ def verify_chat_authority_final_surfaces(
         # 同轴直比（2026-07-20 kmx r4 案）：决策行 matched_* 与 ledger 的
         # local_windows 都锚在产线 spec（padded）时间轴上；换算到交付轴再比
         # 会差 recut 头（9770ms 级），豁免只剩巧合交叠。
-        if any(
-            min(matched_end, pin_end) - max(matched_start, pin_start) >= 200
-            for pin_start, pin_end in pinned_intervals
-        ):
+        full_truth_supersession = _full_source_truth_supersedes_decision(
+            expected_text=expected_text,
+            start_ms=matched_start,
+            end_ms=matched_end,
+            audit=audit,
+        )
+        if full_truth_supersession is not None:
             row["final_verification_scope"] = "SUPERSEDED_BY_SOURCE_TRUTH"
+            row["final_source_truth_supersession"] = (
+                full_truth_supersession
+            )
             superseded_by_truth += 1
             continue
+        expected_text, source_truth_replacements = (
+            _rebase_text_through_source_truth_substrings(
+                expected_text,
+                start_ms=matched_start,
+                end_ms=matched_end,
+                audit=audit,
+            )
+        )
+        if source_truth_replacements:
+            row["final_source_truth_substring_replacements"] = (
+                source_truth_replacements
+            )
         relative_matched_start = matched_start - delivery_start_ms
         relative_matched_end = matched_end - delivery_start_ms
         if not row.get("boundary_required") and any(

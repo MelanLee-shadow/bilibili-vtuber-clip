@@ -311,6 +311,199 @@ def test_v2_uncovered_prefix_and_tail_are_preserved(tmp_path):
     assert audit["uncovered_current_cue_count"] == 2
 
 
+def test_v2_v11_prefix_straddler_ending_at_first_reviewed_cue_is_uncovered(
+    tmp_path,
+):
+    """The V11 prefix crosses only reviewed leading air, not a reviewed cue."""
+
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt(
+            (250, 1_570, "你别坐地上"),
+            (1_570, 3_470, "可是我现在真的很像坐在地上"),
+        ),
+        encoding="utf-8",
+    )
+    config = _config_v2(
+        baseline,
+        absolute_source_start_ms=1_572_910,
+        absolute_source_end_ms=1_576_380,
+    )
+    current = _srt(
+        (0, 2_920, "另外小N老师"),
+        (2_920, 4_240, "随机第一句"),
+        (4_240, 6_140, "随机第二句"),
+    )
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_start_ms=1_570_240,
+        current_source_end_ms=1_576_380,
+    )
+
+    assert audit["status"] == "APPLIED"
+    assert "另外小N老师" in output
+    assert "你别坐地上" in output
+    assert "可是我现在真的很像坐在地上" in output
+    assert audit["uncovered_current_cues"] == [
+        {
+            "current_cue_index": 1,
+            "absolute_source_start_ms": 1_570_240,
+            "absolute_source_end_ms": 1_573_160,
+            "text": "另外小N老师",
+            "boundary_position": "prefix",
+            "classification": (
+                "BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP"
+            ),
+            "reviewed_cue_support_boundary_ms": 1_573_160,
+        }
+    ]
+    assert [
+        (
+            row["current_cue_index"],
+            row["baseline_cue_index"],
+            row["start_drift_ms"],
+            row["end_drift_ms"],
+        )
+        for row in audit["mappings"]
+    ] == [(2, 1, 0, 0), (3, 2, 0, 0)]
+
+
+def test_v2_prefix_straddler_overlapping_first_reviewed_cue_by_1ms_fails(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt((250, 1_570, "首条审定句")),
+        encoding="utf-8",
+    )
+    config = _config_v2(
+        baseline,
+        absolute_source_start_ms=1_572_910,
+        absolute_source_end_ms=1_574_480,
+    )
+    current = _srt(
+        (0, 2_921, "跨进审定句一毫秒"),
+        (2_921, 4_240, "随机审定句"),
+    )
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_start_ms=1_570_240,
+        current_source_end_ms=1_574_480,
+    )
+
+    assert output == current
+    assert audit["status"] == "FAILED"
+    assert audit["failures"] == [
+        {
+            "reason_code": (
+                "REDELIVERY_CURRENT_CUE_STRADDLES_REVIEWED_COVERAGE"
+            ),
+            "current_cue_index": 1,
+            "absolute_source_start_ms": 1_570_240,
+            "absolute_source_end_ms": 1_573_161,
+        }
+    ]
+
+
+def test_v2_tail_straddler_starting_at_last_reviewed_cue_end_is_uncovered(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt(
+            (0, 1_000, "第一条审定句"),
+            (1_000, 2_750, "最后一条审定句"),
+        ),
+        encoding="utf-8",
+    )
+    config = _config_v2(
+        baseline,
+        absolute_source_end_ms=103_000,
+    )
+    current = _srt(
+        (0, 1_000, "随机第一句"),
+        (1_000, 2_750, "随机第二句"),
+        (2_750, 3_500, "新增尾句"),
+    )
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_end_ms=103_500,
+    )
+
+    assert audit["status"] == "APPLIED"
+    assert "第一条审定句" in output
+    assert "最后一条审定句" in output
+    assert "新增尾句" in output
+    assert audit["uncovered_current_cues"] == [
+        {
+            "current_cue_index": 3,
+            "absolute_source_start_ms": 102_750,
+            "absolute_source_end_ms": 103_500,
+            "text": "新增尾句",
+            "boundary_position": "tail",
+            "classification": (
+                "BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP"
+            ),
+            "reviewed_cue_support_boundary_ms": 102_750,
+        }
+    ]
+
+
+def test_v2_tail_straddler_overlapping_last_reviewed_cue_by_1ms_fails(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt(
+            (0, 1_000, "第一条审定句"),
+            (1_000, 2_750, "最后一条审定句"),
+        ),
+        encoding="utf-8",
+    )
+    config = _config_v2(
+        baseline,
+        absolute_source_end_ms=103_000,
+    )
+    current = _srt(
+        (0, 1_000, "随机第一句"),
+        (1_000, 2_749, "随机第二句"),
+        (2_749, 3_500, "跨进审定句一毫秒"),
+    )
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_end_ms=103_500,
+    )
+
+    assert output == current
+    assert audit["status"] == "FAILED"
+    assert audit["failures"] == [
+        {
+            "reason_code": (
+                "REDELIVERY_CURRENT_CUE_STRADDLES_REVIEWED_COVERAGE"
+            ),
+            "current_cue_index": 3,
+            "absolute_source_start_ms": 102_749,
+            "absolute_source_end_ms": 103_500,
+        }
+    ]
+
+
 def test_v2_projects_protected_drop_window_on_absolute_timeline(tmp_path):
     baseline = tmp_path / "baseline.srt"
     baseline.write_text(

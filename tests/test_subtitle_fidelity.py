@@ -57,6 +57,38 @@ def test_late_authority_resolves_only_fully_owned_introduced_kana():
     assert resolution["findings"][0]["introduced_surfaces"] == ["やさしい"]
 
 
+def test_late_authority_ignores_kana_in_twenty_ms_neighbour_sliver():
+    audit = {
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 2,
+                "start_ms": 1_000,
+                "end_ms": 2_000,
+                "attempted": "非常やさしい",
+            }
+        ]
+    }
+    final_srt = (
+        "1\n00:00:00,000 --> 00:00:01,020\n非常やさしい\n\n"
+        "2\n00:00:01,020 --> 00:00:02,000\n已经改正\n"
+    )
+
+    resolution = resolve_deferred_foreign_introductions(
+        audit,
+        final_srt,
+        authority_rows=[
+            {
+                "truth_id": "twenty-ms-sliver",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ],
+        authority_kind="source_subtitle_truth",
+    )
+
+    assert resolution["status"] == "PASS"
+    assert resolution["findings"][0]["final_window_texts"] == ["已经改正"]
+
+
 def test_source_truth_can_positively_witness_declared_kana_name():
     audit = {
         "unproven_foreign_introductions": [

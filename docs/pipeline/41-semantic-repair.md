@@ -17,11 +17,11 @@
 3. **裁决分层（Ivan 2026-07-19「不能绑死 Gemini 额度、也不能老用付费key」）**：
    - **T0 确定性**：hard canon / 源真值 ledger / 弹幕逐字——零模型。
    - **T0.5 同音候选**：拼音无调全等（`homophone_fix`）时可以零外部调用，但应用前仍必须取得 cue/referent-bound 的 typed textual authority receipt。纯音频、同片 transcript recurrence、宽泛 structured context/selection hook 都只负责提出候选，不能决定汉字写法；缺回执就保留 draft 并阻断。疑问意图族（什么/怎么/为什么/谁/哪里/多少等）也不可由二听结果自行改写。
-   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有独立、精确绑定的 glossary/official roster/source truth/structured chat/verified OCR 见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **改写既不替换也不引入注册实体词面** → 携带 PASS 的正字法回执后纯文本应用，零外部调用。同片其他 cue 可用于召回 callback/平行复述，但它和目标通常来自同一 ASR 派生链，不能循环自证；此类 `transcript_context` 强制进入 T3 声学仲裁，且声学结果本身仍不授权近同音选字。终审若正确给出完整 entity 修正句、但错标成 `phonetic` 且漏写 `source_surface`，代码最多恢复候选 provenance；没有上述 typed authority 时仍不得直接改字。
+   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有独立、精确绑定的 glossary surface / official roster / source truth / structured chat / verified OCR 见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **改写既不替换也不引入注册实体词面** → 携带 PASS 的正字法回执后纯文本应用，零外部调用。raw glossary prose 中仅出现一个规范化字符只能作 `glossary_context` 候选召回，不能取得正字法 authority；单字必须另有 referent-bound typed 见证。同片其他 cue 可用于召回 callback/平行复述，但它和目标通常来自同一 ASR 派生链，不能循环自证；此类 `transcript_context` 强制进入 T3 声学仲裁，且声学结果本身仍不授权近同音选字。终审若正确给出完整 entity 修正句、但错标成 `phonetic` 且漏写 `source_surface`，代码最多恢复候选 provenance；没有上述 typed authority 时仍不得直接改字。
    - **T3 声学仲裁**：只裁决声音上可区分的实体 vs 实体（kmx/乒乓球、梦限大/Mujica 保向铁律）与拼音强变形（醉堆→这一堆型）。同音/近同音/字母正字法即使也送入声学层，音频只提供读音证据，最终 mutation 仍须上述文字权威回执。量级 ~1/10。
    - T2 备选未实施：免费 BCUT 对争议 span 重转写+拼音距离比对（「穷人声学见证」），T3 仍嫌贵时再上。
    - **删除专线**：`acoustic_delete` 仅删一个有界疑似幻听 span，必须保留 cue 的真实后半段；`acoustic_drop_cue` 仅用于整条无声。两者都不能走 T0.5/T1，严格声学 postcondition 不成立就保留原文并披露。
-4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。
+4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。
 5. **付费兜底**：同项失败≥3轮即可触发（额度类失败可同 run 连续补轮，`quota_exhausted_round`），每笔入帐。**Ivan 2026-07-19 明确否决冷却期类附加门**——控制付费用量靠 T1 分层缩减声学仲裁需求本身，不靠拖延付费。
 6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
 7. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁（插入永远走 T3，不进 T1）。**已知盲区（2026-07-19 合并条实证）**：专名在片内它处出现过时零出现触发器不响，单句漏听无人怀疑（kmx 0:49 案，最终走 Ivan 审定 ledger 钉子）。改成逐句怀疑会假阳性爆炸；候选方向是「称呼/接话/突击等强语境句位 + 专名句位模板」的窄触发，进欠账。
@@ -33,16 +33,22 @@
 9. **别名按 mention 裁决**：`南町 / nightin`、`大N / 小N / 南町nightin` 等相似音节
    不能做整窗“统一词面”。每一次 mention 都绑定自己的 source interval、required text 与
    forbidden tokens；窗口内另一处写对，不能替当前 mention 通过。
-10. **结构化聊天的上下文命中不等于整句听见**：SC/弹幕只有通过近完整文本跨度的
-    `exact_span` 门，或得到 hash-bound、逐字覆盖整句的 audio verdict，才可整句复制进字幕。
-    “她大概在念这条 SC”的 context-only verdict、低 coverage 或只命中几个词槽时，必须记
-    `PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY` 并保留原句；已证实的昵称/实体
-    槽仍可由 entity 或 source truth 单独修复，不能把未说出的 SC 余文一并补入。
+10. **结构化聊天的上下文命中不等于整句听见**：SC/弹幕的 `exact_span` 只是候选类型，不是
+    authority。每一路 support 都必须写入 typed whole-line gate receipt，保存
+    score/coverage/precision/extent/common 与 unsupported head/interior/tail。只有
+    hash-bound raw-audio full-span、typed 近完整独立 transcript，或现行明示
+    strong-thread-anchor 窄例外，才可令 applied row `owner_eligible=true` 并整句复制/冻结边界；
+    missing/False、主 transcript fuzzy proxy、context-only verdict、低 coverage 或只命中几个
+    词槽时，必须记 `PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY` 并保留原句。
+    已证实的昵称/实体槽仍可由 entity 或 source truth 单独修复，不能把未说出的 SC 余文一并补入。
 
 ## 两次审查不可合并
 
 - correction pass 输出 `final-review-audit.v1`，用途是发现问题、决定是否需要同音修复或声学
   仲裁。它在 source truth、reviewed baseline 和全部 finalizer 之前/之中运行，因此不是发布证明。
+  所有 mutation 先 staged；任一 discovery/routing 异常必须恢复输入 SRT 与原 audit，并输出
+  `status=AUDITOR_UNAVAILABLE`、`release_gate=BLOCK`、typed reason、`findings=[]`、
+  `applied_count=0`。
 - 全部 authority 和确定性 guard 落地后，必须对精确最终 SRT 再跑一次 discovery，输出
   `final-review-audit.v2`。该回执绑定最终 SRT SHA-256；只有 discovery 完整、显式合法的空
   findings、零未决项、release gate PASS、`subtitle-correction-mutation-audit.v1` PASS，

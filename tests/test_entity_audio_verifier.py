@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 from pathlib import Path
 
@@ -29,11 +30,26 @@ def _request():
     }
 
 
-def _context_request():
+def _seal_request(request):
+    payload = dict(request)
+    payload.pop("request_sha256", None)
+    payload["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return payload
+
+
+def _context_request(*, source_media_timeline_offset_ms=0):
     request = _request()
     request.update(
         {
             "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "source_media_timeline_offset_ms": source_media_timeline_offset_ms,
             "context_start_ms": 500,
             "context_end_ms": 7_500,
             "context_before": "一直在说欠了很多首歌",
@@ -54,7 +70,7 @@ def _context_request():
             ],
         }
     )
-    return request
+    return _seal_request(request)
 
 
 def test_audio_verifier_uses_black_frame_clip_and_neutral_prompt(tmp_path, monkeypatch):
@@ -181,7 +197,8 @@ def test_context_verifier_crops_adjacent_audio_and_exposes_bounded_discourse(tmp
         agy_bin="agy-test",
     )
 
-    verdict = verify(_context_request())
+    request = _context_request()
+    verdict = verify(request)
 
     assert verdict["status"] == "OBSERVED"
     assert verdict["current_fit"] == "PLAUSIBLE"
@@ -189,7 +206,12 @@ def test_context_verifier_crops_adjacent_audio_and_exposes_bounded_discourse(tmp
     ffmpeg = commands[0]
     assert ffmpeg[ffmpeg.index("-ss") + 1] == "0.500"
     assert ffmpeg[ffmpeg.index("-t") + 1] == "7.000"
-    prompt = (tmp_path / "out/entity_verdicts" / ("a" * 20) / "prompt.md").read_text(
+    prompt = (
+        tmp_path
+        / "out/entity_verdicts"
+        / request["request_sha256"][:20]
+        / "prompt.md"
+    ).read_text(
         encoding="utf-8"
     )
     assert "一直在说欠了很多首歌" in prompt
@@ -201,6 +223,123 @@ def test_context_verifier_crops_adjacent_audio_and_exposes_bounded_discourse(tmp
     assert '"candidate_id": "one exact candidate_id above, or null"' not in prompt
     assert '"canonical_entity": "one exact candidate sentence' not in prompt
     assert "Use RESOLVED only" not in prompt
+
+
+def test_context_verifier_applies_hash_bound_source_media_timeline_offset(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"correct offset audio")
+            return _Completed()
+        Path(kwargs["cwd"], "verdict.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "entity-audio-observation.v1",
+                    "status": "OBSERVED",
+                    "target_audible": True,
+                    "heard_syllables": "jiu qing zuo zai zuo bian de tan",
+                    "current_fit": "SUPPORTED",
+                    "proposed_fit": "INCOMPATIBLE",
+                    "confidence_current": 0.95,
+                    "confidence_proposed": 0.05,
+                    "reason": "target phrase is audible",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return _Completed()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-22",
+        source_duration_ms=30_000,
+        agy_bin="agy-test",
+    )
+    request = _context_request(source_media_timeline_offset_ms=9_770)
+    request.update(
+        {
+            "matched_start_ms": 250,
+            "matched_end_ms": 2_810,
+            "context_start_ms": 0,
+            "context_end_ms": 3_310,
+        }
+    )
+    request = _seal_request(request)
+
+    verdict = verify(request)
+
+    assert verdict["status"] == "OBSERVED"
+    ffmpeg = commands[0]
+    assert ffmpeg[ffmpeg.index("-ss") + 1] == "9.770"
+    assert ffmpeg[ffmpeg.index("-t") + 1] == "3.310"
+    binding = verdict["timeline_binding"]
+    assert binding["source_media_timeline_offset_ms"] == 9_770
+    assert binding["delivery_local"] == {
+        "target_start_ms": 250,
+        "target_end_ms": 2_810,
+        "context_start_ms": 0,
+        "context_end_ms": 3_310,
+    }
+    assert binding["source_media"] == {
+        "target_start_ms": 10_020,
+        "target_end_ms": 12_580,
+        "crop_start_ms": 9_770,
+        "crop_end_ms": 13_080,
+    }
+    job_dir = (
+        tmp_path / "out/entity_verdicts" / request["request_sha256"][:20]
+    )
+    manifest = json.loads(
+        (job_dir / "verdict.manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["timeline_binding"] == binding
+    assert manifest["verdict"]["timeline_binding"] == binding
+
+
+def test_context_verifier_rejects_missing_negative_or_unbound_timeline_offset(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(
+        verifier_module.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid request must not crop or call provider")
+        ),
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-22",
+        source_duration_ms=30_000,
+        agy_bin="agy-test",
+    )
+
+    missing = _context_request()
+    missing.pop("source_media_timeline_offset_ms")
+    missing = _seal_request(missing)
+    assert verify(missing)["reason_code"] == "ENTITY_AUDIO_TIMELINE_OFFSET_INVALID"
+
+    negative = _context_request()
+    negative["source_media_timeline_offset_ms"] = -1
+    negative = _seal_request(negative)
+    assert verify(negative)["reason_code"] == "ENTITY_AUDIO_TIMELINE_OFFSET_INVALID"
+
+    tampered = _context_request()
+    tampered["source_media_timeline_offset_ms"] = 9_770
+    assert verify(tampered)["reason_code"] == "ENTITY_AUDIO_REQUEST_HASH_MISMATCH"
 
 
 def _agy_quota_run(command, **kwargs):

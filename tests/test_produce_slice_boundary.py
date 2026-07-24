@@ -23,6 +23,9 @@ from scripts.produce_slice_package import (
     tail_requires_forward_extension,
 )
 from src.autoslice import producer_boundary_resolution as boundary_resolution
+from src.autoslice.boundary_semantic_review import (
+    build_boundary_search_scope,
+)
 from src.autoslice.jingting_chunker import SrtCue
 from src.autoslice.producer_boundary_resolution import (
     BoundaryResolutionAdapters,
@@ -481,6 +484,149 @@ def test_required_owner_uses_hotpot_lower_bound_without_moving_repair_cap(
     assert initial.target_rel == 230_760
     assert initial.repair_max_end_ms == 232_720
     assert initial.snapped_end == 231_000
+
+
+def test_bound_manual_scope_resolves_1863_closure_without_cap_ratchet(
+    tmp_path,
+):
+    scope = build_boundary_search_scope(
+        semantic_target_ms=202_720,
+        manual_lower_bound_ms=230_760,
+        required_owner_end_ms=230_760,
+        repair_cap_ms=60_000,
+    )
+    cues = [
+        _cue(227_640, 230_760, "拿烟头烫人的人。"),
+        _cue(261_850, 263_330, "就是不会说这种话呀，一般人。"),
+        _cue(263_330, 268_480, "小时候衣服的新话题。"),
+    ]
+    initial = _select_initial_boundary(
+        spec={
+            "pieces": [{"start_ms": 0, "end_ms": 320_000}],
+            "semantic_start_ms": 0,
+            "semantic_end_ms": 202_720,
+            "given_end_ms": 230_760,
+            "given_end_authority": "Ivan-reviewed source closure",
+            "required_boundary_owners": [
+                {
+                    "owner_kind": "source_subtitle_truth",
+                    "owner_id": "evil-gecko-tail",
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": 229_000, "end_ms": 230_760}
+                    ],
+                }
+            ],
+            "boundary_search_scope": scope,
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "cue_grid_sha256": (
+                    boundary_resolution.cue_grid_sha256(cues)
+                ),
+                "recommended_end_cue_index": 2,
+                "recommended_end_ms": 263_330,
+                "boundary_search_scope": scope,
+            },
+        },
+        durations=[320_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=320_000,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        required_tail_end_ms=None,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+        boundary_repair_extend_cap_ms=60_000,
+    )
+
+    assert initial.repair_search_origin_ms == 230_760
+    assert initial.repair_max_end_ms == 290_760
+    assert initial.target_rel == 263_330
+    assert initial.snapped_end == 263_330
+
+
+def test_resolver_blocks_valid_but_different_search_scope(tmp_path):
+    expected_scope = build_boundary_search_scope(
+        semantic_target_ms=20_000,
+        manual_lower_bound_ms=25_000,
+        repair_cap_ms=60_000,
+    )
+    stale_scope = build_boundary_search_scope(
+        semantic_target_ms=20_000,
+        manual_lower_bound_ms=25_000,
+        repair_cap_ms=30_000,
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="BOUNDARY_SEMANTIC_SEARCH_SCOPE_MISMATCH",
+    ):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 100_000}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 20_000,
+                "given_end_ms": 25_000,
+                "given_end_authority": "Ivan-reviewed source closure",
+                "boundary_search_scope": stale_scope,
+                "boundary_semantic_review": {
+                    "status": "PASS",
+                    "recommended_end_ms": 30_000,
+                    "boundary_search_scope": stale_scope,
+                },
+            },
+            durations=[100_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=100_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[_cue(25_000, 30_000, "完整收束。")],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+            boundary_repair_extend_cap_ms=int(
+                expected_scope["repair_cap_ms"]
+            ),
+        )
+
+
+def test_source_full_window_receipt_cannot_drop_bound_scope(tmp_path):
+    with pytest.raises(
+        SystemExit,
+        match="BOUNDARY_SEMANTIC_SEARCH_SCOPE_INVALID",
+    ):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 100_000}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 20_000,
+                "boundary_semantic_review": {
+                    "schema_version": (
+                        "talk-boundary-semantic-review.v1"
+                    ),
+                    "review_scope": "source_full_window",
+                    "status": "PASS",
+                    "recommended_end_ms": 20_000,
+                },
+            },
+            durations=[100_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=100_000,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[_cue(0, 20_000, "完整收束。")],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+            boundary_repair_extend_cap_ms=30_000,
+        )
 
 
 def test_required_owner_fails_when_only_closure_is_beyond_original_cap(

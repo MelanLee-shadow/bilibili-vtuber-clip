@@ -73,6 +73,60 @@ def test_deferred_exact_replay_rejects_missing_truth_id() -> None:
     assert audit["missing_truth_ids"] == ["reviewed-cue-shape"]
 
 
+def test_rebase_source_truth_audit_moves_resolved_projection_to_padded_axis():
+    audit = {
+        "applied": [
+            {
+                "action": "replace_cue",
+                "cue_indexes": [1],
+                "local_windows": [{"start_ms": 100, "end_ms": 900}],
+                "resolved_target_projection": {
+                    "schema_version": (
+                        "source-truth-resolved-target-projection.v1"
+                    ),
+                    "selector": (
+                        "half-open-overlap-gte-min-then-action-resolution"
+                    ),
+                    "min_overlap_ms": 80,
+                    "action": "replace_cue",
+                    "status": "RESOLVED",
+                    "cues": [
+                        {
+                            "cue_index": 1,
+                            "start_ms": 120,
+                            "end_ms": 880,
+                            "before_text": "旧",
+                            "after_text": "新",
+                        }
+                    ],
+                },
+                "timing_pin": {
+                    "before_start_ms": 120,
+                    "after_start_ms": 140,
+                },
+            }
+        ]
+    }
+
+    rebased = finalization._rebase_source_truth_audit_to_padded(
+        audit,
+        final_start=10_000,
+    )
+
+    row = rebased["applied"][0]
+    assert row["local_windows"] == [
+        {"start_ms": 10_100, "end_ms": 10_900}
+    ]
+    assert row["resolved_target_projection"]["cues"][0][
+        "start_ms"
+    ] == 10_120
+    assert row["resolved_target_projection"]["cues"][0][
+        "end_ms"
+    ] == 10_880
+    assert row["timing_pin"]["after_start_ms"] == 10_140
+    assert audit["applied"][0]["local_windows"][0]["start_ms"] == 100
+
+
 def test_exact_final_review_gate_binds_post_boundary_recut_bytes(
     tmp_path: Path,
 ) -> None:

@@ -1150,7 +1150,7 @@ def _audit_source_truth_owner_attestations(
         row
         for key in ("applied", "satisfied")
         for row in truth_audit.get(key) or []
-        if isinstance(row, dict)
+        if isinstance(row, dict) and row.get("required") is not False
     ]
     if truth_rows and (
         not isinstance(truth_owner, dict)

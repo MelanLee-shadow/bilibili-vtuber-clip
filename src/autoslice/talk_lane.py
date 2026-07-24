@@ -14,8 +14,13 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
+from src.autoslice.boundary_semantic_review import (
+    boundary_search_scope_is_valid,
+    required_source_context_end_ms,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -34,6 +39,37 @@ from src.autoslice.talk_filler import (
 
 
 _runner = RunnerProxy()
+
+
+def _bound_boundary_retry_source_end_ms(
+    *,
+    out_root: Path,
+    candidate_id: str,
+    repair_cap_ms: int,
+) -> int | None:
+    """Read the failed review's bound scope and retain ceiling witnesses."""
+
+    review_path = (
+        out_root
+        / candidate_id
+        / f"{candidate_id}.review-flags.json"
+    )
+    document, _digest = _read_final_review_surface(review_path)
+    if not isinstance(document, dict):
+        return None
+    review = document.get("boundary_semantic_review")
+    if not isinstance(review, dict):
+        return None
+    scope = review.get("boundary_search_scope")
+    if not boundary_search_scope_is_valid(scope):
+        return None
+    try:
+        return required_source_context_end_ms(
+            scope,
+            repair_cap_ms=repair_cap_ms,
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def danmaku_hints(xml_path: Path | None) -> str | None:
@@ -513,6 +549,77 @@ def _final_review_contract_reason_code(attempt_output: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _compact_correction_pass(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {"status": "MISSING"}
+    reason_codes = value.get("reason_codes")
+    if isinstance(reason_codes, str):
+        normalized_reason_codes = [reason_codes] if reason_codes else []
+    elif isinstance(reason_codes, list):
+        normalized_reason_codes = [
+            str(code) for code in reason_codes if str(code)
+        ]
+    else:
+        normalized_reason_codes = []
+    discovery = value.get("discovery")
+    return {
+        key: item
+        for key, item in {
+            "schema_version": value.get("schema_version"),
+            "status": value.get("status"),
+            "reason_codes": normalized_reason_codes,
+            "discovery": (
+                {
+                    field: discovery.get(field)
+                    for field in ("status", "detail")
+                    if discovery.get(field) is not None
+                }
+                if isinstance(discovery, Mapping)
+                else {"status": "MISSING"}
+            ),
+            "error_type": value.get("error_type"),
+            "applied_count": value.get("applied_count"),
+        }.items()
+        if item is not None
+    }
+
+
+def _compact_correction_mutation_authority(
+    value: object,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {"status": "MISSING", "failures": []}
+    compact_failures: list[dict[str, object]] = []
+    for row in value.get("failures") or []:
+        if not isinstance(row, Mapping):
+            continue
+        compact_failures.append(
+            {
+                key: row.get(key)
+                for key in (
+                    "reason_code",
+                    "upstream_reason_codes",
+                    "cue_index",
+                    "routed",
+                )
+                if row.get(key) is not None
+            }
+        )
+    return {
+        key: item
+        for key, item in {
+            "schema_version": value.get("schema_version"),
+            "status": value.get("status"),
+            "applied_count": value.get("applied_count"),
+            "validated_mutation_count": value.get(
+                "validated_mutation_count"
+            ),
+            "failures": compact_failures,
+        }.items()
+        if item is not None
+    }
+
+
 def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
     matches = _FINAL_REVIEW_ARTIFACT_RX.findall(attempt_output)
     artifact_path = Path(matches[-1].strip()) if matches else None
@@ -615,6 +722,14 @@ def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
             "boundary_semantic_review": _compact_boundary_semantic_review(
                 audit.get("boundary_semantic_review")
             ),
+            "correction_pass": _compact_correction_pass(
+                audit.get("correction_pass")
+            ),
+            "correction_mutation_authority": (
+                _compact_correction_mutation_authority(
+                    audit.get("correction_mutation_authority")
+                )
+            ),
         }
     )
     return evidence
@@ -655,6 +770,38 @@ def _classify_final_review_release(
         return "final_review_contract", "final_review_contract", False, evidence
     if evidence.get("audit_loaded") is not True:
         return "final_review_contract", "final_review_contract", False, evidence
+    correction_pass = evidence.get("correction_pass")
+    correction_status = (
+        str(correction_pass.get("status") or "")
+        if isinstance(correction_pass, Mapping)
+        else ""
+    )
+    correction_mutations = evidence.get("correction_mutation_authority")
+    correction_failures = (
+        correction_mutations.get("failures")
+        if isinstance(correction_mutations, Mapping)
+        else []
+    )
+    correction_failure_codes = {
+        str(row.get("reason_code") or "")
+        for row in (
+            correction_failures
+            if isinstance(correction_failures, list)
+            else []
+        )
+        if isinstance(row, Mapping)
+    }
+    if (
+        correction_status == "AUDITOR_UNAVAILABLE"
+        or "CORRECTION_DISCOVERY_INCOMPLETE"
+        in correction_failure_codes
+    ):
+        return (
+            "provider_transient",
+            "final_review_correction_discovery",
+            True,
+            evidence,
+        )
     boundary = evidence.get("boundary_semantic_review")
     boundary_status = (
         str(boundary.get("status") or "")
@@ -1042,6 +1189,75 @@ def _apply_recovery_authorities_to_talk_spec(
     spec["recovery_publication_authority"] = authority
 
 
+def _talk_filler_rejection(
+    item: dict,
+    *,
+    candidate_id: str,
+    filler_plan: dict,
+) -> dict[str, object] | None:
+    """Fail closed when a filler plan cannot preserve the selected talk."""
+
+    requested_merge_gaps = [
+        row
+        for row in (item.get("merge_gap_removals") or [])
+        if isinstance(row, dict)
+    ]
+    if requested_merge_gaps:
+        planned_merge_gaps = [
+            row
+            for row in (filler_plan.get("removals") or [])
+            if isinstance(row, dict)
+            and row.get("authorization_kind") == "merge_gap"
+        ]
+        if len(planned_merge_gaps) != len(requested_merge_gaps):
+            return {
+                "candidate_id": candidate_id,
+                "segment": Path(item["segment_path"]).name,
+                "start_ms": item["start_ms"],
+                "end_ms": item["end_ms"],
+                "hook": item.get("hook", ""),
+                "confidence": item.get("confidence"),
+                "selection_scorecard": item.get("selection_scorecard"),
+                "session_relation_authority": item.get(
+                    "session_relation_authority"
+                ),
+                "lane": item.get("lane", ""),
+                "talk_filler_plan": filler_plan,
+                "rc": 0,
+                "status": "candidate_rejected",
+                "rejection_reason": "merge_gap_plan_rejected",
+                "reason_codes": ["SAME_TOPIC_MERGE_GAP_PLAN_REJECTED"],
+                "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(
+                    candidate_id
+                ),
+            }
+    effective_duration_ms = int(filler_plan["effective_duration_ms"])
+    if effective_duration_ms > _runner.MIN_TALK_EFFECTIVE_DURATION_MS:
+        return None
+    return {
+        "candidate_id": candidate_id,
+        "segment": Path(item["segment_path"]).name,
+        "start_ms": item["start_ms"],
+        "end_ms": item["end_ms"],
+        "effective_duration_ms": effective_duration_ms,
+        "hook": item.get("hook", ""),
+        "confidence": item.get("confidence"),
+        "selection_scorecard": item.get("selection_scorecard"),
+        "session_relation_authority": item.get(
+            "session_relation_authority"
+        ),
+        "lane": item.get("lane", ""),
+        "talk_filler_plan": filler_plan,
+        "rc": 0,
+        "status": "candidate_rejected",
+        "rejection_reason": "talk_effective_duration_too_short",
+        "reason_codes": ["TALK_EFFECTIVE_DURATION_NOT_OVER_45S"],
+        "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(
+            candidate_id
+        ),
+    }
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -1058,53 +1274,14 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     filler_plan = _prepare_talk_filler_plan(item)
     # 合并候选的缝隙移除若被 plan 拒绝，绝不回退成整窗连续交付——那会把
     # 缝里的 8 分钟无关内容一起端出去（fail-closed，候选拒绝留审计）。
-    requested_merge_gaps = [
-        row for row in (item.get("merge_gap_removals") or []) if isinstance(row, dict)
-    ]
-    if requested_merge_gaps:
-        planned_merge_gaps = [
-            row
-            for row in (filler_plan.get("removals") or [])
-            if isinstance(row, dict) and row.get("authorization_kind") == "merge_gap"
-        ]
-        if len(planned_merge_gaps) != len(requested_merge_gaps):
-            return {
-                "candidate_id": cid,
-                "segment": Path(item["segment_path"]).name,
-                "start_ms": item["start_ms"],
-                "end_ms": item["end_ms"],
-                "hook": item.get("hook", ""),
-                "confidence": item.get("confidence"),
-                "selection_scorecard": item.get("selection_scorecard"),
-                "session_relation_authority": item.get("session_relation_authority"),
-                "lane": item.get("lane", ""),
-                "talk_filler_plan": filler_plan,
-                "rc": 0,
-                "status": "candidate_rejected",
-                "rejection_reason": "merge_gap_plan_rejected",
-                "reason_codes": ["SAME_TOPIC_MERGE_GAP_PLAN_REJECTED"],
-                "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
-            }
+    filler_rejection = _talk_filler_rejection(
+        item,
+        candidate_id=cid,
+        filler_plan=filler_plan,
+    )
+    if filler_rejection is not None:
+        return filler_rejection
     effective_duration_ms = int(filler_plan["effective_duration_ms"])
-    if effective_duration_ms <= _runner.MIN_TALK_EFFECTIVE_DURATION_MS:
-        return {
-            "candidate_id": cid,
-            "segment": Path(item["segment_path"]).name,
-            "start_ms": item["start_ms"],
-            "end_ms": item["end_ms"],
-            "effective_duration_ms": effective_duration_ms,
-            "hook": item.get("hook", ""),
-            "confidence": item.get("confidence"),
-            "selection_scorecard": item.get("selection_scorecard"),
-            "session_relation_authority": item.get("session_relation_authority"),
-            "lane": item.get("lane", ""),
-            "talk_filler_plan": filler_plan,
-            "rc": 0,
-            "status": "candidate_rejected",
-            "rejection_reason": "talk_effective_duration_too_short",
-            "reason_codes": ["TALK_EFFECTIVE_DURATION_NOT_OVER_45S"],
-            "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
-        }
     out_root = _runner.BASE / "out" / date
     delivery_name = _runner.safe_name(item.get("hook", ""), cid)
     pieces = build_piece_specs(
@@ -1196,22 +1373,45 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         and "retry_scope=same_topic_continues" in first_tail
     ):
         piece = spec["pieces"][-1]
-        retry_end = (
+        legacy_retry_end = (
             min(item["seg_dur_ms"], item["end_ms"] + _runner.BOUNDARY_CONTEXT_RETRY_POST_MS)
             if item["seg_dur_ms"]
             else item["end_ms"] + _runner.BOUNDARY_CONTEXT_RETRY_POST_MS
         )
+        scoped_retry_end = _bound_boundary_retry_source_end_ms(
+            out_root=out_root,
+            candidate_id=cid,
+            repair_cap_ms=_runner.BOUNDARY_REPAIR_RETRY_CAP_MS,
+        )
+        retry_end = max(
+            legacy_retry_end,
+            scoped_retry_end or legacy_retry_end,
+        )
+        if item["seg_dur_ms"]:
+            retry_end = min(item["seg_dur_ms"], retry_end)
         current_cap = int(spec["boundary_repair_extend_cap_ms"])
-        if retry_end > piece["end_ms"] and _runner.BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap:
+        source_context_already_sufficient = bool(
+            scoped_retry_end is not None
+            and piece["end_ms"] >= scoped_retry_end
+        )
+        if (
+            _runner.BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap
+            and (
+                retry_end > piece["end_ms"]
+                or source_context_already_sufficient
+            )
+        ):
             boundary_context_retries = 1
-            piece["end_ms"] = retry_end
+            piece["end_ms"] = max(piece["end_ms"], retry_end)
             spec["boundary_repair_extend_cap_ms"] = _runner.BOUNDARY_REPAIR_RETRY_CAP_MS
             spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
             with open(log_path, "a", encoding="utf-8") as sink:
                 sink.write(
-                    f"\nBOUNDARY_CONTEXT_RETRY: widening source post-context to {retry_end}ms "
+                    "\nBOUNDARY_CONTEXT_RETRY: retaining/widening source "
+                    f"post-context to {piece['end_ms']}ms "
                     f"and absolute repair cap to {_runner.BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
-                    f"(semantic end remains {item['end_ms']}ms)\n"
+                    f"(semantic end remains {item['end_ms']}ms; "
+                    f"bound_scope_required_end={scoped_retry_end})\n"
                 )
             completed, attempt_output, previous_speaker_review_state = run_producer()
     result = {

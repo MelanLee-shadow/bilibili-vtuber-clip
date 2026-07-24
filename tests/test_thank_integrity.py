@@ -7,7 +7,10 @@
 
 from __future__ import annotations
 
-from src.autoslice.chat_evidence import ChatEvidence
+from src.autoslice.chat_evidence import (
+    ChatEvidence,
+    normalize_srt_owner_payload_window,
+)
 from src.autoslice.chat_repair import _repair_sc_sender
 from src.autoslice.cue_split_hygiene import _shift_boundary_punct, _snap_split_to_punct
 from src.autoslice.thank_integrity import (
@@ -206,6 +209,32 @@ class TestSourceTruthSupersedesDecisionSurfaces:
                             ],
                             "required_text": "",
                         },
+                        "resolved_target_projection": {
+                            "schema_version": (
+                                "source-truth-resolved-target-projection.v1"
+                            ),
+                            "selector": (
+                                "half-open-overlap-gte-min-then-action-resolution"
+                            ),
+                            "min_overlap_ms": 80,
+                            "action": "replace_cue",
+                            "status": "RESOLVED",
+                            "cues": [
+                                {
+                                    "cue_index": 1,
+                                    "start_ms": 9_750,
+                                    "end_ms": 12_000,
+                                    "before_text": (
+                                        "十麻乃SC得了一种听到"
+                                        '"是侄女"就想笑的病。'
+                                    ),
+                                    "after_text": (
+                                        "谢谢十麻乃的SC，得了一种听到"
+                                        "“是侄女”就想笑的病"
+                                    ),
+                                }
+                            ],
+                        },
                     }
                 ],
             },
@@ -225,14 +254,13 @@ class TestSourceTruthSupersedesDecisionSurfaces:
         assert self._verify(audit) is False
 
     def test_local_windows_survive_layout_resegmentation(self) -> None:
-        """钉子辖区按时间豁免（2026-07-20 kmx r3 案）：layout 重排后 cue
-        序号漂移,cue_indexes 映射失效;local_windows 时间区间不受影响。"""
+        """钉子按 post-apply 投影跨 layout 拆句，仍能绑定最终时间区间。"""
 
         from src.autoslice.producer_text_finalization import (
             verify_chat_authority_final_surfaces,
         )
 
-        # 终稿被 layout 拆成两条,ledger 时的 cue 1 序号已不可靠
+        # 终稿被 layout 拆成两条；投影逐 cue 绑定时间与 before/after。
         final = _srt(
             (96_950, 98_000, "谢谢十麻乃的SC，"),
             (98_000, 100_970, "得了一种听到“是侄女”就想笑的病"),
@@ -248,7 +276,7 @@ class TestSourceTruthSupersedesDecisionSurfaces:
                 "applied": [{
                     "truth_id": "layout-independent-reviewed-final",
                     "action": "replace_cue",
-                    "cue_indexes": [99],
+                    "cue_indexes": [1, 2],
                     "local_windows": [{"start_ms": 106_700, "end_ms": 110_720}],
                     "declared_output_contract": {
                         "action": "replace_cue",
@@ -256,6 +284,35 @@ class TestSourceTruthSupersedesDecisionSurfaces:
                             "谢谢十麻乃的SC，得了一种听到“是侄女”就想笑的病"
                         ],
                         "required_text": "",
+                    },
+                    "resolved_target_projection": {
+                        "schema_version": (
+                            "source-truth-resolved-target-projection.v1"
+                        ),
+                        "selector": (
+                            "half-open-overlap-gte-min-then-action-resolution"
+                        ),
+                        "min_overlap_ms": 80,
+                        "action": "replace_cue",
+                        "status": "RESOLVED",
+                        "cues": [
+                            {
+                                "cue_index": 1,
+                                "start_ms": 106_700,
+                                "end_ms": 107_750,
+                                "before_text": "十麻乃SC",
+                                "after_text": "谢谢十麻乃的SC，",
+                            },
+                            {
+                                "cue_index": 2,
+                                "start_ms": 107_750,
+                                "end_ms": 110_720,
+                                "before_text": "得了一种病。",
+                                "after_text": (
+                                    "得了一种听到“是侄女”就想笑的病"
+                                ),
+                            },
+                        ],
                     },
                 }],
             },
@@ -417,6 +474,499 @@ def test_source_truth_owner_mismatch_cannot_pass_with_zero_required_rows() -> No
     assert audit["final_source_truth_owner_verification"]["status"] == "FAIL"
     assert audit["final_verification_failure"] == (
         "SOURCE_TRUTH_FINAL_OWNER_NOT_VERIFIED"
+    )
+
+
+def test_exact_owner_window_excludes_touching_neighbours() -> None:
+    final = _srt(
+        (0, 1_000, "前句"),
+        (1_000, 2_000, "真值"),
+        (2_000, 3_000, "后句"),
+    )
+
+    assert normalize_srt_owner_payload_window(
+        final,
+        start_ms=1_000,
+        end_ms=2_000,
+        min_overlap_ms=80,
+    ) == "真值"
+
+
+def test_replace_cue_owner_accepts_exact_cue_between_touching_neighbours() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt(
+        (0, 1_000, "前句"),
+        (1_000, 2_000, "姐感妹"),
+        (2_000, 3_000, "秦秦"),
+    )
+    audit = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "jiegammei",
+                    "action": "replace_cue",
+                    "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                    "declared_output_contract": {
+                        "action": "replace_cue",
+                        "canonical_texts": ["姐感妹"],
+                        "required_text": "",
+                    },
+                }
+            ]
+        }
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+
+
+def test_replace_cue_owner_preserves_exact_text_split_across_owned_cues() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt(
+        (0, 1_000, "前句"),
+        (1_000, 1_500, "姐感"),
+        (1_500, 2_000, "妹"),
+        (2_000, 3_000, "后句"),
+    )
+    audit = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "split-jiegammei",
+                    "action": "replace_cue",
+                    "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                    "declared_output_contract": {
+                        "action": "replace_cue",
+                        "canonical_texts": ["姐感", "妹"],
+                        "required_text": "",
+                    },
+                }
+            ]
+        }
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+
+
+def test_drop_cue_owner_ignores_speech_touching_silent_window() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 1_000, "前句"), (2_000, 3_000, "后句"))
+    audit = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "silent-gap",
+                    "action": "drop_cue",
+                    "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                    "declared_output_contract": {
+                        "action": "drop_cue",
+                        "canonical_texts": [],
+                        "required_text": "",
+                    },
+                }
+            ]
+        }
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+
+
+def test_drop_cue_owner_uses_same_eighty_ms_overlap_threshold_as_truth_apply() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    def verifies(overlap_ms: int) -> bool:
+        final = _srt((2_000 - overlap_ms, 2_500, "幻听"))
+        audit = {
+            "source_subtitle_truth_audit": {
+                "applied": [
+                    {
+                        "truth_id": f"silent-gap-{overlap_ms}",
+                        "action": "drop_cue",
+                        "local_windows": [
+                            {"start_ms": 1_000, "end_ms": 2_000}
+                        ],
+                        "declared_output_contract": {
+                            "action": "drop_cue",
+                            "canonical_texts": [],
+                            "required_text": "",
+                        },
+                    }
+                ]
+            }
+        }
+        return verify_chat_authority_final_surfaces(
+            audit,
+            final_text_srt=final,
+            final_speaker_srt=final,
+            delivery_start_ms=0,
+            delivery_end_ms=3_000,
+        )
+
+    assert verifies(79)
+    assert not verifies(80)
+
+
+def test_replace_cue_owner_still_rejects_merged_extra_speech() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((500, 2_500, "前句姐感妹后句"))
+    audit = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "merged-extra-speech",
+                    "action": "replace_cue",
+                    "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                    "declared_output_contract": {
+                        "action": "replace_cue",
+                        "canonical_texts": ["姐感妹"],
+                        "required_text": "",
+                    },
+                }
+            ]
+        }
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+    failure = audit["final_source_truth_owner_verification"]["failures"][0]
+    assert failure["text_payload"] == "前句姐感妹后句"
+
+
+def test_replace_cue_owner_does_not_accept_canonical_only_in_nearby_cue() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt(
+        (1_000, 2_000, "错词"),
+        (2_050, 2_500, "姐感妹"),
+    )
+    audit = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "canonical-outside-owner",
+                    "action": "replace_cue",
+                    "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                    "declared_output_contract": {
+                        "action": "replace_cue",
+                        "canonical_texts": ["姐感妹"],
+                        "required_text": "",
+                    },
+                }
+            ]
+        }
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+    failure = audit["final_source_truth_owner_verification"]["failures"][0]
+    assert failure["text_payload"] == "错词"
+
+
+def test_replace_cue_owner_checks_speaker_subtitle_exactly_too() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    text_srt = _srt((1_000, 2_000, "姐感妹"))
+    speaker_srt = _srt((1_000, 2_000, "[李豆沙] 姐感妹秦秦"))
+    audit = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "speaker-extra-speech",
+                    "action": "replace_cue",
+                    "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                    "declared_output_contract": {
+                        "action": "replace_cue",
+                        "canonical_texts": ["姐感妹"],
+                        "required_text": "",
+                    },
+                }
+            ]
+        }
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=text_srt,
+        final_speaker_srt=speaker_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+    failure = audit["final_source_truth_owner_verification"]["failures"][0]
+    assert failure["text_ok"] is True
+    assert failure["speaker_ok"] is False
+
+
+def test_redelivery_baseline_owner_uses_strict_overlap_for_adjacent_cues() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt(
+        (0, 1_000, "前句"),
+        (1_000, 2_000, "旧版已审定"),
+        (2_000, 3_000, "后句"),
+    )
+    audit = {
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 2,
+                    "start_ms": 1_000,
+                    "end_ms": 2_000,
+                    "text": "旧版已审定",
+                }
+            ],
+        }
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+
+
+def test_redelivery_baseline_owner_rejects_extra_speech_inside_owner_cue() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((1_000, 2_000, "旧版已审定但多了内容"))
+    audit = {
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 1_000,
+                    "end_ms": 2_000,
+                    "text": "旧版已审定",
+                }
+            ],
+        }
+    }
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+    failure = audit["final_redelivery_baseline_owner_verification"][
+        "failures"
+    ][0]
+    assert failure["reason_code"] == (
+        "REDELIVERY_BASELINE_FINAL_OWNER_MISMATCH"
+    )
+
+
+def test_redelivery_baseline_replays_only_typed_substring_truth_change() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 3_000, "A正词B"))
+    audit = {
+        "source_subtitle_truth_audit": {
+            "applied": [
+                {
+                    "truth_id": "typed-substring",
+                    "required": True,
+                    "action": "replace_substring",
+                    "cue_indexes": [1],
+                    "local_windows": [{"start_ms": 0, "end_ms": 3_000}],
+                    "declared_output_contract": {
+                        "action": "replace_substring",
+                        "canonical_texts": [],
+                        "required_text": "正词",
+                    },
+                    "replacements": [
+                        {
+                            "cue_index": 1,
+                            "surface": "误词",
+                            "canonical": "正词",
+                        }
+                    ],
+                    "resolved_target_projection": {
+                        "schema_version": (
+                            "source-truth-resolved-target-projection.v1"
+                        ),
+                        "selector": (
+                            "half-open-overlap-gte-min-then-action-resolution"
+                        ),
+                        "min_overlap_ms": 80,
+                        "action": "replace_substring",
+                        "status": "RESOLVED",
+                        "cues": [
+                            {
+                                "cue_index": 1,
+                                "start_ms": 0,
+                                "end_ms": 3_000,
+                                "before_text": "A误词B",
+                                "after_text": "A正词B",
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 3_000,
+                    "text": "A误词B",
+                }
+            ],
+        },
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+    verification = audit[
+        "final_redelivery_baseline_owner_verification"
+    ]
+    assert verification["required_mapping_count"] == 1
+    mapping = audit["redelivery_subtitle_baseline_audit"]["mappings"][0]
+    assert mapping["final_owner_scope"] == (
+        "TRANSFORMED_BY_SOURCE_TRUTH_OWNER"
+    )
+    assert mapping["final_owner_expected"] == "a正词b"
+
+
+def test_full_truth_supersession_requires_causal_before_surface() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    def build_audit(decision_text: str) -> dict:
+        return {
+            "sender_repairs": [
+                {
+                    "matched_start_ms": 900,
+                    "matched_end_ms": 1_100,
+                    "after": decision_text,
+                }
+            ],
+            "source_subtitle_truth_audit": {
+                "applied": [
+                    {
+                        "truth_id": "causal-full-owner",
+                        "required": True,
+                        "action": "replace_cue",
+                        "cue_indexes": [1],
+                        "local_windows": [
+                            {"start_ms": 0, "end_ms": 1_000}
+                        ],
+                        "declared_output_contract": {
+                            "action": "replace_cue",
+                            "canonical_texts": ["新句"],
+                            "required_text": "",
+                        },
+                        "resolved_target_projection": {
+                            "schema_version": (
+                                "source-truth-resolved-target-projection.v1"
+                            ),
+                            "selector": (
+                                "half-open-overlap-gte-min-then-action-resolution"
+                            ),
+                            "min_overlap_ms": 80,
+                            "action": "replace_cue",
+                            "status": "RESOLVED",
+                            "cues": [
+                                {
+                                    "cue_index": 1,
+                                    "start_ms": 0,
+                                    "end_ms": 1_000,
+                                    "before_text": "旧名",
+                                    "after_text": "新句",
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        }
+
+    final = _srt((0, 1_000, "新句"))
+    causal = build_audit("旧名")
+    assert verify_chat_authority_final_surfaces(
+        causal,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=2_000,
+    )
+    assert causal["sender_repairs"][0]["final_verification_scope"] == (
+        "SUPERSEDED_BY_SOURCE_TRUTH"
+    )
+
+    unrelated = build_audit("别的名")
+    assert not verify_chat_authority_final_surfaces(
+        unrelated,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=2_000,
+    )
+    assert unrelated["sender_repairs"][0]["final_verification_scope"] == (
+        "DELIVERY"
     )
 
 

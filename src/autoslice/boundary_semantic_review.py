@@ -21,11 +21,14 @@ from src.autoslice.clip_context import MAX_PROMPT_CHARS
 
 
 SCHEMA_VERSION = "talk-boundary-semantic-review.v1"
+SEARCH_SCOPE_SCHEMA_VERSION = "talk-boundary-search-scope.v1"
 MAX_FORWARD_MS = 30_000
 CONTEXT_CUES_EACH_SIDE = 8
 MAX_VISIBLE_CUES = 128
 MAX_VISIBLE_TEXT_CHARS = 16_000
 NEXT_TOPIC_WITNESS_CUES = 2
+SOURCE_WITNESS_RESERVE_MS = 15_000
+DELIVERY_TAIL_PAD_MS = 400
 SEMANTIC_LLM_INDEPENDENCE_GROUP = "cpa-gpt-5.6-semantic-family"
 
 
@@ -38,6 +41,238 @@ def _canonical_sha256(payload: Mapping[str, object]) -> str:
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _required_int_ms(name: str, value: object, *, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise BoundarySemanticReviewError(
+            f"BOUNDARY_SEARCH_SCOPE_{name.upper()}_INVALID"
+        )
+    return value
+
+
+def _optional_int_ms(name: str, value: object) -> int | None:
+    if value is None:
+        return None
+    return _required_int_ms(name, value)
+
+
+def boundary_search_scope_sha256(scope: Mapping[str, object]) -> str:
+    """Digest a scope without trusting its self-declared digest."""
+
+    return _canonical_sha256(
+        {
+            str(key): value
+            for key, value in scope.items()
+            if key != "scope_sha256"
+        }
+    )
+
+
+def boundary_search_scope_is_valid(scope: object) -> bool:
+    if not isinstance(scope, Mapping):
+        return False
+    if scope.get("schema_version") != SEARCH_SCOPE_SCHEMA_VERSION:
+        return False
+    digest = scope.get("scope_sha256")
+    if (
+        not _valid_sha256(digest)
+        or digest != boundary_search_scope_sha256(scope)
+    ):
+        return False
+    try:
+        expected = build_boundary_search_scope(
+            semantic_target_ms=scope.get("semantic_target_ms"),
+            repair_cap_ms=scope.get("repair_cap_ms"),
+            manual_lower_bound_ms=scope.get("manual_lower_bound_ms"),
+            structured_payoff_ms=scope.get("structured_payoff_ms"),
+            required_owner_end_ms=scope.get("required_owner_end_ms"),
+            last_piece_start_ms=scope.get("last_piece_start_ms"),
+            prior_piece_duration_ms=scope.get(
+                "prior_piece_duration_ms"
+            ),
+            witness_reserve_ms=scope.get("witness_reserve_ms"),
+        )
+    except BoundarySemanticReviewError:
+        return False
+    return dict(scope) == expected
+
+
+def build_boundary_search_scope(
+    *,
+    semantic_target_ms: int,
+    repair_cap_ms: int,
+    manual_lower_bound_ms: int | None = None,
+    structured_payoff_ms: int | None = None,
+    required_owner_end_ms: int | None = None,
+    last_piece_start_ms: int = 0,
+    prior_piece_duration_ms: int = 0,
+    witness_reserve_ms: int = SOURCE_WITNESS_RESERVE_MS,
+) -> dict[str, object]:
+    """Build the one scope shared by source review, resolver, and retry.
+
+    A hash-bound human lower bound and a structured payoff are semantic search
+    authorities, so they may move the origin.  A required owner is only a
+    delivery/review lower bound and therefore cannot move the absolute cap.
+    """
+
+    semantic_target = _required_int_ms(
+        "semantic_target_ms", semantic_target_ms
+    )
+    repair_cap = _required_int_ms(
+        "repair_cap_ms", repair_cap_ms, minimum=1_000
+    )
+    if repair_cap > 60_000:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_REPAIR_CAP_MS_INVALID"
+        )
+    manual_lower_bound = _optional_int_ms(
+        "manual_lower_bound_ms", manual_lower_bound_ms
+    )
+    structured_payoff = _optional_int_ms(
+        "structured_payoff_ms", structured_payoff_ms
+    )
+    required_owner_end = _optional_int_ms(
+        "required_owner_end_ms", required_owner_end_ms
+    )
+    last_piece_start = _required_int_ms(
+        "last_piece_start_ms", last_piece_start_ms
+    )
+    prior_piece_duration = _required_int_ms(
+        "prior_piece_duration_ms", prior_piece_duration_ms
+    )
+    witness_reserve = _required_int_ms(
+        "witness_reserve_ms", witness_reserve_ms
+    )
+
+    reasons: list[str] = []
+    if (
+        manual_lower_bound is not None
+        and manual_lower_bound < semantic_target
+    ):
+        reasons.append("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
+
+    search_origin_ms = max(
+        [
+            semantic_target,
+            *(
+                value
+                for value in (manual_lower_bound, structured_payoff)
+                if value is not None
+            ),
+        ]
+    )
+    delivery_lower_bound_ms = max(
+        search_origin_ms,
+        required_owner_end or search_origin_ms,
+    )
+    max_recommended_end_ms = search_origin_ms + repair_cap
+    if delivery_lower_bound_ms > max_recommended_end_ms:
+        reasons.append("BOUNDARY_REQUIRED_OWNER_EXCLUDED")
+    recommendation_forward_ms = max(
+        0,
+        max_recommended_end_ms - delivery_lower_bound_ms,
+    )
+    required_local_source_context_end_ms = (
+        max_recommended_end_ms + witness_reserve
+    )
+    if required_local_source_context_end_ms < prior_piece_duration:
+        reasons.append("BOUNDARY_SEARCH_SCOPE_LAST_PIECE_MAPPING_INVALID")
+        required_last_piece_source_end_ms = last_piece_start
+    else:
+        required_last_piece_source_end_ms = (
+            last_piece_start
+            + required_local_source_context_end_ms
+            - prior_piece_duration
+        )
+
+    core: dict[str, object] = {
+        "schema_version": SEARCH_SCOPE_SCHEMA_VERSION,
+        "status": "BLOCK" if reasons else "PASS",
+        "semantic_target_ms": semantic_target,
+        "manual_lower_bound_ms": manual_lower_bound,
+        "structured_payoff_ms": structured_payoff,
+        "required_owner_end_ms": required_owner_end,
+        "semantic_search_origin_ms": search_origin_ms,
+        "delivery_lower_bound_ms": delivery_lower_bound_ms,
+        "review_target_ms": delivery_lower_bound_ms,
+        "repair_cap_ms": repair_cap,
+        "max_recommended_end_ms": max_recommended_end_ms,
+        "recommendation_forward_ms": recommendation_forward_ms,
+        "minimum_recommended_end_ms": max(
+            search_origin_ms,
+            delivery_lower_bound_ms - DELIVERY_TAIL_PAD_MS,
+        ),
+        "delivery_tail_pad_ms": DELIVERY_TAIL_PAD_MS,
+        "witness_reserve_ms": witness_reserve,
+        "prior_piece_duration_ms": prior_piece_duration,
+        "last_piece_start_ms": last_piece_start,
+        "required_local_source_context_end_ms": (
+            required_local_source_context_end_ms
+        ),
+        "required_last_piece_source_end_ms": (
+            required_last_piece_source_end_ms
+        ),
+        "reason_codes": sorted(set(reasons)),
+    }
+    return {
+        **core,
+        "scope_sha256": boundary_search_scope_sha256(core),
+    }
+
+
+def required_source_context_end_ms(
+    scope: Mapping[str, object],
+    *,
+    repair_cap_ms: int | None = None,
+) -> int:
+    """Translate a local retry ceiling plus witness reserve to source time."""
+
+    if not boundary_search_scope_is_valid(scope):
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_BINDING_INVALID"
+        )
+    search_origin_ms = _required_int_ms(
+        "semantic_search_origin_ms",
+        scope.get("semantic_search_origin_ms"),
+    )
+    effective_cap_ms = _required_int_ms(
+        "repair_cap_ms",
+        (
+            scope.get("repair_cap_ms")
+            if repair_cap_ms is None
+            else repair_cap_ms
+        ),
+        minimum=1_000,
+    )
+    if effective_cap_ms > 60_000:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_REPAIR_CAP_MS_INVALID"
+        )
+    witness_reserve_ms = _required_int_ms(
+        "witness_reserve_ms",
+        scope.get("witness_reserve_ms"),
+    )
+    prior_piece_duration_ms = _required_int_ms(
+        "prior_piece_duration_ms",
+        scope.get("prior_piece_duration_ms"),
+    )
+    last_piece_start_ms = _required_int_ms(
+        "last_piece_start_ms",
+        scope.get("last_piece_start_ms"),
+    )
+    required_local_end_ms = (
+        search_origin_ms + effective_cap_ms + witness_reserve_ms
+    )
+    if required_local_end_ms < prior_piece_duration_ms:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_LAST_PIECE_MAPPING_INVALID"
+        )
+    return (
+        last_piece_start_ms
+        + required_local_end_ms
+        - prior_piece_duration_ms
+    )
 
 
 def _scorecard_story_witness(scorecard: object) -> dict[str, object]:
@@ -209,27 +444,71 @@ def review_talk_boundary_semantics(
     terminal_source_review: Mapping[str, object] | None = None,
     source_final_start_ms: int | None = None,
     source_final_end_ms: int | None = None,
+    boundary_search_scope: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Return a validated, cue-grid-bound semantic boundary decision."""
 
+    if boundary_search_scope is None:
+        scope = build_boundary_search_scope(
+            semantic_target_ms=target_ms,
+            repair_cap_ms=max_forward_ms,
+        )
+    else:
+        scope = dict(boundary_search_scope)
+    if not boundary_search_scope_is_valid(scope):
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEMANTIC_SEARCH_SCOPE_INVALID"
+        )
+    if scope.get("status") != "PASS":
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEMANTIC_SEARCH_SCOPE_BLOCKED:"
+            + ",".join(
+                str(reason)
+                for reason in scope.get("reason_codes") or []
+            )
+        )
     if (
         isinstance(max_forward_ms, bool)
         or not isinstance(max_forward_ms, int)
-        or not 1_000 <= max_forward_ms <= 60_000
+        or not 0 <= max_forward_ms <= 60_000
     ):
         raise BoundarySemanticReviewError(
             "BOUNDARY_SEMANTIC_REVIEW_FORWARD_CAP_INVALID"
         )
+    if (
+        scope.get("review_target_ms") != target_ms
+        or scope.get("recommendation_forward_ms") != max_forward_ms
+    ):
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEMANTIC_SEARCH_SCOPE_ARGUMENT_MISMATCH"
+        )
     rows = _cue_rows(cues)
     target_pos = _target_index(rows, target_ms)
-    lo = max(0, target_pos - CONTEXT_CUES_EACH_SIDE)
-    cap_end_ms = target_ms + max_forward_ms
-    recommendation_hi = target_pos + 1
-    while (
-        recommendation_hi < len(rows)
-        and int(rows[recommendation_hi]["end_ms"]) <= cap_end_ms
-    ):
-        recommendation_hi += 1
+    minimum_end_ms = int(scope["minimum_recommended_end_ms"])
+    cap_end_ms = int(scope["max_recommended_end_ms"])
+    recommendation_positions = [
+        position
+        for position, row in enumerate(rows)
+        if minimum_end_ms <= int(row["end_ms"]) <= cap_end_ms
+    ]
+    recommendation_indexes = [
+        int(rows[position]["cue_index"])
+        for position in recommendation_positions
+    ]
+    recommendation_lo = (
+        recommendation_positions[0]
+        if recommendation_positions
+        else target_pos
+    )
+    recommendation_hi = (
+        recommendation_positions[-1] + 1
+        if recommendation_positions
+        else target_pos + 1
+    )
+    lo = max(
+        0,
+        min(target_pos, recommendation_lo) - CONTEXT_CUES_EACH_SIDE,
+    )
     witness_hi = min(
         len(rows),
         recommendation_hi + NEXT_TOPIC_WITNESS_CUES,
@@ -263,10 +542,8 @@ def review_talk_boundary_semantics(
         "structured_context": structured_context[:12_000],
         "candidate_context": candidate_context,
         "max_forward_ms": max_forward_ms,
-        "recommendation_cue_indexes": [
-            int(row["cue_index"])
-            for row in rows[target_pos:recommendation_hi]
-        ],
+        "boundary_search_scope": scope,
+        "recommendation_cue_indexes": recommendation_indexes,
         "next_topic_witness_cue_indexes": [
             int(row["cue_index"])
             for row in rows[recommendation_hi:witness_hi]
@@ -303,8 +580,8 @@ def review_talk_boundary_semantics(
     target_end = int(rows[target_pos]["end_ms"])
     recommendation_valid = bool(
         recommended is not None
-        and int(recommended["end_ms"]) >= target_end
-        and int(recommended["end_ms"]) <= target_ms + max_forward_ms
+        and recommended_index in recommendation_indexes
+        and minimum_end_ms <= int(recommended["end_ms"]) <= cap_end_ms
     )
     evidence_raw = payload.get("evidence_cue_indexes")
     evidence_indexes = sorted(
@@ -422,6 +699,7 @@ def review_talk_boundary_semantics(
         "target_ms": target_ms,
         "target_cue_index": rows[target_pos]["cue_index"],
         "max_forward_ms": max_forward_ms,
+        "boundary_search_scope": scope,
         "recommended_end_cue_index": recommended_index,
         "recommended_end_ms": (
             int(recommended["end_ms"]) if recommendation_valid and recommended is not None else None

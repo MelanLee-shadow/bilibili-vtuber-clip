@@ -16,6 +16,9 @@ from src.autoslice.final_review_contract import (
     FinalReviewContractError,
     validate_final_review_release,
 )
+from src.autoslice.producer_boundary_owner_contract import (
+    freeze_story_chat_boundary_owners,
+)
 
 
 def _srt(*texts: str) -> str:
@@ -104,6 +107,47 @@ def _correction_pass() -> dict:
         "findings": [],
         "boundary_semantic_review": _boundary_pass(),
     }
+
+
+def test_frozen_boundary_owners_require_typed_gate_only_for_exact_reads():
+    audit = {
+        "applied": [
+            {
+                "matched_start_ms": 1_000,
+                "matched_end_ms": 2_000,
+                "owner_eligible": False,
+            },
+            {
+                "matched_start_ms": 2_000,
+                "matched_end_ms": 3_000,
+                "owner_eligible": True,
+            },
+        ],
+        "sender_repairs": [
+            {
+                "matched_start_ms": 3_000,
+                "matched_end_ms": 4_000,
+            }
+        ],
+    }
+
+    contracts = freeze_story_chat_boundary_owners(
+        audit,
+        story_start_ms=0,
+        story_end_ms=5_000,
+    )
+
+    assert [row["owner_kind"] for row in contracts] == [
+        "exact_read",
+        "sc_sender",
+    ]
+    assert audit["applied"][0]["boundary_required"] is False
+    assert (
+        audit["applied"][0]["boundary_owner_rejection"]
+        == "EXACT_READ_SUPPORT_NOT_OWNER_ELIGIBLE"
+    )
+    assert audit["applied"][1]["boundary_required"] is True
+    assert audit["sender_repairs"][0]["boundary_required"] is True
 
 
 def test_boundary_semantic_review_is_downstream_of_final_text_authority():
@@ -359,6 +403,96 @@ def test_exact_release_blocks_legacy_ungrounded_correction_even_if_rescan_empty(
         match="FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID",
     ):
         validate_final_review_release(receipt)
+
+
+def test_unavailable_correction_discovery_cannot_be_laundered_by_empty_rescan(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: '{"findings":[]}'),
+    )
+    correction = _correction_pass()
+    correction.update(
+        {
+            "status": "AUDITOR_UNAVAILABLE",
+            "release_gate": "BLOCK",
+            "reason_codes": [
+                "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+            ],
+            "discovery": {
+                "status": "AUDITOR_UNAVAILABLE",
+                "detail": "provider unavailable",
+            },
+            "findings": [],
+            "applied_count": 0,
+            "error_type": "FinalReviewAuditError",
+        }
+    )
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"),
+        correction_audit=correction,
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+    )
+
+    mutation_audit = receipt["correction_mutation_authority"]
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["release_gate"] == "BLOCK"
+    assert mutation_audit["status"] == "BLOCK"
+    assert mutation_audit["failures"] == [
+        {
+            "reason_code": "CORRECTION_DISCOVERY_INCOMPLETE",
+            "upstream_reason_codes": [
+                "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+            ],
+        }
+    ]
+    assert "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID" in (
+        receipt["reason_codes"]
+    )
+
+
+def test_correction_mutation_audit_blocks_explicit_empty_unavailable_state():
+    mutation_audit = pipeline.audit_correction_mutation_authority(
+        {
+            "schema_version": "final-review-audit.v1",
+            "status": "AUDITOR_UNAVAILABLE",
+            "reason_codes": ["FINAL_REVIEW_RESPONSE_FINDINGS_MISSING"],
+            "findings": [],
+            "applied_count": 0,
+        }
+    )
+
+    assert mutation_audit["status"] == "BLOCK"
+    assert mutation_audit["validated_mutation_count"] == 0
+    assert mutation_audit["failures"][0]["reason_code"] == (
+        "CORRECTION_DISCOVERY_INCOMPLETE"
+    )
+
+
+def test_correction_mutation_audit_requires_completed_status():
+    mutation_audit = pipeline.audit_correction_mutation_authority(
+        {
+            "schema_version": "final-review-audit.v1",
+            "status": "SKIPPED",
+            "findings": [],
+            "applied_count": 0,
+        }
+    )
+
+    assert mutation_audit["status"] == "BLOCK"
+    assert mutation_audit["failures"] == [
+        {
+            "reason_code": "CORRECTION_STATUS_INVALID",
+            "observed_status": "SKIPPED",
+        }
+    ]
 
 
 def test_release_contract_requires_final_boundary_endpoint_binding(monkeypatch):
@@ -742,6 +876,220 @@ def test_exact_final_release_review_does_not_relitigate_verified_human_truth(
     validate_final_review_release(receipt)
 
 
+def test_final_review_truth_contract_excludes_touching_neighbour_cues() -> None:
+    from src.autoslice.final_review_auditor import (
+        resolve_verified_source_truth_findings,
+    )
+
+    srt_text = (
+        "1\n00:00:00,000 --> 00:00:01,000\n前句\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n姐感妹\n\n"
+        "3\n00:00:02,000 --> 00:00:03,000\n秦秦\n"
+    )
+    finding = {
+        "cue_index": 2,
+        "kind": "context",
+        "suspect": "姐感妹",
+        "suggestion": "别的词",
+        "proposed_full_cue": "别的词",
+        "repair_class": "phonetic",
+        "base_text_sha256": hashlib.sha256(
+            "姐感妹".encode("utf-8")
+        ).hexdigest(),
+    }
+    audit = {
+        "status": "APPLIED",
+        "failures": [],
+        "applied": [
+            {
+                "truth_id": "jiegammei",
+                "action": "replace_cue",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                "declared_output_contract": {
+                    "action": "replace_cue",
+                    "canonical_texts": ["姐感妹"],
+                    "required_text": "",
+                },
+            }
+        ],
+        "satisfied": [],
+    }
+
+    pending, resolved = resolve_verified_source_truth_findings(
+        srt_text,
+        [finding],
+        source_truth_audit=audit,
+        timeline_offset_ms=0,
+    )
+
+    assert pending == []
+    assert resolved[0]["resolution"] == (
+        "VERIFIED_SOURCE_TRUTH_SUPERSEDES_REVIEW_PROPOSAL"
+    )
+
+
+def test_final_review_does_not_protect_finding_on_twenty_ms_owner_sliver() -> None:
+    from src.autoslice.final_review_auditor import (
+        resolve_verified_source_truth_findings,
+    )
+
+    srt_text = (
+        "1\n00:00:00,000 --> 00:00:01,020\n前句\n\n"
+        "2\n00:00:01,020 --> 00:00:02,000\n真值\n"
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "前句",
+        "suggestion": "",
+        "base_text_sha256": hashlib.sha256(
+            "前句".encode("utf-8")
+        ).hexdigest(),
+    }
+    audit = {
+        "status": "APPLIED",
+        "failures": [],
+        "applied": [
+            {
+                "truth_id": "twenty-ms-sliver",
+                "action": "replace_cue",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+                "declared_output_contract": {
+                    "action": "replace_cue",
+                    "canonical_texts": ["真值"],
+                    "required_text": "",
+                },
+            }
+        ],
+        "satisfied": [],
+    }
+
+    pending, resolved = resolve_verified_source_truth_findings(
+        srt_text,
+        [finding],
+        source_truth_audit=audit,
+        timeline_offset_ms=0,
+    )
+
+    assert pending == [finding]
+    assert resolved == []
+
+
+def test_final_review_uses_projection_not_raw_window_grazing_neighbour() -> None:
+    from src.autoslice.final_review_auditor import (
+        resolve_verified_source_truth_findings,
+    )
+
+    srt_text = (
+        "1\n00:00:00,000 --> 00:00:01,000\n真值\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n邻句\n"
+    )
+    finding = {
+        "cue_index": 2,
+        "kind": "context",
+        "suspect": "邻句",
+        "suggestion": "",
+        "base_text_sha256": hashlib.sha256(
+            "邻句".encode("utf-8")
+        ).hexdigest(),
+    }
+    audit = {
+        "status": "APPLIED",
+        "failures": [],
+        "applied": [
+            {
+                "truth_id": "shrunk-owner",
+                "action": "replace_cue",
+                "cue_indexes": [1],
+                "local_windows": [{"start_ms": 0, "end_ms": 1_150}],
+                "declared_output_contract": {
+                    "action": "replace_cue",
+                    "canonical_texts": ["真值"],
+                    "required_text": "",
+                },
+                "resolved_target_projection": {
+                    "schema_version": (
+                        "source-truth-resolved-target-projection.v1"
+                    ),
+                    "selector": (
+                        "half-open-overlap-gte-min-then-action-resolution"
+                    ),
+                    "min_overlap_ms": 80,
+                    "action": "replace_cue",
+                    "status": "RESOLVED",
+                    "cues": [
+                        {
+                            "cue_index": 1,
+                            "start_ms": 0,
+                            "end_ms": 1_000,
+                            "before_text": "误听",
+                            "after_text": "真值",
+                        }
+                    ],
+                },
+            }
+        ],
+        "satisfied": [],
+    }
+
+    pending, resolved = resolve_verified_source_truth_findings(
+        srt_text,
+        [finding],
+        source_truth_audit=audit,
+        timeline_offset_ms=0,
+    )
+
+    assert pending == [finding]
+    assert resolved == []
+
+
+def test_optional_source_truth_never_closes_exact_final_finding() -> None:
+    from src.autoslice.final_review_auditor import (
+        resolve_verified_source_truth_findings,
+    )
+
+    srt_text = "1\n00:00:00,000 --> 00:00:01,000\n可选文本\n"
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "可选文本",
+        "suggestion": "另一文本",
+        "proposed_full_cue": "另一文本",
+        "base_text_sha256": hashlib.sha256(
+            "可选文本".encode("utf-8")
+        ).hexdigest(),
+    }
+    audit = {
+        "status": "APPLIED",
+        "failures": [],
+        "applied": [
+            {
+                "truth_id": "best-effort-only",
+                "required": False,
+                "action": "replace_cue",
+                "cue_indexes": [1],
+                "local_windows": [{"start_ms": 0, "end_ms": 1_000}],
+                "declared_output_contract": {
+                    "action": "replace_cue",
+                    "canonical_texts": ["可选文本"],
+                    "required_text": "",
+                },
+            }
+        ],
+        "satisfied": [],
+    }
+
+    pending, resolved = resolve_verified_source_truth_findings(
+        srt_text,
+        [finding],
+        source_truth_audit=audit,
+        timeline_offset_ms=0,
+    )
+
+    assert pending == [finding]
+    assert resolved == []
+
+
 def test_exact_final_release_review_keeps_unrelated_substring_concern(
     monkeypatch,
 ):
@@ -798,6 +1146,62 @@ def test_exact_final_release_review_keeps_unrelated_substring_concern(
 
     assert receipt["status"] == "FLAGGED"
     assert receipt["findings"][0]["suspect"] == "后来"
+
+
+def test_exact_final_release_review_forwards_recut_offset_to_audio_adjudication(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "原文",
+        "suggestion": "建议",
+        "base_text_sha256": hashlib.sha256("原文".encode("utf-8")).hexdigest(),
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+    captured: dict[str, object] = {}
+
+    def fake_adjudicate(
+        _srt_text,
+        findings,
+        *,
+        entity_verifier,
+        clip_context,
+        source_media_timeline_offset_ms,
+    ):
+        captured["findings"] = list(findings)
+        captured["entity_verifier"] = entity_verifier
+        captured["clip_context"] = clip_context
+        captured["source_media_timeline_offset_ms"] = (
+            source_media_timeline_offset_ms
+        )
+        return list(captured["findings"]), []
+
+    monkeypatch.setattr(
+        pipeline, "adjudicate_exact_release_findings", fake_adjudicate
+    )
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("原文", "第二句", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=None,
+        verified_authority_audit=None,
+        timeline_offset_ms=9_770,
+    )
+
+    assert receipt["status"] == "FLAGGED"
+    assert captured["source_media_timeline_offset_ms"] == 9_770
+    assert captured["findings"] == [finding]
 
 
 def test_post_semantic_entity_stage_never_reverts_name_to_draft_witness(tmp_path):
@@ -971,6 +1375,166 @@ def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(m
     assert "坏词8留在这里" in output
     assert audit["applied_count"] == 7
     assert audit["findings"][7]["routed"] == "disclosure_protected"
+
+
+def test_final_review_preserves_typed_discovery_failure_and_original_bytes(
+    monkeypatch,
+):
+    source = _srt("第一句", "第二句")
+    chat_audit = {"applied": [], "entity_repairs": [{"mode": "preexisting"}]}
+    before_chat = json.loads(json.dumps(chat_audit))
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: "{}"),
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise pipeline.FinalReviewAuditError(
+            "FINAL_REVIEW_RESPONSE_FINDINGS_MISSING",
+            "response object omitted findings",
+        )
+
+    monkeypatch.setattr(pipeline, "audit_final_subtitles", unavailable)
+
+    output, audit = pipeline._run_final_review(
+        srt_text=source,
+        chat_authority_audit=chat_audit,
+        handled_entity_cues=set(),
+        verify_confusable_entity=lambda _request: {},
+        adapters=_adapters(),
+    )
+
+    assert output == source
+    assert chat_audit == before_chat
+    assert audit["status"] == "AUDITOR_UNAVAILABLE"
+    assert audit["release_gate"] == "BLOCK"
+    assert audit["reason_codes"] == [
+        "FINAL_REVIEW_RESPONSE_FINDINGS_MISSING"
+    ]
+    assert audit["discovery"] == {
+        "status": "AUDITOR_UNAVAILABLE",
+        "detail": "response object omitted findings",
+    }
+    assert audit["findings"] == []
+    assert audit["applied_count"] == 0
+    assert audit["error_type"] == "FinalReviewAuditError"
+
+
+def test_final_review_rolls_back_prior_mutations_when_later_stage_raises(
+    monkeypatch,
+):
+    source = _srt("欢迎季下", "坏词留在这里")
+    chat_audit = {"applied": [], "entity_repairs": [{"mode": "preexisting"}]}
+    before_chat = json.loads(json.dumps(chat_audit))
+    findings = [
+        {
+            "cue_index": 1,
+            "kind": "nonword",
+            "suspect": "季下",
+            "suggestion": "记下",
+            "proposed_full_cue": "欢迎记下",
+            "repair_class": "phonetic",
+            "candidate_provenance": {
+                "kind": "glossary",
+                "surface": "记下",
+            },
+            "base_text_sha256": hashlib.sha256(
+                "欢迎季下".encode("utf-8")
+            ).hexdigest(),
+        },
+        {
+            "cue_index": 2,
+            "kind": "context",
+            "suspect": "坏词",
+            "suggestion": "好词",
+            "proposed_full_cue": "好词留在这里",
+            "repair_class": "phonetic",
+            "candidate_provenance": None,
+            "base_text_sha256": hashlib.sha256(
+                "坏词留在这里".encode("utf-8")
+            ).hexdigest(),
+        },
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: '{"findings":[]}'),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "audit_final_subtitles",
+        lambda *_args, **_kwargs: findings,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "adjudicate_context_finding",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("post-route failure")
+        ),
+    )
+
+    output, audit = pipeline._run_final_review(
+        srt_text=source,
+        chat_authority_audit=chat_audit,
+        handled_entity_cues=set(),
+        verify_confusable_entity=lambda _request: {},
+        adapters=_adapters(),
+    )
+
+    assert output == source
+    assert "欢迎记下" not in output
+    assert chat_audit == before_chat
+    assert audit["status"] == "AUDITOR_UNAVAILABLE"
+    assert audit["reason_codes"] == ["FINAL_REVIEW_UNEXPECTED_ERROR"]
+    assert audit["discovery"] == {
+        "status": "AUDITOR_UNAVAILABLE",
+        "detail": "RuntimeError",
+    }
+    assert audit["findings"] == []
+    assert audit["applied_count"] == 0
+
+
+def test_single_character_glossary_prose_cannot_authorize_li_to_li():
+    source = _srt("这个李有点太多了")
+    findings = pipeline.audit_final_subtitles(
+        source,
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "findings": [
+                    {
+                        "cue": 1,
+                        "kind": "context",
+                        "proposed_full_cue": "这个礼有点太多了",
+                        "repair_class": "phonetic",
+                        "source_surface": "礼",
+                        "why": "词表 prose 恰好包含同音单字",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        extract_json=json.loads,
+        glossary_text=(
+            "可以是礼（礼墨的礼），也可以是礼（花礼的礼）"
+        ),
+    )
+
+    assert findings[0]["candidate_provenance"] == {
+        "kind": "glossary_context",
+        "surface": "礼",
+    }
+    output, audit = pipeline.route_findings(
+        source,
+        findings,
+        protected_term_set=frozenset(),
+    )
+    assert output == source
+    assert audit["applied_count"] == 0
+    assert audit["findings"][0]["routed"] == "disclosure"
+    assert audit["findings"][0]["orthography_authority"]["status"] == (
+        "BLOCK"
+    )
 
 
 def test_final_review_allows_only_one_contextual_mutation_per_cue(monkeypatch):
@@ -1224,14 +1788,58 @@ def test_ledger_owned_cue_skips_entity_arbitration(tmp_path):
         term_boundary_moves=[],
         padded=padded,
         adapters=_adapters(),
-        # 第一条 cue (5-9s) 在钉子辖区内
-        source_truth_windows=[(5_000, 7_500)],
+        source_truth_protected_cue_indexes=[1],
     )
 
     assert calls == []
     assert result.srt_text == source
     audit = result.chat_authority_audit["transcript_entity_audit"]
     assert audit["ledger_excluded_cue_indexes"] == [1]
+
+
+def test_exact_source_truth_projection_does_not_exclude_grazed_neighbour(
+    tmp_path,
+):
+    padded = tmp_path / "padded.mp4"
+    source = _srt(
+        "我的我也不零三",
+        "邻句也提到零三",
+        "第三句",
+    )
+    padded.with_suffix(".asr_draft.srt").write_text(
+        source,
+        encoding="utf-8",
+    )
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "零三"), ("li dou sha",)),
+            ReferentEntity("小李", ("小李",), ("xiao li",)),
+        ),
+        positions=("transcript_only",),
+        uncertain_keep_surfaces=(),
+    )
+    calls = []
+
+    def resolve_name(request):
+        calls.append(request)
+        return _resolved_entity_verdict(request, "李豆沙")
+
+    result = pipeline._apply_entity_authority(
+        srt_text=source,
+        authoritative_chat=[],
+        support_srts=[],
+        referent_groups=[group],
+        verify_confusable_entity=resolve_name,
+        code_switch_audit={},
+        term_boundary_moves=[],
+        padded=padded,
+        adapters=_adapters(),
+        source_truth_protected_cue_indexes=[1],
+    )
+
+    assert [request["cue_indexes"] for request in calls] == [[2]]
+    audit = result.chat_authority_audit["transcript_entity_audit"]
+    assert audit["source_truth_preview_excluded_cue_indexes"] == [1]
 
 
 def test_missing_substring_truth_defers_only_with_redelivery_baseline(tmp_path):
@@ -1480,7 +2088,7 @@ def test_source_truth_owned_cue_is_not_mutated_by_final_review(monkeypatch):
         handled_entity_cues=set(),
         verify_confusable_entity=verifier,
         adapters=_adapters(),
-        source_truth_windows=[(4_950, 8_970)],
+        source_truth_protected_cue_indexes=[1],
     )
 
     assert calls == []

@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.boundary_semantic_review import cue_grid_sha256
+from src.autoslice.boundary_semantic_review import (
+    boundary_search_scope_is_valid,
+    build_boundary_search_scope,
+    cue_grid_sha256,
+)
 from src.autoslice.boundary_endpoint_binding import (
     bind_final_semantic_endpoint as _bind_final_semantic_endpoint,
 )
@@ -178,8 +182,13 @@ def _select_initial_boundary(
     #     fine-grained micro re-transcription of the tail so the closure
     #     sentence gets its own boundary.
     last_piece = spec["pieces"][-1]
-    target_rel = sum(durations[:-1]) + (spec["semantic_end_ms"] - last_piece["start_ms"])
+    prior_piece_duration_ms = sum(durations[:-1])
+    last_piece_start_ms = int(last_piece["start_ms"])
+    target_rel = prior_piece_duration_ms + (
+        int(spec["semantic_end_ms"]) - last_piece_start_ms
+    )
     semantic_target_rel = target_rel
+    structured_payoff_ms: int | None = None
     if (
         required_tail_end_ms is not None
         and semantic_target_rel < required_tail_end_ms <= semantic_target_rel + 15_000
@@ -187,12 +196,14 @@ def _select_initial_boundary(
         # A structured message appeared inside the selected event and the
         # transcript proves she finished reading it just after the semantic
         # target.  The read is the event payoff, not the next topic.
-        target_rel = required_tail_end_ms
+        structured_payoff_ms = required_tail_end_ms
+        target_rel = structured_payoff_ms
     # 受监督终点只能扩展、不能截短语义候选，也不能代替独立语义终审。
     # given_end_ms 是人工审过的 source-timeline 下限；semantic review 仍须
     # PASS，最终取二者较晚者再贴句尾。这样一段自由文字 authority 不会
     # 再单独豁免续讲或把某句话切在中间。
     manual_end_authority: str | None = None
+    manual_rel: int | None = None
     if spec.get("given_end_ms") is not None:
         manual_end_authority = str(spec.get("given_end_authority") or "").strip()
         if not manual_end_authority:
@@ -200,8 +211,8 @@ def _select_initial_boundary(
         manual_end_ms = int(spec["given_end_ms"])
         if manual_end_ms < int(spec["semantic_end_ms"]):
             raise SystemExit("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
-        manual_rel = sum(durations[:-1]) + (
-            manual_end_ms - last_piece["start_ms"]
+        manual_rel = prior_piece_duration_ms + (
+            manual_end_ms - last_piece_start_ms
         )
         # The reviewed endpoint is a lower bound, not a replacement target.
         # Preserve a later structured-chat payoff already proven above.
@@ -239,23 +250,91 @@ def _select_initial_boundary(
         and reviewed_grid_sha256 != cue_grid_sha256(cues)
     ):
         raise SystemExit("BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH")
+    expected_search_scope = build_boundary_search_scope(
+        semantic_target_ms=semantic_target_rel,
+        manual_lower_bound_ms=manual_rel,
+        structured_payoff_ms=structured_payoff_ms,
+        required_owner_end_ms=required_owner_end_ms,
+        repair_cap_ms=boundary_repair_extend_cap_ms,
+        last_piece_start_ms=last_piece_start_ms,
+        prior_piece_duration_ms=prior_piece_duration_ms,
+    )
+    spec_search_scope = spec.get("boundary_search_scope")
+    review_search_scope = semantic_review.get("boundary_search_scope")
+    production_scope_required = (
+        semantic_review.get("schema_version")
+        == "talk-boundary-semantic-review.v1"
+        and semantic_review.get("review_scope") == "source_full_window"
+    )
+    bound_search_scope = (
+        production_scope_required
+        or spec_search_scope is not None
+        or review_search_scope is not None
+    )
+    if bound_search_scope:
+        if not (
+            boundary_search_scope_is_valid(spec_search_scope)
+            and boundary_search_scope_is_valid(review_search_scope)
+        ):
+            raise SystemExit(
+                "BOUNDARY_SEMANTIC_SEARCH_SCOPE_INVALID"
+            )
+        if (
+            dict(spec_search_scope) != expected_search_scope
+            or dict(review_search_scope) != expected_search_scope
+        ):
+            raise SystemExit(
+                "BOUNDARY_SEMANTIC_SEARCH_SCOPE_MISMATCH"
+            )
+        search_scope = expected_search_scope
+    else:
+        # Hand-built legacy specs in unit fixtures predate the bound scope.
+        # Production always supplies both copies and is checked above.
+        search_scope = expected_search_scope
+    if search_scope.get("status") != "PASS":
+        reasons = list(search_scope.get("reason_codes") or [])
+        if "BOUNDARY_REQUIRED_OWNER_EXCLUDED" in reasons:
+            raise SystemExit(
+                "BOUNDARY_REQUIRED_OWNER_EXCLUDED: "
+                f"required_end={required_owner_end_ms}ms exceeds "
+                f"repair_max_end={search_scope['max_recommended_end_ms']}ms "
+                f"(origin={search_scope['semantic_search_origin_ms']}ms)"
+            )
+        raise SystemExit(
+            "BOUNDARY_SEMANTIC_SEARCH_SCOPE_BLOCKED: "
+            + json.dumps(reasons, ensure_ascii=False)
+        )
     recommended_end_ms = semantic_review.get("recommended_end_ms")
+    minimum_recommended_end_ms = int(
+        search_scope[
+            (
+                "minimum_recommended_end_ms"
+                if bound_search_scope
+                else "semantic_target_ms"
+            )
+        ]
+    )
     if (
         isinstance(recommended_end_ms, bool)
         or not isinstance(recommended_end_ms, int)
-        or recommended_end_ms < semantic_target_rel
+        or recommended_end_ms < minimum_recommended_end_ms
         or recommended_end_ms
-        > semantic_target_rel + boundary_repair_extend_cap_ms
+        > int(search_scope["max_recommended_end_ms"])
     ):
         raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
-    target_rel = max(target_rel, recommended_end_ms)
-    # Keep the semantic/manual/structured target as the immutable origin of the
-    # forward-repair budget.  A required owner is a delivery lower bound, not
-    # authority to move the 30s cap forward.
-    repair_search_origin_ms = target_rel
+    target_rel = max(
+        int(search_scope["delivery_lower_bound_ms"]),
+        recommended_end_ms,
+    )
+    # Manual/structured semantic authority owns the absolute repair budget.
+    # A required owner remains only a delivery floor, and a later reviewer
+    # recommendation cannot ratchet a fresh cap from itself.
+    repair_search_origin_ms = int(
+        search_scope["semantic_search_origin_ms"]
+    )
     repair_max_end_ms = min(
         padded_dur,
-        repair_search_origin_ms + boundary_repair_extend_cap_ms,
+        int(search_scope["max_recommended_end_ms"]),
     )
     if (
         required_owner_end_ms is not None
@@ -267,8 +346,6 @@ def _select_initial_boundary(
             f"repair_max_end={repair_max_end_ms}ms "
             f"(origin={repair_search_origin_ms}ms)"
         )
-    if required_owner_end_ms is not None:
-        target_rel = max(target_rel, required_owner_end_ms)
     closure_selection_lower_bound_ms = target_rel
     semantic_cues = [
         cue for cue in cues if str(getattr(cue, "text", "") or "").strip()

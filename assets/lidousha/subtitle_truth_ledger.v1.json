@@ -1696,7 +1696,9 @@
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-brainflick-hard-flick-r1",
       "revision_id": "r1",
-      "assertion_state": "VERIFIED_ACTIVE",
+      "assertion_state": "SUPERSEDED",
+      "superseded_by": "20260722-nancho-brainflick-mutual-flick-r2",
+      "supersession_reason": "The prior reviewed subtitle was circular evidence: an exact hash-bound check on the correctly mapped V11 final-recut interval hears 互相弹 and rejects 硬弹.",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 1520750,
       "source_end_ms": 1523420,
@@ -1708,6 +1710,28 @@
       ],
       "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
       "authority": "Ivan-requested brainflick clip 2026-07-22 + prior reviewed subtitle retains 硬弹一弹; source closure review confirmed recurring phrase",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-brainflick-mutual-flick-r2",
+      "revision_id": "r2",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "supersedes": [
+        "20260722-nancho-brainflick-hard-flick-r1"
+      ],
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1520750,
+      "source_end_ms": 1523420,
+      "action": "replace_cue",
+      "text": "互相弹一弹啊",
+      "before_span": "硬弹一弹啊",
+      "forbidden_tokens": [
+        "硬弹一弹啊",
+        "你弹一弹啊"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_FORCED_CHOICE_ON_CORRECT_FINAL_RECUT_INTERVAL",
+      "authority": "Gemini 3.6 Flash (High) forced-choice on the correctly mapped V11 final-recut cue 45.000-47.670s hears hu xiang tan yi tan (互相弹一弹), proposed 互相弹一弹啊 SUPPORTED confidence=0.95 and current 硬弹一弹啊 INCOMPATIBLE confidence=0.95; source media sha256=4b8cc0b1343afe0dd8810c9f7f87723defb655d019e642ff9ac83a7dfe480869, context audio sha256=026a3fa26e6f2bab3ab31b996b167b81feeb66d219bbc5729495bc135a12c56e, request sha256=01d726d0c0c376c11f13472846412f61f87d24bb2f143ceabed9cdd56765180d, response sha256=a9be84f5a36f83d885aa8d056461ae2f593cf50bb975c4907ef6255f108fea40; BCUT and Jianying on the exact cue returned only weak near-homophones and were not treated as decisive",
       "required": true
     },
     {
@@ -1724,8 +1748,8 @@
       "forbidden_tokens": [
         "再一弹一弹"
       ],
-      "evidence_class": "WHOLE_CLIP_CALLBACK_PLUS_SOURCE_CUE_REVIEW",
-      "authority": "Codex source-cue closure review 2026-07-22; callback repeats the earlier hash-bound reviewed phrase 硬弹一弹",
+      "evidence_class": "HASH_BOUND_ACOUSTIC_FORCED_CHOICE_ON_CORRECT_FINAL_RECUT_INTERVAL",
+      "authority": "Gemini 3.6 Flash (High) forced-choice on the correctly mapped V11 final-recut cue 63.030-67.610s hears 再弹，再，再硬弹一弹, current text SUPPORTED confidence=0.95 and proposed 互相 callback INCOMPATIBLE confidence=0.95; source media sha256=4b8cc0b1343afe0dd8810c9f7f87723defb655d019e642ff9ac83a7dfe480869, context audio sha256=7d3d85cf00327ab788dba49dc58c5009ba7bd7e8fa0de598a687ab099d79c0f2, request sha256=3479d3aee5c857f9d1220e2932ce1d6b9dcc640e6d0bcd689c1264a794114b96, response sha256=e70bf724dae568c1d3336ce5b77f6e766f33c0c706dc6d46edbfa5fdd5d76167",
       "required": true
     },
     {

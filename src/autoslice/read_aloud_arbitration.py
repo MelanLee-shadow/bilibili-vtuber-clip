@@ -7,6 +7,7 @@ entity_audio_verifier 黑帧强制选边；任何结局（确认/否决/UNCERTAI
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 from typing import Any, Mapping, Protocol, Sequence
 
 from src.autoslice.chat_evidence import (
@@ -21,6 +22,8 @@ from src.autoslice.chat_evidence import (
 _WHOLE_LINE_MIN_COVERAGE = 0.80
 _WHOLE_LINE_MIN_EXTENT = 0.82
 _WHOLE_LINE_MIN_PRECISION = 0.60
+_WHOLE_LINE_MAX_INTERIOR_GAP_CHARS = 2
+_WHOLE_LINE_MAX_INTERIOR_GAP_RATIO = 0.20
 
 
 class _ChatProposalDiscoveryLike(Protocol):
@@ -47,6 +50,215 @@ def proposal_alignment_basis(proposal: Mapping[str, Any]) -> str:
     return "audio-derived-transcript-proxy.v1"
 
 
+def _unsupported_authority_regions(
+    authority_norm: str,
+    observed_norm: str,
+) -> tuple[str, str, list[str]]:
+    """Expose authority text that no aligned transcript block witnessed."""
+
+    blocks = [
+        block
+        for block in SequenceMatcher(
+            None,
+            authority_norm,
+            observed_norm,
+            autojunk=False,
+        ).get_matching_blocks()
+        if block.size
+    ]
+    if not blocks:
+        return authority_norm, "", []
+    head = authority_norm[: blocks[0].a]
+    interior: list[str] = []
+    prior_end = blocks[0].a + blocks[0].size
+    for block in blocks[1:]:
+        if block.a > prior_end:
+            interior.append(authority_norm[prior_end : block.a])
+        prior_end = block.a + block.size
+    tail = authority_norm[prior_end:]
+    return head, tail, interior
+
+
+def typed_whole_line_support_receipt(
+    authority_text: str,
+    observed_text: str,
+    *,
+    score: float,
+    coverage: float,
+    precision: float,
+    common_chars: int,
+    support_kind: str,
+) -> dict[str, Any]:
+    """Build one auditable, fail-closed whole-line transcript receipt.
+
+    Scalar similarity alone is not ownership.  Boundary omissions are
+    especially dangerous because a missing negation or discourse prefix can
+    still leave excellent aggregate coverage.  Independent transcripts may
+    own a whole-line copy only when both the numeric and structural checks
+    pass; the current/primary transcript is disclosed but is not independent.
+    """
+
+    authority_norm = normalize_chat_text(authority_text)
+    observed_norm = normalize_chat_text(observed_text)
+    extent = len(observed_norm) / max(1, len(authority_norm))
+    required_common = min(6, len(authority_norm))
+    unsupported_head, unsupported_tail, unsupported_interior = (
+        _unsupported_authority_regions(authority_norm, observed_norm)
+    )
+    unsupported_interior_chars = sum(len(value) for value in unsupported_interior)
+    max_interior_chars = max(
+        1,
+        int(len(authority_norm) * _WHOLE_LINE_MAX_INTERIOR_GAP_RATIO),
+    )
+    numeric_near_complete = bool(
+        authority_norm
+        and coverage >= _WHOLE_LINE_MIN_COVERAGE
+        and precision >= _WHOLE_LINE_MIN_PRECISION
+        and extent >= _WHOLE_LINE_MIN_EXTENT
+        and common_chars >= required_common
+    )
+    boundary_complete = not unsupported_head and not unsupported_tail
+    interior_near_complete = bool(
+        all(
+            len(value) <= _WHOLE_LINE_MAX_INTERIOR_GAP_CHARS
+            for value in unsupported_interior
+        )
+        and unsupported_interior_chars <= max_interior_chars
+    )
+    near_complete_transcript = bool(
+        numeric_near_complete
+        and boundary_complete
+        and interior_near_complete
+    )
+    owner_eligible = bool(
+        support_kind == "independent_transcript" and near_complete_transcript
+    )
+    return {
+        "schema_version": "chat-whole-line-support.v1",
+        "support_kind": support_kind,
+        "candidate_present": bool(observed_norm),
+        "observed_text": observed_text,
+        "score": round(float(score), 4),
+        "coverage": round(float(coverage), 4),
+        "precision": round(float(precision), 4),
+        "extent": round(extent, 4),
+        "common": int(common_chars),
+        "common_chars": int(common_chars),
+        "required_common_chars": required_common,
+        "min_coverage": _WHOLE_LINE_MIN_COVERAGE,
+        "min_precision": _WHOLE_LINE_MIN_PRECISION,
+        "min_extent": _WHOLE_LINE_MIN_EXTENT,
+        "unsupported_authority_head": unsupported_head,
+        "unsupported_authority_tail": unsupported_tail,
+        "unsupported_authority_interior": unsupported_interior,
+        "unsupported_authority_interior_chars": unsupported_interior_chars,
+        "max_unsupported_interior_run_chars": (
+            _WHOLE_LINE_MAX_INTERIOR_GAP_CHARS
+        ),
+        "max_unsupported_interior_chars": max_interior_chars,
+        "numeric_near_complete": numeric_near_complete,
+        "boundary_complete": boundary_complete,
+        "interior_near_complete": interior_near_complete,
+        "near_complete_transcript": near_complete_transcript,
+        "owner_eligible": owner_eligible,
+    }
+
+
+def whole_line_exact_copy_gate(
+    item: ChatEvidence,
+    proposal: Mapping[str, Any],
+    observed_span: str,
+    *,
+    verdict: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Combine typed transcript receipts, audio proof, and thread exception."""
+
+    primary_receipt = typed_whole_line_support_receipt(
+        item.text,
+        observed_span,
+        score=float(proposal.get("score") or 0.0),
+        coverage=float(proposal.get("coverage") or 0.0),
+        precision=float(proposal.get("precision") or 0.0),
+        common_chars=int(proposal.get("common_chars") or 0),
+        support_kind="primary_transcript",
+    )
+    support_receipts = [
+        dict(receipt)
+        for receipt in proposal.get("support_receipts") or []
+        if isinstance(receipt, Mapping)
+    ]
+    independent_owner_supports = [
+        receipt
+        for receipt in support_receipts
+        if receipt.get("support_kind") == "independent_transcript"
+        and receipt.get("owner_eligible") is True
+    ]
+    verdict = verdict or {}
+    authority_norm = normalize_chat_text(item.text)
+    full_span_audio_verdict = bool(
+        verdict.get("authority_kind") == "audio_forced_choice"
+        and normalize_chat_text(str(verdict.get("heard_syllables") or ""))
+        == authority_norm
+        and all(
+            _valid_sha256(verdict.get(key))
+            for key in (
+                "source_media_sha256",
+                "audio_clip_sha256",
+                "prompt_sha256",
+                "response_sha256",
+            )
+        )
+    )
+    thread_anchored = bool(proposal.get("thread_anchored"))
+    if full_span_audio_verdict:
+        proof_basis = "hash_bound_full_span_audio_verdict"
+    elif thread_anchored:
+        proof_basis = "strong_thread_anchor"
+    elif independent_owner_supports:
+        proof_basis = "near_complete_independent_transcript"
+    else:
+        proof_basis = "partial_evidence"
+    owner_eligible = bool(
+        full_span_audio_verdict
+        or independent_owner_supports
+        or thread_anchored
+    )
+    return {
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "status": "PASS" if owner_eligible else "BLOCKED_PARTIAL_EVIDENCE",
+        "owner_eligible": owner_eligible,
+        "proof_basis": proof_basis,
+        "full_span_audio_verdict": full_span_audio_verdict,
+        "thread_anchored": thread_anchored,
+        "independent_owner_support_count": len(independent_owner_supports),
+        "independent_supports": support_receipts,
+        "primary_transcript": primary_receipt,
+        # Keep the primary metrics flat for existing audit consumers.
+        "score": primary_receipt["score"],
+        "coverage": primary_receipt["coverage"],
+        "precision": primary_receipt["precision"],
+        "extent": primary_receipt["extent"],
+        "common": primary_receipt["common"],
+        "common_chars": primary_receipt["common_chars"],
+        "required_common_chars": primary_receipt["required_common_chars"],
+        "min_coverage": primary_receipt["min_coverage"],
+        "min_precision": primary_receipt["min_precision"],
+        "min_extent": primary_receipt["min_extent"],
+        "transcript_span_supported": primary_receipt[
+            "near_complete_transcript"
+        ],
+        "unsupported_authority_head": primary_receipt[
+            "unsupported_authority_head"
+        ],
+        "unsupported_authority_tail": primary_receipt[
+            "unsupported_authority_tail"
+        ],
+        "unsupported_authority_interior": primary_receipt[
+            "unsupported_authority_interior"
+        ],
+    }
+
+
 def _whole_line_exact_copy_supported(
     item: ChatEvidence,
     proposal: dict[str, Any],
@@ -63,57 +275,13 @@ def _whole_line_exact_copy_supported(
     their explicitly witnessed slots.
     """
 
-    authority_norm = normalize_chat_text(item.text)
-    near_norm = normalize_chat_text(near_span)
-    coverage = float(proposal.get("coverage") or 0.0)
-    precision = float(proposal.get("precision") or 0.0)
-    common_chars = int(proposal.get("common_chars") or 0)
-    extent = len(near_norm) / max(1, len(authority_norm))
-    required_common = min(6, len(authority_norm))
-    full_span_audio_verdict = bool(
-        verdict.get("authority_kind") == "audio_forced_choice"
-        and normalize_chat_text(str(verdict.get("heard_syllables") or ""))
-        == authority_norm
-        and all(
-            _valid_sha256(verdict.get(key))
-            for key in (
-                "source_media_sha256",
-                "audio_clip_sha256",
-                "prompt_sha256",
-                "response_sha256",
-            )
-        )
+    gate = whole_line_exact_copy_gate(
+        item,
+        proposal,
+        near_span,
+        verdict=verdict,
     )
-    transcript_span_supported = bool(
-        authority_norm
-        and coverage >= _WHOLE_LINE_MIN_COVERAGE
-        and precision >= _WHOLE_LINE_MIN_PRECISION
-        and extent >= _WHOLE_LINE_MIN_EXTENT
-        and common_chars >= required_common
-    )
-    metrics = {
-        "coverage": round(coverage, 4),
-        "precision": round(precision, 4),
-        "extent": round(extent, 4),
-        "common_chars": common_chars,
-        "required_common_chars": required_common,
-        "min_coverage": _WHOLE_LINE_MIN_COVERAGE,
-        "min_precision": _WHOLE_LINE_MIN_PRECISION,
-        "min_extent": _WHOLE_LINE_MIN_EXTENT,
-        "transcript_span_supported": transcript_span_supported,
-        "full_span_audio_verdict": full_span_audio_verdict,
-        "proof_basis": (
-            "hash_bound_full_span_audio_verdict"
-            if full_span_audio_verdict
-            else (
-                "near_complete_transcript_span"
-                if transcript_span_supported
-                else "partial_evidence"
-            )
-        ),
-    }
-    supported = transcript_span_supported or full_span_audio_verdict
-    return supported, metrics
+    return bool(gate["owner_eligible"]), gate
 
 
 def _arbitrate_read_aloud_near_match(
@@ -179,6 +347,7 @@ def _arbitrate_read_aloud_near_match(
         "sender_anchored": bool(proposal.get("sender_anchored")),
         "request_sha256": request["request_sha256"],
         "verdict": verdict if verdict is not None else raw_verdict,
+        "owner_eligible": False,
     }
     if verdict is not None and verdict.get("canonical_entity") == item.text:
         whole_line_supported, whole_line_metrics = _whole_line_exact_copy_supported(
@@ -187,15 +356,18 @@ def _arbitrate_read_aloud_near_match(
             near_span,
             verdict,
         )
-        arbitration_row["whole_line_exact_copy_gate"] = {
-            **whole_line_metrics,
-            "status": "PASS" if whole_line_supported else "BLOCKED_PARTIAL_EVIDENCE",
-        }
+        arbitration_row["whole_line_exact_copy_gate"] = whole_line_metrics
+        arbitration_row["owner_eligible"] = whole_line_supported
         if whole_line_supported:
-            arbitration_row["outcome"] = "authority_confirmed_by_audio"
+            arbitration_row["outcome"] = (
+                "authority_confirmed_by_audio"
+                if whole_line_metrics["full_span_audio_verdict"]
+                else "authority_confirmed_by_independent_transcript"
+            )
             proposal["mode"] = "exact_span"
             proposal["read_aloud_verdict"] = verdict
-            proposal["support_scores"] = []
+            proposal["owner_eligible"] = True
+            proposal["whole_line_exact_copy_gate"] = whole_line_metrics
             discovery.proposals.append(proposal)
         else:
             arbitration_row["outcome"] = "partial_evidence_no_whole_line_copy"
