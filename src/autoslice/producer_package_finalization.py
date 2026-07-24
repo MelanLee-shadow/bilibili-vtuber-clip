@@ -695,24 +695,24 @@ def _run_exact_final_review_gate(
     cid: str,
     out_root: Path,
     final_start: int,
+    final_end: int,
     recut: FinalRecutArtifacts,
     chat_authority_audit: dict,
     chat_authority_path: Path,
     adapters: ProducerFinalizationAdapters,
-) -> None:
+) -> dict[str, object]:
     """Review and bind the actual post-boundary, post-authority SRT bytes."""
 
     reviewer = adapters.run_exact_final_review
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
-    final_text = recut.subtitle_path.read_text(
-        encoding="utf-8",
-        errors="strict",
-    )
+    final_bytes = recut.subtitle_path.read_bytes()
+    final_text = final_bytes.decode("utf-8", errors="strict")
     audit = reviewer(
         final_text,
         chat_authority_audit,
         final_start,
+        final_end,
     )
     chat_authority_audit["final_review_audit"] = audit
     persist_review_audit(out_root / f"{cid}.review-flags.json", audit)
@@ -727,7 +727,7 @@ def _run_exact_final_review_gate(
         encoding="utf-8",
     )
     expected_srt_sha256 = "sha256:" + hashlib.sha256(
-        final_text.encode("utf-8")
+        final_bytes
     ).hexdigest()
     try:
         validate_final_review_release(
@@ -739,6 +739,7 @@ def _run_exact_final_review_gate(
             f"FINAL_REVIEW_RELEASE_BLOCKED: {exc.reason_code}: "
             f"{chat_authority_path}"
         ) from exc
+    return audit
 
 def _finalize_speaker(
     *,
@@ -1437,14 +1438,26 @@ def finalize_producer_package(
         spec_parent=options.spec.parent,
         chat_authority_audit=chat_authority_audit,
     )
-    _run_exact_final_review_gate(
+    exact_final_review = _run_exact_final_review_gate(
         cid=cid,
         out_root=out_root,
         final_start=final_start,
+        final_end=final_end,
         recut=recut,
         chat_authority_audit=chat_authority_audit,
         chat_authority_path=chat_authority_path,
         adapters=adapters,
+    )
+    final_delivery_boundary_review = exact_final_review.get(
+        "boundary_semantic_review"
+    )
+    if not isinstance(final_delivery_boundary_review, Mapping):
+        raise SystemExit("FINAL_DELIVERY_BOUNDARY_REVIEW_MISSING")
+    spec["boundary_semantic_review"] = dict(
+        final_delivery_boundary_review
+    )
+    audit["final_delivery_boundary_semantic_review"] = dict(
+        final_delivery_boundary_review
     )
     speaker = _finalize_speaker(
         options=options,

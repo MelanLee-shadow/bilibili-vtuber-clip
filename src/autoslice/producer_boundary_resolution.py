@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.boundary_semantic_review import cue_grid_sha256
+from src.autoslice.boundary_endpoint_binding import (
+    bind_final_semantic_endpoint as _bind_final_semantic_endpoint,
+)
 from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
     LEAD_AIR_MS,
     MAX_BOUNDARY_REPAIRS,
     SNAP_AFTER_MS,
+    TAIL_PAD_MS,
     adaptive_tail_cut,
     boundary_audit,
     boundary_red_flags,
@@ -41,6 +45,7 @@ class InitialBoundary:
     snapped_start: int | None
     final_start: int
     target_rel: int
+    closure_selection_lower_bound_ms: int
     repair_search_origin_ms: int
     repair_max_end_ms: int
     snapped_end: int
@@ -228,6 +233,12 @@ def _select_initial_boundary(
             "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
             + json.dumps(reason_codes, ensure_ascii=False)
         )
+    reviewed_grid_sha256 = semantic_review.get("cue_grid_sha256")
+    if (
+        reviewed_grid_sha256 is not None
+        and reviewed_grid_sha256 != cue_grid_sha256(cues)
+    ):
+        raise SystemExit("BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH")
     recommended_end_ms = semantic_review.get("recommended_end_ms")
     if (
         isinstance(recommended_end_ms, bool)
@@ -258,18 +269,51 @@ def _select_initial_boundary(
         )
     if required_owner_end_ms is not None:
         target_rel = max(target_rel, required_owner_end_ms)
+    closure_selection_lower_bound_ms = target_rel
+    semantic_cues = [
+        cue for cue in cues if str(getattr(cue, "text", "") or "").strip()
+    ]
+    recommended_index = semantic_review.get("recommended_end_cue_index")
+    recommended_cue = (
+        semantic_cues[recommended_index - 1]
+        if (
+            isinstance(recommended_index, int)
+            and not isinstance(recommended_index, bool)
+            and 1 <= recommended_index <= len(semantic_cues)
+        )
+        else None
+    )
+    # A required media interval may end inside the deterministic tail air
+    # after the semantically reviewed closure cue.  That interval is a final
+    # media coverage floor, not authority to consume the next sentence.
+    # Select the reviewed cue only when its exact identity is still present
+    # and its normal tail can cover the entire delivery floor.  The repair
+    # loop below independently verifies the actual (possibly clamped) final
+    # media end, so this cannot waive a required owner or manual endpoint.
+    if (
+        recommended_cue is not None
+        and int(recommended_cue.end_ms) == recommended_end_ms
+        and recommended_end_ms
+        < target_rel
+        <= recommended_end_ms + TAIL_PAD_MS
+    ):
+        closure_selection_lower_bound_ms = recommended_end_ms
     snapped = _snap_end_at_or_after(
         [c.end_ms for c in cues],
-        target_rel,
+        closure_selection_lower_bound_ms,
         upper_bound_ms=repair_max_end_ms,
     )
     refinement_used = False
-    if needs_tail_refinement(cues, snapped_end=snapped, target_ms=target_rel):
+    if needs_tail_refinement(
+        cues,
+        snapped_end=snapped,
+        target_ms=closure_selection_lower_bound_ms,
+    ):
         refinement_used = True
-        refine_start = max(0, target_rel - 20_000)
+        refine_start = max(0, closure_selection_lower_bound_ms - 20_000)
         refine_end = min(
             padded_dur,
-            target_rel + 15_000,
+            closure_selection_lower_bound_ms + 15_000,
             repair_max_end_ms,
         )
         tail_clip = out_root / "tail_refine.mp4"
@@ -283,7 +327,7 @@ def _select_initial_boundary(
         ]
         snapped = _snap_end_at_or_after(
             [c.end_ms for c in fine_lifted],
-            target_rel,
+            closure_selection_lower_bound_ms,
             upper_bound_ms=repair_max_end_ms,
         )
         if snapped is not None:
@@ -311,6 +355,9 @@ def _select_initial_boundary(
         snapped_start=snapped_start,
         final_start=final_start,
         target_rel=target_rel,
+        closure_selection_lower_bound_ms=(
+            closure_selection_lower_bound_ms
+        ),
         repair_search_origin_ms=repair_search_origin_ms,
         repair_max_end_ms=repair_max_end_ms,
         snapped_end=snapped,
@@ -324,59 +371,6 @@ def _select_initial_boundary(
     )
 
 
-def _bind_final_semantic_endpoint(
-    *,
-    semantic_review: Mapping[str, object] | None,
-    cues: list[object],
-    closure_cue: object,
-    snapped_end_ms: int,
-    final_start_ms: int,
-    final_end_ms: int,
-) -> tuple[dict[str, object], list[str]]:
-    """Bind the semantic vote to the exact endpoint used by the recut."""
-
-    review = dict(semantic_review or {})
-    recommended_index = review.get("recommended_end_cue_index")
-    closure_positions = [
-        position
-        for position, cue in enumerate(cues, start=1)
-        if int(cue.end_ms) == int(snapped_end_ms)
-    ]
-    closure_index = (
-        closure_positions[0] if len(closure_positions) == 1 else None
-    )
-    reasons: list[str] = []
-    if review.get("status") != "PASS":
-        reasons.append("BOUNDARY_SEMANTIC_REVIEW_NOT_PASS")
-    if review.get("recommended_end_ms") != snapped_end_ms:
-        reasons.append("BOUNDARY_SEMANTIC_ENDPOINT_MS_MISMATCH")
-    if (
-        isinstance(recommended_index, bool)
-        or not isinstance(recommended_index, int)
-        or recommended_index != closure_index
-    ):
-        reasons.append("BOUNDARY_SEMANTIC_ENDPOINT_CUE_MISMATCH")
-    review["final_endpoint_binding"] = {
-        "schema_version": "talk-boundary-final-endpoint-binding.v1",
-        "status": "BLOCK" if reasons else "PASS",
-        "semantic_request_sha256": review.get("request_sha256"),
-        "recommended_end_cue_index": recommended_index,
-        "recommended_end_ms": review.get("recommended_end_ms"),
-        "final_closure_cue_index": closure_index,
-        "final_snapped_end_ms": snapped_end_ms,
-        "final_start_ms": final_start_ms,
-        "final_end_ms": final_end_ms,
-        "closure_text_sha256": (
-            "sha256:"
-            + hashlib.sha256(
-                str(closure_cue.text).encode("utf-8")
-            ).hexdigest()
-        ),
-        "reason_codes": reasons,
-    }
-    return review, reasons
-
-
 def _repair_boundary(
     *,
     cid: str,
@@ -388,6 +382,7 @@ def _repair_boundary(
     snapped_start: int | None,
     final_start: int,
     target_rel: int,
+    closure_selection_lower_bound_ms: int,
     repair_search_origin_ms: int,
     repair_max_end_ms: int,
     snapped: int,
@@ -424,6 +419,15 @@ def _repair_boundary(
                 or int(window["end_ms"]) > final_end
             )
         ]
+        delivery_coverage_failure = (
+            {
+                "reason": "FINAL_MEDIA_END_BEFORE_DELIVERY_LOWER_BOUND",
+                "delivery_lower_bound_ms": target_rel,
+                "final_end_ms": final_end,
+            }
+            if final_end < target_rel
+            else None
+        )
         clamp_key = (snapped, final_end)
         if tail_adjustment["reason"] and clamp_key not in recorded_tail_clamps:
             boundary_repairs.append(
@@ -451,7 +455,22 @@ def _repair_boundary(
                 "final_start_ms": final_start,
                 "opening_sentence": next((c.text for c in cues if c.start_ms == snapped_start), None),
                 "semantic_target_rel_ms": repair_search_origin_ms,
-                "boundary_selection_lower_bound_ms": target_rel,
+                "boundary_selection_lower_bound_ms": (
+                    closure_selection_lower_bound_ms
+                ),
+                "delivery_coverage_lower_bound_ms": target_rel,
+                "tail_pad_coverage_bridge": {
+                    "status": (
+                        "USED"
+                        if closure_selection_lower_bound_ms < target_rel
+                        else "NOT_NEEDED"
+                    ),
+                    "closure_lower_bound_ms": (
+                        closure_selection_lower_bound_ms
+                    ),
+                    "delivery_lower_bound_ms": target_rel,
+                    "maximum_tail_pad_ms": TAIL_PAD_MS,
+                },
                 "snapped_sentence_end_ms": snapped,
                 "final_end_ms": final_end,
                 "closure_sentence": closure_cue.text,
@@ -474,6 +493,12 @@ def _repair_boundary(
                     "status": "FAIL" if owner_failures else "PASS",
                     "failures": owner_failures,
                 },
+                "delivery_coverage_verification": {
+                    "status": (
+                        "FAIL" if delivery_coverage_failure else "PASS"
+                    ),
+                    "failure": delivery_coverage_failure,
+                },
             }
         )
         if manual_end_authority:
@@ -492,6 +517,13 @@ def _repair_boundary(
             raise SystemExit(
                 "BOUNDARY_REQUIRED_OWNER_EXCLUDED: "
                 + json.dumps(owner_failures, ensure_ascii=False)
+            )
+        if delivery_coverage_failure:
+            raise SystemExit(
+                "BOUNDARY_DELIVERY_LOWER_BOUND_EXCLUDED: "
+                + json.dumps(
+                    delivery_coverage_failure, ensure_ascii=False
+                )
             )
         if audit["verdict"] != "ok_sentence_boundary_cut":
             raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
@@ -666,6 +698,9 @@ def resolve_producer_boundary(
         snapped_start=initial.snapped_start,
         final_start=initial.final_start,
         target_rel=initial.target_rel,
+        closure_selection_lower_bound_ms=(
+            initial.closure_selection_lower_bound_ms
+        ),
         repair_search_origin_ms=initial.repair_search_origin_ms,
         repair_max_end_ms=initial.repair_max_end_ms,
         snapped=initial.snapped_end,

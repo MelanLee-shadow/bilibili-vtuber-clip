@@ -7,6 +7,10 @@ from pathlib import Path
 from PIL import Image
 
 from scripts.audit_lidousha_review_package import audit_package
+from src.autoslice.boundary_semantic_review import (
+    cue_grid_sha256,
+    semantic_review_sha256,
+)
 from src.autoslice.clip_context import build_clip_context
 from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
@@ -21,6 +25,7 @@ from src.autoslice.cover_title_rendering import (
     sha256_file,
 )
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
+from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.review_package_ass_audit import audit_review_package_ass
 from src.autoslice.recovery_title_authority import (
     build_recovery_publication_authorities,
@@ -98,11 +103,45 @@ def _passing_boundary_review(
     candidate_id: str,
     *,
     end_ms: int,
+    review_scope: str = "source_full_window",
+    source_review: dict[str, object] | None = None,
+    cue_grid_digest: str | None = None,
+    closure_text: str | None = None,
 ) -> dict[str, object]:
+    is_final_delivery = review_scope == "final_delivery"
+    request_sha256 = (
+        "sha256:" + ("b" if is_final_delivery else "d") * 64
+    )
+    grid_sha256 = (
+        cue_grid_digest
+        or "sha256:" + ("c" if is_final_delivery else "e") * 64
+    )
+    source_separation_witness = None
+    if is_final_delivery:
+        assert source_review is not None
+        source_endpoint = source_review["final_endpoint_binding"]
+        assert isinstance(source_endpoint, dict)
+        source_separation_witness = {
+            "schema_version": (
+                "talk-boundary-source-separation-witness.v1"
+            ),
+            "status": "PASS",
+            "source_review_sha256": semantic_review_sha256(source_review),
+            "source_request_sha256": source_review["request_sha256"],
+            "source_cue_grid_sha256": source_review["cue_grid_sha256"],
+            "source_recommended_end_ms": source_review[
+                "recommended_end_ms"
+            ],
+            "source_final_start_ms": source_endpoint["final_start_ms"],
+            "source_final_end_ms": source_endpoint["final_end_ms"],
+            "reason_codes": [],
+        }
     return {
         "schema_version": "talk-boundary-semantic-review.v1",
         "status": "PASS",
+        "review_scope": review_scope,
         "candidate_id": candidate_id,
+        "request_sha256": request_sha256,
         "target_ms": end_ms,
         "target_cue_index": 1,
         "recommended_end_cue_index": 1,
@@ -121,15 +160,27 @@ def _passing_boundary_review(
         "independent_semantic_vote_count": 1,
         "correlated_reviewer_disclosure": True,
         "reason_codes": [],
+        "cue_grid_sha256": grid_sha256,
+        "next_topic_witness_valid": True,
+        "source_separation_witness": source_separation_witness,
         "final_endpoint_binding": {
             "schema_version": "talk-boundary-final-endpoint-binding.v1",
             "status": "PASS",
+            "semantic_request_sha256": request_sha256,
             "recommended_end_cue_index": 1,
             "recommended_end_ms": end_ms,
             "final_closure_cue_index": 1,
             "final_snapped_end_ms": end_ms,
             "final_start_ms": 0,
             "final_end_ms": end_ms,
+            "semantic_cue_grid_sha256": grid_sha256,
+            "final_cue_grid_sha256": grid_sha256,
+            "closure_text_sha256": (
+                "sha256:"
+                + hashlib.sha256(closure_text.encode("utf-8")).hexdigest()
+                if closure_text is not None
+                else "sha256:" + "f" * 64
+            ),
             "reason_codes": [],
         },
     }
@@ -1022,7 +1073,19 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         json.dumps(clip_context, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    boundary_review = _passing_boundary_review(stem, end_ms=4_000)
+    source_boundary_review = _passing_boundary_review(
+        stem,
+        end_ms=4_000,
+    )
+    final_cues = parse_srt_cues(srt.read_bytes().decode("utf-8"))
+    final_boundary_review = _passing_boundary_review(
+        stem,
+        end_ms=4_000,
+        review_scope="final_delivery",
+        source_review=source_boundary_review,
+        cue_grid_digest=cue_grid_sha256(final_cues),
+        closure_text=final_cues[-1].text,
+    )
     contract = build_story_contract(
         candidate_id=stem,
         selection_hook="南町当面追问李豆沙最喜欢谁",
@@ -1036,7 +1099,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         cover_reference_authority=cover_reference_authority,
         clip_context=clip_context,
         recording_date="2026-07-22",
-        boundary_semantic_review=boundary_review,
+        boundary_semantic_review=final_boundary_review,
         human_boundary_authority="fixture source-reviewed closure",
     )
     record = root / f"{stem}.record.json"
@@ -1170,7 +1233,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                     },
                     "findings": [],
                     "validated_finding_count": 0,
-                    "boundary_semantic_review": boundary_review,
+                    "boundary_semantic_review": final_boundary_review,
                 },
             }
         ),
@@ -1185,9 +1248,25 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                         "human_source_reviewed_lower_bound_plus_semantic_review"
                     ),
                     "manual_end_authority": "fixture source-reviewed closure",
-                    "boundary_semantic_review": boundary_review,
+                    "boundary_semantic_review": source_boundary_review,
+                    "final_delivery_boundary_semantic_review": (
+                        final_boundary_review
+                    ),
+                    "final_start_ms": 0,
                     "snapped_sentence_end_ms": 4_000,
                     "final_end_ms": 4_000,
+                    "boundary_selection_lower_bound_ms": 4_000,
+                    "delivery_coverage_lower_bound_ms": 4_000,
+                    "tail_pad_coverage_bridge": {
+                        "status": "NOT_NEEDED",
+                        "closure_lower_bound_ms": 4_000,
+                        "delivery_lower_bound_ms": 4_000,
+                        "maximum_tail_pad_ms": 400,
+                    },
+                    "delivery_coverage_verification": {
+                        "status": "PASS",
+                        "failure": None,
+                    },
                     "frozen_required_boundary_owner_count": 0,
                     "frozen_required_boundary_owners": [],
                     "required_boundary_owner_verification": {
@@ -1206,6 +1285,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                     + hashlib.sha256(
                         chat_authority.read_bytes()
                     ).hexdigest(),
+                    "subtitle_sha256": final_srt_sha256,
                     "ass_sha256": speaker_ass_sha256,
                 },
                 "publish_staging": {
@@ -1414,6 +1494,62 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     manifest_path = root / "review_manifest.json"
     valid_record = record.read_text(encoding="utf-8")
     valid_manifest = manifest_path.read_text(encoding="utf-8")
+    valid_srt_bytes = srt.read_bytes()
+    srt.write_bytes(valid_srt_bytes.replace(b"\n", b"\r\n"))
+    newline_drift_result = audit_package(root)
+    newline_drift_codes = {
+        issue["code"] for issue in newline_drift_result["issues"]
+    }
+    assert "SUBTITLE_RECORD_HASH_MISMATCH" in newline_drift_codes
+    assert "FINAL_REVIEW_SRT_BINDING_MISMATCH" in newline_drift_codes
+    assert "STORY_CONTRACT_SUBTITLE_HASH_DRIFT" not in newline_drift_codes
+    srt.write_bytes(valid_srt_bytes)
+
+    # Updating every raw-byte declaration is not authority to reuse an old
+    # semantic receipt for a different final cue grid.
+    srt.write_bytes(
+        valid_srt_bytes.replace(
+            b"00:00:04,000",
+            b"00:00:03,900",
+        )
+    )
+    drifted_srt_sha256 = "sha256:" + hashlib.sha256(
+        srt.read_bytes()
+    ).hexdigest()
+    drifted_grid_chat = json.loads(valid_chat_authority)
+    drifted_grid_chat["final_review_audit"][
+        "reviewed_srt_sha256"
+    ] = drifted_srt_sha256
+    chat_authority.write_text(
+        json.dumps(drifted_grid_chat, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    drifted_grid_record = json.loads(valid_record)
+    drifted_grid_record["artifact_hashes"][
+        "subtitle_sha256"
+    ] = drifted_srt_sha256
+    drifted_grid_record["artifact_hashes"][
+        "chat_authority_audit_sha256"
+    ] = "sha256:" + hashlib.sha256(
+        chat_authority.read_bytes()
+    ).hexdigest()
+    record.write_text(
+        json.dumps(drifted_grid_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    cue_grid_drift_result = audit_package(root)
+    cue_grid_drift_codes = {
+        issue["code"] for issue in cue_grid_drift_result["issues"]
+    }
+    assert "BOUNDARY_FINAL_DELIVERY_CUE_GRID_MISMATCH" in (
+        cue_grid_drift_codes
+    )
+    assert "SUBTITLE_RECORD_HASH_MISMATCH" not in cue_grid_drift_codes
+    assert "FINAL_REVIEW_SRT_BINDING_MISMATCH" not in cue_grid_drift_codes
+    srt.write_bytes(valid_srt_bytes)
+    chat_authority.write_text(valid_chat_authority, encoding="utf-8")
+    record.write_text(valid_record, encoding="utf-8")
+
     valid_cover_bytes = cover.read_bytes()
     Image.open(ai_bg).save(cover)
     no_text_pixels = dict(rendered_text_pixels)
@@ -1517,6 +1653,200 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     }
     assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in boundary_codes
     assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" in boundary_codes
+    record.write_text(valid_record, encoding="utf-8")
+
+    stale_grid_record = json.loads(valid_record)
+    stale_grid_review = stale_grid_record["story_contract"][
+        "boundary_semantic_review"
+    ]
+    stale_grid_review["final_endpoint_binding"][
+        "final_cue_grid_sha256"
+    ] = "sha256:" + "f" * 64
+    stale_grid_record["boundary_audit"][
+        "final_delivery_boundary_semantic_review"
+    ] = stale_grid_review
+    record.write_text(
+        json.dumps(stale_grid_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    stale_grid_result = audit_package(root)
+    assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in {
+        issue["code"] for issue in stale_grid_result["issues"]
+    }
+    record.write_text(valid_record, encoding="utf-8")
+
+    wrong_final_scope = json.loads(valid_record)
+    wrong_final_scope_review = wrong_final_scope["story_contract"][
+        "boundary_semantic_review"
+    ]
+    wrong_final_scope_review["review_scope"] = "source_full_window"
+    wrong_final_scope["boundary_audit"][
+        "final_delivery_boundary_semantic_review"
+    ] = wrong_final_scope_review
+    record.write_text(
+        json.dumps(wrong_final_scope, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    wrong_final_scope_result = audit_package(root)
+    assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in {
+        issue["code"] for issue in wrong_final_scope_result["issues"]
+    }
+    record.write_text(valid_record, encoding="utf-8")
+
+    wrong_source_scope = json.loads(valid_record)
+    wrong_source_scope_review = wrong_source_scope["boundary_audit"][
+        "boundary_semantic_review"
+    ]
+    wrong_source_scope_review["review_scope"] = "final_delivery"
+    rebound_final_review = wrong_source_scope["story_contract"][
+        "boundary_semantic_review"
+    ]
+    rebound_final_review["source_separation_witness"][
+        "source_review_sha256"
+    ] = semantic_review_sha256(wrong_source_scope_review)
+    wrong_source_scope["boundary_audit"][
+        "final_delivery_boundary_semantic_review"
+    ] = rebound_final_review
+    record.write_text(
+        json.dumps(wrong_source_scope, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    wrong_source_scope_result = audit_package(root)
+    assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in {
+        issue["code"] for issue in wrong_source_scope_result["issues"]
+    }
+    record.write_text(valid_record, encoding="utf-8")
+
+    final_review_binding_drift = json.loads(valid_record)
+    final_review_binding_drift["boundary_audit"][
+        "final_delivery_boundary_semantic_review"
+    ]["summary"] = "unbound audit copy"
+    record.write_text(
+        json.dumps(final_review_binding_drift, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    final_binding_result = audit_package(root)
+    assert "BOUNDARY_SEMANTIC_REVIEW_BINDING_DRIFT" in {
+        issue["code"] for issue in final_binding_result["issues"]
+    }
+    record.write_text(valid_record, encoding="utf-8")
+
+    invalid_delivery_coverage = json.loads(valid_record)
+    invalid_delivery_coverage["boundary_audit"]["final_end_ms"] = 3_999
+    record.write_text(
+        json.dumps(invalid_delivery_coverage, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    delivery_coverage_result = audit_package(root)
+    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in {
+        issue["code"] for issue in delivery_coverage_result["issues"]
+    }
+    record.write_text(valid_record, encoding="utf-8")
+
+    for invalid_maximum_tail_pad_ms in (401, 400.0):
+        invalid_tail_pad = json.loads(valid_record)
+        invalid_tail_pad["boundary_audit"]["tail_pad_coverage_bridge"][
+            "maximum_tail_pad_ms"
+        ] = invalid_maximum_tail_pad_ms
+        record.write_text(
+            json.dumps(invalid_tail_pad, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        invalid_tail_pad_result = audit_package(root)
+        assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in {
+            issue["code"] for issue in invalid_tail_pad_result["issues"]
+        }
+    record.write_text(valid_record, encoding="utf-8")
+
+    for invalid_closure_ms, bridge_status in (
+        (3_999, "USED"),
+        (4_000.0, "NOT_NEEDED"),
+    ):
+        invalid_closure_lower_bound = json.loads(valid_record)
+        invalid_closure_lower_bound["boundary_audit"][
+            "tail_pad_coverage_bridge"
+        ].update(
+            {
+                "status": bridge_status,
+                "closure_lower_bound_ms": invalid_closure_ms,
+            }
+        )
+        record.write_text(
+            json.dumps(invalid_closure_lower_bound, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        invalid_closure_result = audit_package(root)
+        assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in {
+            issue["code"] for issue in invalid_closure_result["issues"]
+        }
+    record.write_text(valid_record, encoding="utf-8")
+
+    invalid_source_witness = json.loads(valid_record)
+    tampered_final_review = invalid_source_witness["story_contract"][
+        "boundary_semantic_review"
+    ]
+    tampered_final_review["source_separation_witness"][
+        "source_review_sha256"
+    ] = "sha256:" + "0" * 64
+    invalid_source_witness["boundary_audit"][
+        "final_delivery_boundary_semantic_review"
+    ] = tampered_final_review
+    record.write_text(
+        json.dumps(invalid_source_witness, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    invalid_witness_result = audit_package(root)
+    assert "BOUNDARY_SOURCE_SEPARATION_WITNESS_INVALID" in {
+        issue["code"] for issue in invalid_witness_result["issues"]
+    }
+    record.write_text(valid_record, encoding="utf-8")
+
+    for witness_field, drifted_value in (
+        ("source_request_sha256", "sha256:" + "1" * 64),
+        ("source_cue_grid_sha256", "sha256:" + "2" * 64),
+        ("source_recommended_end_ms", 4_000.0),
+        ("source_final_start_ms", 0.0),
+        ("source_final_end_ms", 4_000.0),
+    ):
+        invalid_source_binding = json.loads(valid_record)
+        rebound_review = invalid_source_binding["story_contract"][
+            "boundary_semantic_review"
+        ]
+        rebound_review["source_separation_witness"][
+            witness_field
+        ] = drifted_value
+        invalid_source_binding["boundary_audit"][
+            "final_delivery_boundary_semantic_review"
+        ] = rebound_review
+        record.write_text(
+            json.dumps(invalid_source_binding, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        invalid_source_binding_result = audit_package(root)
+        assert "BOUNDARY_SOURCE_SEPARATION_WITNESS_INVALID" in {
+            issue["code"]
+            for issue in invalid_source_binding_result["issues"]
+        }
+    record.write_text(valid_record, encoding="utf-8")
+
+    invalid_delivery_local_endpoint = json.loads(valid_record)
+    nonlocal_final_review = invalid_delivery_local_endpoint[
+        "story_contract"
+    ]["boundary_semantic_review"]
+    nonlocal_final_review["final_endpoint_binding"][
+        "final_start_ms"
+    ] = 1
+    invalid_delivery_local_endpoint["boundary_audit"][
+        "final_delivery_boundary_semantic_review"
+    ] = nonlocal_final_review
+    record.write_text(
+        json.dumps(invalid_delivery_local_endpoint, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    invalid_local_result = audit_package(root)
+    assert "BOUNDARY_FINAL_DELIVERY_ENDPOINT_INVALID" in {
+        issue["code"] for issue in invalid_local_result["issues"]
+    }
     record.write_text(valid_record, encoding="utf-8")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

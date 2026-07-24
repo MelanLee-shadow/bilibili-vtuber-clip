@@ -13,7 +13,10 @@
 | 4 | `_apply_entity_authority` | `self_reference_absorption.py`、`chat_proposals.py`、`subtitle_fidelity.py`、`chat_repair.py` | 自称吸收、弹幕权威修复、数字事实门、音频实体落地 |
 | 5 | `_run_final_review` | `final_review_auditor.py` | correction pass：发现问题、路由修复和逐条声学复核；产物为 `final-review-audit.v1`，不是放行回执 |
 | 6 | `_finalize_text_evidence` | `subtitle_fidelity.py` 各 guard、`surface_canon.py`、`song_name_pin.py`、`source_subtitle_truth.py` | 语言保持/书名号/标点门、梗词定形、歌名钉、源真值投影（FAILED 即 SystemExit） |
-| 7 | `_run_exact_final_release_review` | `final_review_auditor.py` + `final_review_contract.py` | 对所有 authority 落地后的**精确最终 SRT 字节**重新发现问题，签发 hash-bound `final-review-audit.v2` 放行回执 |
+| 7 | `review_final_boundary_semantics` | `producer_boundary_review_stage.py`、`boundary_semantic_review.py` | 对 resolver 前的 source full-window cue grid 评审四命题并保留 post-end witness，签发 `review_scope=source_full_window` 回执 |
+| 8 | boundary resolver + `_materialize_final_recut` | `producer_boundary_resolution.py`、`producer_package_finalization.py` | snap/cut 后恢复最终边界对应的 reviewed baseline、重放 source truth 与其他 materialize authority，写出实际交付 SRT |
+| 9 | `exact_delivery_correction_audit` | `producer_boundary_review_stage.py`、`boundary_semantic_review.py` | 从实际交付 SRT 重新解析 delivery-local grid，借 hash-bound source separation witness 复审并签发 `review_scope=final_delivery` 回执 |
+| 10 | `_run_exact_final_release_review` / `_run_exact_final_review_gate` | `final_review_auditor.py`、`final_review_contract.py`、`producer_package_finalization.py` | 对 materialize 后的**精确最终 SRT raw bytes**重新发现问题，签发并按原始字节 SHA 校验 `final-review-audit.v2` |
 
 语义修复引擎（专名/方言/语境不合适度）的设计与规则见
 [41-semantic-repair.md](41-semantic-repair.md)——那是本步的核心子权威。
@@ -63,6 +66,13 @@
   听到字母名（如 `N→恩`）不得以 grapheme 不同否决 `大N`。该窄门不提供 provenance，
   不适用于普通语义改写、未知专名或发音不等价候选。
 - 源真值支持 `replace_cue` / `replace_substring` / `drop_cue`；`drop_cue` 只允许删除被 source-timeline 真值半开区间完整包含的 cue（仅容忍 120ms 编码/SRT 边界漂移）。任何实质性跨界均记 `DROP_CUE_STRADDLES_TRUTH_INTERVAL` 并 fail closed，禁止按“有重叠”整条删除。
+- boundary semantic receipt 分两层。resolver 前的 `source_full_window` 回执只能绑定当时完整
+  source grid，并用 endpoint 后 cue 证明下一话题；它不是最终交付字幕回执。resolver 与
+  `_materialize_final_recut` 完成全部实际交付改写后，必须从精确最终 SRT 重新解析 grid 并签发
+  独立的 `final_delivery` 回执。后者可用
+  `talk-boundary-source-separation-witness.v1` 继承 source 层的 post-end 分离证明，但仍须按
+  当前最终文本重新判断 syntax/story。两层 request、cue ordinal、grid SHA 与坐标分别绑定，
+  不得要求相等，也不得因 endpoint ms/text 碰巧相同而平移复用。
 - hash-bound 源真值拥有的 cue 在 `_run_final_review` 前即进入保护集，终审不得先把中文音译改成
   假名、也不得用声学对同音专名重新选字后再指望末尾钉子挽救。保护只容忍总计 `<=250ms`
   且不超过 cue 10% 的**外边界**漂移；区间内部有空洞仍 fail closed。源真值随后照常重放并复验，
@@ -118,12 +128,15 @@
   package audit 与 authorized upload 会各自重新运行同一 validator，不能信 producer 自报。
 - `final-review-audit.v1` 只描述 correction pass 的发现、路由与修复结果；即使它显示
   `CLEAN`/`APPLIED`，也不能证明后续 source truth、baseline 或 finalizer 没有引入回归。
-  放行只认 `final-review-audit.v2`：它必须绑定最终 SRT SHA-256，discovery 明确
+  放行只认 `final-review-audit.v2`：它的 `reviewed_srt_sha256` 必须绑定包内 SRT 的原始
+  `read_bytes()`，不得先按文本模式或换行符规范化；discovery 明确
   `COMPLETE`，`findings` 是合法列表且 validated count 精确相等，状态 `CLEAN`、
-  `release_gate=PASS`、零 finding，并携带 PASS 的 correction-mutation audit、boundary
-  semantic review 与 final endpoint binding。provider/JSON 失败、缺失或 null/non-list
-  findings、全部 finding 无效、任何剩余 finding、SRT hash 漂移或任一 typed receipt 非 PASS
-  都阻断。
+  `release_gate=PASS`、零 finding，并携带 PASS 的 correction-mutation audit、`final_delivery`
+  boundary semantic review、source separation witness 与 delivery-local endpoint binding。
+  source `source_full_window` 回执仍须独立保留在 boundary audit，package 再重算 witness 对它的
+  规范 SHA 绑定；它不能塞进 v2 冒充最终回执。provider/JSON 失败、缺失或 null/non-list
+  findings、全部 finding 无效、任何剩余 finding、raw-byte SRT hash 漂移或任一 typed receipt
+  非 PASS 都阻断。
 - exact-final 的声学复核只能关闭“当前读音支持且建议读音明确不兼容”的可听辨提案。若 finding
   涉及同音、近同音、`repair_class=phonetic`、字母规范写法，或 current/proposed 的规范化
   发音键相同（如 `毁神→绘声`、`大恩→大N`），纯音频不能决定字形；即使 verdict 报

@@ -12,7 +12,7 @@ Updated: 2026-07-23
 标题、封面和最终产物审计；用当前能力在隔离 recovery base 重跑、复核并覆盖本地旧审片包。
 已发稿只允许同 BV 修复，不新建重复 BV。
 
-## 已实现并通过本地验收（部署/成片仍须 live readback）
+## 已落地或正在收敛的本地能力（最终验收/部署/成片仍须 live readback）
 
 - stable candidate ID 后再执行严格 reviewed calibration；无效/漂移资产 fail closed；
 - exact contract closure 与统一 terminal projection，candidate 不再同时出现在成品和候补；
@@ -26,6 +26,13 @@ Updated: 2026-07-23
 - boundary reviewer 的 evidence 只能引用实际展示 cue；声明下一话题已分离时必须引用推荐终点
   之后的 witness。最终 snap 还须 PASS 的 `talk-boundary-final-endpoint-binding.v1` 精确绑定
   推荐 cue/ms，否则只允许 cap 内有界重审/重试或阻断；
+- boundary semantic review 已拆成两层：`source_full_window` 保留 endpoint 后 cue，给
+  resolver 提供 source 侧 closure/下一话题证据；`_materialize_final_recut` 后再从包内精确
+  SRT 重跑 `final_delivery`，按最终字幕重新判断 syntax/story，并以 hash-bound source
+  separation witness 继承 post-end 证明。两层 request/grid/ordinal/坐标分别绑定，不能要求
+  SHA 相等，也不能把 source 回执平移成最终回执；final-review v2 另以原始 SRT bytes SHA
+  绑定。语义 closure cue end 与媒体 delivery lower bound 已分型；下界只可由同一 closure
+  cue 后实际落地的 400ms 尾气覆盖，尾气被 VAD/下一 cue 钳短仍硬阻断；
 - `boundary_repair_extend_cap_ms` 已从实际 production entry 只接入 boundary/final review；
   首轮 30 秒、受控重试最高 60 秒，架构 seam test 固定其不得误接相邻 entity-authority 调用；
 - exact-final 不再用纯声学关闭同音/近同音/字母正字法 finding；结构化 SC 只有上一 cue
@@ -66,6 +73,22 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
   ASS；新的 SRT→ASS 门会按预期阻断，必须随五条 recovery 重跑整包重建，不能补写 hash 假绿。
 - exact talk 目标集合是 `3573, 672, 1863, 1573, 1475`；`6577` 被用户明确抑制，不允许普通
   backlog 补位。必须在新的隔离 recovery base 达成 closure COMPLETE 后再重建本地包。
+- 隔离 v10
+  `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v10-final-artifact-v6`
+  已在真实 production path 复现两个确定性通病后主动终止，未生成可交付整包且没有上传，
+  **不得恢复、续跑、复制其回执或把它当作 v11 输入**：
+  `3573` 的 reviewer 正确选择 cue 46 / `102610ms`，但旧 resolver 把媒体覆盖下界
+  `103010ms` 错当成必须吞下一 cue 的语义下界；`672` 的 source full-window 回执使用 ordinal
+  131，materialize 后三条 cue 被删除、最终 delivery ordinal 变为 128，旧链却把 source 回执
+  继续当最终交付证明。扩到 30/60 秒都不能解决，不能放宽 endpoint binding。终止后已确认
+  v10 专属进程组退出、target/global lock 可取得；磁盘余量上次观测约 19GB，重跑前必须 live
+  复核。
+- 针对上述 v10 证据的双层回执/raw-byte/package 补丁仍在共享 dirty worktree 收敛；先前
+  `2134 passed` 发生在 fresh reviewer 揭示“materialize 后仍会改 cue”之前，**不是当前补丁的
+  最终验收数**。必须以最终定向/全量回归、fresh review、clean commit 和部署读回为准。
+- 下一次真实重跑必须新建 v11 隔离 base
+  `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v11-boundary-grid-final`；创建前确认路径
+  不存在、源 SHA/磁盘/进程/锁仍健康。不得复用 v10 state/out/receipt。
 - 本轮五条封面都锁定 `screenshot_direct`，不是因为 AI 功能未部署：`3573` 的源帧同时给出
   男性游戏角色与李豆沙/南町，`672/1863/1573` 给出联动双方与互动情绪，`1475` 还给出双人大笑
   和“别管，先弹了再说”弹幕。未直接出现在源帧中的“不熟”反转、对质/被收集、火锅/霸凌、
@@ -83,7 +106,7 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
   authority map：`3573/672` 的模式是现有 Ivan manual-title 正文，`1863/1573/1475` 的模式
   是已验证 public title 原样保留。当前 asset SHA 是
   `sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118`；
-  它还逐项冻结五个 Ivan-reviewed `required_given_end_ms`。v10 planner 必须以该 SHA 覆盖
+  它还逐项冻结五个 Ivan-reviewed `required_given_end_ms`。v11 planner 必须以该 SHA 覆盖
   完整五项并从资产派生 end，plan schema 为 v7；record、publish draft、review/authorized
   manifest、package audit 与 same-BV repair plan 必须看到同一 authority。repair CLI 的 BVID
   还须在任何 adapter/observe 前与 authority 相等，live AID/CID 再与 authority 精确核对。
@@ -92,10 +115,11 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
 
 ## 进行中
 
-1. 从 clean commit 部署到 `free`，读回 `DEPLOYED_COMMIT` 与实际文件 hash；
-2. 在新 recovery base exact 重跑五条，closure COMPLETE 后重建 review manifest 和扁平包；
-3. 对最终视频逐条复核字幕、边界、标题、封面、StoryContract 和 package audit，再覆盖本地旧包；
-4. 以最终包生成同 BV dry plan；只有四面 live preflight 仍通过才执行修复并闭环验证。
+1. 收敛双层边界回执与 raw-byte/package 绑定，完成定向/全量/负向测试及 fresh review 后提交；
+2. 从该 clean commit 部署到 `free`，读回 `DEPLOYED_COMMIT` 与实际文件 hash；
+3. 在全新 v11 recovery base exact 重跑五条，closure COMPLETE 后重建 review manifest 和扁平包；
+4. 对最终视频逐条复核字幕、边界、标题、封面、StoryContract 和 package audit，再覆盖本地旧包；
+5. 以最终包生成同 BV dry plan；只有四面 live preflight 仍通过才执行修复并闭环验证。
 
 ## 当前约束
 

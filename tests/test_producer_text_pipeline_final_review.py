@@ -1,10 +1,16 @@
+import ast
 import hashlib
+import inspect
 import json
 from pathlib import Path
 
 import pytest
 
 from src.autoslice import producer_text_pipeline as pipeline
+from src.autoslice.boundary_semantic_review import (
+    cue_grid_sha256,
+    semantic_review_sha256,
+)
 from src.autoslice.chat_authority import ReferentEntity, ReferentGroup
 from src.autoslice.final_review_contract import (
     FinalReviewContractError,
@@ -56,10 +62,26 @@ def _resolved_entity_verdict(request, canonical):
 
 
 def _boundary_pass() -> dict:
+    cue_grid_sha256 = "sha256:" + "e" * 64
     return {
         "schema_version": "talk-boundary-semantic-review.v1",
         "status": "PASS",
+        "review_scope": "final_delivery",
         "reason_codes": [],
+        "request_sha256": "sha256:" + "d" * 64,
+        "cue_grid_sha256": cue_grid_sha256,
+        "source_separation_witness": {
+            "schema_version": (
+                "talk-boundary-source-separation-witness.v1"
+            ),
+            "status": "PASS",
+            "source_review_sha256": "sha256:" + "a" * 64,
+            "source_request_sha256": "sha256:" + "b" * 64,
+            "source_cue_grid_sha256": "sha256:" + "c" * 64,
+            "source_final_start_ms": 0,
+            "source_final_end_ms": 19_400,
+            "reason_codes": [],
+        },
         "final_endpoint_binding": {
             "schema_version": "talk-boundary-final-endpoint-binding.v1",
             "status": "PASS",
@@ -67,6 +89,8 @@ def _boundary_pass() -> dict:
             "recommended_end_ms": 19_000,
             "final_closure_cue_index": 3,
             "final_snapped_end_ms": 19_000,
+            "semantic_cue_grid_sha256": cue_grid_sha256,
+            "final_cue_grid_sha256": cue_grid_sha256,
             "reason_codes": [],
         },
     }
@@ -80,6 +104,187 @@ def _correction_pass() -> dict:
         "findings": [],
         "boundary_semantic_review": _boundary_pass(),
     }
+
+
+def test_boundary_semantic_review_is_downstream_of_final_text_authority():
+    run_tree = ast.parse(inspect.getsource(pipeline.run_text_pipeline))
+    finalize_calls = [
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_finalize_text_evidence"
+    ]
+    review_calls = [
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "review_final_boundary_semantics"
+    ]
+    review_assignments = [
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Assign)
+        and node.value in review_calls
+    ]
+
+    assert len(finalize_calls) == 1
+    assert len(review_calls) == 1
+    assert finalize_calls[0].lineno < review_calls[0].lineno
+    cues_keyword = next(
+        keyword
+        for keyword in review_calls[0].keywords
+        if keyword.arg == "cues"
+    )
+    assert ast.dump(cues_keyword.value) == ast.dump(
+        ast.Attribute(
+            value=ast.Name(id="evidence", ctx=ast.Load()),
+            attr="cues",
+            ctx=ast.Load(),
+        )
+    )
+    assert len(review_assignments) == 1
+    target = review_assignments[0].targets[0]
+    assert isinstance(target, ast.Subscript)
+    assert isinstance(target.value, ast.Name)
+    assert target.value.id == "final_review_audit"
+    assert isinstance(target.slice, ast.Constant)
+    assert target.slice.value == "boundary_semantic_review"
+
+    correction_tree = ast.parse(
+        inspect.getsource(pipeline._run_final_review)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {
+            "review_final_boundary_semantics",
+            "review_talk_boundary_semantics",
+        }
+        for node in ast.walk(correction_tree)
+    )
+
+
+def test_final_boundary_review_indexes_exact_post_authority_grid():
+    seen_prompt = ""
+
+    def review(prompt):
+        nonlocal seen_prompt
+        seen_prompt = prompt
+        return json.dumps(
+            {
+                "syntax_complete": True,
+                "story_closed": True,
+                "next_topic_separated": True,
+                "recommended_end_cue_index": 2,
+                "evidence_cue_indexes": [1, 2, 3],
+                "reason_codes": [],
+                "summary": "第二句闭环，第三句换题。",
+            },
+            ensure_ascii=False,
+        )
+
+    final_srt = _srt("保留的前句", "最终闭合句", "下一话题")
+    result = pipeline.review_final_boundary_semantics(
+        cues=pipeline.parse_srt_cues(final_srt),
+        boundary_target_ms=14_000,
+        candidate_id="final-grid",
+        selection_hook="完整包袱",
+        selection_scorecard={
+            "status": "VALID",
+            "dimensions": {
+                "self_contained": 4,
+                "comedic_payoff": 4,
+            },
+        },
+        structured_context="",
+        candidate_context="",
+        boundary_max_forward_ms=30_000,
+        llm_call=review,
+        extract_json=pipeline.extract_json_object,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["recommended_end_cue_index"] == 2
+    assert result["recommended_end_ms"] == 14_000
+    assert "最终闭合句" in seen_prompt
+
+
+def test_exact_delivery_boundary_review_rebinds_post_baseline_grid():
+    source_review = {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "review_scope": "source_full_window",
+        "request_sha256": "sha256:" + "a" * 64,
+        "cue_grid_sha256": "sha256:" + "b" * 64,
+        "next_topic_separated": True,
+        "next_topic_witness_valid": True,
+        "recommended_end_ms": 29_000,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "final_start_ms": 10_000,
+            "final_end_ms": 30_000,
+        },
+    }
+    correction = _correction_pass()
+    correction["boundary_semantic_review"] = source_review
+    final_srt = _srt("baseline 改写后的第一句", "最终闭合句")
+    seen_prompt = ""
+
+    def review(prompt):
+        nonlocal seen_prompt
+        seen_prompt = prompt
+        return json.dumps(
+            {
+                "syntax_complete": True,
+                "story_closed": True,
+                "next_topic_separated": True,
+                "recommended_end_cue_index": 2,
+                "evidence_cue_indexes": [1, 2],
+                "reason_codes": [],
+                "summary": "最终交付的第二句闭环。",
+            },
+            ensure_ascii=False,
+        )
+
+    rebound = pipeline.exact_delivery_correction_audit(
+        final_srt_text=final_srt,
+        correction_audit=correction,
+        source_final_start_ms=10_000,
+        source_final_end_ms=30_000,
+        candidate_id="672",
+        selection_hook="当面对质",
+        selection_scorecard={
+            "status": "VALID",
+            "dimensions": {
+                "self_contained": 4,
+                "comedic_payoff": 4,
+            },
+        },
+        structured_context="",
+        candidate_context="",
+        boundary_max_forward_ms=30_000,
+        llm_call=review,
+        extract_json=pipeline.extract_json_object,
+    )
+
+    final_review = rebound["boundary_semantic_review"]
+    final_cues = pipeline.parse_srt_cues(final_srt)
+    assert final_review["status"] == "PASS"
+    assert final_review["review_scope"] == "final_delivery"
+    assert final_review["cue_grid_sha256"] == cue_grid_sha256(final_cues)
+    assert final_review["cue_grid_sha256"] != source_review[
+        "cue_grid_sha256"
+    ]
+    assert final_review["source_separation_witness"][
+        "source_review_sha256"
+    ] == semantic_review_sha256(source_review)
+    assert final_review["final_endpoint_binding"]["status"] == "PASS"
+    assert "baseline 改写后的第一句" in seen_prompt
+    assert "后来删除的幻听" not in seen_prompt
 
 
 def test_exact_final_release_review_binds_explicit_clean_response(
@@ -203,6 +408,32 @@ def test_release_contract_recomputes_final_boundary_endpoint_equality():
     with pytest.raises(
         FinalReviewContractError,
         match="FINAL_REVIEW_BOUNDARY_ENDPOINT_BINDING_MISMATCH",
+    ):
+        validate_final_review_release(receipt)
+
+
+def test_release_contract_rejects_stale_boundary_cue_grid():
+    receipt = {
+        "schema_version": "final-review-audit.v2",
+        "status": "CLEAN",
+        "release_gate": "PASS",
+        "reviewed_srt_sha256": "sha256:" + "a" * 64,
+        "discovery": {"status": "COMPLETE"},
+        "correction_mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+        },
+        "findings": [],
+        "validated_finding_count": 0,
+        "boundary_semantic_review": _boundary_pass(),
+    }
+    receipt["boundary_semantic_review"]["final_endpoint_binding"][
+        "final_cue_grid_sha256"
+    ] = "sha256:" + "f" * 64
+
+    with pytest.raises(
+        FinalReviewContractError,
+        match="FINAL_REVIEW_BOUNDARY_CUE_GRID_BINDING_MISMATCH",
     ):
         validate_final_review_release(receipt)
 

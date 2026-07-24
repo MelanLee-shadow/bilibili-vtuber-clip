@@ -63,6 +63,12 @@ def validate_final_review_release(
     boundary = audit.get("boundary_semantic_review")
     if not isinstance(boundary, Mapping) or boundary.get("status") != "PASS":
         raise FinalReviewContractError("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
+    if _SHA256_RX.fullmatch(
+        str(boundary.get("request_sha256") or "")
+    ) is None:
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_BOUNDARY_REQUEST_BINDING_INVALID"
+        )
     endpoint = boundary.get("final_endpoint_binding")
     if (
         not isinstance(endpoint, Mapping)
@@ -96,6 +102,52 @@ def validate_final_review_release(
     ):
         raise FinalReviewContractError(
             "FINAL_REVIEW_BOUNDARY_ENDPOINT_BINDING_MISMATCH"
+        )
+    reviewed_grid = str(boundary.get("cue_grid_sha256") or "")
+    semantic_grid = str(
+        endpoint.get("semantic_cue_grid_sha256") or ""
+    )
+    final_grid = str(endpoint.get("final_cue_grid_sha256") or "")
+    if any(
+        _SHA256_RX.fullmatch(value) is None
+        for value in (reviewed_grid, semantic_grid, final_grid)
+    ):
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_BOUNDARY_CUE_GRID_BINDING_INVALID"
+        )
+    if not reviewed_grid == semantic_grid == final_grid:
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_BOUNDARY_CUE_GRID_BINDING_MISMATCH"
+        )
+    witness = boundary.get("source_separation_witness")
+    if (
+        boundary.get("review_scope") != "final_delivery"
+        or not isinstance(witness, Mapping)
+        or witness.get("schema_version")
+        != "talk-boundary-source-separation-witness.v1"
+        or witness.get("status") != "PASS"
+        or _SHA256_RX.fullmatch(
+            str(witness.get("source_review_sha256") or "")
+        )
+        is None
+        or _SHA256_RX.fullmatch(
+            str(witness.get("source_request_sha256") or "")
+        )
+        is None
+        or _SHA256_RX.fullmatch(
+            str(witness.get("source_cue_grid_sha256") or "")
+        )
+        is None
+        or isinstance(witness.get("source_final_start_ms"), bool)
+        or not isinstance(witness.get("source_final_start_ms"), int)
+        or isinstance(witness.get("source_final_end_ms"), bool)
+        or not isinstance(witness.get("source_final_end_ms"), int)
+        or witness["source_final_end_ms"]
+        <= witness["source_final_start_ms"]
+        or witness.get("reason_codes") != []
+    ):
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_BOUNDARY_SOURCE_WITNESS_INVALID"
         )
     if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
         raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")

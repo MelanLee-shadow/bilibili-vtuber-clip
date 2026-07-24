@@ -37,22 +37,38 @@
   StoryContract 逐字相等，并以完整字节送入 boundary/final review；任何 12,000 字兼容切片、
   超预算或 prompt 重渲染漂移都拒发。topic resolution/scoped graph context 也必须留在同一
   digest 内。
-  边界同理：human source endpoint
-  只作为下界并与 boundary audit 精确一致，**同时**完整 semantic review 必须为 PASS，
-  推荐 end 已实际 materialize，四命题与 cue/syntax 门全部通过。最终 semantic review 还必须
-  携带 PASS 的 `talk-boundary-final-endpoint-binding.v1`，证明推荐 cue/ms 与最终唯一 closure
-  cue / snapped endpoint 完全一致；缺失、BLOCK 或 repair 后沿用旧 endpoint 回执均拒发。
+  边界同理：human source endpoint 只作为下界并与 boundary audit 精确一致；机器审计必须同时
+  验证两份不同作用域的 PASS 回执。`boundary_audit.boundary_semantic_review` 必须是
+  `review_scope=source_full_window`，绑定 resolver 实际消费的完整 source grid、真实 post-end
+  witness、source 推荐 end 和 snap 后 source final interval。
+  `boundary_audit.final_delivery_boundary_semantic_review` 必须与 StoryContract
+  `boundary_semantic_review` 逐字段相等，且为 materialize 后从包内最终 SRT 重跑所得的
+  `review_scope=final_delivery`：它绑定 delivery-local grid、唯一最后 closure cue 与
+  `[0, 内容时长)` endpoint，并携带 PASS 的 `talk-boundary-source-separation-witness.v1`。
+  auditor 必须从包内 SRT 原始字节严格解码、重新解析 cue，并重算 final-delivery grid SHA、
+  最后一条 cue 的 ordinal/end/text SHA；不能只检查回执内部三处 grid hash 彼此相等。
+  auditor 必须重算该 witness 的 `source_review_sha256`，并核对其中 source request/grid SHA、
+  推荐 end、source final interval 与第一层回执完全一致。两层 grid/ordinal/坐标不同，不能要求
+  SHA 相等；缺任一层、scope 错、把 source 回执复制成 final、witness 漂移或任一 endpoint
+  binding 非 PASS 均拒发。
 - chat authority 的 `frozen-boundary-owner-contract.v1` 与 record boundary audit 必须携带
   完全相同的 required owner 列表；所有 owner window 都在最终边界内，
   `required_boundary_owner_verification=PASS` 且
-  `final_boundary_required_exclusion_count=0`。裁掉 owner 后把它标成成片外不构成通过。
+  `delivery_coverage_verification=PASS` 且
+  `final_boundary_required_exclusion_count=0`。owner end 若由已审 closure cue 后的固定尾气
+  覆盖，audit 必须显式记录 `tail_pad_coverage_bridge=USED`，且
+  `maximum_tail_pad_ms` 必须精确等于生产常量 400；仍须证明实际 final end 到达 coverage
+  lower bound、bridge 差值不超过 400ms 且未带入下一 cue。裁掉 owner 后把它标成成片外不构成
+  通过。
 - correction pass 的 `final-review-audit.v1` 不是 package 放行证据。package 必须携带
-  `final-review-audit.v2`，其 `reviewed_srt_sha256` 精确绑定包内最终 SRT，discovery 完整、
-  finding 合同合法且为空、release gate PASS、boundary semantic PASS，并携带 PASS 的
-  `subtitle-correction-mutation-audit.v1` 与上述 final endpoint binding。后两项由 exact-final
-  contract 强制；因此“第二遍零 finding”不能替代 correction mutation authority，普通 semantic
-  PASS 也不能替代最终 endpoint 精确绑定。provider/JSON 失败、null/non-list/all-invalid
-  findings、任何未决项、缺失回执或 BLOCK 都阻断。
+  `final-review-audit.v2`，其 `reviewed_srt_sha256` 必须由包内最终 SRT 的原始字节重算，CRLF/LF
+  等字节差异不得被 `read_text()` 规范化掩盖；discovery 完整、finding 合同合法且为空、
+  release gate PASS，并携带 PASS 的 `subtitle-correction-mutation-audit.v1`、上述
+  `final_delivery` semantic review、source separation witness 与 delivery-local endpoint
+  binding。package auditor 还须把这份 final review 与 boundary audit / StoryContract 精确
+  对齐；“第二遍零 finding”不能替代 correction mutation authority，source semantic PASS 也
+  不能替代最终交付重审。provider/JSON 失败、null/non-list/all-invalid findings、任何未决项、
+  raw-byte hash 漂移、缺失回执或 BLOCK 都阻断。
 - 封面审计按 `cover_generation.route_decision.actual_treatment` 分支验真：所有路线都验
   最终 cover SHA 与 `lidousha-cover-rendered-text-pixels.v3`。包内必须同时有 final cover、
   `.cover.pre-overlay.png`、`.cover.title-mask.png`、`.cover.route-background.png`；auditor

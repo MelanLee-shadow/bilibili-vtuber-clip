@@ -1,6 +1,9 @@
 import json
 
-from src.autoslice.boundary_semantic_review import review_talk_boundary_semantics
+from src.autoslice.boundary_semantic_review import (
+    cue_grid_sha256,
+    review_talk_boundary_semantics,
+)
 from src.autoslice.jingting_chunker import SrtCue
 
 
@@ -20,6 +23,29 @@ def _scorecard(*, self_contained: int = 4, comedic_payoff: int = 4) -> dict:
 
 def _extract(value: str) -> dict:
     return json.loads(value)
+
+
+def _source_window_review(
+    *,
+    final_start_ms: int = 10_000,
+    final_end_ms: int = 20_000,
+) -> dict:
+    return {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "review_scope": "source_full_window",
+        "request_sha256": "sha256:" + "a" * 64,
+        "cue_grid_sha256": "sha256:" + "b" * 64,
+        "recommended_end_ms": final_end_ms - 400,
+        "next_topic_separated": True,
+        "next_topic_witness_valid": True,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "final_start_ms": final_start_ms,
+            "final_end_ms": final_end_ms,
+        },
+    }
 
 
 def test_independent_boundary_review_binds_recommendation_to_cue_grid():
@@ -64,6 +90,7 @@ def test_independent_boundary_review_binds_recommendation_to_cue_grid():
     assert review["content_anchor_covered"] is True
     assert review["independent_semantic_vote_count"] == 1
     assert review["correlated_reviewer_disclosure"] is True
+    assert review["cue_grid_sha256"] == cue_grid_sha256(cues)
 
 
 def test_boundary_review_cannot_self_certify_a_weak_selector_story_witness():
@@ -360,3 +387,94 @@ def test_boundary_review_keeps_full_hash_bound_candidate_context():
     assert result["status"] == "PASS"
     assert candidate_context in seen_prompt
     assert "尾部长期回调事实" in seen_prompt
+
+
+def test_final_delivery_terminal_cue_accepts_bound_source_separation_witness():
+    cues = [
+        _cue(1, 0, 4_000, "前句"),
+        _cue(2, 4_100, 9_600, "最终闭合句"),
+    ]
+    seen_request: dict = {}
+
+    def review(prompt: str) -> str:
+        request = json.loads(
+            prompt.split("绑定请求 JSON：\n", 1)[1].split(
+                "\n\n只输出 JSON：", 1
+            )[0]
+        )
+        seen_request.update(request)
+        return json.dumps(
+            {
+                "syntax_complete": True,
+                "story_closed": True,
+                "next_topic_separated": True,
+                "recommended_end_cue_index": 2,
+                "evidence_cue_indexes": [1, 2],
+                "reason_codes": [],
+                "summary": "交付末句闭环，换题由 source 窗口证明。",
+            },
+            ensure_ascii=False,
+        )
+
+    result = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=9_600,
+        candidate_id="final-delivery",
+        selection_hook="完整包袱",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="",
+        llm_call=review,
+        extract_json=_extract,
+        terminal_source_review=_source_window_review(),
+        source_final_start_ms=10_000,
+        source_final_end_ms=20_000,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["review_scope"] == "final_delivery"
+    assert result["next_topic_witness_valid"] is True
+    assert result["source_separation_witness"]["status"] == "PASS"
+    assert seen_request["terminal_source_separation_witness"] == result[
+        "source_separation_witness"
+    ]
+
+
+def test_final_delivery_terminal_cue_rejects_interval_mismatched_source_witness():
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2],
+            "reason_codes": [],
+            "summary": "模型不能把错区间的 source 证据当作换题证据。",
+        },
+        ensure_ascii=False,
+    )
+
+    result = review_talk_boundary_semantics(
+        cues=[
+            _cue(1, 0, 4_000, "前句"),
+            _cue(2, 4_100, 9_600, "最终闭合句"),
+        ],
+        target_ms=9_600,
+        candidate_id="final-delivery",
+        selection_hook="完整包袱",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        terminal_source_review=_source_window_review(),
+        source_final_start_ms=10_000,
+        source_final_end_ms=20_001,
+    )
+
+    assert result["status"] == "BLOCK"
+    assert result["next_topic_witness_valid"] is False
+    assert "BOUNDARY_NEXT_TOPIC_WITNESS_MISSING" in result["reason_codes"]
+    witness = result["source_separation_witness"]
+    assert witness["status"] == "BLOCK"
+    assert witness["reason_codes"] == ["SOURCE_DELIVERY_INTERVAL_MISMATCH"]

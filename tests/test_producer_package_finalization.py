@@ -85,12 +85,18 @@ def test_exact_final_review_gate_binds_post_boundary_recut_bytes(
     chat_path = tmp_path / "candidate.chat-authority.json"
     seen: dict = {}
 
-    def exact_review(text, authority, timeline_offset_ms):
+    def exact_review(
+        text,
+        authority,
+        timeline_offset_ms,
+        source_final_end_ms,
+    ):
         seen.update(
             {
                 "text": text,
                 "authority": authority,
                 "timeline_offset_ms": timeline_offset_ms,
+                "source_final_end_ms": source_final_end_ms,
             }
         )
         return {
@@ -117,7 +123,22 @@ def test_exact_final_review_gate_binds_post_boundary_recut_bytes(
             "boundary_semantic_review": {
                 "schema_version": "talk-boundary-semantic-review.v1",
                 "status": "PASS",
+                "review_scope": "final_delivery",
                 "reason_codes": [],
+                "request_sha256": "sha256:" + "d" * 64,
+                "cue_grid_sha256": "sha256:" + "e" * 64,
+                "source_separation_witness": {
+                    "schema_version": (
+                        "talk-boundary-source-separation-witness.v1"
+                    ),
+                    "status": "PASS",
+                    "source_review_sha256": "sha256:" + "a" * 64,
+                    "source_request_sha256": "sha256:" + "b" * 64,
+                    "source_cue_grid_sha256": "sha256:" + "c" * 64,
+                    "source_final_start_ms": timeline_offset_ms,
+                    "source_final_end_ms": source_final_end_ms,
+                    "reason_codes": [],
+                },
                 "final_endpoint_binding": {
                     "schema_version": "talk-boundary-final-endpoint-binding.v1",
                     "status": "PASS",
@@ -125,6 +146,9 @@ def test_exact_final_review_gate_binds_post_boundary_recut_bytes(
                     "recommended_end_ms": 9_000,
                     "final_closure_cue_index": 1,
                     "final_snapped_end_ms": 9_000,
+                    "final_end_ms": 9_400,
+                    "semantic_cue_grid_sha256": "sha256:" + "e" * 64,
+                    "final_cue_grid_sha256": "sha256:" + "e" * 64,
                     "reason_codes": [],
                 },
             },
@@ -150,6 +174,7 @@ def test_exact_final_review_gate_binds_post_boundary_recut_bytes(
         cid="candidate",
         out_root=tmp_path,
         final_start=12_345,
+        final_end=21_745,
         recut=finalization.FinalRecutArtifacts(
             recut_dir=tmp_path,
             media_path=tmp_path / "candidate.recut.mp4",
@@ -165,8 +190,231 @@ def test_exact_final_review_gate_binds_post_boundary_recut_bytes(
     assert seen["text"] == final_text
     assert seen["authority"] is chat
     assert seen["timeline_offset_ms"] == 12_345
+    assert seen["source_final_end_ms"] == 21_745
     assert chat["final_review_audit"]["status"] == "CLEAN"
     assert (tmp_path / "candidate.review-flags.json").is_file()
+
+
+def test_exact_final_review_gate_hashes_raw_crlf_bytes_without_normalizing(
+    tmp_path: Path,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    raw_srt = (
+        b"1\r\n00:00:00,000 --> 00:00:01,000\r\n"
+        b"raw-byte binding\r\n"
+    )
+    subtitle.write_bytes(raw_srt)
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    normalized_sha256 = "sha256:" + hashlib.sha256(
+        raw_srt.replace(b"\r\n", b"\n")
+    ).hexdigest()
+
+    def exact_review(
+        text,
+        _authority,
+        _timeline_offset_ms,
+        _source_final_end_ms,
+    ):
+        assert "\r\n" in text
+        return {
+            "schema_version": "final-review-audit.v2",
+            # Simulate the historical bug: hashing newline-normalized text
+            # instead of the exact bytes read from the final SRT.
+            "reviewed_srt_sha256": normalized_sha256,
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="FINAL_REVIEW_SRT_BINDING_MISMATCH",
+    ):
+        finalization._run_exact_final_review_gate(
+            cid="candidate",
+            out_root=tmp_path,
+            final_start=0,
+            final_end=1_000,
+            recut=finalization.FinalRecutArtifacts(
+                recut_dir=tmp_path,
+                media_path=tmp_path / "candidate.recut.mp4",
+                subtitle_path=subtitle,
+                text_manifest_path=None,
+                text_manifest=None,
+            ),
+            chat_authority_audit={},
+            chat_authority_path=chat_path,
+            adapters=adapters,
+        )
+
+    assert normalized_sha256 != (
+        "sha256:" + hashlib.sha256(raw_srt).hexdigest()
+    )
+
+
+def test_finalize_routes_exact_endpoint_receipt_into_story_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n最终闭合句\n",
+        encoding="utf-8",
+    )
+    media = tmp_path / "candidate.recut.mp4"
+    media.write_bytes(b"media")
+    recut = finalization.FinalRecutArtifacts(
+        recut_dir=tmp_path,
+        media_path=media,
+        subtitle_path=subtitle,
+        text_manifest_path=None,
+        text_manifest=None,
+    )
+    delivery_review = {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "candidate_id": "candidate",
+        "status": "PASS",
+        "review_scope": "final_delivery",
+        "request_sha256": "sha256:" + "1" * 64,
+        "cue_grid_sha256": "sha256:" + "2" * 64,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "semantic_cue_grid_sha256": "sha256:" + "2" * 64,
+            "final_cue_grid_sha256": "sha256:" + "2" * 64,
+        },
+    }
+    exact_audit = {"boundary_semantic_review": delivery_review}
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        finalization, "_materialize_final_recut", lambda **_kwargs: recut
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_run_exact_final_review_gate",
+        lambda **_kwargs: exact_audit,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_finalize_speaker",
+        lambda **_kwargs: finalization.SpeakerArtifacts(
+            None, None, None, None
+        ),
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_verify_final_authority",
+        lambda **_kwargs: finalization.AuthorityArtifacts(None, None),
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_build_and_burn_record",
+        lambda **_kwargs: {"artifact_hashes": {}},
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_deliver_staged_record",
+        lambda **kwargs: captured.setdefault("record", kwargs["staged"].record)
+        and 0,
+    )
+    monkeypatch.setattr(
+        finalization, "load_candidate_cover_reference", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        finalization, "build_llm_call", lambda _config: lambda _prompt: ""
+    )
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    def stage(record, *, candidate_id, **_kwargs):
+        record["publish_staging"] = {
+            "title": candidate_id,
+            "title_authority_status": "READY",
+            "cover_status": "SKIPPED",
+        }
+        return record
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=stage,
+        generate_upload_tags=lambda *_args, **_kwargs: {"status": "READY"},
+        delivery_root=unused,
+        run_exact_final_review=unused,
+    )
+    spec = {
+        "date": "2026-07-22",
+        "pieces": [],
+        "selection_hook": "最终闭合句",
+        "selection_scorecard": {
+            "status": "VALID",
+            "dimensions": {"self_contained": 4, "comedic_payoff": 4},
+        },
+        "boundary_semantic_review": {"status": "PASS", "stale": True},
+    }
+    boundary_audit: dict = {}
+
+    result = finalization.finalize_producer_package(
+        options=finalization.ProducerFinalizationOptions(
+            spec=tmp_path / "spec.json",
+            substrate="source",
+            correct="reviewed",
+            speaker_mode="off",
+            speaker_overrides=None,
+            speaker_source_session_anchors=None,
+            speaker_mixed_overlap_evidence=None,
+            speaker_python=tmp_path / "python",
+            reuse_cover=True,
+        ),
+        profile_id="lidousha",
+        speaker_subtitle_style_id="style",
+        spec=spec,
+        cid="candidate",
+        out_root=tmp_path,
+        host="free",
+        padded=tmp_path / "padded.mp4",
+        padded_provenance_path=tmp_path / "padded.json",
+        piece_provenance_rows=[],
+        final_start=10_000,
+        final_end=11_000,
+        sanitized=[],
+        timing_qa={},
+        audit=boundary_audit,
+        text_override_path=None,
+        subtitle_regression_path=None,
+        chat_authority_audit={},
+        chat_authority_path=tmp_path / "chat.json",
+        branding_intro=None,
+        adapters=adapters,
+    )
+
+    assert result == 0
+    assert spec["boundary_semantic_review"] == delivery_review
+    assert boundary_audit["final_delivery_boundary_semantic_review"] == (
+        delivery_review
+    )
+    assert captured["record"]["story_contract"][
+        "boundary_semantic_review"
+    ] == delivery_review
 
 
 def test_exact_final_review_gate_persists_deterministic_block(
@@ -180,7 +428,12 @@ def test_exact_final_review_gate_persists_deterministic_block(
     subtitle.write_text(final_text, encoding="utf-8")
     chat_path = tmp_path / "candidate.chat-authority.json"
 
-    def exact_review(text, _authority, _timeline_offset_ms):
+    def exact_review(
+        text,
+        _authority,
+        _timeline_offset_ms,
+        _source_final_end_ms,
+    ):
         return {
             "schema_version": "final-review-audit.v2",
             "status": "FLAGGED",
@@ -205,7 +458,22 @@ def test_exact_final_review_gate_persists_deterministic_block(
             "boundary_semantic_review": {
                     "schema_version": "talk-boundary-semantic-review.v1",
                     "status": "PASS",
+                    "review_scope": "final_delivery",
                     "reason_codes": [],
+                    "request_sha256": "sha256:" + "d" * 64,
+                    "cue_grid_sha256": "sha256:" + "e" * 64,
+                    "source_separation_witness": {
+                        "schema_version": (
+                            "talk-boundary-source-separation-witness.v1"
+                        ),
+                        "status": "PASS",
+                        "source_review_sha256": "sha256:" + "a" * 64,
+                        "source_request_sha256": "sha256:" + "b" * 64,
+                        "source_cue_grid_sha256": "sha256:" + "c" * 64,
+                        "source_final_start_ms": 0,
+                        "source_final_end_ms": 9_400,
+                        "reason_codes": [],
+                    },
                     "final_endpoint_binding": {
                         "schema_version": "talk-boundary-final-endpoint-binding.v1",
                         "status": "PASS",
@@ -213,6 +481,9 @@ def test_exact_final_review_gate_persists_deterministic_block(
                         "recommended_end_ms": 9_000,
                         "final_closure_cue_index": 1,
                         "final_snapped_end_ms": 9_000,
+                        "final_end_ms": 9_400,
+                        "semantic_cue_grid_sha256": "sha256:" + "e" * 64,
+                        "final_cue_grid_sha256": "sha256:" + "e" * 64,
                         "reason_codes": [],
                     },
                 },
@@ -241,6 +512,7 @@ def test_exact_final_review_gate_persists_deterministic_block(
             cid="candidate",
             out_root=tmp_path,
             final_start=0,
+            final_end=9_400,
             recut=finalization.FinalRecutArtifacts(
                 recut_dir=tmp_path,
                 media_path=tmp_path / "candidate.recut.mp4",

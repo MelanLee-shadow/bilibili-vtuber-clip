@@ -408,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
         correction_review["boundary_semantic_review"] = (
             resolved_boundary_semantic
         )
+        spec["boundary_semantic_review"] = resolved_boundary_semantic
     minimum_effective_duration_ms = spec.get("minimum_effective_duration_ms")
     if minimum_effective_duration_ms is not None:
         if (

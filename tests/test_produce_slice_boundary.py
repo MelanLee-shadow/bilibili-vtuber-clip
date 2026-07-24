@@ -616,6 +616,7 @@ def test_required_owner_repair_passes_original_origin_to_clean_closure_search(
             snapped_start=0,
             final_start=0,
             target_rel=230_760,
+            closure_selection_lower_bound_ms=230_760,
             repair_search_origin_ms=202_720,
             repair_max_end_ms=232_720,
             snapped=231_000,
@@ -653,6 +654,133 @@ def test_required_owner_repair_passes_original_origin_to_clean_closure_search(
     assert audit["boundary_repair_search_origin_ms"] == 202_720
     assert audit["boundary_repair_max_end_ms"] == 232_720
     assert audit["required_boundary_owner_verification"]["status"] == "FAIL"
+
+
+def test_reviewed_closure_tail_can_cover_exact_delivery_interval(tmp_path):
+    """A reviewed cue end plus the normal 400ms tail may satisfy a media
+    interval owner; the owner must not force selection of the next sentence."""
+
+    cues = [
+        _cue(0, 102_610, "其实是最包容异性恋的直播间"),
+        _cue(103_120, 105_280, "总之先送妹妹礼物吧"),
+    ]
+    resolution = boundary_resolution.resolve_producer_boundary(
+        spec={
+            "pieces": [{"start_ms": 0, "end_ms": 120_000}],
+            "semantic_start_ms": 0,
+            "semantic_end_ms": 102_510,
+            "given_end_ms": 102_510,
+            "given_end_authority": "Ivan-reviewed source closure",
+            "required_boundary_owners": [
+                {
+                    "owner_kind": "reviewed_redelivery_baseline",
+                    "owner_id": "exact-reviewed-interval",
+                    "required": True,
+                    "local_windows": [
+                        {"start_ms": 0, "end_ms": 103_010}
+                    ],
+                }
+            ],
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "request_sha256": "sha256:" + "a" * 64,
+                "cue_grid_sha256": (
+                    boundary_resolution.cue_grid_sha256(cues)
+                ),
+                "recommended_end_cue_index": 1,
+                "recommended_end_ms": 102_610,
+            },
+        },
+        durations=[120_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=120_000,
+        cid="tail-covered-owner",
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        spans=[SpeechSpan(0, 102_580)],
+        boundary_repair_extend_cap_ms=30_000,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    assert resolution.final_end == 103_010
+    assert resolution.audit["snapped_sentence_end_ms"] == 102_610
+    assert (
+        resolution.audit["boundary_selection_lower_bound_ms"] == 102_610
+    )
+    assert resolution.audit["delivery_coverage_lower_bound_ms"] == 103_010
+    assert resolution.audit["tail_pad_coverage_bridge"]["status"] == "USED"
+    assert (
+        resolution.audit["required_boundary_owner_verification"]["status"]
+        == "PASS"
+    )
+    assert (
+        resolution.audit["boundary_semantic_review"][
+            "final_endpoint_binding"
+        ]["status"]
+        == "PASS"
+    )
+
+
+def test_tail_bridge_still_blocks_when_next_cue_clamps_before_owner(tmp_path):
+    """Tail coverage is not a waiver: an intervening next cue that clamps the
+    actual media end before the owner remains a hard failure."""
+
+    with pytest.raises(
+        SystemExit,
+        match="BOUNDARY_REQUIRED_OWNER_EXCLUDED",
+    ):
+        clamp_cues = [
+            _cue(0, 102_610, "包袱闭环"),
+            _cue(102_800, 105_000, "下一话题"),
+        ]
+        boundary_resolution.resolve_producer_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 120_000}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 102_510,
+                "given_end_ms": 102_510,
+                "given_end_authority": "Ivan-reviewed source closure",
+                "required_boundary_owners": [
+                    {
+                        "owner_kind": "reviewed_redelivery_baseline",
+                        "owner_id": "exact-reviewed-interval",
+                        "required": True,
+                        "local_windows": [
+                            {"start_ms": 0, "end_ms": 103_010}
+                        ],
+                    }
+                ],
+                "boundary_semantic_review": {
+                    "status": "PASS",
+                    "request_sha256": "sha256:" + "b" * 64,
+                    "cue_grid_sha256": (
+                        boundary_resolution.cue_grid_sha256(clamp_cues)
+                    ),
+                    "recommended_end_cue_index": 1,
+                    "recommended_end_ms": 102_610,
+                },
+            },
+            durations=[120_000],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=120_000,
+            cid="clamped-tail-owner",
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=clamp_cues,
+            spans=[
+                SpeechSpan(0, 102_580),
+                SpeechSpan(102_850, 104_900),
+            ],
+            boundary_repair_extend_cap_ms=30_000,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+        )
 
 
 def test_manual_end_cannot_replace_semantic_review(tmp_path):
@@ -985,6 +1113,7 @@ def test_final_semantic_endpoint_binding_matches_exact_closure():
             "schema_version": "talk-boundary-semantic-review.v1",
             "status": "PASS",
             "request_sha256": "sha256:" + "a" * 64,
+            "cue_grid_sha256": boundary_resolution.cue_grid_sha256(cues),
             "recommended_end_cue_index": 2,
             "recommended_end_ms": 9_000,
         },
@@ -1001,6 +1130,9 @@ def test_final_semantic_endpoint_binding_matches_exact_closure():
     assert binding["final_closure_cue_index"] == 2
     assert binding["final_snapped_end_ms"] == 9_000
     assert binding["final_end_ms"] == 9_400
+    assert binding["semantic_cue_grid_sha256"] == (
+        binding["final_cue_grid_sha256"]
+    )
 
 
 def test_final_semantic_endpoint_binding_blocks_later_repair_endpoint():
@@ -1026,3 +1158,33 @@ def test_final_semantic_endpoint_binding_blocks_later_repair_endpoint():
     assert review["final_endpoint_binding"]["status"] == "BLOCK"
     assert "BOUNDARY_SEMANTIC_ENDPOINT_MS_MISMATCH" in reasons
     assert "BOUNDARY_SEMANTIC_ENDPOINT_CUE_MISMATCH" in reasons
+
+
+def test_final_semantic_endpoint_binding_blocks_stale_cue_grid():
+    reviewed_cues = [
+        _cue(0, 5_000, "保留句。"),
+        _cue(5_100, 7_000, "后来删除的幻听。"),
+        _cue(7_100, 9_000, "包袱落地。"),
+    ]
+    final_cues = [reviewed_cues[0], reviewed_cues[2]]
+
+    review, reasons = boundary_resolution._bind_final_semantic_endpoint(
+        semantic_review={
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "PASS",
+            "request_sha256": "sha256:" + "c" * 64,
+            "cue_grid_sha256": (
+                boundary_resolution.cue_grid_sha256(reviewed_cues)
+            ),
+            "recommended_end_cue_index": 2,
+            "recommended_end_ms": 9_000,
+        },
+        cues=final_cues,
+        closure_cue=final_cues[1],
+        snapped_end_ms=9_000,
+        final_start_ms=0,
+        final_end_ms=9_400,
+    )
+
+    assert review["final_endpoint_binding"]["status"] == "BLOCK"
+    assert "BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH" in reasons

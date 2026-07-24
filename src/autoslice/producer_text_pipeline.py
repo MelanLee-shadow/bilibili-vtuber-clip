@@ -29,10 +29,6 @@ from src.autoslice.chat_authority import (
     sanitize_chat_display_text,
     witness_disagreement_cues,
 )
-from src.autoslice.boundary_semantic_review import (
-    BoundarySemanticReviewError,
-    review_talk_boundary_semantics,
-)
 from src.autoslice.clip_context import (
     build_clip_context,
     clip_context_prompt_text,
@@ -62,6 +58,10 @@ from src.autoslice.producer_chat_input import (
     SC_PRE_CONTEXT_MS,
     _load_independent_chat_support_srts,
     _piece_chat_evidence,
+)
+from src.autoslice.producer_boundary_review_stage import (
+    exact_delivery_correction_audit,
+    review_final_boundary_semantics,
 )
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
 from src.autoslice.song_name_pin import pin_song_names_in_srt
@@ -127,7 +127,7 @@ class TextPipelineResult:
     clip_context: dict
     clip_context_path: Path
     review_exact_final_srt: Callable[
-        [str, Mapping[str, object], int], dict[str, object]
+        [str, Mapping[str, object], int, int], dict[str, object]
     ]
 
 
@@ -704,12 +704,7 @@ def _run_final_review(
     selection_hook: str = "",
     referent_groups: Sequence[object] = (),
     clip_context: Mapping[str, object] | None = None,
-    candidate_id: str = "",
-    boundary_target_ms: int | None = None,
-    selection_scorecard: object = None,
-    human_boundary_authority: str = "",
     source_truth_windows: Sequence[tuple[int, int]] = (),
-    boundary_max_forward_ms: int = 30_000,
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -733,34 +728,6 @@ def _run_final_review(
                 candidate_context_text=candidate_context_text,
                 candidate_context=clip_context,
             )
-            boundary_semantic_review: dict[str, object]
-            if boundary_target_ms is None:
-                boundary_semantic_review = {
-                    "schema_version": "talk-boundary-semantic-review.v1",
-                    "status": "BLOCK",
-                    "reason_codes": ["BOUNDARY_TARGET_MISSING"],
-                }
-            else:
-                try:
-                    boundary_semantic_review = review_talk_boundary_semantics(
-                        cues=parse_srt_cues(srt_text),
-                        target_ms=boundary_target_ms,
-                        candidate_id=candidate_id,
-                        selection_hook=selection_hook,
-                        selection_scorecard=selection_scorecard,
-                        structured_context=structured_context_text,
-                        candidate_context=candidate_context_text,
-                        llm_call=review_llm_call,
-                        extract_json=extract_json_object,
-                        max_forward_ms=boundary_max_forward_ms,
-                    )
-                except BoundarySemanticReviewError as exc:
-                    boundary_semantic_review = {
-                        "schema_version": "talk-boundary-semantic-review.v1",
-                        "status": "BLOCK",
-                        "candidate_id": candidate_id,
-                        "reason_codes": [str(exc)],
-                    }
             protected_review_cues = set(handled_entity_cues)
             source_truth_protected_cues = {
                 int(cue.index)
@@ -791,7 +758,6 @@ def _run_final_review(
                 protected_cue_indexes=protected_review_cues,
                 entity_surface_set=entity_surfaces,
             )
-            final_review_audit["boundary_semantic_review"] = boundary_semantic_review
             final_review_audit["source_truth_protected_cue_indexes"] = sorted(
                 source_truth_protected_cues
             )
@@ -1887,14 +1853,7 @@ def run_text_pipeline(
         selection_hook=str(spec.get("selection_hook") or ""),
         referent_groups=entity_context.referent_groups,
         clip_context=clip_context,
-        candidate_id=cid,
-        boundary_target_ms=boundary_target_ms,
-        selection_scorecard=spec.get("selection_scorecard"),
-        human_boundary_authority=str(spec.get("given_end_authority") or ""),
         source_truth_windows=source_truth_windows,
-        boundary_max_forward_ms=int(
-            spec.get("boundary_repair_extend_cap_ms", 30_000)
-        ),
     )
     evidence = _finalize_text_evidence(
         spec=spec,
@@ -1933,6 +1892,28 @@ def run_text_pipeline(
             f"(cues {[row.get('cue_index') for row in still_unresolved]}); "
             "refusing to deliver known-suspect text — runner will retry"
         )
+    final_review_audit["boundary_semantic_review"] = (
+        review_final_boundary_semantics(
+            cues=evidence.cues,
+            boundary_target_ms=boundary_target_ms,
+            candidate_id=cid,
+            selection_hook=str(spec.get("selection_hook") or ""),
+            selection_scorecard=spec.get("selection_scorecard"),
+            structured_context=_final_review_structured_context(
+                selection_hook=str(spec.get("selection_hook") or ""),
+                authoritative_chat=authoritative_chat,
+            ),
+            candidate_context=clip_context_prompt_text(clip_context),
+            boundary_max_forward_ms=int(
+                spec.get("boundary_repair_extend_cap_ms", 30_000)
+            ),
+            llm_call=_build_final_review_llm_call(),
+            extract_json=extract_json_object,
+            disabled=(
+                os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
+            ),
+        )
+    )
     story_start_ms = max(
         0,
         int(spec.get("semantic_start_ms", spec["pieces"][0]["start_ms"]))
@@ -1971,10 +1952,33 @@ def run_text_pipeline(
         final_srt_text: str,
         verified_authority_audit: Mapping[str, object],
         timeline_offset_ms: int,
+        source_final_end_ms: int,
     ) -> dict[str, object]:
+        exact_correction_audit = exact_delivery_correction_audit(
+            final_srt_text=final_srt_text,
+            correction_audit=final_review_audit,
+            source_final_start_ms=timeline_offset_ms,
+            source_final_end_ms=source_final_end_ms,
+            candidate_id=cid,
+            selection_hook=str(spec.get("selection_hook") or ""),
+            selection_scorecard=spec.get("selection_scorecard"),
+            structured_context=_final_review_structured_context(
+                selection_hook=str(spec.get("selection_hook") or ""),
+                authoritative_chat=authoritative_chat,
+            ),
+            candidate_context=clip_context_prompt_text(clip_context),
+            boundary_max_forward_ms=int(
+                spec.get("boundary_repair_extend_cap_ms", 30_000)
+            ),
+            llm_call=_build_final_review_llm_call(),
+            extract_json=extract_json_object,
+            disabled=(
+                os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
+            ),
+        )
         return _run_exact_final_release_review(
             srt_text=final_srt_text,
-            correction_audit=final_review_audit,
+            correction_audit=exact_correction_audit,
             adapters=adapters,
             authoritative_chat=authoritative_chat,
             selection_hook=str(spec.get("selection_hook") or ""),
@@ -1982,8 +1986,7 @@ def run_text_pipeline(
             verify_confusable_entity=entity_context.verify_confusable_entity,
             verified_authority_audit=verified_authority_audit,
             timeline_offset_ms=timeline_offset_ms,
-        )
-
+    )
     return TextPipelineResult(
         srt_text=evidence.srt_text,
         cues=evidence.cues,

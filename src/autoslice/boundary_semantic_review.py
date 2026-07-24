@@ -78,6 +78,86 @@ def _cue_rows(cues: Sequence[object]) -> list[dict[str, object]]:
     ]
 
 
+def cue_grid_sha256(cues: Sequence[object]) -> str:
+    """Bind a semantic decision to the complete non-empty cue grid."""
+
+    return _canonical_sha256(
+        {
+            "schema_version": "talk-boundary-cue-grid.v1",
+            "cues": _cue_rows(cues),
+        }
+    )
+
+
+def semantic_review_sha256(review: Mapping[str, object]) -> str:
+    """Canonical digest for binding a later delivery review to source proof."""
+
+    return _canonical_sha256(review)
+
+
+def _valid_sha256(value: object) -> bool:
+    text = str(value or "")
+    return (
+        text.startswith("sha256:")
+        and len(text) == 71
+        and all(char in "0123456789abcdef" for char in text[7:])
+    )
+
+
+def _source_separation_witness(
+    review: Mapping[str, object] | None,
+    *,
+    source_final_start_ms: int | None,
+    source_final_end_ms: int | None,
+) -> dict[str, object] | None:
+    """Compact a bound source-window review for a delivery-terminal rerun."""
+
+    if review is None:
+        return None
+    binding = review.get("final_endpoint_binding")
+    reasons: list[str] = []
+    if review.get("status") != "PASS":
+        reasons.append("SOURCE_BOUNDARY_REVIEW_NOT_PASS")
+    if review.get("next_topic_separated") is not True:
+        reasons.append("SOURCE_NEXT_TOPIC_SEPARATION_NOT_PROVEN")
+    if review.get("next_topic_witness_valid") is not True:
+        reasons.append("SOURCE_NEXT_TOPIC_WITNESS_INVALID")
+    if not _valid_sha256(review.get("request_sha256")):
+        reasons.append("SOURCE_BOUNDARY_REQUEST_BINDING_INVALID")
+    if not _valid_sha256(review.get("cue_grid_sha256")):
+        reasons.append("SOURCE_BOUNDARY_CUE_GRID_BINDING_INVALID")
+    if (
+        not isinstance(binding, Mapping)
+        or binding.get("status") != "PASS"
+    ):
+        reasons.append("SOURCE_BOUNDARY_ENDPOINT_BINDING_INVALID")
+        binding = {}
+    if (
+        isinstance(source_final_start_ms, bool)
+        or not isinstance(source_final_start_ms, int)
+        or isinstance(source_final_end_ms, bool)
+        or not isinstance(source_final_end_ms, int)
+        or source_final_end_ms <= source_final_start_ms
+    ):
+        reasons.append("SOURCE_DELIVERY_INTERVAL_INVALID")
+    elif (
+        binding.get("final_start_ms") != source_final_start_ms
+        or binding.get("final_end_ms") != source_final_end_ms
+    ):
+        reasons.append("SOURCE_DELIVERY_INTERVAL_MISMATCH")
+    return {
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "status": "BLOCK" if reasons else "PASS",
+        "source_review_sha256": semantic_review_sha256(review),
+        "source_request_sha256": review.get("request_sha256"),
+        "source_cue_grid_sha256": review.get("cue_grid_sha256"),
+        "source_recommended_end_ms": review.get("recommended_end_ms"),
+        "source_final_start_ms": source_final_start_ms,
+        "source_final_end_ms": source_final_end_ms,
+        "reason_codes": reasons,
+    }
+
+
 def _target_index(rows: Sequence[Mapping[str, object]], target_ms: int) -> int:
     if not rows:
         raise BoundarySemanticReviewError("BOUNDARY_SEMANTIC_REVIEW_NO_CUES")
@@ -99,6 +179,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；不得提前删掉候选选择器已经圈定的内容。
 - 若目标本身已闭环，即使后面无停顿继续说，也应选目标；若目标半句或包袱未落地，才向后选最早同时满足三项的 cue。
+- 若请求带 PASS 的 terminal source separation witness，说明 source full-window 已证明 cut 后进入下一话题；此时 delivery 最后一条 cue 可用该 witness 证明 next_topic_separated，但 syntax/story 仍须按当前最终字幕重新判断。
 - 结构化弹幕/SC 可证明话题触发或切换；长期记忆只能帮助理解指代，不能单独证明边界。
 - 任一项无法证明就给 false，不要为了产片凑结论。
 
@@ -125,6 +206,9 @@ def review_talk_boundary_semantics(
     llm_call: Callable[[str], str],
     extract_json: Callable[[str], Any],
     max_forward_ms: int = MAX_FORWARD_MS,
+    terminal_source_review: Mapping[str, object] | None = None,
+    source_final_start_ms: int | None = None,
+    source_final_end_ms: int | None = None,
 ) -> dict[str, object]:
     """Return a validated, cue-grid-bound semantic boundary decision."""
 
@@ -163,6 +247,11 @@ def review_talk_boundary_semantics(
         raise BoundarySemanticReviewError(
             "BOUNDARY_SEMANTIC_REVIEW_CANDIDATE_CONTEXT_OVERFLOW"
         )
+    source_separation_witness = _source_separation_witness(
+        terminal_source_review,
+        source_final_start_ms=source_final_start_ms,
+        source_final_end_ms=source_final_end_ms,
+    )
     request = {
         "schema_version": "talk-boundary-semantic-request.v1",
         "candidate_id": candidate_id,
@@ -182,6 +271,9 @@ def review_talk_boundary_semantics(
             int(row["cue_index"])
             for row in rows[recommendation_hi:witness_hi]
         ],
+        "terminal_source_separation_witness": (
+            source_separation_witness
+        ),
     }
     request_sha256 = _canonical_sha256(request)
     try:
@@ -252,9 +344,16 @@ def review_talk_boundary_semantics(
         or (
             recommendation_valid
             and recommended_position is not None
-            and any(
-                row_positions.get(index, -1) > recommended_position
-                for index in evidence_indexes
+            and (
+                any(
+                    row_positions.get(index, -1) > recommended_position
+                    for index in evidence_indexes
+                )
+                or (
+                    isinstance(source_separation_witness, Mapping)
+                    and source_separation_witness.get("status") == "PASS"
+                    and recommended_position == len(rows) - 1
+                )
             )
         )
     )
@@ -312,8 +411,14 @@ def review_talk_boundary_semantics(
     return {
         "schema_version": SCHEMA_VERSION,
         "status": status,
+        "review_scope": (
+            "final_delivery"
+            if source_separation_witness is not None
+            else "source_full_window"
+        ),
         "candidate_id": candidate_id,
         "request_sha256": request_sha256,
+        "cue_grid_sha256": cue_grid_sha256(cues),
         "target_ms": target_ms,
         "target_cue_index": rows[target_pos]["cue_index"],
         "max_forward_ms": max_forward_ms,
@@ -330,6 +435,7 @@ def review_talk_boundary_semantics(
         "correlated_reviewer_disclosure": True,
         "evidence_cue_indexes": evidence_indexes,
         "next_topic_witness_valid": next_topic_witness_valid,
+        "source_separation_witness": source_separation_witness,
         "same_topic_continues_after_target": (
             same_topic_continues_after_target
         ),

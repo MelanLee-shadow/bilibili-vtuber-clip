@@ -48,6 +48,9 @@ from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.review_package_ass_audit import (  # noqa: E402
     audit_review_package_ass,
 )
+from src.autoslice.review_package_boundary_contract import (  # noqa: E402
+    audit_boundary_contract,
+)
 from src.autoslice.review_package_title_audit import (  # noqa: E402
     audit_recovery_publication_surfaces,
     recovery_publication_authority_contract,
@@ -215,6 +218,14 @@ def _audit_policy_fingerprint() -> str:
         Path(__file__),
         ROOT / "src/autoslice/subtitle_validation.py",
         ROOT / "src/autoslice/final_review_contract.py",
+        ROOT / "src/autoslice/boundary_semantic_review.py",
+        ROOT / "src/autoslice/boundary_endpoint_binding.py",
+        ROOT / "src/autoslice/producer_boundary.py",
+        ROOT / "src/autoslice/producer_boundary_resolution.py",
+        ROOT / "src/autoslice/producer_boundary_review_stage.py",
+        ROOT / "src/autoslice/producer_package_finalization.py",
+        ROOT / "src/autoslice/producer_text_pipeline.py",
+        ROOT / "src/autoslice/review_package_boundary_contract.py",
         ROOT / "src/autoslice/title_policy.py",
         ROOT / "src/autoslice/selection_scorecard.py",
         ROOT / "src/autoslice/cover_route_evidence.py",
@@ -285,7 +296,7 @@ def _parse_srt_time(value: str) -> float:
 def _parse_srt(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    text = path.read_text(encoding="utf-8")
+    text = path.read_bytes().decode("utf-8")
     cues: list[dict[str, Any]] = []
     for block in re.split(r"\n\s*\n", text.strip()):
         lines = block.splitlines()
@@ -325,7 +336,7 @@ def _story_transcript(path: Path | None) -> str:
     if path is None or not path.exists():
         return ""
     try:
-        cues = parse_srt_cues(path.read_text(encoding="utf-8"))
+        cues = parse_srt_cues(path.read_bytes().decode("utf-8"))
     except (OSError, ValueError):
         return ""
     return "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
@@ -497,113 +508,6 @@ def _audit_story_bound_cover(
                     path=record_path,
                     detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
                 )
-
-
-def _audit_boundary_contract(
-    *,
-    issues: list[dict[str, Any]],
-    stem: str,
-    record_path: Path | None,
-    record: dict[str, Any],
-    story_contract: dict[str, Any],
-    required: bool,
-    is_song: bool,
-) -> None:
-    if not required or is_song:
-        return
-    audit = record.get("boundary_audit")
-    if not isinstance(audit, dict):
-        _add_issue(issues, "BOUNDARY_AUDIT_MISSING", stem=stem, path=record_path)
-        return
-    review = story_contract.get("boundary_semantic_review")
-    audit_review = audit.get("boundary_semantic_review")
-    review_valid = (
-        isinstance(review, dict)
-        and review.get("schema_version")
-        == "talk-boundary-semantic-review.v1"
-        and review.get("status") == "PASS"
-        and all(
-            review.get(field) is True
-            for field in (
-                "syntax_complete",
-                "story_closed",
-                "next_topic_separated",
-                "content_anchor_covered",
-            )
-        )
-        and isinstance(review.get("recommended_end_ms"), int)
-        and not isinstance(review.get("recommended_end_ms"), bool)
-        and isinstance(review.get("recommended_end_cue_index"), int)
-        and not isinstance(review.get("recommended_end_cue_index"), bool)
-        and bool(review.get("evidence_cue_indexes"))
-        and isinstance(review.get("selector_story_witness"), dict)
-        and review["selector_story_witness"].get("status") == "PASS"
-    )
-    if not review_valid:
-        _add_issue(
-            issues,
-            "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS",
-            stem=stem,
-            path=record_path,
-        )
-    human_authority = str(story_contract.get("human_boundary_authority") or "").strip()
-    expected_authority = (
-        "human_source_reviewed_lower_bound_plus_semantic_review"
-        if human_authority
-        else "correlated_semantic_review_plus_deterministic_guards"
-    )
-    if audit.get("boundary_authority") != expected_authority:
-        _add_issue(
-            issues,
-            (
-                "HUMAN_BOUNDARY_AUTHORITY_DRIFT"
-                if human_authority
-                else "BOUNDARY_MULTI_WITNESS_AUTHORITY_MISSING"
-            ),
-            stem=stem,
-            path=record_path,
-        )
-    if human_authority:
-        if (
-            str(audit.get("manual_end_authority") or "").strip()
-            != human_authority
-        ):
-            _add_issue(
-                issues,
-                "HUMAN_BOUNDARY_AUTHORITY_DRIFT",
-                stem=stem,
-                path=record_path,
-            )
-    if audit_review != review:
-        _add_issue(
-            issues,
-            "BOUNDARY_SEMANTIC_REVIEW_BINDING_DRIFT",
-            stem=stem,
-            path=record_path,
-        )
-    recommended_end_ms = (
-        review.get("recommended_end_ms")
-        if isinstance(review, dict)
-        else None
-    )
-    snapped_end_ms = audit.get("snapped_sentence_end_ms")
-    final_end_ms = audit.get("final_end_ms")
-    if (
-        not isinstance(recommended_end_ms, int)
-        or isinstance(recommended_end_ms, bool)
-        or not isinstance(snapped_end_ms, int)
-        or isinstance(snapped_end_ms, bool)
-        or snapped_end_ms < recommended_end_ms
-        or not isinstance(final_end_ms, int)
-        or isinstance(final_end_ms, bool)
-        or final_end_ms < snapped_end_ms
-    ):
-        _add_issue(
-            issues,
-            "BOUNDARY_RECOMMENDED_END_NOT_MATERIALIZED",
-            stem=stem,
-            path=record_path,
-        )
 
 
 def _contains_japanese(text: str) -> bool:
@@ -1018,6 +922,7 @@ def _audit_item_story_contract(
     issues: list[dict[str, Any]],
     stem: str,
     subtitle_path: Path | None,
+    chat_authority: dict[str, Any],
     publish_path: Path | None,
     title_txt_path: Path | None,
     publish_title: str,
@@ -1186,10 +1091,13 @@ def _audit_item_story_contract(
         story_contract=story_contract,
         required=story_contract_required,
     )
-    _audit_boundary_contract(
+    audit_boundary_contract(
+        issue_adder=_add_issue,
         issues=issues,
         stem=stem,
         record_path=record_path,
+        subtitle_path=subtitle_path,
+        exact_final_review=chat_authority.get("final_review_audit"),
         record=record,
         story_contract=story_contract,
         required=story_contract_required,
@@ -1310,6 +1218,11 @@ def _audit_source_truth_owner_attestations(
         if isinstance(boundary_audit, dict)
         else None
     )
+    delivery_coverage_verification = (
+        boundary_audit.get("delivery_coverage_verification")
+        if isinstance(boundary_audit, dict)
+        else None
+    )
     frozen_owner_keys = [
         (
             str(owner.get("owner_kind") or ""),
@@ -1406,6 +1319,9 @@ def _audit_source_truth_owner_attestations(
         and isinstance(boundary_owner_verification, dict)
         and boundary_owner_verification.get("status") == "PASS"
         and boundary_owner_verification.get("failures") == []
+        and isinstance(delivery_coverage_verification, dict)
+        and delivery_coverage_verification.get("status") == "PASS"
+        and delivery_coverage_verification.get("failure") is None
         and int(
             chat_authority.get(
                 "final_boundary_required_exclusion_count", 0
@@ -1466,9 +1382,33 @@ def _audit_final_review_attestation(
                 f"actual={actual_chat_sha256}"
             ),
         )
-    expected_srt_sha256 = "sha256:" + hashlib.sha256(
-        subtitle_path.read_text(encoding="utf-8").encode("utf-8")
-    ).hexdigest()
+    subtitle_bytes = subtitle_path.read_bytes()
+    expected_srt_sha256 = (
+        "sha256:" + hashlib.sha256(subtitle_bytes).hexdigest()
+    )
+    declared_srt_sha256 = (
+        artifact_hashes.get("subtitle_sha256")
+        if isinstance(artifact_hashes, dict)
+        else None
+    )
+    if not _is_sha256(declared_srt_sha256):
+        _add_issue(
+            issues,
+            "SUBTITLE_RECORD_HASH_MISSING_OR_INVALID",
+            stem=stem,
+            path=record_path or subtitle_path,
+        )
+    elif declared_srt_sha256 != expected_srt_sha256:
+        _add_issue(
+            issues,
+            "SUBTITLE_RECORD_HASH_MISMATCH",
+            stem=stem,
+            path=record_path or subtitle_path,
+            detail=(
+                f"record={declared_srt_sha256!r}; "
+                f"actual={expected_srt_sha256}"
+            ),
+        )
     try:
         validate_final_review_release(
             chat_authority.get("final_review_audit"),
@@ -1947,6 +1887,7 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             issues=issues,
             stem=stem,
             subtitle_path=subtitle_path,
+            chat_authority=chat_authority,
             publish_path=publish_path,
             title_txt_path=title_txt_path,
             publish_title=publish_title,
