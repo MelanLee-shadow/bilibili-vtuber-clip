@@ -1676,6 +1676,25 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-brainflick-opening-conservative-core-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1476000,
+      "source_end_ms": 1478560,
+      "action": "replace_cue",
+      "text": "请坐在左边的弹",
+      "before_span": "就请坐在左边的弹",
+      "forbidden_tokens": [
+        "李姐晚上好",
+        "就请坐在左边的弹"
+      ],
+      "evidence_class": "DISPUTED_PREFIX_CONSERVATIVE_COMMON_ACOUSTIC_CORE",
+      "authority": "BCUT and Jianying independently begin this exact final-recut cue at 请坐在左边的弹; the closed-set Gemini verdict also contains that core but adds a leaked structured-chat prefix, while an open Gemini transcript conflicts. Ivan stated 2026-07-23 that uncertain speech should be left blank rather than subtitled incorrectly, so the disputed prefix is intentionally omitted and only the common audible core is authorized.",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-brainflick-give-up-r1",
       "revision_id": "r1",
       "assertion_state": "VERIFIED_ACTIVE",

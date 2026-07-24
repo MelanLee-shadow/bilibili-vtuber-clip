@@ -11,6 +11,8 @@
   ],
   "required_any_substring_groups": [],
   "forbidden_payload_substrings": [
+    "李姐晚上好",
+    "就请坐在左边的弹",
     "你弹一弹啊",
     "再一弹一弹",
     "硬弹一弹啊",

@@ -113,10 +113,11 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
   仍是“再弹，再，再硬弹一弹”；二者已分别写入 hash-bound baseline/regression，禁止再用
   “后文复读所以应统一”循环推断。当前仍是 dirty worktree，必须以最终集成测试、clean commit
   和 live deploy readback 为准。
-- 1475 首句仍保持 BLOCK：正确 recut 0–5.08s 上，BCUT/剪映都从“请坐在左边的弹……”起；
-  闭集 Gemini 却支持“李姐晚上好，请坐……”；无候选 Gemini 3.1 Pro 把开头低置信听成另一短句。
-  证据互相冲突，不能靠结构化弹幕把前缀灌回，也不能建立 active source truth。只有同一 exact
-  interval 的开放听写与无泄漏闭集仲裁一致后才能解除。
+- 1475 首句的争议前缀按用户“听不清宁可空着”原则收窄：正确 recut 0–5.08s 上，BCUT/剪映
+  都从“请坐在左边的弹……”起，闭集 Gemini 也包含这一共同核心，但额外补出受结构化弹幕污染
+  的“李姐晚上好”；无候选 Gemini 3.1 Pro 又低置信听成另一短句。现行 active source truth
+  只授权三路共有的“请坐在左边的弹”，显式禁止“李姐晚上好/就请坐”回灌；这不是宣称完整
+  听清，而是对争议前缀留空。whole-line support gate 与 exact-final regression 必须共同守住。
 - 下一次真实重跑必须新建 fresh v12
   `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v12-screenshot-cover`，且只从 immutable
   v2 source 由 v7 planner 重建，不得复用 v10/v11 state/out/receipt。该路径当前不存在；live
