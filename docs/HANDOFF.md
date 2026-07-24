@@ -85,6 +85,28 @@ plan 为 v7 exact-no-backfill 五项、`6577` 已抑制、1475 为 replacement�
 四处 `AUTO_UPLOAD` 均不存在、五项 `given_end_ms` 与 registry 一致；runner 以
 `AUTOSLICE_COVER_MODE=screenshot` 运行。尚未宣称任何产物通过。
 
+### V15 结果（2026-07-24 20:23Z，两轮 tick）
+
+`talk 2/5 delivered`（V13 0/5、V14 0/5 → V15 2/5）。**边界层修复已被生产证明**：
+五个候选全部越过 V13/V14 的边界死锁；1573 的见证窗重跑零 `OWNER_SET_DRIFT`；
+1475 的源层审查逐字记录了 `silent_gap_closure_cue`（cue 39 收在 77380，旧下限 77780，
+中间 400ms 机器验证为纯静音，尾垫桥补齐、下限未动），收尾句「再弹，再，再硬弹一弹」。
+
+| 候选 | 结果 |
+|---|---|
+| 1475 | 交付，`release_gate=PASS` |
+| 3573 | 首轮 provider 抖动，重试后 `CLEAN/PASS`（零 finding），交付 |
+| 672 | provider 已消除；剩 cue85 `听到是吗`，声学裁定 current/proposed **双双 INCOMPATIBLE** |
+| 1863 | cue100 `这切哈哈`，终审提议 `这期哈哈`；BCUT 官方与 AGY 两独立引擎均写 `这切` |
+| 1573 | cue76 `谢谢梅杰克家的六更るり的SC` 含假名，音频证人 `audible_language=zh`、`kana_similarity=0.0` |
+
+**重要判定（两次自我推翻，勿再重犯）**：终审 `findings` 门**不是**过度限制，不要去放宽它。
+它校验的是**对最终字节的独立重扫**，此层不能再改字节，`repaired:true` 只是沙盘裁定。
+逐例查证结论：607_723 是首轮漏检的真错字（`粉团灯牌`→`粉丝灯牌`）留在成片里；
+672 cue85 是现文本与提议**都不符音频**（闭合条件要求 current_fit∈{SUPPORTED,PLAUSIBLE}）。
+两次都是门在保护质量。剩余阻断是**真实字幕问题**，正解是修字幕（ledger 真值条目 / 重出），
+不是松门。
+
 剩余步骤：
 
 1. V15 必须跑到 exact closure COMPLETE；任一 exact candidate 失败都不得补位或沿用旧产物。
