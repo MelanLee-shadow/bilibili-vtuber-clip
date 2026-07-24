@@ -12,6 +12,16 @@ import scripts.authorized_upload as au
 
 TEST_TAGS = ["李豆沙", "虚拟主播", "直播切片"]
 VALID_TITLE = "【李豆沙】这是一个足够长度的测试标题"
+RECOVERY_BVID = "BV1Mug46EEQz"
+TEST_PUBLICATION_AUTHORITY = {
+    "schema_version": "test-recovery-publication-authority.v1",
+    "candidate_id": "candidate-test",
+    "bvid": RECOVERY_BVID,
+    "aid": 42,
+    "cid": 101,
+    "title_mode": "preserve_verified_public",
+    "observed_public_title": VALID_TITLE,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +90,14 @@ def _stub_season_http(monkeypatch):
     )
 
 
-def _write_v3_package(video, cover, title, tags=None):
+def _write_v3_package(
+    video,
+    cover,
+    title,
+    tags=None,
+    *,
+    recovery_publication_authority=None,
+):
     tags = list(TEST_TAGS if tags is None else tags)
     stem = video.stem
     subtitle = video.parent / f"{stem}.srt"
@@ -88,9 +105,7 @@ def _write_v3_package(video, cover, title, tags=None):
     review = video.parent / "review_manifest.json"
     audit = video.parent / f"{stem}.package_audit.json"
     subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\n测试\n", encoding="utf-8")
-    record.write_text(
-        json.dumps(
-            {
+    record_payload = {
                 "artifact_hashes": {
                     "burned_video_sha256": "sha256:" + au.sha256_file(video),
                     "cover_sha256": "sha256:" + au.sha256_file(cover),
@@ -119,32 +134,40 @@ def _write_v3_package(video, cover, title, tags=None):
                     "status": "OK",
                     "final_tags": tags,
                 },
-            },
-            ensure_ascii=False,
-        ),
+            }
+    if recovery_publication_authority is not None:
+        record_payload["recovery_publication_authority"] = (
+            recovery_publication_authority
+        )
+    record.write_text(
+        json.dumps(record_payload, ensure_ascii=False),
         encoding="utf-8",
     )
+    review_item = {
+        "stem": stem,
+        "candidate_id": "candidate-test",
+        "media": video.name,
+        "cover": cover.name,
+        "record": record.name,
+        "subtitle_srt": subtitle.name,
+        "title": title,
+        **(
+            {
+                "classification": "song",
+                "lyrics_alignment_report": "test-fixture",
+            }
+            if title.startswith(au.SONG_TITLE_PREFIX)
+            else {}
+        ),
+    }
+    if recovery_publication_authority is not None:
+        review_item["recovery_publication_authority"] = (
+            recovery_publication_authority
+        )
     review.write_text(
         json.dumps(
             {
-                "items": [
-                    {
-                        "stem": stem,
-                        "media": video.name,
-                        "cover": cover.name,
-                        "record": record.name,
-                        "subtitle_srt": subtitle.name,
-                        "title": title,
-                        **(
-                            {
-                                "classification": "song",
-                                "lyrics_alignment_report": "test-fixture",
-                            }
-                            if title.startswith(au.SONG_TITLE_PREFIX)
-                            else {}
-                        ),
-                    }
-                ]
+                "items": [review_item]
             },
             ensure_ascii=False,
         ),
@@ -222,6 +245,50 @@ def test_repair_cli_routes_separate_api_and_biliup_cookie_files(
     }
 
 
+def test_repair_plan_refuses_wrong_bvid_before_adapter_or_observe(
+    tmp_path, monkeypatch, capsys
+):
+    manifest = {
+        "manifest_version": 3,
+        "recovery_publication_authority": dict(
+            TEST_PUBLICATION_AUTHORITY
+        ),
+    }
+    adapter_created = 0
+
+    def make_adapter(*_args):
+        nonlocal adapter_created
+        adapter_created += 1
+        raise AssertionError("adapter must not be created")
+
+    monkeypatch.setattr(
+        au, "load_and_verify", lambda _path: (manifest, [])
+    )
+    monkeypatch.setattr(
+        au.repair_binding,
+        "validate_recovery_publication_authority",
+        lambda value, **_kwargs: dict(value),
+    )
+    monkeypatch.setattr(au, "_same_bv_adapter", make_adapter)
+
+    assert au.main(
+        [
+            "repair-plan",
+            "--manifest",
+            str(tmp_path / "manifest.json"),
+            "--bvid",
+            "BV1tTg46UE3y",
+            "--out",
+            str(tmp_path / "plan.json"),
+        ]
+    ) == 2
+    assert adapter_created == 0
+    assert (
+        "repair BVID differs from recovery_publication_authority"
+        in capsys.readouterr().err
+    )
+
+
 def test_make_manifest_then_verify_ok(tmp_path, capsys):
     _, _, manifest = _mk(tmp_path)
     assert au.main(["verify", "--manifest", str(manifest)]) == 0
@@ -233,6 +300,155 @@ def test_make_manifest_then_verify_ok(tmp_path, capsys):
         "李豆沙个人主页：https://space.bilibili.com/1703797642\n"
         "李豆沙直播间：https://live.bilibili.com/22966160"
     )
+
+
+def test_make_manifest_freezes_matching_package_publication_authority(
+    tmp_path, monkeypatch
+):
+    def audit_package(root):
+        return {
+            "schema_version": au.AUDIT_SCHEMA_VERSION,
+            "policy_epoch": au.AUDIT_POLICY_EPOCH,
+            "policy_fingerprint": "test-policy",
+            "auditor_source_sha256": "test-auditor",
+            "passed": True,
+            "root": str(root.resolve()),
+            "audited_inputs": [],
+            "issues": [],
+            "issue_count": 0,
+            "blocking_issue_count": 0,
+        }
+
+    def validate(value, *, candidate_id, expected_final_title=None):
+        assert candidate_id == "candidate-test"
+        assert expected_final_title == VALID_TITLE
+        if value != TEST_PUBLICATION_AUTHORITY:
+            raise au.repair_binding.RecoveryTitleAuthorityError(
+                "test mismatch"
+            )
+        return dict(TEST_PUBLICATION_AUTHORITY)
+
+    monkeypatch.setattr(
+        au.repair_binding,
+        "validate_recovery_publication_authority",
+        validate,
+    )
+    monkeypatch.setattr(au, "audit_package", audit_package)
+    video = tmp_path / "recovery.mp4"
+    cover = tmp_path / "recovery.cover.png"
+    video.write_bytes(b"recovery-video")
+    cover.write_bytes(b"recovery-cover")
+    audit = _write_v3_package(
+        video,
+        cover,
+        VALID_TITLE,
+        recovery_publication_authority=TEST_PUBLICATION_AUTHORITY,
+    )
+    manifest = tmp_path / "recovery.upload_manifest.json"
+
+    assert au.main(
+        [
+            "make-manifest",
+            "--video",
+            str(video),
+            "--cover",
+            str(cover),
+            "--package-audit",
+            str(audit),
+            "--title",
+            VALID_TITLE,
+            "--quote",
+            "尽量上传",
+            "--out",
+            str(manifest),
+        ]
+    ) == 0
+    assert (
+        json.loads(manifest.read_text(encoding="utf-8"))[
+            "recovery_publication_authority"
+        ]
+        == TEST_PUBLICATION_AUTHORITY
+    )
+    assert au.main(["verify", "--manifest", str(manifest)]) == 0
+
+    tampered = json.loads(manifest.read_text(encoding="utf-8"))
+    tampered["recovery_publication_authority"]["cid"] = 999
+    manifest.write_text(
+        json.dumps(tampered, ensure_ascii=False), encoding="utf-8"
+    )
+    assert au.main(["verify", "--manifest", str(manifest)]) == 2
+
+
+def test_make_manifest_refuses_one_sided_publication_authority(
+    tmp_path, monkeypatch, capsys
+):
+    video = tmp_path / "recovery.mp4"
+    cover = tmp_path / "recovery.cover.png"
+    video.write_bytes(b"recovery-video")
+    cover.write_bytes(b"recovery-cover")
+    audit = _write_v3_package(video, cover, VALID_TITLE)
+    record = tmp_path / "recovery.record.json"
+    record_data = json.loads(record.read_text(encoding="utf-8"))
+    record_data["recovery_publication_authority"] = (
+        TEST_PUBLICATION_AUTHORITY
+    )
+    record.write_text(
+        json.dumps(record_data, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(au, "_validate_v3_package_attestation", lambda *_a, **_k: [])
+
+    assert au.main(
+        [
+            "make-manifest",
+            "--video",
+            str(video),
+            "--cover",
+            str(cover),
+            "--package-audit",
+            str(audit),
+            "--title",
+            VALID_TITLE,
+            "--quote",
+            "尽量上传",
+        ]
+    ) == 2
+    assert "must exist on both record and review item" in capsys.readouterr().err
+
+
+def test_package_binding_replays_real_committed_publication_authority():
+    from src.autoslice.recovery_title_authority import (
+        build_recovery_publication_authorities,
+        expected_recovery_publish_title,
+    )
+
+    candidate_id = "auto_193450_1475_1543"
+    registry = (
+        au.ROOT
+        / "assets/lidousha/recovery_publication_authority.v1.json"
+    )
+    authority = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=registry,
+        expected_registry_sha256="sha256:" + au.sha256_file(registry),
+    )[candidate_id]
+    record = {
+        "story_contract": {"candidate_id": candidate_id},
+        "recovery_publication_authority": authority,
+    }
+    review_item = {
+        "candidate_id": candidate_id,
+        "recovery_publication_authority": authority,
+    }
+
+    validated, problems = (
+        au.repair_binding.package_recovery_publication_authority(
+            record,
+            review_item,
+            expected_final_title=expected_recovery_publish_title(authority),
+        )
+    )
+    assert problems == []
+    assert validated == authority
 
 
 def test_verify_refuses_hash_drift(tmp_path, capsys):

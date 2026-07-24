@@ -41,6 +41,13 @@
 执行前必须确认当前 source 已部署到 `free`，目标修复包通过本页发布准入，并先完成真实
 dry plan；本地存在代码/测试不等于 production 已可用，也不等于五条线上稿件已经修复。
 
+同 BV `repair-plan` 只接受 authorized manifest 顶层 hash-bound
+`recovery-same-bv-publication-authority.v1`。该 authority 必须由包内 record 与 review item
+两面精确投影；命令行 `--bvid` 在 adapter 构造和任何网络 observe **之前**就须与 authority
+BVID 相等。只读 live snapshot 随后还要证明 Creator/public/section 的 AID 与旧单 P CID 均
+等于 authority；`same-bv-repair-plan.v2` 冻结该 authority，repair-run/status 每次恢复都与 manifest
+重验。这样不能把 A 包靠错误 CLI 参数指向 B 稿件。
+
 same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie_pairs`：
 `{cookie_info:{cookies:[…]}}` 与 `{data:{cookie_info:{cookies:[…]}}}` 两种真实形态都按
 唯一 schema 严格解析；根节点/字段/条目异常、两形态同时出现、空值、重复 cookie 名或缺

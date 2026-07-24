@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.authorized_upload import UploadLockBusy, exclusive_upload_lock
+import src.autoslice.same_bv_repair as same_bv
 from src.autoslice.same_bv_repair import (
     DuplicateBvid,
     JournalCorrupt,
@@ -22,6 +23,7 @@ from src.autoslice.same_bv_repair import (
     repair_step,
     run_repair,
     sha256_file,
+    validate_plan,
     write_plan,
 )
 
@@ -29,6 +31,37 @@ BVID = "BV1Mug46EEQz"
 OLD_CID = 101
 NEW_CID = 202
 COVER_URL = "https://img.example/new-cover.png"
+FINAL_TITLE = "【李豆沙】新标题"
+PUBLICATION_AUTHORITY = {
+    "schema_version": "test-recovery-publication-authority.v1",
+    "candidate_id": "candidate-test",
+    "bvid": BVID,
+    "aid": 42,
+    "cid": OLD_CID,
+    "title_mode": "preserve_verified_public",
+    "observed_public_title": FINAL_TITLE,
+}
+
+
+@pytest.fixture(autouse=True)
+def _stub_recovery_publication_authority(monkeypatch):
+    def validate(value, *, candidate_id, expected_final_title=None):
+        if (
+            value != PUBLICATION_AUTHORITY
+            or candidate_id != PUBLICATION_AUTHORITY["candidate_id"]
+            or (
+                expected_final_title is not None
+                and expected_final_title != FINAL_TITLE
+            )
+        ):
+            raise same_bv.RecoveryTitleAuthorityError(
+                "test recovery publication authority mismatch"
+            )
+        return copy.deepcopy(PUBLICATION_AUTHORITY)
+
+    monkeypatch.setattr(
+        same_bv, "validate_recovery_publication_authority", validate
+    )
 
 
 def _before_snapshot() -> dict:
@@ -97,7 +130,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             "sha256": sha256_file(cover),
             "bytes": cover.stat().st_size,
         },
-        "title": "【李豆沙】新标题",
+        "title": FINAL_TITLE,
         "description": "https://live.bilibili.com/\n简介",
         "tags": ["李豆沙", "直播切片"],
         "publish_policy": {
@@ -111,6 +144,9 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             "season_title": "小李切片",
         },
         "authorization": {"by": "Ivan", "quote": "尽量上传"},
+        "recovery_publication_authority": copy.deepcopy(
+            PUBLICATION_AUTHORITY
+        ),
     }
     path = tmp_path / "new.upload_manifest.json"
     path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -150,8 +186,10 @@ class FakeAdapter:
         self.append_calls = 0
         self.cover_calls = 0
         self.swap_calls = 0
+        self.observe_calls = 0
 
     def observe(self, bvid: str, section_id: int) -> dict:
+        self.observe_calls += 1
         assert bvid == BVID
         assert section_id == 9320779
         return copy.deepcopy(self.snapshot)
@@ -583,6 +621,75 @@ def test_manifest_or_artifact_drift_invalidates_plan_before_remote_action(tmp_pa
             manifest=manifest,
             adapter=adapter,
         )
+    assert adapter.append_calls == adapter.swap_calls == 0
+
+
+def test_plan_binds_recovery_publication_authority_to_manifest(tmp_path):
+    manifest, plan, plan_path, _journal = _plan_authority(tmp_path)
+    assert (
+        plan["recovery_publication_authority"]
+        == PUBLICATION_AUTHORITY
+    )
+
+    tampered_plan = copy.deepcopy(plan)
+    tampered_plan["recovery_publication_authority"]["bvid"] = (
+        "BV1tTg46UE3y"
+    )
+    with pytest.raises(
+        PlanInvalid, match="recovery_publication_authority"
+    ):
+        validate_plan(
+            tampered_plan,
+            manifest=manifest,
+            plan_path=plan_path,
+        )
+
+
+@pytest.mark.parametrize(
+    ("surface", "field", "value", "message"),
+    [
+        ("creator", "aid", 999, "Creator AID differs"),
+        ("public", "cid", 999, "public CID differs"),
+        ("section", "cid", 999, "section CID differs"),
+    ],
+)
+def test_planning_requires_live_aid_cid_to_match_publication_authority(
+    tmp_path, surface, field, value, message
+):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    if surface == "section":
+        snapshot["section"]["matches"][0][field] = value
+    else:
+        snapshot[surface][field] = value
+
+    with pytest.raises(PlanInvalid, match=message):
+        create_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            bvid=BVID,
+            snapshot=snapshot,
+        )
+
+
+def test_manifest_authority_drift_refuses_resume_before_observe(tmp_path):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan)
+    manifest["recovery_publication_authority"] = {
+        **PUBLICATION_AUTHORITY,
+        "cid": 999,
+    }
+
+    with pytest.raises(
+        PlanInvalid, match="recovery_publication_authority"
+    ):
+        repair_step(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        )
+    assert adapter.observe_calls == 0
     assert adapter.append_calls == adapter.swap_calls == 0
 
 

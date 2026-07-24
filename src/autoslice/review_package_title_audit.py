@@ -1,10 +1,9 @@
-"""Fail-closed audit for recovery packages that retain a public title.
+"""Fail-closed audit for exact same-BV publication authorities.
 
-Recovery may preserve the title of an existing same-BV publication.  That is
-not an ordinary generated title: the package has to carry one replayable
-public-verification authority across the manifest, record, staging draft, and
-publish draft.  Keep this narrow contract outside the large package auditor so
-the title-specific closure remains independently testable.
+Each recovery item carries one replayable registry authority across the
+manifest, record, staging draft, and publish draft.  It binds both the final
+title source and the existing BV identity.  Keep this narrow contract outside
+the large package auditor so the closure remains independently testable.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from typing import Any
 
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
-    validate_recovery_title_authority,
+    validate_recovery_publication_authority,
 )
 
 
@@ -28,6 +27,56 @@ class ReviewPackageTitleIssue:
     code: str
     path: Path | None
     detail: str = ""
+
+
+def recovery_publication_authority_contract(
+    manifest: dict[str, Any],
+    items: list[Any],
+) -> tuple[
+    dict[str, Any],
+    bool,
+    tuple[ReviewPackageTitleIssue, ...],
+]:
+    """Resolve the exact candidate map without trusting item self-report."""
+
+    authorities = manifest.get(
+        "recovery_publication_authorities_by_candidate"
+    )
+    selection_contract = manifest.get("selection_contract")
+    required = bool(
+        manifest.get("run_mode") == "RECOVERY_REVIEW"
+        and isinstance(selection_contract, dict)
+        and selection_contract.get("mode")
+        == "EXACT_CANDIDATE_SET_NO_BACKFILL"
+    )
+    issues: list[ReviewPackageTitleIssue] = []
+    if required and not isinstance(authorities, dict):
+        issues.append(
+            ReviewPackageTitleIssue(
+                "RECOVERY_PUBLICATION_AUTHORITY_MAP_MISSING",
+                None,
+            )
+        )
+    if not isinstance(authorities, dict):
+        authorities = {}
+    item_candidate_ids = {
+        str(item.get("candidate_id") or "")
+        for item in items
+        if isinstance(item, dict)
+        and str(item.get("candidate_id") or "")
+    }
+    if required and set(authorities) != item_candidate_ids:
+        issues.append(
+            ReviewPackageTitleIssue(
+                "RECOVERY_PUBLICATION_AUTHORITY_MAP_SET_MISMATCH",
+                None,
+                (
+                    f"authority={sorted(authorities)}; "
+                    f"items={sorted(item_candidate_ids)}"
+                ),
+            )
+        )
+    return authorities, required, tuple(issues)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -56,22 +105,21 @@ def audit_recovery_title_authority(
     record_path: Path | None,
     record: dict[str, Any],
     publish_staging: dict[str, Any],
+    expected_authority: object,
 ) -> tuple[ReviewPackageTitleIssue, ...]:
-    """Bind a preserved public title across every packaged surface.
+    """Bind the required same-BV target/title contract across every surface."""
 
-    A normal automatic or Ivan-manual title has no recovery authority and is
-    deliberately outside this gate.  If any surface introduces the authority,
-    all four surfaces and the packaged publish-byte hash are required.
-    """
-
-    record_authority = record.get("recovery_title_authority")
-    item_authority = item.get("recovery_title_authority")
-    staging_authority = publish_staging.get("recovery_title_authority")
+    record_authority = record.get("recovery_publication_authority")
+    item_authority = item.get("recovery_publication_authority")
+    staging_authority = publish_staging.get(
+        "recovery_publication_authority"
+    )
     publish = _load_json(publish_path) if publish_path else {}
-    publish_authority = publish.get("recovery_title_authority")
+    publish_authority = publish.get("recovery_publication_authority")
     present = [
         value is not None
         for value in (
+            expected_authority,
             record_authority,
             item_authority,
             staging_authority,
@@ -79,12 +127,10 @@ def audit_recovery_title_authority(
         )
     ]
     issue_path = record_path or publish_path
-    if not any(present):
-        return ()
     if not all(present):
         return (
             ReviewPackageTitleIssue(
-                "RECOVERY_PUBLIC_TITLE_AUTHORITY_SURFACE_MISSING",
+                "RECOVERY_PUBLICATION_AUTHORITY_SURFACE_MISSING",
                 issue_path,
             ),
         )
@@ -94,31 +140,32 @@ def audit_recovery_title_authority(
         or item_title
     )
     try:
-        validated = validate_recovery_title_authority(
-            record_authority,
+        validated = validate_recovery_publication_authority(
+            expected_authority,
             candidate_id=item_candidate_id,
-            expected_title=final_title,
+            expected_final_title=final_title,
         )
     except RecoveryTitleAuthorityError as exc:
         return (
             ReviewPackageTitleIssue(
-                "RECOVERY_PUBLIC_TITLE_AUTHORITY_INVALID",
+                "RECOVERY_PUBLICATION_AUTHORITY_INVALID",
                 issue_path,
                 str(exc),
             ),
         )
     issues: list[ReviewPackageTitleIssue] = []
     if (
-        item_authority != validated
+        record_authority != validated
+        or item_authority != validated
         or staging_authority != validated
         or publish_authority != validated
-        or item_title != validated["title"]
-        or publish_staging.get("title") != validated["title"]
-        or publish.get("title") != validated["title"]
+        or item_title != final_title
+        or publish_staging.get("title") != final_title
+        or publish.get("title") != final_title
     ):
         issues.append(
             ReviewPackageTitleIssue(
-                "RECOVERY_PUBLIC_TITLE_AUTHORITY_BINDING_DRIFT",
+                "RECOVERY_PUBLICATION_AUTHORITY_BINDING_DRIFT",
                 issue_path,
             )
         )
@@ -132,8 +179,47 @@ def audit_recovery_title_authority(
     ):
         issues.append(
             ReviewPackageTitleIssue(
-                "RECOVERY_PUBLIC_TITLE_PUBLISH_HASH_DRIFT",
+                "RECOVERY_PUBLICATION_PUBLISH_HASH_DRIFT",
                 publish_path or record_path,
             )
         )
     return tuple(issues)
+
+
+def audit_recovery_publication_surfaces(
+    *,
+    item: dict[str, Any],
+    item_candidate_id: str,
+    item_title: str,
+    publish_path: Path | None,
+    record_path: Path | None,
+    record: dict[str, Any],
+    publish_staging: dict[str, Any],
+    expected_authority: object,
+    required: bool,
+) -> tuple[ReviewPackageTitleIssue, ...]:
+    """Run the surface gate only for exact recovery or an introduced surface."""
+
+    surface_present = any(
+        value is not None
+        for value in (
+            item.get("recovery_publication_authority"),
+            record.get("recovery_publication_authority"),
+            publish_staging.get("recovery_publication_authority"),
+        )
+    )
+    if not required and not surface_present:
+        return ()
+    return audit_recovery_title_authority(
+        item=item,
+        item_candidate_id=item_candidate_id,
+        item_title=item_title,
+        publish_path=publish_path,
+        record_path=record_path,
+        record=record,
+        publish_staging=publish_staging,
+        expected_authority=(
+            expected_authority
+            or item.get("recovery_publication_authority")
+        ),
+    )

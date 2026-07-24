@@ -49,7 +49,8 @@ from src.autoslice.review_package_ass_audit import (  # noqa: E402
     audit_review_package_ass,
 )
 from src.autoslice.review_package_title_audit import (  # noqa: E402
-    audit_recovery_title_authority,
+    audit_recovery_publication_surfaces,
+    recovery_publication_authority_contract,
 )
 from src.autoslice.title_policy import (  # noqa: E402
     CHANNEL_PROFILE,
@@ -1541,7 +1542,7 @@ def _audit_finished_item_cover(
             or finished_generation.get("fallback_used") is True
         )
         attestation_candidate_id = story_candidate_id or item_candidate_id
-        if attestations_by_candidate and attestation_candidate_id:
+        if story_contract_required and attestation_candidate_id:
             attestation = attestations_by_candidate.get(
                 attestation_candidate_id
             )
@@ -1616,6 +1617,70 @@ def _audit_finished_item_cover(
     )
 
 
+def _cover_attestations_by_candidate(
+    *,
+    manifest: dict[str, Any],
+    items: list[Any],
+    recovery_publication_authorities: dict[str, Any],
+    publication_contract_required: bool,
+    story_contract_required: bool,
+    manifest_path: Path,
+    issues: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    cover_attestations = manifest.get("cover_route_attestations")
+    indexed: dict[str, dict[str, Any]] = {}
+    if isinstance(cover_attestations, list):
+        for attestation in cover_attestations:
+            if not isinstance(attestation, dict):
+                _add_issue(
+                    issues,
+                    "MANIFEST_COVER_ATTESTATION_ID_INVALID",
+                    path=manifest_path,
+                    detail="attestation is not an object",
+                )
+                continue
+            candidate_id = str(attestation.get("candidate_id") or "")
+            if not candidate_id or candidate_id in indexed:
+                _add_issue(
+                    issues,
+                    "MANIFEST_COVER_ATTESTATION_ID_INVALID",
+                    path=manifest_path,
+                    detail=f"candidate_id={candidate_id!r}",
+                )
+                continue
+            indexed[candidate_id] = attestation
+
+    if not (story_contract_required or publication_contract_required):
+        return indexed
+    expected = (
+        set(recovery_publication_authorities)
+        if publication_contract_required
+        else {
+            str(item.get("candidate_id") or "")
+            for item in items
+            if isinstance(item, dict)
+            and str(item.get("candidate_id") or "")
+        }
+    )
+    if not isinstance(cover_attestations, list):
+        _add_issue(
+            issues,
+            "MANIFEST_COVER_ATTESTATIONS_MISSING",
+            path=manifest_path,
+        )
+    if set(indexed) != expected:
+        _add_issue(
+            issues,
+            "MANIFEST_COVER_ATTESTATION_SET_MISMATCH",
+            path=manifest_path,
+            detail=(
+                f"attestations={sorted(indexed)}; "
+                f"expected={sorted(expected)}"
+            ),
+        )
+    return indexed
+
+
 def audit_package(root: str | Path) -> dict[str, Any]:
     root = Path(root)
     manifest_path = root / "review_manifest.json"
@@ -1661,6 +1726,16 @@ def audit_package(root: str | Path) -> dict[str, Any]:
     if not isinstance(items, list):
         _add_issue(issues, "MANIFEST_ITEMS_MISSING", path=manifest_path)
         items = []
+    (
+        recovery_publication_authorities,
+        publication_contract_required,
+        publication_contract_issues,
+    ) = recovery_publication_authority_contract(
+        manifest,
+        items,
+    )
+    for authority_issue in publication_contract_issues:
+        _add_issue(issues, authority_issue.code, path=manifest_path, detail=authority_issue.detail)
 
     story_contract_required = _story_contract_is_required(manifest)
     if story_contract_required:
@@ -1682,22 +1757,17 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 detail=f"run_mode={manifest.get('run_mode')!r}",
             )
 
-    cover_attestations = manifest.get("cover_route_attestations")
-    attestations_by_candidate: dict[str, dict[str, Any]] = {}
-    if isinstance(cover_attestations, list):
-        for attestation in cover_attestations:
-            if not isinstance(attestation, dict):
-                continue
-            candidate_id = str(attestation.get("candidate_id") or "")
-            if not candidate_id or candidate_id in attestations_by_candidate:
-                _add_issue(
-                    issues,
-                    "MANIFEST_COVER_ATTESTATION_ID_INVALID",
-                    path=manifest_path,
-                    detail=f"candidate_id={candidate_id!r}",
-                )
-                continue
-            attestations_by_candidate[candidate_id] = attestation
+    attestations_by_candidate = _cover_attestations_by_candidate(
+        manifest=manifest,
+        items=items,
+        recovery_publication_authorities=(
+            recovery_publication_authorities
+        ),
+        publication_contract_required=publication_contract_required,
+        story_contract_required=story_contract_required,
+        manifest_path=manifest_path,
+        issues=issues,
+    )
 
     for item in items:
         if not isinstance(item, dict):
@@ -1835,7 +1905,7 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             else ""
         )
         item_candidate_id = str(item.get("candidate_id") or "")
-        for title_issue in audit_recovery_title_authority(
+        for authority_issue in audit_recovery_publication_surfaces(
             item=item,
             item_candidate_id=item_candidate_id,
             item_title=item_title,
@@ -1843,13 +1913,17 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             record_path=record_path,
             record=record,
             publish_staging=publish_staging,
+            expected_authority=recovery_publication_authorities.get(
+                item_candidate_id
+            ),
+            required=publication_contract_required,
         ):
             _add_issue(
                 issues,
-                title_issue.code,
+                authority_issue.code,
                 stem=stem,
-                path=title_issue.path,
-                detail=title_issue.detail,
+                path=authority_issue.path,
+                detail=authority_issue.detail,
             )
         if (
             item_candidate_id

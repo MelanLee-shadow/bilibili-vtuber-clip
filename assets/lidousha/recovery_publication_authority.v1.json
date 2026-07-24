@@ -1,0 +1,71 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-23: repair exactly these five already-published clips in place, preserve each reviewed title source, and retain each reviewed source-timeline ending.",
+  "entries": [
+    {
+      "candidate_id": "auto_193450_3573_3665",
+      "title_mode": "ivan_manual_override",
+      "observed_public_title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
+      "required_given_end_ms": 3665850,
+      "bvid": "BV1Mug46EEQz",
+      "aid": 116969542128097,
+      "cid": 40230585584,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_3573_3665.public_verify.json",
+      "source_public_verify_sha256": "sha256:0ea162e597ac43c0d0be8431be41a49a132f1856999f1f8e036addabed1af68f",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_193450_672_945",
+      "title_mode": "ivan_manual_override",
+      "observed_public_title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+      "required_given_end_ms": 951900,
+      "bvid": "BV1tTg46UE3y",
+      "aid": 116969558771366,
+      "cid": 40230715805,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_672_945.public_verify.json",
+      "source_public_verify_sha256": "sha256:3b95501c30fa14c6f0747f55cffa6a5255f13ba41278d65b702f5c9a45fe1aef",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_193450_1863_2056",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+      "required_given_end_ms": 2084520,
+      "bvid": "BV1xgg462Env",
+      "aid": 116969592326605,
+      "cid": 40230977891,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1863_2056.public_verify.json",
+      "source_public_verify_sha256": "sha256:b8479b4a979b36bd53e0ea8e947a1220dd54ac9b2e1d59943194e4df6df9f5a9",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_193450_1573_1672",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了",
+      "required_given_end_ms": 1679990,
+      "bvid": "BV1DAg46HEXE",
+      "aid": 116969609172199,
+      "cid": 40231111679,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1573_1672.public_verify.json",
+      "source_public_verify_sha256": "sha256:08fd268ea04878877014838a8925440a893affc972c292de17e464d62768dcfb",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_193450_1475_1543",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+      "required_given_end_ms": 1543760,
+      "bvid": "BV1acg46XEjx",
+      "aid": 116969625884294,
+      "cid": 40231177971,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1475_1543.public_verify.json",
+      "source_public_verify_sha256": "sha256:c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}

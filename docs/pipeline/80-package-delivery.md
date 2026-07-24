@@ -69,6 +69,14 @@
 - 汇总中的封面路线必须从校验通过的 `lidousha-cover-route-decision.v2` 投影实际执行路线、是否调用/采用 AI、选中理由和两个未选路线的拒绝理由。内部兼容状态 `AI_COVER_READY` 仅表示封面 artifact 已就绪，绝不能被报告解释成 AI 生图；缺少有效 v2 证据时必须显示 UNKNOWN/缺证。
 - `reporting.py` 是从既有 state/record 生成只读审片报告的投影层，不属于会改变选片、字幕、边界、标题、封面或媒体 bytes 的 proof closure；内容与歌切流水线指纹都必须排除它。报告变化直接重写报告，不得唤醒成片重制或无关失败重试。
 - 已为 `CURRENT + COMPLIANT` 的历史审片包不会因宽流水线指纹变化被 cron 自动重做。确需全量重出时，只能在新的 `RECOVERY_REVIEW` base 运行 `scripts/plan_recovery_review_rerun.py`：它要求源 state 字节 SHA-256、全部 CURRENT candidate allowlist、共同旧指纹和当前新指纹完全匹配，且 source/target 均无 `AUTO_UPLOAD`；旧 record 完整降为 `SUPERSEDED + STALE_PIPELINE`，新项以 `selected_repair` 入队，随后仍由正常 runner 生成 CURRENT 成品。禁止把旧 `review_ready` 手改成 failed，也禁止在旧 base 原地覆盖。
+- `delivery_rerun_plan.schema_version` 必须精确为
+  `recovery-review-talk-rerun-plan.v7`；v6 及以下只作历史证据，不可执行。planner 必须以
+  `registry_repo_path + registry_sha256` 绑定
+  `assets/lidousha/recovery_publication_authority.v1.json`，其 registry entry 集合须与 exact
+  queue 完全相等。每条 entry 同时冻结 `required_given_end_ms`；planner 从 registry 派生
+  全量 end map 和 authority，不接受操作员另输一套 endpoint。少/多 candidate、少/错 end、
+  authority 漂移都在 supersede 或产片前拒绝。后续自然 fingerprint requeue 也只接受同一 v7
+  plan，pending/current record 必须逐项保持相同 publication authority 与 endpoint。
 - recovery plan 同时写入 exact-no-backfill selection contract；本地审片包只能在
   `exact-talk-contract-closure.v1.status=COMPLETE` 后逐 stem 重建。每个 contract ID 必须
   恰有一个 `rc=0 + CURRENT + COMPLIANT`，且无 pending、missing、failure、重复/冲突或
@@ -77,14 +85,15 @@
 - state 的最终 status 必须来自 `batch_terminal_state.py` 的一次精确投影；future retry、
   部分 delivery 或报告层旧状态都不能盖过 incomplete exact closure。只有 closure COMPLETE
   才能投影 `review_ready` 并进入本地覆盖。
-- exact recovery 重跑结束后必须用 `scripts/build_lidousha_recovery_review_manifest.py` 从最终 state 与 record **整份重建** `review_manifest.json`，禁止复用/手补上一轮清单。审计器必须比较 manifest item 与 record 的 candidate/title，并在存在 `cover_route_attestations` 时重验 reference/final hash、method、完整 route decision 与 reference authority；任一旧标题、旧封面 hash 或旧路由证据都要阻断上传。
-- recovery 保留已发布 same-BV 标题时，包内必须额外携带 `.publish.json` regular file，并以
-  record `artifact_hashes.publish_draft_sha256` 绑定。record 顶层、record
-  `publish_staging`、publish draft 与 manifest item 必须携带同一个
-  `recovery-public-title-authority.v1`；auditor 会重新读取其 repo-relative
-  `authorized-upload-public-verify.v2`、复算源 SHA/authority SHA，并逐字比较 candidate、
-  title、BVID/AID/CID。只有其中一面有 authority、裸标题相等但缺 receipt、或 publish hash
-  漂移都拒发。Ivan manual title 和普通自动标题没有该 authority 时不伪造此字段。
+- exact recovery 重跑结束后必须用 `scripts/build_lidousha_recovery_review_manifest.py` 从最终 state 与 record **整份重建** `review_manifest.json`，禁止复用/手补上一轮清单。审计器必须比较 manifest item 与 record 的 candidate/title。`cover_route_attestations` 必须存在，candidate 集合须与 exact candidate 集合完全相等，并逐项重验 reference/final hash、method、完整 route decision 与 reference authority；缺失、额外、重复、旧标题、旧封面 hash 或旧路由证据漂移都要阻断上传。
+- exact same-BV recovery 的包内必须额外携带 `.publish.json` regular file，并以 record
+  `artifact_hashes.publish_draft_sha256` 绑定。state rerun plan 的
+  `recovery_publication_authorities_by_candidate` 必须与 exact candidate 集合完全相等；
+  record 顶层、record `publish_staging`、publish draft、manifest item 与 manifest 顶层 map
+  必须携带同一个 `recovery-same-bv-publication-authority.v1`。auditor 重读受管部署的
+  publication registry asset、复算 registry/authority SHA，并逐字比较 candidate、最终标题、
+  BVID/AID/CID 与标题模式。缺任一候选、任一 surface、只有裸标题相等、publish hash 漂移或
+  map 集合不等都拒发。
 - exact-no-backfill 合同中的入选项失败时必须保留真实终态（`failed`、`boundary_unrepairable`、
   `speaker_review_required` 或 `speaker_evidence_insufficient`），并记录“合同禁止补位”；不得把它改写成代表可由候补替换的
   `candidate_rejected`。这样相关 failure-scoped fingerprint 变化后仍可自动重试。对于此规则上线前

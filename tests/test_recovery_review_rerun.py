@@ -6,7 +6,8 @@ import pytest
 from src.autoslice import delivery_recovery
 from src.autoslice.recovery_title_authority import (
     ROOT,
-    build_recovery_title_authority,
+    build_recovery_publication_authorities,
+    expected_recovery_publish_title,
 )
 
 
@@ -15,14 +16,58 @@ NEW = "sha256:" + "2" * 64
 ALT_NEW = "sha256:" + "4" * 64
 STATE_SHA = "sha256:" + "3" * 64
 PUBLIC_TITLE_CANDIDATE = "auto_193450_1475_1543"
-PUBLIC_TITLE_EVIDENCE = (
-    ROOT
-    / "reports/authorized_uploads/2026-07-22-v8-final"
-    / f"{PUBLIC_TITLE_CANDIDATE}.public_verify.json"
+PUBLICATION_AUTHORITY_ASSET = (
+    ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
 )
-PUBLIC_TITLE_EVIDENCE_SHA256 = (
-    "sha256:c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771"
+PUBLICATION_AUTHORITY_SHA256 = (
+    "sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
 )
+
+
+def _publication_authorities(*candidate_ids: str):
+    return build_recovery_publication_authorities(
+        candidate_ids=set(candidate_ids),
+        registry_path=PUBLICATION_AUTHORITY_ASSET,
+        expected_registry_sha256=PUBLICATION_AUTHORITY_SHA256,
+    )
+
+
+def _fake_publication_authority(
+    candidate_id: str,
+    *,
+    required_given_end_ms: int,
+) -> dict[str, object]:
+    return {
+        "candidate_id": candidate_id,
+        "required_given_end_ms": required_given_end_ms,
+        "registry_authority": "Ivan-reviewed recovery fixture",
+    }
+
+
+@pytest.fixture(autouse=True)
+def _allow_synthetic_publication_authorities(monkeypatch):
+    original = delivery_recovery._validated_recovery_publication
+
+    def validate(*, candidate_id, recovery_publication_authority):
+        if (
+            isinstance(recovery_publication_authority, dict)
+            and recovery_publication_authority.get("schema_version")
+            == "recovery-same-bv-publication-authority.v1"
+        ):
+            return original(
+                candidate_id=candidate_id,
+                recovery_publication_authority=(
+                    recovery_publication_authority
+                ),
+            )
+        assert recovery_publication_authority["candidate_id"] == candidate_id
+        return "【李豆沙】恢复测试", recovery_publication_authority
+
+    monkeypatch.setattr(
+        delivery_recovery,
+        "_validated_recovery_publication",
+        validate,
+    )
 
 
 class _Runner:
@@ -105,6 +150,10 @@ def _fixture(tmp_path: Path, monkeypatch):
 
 
 def _plan(date: str, state: dict):
+    authority = _fake_publication_authority(
+        "auto_current",
+        required_given_end_ms=125_000,
+    )
     return delivery_recovery.plan_current_talk_recovery_rerun(
         date,
         state,
@@ -112,16 +161,56 @@ def _plan(date: str, state: dict):
         expected_source_state_sha256=STATE_SHA,
         expected_old_fingerprint=OLD,
         expected_new_fingerprint=NEW,
+        given_end_ms_by_candidate={"auto_current": 125_000},
+        given_end_authority=str(authority["registry_authority"]),
+        recovery_publication_authorities_by_candidate={
+            "auto_current": authority
+        },
     )
 
 
 def _bind_exact_contract(state: dict, candidate_ids: list[str]) -> None:
-    state["talk_selection_contract"] = {
+    contract = {
         "schema_version": "talk-selection-contract.v1",
         "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
         "candidate_ids": candidate_ids,
         "authority": "Ivan-stated recovery review exact set",
         "source_state_sha256": STATE_SHA,
+    }
+    state["talk_selection_contract"] = contract
+    given_end_ms_by_candidate: dict[str, int] = {}
+    authorities: dict[str, dict[str, object]] = {}
+    rows_by_id = {
+        str(row.get("candidate_id") or row.get("cid") or ""): row
+        for row in [*(state.get("picks") or []), *(state.get("pending_talk") or [])]
+        if isinstance(row, dict)
+    }
+    for candidate_id in candidate_ids:
+        row = rows_by_id.get(candidate_id)
+        end_ms = (
+            int(row.get("given_end_ms"))
+            if isinstance(row, dict)
+            and isinstance(row.get("given_end_ms"), int)
+            else int((row or {}).get("end_ms") or 120_000) + 5_000
+        )
+        authority = _fake_publication_authority(
+            candidate_id,
+            required_given_end_ms=end_ms,
+        )
+        given_end_ms_by_candidate[candidate_id] = end_ms
+        authorities[candidate_id] = authority
+        if row is not None:
+            row["given_end_ms"] = end_ms
+            row["given_end_authority"] = str(
+                authority["registry_authority"]
+            )
+            row["recovery_publication_authority"] = authority
+    state["delivery_rerun_plan"] = {
+        "schema_version": "recovery-review-talk-rerun-plan.v7",
+        "talk_selection_contract": copy.deepcopy(contract),
+        "given_end_ms_by_candidate": given_end_ms_by_candidate,
+        "given_end_authority": "Ivan-reviewed recovery fixture",
+        "recovery_publication_authorities_by_candidate": authorities,
     }
 
 
@@ -160,6 +249,45 @@ def test_natural_recovery_tick_requeues_stale_current_success(
     assert archived["superseded_by"] == NEW
 
 
+def test_natural_recovery_tick_rejects_legacy_exact_state_atomically(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    state["talk_selection_contract"] = {
+        "schema_version": "talk-selection-contract.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": ["auto_current"],
+        "authority": "legacy exact state without v7 publication contract",
+        "source_state_sha256": STATE_SHA,
+    }
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_REVIEW_V7_PLAN_REQUIRED",
+    ):
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+
+    assert state == before
+
+
+def test_natural_recovery_tick_rejects_missing_record_authority_atomically(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    _bind_exact_contract(state, ["auto_current"])
+    state["picks"][0].pop("recovery_publication_authority")
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_REVIEW_CURRENT_AUTHORITY_DRIFT:auto_current",
+    ):
+        delivery_recovery.requeue_stale_current_recovery_talks(date, state)
+
+    assert state == before
+
+
 def test_natural_recovery_tick_same_fingerprint_is_byte_stable(
     tmp_path, monkeypatch
 ):
@@ -184,11 +312,17 @@ def test_explicit_recovery_carries_hash_bound_public_title(
 ):
     date, state = _fixture(tmp_path, monkeypatch)
     state["picks"][0]["candidate_id"] = PUBLIC_TITLE_CANDIDATE
-    authority = build_recovery_title_authority(
-        candidate_id=PUBLIC_TITLE_CANDIDATE,
-        evidence_path=PUBLIC_TITLE_EVIDENCE,
-        expected_evidence_sha256=PUBLIC_TITLE_EVIDENCE_SHA256,
+    state["picks"][0]["start_ms"] = 1_475_000
+    state["picks"][0]["end_ms"] = 1_543_000
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "ffprobe_ms",
+        lambda _segment: 2_000_000,
     )
+    authority = _publication_authorities(
+        PUBLIC_TITLE_CANDIDATE
+    )[PUBLIC_TITLE_CANDIDATE]
+    required_given_end_ms = int(authority["required_given_end_ms"])
 
     plan = delivery_recovery.plan_current_talk_recovery_rerun(
         date,
@@ -197,15 +331,21 @@ def test_explicit_recovery_carries_hash_bound_public_title(
         expected_source_state_sha256=STATE_SHA,
         expected_old_fingerprint=OLD,
         expected_new_fingerprint=NEW,
-        recovery_title_authorities_by_candidate={
+        given_end_ms_by_candidate={
+            PUBLIC_TITLE_CANDIDATE: required_given_end_ms
+        },
+        given_end_authority=str(authority["registry_authority"]),
+        recovery_publication_authorities_by_candidate={
             PUBLIC_TITLE_CANDIDATE: authority
         },
     )
 
     item = state["pending_talk"][0]
-    assert item["given_title"] == authority["title"]
-    assert item["recovery_title_authority"] == authority
-    assert plan["recovery_title_authorities_by_candidate"] == {
+    assert item["given_title"] == expected_recovery_publish_title(
+        authority
+    )
+    assert item["recovery_publication_authority"] == authority
+    assert plan["recovery_publication_authorities_by_candidate"] == {
         PUBLIC_TITLE_CANDIDATE: authority
     }
 
@@ -214,15 +354,44 @@ def test_explicit_recovery_rejects_public_title_for_unqueued_candidate(
     tmp_path, monkeypatch
 ):
     date, state = _fixture(tmp_path, monkeypatch)
-    authority = build_recovery_title_authority(
-        candidate_id=PUBLIC_TITLE_CANDIDATE,
-        evidence_path=PUBLIC_TITLE_EVIDENCE,
-        expected_evidence_sha256=PUBLIC_TITLE_EVIDENCE_SHA256,
-    )
+    authority = _publication_authorities(
+        PUBLIC_TITLE_CANDIDATE
+    )[PUBLIC_TITLE_CANDIDATE]
 
     with pytest.raises(
         delivery_recovery.RecoveryReviewRerunError,
-        match="RECOVERY_RERUN_PUBLIC_TITLE_CANDIDATE_NOT_QUEUED",
+        match="RECOVERY_RERUN_PUBLICATION_AUTHORITY_MUST_EQUAL_QUEUE",
+    ):
+        fake_authority = _fake_publication_authority(
+            "auto_current",
+            required_given_end_ms=125_000,
+        )
+        delivery_recovery.plan_current_talk_recovery_rerun(
+            date,
+            state,
+            candidate_ids=["auto_current"],
+            expected_source_state_sha256=STATE_SHA,
+            expected_old_fingerprint=OLD,
+            expected_new_fingerprint=NEW,
+            given_end_ms_by_candidate={"auto_current": 125_000},
+            given_end_authority=str(
+                fake_authority["registry_authority"]
+            ),
+            recovery_publication_authorities_by_candidate={
+                PUBLIC_TITLE_CANDIDATE: authority
+            },
+        )
+
+
+def test_explicit_same_bv_recovery_rejects_missing_publication_authority(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_RERUN_PUBLICATION_AUTHORITY_MUST_EQUAL_QUEUE",
     ):
         delivery_recovery.plan_current_talk_recovery_rerun(
             date,
@@ -231,10 +400,42 @@ def test_explicit_recovery_rejects_public_title_for_unqueued_candidate(
             expected_source_state_sha256=STATE_SHA,
             expected_old_fingerprint=OLD,
             expected_new_fingerprint=NEW,
-            recovery_title_authorities_by_candidate={
-                PUBLIC_TITLE_CANDIDATE: authority
+            given_end_ms_by_candidate={"auto_current": 125_000},
+            given_end_authority="Ivan-reviewed recovery fixture",
+            recovery_publication_authorities_by_candidate={},
+        )
+    assert state == before
+
+
+def test_explicit_same_bv_recovery_rejects_wrong_reviewed_end(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    authority = _fake_publication_authority(
+        "auto_current",
+        required_given_end_ms=125_000,
+    )
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_RERUN_GIVEN_END_AUTHORITY_MISMATCH:auto_current",
+    ):
+        delivery_recovery.plan_current_talk_recovery_rerun(
+            date,
+            state,
+            candidate_ids=["auto_current"],
+            expected_source_state_sha256=STATE_SHA,
+            expected_old_fingerprint=OLD,
+            expected_new_fingerprint=NEW,
+            given_end_ms_by_candidate={"auto_current": 124_999},
+            given_end_authority=str(authority["registry_authority"]),
+            recovery_publication_authorities_by_candidate={
+                "auto_current": authority
             },
         )
+
+    assert state == before
 
 
 def test_natural_recovery_tick_does_not_refresh_ordinary_production(
@@ -279,7 +480,7 @@ def test_natural_recovery_tick_rejects_truncating_given_end_atomically(
 
     with pytest.raises(
         delivery_recovery.RecoveryReviewRerunError,
-        match="RECOVERY_RERUN_GIVEN_END_INVALID:auto_current",
+        match="RECOVERY_REVIEW_CURRENT_AUTHORITY_DRIFT:auto_current",
     ):
         delivery_recovery.requeue_stale_current_recovery_talks(date, state)
 
@@ -466,6 +667,10 @@ def test_recovery_plan_fails_closed_on_authority_drift(
 
 def test_recovery_plan_requires_exact_complete_allowlist(tmp_path, monkeypatch):
     date, state = _fixture(tmp_path, monkeypatch)
+    authority = _fake_publication_authority(
+        "another_candidate",
+        required_given_end_ms=125_000,
+    )
 
     with pytest.raises(
         delivery_recovery.RecoveryReviewRerunError,
@@ -478,6 +683,11 @@ def test_recovery_plan_requires_exact_complete_allowlist(tmp_path, monkeypatch):
             expected_source_state_sha256=STATE_SHA,
             expected_old_fingerprint=OLD,
             expected_new_fingerprint=NEW,
+            given_end_ms_by_candidate={"another_candidate": 125_000},
+            given_end_authority=str(authority["registry_authority"]),
+            recovery_publication_authorities_by_candidate={
+                "another_candidate": authority
+            },
         )
 
 
@@ -551,7 +761,10 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
         replacement_selection_authority=(
             "Ivan-stated-20260722: 明确要求制作脑瓜崩切片"
         ),
-        given_end_ms_by_candidate={"auto_current": 125_000},
+        given_end_ms_by_candidate={
+            "auto_current": 125_000,
+            "auto_brainflick": 205_000,
+        },
         given_end_authority="Ivan-reviewed semantic closure 2026-07-22",
         expected_source_state_sha256=STATE_SHA,
         expected_old_fingerprint=OLD,
@@ -559,9 +772,29 @@ def test_recovery_plan_can_suppress_current_and_promote_backlog_with_manual_end(
             "auto_current": NEW,
             "auto_brainflick": ALT_NEW,
         },
+        recovery_publication_authorities_by_candidate={
+            "auto_current": {
+                **_fake_publication_authority(
+                    "auto_current",
+                    required_given_end_ms=125_000,
+                ),
+                "registry_authority": (
+                    "Ivan-reviewed semantic closure 2026-07-22"
+                ),
+            },
+            "auto_brainflick": {
+                **_fake_publication_authority(
+                    "auto_brainflick",
+                    required_given_end_ms=205_000,
+                ),
+                "registry_authority": (
+                    "Ivan-reviewed semantic closure 2026-07-22"
+                ),
+            },
+        },
     )
 
-    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v6"
+    assert plan["schema_version"] == "recovery-review-talk-rerun-plan.v7"
     assert plan["new_pipeline_fingerprint"] is None
     assert plan["new_pipeline_fingerprints_by_candidate"] == {
         "auto_brainflick": ALT_NEW,

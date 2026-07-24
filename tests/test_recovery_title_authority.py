@@ -7,7 +7,10 @@ import pytest
 from src.autoslice.recovery_title_authority import (
     ROOT,
     RecoveryTitleAuthorityError,
+    build_recovery_publication_authorities,
     build_recovery_title_authority,
+    expected_recovery_publish_title,
+    validate_recovery_publication_authority,
     validate_recovery_title_authority,
 )
 
@@ -20,6 +23,12 @@ EVIDENCE = (
 )
 EVIDENCE_SHA256 = (
     "sha256:c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771"
+)
+PUBLICATION_ASSET = (
+    ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
+)
+PUBLICATION_ASSET_SHA256 = (
+    "sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
 )
 
 
@@ -124,4 +133,85 @@ def test_recovery_title_authority_rejects_symlinked_evidence(
             evidence_path=link,
             expected_evidence_sha256=EVIDENCE_SHA256,
             repo_root=repo,
+        )
+
+
+def test_publication_registry_covers_public_and_manual_title_modes():
+    candidate_ids = {
+        "auto_193450_3573_3665",
+        "auto_193450_672_945",
+        "auto_193450_1863_2056",
+        "auto_193450_1573_1672",
+        "auto_193450_1475_1543",
+    }
+    authorities = build_recovery_publication_authorities(
+        candidate_ids=candidate_ids,
+        registry_path=PUBLICATION_ASSET,
+        expected_registry_sha256=PUBLICATION_ASSET_SHA256,
+    )
+
+    assert set(authorities) == candidate_ids
+    assert authorities["auto_193450_3573_3665"]["title_mode"] == (
+        "ivan_manual_override"
+    )
+    assert authorities["auto_193450_1475_1543"]["title_mode"] == (
+        "verified_public_exact"
+    )
+    assert {
+        candidate_id: authority["required_given_end_ms"]
+        for candidate_id, authority in authorities.items()
+    } == {
+        "auto_193450_3573_3665": 3_665_850,
+        "auto_193450_672_945": 951_900,
+        "auto_193450_1863_2056": 2_084_520,
+        "auto_193450_1573_1672": 1_679_990,
+        "auto_193450_1475_1543": 1_543_760,
+    }
+    for candidate_id, authority in authorities.items():
+        assert (
+            validate_recovery_publication_authority(
+                authority,
+                candidate_id=candidate_id,
+                expected_final_title=expected_recovery_publish_title(
+                    authority
+                ),
+            )
+            == authority
+        )
+
+
+def test_publication_registry_requires_every_requested_candidate():
+    with pytest.raises(
+        RecoveryTitleAuthorityError,
+        match="RECOVERY_PUBLICATION_CANDIDATE_MISSING",
+    ):
+        build_recovery_publication_authorities(
+            candidate_ids={"auto_missing"},
+            registry_path=PUBLICATION_ASSET,
+            expected_registry_sha256=PUBLICATION_ASSET_SHA256,
+        )
+
+
+def test_publication_registry_exact_mode_rejects_omitted_candidate():
+    with pytest.raises(
+        RecoveryTitleAuthorityError,
+        match="RECOVERY_PUBLICATION_CANDIDATE_SET_MISMATCH",
+    ):
+        build_recovery_publication_authorities(
+            candidate_ids={"auto_193450_3573_3665"},
+            registry_path=PUBLICATION_ASSET,
+            expected_registry_sha256=PUBLICATION_ASSET_SHA256,
+            require_exact_candidate_set=True,
+        )
+
+
+def test_publication_authority_rejects_wrong_registry_hash():
+    with pytest.raises(
+        RecoveryTitleAuthorityError,
+        match="RECOVERY_PUBLICATION_REGISTRY_SHA_MISMATCH",
+    ):
+        build_recovery_publication_authorities(
+            candidate_ids={CANDIDATE_ID},
+            registry_path=PUBLICATION_ASSET,
+            expected_registry_sha256="sha256:" + "0" * 64,
         )

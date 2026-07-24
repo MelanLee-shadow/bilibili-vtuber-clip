@@ -14,6 +14,11 @@ from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
 )
+from src.autoslice.recovery_title_authority import (
+    ROOT,
+    build_recovery_publication_authorities,
+    expected_recovery_publish_title,
+)
 
 
 def _sha(path: Path) -> str:
@@ -26,7 +31,19 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
     root = tmp_path / "2026-07-22"
     root.mkdir()
     stem = "当面对质"
-    candidate_id = "auto_exact"
+    candidate_id = "auto_193450_1475_1543"
+    authority = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=(
+            ROOT
+            / "assets/lidousha/recovery_publication_authority.v1.json"
+        ),
+        expected_registry_sha256=(
+            "sha256:"
+            "ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
+        ),
+    )[candidate_id]
+    title = expected_recovery_publish_title(authority)
     files = {}
     for suffix, payload in (
         ("mp4", b"video"),
@@ -51,8 +68,8 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
             "publish.json",
             json.dumps(
                 {
-                    "title": "新标题",
-                    "recovery_title_authority": None,
+                    "title": title,
+                    "recovery_publication_authority": authority,
                 },
                 ensure_ascii=False,
             ).encode("utf-8"),
@@ -81,7 +98,7 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
     }
     generation: dict[str, object] = {
         "story_contract": story_contract,
-        "title": "新标题",
+        "title": title,
         "cover_text": "对质",
         "method": "screenshot_direct",
         "cover_origin": "SOURCE_SCREENSHOT",
@@ -105,7 +122,7 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
         story_contract=story_contract,
         reference_authority={},
         decision_inputs={"composition_strength": "STRONG"},
-        title="新标题",
+        title=title,
         cover_text="对质",
     )
     record_cover_route_execution(
@@ -117,8 +134,10 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
     )
     record = {
         "story_contract": story_contract,
+        "recovery_publication_authority": authority,
         "publish_staging": {
-            "title": "新标题",
+            "title": title,
+            "recovery_publication_authority": authority,
             "cover_generation": generation,
         },
         "artifact_hashes": {
@@ -141,6 +160,12 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
             "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
             "candidate_ids": [candidate_id],
         },
+        "delivery_rerun_plan": {
+            "schema_version": "recovery-review-talk-rerun-plan.v7",
+            "recovery_publication_authorities_by_candidate": {
+                candidate_id: authority
+            },
+        },
         "picks": [
             {
                 "candidate_id": candidate_id,
@@ -158,7 +183,7 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
         deployed_commit="a" * 40,
         created_at="2026-07-23T00:00:00+00:00",
     )
-    assert first["items"][0]["title"] == "新标题"
+    assert first["items"][0]["title"] == title
     assert first["exact_candidate_ids"] == [candidate_id]
     assert first["cover_route_attestations"][0]["final_cover_sha256"] == _sha(
         files["cover.png"]
@@ -202,11 +227,13 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
 
     record["publish_staging"]["title"] = "重跑后的标题"
     record_path.write_text(json.dumps(record), encoding="utf-8")
-    second = build_manifest(
-        package_root=root,
-        state=state,
-        deployed_commit="b" * 40,
-        created_at="2026-07-23T01:00:00+00:00",
-    )
-    assert second["items"][0]["title"] == "重跑后的标题"
-    assert second["deployed_commit"] == "b" * 40
+    with pytest.raises(
+        ManifestBuildError,
+        match="recovery publication authority invalid",
+    ):
+        build_manifest(
+            package_root=root,
+            state=state,
+            deployed_commit="b" * 40,
+            created_at="2026-07-23T01:00:00+00:00",
+        )

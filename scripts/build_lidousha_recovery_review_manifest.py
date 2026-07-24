@@ -21,7 +21,7 @@ from typing import Any
 from src.autoslice.cover_route_evidence import validate_cover_route_decision
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
-    validate_recovery_title_authority,
+    validate_recovery_publication_authority,
 )
 
 
@@ -203,6 +203,40 @@ def build_manifest(
         or not all(isinstance(value, str) and value for value in candidate_ids)
     ):
         raise ManifestBuildError("exact candidate_ids must be a unique non-empty list")
+    rerun_plan = state.get("delivery_rerun_plan")
+    publication_authorities = (
+        rerun_plan.get(
+            "recovery_publication_authorities_by_candidate"
+        )
+        if isinstance(rerun_plan, dict)
+        else None
+    )
+    if (
+        not isinstance(rerun_plan, dict)
+        or rerun_plan.get("schema_version")
+        != "recovery-review-talk-rerun-plan.v7"
+        or not isinstance(publication_authorities, dict)
+        or set(publication_authorities) != set(candidate_ids)
+    ):
+        raise ManifestBuildError(
+            "exact recovery publication authority map is missing"
+        )
+    normalized_publication_authorities: dict[
+        str, dict[str, object]
+    ] = {}
+    for candidate_id in candidate_ids:
+        try:
+            normalized_publication_authorities[candidate_id] = (
+                validate_recovery_publication_authority(
+                    publication_authorities[candidate_id],
+                    candidate_id=candidate_id,
+                )
+            )
+        except RecoveryTitleAuthorityError as exc:
+            raise ManifestBuildError(
+                "recovery publication authority invalid: "
+                f"{candidate_id}: {exc}"
+            ) from exc
 
     picks = state.get("picks")
     if not isinstance(picks, list):
@@ -310,35 +344,33 @@ def build_manifest(
                 f"cover title replay artifact hash drift: {candidate_id}"
             )
         title = _record_title(record)
-        recovery_title_authority = record.get(
-            "recovery_title_authority"
-        )
-        if recovery_title_authority is not None:
-            try:
-                recovery_title_authority = (
-                    validate_recovery_title_authority(
-                        recovery_title_authority,
-                        candidate_id=candidate_id,
-                        expected_title=title,
-                    )
+        try:
+            recovery_publication_authority = (
+                validate_recovery_publication_authority(
+                    record.get("recovery_publication_authority"),
+                    candidate_id=candidate_id,
+                    expected_final_title=title,
                 )
-            except RecoveryTitleAuthorityError as exc:
-                raise ManifestBuildError(
-                    f"recovery public title authority invalid: "
-                    f"{candidate_id}: {exc}"
-                ) from exc
-            publish_staging = record.get("publish_staging")
-            if (
-                not isinstance(publish_staging, dict)
-                or publish_staging.get("recovery_title_authority")
-                != recovery_title_authority
-                or publish_payload.get("recovery_title_authority")
-                != recovery_title_authority
-                or publish_payload.get("title") != title
-            ):
-                raise ManifestBuildError(
-                    f"recovery public title binding drift: {candidate_id}"
-                )
+            )
+        except RecoveryTitleAuthorityError as exc:
+            raise ManifestBuildError(
+                f"recovery publication authority invalid: "
+                f"{candidate_id}: {exc}"
+            ) from exc
+        publish_staging = record.get("publish_staging")
+        if (
+            recovery_publication_authority
+            != normalized_publication_authorities[candidate_id]
+            or not isinstance(publish_staging, dict)
+            or publish_staging.get("recovery_publication_authority")
+            != recovery_publication_authority
+            or publish_payload.get("recovery_publication_authority")
+            != recovery_publication_authority
+            or publish_payload.get("title") != title
+        ):
+            raise ManifestBuildError(
+                f"recovery publication binding drift: {candidate_id}"
+            )
         artifact_hashes = record.get("artifact_hashes")
         if (
             not isinstance(artifact_hashes, dict)
@@ -384,10 +416,9 @@ def build_manifest(
             "ass_sha256": _sha256(speaker_ass),
             "cover_route_summary": _cover_route_summary(generation),
         }
-        if recovery_title_authority is not None:
-            item["recovery_title_authority"] = (
-                recovery_title_authority
-            )
+        item["recovery_publication_authority"] = (
+            recovery_publication_authority
+        )
         baseline = package_root / f"{stem}.redelivery-baseline.json"
         if baseline.is_file() and not baseline.is_symlink():
             item["redelivery_baseline"] = baseline.name
@@ -421,6 +452,9 @@ def build_manifest(
         },
         "deployed_commit": commit,
         "selection_contract": contract,
+        "recovery_publication_authorities_by_candidate": (
+            normalized_publication_authorities
+        ),
         "exact_candidate_ids": list(candidate_ids),
         "counts": {"items": len(items), "talk": len(items), "song": 0},
         "cover_route_attestations": attestations,

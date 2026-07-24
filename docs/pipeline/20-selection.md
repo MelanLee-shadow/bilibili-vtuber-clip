@@ -67,3 +67,5 @@
   `raw_score`、罚分与 Tier 准入。任何手改后的算术不一致都使 scorecard 无效。
 - 7/22 executable anchors：`auto_193450_3573_3665` 必须 Tier 1、有效分 75–85；
   `auto_193450_5341_5459` 必须 Tier 2、有效分 50–60；前者必须稳定高于后者。
+  这两项只是量尺 canary，不构成 recovery allowlist；exact 集合只能来自当前 v7 plan 的
+  selection contract。

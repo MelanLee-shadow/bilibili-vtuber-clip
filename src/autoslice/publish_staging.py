@@ -54,7 +54,7 @@ from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
     RecoveryTitleAuthorityError,
-    validate_recovery_title_authority,
+    validate_recovery_publication_authority,
 )
 from .shadow_review import _sha256, _write_json_file
 from .story_contract import audit_story_artifact, cover_relation_prompt
@@ -153,12 +153,12 @@ def _stage_publish_after_release_gate(
     return staged
 
 
-def _recovery_title_staging_state(
+def _recovery_publication_staging_state(
     *,
     candidate_id: str,
     title: str,
     title_llm_call: LlmCall | None,
-    recovery_title_authority: Mapping[str, object] | None,
+    recovery_publication_authority: Mapping[str, object] | None,
 ) -> tuple[str, str, dict[str, object] | None]:
     source = "job_title"
     status = (
@@ -166,22 +166,24 @@ def _recovery_title_staging_state(
         if title_llm_call is None
         else "UNRESOLVED_AUTO"
     )
-    if recovery_title_authority is None:
+    if recovery_publication_authority is None:
         return source, status, None
     if title_llm_call is not None:
         raise ValueError(
-            "recovery title authority requires a non-LLM title path"
+            "recovery publication authority requires a non-LLM title path"
         )
     try:
-        authority = validate_recovery_title_authority(
-            recovery_title_authority,
+        authority = validate_recovery_publication_authority(
+            recovery_publication_authority,
             candidate_id=candidate_id,
-            expected_title=title,
+            expected_final_title=title,
         )
     except RecoveryTitleAuthorityError as exc:
         raise ValueError(
-            f"recovery public title authority invalid: {exc}"
+            f"recovery publication authority invalid: {exc}"
         ) from exc
+    if authority["title_mode"] == "ivan_manual_override":
+        return ("ivan_manual_override", "RESOLVED_MANUAL", authority)
     return (
         "recovery_verified_same_bv_public_title",
         "RESOLVED_RECOVERY_PUBLIC",
@@ -201,7 +203,7 @@ def _stage_publish_draft(
     skip_cover: bool = False,
     selection_hook: str | None = None,
     cover_diversity_slot: int | None = None,
-    recovery_title_authority: Mapping[str, object] | None = None,
+    recovery_publication_authority: Mapping[str, object] | None = None,
     stage_cover: Callable[..., dict[str, object]] | None = None,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
@@ -225,12 +227,12 @@ def _stage_publish_draft(
     (
         title_source,
         title_authority_status,
-        normalized_recovery_title_authority,
-    ) = _recovery_title_staging_state(
+        normalized_recovery_publication_authority,
+    ) = _recovery_publication_staging_state(
         candidate_id=candidate_id,
         title=title,
         title_llm_call=title_llm_call,
-        recovery_title_authority=recovery_title_authority,
+        recovery_publication_authority=recovery_publication_authority,
     )
     story_contract = record.get("story_contract")
     # Ivan 手定标题正文按 candidate 注入：命中后 LLM 不再改正文，但共享
@@ -456,7 +458,7 @@ def _stage_publish_draft(
         "title": staged_title,
         "title_source": title_source,
         "title_authority_status": title_authority_status,
-        "recovery_title_authority": normalized_recovery_title_authority,
+        "recovery_publication_authority": normalized_recovery_publication_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,
@@ -475,7 +477,7 @@ def _stage_publish_draft(
         "title": staged_title,
         "title_source": title_source,
         "title_authority_status": title_authority_status,
-        "recovery_title_authority": normalized_recovery_title_authority,
+        "recovery_publication_authority": normalized_recovery_publication_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,

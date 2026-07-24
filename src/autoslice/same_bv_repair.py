@@ -26,8 +26,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from src.autoslice.bilibili_member_api import BiliSession
+from src.autoslice.recovery_title_authority import (
+    RecoveryTitleAuthorityError,
+    validate_recovery_publication_authority,
+)
 
-PLAN_SCHEMA = "same-bv-repair-plan.v1"
+PLAN_SCHEMA = "same-bv-repair-plan.v2"
 JOURNAL_SCHEMA = "same-bv-repair-journal.v1"
 JOURNAL_STATES = {
     "PLANNED",
@@ -443,6 +447,177 @@ def _target_metadata(manifest: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def package_recovery_publication_authority(
+    record: Mapping[str, Any],
+    review_item: Mapping[str, Any] | None,
+    *,
+    expected_final_title: str,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Validate an optional authority only when both package surfaces agree."""
+
+    record_authority = record.get("recovery_publication_authority")
+    review_authority = (
+        review_item.get("recovery_publication_authority")
+        if isinstance(review_item, Mapping)
+        else None
+    )
+    if record_authority is None and review_authority is None:
+        return None, []
+    if record_authority is None or review_authority is None:
+        return None, [
+            "recovery_publication_authority must exist on both record and review item"
+        ]
+    if record_authority != review_authority:
+        return None, [
+            "record and review item recovery_publication_authority differ"
+        ]
+    story = record.get("story_contract")
+    candidate_id = (
+        str(story.get("candidate_id") or "").strip()
+        if isinstance(story, Mapping)
+        else ""
+    )
+    if not candidate_id:
+        return None, [
+            "recovery_publication_authority has no record story candidate_id"
+        ]
+    item_candidate_id = str((review_item or {}).get("candidate_id") or "").strip()
+    if item_candidate_id and item_candidate_id != candidate_id:
+        return None, [
+            "review item candidate_id differs from record story candidate_id"
+        ]
+    try:
+        authority = validate_recovery_publication_authority(
+            record_authority,
+            candidate_id=candidate_id,
+            expected_final_title=expected_final_title,
+        )
+    except RecoveryTitleAuthorityError as exc:
+        return None, [f"recovery_publication_authority invalid: {exc}"]
+    if record_authority != authority:
+        return None, [
+            "record/review recovery_publication_authority is not canonical"
+        ]
+    return authority, []
+
+
+def recovery_publication_package_problems(
+    manifest: Mapping[str, Any],
+    record: Mapping[str, Any],
+    review_item: Mapping[str, Any] | None,
+) -> list[str]:
+    authority, problems = package_recovery_publication_authority(
+        record,
+        review_item,
+        expected_final_title=str(manifest.get("title") or ""),
+    )
+    if manifest.get("recovery_publication_authority") != authority:
+        problems.append(
+            "manifest recovery_publication_authority does not exactly match "
+            "the record/review package"
+        )
+    return problems
+
+
+def attach_package_recovery_publication_authority(
+    manifest: dict[str, Any],
+    record: Mapping[str, Any],
+    review_manifest_path: Path,
+    video_path: Path,
+) -> list[str]:
+    """Attach the optional two-surface authority while constructing a manifest."""
+
+    try:
+        review = json.loads(review_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"review manifest unreadable: {review_manifest_path} ({exc})"]
+    if not isinstance(review, Mapping):
+        return [f"review manifest must be a JSON object: {review_manifest_path}"]
+    expected = video_path.resolve()
+    root = review_manifest_path.parent.resolve()
+    review_item = None
+    for raw_item in review.get("items") or []:
+        if not isinstance(raw_item, Mapping):
+            continue
+        raw_media = raw_item.get("media") or raw_item.get("video")
+        if not isinstance(raw_media, str) or not raw_media:
+            continue
+        media = Path(raw_media)
+        media = media.resolve() if media.is_absolute() else (root / media).resolve()
+        if media == expected:
+            review_item = raw_item
+            break
+    if review_item is None:
+        return ["review_manifest has no item for the reviewed video"]
+    authority, problems = package_recovery_publication_authority(
+        record,
+        review_item,
+        expected_final_title=str(manifest.get("title") or ""),
+    )
+    if authority is not None:
+        manifest["recovery_publication_authority"] = authority
+    return problems
+
+
+def _manifest_recovery_publication_authority(
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw = manifest.get("recovery_publication_authority")
+    candidate_id = (
+        str(raw.get("candidate_id") or "").strip()
+        if isinstance(raw, Mapping)
+        else ""
+    )
+    if not candidate_id:
+        raise PlanInvalid(
+            "same-BV repair requires recovery_publication_authority"
+        )
+    try:
+        authority = validate_recovery_publication_authority(
+            raw,
+            candidate_id=candidate_id,
+            expected_final_title=str(manifest.get("title") or ""),
+        )
+    except RecoveryTitleAuthorityError as exc:
+        raise PlanInvalid(
+            f"recovery_publication_authority invalid: {exc}"
+        ) from exc
+    if dict(raw) != authority:
+        raise PlanInvalid(
+            "recovery_publication_authority is not canonical"
+        )
+    return authority
+
+
+def validate_repair_publication_target(
+    manifest: Mapping[str, Any],
+    bvid: str,
+) -> dict[str, Any]:
+    """Reject the wrong existing archive before any adapter/network setup."""
+
+    if manifest.get("manifest_version") != 3:
+        raise PlanInvalid(
+            "same-BV repair requires authorized-upload-manifest.v3"
+        )
+    authority = _manifest_recovery_publication_authority(manifest)
+    if bvid != authority.get("bvid"):
+        raise PlanInvalid(
+            "repair BVID differs from recovery_publication_authority"
+        )
+    return authority
+
+
+def repair_publication_target_problems(
+    manifest: Mapping[str, Any],
+    bvid: str,
+) -> list[str]:
+    try:
+        validate_repair_publication_target(manifest, bvid)
+    except PlanInvalid as exc:
+        return [str(exc)]
+    return []
+
+
 def _basic_snapshot_problems(
     snapshot: Mapping[str, Any],
     *,
@@ -502,6 +677,7 @@ def create_plan(
         raise PlanInvalid(f"invalid existing BVID: {bvid!r}")
     if manifest.get("manifest_version") != 3:
         raise PlanInvalid("same-BV repair requires authorized-upload-manifest.v3")
+    authority = validate_repair_publication_target(manifest, bvid)
     season = manifest.get("season")
     if not isinstance(season, Mapping):
         raise PlanInvalid("same-BV repair requires an exact season/section binding")
@@ -517,11 +693,27 @@ def create_plan(
     videos = creator.get("videos") or []
     if len(videos) != 1:
         problems.append(f"repair planning requires exactly 1 Creator P, got {len(videos)}")
+    elif videos[0].get("cid") != authority.get("cid"):
+        problems.append(
+            "sole Creator CID differs from recovery_publication_authority"
+        )
+    if creator.get("aid") != authority.get("aid"):
+        problems.append(
+            "Creator AID differs from recovery_publication_authority"
+        )
     if creator.get("state") != 0:
         problems.append("Creator archive is not state=0 during planning")
     if public.get("available") is not True:
         problems.append("public archive unavailable during planning")
     elif len(videos) == 1:
+        if public.get("aid") != authority.get("aid"):
+            problems.append(
+                "public AID differs from recovery_publication_authority"
+            )
+        if public.get("cid") != authority.get("cid"):
+            problems.append(
+                "public CID differs from recovery_publication_authority"
+            )
         if public.get("state") != 0:
             problems.append("public archive is not state=0 during planning")
         if public.get("cid") != videos[0].get("cid"):
@@ -541,6 +733,14 @@ def create_plan(
             f"planning requires exactly one exact-section membership, got {len(matches)}"
         )
     elif len(videos) == 1:
+        if matches[0].get("aid") != authority.get("aid"):
+            problems.append(
+                "section AID differs from recovery_publication_authority"
+            )
+        if matches[0].get("cid") != authority.get("cid"):
+            problems.append(
+                "section CID differs from recovery_publication_authority"
+            )
         if matches[0].get("cid") != videos[0].get("cid"):
             problems.append("section CID does not equal the sole Creator CID")
         if matches[0].get("bvid") not in (None, bvid):
@@ -578,6 +778,7 @@ def create_plan(
             "by": (manifest.get("authorization") or {}).get("by"),
             "quote": (manifest.get("authorization") or {}).get("quote"),
         },
+        "recovery_publication_authority": authority,
         "season": {
             "season_id": season_id,
             "section_id": section_id,
@@ -604,6 +805,34 @@ def validate_plan(
     bvid = plan.get("bvid")
     if not isinstance(bvid, str) or not _BVID_RE.fullmatch(bvid):
         problems.append("repair BVID invalid")
+    plan_authority = plan.get("recovery_publication_authority")
+    candidate_id = (
+        str(plan_authority.get("candidate_id") or "").strip()
+        if isinstance(plan_authority, Mapping)
+        else ""
+    )
+    try:
+        validated_plan_authority = validate_recovery_publication_authority(
+            plan_authority,
+            candidate_id=candidate_id,
+            expected_final_title=str(
+                (plan.get("target_metadata") or {}).get("title") or ""
+            ),
+        )
+    except RecoveryTitleAuthorityError as exc:
+        problems.append(
+            f"repair recovery_publication_authority invalid: {exc}"
+        )
+        validated_plan_authority = None
+    if validated_plan_authority is not None:
+        if plan_authority != validated_plan_authority:
+            problems.append(
+                "repair recovery_publication_authority is not canonical"
+            )
+        if bvid != validated_plan_authority.get("bvid"):
+            problems.append(
+                "repair BVID differs from recovery_publication_authority"
+            )
     manifest_entry = plan.get("manifest") or {}
     manifest_path = Path(str(manifest_entry.get("path") or ""))
     if not manifest_path.is_absolute() or not manifest_path.is_file():
@@ -634,6 +863,17 @@ def validate_plan(
     if len(videos) != 1 or not isinstance(videos[0].get("cid"), int):
         problems.append("repair plan does not freeze exactly one old CID")
     if manifest is not None:
+        try:
+            manifest_authority = (
+                _manifest_recovery_publication_authority(manifest)
+            )
+        except PlanInvalid as exc:
+            problems.append(str(exc))
+        else:
+            if plan_authority != manifest_authority:
+                problems.append(
+                    "repair recovery_publication_authority drifted from manifest"
+                )
         if plan.get("target_metadata") != _target_metadata(manifest):
             problems.append("repair target metadata drifted from manifest")
         for kind in ("video", "cover"):

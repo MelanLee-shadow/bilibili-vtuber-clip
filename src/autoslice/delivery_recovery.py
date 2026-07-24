@@ -19,7 +19,8 @@ from src.autoslice.candidate_selection import _exact_talk_contract_ids
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
-    validate_recovery_title_authority,
+    expected_recovery_publish_title,
+    validate_recovery_publication_authority,
 )
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
 
@@ -261,25 +262,26 @@ def _validated_given_end_boundary(
     return given_end_ms, authority
 
 
-def _validated_recovery_title(
+def _validated_recovery_publication(
     *,
     candidate_id: str,
-    recovery_title_authority: object,
+    recovery_publication_authority: object,
 ) -> tuple[str | None, dict[str, object] | None]:
-    """Replay one typed same-BV public-title receipt before requeue."""
+    """Replay the typed same-BV identity/title contract before requeue."""
 
-    if recovery_title_authority is None:
+    if recovery_publication_authority is None:
         return None, None
     try:
-        authority = validate_recovery_title_authority(
-            recovery_title_authority,
+        authority = validate_recovery_publication_authority(
+            recovery_publication_authority,
             candidate_id=candidate_id,
         )
     except RecoveryTitleAuthorityError as exc:
         raise RecoveryReviewRerunError(
-            f"RECOVERY_RERUN_PUBLIC_TITLE_INVALID:{candidate_id}:{exc}"
+            f"RECOVERY_RERUN_PUBLICATION_AUTHORITY_INVALID:"
+            f"{candidate_id}:{exc}"
         ) from exc
-    return str(authority["title"]), authority
+    return expected_recovery_publish_title(authority), authority
 
 
 def _recovery_queue_item(
@@ -291,7 +293,7 @@ def _recovery_queue_item(
     selected_repair: bool,
     given_end_ms: int | None,
     given_end_authority: str | None,
-    recovery_title_authority: object,
+    recovery_publication_authority: object,
 ) -> dict:
     segment_name = Path(
         str(record.get("segment") or record.get("segment_path") or "")
@@ -333,9 +335,11 @@ def _recovery_queue_item(
         given_end_ms=given_end_ms,
         given_end_authority=given_end_authority,
     )
-    given_title, normalized_title_authority = _validated_recovery_title(
-        candidate_id=candidate_id,
-        recovery_title_authority=recovery_title_authority,
+    given_title, normalized_publication_authority = (
+        _validated_recovery_publication(
+            candidate_id=candidate_id,
+            recovery_publication_authority=recovery_publication_authority,
+        )
     )
     chat_binding = _structured_chat_binding_for_record(
         segment,
@@ -379,7 +383,9 @@ def _recovery_queue_item(
         item["given_end_authority"] = normalized_given_end_authority
     if given_title is not None:
         item["given_title"] = given_title
-        item["recovery_title_authority"] = normalized_title_authority
+        item["recovery_publication_authority"] = (
+            normalized_publication_authority
+        )
     return item
 
 
@@ -434,12 +440,12 @@ def _recovery_rerun_plan(
     suppression_authority: str,
     boundary_overrides: dict[str, int],
     given_end_authority: str | None,
-    recovery_title_authorities: dict[str, dict[str, object]],
+    recovery_publication_authorities: dict[str, dict[str, object]],
     queue: list[dict],
 ) -> dict:
     unique_new_fingerprints = set(new_fingerprint_by_candidate.values())
     return {
-        "schema_version": "recovery-review-talk-rerun-plan.v6",
+        "schema_version": "recovery-review-talk-rerun-plan.v7",
         "date": date,
         "upload_allowed": False,
         "source_state_sha256": expected_source_state_sha256,
@@ -467,8 +473,8 @@ def _recovery_rerun_plan(
         "given_end_authority": (
             str(given_end_authority).strip() if boundary_overrides else None
         ),
-        "recovery_title_authorities_by_candidate": dict(
-            sorted(recovery_title_authorities.items())
+        "recovery_publication_authorities_by_candidate": dict(
+            sorted(recovery_publication_authorities.items())
         ),
         "queued_count": len(queue),
     }
@@ -479,32 +485,45 @@ def _validated_recovery_plan_overrides(
     queued_ids: set[str],
     given_end_ms_by_candidate: dict[str, int] | None,
     given_end_authority: str | None,
-    recovery_title_authorities_by_candidate: (
+    recovery_publication_authorities_by_candidate: (
         dict[str, dict[str, object]] | None
     ),
 ) -> tuple[dict[str, int], dict[str, dict[str, object]]]:
     boundary_overrides = dict(given_end_ms_by_candidate or {})
-    title_authorities = dict(
-        recovery_title_authorities_by_candidate or {}
+    publication_authorities = dict(
+        recovery_publication_authorities_by_candidate or {}
     )
-    if set(boundary_overrides) - queued_ids:
+    if set(boundary_overrides) != queued_ids:
         raise RecoveryReviewRerunError(
-            "RECOVERY_RERUN_GIVEN_END_CANDIDATE_NOT_QUEUED"
+            "RECOVERY_RERUN_GIVEN_END_MUST_EQUAL_QUEUE"
         )
-    if boundary_overrides and not str(given_end_authority or "").strip():
+    normalized_given_end_authority = str(
+        given_end_authority or ""
+    ).strip()
+    if not normalized_given_end_authority:
         raise RecoveryReviewRerunError(
             "RECOVERY_RERUN_GIVEN_END_AUTHORITY_REQUIRED"
         )
-    if set(title_authorities) - queued_ids:
+    if set(publication_authorities) != queued_ids:
         raise RecoveryReviewRerunError(
-            "RECOVERY_RERUN_PUBLIC_TITLE_CANDIDATE_NOT_QUEUED"
+            "RECOVERY_RERUN_PUBLICATION_AUTHORITY_MUST_EQUAL_QUEUE"
         )
-    for cid, authority in title_authorities.items():
-        _validated_recovery_title(
+    for cid, authority in publication_authorities.items():
+        _, validated = _validated_recovery_publication(
             candidate_id=cid,
-            recovery_title_authority=authority,
+            recovery_publication_authority=authority,
         )
-    return boundary_overrides, title_authorities
+        if (
+            validated is None
+            or boundary_overrides[cid]
+            != validated.get("required_given_end_ms")
+            or normalized_given_end_authority
+            != str(validated.get("registry_authority") or "").strip()
+        ):
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_RERUN_GIVEN_END_AUTHORITY_MISMATCH:{cid}"
+            )
+    return boundary_overrides, publication_authorities
 
 
 def _validate_recovery_plan_header(
@@ -546,7 +565,7 @@ def plan_current_talk_recovery_rerun(
     replacement_selection_authority: str | None = None,
     given_end_ms_by_candidate: dict[str, int] | None = None,
     given_end_authority: str | None = None,
-    recovery_title_authorities_by_candidate: (
+    recovery_publication_authorities_by_candidate: (
         dict[str, dict[str, object]] | None
     ) = None,
 ) -> dict:
@@ -600,13 +619,13 @@ def plan_current_talk_recovery_rerun(
             expected_new_fingerprints_by_candidate
         ),
     )
-    boundary_overrides, recovery_title_authorities = (
+    boundary_overrides, recovery_publication_authorities = (
         _validated_recovery_plan_overrides(
             queued_ids=queued_ids,
             given_end_ms_by_candidate=given_end_ms_by_candidate,
             given_end_authority=given_end_authority,
-            recovery_title_authorities_by_candidate=(
-                recovery_title_authorities_by_candidate
+            recovery_publication_authorities_by_candidate=(
+                recovery_publication_authorities_by_candidate
             ),
         )
     )
@@ -683,8 +702,8 @@ def plan_current_talk_recovery_rerun(
                 selected_repair=True,
                 given_end_ms=boundary_overrides.get(cid),
                 given_end_authority=given_end_authority,
-                recovery_title_authority=(
-                    recovery_title_authorities.get(cid)
+                recovery_publication_authority=(
+                    recovery_publication_authorities.get(cid)
                 ),
             )
         )
@@ -756,8 +775,8 @@ def plan_current_talk_recovery_rerun(
             selected_repair=False,
             given_end_ms=boundary_overrides.get(cid),
             given_end_authority=given_end_authority,
-            recovery_title_authority=(
-                recovery_title_authorities.get(cid)
+            recovery_publication_authority=(
+                recovery_publication_authorities.get(cid)
             ),
         )
         queue_item["selection_override"] = selection_override
@@ -820,7 +839,9 @@ def plan_current_talk_recovery_rerun(
         suppression_authority=suppression_authority,
         boundary_overrides=boundary_overrides,
         given_end_authority=given_end_authority,
-        recovery_title_authorities=recovery_title_authorities,
+        recovery_publication_authorities=(
+            recovery_publication_authorities
+        ),
         queue=queue,
     )
     state["delivery_rerun_plan"] = plan
@@ -1456,6 +1477,32 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
     if not contract_ids:
         return 0
     contract_set = set(contract_ids)
+    rerun_plan = state.get("delivery_rerun_plan")
+    if (
+        not isinstance(rerun_plan, dict)
+        or rerun_plan.get("schema_version")
+        != "recovery-review-talk-rerun-plan.v7"
+        or rerun_plan.get("talk_selection_contract")
+        != state.get("talk_selection_contract")
+    ):
+        raise RecoveryReviewRerunError(
+            "RECOVERY_REVIEW_V7_PLAN_REQUIRED"
+        )
+    plan_boundaries, plan_publication_authorities = (
+        _validated_recovery_plan_overrides(
+            queued_ids=contract_set,
+            given_end_ms_by_candidate=rerun_plan.get(
+                "given_end_ms_by_candidate"
+            ),
+            given_end_authority=rerun_plan.get("given_end_authority"),
+            recovery_publication_authorities_by_candidate=rerun_plan.get(
+                "recovery_publication_authorities_by_candidate"
+            ),
+        )
+    )
+    plan_end_authority = str(
+        rerun_plan.get("given_end_authority") or ""
+    ).strip()
     picks = state.get("picks")
     pending = state.get("pending_talk")
     if not isinstance(picks, list) or not isinstance(pending, list):
@@ -1472,6 +1519,21 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
             "RECOVERY_REVIEW_PENDING_TALK_DUPLICATE"
         )
     pending_set = set(pending_ids)
+    for row in pending:
+        if not isinstance(row, dict):
+            continue
+        cid = _candidate_id(row)
+        if cid not in contract_set:
+            continue
+        if (
+            row.get("given_end_ms") != plan_boundaries[cid]
+            or row.get("given_end_authority") != plan_end_authority
+            or row.get("recovery_publication_authority")
+            != plan_publication_authorities[cid]
+        ):
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_REVIEW_PENDING_AUTHORITY_DRIFT:{cid}"
+            )
 
     current_rows = [
         row
@@ -1501,6 +1563,15 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
         cid = _candidate_id(record)
         if cid in pending_set:
             continue
+        if (
+            record.get("given_end_ms") != plan_boundaries[cid]
+            or record.get("given_end_authority") != plan_end_authority
+            or record.get("recovery_publication_authority")
+            != plan_publication_authorities[cid]
+        ):
+            raise RecoveryReviewRerunError(
+                f"RECOVERY_REVIEW_CURRENT_AUTHORITY_DRIFT:{cid}"
+            )
         try:
             current = _runner.talk_pipeline_fingerprint(cid)
         except ValueError as exc:
@@ -1518,8 +1589,8 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
             selected_repair=True,
             given_end_ms=record.get("given_end_ms"),
             given_end_authority=record.get("given_end_authority"),
-            recovery_title_authority=record.get(
-                "recovery_title_authority"
+            recovery_publication_authority=record.get(
+                "recovery_publication_authority"
             ),
         )
         archived = copy.deepcopy(record)

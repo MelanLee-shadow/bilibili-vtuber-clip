@@ -45,7 +45,7 @@ from src.autoslice.redelivery_subtitle_baseline import (
 )
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
-    validate_recovery_title_authority,
+    validate_recovery_publication_authority,
 )
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
@@ -1064,22 +1064,24 @@ def _stage_record(
     recut_dir = recut.recut_dir
     subtitle_path = recut.subtitle_path
     given_title = spec.get("given_title")
-    recovery_title_authority = spec.get("recovery_title_authority")
-    if bool(given_title) != bool(recovery_title_authority):
-        raise SystemExit("RECOVERY_PUBLIC_TITLE_AUTHORITY_PAIR_INVALID")
-    normalized_recovery_title_authority = None
+    recovery_publication_authority = spec.get(
+        "recovery_publication_authority"
+    )
+    if bool(given_title) != bool(recovery_publication_authority):
+        raise SystemExit("RECOVERY_PUBLICATION_AUTHORITY_PAIR_INVALID")
+    normalized_recovery_publication_authority = None
     if given_title:
         try:
-            normalized_recovery_title_authority = (
-                validate_recovery_title_authority(
-                    recovery_title_authority,
+            normalized_recovery_publication_authority = (
+                validate_recovery_publication_authority(
+                    recovery_publication_authority,
                     candidate_id=cid,
-                    expected_title=str(given_title),
+                    expected_final_title=str(given_title),
                 )
             )
         except RecoveryTitleAuthorityError as exc:
             raise SystemExit(
-                f"RECOVERY_PUBLIC_TITLE_AUTHORITY_INVALID:{exc}"
+                f"RECOVERY_PUBLICATION_AUTHORITY_INVALID:{exc}"
             ) from exc
     # Title LLM runs only when no manual body exists. A manual body is not
     # rewritten, but it still passes the shared archive-envelope/structure gate.
@@ -1166,9 +1168,9 @@ def _stage_record(
     record["selection_scorecard"] = spec.get("selection_scorecard")
     record["session_relation_authority"] = spec.get("session_relation_authority")
     record["story_contract"] = story_contract
-    if normalized_recovery_title_authority is not None:
-        record["recovery_title_authority"] = (
-            normalized_recovery_title_authority
+    if normalized_recovery_publication_authority is not None:
+        record["recovery_publication_authority"] = (
+            normalized_recovery_publication_authority
         )
     if clip_context_path is not None:
         record["clip_context_path"] = str(clip_context_path)
@@ -1202,19 +1204,23 @@ def _stage_record(
         skip_cover=options.reuse_cover,
         selection_hook=str(spec.get("selection_hook") or ""),
         cover_diversity_slot=spec.get("cover_diversity_slot"),
-        recovery_title_authority=normalized_recovery_title_authority,
+        recovery_publication_authority=(
+            normalized_recovery_publication_authority
+        ),
     )
     staging = record.get("publish_staging") or {}
     if (
-        normalized_recovery_title_authority is not None
+        normalized_recovery_publication_authority is not None
         and (
             staging.get("title")
-            != normalized_recovery_title_authority["title"]
-            or staging.get("recovery_title_authority")
-            != normalized_recovery_title_authority
+            != str(given_title)
+            or staging.get("recovery_publication_authority")
+            != normalized_recovery_publication_authority
         )
     ):
-        raise SystemExit("RECOVERY_PUBLIC_TITLE_STAGING_BINDING_MISMATCH")
+        raise SystemExit(
+            "RECOVERY_PUBLICATION_STAGING_BINDING_MISMATCH"
+        )
     if staging.get("title_authority_status") == "BLOCKED_STORY_CONTRACT":
         raise SystemExit(
             "STORY_CONTRACT_TITLE_FAILED: "

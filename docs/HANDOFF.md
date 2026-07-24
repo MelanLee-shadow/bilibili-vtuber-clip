@@ -61,10 +61,15 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
   ASS；新的 SRT→ASS 门会按预期阻断，必须随五条 recovery 重跑整包重建，不能补写 hash 假绿。
 - exact talk 目标集合是 `3573, 672, 1863, 1573, 1475`；`6577` 被用户明确抑制，不允许普通
   backlog 补位。必须在新的隔离 recovery base 达成 closure COMPLETE 后再重建本地包。
-- `3573/672` 继续使用 Ivan 现有 manual-title asset；`1863/1573/1475` 的同 BV 标题保留必须
-  从已提交的 `authorized-upload-public-verify.v2` 生成 typed recovery public-title
-  authority，禁止裸抄旧 record 或写进 Ivan 手定资产。v10 planner、record、publish draft、
-  manifest 与 package audit 必须看到同一 authority 和源 receipt hash。
+- 五条统一从受管部署的
+  `assets/lidousha/recovery_publication_authority.v1.json` 生成 exact publication
+  authority map：`3573/672` 的模式是现有 Ivan manual-title 正文，`1863/1573/1475` 的模式
+  是已验证 public title 原样保留。当前 asset SHA 是
+  `sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118`；
+  它还逐项冻结五个 Ivan-reviewed `required_given_end_ms`。v10 planner 必须以该 SHA 覆盖
+  完整五项并从资产派生 end，plan schema 为 v7；record、publish draft、review/authorized
+  manifest、package audit 与 same-BV repair plan 必须看到同一 authority。repair CLI 的 BVID
+  还须在任何 adapter/observe 前与 authority 相等，live AID/CID 再与 authority 精确核对。
 - 普通 7/22 state 的 source 仍不完整；恢复必须继续使用已验证的 official immutable recovery
   source，且不得覆盖普通 state/out。继续前复核当前源 SHA、磁盘、进程/锁和 target base 不存在。
 

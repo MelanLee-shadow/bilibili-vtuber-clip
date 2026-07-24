@@ -113,48 +113,20 @@ def _parser() -> argparse.ArgumentParser:
         help="Ivan authority for choosing a replacement over the score baseline",
     )
     parser.add_argument(
-        "--given-end-ms",
-        action="append",
-        default=[],
-        metavar="CANDIDATE_ID=ABSOLUTE_MS",
+        "--publication-authority-asset",
+        type=Path,
+        required=True,
         help=(
-            "human-reviewed source-timeline lower-bound end; must be >= the "
-            "candidate end; repeat per candidate"
-        ),
-    )
-    parser.add_argument("--given-end-authority")
-    parser.add_argument(
-        "--public-title-evidence",
-        action="append",
-        default=[],
-        metavar="CANDIDATE_ID=REPO_RELATIVE_PATH",
-        help=(
-            "hash-bound authorized-upload-public-verify.v2 receipt for an "
-            "already-published same-BV title; repeat per candidate"
+            "committed, deployable registry binding every queued candidate "
+            "to its existing BV identity and reviewed title source"
         ),
     )
     parser.add_argument(
-        "--expected-public-title-evidence-sha256",
-        action="append",
-        default=[],
-        metavar="CANDIDATE_ID=SHA256",
+        "--expected-publication-authority-sha256",
+        required=True,
+        metavar="SHA256",
     )
     return parser
-
-
-def _given_end_overrides(values: list[str]) -> dict[str, int]:
-    parsed: dict[str, int] = {}
-    for value in values:
-        candidate_id, separator, raw_ms = str(value).partition("=")
-        if (
-            separator != "="
-            or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate_id) is None
-            or not raw_ms.isdigit()
-            or candidate_id in parsed
-        ):
-            raise SystemExit(f"invalid --given-end-ms: {value}")
-        parsed[candidate_id] = int(raw_ms)
-    return parsed
 
 
 def _fingerprint_overrides(values: list[str]) -> dict[str, str]:
@@ -174,34 +146,49 @@ def _fingerprint_overrides(values: list[str]) -> dict[str, str]:
     return parsed
 
 
-def _candidate_path_overrides(values: list[str]) -> dict[str, Path]:
-    parsed: dict[str, Path] = {}
-    for value in values:
-        candidate_id, separator, raw_path = str(value).partition("=")
-        if (
-            separator != "="
-            or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate_id) is None
-            or not raw_path
-            or candidate_id in parsed
-        ):
-            raise SystemExit(f"invalid candidate evidence path: {value}")
-        parsed[candidate_id] = Path(raw_path)
-    return parsed
+def _load_recovery_publication_contract(
+    *,
+    queued_candidate_ids: set[str],
+    publication_asset: Path,
+    expected_publication_authority_sha256: str,
+    repo_root: Path,
+) -> tuple[dict[str, dict[str, object]], dict[str, int], str]:
+    from src.autoslice.recovery_title_authority import (
+        RecoveryTitleAuthorityError,
+        build_recovery_publication_authorities,
+    )
 
-
-def _candidate_sha256_overrides(values: list[str]) -> dict[str, str]:
-    parsed: dict[str, str] = {}
-    for value in values:
-        candidate_id, separator, sha256 = str(value).partition("=")
-        if (
-            separator != "="
-            or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate_id) is None
-            or FINGERPRINT_RX.fullmatch(sha256) is None
-            or candidate_id in parsed
-        ):
-            raise SystemExit(f"invalid candidate evidence sha256: {value}")
-        parsed[candidate_id] = sha256
-    return parsed
+    try:
+        authorities = build_recovery_publication_authorities(
+            candidate_ids=queued_candidate_ids,
+            registry_path=(
+                publication_asset
+                if publication_asset.is_absolute()
+                else repo_root / publication_asset
+            ),
+            expected_registry_sha256=(
+                expected_publication_authority_sha256
+            ),
+            require_exact_candidate_set=True,
+            repo_root=repo_root,
+        )
+    except RecoveryTitleAuthorityError as exc:
+        raise SystemExit(str(exc)) from exc
+    given_end_ms_by_candidate = {
+        candidate_id: int(authority["required_given_end_ms"])
+        for candidate_id, authority in authorities.items()
+    }
+    given_end_authorities = {
+        str(authority["registry_authority"])
+        for authority in authorities.values()
+    }
+    if len(given_end_authorities) != 1:
+        raise SystemExit("RECOVERY_PUBLICATION_GIVEN_END_AUTHORITY_INVALID")
+    return (
+        authorities,
+        given_end_ms_by_candidate,
+        next(iter(given_end_authorities)),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -211,6 +198,10 @@ def main(argv: list[str] | None = None) -> int:
     for label, value in (
         ("source state", args.expected_source_state_sha256),
         ("old pipeline", args.expected_old_fingerprint),
+        (
+            "publication authority",
+            args.expected_publication_authority_sha256,
+        ),
     ):
         if FINGERPRINT_RX.fullmatch(value) is None:
             raise SystemExit(f"invalid {label} fingerprint")
@@ -275,41 +266,21 @@ def main(argv: list[str] | None = None) -> int:
         plan_current_talk_recovery_rerun,
     )
 
-    given_end_ms_by_candidate = _given_end_overrides(args.given_end_ms)
-    public_title_evidence = _candidate_path_overrides(
-        args.public_title_evidence
+    queued_candidate_ids = set(args.candidate_ids) | set(
+        args.replacement_candidate_ids
     )
-    public_title_evidence_sha256 = _candidate_sha256_overrides(
-        args.expected_public_title_evidence_sha256
+    (
+        recovery_publication_authorities,
+        given_end_ms_by_candidate,
+        given_end_authority,
+    ) = _load_recovery_publication_contract(
+        queued_candidate_ids=queued_candidate_ids,
+        publication_asset=args.publication_authority_asset,
+        expected_publication_authority_sha256=(
+            args.expected_publication_authority_sha256
+        ),
+        repo_root=repo_root,
     )
-    if set(public_title_evidence) != set(public_title_evidence_sha256):
-        raise SystemExit(
-            "public title evidence paths and hashes must name the same candidates"
-        )
-    from src.autoslice.recovery_title_authority import (
-        RecoveryTitleAuthorityError,
-        build_recovery_title_authority,
-    )
-
-    recovery_title_authorities: dict[str, dict[str, object]] = {}
-    try:
-        for candidate_id, evidence_path in public_title_evidence.items():
-            recovery_title_authorities[candidate_id] = (
-                build_recovery_title_authority(
-                    candidate_id=candidate_id,
-                    evidence_path=(
-                        evidence_path
-                        if evidence_path.is_absolute()
-                        else repo_root / evidence_path
-                    ),
-                    expected_evidence_sha256=(
-                        public_title_evidence_sha256[candidate_id]
-                    ),
-                    repo_root=repo_root,
-                )
-            )
-    except RecoveryTitleAuthorityError as exc:
-        raise SystemExit(str(exc)) from exc
     try:
         plan = plan_current_talk_recovery_rerun(
             args.date,
@@ -328,9 +299,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.replacement_selection_authority
             ),
             given_end_ms_by_candidate=given_end_ms_by_candidate,
-            given_end_authority=args.given_end_authority,
-            recovery_title_authorities_by_candidate=(
-                recovery_title_authorities
+            given_end_authority=given_end_authority,
+            recovery_publication_authorities_by_candidate=(
+                recovery_publication_authorities
             ),
         )
     except RecoveryReviewRerunError as exc:

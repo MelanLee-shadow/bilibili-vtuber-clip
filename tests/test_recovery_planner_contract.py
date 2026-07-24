@@ -1,0 +1,315 @@
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts import plan_recovery_review_rerun as planner
+from scripts import free_session_autoslice as runner
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ASSET = ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
+ASSET_SHA256 = (
+    "sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
+)
+CANDIDATE_IDS = {
+    "auto_193450_3573_3665",
+    "auto_193450_672_945",
+    "auto_193450_1863_2056",
+    "auto_193450_1573_1672",
+    "auto_193450_1475_1543",
+}
+EXPECTED_ENDS = {
+    "auto_193450_3573_3665": 3_665_850,
+    "auto_193450_672_945": 951_900,
+    "auto_193450_1863_2056": 2_084_520,
+    "auto_193450_1573_1672": 1_679_990,
+    "auto_193450_1475_1543": 1_543_760,
+}
+OLD_FINGERPRINT = "sha256:" + "1" * 64
+NEW_FINGERPRINT = "sha256:" + "2" * 64
+DATE = "2026-07-22"
+
+
+def _load(candidate_ids: set[str]):
+    return planner._load_recovery_publication_contract(
+        queued_candidate_ids=candidate_ids,
+        publication_asset=ASSET,
+        expected_publication_authority_sha256=ASSET_SHA256,
+        repo_root=ROOT,
+    )
+
+
+def _record(
+    candidate_id: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    status: str = "review_ready",
+) -> dict[str, object]:
+    return {
+        "candidate_id": candidate_id,
+        "status": status,
+        "rc": 0,
+        "bundle_lifecycle": "CURRENT",
+        "bundle_compliance": "COMPLIANT",
+        "pipeline_fingerprint": OLD_FINGERPRINT,
+        "segment": "official.mp4",
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "hook": candidate_id,
+        "confidence": 0.9,
+        "selection_scorecard": {
+            "status": "VALID",
+            "tier": 1,
+            "effective_score": 80.0,
+        },
+        "session_relation_authority": {
+            "state": "CONFIRMED",
+            "participants": ["李豆沙", "南町"],
+        },
+        "session_id": "fixture-20260722",
+    }
+
+
+def _planner_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    requested_candidate_ids: list[str],
+) -> tuple[list[str], Path, Path]:
+    source_base = tmp_path / "source"
+    target_base = tmp_path / "target"
+    (source_base / "state").mkdir(parents=True)
+    (target_base / "recordings" / DATE).mkdir(parents=True)
+    (target_base / "cache" / DATE).mkdir(parents=True)
+    (target_base / "repo").symlink_to(ROOT, target_is_directory=True)
+    (target_base / "recordings" / DATE / "official.mp4").write_bytes(
+        b"official-media"
+    )
+    (target_base / "cache" / DATE / "official.bcut.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n字幕\n",
+        encoding="utf-8",
+    )
+    current = [
+        _record(
+            "auto_193450_3573_3665",
+            start_ms=3_573_000,
+            end_ms=3_665_000,
+        ),
+        _record(
+            "auto_193450_672_945",
+            start_ms=672_000,
+            end_ms=945_000,
+        ),
+        _record(
+            "auto_193450_1863_2056",
+            start_ms=1_863_000,
+            end_ms=2_056_000,
+        ),
+        _record(
+            "auto_193450_1573_1672",
+            start_ms=1_573_000,
+            end_ms=1_672_000,
+        ),
+        _record(
+            "auto_193450_6577_6695",
+            start_ms=6_577_000,
+            end_ms=6_695_000,
+        ),
+    ]
+    backlog = [
+        _record(
+            "auto_193450_1475_1543",
+            start_ms=1_475_000,
+            end_ms=1_543_000,
+            status="reserve",
+        )
+    ]
+    state = {
+        "date": DATE,
+        "status": "review_ready",
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "pending_talk": [],
+        "picks": current,
+        "talk_backlog": backlog,
+        "talk_superseded_attempts": [],
+    }
+    source_state = source_base / "state" / f"{DATE}.json"
+    source_state.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    source_sha = (
+        "sha256:" + hashlib.sha256(source_state.read_bytes()).hexdigest()
+    )
+
+    monkeypatch.setenv("AUTOSLICE_BASE", "planner-test-original-base")
+    monkeypatch.setenv("AUTOSLICE_REC_ROOT", "planner-test-original-rec")
+    monkeypatch.setattr(runner, "BASE", target_base)
+    monkeypatch.setattr(
+        runner,
+        "REC_ROOT",
+        target_base / "recordings",
+    )
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: NEW_FINGERPRINT,
+    )
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _segment: 7_000_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _segment: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda _segment, source_sha256=None: {
+            "chat_jsonl": None,
+            "structured_chat_required": False,
+            "chat_binding_status": "OPTIONAL_ABSENT",
+        },
+    )
+
+    args = [
+        "--source-base",
+        str(source_base),
+        "--target-base",
+        str(target_base),
+        "--date",
+        DATE,
+        "--expected-source-state-sha256",
+        source_sha,
+        "--expected-old-fingerprint",
+        OLD_FINGERPRINT,
+        "--expected-new-fingerprint",
+        NEW_FINGERPRINT,
+    ]
+    for candidate_id in requested_candidate_ids:
+        args.extend(["--candidate-id", candidate_id])
+    args.extend(
+        [
+            "--suppress-candidate-id",
+            "auto_193450_6577_6695",
+            "--suppression-authority",
+            "Ivan: 已有同题材视频，不再制作连线谜题",
+            "--replacement-candidate-id",
+            "auto_193450_1475_1543",
+            "--replacement-selection-authority",
+            "Ivan: 明确要求制作脑瓜崩切片",
+            "--publication-authority-asset",
+            str(ASSET),
+            "--expected-publication-authority-sha256",
+            ASSET_SHA256,
+        ]
+    )
+    return args, target_base, source_state
+
+
+def test_v10_contract_binds_exact_five_candidates_and_reviewed_ends():
+    authorities, ends, end_authority = _load(CANDIDATE_IDS)
+
+    assert set(authorities) == CANDIDATE_IDS
+    assert ends == EXPECTED_ENDS
+    assert end_authority == next(
+        iter(
+            {
+                str(authority["registry_authority"])
+                for authority in authorities.values()
+            }
+        )
+    )
+    assert all(
+        authority["required_given_end_ms"] == EXPECTED_ENDS[candidate_id]
+        for candidate_id, authority in authorities.items()
+    )
+
+
+@pytest.mark.parametrize(
+    "candidate_ids",
+    [
+        CANDIDATE_IDS - {"auto_193450_1475_1543"},
+        CANDIDATE_IDS | {"auto_unexpected_sixth"},
+    ],
+)
+def test_v10_contract_rejects_missing_or_extra_candidate(candidate_ids):
+    with pytest.raises(
+        SystemExit,
+        match=(
+            "RECOVERY_PUBLICATION_CANDIDATE_SET_MISMATCH"
+            "|RECOVERY_PUBLICATION_CANDIDATE_MISSING"
+        ),
+    ):
+        _load(candidate_ids)
+
+
+def test_v10_planner_main_writes_exact_hash_bound_state_and_receipt(
+    tmp_path, monkeypatch
+):
+    requested = [
+        "auto_193450_3573_3665",
+        "auto_193450_672_945",
+        "auto_193450_1863_2056",
+        "auto_193450_1573_1672",
+    ]
+    args, target_base, _ = _planner_fixture(
+        tmp_path,
+        monkeypatch,
+        requested_candidate_ids=requested,
+    )
+
+    assert planner.main(args) == 0
+
+    target_state_path = target_base / "state" / f"{DATE}.json"
+    receipt_path = (
+        target_base
+        / "reports"
+        / f"recovery-review-rerun-plan-{DATE}.json"
+    )
+    state = json.loads(target_state_path.read_text(encoding="utf-8"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    exact_ids = [
+        *requested,
+        "auto_193450_1475_1543",
+    ]
+    assert state["upload_allowed"] is False
+    assert state["talk_selection_contract"]["candidate_ids"] == exact_ids
+    assert receipt["talk_selection_contract"]["candidate_ids"] == exact_ids
+    assert receipt["given_end_ms_by_candidate"] == EXPECTED_ENDS
+    assert (
+        set(receipt["recovery_publication_authorities_by_candidate"])
+        == CANDIDATE_IDS
+    )
+    assert [row["cid"] for row in state["pending_talk"]] == exact_ids
+    assert {
+        row["cid"]: row["given_end_ms"]
+        for row in state["pending_talk"]
+    } == EXPECTED_ENDS
+
+
+def test_v10_planner_main_missing_candidate_creates_no_target_state(
+    tmp_path, monkeypatch
+):
+    args, target_base, _ = _planner_fixture(
+        tmp_path,
+        monkeypatch,
+        requested_candidate_ids=[
+            "auto_193450_3573_3665",
+            "auto_193450_672_945",
+            "auto_193450_1863_2056",
+        ],
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="RECOVERY_PUBLICATION_CANDIDATE_SET_MISMATCH",
+    ):
+        planner.main(args)
+
+    assert not (target_base / "state" / f"{DATE}.json").exists()
+    assert not (
+        target_base
+        / "reports"
+        / f"recovery-review-rerun-plan-{DATE}.json"
+    ).exists()

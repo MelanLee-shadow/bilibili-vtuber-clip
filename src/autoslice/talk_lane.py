@@ -19,7 +19,7 @@ from pathlib import Path
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
-    validate_recovery_title_authority,
+    validate_recovery_publication_authority,
 )
 from src.autoslice.selection_scorecard import selection_scorecard_is_valid
 from src.autoslice.speaker_finalizer import (
@@ -1020,24 +1020,26 @@ def _apply_recovery_authorities_to_talk_spec(
         spec["given_end_authority"] = str(
             item.get("given_end_authority") or ""
         ).strip()
-    authority = item.get("recovery_title_authority")
+    authority = item.get("recovery_publication_authority")
     if item.get("given_title") is None and authority is None:
         return
-    given_title = item["given_title"]
+    given_title = item.get("given_title")
+    if not isinstance(given_title, str) or not given_title:
+        raise ValueError(
+            "recovery publication authority requires an exact given_title"
+        )
     try:
-        authority = validate_recovery_title_authority(
+        authority = validate_recovery_publication_authority(
             authority,
             candidate_id=candidate_id,
-            expected_title=(
-                given_title if isinstance(given_title, str) else None
-            ),
+            expected_final_title=given_title,
         )
     except RecoveryTitleAuthorityError as exc:
         raise ValueError(
-            f"given_title requires verified public authority: {exc}"
+            f"given_title requires verified publication authority: {exc}"
         ) from exc
     spec["given_title"] = given_title
-    spec["recovery_title_authority"] = authority
+    spec["recovery_publication_authority"] = authority
 
 
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
@@ -1241,8 +1243,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         result["given_end_authority"] = item.get("given_end_authority")
     if item.get("given_title") is not None:
         result["given_title"] = item["given_title"]
-        result["recovery_title_authority"] = item.get(
-            "recovery_title_authority"
+        result["recovery_publication_authority"] = item.get(
+            "recovery_publication_authority"
         )
     if "cover_diversity_slot" in item:
         result["cover_diversity_slot"] = item["cover_diversity_slot"]

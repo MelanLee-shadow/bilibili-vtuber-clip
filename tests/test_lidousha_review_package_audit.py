@@ -23,7 +23,8 @@ from src.autoslice.cover_title_rendering import (
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from src.autoslice.review_package_ass_audit import audit_review_package_ass
 from src.autoslice.recovery_title_authority import (
-    build_recovery_title_authority,
+    build_recovery_publication_authorities,
+    expected_recovery_publish_title,
 )
 from src.autoslice.story_contract import build_story_contract
 
@@ -261,19 +262,18 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
     tmp_path: Path,
 ) -> None:
     candidate_id = "auto_193450_1475_1543"
-    evidence = (
-        REPO_ROOT
-        / "reports/authorized_uploads/2026-07-22-v8-final"
-        / f"{candidate_id}.public_verify.json"
-    )
-    authority = build_recovery_title_authority(
-        candidate_id=candidate_id,
-        evidence_path=evidence,
-        expected_evidence_sha256=(
-            "sha256:"
-            "c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771"
+    authority = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=(
+            REPO_ROOT
+            / "assets/lidousha/recovery_publication_authority.v1.json"
         ),
-    )
+        expected_registry_sha256=(
+            "sha256:"
+            "ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
+        ),
+    )[candidate_id]
+    title = expected_recovery_publish_title(authority)
     root = tmp_path / "pkg"
     root.mkdir()
     stem = "public-title"
@@ -281,18 +281,18 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
     publish.write_text(
         json.dumps(
             {
-                "title": authority["title"],
-                "recovery_title_authority": authority,
+                "title": title,
+                "recovery_publication_authority": authority,
             },
             ensure_ascii=False,
         ),
         encoding="utf-8",
     )
     record = {
-        "recovery_title_authority": authority,
+        "recovery_publication_authority": authority,
         "publish_staging": {
-            "title": authority["title"],
-            "recovery_title_authority": authority,
+            "title": title,
+            "recovery_publication_authority": authority,
         },
         "artifact_hashes": {
             "publish_draft_sha256": (
@@ -310,10 +310,10 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
             {
                 "stem": stem,
                 "candidate_id": candidate_id,
-                "title": authority["title"],
+                "title": title,
                 "record": record_path.name,
                 "publish_json": publish.name,
-                "recovery_title_authority": authority,
+                "recovery_publication_authority": authority,
             }
         ],
     }
@@ -326,18 +326,18 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
         issue["code"] for issue in audit_package(root)["issues"]
     }
     assert not any(
-        code.startswith("RECOVERY_PUBLIC_TITLE")
+        code.startswith("RECOVERY_PUBLICATION")
         for code in clean_codes
     )
 
-    del manifest["items"][0]["recovery_title_authority"]
+    del manifest["items"][0]["recovery_publication_authority"]
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
     )
     drift_codes = {
         issue["code"] for issue in audit_package(root)["issues"]
     }
-    assert "RECOVERY_PUBLIC_TITLE_AUTHORITY_SURFACE_MISSING" in (
+    assert "RECOVERY_PUBLICATION_AUTHORITY_SURFACE_MISSING" in (
         drift_codes
     )
 
@@ -1468,6 +1468,35 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     }
     cover.write_bytes(valid_cover_bytes)
     record.write_text(valid_record, encoding="utf-8")
+    manifest_path.write_text(valid_manifest, encoding="utf-8")
+
+    missing_cover_attestations = json.loads(valid_manifest)
+    missing_cover_attestations.pop("cover_route_attestations")
+    manifest_path.write_text(
+        json.dumps(missing_cover_attestations, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    missing_cover_result = audit_package(root)
+    missing_cover_codes = {
+        issue["code"] for issue in missing_cover_result["issues"]
+    }
+    assert "MANIFEST_COVER_ATTESTATIONS_MISSING" in missing_cover_codes
+    assert "MANIFEST_COVER_ATTESTATION_SET_MISMATCH" in missing_cover_codes
+    assert "MANIFEST_COVER_ATTESTATION_MISSING" in missing_cover_codes
+    manifest_path.write_text(valid_manifest, encoding="utf-8")
+
+    extra_cover_attestation = json.loads(valid_manifest)
+    extra = dict(extra_cover_attestation["cover_route_attestations"][0])
+    extra["candidate_id"] = "auto_unexpected_cover"
+    extra_cover_attestation["cover_route_attestations"].append(extra)
+    manifest_path.write_text(
+        json.dumps(extra_cover_attestation, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    extra_cover_result = audit_package(root)
+    assert "MANIFEST_COVER_ATTESTATION_SET_MISMATCH" in {
+        issue["code"] for issue in extra_cover_result["issues"]
+    }
     manifest_path.write_text(valid_manifest, encoding="utf-8")
 
     invalid_boundary_record = json.loads(valid_record)

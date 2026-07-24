@@ -34,6 +34,7 @@ from scripts.audit_lidousha_review_package import (  # noqa: E402
     audit_package,
 )
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
+from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
     BilibiliRepairAdapter,
@@ -404,6 +405,7 @@ def _validate_v3_package_attestation(
                 "reviewed SRT fails release validation: " + ",".join(codes)
             )
         record = _load_json_object(record_path, "record", problems)
+        problems.extend(repair_binding.recovery_publication_package_problems(manifest, record, review_item))
         problems.extend(
             _record_artifact_hash_problems(
                 record,
@@ -1179,7 +1181,8 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags": tags,
         "tags_source": tags_source,
     }
-    package_problems = _validate_v3_package_attestation(manifest, verify_hashes=True)
+    package_problems = repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
+    package_problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
     if package_problems:
         for problem in package_problems:
             print(f"REFUSE: {problem}", file=sys.stderr)
@@ -1733,16 +1736,12 @@ def repair_plan(args: argparse.Namespace) -> int:
 
     manifest_path = Path(args.manifest).resolve()
     manifest, problems = load_and_verify(manifest_path)
+    problems.extend(repair_binding.repair_publication_target_problems(manifest or {}, args.bvid))
     if problems:
         for problem in problems:
             print(f"REFUSE: {problem}", file=sys.stderr)
         return 2
-    if manifest is None or manifest.get("manifest_version") != 3:
-        print(
-            "REFUSE: same-BV repair requires authorized-upload-manifest.v3",
-            file=sys.stderr,
-        )
-        return 2
+    assert manifest is not None
     lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
     with exclusive_upload_lock(lock_path):
         adapter = _same_bv_adapter(Path(args.cookie_json), Path(args.biliup_cookie_json))
