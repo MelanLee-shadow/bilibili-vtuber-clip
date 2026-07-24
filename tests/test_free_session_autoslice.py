@@ -3651,7 +3651,7 @@ def test_produce_talk_materializes_reviewed_july18_jump_pieces(
         (517_500, 559_670),
         (569_730, 603_170),
         (611_530, 638_270),
-        (650_250, 727_400),
+        (650_250, 743_400),
     ]
     assert spec["minimum_effective_duration_ms"] == 45_000
 
@@ -7181,7 +7181,7 @@ def test_talk_boundary_retry_refuses_missing_bound_scope(
             / "spec_auto_missing_bound_scope.json"
         ).read_text()
     )
-    assert spec["pieces"][0]["end_ms"] == 182_000
+    assert spec["pieces"][0]["end_ms"] == 198_000
     assert spec["boundary_repair_extend_cap_ms"] == 30_000
 
 
@@ -7239,7 +7239,7 @@ def test_talk_boundary_failure_does_not_retry_without_continuation_scope(tmp_pat
     assert result["status"] == "boundary_unrepairable"
     assert result["boundary_context_retries"] == 0
     spec = json.loads((base / "out" / date / "spec_auto_distinct_next_topic.json").read_text())
-    assert spec["pieces"][0]["end_ms"] == 182_000
+    assert spec["pieces"][0]["end_ms"] == 198_000
     assert spec["boundary_repair_extend_cap_ms"] == 30_000
 
 
@@ -8730,3 +8730,112 @@ def test_structured_chat_without_sidecar_or_alias_is_explicitly_optional(
         "structured_chat_required": False,
         "chat_binding_status": "OPTIONAL_ABSENT",
     }
+
+
+def test_boundary_retry_tolerates_asr_derived_owner_jitter():
+    """A widened witness-reserve retry re-derives the transcript, so a
+    story-chat owner matched from fresh ASR may shift or vanish.  Only the
+    immutable scope and committed-truth owners bind across attempts."""
+
+    initial_spec = {
+        "candidate_id": "candidate-a",
+        "semantic_start_ms": 100_000,
+        "semantic_end_ms": 110_000,
+        "boundary_repair_extend_cap_ms": 30_000,
+        "pieces": [{"start_ms": 95_000, "end_ms": 125_000}],
+    }
+    truth_owner = {
+        "owner_kind": "source_subtitle_truth",
+        "owner_id": "story-truth",
+        "required": True,
+        "source_start_ms": 104_000,
+        "source_end_ms": 106_000,
+        "local_windows": [{"start_ms": 9_000, "end_ms": 11_000}],
+    }
+    first_attempt_audit: dict[str, object] = {
+        "entity_repairs": [
+            {
+                "matched_start_ms": 6_240,
+                "matched_end_ms": 7_120,
+            }
+        ]
+    }
+    freeze_required_boundary_owner_contract(
+        spec=initial_spec,
+        durations=[30_000],
+        chat_authority_audit=first_attempt_audit,
+        required_boundary_owners=[dict(truth_owner)],
+    )
+    first_contract = first_attempt_audit["frozen_boundary_owner_contract"]
+    assert first_contract["required_owner_count"] == 2
+
+    retry_spec = {
+        **initial_spec,
+        "pieces": [{"start_ms": 95_000, "end_ms": 140_000}],
+        "boundary_repair_extend_cap_ms": 60_000,
+        "boundary_retry_frozen_owner_contract": first_contract,
+    }
+    # Fresh ASR on the retry: the entity repair row does not reoccur.
+    retry_audit: dict[str, object] = {"entity_repairs": []}
+
+    freeze_required_boundary_owner_contract(
+        spec=retry_spec,
+        durations=[45_000],
+        chat_authority_audit=retry_audit,
+        required_boundary_owners=[dict(truth_owner)],
+    )
+
+    frozen = retry_audit["frozen_boundary_owner_contract"]
+    receipt = frozen["boundary_retry_owner_contract_verification"]
+    assert receipt["status"] == "PASS"
+    assert receipt["asr_derived_owner_binding"] == "per_attempt"
+    assert (
+        receipt["deterministic_owner_set_sha256"]
+        == first_contract["deterministic_owner_set_sha256"]
+    )
+    assert frozen["owner_set_sha256"] != first_contract["owner_set_sha256"]
+
+
+def test_boundary_retry_still_rejects_committed_truth_owner_drift():
+    initial_spec = {
+        "candidate_id": "candidate-a",
+        "semantic_start_ms": 100_000,
+        "semantic_end_ms": 110_000,
+        "boundary_repair_extend_cap_ms": 30_000,
+        "pieces": [{"start_ms": 95_000, "end_ms": 125_000}],
+    }
+    truth_owner = {
+        "owner_kind": "source_subtitle_truth",
+        "owner_id": "story-truth",
+        "required": True,
+        "source_start_ms": 104_000,
+        "source_end_ms": 106_000,
+        "local_windows": [{"start_ms": 9_000, "end_ms": 11_000}],
+    }
+    initial_audit: dict[str, object] = {}
+    freeze_required_boundary_owner_contract(
+        spec=initial_spec,
+        durations=[30_000],
+        chat_authority_audit=initial_audit,
+        required_boundary_owners=[dict(truth_owner)],
+    )
+
+    retry_spec = {
+        **initial_spec,
+        "pieces": [{"start_ms": 95_000, "end_ms": 140_000}],
+        "boundary_repair_extend_cap_ms": 60_000,
+        "boundary_retry_frozen_owner_contract": initial_audit[
+            "frozen_boundary_owner_contract"
+        ],
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="BOUNDARY_RETRY_OWNER_SET_DRIFT",
+    ):
+        freeze_required_boundary_owner_contract(
+            spec=retry_spec,
+            durations=[45_000],
+            chat_authority_audit={},
+            required_boundary_owners=[],
+        )

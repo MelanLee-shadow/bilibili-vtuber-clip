@@ -96,6 +96,35 @@ def frozen_boundary_owner_contract_sha256(
     )
 
 
+# Owner kinds whose identity and windows derive only from committed inputs
+# (ledger truth intervals + immutable candidate scope), never from a fresh
+# ASR pass.  Only these bind across a widened-context retry: story-chat
+# owners are re-derived from a fresh transcript whose matched geometry (and
+# even row membership) legitimately jitters between attempts, so each attempt
+# freezes and enforces its own full owner set instead.
+_DETERMINISTIC_OWNER_KINDS = frozenset({"source_subtitle_truth"})
+
+
+def _deterministic_owner_subset(
+    owners: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    return _normalized_owner_set(
+        [
+            owner
+            for owner in owners
+            if isinstance(owner, Mapping)
+            and str(owner.get("owner_kind") or "")
+            in _DETERMINISTIC_OWNER_KINDS
+        ]
+    )
+
+
+def deterministic_owner_set_sha256(
+    owners: Sequence[Mapping[str, object]],
+) -> str:
+    return _canonical_sha256(_deterministic_owner_subset(owners))
+
+
 def validate_frozen_boundary_owner_contract(
     contract: object,
 ) -> dict[str, object]:
@@ -129,6 +158,10 @@ def validate_frozen_boundary_owner_contract(
         )
         or contract.get("owner_set_sha256")
         != _canonical_sha256(normalized_owners)
+        or contract.get("deterministic_owner_set_sha256")
+        != _canonical_sha256(
+            _deterministic_owner_subset(owners)
+        )
         or owner_scope.get("scope_sha256")
         != _canonical_sha256(
             {
@@ -323,6 +356,9 @@ def freeze_required_boundary_owner_contract(
         "owner_set_sha256": _canonical_sha256(
             _normalized_owner_set(required_boundary_owners)
         ),
+        "deterministic_owner_set_sha256": deterministic_owner_set_sha256(
+            required_boundary_owners
+        ),
         "boundary_search_scope": boundary_search_scope,
     }
     frozen_contract["contract_sha256"] = (
@@ -335,9 +371,14 @@ def freeze_required_boundary_owner_contract(
         expected = validate_frozen_boundary_owner_contract(
             expected_retry_contract
         )
+        # A widened-context retry re-derives the transcript, so ASR-matched
+        # story-chat owner geometry may not reproduce bit-for-bit.  What must
+        # not drift: the immutable candidate scope and every committed-truth
+        # owner.  The retry's own full owner set is frozen and enforced for
+        # its own boundary resolution above.
         if (
-            expected.get("owner_set_sha256")
-            != frozen_contract["owner_set_sha256"]
+            expected.get("deterministic_owner_set_sha256")
+            != frozen_contract["deterministic_owner_set_sha256"]
             or (
                 expected.get("owner_eligibility_scope") or {}
             ).get("scope_sha256")
@@ -349,12 +390,19 @@ def freeze_required_boundary_owner_contract(
             "expected_contract_sha256": expected[
                 "contract_sha256"
             ],
-            "owner_set_sha256": frozen_contract[
+            "deterministic_owner_set_sha256": frozen_contract[
+                "deterministic_owner_set_sha256"
+            ],
+            "first_attempt_owner_set_sha256": expected.get(
+                "owner_set_sha256"
+            ),
+            "retry_owner_set_sha256": frozen_contract[
                 "owner_set_sha256"
             ],
             "owner_eligibility_scope_sha256": (
                 owner_eligibility_scope["scope_sha256"]
             ),
+            "asr_derived_owner_binding": "per_attempt",
         }
         # The verification receipt is part of the new attempt's contract.
         frozen_contract["contract_sha256"] = (

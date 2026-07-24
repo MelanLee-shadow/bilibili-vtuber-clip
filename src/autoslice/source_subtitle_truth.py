@@ -28,6 +28,10 @@ PREVIEW_SCHEMA_VERSION = "source-truth-deterministic-preview.v1"
 MIN_CUE_OVERLAP_MS = 80
 DROP_CUE_BOUNDARY_EPSILON_MS = 120
 SPOKEN_START_CUE_LAG_TOLERANCE_MS = 500
+# Candidate recall timestamps and subtitle cue onsets may differ by a few
+# frames.  Boundary ownership may absorb only this bounded lead jitter; larger
+# lead/story or any trailing story/context straddle remains fail-closed.
+BOUNDARY_OWNER_LEAD_TOLERANCE_MS = 500
 _SOURCE_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _ASSERTION_STATES = frozenset(
     {"PROPOSED", "VERIFIED_ACTIVE", "REJECTED", "CONFLICTED", "SUPERSEDED"}
@@ -1802,7 +1806,13 @@ def candidate_boundary_owner_scope(
         )
 
     prior_piece_duration_ms = sum(int(value) for value in durations[:-1])
-    story_start_ms = int(semantic_start_ms) - int(first_piece_start_ms)
+    semantic_story_start_ms = (
+        int(semantic_start_ms) - int(first_piece_start_ms)
+    )
+    story_start_ms = max(
+        0,
+        semantic_story_start_ms - BOUNDARY_OWNER_LEAD_TOLERANCE_MS,
+    )
     story_source_end_ms = max(
         int(semantic_end_ms),
         int(given_end_ms)
@@ -1823,6 +1833,8 @@ def candidate_boundary_owner_scope(
         "candidate_id": str(spec.get("candidate_id") or ""),
         "story_start_ms": story_start_ms,
         "story_end_ms": story_end_ms,
+        "semantic_story_start_ms": semantic_story_start_ms,
+        "lead_tolerance_ms": BOUNDARY_OWNER_LEAD_TOLERANCE_MS,
         "semantic_source_start_ms": int(semantic_start_ms),
         "semantic_source_end_ms": int(semantic_end_ms),
         "given_source_end_ms": (

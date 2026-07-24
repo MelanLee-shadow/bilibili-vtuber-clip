@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
     build_boundary_search_scope,
     cue_grid_sha256,
+    cue_rows,
+    recommendation_eligibility,
 )
 from src.autoslice.boundary_endpoint_binding import (
     bind_final_semantic_endpoint as _bind_final_semantic_endpoint,
@@ -81,6 +83,55 @@ class BoundaryResolution:
     timing_qa: dict
 
 
+def _validated_recommended_end_ms(
+    *,
+    semantic_review: Mapping[str, object],
+    search_scope: Mapping[str, object],
+    cues: Sequence[object],
+    bound_search_scope: bool,
+) -> int:
+    """Re-derive recommendation eligibility and validate the reported end.
+
+    Production scopes recompute eligibility from this exact cue grid (already
+    bound to the review via ``cue_grid_sha256``): the reported end must be the
+    effective end of an eligible cue, including the bounded pin-crossing /
+    silent-gap absorptions.  Hand-built legacy specs validate against the raw
+    scope numbers.
+    """
+
+    recommended_end_ms = semantic_review.get("recommended_end_ms")
+    if isinstance(recommended_end_ms, bool) or not isinstance(
+        recommended_end_ms, int
+    ):
+        raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
+    if bound_search_scope:
+        eligibility = recommendation_eligibility(
+            cue_rows(cues), search_scope
+        )
+        reviewed_recommended_index = semantic_review.get(
+            "recommended_end_cue_index"
+        )
+        effective_end_ms = dict(eligibility["effective_end_ms"])
+        if (
+            isinstance(reviewed_recommended_index, bool)
+            or not isinstance(reviewed_recommended_index, int)
+            or reviewed_recommended_index not in effective_end_ms
+            or recommended_end_ms
+            != int(effective_end_ms[reviewed_recommended_index])
+        ):
+            raise SystemExit(
+                "BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID"
+            )
+        return recommended_end_ms
+    if (
+        recommended_end_ms < int(search_scope["semantic_target_ms"])
+        or recommended_end_ms
+        > int(search_scope["max_recommended_end_ms"])
+    ):
+        raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
+    return recommended_end_ms
+
+
 def _required_boundary_owner_contract(
     spec: Mapping[str, object],
     *,
@@ -139,6 +190,10 @@ def _required_boundary_owner_contract(
                 "local_windows": normalized_windows,
             }
         )
+    if not starts:
+        # A fresh session with no reviewed truths and no applied story-chat
+        # decisions legitimately freezes an empty owner set.
+        return owners, None, None
     return owners, min(starts), max(ends)
 
 
@@ -457,24 +512,12 @@ def _select_initial_boundary(
             "BOUNDARY_SEMANTIC_SEARCH_SCOPE_BLOCKED: "
             + json.dumps(reasons, ensure_ascii=False)
         )
-    recommended_end_ms = semantic_review.get("recommended_end_ms")
-    minimum_recommended_end_ms = int(
-        search_scope[
-            (
-                "minimum_recommended_end_ms"
-                if bound_search_scope
-                else "semantic_target_ms"
-            )
-        ]
+    recommended_end_ms = _validated_recommended_end_ms(
+        semantic_review=semantic_review,
+        search_scope=search_scope,
+        cues=cues,
+        bound_search_scope=bound_search_scope,
     )
-    if (
-        isinstance(recommended_end_ms, bool)
-        or not isinstance(recommended_end_ms, int)
-        or recommended_end_ms < minimum_recommended_end_ms
-        or recommended_end_ms
-        > int(search_scope["max_recommended_end_ms"])
-    ):
-        raise SystemExit("BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID")
     target_rel = max(
         int(search_scope["delivery_lower_bound_ms"]),
         recommended_end_ms,
@@ -535,13 +578,27 @@ def _select_initial_boundary(
         <= recommended_end_ms + TAIL_PAD_MS
     ):
         closure_selection_lower_bound_ms = recommended_end_ms
-    snapped = _snap_end_at_or_after(
-        [c.end_ms for c in cues],
-        closure_selection_lower_bound_ms,
-        upper_bound_ms=repair_max_end_ms,
+    # A pin-crossing closure cue already passed the shared eligibility
+    # contract: it contains the pin, overruns it by a bounded margin, and its
+    # effective recommendation end is the pin itself.  The reviewed cue IS
+    # the closure sentence; the exact-pin tail lock below still owns the end.
+    pin_crossing_recommended = bool(
+        manual_end_mode == "exact_source_pin"
+        and recommended_cue is not None
+        and int(recommended_cue.start_ms) <= target_rel
+        and target_rel < int(recommended_cue.end_ms)
+        and recommended_end_ms == target_rel
     )
+    if pin_crossing_recommended:
+        snapped = int(recommended_cue.end_ms)
+    else:
+        snapped = _snap_end_at_or_after(
+            [c.end_ms for c in cues],
+            closure_selection_lower_bound_ms,
+            upper_bound_ms=repair_max_end_ms,
+        )
     refinement_used = False
-    if needs_tail_refinement(
+    if not pin_crossing_recommended and needs_tail_refinement(
         cues,
         snapped_end=snapped,
         target_ms=closure_selection_lower_bound_ms,
@@ -589,7 +646,7 @@ def _select_initial_boundary(
         manual_end_mode == "exact_source_pin"
         and (
             recommended_cue is None
-            or snapped != recommended_end_ms
+            or snapped != int(recommended_cue.end_ms)
         )
     ):
         raise SystemExit(

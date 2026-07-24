@@ -8,73 +8,58 @@ Updated: 2026-07-24 America/New_York
 
 ## 目标
 
-用当前流水线系统性修复 2026-07-22 五条已发李豆沙切片，exact 重跑
-`3573, 672, 1863, 1573, 1475`，抑制 `6577` 且不补位；全部封面走
-`screenshot_direct`。机器闭包、root 最终逐片观看和授权门通过后，只修复原 BV，不新建重复稿。
+1. 用当前流水线系统性修复 2026-07-22 五条已发李豆沙切片，exact 重跑
+   `3573, 672, 1863, 1573, 1475`，抑制 `6577` 且不补位；全部封面走
+   `screenshot_direct`。机器闭包、root 最终逐片观看和授权门通过后，只修复原 BV，不新建重复稿。
+2. 2026-07-24 当日场次在修复后的流水线上正常交付（talk 首批在 219b111 下 0/10，
+   6 个 `failed` 属于同一批 systemic 缺陷，部署新 commit 后按 fingerprint 变化自动 requeue）。
 
 ## 已完成
 
-- 系统性第一阶段已提交并部署：
-  - `ba06fe80e61592733a33a5a26e076024188ea0c5`：source truth 精确投影、exact-final
-    timeline offset、whole-line `owner_eligible`、hash-bound boundary scope、原子 correction、
-    exact closure、评分/标题/关系/封面与 same-BV 证据门；
-  - `d995c848b5f0f82cf53dc7eb4c2b36a7beed6c22`：1475 开头只保留多路共同支持的
-    “请坐在左边的弹”，禁止“李姐晚上好/就请坐”回灌。
-- 上述部署已从 `free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` 与关键文件 hash 读回。
-- 为容量门精确删除过七个可重算 media/output 层；未删 state/reports/logs、immutable v2、
-  v11 失败证据或 source/adjudication 资产。V12 结束后最近只读快照显示可用
-  `29,281,452,032` bytes（约 27.27 GiB），高于 25 GiB 门。
-- fresh V12 probe 已终止：
-  `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v12-screenshot-cover`。
-  它没有上传，state=`recovery_incomplete`，exact closure=`INCOMPLETE`，0/5 delivery，
-  outside-contract attempt 为空；终止审计当时 V12 target/global runner lock 均可取得。
-  global lock 的此刻状态仍须 live readback，正常 cron 运行也可能短暂持有它。
-- V12 精确暴露的五项结果：
-  - 3573：compat publish adapter 漏传 `recovery_publication_authority`；
-  - 672：四个已写对的“毁神” mention 被宽窗口误判 owner ambiguous；
-  - 1863：旧 `required_given_end_ms=2084520` 把 cue 911 之后的新 SC 冻结成故事内容，继而
-    30→60 秒仍追着烟头话题扩展；
-  - 1573：closure cue 66 end=`141410` 在 30 秒 ceiling 内，但实际 source window 只到
-    local `141820`，比 scope 要求的 `161840` witness reserve 少 `20020ms`；
-  - 1475：`BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError`，属于 provider transient，
-    不是字幕裁决。
-- 已重新阅读两份现有 Pro 回答。Pro 明确认定 1863 火锅故事结束于 source cue 911 /
-  `2056480ms`；后续 3:24“邪恶守宫”属于下一条 SC，应作为 topic-separation evidence，
-  不能靠扩大到 120 秒吞入。新的 Pro 请求因浏览器 attach 失败未提交，不能记作成功咨询。
-- 当前未提交集成修复已经实现并有定向回归：
-  - publish adapter 精确转发 same-BV authority；
-  - mention-scoped `replace_substring` 先解析全部 mention，再用同一精确 cue 并集约束
-    mutation 与 owner projection；未审父窗口 cue 不再可能“被改但从审计消失”；
-  - source reviewer 前先落 `talk-boundary-source-context-coverage.v1`；reserve 不足时不调用
-    LLM，而以 `source_witness_reserve` 触发一次最多 60 秒的 fresh 重物化/重审；
-  - `recommended=null` 记为 missing，不再伪报 out-of-scope；
-  - source truth 新增 `boundary_role=next_topic_witness`：仍要求 padded context 正确落字，
-    但完全位于 semantic target 之后时不取得故事终点 owner；
-  - 1863 publication authority 已改为
-    `boundary_end_mode=exact_source_pin`、`required_given_end_ms=2056480`：source reviewer
-    仍须通过四命题语义门，只可选择 pin 前 400ms 内的完整 fresh-ASR closure；resolver 绑定
-    该 cue 后把最终媒体 end 精确锁到官方 source cue 911 / `2056480ms`，并排除跨 pin 的派生
-    ASR cue。其余四项仍为 `semantic_lower_bound`。较早的“邪恶守宫”感知检查保留，后续新
-    SC 明确排除。
-- 当前 tracked 集成态已完成 `608 passed` 相关广覆盖与一次完整
-  `2219 passed in 69.70s`；Ruff（全部本轮 Python diff 与两个新模块）、compileall、
-  architecture `7 passed`、`git diff --check` 均通过。独立聚焦复核的 exact-pin、late-cue、
-  package `pin+200`、context-only owner 与无 scope retry 反例均已 fail closed；仍未完成的是
-  clean commit/deploy 后的 fresh artifact/runtime/public 验收，不能用测试代替。
+- 历史阶段（codex）：`ba06fe8`、`d995c84` 第一阶段；`f9223c0` 第二阶段并部署（08:23:21Z）；
+  `219b111` 第三阶段并部署（09:44:19Z）。V13（f9223c0）与 V14（219b111）两轮 fresh 重跑均
+  `recovery_incomplete`，5 尝试 0 交付。
+- V14 五项失败已全部根因闭合（Claude 2026-07-24）：
+  - 3573/1573：`BOUNDARY_RETRY_OWNER_SET_DRIFT` —— 跨尝试 owner 哈希绑定了 fresh-ASR 派生
+    的 story-chat owner 几何（含 `entity_repair:1:52240:55120` 这类毫秒内嵌 ID），重转录后
+    必然漂移；见证窗 retry 因此永不可能通过。
+  - 672：`SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_STRADDLE` —— 开场真值 cue（672920）比
+    semantic_start（672960）早 40ms，撞 immutable scope 起点。
+  - 1863：exact pin 模式下推荐集合为空 —— fresh 收尾 cue [201370..202930] 越过官方 pin
+    202720 共 210ms 被排除，前一 cue 又早于 pin−400ms 窗；LLM 四命题全 true 仍死局。
+  - 1475：旧发布尾点 given_end=1543760 作为硬下限进推荐窗，而故事真实收尾 cue 止于
+    77380（local），距下限 400ms 纯静音；正确切点被旧机器几何禁止。
+  - 另发现当日 lane 回归：零 owner 冻结在 `producer_boundary_resolution` `min([])` 崩溃
+    （全新场次无 ledger 真值时 100% 触发）。
+- 本轮修复（待 commit 的工作树，含 codex 未提交的 500ms 开场容差，一并保留）：
+  - 跨尝试 drift 门改绑 `deterministic_owner_set_sha256`（source_subtitle_truth 子集）+
+    scope SHA；ASR 派生 owner 按尝试各自冻结执行，回执披露 `asr_derived_owner_binding`；
+  - `recommendation_eligibility` 共享确定性资格函数：pin 跨界收尾 cue（≤600ms，媒体仍锁
+    pin）与静音间隙收尾 cue（≤400ms=tail-pad 桥，交付下界不动）两类有界放宽，review 与
+    resolver 两侧同函数重算，`recommendation_relaxations` 留证；endpoint binding 按 grid
+    containment 重算不信任自述；
+  - 零 owner 冻结合法化（无 owner 下界）；
+  - `PIECE_POST_MS` 32s→48s 且人工下界差额逐候选加入 post pad——首窗覆盖
+    origin+30s+15s 常规需求，不再必然走整窗重转录 retry；
+  - witness 证据要求写入 prompt（next_topic_separated=true 必须给推荐点之后的证据 cue）。
+  - 定向与全量测试、ruff（新增文件零告警）、compileall 通过；docs/pipeline/30-boundary.md、
+    40-subtitle-text.md 同步。
+- immutable recovery source 三项 SHA（source state / official MP4 / BCUT）与 V13 建立前
+  记录一致，未再变更；V12/V13/V14 全部保留为失败证据，未续跑未复制。
 
 ## 当前工作树与权威 hash
 
 - 只允许提交本轮 tracked 代码、资产、测试与 docs；不得碰用户/生成物：
   `lidousha/.recovery-archives/`、`uv.lock`、当前
   `lidousha/2026-07-22-full-rerun-review/` 未跟踪媒体/sidecar。
-- 当前修改后的 authority hashes（提交前仍须重算）：
+- committed authority hashes（219b111 起未变）：
   - recovery publication registry：
     `sha256:be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757`；
   - subtitle truth ledger：
     `sha256:794a4e2f45beae9e612ae884ca48eea2cd601d3c4537f05ae4fc024fd88a5749`；
   - final media review contract：
     `sha256:d51040d6d02931c328c31c6a8fa52b457e096c46d0959dfc7b3b8ea22a67cbd1`。
-- immutable recovery source 仍须在下一 base 创建前复验：
+- immutable recovery source：
   - source state：
     `sha256:fc26e2d68f4d78f4420b3e49d79f791bd24e4c3bcf2740862e380e7af7108f54`；
   - official MP4：
@@ -84,38 +69,43 @@ Updated: 2026-07-24 America/New_York
 
 ## 进行中
 
-1. 完成 tracked diff 的 targeted/full regression、Ruff、compile、`git diff --check` 和 root review；
-2. clean commit 后从 detached worktree 部署，读回 `DEPLOYED_COMMIT` 与关键 hash；
-3. 保留 V12 state/reports/logs 作为失败证据；若容量不足，只精确删除 V12 可重算 `out/`；
-4. 新建 fresh V13：
-   `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v13-screenshot-cover`，
-   只从 immutable v2 source 和新部署 repo 由 v7 planner 重建；
-5. 重新计算五项 pipeline fingerprint，验证 exact-no-backfill、6577 suppression、1475
-   replacement 与四处 `AUTO_UPLOAD` 不存在，再以
-   `AUTOSLICE_COVER_MODE=screenshot` 跑到 exact closure COMPLETE；
-6. COMPLETE 后整包重建 manifest/audit，先同步到 staging，audit 与 rsync 空 diff 通过后才
+1. clean commit 本轮修复，`deploy_free_autoslice.sh` 部署并读回 `DEPLOYED_COMMIT`
+   （脚本自带 runner.lock 等待，当日批次跑完前不会切换）；
+2. 部署后当日 2026-07-24 `failed` talk picks 依 fingerprint 变化自动 requeue，观察下一 tick
+   交付（`candidate_rejected` 的 3×外语转写门与 1×段尾边界属设计内 fail-closed，不复跑）；
+3. 新建 fresh V15：
+   `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover`，
+   由 v7 planner 从 immutable v2 source 与新部署 commit 重建，重算五项 per-candidate
+   pipeline fingerprint，验证 exact-no-backfill、`6577` suppression、1475 replacement 与
+   四处 `AUTO_UPLOAD` 不存在，以 `AUTOSLICE_COVER_MODE=screenshot` 跑到 exact closure
+   COMPLETE；任一 exact candidate 失败都不得补位或沿用旧产物；
+4. COMPLETE 后整包重建 manifest/audit，先同步 staging，audit 与 rsync 空 diff 通过后才
    `--delete` 覆盖本地旧审片包；
-7. root 完整播放五个最终烧录 MP4，按 committed exact points、八项检查与 StoryContract
+5. root 完整播放五个最终烧录 MP4，按 committed exact points、八项检查与 StoryContract
    cover claims 出具真实 `delegated_root_agent` receipt；
-8. receipt 与 authorized manifest 通过后，对五个原 BVID 执行
+6. receipt 与 authorized manifest 通过后，对五个原 BVID 执行
    `repair-plan --dry-run → repair-plan → repair-status → repair-run --dry-run → repair-run`，
    最后核对 public/public-tags/Creator/exact-section 四面。
 
 ## 约束与阻塞判据
 
-- V8/V10/V11/V12 都只是历史或失败证据，不得续跑、复制 state/out/receipt、补 hash 或冒充
-  current package。V13 也只有 exact closure COMPLETE 才能覆盖本地包。
+- V8–V14 都只是历史或失败证据，不得续跑、复制 state/out/receipt、补 hash 或冒充
+  current package。V15 也只有 exact closure COMPLETE 才能覆盖本地包。
 - `6577` 永不补位；任一 exact candidate 失败都保持真实失败状态。
 - 本轮五封面强制 screenshot 是内容选择：源帧能证明双人/角色/情绪；不代表 AI 生图功能未部署。
 - recovery review manifest 始终 `upload_allowed=false`。新 BV 需要 `AUTO_UPLOAD`；本轮只走
   exact same-BV receipt/authorized-manifest lane，不创建 `AUTO_UPLOAD`。
 - 感知 receipt 只有 root 实际完成五片全片观看后才能签，不能把机器 audit 或旧包观看冒充
   当前最终字节复核。
-- `AUTOSLICE_SUMMARY.md` 仍是醒目标记的历史 V8 快照；只有 V13 成功并覆盖审片包后才从最终
+- `AUTOSLICE_SUMMARY.md` 仍是醒目标记的历史 V8 快照；只有 V15 成功并覆盖审片包后才从最终
   state/records 整份重生成，不能局部改旧数字伪造新历史。
+- 已知但本轮不修（记录在案）：段尾候选的 witness reserve 无法跨 segment 文件取后文
+  （1571_1804 类）；2026-07-19 `auto_163109_91_291` cover repair 因 delivery record
+  title/upload binding mismatch 被 preflight 拦下。
 
 ## 完成判据
 
-最新代码 clean commit 并部署读回；V13 exact 五项 closure COMPLETE；当前 package audit、
+最新代码 clean commit 并部署读回；V15 exact 五项 closure COMPLETE；当前 package audit、
 root final-human receipt 与本地镜像验证全部通过；五个原 BVID 完成 same-BV repair，且
-public、public tags、Creator、exact section 四面一致；相关现行 docs/summary 与发布证据提交。
+public、public tags、Creator、exact section 四面一致；2026-07-24 当日批次在新代码下正常
+交付或留下真实 fail-closed 记录；相关现行 docs/summary 与发布证据提交。

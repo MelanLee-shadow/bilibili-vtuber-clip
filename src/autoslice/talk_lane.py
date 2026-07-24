@@ -1464,11 +1464,22 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     effective_duration_ms = int(filler_plan["effective_duration_ms"])
     out_root = _runner.BASE / "out" / date
     delivery_name = _runner.safe_name(item.get("hook", ""), cid)
+    # A manual lower bound beyond the semantic end shifts the boundary search
+    # origin by the same amount, so the first materialized window must carry
+    # that extra tail too or every such candidate needlessly burns a widened
+    # full re-transcription retry.
+    given_end_ms = item.get("given_end_ms")
+    manual_tail_delta_ms = (
+        max(0, int(given_end_ms) - int(item["end_ms"]))
+        if isinstance(given_end_ms, int)
+        and not isinstance(given_end_ms, bool)
+        else 0
+    )
     pieces = build_piece_specs(
         item=item,
         plan=filler_plan,
         pre_ms=_runner.PIECE_PRE_MS,
-        post_ms=_runner.PIECE_POST_MS,
+        post_ms=_runner.PIECE_POST_MS + manual_tail_delta_ms,
     )
     spec = {
         "candidate_id": cid,

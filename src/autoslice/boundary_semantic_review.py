@@ -29,6 +29,13 @@ MAX_VISIBLE_TEXT_CHARS = 16_000
 NEXT_TOPIC_WITNESS_CUES = 2
 SOURCE_WITNESS_RESERVE_MS = 15_000
 DELIVERY_TAIL_PAD_MS = 400
+# Fresh-ASR cue ends and frozen ms authorities come from different timing
+# sources; absorption is bounded and only ever crosses proven-silent gaps.
+PIN_CROSSING_TOLERANCE_MS = 600
+# Must not exceed DELIVERY_TAIL_PAD_MS: the resolver's tail-pad coverage
+# bridge is what carries the delivered media from the earlier closure cue up
+# to the untouched delivery floor.
+SEMANTIC_FLOOR_SILENT_GAP_MS = DELIVERY_TAIL_PAD_MS
 SEMANTIC_LLM_INDEPENDENCE_GROUP = "cpa-gpt-5.6-semantic-family"
 
 
@@ -343,7 +350,9 @@ def _scorecard_story_witness(scorecard: object) -> dict[str, object]:
     }
 
 
-def _cue_rows(cues: Sequence[object]) -> list[dict[str, object]]:
+def cue_rows(cues: Sequence[object]) -> list[dict[str, object]]:
+    """1-based rows over the non-empty cue grid, shared with the resolver."""
+
     return [
         {
             "cue_index": index,
@@ -356,6 +365,9 @@ def _cue_rows(cues: Sequence[object]) -> list[dict[str, object]]:
     ]
 
 
+_cue_rows = cue_rows
+
+
 def cue_grid_sha256(cues: Sequence[object]) -> str:
     """Bind a semantic decision to the complete non-empty cue grid."""
 
@@ -365,6 +377,111 @@ def cue_grid_sha256(cues: Sequence[object]) -> str:
             "cues": _cue_rows(cues),
         }
     )
+
+
+def recommendation_eligibility(
+    rows: Sequence[Mapping[str, object]],
+    scope: Mapping[str, object],
+) -> dict[str, object]:
+    """Return recommendable cue positions plus bounded grid-jitter absorption.
+
+    Frozen millisecond authorities (a published lower bound, an official
+    source pin) come from a different timing source than the fresh ASR grid,
+    so the closure cue may miss the base window ``[minimum, cap]`` by a
+    bounded, provably content-free margin.  Absorption never crosses speech:
+
+    - ``exact_source_pin``: the single cue containing the pin may witness
+      closure when it overruns the pin by at most
+      ``PIN_CROSSING_TOLERANCE_MS``; its effective recommendation end is the
+      pin itself and the delivered media end stays exactly the pin.
+    - ``semantic_lower_bound``: the latest cue ending before ``minimum`` may
+      witness closure when the gap up to ``minimum`` contains no cue start
+      and is at most ``SEMANTIC_FLOOR_SILENT_GAP_MS``; the delivery floor
+      still applies unchanged, so no published content is dropped.
+    """
+
+    minimum_end_ms = int(scope["minimum_recommended_end_ms"])
+    cap_end_ms = int(scope["max_recommended_end_ms"])
+    end_mode = str(scope.get("boundary_end_mode") or "semantic_lower_bound")
+    positions = [
+        position
+        for position, row in enumerate(rows)
+        if minimum_end_ms <= int(row["end_ms"]) <= cap_end_ms
+    ]
+    effective_end_ms = {
+        int(rows[position]["cue_index"]): int(rows[position]["end_ms"])
+        for position in positions
+    }
+    relaxations: list[dict[str, object]] = []
+    if end_mode == "exact_source_pin":
+        crossing = [
+            position
+            for position, row in enumerate(rows)
+            if int(row["start_ms"]) <= cap_end_ms < int(row["end_ms"])
+            and int(row["end_ms"]) - cap_end_ms
+            <= PIN_CROSSING_TOLERANCE_MS
+        ]
+        for position in crossing:
+            if position in positions:
+                continue
+            cue_index = int(rows[position]["cue_index"])
+            positions.append(position)
+            effective_end_ms[cue_index] = cap_end_ms
+            relaxations.append(
+                {
+                    "kind": "pin_crossing_closure_cue",
+                    "cue_index": cue_index,
+                    "cue_end_ms": int(rows[position]["end_ms"]),
+                    "pin_ms": cap_end_ms,
+                    "overrun_ms": int(rows[position]["end_ms"])
+                    - cap_end_ms,
+                    "tolerance_ms": PIN_CROSSING_TOLERANCE_MS,
+                }
+            )
+    else:
+        before = [
+            position
+            for position, row in enumerate(rows)
+            if int(row["end_ms"]) < minimum_end_ms
+        ]
+        if before:
+            closure_position = max(
+                before, key=lambda position: int(rows[position]["end_ms"])
+            )
+            closure_end_ms = int(rows[closure_position]["end_ms"])
+            gap_ms = minimum_end_ms - closure_end_ms
+            gap_has_speech = any(
+                closure_end_ms <= int(row["start_ms"]) < minimum_end_ms
+                for position, row in enumerate(rows)
+                if position != closure_position
+            )
+            if (
+                gap_ms <= SEMANTIC_FLOOR_SILENT_GAP_MS
+                and not gap_has_speech
+                and closure_position not in positions
+            ):
+                cue_index = int(rows[closure_position]["cue_index"])
+                positions.append(closure_position)
+                effective_end_ms[cue_index] = closure_end_ms
+                relaxations.append(
+                    {
+                        "kind": "silent_gap_closure_cue",
+                        "cue_index": cue_index,
+                        "cue_end_ms": closure_end_ms,
+                        "floor_ms": minimum_end_ms,
+                        "gap_ms": gap_ms,
+                        "tolerance_ms": SEMANTIC_FLOOR_SILENT_GAP_MS,
+                    }
+                )
+    positions.sort()
+    return {
+        "positions": positions,
+        "cue_indexes": [
+            int(rows[position]["cue_index"]) for position in positions
+        ],
+        "effective_end_ms": effective_end_ms,
+        "relaxations": relaxations,
+    }
 
 
 def semantic_review_sha256(review: Mapping[str, object]) -> str:
@@ -455,7 +572,9 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
-- 只能从 recommendation_cue_indexes 选择。普通 semantic_lower_bound 不得提前删掉已圈内容；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，绝不可选择 pin 后 cue。
+- 只能从 recommendation_cue_indexes 选择。普通 semantic_lower_bound 不得提前删掉已圈内容；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
+- recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音。语义合适就正常选择它们。
+- 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。
 - 若目标本身已闭环，即使后面无停顿继续说，也应选目标；若目标半句或包袱未落地，才向后选最早同时满足三项的 cue。
 - 若请求带 PASS 的 terminal source separation witness，说明 source full-window 已证明 cut 后进入下一话题；此时 delivery 最后一条 cue 可用该 witness 证明 next_topic_separated，但 syntax/story 仍须按当前最终字幕重新判断。
@@ -539,17 +658,13 @@ def review_talk_boundary_semantics(
         )
     rows = _cue_rows(cues)
     target_pos = _target_index(rows, target_ms)
-    minimum_end_ms = int(scope["minimum_recommended_end_ms"])
-    cap_end_ms = int(scope["max_recommended_end_ms"])
-    recommendation_positions = [
-        position
-        for position, row in enumerate(rows)
-        if minimum_end_ms <= int(row["end_ms"]) <= cap_end_ms
-    ]
-    recommendation_indexes = [
-        int(rows[position]["cue_index"])
-        for position in recommendation_positions
-    ]
+    eligibility = recommendation_eligibility(rows, scope)
+    recommendation_positions = list(eligibility["positions"])
+    recommendation_indexes = list(eligibility["cue_indexes"])
+    recommendation_effective_end_ms = dict(
+        eligibility["effective_end_ms"]
+    )
+    recommendation_relaxations = list(eligibility["relaxations"])
     recommendation_lo = (
         recommendation_positions[0]
         if recommendation_positions
@@ -599,6 +714,7 @@ def review_talk_boundary_semantics(
         "max_forward_ms": max_forward_ms,
         "boundary_search_scope": scope,
         "recommendation_cue_indexes": recommendation_indexes,
+        "recommendation_relaxations": recommendation_relaxations,
         "next_topic_witness_cue_indexes": [
             int(row["cue_index"])
             for row in rows[recommendation_hi:witness_hi]
@@ -634,7 +750,7 @@ def review_talk_boundary_semantics(
     recommendation_valid = bool(
         recommended is not None
         and recommended_index in recommendation_indexes
-        and minimum_end_ms <= int(recommended["end_ms"]) <= cap_end_ms
+        and recommended_index in recommendation_effective_end_ms
     )
     evidence_raw = payload.get("evidence_cue_indexes")
     evidence_indexes = sorted(
@@ -762,8 +878,11 @@ def review_talk_boundary_semantics(
         "boundary_search_scope": scope,
         "recommended_end_cue_index": recommended_index,
         "recommended_end_ms": (
-            int(recommended["end_ms"]) if recommendation_valid and recommended is not None else None
+            int(recommendation_effective_end_ms[recommended_index])
+            if recommendation_valid and recommended is not None
+            else None
         ),
+        "recommendation_relaxations": recommendation_relaxations,
         **booleans,
         "content_anchor_covered": content_anchor_covered,
         "selector_story_witness": selector_witness,

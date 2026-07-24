@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from src.autoslice.boundary_semantic_review import cue_grid_sha256
+from src.autoslice.boundary_semantic_review import PIN_CROSSING_TOLERANCE_MS, cue_grid_sha256
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 
@@ -75,7 +75,21 @@ def bind_final_semantic_endpoint(
         reasons.append("BOUNDARY_SEMANTIC_REVIEW_NOT_PASS")
     if review.get("cue_grid_sha256") != final_grid_sha256:
         reasons.append("BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH")
-    if review.get("recommended_end_ms") != snapped_end_ms:
+    pin = review.get("recommended_end_ms")
+    endpoint_ms_bound = pin == snapped_end_ms
+    if not endpoint_ms_bound and closure_index is not None:
+        # Pin-crossing closure: the reviewed effective end is the source pin
+        # inside the closure cue — recompute containment from the grid, never
+        # from a relaxation claim in the review.
+        closure = semantic_cues[closure_index - 1]
+        endpoint_ms_bound = bool(
+            isinstance(pin, int)
+            and not isinstance(pin, bool)
+            and int(getattr(closure, "start_ms")) <= pin < int(getattr(closure, "end_ms"))
+            and int(snapped_end_ms) - pin <= PIN_CROSSING_TOLERANCE_MS
+            and pin == final_end_ms
+        )
+    if not endpoint_ms_bound:
         reasons.append("BOUNDARY_SEMANTIC_ENDPOINT_MS_MISMATCH")
     if (
         isinstance(recommended_index, bool)

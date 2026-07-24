@@ -323,7 +323,11 @@ MAX_PARALLEL_PRODUCE = 3  # slices are independent; produce them concurrently (e
 # terminally recorded as not selected instead of living in the retry backlog.
 MIN_TALK_CONFIDENCE = 0.80
 PIECE_PRE_MS = 10_000
-PIECE_POST_MS = 32_000
+# Post context must cover the deterministic source-review demand for the
+# common (origin == semantic end) case in one pass: initial repair cap 30s +
+# source witness reserve 15s + margin.  A short window is not cheaper — it
+# forces a widened-context retry that re-transcribes the whole padded window.
+PIECE_POST_MS = 48_000
 BOUNDARY_CONTEXT_RETRY_POST_MS = 90_000
 BOUNDARY_REPAIR_INITIAL_CAP_MS = 30_000
 BOUNDARY_REPAIR_RETRY_CAP_MS = 60_000

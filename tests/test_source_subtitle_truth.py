@@ -786,6 +786,94 @@ def test_lead_context_truth_is_not_boundary_owner(tmp_path):
     assert contracts == []
 
 
+def test_bounded_leading_cue_jitter_becomes_story_boundary_owner(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "opening-cue-jitter",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 99_960,
+                "source_end_ms": 102_000,
+                "action": "replace_cue",
+                "text": "开场完整问句",
+                "required": True,
+            }
+        ],
+    )
+
+    contracts = ledger_required_owner_contracts(
+        spec={
+            "candidate_id": "candidate-a",
+            "semantic_start_ms": 100_000,
+            "semantic_end_ms": 110_000,
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 95_000,
+                    "end_ms": 125_000,
+                }
+            ],
+        },
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+
+    assert contracts == [
+        {
+            "owner_kind": "source_subtitle_truth",
+            "owner_id": "opening-cue-jitter",
+            "required": True,
+            "source_start_ms": 99_960,
+            "source_end_ms": 102_000,
+            "owner_scope_sha256": contracts[0]["owner_scope_sha256"],
+            "local_windows": [
+                {"start_ms": 4_960, "end_ms": 7_000}
+            ],
+        }
+    ]
+
+
+def test_leading_story_straddle_beyond_jitter_tolerance_fails(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "wide-opening-straddle",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 99_000,
+                "source_end_ms": 102_000,
+                "action": "replace_cue",
+                "text": "无法安全归属的开场",
+                "required": True,
+            }
+        ],
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_STRADDLE",
+    ):
+        ledger_required_owner_contracts(
+            spec={
+                "candidate_id": "candidate-a",
+                "semantic_start_ms": 100_000,
+                "semantic_end_ms": 110_000,
+                "pieces": [
+                    {
+                        "remote_media": "/source/recording.mp4",
+                        "start_ms": 95_000,
+                        "end_ms": 125_000,
+                    }
+                ],
+            },
+            durations=[30_000],
+            ledger_path=ledger,
+        )
+
+
 def test_story_scope_straddle_fails_closed(tmp_path):
     ledger = _ledger(
         tmp_path,

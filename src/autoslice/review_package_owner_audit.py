@@ -564,8 +564,11 @@ def _retry_verification_valid(
             isinstance(receipt, Mapping)
             and receipt.get("status") == "PASS"
             and _is_sha256(receipt.get("expected_contract_sha256"))
-            and receipt.get("owner_set_sha256")
+            and receipt.get("deterministic_owner_set_sha256")
+            == frozen.get("deterministic_owner_set_sha256")
+            and receipt.get("retry_owner_set_sha256")
             == frozen.get("owner_set_sha256")
+            and receipt.get("asr_derived_owner_binding") == "per_attempt"
             and isinstance(owner_scope, Mapping)
             and receipt.get("owner_eligibility_scope_sha256")
             == owner_scope.get("scope_sha256")

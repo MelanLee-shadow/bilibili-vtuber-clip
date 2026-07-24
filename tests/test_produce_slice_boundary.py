@@ -1583,3 +1583,108 @@ def test_final_semantic_endpoint_binding_blocks_stale_cue_grid():
 
     assert review["final_endpoint_binding"]["status"] == "BLOCK"
     assert "BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH" in reasons
+
+
+def test_hotpot_exact_source_pin_accepts_pin_crossing_closure_cue(tmp_path):
+    """V14 live failure: fresh ASR merged the closure so its cue ends 210ms
+    AFTER official cue 911.  The crossing cue is the reviewed closure; the
+    delivered media end still locks to the official pin exactly."""
+
+    candidate_id = "auto_193450_1863_2056"
+    source_start_ms = 1_853_760
+    official_source_end_ms = 2_056_480
+    official_local_end_ms = official_source_end_ms - source_start_ms
+    crossing_end_ms = official_local_end_ms + 210
+    scope = build_boundary_search_scope(
+        semantic_target_ms=official_local_end_ms,
+        manual_lower_bound_ms=official_local_end_ms,
+        repair_cap_ms=30_000,
+        last_piece_start_ms=source_start_ms,
+        boundary_end_mode="exact_source_pin",
+    )
+    cues = [
+        _cue(0, 1_000, "开场完整。"),
+        _cue(199_610, 201_370, "就是刚认识。"),
+        _cue(201_370, crossing_end_ms, "暂时不太熟。"),
+        _cue(203_650, 205_170, "嗯谢谢，下一条SC。"),
+    ]
+
+    resolution = boundary_resolution.resolve_producer_boundary(
+        spec={
+            "candidate_id": candidate_id,
+            "pieces": [
+                {"start_ms": source_start_ms, "end_ms": 2_088_480}
+            ],
+            "semantic_start_ms": source_start_ms,
+            "semantic_end_ms": official_source_end_ms,
+            "given_end_ms": official_source_end_ms,
+            "given_end_mode": "exact_source_pin",
+            "given_end_authority": (
+                "Pro source cue 911 exact endpoint"
+            ),
+            "recovery_publication_authority": (
+                _hotpot_exact_source_pin_authority()
+            ),
+            "boundary_search_scope": scope,
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "cue_grid_sha256": (
+                    boundary_resolution.cue_grid_sha256(cues)
+                ),
+                "recommended_end_cue_index": 3,
+                "recommended_end_ms": official_local_end_ms,
+                "recommendation_relaxations": [
+                    {
+                        "kind": "pin_crossing_closure_cue",
+                        "cue_index": 3,
+                        "cue_end_ms": crossing_end_ms,
+                        "pin_ms": official_local_end_ms,
+                        "overrun_ms": 210,
+                        "tolerance_ms": 600,
+                    }
+                ],
+                "boundary_search_scope": scope,
+            },
+        },
+        durations=[234_720],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=234_720,
+        cid=candidate_id,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        spans=[
+            SpeechSpan(0, 900),
+            SpeechSpan(199_610, crossing_end_ms - 20),
+            SpeechSpan(203_650, 205_150),
+        ],
+        boundary_repair_extend_cap_ms=30_000,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+        required_tail_end_ms=None,
+    )
+
+    assert resolution.audit["manual_end_mode"] == "exact_source_pin"
+    assert resolution.audit["snapped_sentence_end_ms"] == crossing_end_ms
+    assert resolution.final_end == official_local_end_ms
+    assert (
+        source_start_ms + resolution.final_end == official_source_end_ms
+    )
+
+
+def test_zero_frozen_owner_contract_resolves_without_owner_floor():
+    """A fresh session with no reviewed truths freezes an empty owner set;
+    resolution must treat that as no owner floor, not crash (V14 daily-lane
+    regression: min() over an empty window list)."""
+
+    owners, start_ms, end_ms = (
+        boundary_resolution._required_boundary_owner_contract(
+            {"required_boundary_owners": []},
+            padded_dur=60_000,
+        )
+    )
+    assert owners == []
+    assert start_ms is None
+    assert end_ms is None

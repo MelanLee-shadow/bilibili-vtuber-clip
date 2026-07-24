@@ -34,14 +34,17 @@ cue/VAD guard 钳到下界之前，仍以 `BOUNDARY_REQUIRED_OWNER_EXCLUDED` /
 只有 candidate-bound、registry-SHA-bound 的 publication authority 明示
 `boundary_end_mode=exact_source_pin` 时，`required_given_end_ms` 才是官方 source 时间轴上的
 **精确最终媒体 end**，不是普通下界，也不签发语义 PASS。source-full-window reviewer 仍须使
-上述四命题全部成立；由于 fresh ASR cue timing 可相对官方 source cue 漂移，exact scope 只把
-`[pin-400ms, pin]` 内的完整语义句尾列为可选 recommendation，禁止选择 pin 后 cue，forward
-recommendation 固定为 0。resolver 必须 snap 到 reviewer 所选 fresh cue，再由 source pin
-精确补足/钳短 disposable tail；最终媒体 end 必须等于 pin。落在 semantic closure 之后的
+上述四命题全部成立；由于 fresh ASR cue timing 可相对官方 source cue 漂移，exact scope 把
+`[pin-400ms, pin]` 内的完整语义句尾、加上唯一**包含 pin 且越过 pin 不超过 600ms** 的收尾
+cue（`pin_crossing_closure_cue`，AGY 合并收尾时的有界计时差）列为可选 recommendation，
+禁止选择 pin 之后才开始的 cue，forward recommendation 固定为 0。resolver 必须 snap 到
+reviewer 所选 fresh cue（跨界收尾时即该 cue 本身），再由 source pin 精确补足/钳短
+disposable tail；最终媒体 end 必须等于 pin。落在 semantic closure 之后的
 fresh-ASR 漂移 cue 不取得交付字幕所有权，下一话题仍只作 source witness；
 `talk-boundary-final-endpoint-binding.v1` 同时绑定所选 closure cue 与 pin 后的 exact final
-interval。registry/candidate/mode/ms 任一不匹配、没有 pin 前 400ms 内的完整 closure、
-reviewer 选择 pin 后 cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
+interval（跨界收尾时按 cue 含 pin 的确定性containment重算，不信任 review 自述）。
+registry/candidate/mode/ms 任一不匹配、可选集合为空、reviewer 选择 pin 之后才开始的
+cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
 媒体不等于 pin，均 fail closed；不得把 exact pin 降级为普通下界，也不得用它绕过四命题。
 
 source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SHA 绑定同一份
@@ -54,11 +57,19 @@ source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SH
   `delivery_lower_bound_ms = max(semantic_search_origin_ms, required_owner_end_ms)`；
   required owner 只抬高交付/评审下界，不能移动搜索原点，也不能把 cap 滚动再加一次；
   `max_recommended_end_ms = semantic_search_origin_ms + repair_cap_ms`。reviewer 的推荐 end 必须
-  同时不早于交付下界、不晚于该绝对 ceiling；
+  同时不早于交付下界、不晚于该绝对 ceiling。唯一的有界例外是
+  `silent_gap_closure_cue`：下限前**最后一个**收尾 cue，且它到下限之间不超过 400ms
+  （=DELIVERY_TAIL_PAD_MS）并且该间隙内没有任何 cue 起点（纯静音，机器可证）；此时该
+  收尾 cue 可被推荐为语义收束，交付下界本身不动，由 tail-pad 桥把媒体补到下界，因此不会
+  丢任何已圈内容。间隙里有语音或超过 400ms 仍 fail closed；
 - `exact_source_pin`：`semantic_search_origin_ms=delivery_lower_bound_ms=pin`，
   `minimum_recommended_end_ms=pin-400ms`、`max_recommended_end_ms=pin`、
-  `max_forward_ms=0`。reviewer 只能在该 400ms 窗内选择完整 closure；resolver 仍把最终媒体
-  end 精确锁到 pin。required owner、structured payoff 或 recommendation 越过 pin 都阻断；
+  `max_forward_ms=0`。reviewer 在该 400ms 窗内选择完整 closure；当 fresh-ASR 收尾 cue
+  合并跨过 pin 时（官方 cue 与 AGY 计时源不同），唯一包含 pin 的那个 cue 若越过 pin 不超过
+  600ms（`pin_crossing_closure_cue`），可作为语义收束证人被推荐，其生效推荐 end 记为 pin
+  本身，最终媒体仍精确截止在 pin。越界超过 600ms、pin 之后才开始的 cue、required
+  owner/structured payoff 越过 pin 都阻断。两类放宽都必须在 review 与 resolver 两侧由同一
+  确定性函数重算并在 `recommendation_relaxations` 里留证；
 - retry 的 source full window 至少覆盖
   `max_recommended_end_ms + witness_reserve_ms`，再按 piece 映射回绝对 source 时间。reserve
   只供 reviewer 观察终点后的下一话题，不能扩大合法推荐 endpoint。
@@ -73,17 +84,22 @@ context end 与 deficit。覆盖不足时**不得调用 LLM 自证**，而是返
 `retry_scope=source_witness_reserve` /
 `BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE`；runner 只允许一次 fresh source
 重物化，endpoint cap 仍从当前 30 秒最多扩到 60 秒，并重新转录、重新生成 request/grid、
-重新审查。未知 retry scope、scope 无效、源字节不足、已在 60 秒仍失败或第二次失败均终止，
+重新审查。首轮 piece post-context（PIECE_POST_MS=48s，人工下界超出 semantic end 的部分
+逐候选加到 post pad 上）必须覆盖 origin+初始 cap(30s)+reserve(15s) 的常规需求，让常见
+情况一次通过；短窗不省钱——它换来整窗重转录的 retry。未知 retry scope、scope 无效、源字节不足、已在 60 秒仍失败或第二次失败均终止，
 不得空转、滚动 cap 或扩大到 120 秒。`recommended_end_cue_index=null` 应记
 `BOUNDARY_RECOMMENDATION_MISSING`，不能冒充“给了一个越界推荐”。
 
 source truth 的**修字作用域**与**边界所有权作用域**必须分开。所有命中 padded source
-context 的 active truth 仍须正确应用；但只有 source interval 完整落在 candidate-relative
-immutable story scope
-`[semantic_start_ms, max(semantic_end_ms, given_end_ms))` 内的 `required=true` truth
-才可取得终点 owner。普通 `story_content` truth 若完全位于该 scope 的 lead/post context，
-仍须修字和留证，但不拥有本片边界；跨过 scope 边缘则 fail closed，不能一半当正文、一半当
-context。经证据确认的下一话题文本可显式标为 `boundary_role=next_topic_witness`：它仍是
+context 的 active truth 仍须正确应用。candidate recall/semantic start 与字幕 cue 起点允许
+最多 500ms 的有界开场时间抖动，因此 immutable story scope 的 start 为
+`max(padded_start, semantic_start_ms-500ms)`，end 仍为
+`max(semantic_end_ms, given_end_ms)`；只有 source interval 完整落入这个 scope 的
+`required=true` truth 才可取得 owner，并可把最终 start 拉回该完整 cue。普通
+`story_content` truth 若完全位于更早 lead 或 post context，仍须修字和留证但不拥有本片
+边界；开场跨界超过 500ms、任何尾部跨界或其他 scope straddle 都 fail closed，不能一半当
+正文、一半当 context。经证据确认的下一话题文本可显式标为
+`boundary_role=next_topic_witness`：它仍是
 padded context 中必须正确落字的真值，可帮助证明换题，但不能把当前故事终点向后拖进下一条
 SC，也不取得最终字幕 owner；与故事 scope 有任何重叠都 fail closed。
 
@@ -147,10 +163,18 @@ context-only verdict 与被拒 proposal 都不得取得 ownership；
 contract 冻结。最终 boundary audit 必须原样携带同一 owner 列表，且每个窗口完全落在最终
 `[start,end)` 内。
 
-首轮还必须冻结 `owner_eligibility_scope`、`owner_set_sha256` 与整个
-`contract_sha256`。有界 source-witness retry 只能扩大观察用 post-context，必须把首轮 token
-原样带入并重新计算；scope 或 owner 集合任一漂移都报
-`BOUNDARY_RETRY_OWNER_SET_DRIFT`，不得让扩窗后出现的相邻候选 truth/SC 反向加入本片故事。
+首轮还必须冻结 `owner_eligibility_scope`、`owner_set_sha256`、
+`deterministic_owner_set_sha256` 与整个 `contract_sha256`。有界 source-witness retry 只能
+扩大观察用 post-context，必须把首轮 token 原样带入并重新计算。跨尝试绑定的是**确定性
+部分**：`owner_eligibility_scope.scope_sha256` 与 committed-truth owner 子集
+（`source_subtitle_truth`，其身份与窗口只由 ledger 区间和 immutable scope 决定）；任一漂移
+即报 `BOUNDARY_RETRY_OWNER_SET_DRIFT`，不得让扩窗后出现的相邻候选 truth/SC 反向加入
+本片故事。story-chat 类 owner（exact_read/sender/gift/coreference/entity）由每次尝试的
+fresh ASR 匹配派生，毫秒几何甚至行成员在重转录后合法抖动，因此**按尝试各自冻结、各自
+足额执行**，不参与跨尝试哈希；retry 回执必须披露
+`asr_derived_owner_binding=per_attempt` 与两轮各自的 owner_set 哈希。空 owner 集
+（全新场次、无 ledger 真值、无已应用 story-chat 决定）是合法冻结结果，交付层按无 owner
+下界处理，不得崩溃。
 
 旧候选边界若排除了 required owner，唯一合法结果是扩展边界、重新通过语义闭环和确定性门，
 或以 `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 阻断；不得把该 owner 在裁切后降级成

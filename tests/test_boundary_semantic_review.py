@@ -619,3 +619,223 @@ def test_final_delivery_terminal_cue_rejects_interval_mismatched_source_witness(
     witness = result["source_separation_witness"]
     assert witness["status"] == "BLOCK"
     assert witness["reason_codes"] == ["SOURCE_DELIVERY_INTERVAL_MISMATCH"]
+
+
+def test_exact_source_pin_accepts_bounded_pin_crossing_closure_cue():
+    """V14 auto_193450_1863_2056: the fresh closure cue ends 210ms after the
+    official pin, so no cue ends inside [pin-400, pin] at all.  The crossing
+    cue is the closure witness; the media end stays exactly the pin."""
+
+    pin_ms = 202_720
+    scope = build_boundary_search_scope(
+        semantic_target_ms=pin_ms,
+        manual_lower_bound_ms=pin_ms,
+        repair_cap_ms=30_000,
+        boundary_end_mode="exact_source_pin",
+    )
+    cues = [
+        _cue(1, 199_610, 201_370, "就是刚认识"),
+        _cue(2, 201_370, pin_ms + 210, "暂时不太熟"),
+        _cue(3, 203_650, 205_170, "嗯谢谢"),
+        _cue(4, 205_170, 206_490, "下一条SC"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第二句闭合关系定义，pin 后进入致谢与下一条SC。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=pin_ms,
+        candidate_id="auto_193450_1863_2056",
+        selection_hook="火锅关系闭环",
+        selection_scorecard=_scorecard(),
+        structured_context="官方 cue 912 为下一条SC",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=0,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["recommended_end_cue_index"] == 2
+    assert review["recommended_end_ms"] == pin_ms
+    assert review["recommendation_relaxations"] == [
+        {
+            "kind": "pin_crossing_closure_cue",
+            "cue_index": 2,
+            "cue_end_ms": pin_ms + 210,
+            "pin_ms": pin_ms,
+            "overrun_ms": 210,
+            "tolerance_ms": 600,
+        }
+    ]
+
+
+def test_exact_source_pin_rejects_crossing_cue_beyond_tolerance():
+    pin_ms = 202_720
+    scope = build_boundary_search_scope(
+        semantic_target_ms=pin_ms,
+        manual_lower_bound_ms=pin_ms,
+        repair_cap_ms=30_000,
+        boundary_end_mode="exact_source_pin",
+    )
+    cues = [
+        _cue(1, 199_610, 201_370, "就是刚认识"),
+        _cue(2, 201_370, pin_ms + 700, "暂时不太熟还在往下说"),
+        _cue(3, 203_650 + 700, 206_490, "下一条SC"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "越界过多的cue不可选。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=pin_ms,
+        candidate_id="auto_193450_1863_2056",
+        selection_hook="火锅关系闭环",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=0,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "BLOCK"
+    assert "BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE" in review["reason_codes"]
+    assert review["recommendation_relaxations"] == []
+
+
+def test_semantic_floor_silent_gap_closure_cue_is_recommendable():
+    """V14 auto_193450_1475_1543: the published old end sits 400ms of dead
+    air after the story-closing cue; the closure cue must stay recommendable
+    while the delivery floor itself is untouched."""
+
+    scope = build_boundary_search_scope(
+        semantic_target_ms=77_310,
+        manual_lower_bound_ms=77_780,
+        repair_cap_ms=30_000,
+    )
+    cues = [
+        _cue(1, 72_800, 77_380, "再弹再再一弹一弹"),
+        _cue(2, 78_280, 79_720, "谢谢刚刚"),
+        _cue(3, 81_680, 83_680, "谢谢舰长欢迎上船"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 1,
+            "evidence_cue_indexes": [1, 2, 3],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第一句落地包袱，其后为谢礼段新话题。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=77_780,
+        candidate_id="auto_193450_1475_1543",
+        selection_hook="脑瓜崩镜像左右",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=30_000,
+        boundary_search_scope=scope,
+    )
+
+    assert scope["delivery_lower_bound_ms"] == 77_780
+    assert review["status"] == "PASS"
+    assert review["recommended_end_cue_index"] == 1
+    assert review["recommended_end_ms"] == 77_380
+    assert review["recommendation_relaxations"] == [
+        {
+            "kind": "silent_gap_closure_cue",
+            "cue_index": 1,
+            "cue_end_ms": 77_380,
+            "floor_ms": 77_780,
+            "gap_ms": 400,
+            "tolerance_ms": 400,
+        }
+    ]
+
+
+def test_semantic_floor_gap_with_speech_keeps_closure_cue_ineligible():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=77_310,
+        manual_lower_bound_ms=77_780,
+        repair_cap_ms=30_000,
+    )
+    cues = [
+        _cue(1, 72_800, 77_380, "再弹再再一弹一弹"),
+        _cue(2, 77_500, 77_760, "补一句"),
+        _cue(3, 78_280, 79_720, "谢谢刚刚"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 1,
+            "evidence_cue_indexes": [1, 2, 3],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "间隙里还有话，不能提前收。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=77_780,
+        candidate_id="auto_193450_1475_1543",
+        selection_hook="脑瓜崩镜像左右",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=30_000,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "BLOCK"
+    assert "BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE" in review["reason_codes"]
+    # The absorbable closure is the LAST cue before the floor (20ms of air),
+    # never an earlier cue whose recommendation would drop the speech at
+    # 77_500..77_760.
+    assert [
+        relaxation["cue_index"]
+        for relaxation in review["recommendation_relaxations"]
+    ] == [2]

@@ -126,8 +126,10 @@
   `final_redelivery_baseline_owner_verification` 在对应 owner 存在时必须为 PASS，且该类
   required count 非零。
 - required source truth 仍在完整 padded context 上应用，但 boundary owner 资格只属于完整
-  落在 candidate-relative immutable story scope 的 truth；lead/post context truth 修字但不
-  抬高边界，跨 scope truth fail closed。具备对应 typed ownership contract 的 applied
+  落在 candidate-relative immutable story scope 的 truth；该 scope 仅在开场容忍并冻结
+  `semantic_start` 前最多 500ms 的 cue 时间抖动，使完整开场 cue 可把最终 start 拉回自身
+  起点。更早 lead/post context truth 修字但不抬高边界，超过容差的开场跨界、尾部跨界及其他
+  scope straddle 均 fail closed。具备对应 typed ownership contract 的 applied
   story-chat owner 也须完整落在同一 scope，随后在裁切前冻结并由最终边界完整覆盖。
   `boundary_role=next_topic_witness` 只负责证明分离，必须以 context-only 留证，不得取得
   boundary owner。reviewed baseline 仍须在最终 clean/speaker SRT 逐 mapping 验活，但它是文字
