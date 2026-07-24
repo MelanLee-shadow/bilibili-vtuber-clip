@@ -32,6 +32,7 @@ _SOURCE_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _ASSERTION_STATES = frozenset(
     {"PROPOSED", "VERIFIED_ACTIVE", "REJECTED", "CONFLICTED", "SUPERSEDED"}
 )
+_BOUNDARY_ROLES = frozenset({"story_content", "next_topic_witness"})
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -363,6 +364,15 @@ def _assertion_state(entry: Mapping[str, object]) -> str:
     return value
 
 
+def _boundary_role(entry: Mapping[str, object]) -> str:
+    """Classify whether a required truth owns the delivery endpoint."""
+
+    value = str(entry.get("boundary_role") or "story_content")
+    if value not in _BOUNDARY_ROLES:
+        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_BOUNDARY_ROLE_INVALID")
+    return value
+
+
 def _skip_inactive_assertion(
     *,
     audit: dict[str, Any],
@@ -420,36 +430,38 @@ def _forbidden_token_failure(
     }
 
 
-def _mention_postcondition_failures(
+def _resolve_mention_postcondition_targets(
     *,
     entry: Mapping[str, object],
     pieces: Sequence[Mapping[str, object]],
     durations: Sequence[int],
     source_aliases: Sequence[Mapping[str, object]],
     cues: Sequence[SrtCue],
-    texts: Sequence[str],
     row: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    """Verify exact source mentions instead of a window-existential string.
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Resolve independently reviewed mention intervals to isolated cues.
 
     A broad repair interval may contain the same name several times.  Merely
     finding the canonical spelling once in that interval allowed one correct
     mention to hide another wrong one (the 2026-07-22 毁神/绘声 incident).
-    Optional ``mention_postconditions`` bind every required occurrence to its
-    own absolute source interval.  If fresh ASR merges two mentions into one
-    cue, their text can no longer be attributed independently and the check
-    fails closed rather than pretending both landed.
+    ``mention_postconditions`` bind every required occurrence to its own
+    absolute source interval.  This resolver is shared by mutation ownership
+    and postcondition verification so a correct pre-existing spelling cannot
+    become an ambiguous broad-window owner, while merged mentions still fail
+    closed.
     """
 
     raw_conditions = entry.get("mention_postconditions")
     if raw_conditions is None:
-        return []
+        return [], []
     if not isinstance(raw_conditions, list) or not raw_conditions:
-        return [{**row, "reason_code": "MENTION_POSTCONDITIONS_INVALID"}]
+        return [], [
+            {**row, "reason_code": "MENTION_POSTCONDITIONS_INVALID"}
+        ]
 
     parent_start = int(entry["source_start_ms"])
     parent_end = int(entry["source_end_ms"])
-    resolved: list[tuple[int, Mapping[str, object], list[int], list[str]]] = []
+    resolved: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     for ordinal, condition in enumerate(raw_conditions, start=1):
         if not isinstance(condition, Mapping):
@@ -509,12 +521,21 @@ def _mention_postcondition_failures(
                 }
             )
             continue
-        resolved.append((ordinal, condition, mention_targets, forbidden))
+        resolved.append(
+            {
+                "ordinal": ordinal,
+                "condition": condition,
+                "target_indexes": mention_targets,
+                "forbidden_tokens": forbidden,
+            }
+        )
 
     cue_owners: dict[int, set[int]] = {}
-    for ordinal, _condition, mention_targets, _forbidden in resolved:
-        for cue_index in mention_targets:
-            cue_owners.setdefault(cue_index, set()).add(ordinal)
+    for resolved_row in resolved:
+        for cue_index in resolved_row["target_indexes"]:
+            cue_owners.setdefault(cue_index, set()).add(
+                int(resolved_row["ordinal"])
+            )
     overlapping_ordinals = {
         ordinal
         for owners in cue_owners.values()
@@ -522,7 +543,11 @@ def _mention_postcondition_failures(
         for ordinal in owners
     }
 
-    for ordinal, condition, mention_targets, forbidden in resolved:
+    isolated: list[dict[str, Any]] = []
+    for resolved_row in resolved:
+        ordinal = int(resolved_row["ordinal"])
+        condition = resolved_row["condition"]
+        mention_targets = resolved_row["target_indexes"]
         audit_row = {
             **row,
             "mention_ordinal": ordinal,
@@ -538,6 +563,44 @@ def _mention_postcondition_failures(
                 }
             )
             continue
+        isolated.append(resolved_row)
+    return isolated, failures
+
+
+def _mention_postcondition_failures(
+    *,
+    entry: Mapping[str, object],
+    pieces: Sequence[Mapping[str, object]],
+    durations: Sequence[int],
+    source_aliases: Sequence[Mapping[str, object]],
+    cues: Sequence[SrtCue],
+    texts: Sequence[str],
+    row: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Verify the canonical and forbidden surfaces at every exact mention."""
+
+    resolved, failures = _resolve_mention_postcondition_targets(
+        entry=entry,
+        pieces=pieces,
+        durations=durations,
+        source_aliases=source_aliases,
+        cues=cues,
+        row=row,
+    )
+    for resolved_row in resolved:
+        ordinal = int(resolved_row["ordinal"])
+        condition = resolved_row["condition"]
+        mention_targets = resolved_row["target_indexes"]
+        forbidden = resolved_row["forbidden_tokens"]
+        audit_row = {
+            **row,
+            "mention_ordinal": ordinal,
+            "mention_source_start_ms": int(condition["source_start_ms"]),
+            "mention_source_end_ms": int(condition["source_end_ms"]),
+            "mention_cue_indexes": [
+                index + 1 for index in mention_targets
+            ],
+        }
         joined = "".join(texts[index] for index in mention_targets)
         required_text = str(condition["required_text"])
         if _normalize_truth_surface(required_text) not in _normalize_truth_surface(joined):
@@ -631,6 +694,7 @@ def _source_truth_audit_row(
         "source_start_ms": int(entry["source_start_ms"]),
         "source_end_ms": int(entry["source_end_ms"]),
         "required": entry.get("required") is not False,
+        "boundary_role": _boundary_role(entry),
         "action": action,
         # Typed, ledger-derived positive output authority.  Downstream guards
         # may use these exact canonical surfaces as witnesses (for example a
@@ -1260,6 +1324,148 @@ def _apply_replace_cue_action(
     return changed, satisfied, target_indexes, before
 
 
+def _apply_replace_substring_action(
+    *,
+    entry: Mapping[str, object],
+    pieces: Sequence[Mapping[str, object]],
+    durations: Sequence[int],
+    source_aliases: Sequence[Mapping[str, object]],
+    cues: Sequence[SrtCue],
+    texts: list[str],
+    target_indexes: list[int],
+    before_by_index: Mapping[int, str],
+    before: list[str],
+    row: dict[str, Any],
+) -> tuple[bool, bool, list[int], list[str]]:
+    """Apply one substring truth with mention-scoped mutation ownership."""
+
+    replacements_raw = entry.get("replacements")
+    if not isinstance(replacements_raw, list) or not target_indexes:
+        row["reason_code"] = "SUBSTRING_TARGET_OR_RULE_MISSING"
+        return False, False, target_indexes, before
+
+    mention_owned_indexes: list[int] = []
+    mutation_indexes = list(target_indexes)
+    if entry.get("mention_postconditions") is not None:
+        resolved_mentions, mention_resolution_failures = (
+            _resolve_mention_postcondition_targets(
+                entry=entry,
+                pieces=pieces,
+                durations=durations,
+                source_aliases=source_aliases,
+                cues=cues,
+                row=row,
+            )
+        )
+        if not mention_resolution_failures:
+            mention_owned_indexes = sorted(
+                {
+                    index
+                    for mention in resolved_mentions
+                    for index in mention["target_indexes"]
+                }
+            )
+        row["mention_owner_resolution"] = {
+            "status": "PASS" if mention_owned_indexes else "BLOCK",
+            "cue_indexes": [
+                index + 1 for index in mention_owned_indexes
+            ],
+            "failure_reason_codes": sorted(
+                {
+                    str(
+                        failure.get("reason_code")
+                        or "MENTION_OWNER_RESOLUTION_FAILED"
+                    )
+                    for failure in mention_resolution_failures
+                }
+            ),
+        }
+        if mention_owned_indexes:
+            mutation_indexes = mention_owned_indexes
+            target_indexes = mention_owned_indexes
+            row["cue_indexes"] = [
+                index + 1 for index in target_indexes
+            ]
+            before = [
+                before_by_index.get(index, texts[index])
+                for index in target_indexes
+            ]
+        else:
+            # A mention resolution failure owns neither mutation nor audit
+            # projection. The shared postcondition check records the exact
+            # typed failure after this no-op.
+            mutation_indexes = []
+            target_indexes = []
+            before = []
+            row["cue_indexes"] = []
+            row["reason_code"] = "MENTION_OWNER_RESOLUTION_FAILED"
+
+    changed = False
+    for index in mutation_indexes:
+        updated, replacements = _replace_substrings(
+            texts[index],
+            [
+                item
+                for item in replacements_raw
+                if isinstance(item, Mapping)
+            ],
+        )
+        if replacements:
+            texts[index] = updated
+            changed = True
+            row.setdefault("replacements", []).extend(
+                {"cue_index": index + 1, **item}
+                for item in replacements
+            )
+    required_text = str(entry.get("required_text") or "")
+    satisfied = bool(
+        mutation_indexes
+        and (
+            not required_text
+            or any(
+                required_text in texts[index]
+                for index in mutation_indexes
+            )
+        )
+    )
+    replacement_indexes = sorted(
+        {
+            int(replacement["cue_index"]) - 1
+            for replacement in row.get("replacements") or []
+        }
+    )
+    required_indexes = [
+        index
+        for index in mutation_indexes
+        if required_text and required_text in texts[index]
+    ]
+    owned_indexes = (
+        mention_owned_indexes
+        if mention_owned_indexes
+        else replacement_indexes
+        if replacement_indexes
+        else required_indexes
+        if len(required_indexes) == 1
+        else []
+    )
+    if (
+        not replacement_indexes
+        and not mention_owned_indexes
+        and len(required_indexes) > 1
+        and entry.get("required") is not False
+    ):
+        satisfied = False
+        row["reason_code"] = "REPLACE_SUBSTRING_OWNER_AMBIGUOUS"
+    if owned_indexes:
+        target_indexes = owned_indexes
+        row["cue_indexes"] = [index + 1 for index in target_indexes]
+        before = [
+            before_by_index.get(index, texts[index])
+            for index in target_indexes
+        ]
+    return changed, satisfied, target_indexes, before
+
+
 def apply_source_subtitle_truth(
     srt_text: str,
     *,
@@ -1406,70 +1612,20 @@ def apply_source_subtitle_truth(
                 )
             )
         elif action == "replace_substring":
-            replacements_raw = raw_entry.get("replacements")
-            if not isinstance(replacements_raw, list) or not target_indexes:
-                row["reason_code"] = "SUBSTRING_TARGET_OR_RULE_MISSING"
-            else:
-                for index in target_indexes:
-                    updated, replacements = _replace_substrings(
-                        texts[index],
-                        [
-                            item
-                            for item in replacements_raw
-                            if isinstance(item, Mapping)
-                        ],
-                    )
-                    if replacements:
-                        texts[index] = updated
-                        changed = True
-                        row.setdefault("replacements", []).extend(
-                            {"cue_index": index + 1, **item}
-                            for item in replacements
-                        )
-                required_text = str(raw_entry.get("required_text") or "")
-                satisfied = bool(
-                    target_indexes
-                    and (
-                        not required_text
-                        or any(required_text in texts[index] for index in target_indexes)
-                    )
+            changed, satisfied, target_indexes, before = (
+                _apply_replace_substring_action(
+                    entry=raw_entry,
+                    pieces=pieces,
+                    durations=durations,
+                    source_aliases=source_aliases,
+                    cues=cues,
+                    texts=texts,
+                    target_indexes=target_indexes,
+                    before_by_index=before_by_index,
+                    before=before,
+                    row=row,
                 )
-                replacement_indexes = sorted(
-                    {
-                        int(replacement["cue_index"]) - 1
-                        for replacement in row.get("replacements") or []
-                    }
-                )
-                required_indexes = [
-                    index
-                    for index in target_indexes
-                    if required_text and required_text in texts[index]
-                ]
-                owned_indexes = (
-                    replacement_indexes
-                    if replacement_indexes
-                    else required_indexes
-                    if len(required_indexes) == 1
-                    else []
-                )
-                if (
-                    not replacement_indexes
-                    and len(required_indexes) > 1
-                    and raw_entry.get("required") is not False
-                ):
-                    satisfied = False
-                    row["reason_code"] = (
-                        "REPLACE_SUBSTRING_OWNER_AMBIGUOUS"
-                    )
-                if owned_indexes:
-                    target_indexes = owned_indexes
-                    row["cue_indexes"] = [
-                        index + 1 for index in target_indexes
-                    ]
-                    before = [
-                        before_by_index.get(index, texts[index])
-                        for index in target_indexes
-                    ]
+            )
         elif action == "drop_cue":
             drop_indexes, conflicts = _drop_cue_targets(cues, windows)
             target_indexes = drop_indexes
@@ -1626,6 +1782,23 @@ def ledger_required_owner_contracts(
     if len(pieces) != len(durations):
         raise RuntimeError("SOURCE_SUBTITLE_TRUTH_PIECE_MAPPING_INVALID")
     source_aliases = _load_source_aliases(document)
+    semantic_end_ms = spec.get("semantic_end_ms")
+    if (
+        isinstance(semantic_end_ms, bool)
+        or not isinstance(semantic_end_ms, int)
+    ):
+        raise RuntimeError("SOURCE_TRUTH_SEMANTIC_END_INVALID")
+    prior_piece_duration_ms = sum(int(value) for value in durations[:-1])
+    last_piece_start_ms = int(pieces[-1]["start_ms"])
+    semantic_target_local_ms = (
+        prior_piece_duration_ms
+        + semantic_end_ms
+        - last_piece_start_ms
+    )
+    if not 0 <= semantic_target_local_ms <= sum(
+        int(value) for value in durations
+    ):
+        raise RuntimeError("SOURCE_TRUTH_SEMANTIC_END_MAPPING_INVALID")
     contracts: list[dict[str, object]] = []
     seen: set[str] = set()
     for entry in document["entries"]:
@@ -1656,6 +1829,20 @@ def ledger_required_owner_contracts(
             raise RuntimeError(
                 f"SOURCE_TRUTH_REQUIRED_OWNER_PARTIAL: {truth_id}"
             )
+        boundary_role = _boundary_role(entry)
+        if boundary_role == "next_topic_witness":
+            if any(
+                int(window["start_ms"]) < semantic_target_local_ms
+                for window in windows
+            ):
+                raise RuntimeError(
+                    "SOURCE_TRUTH_NEXT_TOPIC_WITNESS_OVERLAPS_STORY:"
+                    f"{truth_id}"
+                )
+            # It remains required subtitle truth in the padded source context
+            # and may prove topic separation, but it must not move the story
+            # endpoint forward into the next topic.
+            continue
         if truth_id in seen:
             raise RuntimeError(
                 f"SOURCE_TRUTH_REQUIRED_OWNER_AMBIGUOUS: {truth_id}"

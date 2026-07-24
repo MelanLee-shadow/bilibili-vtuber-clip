@@ -5,6 +5,9 @@ from pathlib import Path
 import pytest
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.producer_text_finalization import (
+    verify_chat_authority_final_surfaces,
+)
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
     build_source_truth_preview_receipt,
@@ -742,6 +745,184 @@ def test_required_owner_contract_freezes_truth_beyond_semantic_end(
             "local_windows": [{"start_ms": 18_000, "end_ms": 20_000}],
         }
     ]
+
+
+def test_next_topic_truth_is_required_context_but_not_boundary_owner(
+    tmp_path,
+):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "next-topic-nickname",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 118_000,
+                "source_end_ms": 120_000,
+                "action": "replace_substring",
+                "replacements": [
+                    {
+                        "surface": "香香烧烤",
+                        "canonical": "邪恶守宫",
+                    }
+                ],
+                "required_text": "邪恶守宫",
+                "boundary_role": "next_topic_witness",
+                "required": True,
+            }
+        ],
+    )
+    spec = {
+        "semantic_end_ms": 110_000,
+        "pieces": [
+            {
+                "remote_media": "/source/recording.mp4",
+                "start_ms": 100_000,
+                "end_ms": 125_000,
+            }
+        ],
+    }
+    corrected, audit = apply_source_subtitle_truth(
+        _srt((18, 20, "香香烧烤开始下一条SC")),
+        spec=spec,
+        durations=[25_000],
+        ledger_path=ledger,
+    )
+    contracts = ledger_required_owner_contracts(
+        spec=spec,
+        durations=[25_000],
+        ledger_path=ledger,
+    )
+
+    assert "邪恶守宫开始下一条SC" in corrected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["boundary_role"] == "next_topic_witness"
+    assert contracts == []
+
+
+def test_next_topic_truth_is_not_a_final_delivery_owner(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "post-story-context-only",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 118_000,
+                "source_end_ms": 120_000,
+                "action": "replace_substring",
+                "replacements": [
+                    {"surface": "香香烧烤", "canonical": "邪恶守宫"}
+                ],
+                "required_text": "邪恶守宫",
+                "boundary_role": "next_topic_witness",
+                "required": True,
+            }
+        ],
+    )
+    _corrected, truth_audit = apply_source_subtitle_truth(
+        _srt_ms((18_000, 20_000, "香香烧烤开始下一条SC")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 125_000,
+                }
+            ]
+        },
+        durations=[25_000],
+        ledger_path=ledger,
+    )
+    authority_audit = {
+        "source_subtitle_truth_audit": truth_audit,
+    }
+    final_srt = _srt_ms((0, 10_000, "当前故事已经闭环"))
+
+    assert verify_chat_authority_final_surfaces(
+        authority_audit,
+        final_text_srt=final_srt,
+        final_speaker_srt=final_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=10_000,
+    )
+    receipt = authority_audit[
+        "final_source_truth_owner_verification"
+    ]
+    assert receipt["status"] == "PASS"
+    assert receipt["required_truth_row_count"] == 0
+    assert receipt["context_only_truth_row_count"] == 1
+    assert receipt["required_window_count"] == 0
+
+
+def test_next_topic_truth_cannot_overlap_story_target(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "misclassified-story-truth",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 108_000,
+                "source_end_ms": 112_000,
+                "action": "replace_cue",
+                "text": "不能逃出故事",
+                "boundary_role": "next_topic_witness",
+                "required": True,
+            }
+        ],
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="SOURCE_TRUTH_NEXT_TOPIC_WITNESS_OVERLAPS_STORY",
+    ):
+        ledger_required_owner_contracts(
+            spec={
+                "semantic_end_ms": 110_000,
+                "pieces": [
+                    {
+                        "remote_media": "/source/recording.mp4",
+                        "start_ms": 100_000,
+                        "end_ms": 125_000,
+                    }
+                ],
+            },
+            durations=[25_000],
+            ledger_path=ledger,
+        )
+
+
+def test_committed_hotpot_next_sc_truth_does_not_move_cue_911_endpoint():
+    ledger = (
+        REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
+    )
+    contracts = ledger_required_owner_contracts(
+        spec={
+            "semantic_end_ms": 2_056_480,
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/source/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 1_853_760,
+                    "end_ms": 2_116_480,
+                }
+            ],
+        },
+        durations=[262_720],
+        ledger_path=ledger,
+    )
+    by_id = {str(row["owner_id"]): row for row in contracts}
+
+    assert "20260722-hotpot-evil-gecko-guard-thanks-r1" in by_id
+    assert "20260722-hotpot-evil-gecko-nickname-first-r1" not in by_id
+    assert "20260722-hotpot-evil-gecko-nickname-callback-r1" not in by_id
+    assert max(
+        int(window["end_ms"])
+        for row in contracts
+        for window in row["local_windows"]
+    ) <= 202_720
 
 
 def test_required_truth_fails_closed_when_candidate_cuts_through_interval(tmp_path):
@@ -1806,6 +1987,257 @@ def test_mention_postconditions_do_not_let_one_correct_name_hide_another(tmp_pat
         and row["mention_ordinal"] == 2
         for row in audit["failures"]
     )
+
+
+def test_mention_postconditions_own_each_preexisting_correct_mention(
+    tmp_path,
+):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "same-name-twice-correct",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 100_000,
+                "source_end_ms": 104_000,
+                "action": "replace_substring",
+                "replacements": [
+                    {"surface": "绘声", "canonical": "毁神"}
+                ],
+                "required_text": "毁神",
+                "mention_postconditions": [
+                    {
+                        "source_start_ms": 100_000,
+                        "source_end_ms": 102_000,
+                        "required_text": "毁神",
+                        "forbidden_tokens": ["绘声"],
+                    },
+                    {
+                        "source_start_ms": 102_000,
+                        "source_end_ms": 104_000,
+                        "required_text": "毁神",
+                        "forbidden_tokens": ["绘声"],
+                    },
+                ],
+                "required": True,
+            }
+        ],
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (0, 2_000, "毁神来了"),
+            (2_000, 4_000, "毁神什么都没做"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/recordings/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 104_000,
+                }
+            ]
+        },
+        durations=[4_000],
+        ledger_path=ledger,
+    )
+
+    assert "毁神来了" in corrected
+    assert "毁神什么都没做" in corrected
+    assert audit["status"] == "ALREADY_SATISFIED"
+    row = audit["satisfied"][0]
+    assert row["mention_owner_resolution"] == {
+        "status": "PASS",
+        "cue_indexes": [1, 2],
+        "failure_reason_codes": [],
+    }
+    assert row["resolved_target_projection"]["cues"] == [
+        {
+            "cue_index": 1,
+            "start_ms": 0,
+            "end_ms": 2_000,
+            "before_text": "毁神来了",
+            "after_text": "毁神来了",
+        },
+        {
+            "cue_index": 2,
+            "start_ms": 2_000,
+            "end_ms": 4_000,
+            "before_text": "毁神什么都没做",
+            "after_text": "毁神什么都没做",
+        },
+    ]
+
+
+def test_mention_postconditions_never_mutate_unowned_parent_cue(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "one-owned-mention-in-broad-parent",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 100_000,
+                "source_end_ms": 104_000,
+                "action": "replace_substring",
+                "replacements": [
+                    {"surface": "绘声", "canonical": "毁神"}
+                ],
+                "required_text": "毁神",
+                "mention_postconditions": [
+                    {
+                        "source_start_ms": 100_000,
+                        "source_end_ms": 102_000,
+                        "required_text": "毁神",
+                        "forbidden_tokens": ["绘声"],
+                    }
+                ],
+                "required": True,
+            }
+        ],
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (0, 2_000, "毁神已正确"),
+            (2_000, 4_000, "绘声未审定"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/recordings/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 104_000,
+                }
+            ]
+        },
+        durations=[4_000],
+        ledger_path=ledger,
+    )
+
+    assert "毁神已正确" in corrected
+    assert "绘声未审定" in corrected
+    assert "毁神未审定" not in corrected
+    assert audit["status"] == "ALREADY_SATISFIED"
+    row = audit["satisfied"][0]
+    assert row["mention_owner_resolution"] == {
+        "status": "PASS",
+        "cue_indexes": [1],
+        "failure_reason_codes": [],
+    }
+    assert row.get("replacements") in (None, [])
+    assert [
+        cue["cue_index"]
+        for cue in row["resolved_target_projection"]["cues"]
+    ] == [1]
+
+
+def test_mention_postconditions_reject_one_cue_owning_two_mentions(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "same-name-twice-merged",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 100_000,
+                "source_end_ms": 104_000,
+                "action": "replace_substring",
+                "replacements": [
+                    {"surface": "绘声", "canonical": "毁神"}
+                ],
+                "required_text": "毁神",
+                "mention_postconditions": [
+                    {
+                        "source_start_ms": 100_000,
+                        "source_end_ms": 102_000,
+                        "required_text": "毁神",
+                        "forbidden_tokens": [],
+                    },
+                    {
+                        "source_start_ms": 102_000,
+                        "source_end_ms": 104_000,
+                        "required_text": "毁神",
+                        "forbidden_tokens": [],
+                    },
+                ],
+                "required": True,
+            }
+        ],
+    )
+    _corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 4_000, "毁神说完，毁神又说"),),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/recordings/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 104_000,
+                }
+            ]
+        },
+        durations=[4_000],
+        ledger_path=ledger,
+    )
+
+    assert audit["status"] == "FAILED"
+    assert {
+        (
+            row["reason_code"],
+            row["mention_ordinal"],
+        )
+        for row in audit["failures"]
+        if row.get("mention_ordinal") is not None
+    } == {
+        ("MENTION_POSTCONDITION_TARGET_NOT_ISOLATED", 1),
+        ("MENTION_POSTCONDITION_TARGET_NOT_ISOLATED", 2),
+    }
+
+
+def test_committed_huishen_mentions_are_independent_exact_owners():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (0, 1_370, "好像是毁神吧"),
+            (1_370, 3_530, "毁神说救救李姐"),
+            (3_530, 5_980, "然后大N老师就来了"),
+            (5_980, 8_600, "然后毁神什么都没有做"),
+            (8_600, 11_560, "但是大N老师拯救完李姐之后"),
+            (11_560, 14_120, "毁神发了一句"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 748_620,
+                    "end_ms": 762_740,
+                }
+            ]
+        },
+        durations=[14_120],
+        ledger_path=ledger,
+    )
+
+    assert "绘声" not in corrected
+    assert audit["status"] == "ALREADY_SATISFIED"
+    row = next(
+        row
+        for row in audit["satisfied"]
+        if row["truth_id"]
+        == "20260722-nancho-confrontation-huishen-surface"
+    )
+    assert row["mention_owner_resolution"]["status"] == "PASS"
+    assert row["mention_owner_resolution"]["cue_indexes"] == [1, 2, 4, 6]
+    assert [
+        cue["cue_index"]
+        for cue in row["resolved_target_projection"]["cues"]
+    ] == [1, 2, 4, 6]
 
 
 def test_committed_ledger_repairs_hotpot_parallel_repeat_entity_phrase():

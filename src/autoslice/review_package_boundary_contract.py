@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-import re
 from typing import Any
 
 from src.autoslice.boundary_endpoint_binding import (
@@ -12,87 +11,11 @@ from src.autoslice.boundary_endpoint_binding import (
 )
 from src.autoslice.boundary_semantic_review import semantic_review_sha256
 from src.autoslice.producer_boundary import TAIL_PAD_MS
-
-
-_SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
-
-
-def _is_int(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _semantic_review_is_valid(
-    review: object,
-    *,
-    expected_scope: str,
-) -> bool:
-    if not isinstance(review, dict):
-        return False
-    endpoint = review.get("final_endpoint_binding")
-    reviewed_grid = str(review.get("cue_grid_sha256") or "")
-    evidence = review.get("evidence_cue_indexes")
-    return bool(
-        review.get("schema_version")
-        == "talk-boundary-semantic-review.v1"
-        and review.get("status") == "PASS"
-        and review.get("review_scope") == expected_scope
-        and all(
-            review.get(field) is True
-            for field in (
-                "syntax_complete",
-                "story_closed",
-                "next_topic_separated",
-                "content_anchor_covered",
-                "next_topic_witness_valid",
-            )
-        )
-        and _is_int(review.get("recommended_end_ms"))
-        and _is_int(review.get("recommended_end_cue_index"))
-        and isinstance(evidence, list)
-        and bool(evidence)
-        and all(_is_int(value) for value in evidence)
-        and isinstance(review.get("selector_story_witness"), dict)
-        and review["selector_story_witness"].get("status") == "PASS"
-        and _SHA256_RX.fullmatch(
-            str(review.get("request_sha256") or "")
-        )
-        is not None
-        and _SHA256_RX.fullmatch(reviewed_grid) is not None
-        and isinstance(endpoint, dict)
-        and endpoint.get("schema_version")
-        == "talk-boundary-final-endpoint-binding.v1"
-        and endpoint.get("status") == "PASS"
-        and endpoint.get("reason_codes") == []
-        and all(
-            _is_int(endpoint.get(field))
-            for field in (
-                "recommended_end_cue_index",
-                "recommended_end_ms",
-                "final_closure_cue_index",
-                "final_snapped_end_ms",
-                "final_start_ms",
-                "final_end_ms",
-            )
-        )
-        and endpoint.get("semantic_request_sha256")
-        == review.get("request_sha256")
-        and endpoint.get("recommended_end_cue_index")
-        == review.get("recommended_end_cue_index")
-        and endpoint.get("recommended_end_ms")
-        == review.get("recommended_end_ms")
-        and endpoint.get("final_closure_cue_index")
-        == review.get("recommended_end_cue_index")
-        and endpoint.get("final_snapped_end_ms")
-        == review.get("recommended_end_ms")
-        and endpoint.get("semantic_cue_grid_sha256")
-        == reviewed_grid
-        and endpoint.get("final_cue_grid_sha256")
-        == reviewed_grid
-        and _SHA256_RX.fullmatch(
-            str(endpoint.get("closure_text_sha256") or "")
-        )
-        is not None
-    )
+from src.autoslice.review_package_boundary_validators import (
+    expected_boundary_authority as _expected_boundary_authority,
+    is_boundary_int as _is_int,
+    semantic_boundary_review_is_valid as _semantic_review_is_valid,
+)
 
 
 def audit_boundary_contract(
@@ -152,12 +75,17 @@ def audit_boundary_contract(
     human_authority = str(
         story_contract.get("human_boundary_authority") or ""
     ).strip()
-    expected_authority = (
-        "human_source_reviewed_lower_bound_plus_semantic_review"
-        if human_authority
-        else "correlated_semantic_review_plus_deterministic_guards"
+    expected_authority, boundary_mode_matches = (
+        _expected_boundary_authority(
+            record,
+            audit,
+            human_authority=human_authority,
+        )
     )
-    if audit.get("boundary_authority") != expected_authority:
+    if (
+        audit.get("boundary_authority") != expected_authority
+        or not boundary_mode_matches
+    ):
         issue_adder(
             issues,
             (
@@ -312,7 +240,12 @@ def audit_boundary_contract(
     delivery_valid = bool(
         _is_int(delivery_lower_bound_ms)
         and _is_int(final_end_ms)
-        and final_end_ms >= delivery_lower_bound_ms
+        and (
+            final_end_ms == delivery_lower_bound_ms
+            if expected_authority
+            == "human_source_exact_pin_plus_semantic_review"
+            else final_end_ms >= delivery_lower_bound_ms
+        )
         and isinstance(delivery_verification, dict)
         and delivery_verification.get("status") == "PASS"
         and delivery_verification.get("failure") is None

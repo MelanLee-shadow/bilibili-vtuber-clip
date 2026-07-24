@@ -13,6 +13,9 @@ from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
     review_talk_boundary_semantics,
 )
+from src.autoslice.boundary_source_context_coverage import (
+    source_context_coverage_block,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 
@@ -33,6 +36,7 @@ def review_final_boundary_semantics(
     source_final_start_ms: int | None = None,
     source_final_end_ms: int | None = None,
     boundary_search_scope: Mapping[str, object] | None = None,
+    available_local_source_context_end_ms: int | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority cue grid used by the resolver."""
 
@@ -71,6 +75,16 @@ def review_final_boundary_semantics(
                 "reason_codes": list(scope.get("reason_codes") or [])
                 or ["BOUNDARY_SEMANTIC_SEARCH_SCOPE_BLOCKED"],
             }
+        coverage_block = source_context_coverage_block(
+            scope=scope,
+            available_local_source_context_end_ms=(
+                available_local_source_context_end_ms
+            ),
+            candidate_id=candidate_id,
+            boundary_max_forward_ms=boundary_max_forward_ms,
+        )
+        if coverage_block is not None:
+            return coverage_block
     try:
         return review_talk_boundary_semantics(
             cues=cues,

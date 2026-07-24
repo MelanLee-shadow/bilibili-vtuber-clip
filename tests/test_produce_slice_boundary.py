@@ -31,6 +31,10 @@ from src.autoslice.producer_boundary_resolution import (
     BoundaryResolutionAdapters,
     _select_initial_boundary,
 )
+from src.autoslice.recovery_title_authority import (
+    ROOT,
+    build_recovery_publication_authorities,
+)
 from src.autoslice.subtitle_timing_qa import SpeechSpan
 
 
@@ -129,6 +133,21 @@ def test_snap_start_opens_on_a_sentence():
 
 def _cue(start_ms, end_ms, text="x"):
     return SrtCue(index="1", start_ms=start_ms, end_ms=end_ms, text=text)
+
+
+def _hotpot_exact_source_pin_authority():
+    candidate_id = "auto_193450_1863_2056"
+    return build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=(
+            ROOT
+            / "assets/lidousha/recovery_publication_authority.v1.json"
+        ),
+        expected_registry_sha256=(
+            "sha256:"
+            "be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
+        ),
+    )[candidate_id]
 
 
 def test_runon_cue_straddling_target_triggers_refinement():
@@ -255,6 +274,46 @@ def test_boundary_semantic_context_exhaustion_emits_retry_scope(tmp_path):
         )
 
 
+def test_boundary_source_witness_reserve_emits_typed_retry_scope(tmp_path):
+    with pytest.raises(
+        SystemExit,
+        match=(
+            "BOUNDARY_CONTEXT_EXHAUSTED:.*"
+            "retry_scope=source_witness_reserve"
+        ),
+    ):
+        _select_initial_boundary(
+            spec={
+                "pieces": [{"start_ms": 0, "end_ms": 141_820}],
+                "semantic_start_ms": 0,
+                "semantic_end_ms": 109_820,
+                "boundary_semantic_review": {
+                    "status": "BLOCK",
+                    "reason_codes": [
+                        "BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE"
+                    ],
+                    "needs_more_context": True,
+                    "retry_scope": "source_witness_reserve",
+                    "max_forward_ms": 30_000,
+                },
+            },
+            durations=[141_820],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=141_820,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=[
+                _cue(0, 109_820, "目标"),
+                _cue(139_000, 141_410, "故事闭合"),
+            ],
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+        )
+
+
 def test_boundary_semantic_recommendation_uses_retry_forward_cap(tmp_path):
     cues = [
         _cue(0, 9_000, "目标"),
@@ -363,7 +422,7 @@ def test_required_truth_owner_extends_boundary_and_cannot_become_not_required(
             "required_boundary_owners": [
                 {
                     "owner_kind": "source_subtitle_truth",
-                    "owner_id": "evil-gecko-tail",
+                    "owner_id": "late-reviewed-truth",
                     "required": True,
                     "local_windows": [
                         {"start_ms": 12_000, "end_ms": 14_000}
@@ -391,7 +450,7 @@ def test_required_truth_owner_extends_boundary_and_cannot_become_not_required(
     assert initial.target_rel == 18_000
     assert initial.snapped_end == 18_000
     assert initial.required_boundary_owners[0]["owner_id"] == (
-        "evil-gecko-tail"
+        "late-reviewed-truth"
     )
 
 
@@ -436,11 +495,11 @@ def test_required_owner_snap_never_selects_closer_sentence_before_truth(
     assert initial.snapped_end == 15_000
 
 
-def test_required_owner_uses_hotpot_lower_bound_without_moving_repair_cap(
+def test_required_owner_moves_lower_bound_without_moving_repair_cap(
     tmp_path,
 ):
-    """7/22 hotpot: the truth owner raises the legal closure floor to 230760,
-    while the original 202720 semantic target still owns the 232720 cap."""
+    """A story truth may raise the closure floor while the original semantic
+    target still owns the absolute repair cap."""
 
     initial = _select_initial_boundary(
         spec={
@@ -450,7 +509,7 @@ def test_required_owner_uses_hotpot_lower_bound_without_moving_repair_cap(
             "required_boundary_owners": [
                 {
                     "owner_kind": "source_subtitle_truth",
-                    "owner_id": "evil-gecko-tail",
+                    "owner_id": "late-reviewed-truth",
                     "required": True,
                     "local_windows": [
                         {"start_ms": 229_000, "end_ms": 230_760}
@@ -486,7 +545,7 @@ def test_required_owner_uses_hotpot_lower_bound_without_moving_repair_cap(
     assert initial.snapped_end == 231_000
 
 
-def test_bound_manual_scope_resolves_1863_closure_without_cap_ratchet(
+def test_bound_manual_scope_resolves_generic_late_closure_without_cap_ratchet(
     tmp_path,
 ):
     scope = build_boundary_search_scope(
@@ -496,9 +555,9 @@ def test_bound_manual_scope_resolves_1863_closure_without_cap_ratchet(
         repair_cap_ms=60_000,
     )
     cues = [
-        _cue(227_640, 230_760, "拿烟头烫人的人。"),
-        _cue(261_850, 263_330, "就是不会说这种话呀，一般人。"),
-        _cue(263_330, 268_480, "小时候衣服的新话题。"),
+        _cue(227_640, 230_760, "人工下界处的句子。"),
+        _cue(261_850, 263_330, "同一故事终于完整收束。"),
+        _cue(263_330, 268_480, "明确开始下一话题。"),
     ]
     initial = _select_initial_boundary(
         spec={
@@ -510,7 +569,7 @@ def test_bound_manual_scope_resolves_1863_closure_without_cap_ratchet(
             "required_boundary_owners": [
                 {
                     "owner_kind": "source_subtitle_truth",
-                    "owner_id": "evil-gecko-tail",
+                    "owner_id": "late-reviewed-truth",
                     "required": True,
                     "local_windows": [
                         {"start_ms": 229_000, "end_ms": 230_760}
@@ -546,6 +605,193 @@ def test_bound_manual_scope_resolves_1863_closure_without_cap_ratchet(
     assert initial.repair_max_end_ms == 290_760
     assert initial.target_rel == 263_330
     assert initial.snapped_end == 263_330
+
+
+def test_hotpot_exact_source_pin_emits_official_source_endpoint(tmp_path):
+    candidate_id = "auto_193450_1863_2056"
+    source_start_ms = 1_853_760
+    official_source_end_ms = 2_056_480
+    official_local_end_ms = official_source_end_ms - source_start_ms
+    # Live V12 fresh ASR ends the semantic closure 400ms before official
+    # BCUT cue 911, then starts a timing-drifted cue at that same instant.
+    # The official source pin—not that derived ASR tail—owns the media cut.
+    fresh_asr_closure_end_ms = official_local_end_ms - 400
+    scope = build_boundary_search_scope(
+        semantic_target_ms=official_local_end_ms,
+        manual_lower_bound_ms=official_local_end_ms,
+        repair_cap_ms=30_000,
+        last_piece_start_ms=source_start_ms,
+        boundary_end_mode="exact_source_pin",
+    )
+    cues = [
+        _cue(0, 1_000, "开场完整。"),
+        _cue(
+            199_400,
+            fresh_asr_closure_end_ms,
+            "就是刚认识，暂时不太熟啊。",
+        ),
+        _cue(
+            fresh_asr_closure_end_ms,
+            official_local_end_ms + 1_400,
+            "我行啊。",
+        ),
+        _cue(
+            official_local_end_ms + 1_460,
+            official_local_end_ms + 3_700,
+            "谢谢恩恩的SC。",
+        ),
+    ]
+
+    resolution = boundary_resolution.resolve_producer_boundary(
+        spec={
+            "candidate_id": candidate_id,
+            "pieces": [
+                {"start_ms": source_start_ms, "end_ms": 2_088_480}
+            ],
+            "semantic_start_ms": source_start_ms,
+            "semantic_end_ms": official_source_end_ms,
+            "given_end_ms": official_source_end_ms,
+            "given_end_mode": "exact_source_pin",
+            "given_end_authority": (
+                "Pro source cue 911 exact endpoint"
+            ),
+            "recovery_publication_authority": (
+                _hotpot_exact_source_pin_authority()
+            ),
+            "boundary_search_scope": scope,
+            "boundary_semantic_review": {
+                "status": "PASS",
+                "cue_grid_sha256": (
+                    boundary_resolution.cue_grid_sha256(cues)
+                ),
+                "recommended_end_cue_index": 2,
+                "recommended_end_ms": fresh_asr_closure_end_ms,
+                "boundary_search_scope": scope,
+            },
+        },
+        durations=[234_720],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=234_720,
+        cid=candidate_id,
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        spans=[
+            SpeechSpan(0, 900),
+            SpeechSpan(199_400, fresh_asr_closure_end_ms - 20),
+            SpeechSpan(
+                fresh_asr_closure_end_ms,
+                official_local_end_ms + 1_380,
+            ),
+            SpeechSpan(
+                official_local_end_ms + 1_460,
+                official_local_end_ms + 3_680,
+            ),
+        ],
+        boundary_repair_extend_cap_ms=30_000,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+        required_tail_end_ms=None,
+    )
+
+    assert resolution.audit["manual_end_mode"] == "exact_source_pin"
+    assert (
+        resolution.audit["snapped_sentence_end_ms"]
+        == fresh_asr_closure_end_ms
+    )
+    assert resolution.final_end == official_local_end_ms
+    assert source_start_ms + resolution.final_end == official_source_end_ms
+
+
+def test_hotpot_exact_source_pin_rejects_later_otherwise_valid_cue(
+    tmp_path,
+):
+    candidate_id = "auto_193450_1863_2056"
+    source_start_ms = 1_853_760
+    official_source_end_ms = 2_056_480
+    official_local_end_ms = official_source_end_ms - source_start_ms
+    later_local_end_ms = 2_084_520 - source_start_ms
+    scope = build_boundary_search_scope(
+        semantic_target_ms=official_local_end_ms,
+        manual_lower_bound_ms=official_local_end_ms,
+        repair_cap_ms=30_000,
+        last_piece_start_ms=source_start_ms,
+        boundary_end_mode="exact_source_pin",
+    )
+    cues = [
+        _cue(
+            199_600,
+            official_local_end_ms,
+            "就是刚认识，暂时不太熟啊。",
+        ),
+        _cue(
+            227_640,
+            later_local_end_ms,
+            "邪恶守宫的下一条SC。",
+        ),
+    ]
+    generic_scope = build_boundary_search_scope(
+        semantic_target_ms=official_local_end_ms,
+        manual_lower_bound_ms=official_local_end_ms,
+        repair_cap_ms=30_000,
+        last_piece_start_ms=source_start_ms,
+    )
+    assert (
+        int(generic_scope["minimum_recommended_end_ms"])
+        <= later_local_end_ms
+        <= int(generic_scope["max_recommended_end_ms"])
+    )
+    assert later_local_end_ms > int(scope["max_recommended_end_ms"])
+
+    with pytest.raises(
+        SystemExit,
+        match="BOUNDARY_SEMANTIC_RECOMMENDATION_INVALID",
+    ):
+        _select_initial_boundary(
+            spec={
+                "candidate_id": candidate_id,
+                "pieces": [
+                    {
+                        "start_ms": source_start_ms,
+                        "end_ms": 2_088_480,
+                    }
+                ],
+                "semantic_start_ms": 1_863_450,
+                "semantic_end_ms": official_source_end_ms,
+                "given_end_ms": official_source_end_ms,
+                "given_end_mode": "exact_source_pin",
+                "given_end_authority": (
+                    "Pro source cue 911 exact endpoint"
+                ),
+                "recovery_publication_authority": (
+                    _hotpot_exact_source_pin_authority()
+                ),
+                "boundary_search_scope": scope,
+                "boundary_semantic_review": {
+                    "status": "PASS",
+                    "cue_grid_sha256": (
+                        boundary_resolution.cue_grid_sha256(cues)
+                    ),
+                    "recommended_end_cue_index": 2,
+                    "recommended_end_ms": later_local_end_ms,
+                    "boundary_search_scope": scope,
+                },
+            },
+            durations=[234_720],
+            padded=tmp_path / "unused.mp4",
+            padded_dur=234_720,
+            out_root=tmp_path,
+            transcriber=lambda *_args: "",
+            cues=cues,
+            required_tail_end_ms=None,
+            adapters=BoundaryResolutionAdapters(
+                accurate_recut_command=lambda **_kwargs: [],
+                run_command=lambda *_args, **_kwargs: None,
+            ),
+            boundary_repair_extend_cap_ms=30_000,
+        )
 
 
 def test_resolver_blocks_valid_but_different_search_scope(tmp_path):
@@ -644,7 +890,7 @@ def test_required_owner_fails_when_only_closure_is_beyond_original_cap(
                 "required_boundary_owners": [
                     {
                         "owner_kind": "source_subtitle_truth",
-                        "owner_id": "evil-gecko-tail",
+                        "owner_id": "late-reviewed-truth",
                         "required": True,
                         "local_windows": [
                             {"start_ms": 229_000, "end_ms": 230_760}
@@ -750,7 +996,7 @@ def test_required_owner_repair_passes_original_origin_to_clean_closure_search(
         match="BOUNDARY_REQUIRED_OWNER_EXCLUDED.*\\[230760,232720\\]",
     ):
         boundary_resolution._repair_boundary(
-            cid="hotpot",
+            cid="generic-late-owner",
             out_root=tmp_path,
             padded_dur=250_000,
             spans=[],
@@ -769,6 +1015,7 @@ def test_required_owner_repair_passes_original_origin_to_clean_closure_search(
             closure_cue=_cue(200_000, 231_000, "初次句尾。"),
             refinement_used=False,
             manual_end_authority=None,
+            manual_end_mode="semantic_lower_bound",
             semantic_review={
                 "status": "PASS",
                 "recommended_end_ms": 202_720,
@@ -776,7 +1023,7 @@ def test_required_owner_repair_passes_original_origin_to_clean_closure_search(
             required_boundary_owners=[
                 {
                     "owner_kind": "source_subtitle_truth",
-                    "owner_id": "evil-gecko-tail",
+                    "owner_id": "late-reviewed-truth",
                     "required": True,
                     "local_windows": [
                         {"start_ms": 229_000, "end_ms": 230_760}
@@ -796,7 +1043,9 @@ def test_required_owner_repair_passes_original_origin_to_clean_closure_search(
             "search_origin_ms": 202_720,
         }
     ]
-    audit = json.loads((tmp_path / "hotpot.boundary_audit.json").read_text())
+    audit = json.loads(
+        (tmp_path / "generic-late-owner.boundary_audit.json").read_text()
+    )
     assert audit["boundary_repair_search_origin_ms"] == 202_720
     assert audit["boundary_repair_max_end_ms"] == 232_720
     assert audit["required_boundary_owner_verification"]["status"] == "FAIL"
@@ -985,7 +1234,7 @@ def test_manual_end_cannot_truncate_semantic_target_with_authority(tmp_path):
 
 
 def test_manual_end_without_authority_fails_closed(tmp_path):
-    with pytest.raises(SystemExit, match="MANUAL_END_AUTHORITY_MISSING"):
+    with pytest.raises(SystemExit, match="MANUAL_END_AUTHORITY_INVALID"):
         _select_initial_boundary(
             spec={
                 "pieces": [{"start_ms": 0, "end_ms": 20_000}],

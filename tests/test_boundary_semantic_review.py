@@ -7,6 +7,7 @@ from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
     build_boundary_search_scope,
     cue_grid_sha256,
+    required_source_context_end_ms,
     review_talk_boundary_semantics,
 )
 from src.autoslice.jingting_chunker import SrtCue
@@ -213,12 +214,9 @@ def test_boundary_review_sees_long_forward_window_and_next_topic_witness():
     assert '"cue_index": 19' in seen_prompt
 
 
-def test_manual_lower_bound_moves_shared_scope_past_old_610ms_failure():
-    """1863 regression: 263330 is legal from the reviewed 230760 origin.
-
-    The old resolver incorrectly measured 60s from the stale 202720 selector
-    end and rejected this exact closure by 610ms.
-    """
+def test_manual_lower_bound_moves_shared_scope_past_old_origin():
+    """The shared cap is measured from an authorized lower bound, not from a
+    stale selector endpoint."""
 
     scope = build_boundary_search_scope(
         semantic_target_ms=202_720,
@@ -228,9 +226,9 @@ def test_manual_lower_bound_moves_shared_scope_past_old_610ms_failure():
         last_piece_start_ms=1_856_000,
     )
     cues = [
-        _cue(1, 227_640, 230_760, "觉得我看上去很像拿烟头烫人的人"),
-        _cue(2, 261_850, 263_330, "就是不会说这种话呀，一般人"),
-        _cue(3, 263_330, 268_480, "小时候衣服的下一段话题"),
+        _cue(1, 227_640, 230_760, "人工下界处的句子"),
+        _cue(2, 261_850, 263_330, "同一故事终于完整收束"),
+        _cue(3, 263_330, 268_480, "明确开始下一话题"),
     ]
     response = json.dumps(
         {
@@ -250,8 +248,8 @@ def test_manual_lower_bound_moves_shared_scope_past_old_610ms_failure():
     review = review_talk_boundary_semantics(
         cues=cues,
         target_ms=230_760,
-        candidate_id="auto_193450_1863_2056",
-        selection_hook="火锅与邪恶守宫",
+        candidate_id="generic-late-closure",
+        selection_hook="晚到的故事闭环",
         selection_scorecard=_scorecard(),
         structured_context="",
         candidate_context="hash-bound context",
@@ -267,6 +265,60 @@ def test_manual_lower_bound_moves_shared_scope_past_old_610ms_failure():
     assert review["status"] == "PASS"
     assert review["recommended_end_ms"] == 263_330
     assert review["boundary_search_scope"] == scope
+
+
+def test_exact_source_pin_reviews_fresh_closure_before_media_cut():
+    pin_ms = 202_720
+    scope = build_boundary_search_scope(
+        semantic_target_ms=pin_ms,
+        manual_lower_bound_ms=pin_ms,
+        repair_cap_ms=30_000,
+        boundary_end_mode="exact_source_pin",
+    )
+    cues = [
+        _cue(1, 199_400, 202_320, "就是刚认识暂时不太熟啊"),
+        _cue(2, 202_320, 204_120, "我行啊"),
+        _cue(3, 204_180, 206_420, "谢谢下一条SC"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 1,
+            "evidence_cue_indexes": [1, 2, 3],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第一句闭环，source pin 后进入下一条SC。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=pin_ms,
+        candidate_id="auto_193450_1863_2056",
+        selection_hook="火锅关系闭环",
+        selection_scorecard=_scorecard(),
+        structured_context="官方 cue 912 为下一条SC",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=0,
+        boundary_search_scope=scope,
+    )
+
+    assert boundary_search_scope_is_valid(scope)
+    assert scope["minimum_recommended_end_ms"] == pin_ms - 400
+    assert scope["max_recommended_end_ms"] == pin_ms
+    assert scope["recommendation_forward_ms"] == 0
+    assert (
+        required_source_context_end_ms(scope, repair_cap_ms=60_000)
+        == pin_ms + 15_000
+    )
+    assert review["status"] == "PASS"
+    assert review["recommended_end_ms"] == pin_ms - 400
 
 
 def test_boundary_review_rejects_tampered_search_scope_binding():
@@ -334,6 +386,8 @@ def test_boundary_review_requests_one_long_context_retry_fail_closed():
     assert result["same_topic_continues_after_target"] is True
     assert result["retry_scope"] == "same_topic_continues"
     assert "BOUNDARY_CONTEXT_EXHAUSTED" in result["reason_codes"]
+    assert "BOUNDARY_RECOMMENDATION_MISSING" in result["reason_codes"]
+    assert "BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE" not in result["reason_codes"]
 
 
 def test_boundary_review_cannot_request_context_without_post_target_evidence():

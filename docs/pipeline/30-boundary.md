@@ -21,7 +21,8 @@ talk 成片的最终 end 必须同时成立：
 3. 故事/回答/包袱已经落地；
 4. 下一 cue 已被证明是下一条 SC、谢礼或另一话题，不能吞进本片。
 
-hash-bound 人工 end 只表示“人工已确认至少要保留到这里”的**下界**，不是可绕过语义门的
+普通 hash-bound 人工 end（`boundary_end_mode=semantic_lower_bound`，也包括未显式声明 mode
+的普通 `given_end_ms`）只表示“人工已确认至少要保留到这里”的**下界**，不是可绕过语义门的
 绝对截断点。它不得早于候选 `end_ms`，不得砍掉 content anchor，也不得覆盖一个更晚的语义
 闭环建议。这里必须区分两种量：`semantic closure cue end` 是 reviewer 选择的句尾，
 `delivery coverage lower bound` 是最终媒体至少覆盖到的位置。若 coverage lower bound
@@ -29,6 +30,19 @@ hash-bound 人工 end 只表示“人工已确认至少要保留到这里”的*
 `adaptive_tail_cut` 生成尾气；不得为了满足媒体覆盖下界而吞进下一句。实际尾气若被下一
 cue/VAD guard 钳到下界之前，仍以 `BOUNDARY_REQUIRED_OWNER_EXCLUDED` /
 `BOUNDARY_DELIVERY_LOWER_BOUND_EXCLUDED` 阻断，不能靠理论 400ms 放行。
+
+只有 candidate-bound、registry-SHA-bound 的 publication authority 明示
+`boundary_end_mode=exact_source_pin` 时，`required_given_end_ms` 才是官方 source 时间轴上的
+**精确最终媒体 end**，不是普通下界，也不签发语义 PASS。source-full-window reviewer 仍须使
+上述四命题全部成立；由于 fresh ASR cue timing 可相对官方 source cue 漂移，exact scope 只把
+`[pin-400ms, pin]` 内的完整语义句尾列为可选 recommendation，禁止选择 pin 后 cue，forward
+recommendation 固定为 0。resolver 必须 snap 到 reviewer 所选 fresh cue，再由 source pin
+精确补足/钳短 disposable tail；最终媒体 end 必须等于 pin。落在 semantic closure 之后的
+fresh-ASR 漂移 cue 不取得交付字幕所有权，下一话题仍只作 source witness；
+`talk-boundary-final-endpoint-binding.v1` 同时绑定所选 closure cue 与 pin 后的 exact final
+interval。registry/candidate/mode/ms 任一不匹配、没有 pin 前 400ms 内的完整 closure、
+reviewer 选择 pin 后 cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
+媒体不等于 pin，均 fail closed；不得把 exact pin 降级为普通下界，也不得用它绕过四命题。
 
 source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SHA 绑定同一份
 `talk-boundary-search-scope.v1`，禁止各自从旧 candidate end 重新推导 cap：
@@ -46,6 +60,23 @@ source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SH
 scope 缺失、SHA 漂移、resolver 重算不一致、source window 没覆盖 reserve，或 owner 下界已经
 越过绝对 ceiling，都必须 fail closed；不得用旧的 `semantic_target + 60s` 或
 `candidate end + 90s` 近似替代。
+
+调用 source reviewer 前必须先落
+`talk-boundary-source-context-coverage.v1`，逐字绑定 scope SHA、实际/必需 local source
+context end 与 deficit。覆盖不足时**不得调用 LLM 自证**，而是返回 typed
+`retry_scope=source_witness_reserve` /
+`BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE`；runner 只允许一次 fresh source
+重物化，endpoint cap 仍从当前 30 秒最多扩到 60 秒，并重新转录、重新生成 request/grid、
+重新审查。未知 retry scope、scope 无效、源字节不足、已在 60 秒仍失败或第二次失败均终止，
+不得空转、滚动 cap 或扩大到 120 秒。`recommended_end_cue_index=null` 应记
+`BOUNDARY_RECOMMENDATION_MISSING`，不能冒充“给了一个越界推荐”。
+
+required source truth 默认是 `boundary_role=story_content`，会取得终点 owner。只有经证据确认、
+且其 source interval 完全位于候选 semantic target 之后的下一话题文本，才可显式标为
+`boundary_role=next_topic_witness`：它仍是 padded context 中必须正确落字的真值，可帮助证明
+换题，但不能把当前故事终点向后拖进下一条 SC，也不取得最终裁掉该下一话题后的字幕 owner；
+final-owner receipt 必须将其单列为 context-only，而不是伪报最终字幕缺失。该 role 与故事区间
+有任何重叠都 fail closed。
 
 所有 talk 包——包括带人工 end 的恢复包——都必须通过**两层不同作用域的语义回执**，同时
 通过确定性 cue/syntax 门与上述四命题。两层不能互相冒充，也不能把第一层的 cue ordinal

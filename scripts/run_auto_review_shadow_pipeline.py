@@ -730,6 +730,7 @@ def _stage_publish_draft(
     skip_cover: bool = False,
     selection_hook: str | None = None,
     cover_diversity_slot: int | None = None,
+    recovery_publication_authority: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
     return _stage_publish_draft_impl(
         materialized_recut,
@@ -742,6 +743,7 @@ def _stage_publish_draft(
         skip_cover=skip_cover,
         selection_hook=selection_hook,
         cover_diversity_slot=cover_diversity_slot,
+        recovery_publication_authority=recovery_publication_authority,
         stage_cover=_stage_lidousha_ai_cover,
     )
 

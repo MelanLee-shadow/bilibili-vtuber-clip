@@ -1381,6 +1381,24 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             kept.append(record)
             continue
         try:
+            given_title, publication_authority = (
+                _validated_recovery_publication(
+                    candidate_id=cid,
+                    recovery_publication_authority=record.get(
+                        "recovery_publication_authority"
+                    ),
+                )
+            )
+        except RecoveryReviewRerunError:
+            kept.append(record)
+            continue
+        if (
+            record.get("given_title") is not None
+            and given_title != record.get("given_title")
+        ):
+            kept.append(record)
+            continue
+        try:
             chat_binding = _structured_chat_binding_for_record(
                 segment,
                 record,
@@ -1431,6 +1449,11 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         if given_end_ms is not None:
             item["given_end_ms"] = given_end_ms
             item["given_end_authority"] = given_end_authority
+        if given_title is not None:
+            item["given_title"] = given_title
+            item["recovery_publication_authority"] = (
+                publication_authority
+            )
         requeued.append(item)
         existing_pending.add(cid)
         state.setdefault("talk_superseded_attempts", []).append(

@@ -6599,6 +6599,32 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
         calls.append(command)
         sink = kwargs["stdout"]
         if len(calls) == 1:
+            cid = "auto_212005_163_311"
+            candidate_root = base / "out" / date / cid
+            candidate_root.mkdir(parents=True, exist_ok=True)
+            scope = build_boundary_search_scope(
+                semantic_target_ms=158_000,
+                repair_cap_ms=30_000,
+                last_piece_start_ms=153_000,
+            )
+            (
+                candidate_root / f"{cid}.review-flags.json"
+            ).write_text(
+                json.dumps(
+                    {
+                        "boundary_semantic_review": {
+                            "schema_version": (
+                                "talk-boundary-semantic-review.v1"
+                            ),
+                            "status": "BLOCK",
+                            "needs_more_context": True,
+                            "retry_scope": "same_topic_continues",
+                            "boundary_search_scope": scope,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
             sink.write(
                 "BOUNDARY_CONTEXT_EXHAUSTED: no closure in current source context; "
                 "reason_codes=STORY_CLOSED_NOT_PROVEN "
@@ -6632,7 +6658,7 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
     assert result["boundary_context_retries"] == 1
     spec = json.loads((base / "out" / date / "spec_auto_212005_163_311.json").read_text())
     assert spec["semantic_end_ms"] == 311_000
-    assert spec["pieces"][0]["end_ms"] == 401_000
+    assert spec["pieces"][0]["end_ms"] == 386_000
     assert spec["boundary_repair_extend_cap_ms"] == 60_000
     assert spec["subtitle_text_overrides"] == str(override)
     assert spec["subtitle_regression"] == str(regression)
@@ -6643,9 +6669,9 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
 
 
 def test_boundary_retry_keeps_ceiling_plus_next_topic_witness(tmp_path):
-    """The 1863 manual origin needs more than semantic_end + 90s."""
+    """Retry source context follows the bound scope, not a legacy +90s guess."""
 
-    cid = "auto_193450_1863_2056"
+    cid = "generic_bound_scope"
     out_root = tmp_path / "out"
     candidate_root = out_root / cid
     candidate_root.mkdir(parents=True)
@@ -6679,6 +6705,99 @@ def test_boundary_retry_keeps_ceiling_plus_next_topic_witness(tmp_path):
     ) == 2_159_520
 
 
+def test_source_witness_reserve_retry_materializes_1573_scope_once(
+    tmp_path,
+    monkeypatch,
+):
+    date = "2026-07-22"
+    cid = "auto_193450_1573_1672"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+    calls = []
+
+    class Completed:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        sink = kwargs["stdout"]
+        if len(calls) == 1:
+            candidate_root = base / "out" / date / cid
+            candidate_root.mkdir(parents=True, exist_ok=True)
+            scope = build_boundary_search_scope(
+                semantic_target_ms=109_820,
+                manual_lower_bound_ms=116_840,
+                structured_payoff_ms=116_830,
+                required_owner_end_ms=116_830,
+                repair_cap_ms=30_000,
+                last_piece_start_ms=1_563_150,
+            )
+            (
+                candidate_root / f"{cid}.review-flags.json"
+            ).write_text(
+                json.dumps(
+                    {
+                        "boundary_semantic_review": {
+                            "schema_version": (
+                                "talk-boundary-semantic-review.v1"
+                            ),
+                            "status": "BLOCK",
+                            "needs_more_context": True,
+                            "retry_scope": "source_witness_reserve",
+                            "boundary_search_scope": scope,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            sink.write(
+                "BOUNDARY_CONTEXT_EXHAUSTED: "
+                '["BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE"] '
+                "max_forward_ms=30000 "
+                "retry_scope=source_witness_reserve\n"
+            )
+            sink.flush()
+            return Completed(1)
+        sink.write(
+            '{"red_flags": [], "boundary_repairs": '
+            '[{"snapped_end_ms": 141410}]}\n'
+        )
+        sink.flush()
+        return Completed(0)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": cid,
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 7_250_082,
+            "start_ms": 1_573_150,
+            "end_ms": 1_672_970,
+            "hook": "椅子反差",
+            "given_end_ms": 1_679_990,
+            "given_end_authority": "Ivan-reviewed source closure",
+        },
+    )
+
+    assert len(calls) == 2
+    assert result["boundary_context_retries"] == 1
+    spec = json.loads(
+        (base / "out" / date / f"spec_{cid}.json").read_text()
+    )
+    assert spec["semantic_end_ms"] == 1_672_970
+    assert spec["given_end_ms"] == 1_679_990
+    assert spec["pieces"][0]["end_ms"] == 1_754_990
+    assert spec["boundary_repair_extend_cap_ms"] == 60_000
+
+
 def test_talk_boundary_context_exhausted_retries_once_then_stops(
     tmp_path,
     monkeypatch,
@@ -6699,6 +6818,33 @@ def test_talk_boundary_context_exhausted_retries_once_then_stops(
 
     def fake_run(command, **kwargs):
         calls.append(command)
+        if len(calls) == 1:
+            cid = "auto_context_exhausted"
+            candidate_root = base / "out" / date / cid
+            candidate_root.mkdir(parents=True, exist_ok=True)
+            scope = build_boundary_search_scope(
+                semantic_target_ms=60_000,
+                repair_cap_ms=30_000,
+                last_piece_start_ms=90_000,
+            )
+            (
+                candidate_root / f"{cid}.review-flags.json"
+            ).write_text(
+                json.dumps(
+                    {
+                        "boundary_semantic_review": {
+                            "schema_version": (
+                                "talk-boundary-semantic-review.v1"
+                            ),
+                            "status": "BLOCK",
+                            "needs_more_context": True,
+                            "retry_scope": "same_topic_continues",
+                            "boundary_search_scope": scope,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
         kwargs["stdout"].write(
             "BOUNDARY_CONTEXT_EXHAUSTED: no closed ending after expanded context; "
             "reason_codes=STORY_CLOSED_NOT_PROVEN,"
@@ -6733,6 +6879,64 @@ def test_talk_boundary_context_exhausted_retries_once_then_stops(
         "NEXT_TOPIC_SEPARATED_NOT_PROVEN",
     ]
     assert "next_retry_at" not in result
+
+
+def test_talk_boundary_retry_refuses_missing_bound_scope(
+    tmp_path,
+    monkeypatch,
+):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:test"
+    )
+    calls = []
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        kwargs["stdout"].write(
+            "BOUNDARY_CONTEXT_EXHAUSTED: "
+            '["STORY_CLOSED_NOT_PROVEN"] '
+            "max_forward_ms=30000 "
+            "retry_scope=same_topic_continues\n"
+        )
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": "auto_missing_bound_scope",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 900_000,
+            "start_ms": 100_000,
+            "end_ms": 150_000,
+            "hook": "缺失 scope 不得扩窗",
+        },
+    )
+
+    assert len(calls) == 1
+    assert result["boundary_context_retries"] == 0
+    spec = json.loads(
+        (
+            base
+            / "out"
+            / date
+            / "spec_auto_missing_bound_scope.json"
+        ).read_text()
+    )
+    assert spec["pieces"][0]["end_ms"] == 182_000
+    assert spec["boundary_repair_extend_cap_ms"] == 30_000
 
 
 def test_boundary_context_failure_preserves_json_reason_codes():

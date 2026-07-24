@@ -2798,6 +2798,47 @@ def test_publish_staging_release_gate_runs_only_after_auto_upload_snapshot(tmp_p
     assert record["cover_release_gate"]["decision_action"] == "AUTO_UPLOAD"
 
 
+def test_shadow_publish_adapter_forwards_recovery_publication_authority(
+    monkeypatch,
+):
+    """Producer 导入的兼容 seam 不得丢失 same-BV 权威参数。"""
+
+    authority = {
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "candidate_id": "auto_test",
+        "bvid": "BV1test",
+    }
+    captured = {}
+
+    def stage_impl(materialized_recut, **kwargs):
+        captured["materialized_recut"] = materialized_recut
+        captured.update(kwargs)
+        return {"status": "MATERIALIZED"}
+
+    monkeypatch.setattr(
+        shadow_pipeline,
+        "_stage_publish_draft_impl",
+        stage_impl,
+    )
+
+    result = shadow_pipeline._stage_publish_draft(
+        {"status": "MATERIALIZED"},
+        candidate_id="auto_test",
+        title="【李豆沙】测试",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        recovery_publication_authority=authority,
+    )
+
+    assert result == {"status": "MATERIALIZED"}
+    assert captured["recovery_publication_authority"] is authority
+    assert (
+        captured["stage_cover"]
+        is shadow_pipeline._stage_lidousha_ai_cover
+    )
+
+
 def test_publish_staging_blocks_without_cpa_ai_cover_and_never_extracts_frame_cover(tmp_path, monkeypatch):
     media_path = _write(tmp_path / "recuts" / "lidousha-song.mp4", b"fake media bytes\n")
     subtitle_path = _write(tmp_path / "recuts" / "lidousha-song.srt", "1\n00:00:00,000 --> 00:00:03,000\n唱歌\n")

@@ -166,16 +166,16 @@
           "expectation": "昵称必须是指露蒂斯的“露医生”。"
         },
         {
-          "point_id": "evil-gecko-chat",
-          "final_video_start_ms": 198000,
-          "final_video_end_ms": 211000,
-          "expectation": "必须从结构化原版弹幕恢复南町昵称“邪恶守宫”。"
+          "point_id": "evil-gecko-guard-thanks",
+          "final_video_start_ms": 98000,
+          "final_video_end_ms": 112000,
+          "expectation": "片内较早的舰长感谢必须正确写出南町昵称“邪恶守宫”。"
         },
         {
-          "point_id": "complete-ending",
-          "final_video_start_ms": 214000,
-          "final_video_end_ms": 227000,
-          "expectation": "必须播放并核对新终点，结尾不能断在一句话中间。"
+          "point_id": "cue-911-topic-separation",
+          "final_video_start_ms": 188000,
+          "final_video_end_ms": 204000,
+          "expectation": "必须在火锅故事闭环“就是刚认识暂时不太熟啊”后结束；不得带入后续拿烟头烫人的下一条SC，也不能断在半句话中。"
         }
       ]
     },

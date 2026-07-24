@@ -84,8 +84,11 @@
   最终未满足均 fail closed。
 - 宽 `replace_substring` 窗若同一专名出现多次，必须用 `mention_postconditions` 为每一次
   绑定绝对 source interval、required text 与 forbidden tokens；窗口内“某一次写对”不能
-  掩盖另一 mention 仍错误。fresh ASR 把两个 mention 合进同一 cue 而无法分别归因时，
-  `MENTION_POSTCONDITION_TARGET_NOT_ISOLATED` fail closed，禁止假阳性通过。
+  掩盖另一 mention 仍错误。全部 mention 必须先独立解析、隔离并通过；这些 mention 对应 cue
+  的并集同时是**实际 mutation target**和最终 exact owner projection。即使 fresh ASR 已经写对、
+  本轮没有发生 replacement，也不得退回宽 `local_windows` 或“所有含 required text 的 cue”
+  取得 ownership。fresh ASR 把两个 mention 合进同一 cue、任一 mention 缺失或无法分别归因时，
+  必须在改字前 fail closed；未审的父窗口 cue 绝不能先被改写后再从审计 projection 中消失。
 - `replace_cue` 可附带经人工/黑屏纯音频听证确认的绝对源时间轴 `spoken_start_ms`：用于删除幻听前缀后把保留口播的字幕起点同步收紧。目标必须唯一；真值宽窗擦到的前句仅在其结束早于审定起点时排除，fresh ASR 的目标 cue 起点最多可比审定起点晚 500ms（随后回钉到绝对起点），若仍有后续重叠 cue、前句跨过起点、越界或非整型则 fail closed。VAD 未检出本身仍不得推导这个起点。
 - 已审字幕是独立于封面的文本权威。候选级资产放在 profile 的 `reviewed_subtitle_baselines`
   目录，由 runner 自动发现并写入候选指纹/spec；不得再以 `--reuse-cover` 作为是否保留人工字幕的

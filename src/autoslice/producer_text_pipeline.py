@@ -1861,6 +1861,7 @@ def run_text_pipeline(
                 os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
             ),
             boundary_search_scope=boundary_search_scope,
+            available_local_source_context_end_ms=sum(durations),
         )
     )
     persist_review_audit(

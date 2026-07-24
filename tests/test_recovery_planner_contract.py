@@ -11,7 +11,7 @@ from scripts import free_session_autoslice as runner
 ROOT = Path(__file__).resolve().parents[1]
 ASSET = ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
 ASSET_SHA256 = (
-    "sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
+    "sha256:be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
 )
 CANDIDATE_IDS = {
     "auto_193450_3573_3665",
@@ -23,7 +23,7 @@ CANDIDATE_IDS = {
 EXPECTED_ENDS = {
     "auto_193450_3573_3665": 3_665_850,
     "auto_193450_672_945": 951_900,
-    "auto_193450_1863_2056": 2_084_520,
+    "auto_193450_1863_2056": 2_056_480,
     "auto_193450_1573_1672": 1_679_990,
     "auto_193450_1475_1543": 1_543_760,
 }

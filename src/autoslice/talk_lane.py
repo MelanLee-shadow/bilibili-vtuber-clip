@@ -1167,6 +1167,7 @@ def _apply_recovery_authorities_to_talk_spec(
         spec["given_end_authority"] = str(
             item.get("given_end_authority") or ""
         ).strip()
+        spec["given_end_mode"] = "semantic_lower_bound"
     authority = item.get("recovery_publication_authority")
     if item.get("given_title") is None and authority is None:
         return
@@ -1185,6 +1186,13 @@ def _apply_recovery_authorities_to_talk_spec(
         raise ValueError(
             f"given_title requires verified publication authority: {exc}"
         ) from exc
+    if (
+        spec.get("given_end_ms") != authority["required_given_end_ms"]
+    ):
+        raise ValueError(
+            "recovery publication authority given_end_ms mismatch"
+        )
+    spec["given_end_mode"] = authority["boundary_end_mode"]
     spec["given_title"] = given_title
     spec["recovery_publication_authority"] = authority
 
@@ -1364,38 +1372,44 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
 
     completed, attempt_output, previous_speaker_review_state = run_producer()
     first_tail = attempt_output[-4000:]
+    boundary_failure_evidence = _boundary_context_failure_evidence(
+        first_tail
+    )
+    boundary_retry_scope = boundary_failure_evidence.get("retry_scope")
     if (
         completed.returncode != 0
         and (
             "BOUNDARY_UNREPAIRABLE" in first_tail
             or "BOUNDARY_CONTEXT_EXHAUSTED" in first_tail
         )
-        and "retry_scope=same_topic_continues" in first_tail
+        and boundary_retry_scope
+        in {
+            "same_topic_continues",
+            "source_witness_reserve",
+        }
     ):
         piece = spec["pieces"][-1]
-        legacy_retry_end = (
-            min(item["seg_dur_ms"], item["end_ms"] + _runner.BOUNDARY_CONTEXT_RETRY_POST_MS)
-            if item["seg_dur_ms"]
-            else item["end_ms"] + _runner.BOUNDARY_CONTEXT_RETRY_POST_MS
-        )
         scoped_retry_end = _bound_boundary_retry_source_end_ms(
             out_root=out_root,
             candidate_id=cid,
             repair_cap_ms=_runner.BOUNDARY_REPAIR_RETRY_CAP_MS,
         )
-        retry_end = max(
-            legacy_retry_end,
-            scoped_retry_end or legacy_retry_end,
-        )
-        if item["seg_dur_ms"]:
-            retry_end = min(item["seg_dur_ms"], retry_end)
+        retry_end = scoped_retry_end or piece["end_ms"]
         current_cap = int(spec["boundary_repair_extend_cap_ms"])
         source_context_already_sufficient = bool(
             scoped_retry_end is not None
             and piece["end_ms"] >= scoped_retry_end
         )
+        source_context_reachable = bool(
+            scoped_retry_end is not None
+            and (
+                not item["seg_dur_ms"]
+                or scoped_retry_end <= item["seg_dur_ms"]
+            )
+        )
         if (
-            _runner.BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap
+            source_context_reachable
+            and _runner.BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap
             and (
                 retry_end > piece["end_ms"]
                 or source_context_already_sufficient
@@ -1411,7 +1425,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
                     f"post-context to {piece['end_ms']}ms "
                     f"and absolute repair cap to {_runner.BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
                     f"(semantic end remains {item['end_ms']}ms; "
-                    f"bound_scope_required_end={scoped_retry_end})\n"
+                    f"bound_scope_required_end={scoped_retry_end}; "
+                    f"retry_scope={boundary_retry_scope})\n"
                 )
             completed, attempt_output, previous_speaker_review_state = run_producer()
     result = {

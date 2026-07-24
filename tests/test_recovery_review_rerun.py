@@ -20,7 +20,7 @@ PUBLICATION_AUTHORITY_ASSET = (
     ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
 )
 PUBLICATION_AUTHORITY_SHA256 = (
-    "sha256:ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
+    "sha256:be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
 )
 
 
@@ -348,6 +348,110 @@ def test_explicit_recovery_carries_hash_bound_public_title(
     assert plan["recovery_publication_authorities_by_candidate"] == {
         PUBLIC_TITLE_CANDIDATE: authority
     }
+
+
+@pytest.mark.parametrize(
+    (
+        "recorded_recovery_fingerprint",
+        "failure_recoverable",
+        "next_retry_at_epoch",
+        "expected_retry_reason",
+    ),
+    [
+        (
+            NEW,
+            True,
+            0,
+            "transient_infrastructure_failure",
+        ),
+        (
+            OLD,
+            False,
+            None,
+            "pipeline_fingerprint_changed",
+        ),
+    ],
+    ids=("transient-same-fingerprint", "systemic-fingerprint-change"),
+)
+def test_failure_requeue_preserves_hash_bound_publication_fields(
+    tmp_path,
+    monkeypatch,
+    recorded_recovery_fingerprint,
+    failure_recoverable,
+    next_retry_at_epoch,
+    expected_retry_reason,
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    state["picks"][0]["candidate_id"] = PUBLIC_TITLE_CANDIDATE
+    state["picks"][0]["start_ms"] = 1_475_000
+    state["picks"][0]["end_ms"] = 1_543_000
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "ffprobe_ms",
+        lambda _segment: 2_000_000,
+    )
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _failure_kind, _candidate_id: NEW,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "TALK_REPAIR_LIFETIME_RETRY_CAP",
+        3,
+        raising=False,
+    )
+    authority = _publication_authorities(
+        PUBLIC_TITLE_CANDIDATE
+    )[PUBLIC_TITLE_CANDIDATE]
+    required_given_end_ms = int(authority["required_given_end_ms"])
+
+    delivery_recovery.plan_current_talk_recovery_rerun(
+        date,
+        state,
+        candidate_ids=[PUBLIC_TITLE_CANDIDATE],
+        expected_source_state_sha256=STATE_SHA,
+        expected_old_fingerprint=OLD,
+        expected_new_fingerprint=NEW,
+        given_end_ms_by_candidate={
+            PUBLIC_TITLE_CANDIDATE: required_given_end_ms
+        },
+        given_end_authority=str(authority["registry_authority"]),
+        recovery_publication_authorities_by_candidate={
+            PUBLIC_TITLE_CANDIDATE: authority
+        },
+    )
+    failed_record = state["pending_talk"].pop()
+    expected_title = failed_record["given_title"]
+    expected_authority = copy.deepcopy(
+        failed_record["recovery_publication_authority"]
+    )
+    failed_record.update(
+        {
+            "status": "failed",
+            "pipeline_fingerprint": NEW,
+            "failure_kind": "producer_error",
+            "failure_stage": "producer",
+            "failure_recoverable": failure_recoverable,
+            "failure_recovery_fingerprint": (
+                recorded_recovery_fingerprint
+            ),
+            "next_retry_at_epoch": next_retry_at_epoch,
+        }
+    )
+    state["picks"] = [failed_record]
+
+    assert delivery_recovery.requeue_recoverable_talks(date, state) == 1
+
+    assert state["picks"] == []
+    retry = state["pending_talk"][0]
+    assert retry["retry_reason"] == expected_retry_reason
+    assert retry["given_title"] == expected_title
+    assert retry["given_title"] == expected_recovery_publish_title(
+        expected_authority
+    )
+    assert retry["recovery_publication_authority"] == expected_authority
 
 
 def test_explicit_recovery_rejects_public_title_for_unqueued_candidate(

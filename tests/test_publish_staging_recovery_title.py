@@ -21,7 +21,7 @@ def test_publish_staging_preserves_typed_same_bv_title_authority(
         ),
         expected_registry_sha256=(
             "sha256:"
-            "ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
+            "be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
         ),
     )[candidate_id]
     title = expected_recovery_publish_title(authority)

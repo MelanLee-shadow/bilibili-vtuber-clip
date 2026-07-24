@@ -8,6 +8,7 @@ import pytest
 
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice.boundary_semantic_review import (
+    build_boundary_search_scope,
     cue_grid_sha256,
     semantic_review_sha256,
 )
@@ -254,6 +255,105 @@ def test_final_boundary_review_indexes_exact_post_authority_grid():
     assert result["recommended_end_cue_index"] == 2
     assert result["recommended_end_ms"] == 14_000
     assert "最终闭合句" in seen_prompt
+
+
+def test_source_boundary_review_blocks_before_llm_when_witness_reserve_incomplete():
+    calls = 0
+
+    def review(_prompt):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("incomplete source context must block before LLM")
+
+    scope = build_boundary_search_scope(
+        semantic_target_ms=116_840,
+        manual_lower_bound_ms=116_840,
+        required_owner_end_ms=116_830,
+        repair_cap_ms=30_000,
+        last_piece_start_ms=1_563_150,
+    )
+    result = pipeline.review_final_boundary_semantics(
+        cues=pipeline.parse_srt_cues(_srt("目标", "闭合句")),
+        boundary_target_ms=116_840,
+        candidate_id="auto_193450_1573_1672",
+        selection_hook="椅子反差",
+        selection_scorecard={
+            "status": "VALID",
+            "dimensions": {
+                "self_contained": 4,
+                "comedic_payoff": 4,
+            },
+        },
+        structured_context="",
+        candidate_context="",
+        boundary_max_forward_ms=30_000,
+        llm_call=review,
+        extract_json=pipeline.extract_json_object,
+        boundary_search_scope=scope,
+        available_local_source_context_end_ms=141_820,
+    )
+
+    assert calls == 0
+    assert result["status"] == "BLOCK"
+    assert result["needs_more_context"] is True
+    assert result["retry_scope"] == "source_witness_reserve"
+    assert result["reason_codes"] == [
+        "BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE"
+    ]
+    assert result["source_context_coverage"] == {
+        "schema_version": "talk-boundary-source-context-coverage.v1",
+        "status": "BLOCK",
+        "scope_sha256": scope["scope_sha256"],
+        "available_local_source_context_end_ms": 141_820,
+        "required_local_source_context_end_ms": 161_840,
+        "deficit_ms": 20_020,
+    }
+
+
+def test_source_boundary_review_accepts_exact_required_window():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=14_000,
+        repair_cap_ms=30_000,
+    )
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3],
+            "reason_codes": [],
+            "summary": "第二句闭环，第三句换题。",
+        },
+        ensure_ascii=False,
+    )
+    result = pipeline.review_final_boundary_semantics(
+        cues=pipeline.parse_srt_cues(
+            _srt("保留的前句", "最终闭合句", "下一话题")
+        ),
+        boundary_target_ms=14_000,
+        candidate_id="exact-source-context",
+        selection_hook="完整包袱",
+        selection_scorecard={
+            "status": "VALID",
+            "dimensions": {
+                "self_contained": 4,
+                "comedic_payoff": 4,
+            },
+        },
+        structured_context="",
+        candidate_context="",
+        boundary_max_forward_ms=30_000,
+        llm_call=lambda _prompt: response,
+        extract_json=pipeline.extract_json_object,
+        boundary_search_scope=scope,
+        available_local_source_context_end_ms=scope[
+            "required_local_source_context_end_ms"
+        ],
+    )
+
+    assert result["status"] == "PASS"
+    assert result["recommended_end_ms"] == 14_000
 
 
 def test_exact_delivery_boundary_review_rebinds_post_baseline_grid():

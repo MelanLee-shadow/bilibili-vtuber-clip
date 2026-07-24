@@ -54,7 +54,10 @@ BililiveRecorder 原始录播 + 弹幕/SC
 - `review_ready`、本地产物存在、脚本返回 0、audit JSON 自报 `passed` 都不能单独证明可发布。
 - same-BV 最终感知复核 receipt 必须如实记录实际 reviewer、绑定 committed exact review
   contract 与最终字节；它不改变 `upload_allowed=false`，也不构成新 BV 投稿授权。
-- 没有当前 package audit、artifact hash、Ivan 授权和 `AUTO_UPLOAD` manifest 就不发布。
+- 新 BV 没有当前 package audit、artifact hash、Ivan 授权和 `AUTO_UPLOAD` manifest
+  就不发布；exact same-BV 修复不消费 `AUTO_UPLOAD`，只接受当前 package audit、
+  artifact hash、独立修复授权、final-human receipt 与 recovery publication authority
+  全部绑定的既有稿修复通道。
 - 已发稿修复使用同 BV 编辑/换源，不为修正新建 BV。
 
 ## 主要入口

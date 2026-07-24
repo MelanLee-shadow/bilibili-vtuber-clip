@@ -32,7 +32,9 @@
    候选上下文，禁止变成无条件全局替换。
 9. **别名按 mention 裁决**：`南町 / nightin`、`大N / 小N / 南町nightin` 等相似音节
    不能做整窗“统一词面”。每一次 mention 都绑定自己的 source interval、required text 与
-   forbidden tokens；窗口内另一处写对，不能替当前 mention 通过。
+   forbidden tokens；窗口内另一处写对，不能替当前 mention 通过。所有 mention 独立隔离后，
+   精确 cue 并集才同时拥有 mutation 与 owner projection；预先写对也走同一投影。两个 mention
+   合并进一条 cue、任一 mention 无法唯一归因或父窗口另有未审词面时，必须在 mutation 前阻断。
 10. **结构化聊天的上下文命中不等于整句听见**：SC/弹幕的 `exact_span` 只是候选类型，不是
     authority。每一路 support 都必须写入 typed whole-line gate receipt，保存
     score/coverage/precision/extent/common 与 unsupported head/interior/tail。只有

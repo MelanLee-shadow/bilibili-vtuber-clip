@@ -92,6 +92,9 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
                 "prior_piece_duration_ms"
             ),
             witness_reserve_ms=scope.get("witness_reserve_ms"),
+            boundary_end_mode=scope.get(
+                "boundary_end_mode", "semantic_lower_bound"
+            ),
         )
     except BoundarySemanticReviewError:
         return False
@@ -108,12 +111,14 @@ def build_boundary_search_scope(
     last_piece_start_ms: int = 0,
     prior_piece_duration_ms: int = 0,
     witness_reserve_ms: int = SOURCE_WITNESS_RESERVE_MS,
+    boundary_end_mode: str = "semantic_lower_bound",
 ) -> dict[str, object]:
     """Build the one scope shared by source review, resolver, and retry.
 
-    A hash-bound human lower bound and a structured payoff are semantic search
-    authorities, so they may move the origin.  A required owner is only a
-    delivery/review lower bound and therefore cannot move the absolute cap.
+    A hash-bound human lower bound and a structured payoff may move the normal
+    search origin. An exact source pin instead fixes the media ceiling while
+    exposing only the preceding tail-pad-sized semantic closure cue. A
+    required owner is only a delivery/review lower bound.
     """
 
     semantic_target = _required_int_ms(
@@ -144,6 +149,13 @@ def build_boundary_search_scope(
     witness_reserve = _required_int_ms(
         "witness_reserve_ms", witness_reserve_ms
     )
+    if boundary_end_mode not in {
+        "semantic_lower_bound",
+        "exact_source_pin",
+    }:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_END_MODE_INVALID"
+        )
 
     reasons: list[str] = []
     if (
@@ -152,21 +164,46 @@ def build_boundary_search_scope(
     ):
         reasons.append("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
 
-    search_origin_ms = max(
-        [
-            semantic_target,
-            *(
-                value
-                for value in (manual_lower_bound, structured_payoff)
-                if value is not None
-            ),
-        ]
+    exact_source_pin = (
+        manual_lower_bound
+        if boundary_end_mode == "exact_source_pin"
+        else None
     )
+    if boundary_end_mode == "exact_source_pin":
+        if exact_source_pin is None:
+            reasons.append("BOUNDARY_EXACT_SOURCE_PIN_MISSING")
+            exact_source_pin = semantic_target
+        if (
+            structured_payoff is not None
+            and structured_payoff > exact_source_pin
+        ):
+            reasons.append(
+                "BOUNDARY_EXACT_SOURCE_PIN_PAYOFF_CONFLICT"
+            )
+        search_origin_ms = exact_source_pin
+    else:
+        search_origin_ms = max(
+            [
+                semantic_target,
+                *(
+                    value
+                    for value in (
+                        manual_lower_bound,
+                        structured_payoff,
+                    )
+                    if value is not None
+                ),
+            ]
+        )
     delivery_lower_bound_ms = max(
         search_origin_ms,
         required_owner_end or search_origin_ms,
     )
-    max_recommended_end_ms = search_origin_ms + repair_cap
+    max_recommended_end_ms = (
+        exact_source_pin
+        if exact_source_pin is not None
+        else search_origin_ms + repair_cap
+    )
     if delivery_lower_bound_ms > max_recommended_end_ms:
         reasons.append("BOUNDARY_REQUIRED_OWNER_EXCLUDED")
     recommendation_forward_ms = max(
@@ -188,6 +225,7 @@ def build_boundary_search_scope(
 
     core: dict[str, object] = {
         "schema_version": SEARCH_SCOPE_SCHEMA_VERSION,
+        "boundary_end_mode": boundary_end_mode,
         "status": "BLOCK" if reasons else "PASS",
         "semantic_target_ms": semantic_target,
         "manual_lower_bound_ms": manual_lower_bound,
@@ -200,7 +238,7 @@ def build_boundary_search_scope(
         "max_recommended_end_ms": max_recommended_end_ms,
         "recommendation_forward_ms": recommendation_forward_ms,
         "minimum_recommended_end_ms": max(
-            search_origin_ms,
+            0 if exact_source_pin is not None else search_origin_ms,
             delivery_lower_bound_ms - DELIVERY_TAIL_PAD_MS,
         ),
         "delivery_tail_pad_ms": DELIVERY_TAIL_PAD_MS,
@@ -261,8 +299,13 @@ def required_source_context_end_ms(
         "last_piece_start_ms",
         scope.get("last_piece_start_ms"),
     )
+    recommendation_ceiling_ms = (
+        int(scope["max_recommended_end_ms"])
+        if scope.get("boundary_end_mode") == "exact_source_pin"
+        else search_origin_ms + effective_cap_ms
+    )
     required_local_end_ms = (
-        search_origin_ms + effective_cap_ms + witness_reserve_ms
+        recommendation_ceiling_ms + witness_reserve_ms
     )
     if required_local_end_ms < prior_piece_duration_ms:
         raise BoundarySemanticReviewError(
@@ -412,7 +455,8 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
-- 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；不得提前删掉候选选择器已经圈定的内容。
+- 只能从 recommendation_cue_indexes 选择。普通 semantic_lower_bound 不得提前删掉已圈内容；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，绝不可选择 pin 后 cue。
+- 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。
 - 若目标本身已闭环，即使后面无停顿继续说，也应选目标；若目标半句或包袱未落地，才向后选最早同时满足三项的 cue。
 - 若请求带 PASS 的 terminal source separation witness，说明 source full-window 已证明 cut 后进入下一话题；此时 delivery 最后一条 cue 可用该 witness 证明 next_topic_separated，但 syntax/story 仍须按当前最终字幕重新判断。
 - 结构化弹幕/SC 可证明话题触发或切换；长期记忆只能帮助理解指代，不能单独证明边界。
@@ -427,6 +471,17 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 "same_topic_continues_after_target":bool,"needs_more_context":bool,
 "reason_codes":[字符串],"summary":"一句中文结论"}}
 """
+
+
+def _parse_recommended_cue_index(
+    payload: Mapping[str, object],
+) -> tuple[int | None, str]:
+    value = payload.get("recommended_end_cue_index")
+    if value is None:
+        return None, "MISSING"
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None, "INVALID"
+    return value, "PRESENT"
 
 
 def review_talk_boundary_semantics(
@@ -570,11 +625,9 @@ def review_talk_boundary_semantics(
                 f"BOUNDARY_SEMANTIC_REVIEW_INVALID_{field.upper()}"
             )
         booleans[field] = value
-    recommended_raw = payload.get("recommended_end_cue_index")
-    if isinstance(recommended_raw, bool) or not isinstance(recommended_raw, int):
-        recommended_index = None
-    else:
-        recommended_index = recommended_raw
+    recommended_index, recommendation_value_state = (
+        _parse_recommended_cue_index(payload)
+    )
     by_index = {int(row["cue_index"]): row for row in rows}
     recommended = by_index.get(recommended_index) if recommended_index is not None else None
     target_end = int(rows[target_pos]["end_ms"])
@@ -674,7 +727,14 @@ def review_talk_boundary_semantics(
     if not selector_pass:
         reason_codes.append("SELECTOR_STORY_WITNESS_INSUFFICIENT")
     if not recommendation_valid:
-        reason_codes.append("BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE")
+        if recommendation_value_state == "MISSING":
+            reason_codes.append("BOUNDARY_RECOMMENDATION_MISSING")
+        elif recommendation_value_state == "INVALID":
+            reason_codes.append("BOUNDARY_RECOMMENDATION_INVALID")
+        elif recommended is None:
+            reason_codes.append("BOUNDARY_RECOMMENDATION_UNKNOWN_CUE")
+        else:
+            reason_codes.append("BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE")
     if not evidence_valid:
         reason_codes.append("BOUNDARY_EVIDENCE_CUES_INVALID")
     if not next_topic_witness_valid:

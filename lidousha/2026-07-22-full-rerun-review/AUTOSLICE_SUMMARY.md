@@ -3,9 +3,8 @@
 > **HISTORICAL V8 SNAPSHOT / STALE_POLICY / NO_UPLOAD**
 >
 > 本文件不是当前恢复 authority，也不证明当前可上传。不要从历史快照推断下一轮版本、路径、
-> 指纹、部署或发布状态；当前 exact 集合、plan、publication authority 与执行状态只读项目
-> `docs/HANDOFF.md`、对应 `docs/pipeline/` 步骤和 live `free`。下列状态、成品和候补都只是
-> v8 当时的历史投影。
+> 指纹、部署或发布状态；规则只读对应 `docs/pipeline/` 步骤，运行状态只读 live `free`，
+> `docs/HANDOFF.md` 仅是继续工作时的恢复点。下列状态、成品和候补都只是 v8 当时的历史投影。
 
 - 状态: **HISTORICAL_V8_STALE_POLICY**
 - 运行模式: **RECOVERY_REVIEW** · 来源: **OFFICIAL_COMPLETE_REPLAY** · 上传许可: **否**

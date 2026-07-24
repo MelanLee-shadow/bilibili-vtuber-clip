@@ -180,5 +180,9 @@
   same-BV manifest；它既不是 `AUTO_UPLOAD`，也不是新 BV 投稿授权。新投稿仍须独立满足当前
   audit、artifact hash、Ivan 对该发布动作的明确授权与 `AUTO_UPLOAD` manifest；same-BV
   manifest 也仍须把 Ivan 的修复授权原话与最终感知复核 receipt 分开冻结。
-- 上传路径 fail-closed：无当前 audit v2 + `AUTO_UPLOAD` manifest + artifact hash 门就没有发布。
+- 发布路径分成两个互不借权的 fail-closed lane：
+  - **新 BV**：当前 audit v2 + `AUTO_UPLOAD` manifest + artifact hash gate；
+  - **exact same-BV repair**：exact closure COMPLETE + 当前 audit v2 + authorized manifest +
+    `lidousha-final-human-review.v1` + recovery publication authority + artifact hash gate。
+    这一 lane 必须保持 review manifest `upload_allowed=false`，也不要求或伪造 `AUTO_UPLOAD`。
 - tag 按成品字幕出（`upload_tag_policy.py`，Ivan 2026-07-13）。

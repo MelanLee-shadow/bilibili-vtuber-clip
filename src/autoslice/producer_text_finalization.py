@@ -297,7 +297,21 @@ def _verify_source_truth_owners(
         for row in truth.get(key) or []
         if isinstance(row, dict)
     ]
-    rows = [row for row in all_rows if row.get("required") is not False]
+    context_only_rows = [
+        row
+        for row in all_rows
+        if row.get("required") is not False
+        and row.get("boundary_role") == "next_topic_witness"
+    ]
+    optional_rows = [
+        row for row in all_rows if row.get("required") is False
+    ]
+    rows = [
+        row
+        for row in all_rows
+        if row.get("required") is not False
+        and row.get("boundary_role") != "next_topic_witness"
+    ]
     required_count = 0
     failures: list[dict] = []
     for row in rows:
@@ -465,7 +479,8 @@ def _verify_source_truth_owners(
     audit["final_source_truth_owner_verification"] = {
         "status": "FAIL" if failures else "PASS",
         "required_truth_row_count": len(rows),
-        "optional_truth_row_count": len(all_rows) - len(rows),
+        "context_only_truth_row_count": len(context_only_rows),
+        "optional_truth_row_count": len(optional_rows),
         "required_window_count": required_count,
         "failures": failures,
     }

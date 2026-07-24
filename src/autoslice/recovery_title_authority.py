@@ -56,6 +56,7 @@ _PUBLICATION_ENTRY_FIELDS = frozenset(
         "title_mode",
         "observed_public_title",
         "required_given_end_ms",
+        "boundary_end_mode",
         "bvid",
         "aid",
         "cid",
@@ -73,6 +74,7 @@ _PUBLICATION_AUTHORITY_FIELDS = frozenset(
         "title_mode",
         "observed_public_title",
         "required_given_end_ms",
+        "boundary_end_mode",
         "bvid",
         "aid",
         "cid",
@@ -89,6 +91,9 @@ _PUBLICATION_AUTHORITY_FIELDS = frozenset(
 )
 _PUBLICATION_TITLE_MODES = frozenset(
     {"verified_public_exact", "ivan_manual_override"}
+)
+_BOUNDARY_END_MODES = frozenset(
+    {"semantic_lower_bound", "exact_source_pin"}
 )
 
 
@@ -250,6 +255,7 @@ def _validated_publication_entry(
         or isinstance(entry.get("required_given_end_ms"), bool)
         or not isinstance(entry.get("required_given_end_ms"), int)
         or entry["required_given_end_ms"] <= 0
+        or entry.get("boundary_end_mode") not in _BOUNDARY_END_MODES
         or _BVID_RX.fullmatch(str(entry.get("bvid") or "")) is None
         or _SHA256_RX.fullmatch(source_sha) is None
         or entry.get("source_public_verify_schema_version") != _SOURCE_SCHEMA

@@ -1862,6 +1862,7 @@
       "required_text": "邪恶守宫",
       "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
       "authority": "Ivan-stated-20260722-conversation(这里说的是邪恶守宫；邪恶守宫是南町nightin的昵称指代); only the nickname surface is pinned because the rest of the danmaku-derived line is partially occluded",
+      "boundary_role": "next_topic_witness",
       "required": true
     },
     {
@@ -1882,6 +1883,7 @@
       "required_text": "邪恶守宫",
       "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
       "authority": "Ivan-stated-20260722-conversation(两句原版弹幕指代均为邪恶守宫); only the recurring nickname surface is pinned",
+      "boundary_role": "next_topic_witness",
       "required": true
     },
     {

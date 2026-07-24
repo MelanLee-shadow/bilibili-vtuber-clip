@@ -16,7 +16,10 @@
   严格 SRT 与共享标题门，并要求结果与 manifest 绑定一致；自报 `passed:true` 不算。
 - talk 标题统一 `【李豆沙】` envelope，song 精确目录式；人工正文不能绕过外壳、长度或
   结构门。tags 必须逐项等于 audited record 的冻结结果。
-- 没有当前 audit + `AUTO_UPLOAD` manifest + artifact hash gate 就没有发布。
+- 新 BV 没有当前 audit + `AUTO_UPLOAD` manifest + artifact hash gate 就不得发布。
+- exact same-BV repair 不消费 `AUTO_UPLOAD`；它只接受 exact closure COMPLETE、当前 audit、
+  authorized manifest、最终感知 receipt、recovery publication authority 与 artifact hash
+  全部绑定的既有稿修复 lane，并继续保持 `upload_allowed=false`。
 - 授权上传/修复的证据必须 commit；媒体本身不因此入库。
 
 ## 最终感知复核 receipt 的权限边界
@@ -77,16 +80,19 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
 
 同 BV 的顺序固定为：
 
-1. 冻结最终包，重建 pending-human review manifest，运行 current canonical package audit；
-2. 被如实命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节并签出
+1. 先证明 `exact-talk-contract-closure.v1.status=COMPLETE`，且最终 state、重建 manifest 与
+   selection contract 的 candidate 集合完全相等；五项整包未闭合时，不得先为已完成子集建立
+   repair plan；
+2. 冻结最终包，重建 pending-human review manifest，运行 current canonical package audit；
+3. 被如实命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节并签出
    `lidousha-final-human-review.v1`；只有真的完成观看后才可出 receipt；
-3. `make-manifest --final-human-review ...` 同时冻结 package/audit/receipt、publication
+4. `make-manifest --final-human-review ...` 同时冻结 package/audit/receipt、publication
    authority 和 Ivan 的修复授权原话；缺 receipt 的 recovery manifest 直接拒绝；
-4. `verify --manifest ...` 重跑 current audit、hash 与 receipt validator；
-5. 先 `repair-plan --dry-run` 读真实 Creator/public/section 单 P 事实；确认后才运行
+5. `verify --manifest ...` 重跑 current audit、hash 与 receipt validator；
+6. 先 `repair-plan --dry-run` 读真实 Creator/public/section 单 P 事实；确认后才运行
    `repair-plan` create-only 落 plan/journal；
-6. 先 `repair-status`，再 `repair-run --dry-run`；最后只用 `repair-run` 执行或幂等 resume；
-7. 每次 resume 前后均可用 `repair-status` 重验本地 plan/journal/receipt 闭包；最终仍须以
+7. 先 `repair-status`，再 `repair-run --dry-run`；最后只用 `repair-run` 执行或幂等 resume；
+8. 每次 resume 前后均可用 `repair-status` 重验本地 plan/journal/receipt 闭包；最终仍须以
    Creator/public/public tags/exact section 四面读回进入 `VERIFIED`，status 本身不替代公开验收。
 
 同 BV `repair-plan` 只接受 authorized manifest 顶层 hash-bound

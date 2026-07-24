@@ -30,6 +30,9 @@ from src.autoslice.cover_title_rendering import (
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.review_package_ass_audit import audit_review_package_ass
+from src.autoslice.review_package_boundary_contract import (
+    audit_boundary_contract,
+)
 from src.autoslice.recovery_title_authority import (
     build_recovery_publication_authorities,
     expected_recovery_publish_title,
@@ -231,6 +234,150 @@ def _passing_boundary_review(
     }
 
 
+def test_exact_source_pin_boundary_authority_survives_package_audit(
+    tmp_path: Path,
+):
+    stem = "auto_193450_1863_2056"
+    closure_end_ms = 3_600
+    exact_media_end_ms = 4_000
+    subtitle = _write(
+        tmp_path / f"{stem}.srt",
+        "1\n00:00:00,000 --> 00:00:03,600\n"
+        "就是刚认识暂时不太熟啊\n",
+    )
+    source_review = _passing_boundary_review(
+        stem,
+        end_ms=closure_end_ms,
+    )
+    source_review["final_endpoint_binding"]["final_end_ms"] = (
+        exact_media_end_ms
+    )
+    final_cues = parse_srt_cues(subtitle.read_text(encoding="utf-8"))
+    final_review = _passing_boundary_review(
+        stem,
+        end_ms=closure_end_ms,
+        review_scope="final_delivery",
+        source_review=source_review,
+        cue_grid_digest=cue_grid_sha256(final_cues),
+        closure_text=final_cues[-1].text,
+    )
+    final_review["final_endpoint_binding"]["final_end_ms"] = (
+        exact_media_end_ms
+    )
+    issues: list[dict] = []
+    human_authority = "Pro source cue 911 exact endpoint"
+    record = {
+        "recovery_publication_authority": {
+            "boundary_end_mode": "exact_source_pin",
+        },
+        "boundary_audit": {
+            "boundary_authority": (
+                "human_source_exact_pin_plus_semantic_review"
+            ),
+            "manual_end_authority": human_authority,
+            "manual_end_mode": "exact_source_pin",
+            "boundary_semantic_review": source_review,
+            "final_delivery_boundary_semantic_review": final_review,
+            "final_start_ms": 0,
+            "snapped_sentence_end_ms": closure_end_ms,
+            "final_end_ms": exact_media_end_ms,
+            "boundary_selection_lower_bound_ms": closure_end_ms,
+            "delivery_coverage_lower_bound_ms": exact_media_end_ms,
+            "tail_pad_coverage_bridge": {
+                "status": "USED",
+                "closure_lower_bound_ms": closure_end_ms,
+                "delivery_lower_bound_ms": exact_media_end_ms,
+                "maximum_tail_pad_ms": 400,
+            },
+            "delivery_coverage_verification": {
+                "status": "PASS",
+                "failure": None,
+            },
+            "frozen_required_boundary_owner_count": 0,
+            "frozen_required_boundary_owners": [],
+            "required_boundary_owner_verification": {
+                "status": "PASS",
+                "failures": [],
+            },
+        },
+    }
+
+    audit_boundary_contract(
+        issue_adder=lambda rows, code, **fields: rows.append(
+            {"code": code, **fields}
+        ),
+        issues=issues,
+        stem=stem,
+        record_path=tmp_path / f"{stem}.record.json",
+        subtitle_path=subtitle,
+        exact_final_review={
+            "boundary_semantic_review": final_review,
+        },
+        record=record,
+        story_contract={
+            "human_boundary_authority": human_authority,
+            "boundary_semantic_review": final_review,
+        },
+        required=True,
+        is_song=False,
+    )
+
+    assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" not in {
+        issue["code"] for issue in issues
+    }
+    record["boundary_audit"]["manual_end_mode"] = (
+        "semantic_lower_bound"
+    )
+    drift_issues: list[dict] = []
+    audit_boundary_contract(
+        issue_adder=lambda rows, code, **fields: rows.append(
+            {"code": code, **fields}
+        ),
+        issues=drift_issues,
+        stem=stem,
+        record_path=tmp_path / f"{stem}.record.json",
+        subtitle_path=subtitle,
+        exact_final_review={
+            "boundary_semantic_review": final_review,
+        },
+        record=record,
+        story_contract={
+            "human_boundary_authority": human_authority,
+            "boundary_semantic_review": final_review,
+        },
+        required=True,
+        is_song=False,
+    )
+    assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" in {
+        issue["code"] for issue in drift_issues
+    }
+    record["boundary_audit"]["manual_end_mode"] = "exact_source_pin"
+    record["boundary_audit"]["final_end_ms"] = exact_media_end_ms + 200
+    late_end_issues: list[dict] = []
+    audit_boundary_contract(
+        issue_adder=lambda rows, code, **fields: rows.append(
+            {"code": code, **fields}
+        ),
+        issues=late_end_issues,
+        stem=stem,
+        record_path=tmp_path / f"{stem}.record.json",
+        subtitle_path=subtitle,
+        exact_final_review={
+            "boundary_semantic_review": final_review,
+        },
+        record=record,
+        story_contract={
+            "human_boundary_authority": human_authority,
+            "boundary_semantic_review": final_review,
+        },
+        required=True,
+        is_song=False,
+    )
+    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in {
+        issue["code"] for issue in late_end_issues
+    }
+
+
 def _minimal_package(tmp_path: Path) -> Path:
     root = tmp_path / "pkg"
     (root / "subtitles").mkdir(parents=True)
@@ -366,7 +513,7 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
         ),
         expected_registry_sha256=(
             "sha256:"
-            "ae15fbfd2b72cbb577fcdda66f94bb2108b79dfb0954f6649bc775ef2e8a6118"
+            "be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
         ),
     )[candidate_id]
     title = expected_recovery_publish_title(authority)
@@ -1293,6 +1440,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                         "human_source_reviewed_lower_bound_plus_semantic_review"
                     ),
                     "manual_end_authority": "fixture source-reviewed closure",
+                    "manual_end_mode": "semantic_lower_bound",
                     "boundary_semantic_review": source_boundary_review,
                     "final_delivery_boundary_semantic_review": (
                         final_boundary_review

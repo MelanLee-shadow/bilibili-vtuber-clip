@@ -33,7 +33,16 @@ from src.autoslice.producer_boundary import (
     tail_requires_forward_extension,
 )
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.recovery_title_authority import (
+    RecoveryTitleAuthorityError,
+    validate_recovery_publication_authority,
+)
 from src.autoslice.subtitle_timing_qa import sanitize_cue_timing
+
+
+_MANUAL_END_MODES = frozenset(
+    {"semantic_lower_bound", "exact_source_pin"}
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,7 @@ class InitialBoundary:
     closure_cue: object
     refinement_used: bool
     manual_end_authority: str | None
+    manual_end_mode: str
     semantic_review: dict | None
     required_boundary_owners: list[dict[str, object]]
     required_owner_start_ms: int | None
@@ -153,6 +163,162 @@ def _snap_end_at_or_after(
     return min(candidates) if candidates else None
 
 
+def _bounded_boundary_retry_scope(
+    semantic_review: object,
+) -> str | None:
+    if (
+        not isinstance(semantic_review, Mapping)
+        or semantic_review.get("needs_more_context") is not True
+    ):
+        return None
+    retry_scope = semantic_review.get("retry_scope")
+    if retry_scope in {"same_topic_continues", "source_witness_reserve"}:
+        return str(retry_scope)
+    return None
+
+
+def _apply_exact_source_pin_to_tail(
+    tail_adjustment: Mapping[str, object],
+    *,
+    exact_pin_ms: int,
+    maximum_end_ms: int,
+) -> dict[str, object]:
+    """Make source-authoritative tail coverage exact despite ASR drift."""
+
+    result = dict(tail_adjustment)
+    final_end_ms = int(result["final_end_ms"])
+    if final_end_ms != exact_pin_ms and exact_pin_ms <= maximum_end_ms:
+        result["pre_exact_pin_final_end_ms"] = final_end_ms
+        result["final_end_ms"] = exact_pin_ms
+        result["reason_before_exact_pin"] = result.get("reason")
+        result["reason"] = "tail_fixed_at_exact_source_pin"
+    return result
+
+
+def _delivery_boundary_failure(
+    *,
+    final_end_ms: int,
+    delivery_lower_bound_ms: int,
+    manual_end_mode: str,
+) -> dict[str, object] | None:
+    if (
+        manual_end_mode == "exact_source_pin"
+        and final_end_ms != delivery_lower_bound_ms
+    ):
+        return {
+            "reason": "FINAL_MEDIA_END_MISMATCH_EXACT_SOURCE_PIN",
+            "exact_source_pin_ms": delivery_lower_bound_ms,
+            "final_end_ms": final_end_ms,
+        }
+    if final_end_ms < delivery_lower_bound_ms:
+        return {
+            "reason": "FINAL_MEDIA_END_BEFORE_DELIVERY_LOWER_BOUND",
+            "delivery_lower_bound_ms": delivery_lower_bound_ms,
+            "final_end_ms": final_end_ms,
+        }
+    return None
+
+
+def _boundary_delivery_cues(
+    cues: list[object],
+    *,
+    snapped_end_ms: int,
+    manual_end_mode: str,
+) -> list[object]:
+    if manual_end_mode != "exact_source_pin":
+        return cues
+    return [cue for cue in cues if cue.end_ms <= snapped_end_ms]
+
+
+def _resolved_tail_adjustment(
+    spans: list[object],
+    cues: list[object],
+    *,
+    snapped_end_ms: int,
+    padded_dur_ms: int,
+    exact_source_pin_ms: int | None,
+) -> dict[str, object]:
+    result = adaptive_tail_cut(
+        spans,
+        cues=cues,
+        snapped_end_ms=snapped_end_ms,
+        padded_dur_ms=padded_dur_ms,
+    )
+    if exact_source_pin_ms is None:
+        return result
+    return _apply_exact_source_pin_to_tail(
+        result,
+        exact_pin_ms=exact_source_pin_ms,
+        maximum_end_ms=padded_dur_ms,
+    )
+
+
+def _boundary_owner_failures(
+    owners: list[dict[str, object]],
+    *,
+    final_start_ms: int,
+    final_end_ms: int,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "owner_kind": owner["owner_kind"],
+            "owner_id": owner["owner_id"],
+            "window": window,
+        }
+        for owner in owners
+        for window in owner["local_windows"]
+        if (
+            int(window["start_ms"]) < final_start_ms
+            or int(window["end_ms"]) > final_end_ms
+        )
+    ]
+
+
+def _manual_end_contract(
+    spec: Mapping[str, object],
+    *,
+    prior_piece_duration_ms: int,
+    last_piece_start_ms: int,
+) -> tuple[str | None, int | None, str]:
+    mode = str(spec.get("given_end_mode") or "semantic_lower_bound")
+    if mode not in _MANUAL_END_MODES:
+        raise SystemExit("MANUAL_END_MODE_INVALID")
+    if spec.get("given_end_ms") is None:
+        if mode != "semantic_lower_bound":
+            raise SystemExit("MANUAL_EXACT_END_MISSING")
+        return None, None, mode
+    authority = str(spec.get("given_end_authority") or "").strip()
+    manual_end_ms = spec["given_end_ms"]
+    if (
+        not authority
+        or isinstance(manual_end_ms, bool)
+        or not isinstance(manual_end_ms, int)
+    ):
+        raise SystemExit("MANUAL_END_AUTHORITY_INVALID")
+    if manual_end_ms < int(spec["semantic_end_ms"]):
+        raise SystemExit("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
+    if mode == "exact_source_pin":
+        candidate_id = str(spec.get("candidate_id") or "")
+        try:
+            publication = validate_recovery_publication_authority(
+                spec.get("recovery_publication_authority"),
+                candidate_id=candidate_id,
+            )
+        except RecoveryTitleAuthorityError as exc:
+            raise SystemExit(
+                f"MANUAL_EXACT_END_AUTHORITY_INVALID:{exc}"
+            ) from exc
+        if (
+            publication.get("boundary_end_mode") != mode
+            or publication.get("required_given_end_ms") != manual_end_ms
+        ):
+            raise SystemExit("MANUAL_EXACT_END_AUTHORITY_MISMATCH")
+    manual_rel = prior_piece_duration_ms + (
+        manual_end_ms - last_piece_start_ms
+    )
+    return authority, manual_rel, mode
+
+
 def _select_initial_boundary(
     *,
     spec: dict,
@@ -198,24 +364,14 @@ def _select_initial_boundary(
         # target.  The read is the event payoff, not the next topic.
         structured_payoff_ms = required_tail_end_ms
         target_rel = structured_payoff_ms
-    # 受监督终点只能扩展、不能截短语义候选，也不能代替独立语义终审。
-    # given_end_ms 是人工审过的 source-timeline 下限；semantic review 仍须
-    # PASS，最终取二者较晚者再贴句尾。这样一段自由文字 authority 不会
-    # 再单独豁免续讲或把某句话切在中间。
-    manual_end_authority: str | None = None
-    manual_rel: int | None = None
-    if spec.get("given_end_ms") is not None:
-        manual_end_authority = str(spec.get("given_end_authority") or "").strip()
-        if not manual_end_authority:
-            raise SystemExit("MANUAL_END_AUTHORITY_MISSING")
-        manual_end_ms = int(spec["given_end_ms"])
-        if manual_end_ms < int(spec["semantic_end_ms"]):
-            raise SystemExit("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
-        manual_rel = prior_piece_duration_ms + (
-            manual_end_ms - last_piece_start_ms
+    manual_end_authority, manual_rel, manual_end_mode = (
+        _manual_end_contract(
+            spec,
+            prior_piece_duration_ms=prior_piece_duration_ms,
+            last_piece_start_ms=last_piece_start_ms,
         )
-        # The reviewed endpoint is a lower bound, not a replacement target.
-        # Preserve a later structured-chat payoff already proven above.
+    )
+    if manual_rel is not None:
         target_rel = max(target_rel, manual_rel)
     semantic_review = (
         dict(spec["boundary_semantic_review"])
@@ -228,17 +384,13 @@ def _select_initial_boundary(
             if isinstance(semantic_review, dict)
             else ["BOUNDARY_SEMANTIC_REVIEW_MISSING"]
         )
-        if (
-            isinstance(semantic_review, dict)
-            and semantic_review.get("needs_more_context") is True
-            and semantic_review.get("retry_scope")
-            == "same_topic_continues"
-        ):
+        retry_scope = _bounded_boundary_retry_scope(semantic_review)
+        if retry_scope is not None:
             raise SystemExit(
                 "BOUNDARY_CONTEXT_EXHAUSTED: "
                 f"{json.dumps(reason_codes, ensure_ascii=False)} "
                 f"max_forward_ms={semantic_review.get('max_forward_ms')} "
-                "retry_scope=same_topic_continues"
+                f"retry_scope={retry_scope}"
             )
         raise SystemExit(
             "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
@@ -258,6 +410,7 @@ def _select_initial_boundary(
         repair_cap_ms=boundary_repair_extend_cap_ms,
         last_piece_start_ms=last_piece_start_ms,
         prior_piece_duration_ms=prior_piece_duration_ms,
+        boundary_end_mode=manual_end_mode,
     )
     spec_search_scope = spec.get("boundary_search_scope")
     review_search_scope = semantic_review.get("boundary_search_scope")
@@ -326,6 +479,13 @@ def _select_initial_boundary(
         int(search_scope["delivery_lower_bound_ms"]),
         recommended_end_ms,
     )
+    if (
+        manual_end_mode == "exact_source_pin"
+        and (manual_rel is None or target_rel != manual_rel)
+    ):
+        raise SystemExit(
+            "MANUAL_EXACT_END_RECOMMENDATION_MISMATCH"
+        )
     # Manual/structured semantic authority owns the absolute repair budget.
     # A required owner remains only a delivery floor, and a later reviewer
     # recommendation cannot ratchet a fresh cap from itself.
@@ -425,6 +585,16 @@ def _select_initial_boundary(
             f"NO_SENTENCE_BOUNDARY_NEAR_TARGET: target={target_rel}ms; nearest cue ends="
             f"{sorted((c.end_ms for c in cues), key=lambda e: abs(e - target_rel))[:3]}"
         )
+    if (
+        manual_end_mode == "exact_source_pin"
+        and (
+            recommended_cue is None
+            or snapped != recommended_end_ms
+        )
+    ):
+        raise SystemExit(
+            "MANUAL_EXACT_END_REVIEW_CUE_MISMATCH"
+        )
     closure_cue = next(c for c in cues if c.end_ms == snapped)
     return InitialBoundary(
         cues=cues,
@@ -441,6 +611,7 @@ def _select_initial_boundary(
         closure_cue=closure_cue,
         refinement_used=refinement_used,
         manual_end_authority=manual_end_authority,
+        manual_end_mode=manual_end_mode,
         semantic_review=semantic_review,
         required_boundary_owners=required_boundary_owners,
         required_owner_start_ms=required_owner_start_ms,
@@ -466,6 +637,7 @@ def _repair_boundary(
     closure_cue: object,
     refinement_used: bool,
     manual_end_authority: str | None,
+    manual_end_mode: str,
     semantic_review: dict | None,
     required_boundary_owners: list[dict[str, object]],
     required_owner_start_ms: int | None,
@@ -476,34 +648,27 @@ def _repair_boundary(
     boundary_repairs: list[dict] = []
     recorded_tail_clamps: set[tuple[int, int]] = set()
     while True:
-        tail_adjustment = adaptive_tail_cut(
+        tail_adjustment = _resolved_tail_adjustment(
             spans,
-            cues=cues,
             snapped_end_ms=snapped,
             padded_dur_ms=padded_dur,
+            cues=cues,
+            exact_source_pin_ms=(
+                target_rel
+                if manual_end_mode == "exact_source_pin"
+                else None
+            ),
         )
-        final_end = tail_adjustment["final_end_ms"]
-        owner_failures = [
-            {
-                "owner_kind": owner["owner_kind"],
-                "owner_id": owner["owner_id"],
-                "window": window,
-            }
-            for owner in required_boundary_owners
-            for window in owner["local_windows"]
-            if (
-                int(window["start_ms"]) < final_start
-                or int(window["end_ms"]) > final_end
-            )
-        ]
-        delivery_coverage_failure = (
-            {
-                "reason": "FINAL_MEDIA_END_BEFORE_DELIVERY_LOWER_BOUND",
-                "delivery_lower_bound_ms": target_rel,
-                "final_end_ms": final_end,
-            }
-            if final_end < target_rel
-            else None
+        final_end = int(tail_adjustment["final_end_ms"])
+        owner_failures = _boundary_owner_failures(
+            required_boundary_owners,
+            final_start_ms=final_start,
+            final_end_ms=final_end,
+        )
+        delivery_coverage_failure = _delivery_boundary_failure(
+            final_end_ms=final_end,
+            delivery_lower_bound_ms=target_rel,
+            manual_end_mode=manual_end_mode,
         )
         clamp_key = (snapped, final_end)
         if tail_adjustment["reason"] and clamp_key not in recorded_tail_clamps:
@@ -580,9 +745,12 @@ def _repair_boundary(
         )
         if manual_end_authority:
             audit["boundary_authority"] = (
-                "human_source_reviewed_lower_bound_plus_semantic_review"
+                "human_source_exact_pin_plus_semantic_review"
+                if manual_end_mode == "exact_source_pin"
+                else "human_source_reviewed_lower_bound_plus_semantic_review"
             )
             audit["manual_end_authority"] = manual_end_authority
+            audit["manual_end_mode"] = manual_end_mode
             audit["boundary_semantic_review"] = semantic_review
         elif semantic_review is not None:
             audit["boundary_authority"] = (
@@ -597,22 +765,31 @@ def _repair_boundary(
             )
         if delivery_coverage_failure:
             raise SystemExit(
-                "BOUNDARY_DELIVERY_LOWER_BOUND_EXCLUDED: "
+                (
+                    "BOUNDARY_EXACT_SOURCE_PIN_MISMATCH: "
+                    if manual_end_mode == "exact_source_pin"
+                    else "BOUNDARY_DELIVERY_LOWER_BOUND_EXCLUDED: "
+                )
                 + json.dumps(
                     delivery_coverage_failure, ensure_ascii=False
                 )
             )
         if audit["verdict"] != "ok_sentence_boundary_cut":
             raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
+        delivery_cues = _boundary_delivery_cues(
+            cues,
+            snapped_end_ms=snapped,
+            manual_end_mode=manual_end_mode,
+        )
         source_cues = [
             SourceCue(f"fresh_{i:04d}", max(c.start_ms, final_start), min(c.end_ms, final_end), c.text.strip(), "zh", "speech", 1.0)
-            for i, c in enumerate(cues, start=1)
+            for i, c in enumerate(delivery_cues, start=1)
             if c.start_ms < final_end and c.end_ms > final_start
         ]
         sanitized, timing_qa = sanitize_cue_timing(source_cues, spans, window_start_ms=final_start, window_end_ms=final_end)
         red_flags = boundary_red_flags(
             audit=audit,
-            cues=cues,
+            cues=delivery_cues,
             sanitized=sanitized,
             final_start_ms=final_start,
             final_end_ms=final_end,
@@ -784,6 +961,7 @@ def resolve_producer_boundary(
         closure_cue=initial.closure_cue,
         refinement_used=initial.refinement_used,
         manual_end_authority=initial.manual_end_authority,
+        manual_end_mode=initial.manual_end_mode,
         semantic_review=initial.semantic_review,
         required_boundary_owners=initial.required_boundary_owners,
         required_owner_start_ms=initial.required_owner_start_ms,
