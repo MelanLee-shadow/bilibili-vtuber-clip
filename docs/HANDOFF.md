@@ -31,7 +31,8 @@ Updated: 2026-07-24 America/New_York
     77380（local），距下限 400ms 纯静音；正确切点被旧机器几何禁止。
   - 另发现当日 lane 回归：零 owner 冻结在 `producer_boundary_resolution` `min([])` 崩溃
     （全新场次无 ledger 真值时 100% 触发）。
-- 本轮修复（待 commit 的工作树，含 codex 未提交的 500ms 开场容差，一并保留）：
+- 本轮修复已提交：`41d9cb1`（系统性修复+测试+docs，含 codex 未提交的 500ms 开场容差）与
+  `11139da`（7/9 speaker anchor 证据替换，见下）：
   - 跨尝试 drift 门改绑 `deterministic_owner_set_sha256`（source_subtitle_truth 子集）+
     scope SHA；ASR 派生 owner 按尝试各自冻结执行，回执披露 `asr_derived_owner_binding`；
   - `recommendation_eligibility` 共享确定性资格函数：pin 跨界收尾 cue（≤600ms，媒体仍锁
@@ -46,6 +47,14 @@ Updated: 2026-07-24 America/New_York
     40-subtitle-text.md 同步。
 - immutable recovery source 三项 SHA（source state / official MP4 / BCUT）与 V13 建立前
   记录一致，未再变更；V12/V13/V14 全部保留为失败证据，未续跑未复制。
+- 2026-07-24 free ENOSPC 事故与处置（`11139da`）：磁盘 394G 满（qbittorrent 148G 未动；
+  out/ 老日期 123G）。按容量惯例删除 out/2026-07-09..16 可重算媒体约 54G 后发现其中
+  5 个 recut 被 speaker anchor 资产强引用（3 target + 2 donor），字节级不可恢复；已把
+  anchor target/donor 改绑 upload manifest 见证的烧录交付件（`-c:a copy` 音轨 bit 级同源、
+  时长与 recut 完全一致），原 path/sha 保留在每个 `media_substitution` 披露块，
+  speaker_batch_plans 与测试 pin 同步。教训：删 out/ 媒体前必须先扫
+  assets（anchors/batch_plans/talk_recoveries）引用。磁盘满的连锁症状：recorder status
+  stale→runner fail-safe skip、deploy guard mkdir 报"guard already exists"（误导）。
 
 ## 当前工作树与权威 hash
 
@@ -69,23 +78,30 @@ Updated: 2026-07-24 America/New_York
 
 ## 进行中
 
-1. clean commit 本轮修复，`deploy_free_autoslice.sh` 部署并读回 `DEPLOYED_COMMIT`
-   （脚本自带 runner.lock 等待，当日批次跑完前不会切换）；
-2. 部署后当日 2026-07-24 `failed` talk picks 依 fingerprint 变化自动 requeue，观察下一 tick
-   交付（`candidate_rejected` 的 3×外语转写门与 1×段尾边界属设计内 fail-closed，不复跑）；
-3. 新建 fresh V15：
-   `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover`，
-   由 v7 planner 从 immutable v2 source 与新部署 commit 重建，重算五项 per-candidate
-   pipeline fingerprint，验证 exact-no-backfill、`6577` suppression、1475 replacement 与
-   四处 `AUTO_UPLOAD` 不存在，以 `AUTOSLICE_COVER_MODE=screenshot` 跑到 exact closure
-   COMPLETE；任一 exact candidate 失败都不得补位或沿用旧产物；
-4. COMPLETE 后整包重建 manifest/audit，先同步 staging，audit 与 rsync 空 diff 通过后才
+已完成：`11139da` 于 `2026-07-24T19:34:12Z` 从干净 detached worktree 部署到 free，15 个关键
+文件 SHA 逐一读回匹配，无 guard/DISABLED/staging 残留。fresh V15 已于 `19:35:28Z` 建立并启动：
+`/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover`，
+plan 为 v7 exact-no-backfill 五项、`6577` 已抑制、1475 为 replacement、`upload_allowed=false`、
+四处 `AUTO_UPLOAD` 均不存在、五项 `given_end_ms` 与 registry 一致；runner 以
+`AUTOSLICE_COVER_MODE=screenshot` 运行。尚未宣称任何产物通过。
+
+剩余步骤：
+
+1. V15 必须跑到 exact closure COMPLETE；任一 exact candidate 失败都不得补位或沿用旧产物。
+   注意 V15 与主 cron 并发共享 AGY/CPA 配额，出现 provider transient 属可重试而非裁决；
+2. 当日 2026-07-24 的 5 个 `failed`（4×pipeline_contract + 1×producer_error）依完整流水线
+   fingerprint 变化在下个 cron tick 自动 requeue；4 个 `candidate_rejected`
+   （3×外语转写门 + 1×段尾边界）不在 `TALK_RECOVERY_FAILURE_STATUSES` 内，保持 fail-closed
+   不复跑；
+3. COMPLETE 后整包重建 manifest/audit，先同步 staging，audit 与 rsync 空 diff 通过后才
    `--delete` 覆盖本地旧审片包；
-5. root 完整播放五个最终烧录 MP4，按 committed exact points、八项检查与 StoryContract
+4. root 完整播放五个最终烧录 MP4，按 committed exact points、八项检查与 StoryContract
    cover claims 出具真实 `delegated_root_agent` receipt；
-6. receipt 与 authorized manifest 通过后，对五个原 BVID 执行
+5. receipt 与 authorized manifest 通过后，对五个原 BVID 执行
    `repair-plan --dry-run → repair-plan → repair-status → repair-run --dry-run → repair-run`，
-   最后核对 public/public-tags/Creator/exact-section 四面。
+   最后核对 public/public-tags/Creator/exact-section 四面。3573/672 线上标题当前缺
+   `【李豆沙】`（人工标题曾绕过 envelope 门）；registry 以 `ivan_manual_override` 存 Ivan 手定
+   正文，`canonicalize_publish_title` 会补前缀成 29/38 字，本轮修复应一并纠正这两条线上标题。
 
 ## 约束与阻塞判据
 
