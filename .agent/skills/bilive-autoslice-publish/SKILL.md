@@ -1,6 +1,6 @@
 ---
 name: bilive-autoslice-publish
-description: "操作、修复、审查或发布李豆沙 autoslice 成品；从 free runtime authority 开始，按当前 package audit 与 authorized-upload 闭环执行。"
+description: "操作、修复、审查或发布李豆沙 autoslice 成品；从 free runtime authority 开始，按当前机器审计、最终感知复核与 authorized-upload 闭环执行。"
 ---
 
 # Bilive Autoslice Publish
@@ -44,11 +44,15 @@ container bililive_recorder:/rec
    文件、时长或 hash。
 4. 运行 `scripts/audit_lidousha_review_package.py --json`。新包必须得到当前 audit v2、
    当前 epoch/fingerprint 和完整 audited-input closure；旧 `passed:true` 不可复用。
-5. 无 Ivan 上传授权时停在 `NO_UPLOAD`，但仍可完成审片包与失败诊断。
+5. package audit 只证明机器可判定的结构、hash 与政策闭包，不代表人已完整看过最终视频。
+   exact same-BV repair 的最终感知复核与 receipt 门只按
+   [80-package-delivery.md](../../../docs/pipeline/80-package-delivery.md) 和
+   [90-publish.md](../../../docs/pipeline/90-publish.md) 执行。
+6. 无 Ivan 上传授权时停在 `NO_UPLOAD`，但仍可完成审片包与失败诊断。
 
 ## 4. 授权发布
 
-用户明确授权某条后：
+用户明确授权新投稿后：
 
 1. 用 `scripts/authorized_upload.py make-manifest` 绑定最终包、冻结标题/tags 与授权原话；
 2. 用 `verify` 让 uploader 重跑当前 auditor、strict SRT、共享标题门与 hashes；
@@ -60,8 +64,21 @@ container bililive_recorder:/rec
 
 ## 5. 已发稿修复
 
-先确认部署版本含当前 `same_bv_repair.py`，且最终包通过 current manifest/audit；源码存在或
-单测通过不等于 production 已部署。只用 `authorized_upload.py repair-plan` 冻结同 BVID 的
+先确认部署版本含当前 `same_bv_repair.py`，且最终包通过 current manifest/audit，并完成
+最终烧录字节的逐点感知复核后签出 current final-human-review receipt；源码存在、单测通过、audit
+`passed:true` 或 pending-human review manifest 都不等于 production 已部署或最终感知复核通过。
+receipt 必须绑定 committed exact-point review contract 及其 hash，以及同一 package 的
+review manifest/audit、每项 title/record、same-BV publication target 和最终媒体证据。
+`reviewer_kind` / `reviewed_by` 必须如实写实际观看者：owner 固定为
+`human_owner` / `Ivan`，本项目 root agent 固定为
+`delegated_root_agent` / `Codex root`，human delegate 写其真实姓名。只有 root 确实完成
+本轮完整逐点观看才可签 agent receipt，不能因为任务被委托就提前签，也不得冒称 Ivan 已亲自观看。
+receipt 只准入 exact same-BV repair：它不是 `AUTO_UPLOAD`，不把
+`upload_allowed` 改成 true，不授权新 BV，也不替代 Ivan 对本次修复动作的授权原话。具体
+receipt、manifest 与漂移判据只读 [80-package-delivery.md](../../../docs/pipeline/80-package-delivery.md)
+和 [90-publish.md](../../../docs/pipeline/90-publish.md)。
+
+只用 `authorized_upload.py repair-plan` 冻结同 BVID 的
 单 P live truth，再用 `repair-status` / `repair-run --dry-run` 检查，最后以 `repair-run`
 跨进程幂等推进到 `VERIFIED`。它与投稿共用 `upload.lock`，append intent 落盘后绝不再次
 append，21540/timeout 只可对同一 frozen CID/payload 重试。
@@ -74,4 +91,6 @@ append，21540/timeout 只可对同一 frozen CID/payload 重试。
 
 - 不打印 cookie、token、API key 或含密钥的完整命令。
 - 不凭历史文档冻结账号、合集 ID、运行 commit 或配额状态；每次 live inspect。
+- 封面源帧事实与文字/版式叙事分开复核；源帧没直接显示的动作或反转不能写成像素证据。
+  完整 claim contract 只读 [70-cover.md](../../../docs/pipeline/70-cover.md)。
 - 发布路径 fail closed。需要新权限、验证码或无法证明同 BV 闭环时，停止并报告 blocker。

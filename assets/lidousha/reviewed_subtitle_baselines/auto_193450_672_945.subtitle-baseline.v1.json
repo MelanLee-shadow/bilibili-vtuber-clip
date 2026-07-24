@@ -5,7 +5,7 @@
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
   "path": "auto_193450_672_945.reviewed.srt",
-  "sha256": "e27f1b3ba7d3133daa7176f836a29e8c20357f4b1e0b37a67afee92edb6cf460",
+  "sha256": "b46ea4ce28e56de260e8f2d635c2bda6563114a9b284d5005e81aaa1c623c3ba",
   "authority": "Ivan-reviewed 2026-07-22 corrections plus prior reviewed lexical and structured-chat repairs, bound to the current reviewed cue segmentation",
   "source_recording_basename": "22966160_20260722-19-34-50.mp4",
   "source_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",

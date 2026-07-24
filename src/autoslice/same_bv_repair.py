@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
+from src.autoslice import final_human_review as human_review
 from src.autoslice.bilibili_member_api import BiliSession
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -589,6 +590,33 @@ def _manifest_recovery_publication_authority(
     return authority
 
 
+def _json_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise PlanInvalid(f"{label} unreadable: {path} ({exc})") from exc
+    if not isinstance(value, dict):
+        raise PlanInvalid(f"{label} must be a JSON object: {path}")
+    return value
+
+
+def _final_human_review_attestation(
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    try:
+        return dict(
+            human_review.replay_final_human_review_attestation(
+                manifest
+            )
+        )
+    except human_review.FinalHumanReviewError as exc:
+        detail = f" ({exc.detail})" if exc.detail else ""
+        raise PlanInvalid(
+            "same-BV repair final_human_review rejected: "
+            f"{exc.reason_code}{detail}"
+        ) from exc
+
+
 def validate_repair_publication_target(
     manifest: Mapping[str, Any],
     bvid: str,
@@ -600,6 +628,7 @@ def validate_repair_publication_target(
             "same-BV repair requires authorized-upload-manifest.v3"
         )
     authority = _manifest_recovery_publication_authority(manifest)
+    _final_human_review_attestation(manifest)
     if bvid != authority.get("bvid"):
         raise PlanInvalid(
             "repair BVID differs from recovery_publication_authority"
@@ -678,6 +707,7 @@ def create_plan(
     if manifest.get("manifest_version") != 3:
         raise PlanInvalid("same-BV repair requires authorized-upload-manifest.v3")
     authority = validate_repair_publication_target(manifest, bvid)
+    final_human_review = _final_human_review_attestation(manifest)
     season = manifest.get("season")
     if not isinstance(season, Mapping):
         raise PlanInvalid("same-BV repair requires an exact season/section binding")
@@ -779,6 +809,7 @@ def create_plan(
             "quote": (manifest.get("authorization") or {}).get("quote"),
         },
         "recovery_publication_authority": authority,
+        "package_attestation": final_human_review,
         "season": {
             "season_id": season_id,
             "section_id": section_id,
@@ -833,14 +864,36 @@ def validate_plan(
             problems.append(
                 "repair BVID differs from recovery_publication_authority"
             )
+    plan_package_attestation = plan.get("package_attestation")
+    if not isinstance(plan_package_attestation, Mapping):
+        problems.append("repair final human review attestation is missing")
+    else:
+        try:
+            replayed_plan_attestation = _final_human_review_attestation(
+                {"package_attestation": plan_package_attestation}
+            )
+        except PlanInvalid as exc:
+            problems.append(str(exc))
+        else:
+            if plan_package_attestation != replayed_plan_attestation:
+                problems.append(
+                    "repair final human review attestation is not canonical"
+                )
     manifest_entry = plan.get("manifest") or {}
     manifest_path = Path(str(manifest_entry.get("path") or ""))
+    bound_manifest: dict[str, Any] | None = None
     if not manifest_path.is_absolute() or not manifest_path.is_file():
         problems.append("bound manifest missing or not absolute")
     else:
         actual = sha256_file(manifest_path)
         if actual != manifest_entry.get("sha256"):
             problems.append("bound manifest hash drift")
+        try:
+            bound_manifest = _json_object(
+                manifest_path, label="bound repair manifest"
+            )
+        except PlanInvalid as exc:
+            problems.append(str(exc))
     replacement = plan.get("replacement") or {}
     for kind in ("video", "cover"):
         entry = replacement.get(kind) or {}
@@ -863,6 +916,10 @@ def validate_plan(
     if len(videos) != 1 or not isinstance(videos[0].get("cid"), int):
         problems.append("repair plan does not freeze exactly one old CID")
     if manifest is not None:
+        if bound_manifest is not None and manifest != bound_manifest:
+            problems.append(
+                "runtime manifest differs from the hash-bound manifest file"
+            )
         try:
             manifest_authority = (
                 _manifest_recovery_publication_authority(manifest)
@@ -873,6 +930,17 @@ def validate_plan(
             if plan_authority != manifest_authority:
                 problems.append(
                     "repair recovery_publication_authority drifted from manifest"
+                )
+        try:
+            manifest_human_review = _final_human_review_attestation(
+                manifest
+            )
+        except PlanInvalid as exc:
+            problems.append(str(exc))
+        else:
+            if plan_package_attestation != manifest_human_review:
+                problems.append(
+                    "repair final human review attestation drifted from manifest"
                 )
         if plan.get("target_metadata") != _target_metadata(manifest):
             problems.append("repair target metadata drifted from manifest")
@@ -890,7 +958,15 @@ def validate_plan(
     if plan_path is not None and not plan_path.is_file():
         problems.append("repair plan file missing")
     if problems:
-        raise PlanInvalid("; ".join(problems))
+        raise PlanInvalid("; ".join(dict.fromkeys(problems)))
+
+
+def validate_plan_problems(plan: Mapping[str, Any], *, manifest: Mapping[str, Any], plan_path: Path) -> list[str]:
+    try:
+        validate_plan(plan, manifest=manifest, plan_path=plan_path)
+    except PlanInvalid as exc:
+        return [str(exc)]
+    return []
 
 
 def write_plan(path: Path, plan: Mapping[str, Any]) -> None:
@@ -1863,9 +1939,7 @@ def repair_step(
             bvid=bvid,
             section_id=section_id,
         )
-    if state in {"CREATOR_SINGLE_NEW", "PUBLIC_PENDING"} and isinstance(
-        cover_url, str
-    ):
+    if state in {"CREATOR_SINGLE_NEW", "PUBLIC_PENDING"} and isinstance(cover_url, str):
         return _final_projection_stage(
             state=state,
             snapshot=snapshot,
@@ -1920,12 +1994,7 @@ def run_repair(
             sleeper(max(0.0, poll_seconds))
 
 
-def preview_repair(
-    *,
-    plan_path: Path,
-    journal: Path,
-    manifest: Mapping[str, Any],
-) -> RepairResult:
+def preview_repair(*, plan_path: Path, journal: Path, manifest: Mapping[str, Any]) -> RepairResult:
     """Strict local dry-run: validate and report; perform no writes or HTTP."""
 
     return repair_status(plan_path=plan_path, journal=journal, manifest=manifest)

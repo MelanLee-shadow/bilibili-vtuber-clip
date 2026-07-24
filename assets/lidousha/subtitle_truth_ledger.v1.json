@@ -1037,7 +1037,9 @@
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-nancho-confrontation-drop-hallucinated-formula-r3",
       "revision_id": "r3",
-      "assertion_state": "VERIFIED_ACTIVE",
+      "assertion_state": "SUPERSEDED",
+      "superseded_by": "20260722-nancho-confrontation-drop-hallucinated-formula-r4",
+      "supersession_reason": "Ivan's atomic 1:48 review covers the following generated L-question cue too; stopping at 780610 left that whole silent cue outside the drop window.",
       "supersedes": [
         "20260722-nancho-confrontation-latin-formula-positive-r1",
         "20260722-nancho-confrontation-drop-hallucinated-formula-r2"
@@ -1052,6 +1054,28 @@
       ],
       "evidence_class": "ATOMIC_HUMAN_ACOUSTIC_ABSENCE_TRUTH_FULL_CUE",
       "authority": "Ivan-stated-20260722-conversation(最最最最喜欢的南町nightin之后该完整cue没有说话；用户特别澄清前一处我草仅前半段无声但本区间是南町nightin听不清造成的整cue幻听)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-confrontation-drop-hallucinated-formula-r4",
+      "revision_id": "r4",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "supersedes": [
+        "20260722-nancho-confrontation-drop-hallucinated-formula-r3"
+      ],
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 776470,
+      "source_end_ms": 783240,
+      "action": "drop_cue",
+      "forbidden_tokens": [
+        "LLNNHHB",
+        "NLL",
+        "这个L是李乐莎的L吗",
+        "这个L是李豆沙的L吗"
+      ],
+      "evidence_class": "ATOMIC_HUMAN_ACOUSTIC_ABSENCE_TRUTH_FULL_CUE",
+      "authority": "Ivan-stated-20260722-conversation(1:48没有说话；这是对南町nightin听不清导致的整句幻听，而前一处我草仅前半段无声、后半段真实有声)",
       "required": true
     },
     {

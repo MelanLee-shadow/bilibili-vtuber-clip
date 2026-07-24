@@ -19,6 +19,40 @@
 - 没有当前 audit + `AUTO_UPLOAD` manifest + artifact hash gate 就没有发布。
 - 授权上传/修复的证据必须 commit；媒体本身不因此入库。
 
+## 最终感知复核 receipt 的权限边界
+
+- recovery review manifest 的
+  `finished_review_package_no_upload_pending_human_review` / `upload_allowed=false`
+  是机器打包状态，不是发布许可。机器 audit 与最终感知复核是两道独立门，不能用其中一面
+  替代另一面。
+- `lidousha-final-human-review.v1` 只接受
+  `scope=same_bv_repair`、`status=ACCEPTED_FOR_SAME_BV`。`reviewer_kind` 可为
+  `human_owner`、`human_delegate` 或 `delegated_root_agent`，但必须与真实观看者一致：
+  owner 固定 `reviewed_by=Ivan`，本项目 root agent 固定
+  `reviewed_by="Codex root"`，human delegate 写实际姓名；带时区 `reviewed_at` 记录实际完成时间，
+  `approval_quote` 保存授权/委托原话。委托 agent 自审不等于 Ivan 亲自观看，严禁把
+  `reviewed_by` 伪写成 Ivan。
+- receipt 以 committed `assets/lidousha/final_media_review_contracts.v1.json` 的 SHA-256
+  为 review contract authority。每个 candidate 必须逐点复核 exact final-video window 与
+  expectation 并提供 PASS/evidence；八个总检查也各自需要非空具体 evidence，裸 PASS 或任意
+  泛化检查表无效。672 必须把 0:13“前半无声、后半有声、全段无我草”和 1:48“整条 L 问句
+  无声并删除”作为两个独立 exact point 验收。
+- receipt 同时绑定 package review manifest/audit、record、reviewed title、原 BVID/AID/CID
+  publication target 和 final video/subtitle/cover。封面 claims 集合只能精确投影 record
+  StoryContract `cover_reference_authority` 的 `source_visible_claims → SOURCE_FRAME` 与
+  `narrative_presentation → COVER_TEXT`，不能让 reviewer 自行换成宽泛故事摘要。
+- receipt **仅准入 exact same-BV repair**。它不会把 `upload_allowed` 改成 true，不是
+  `AUTO_UPLOAD`，不授权新建 BV，也不替代 authorized manifest 中 Ivan 针对修复动作的授权原话。
+  普通新投稿不得传 `--final-human-review` 借用这份权限。
+- authorized manifest 以
+  `package_attestation.final_human_review={path,sha256,bytes}` 冻结 receipt；repair plan 再冻结同一
+  package root、review manifest 与 receipt。receipt 路径/hash、review contract hash、
+  package evidence、reviewer identity、candidate/record/title/publication target、
+  final video/subtitle/cover 路径/hash、exact review points、八项 checks、StoryContract
+  封面声明或包内文件
+  任一漂移，`verify`、`repair-plan`、`repair-run`、`repair-status` 都必须在 adapter 构造或
+  远端变更前拒绝。不得编辑 receipt 后只更新 manifest hash 来“续期”旧人工结论。
+
 ## 新投稿流程
 
 1. 在审片字节冻结后运行 `make-manifest`，只引用 package 内最终文件与 Ivan 授权原话。
@@ -40,6 +74,20 @@
 
 执行前必须确认当前 source 已部署到 `free`，目标修复包通过本页发布准入，并先完成真实
 dry plan；本地存在代码/测试不等于 production 已可用，也不等于五条线上稿件已经修复。
+
+同 BV 的顺序固定为：
+
+1. 冻结最终包，重建 pending-human review manifest，运行 current canonical package audit；
+2. 被如实命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节并签出
+   `lidousha-final-human-review.v1`；只有真的完成观看后才可出 receipt；
+3. `make-manifest --final-human-review ...` 同时冻结 package/audit/receipt、publication
+   authority 和 Ivan 的修复授权原话；缺 receipt 的 recovery manifest 直接拒绝；
+4. `verify --manifest ...` 重跑 current audit、hash 与 receipt validator；
+5. 先 `repair-plan --dry-run` 读真实 Creator/public/section 单 P 事实；确认后才运行
+   `repair-plan` create-only 落 plan/journal；
+6. 先 `repair-status`，再 `repair-run --dry-run`；最后只用 `repair-run` 执行或幂等 resume；
+7. 每次 resume 前后均可用 `repair-status` 重验本地 plan/journal/receipt 闭包；最终仍须以
+   Creator/public/public tags/exact section 四面读回进入 `VERIFIED`，status 本身不替代公开验收。
 
 同 BV `repair-plan` 只接受 authorized manifest 顶层 hash-bound
 `recovery-same-bv-publication-authority.v1`。该 authority 必须由包内 record 与 review item

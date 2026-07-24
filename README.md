@@ -49,8 +49,11 @@ BililiveRecorder 原始录播 + 弹幕/SC
 - Tier 是硬准入；有效分只在 Tier 内排序，confidence 只破同分。
 - 人工标题拥有正文，不拥有绕过频道发布外壳与合规门的权限。
 - reviewed baseline 先恢复，source truth 后覆盖；两类 owner 都必须在最终 SRT/说话人面真实存活。
-- 截图与 AI 都可作为封面路线；二者都必须证明最终像素、文字与人物关系。
+- 截图与 AI 都可作为封面路线；二者都必须证明最终像素、文字与人物身份。源帧可见事实与
+  由封面文字/版式表达的叙事声明必须分开，不得把未拍到的动作倒推成截图事实。
 - `review_ready`、本地产物存在、脚本返回 0、audit JSON 自报 `passed` 都不能单独证明可发布。
+- same-BV 最终感知复核 receipt 必须如实记录实际 reviewer、绑定 committed exact review
+  contract 与最终字节；它不改变 `upload_allowed=false`，也不构成新 BV 投稿授权。
 - 没有当前 package audit、artifact hash、Ivan 授权和 `AUTO_UPLOAD` manifest 就不发布。
 - 已发稿修复使用同 BV 编辑/换源，不为修正新建 BV。
 

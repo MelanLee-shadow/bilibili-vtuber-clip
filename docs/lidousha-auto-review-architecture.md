@@ -28,7 +28,9 @@ Text
 Story surfaces
   one StoryContract → final subtitle + archive title + cover task
   → shared title choke point
-  → screenshot/AI route + final-pixel/participant/glyph proof
+  → screenshot/AI route
+  → source-frame facts ≠ cover-text/layout narrative
+  → final-pixel/participant/glyph proof
           │
           ▼
 Final bytes
@@ -40,8 +42,12 @@ Package attestation
           │
           ▼
 Delivery
-  no-upload review
-  or Ivan-authorized manifest v3 → upload / same-BV edit
+  ├─ no-upload review
+  ├─ Ivan-authorized manifest v3 → new upload
+  └─ exact same-BV:
+     committed exact-point contract/hash
+     → final-byte perceptual review → truthfully attributed receipt
+     + separate Ivan repair authorization → same-BV edit
   → public + Creator + exact section closure
 ```
 
@@ -53,13 +59,26 @@ Delivery
 - media ready 但 cover proof 缺失是 `media_ready_cover_pending`，不是 compliant product。
 - Producer pass 不是 package pass；package pass 不是 upload authorization；上传 API code 0
   不是 public completion。
+- recovery manifest 的 pending-human 状态、package audit 与 final perceptual receipt 是
+  不同证据面；receipt 只准入 exact same-BV repair，不是 `AUTO_UPLOAD` 或新 BV 授权，也不
+  替代 Ivan 对该修复动作的独立授权。细则只读
+  [80-package-delivery.md](pipeline/80-package-delivery.md) 与
+  [90-publish.md](pipeline/90-publish.md)。
 
 ## 证据边界
 
 - 高权威 source truth / reviewed baseline 必须在最终 surfaces 存活，不能只证明“曾应用”。
 - 人工 boundary 是下界，不是绕过 semantic closure 的绝对终点。
-- 截图与 AI 都必须证明最终像素；source reference 人物声明不能无条件复制到修改后图片。
+- 截图与 AI 都必须证明最终像素。hash-bound 源帧可见事实与由封面文字/版式表达的故事叙事
+  必须分开；源帧没直接显示的动作、物件或反转不能倒推成像素事实，source reference 声明
+  也不能无条件复制到修改后图片。完整规则只读 [70-cover.md](pipeline/70-cover.md)。
 - package auditor 绑定当前代码/资产政策与全部 portable inputs；uploader 重新运行 auditor。
+  它不承担最终人眼/听感复核，也不能自行产生发布权限。
+- final perceptual receipt 必须绑定 committed exact-point contract/hash、package
+  manifest/audit、title/record、same-BV publication target 与最终媒体证据，并如实记录实际
+  reviewer。只有 root 真正完成完整逐点观看才可标成 `delegated_root_agent`；不能冒称 Ivan
+  已亲自观看。字段与漂移判据只读 [80-package-delivery.md](pipeline/80-package-delivery.md)
+  和 [90-publish.md](pipeline/90-publish.md)。
 - Runtime、credential、quota、部署 commit 与 public state 一律 live inspect，不从架构文档推断。
 
 ## 代码入口

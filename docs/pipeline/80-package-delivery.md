@@ -86,6 +86,44 @@
   部分 delivery 或报告层旧状态都不能盖过 incomplete exact closure。只有 closure COMPLETE
   才能投影 `review_ready` 并进入本地覆盖。
 - exact recovery 重跑结束后必须用 `scripts/build_lidousha_recovery_review_manifest.py` 从最终 state 与 record **整份重建** `review_manifest.json`，禁止复用/手补上一轮清单。审计器必须比较 manifest item 与 record 的 candidate/title。`cover_route_attestations` 必须存在，candidate 集合须与 exact candidate 集合完全相等，并逐项重验 reference/final hash、method、完整 route decision 与 reference authority；缺失、额外、重复、旧标题、旧封面 hash 或旧路由证据漂移都要阻断上传。
+- 重建的 recovery `review_manifest.json` 固定保持
+  `status=finished_review_package_no_upload_pending_human_review` 与
+  `upload_allowed=false`。current package audit 只证明机器可确定的结构、hash、投影与政策闭包；
+  它不能证明人已完整播放最终烧录 MP4、逐句对齐音频/静音、确认结尾闭合或看过最终封面。
+  因此 audit `passed=true`、state `review_ready`、本地包覆盖或该 pending-human manifest
+  都不能转写为人工通过，更不能自行改成发布许可。
+- exact same-BV repair 在生成 authorized manifest 前还必须有
+  `lidousha-final-human-review.v1`。receipt 的 scope/status 只能是
+  `same_bv_repair` / `ACCEPTED_FOR_SAME_BV`。`reviewer_kind` 只能如实选择
+  `human_owner`、`human_delegate` 或 `delegated_root_agent`；前两类保留实际人类观看者，
+  其中 owner 固定 `reviewed_by=Ivan`，本项目 root agent 固定
+  `reviewed_by="Codex root"`，delegate 写其真实姓名，三者不得互相冒充。
+  `reviewed_at` 必须是带时区时间；`approval_quote` 保存授权/委托原话，不能借此
+  伪写 Ivan 已亲自观看。candidate 集合须与 review manifest（含 exact/selection contract）
+  完全相等且无重复。receipt 还须绑定包内 review manifest、current package audit、每项 record、
+  reviewed title、same-BV publication target，以及 package-relative regular final
+  video/subtitle/cover 的路径与 SHA-256，并要求
+  `final_burned_full_playback`、`subtitle_audio`、`silence_hallucination`、
+  `boundary_closure`、`title_story`、`cover_identity`、`cover_story`、
+  `intro_timing` 八项各自为 `{status=PASS,evidence=<非空具体证据>}`；裸字符串 PASS
+  或泛化 evidence 不合规。
+- receipt 必须以 `review_contract_sha256` 精确绑定 committed
+  `assets/lidousha/final_media_review_contracts.v1.json`，并为每个 candidate 逐项、按原顺序
+  复核其中完整 `subtitle_review_points`：point ID、最终烧录视频时间窗、expectation 必须逐字
+  相等且落在最终时长内，每点另有 PASS 与实际 evidence。任意少点、多点、换窗、泛化 expectation
+  或只填总括八项 PASS 都不能放行。特别是 672 的 `no-wocao-partial-silence` 必须确认
+  0:13 附近前半无声、后半有真实语音但从未说“我草”；`silent-hallucinated-l-question`
+  必须独立确认 1:48 附近整条 L 问句无声并完全删除，不能把两种静音情况合并成一个结论。
+- 封面 `cover_story_claims` 必须精确来自每项 record StoryContract 的 hash-bound
+  `cover_reference_authority`：全部 `source_visible_claims` 逐条对应 `SOURCE_FRAME`，唯一
+  `narrative_presentation` 对应 `COVER_TEXT`，每条另有实际 evidence。自造、改写、遗漏、
+  增补或用泛化关系 claim 替代该集合都阻断。
+- receipt 是对**这些最终字节**的最终感知复核证明，不是 package auditor 的一部分，也不改变
+  review manifest 的 pending-human 文案或 `upload_allowed=false`。receipt 文件本身的规范绝对
+  路径与 hash、review contract hash、package evidence、candidate/record/title/publication
+  target、三类 artifact 路径/hash、exact review points、八项 checks 或 StoryContract 封面声明
+  任一缺失、额外、重复、非 PASS、越界/symlink 或漂移，均 fail closed，必须由声明的 reviewer
+  重新审阅当前字节并生成新 receipt，不能只重绑 hash。
 - exact same-BV recovery 的包内必须额外携带 `.publish.json` regular file，并以 record
   `artifact_hashes.publish_draft_sha256` 绑定。state rerun plan 的
   `recovery_publication_authorities_by_candidate` 必须与 exact candidate 集合完全相等；
@@ -101,5 +139,9 @@
   普通 production 的 `candidate_rejected` 仍是终态，不能借此复活。
 - authorized uploader 在任何副作用前重跑**当前** canonical package auditor、严格 SRT 与共享
   标题门，并要求重跑结果与 manifest 绑定的 v2 audit 完全一致；它不信任旧 audit 自报。
+- `lidousha-final-human-review.v1` 只可附着在带 exact recovery publication authority 的
+  same-BV manifest；它既不是 `AUTO_UPLOAD`，也不是新 BV 投稿授权。新投稿仍须独立满足当前
+  audit、artifact hash、Ivan 对该发布动作的明确授权与 `AUTO_UPLOAD` manifest；same-BV
+  manifest 也仍须把 Ivan 的修复授权原话与最终感知复核 receipt 分开冻结。
 - 上传路径 fail-closed：无当前 audit v2 + `AUTO_UPLOAD` manifest + artifact hash 门就没有发布。
 - tag 按成品字幕出（`upload_tag_policy.py`，Ivan 2026-07-13）。

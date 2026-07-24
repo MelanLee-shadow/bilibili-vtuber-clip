@@ -39,6 +39,11 @@ Updated: 2026-07-23
   `2026-07-23.final-artifact-gates.v3`；
 - 封面已使用 `lidousha-cover-rendered-text-pixels.v3`、deterministic render spec、
   committed trusted font 与 package-internal pre-overlay/mask/route-background 精确重组门；
+- final perceptual review receipt 已与机器 audit 分层：same-BV 必须绑定 committed exact
+  review contract、package evidence、record/title/publication target、最终 video/SRT/cover、
+  每候选 exact points 与八类带具体 evidence 的检查；任一漂移会在 manifest、plan 和 resume
+  各层阻断。cover claims 只接受 record StoryContract authority 的 exact 集合。它不改变
+  `upload_allowed=false`，也不授权新 BV；
 - current talk/recovery package 的 speaker SRT 与 ASS 已改为包内双 hash，并由独立 auditor
   重放全部 Dialogue 文本、时轴和 style；
 - 现行规则已收敛到 `docs/pipeline/`；根 AGENTS 与 publish skill 只保留步骤/操作入口。
@@ -61,6 +66,18 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
   ASS；新的 SRT→ASS 门会按预期阻断，必须随五条 recovery 重跑整包重建，不能补写 hash 假绿。
 - exact talk 目标集合是 `3573, 672, 1863, 1573, 1475`；`6577` 被用户明确抑制，不允许普通
   backlog 补位。必须在新的隔离 recovery base 达成 closure COMPLETE 后再重建本地包。
+- 本轮五条封面都锁定 `screenshot_direct`，不是因为 AI 功能未部署：`3573` 的源帧同时给出
+  男性游戏角色与李豆沙/南町，`672/1863/1573` 给出联动双方与互动情绪，`1475` 还给出双人大笑
+  和“别管，先弹了再说”弹幕。未直接出现在源帧中的“不熟”反转、对质/被收集、火锅/霸凌、
+  大椅子和脑瓜崩动作只由封面文字/版式表达；不得把这些叙事写成 source-visible claim。
+- 本轮 Ivan 已明确委托 Codex 在最新流水线重跑后自行 review，有信心时权宜上传；若实际由
+  root 完成最终五片观看，receipt 必须如实写
+  `reviewer_kind=delegated_root_agent`、`reviewed_by="Codex root"`，并原样保存
+  `approval_quote="你在自己用修复的流水线过了一遍，自己review并修改后觉得有信心了之后可以权宜上传"`。
+  只有 root 真的逐片完成 contract 中全部 points 后才能签出；不得写 Ivan 已人工观看。
+- 672 的最终 perceptual contract 特别分开两点：0:13 附近是“前半无声、后半有真实语音，
+  全段从未说我草”；1:48 附近是“整条 L 问句没有说话并须完全删除”。两点必须分别留下
+  final-video evidence，不能以一个泛化 `silence_hallucination=PASS` 代替。
 - 五条统一从受管部署的
   `assets/lidousha/recovery_publication_authority.v1.json` 生成 exact publication
   authority map：`3573/672` 的模式是现有 Ivan manual-title 正文，`1863/1573/1475` 的模式
@@ -90,6 +107,7 @@ HANDOFF 不固化会被后续改动立即淘汰的通过项总数。旧 v8 仍�
 
 ## 完成判据
 
-当前代码通过全量与负向测试并部署读回；五条在新 base 产出同一政策字节、人工/自动复核通过、
-本地旧包已覆盖；随后在当前 same-BV 状态机完成部署与真实 dry plan 后，对原 BVID 执行修复
-并完成 public / public tags / Creator / section 四面验证。
+当前代码通过全量与负向测试并部署读回；五条在新 base 产出同一政策字节，current machine
+package audit 与由实际 reviewer 完成的 final perceptual review receipt 两门均通过，本地旧包
+已覆盖；随后在当前 same-BV 状态机完成部署与真实 dry plan 后，对原 BVID 执行修复并完成
+public / public tags / Creator / section 四面验证。

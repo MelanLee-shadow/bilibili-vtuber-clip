@@ -9,9 +9,15 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = "lidousha-cover-reference-overrides.v1"
+SOURCE_VISUAL_VERIFICATION_SCHEMA = "lidousha-cover-source-visual-verification.v1"
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9_-]{1,96}")
 _RECUT_SUFFIX_RX = re.compile(r"r\d+$")
+_SOURCE_VISUAL_CONTRACT_FIELDS = (
+    "source_visible_claims",
+    "narrative_presentation",
+    "source_visual_verification",
+)
 
 
 class CoverReferenceAuthorityError(ValueError):
@@ -20,6 +26,53 @@ class CoverReferenceAuthorityError(ValueError):
 
 def _candidate_family(value: str) -> str:
     return _RECUT_SUFFIX_RX.sub("", str(value or "").strip())
+
+
+def _is_unique_nonempty_string_list(value: object) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    if not all(isinstance(item, str) and item == item.strip() and bool(item) for item in value):
+        return False
+    return len(value) == len(set(value))
+
+
+def _source_visual_claim_contract_is_valid(row: dict[str, object]) -> bool:
+    """Validate source-pixel claims without upgrading narrative prose.
+
+    Generic historical rows without ``relation_action`` remain compatible.
+    Once any source-visual contract field is supplied, however, the complete
+    contract is required.  A committed-style ``relation_action`` row always
+    requires it: the free-form narrative is presentation guidance only, while
+    only ``source_visible_claims`` may be mirrored by pixel verification.
+    """
+
+    relation_action_present = "relation_action" in row
+    contract_field_present = any(field in row for field in _SOURCE_VISUAL_CONTRACT_FIELDS)
+    if not relation_action_present and not contract_field_present:
+        return True
+    if not all(field in row for field in _SOURCE_VISUAL_CONTRACT_FIELDS):
+        return False
+
+    claims = row.get("source_visible_claims")
+    narrative = row.get("narrative_presentation")
+    verification = row.get("source_visual_verification")
+    if (
+        not _is_unique_nonempty_string_list(claims)
+        or not isinstance(narrative, str)
+        or not narrative.strip()
+        or not isinstance(verification, dict)
+    ):
+        return False
+
+    return (
+        verification.get("schema_version") == SOURCE_VISUAL_VERIFICATION_SCHEMA
+        and verification.get("status") == "PASS"
+        and verification.get("reference_png_sha256") == row.get("reference_png_sha256")
+        and verification.get("visible_participant_ids") == row.get("visible_participant_ids")
+        and verification.get("verified_claims") == claims
+        and isinstance(verification.get("authority"), str)
+        and bool(str(verification["authority"]).strip())
+    )
 
 
 def load_candidate_cover_reference(
@@ -79,6 +132,7 @@ def load_candidate_cover_reference(
         or row.get("required_treatment")
         not in {"screenshot_direct", "screenshot_polish"}
         or not str(row.get("authority") or "").strip()
+        or not _source_visual_claim_contract_is_valid(row)
     ):
         raise CoverReferenceAuthorityError(
             f"COVER_REFERENCE_OVERRIDE_INVALID:{candidate_id}"

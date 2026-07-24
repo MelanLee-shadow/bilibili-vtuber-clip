@@ -7,7 +7,7 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 证据，全部带 `do_not_execute=true`；repair CLI 会 fail-closed 拒绝。当前修复计划必须从
 当前 state/artifact hashes 新建，不能复制历史候选、标题或路径。
 
-- 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动或人物关系梗则先看**关系语义证据**，hash-bound 源帧同时清楚出现双方且画面直接承载标题关系时，即使运动分数不高，也优先保留真实互动。游戏运动高分但 `subject_confident=false`，或累计动作热区超过半屏，即使局部运动块误判为主体，也不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
+- 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动或人物关系梗则先看**关系语义证据**。hash-bound 源帧同时清楚出现双方，并能提供与故事有关的真实人物、物件、文字或情绪证据时，即使运动分数不高，也可优先保留真实互动；源帧没有直接拍到的动作或反转只能由封面文字/版式表达，不能倒推成像素事实。游戏运动高分但 `subject_confident=false`，或累计动作热区超过半屏，即使局部运动块误判为主体，也不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
@@ -39,6 +39,15 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   双人关系任务只有 hash-bound reference 同时看见全部 `required_participant_ids` 才能选择截图；
   缺任一方时不能把单人图当“双人封面”，也不能静默调用 AI 补人。每条成片必须逐项记录截图直出、
   截图轻修与 CPA 重绘的接受或拒绝理由，不能用“默认”“自动选择”或功能不可用充当理由。
+- reference authority 必须把 `source_visible_claims` 与 `narrative_presentation` 分开：
+  前者只能列 exact hash-bound 源帧原分辨率人工可见的像素事实，并由
+  `lidousha-cover-source-visual-verification.v1` 精确复核 reference hash、人物与逐条声明；
+  后者说明哪些故事信息由封面文字/版式表达，不是源帧像素证明。例如双人同框可以是
+  source-visible claim，未出现的椅子、火锅、霸凌、对质或脑瓜崩动作不能写成源画面事实。
+  最终感知复核的 `cover_story_claims` 不能自行概括：集合必须精确等于包内 record
+  StoryContract `cover_reference_authority` 的全部 `source_visible_claims → SOURCE_FRAME`
+  加唯一 `narrative_presentation → COVER_TEXT`，逐条提供实际复核 evidence。任意遗漏、
+  增补、改写、换 presentation，或用一个宽泛“关系符合”替代两面证据都阻断。
 - 当前生产只接受 `lidousha-cover-route-decision.v2`：必须同时记录 `required_participant_ids`、
   hash-bound `source_visible_participant_ids`、`image_generation_planned/attempted/used`、selected 与
   actual treatment、执行结果，以及 screenshot_direct / screenshot_polish / cpa_redraw 三条路线中
@@ -56,7 +65,8 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `model`/`method` 默认字符串或 `ai_cover_generated=true` 不能冒充生图成功。
 - **所有关系型路线**都必须有最终人物 proof。`screenshot_polish` 与 CPA/AI 因像素已被修改，
   绝不能继承 source participant 声明，必须由独立 final-pixel verifier 逐个确认双方可见、
-  身份正确、关系动作符合叙事，并绑定最终 cover SHA；没有 verifier 就阻断。
+  身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`
+  单独验收，不能要求或声称画面里存在。没有 verifier 或声明表现面不明确就阻断。
 - 任一路线在最终像素、文字、安全区、人物关系或 route evidence 上失败都 fail closed，不得跨路线
   静默降级。双人联动要求双方在 hash-bound source reference 中真实可见；没有 counterpart
   reference 时禁止凭描述画第二位。

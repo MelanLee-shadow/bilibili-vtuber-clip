@@ -20,7 +20,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Iterator
 
@@ -34,6 +34,7 @@ from scripts.audit_lidousha_review_package import (  # noqa: E402
     audit_package,
 )
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
+from src.autoslice import final_human_review as human_review  # noqa: E402
 from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
@@ -367,6 +368,7 @@ def _validate_v3_package_attestation(
 
     review_path = entries.get("review_manifest", (Path(), {}))[0]
     review = _load_json_object(review_path, "review manifest", problems) if review_path.is_file() else {}
+    problems.extend(human_review.final_human_review_attestation_problems(manifest))
     review_item = _find_review_item(review, root, video)
     if review_item is None:
         problems.append("review_manifest has no item for the reviewed video")
@@ -1182,6 +1184,7 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags_source": tags_source,
     }
     package_problems = repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
+    package_problems.extend(human_review.attach_final_human_review(manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))
     package_problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
     if package_problems:
         for problem in package_problems:
@@ -1193,7 +1196,7 @@ def make_manifest(args: argparse.Namespace) -> int:
     return 0
 
 
-def load_and_verify(manifest_path: Path) -> tuple[dict | None, list[str]]:
+def load_and_verify(manifest_path: Path, *, ordinary_upload: bool = False) -> tuple[dict | None, list[str]]:
     """(manifest, problems) — problems non-empty means REFUSE."""
     problems: list[str] = []
     try:
@@ -1212,9 +1215,10 @@ def load_and_verify(manifest_path: Path) -> tuple[dict | None, list[str]]:
             problems.append(f"manifest publish title violates {code}")
     if "season" in manifest:
         problems.extend(validate_season_block(manifest["season"]))
-        if isinstance(manifest.get("season"), dict) and manifest["season"].get(
-            "lane"
-        ) != derive_season_lane(title):
+        if (
+            isinstance(manifest.get("season"), dict)
+            and manifest["season"].get("lane") != derive_season_lane(title)
+        ):
             problems.append("manifest season lane contradicts the frozen title")
     if "tags" in manifest:
         problems.extend(validate_tags(manifest["tags"]))
@@ -1243,6 +1247,8 @@ def load_and_verify(manifest_path: Path) -> tuple[dict | None, list[str]]:
             problems.append(
                 f"{kind} HASH DRIFT since review: manifest={str(entry.get('sha256'))[:12]} actual={actual[:12]} ({path})"
             )
+    if ordinary_upload:
+        problems.extend(human_review.ordinary_upload_problems(manifest))
     return manifest, problems
 
 
@@ -1468,7 +1474,7 @@ def upload(args: argparse.Namespace) -> int:
     lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
 
     with exclusive_upload_lock(lock_path):
-        manifest, problems = load_and_verify(manifest_path)
+        manifest, problems = load_and_verify(manifest_path, ordinary_upload=True)
         if problems:
             for p in problems:
                 print(f"REFUSE: {p}", file=sys.stderr)
@@ -1735,15 +1741,15 @@ def repair_plan(args: argparse.Namespace) -> int:
     """Freeze one exact existing-BV repair without changing remote state."""
 
     manifest_path = Path(args.manifest).resolve()
-    manifest, problems = load_and_verify(manifest_path)
-    problems.extend(repair_binding.repair_publication_target_problems(manifest or {}, args.bvid))
-    if problems:
-        for problem in problems:
-            print(f"REFUSE: {problem}", file=sys.stderr)
-        return 2
-    assert manifest is not None
     lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
     with exclusive_upload_lock(lock_path):
+        manifest, problems = load_and_verify(manifest_path)
+        problems.extend(repair_binding.repair_publication_target_problems(manifest or {}, args.bvid))
+        if problems:
+            for problem in problems:
+                print(f"REFUSE: {problem}", file=sys.stderr)
+            return 2
+        assert manifest is not None
         adapter = _same_bv_adapter(Path(args.cookie_json), Path(args.biliup_cookie_json))
         season = manifest.get("season") or {}
         section_id = season.get("section_id")
@@ -1794,6 +1800,9 @@ def _load_repair_manifest(plan_path: Path) -> tuple[dict | None, dict | None, li
         return None, None, [str(exc)]
     manifest_path = Path(str((plan.get("manifest") or {}).get("path") or ""))
     manifest, problems = load_and_verify(manifest_path)
+    if problems or manifest is None:
+        return plan, manifest, problems
+    problems.extend(repair_binding.validate_plan_problems(plan, manifest=manifest, plan_path=plan_path))
     return plan, manifest, problems
 
 
@@ -1802,20 +1811,17 @@ def repair_run(args: argparse.Namespace) -> int:
 
     plan_path = Path(args.plan).resolve()
     journal = Path(args.journal).resolve()
-    _plan, manifest, problems = _load_repair_manifest(plan_path)
-    if problems or manifest is None:
-        for problem in problems:
-            print(f"REFUSE: {problem}", file=sys.stderr)
-        return 2
-    if args.dry_run:
-        result = preview_same_bv_repair(
-            plan_path=plan_path,
-            journal=journal,
-            manifest=manifest,
-        )
-    else:
-        lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
-        with exclusive_upload_lock(lock_path):
+    lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
+    lock = nullcontext() if args.dry_run else exclusive_upload_lock(lock_path)
+    with lock:
+        _plan, manifest, problems = _load_repair_manifest(plan_path)
+        if problems or manifest is None:
+            for problem in problems:
+                print(f"REFUSE: {problem}", file=sys.stderr)
+            return 2
+        if args.dry_run:
+            result = preview_same_bv_repair(plan_path=plan_path, journal=journal, manifest=manifest)
+        else:
             result = run_same_bv_repair(
                 plan_path=plan_path,
                 journal=journal,
@@ -1879,14 +1885,11 @@ def main(argv: list[str] | None = None) -> int:
     mk = sub.add_parser("make-manifest", help="freeze the reviewed artifact's identity + authorization")
     mk.add_argument("--video", required=True)
     mk.add_argument("--cover", required=True)
-    mk.add_argument(
-        "--package-audit",
-        required=True,
-        help="machine-readable passed audit JSON for the package containing this same-stem bundle",
-    )
+    mk.add_argument("--package-audit", required=True, help="machine-readable passed audit JSON for the package containing this same-stem bundle")
     mk.add_argument("--title", required=True)
     mk.add_argument("--authorized-by", default="Ivan")
     mk.add_argument("--quote", required=True, help="the verbatim authorization words")
+    mk.add_argument("--final-human-review", default=None, help="hash-bound final perceptual-review receipt; required for same-BV recovery")
     mk.add_argument(
         "--tags",
         default="",
@@ -1912,12 +1915,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON), help="bilibili login-API cookie file")
         p.add_argument("--season-wait", type=float, default=900.0, help="seconds to wait for state=0 (transcode)")
         p.add_argument("--season-poll", type=float, default=30.0, help="poll interval seconds")
-        p.add_argument(
-            "--public-wait",
-            type=float,
-            default=240.0,
-            help="seconds to wait for exact public/member/tags/section metadata convergence",
-        )
+        p.add_argument("--public-wait", type=float, default=240.0, help="seconds to wait for exact public/member/tags/section metadata convergence")
 
     up = sub.add_parser(
         "upload",

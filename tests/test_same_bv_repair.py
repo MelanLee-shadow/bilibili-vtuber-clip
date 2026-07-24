@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.authorized_upload import UploadLockBusy, exclusive_upload_lock
+import src.autoslice.final_human_review as final_human_review
 import src.autoslice.same_bv_repair as same_bv
 from src.autoslice.same_bv_repair import (
     DuplicateBvid,
@@ -24,6 +25,7 @@ from src.autoslice.same_bv_repair import (
     run_repair,
     sha256_file,
     validate_plan,
+    validate_repair_publication_target,
     write_plan,
 )
 
@@ -40,6 +42,7 @@ PUBLICATION_AUTHORITY = {
     "cid": OLD_CID,
     "title_mode": "preserve_verified_public",
     "observed_public_title": FINAL_TITLE,
+    "authority_sha256": "sha256:" + "a" * 64,
 }
 
 
@@ -61,6 +64,46 @@ def _stub_recovery_publication_authority(monkeypatch):
 
     monkeypatch.setattr(
         same_bv, "validate_recovery_publication_authority", validate
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_final_media_review_contract(tmp_path, monkeypatch):
+    contract_path = tmp_path / "final-media-review-contract.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "schema_version": (
+                    "lidousha-final-media-review-contracts.v1"
+                ),
+                "authority": "same-bv repair test exact review point",
+                "contracts": [
+                    {
+                        "candidate_id": PUBLICATION_AUTHORITY[
+                            "candidate_id"
+                        ],
+                        "subtitle_review_points": [
+                            {
+                                "point_id": "corrected-cue",
+                                "final_video_start_ms": 13_000,
+                                "final_video_end_ms": 15_000,
+                                "expectation": (
+                                    "字幕与该段最终烧录人声一致"
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        final_human_review,
+        "FINAL_MEDIA_REVIEW_CONTRACT_PATH",
+        contract_path,
     )
 
 
@@ -115,8 +158,185 @@ def _before_snapshot() -> dict:
 def _manifest(tmp_path: Path) -> tuple[Path, dict]:
     video = tmp_path / "new.mp4"
     cover = tmp_path / "new.png"
+    subtitle = tmp_path / "new.srt"
     video.write_bytes(b"new exact video")
     cover.write_bytes(b"new exact cover")
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n测试\n",
+        encoding="utf-8",
+    )
+    source_claim = "李豆沙与联动对象均可见"
+    narrative = "封面文字准确表达两人互动"
+    record = {
+        "duration_ms": 180_000,
+        "burned_preview": {
+            "branding_intro": {
+                "verification": {"duration_ms": 186_000}
+            }
+        },
+        "story_contract": {
+            "candidate_id": PUBLICATION_AUTHORITY["candidate_id"],
+            "cover_reference_authority": {
+                "source_visible_claims": [source_claim],
+                "narrative_presentation": narrative,
+            },
+        },
+        "publish_staging": {"title": FINAL_TITLE},
+        "recovery_publication_authority": copy.deepcopy(
+            PUBLICATION_AUTHORITY
+        ),
+    }
+    record_path = tmp_path / "new.record.json"
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    review = {
+        "status": (
+            "finished_review_package_no_upload_pending_human_review"
+        ),
+        "upload_allowed": False,
+        "exact_candidate_ids": [
+            PUBLICATION_AUTHORITY["candidate_id"]
+        ],
+        "selection_contract": {
+            "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+            "candidate_ids": [
+                PUBLICATION_AUTHORITY["candidate_id"]
+            ],
+        },
+        "items": [
+            {
+                "candidate_id": PUBLICATION_AUTHORITY["candidate_id"],
+                "title": FINAL_TITLE,
+                "video": video.name,
+                "mp4": video.name,
+                "subtitle_srt": subtitle.name,
+                "cover": cover.name,
+                "record": record_path.name,
+                "recovery_publication_authority": copy.deepcopy(
+                    PUBLICATION_AUTHORITY
+                ),
+            }
+        ]
+    }
+    review_path = tmp_path / "review_manifest.json"
+    review_path.write_text(
+        json.dumps(review, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    package_audit_path = tmp_path / "package-audit.json"
+    package_audit_path.write_text(
+        json.dumps(
+            {"passed": True, "blocking_issue_count": 0},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt = {
+        "schema_version": "lidousha-final-human-review.v1",
+        "scope": "same_bv_repair",
+        "status": "ACCEPTED_FOR_SAME_BV",
+        "reviewer_kind": "delegated_root_agent",
+        "reviewed_by": "Codex root",
+        "reviewed_at": "2026-07-23T23:00:00-04:00",
+        "approval_quote": "完整播放并核对最终成片",
+        "review_contract_sha256": (
+            "sha256:"
+            + sha256_file(
+                final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
+            )
+        ),
+        "package_evidence": {
+            "review_manifest": {
+                "path": review_path.name,
+                "sha256": "sha256:" + sha256_file(review_path),
+            },
+            "package_audit": {
+                "path": package_audit_path.name,
+                "sha256": "sha256:" + sha256_file(package_audit_path),
+            },
+        },
+        "items": [
+            {
+                "candidate_id": PUBLICATION_AUTHORITY["candidate_id"],
+                "reviewed_title": FINAL_TITLE,
+                "artifacts": {
+                    kind: {
+                        "path": path.name,
+                        "sha256": "sha256:" + sha256_file(path),
+                    }
+                    for kind, path in {
+                        "video": video,
+                        "subtitle": subtitle,
+                        "cover": cover,
+                    }.items()
+                },
+                "record": {
+                    "path": record_path.name,
+                    "sha256": "sha256:" + sha256_file(record_path),
+                },
+                "publication_target": {
+                    "candidate_id": PUBLICATION_AUTHORITY[
+                        "candidate_id"
+                    ],
+                    "bvid": BVID,
+                    "aid": 42,
+                    "cid": OLD_CID,
+                    "final_title": FINAL_TITLE,
+                    "authority_sha256": PUBLICATION_AUTHORITY[
+                        "authority_sha256"
+                    ],
+                },
+                "checks": {
+                    check: {
+                        "status": "PASS",
+                        "evidence": f"人工完成 {check}",
+                    }
+                    for check in (
+                        "final_burned_full_playback",
+                        "subtitle_audio",
+                        "silence_hallucination",
+                        "boundary_closure",
+                        "title_story",
+                        "cover_identity",
+                        "cover_story",
+                        "intro_timing",
+                    )
+                },
+                "subtitle_review_points": [
+                    {
+                        "point_id": "corrected-cue",
+                        "final_video_start_ms": 13_000,
+                        "final_video_end_ms": 15_000,
+                        "expectation": "字幕与该段最终烧录人声一致",
+                        "status": "PASS",
+                        "evidence": "播放最终烧录成片对应时间点",
+                    }
+                ],
+                "cover_story_claims": [
+                    {
+                        "claim": source_claim,
+                        "presentation": "SOURCE_FRAME",
+                        "status": "PASS",
+                        "evidence": "人工逐像素核对最终封面",
+                    },
+                    {
+                        "claim": narrative,
+                        "presentation": "COVER_TEXT",
+                        "status": "PASS",
+                        "evidence": "人工核对最终封面文字",
+                    },
+                ],
+            }
+        ],
+    }
+    receipt_path = tmp_path / "final_human_review.json"
+    receipt_path.write_text(
+        json.dumps(receipt, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     manifest = {
         "manifest_version": 3,
         "schema_version": "authorized-upload-manifest.v3",
@@ -147,6 +367,25 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         "recovery_publication_authority": copy.deepcopy(
             PUBLICATION_AUTHORITY
         ),
+        "package_attestation": {
+            "schema_version": "authorized-upload-package-attestation.v1",
+            "package_root": str(tmp_path.resolve()),
+            "review_manifest": {
+                "path": str(review_path.resolve()),
+                "sha256": sha256_file(review_path),
+                "bytes": review_path.stat().st_size,
+            },
+            "package_audit": {
+                "path": str(package_audit_path.resolve()),
+                "sha256": sha256_file(package_audit_path),
+                "bytes": package_audit_path.stat().st_size,
+            },
+            "final_human_review": {
+                "path": str(receipt_path.resolve()),
+                "sha256": sha256_file(receipt_path),
+                "bytes": receipt_path.stat().st_size,
+            },
+        },
     }
     path = tmp_path / "new.upload_manifest.json"
     path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -374,7 +613,7 @@ def test_edit_21540_retries_the_same_cid_and_payload(tmp_path):
         journal=journal,
         manifest=manifest,
         adapter=adapter,
-        wait_seconds=1,
+        wait_seconds=5,
         poll_seconds=0,
     )
 
@@ -643,6 +882,111 @@ def test_plan_binds_recovery_publication_authority_to_manifest(tmp_path):
             manifest=manifest,
             plan_path=plan_path,
         )
+
+
+def test_same_bv_target_requires_valid_final_human_review_receipt(tmp_path):
+    _manifest_path, manifest = _manifest(tmp_path)
+    del manifest["package_attestation"]["final_human_review"]
+
+    with pytest.raises(
+        PlanInvalid, match="FINAL_HUMAN_REVIEW_ATTESTED_FILE_INVALID"
+    ):
+        validate_repair_publication_target(manifest, BVID)
+
+
+def test_plan_freezes_complete_final_human_review_input_closure(tmp_path):
+    manifest, plan, _plan_path, _journal = _plan_authority(tmp_path)
+
+    assert plan["package_attestation"] == {
+        "package_root": manifest["package_attestation"]["package_root"],
+        "review_manifest": manifest["package_attestation"][
+            "review_manifest"
+        ],
+        "package_audit": manifest["package_attestation"][
+            "package_audit"
+        ],
+        "final_human_review": manifest["package_attestation"][
+            "final_human_review"
+        ],
+    }
+
+
+@pytest.mark.parametrize("drift", ["edit", "delete"])
+def test_final_human_review_drift_after_plan_blocks_before_observe_or_mutation(
+    tmp_path, drift
+):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan)
+    receipt = Path(
+        plan["package_attestation"]["final_human_review"]["path"]
+    )
+    if drift == "edit":
+        receipt.write_text(
+            receipt.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+    else:
+        receipt.unlink()
+    journal_before = journal.read_bytes()
+
+    with pytest.raises(
+        PlanInvalid,
+        match="FINAL_HUMAN_REVIEW_ATTESTED_FILE_(HASH_DRIFT|INVALID)",
+    ):
+        repair_status(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+        )
+    with pytest.raises(
+        PlanInvalid,
+        match="FINAL_HUMAN_REVIEW_ATTESTED_FILE_(HASH_DRIFT|INVALID)",
+    ):
+        repair_step(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        )
+
+    assert adapter.observe_calls == 0
+    assert adapter.append_calls == 0
+    assert adapter.cover_calls == 0
+    assert adapter.swap_calls == 0
+    assert journal.read_bytes() == journal_before
+
+
+def test_committed_review_contract_drift_blocks_before_observe_or_mutation(
+    tmp_path,
+):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan)
+    contract_path = (
+        final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
+    )
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    contract["authority"] = "changed after plan"
+    contract_path.write_text(
+        json.dumps(contract, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    journal_before = journal.read_bytes()
+
+    with pytest.raises(
+        PlanInvalid, match="FINAL_HUMAN_REVIEW_CONTRACT_HASH_MISMATCH"
+    ):
+        repair_step(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        )
+
+    assert adapter.observe_calls == 0
+    assert adapter.append_calls == 0
+    assert adapter.cover_calls == 0
+    assert adapter.swap_calls == 0
+    assert journal.read_bytes() == journal_before
 
 
 @pytest.mark.parametrize(

@@ -1494,7 +1494,7 @@ def test_committed_ledger_preserves_new_acoustic_and_entity_truths(
     assert audit["status"] == "APPLIED"
 
 
-def test_committed_ledger_drops_post_nightin_formula_hallucination():
+def test_committed_ledger_drops_full_post_nightin_silence_hallucination():
     ledger = (
         Path(__file__).resolve().parents[1]
         / "assets"
@@ -1502,7 +1502,10 @@ def test_committed_ledger_drops_post_nightin_formula_hallucination():
         / "subtitle_truth_ledger.v1.json"
     )
     corrected, audit = apply_source_subtitle_truth(
-        _srt_ms((0, 4_140, "嗯，LLNNHHB，是这个")),
+        _srt_ms(
+            (0, 4_140, "嗯，LLNNHHB，是这个"),
+            (4_140, 6_770, "这个L是李乐莎的L吗"),
+        ),
         spec={
             "pieces": [
                 {
@@ -1510,24 +1513,71 @@ def test_committed_ledger_drops_post_nightin_formula_hallucination():
                         "/recordings/22966160_20260722-19-35-15.mp4"
                     ),
                     "start_ms": 776_470,
-                    "end_ms": 780_610,
+                    "end_ms": 783_240,
                 }
             ]
         },
-        durations=[4_140],
+        durations=[6_770],
         ledger_path=ledger,
     )
 
     assert corrected == ""
     assert audit["status"] == "APPLIED"
     assert audit["applied"][0]["truth_id"] == (
-        "20260722-nancho-confrontation-drop-hallucinated-formula-r3"
+        "20260722-nancho-confrontation-drop-hallucinated-formula-r4"
     )
     assert {
         row["truth_id"] for row in audit["inactive"]
     } >= {
         "20260722-nancho-confrontation-latin-formula-positive-r1",
         "20260722-nancho-confrontation-drop-hallucinated-formula-r2",
+        "20260722-nancho-confrontation-drop-hallucinated-formula-r3",
+    }
+
+
+def test_committed_ledger_preserves_real_opening_speech_after_silent_prefix():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (0, 2_560, "这不是主播最最最最喜欢的南町nightin吗，llnnhhb"),
+            (2_560, 5_120, "你为什么在说我的时候要最最最最喜欢，草"),
+            (5_120, 8_150, "我草，乱说的啊"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 672_920,
+                    "end_ms": 681_070,
+                }
+            ]
+        },
+        durations=[8_150],
+        ledger_path=ledger,
+    )
+
+    cues = parse_srt_cues(corrected)
+    assert [cue.text for cue in cues] == [
+        "这不是主播最最最最喜欢",
+        "你为什么在说我的时候要最最最最喜欢",
+        "乱说的啊",
+    ]
+    assert cues[-1].start_ms == 6_050
+    assert "草" not in corrected
+    assert audit["status"] == "APPLIED"
+    assert {
+        row["truth_id"] for row in audit["applied"]
+    } >= {
+        "20260722-nancho-confrontation-opening-human-r2",
+        "20260722-nancho-confrontation-no-cao-response-r1",
+        "20260722-nancho-confrontation-silent-prefix",
     }
 
 

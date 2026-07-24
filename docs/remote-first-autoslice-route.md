@@ -30,14 +30,26 @@ BililiveRecorder 文件闭合与源完整性
 → 字幕 authority、long-context repair、strict SRT
 → title / cover final-pixel / StoryContract
 → final burn + package audit v2
-→ no-upload review
-→ Ivan per-clip authorization
-→ authorized upload or same-BV edit
+→ delivery branch:
+  ├─ no-upload review
+  ├─ Ivan-authorized new upload
+  └─ exact same-BV:
+     committed exact-point contract/hash
+     + final-byte perceptual review + truthfully attributed receipt
+     + separate Ivan repair authorization
 → public + Creator + exact section closure
 ```
 
 生产默认不需要 Ivan 手动逐片裁时间线、逐条挑候选或守着上传；安全门无法证明时由系统
 BLOCK/RETRY/隔离。`review_ready`、脚本 rc=0、本地包存在或 JSON 自报通过都不是发布证明。
+package audit 也只证明机器可判定的结构、hash 与政策闭包，不等于最终感知复核。exact
+same-BV 的 final perceptual receipt 必须绑定 committed exact-point contract/hash、
+package manifest/audit、title/record、publication target 与最终媒体证据，并如实记录实际
+reviewer；只有 root 真的完成本轮完整逐点观看才可写 `delegated_root_agent`，不得冒称
+Ivan 已亲自观看。receipt 只准入同 BV 修复，不是 `AUTO_UPLOAD`、不授权新 BV，也不替代
+Ivan 对该修复动作的明确授权；具体门只读
+[pipeline/80-package-delivery.md](pipeline/80-package-delivery.md) 与
+[pipeline/90-publish.md](pipeline/90-publish.md)。
 
 ## 部署与验证
 
@@ -46,8 +58,14 @@ BLOCK/RETRY/隔离。`review_ready`、脚本 rc=0、本地包存在或 JSON 自�
 - 部署后核对 `DEPLOYED_COMMIT`、受管树 hash、外部 runtime media、kill switch、cron/lock
   与真实 state/out/report。
 - `DISABLED`、进程、mount、录播段完整性和公开稿件是 live state，文档不固化当前值。
-- 发布始终是独立 Ivan-authorized step；无 current audit/manifest/hash gate 就无副作用。
+- 发布始终是独立 Ivan-authorized step；机器 audit、最终感知复核 receipt、authorized manifest 与
+  public readback 各自证明不同事实，不能互相代替。新投稿与 exact same-BV 的精确准入分别
+  以 [pipeline/90-publish.md](pipeline/90-publish.md) 为准。
 - 已发稿修复保留同 BV；完整闭环见 [pipeline/90-publish.md](pipeline/90-publish.md)。
+
+封面路线中的 source-frame 可见事实与 cover-text/layout 叙事必须分开；截图没有直接拍到
+的动作、物件或反转不得写成源帧像素证据。具体 claim contract 只读
+[pipeline/70-cover.md](pipeline/70-cover.md)。
 
 ## 本地职责
 

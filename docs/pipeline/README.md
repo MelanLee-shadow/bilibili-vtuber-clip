@@ -22,4 +22,4 @@
 | 60 | [60-title.md](60-title.md) | 标题（谈话 + 歌切铁律） | `src/autoslice/title_policy.py`、`publish_staging.py` |
 | 70 | [70-cover.md](70-cover.md) | 封面路由、最终像素、人物与真实字形 | `src/autoslice/cover_generation.py`、`cover_title_rendering.py`、`cover_text_pixel_evidence.py`、`cover_route_evidence.py` |
 | 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、严格 SRT、audit v2 输入闭包 | `src/autoslice/producer_package_finalization.py`、`subtitle_validation.py`、`review_package_ass_audit.py`、`scripts/audit_lidousha_review_package.py` |
-| 90 | [90-publish.md](90-publish.md) | authorized upload、durable 同 BV 修复、合集与公开验证 | `scripts/authorized_upload.py`、`src/autoslice/same_bv_repair.py`、`bilibili_member_api.py` |
+| 90 | [90-publish.md](90-publish.md) | authorized upload、最终感知复核 receipt、durable 同 BV 修复、合集与公开验证 | `scripts/authorized_upload.py`、`src/autoslice/final_human_review.py`、`src/autoslice/same_bv_repair.py`、`bilibili_member_api.py` |

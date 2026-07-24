@@ -12,8 +12,27 @@
         "lidousha",
         "nancho"
       ],
+      "source_visible_claims": [
+        "画面中央清楚显示男性游戏角色基利安及角色名",
+        "画面右下清楚显示李豆沙与南町两位直播角色"
+      ],
+      "narrative_presentation": "封面文字与版式表达看到男角色后改口不熟的反转；不把静态源帧冒充现场动作。",
+      "source_visual_verification": {
+        "schema_version": "lidousha-cover-source-visual-verification.v1",
+        "status": "PASS",
+        "reference_png_sha256": "sha256:53d32dd63928c800458cd020ab988703bf13c585f41b56789efa715d6b693b8c",
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "verified_claims": [
+          "画面中央清楚显示男性游戏角色基利安及角色名",
+          "画面右下清楚显示李豆沙与南町两位直播角色"
+        ],
+        "authority": "Codex-manual-visual-review-20260724(exact hash-bound frame reviewed at original resolution; claims are limited to visible pixels)"
+      },
       "required_treatment": "screenshot_direct",
-      "relation_action": "画面中央展示男性角色基利安，李豆沙与南町同框，对应看到男角色只能说不熟的反转",
+      "relation_action": "源帧显示男性角色基利安及李豆沙/南町双人；不熟反转由封面文字与版式表达",
       "authority": "Ivan-stated-20260722(标题为最包容异性恋的直播间，看到男角色只能说出一句不熟)+Codex-visual-review-20260722(同源70.0s帧清楚显示男性角色基利安、角色名及李豆沙/南町双人；当前AI熊猫脸未承载故事信息，故选真实故事帧)"
     },
     {
@@ -27,8 +46,27 @@
         "lidousha",
         "nancho"
       ],
+      "source_visible_claims": [
+        "画面清楚显示李豆沙与南町双人同框",
+        "画面中两位直播角色同时呈现笑脸互动状态"
+      ],
+      "narrative_presentation": "封面文字表达南町当面追问与李豆沙发现自己被收集的反转；源帧只证明双人主体和互动情绪，不声称捕捉到字面上的对质动作。",
+      "source_visual_verification": {
+        "schema_version": "lidousha-cover-source-visual-verification.v1",
+        "status": "PASS",
+        "reference_png_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "verified_claims": [
+          "画面清楚显示李豆沙与南町双人同框",
+          "画面中两位直播角色同时呈现笑脸互动状态"
+        ],
+        "authority": "Codex-manual-visual-review-20260724(exact hash-bound frame reviewed at original resolution; claims are limited to visible pixels)"
+      },
       "required_treatment": "screenshot_direct",
-      "relation_action": "李豆沙与南町并排大头像，承载南町当面对质及李豆沙发现自己也是收藏品的双人关系",
+      "relation_action": "源帧真实保留李豆沙与南町双人和互动情绪；对质与被收集反转由封面文字表达",
       "authority": "Ivan-stated-20260722(标题点名坏女人南町与自己被收集)+Codex-visual-review-20260722(同源136.0s帧清楚显示李豆沙和南町；本轮AI封面仅剩李豆沙，已实证丢失关系主体，故拒绝AI重绘)"
     },
     {
@@ -42,8 +80,27 @@
         "lidousha",
         "nancho"
       ],
+      "source_visible_claims": [
+        "画面清楚显示李豆沙与南町双人同框",
+        "画面中两位直播角色同时呈现笑脸互动状态"
+      ],
+      "narrative_presentation": "封面文字表达请大N吃火锅与互相霸凌的故事；源帧只证明联动双方和互动情绪，不虚构火锅道具或霸凌动作。",
+      "source_visual_verification": {
+        "schema_version": "lidousha-cover-source-visual-verification.v1",
+        "status": "PASS",
+        "reference_png_sha256": "sha256:ee46c27e929d57244cf10d179e5e4127a46b89264b8ad10c15dde2be3ce5e217",
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "verified_claims": [
+          "画面清楚显示李豆沙与南町双人同框",
+          "画面中两位直播角色同时呈现笑脸互动状态"
+        ],
+        "authority": "Codex-manual-visual-review-20260724(exact hash-bound frame reviewed at original resolution; claims are limited to visible pixels)"
+      },
       "required_treatment": "screenshot_direct",
-      "relation_action": "李豆沙与南町真实双人同框，承载请大N吃火锅后一路互相霸凌的联动钩子",
+      "relation_action": "源帧真实保留李豆沙与南町双人和互动情绪；火锅与互相霸凌由封面文字表达",
       "authority": "Ivan-stated-20260722(这是南町与李豆沙联动，火锅片须保留双方关系)+Codex-visual-review-20260722(同源142.5s帧清楚显示双人；本轮AI封面遗漏南町且偏离火锅提问，故选真实故事帧)"
     },
     {
@@ -57,9 +114,28 @@
         "lidousha",
         "nancho"
       ],
+      "source_visible_claims": [
+        "画面清楚显示李豆沙与南町双人同框",
+        "画面中两位直播角色同时呈现笑脸互动状态"
+      ],
+      "narrative_presentation": "封面文字与版式表达李豆沙占大椅子、南町被调侃遭霸凌；源帧只证明双人主体，不声称画面里出现实体椅子或霸凌动作。",
+      "source_visual_verification": {
+        "schema_version": "lidousha-cover-source-visual-verification.v1",
+        "status": "PASS",
+        "reference_png_sha256": "sha256:0fc276abc083eef63a79adf6c4ba43462dd6759df1de63a5f0c6928b5f2ebe73",
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "verified_claims": [
+          "画面清楚显示李豆沙与南町双人同框",
+          "画面中两位直播角色同时呈现笑脸互动状态"
+        ],
+        "authority": "Codex-manual-visual-review-20260724(exact hash-bound frame reviewed at original resolution; claims are limited to visible pixels)"
+      },
       "required_treatment": "screenshot_direct",
-      "relation_action": "李豆沙占大椅子，南町在旁边被调侃遭霸凌",
-      "authority": "Ivan-stated-20260722(封面必须李豆沙和南町双人并表现李豆沙霸凌南町)+Codex-visual-review-20260722(同源21.5s帧清晰展示两位完整角色且面部足够大)"
+      "relation_action": "源帧真实保留李豆沙与南町双人；大椅子与霸凌叙事必须由封面文字和版式诚实表达",
+      "authority": "Ivan-stated-20260722(封面必须李豆沙和南町双人并表现李豆沙霸凌南町)+Codex-visual-review-20260724(同源21.5s帧清晰展示两位完整角色且面部足够大；帧中没有实体椅子或霸凌动作，相关叙事只能由封面文字与版式表达，不得冒充像素证据)"
     },
     {
       "candidate_id": "auto_193450_1475_1543",
@@ -72,8 +148,27 @@
         "lidousha",
         "nancho"
       ],
+      "source_visible_claims": [
+        "画面清楚显示李豆沙与南町双人同框并共同大笑",
+        "左侧直播弹幕清楚出现“别管，先弹了再说”"
+      ],
+      "narrative_presentation": "封面文字表达左右争论后索性都弹脑瓜崩的互动结局；源帧以双人大笑和可读弹幕作故事佐证，不虚构手部动作。",
+      "source_visual_verification": {
+        "schema_version": "lidousha-cover-source-visual-verification.v1",
+        "status": "PASS",
+        "reference_png_sha256": "sha256:2d5bcd86f6bf12e9ed52202e4600c1bb09b10275fb22c56d72ef670a214bdff6",
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "verified_claims": [
+          "画面清楚显示李豆沙与南町双人同框并共同大笑",
+          "左侧直播弹幕清楚出现“别管，先弹了再说”"
+        ],
+        "authority": "Codex-manual-visual-review-20260724(exact hash-bound frame reviewed at original resolution; claims are limited to visible pixels)"
+      },
       "required_treatment": "screenshot_direct",
-      "relation_action": "两人同时大笑，诚实表现左右分不清后索性都弹脑瓜崩的互动结局",
+      "relation_action": "源帧以双人大笑和“别管，先弹了再说”弹幕佐证互动结局；不虚构脑瓜崩手部动作",
       "authority": "Ivan-stated-20260722(弹幕要求给左边的人一个脑瓜崩这条也要做)+Codex-visual-review-20260722(同源65.0s payoff帧中李豆沙与南町同时大笑；AI画手部动作会虚构直播画面且旧AI已丢掉南町，故选真实双人帧)"
     }
   ]

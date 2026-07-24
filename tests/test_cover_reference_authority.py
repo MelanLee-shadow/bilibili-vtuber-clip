@@ -142,6 +142,44 @@ def _hash_bound_dual_reference(
     }
 
 
+def _source_visual_contract_row() -> dict[str, object]:
+    row = _hash_bound_dual_reference()
+    claims = [
+        "李豆沙与南町同时出现在源画面中",
+        "画面中央可见男性角色基利安",
+    ]
+    row.update(
+        {
+            "relation_action": "用双人同框和男性角色呈现不熟反转",
+            "source_visible_claims": claims,
+            "narrative_presentation": ("封面可借这些可见元素表达看到男角色后改口不熟的反转"),
+            "source_visual_verification": {
+                "schema_version": ("lidousha-cover-source-visual-verification.v1"),
+                "status": "PASS",
+                "reference_png_sha256": row["reference_png_sha256"],
+                "visible_participant_ids": row["visible_participant_ids"],
+                "verified_claims": claims,
+                "authority": "independent source-frame pixel review",
+            },
+        }
+    )
+    return row
+
+
+def _write_reference_ledger(tmp_path: Path, row: dict[str, object]) -> Path:
+    path = tmp_path / "cover-references.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": ("lidousha-cover-reference-overrides.v1"),
+                "overrides": [row],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_committed_chair_reference_is_hash_bound_and_survives_recut_suffix():
     reference = load_candidate_cover_reference(
         "auto_193450_1573_1672r4",
@@ -156,6 +194,13 @@ def test_committed_chair_reference_is_hash_bound_and_survives_recut_suffix():
     assert reference["visible_participant_ids"] == ["lidousha", "nancho"]
     assert reference["required_treatment"] == "screenshot_direct"
     assert str(reference["ledger_sha256"]).startswith("sha256:")
+    assert all(
+        "椅子" not in claim and "霸凌" not in claim
+        for claim in reference["source_visible_claims"]
+    )
+    assert "不声称画面里出现实体椅子或霸凌动作" in (
+        reference["narrative_presentation"]
+    )
 
     contract = build_story_contract(
         candidate_id="auto_193450_1573_1672",
@@ -173,6 +218,23 @@ def test_committed_chair_reference_is_hash_bound_and_survives_recut_suffix():
     assert "hash-bound source frame" in prompt
     assert "Preserve both" in prompt
     assert "HOST-ONLY" not in prompt
+
+
+def test_committed_brainflick_reference_binds_readable_chat_without_fake_action():
+    reference = load_candidate_cover_reference(
+        "auto_193450_1475_1543r2",
+        ledger_path=(
+            REPO_ROOT
+            / "assets/lidousha/cover_reference_overrides.v1.json"
+        ),
+    )
+
+    assert reference is not None
+    assert "左侧直播弹幕清楚出现“别管，先弹了再说”" in (
+        reference["source_visible_claims"]
+    )
+    assert "不虚构手部动作" in reference["narrative_presentation"]
+    assert "不虚构脑瓜崩手部动作" in reference["relation_action"]
 
 
 def test_committed_sumi_reference_uses_story_aligned_real_frame():
@@ -530,3 +592,122 @@ def test_duplicate_reference_rows_fail_closed(tmp_path):
 
     with pytest.raises(CoverReferenceAuthorityError, match="AMBIGUOUS"):
         load_candidate_cover_reference("candidate", ledger_path=path)
+
+
+def test_generic_reference_without_relation_action_remains_compatible(
+    tmp_path: Path,
+):
+    path = _write_reference_ledger(tmp_path, _hash_bound_dual_reference())
+
+    reference = load_candidate_cover_reference("candidate", ledger_path=path)
+
+    assert reference is not None
+    assert "source_visual_verification" not in reference
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "source_visible_claims",
+        "narrative_presentation",
+        "source_visual_verification",
+    ],
+)
+def test_relation_action_requires_every_source_visual_contract_field(
+    tmp_path: Path,
+    missing_field: str,
+):
+    row = _source_visual_contract_row()
+    del row[missing_field]
+    path = _write_reference_ledger(tmp_path, row)
+
+    with pytest.raises(CoverReferenceAuthorityError, match="INVALID"):
+        load_candidate_cover_reference("candidate", ledger_path=path)
+
+
+def test_optional_source_visual_field_also_triggers_complete_contract(
+    tmp_path: Path,
+):
+    row = _hash_bound_dual_reference()
+    row["source_visible_claims"] = ["李豆沙与南町同时可见"]
+    path = _write_reference_ledger(tmp_path, row)
+
+    with pytest.raises(CoverReferenceAuthorityError, match="INVALID"):
+        load_candidate_cover_reference("candidate", ledger_path=path)
+
+
+def test_source_visual_contract_rejects_verified_claim_drift(
+    tmp_path: Path,
+):
+    row = _source_visual_contract_row()
+    verification = dict(row["source_visual_verification"])
+    verification["verified_claims"] = ["两人同框"]
+    row["source_visual_verification"] = verification
+    path = _write_reference_ledger(tmp_path, row)
+
+    with pytest.raises(CoverReferenceAuthorityError, match="INVALID"):
+        load_candidate_cover_reference("candidate", ledger_path=path)
+
+
+def test_source_visual_contract_rejects_reference_hash_drift(
+    tmp_path: Path,
+):
+    row = _source_visual_contract_row()
+    verification = dict(row["source_visual_verification"])
+    verification["reference_png_sha256"] = "sha256:" + "9" * 64
+    row["source_visual_verification"] = verification
+    path = _write_reference_ledger(tmp_path, row)
+
+    with pytest.raises(CoverReferenceAuthorityError, match="INVALID"):
+        load_candidate_cover_reference("candidate", ledger_path=path)
+
+
+def test_source_visual_contract_rejects_visible_participant_drift(
+    tmp_path: Path,
+):
+    row = _source_visual_contract_row()
+    verification = dict(row["source_visual_verification"])
+    verification["visible_participant_ids"] = ["lidousha", "other"]
+    row["source_visual_verification"] = verification
+    path = _write_reference_ledger(tmp_path, row)
+
+    with pytest.raises(CoverReferenceAuthorityError, match="INVALID"):
+        load_candidate_cover_reference("candidate", ledger_path=path)
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        [],
+        [""],
+        ["同框", "同框"],
+        [" 同框"],
+    ],
+)
+def test_source_visual_contract_rejects_non_unique_or_empty_claims(
+    tmp_path: Path,
+    claims: list[str],
+):
+    row = _source_visual_contract_row()
+    row["source_visible_claims"] = claims
+    verification = dict(row["source_visual_verification"])
+    verification["verified_claims"] = claims
+    row["source_visual_verification"] = verification
+    path = _write_reference_ledger(tmp_path, row)
+
+    with pytest.raises(CoverReferenceAuthorityError, match="INVALID"):
+        load_candidate_cover_reference("candidate", ledger_path=path)
+
+
+def test_complete_source_visual_contract_passes_and_keeps_narrative_separate(
+    tmp_path: Path,
+):
+    row = _source_visual_contract_row()
+    path = _write_reference_ledger(tmp_path, row)
+
+    reference = load_candidate_cover_reference("candidater4", ledger_path=path)
+
+    assert reference is not None
+    verification = reference["source_visual_verification"]
+    assert verification["verified_claims"] == reference["source_visible_claims"]
+    assert reference["narrative_presentation"] not in verification["verified_claims"]
