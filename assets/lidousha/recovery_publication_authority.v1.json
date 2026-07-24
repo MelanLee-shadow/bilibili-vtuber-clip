@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-recovery-publication-authority.v1",
-  "authority": "Ivan 2026-07-23/24: repair exactly these five already-published clips in place and preserve each reviewed title source; after explicitly re-reading the Pro systemic review, exact-pin the hotpot clip to source cue 911 at 2056480ms and treat the later evil-gecko SC as next-topic evidence rather than retained tail content.",
+  "authority": "Ivan 2026-07-23/24: repair exactly these five already-published clips in place and preserve each reviewed title source; after explicitly re-reading the Pro systemic review, exact-pin the hotpot clip to source cue 911 at 2056480ms and treat the later evil-gecko SC as next-topic evidence rather than retained tail content; for the chair clip, the chair/bullying story closes on 假哭 at 1672970ms and the immediately following mouse superchat is a separate topic, not a delivery lower bound.",
   "entries": [
     {
       "candidate_id": "auto_193450_3573_3665",
@@ -48,7 +48,7 @@
       "candidate_id": "auto_193450_1573_1672",
       "title_mode": "verified_public_exact",
       "observed_public_title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了",
-      "required_given_end_ms": 1679990,
+      "required_given_end_ms": 1672970,
       "boundary_end_mode": "semantic_lower_bound",
       "bvid": "BV1DAg46HEXE",
       "aid": 116969609172199,

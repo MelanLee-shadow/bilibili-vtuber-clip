@@ -4,8 +4,10 @@ idempotent, and the uploader can only receive manifest args — never hand-typed
 import fcntl
 import json
 import os
+import subprocess
 import sys
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -261,32 +263,148 @@ def _write_final_human_review(
     record = video.parent / f"{stem}.record.json"
     review_manifest = video.parent / "review_manifest.json"
     receipt = video.parent / "final_human_review.json"
-    checks = (
-        "final_burned_full_playback",
-        "subtitle_audio",
-        "silence_hallucination",
-        "boundary_closure",
-        "title_story",
-        "cover_identity",
-        "cover_story",
-        "intro_timing",
+    evidence_path = (
+        video.parent / "final-human-review-evidence.v2.json"
+    )
+    reviewer = {
+        "reviewer_kind": "delegated_root_agent",
+        "reviewed_by": "Codex root",
+        "reviewed_at": "2026-07-23T23:30:00-04:00",
+        "approval_quote": "终片完整看过，可以同 BV 修复",
+    }
+    artifact_bindings = {
+        "video": {
+            "path": video.name,
+            "sha256": "sha256:" + au.sha256_file(video),
+        },
+        "subtitle": {
+            "path": subtitle.name,
+            "sha256": "sha256:" + au.sha256_file(subtitle),
+        },
+        "cover": {
+            "path": cover.name,
+            "sha256": "sha256:" + au.sha256_file(cover),
+        },
+    }
+    record_binding = {
+        "path": record.name,
+        "sha256": "sha256:" + au.sha256_file(record),
+    }
+    check_details = {
+        "final_burned_full_playback": (
+            "从00:00开头连续播放到EOS结尾，最后一帧停在双人对话收束。"
+        ),
+        "subtitle_audio": (
+            "在00:13实际听到纠错台词，烧录字幕随音频发声同步出现。"
+        ),
+        "silence_hallucination": (
+            "复看静音段确认无声，画面没有多出幻听字幕cue。"
+        ),
+        "boundary_closure": (
+            "开头保留完整问句，结尾落在回答后的自然停顿。"
+        ),
+        "title_story": (
+            "最终标题写明测试争论，完整故事先提问再回答。"
+        ),
+        "cover_identity": (
+            "最终封面左侧人物身份与右侧联动立绘均清楚可辨。"
+        ),
+        "cover_story": (
+            "最终封面文字概括双人关系，叙事与画面故事一致。"
+        ),
+        "intro_timing": (
+            "片头结束后平滑切入正片第一句，衔接没有吞字。"
+        ),
+    }
+    point_detail = (
+        "在00:13到00:15实际听到纠错台词，烧录字幕cue与发声同步。"
+    )
+    claims = (
+        ("李豆沙与联动对象都在源帧中可见", "SOURCE_FRAME"),
+        ("关系叙事由封面文字与版式表达", "COVER_TEXT"),
+    )
+    claim_details = (
+        "最终封面源帧左侧和右侧人物均清楚可见，身份没有被大字遮挡。",
+        "最终封面大字呈现双人关系故事，文字叙事与版式内容一致。",
+    )
+    contract_sha256 = (
+        "sha256:"
+        + au.sha256_file(fhr.FINAL_MEDIA_REVIEW_CONTRACT_PATH)
+    )
+    evidence = {
+        "schema_version": fhr.REVIEW_EVIDENCE_SCHEMA_VERSION,
+        "bindings": {
+            "review_contract_sha256": contract_sha256,
+            "review_manifest": {
+                "path": review_manifest.name,
+                "sha256": "sha256:"
+                + au.sha256_file(review_manifest),
+            },
+            "package_audit": {
+                "path": package_audit.name,
+                "sha256": "sha256:"
+                + au.sha256_file(package_audit),
+            },
+            "items": [
+                {
+                    "candidate_id": "candidate-test",
+                    "record": record_binding,
+                    "artifacts": artifact_bindings,
+                }
+            ],
+        },
+        **reviewer,
+        "items": [
+            {
+                "candidate_id": "candidate-test",
+                "checks": {
+                    check: {
+                        "anchor": fhr._CHECK_ANCHORS[check],
+                        "detail": detail,
+                    }
+                    for check, detail in check_details.items()
+                },
+                "subtitle_review_points": [
+                    {
+                        "point_id": "corrected-cue",
+                        "observation": {
+                            "anchor": (
+                                "00:00:13.000-00:00:15.000"
+                            ),
+                            "detail": point_detail,
+                        },
+                    }
+                ],
+                "cover_story_claims": [
+                    {
+                        "claim": claim,
+                        "presentation": presentation,
+                        "observation": {
+                            "anchor": (
+                                f"FINAL_COVER/{presentation}"
+                            ),
+                            "detail": detail,
+                        },
+                    }
+                    for (claim, presentation), detail in zip(
+                        claims, claim_details, strict=True
+                    )
+                ],
+            }
+        ],
+    }
+    evidence_path.write_text(
+        json.dumps(evidence, ensure_ascii=False),
+        encoding="utf-8",
     )
     receipt.write_text(
         json.dumps(
             {
-                "schema_version": "lidousha-final-human-review.v1",
+                "schema_version": fhr.SCHEMA_VERSION,
                 "scope": "same_bv_repair",
                 "status": "ACCEPTED_FOR_SAME_BV",
-                "reviewer_kind": "delegated_root_agent",
-                "reviewed_by": "Codex root",
-                "reviewed_at": "2026-07-23T23:30:00-04:00",
-                "approval_quote": "终片完整看过，可以同 BV 修复",
-                "review_contract_sha256": (
-                    "sha256:"
-                    + au.sha256_file(
-                        fhr.FINAL_MEDIA_REVIEW_CONTRACT_PATH
-                    )
-                ),
+                **reviewer,
+                "review_contract_sha256": contract_sha256,
                 "package_evidence": {
                     "review_manifest": {
                         "path": review_manifest.name,
@@ -298,30 +416,19 @@ def _write_final_human_review(
                         "sha256": "sha256:"
                         + au.sha256_file(package_audit),
                     },
+                    "review_evidence": {
+                        "path": evidence_path.name,
+                        "sha256": "sha256:"
+                        + au.sha256_file(evidence_path),
+                        "bytes": evidence_path.stat().st_size,
+                    },
                 },
                 "items": [
                     {
                         "candidate_id": "candidate-test",
                         "reviewed_title": title,
-                        "artifacts": {
-                            "video": {
-                                "path": video.name,
-                                "sha256": "sha256:" + au.sha256_file(video),
-                            },
-                            "subtitle": {
-                                "path": subtitle.name,
-                                "sha256": "sha256:" + au.sha256_file(subtitle),
-                            },
-                            "cover": {
-                                "path": cover.name,
-                                "sha256": "sha256:" + au.sha256_file(cover),
-                            },
-                        },
-                        "record": {
-                            "path": record.name,
-                            "sha256": "sha256:"
-                            + au.sha256_file(record),
-                        },
+                        "artifacts": artifact_bindings,
+                        "record": record_binding,
                         "publication_target": {
                             "candidate_id": "candidate-test",
                             "bvid": publication_authority["bvid"],
@@ -335,9 +442,12 @@ def _write_final_human_review(
                         "checks": {
                             check: {
                                 "status": "PASS",
-                                "evidence": f"{check} 已检查最终烧录字节",
+                                "evidence": (
+                                    f"{fhr._CHECK_ANCHORS[check]} — "
+                                    f"{detail}"
+                                ),
                             }
-                            for check in checks
+                            for check, detail in check_details.items()
                         },
                         "subtitle_review_points": [
                             {
@@ -346,22 +456,27 @@ def _write_final_human_review(
                                 "final_video_end_ms": 15_000,
                                 "expectation": "纠错点与最终音频一致",
                                 "status": "PASS",
-                                "evidence": "已播放最终烧录字节对应区间",
+                                "evidence": (
+                                    "00:00:13.000-00:00:15.000 — "
+                                    + point_detail
+                                ),
                             }
                         ],
                         "cover_story_claims": [
                             {
-                                "claim": "李豆沙与联动对象都在源帧中可见",
-                                "presentation": "SOURCE_FRAME",
+                                "claim": claim,
+                                "presentation": presentation,
                                 "status": "PASS",
-                                "evidence": "人工核对最终封面源帧人物",
-                            },
-                            {
-                                "claim": "关系叙事由封面文字与版式表达",
-                                "presentation": "COVER_TEXT",
-                                "status": "PASS",
-                                "evidence": "人工核对最终封面文字与版式",
+                                "evidence": (
+                                    f"FINAL_COVER/{presentation} — "
+                                    f"{detail}"
+                                ),
                             }
+                            for (claim, presentation), detail in zip(
+                                claims,
+                                claim_details,
+                                strict=True,
+                            )
                         ],
                     }
                 ],
@@ -422,6 +537,16 @@ def _ledger_rows(path):
             "repair_run",
             ["--plan", "plan.json"],
         ),
+        (
+            "repair-verify-live",
+            "repair_verify_live",
+            [
+                "--plan",
+                "plan.json",
+                "--out",
+                "completed.json",
+            ],
+        ),
     ],
 )
 def test_repair_cli_routes_separate_api_and_biliup_cookie_files(
@@ -451,6 +576,228 @@ def test_repair_cli_routes_separate_api_and_biliup_cookie_files(
         "api": "/cookies/member-api.json",
         "biliup": "/cookies/biliup.json",
     }
+
+
+def test_biliup_readonly_canary_precedes_append_intent_without_leaking_output(
+    tmp_path, monkeypatch
+):
+    cookie = tmp_path / "biliup.json"
+    cookie.write_text("{}", encoding="utf-8")
+    observed = {}
+
+    monkeypatch.setattr(
+        au.member_api,
+        "validate_biliup_cookie_file",
+        lambda path: observed.setdefault("validated", path),
+    )
+    monkeypatch.setattr(
+        au.member_api,
+        "BILIUP_BIN",
+        tmp_path / "biliup",
+    )
+
+    def run(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            command,
+            returncode=7,
+            stdout="secret-cookie-output",
+            stderr="secret-cookie-error",
+        )
+
+    monkeypatch.setattr(au.subprocess, "run", run)
+    with pytest.raises(
+        au.RepairError,
+        match=r"read-only login canary failed.*rc=7",
+    ) as caught:
+        au._biliup_readonly_canary(cookie, RECOVERY_BVID)
+    assert "secret-cookie" not in str(caught.value)
+    assert observed["validated"] == cookie
+    assert observed["command"] == [
+        str(tmp_path / "biliup"),
+        "-u",
+        "biliup.json",
+        "show",
+        RECOVERY_BVID,
+    ]
+    assert observed["kwargs"] == {
+        "cwd": str(tmp_path),
+        "capture_output": True,
+        "text": True,
+        "timeout": 120,
+    }
+
+
+def test_repair_verify_live_creates_fresh_hash_bound_completed_sidecar(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "repair-plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    journal = tmp_path / "repair-journal.jsonl"
+    journal.write_text("journal-placeholder\n", encoding="utf-8")
+    completed_path = tmp_path / "completed.json"
+    manifest = {"manifest_version": 3}
+    snapshot = {
+        "creator": {
+            "videos": [{"cid": 987654321, "filename": "new", "title": VALID_TITLE}]
+        },
+        "public": {"cid": 987654321},
+        "section": {"matches": [{"cid": 987654321}]},
+    }
+    plan = {
+        "plan_id": "plan-test",
+        "bvid": RECOVERY_BVID,
+        "manifest": {
+            "path": str(tmp_path / "manifest.json"),
+            "sha256": "manifest-sha",
+        },
+        "replacement": {
+            "video": {"sha256": "video-sha"},
+            "cover": {"sha256": "cover-sha"},
+        },
+        "season": {"section_id": 9320779},
+        "recovery_publication_authority": {
+            "candidate_id": "candidate-test",
+            "aid": TEST_PUBLICATION_AUTHORITY["aid"],
+        },
+    }
+    verified_row = {
+        "state": "VERIFIED",
+        "seq": 8,
+        "at": "2026-07-24T08:00:00+00:00",
+        "row_sha256": "verified-row-sha",
+        "details": {"live_snapshot": snapshot},
+    }
+
+    class ReadOnlyAdapter:
+        def observe(self, bvid, section_id):
+            assert bvid == RECOVERY_BVID
+            assert section_id == 9320779
+            return snapshot
+
+    monkeypatch.setattr(
+        au,
+        "_load_repair_manifest",
+        lambda _path: (plan, manifest, []),
+    )
+    monkeypatch.setattr(
+        au,
+        "same_bv_repair_status",
+        lambda **_kwargs: SimpleNamespace(state="VERIFIED"),
+    )
+    monkeypatch.setattr(
+        au.repair_binding,
+        "plan_entries",
+        lambda *_args: [verified_row],
+    )
+    monkeypatch.setattr(
+        au,
+        "_same_bv_adapter",
+        lambda *_args: ReadOnlyAdapter(),
+    )
+
+    assert au.main(
+        [
+            "repair-verify-live",
+            "--plan",
+            str(plan_path),
+            "--journal",
+            str(journal),
+            "--out",
+            str(completed_path),
+            "--lock",
+            str(tmp_path / "upload.lock"),
+        ]
+    ) == 0
+    completed = json.loads(completed_path.read_text(encoding="utf-8"))
+    assert completed["schema_version"] == "same-bv-repair-completed.v1"
+    assert completed["status"] == "VERIFIED_FRESH_LIVE"
+    assert completed["rc"] == 0
+    assert completed["remote_mutation"] is False
+    assert completed["candidate_id"] == "candidate-test"
+    assert completed["bvid"] == RECOVERY_BVID
+    assert completed["new_cid"] == 987654321
+    assert completed["live_snapshot"] == snapshot
+    assert completed["verified_journal_row"] == {
+        "journal_path": str(journal.resolve()),
+        "seq": 8,
+        "at": "2026-07-24T08:00:00+00:00",
+        "row_sha256": "verified-row-sha",
+    }
+    assert completed["plan"]["path"] == str(plan_path.resolve())
+    assert completed["plan"]["sha256"] == au.sha256_file(plan_path)
+
+
+def test_repair_verify_live_refuses_fresh_surface_drift_without_sidecar(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "repair-plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    journal = tmp_path / "repair-journal.jsonl"
+    journal.write_text("journal-placeholder\n", encoding="utf-8")
+    completed_path = tmp_path / "completed.json"
+    expected = {
+        "creator": {"videos": [{"cid": 10}]},
+        "public": {"cid": 10},
+        "section": {"matches": [{"cid": 10}]},
+    }
+    plan = {
+        "plan_id": "plan-test",
+        "bvid": RECOVERY_BVID,
+        "manifest": {"path": "manifest", "sha256": "manifest-sha"},
+        "replacement": {},
+        "season": {"section_id": 9320779},
+        "recovery_publication_authority": {},
+    }
+
+    class DriftedAdapter:
+        def observe(self, _bvid, _section_id):
+            return {
+                **expected,
+                "public": {"cid": 11},
+            }
+
+    monkeypatch.setattr(
+        au,
+        "_load_repair_manifest",
+        lambda _path: (plan, {"manifest_version": 3}, []),
+    )
+    monkeypatch.setattr(
+        au,
+        "same_bv_repair_status",
+        lambda **_kwargs: SimpleNamespace(state="VERIFIED"),
+    )
+    monkeypatch.setattr(
+        au.repair_binding,
+        "plan_entries",
+        lambda *_args: [
+            {
+                "state": "VERIFIED",
+                "details": {"live_snapshot": expected},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        au,
+        "_same_bv_adapter",
+        lambda *_args: DriftedAdapter(),
+    )
+
+    assert au.main(
+        [
+            "repair-verify-live",
+            "--plan",
+            str(plan_path),
+            "--journal",
+            str(journal),
+            "--out",
+            str(completed_path),
+            "--lock",
+            str(tmp_path / "upload.lock"),
+        ]
+    ) == 5
+    assert not completed_path.exists()
 
 
 def test_repair_plan_refuses_wrong_bvid_before_adapter_or_observe(

@@ -1311,6 +1311,42 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-chair-seat-phrase-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1580300,
+      "source_end_ms": 1581980,
+      "action": "replace_cue",
+      "text": "然后我就坐这一个",
+      "before_span": "然后我在坐做一个",
+      "forbidden_tokens": [
+        "在坐做"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_VERDICT_PLUS_LOCAL_STORY_SEMANTICS",
+      "authority": "V13 final-review acoustic request sha256=6571fe93bce362c3ae290929e1eef24158cbd0a4694f25bcc653f78fa7935b2 and response sha256=934f303453bc66db3ab78239ba111051e5c2f238b4d4d80d64da797791ae6dc3 bind the exact source interval; Gemini 3.6 Flash High heard 然后我就坐这一个 with current_fit=INCOMPATIBLE and proposed_fit=SUPPORTED at 0.95 confidence, consistent with the surrounding explanation of which chair she is sitting on",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nancho-chair-youxing-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1642350,
+      "source_end_ms": 1644920,
+      "action": "replace_cue",
+      "text": "我真的很有型啊",
+      "before_span": "我真违心啊",
+      "forbidden_tokens": [
+        "违心"
+      ],
+      "evidence_class": "HASH_BOUND_ACOUSTIC_VERDICT_PLUS_WHOLE_CLIP_CALLBACK",
+      "authority": "V13 final-review acoustic request sha256=955f2c0356ec096b741a8ef8309c113eb7e872d5ed79b83029a89cc62b271c32 and response sha256=c10227aebe179dffae3b1b44be46c40d8486b36a52b3e48aa2c73859f822f168 bind the exact source interval; Gemini 3.6 Flash High heard wo zhen de hen you xing a with current_fit=INCOMPATIBLE and proposed_fit=SUPPORTED at 0.95 confidence, and the following lines explicitly affirm her image and帅气 clothes",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-qin-jieganmei-full-clause-r1",
       "revision_id": "r1",
       "assertion_state": "VERIFIED_ACTIVE",

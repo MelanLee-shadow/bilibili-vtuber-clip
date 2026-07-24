@@ -155,3 +155,28 @@ def test_committed_nancho_baseline_binds_new_truths_to_absolute_source_timeline(
             - loaded.config["absolute_source_start_ms"]
         ),
     )["status"] == "PASS"
+
+
+def test_committed_chair_baseline_ends_at_fake_cry_before_next_superchat():
+    root = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "reviewed_subtitle_baselines"
+    )
+    loaded = load_candidate_reviewed_subtitle_baseline(
+        root,
+        "auto_193450_1573_1672",
+    )
+
+    assert loaded is not None
+    assert loaded.config["absolute_source_start_ms"] == 1_572_910
+    assert loaded.config["absolute_source_end_ms"] == 1_672_970
+    cues = parse_srt_cues(loaded.baseline_path.read_text(encoding="utf-8"))
+    texts = [cue.text for cue in cues]
+    assert texts[-1] == "假哭"
+    assert "然后我就坐这一个" in texts
+    assert "我真的很有型啊" in texts
+    assert all("钢镚" not in text for text in texts)
+    assert all("鼠标" not in text for text in texts)
+    assert cues[-1].end_ms == 100_060

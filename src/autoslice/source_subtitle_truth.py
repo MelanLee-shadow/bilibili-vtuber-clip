@@ -1749,6 +1749,95 @@ def ledger_local_windows(
         return []
 
 
+def candidate_boundary_owner_scope(
+    *,
+    spec: Mapping[str, object],
+    durations: Sequence[int],
+) -> dict[str, object]:
+    """Return the immutable candidate-local story scope for boundary owners.
+
+    Source truth remains applicable to every retained padded-context interval.
+    Boundary ownership is narrower: widening only the final witness reserve
+    must not turn a later candidate's truth into part of this candidate's
+    story.  The scope deliberately excludes piece ``end_ms`` and the final
+    piece duration, because those are the values a bounded context retry is
+    allowed to widen.
+    """
+
+    pieces = [
+        piece
+        for piece in (spec.get("pieces") or [])
+        if isinstance(piece, Mapping)
+    ]
+    if not pieces or len(pieces) != len(durations):
+        raise RuntimeError("SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_MAPPING_INVALID")
+    if any(
+        isinstance(duration, bool)
+        or not isinstance(duration, int)
+        or duration <= 0
+        for duration in durations
+    ):
+        raise RuntimeError("SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_DURATION_INVALID")
+
+    first_piece_start_ms = pieces[0].get("start_ms")
+    last_piece_start_ms = pieces[-1].get("start_ms")
+    semantic_start_ms = spec.get("semantic_start_ms", first_piece_start_ms)
+    semantic_end_ms = spec.get("semantic_end_ms")
+    given_end_ms = spec.get("given_end_ms")
+    for value in (
+        first_piece_start_ms,
+        last_piece_start_ms,
+        semantic_start_ms,
+        semantic_end_ms,
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise RuntimeError(
+                "SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_TIMESTAMP_INVALID"
+            )
+    if given_end_ms is not None and (
+        isinstance(given_end_ms, bool) or not isinstance(given_end_ms, int)
+    ):
+        raise RuntimeError(
+            "SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_TIMESTAMP_INVALID"
+        )
+
+    prior_piece_duration_ms = sum(int(value) for value in durations[:-1])
+    story_start_ms = int(semantic_start_ms) - int(first_piece_start_ms)
+    story_source_end_ms = max(
+        int(semantic_end_ms),
+        int(given_end_ms)
+        if given_end_ms is not None
+        else int(semantic_end_ms),
+    )
+    story_end_ms = (
+        prior_piece_duration_ms
+        + story_source_end_ms
+        - int(last_piece_start_ms)
+    )
+    padded_duration_ms = sum(int(value) for value in durations)
+    if not 0 <= story_start_ms < story_end_ms <= padded_duration_ms:
+        raise RuntimeError("SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_INVALID")
+
+    core: dict[str, object] = {
+        "schema_version": "candidate-boundary-owner-scope.v1",
+        "candidate_id": str(spec.get("candidate_id") or ""),
+        "story_start_ms": story_start_ms,
+        "story_end_ms": story_end_ms,
+        "semantic_source_start_ms": int(semantic_start_ms),
+        "semantic_source_end_ms": int(semantic_end_ms),
+        "given_source_end_ms": (
+            int(given_end_ms) if given_end_ms is not None else None
+        ),
+        "first_piece_source_start_ms": int(first_piece_start_ms),
+        "last_piece_source_start_ms": int(last_piece_start_ms),
+        "prior_piece_duration_ms": prior_piece_duration_ms,
+    }
+    return {
+        **core,
+        "scope_sha256": _canonical_sha256(core),
+    }
+
+
 def ledger_required_owner_contracts(
     *,
     spec: Mapping[str, object],
@@ -1782,23 +1871,12 @@ def ledger_required_owner_contracts(
     if len(pieces) != len(durations):
         raise RuntimeError("SOURCE_SUBTITLE_TRUTH_PIECE_MAPPING_INVALID")
     source_aliases = _load_source_aliases(document)
-    semantic_end_ms = spec.get("semantic_end_ms")
-    if (
-        isinstance(semantic_end_ms, bool)
-        or not isinstance(semantic_end_ms, int)
-    ):
-        raise RuntimeError("SOURCE_TRUTH_SEMANTIC_END_INVALID")
-    prior_piece_duration_ms = sum(int(value) for value in durations[:-1])
-    last_piece_start_ms = int(pieces[-1]["start_ms"])
-    semantic_target_local_ms = (
-        prior_piece_duration_ms
-        + semantic_end_ms
-        - last_piece_start_ms
+    owner_scope = candidate_boundary_owner_scope(
+        spec=spec,
+        durations=durations,
     )
-    if not 0 <= semantic_target_local_ms <= sum(
-        int(value) for value in durations
-    ):
-        raise RuntimeError("SOURCE_TRUTH_SEMANTIC_END_MAPPING_INVALID")
+    story_start_ms = int(owner_scope["story_start_ms"])
+    story_end_ms = int(owner_scope["story_end_ms"])
     contracts: list[dict[str, object]] = []
     seen: set[str] = set()
     for entry in document["entries"]:
@@ -1832,7 +1910,9 @@ def ledger_required_owner_contracts(
         boundary_role = _boundary_role(entry)
         if boundary_role == "next_topic_witness":
             if any(
-                int(window["start_ms"]) < semantic_target_local_ms
+                min(int(window["end_ms"]), story_end_ms)
+                - max(int(window["start_ms"]), story_start_ms)
+                > 0
                 for window in windows
             ):
                 raise RuntimeError(
@@ -1842,6 +1922,27 @@ def ledger_required_owner_contracts(
             # It remains required subtitle truth in the padded source context
             # and may prove topic separation, but it must not move the story
             # endpoint forward into the next topic.
+            continue
+        fully_inside_story = all(
+            story_start_ms <= int(window["start_ms"])
+            and int(window["end_ms"]) <= story_end_ms
+            for window in windows
+        )
+        overlaps_story = any(
+            min(int(window["end_ms"]), story_end_ms)
+            - max(int(window["start_ms"]), story_start_ms)
+            > 0
+            for window in windows
+        )
+        if not fully_inside_story:
+            if overlaps_story:
+                raise RuntimeError(
+                    "SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_STRADDLE:"
+                    f"{truth_id}"
+                )
+            # Lead/post context is still corrected and verified by
+            # apply_source_subtitle_truth; it simply cannot move this
+            # candidate's delivery boundary.
             continue
         if truth_id in seen:
             raise RuntimeError(
@@ -1855,6 +1956,7 @@ def ledger_required_owner_contracts(
                 "required": True,
                 "source_start_ms": source_start,
                 "source_end_ms": source_end,
+                "owner_scope_sha256": owner_scope["scope_sha256"],
                 "local_windows": [
                     {
                         "start_ms": int(window["start_ms"]),

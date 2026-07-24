@@ -4859,6 +4859,7 @@ def test_3573_shaped_dual_route_blocks_without_proof_then_passes_no_crop(
             "title": title,
             "cover_text": cover_text,
             "story_contract": contract,
+            "reference_selection": frame_selection,
         }
         treatment, route = publish_staging._build_lidousha_cover_route(
             cover_generation=generation,
@@ -4913,6 +4914,7 @@ def test_3573_shaped_dual_route_blocks_without_proof_then_passes_no_crop(
         "RELATION_COVER_FINAL_PARTICIPANTS_UNVERIFIED"
     ]
     assert blocked_generation["screenshot_frame"]["crop_applied"] is False
+    assert blocked_generation["screenshot_frame"]["frame_ms"] == 70_000
     assert blocked_generation["route_decision"]["execution_status"] == (
         "BLOCKED"
     )
@@ -4941,6 +4943,11 @@ def test_3573_shaped_dual_route_blocks_without_proof_then_passes_no_crop(
 
     assert ready["status"] == "AI_COVER_READY", ready
     assert ready_generation["screenshot_frame"]["crop_applied"] is False
+    assert (
+        ready_generation["screenshot_frame"]["frame_ms"]
+        == ready_generation["reference_selection"]["best_ms"]
+        == 70_000
+    )
     assert ready_generation["screenshot_frame"]["zoom"] == 1.0
     assert ready_generation["screenshot_graphic_poster"][
         "source_frame_transform"

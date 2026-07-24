@@ -234,20 +234,149 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         + "\n",
         encoding="utf-8",
     )
-    receipt = {
-        "schema_version": "lidousha-final-human-review.v1",
-        "scope": "same_bv_repair",
-        "status": "ACCEPTED_FOR_SAME_BV",
+    candidate_id = PUBLICATION_AUTHORITY["candidate_id"]
+    artifact_bindings = {
+        kind: {
+            "path": path.name,
+            "sha256": "sha256:" + sha256_file(path),
+        }
+        for kind, path in {
+            "video": video,
+            "subtitle": subtitle,
+            "cover": cover,
+        }.items()
+    }
+    record_binding = {
+        "path": record_path.name,
+        "sha256": "sha256:" + sha256_file(record_path),
+    }
+    reviewer = {
         "reviewer_kind": "delegated_root_agent",
         "reviewed_by": "Codex root",
         "reviewed_at": "2026-07-23T23:00:00-04:00",
         "approval_quote": "完整播放并核对最终成片",
-        "review_contract_sha256": (
-            "sha256:"
-            + sha256_file(
-                final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
-            )
+    }
+    check_details = {
+        "final_burned_full_playback": (
+            "从00:00开头连续播放到EOS结尾，最后一帧停在互动自然收束处。"
         ),
+        "subtitle_audio": (
+            "在00:13实际听到纠错台词，烧录字幕随音频发声同步出现。"
+        ),
+        "silence_hallucination": (
+            "复看静音段确认无声，画面没有多出幻听字幕cue。"
+        ),
+        "boundary_closure": (
+            "开头保留完整问句，结尾落在回答后的自然停顿。"
+        ),
+        "title_story": (
+            "最终标题写明双人互动，完整故事先提问再回答。"
+        ),
+        "cover_identity": (
+            "最终封面左侧人物身份与右侧联动立绘均清楚可辨。"
+        ),
+        "cover_story": (
+            "最终封面文字概括双人关系，叙事与画面故事一致。"
+        ),
+        "intro_timing": (
+            "片头结束后平滑切入正片第一句，衔接没有吞字。"
+        ),
+    }
+    point_detail = (
+        "在00:13到00:15实际听到纠错台词，烧录字幕cue与发声同步。"
+    )
+    claim_rows = (
+        (
+            source_claim,
+            "SOURCE_FRAME",
+            "最终封面源帧左侧和右侧人物均清楚可见，身份没有被大字遮挡。",
+        ),
+        (
+            narrative,
+            "COVER_TEXT",
+            "最终封面大字呈现双人互动故事，文字叙事与版式内容一致。",
+        ),
+    )
+    review_contract_sha256 = (
+        "sha256:"
+        + sha256_file(
+            final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
+        )
+    )
+    evidence = {
+        "schema_version": (
+            final_human_review.REVIEW_EVIDENCE_SCHEMA_VERSION
+        ),
+        "bindings": {
+            "review_contract_sha256": review_contract_sha256,
+            "review_manifest": {
+                "path": review_path.name,
+                "sha256": "sha256:" + sha256_file(review_path),
+            },
+            "package_audit": {
+                "path": package_audit_path.name,
+                "sha256": "sha256:"
+                + sha256_file(package_audit_path),
+            },
+            "items": [
+                {
+                    "candidate_id": candidate_id,
+                    "record": record_binding,
+                    "artifacts": artifact_bindings,
+                }
+            ],
+        },
+        **reviewer,
+        "items": [
+            {
+                "candidate_id": candidate_id,
+                "checks": {
+                    check: {
+                        "anchor": final_human_review._CHECK_ANCHORS[
+                            check
+                        ],
+                        "detail": detail,
+                    }
+                    for check, detail in check_details.items()
+                },
+                "subtitle_review_points": [
+                    {
+                        "point_id": "corrected-cue",
+                        "observation": {
+                            "anchor": (
+                                "00:00:13.000-00:00:15.000"
+                            ),
+                            "detail": point_detail,
+                        },
+                    }
+                ],
+                "cover_story_claims": [
+                    {
+                        "claim": claim,
+                        "presentation": presentation,
+                        "observation": {
+                            "anchor": (
+                                f"FINAL_COVER/{presentation}"
+                            ),
+                            "detail": detail,
+                        },
+                    }
+                    for claim, presentation, detail in claim_rows
+                ],
+            }
+        ],
+    }
+    evidence_path = tmp_path / "final-human-review-evidence.v2.json"
+    evidence_path.write_text(
+        json.dumps(evidence, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    receipt = {
+        "schema_version": final_human_review.SCHEMA_VERSION,
+        "scope": "same_bv_repair",
+        "status": "ACCEPTED_FOR_SAME_BV",
+        **reviewer,
+        "review_contract_sha256": review_contract_sha256,
         "package_evidence": {
             "review_manifest": {
                 "path": review_path.name,
@@ -257,30 +386,20 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                 "path": package_audit_path.name,
                 "sha256": "sha256:" + sha256_file(package_audit_path),
             },
+            "review_evidence": {
+                "path": evidence_path.name,
+                "sha256": "sha256:" + sha256_file(evidence_path),
+                "bytes": evidence_path.stat().st_size,
+            },
         },
         "items": [
             {
-                "candidate_id": PUBLICATION_AUTHORITY["candidate_id"],
+                "candidate_id": candidate_id,
                 "reviewed_title": FINAL_TITLE,
-                "artifacts": {
-                    kind: {
-                        "path": path.name,
-                        "sha256": "sha256:" + sha256_file(path),
-                    }
-                    for kind, path in {
-                        "video": video,
-                        "subtitle": subtitle,
-                        "cover": cover,
-                    }.items()
-                },
-                "record": {
-                    "path": record_path.name,
-                    "sha256": "sha256:" + sha256_file(record_path),
-                },
+                "artifacts": artifact_bindings,
+                "record": record_binding,
                 "publication_target": {
-                    "candidate_id": PUBLICATION_AUTHORITY[
-                        "candidate_id"
-                    ],
+                    "candidate_id": candidate_id,
                     "bvid": BVID,
                     "aid": 42,
                     "cid": OLD_CID,
@@ -292,18 +411,12 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                 "checks": {
                     check: {
                         "status": "PASS",
-                        "evidence": f"人工完成 {check}",
+                        "evidence": (
+                            f"{final_human_review._CHECK_ANCHORS[check]}"
+                            f" — {detail}"
+                        ),
                     }
-                    for check in (
-                        "final_burned_full_playback",
-                        "subtitle_audio",
-                        "silence_hallucination",
-                        "boundary_closure",
-                        "title_story",
-                        "cover_identity",
-                        "cover_story",
-                        "intro_timing",
-                    )
+                    for check, detail in check_details.items()
                 },
                 "subtitle_review_points": [
                     {
@@ -312,22 +425,22 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                         "final_video_end_ms": 15_000,
                         "expectation": "字幕与该段最终烧录人声一致",
                         "status": "PASS",
-                        "evidence": "播放最终烧录成片对应时间点",
+                        "evidence": (
+                            "00:00:13.000-00:00:15.000 — "
+                            + point_detail
+                        ),
                     }
                 ],
                 "cover_story_claims": [
                     {
-                        "claim": source_claim,
-                        "presentation": "SOURCE_FRAME",
+                        "claim": claim,
+                        "presentation": presentation,
                         "status": "PASS",
-                        "evidence": "人工逐像素核对最终封面",
-                    },
-                    {
-                        "claim": narrative,
-                        "presentation": "COVER_TEXT",
-                        "status": "PASS",
-                        "evidence": "人工核对最终封面文字",
-                    },
+                        "evidence": (
+                            f"FINAL_COVER/{presentation} — {detail}"
+                        ),
+                    }
+                    for claim, presentation, detail in claim_rows
                 ],
             }
         ],
@@ -890,6 +1003,33 @@ def test_same_bv_target_requires_valid_final_human_review_receipt(tmp_path):
 
     with pytest.raises(
         PlanInvalid, match="FINAL_HUMAN_REVIEW_ATTESTED_FILE_INVALID"
+    ):
+        validate_repair_publication_target(manifest, BVID)
+
+
+def test_same_bv_target_rejects_legacy_v1_human_review_receipt(
+    tmp_path,
+):
+    _manifest_path, manifest = _manifest(tmp_path)
+    attestation = manifest["package_attestation"][
+        "final_human_review"
+    ]
+    receipt_path = Path(attestation["path"])
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["schema_version"] = "lidousha-final-human-review.v1"
+    receipt_path.write_text(
+        json.dumps(receipt, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    attestation.update(
+        {
+            "sha256": sha256_file(receipt_path),
+            "bytes": receipt_path.stat().st_size,
+        }
+    )
+
+    with pytest.raises(
+        PlanInvalid, match="FINAL_HUMAN_REVIEW_SCHEMA_INVALID"
     ):
         validate_repair_publication_target(manifest, BVID)
 

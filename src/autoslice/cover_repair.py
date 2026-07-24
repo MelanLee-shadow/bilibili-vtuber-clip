@@ -1203,6 +1203,7 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
         valid_method = method == treatment or degraded_polish
         rendered_lines = generation.get("rendered_lines")
         screenshot_frame = generation.get("screenshot_frame")
+        reference_selection = generation.get("reference_selection")
         try:
             reference = Path(
                 str(generation.get("reference_image") or "")
@@ -1220,6 +1221,13 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
             and isinstance(screenshot_frame, dict)
             and isinstance(screenshot_frame.get("frame_ms"), int)
             and not isinstance(screenshot_frame.get("frame_ms"), bool)
+            and screenshot_frame.get("frame_ms") >= 0
+            and isinstance(reference_selection, dict)
+            and isinstance(reference_selection.get("best_ms"), int)
+            and not isinstance(reference_selection.get("best_ms"), bool)
+            and reference_selection.get("best_ms") >= 0
+            and screenshot_frame.get("frame_ms")
+            == reference_selection.get("best_ms")
             and _matches_sha256(
                 reference, str(generation.get("reference_sha256") or "")
             )

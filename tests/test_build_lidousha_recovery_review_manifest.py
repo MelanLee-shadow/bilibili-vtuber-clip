@@ -40,7 +40,7 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
         ),
         expected_registry_sha256=(
             "sha256:"
-            "be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
+                "0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
         ),
     )[candidate_id]
     title = expected_recovery_publish_title(authority)

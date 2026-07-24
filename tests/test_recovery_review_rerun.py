@@ -20,7 +20,7 @@ PUBLICATION_AUTHORITY_ASSET = (
     ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
 )
 PUBLICATION_AUTHORITY_SHA256 = (
-    "sha256:be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
+    "sha256:0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
 )
 
 

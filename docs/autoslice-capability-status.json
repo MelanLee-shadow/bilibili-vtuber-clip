@@ -1,6 +1,6 @@
 {
   "schema_version": "vtuber-slice-autoslice-capability-map.v2",
-  "updated_on": "2026-07-23",
+  "updated_on": "2026-07-24",
   "runtime_status": "LIVE_READBACK_REQUIRED",
   "runtime_authority": [
     "free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT",
@@ -20,7 +20,9 @@
     "title": "docs/pipeline/60-title.md",
     "cover": "docs/pipeline/70-cover.md",
     "package_delivery": "docs/pipeline/80-package-delivery.md",
-    "publish": "docs/pipeline/90-publish.md"
+    "final_human_review": "docs/pipeline/90-publish.md",
+    "publish": "docs/pipeline/90-publish.md",
+    "same_bv_repair": "docs/pipeline/90-publish.md"
   },
   "non_claims": [
     "This file does not prove a commit is deployed.",

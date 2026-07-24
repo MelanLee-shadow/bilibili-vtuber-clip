@@ -2002,6 +2002,182 @@ def test_exact_interval_replay_defers_fresh_cue_shape_failure(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "reason_code",
+    [
+        "MENTION_REQUIRED_TEXT_MISSING",
+        "MENTION_FORBIDDEN_TOKEN_SURVIVED",
+    ],
+)
+def test_exact_interval_replay_defers_isolated_mention_postconditions(
+    tmp_path,
+    reason_code,
+):
+    path = tmp_path / "chat-authority.json"
+    audit = {
+        "status": "FAILED",
+        "failures": [
+            {
+                "required": True,
+                "action": "replace_substring",
+                "reason_code": reason_code,
+                "local_windows": [
+                    {"start_ms": 85_660, "end_ms": 99_780}
+                ],
+                "mention_owner_resolution": {
+                    "status": "PASS",
+                    "cue_indexes": [38, 39, 41, 43, 44],
+                    "failure_reason_codes": [],
+                },
+            }
+        ],
+    }
+
+    pipeline._defer_source_truth_failure_for_redelivery(
+        spec={
+            "subtitle_redelivery_baseline": (
+                _redelivery_baseline_config_v2()
+            )
+        },
+        source_truth_audit=audit,
+        chat_authority_audit={"source_subtitle_truth_audit": audit},
+        chat_authority_path=path,
+    )
+
+    assert audit["status"] == "DEFERRED_TO_REDELIVERY_BASELINE"
+    assert audit["deferred_strategy"] == (
+        "exact_reviewed_interval_replay_then_reapply_source_truth"
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure_override", "baseline_override"),
+    [
+        (
+            {"required": False},
+            {},
+        ),
+        (
+            {"local_windows": []},
+            {},
+        ),
+        (
+            {
+                "reason_code": (
+                    "MENTION_POSTCONDITION_TARGET_NOT_ISOLATED"
+                )
+            },
+            {},
+        ),
+        (
+            {
+                "mention_owner_resolution": {
+                    "status": "BLOCK",
+                    "cue_indexes": [],
+                    "failure_reason_codes": [
+                        "MENTION_POSTCONDITION_TARGET_NOT_ISOLATED"
+                    ],
+                }
+            },
+            {},
+        ),
+        (
+            {},
+            {"source_sha256": "invalid"},
+        ),
+        (
+            {},
+            {"exact_interval_replay": False},
+        ),
+    ],
+)
+def test_exact_replay_mention_deferral_requires_complete_isolated_authority(
+    tmp_path,
+    failure_override,
+    baseline_override,
+):
+    path = tmp_path / "chat-authority.json"
+    failure = {
+        "required": True,
+        "action": "replace_substring",
+        "reason_code": "MENTION_REQUIRED_TEXT_MISSING",
+        "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+        "mention_owner_resolution": {
+            "status": "PASS",
+            "cue_indexes": [1],
+            "failure_reason_codes": [],
+        },
+        **failure_override,
+    }
+    baseline = {
+        **_redelivery_baseline_config_v2(),
+        **baseline_override,
+    }
+    audit = {"status": "FAILED", "failures": [failure]}
+
+    with pytest.raises(SystemExit, match="SOURCE_SUBTITLE_TRUTH_REQUIRED"):
+        pipeline._defer_source_truth_failure_for_redelivery(
+            spec={"subtitle_redelivery_baseline": baseline},
+            source_truth_audit=audit,
+            chat_authority_audit={
+                "source_subtitle_truth_audit": audit
+            },
+            chat_authority_path=path,
+        )
+
+    assert audit["status"] == "FAILED"
+    assert not path.exists()
+
+
+def test_exact_replay_does_not_defer_mixed_mention_failure_kinds(tmp_path):
+    path = tmp_path / "chat-authority.json"
+    owner = {
+        "status": "PASS",
+        "cue_indexes": [1],
+        "failure_reason_codes": [],
+    }
+    audit = {
+        "status": "FAILED",
+        "failures": [
+            {
+                "required": True,
+                "action": "replace_substring",
+                "reason_code": "MENTION_REQUIRED_TEXT_MISSING",
+                "local_windows": [
+                    {"start_ms": 1_000, "end_ms": 2_000}
+                ],
+                "mention_owner_resolution": owner,
+            },
+            {
+                "required": True,
+                "action": "replace_substring",
+                "reason_code": "REPLACE_SUBSTRING_OWNER_AMBIGUOUS",
+                "local_windows": [
+                    {"start_ms": 2_000, "end_ms": 3_000}
+                ],
+                "mention_owner_resolution": owner,
+            },
+        ],
+    }
+
+    with pytest.raises(SystemExit, match="SOURCE_SUBTITLE_TRUTH_REQUIRED"):
+        pipeline._defer_source_truth_failure_for_redelivery(
+            spec={
+                "subtitle_redelivery_baseline": (
+                    _redelivery_baseline_config_v2()
+                )
+            },
+            source_truth_audit=audit,
+            chat_authority_audit={
+                "source_subtitle_truth_audit": audit
+            },
+            chat_authority_path=path,
+        )
+
+    assert audit["status"] == "FAILED"
+    assert not path.exists()
+
+
 def test_exact_interval_replay_grant_must_be_literal_boolean(tmp_path):
     path = tmp_path / "chat-authority.json"
     audit = {

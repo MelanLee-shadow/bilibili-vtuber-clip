@@ -14,6 +14,10 @@ from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
 )
 from src.autoslice.chat_authority import recording_start_epoch_ms
+from src.autoslice.producer_boundary_owner_contract import (
+    freeze_required_boundary_owner_contract,
+    redelivery_baseline_boundary_owner,
+)
 from src.autoslice.talk_lane import (
     _bound_boundary_retry_source_end_ms,
 )
@@ -1453,8 +1457,12 @@ def test_initial_producer_cover_accepts_hash_bound_source_to_delivery_copy(tmp_p
     assert not cover_repair_needed(fx["date"], rec)
 
 
-def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
-    tmp_path, monkeypatch
+def _initial_screenshot_cover_proof_fixture(
+    tmp_path,
+    monkeypatch,
+    *,
+    screenshot_frame,
+    reference_selection,
 ):
     fx = _cover_binding_fixture(tmp_path, monkeypatch)
     source_cover = fx["generated_cover"]
@@ -1472,11 +1480,14 @@ def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
         "fallback_used": False,
         "reference_image": str(reference),
         "reference_sha256": fx["digest"](reference),
-        "screenshot_frame": {"frame_ms": 21_500},
         "rendered_lines": ["双人截图"],
         "final_cover": str(source_cover),
         "final_cover_sha256": expected_cover,
     }
+    if screenshot_frame is not None:
+        generation["screenshot_frame"] = screenshot_frame
+    if reference_selection is not None:
+        generation["reference_selection"] = reference_selection
     generation["route_decision"] = build_cover_route_decision(
         selected_treatment="screenshot_direct",
         selected_rationale="hash-bound real stream frame has both participants",
@@ -1521,9 +1532,59 @@ def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
         "cover_generation": generation,
         "delivered": str(fx["mp4"]),
     }
+    return fx, rec, reference
 
+
+def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
+    tmp_path, monkeypatch
+):
+    fx, rec, reference = _initial_screenshot_cover_proof_fixture(
+        tmp_path,
+        monkeypatch,
+        screenshot_frame={"frame_ms": 21_500},
+        reference_selection={"best_ms": 21_500},
+    )
     assert not cover_repair_needed(fx["date"], rec)
     reference.write_bytes(b"tampered")
+    assert cover_repair_needed(fx["date"], rec)
+
+
+@pytest.mark.parametrize(
+    ("screenshot_frame", "reference_selection"),
+    [
+        (None, {"best_ms": 21_500}),
+        ({}, {"best_ms": 21_500}),
+        ({"frame_ms": True}, {"best_ms": 21_500}),
+        ({"frame_ms": 21_500}, None),
+        ({"frame_ms": 21_500}, {}),
+        ({"frame_ms": 21_500}, {"best_ms": True}),
+        ({"frame_ms": -1}, {"best_ms": -1}),
+        ({"frame_ms": 21_500}, {"best_ms": 21_501}),
+    ],
+    ids=[
+        "missing-screenshot-proof",
+        "missing-screenshot-frame-ms",
+        "boolean-screenshot-frame-ms",
+        "missing-reference-selection",
+        "missing-reference-best-ms",
+        "boolean-reference-best-ms",
+        "negative-frame-selection",
+        "frame-selection-mismatch",
+    ],
+)
+def test_initial_screenshot_cover_frame_selection_binding_fails_closed(
+    tmp_path,
+    monkeypatch,
+    screenshot_frame,
+    reference_selection,
+):
+    fx, rec, _reference = _initial_screenshot_cover_proof_fixture(
+        tmp_path,
+        monkeypatch,
+        screenshot_frame=screenshot_frame,
+        reference_selection=reference_selection,
+    )
+
     assert cover_repair_needed(fx["date"], rec)
 
 
@@ -6546,6 +6607,176 @@ def test_unexpected_song_crash_preserves_retry_reconstruction(tmp_path, monkeypa
     assert state["pending_song"][0]["visual_song_evidence"]["frame_ms"] == 205_000
 
 
+def _write_test_boundary_owner_contract(
+    *,
+    candidate_root: Path,
+    candidate_id: str,
+    spec_path: Path,
+) -> None:
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    durations = [
+        int(piece["end_ms"]) - int(piece["start_ms"])
+        for piece in spec["pieces"]
+    ]
+    audit: dict[str, object] = {}
+    freeze_required_boundary_owner_contract(
+        spec=spec,
+        durations=durations,
+        chat_authority_audit=audit,
+        required_boundary_owners=[],
+    )
+    (candidate_root / f"{candidate_id}.chat-authority.json").write_text(
+        json.dumps(audit, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def test_redelivery_baseline_is_text_authority_not_boundary_owner():
+    owners = redelivery_baseline_boundary_owner(
+        {
+            "candidate_id": "candidate-a",
+            "subtitle_redelivery_baseline": {
+                "schema_version": "subtitle-redelivery-baseline.v2",
+                "exact_interval_replay": True,
+                "absolute_source_start_ms": 100_000,
+                "absolute_source_end_ms": 130_000,
+                "source_sha256": "sha256:" + "a" * 64,
+            },
+            "pieces": [
+                {
+                    "start_ms": 100_000,
+                    "end_ms": 130_000,
+                    "source_media_sha256": "sha256:" + "a" * 64,
+                }
+            ],
+        },
+        [30_000],
+    )
+
+    assert owners == []
+
+
+@pytest.mark.parametrize("drift_kind", ["scope", "owner_set"])
+def test_boundary_retry_frozen_scope_or_owner_drift_is_rejected(
+    drift_kind,
+):
+    initial_spec = {
+        "candidate_id": "candidate-a",
+        "semantic_start_ms": 100_000,
+        "semantic_end_ms": 110_000,
+        "boundary_repair_extend_cap_ms": 30_000,
+        "pieces": [{"start_ms": 95_000, "end_ms": 125_000}],
+    }
+    owners = [
+        {
+            "owner_kind": "source_subtitle_truth",
+            "owner_id": "story-truth",
+            "required": True,
+            "source_start_ms": 104_000,
+            "source_end_ms": 106_000,
+            "local_windows": [{"start_ms": 9_000, "end_ms": 11_000}],
+        }
+    ]
+    initial_audit: dict[str, object] = {}
+    freeze_required_boundary_owner_contract(
+        spec=initial_spec,
+        durations=[30_000],
+        chat_authority_audit=initial_audit,
+        required_boundary_owners=owners,
+    )
+    expected = initial_audit["frozen_boundary_owner_contract"]
+
+    retry_spec = {
+        **initial_spec,
+        "pieces": [{"start_ms": 95_000, "end_ms": 140_000}],
+        "boundary_repair_extend_cap_ms": 60_000,
+        "boundary_retry_frozen_owner_contract": expected,
+    }
+    retry_owners = [dict(owners[0])]
+    if drift_kind == "scope":
+        retry_spec["semantic_end_ms"] = 111_000
+    else:
+        retry_owners[0] = {
+            **retry_owners[0],
+            "owner_id": "later-candidate-truth",
+        }
+
+    with pytest.raises(
+        RuntimeError,
+        match="BOUNDARY_RETRY_OWNER_SET_DRIFT",
+    ):
+        freeze_required_boundary_owner_contract(
+            spec=retry_spec,
+            durations=[45_000],
+            chat_authority_audit={},
+            required_boundary_owners=retry_owners,
+        )
+
+
+def test_boundary_retry_only_widening_witness_context_preserves_owner_set():
+    initial_spec = {
+        "candidate_id": "candidate-a",
+        "semantic_start_ms": 100_000,
+        "semantic_end_ms": 110_000,
+        "boundary_repair_extend_cap_ms": 30_000,
+        "pieces": [{"start_ms": 95_000, "end_ms": 125_000}],
+    }
+    owners = [
+        {
+            "owner_kind": "source_subtitle_truth",
+            "owner_id": "story-truth",
+            "required": True,
+            "source_start_ms": 104_000,
+            "source_end_ms": 106_000,
+            "local_windows": [{"start_ms": 9_000, "end_ms": 11_000}],
+        }
+    ]
+    initial_audit: dict[str, object] = {}
+    freeze_required_boundary_owner_contract(
+        spec=initial_spec,
+        durations=[30_000],
+        chat_authority_audit=initial_audit,
+        required_boundary_owners=[dict(owners[0])],
+    )
+    retry_spec = {
+        **initial_spec,
+        "pieces": [{"start_ms": 95_000, "end_ms": 140_000}],
+        "boundary_repair_extend_cap_ms": 60_000,
+        "boundary_retry_frozen_owner_contract": initial_audit[
+            "frozen_boundary_owner_contract"
+        ],
+    }
+    retry_audit: dict[str, object] = {}
+
+    freeze_required_boundary_owner_contract(
+        spec=retry_spec,
+        durations=[45_000],
+        chat_authority_audit=retry_audit,
+        required_boundary_owners=[dict(owners[0])],
+    )
+
+    frozen = retry_audit["frozen_boundary_owner_contract"]
+    assert (
+        frozen["boundary_retry_owner_contract_verification"]["status"]
+        == "PASS"
+    )
+    assert frozen["owner_set_sha256"] == (
+        initial_audit["frozen_boundary_owner_contract"][
+            "owner_set_sha256"
+        ]
+    )
+
+
+def test_boundary_retry_owner_set_drift_is_terminal_pipeline_contract():
+    classified = runner.classify_talk_failure(
+        "BOUNDARY_RETRY_OWNER_SET_DRIFT: owner id/window changed"
+    )
+
+    assert classified["failure_kind"] == "pipeline_contract"
+    assert classified["failure_stage"] == "boundary_retry_owner_contract"
+    assert classified["failure_recoverable"] is False
+
+
 def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monkeypatch):
     date = "2026-07-10"
     base = tmp_path / "autoslice"
@@ -6624,6 +6855,11 @@ def test_talk_boundary_failure_widens_original_source_and_retries(tmp_path, monk
                     }
                 ),
                 encoding="utf-8",
+            )
+            _write_test_boundary_owner_contract(
+                candidate_root=candidate_root,
+                candidate_id=cid,
+                spec_path=Path(command[command.index("--spec") + 1]),
             )
             sink.write(
                 "BOUNDARY_CONTEXT_EXHAUSTED: no closure in current source context; "
@@ -6757,6 +6993,11 @@ def test_source_witness_reserve_retry_materializes_1573_scope_once(
                 ),
                 encoding="utf-8",
             )
+            _write_test_boundary_owner_contract(
+                candidate_root=candidate_root,
+                candidate_id=cid,
+                spec_path=Path(command[command.index("--spec") + 1]),
+            )
             sink.write(
                 "BOUNDARY_CONTEXT_EXHAUSTED: "
                 '["BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE"] '
@@ -6844,6 +7085,11 @@ def test_talk_boundary_context_exhausted_retries_once_then_stops(
                     }
                 ),
                 encoding="utf-8",
+            )
+            _write_test_boundary_owner_contract(
+                candidate_root=candidate_root,
+                candidate_id=cid,
+                spec_path=Path(command[command.index("--spec") + 1]),
             )
         kwargs["stdout"].write(
             "BOUNDARY_CONTEXT_EXHAUSTED: no closed ending after expanded context; "

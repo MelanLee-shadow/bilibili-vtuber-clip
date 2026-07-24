@@ -73,6 +73,221 @@ def test_deferred_exact_replay_rejects_missing_truth_id() -> None:
     assert audit["missing_truth_ids"] == ["reviewed-cue-shape"]
 
 
+def test_deferred_replay_does_not_require_post_boundary_context_witness() -> None:
+    pre = _deferred_exact_truth_audit()
+    pre["deferred_strategy"] = (
+        "reviewed_text_restore_then_reapply_source_truth"
+    )
+    pre["failures"] = [
+        {
+            "truth_id": "story-content",
+            "boundary_role": "story_content",
+            "source_start_ms": 2_050_000,
+            "source_end_ms": 2_055_000,
+        },
+        {
+            "truth_id": "next-sc-nickname",
+            "boundary_role": "next_topic_witness",
+            "source_start_ms": 2_062_300,
+            "source_end_ms": 2_064_990,
+        },
+    ]
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=pre,
+        baseline_audit={
+            "status": "APPLIED",
+            "current_source_interval": {
+                "absolute_source_start_ms": 1_863_550,
+                "absolute_source_end_ms": 2_056_480,
+            },
+        },
+        post_truth_audit={
+            "status": "ALREADY_SATISFIED",
+            "satisfied": [{"truth_id": "story-content"}],
+        },
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["required_truth_ids"] == ["story-content"]
+    assert audit["context_only_truth_ids"] == ["next-sc-nickname"]
+    assert audit["missing_truth_ids"] == []
+
+
+def test_deferred_replay_passes_when_only_failure_is_post_boundary_context() -> None:
+    pre = _deferred_exact_truth_audit()
+    pre["deferred_strategy"] = (
+        "reviewed_text_restore_then_reapply_source_truth"
+    )
+    pre["failures"] = [
+        {
+            "truth_id": "next-sc-nickname",
+            "boundary_role": "next_topic_witness",
+            "source_start_ms": 2_062_300,
+            "source_end_ms": 2_064_990,
+        }
+    ]
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=pre,
+        baseline_audit={
+            "status": "APPLIED",
+            "current_source_interval": {
+                "absolute_source_start_ms": 1_863_550,
+                "absolute_source_end_ms": 2_056_480,
+            },
+        },
+        post_truth_audit={
+            "status": "APPLIED",
+            "satisfied": [
+                {"truth_id": "unrelated-story-truth"}
+            ],
+        },
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["reason_code"] == (
+        "ALL_DEFERRED_TRUTH_CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+    )
+    assert audit["required_truth_ids"] == []
+    assert audit["context_only_truth_ids"] == ["next-sc-nickname"]
+    assert audit["missing_truth_ids"] == []
+
+
+def test_deferred_replay_treats_ordinary_post_context_truth_as_context_only() -> None:
+    pre = _deferred_exact_truth_audit()
+    pre["deferred_strategy"] = (
+        "reviewed_text_restore_then_reapply_source_truth"
+    )
+    pre["failures"] = [
+        {
+            "truth_id": "ordinary-later-story-truth",
+            "boundary_role": "story_content",
+            "source_start_ms": 2_062_300,
+            "source_end_ms": 2_064_990,
+        }
+    ]
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=pre,
+        baseline_audit={
+            "status": "APPLIED",
+            "current_source_interval": {
+                "absolute_source_start_ms": 1_863_550,
+                "absolute_source_end_ms": 2_056_480,
+            },
+        },
+        post_truth_audit={
+            "status": "NO_RELEVANT_INTERVAL",
+            "satisfied": [],
+        },
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["required_truth_ids"] == []
+    assert audit["context_only_truth_ids"] == [
+        "ordinary-later-story-truth"
+    ]
+    assert audit["straddling_truth_ids"] == []
+
+
+@pytest.mark.parametrize(
+    ("source_start_ms", "source_end_ms"),
+    [
+        (1_862_000, 1_864_000),
+        (2_056_000, 2_058_000),
+        (1_862_000, 2_058_000),
+    ],
+)
+def test_deferred_replay_rejects_truth_straddling_final_interval(
+    source_start_ms: int,
+    source_end_ms: int,
+) -> None:
+    pre = _deferred_exact_truth_audit()
+    pre["failures"] = [
+        {
+            "truth_id": "straddling-truth",
+            "boundary_role": "story_content",
+            "source_start_ms": source_start_ms,
+            "source_end_ms": source_end_ms,
+        }
+    ]
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=pre,
+        baseline_audit={
+            "status": "APPLIED",
+            "application_strategy": "exact_reviewed_interval_replay",
+            "current_source_interval": {
+                "absolute_source_start_ms": 1_863_550,
+                "absolute_source_end_ms": 2_056_480,
+            },
+        },
+        post_truth_audit={
+            "status": "ALREADY_SATISFIED",
+            "satisfied": [{"truth_id": "straddling-truth"}],
+        },
+    )
+
+    assert audit["status"] == "FAILED"
+    assert audit["reason_code"] == (
+        "DEFERRED_TRUTH_STRADDLES_FINAL_DELIVERY"
+    )
+    assert audit["straddling_truth_ids"] == ["straddling-truth"]
+    assert audit["context_only_truth_ids"] == []
+
+
+def test_deferred_replay_rejects_empty_failure_requirement() -> None:
+    pre = _deferred_exact_truth_audit()
+    pre["failures"] = []
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=pre,
+        baseline_audit={
+            "status": "APPLIED",
+            "application_strategy": "exact_reviewed_interval_replay",
+        },
+        post_truth_audit={
+            "status": "ALREADY_SATISFIED",
+            "satisfied": [],
+        },
+    )
+
+    assert audit["status"] == "FAILED"
+    assert audit["reason_code"] == "DEFERRED_TRUTH_REQUIREMENT_EMPTY"
+
+
+def test_deferred_replay_keeps_overlapping_next_topic_truth_required() -> None:
+    pre = _deferred_exact_truth_audit()
+    pre["failures"] = [
+        {
+            "truth_id": "overlapping-witness",
+            "boundary_role": "next_topic_witness",
+            "source_start_ms": 2_056_000,
+            "source_end_ms": 2_058_000,
+        }
+    ]
+    audit = finalization._audit_deferred_exact_replay_reverification(
+        pre_truth_audit=pre,
+        baseline_audit={
+            "status": "APPLIED",
+            "application_strategy": "exact_reviewed_interval_replay",
+            "current_source_interval": {
+                "absolute_source_start_ms": 1_863_550,
+                "absolute_source_end_ms": 2_056_480,
+            },
+        },
+        post_truth_audit={
+            "status": "ALREADY_SATISFIED",
+            "satisfied": [],
+        },
+    )
+
+    assert audit["status"] == "FAILED"
+    assert audit["reason_code"] == (
+        "DEFERRED_TRUTH_STRADDLES_FINAL_DELIVERY"
+    )
+    assert audit["required_truth_ids"] == []
+    assert audit["context_only_truth_ids"] == []
+    assert audit["straddling_truth_ids"] == ["overlapping-witness"]
+    assert audit["missing_truth_ids"] == []
+
+
 def test_rebase_source_truth_audit_moves_resolved_projection_to_padded_axis():
     audit = {
         "applied": [

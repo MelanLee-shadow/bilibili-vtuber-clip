@@ -58,6 +58,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - `screenshot_direct` / `screenshot_polish` 必须有官方源 SHA 绑定的 reference、实际 final cover
   文件与 SHA、逐字 rendered text；指定双人帧还必须匹配 reference override 的 candidate、
   source time、participant IDs 与 required treatment。截图路线不要求、也不得伪造 AI model 证据。
+- screenshot proof 的 `screenshot_frame.frame_ms` 与
+  `reference_selection.best_ms` 都必须是内容时间轴上的非负、非 bool 整数且精确相等；缺字段、布尔值、
+  时间轴错位或任意 mismatch 都 fail closed。producer 写入与 cover repair 消费的是同一
+  reference selection，禁止用“看起来是同一帧”的图片哈希或默认 `0ms` 代替时间绑定。
 - 关系型 `screenshot_direct` 只允许
   `HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR`：reference 必须整帧、未裁切、未旋转、
   未 AI 修改，使用 deterministic `ImageOps.contain` 进入海报，人物落在中央 4:3 安全区，

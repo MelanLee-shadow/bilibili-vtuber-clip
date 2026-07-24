@@ -28,7 +28,7 @@
   `finished_review_package_no_upload_pending_human_review` / `upload_allowed=false`
   是机器打包状态，不是发布许可。机器 audit 与最终感知复核是两道独立门，不能用其中一面
   替代另一面。
-- `lidousha-final-human-review.v1` 只接受
+- `lidousha-final-human-review.v2` 只接受
   `scope=same_bv_repair`、`status=ACCEPTED_FOR_SAME_BV`。`reviewer_kind` 可为
   `human_owner`、`human_delegate` 或 `delegated_root_agent`，但必须与真实观看者一致：
   owner 固定 `reviewed_by=Ivan`，本项目 root agent 固定
@@ -40,8 +40,11 @@
   expectation 并提供 PASS/evidence；八个总检查也各自需要非空具体 evidence，裸 PASS 或任意
   泛化检查表无效。672 必须把 0:13“前半无声、后半有声、全段无我草”和 1:48“整条 L 问句
   无声并删除”作为两个独立 exact point 验收。
-- receipt 同时绑定 package review manifest/audit、record、reviewed title、原 BVID/AID/CID
-  publication target 和 final video/subtitle/cover。封面 claims 集合只能精确投影 record
+- receipt 同时绑定 create-only 提交的
+  `lidousha-final-human-review-evidence.v2` 路径、SHA-256 与字节数，以及 package review
+  manifest/audit、record、reviewed title、原 BVID/AID/CID publication target 和 final
+  video/subtitle/cover。validator 必须重读 evidence 文件，验证其仍为完成状态并逐字段重建
+  receipt；路径、字节或内容漂移都拒绝。封面 claims 集合只能精确投影 record
   StoryContract `cover_reference_authority` 的 `source_visible_claims → SOURCE_FRAME` 与
   `narrative_presentation → COVER_TEXT`，不能让 reviewer 自行换成宽泛故事摘要。
 - receipt **仅准入 exact same-BV repair**。它不会把 `upload_allowed` 改成 true，不是
@@ -55,6 +58,18 @@
   封面声明或包内文件
   任一漂移，`verify`、`repair-plan`、`repair-run`、`repair-status` 都必须在 adapter 构造或
   远端变更前拒绝。不得编辑 receipt 后只更新 manifest hash 来“续期”旧人工结论。
+- receipt 只能由 `scripts/build_lidousha_final_human_review.py` 从完成后的
+  `lidousha-final-human-review-evidence.v2` 构建，禁止手写 PASS receipt。先在最终包和 current
+  package audit 冻结后运行 `--prepare-evidence-template`；模板必须绑定 committed review
+  contract、review manifest、current audit，以及每项 record/video/subtitle/cover 的当前
+  SHA-256。实际 reviewer 完整播放后再如实填写 reviewer 元数据和每一条结构化
+  `{anchor,detail}` observation；placeholder、裸 PASS、编号式“均无异常”、复述 expectation、
+  跨点复用或 NFKC/去编号标点后近重复的 detail 均拒绝。
+- 用同一脚本和完成后的 evidence 构建 receipt 时，builder 必须重跑 canonical package audit、
+  重验所有 byte bindings 与正式 receipt validator，并以 create-only 方式提交输出；任何输入
+  漂移都要求重做 evidence/复核，不能自动改绑。若输出名已提交但临时清理或目录 fsync 失败，
+  CLI 返回 `COMMITTED_BUT_DURABILITY_UNCONFIRMED`（rc=3）；此时不得重跑覆盖，须先检查已存在
+  receipt 的真实字节和目录持久性。
 
 ## 新投稿流程
 
@@ -71,9 +86,10 @@
 ## 已发稿修复：只改同一个 BV
 
 字幕、边界、片头、视频字节、标题、封面或 tags 的修复都编辑原稿，不新建 BV、不删稿。
-唯一入口是 `scripts/authorized_upload.py repair-plan / repair-run / repair-status`，核心状态机
-在 `src/autoslice/same_bv_repair.py`。legacy `swap_video_p.py`、`bili_archive_tool.py replace`、
-裸 API 和手工 append/edit 仍禁止。
+唯一入口是
+`scripts/authorized_upload.py repair-plan / repair-run / repair-status / repair-verify-live`，
+核心状态机在 `src/autoslice/same_bv_repair.py`。legacy `swap_video_p.py`、
+`bili_archive_tool.py replace`、裸 API 和手工 append/edit 仍禁止。
 
 执行前必须确认当前 source 已部署到 `free`，目标修复包通过本页发布准入，并先完成真实
 dry plan；本地存在代码/测试不等于 production 已可用，也不等于五条线上稿件已经修复。
@@ -84,16 +100,22 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
    selection contract 的 candidate 集合完全相等；五项整包未闭合时，不得先为已完成子集建立
    repair plan；
 2. 冻结最终包，重建 pending-human review manifest，运行 current canonical package audit；
-3. 被如实命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节并签出
-   `lidousha-final-human-review.v1`；只有真的完成观看后才可出 receipt；
+3. 先用 final-human-review builder 的 `--prepare-evidence-template` 冻结 v2 bindings；被如实
+   命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节、填写实际
+   observations，再由 builder create-only 签出 `lidousha-final-human-review.v2`；只有真的
+   完成观看后才可出 receipt；
 4. `make-manifest --final-human-review ...` 同时冻结 package/audit/receipt、publication
    authority 和 Ivan 的修复授权原话；缺 receipt 的 recovery manifest 直接拒绝；
 5. `verify --manifest ...` 重跑 current audit、hash 与 receipt validator；
-6. 先 `repair-plan --dry-run` 读真实 Creator/public/section 单 P 事实；确认后才运行
+6. 先 `repair-plan --dry-run`；它必须先用显式 biliup cookie 对目标 BVID 运行只读
+   `biliup show` 登录 canary，再读真实 Creator/public/section 单 P 事实。确认后才运行
    `repair-plan` create-only 落 plan/journal；
 7. 先 `repair-status`，再 `repair-run --dry-run`；最后只用 `repair-run` 执行或幂等 resume；
-8. 每次 resume 前后均可用 `repair-status` 重验本地 plan/journal/receipt 闭包；最终仍须以
-   Creator/public/public tags/exact section 四面读回进入 `VERIFIED`，status 本身不替代公开验收。
+8. 每次 resume 前后均可用 `repair-status` 重验**本地** plan/journal/receipt 闭包；它不访问
+   线上，也不能证明当前公开态。`repair-run` 进入 `VERIFIED` 后还必须运行
+   `repair-verify-live --out <same-bv-repair-completed.json>`，重新读取
+   Creator/public/public tags/exact section；只有 fresh snapshot 与 journal 的 VERIFIED
+   snapshot 精确相等并 create-only 生成 completed sidecar，才算公开验收闭环。
 
 同 BV `repair-plan` 只接受 authorized manifest 顶层 hash-bound
 `recovery-same-bv-publication-authority.v1`。该 authority 必须由包内 record 与 review item
@@ -108,9 +130,11 @@ same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie
 `bili_jct` 都在网络请求前 fail closed，且错误不得回显 secret。`biliup append` 另由显式
 `--biliup-cookie-json` 提供 CLI 所需的 top-level `cookie_info` 文件，不能把 app 嵌套形态暗中
 改写后复用。当前默认分别是 API `--cookie-json /opt/bilive/app/cookie.json` 与 CLI
-`--biliup-cookie-json /opt/bilive/app/tmp_manual_upload/biliup_cookies.json`；通过 parser 只
-证明文件结构，执行前仍必须读回已部署 CLI/模块版本并验证当前登录态，本地双形态测试不能
-代替 production login。
+`--biliup-cookie-json /opt/bilive/app/tmp_manual_upload/biliup_cookies.json`。parser 只证明
+文件结构；`repair-plan`、`repair-run` 与 `repair-verify-live` 在构造 adapter 前还必须对目标
+BVID 运行只读 `biliup -u <cookie> show <BVID>` canary。canary 非零只返回经过清洗的拒绝原因，
+不得写 `APPEND_INTENT`、plan、completed sidecar 或任何远端状态；本地双形态测试不能代替
+production login。
 
 1. `repair-plan --manifest … --bvid … --out … --journal …` 先重跑 manifest/audit，再只读
    Creator/public/exact section；只接受同 BVID/aid、公开 state=0、Creator 恰一 P、public 与
@@ -122,8 +146,9 @@ same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie
    `same-bv-repair-journal.v1`；截断、改写、非法跳转、同 BVID 被另一 plan 占用或 artifact
    漂移都拒绝执行。
 3. 先用 `repair-status` 和 `repair-run --dry-run` 查看本地状态/下一动作；两者不做远端写。
-   真执行只用 `repair-run`，它可以跨进程反复 resume，返回 `0=VERIFIED`、
-   `6=仍在安全等待/推进`、`5=BLOCKED_DRIFT`。
+   其中 status 完全不访问远端，dry-run 仍须通过只读 login canary。真执行只用 `repair-run`，
+   它可以跨进程反复 resume，返回 `0=VERIFIED`、`6=仍在安全等待/推进`、
+   `5=BLOCKED_DRIFT`。多稿修复必须在同一 upload lock 下逐稿顺序执行，不得并发 append/swap。
 4. 状态为 `PLANNED → APPEND_INTENT → APPEND_AMBIGUOUS → TWO_P_READY →
    SWAP_RETRYABLE → CREATOR_SINGLE_NEW → PUBLIC_PENDING → VERIFIED`；任一确定性身份/
    topology/metadata 漂移进入终态 `BLOCKED_DRIFT`。
@@ -136,6 +161,11 @@ same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie
 7. `PUBLIC_PENDING` 只轮询瞬时不可用/未传播的 public、tags 与 section；只有
    Creator/public/exact section 的 CID、title/desc/tid/copyright/source/tags/cover 与 section
    episode title 全部一致才进入幂等终态 `VERIFIED`。
+8. `VERIFIED` 是 journal 记录的那次线上快照，不代表以后仍未漂移。随后必须运行
+   `repair-verify-live`：它先重验 plan/manifest/journal，再做只读 login canary 和四面 fresh
+   observe，要求规范化 snapshot 与终态 journal row 完全相等。成功后以
+   `same-bv-repair-completed.v1` 原子 create-only 写证；目标已存在、线上漂移或任一面不可用
+   都拒绝且不覆盖旧证据。
 
 同 BV replacement 的完成证据必须持久化并同时证明：
 
@@ -147,13 +177,16 @@ same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie
 6. 目标 section 中 membership count 恰为 1、episode title 与最终发布标题精确一致，
    public season title/display 正常；
 7. Creator/public 不存在本次修复产生的第二个重复 BVID；
-8. replacement/public/season evidence 与 ledger 已入库并 commit。
+8. replacement/public/season evidence、终态 journal row 与 fresh
+   `same-bv-repair-completed.v1` sidecar 已入库并 commit。
 
 `scripts/swap_video_p.py` 只完成 P 置换，不单独证明上述八项，永远不得把它当作发布闭环入口。
 
 ## 公开验收
 
-只有以下四面同时匹配才记 ledger `rc=0` 和 completed sidecar：
+`repair-run` 只有在以下四面同时匹配时才记终态 journal `VERIFIED`；随后
+`repair-verify-live` 必须再次观察同样四面，fresh snapshot 精确一致后才 create-only 生成
+completed sidecar：
 
 - B 站 public view（可见、最终 CID/标题/简介/分区/版权/source/合集）；
 - public tags；

@@ -14,9 +14,14 @@ import hashlib
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.autoslice.cover_route_evidence import validate_cover_route_decision
 from src.autoslice.recovery_title_authority import (

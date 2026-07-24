@@ -21,6 +21,9 @@ from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
     required_source_context_end_ms,
 )
+from src.autoslice.producer_boundary_owner_contract import (
+    validate_frozen_boundary_owner_contract,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -70,6 +73,26 @@ def _bound_boundary_retry_source_end_ms(
         )
     except (TypeError, ValueError):
         return None
+
+
+def _load_boundary_retry_owner_contract(
+    *,
+    out_root: Path,
+    candidate_id: str,
+) -> dict[str, object]:
+    """Load the first attempt's hash-bound owner set before widening context."""
+
+    chat_path = (
+        out_root
+        / candidate_id
+        / f"{candidate_id}.chat-authority.json"
+    )
+    document, _digest = _read_final_review_surface(chat_path)
+    if not isinstance(document, dict):
+        raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
+    return validate_frozen_boundary_owner_contract(
+        document.get("frozen_boundary_owner_contract")
+    )
 
 
 def danmaku_hints(xml_path: Path | None) -> str | None:
@@ -898,7 +921,13 @@ def classify_talk_failure(attempt_output: str) -> dict:
     nonempty = [line.strip() for line in tail.splitlines() if line.strip()]
     message = nonempty[-1][:1200] if nonempty else "producer exited without diagnostic"
     failure_evidence: dict[str, object] | None = None
-    if "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
+    if "BOUNDARY_RETRY_OWNER_SET_DRIFT" in tail:
+        kind, stage, recoverable = (
+            "pipeline_contract",
+            "boundary_retry_owner_contract",
+            False,
+        )
+    elif "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
         kind, stage, recoverable = "content_duration", "boundary_resolution", False
     elif "BOUNDARY_CONTEXT_EXHAUSTED" in tail:
         kind, stage, recoverable = (
@@ -1266,6 +1295,149 @@ def _talk_filler_rejection(
     }
 
 
+def _run_talk_producer_with_boundary_context_retry(
+    *,
+    date: str,
+    item: dict,
+    candidate_id: str,
+    spec: dict,
+    out_root: Path,
+    spec_path: Path,
+    log_path: Path,
+    cmd: list[str],
+):
+    boundary_context_retries = 0
+    retry_owner_contract_sha256: str | None = None
+
+    def run_producer():
+        speaker_review_state = _runner._speaker_review_manifest_state(
+            out_root / candidate_id
+        )
+        attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
+        with open(log_path, "a", encoding="utf-8") as sink:
+            completed = subprocess.run(
+                cmd,
+                check=False,
+                stdout=sink,
+                stderr=subprocess.STDOUT,
+                timeout=5400,
+                cwd=str(_runner.REPO_ROOT),
+                env=_runner.child_env_for_date(date),
+            )
+        with open(log_path, "rb") as source:
+            source.seek(attempt_offset)
+            attempt_output = source.read().decode("utf-8", "replace")
+        return completed, attempt_output, speaker_review_state
+
+    completed, attempt_output, speaker_review_state = run_producer()
+    first_tail = attempt_output[-4000:]
+    failure_evidence = _boundary_context_failure_evidence(first_tail)
+    retry_scope = failure_evidence.get("retry_scope")
+    should_retry = bool(
+        completed.returncode != 0
+        and (
+            "BOUNDARY_UNREPAIRABLE" in first_tail
+            or "BOUNDARY_CONTEXT_EXHAUSTED" in first_tail
+        )
+        and retry_scope
+        in {
+            "same_topic_continues",
+            "source_witness_reserve",
+        }
+    )
+    if not should_retry:
+        return (
+            completed,
+            attempt_output,
+            speaker_review_state,
+            boundary_context_retries,
+            retry_owner_contract_sha256,
+        )
+
+    piece = spec["pieces"][-1]
+    scoped_retry_end = _bound_boundary_retry_source_end_ms(
+        out_root=out_root,
+        candidate_id=candidate_id,
+        repair_cap_ms=_runner.BOUNDARY_REPAIR_RETRY_CAP_MS,
+    )
+    retry_end = scoped_retry_end or piece["end_ms"]
+    current_cap = int(spec["boundary_repair_extend_cap_ms"])
+    source_context_already_sufficient = bool(
+        scoped_retry_end is not None and piece["end_ms"] >= scoped_retry_end
+    )
+    source_context_reachable = bool(
+        scoped_retry_end is not None
+        and (
+            not item["seg_dur_ms"]
+            or scoped_retry_end <= item["seg_dur_ms"]
+        )
+    )
+    retry_allowed = bool(
+        source_context_reachable
+        and _runner.BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap
+        and (
+            retry_end > piece["end_ms"]
+            or source_context_already_sufficient
+        )
+    )
+    if not retry_allowed:
+        return (
+            completed,
+            attempt_output,
+            speaker_review_state,
+            boundary_context_retries,
+            retry_owner_contract_sha256,
+        )
+    try:
+        frozen_owner_contract = _load_boundary_retry_owner_contract(
+            out_root=out_root,
+            candidate_id=candidate_id,
+        )
+    except RuntimeError:
+        drift_marker = (
+            "BOUNDARY_RETRY_OWNER_SET_DRIFT: missing or invalid "
+            "first-attempt frozen owner contract; refusing widened "
+            "context retry"
+        )
+        with open(log_path, "a", encoding="utf-8") as sink:
+            sink.write("\n" + drift_marker + "\n")
+        attempt_output += "\n" + drift_marker + "\n"
+    else:
+        retry_owner_contract_sha256 = str(
+            frozen_owner_contract["contract_sha256"]
+        )
+        spec["boundary_retry_frozen_owner_contract"] = frozen_owner_contract
+        boundary_context_retries = 1
+        piece["end_ms"] = max(piece["end_ms"], retry_end)
+        spec["boundary_repair_extend_cap_ms"] = (
+            _runner.BOUNDARY_REPAIR_RETRY_CAP_MS
+        )
+        spec_path.write_text(
+            json.dumps(spec, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        with open(log_path, "a", encoding="utf-8") as sink:
+            sink.write(
+                "\nBOUNDARY_CONTEXT_RETRY: retaining/widening source "
+                f"post-context to {piece['end_ms']}ms "
+                "with hash-bound frozen owner set "
+                f"{retry_owner_contract_sha256} "
+                "and absolute repair cap to "
+                f"{_runner.BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
+                f"(semantic end remains {item['end_ms']}ms; "
+                f"bound_scope_required_end={scoped_retry_end}; "
+                f"retry_scope={retry_scope})\n"
+            )
+        completed, attempt_output, speaker_review_state = run_producer()
+    return (
+        completed,
+        attempt_output,
+        speaker_review_state,
+        boundary_context_retries,
+        retry_owner_contract_sha256,
+    )
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -1355,80 +1527,22 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
            "--spec", str(spec_path), "--ssh-host", "localhost", "--speaker-mode", _runner.SPEAKER_MODE]
     if reuse_cover:
         cmd.append("--reuse-cover")
-    boundary_context_retries = 0
-
-    def run_producer():
-        speaker_review_state = _runner._speaker_review_manifest_state(out_root / cid)
-        attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
-        with open(log_path, "a", encoding="utf-8") as sink:
-            completed = subprocess.run(
-                cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
-                cwd=str(_runner.REPO_ROOT), env=_runner.child_env_for_date(date),
-            )
-        with open(log_path, "rb") as source:
-            source.seek(attempt_offset)
-            attempt_output = source.read().decode("utf-8", "replace")
-        return completed, attempt_output, speaker_review_state
-
-    completed, attempt_output, previous_speaker_review_state = run_producer()
-    first_tail = attempt_output[-4000:]
-    boundary_failure_evidence = _boundary_context_failure_evidence(
-        first_tail
+    (
+        completed,
+        attempt_output,
+        previous_speaker_review_state,
+        boundary_context_retries,
+        boundary_retry_owner_contract_sha256,
+    ) = _run_talk_producer_with_boundary_context_retry(
+        date=date,
+        item=item,
+        candidate_id=cid,
+        spec=spec,
+        out_root=out_root,
+        spec_path=spec_path,
+        log_path=log_path,
+        cmd=cmd,
     )
-    boundary_retry_scope = boundary_failure_evidence.get("retry_scope")
-    if (
-        completed.returncode != 0
-        and (
-            "BOUNDARY_UNREPAIRABLE" in first_tail
-            or "BOUNDARY_CONTEXT_EXHAUSTED" in first_tail
-        )
-        and boundary_retry_scope
-        in {
-            "same_topic_continues",
-            "source_witness_reserve",
-        }
-    ):
-        piece = spec["pieces"][-1]
-        scoped_retry_end = _bound_boundary_retry_source_end_ms(
-            out_root=out_root,
-            candidate_id=cid,
-            repair_cap_ms=_runner.BOUNDARY_REPAIR_RETRY_CAP_MS,
-        )
-        retry_end = scoped_retry_end or piece["end_ms"]
-        current_cap = int(spec["boundary_repair_extend_cap_ms"])
-        source_context_already_sufficient = bool(
-            scoped_retry_end is not None
-            and piece["end_ms"] >= scoped_retry_end
-        )
-        source_context_reachable = bool(
-            scoped_retry_end is not None
-            and (
-                not item["seg_dur_ms"]
-                or scoped_retry_end <= item["seg_dur_ms"]
-            )
-        )
-        if (
-            source_context_reachable
-            and _runner.BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap
-            and (
-                retry_end > piece["end_ms"]
-                or source_context_already_sufficient
-            )
-        ):
-            boundary_context_retries = 1
-            piece["end_ms"] = max(piece["end_ms"], retry_end)
-            spec["boundary_repair_extend_cap_ms"] = _runner.BOUNDARY_REPAIR_RETRY_CAP_MS
-            spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
-            with open(log_path, "a", encoding="utf-8") as sink:
-                sink.write(
-                    "\nBOUNDARY_CONTEXT_RETRY: retaining/widening source "
-                    f"post-context to {piece['end_ms']}ms "
-                    f"and absolute repair cap to {_runner.BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
-                    f"(semantic end remains {item['end_ms']}ms; "
-                    f"bound_scope_required_end={scoped_retry_end}; "
-                    f"retry_scope={boundary_retry_scope})\n"
-                )
-            completed, attempt_output, previous_speaker_review_state = run_producer()
     result = {
         "candidate_id": cid, "segment": Path(item["segment_path"]).name,
         "start_ms": item["start_ms"], "end_ms": item["end_ms"],
@@ -1437,6 +1551,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "session_relation_authority": item.get("session_relation_authority"),
         "lane": item.get("lane", ""), "rc": completed.returncode, "log": str(log_path),
         "boundary_context_retries": boundary_context_retries,
+        "boundary_retry_owner_contract_sha256": (
+            boundary_retry_owner_contract_sha256
+        ),
         "talk_repair_retry_count": int(item.get("talk_repair_retry_count") or 0),
         "talk_transient_retry_count": int(item.get("talk_transient_retry_count") or 0),
         "selected_repair": bool(item.get("selected_repair")),

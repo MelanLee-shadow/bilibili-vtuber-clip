@@ -20,8 +20,16 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
+from . import final_human_review_evidence as _review_evidence
+from .final_human_review_evidence import (
+    FinalHumanReviewEvidenceError,
+)
+from .final_human_review_evidence import validate_bound_review_evidence
 
-SCHEMA_VERSION = "lidousha-final-human-review.v1"
+
+SCHEMA_VERSION = "lidousha-final-human-review.v2"
+REVIEW_EVIDENCE_SCHEMA_VERSION = _review_evidence.SCHEMA_VERSION
+_CHECK_ANCHORS = _review_evidence.CHECK_ANCHORS
 REVIEW_SCOPE = "same_bv_repair"
 ACCEPTED_STATUS = "ACCEPTED_FOR_SAME_BV"
 REVIEW_CONTRACT_SCHEMA = "lidousha-final-media-review-contracts.v1"
@@ -63,7 +71,13 @@ _ITEM_FIELDS = frozenset(
 _ARTIFACT_FIELDS = ("video", "subtitle", "cover")
 _ARTIFACT_BINDING_FIELDS = frozenset({"path", "sha256"})
 _PACKAGE_EVIDENCE_FIELDS = frozenset(
+    {"review_manifest", "package_audit", "review_evidence"}
+)
+_PACKAGE_ATTESTED_EVIDENCE_FIELDS = frozenset(
     {"review_manifest", "package_audit"}
+)
+_REVIEW_EVIDENCE_FILE_BINDING_FIELDS = frozenset(
+    {"path", "sha256", "bytes"}
 )
 _PUBLICATION_TARGET_FIELDS = frozenset(
     {
@@ -436,7 +450,7 @@ def _normalized_package_evidence(
     package_root: Path,
     package_attestation: object,
     review_manifest: Mapping[str, object],
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, object]]:
     if not isinstance(raw_evidence, Mapping):
         raise FinalHumanReviewError(
             "FINAL_HUMAN_REVIEW_PACKAGE_EVIDENCE_INVALID"
@@ -462,8 +476,8 @@ def _normalized_package_evidence(
             "package_root",
         )
 
-    normalized: dict[str, dict[str, str]] = {}
-    for key in sorted(_PACKAGE_EVIDENCE_FIELDS):
+    normalized: dict[str, dict[str, object]] = {}
+    for key in sorted(_PACKAGE_ATTESTED_EVIDENCE_FIELDS):
         binding, path = _normalized_file_binding(
             raw_evidence.get(key),
             package_root=package_root,
@@ -482,6 +496,50 @@ def _normalized_package_evidence(
                 key,
             )
         normalized[key] = binding
+
+    raw_review_evidence = raw_evidence.get("review_evidence")
+    if not isinstance(raw_review_evidence, Mapping):
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_REVIEW_EVIDENCE_BINDING_INVALID"
+        )
+    _require_exact_fields(
+        raw_review_evidence,
+        _REVIEW_EVIDENCE_FILE_BINDING_FIELDS,
+        reason_code=(
+            "FINAL_HUMAN_REVIEW_REVIEW_EVIDENCE_BINDING_INVALID"
+        ),
+    )
+    review_evidence_path = _portable_path(
+        raw_review_evidence.get("path"),
+        source="package_evidence.review_evidence.path",
+    )
+    review_evidence_sha256 = raw_review_evidence.get("sha256")
+    review_evidence_bytes = raw_review_evidence.get("bytes")
+    if (
+        not isinstance(review_evidence_sha256, str)
+        or _SHA256_RX.fullmatch(review_evidence_sha256) is None
+        or not isinstance(review_evidence_bytes, int)
+        or isinstance(review_evidence_bytes, bool)
+        or review_evidence_bytes < 0
+    ):
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_REVIEW_EVIDENCE_BINDING_INVALID"
+        )
+    review_evidence_file = _regular_package_file(
+        package_root, review_evidence_path
+    )
+    if (
+        _sha256(review_evidence_file) != review_evidence_sha256
+        or review_evidence_file.stat().st_size != review_evidence_bytes
+    ):
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_REVIEW_EVIDENCE_BINDING_MISMATCH"
+        )
+    normalized["review_evidence"] = {
+        "path": review_evidence_path,
+        "sha256": review_evidence_sha256,
+        "bytes": review_evidence_bytes,
+    }
 
     loaded_review = _json_object(
         _regular_package_file(
@@ -1439,6 +1497,57 @@ def validate_final_human_review(
         raise FinalHumanReviewError(
             "FINAL_HUMAN_REVIEW_CANDIDATE_SET_MISMATCH"
         )
+    normalized_items = [
+        receipt_by_candidate[candidate_id]
+        for candidate_id in manifest_order
+    ]
+    review_evidence_binding = package_evidence["review_evidence"]
+    review_evidence_path = _regular_package_file(
+        root, str(review_evidence_binding["path"])
+    )
+    try:
+        bound_review_evidence_bytes = review_evidence_path.read_bytes()
+    except OSError as exc:
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_ARTIFACT_FILE_INVALID",
+            str(review_evidence_path),
+        ) from exc
+    if (
+        "sha256:"
+        + hashlib.sha256(bound_review_evidence_bytes).hexdigest()
+        != review_evidence_binding["sha256"]
+        or len(bound_review_evidence_bytes)
+        != review_evidence_binding["bytes"]
+    ):
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_REVIEW_EVIDENCE_BINDING_MISMATCH"
+        )
+    try:
+        bound_review_evidence = json.loads(
+            bound_review_evidence_bytes.decode("utf-8")
+        )
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_EVIDENCE_JSON_INVALID",
+            "package_evidence.review_evidence",
+        ) from exc
+    try:
+        validate_bound_review_evidence(
+            bound_review_evidence,
+            review_contract_sha256=review_contract_sha256,
+            package_evidence=package_evidence,
+            reviewer_metadata={
+                "reviewer_kind": reviewer_kind,
+                "reviewed_by": reviewed_by,
+                "reviewed_at": reviewed_at,
+                "approval_quote": approval_quote,
+            },
+            receipt_items=normalized_items,
+        )
+    except FinalHumanReviewEvidenceError as exc:
+        raise FinalHumanReviewError(
+            exc.reason_code, exc.detail
+        ) from exc
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1450,8 +1559,5 @@ def validate_final_human_review(
         "approval_quote": approval_quote,
         "review_contract_sha256": review_contract_sha256,
         "package_evidence": package_evidence,
-        "items": [
-            receipt_by_candidate[candidate_id]
-            for candidate_id in manifest_order
-        ],
+        "items": normalized_items,
     }

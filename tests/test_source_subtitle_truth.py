@@ -702,7 +702,7 @@ def test_required_included_truth_fails_closed_when_timeline_has_no_cue(tmp_path)
     assert audit["failures"][0]["reason_code"] == "REPLACE_CUE_TARGET_NOT_UNIQUE"
 
 
-def test_required_owner_contract_freezes_truth_beyond_semantic_end(
+def test_post_context_truth_is_corrected_but_not_boundary_owner(
     tmp_path,
 ):
     ledger = _ledger(
@@ -710,41 +710,119 @@ def test_required_owner_contract_freezes_truth_beyond_semantic_end(
         [
             {
                 "knowledge_type": "SOURCE_INTERVAL_TRUTH",
-                "truth_id": "late-required-truth",
+                "truth_id": "later-candidate-truth",
                 "recording_basename": "recording.mp4",
                 "source_start_ms": 118_000,
                 "source_end_ms": 120_000,
                 "action": "replace_cue",
-                "text": "邪恶守宫",
+                "text": "后续候选正确文本",
                 "required": True,
             }
         ],
     )
+    spec = {
+        "candidate_id": "candidate-a",
+        "semantic_start_ms": 100_000,
+        "semantic_end_ms": 110_000,
+        "pieces": [
+            {
+                "remote_media": "/source/recording.mp4",
+                "start_ms": 95_000,
+                "end_ms": 125_000,
+            }
+        ],
+    }
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((23_000, 25_000, "后续候选误听")),
+        spec=spec,
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+    contracts = ledger_required_owner_contracts(
+        spec=spec,
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+
+    assert "后续候选正确文本" in corrected
+    assert audit["applied"][0]["truth_id"] == "later-candidate-truth"
+    assert contracts == []
+
+
+def test_lead_context_truth_is_not_boundary_owner(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "lead-context-truth",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 96_000,
+                "source_end_ms": 98_000,
+                "action": "replace_cue",
+                "text": "前置语境",
+                "required": True,
+            }
+        ],
+    )
+
     contracts = ledger_required_owner_contracts(
         spec={
+            "candidate_id": "candidate-a",
+            "semantic_start_ms": 100_000,
             "semantic_end_ms": 110_000,
             "pieces": [
                 {
                     "remote_media": "/source/recording.mp4",
-                    "start_ms": 100_000,
+                    "start_ms": 95_000,
                     "end_ms": 125_000,
                 }
             ],
         },
-        durations=[25_000],
+        durations=[30_000],
         ledger_path=ledger,
     )
 
-    assert contracts == [
-        {
-            "owner_kind": "source_subtitle_truth",
-            "owner_id": "late-required-truth",
-            "required": True,
-            "source_start_ms": 118_000,
-            "source_end_ms": 120_000,
-            "local_windows": [{"start_ms": 18_000, "end_ms": 20_000}],
-        }
-    ]
+    assert contracts == []
+
+
+def test_story_scope_straddle_fails_closed(tmp_path):
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "straddling-truth",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 109_000,
+                "source_end_ms": 112_000,
+                "action": "replace_cue",
+                "text": "跨界文本",
+                "required": True,
+            }
+        ],
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_STRADDLE",
+    ):
+        ledger_required_owner_contracts(
+            spec={
+                "candidate_id": "candidate-a",
+                "semantic_start_ms": 100_000,
+                "semantic_end_ms": 110_000,
+                "pieces": [
+                    {
+                        "remote_media": "/source/recording.mp4",
+                        "start_ms": 95_000,
+                        "end_ms": 125_000,
+                    }
+                ],
+            },
+            durations=[30_000],
+            ledger_path=ledger,
+        )
 
 
 def test_next_topic_truth_is_required_context_but_not_boundary_owner(
@@ -2332,6 +2410,139 @@ def test_committed_ledger_repairs_chair_bullying_phrase_across_bad_split():
     assert audit["status"] == "APPLIED"
     assert audit["applied"][0]["truth_id"] == (
         "20260722-nancho-chair-bullying-phrase-r1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms", "draft", "expected", "truth_id"),
+    [
+        (
+            1_580_300,
+            1_581_980,
+            "然后我在坐做一个",
+            "然后我就坐这一个",
+            "20260722-nancho-chair-seat-phrase-r1",
+        ),
+        (
+            1_642_350,
+            1_644_920,
+            "我真违心啊",
+            "我真的很有型啊",
+            "20260722-nancho-chair-youxing-r1",
+        ),
+    ],
+)
+def test_committed_ledger_repairs_v13_hash_bound_chair_acoustic_findings(
+    start_ms, end_ms, draft, expected, truth_id
+):
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, end_ms - start_ms, draft)),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                }
+            ]
+        },
+        durations=[end_ms - start_ms],
+        ledger_path=ledger,
+    )
+
+    assert "".join(cue.text for cue in parse_srt_cues(corrected)) == expected
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == truth_id
+
+
+def test_real_1475_retry_witness_widening_does_not_absorb_1573_owners():
+    """Widened witness context keeps four brainflick owners, but repairs chair."""
+
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    replay_sha256 = (
+        "sha256:"
+        "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    )
+    base_spec = {
+        "candidate_id": "auto_193450_1475_1543",
+        "semantic_start_ms": 1_475_980,
+        "semantic_end_ms": 1_543_290,
+        "given_end_ms": 1_543_760,
+        "pieces": [
+            {
+                "remote_media": (
+                    "/recovery/22966160_20260722-19-34-50.mp4"
+                ),
+                "source_media_sha256": replay_sha256,
+                "start_ms": 1_475_750,
+                "end_ms": 1_560_000,
+            }
+        ],
+    }
+    widened_spec = deepcopy(base_spec)
+    widened_spec["pieces"][0]["end_ms"] = 1_650_000
+
+    initial = ledger_required_owner_contracts(
+        spec=base_spec,
+        durations=[84_250],
+        ledger_path=ledger,
+    )
+    widened = ledger_required_owner_contracts(
+        spec=widened_spec,
+        durations=[174_250],
+        ledger_path=ledger,
+    )
+    initial_projection = [
+        (
+            row["owner_id"],
+            row["source_start_ms"],
+            row["source_end_ms"],
+            row["local_windows"],
+        )
+        for row in initial
+    ]
+    widened_projection = [
+        (
+            row["owner_id"],
+            row["source_start_ms"],
+            row["source_end_ms"],
+            row["local_windows"],
+        )
+        for row in widened
+    ]
+
+    assert len(initial_projection) == 4
+    assert widened_projection == initial_projection
+    assert all("chair" not in str(row["owner_id"]) for row in widened)
+
+    corrected, audit = apply_source_subtitle_truth(
+        (
+            "1\n"
+            "00:02:02,210 --> 00:02:04,690\n"
+            "感觉像被留了像霸凌\n"
+        ),
+        spec=widened_spec,
+        durations=[174_250],
+        ledger_path=ledger,
+    )
+    assert "感觉像被豆沙霸凌" in corrected
+    assert any(
+        row["truth_id"]
+        == "20260722-nancho-chair-bullying-phrase-r1"
+        for row in audit["applied"]
     )
 
 

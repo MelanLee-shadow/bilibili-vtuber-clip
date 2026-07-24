@@ -329,6 +329,8 @@ def _audit_deferred_exact_replay_reverification(
         "status": "NOT_REQUIRED",
         "deferred_strategy": strategy,
         "required_truth_ids": [],
+        "context_only_truth_ids": [],
+        "straddling_truth_ids": [],
         "reverified_truth_ids": [],
         "missing_truth_ids": [],
     }
@@ -339,14 +341,74 @@ def _audit_deferred_exact_replay_reverification(
     if strategy not in supported_strategies:
         return result
 
-    required_ids = sorted(
-        {
-            str(row.get("truth_id"))
-            for row in (pre_truth_audit.get("failures") or [])
-            if isinstance(row, Mapping) and str(row.get("truth_id") or "")
-        }
+    current_source_interval = baseline_audit.get("current_source_interval")
+    if isinstance(current_source_interval, Mapping):
+        final_source_start_ms = current_source_interval.get(
+            "absolute_source_start_ms"
+        )
+        final_source_end_ms = current_source_interval.get(
+            "absolute_source_end_ms"
+        )
+    else:
+        final_source_start_ms = final_source_end_ms = None
+    final_interval_valid = bool(
+        isinstance(final_source_start_ms, int)
+        and not isinstance(final_source_start_ms, bool)
+        and isinstance(final_source_end_ms, int)
+        and not isinstance(final_source_end_ms, bool)
+        and final_source_end_ms > final_source_start_ms
+    )
+    required_ids: list[str] = []
+    context_only_ids: list[str] = []
+    straddling_ids: list[str] = []
+    for row in pre_truth_audit.get("failures") or []:
+        if not isinstance(row, Mapping):
+            continue
+        truth_id = str(row.get("truth_id") or "")
+        if not truth_id:
+            continue
+        source_start_ms = row.get("source_start_ms")
+        source_end_ms = row.get("source_end_ms")
+        source_interval_valid = bool(
+            isinstance(source_start_ms, int)
+            and not isinstance(source_start_ms, bool)
+            and isinstance(source_end_ms, int)
+            and not isinstance(source_end_ms, bool)
+            and source_end_ms > source_start_ms
+        )
+        if not (final_interval_valid and source_interval_valid):
+            required_ids.append(truth_id)
+            continue
+        wholly_outside = bool(
+            source_end_ms <= final_source_start_ms
+            or source_start_ms >= final_source_end_ms
+        )
+        wholly_inside = bool(
+            final_source_start_ms <= source_start_ms
+            and source_end_ms <= final_source_end_ms
+        )
+        if wholly_outside:
+            context_only_ids.append(truth_id)
+        elif wholly_inside:
+            required_ids.append(truth_id)
+        else:
+            straddling_ids.append(truth_id)
+    required_ids = sorted(set(required_ids))
+    straddling_ids = sorted(set(straddling_ids))
+    # A duplicated truth id is context-only only if every occurrence is wholly
+    # outside. Any inside or straddling occurrence keeps it out of that class.
+    context_only_ids = sorted(
+        set(context_only_ids) - set(required_ids) - set(straddling_ids)
     )
     result["required_truth_ids"] = required_ids
+    result["context_only_truth_ids"] = context_only_ids
+    result["straddling_truth_ids"] = straddling_ids
+    if straddling_ids:
+        result["status"] = "FAILED"
+        result["reason_code"] = (
+            "DEFERRED_TRUTH_STRADDLES_FINAL_DELIVERY"
+        )
+        return result
     exact_strategy = (
         strategy
         == "exact_reviewed_interval_replay_then_reapply_source_truth"
@@ -358,16 +420,26 @@ def _audit_deferred_exact_replay_reverification(
         else baseline_audit.get("status")
         in {"APPLIED", "ALREADY_SATISFIED"}
     )
-    if (
-        not required_ids
-        or not baseline_strategy_ok
-        or not isinstance(post_truth_audit, Mapping)
-        or post_truth_audit.get("status") == "FAILED"
-    ):
+    post_truth_ok = bool(
+        isinstance(post_truth_audit, Mapping)
+        and post_truth_audit.get("status")
+        in {"APPLIED", "ALREADY_SATISFIED", "NO_RELEVANT_INTERVAL"}
+    )
+    if not baseline_strategy_ok or not post_truth_ok:
         result["status"] = "FAILED"
         result["reason_code"] = (
             "EXACT_REPLAY_OR_POST_TRUTH_AUTHORITY_MISSING"
         )
+        return result
+    if not required_ids:
+        if context_only_ids:
+            result["status"] = "PASS"
+            result["reason_code"] = (
+                "ALL_DEFERRED_TRUTH_CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+            )
+            return result
+        result["status"] = "FAILED"
+        result["reason_code"] = "DEFERRED_TRUTH_REQUIREMENT_EMPTY"
         return result
 
     reverified_ids = sorted(

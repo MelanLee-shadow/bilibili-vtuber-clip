@@ -106,10 +106,18 @@
   起止区间全部逐字相同时，整份人工审定 SRT（含 cue 时间）才可直接重放。这防止同源重跑因
   ASR 随机漏 cue 而删除已审字幕；随后仍必须重放 source-truth。只要区间发生裁切或扩展，就
   回到上面的逐 cue 绝对时间映射，缺失、合并、拆分或漂移继续 fail closed，不能把审定时间轴
-  宽松套用到另一段素材。fresh cue 形状导致的 `replace_cue / REPLACE_CUE_TARGET_NOT_UNIQUE`
-  只能在这条 exact 路径延后；结构冲突、timing pin、postcondition 等失败仍立即阻断。finalizer
-  还必须证明实际策略确为 `exact_reviewed_interval_replay`，并把每个延后 `truth_id` 在重放后的
-  `applied+satisfied` 中逐个复证，不能只看总状态非 FAILED。
+  宽松套用到另一段素材。fresh cue 形状导致的
+  `replace_cue / REPLACE_CUE_TARGET_NOT_UNIQUE` 只能在这条 exact 路径延后。另一个同样窄的
+  例外是 required `replace_substring` 的 mention postcondition：只在每个 failure 都是
+  `MENTION_REQUIRED_TEXT_MISSING` 或 `MENTION_FORBIDDEN_TOKEN_SURVIVED`、`local_windows`
+  非空、`mention_owner_resolution.status=PASS`，且 v2 source binding 完整有效时，才可延后到
+  exact replay；缺 mention、无法隔离、owner BLOCK、混合 failure、timing pin 或无 exact
+  authority 仍立即阻断。finalizer 还必须证明实际 replay/restore authority 有效，并把所有仍
+  与最终交付区间重叠的 deferred `truth_id` 在重放后的 `applied+satisfied` 中逐个复证，不能只
+  看总状态非 FAILED。完全位于最终交付区间外的 deferred truth 不应在裁掉后的成片中复现，
+  但必须以 `context_only_truth_ids` 和逐窗 interval evidence 明示排除；跨过终点或同时包含
+  inside/outside windows 的 truth 仍须阻断。边界角色与半开区间定义见
+  [30-boundary.md](30-boundary.md)。
 - 最终裁决顺序固定为：**先按最终边界恢复 reviewed baseline → 再重放更高权威 source truth
   → 对每个 baseline mapping 与 source-truth declared output 在最终 clean SRT 和 speaker SRT
   上逐项验活 → 才允许低权威 repair 记为 `SUPERSEDED_*`**。owner 自己未通过时，不能用
@@ -117,14 +125,24 @@
   `final_source_truth_owner_verification` 与
   `final_redelivery_baseline_owner_verification` 在对应 owner 存在时必须为 PASS，且该类
   required count 非零。
-- 所有 required source-truth/baseline owner，以及具备对应 typed ownership contract 的
-  applied story-chat owner，还必须在裁切前冻结并由最终边界完整覆盖。整句 `exact_read`
+- required source truth 仍在完整 padded context 上应用，但 boundary owner 资格只属于完整
+  落在 candidate-relative immutable story scope 的 truth；lead/post context truth 修字但不
+  抬高边界，跨 scope truth fail closed。具备对应 typed ownership contract 的 applied
+  story-chat owner 也须完整落在同一 scope，随后在裁切前冻结并由最终边界完整覆盖。
+  `boundary_role=next_topic_witness` 只负责证明分离，必须以 context-only 留证，不得取得
+  boundary owner。reviewed baseline 仍须在最终 clean/speaker SRT 逐 mapping 验活，但它是文字
+  权威，不进入 boundary owner 列表，不能冻结旧切片尾部。整句 `exact_read`
   必须由 whole-line gate 明示 `owner_eligible=true`；sender/gift/coreference/entity 等窄槽
   则按各自 slot contract，不借用整句字段。`required:false` truth、partial/proxy chat support
   与 context-only verdict 不能进入 owner 列表。finalizer 发现任一真实 owner 被裁掉或只剩
   残片时必须记
   `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 并拒发，不能因成片外已“不可见”就把它降级为
   `NOT_REQUIRED` / `OUTSIDE_DELIVERY`。完整边界契约见 [30-boundary.md](30-boundary.md)。
+- final owner verifier 以 resolver 的最终半开区间
+  `[delivery_start_ms, delivery_end_ms)` 重新分类全部 required source truth：完全在成片外的
+  任意 truth（不只 `next_topic_witness`）必须显式记为 context-only；完全在成片内的 truth
+  必须在 clean/speaker SRT 上逐窗验活；跨过任一终点或同一 truth 同时含 inside/outside
+  windows 一律 fail closed。这里的最终可见性分类不反向授予成片外 truth 边界 ownership。
 - 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
   path/SHA-256、JSONL 自身 origin epoch、alias timeline offset 与 `source_alias_id` 缺一不可；
   JSONL 的事件时钟不得从另一份官方媒体 basename 猜。已知 alias 但 sidecar 缺失、哈希漂移、

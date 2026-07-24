@@ -1562,6 +1562,11 @@ def _stage_screenshot_direct_cover(
             crop_evidence = {
                 "schema": "cover-frame-transfer.v1",
                 "status": "HASH_BOUND_FULL_FRAME",
+                # This stays on the content timeline.  The hash-bound source
+                # authority may also carry an absolute source_time_ms, but the
+                # transfer proof must bind the exact frame selected from the
+                # materialized clip just like the cropped screenshot route.
+                "frame_ms": int(frame_selection["best_ms"]),
                 "source_path": str(reference_path),
                 "source_sha256": "sha256:" + _sha256(reference_path),
                 "crop_applied": False,

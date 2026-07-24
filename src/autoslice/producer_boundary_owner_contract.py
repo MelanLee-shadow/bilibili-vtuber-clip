@@ -2,80 +2,162 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
 )
+from src.autoslice.source_subtitle_truth import (
+    candidate_boundary_owner_scope,
+)
+
+
+def _canonical_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _normalized_owner_set(
+    owners: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    for owner in owners:
+        if not isinstance(owner, Mapping):
+            raise RuntimeError("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+        windows = owner.get("local_windows")
+        if not isinstance(windows, list):
+            raise RuntimeError("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+        normalized_windows: list[dict[str, int]] = []
+        for window in windows:
+            if not isinstance(window, Mapping):
+                raise RuntimeError(
+                    "BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID"
+                )
+            start = window.get("start_ms")
+            end = window.get("end_ms")
+            if (
+                isinstance(start, bool)
+                or not isinstance(start, int)
+                or isinstance(end, bool)
+                or not isinstance(end, int)
+                or start >= end
+            ):
+                raise RuntimeError(
+                    "BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID"
+                )
+            normalized_windows.append(
+                {"start_ms": start, "end_ms": end}
+            )
+        normalized.append(
+            {
+                "owner_kind": str(owner.get("owner_kind") or ""),
+                "owner_id": str(owner.get("owner_id") or ""),
+                "required": owner.get("required") is True,
+                "source_start_ms": owner.get("source_start_ms"),
+                "source_end_ms": owner.get("source_end_ms"),
+                "owner_scope_sha256": owner.get("owner_scope_sha256"),
+                "local_windows": sorted(
+                    normalized_windows,
+                    key=lambda window: (
+                        window["start_ms"],
+                        window["end_ms"],
+                    ),
+                ),
+            }
+        )
+    return sorted(
+        normalized,
+        key=lambda owner: (
+            owner["owner_kind"],
+            owner["owner_id"],
+            json.dumps(owner["local_windows"], sort_keys=True),
+        ),
+    )
+
+
+def frozen_boundary_owner_contract_sha256(
+    contract: Mapping[str, object],
+) -> str:
+    """Hash one frozen contract without its self-referential digest."""
+
+    return _canonical_sha256(
+        {
+            str(key): value
+            for key, value in contract.items()
+            if key != "contract_sha256"
+        }
+    )
+
+
+def validate_frozen_boundary_owner_contract(
+    contract: object,
+) -> dict[str, object]:
+    """Validate the retry token before it can authorize a widened rerun."""
+
+    if not isinstance(contract, Mapping):
+        raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
+    owners = contract.get("owners")
+    owner_scope = contract.get("owner_eligibility_scope")
+    try:
+        normalized_owners = (
+            _normalized_owner_set(owners)
+            if isinstance(owners, list)
+            else None
+        )
+    except RuntimeError as exc:
+        raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT") from exc
+    if (
+        contract.get("schema_version")
+        != "frozen-boundary-owner-contract.v1"
+        or contract.get("status") != "FROZEN"
+        or not isinstance(owners, list)
+        or not isinstance(owner_scope, Mapping)
+        or contract.get("required_owner_count") != len(owners)
+        or any(
+            not owner["owner_kind"]
+            or not owner["owner_id"]
+            or owner["required"] is not True
+            or not owner["local_windows"]
+            for owner in (normalized_owners or [])
+        )
+        or contract.get("owner_set_sha256")
+        != _canonical_sha256(normalized_owners)
+        or owner_scope.get("scope_sha256")
+        != _canonical_sha256(
+            {
+                str(key): value
+                for key, value in owner_scope.items()
+                if key != "scope_sha256"
+            }
+        )
+        or contract.get("contract_sha256")
+        != frozen_boundary_owner_contract_sha256(contract)
+    ):
+        raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
+    return dict(contract)
 
 
 def redelivery_baseline_boundary_owner(
     spec: Mapping[str, object],
     durations: Sequence[int],
 ) -> list[dict[str, object]]:
-    """Project a hash-bound v2 reviewed baseline onto the padded timeline."""
+    """A reviewed text baseline never acquires content-selection authority.
 
-    config = spec.get("subtitle_redelivery_baseline")
-    if not isinstance(config, Mapping):
-        return []
-    if (
-        config.get("schema_version") != "subtitle-redelivery-baseline.v2"
-        or config.get("exact_interval_replay") is not True
-    ):
-        return []
-    start = config.get("absolute_source_start_ms")
-    end = config.get("absolute_source_end_ms")
-    expected_sha = str(config.get("source_sha256") or "").removeprefix(
-        "sha256:"
-    )
-    if (
-        isinstance(start, bool)
-        or not isinstance(start, int)
-        or isinstance(end, bool)
-        or not isinstance(end, int)
-        or end <= start
-        or len(expected_sha) != 64
-    ):
-        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_OWNER_INVALID")
-    pieces = [
-        piece
-        for piece in (spec.get("pieces") or [])
-        if isinstance(piece, Mapping)
-    ]
-    if len(pieces) != len(durations):
-        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_MAPPING_INVALID")
-    offset = 0
-    windows: list[dict[str, int]] = []
-    coverage = 0
-    for piece, duration in zip(pieces, durations):
-        piece_sha = str(
-            piece.get("source_media_sha256") or ""
-        ).removeprefix("sha256:")
-        piece_start = int(piece["start_ms"])
-        piece_end = int(piece["end_ms"])
-        overlap_start = max(start, piece_start)
-        overlap_end = min(end, piece_end)
-        if piece_sha == expected_sha and overlap_start < overlap_end:
-            windows.append(
-                {
-                    "start_ms": offset + overlap_start - piece_start,
-                    "end_ms": offset + overlap_end - piece_start,
-                }
-            )
-            coverage += overlap_end - overlap_start
-        offset += int(duration)
-    if coverage != end - start:
-        raise RuntimeError("REDELIVERY_BASELINE_BOUNDARY_OWNER_PARTIAL")
-    return [
-        {
-            "owner_kind": "reviewed_redelivery_baseline",
-            "owner_id": "exact-reviewed-interval",
-            "required": True,
-            "source_start_ms": start,
-            "source_end_ms": end,
-            "local_windows": windows,
-        }
-    ]
+    Baseline replay and its final per-mapping verification remain mandatory in
+    the text pipeline.  Registering the old reviewed interval as a boundary
+    owner would instead force a new cut to preserve the old cut's lead/tail,
+    allowing stale delivery geometry to override the current candidate.
+    """
+
+    _ = spec, durations
+    return []
 
 
 def freeze_story_chat_boundary_owners(
@@ -114,9 +196,22 @@ def freeze_story_chat_boundary_owners(
                 or isinstance(end, bool)
                 or not isinstance(end, int)
                 or end <= start
-                or min(end, story_end_ms) - max(start, story_start_ms)
-                <= 0
             ):
+                continue
+            overlap_ms = (
+                min(end, story_end_ms) - max(start, story_start_ms)
+            )
+            if overlap_ms <= 0:
+                row["boundary_required"] = False
+                row["boundary_owner_rejection"] = (
+                    "OUTSIDE_IMMUTABLE_STORY_SCOPE"
+                )
+                continue
+            if not story_start_ms <= start < end <= story_end_ms:
+                row["boundary_required"] = False
+                row["boundary_owner_rejection"] = (
+                    "STRADDLES_IMMUTABLE_STORY_SCOPE"
+                )
                 continue
             owner_id = str(
                 row.get("finding_id")
@@ -175,38 +270,19 @@ def freeze_required_boundary_owner_contract(
         ),
         default=None,
     )
-    initial_owner_tail_ms = max(
-        (
-            int(window["end_ms"])
-            for owner in required_boundary_owners
-            for window in owner.get("local_windows") or []
-        ),
-        default=None,
+    owner_eligibility_scope = candidate_boundary_owner_scope(
+        spec=spec,
+        durations=durations,
     )
-    preliminary_story_end_ms = max(
-        [
-            semantic_target_ms,
-            *(
-                value
-                for value in (
-                    manual_lower_bound_ms,
-                    structured_payoff_ms,
-                    initial_owner_tail_ms,
-                )
-                if value is not None
-            ),
-        ]
-    )
-    story_start_ms = max(
-        0,
-        int(spec.get("semantic_start_ms", spec["pieces"][0]["start_ms"]))
-        - int(spec["pieces"][0]["start_ms"]),
+    story_start_ms = int(owner_eligibility_scope["story_start_ms"])
+    immutable_story_end_ms = int(
+        owner_eligibility_scope["story_end_ms"]
     )
     required_boundary_owners.extend(
         freeze_story_chat_boundary_owners(
             chat_authority_audit,
             story_start_ms=story_start_ms,
-            story_end_ms=preliminary_story_end_ms,
+            story_end_ms=immutable_story_end_ms,
         )
     )
     spec["required_boundary_owners"] = required_boundary_owners
@@ -234,14 +310,57 @@ def freeze_required_boundary_owner_contract(
     )
     spec["boundary_search_scope"] = boundary_search_scope
     boundary_target_ms = int(boundary_search_scope["review_target_ms"])
-    chat_authority_audit["frozen_boundary_owner_contract"] = {
+    frozen_contract: dict[str, object] = {
         "schema_version": "frozen-boundary-owner-contract.v1",
         "status": "FROZEN",
         "story_start_ms": story_start_ms,
-        "story_end_ms": boundary_target_ms,
-        "owner_discovery_end_ms": preliminary_story_end_ms,
+        "story_end_ms": immutable_story_end_ms,
+        "boundary_review_target_ms": boundary_target_ms,
+        "owner_discovery_end_ms": immutable_story_end_ms,
         "required_owner_count": len(required_boundary_owners),
         "owners": required_boundary_owners,
+        "owner_eligibility_scope": owner_eligibility_scope,
+        "owner_set_sha256": _canonical_sha256(
+            _normalized_owner_set(required_boundary_owners)
+        ),
         "boundary_search_scope": boundary_search_scope,
     }
+    frozen_contract["contract_sha256"] = (
+        frozen_boundary_owner_contract_sha256(frozen_contract)
+    )
+    expected_retry_contract = spec.get(
+        "boundary_retry_frozen_owner_contract"
+    )
+    if expected_retry_contract is not None:
+        expected = validate_frozen_boundary_owner_contract(
+            expected_retry_contract
+        )
+        if (
+            expected.get("owner_set_sha256")
+            != frozen_contract["owner_set_sha256"]
+            or (
+                expected.get("owner_eligibility_scope") or {}
+            ).get("scope_sha256")
+            != owner_eligibility_scope["scope_sha256"]
+        ):
+            raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
+        frozen_contract["boundary_retry_owner_contract_verification"] = {
+            "status": "PASS",
+            "expected_contract_sha256": expected[
+                "contract_sha256"
+            ],
+            "owner_set_sha256": frozen_contract[
+                "owner_set_sha256"
+            ],
+            "owner_eligibility_scope_sha256": (
+                owner_eligibility_scope["scope_sha256"]
+            ),
+        }
+        # The verification receipt is part of the new attempt's contract.
+        frozen_contract["contract_sha256"] = (
+            frozen_boundary_owner_contract_sha256(frozen_contract)
+        )
+    chat_authority_audit["frozen_boundary_owner_contract"] = (
+        frozen_contract
+    )
     return boundary_target_ms, boundary_search_scope

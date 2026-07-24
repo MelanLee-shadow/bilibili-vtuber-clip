@@ -45,14 +45,20 @@ reviewer 选择 pin 后 cue、required owner/structured payoff 越过 pin、grid
 媒体不等于 pin，均 fail closed；不得把 exact pin 降级为普通下界，也不得用它绕过四命题。
 
 source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SHA 绑定同一份
-`talk-boundary-search-scope.v1`，禁止各自从旧 candidate end 重新推导 cap：
+`talk-boundary-search-scope.v1`，禁止各自从旧 candidate end 重新推导 cap。scope 按
+`boundary_end_mode` 分成两种，不能混用：
 
-- `semantic_search_origin_ms = max(semantic_target_ms, manual_lower_bound_ms,
+- `semantic_lower_bound`：
+  `semantic_search_origin_ms = max(semantic_target_ms, manual_lower_bound_ms,
   structured_payoff_ms)`；人工下界与已确认 payoff 属于语义搜索起点，可以把搜索原点向后移；
-- `delivery_lower_bound_ms = max(semantic_search_origin_ms, required_owner_end_ms)`；
+  `delivery_lower_bound_ms = max(semantic_search_origin_ms, required_owner_end_ms)`；
   required owner 只抬高交付/评审下界，不能移动搜索原点，也不能把 cap 滚动再加一次；
-- `max_recommended_end_ms = semantic_search_origin_ms + repair_cap_ms`。reviewer 的推荐 end 必须
+  `max_recommended_end_ms = semantic_search_origin_ms + repair_cap_ms`。reviewer 的推荐 end 必须
   同时不早于交付下界、不晚于该绝对 ceiling；
+- `exact_source_pin`：`semantic_search_origin_ms=delivery_lower_bound_ms=pin`，
+  `minimum_recommended_end_ms=pin-400ms`、`max_recommended_end_ms=pin`、
+  `max_forward_ms=0`。reviewer 只能在该 400ms 窗内选择完整 closure；resolver 仍把最终媒体
+  end 精确锁到 pin。required owner、structured payoff 或 recommendation 越过 pin 都阻断；
 - retry 的 source full window 至少覆盖
   `max_recommended_end_ms + witness_reserve_ms`，再按 piece 映射回绝对 source 时间。reserve
   只供 reviewer 观察终点后的下一话题，不能扩大合法推荐 endpoint。
@@ -71,12 +77,15 @@ context end 与 deficit。覆盖不足时**不得调用 LLM 自证**，而是返
 不得空转、滚动 cap 或扩大到 120 秒。`recommended_end_cue_index=null` 应记
 `BOUNDARY_RECOMMENDATION_MISSING`，不能冒充“给了一个越界推荐”。
 
-required source truth 默认是 `boundary_role=story_content`，会取得终点 owner。只有经证据确认、
-且其 source interval 完全位于候选 semantic target 之后的下一话题文本，才可显式标为
-`boundary_role=next_topic_witness`：它仍是 padded context 中必须正确落字的真值，可帮助证明
-换题，但不能把当前故事终点向后拖进下一条 SC，也不取得最终裁掉该下一话题后的字幕 owner；
-final-owner receipt 必须将其单列为 context-only，而不是伪报最终字幕缺失。该 role 与故事区间
-有任何重叠都 fail closed。
+source truth 的**修字作用域**与**边界所有权作用域**必须分开。所有命中 padded source
+context 的 active truth 仍须正确应用；但只有 source interval 完整落在 candidate-relative
+immutable story scope
+`[semantic_start_ms, max(semantic_end_ms, given_end_ms))` 内的 `required=true` truth
+才可取得终点 owner。普通 `story_content` truth 若完全位于该 scope 的 lead/post context，
+仍须修字和留证，但不拥有本片边界；跨过 scope 边缘则 fail closed，不能一半当正文、一半当
+context。经证据确认的下一话题文本可显式标为 `boundary_role=next_topic_witness`：它仍是
+padded context 中必须正确落字的真值，可帮助证明换题，但不能把当前故事终点向后拖进下一条
+SC，也不取得最终字幕 owner；与故事 scope 有任何重叠都 fail closed。
 
 所有 talk 包——包括带人工 end 的恢复包——都必须通过**两层不同作用域的语义回执**，同时
 通过确定性 cue/syntax 门与上述四命题。两层不能互相冒充，也不能把第一层的 cue ordinal
@@ -126,15 +135,22 @@ final-delivery 回执与 exact-final 放行回执失效，均须从相应层重�
 
 ## 冻结的 required owner
 
-只有 `required=true` 的字幕源真值、已审 baseline 覆盖区，以及具备相应 typed ownership
-contract 的已应用 story/chat 修复，才可在定边界前冻结进
+只有完整落在上述 immutable story scope 的 `required=true` 字幕源真值，以及具备相应 typed
+ownership contract 且同样完整落在该 scope 的已应用 story/chat 修复，才可在定边界前冻结进
 `frozen-boundary-owner-contract.v1`，逐项绑定
-`owner_kind + owner_id + local_windows`。`required:false` source truth 只是 best-effort，
-partial/proxy chat support、context-only verdict 与被拒 proposal 都不得取得 ownership；
+`owner_kind + owner_id + local_windows + owner_scope_sha256`。已审 baseline 是最终字幕文字
+恢复/验活权威，不是内容选择权威，绝不能因旧稿起止区间而取得 boundary owner、强迫新切点
+保留旧尾巴。`required:false` source truth 只是 best-effort，partial/proxy chat support、
+context-only verdict 与被拒 proposal 都不得取得 ownership；
 其中整句 `exact_read` 还必须由 whole-line gate 明示 `owner_eligible=true`，缺失/False 即
 拒绝。sender/gift/coreference/entity 等窄槽修复不借用该整句字段，而按各自 slot-scoped typed
 contract 冻结。最终 boundary audit 必须原样携带同一 owner 列表，且每个窗口完全落在最终
 `[start,end)` 内。
+
+首轮还必须冻结 `owner_eligibility_scope`、`owner_set_sha256` 与整个
+`contract_sha256`。有界 source-witness retry 只能扩大观察用 post-context，必须把首轮 token
+原样带入并重新计算；scope 或 owner 集合任一漂移都报
+`BOUNDARY_RETRY_OWNER_SET_DRIFT`，不得让扩窗后出现的相邻候选 truth/SC 反向加入本片故事。
 
 旧候选边界若排除了 required owner，唯一合法结果是扩展边界、重新通过语义闭环和确定性门，
 或以 `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 阻断；不得把该 owner 在裁切后降级成

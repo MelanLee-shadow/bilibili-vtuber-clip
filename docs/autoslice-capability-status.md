@@ -1,6 +1,6 @@
 # Autoslice local capability map
 
-Updated: 2026-07-23
+Updated: 2026-07-24
 
 > 本文件只列本地 checkout 中的实现/测试入口，不是流水线规则，也不是 production 状态页。
 > 当前规则只从 [pipeline/README.md](pipeline/README.md) 进入。版本号和 runtime 结论不在
@@ -19,14 +19,15 @@ Updated: 2026-07-23
 |---|---|---|---|
 | 源录制与源完整性 | `ops/recording/`、`src/autoslice/source_integrity.py` | [test_source_integrity.py](../tests/test_source_integrity.py) | [10-source-recording.md](pipeline/10-source-recording.md) |
 | 选片与 exact closure | `src/autoslice/semantic_candidate_selector.py`、`selection_scorecard.py`、`batch_terminal_state.py` | [test_selection_scorecard.py](../tests/test_selection_scorecard.py)、[test_recovery_review_rerun.py](../tests/test_recovery_review_rerun.py) | [20-selection.md](pipeline/20-selection.md) |
-| 边界 | `src/autoslice/boundary_resolver.py`、`boundary_semantic_review.py`、`producer_boundary_resolution.py` | [test_boundary_resolver.py](../tests/test_boundary_resolver.py)、[test_boundary_semantic_review.py](../tests/test_boundary_semantic_review.py)、[test_produce_slice_boundary.py](../tests/test_produce_slice_boundary.py)、[test_runtime_architecture.py](../tests/test_runtime_architecture.py) | [30-boundary.md](pipeline/30-boundary.md) |
-| talk 字幕与语义修复 | `src/autoslice/producer_text_pipeline.py`、`producer_text_finalization.py`、`final_review_auditor.py`、`final_review_contract.py`、`chat_alignment_context.py` | [test_semantic_authority_pipeline.py](../tests/test_semantic_authority_pipeline.py)、[test_producer_text_pipeline_final_review.py](../tests/test_producer_text_pipeline_final_review.py)、[test_chat_authority.py](../tests/test_chat_authority.py) | [40-subtitle-text.md](pipeline/40-subtitle-text.md)、[41-semantic-repair.md](pipeline/41-semantic-repair.md) |
+| 边界 | `src/autoslice/boundary_resolver.py`、`boundary_semantic_review.py`、`producer_boundary_resolution.py`、`producer_boundary_owner_contract.py` | [test_boundary_resolver.py](../tests/test_boundary_resolver.py)、[test_boundary_semantic_review.py](../tests/test_boundary_semantic_review.py)、[test_produce_slice_boundary.py](../tests/test_produce_slice_boundary.py)、[test_source_subtitle_truth.py](../tests/test_source_subtitle_truth.py) | [30-boundary.md](pipeline/30-boundary.md) |
+| talk 字幕与语义修复 | `src/autoslice/producer_text_pipeline.py`、`source_subtitle_truth.py`、`producer_text_finalization.py`、`final_review_auditor.py`、`final_review_contract.py` | [test_producer_text_pipeline_final_review.py](../tests/test_producer_text_pipeline_final_review.py)、[test_producer_text_finalization.py](../tests/test_producer_text_finalization.py)、[test_source_subtitle_truth.py](../tests/test_source_subtitle_truth.py)、[test_chat_authority.py](../tests/test_chat_authority.py) | [40-subtitle-text.md](pipeline/40-subtitle-text.md)、[41-semantic-repair.md](pipeline/41-semantic-repair.md) |
 | song lane | `src/autoslice/song_lane.py`、`song_alignment.py`、`song_completion.py` | [test_song_lane_reasons.py](../tests/test_song_lane_reasons.py)、[test_song_completion_offsets.py](../tests/test_song_completion_offsets.py) | [50-song-lane.md](pipeline/50-song-lane.md) |
 | 标题 | `src/autoslice/title_policy.py`、`publish_staging.py`、`recovery_title_authority.py` | [test_title_policy.py](../tests/test_title_policy.py)、[test_recovery_title_authority.py](../tests/test_recovery_title_authority.py)、[test_publish_staging_recovery_title.py](../tests/test_publish_staging_recovery_title.py) | [60-title.md](pipeline/60-title.md) |
-| 封面 | `src/autoslice/cover_generation.py`、`cover_route_evidence.py` | [test_cover_reference_authority.py](../tests/test_cover_reference_authority.py)、[test_cover_text_pixel_evidence.py](../tests/test_cover_text_pixel_evidence.py) | [70-cover.md](pipeline/70-cover.md) |
+| 封面 | `src/autoslice/cover_generation.py`、`publish_staging.py`、`cover_repair.py`、`cover_route_evidence.py` | [test_cover_reference_authority.py](../tests/test_cover_reference_authority.py)、[test_cover_text_pixel_evidence.py](../tests/test_cover_text_pixel_evidence.py)、[test_auto_review_shadow_pipeline.py](../tests/test_auto_review_shadow_pipeline.py)、[test_free_session_autoslice.py](../tests/test_free_session_autoslice.py) | [70-cover.md](pipeline/70-cover.md) |
 | 打包与审计 | `src/autoslice/producer_package_finalization.py`、`review_package_ass_audit.py`、`scripts/audit_lidousha_review_package.py` | [test_producer_package_finalization.py](../tests/test_producer_package_finalization.py)、[test_lidousha_review_package_audit.py](../tests/test_lidousha_review_package_audit.py) | [80-package-delivery.md](pipeline/80-package-delivery.md) |
+| 最终感知复核 | `scripts/build_lidousha_final_human_review.py`、`src/autoslice/final_human_review.py` | [test_build_lidousha_final_human_review.py](../tests/test_build_lidousha_final_human_review.py)、[test_final_human_review.py](../tests/test_final_human_review.py) | [90-publish.md](pipeline/90-publish.md) |
 | 授权上传 | `scripts/authorized_upload.py`、`src/autoslice/bilibili_member_api.py` | [test_authorized_upload.py](../tests/test_authorized_upload.py)、[test_bilibili_member_api.py](../tests/test_bilibili_member_api.py) | [90-publish.md](pipeline/90-publish.md) |
-| durable 同 BV 修复 | `src/autoslice/same_bv_repair.py`、`scripts/authorized_upload.py repair-*` | [test_same_bv_repair.py](../tests/test_same_bv_repair.py) | [90-publish.md](pipeline/90-publish.md) |
+| durable 同 BV 修复 | `src/autoslice/same_bv_repair.py`、`scripts/authorized_upload.py repair-plan/repair-run/repair-status/repair-verify-live` | [test_same_bv_repair.py](../tests/test_same_bv_repair.py)、[test_authorized_upload.py](../tests/test_authorized_upload.py) | [90-publish.md](pipeline/90-publish.md) |
 
 ## 当前已知能力边界
 
@@ -35,10 +36,9 @@ Updated: 2026-07-23
 - durable 同 BV 状态机及其测试入口已经存在于本地源码；在 live deployed commit、真实
   repair journal 与发布 step 的公开闭环出现之前，状态仍只能是“本地能力”，不能写成
   “production 已部署”或“原 BV 已修复”。
-- correction mutation 文字权威回执与 anti-wash 审计、reviewer-visible boundary evidence、
-  post-end next-topic witness、完整 18k hash-bound context、final endpoint binding、动态 cap
-  production seam、SC 前缀门、portable speaker SRT→ASS 重放审计和统一 cookie parser 也仍是
-  当前 checkout 的能力；部署 commit、线上登录态与旧 BV 是否已修复必须分别 live readback，
-  不能从本表推导。
+- candidate-relative boundary-owner freeze、padded-context text application、final-interval
+  inside/context-only/straddle verification、截图 frame-selection binding、evidence-v2 builder 与
+  post-journal verify-live 都有上表所列本地入口；它们是否已部署、某个包是否由这些字节生成、
+  某个原 BV 是否已完成修复仍必须分别 live readback，不能从本表推导。
 - 模型/provider、配额、cookie、合集 ID、部署 commit、runtime health 与具体稿件状态都是
   易变 live state，只能现场读取。

@@ -1,10 +1,11 @@
-# 流水线分步权威索引（Ivan 2026-07-19 定，2026-07-23 收敛）
+# 流水线分步权威索引
 
 **本目录是切片流水线的分步文档权威。** 结构规则：
 
 1. **每一步的规则只写在该步的 step 文件里**（或 step 文件明确指向的更强机器权威：
    code/schema/profile asset）。skill 只能是操作配方，不能反向覆盖 step。
-2. **其他任何文档（AGENTS.md、HANDOFF、workflow 文档、skill、memory）只允许放入口、操作方法或历史证据，不允许另立规则正文。** 复制即债——2026-07-19 歌切标题事故与 2026-07-22 人工标题/歌切 skill 漂移都证明，改一处漏三处会直接进入成品。
+2. **其他任何文档（AGENTS.md、HANDOFF、workflow 文档、skill、memory）只允许放入口、
+   操作方法或历史证据，不允许另立规则正文。** 复制即债。
 3. **进行到某一步时只读该步文件**；总索引（本文件）只是指针表。
 4. 改某步规则 = 改对应 step 文件 + 它指向的代码/资产强制层；随后必须扫描 README、skills、workflows、assets 与历史 runbook 中的冲突措辞。历史事实可以保留，但必须有醒目的历史快照标记和当前入口。
 5. 新纠偏落地顺序：先落**代码强制层**（schema 校验/choke point/负向 canary），再改 step 文件，最后运行陈旧规则扫描、文档链接检查、定向/全量测试。只改文案而没有机器门不算修复；只改机器门而留下旧操作说明同样不算完成。
@@ -20,6 +21,6 @@
 | 41 | [41-semantic-repair.md](41-semantic-repair.md) | 语义修复、专名/幻听/长程呼应与权威裁决 | `src/autoslice/producer_text_finalization.py`、`source_subtitle_truth.py` |
 | 50 | [50-song-lane.md](50-song-lane.md) | 歌切专线：识别、LRC 对齐、host-vocal 证明、完整性 | `src/autoslice/song_lane.py`、`song_alignment.py`、`song_completion.py` |
 | 60 | [60-title.md](60-title.md) | 标题（谈话 + 歌切铁律） | `src/autoslice/title_policy.py`、`publish_staging.py` |
-| 70 | [70-cover.md](70-cover.md) | 封面路由、最终像素、人物与真实字形 | `src/autoslice/cover_generation.py`、`cover_title_rendering.py`、`cover_text_pixel_evidence.py`、`cover_route_evidence.py` |
-| 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、严格 SRT、raw-byte 与双层边界回执闭包 | `src/autoslice/producer_package_finalization.py`、`subtitle_validation.py`、`review_package_ass_audit.py`、`review_package_boundary_contract.py`、`scripts/audit_lidousha_review_package.py` |
-| 90 | [90-publish.md](90-publish.md) | authorized upload、最终感知复核 receipt、durable 同 BV 修复、合集与公开验证 | `scripts/authorized_upload.py`、`src/autoslice/final_human_review.py`、`src/autoslice/same_bv_repair.py`、`bilibili_member_api.py` |
+| 70 | [70-cover.md](70-cover.md) | 封面路由、最终像素、人物与真实字形 | `src/autoslice/cover_generation.py`、`publish_staging.py`、`cover_repair.py`、`cover_title_rendering.py`、`cover_text_pixel_evidence.py`、`cover_route_evidence.py` |
+| 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、严格 SRT、raw-byte 与双层边界回执闭包 | `src/autoslice/producer_package_finalization.py`、`subtitle_validation.py`、`review_package_ass_audit.py`、`review_package_boundary_contract.py`、`scripts/build_lidousha_recovery_review_manifest.py`、`scripts/audit_lidousha_review_package.py` |
+| 90 | [90-publish.md](90-publish.md) | authorized upload、最终感知复核 receipt、durable 同 BV 修复、合集与公开验证 | `scripts/build_lidousha_final_human_review.py`、`scripts/authorized_upload.py`、`src/autoslice/final_human_review.py`、`src/autoslice/same_bv_repair.py`、`bilibili_member_api.py` |

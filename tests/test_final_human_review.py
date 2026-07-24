@@ -29,6 +29,32 @@ CHECK_NAMES = (
     "cover_story",
     "intro_timing",
 )
+CHECK_DETAILS = {
+    "final_burned_full_playback": (
+        "从00:00开头连续播放到EOS结尾，最后看到双人对话自然停止。"
+    ),
+    "subtitle_audio": (
+        "在对话段实际听到人物发声，烧录字幕随音频逐句出现。"
+    ),
+    "silence_hallucination": (
+        "复看静音段确认无声，画面没有出现对应的幻听字幕cue。"
+    ),
+    "boundary_closure": (
+        "开头保留完整问句，结尾在回答后的自然停顿收束。"
+    ),
+    "title_story": (
+        "最终标题写明争论焦点，完整故事确实先提问再回答。"
+    ),
+    "cover_identity": (
+        "最终封面左侧人物身份与右侧立绘均清楚可辨。"
+    ),
+    "cover_story": (
+        "最终封面文字概括双人关系，叙事与画面故事一致。"
+    ),
+    "intro_timing": (
+        "片头结束后平滑切入正片第一句，衔接没有吞掉发音。"
+    ),
+}
 
 
 def test_committed_review_cover_and_publication_assets_freeze_exact_five():
@@ -79,6 +105,26 @@ def test_committed_review_cover_and_publication_assets_freeze_exact_five():
         "南町nightin 后的整条 L 问句没有说话，必须完全删除，"
         "不得保留“这个L是李豆沙/李乐莎的L吗”。"
     )
+
+    chair = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_193450_1573_1672"
+    )
+    chair_points = {
+        row["point_id"]: row
+        for row in chair["subtitle_review_points"]
+    }
+    assert chair_points["fake-cry"]["final_video_end_ms"] == 105_700
+    assert chair_points["complete-ending"] == {
+        "point_id": "complete-ending",
+        "final_video_start_ms": 99_000,
+        "final_video_end_ms": 105_700,
+        "expectation": (
+            "结尾必须完整收束在“假哭”，不能断在话中间，也不得带入随后"
+            "感谢钢镚和修鼠标的新 SC 话题。"
+        ),
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -139,9 +185,15 @@ def _fixture(
 ]:
     review_items: list[dict[str, object]] = []
     receipt_items: list[dict[str, object]] = []
+    evidence_items: list[dict[str, object]] = []
     for ordinal, candidate_id in enumerate(("3573", "672"), start=1):
         stem = f"clip-{candidate_id}"
         title = f"reviewed title {candidate_id}"
+        scene_marker = (
+            "蓝色对话框与桌面构图"
+            if candidate_id == "3573"
+            else "金色角色卡与聊天栏构图"
+        )
         paths = {
             "video": f"{stem}.mp4",
             "subtitle": f"{stem}.srt",
@@ -197,8 +249,39 @@ def _fixture(
                 "recovery_publication_authority": authority,
             }
         )
-        receipt_items.append(
-            {
+        checks = {
+            name: {
+                "status": "PASS",
+                "evidence": (
+                    f"{fhr._CHECK_ANCHORS[name]} — "
+                    f"{candidate_id}号片的{scene_marker}："
+                    f"{CHECK_DETAILS[name]}"
+                ),
+            }
+            for name in CHECK_NAMES
+        }
+        point_detail = (
+            f"{candidate_id}号片的{scene_marker}段实际听到修正台词，"
+            "对应烧录字幕cue与发声同步出现。"
+        )
+        claim_details = (
+            (
+                f"{candidate_id}号片{scene_marker}的最终封面源帧"
+                "左侧人物清楚可见，"
+                "面部没有被文字遮挡。"
+            ),
+            (
+                f"{candidate_id}号片{scene_marker}的最终封面画面"
+                "右侧人物立绘可见，"
+                "与左侧对象保持同框。"
+            ),
+            (
+                f"{candidate_id}号片{scene_marker}的最终封面大字"
+                "呈现双方争论故事，"
+                "文字叙事与人物关系一致。"
+            ),
+        )
+        receipt_item = {
                 "candidate_id": candidate_id,
                 "reviewed_title": title,
                 "artifacts": {
@@ -220,13 +303,7 @@ def _fixture(
                     "final_title": title,
                     "authority_sha256": authority["authority_sha256"],
                 },
-                "checks": {
-                    name: {
-                        "status": "PASS",
-                        "evidence": f"{candidate_id}: {name} inspected",
-                    }
-                    for name in CHECK_NAMES
-                },
+                "checks": checks,
                 "subtitle_review_points": [
                     {
                         "point_id": "corrected-cue",
@@ -236,7 +313,10 @@ def _fixture(
                             f"{candidate_id}: corrected cue matches audio"
                         ),
                         "status": "PASS",
-                        "evidence": "Played final burned bytes around this point.",
+                        "evidence": (
+                            "00:00:13.000-00:00:15.000 — "
+                            + point_detail
+                        ),
                     }
                 ],
                 "cover_story_claims": [
@@ -245,15 +325,70 @@ def _fixture(
                             "claim": claim,
                             "presentation": "SOURCE_FRAME",
                             "status": "PASS",
-                            "evidence": "Inspected the exact final cover pixels.",
+                            "evidence": (
+                                "FINAL_COVER/SOURCE_FRAME — "
+                                + claim_details[claim_index]
+                            ),
                         }
-                        for claim in source_claims
+                        for claim_index, claim in enumerate(source_claims)
                     ],
                     {
                         "claim": narrative,
                         "presentation": "COVER_TEXT",
                         "status": "PASS",
-                        "evidence": "Inspected the exact final cover text.",
+                        "evidence": (
+                            "FINAL_COVER/COVER_TEXT — "
+                            + claim_details[2]
+                        ),
+                    },
+                ],
+            }
+        receipt_items.append(receipt_item)
+        evidence_items.append(
+            {
+                "candidate_id": candidate_id,
+                "checks": {
+                    name: {
+                        "anchor": fhr._CHECK_ANCHORS[name],
+                        "detail": (
+                            f"{candidate_id}号片的{scene_marker}："
+                            f"{CHECK_DETAILS[name]}"
+                        ),
+                    }
+                    for name in CHECK_NAMES
+                },
+                "subtitle_review_points": [
+                    {
+                        "point_id": "corrected-cue",
+                        "observation": {
+                            "anchor": (
+                                "00:00:13.000-00:00:15.000"
+                            ),
+                            "detail": point_detail,
+                        },
+                    }
+                ],
+                "cover_story_claims": [
+                    *[
+                        {
+                            "claim": claim,
+                            "presentation": "SOURCE_FRAME",
+                            "observation": {
+                                "anchor": (
+                                    "FINAL_COVER/SOURCE_FRAME"
+                                ),
+                                "detail": claim_details[claim_index],
+                            },
+                        }
+                        for claim_index, claim in enumerate(source_claims)
+                    ],
+                    {
+                        "claim": narrative,
+                        "presentation": "COVER_TEXT",
+                        "observation": {
+                            "anchor": "FINAL_COVER/COVER_TEXT",
+                            "detail": claim_details[2],
+                        },
                     },
                 ],
             }
@@ -276,6 +411,42 @@ def _fixture(
     audit_path = root / "verification" / "package-audit.json"
     _write_json(review_path, manifest)
     _write_json(audit_path, {"passed": True, "blocking_issue_count": 0})
+    evidence_path = (
+        root / "verification" / "final-human-review-evidence.v2.json"
+    )
+    evidence = {
+        "schema_version": fhr.REVIEW_EVIDENCE_SCHEMA_VERSION,
+        "bindings": {
+            "review_contract_sha256": _sha256(
+                fhr.FINAL_MEDIA_REVIEW_CONTRACT_PATH
+            ),
+            "review_manifest": {
+                "path": "review_manifest.json",
+                "sha256": _sha256(review_path),
+            },
+            "package_audit": {
+                "path": "verification/package-audit.json",
+                "sha256": _sha256(audit_path),
+            },
+            "items": [
+                {
+                    "candidate_id": item["candidate_id"],
+                    "record": item["record"],
+                    "artifacts": item["artifacts"],
+                }
+                for item in receipt_items
+            ],
+        },
+        "reviewer_kind": "delegated_root_agent",
+        "reviewed_by": "Codex root",
+        "reviewed_at": "2026-07-23T23:59:00-04:00",
+        "approval_quote": (
+            "你在自己用修复的流水线过了一遍，自己review并修改后"
+            "觉得有信心了之后可以权宜上传"
+        ),
+        "items": evidence_items,
+    }
+    _write_json(evidence_path, evidence)
     package_evidence = {
         "review_manifest": {
             "path": "review_manifest.json",
@@ -284,6 +455,11 @@ def _fixture(
         "package_audit": {
             "path": "verification/package-audit.json",
             "sha256": _sha256(audit_path),
+        },
+        "review_evidence": {
+            "path": "verification/final-human-review-evidence.v2.json",
+            "sha256": _sha256(evidence_path),
+            "bytes": evidence_path.stat().st_size,
         },
     }
     attestation: dict[str, object] = {
@@ -350,6 +526,27 @@ def _rebind_review(
     attestation["review_manifest"]["bytes"] = review_path.stat().st_size
 
 
+def _rebind_evidence_metadata(
+    root: Path,
+    receipt: dict[str, object],
+) -> None:
+    evidence_path = (
+        root / "verification" / "final-human-review-evidence.v2.json"
+    )
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    for field in (
+        "reviewer_kind",
+        "reviewed_by",
+        "reviewed_at",
+        "approval_quote",
+    ):
+        evidence[field] = receipt[field]
+    _write_json(evidence_path, evidence)
+    binding = receipt["package_evidence"]["review_evidence"]
+    binding["sha256"] = _sha256(evidence_path)
+    binding["bytes"] = evidence_path.stat().st_size
+
+
 def test_failed_machine_audit_cannot_be_signed_by_perceptual_receipt(
     tmp_path: Path,
 ) -> None:
@@ -394,6 +591,70 @@ def test_validates_complete_receipt_in_manifest_order(
     assert normalized["items"][0]["checks"]["subtitle_audio"][
         "status"
     ] == "PASS"
+
+
+def test_old_v1_receipt_and_unbound_evidence_cannot_authorize(
+    tmp_path: Path,
+) -> None:
+    manifest, receipt, attestation = _fixture(tmp_path)
+    receipt["schema_version"] = "lidousha-final-human-review.v1"
+    _assert_reason(
+        tmp_path,
+        receipt,
+        manifest,
+        attestation,
+        "FINAL_HUMAN_REVIEW_SCHEMA_INVALID",
+    )
+
+    manifest, receipt, attestation = _fixture(tmp_path)
+    receipt["package_evidence"].pop("review_evidence")
+    _assert_reason(
+        tmp_path,
+        receipt,
+        manifest,
+        attestation,
+        "FINAL_HUMAN_REVIEW_PACKAGE_EVIDENCE_FIELDS_INVALID",
+    )
+
+
+def test_bound_evidence_bytes_and_non_generic_observations_are_required(
+    tmp_path: Path,
+) -> None:
+    manifest, receipt, attestation = _fixture(tmp_path)
+    evidence_path = (
+        tmp_path / "verification" / "final-human-review-evidence.v2.json"
+    )
+    with evidence_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    _assert_reason(
+        tmp_path,
+        receipt,
+        manifest,
+        attestation,
+        "FINAL_HUMAN_REVIEW_REVIEW_EVIDENCE_BINDING_MISMATCH",
+    )
+
+    manifest, receipt, attestation = _fixture(tmp_path)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    generic = "编号１：均无异常。"
+    evidence["items"][0]["checks"]["subtitle_audio"]["detail"] = generic
+    _write_json(evidence_path, evidence)
+    receipt["package_evidence"]["review_evidence"].update(
+        {
+            "sha256": _sha256(evidence_path),
+            "bytes": evidence_path.stat().st_size,
+        }
+    )
+    receipt["items"][0]["checks"]["subtitle_audio"]["evidence"] = (
+        f"{fhr._CHECK_ANCHORS['subtitle_audio']} — {generic}"
+    )
+    _assert_reason(
+        tmp_path,
+        receipt,
+        manifest,
+        attestation,
+        "FINAL_HUMAN_REVIEW_BOUND_EVIDENCE_OBSERVATION_INVALID",
+    )
 
 
 @pytest.mark.parametrize(
@@ -489,6 +750,7 @@ def test_truthful_human_reviewer_identities_remain_valid(
     manifest, receipt, attestation = _fixture(tmp_path)
     receipt["reviewer_kind"] = reviewer_kind
     receipt["reviewed_by"] = reviewed_by
+    _rebind_evidence_metadata(tmp_path, receipt)
 
     normalized = validate_final_human_review(
         receipt, tmp_path, manifest, attestation

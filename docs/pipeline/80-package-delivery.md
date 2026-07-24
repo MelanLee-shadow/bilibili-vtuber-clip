@@ -11,6 +11,13 @@
   或用来制造 owner PASS。discovery `local_windows` 仅用于定位，最终 owner 必须来自有效
   `source-truth-resolved-target-projection.v1`。文字/说话人 ASS 也必须绑定同一最终文本与
   hash；低权威 repair 只有在真实 owner 已通过后才能记为 superseded。
+- package auditor 按 resolver 的最终半开区间独立重算 source-truth 分类：完全 inside 的
+  required truth 必须逐窗通过 final clean/speaker contract；完全 outside 的 truth 必须具有
+  context-only receipt；straddle 或同一 truth 的 mixed inside/outside windows 一律拒绝。
+  因此“全部 required truth 都在成片外”的合法包可有
+  `required_truth_row_count=0`、`required_window_count=0`，但其
+  `context_only_truth_row_count`、ID、逐窗关系和最终 interval 必须完整、可重算，不能靠空计数
+  逃过审计。
 - current/story-contract 的 talk/recovery item 必须把 `speaker_srt`、`ass_path` 两份真实字节
   连同 `speaker_srt_sha256`、`ass_sha256` 放进 package。两条路径都只能指向 package-relative
   regular file；绝对路径、越界、缺文件以及路径任一层 symlink 都拒绝。song lane 不进入这条
@@ -40,8 +47,10 @@
   StoryContract 逐字相等，并以完整字节送入 boundary/final review；任何 12,000 字兼容切片、
   超预算或 prompt 重渲染漂移都拒发。topic resolution/scoped graph context 也必须留在同一
   digest 内。
-  边界同理：human source endpoint 只作为下界并与 boundary audit 精确一致；机器审计必须同时
-  验证两份不同作用域的 PASS 回执。`boundary_audit.boundary_semantic_review` 必须是
+  边界同理：human source endpoint 必须携带 typed `boundary_end_mode` 并与 boundary audit
+  精确一致。`semantic_lower_bound` 只作为下界；`exact_source_pin` 则要求最终媒体 end
+  精确等于 pin，不能降级成下界。机器审计必须同时验证两份不同作用域的 PASS 回执。
+  `boundary_audit.boundary_semantic_review` 必须是
   `review_scope=source_full_window`，绑定 resolver 实际消费的完整 source grid、真实 post-end
   witness、source 推荐 end 和 snap 后 source final interval。
   `boundary_audit.final_delivery_boundary_semantic_review` 必须与 StoryContract
@@ -55,16 +64,23 @@
   SHA 相等；缺任一层、scope 错、把 source 回执复制成 final、witness 漂移或任一 endpoint
   binding 非 PASS 均拒发。
 - source review、resolver、retry 与 boundary audit 还必须逐字段携带并验证同 SHA 的
-  `talk-boundary-search-scope.v1`：人工下界/结构化 payoff 可移动 semantic search origin，
-  required owner 只抬 delivery floor，绝对 ceiling 固定为 `search_origin + repair_cap`；
-  retry source window 另须覆盖 ceiling 后的 witness reserve，但 reserve 不扩大 endpoint cap。
-  任一 surface 缺 scope、hash/重算漂移、从推荐 end 二次滚动加 cap，或 source witness 窗不足
-  都拒发。
+  `talk-boundary-search-scope.v1`。`semantic_lower_bound` 中，人工下界/结构化 payoff 可移动
+  semantic search origin，required owner 只抬 delivery floor，绝对 ceiling 固定为
+  `search_origin + repair_cap`。`exact_source_pin` 中 origin/floor/max recommendation 均为
+  pin、minimum recommendation 为 `pin-400ms`、forward 为 0；closure 必须在该窗内，最终媒体
+  end 必须等于 pin，pin 后 cue 只能作 context witness、不得取得 owner。两种模式的 retry
+  source window 都须覆盖 ceiling 后的 witness reserve，但 reserve 不扩大 endpoint cap。
+  任一 surface 缺 scope/mode、hash/重算漂移、从推荐 end 二次滚动加 cap、exact 最终 end 不等于
+  pin，或 source witness 窗不足都拒发。
 - chat authority 的 `frozen-boundary-owner-contract.v1` 与 record boundary audit 必须携带
-  完全相同的 required owner 列表。source truth 仅 `required=true` 可入列；story/chat 必须
-  applied 且具备对应 typed ownership contract，其中整句 exact-read 另须 whole-line gate
-  明示 `owner_eligible=true`，窄 sender/gift/coreference/entity slot 不借用该整句字段。所有
-  owner window 都在最终边界内，
+  完全相同的 candidate-relative required owner 列表、`owner_eligibility_scope`、
+  `owner_set_sha256` 与 `contract_sha256`。source truth 必须 `required=true` 且完整落在
+  immutable story scope 才可入列；padded lead/post truth 仍修字但不是 owner，straddle
+  fail closed。story/chat 必须 applied 且具备对应 typed ownership contract，其中整句
+  exact-read 另须 whole-line gate 明示 `owner_eligible=true`，窄
+  sender/gift/coreference/entity slot 不借用该整句字段。reviewed baseline 只在最终文字映射
+  门验活，不得作为 boundary owner。retry 必须验证首轮 scope/owner token 未漂移。所有 owner
+  window 都在最终边界内，
   `required_boundary_owner_verification=PASS` 且
   `delivery_coverage_verification=PASS` 且
   `final_boundary_required_exclusion_count=0`。owner end 若由已审 closure cue 后的固定尾气
@@ -110,10 +126,11 @@
   `recovery-review-talk-rerun-plan.v7`；v6 及以下只作历史证据，不可执行。planner 必须以
   `registry_repo_path + registry_sha256` 绑定
   `assets/lidousha/recovery_publication_authority.v1.json`，其 registry entry 集合须与 exact
-  queue 完全相等。每条 entry 同时冻结 `required_given_end_ms`；planner 从 registry 派生
-  全量 end map 和 authority，不接受操作员另输一套 endpoint。少/多 candidate、少/错 end、
-  authority 漂移都在 supersede 或产片前拒绝。后续自然 fingerprint requeue 也只接受同一 v7
-  plan，pending/current record 必须逐项保持相同 publication authority 与 endpoint。
+  queue 完全相等。每条 entry 同时冻结 `required_given_end_ms` 与 `boundary_end_mode`；planner
+  从 registry 派生全量 end map、typed mode 和 authority，不接受操作员另输一套 endpoint。
+  plan、pending item、spec、record、boundary audit 与 manifest 必须逐项保持相同 mode/ms。
+  少/多 candidate、少/错 end、mode 或 authority 漂移都在 supersede 或产片前拒绝。后续自然
+  fingerprint requeue 也只接受同一 v7 plan，并保持完整 publication authority。
 - recovery plan 同时写入 exact-no-backfill selection contract；本地审片包只能在
   `exact-talk-contract-closure.v1.status=COMPLETE` 后逐 stem 重建。每个 contract ID 必须
   恰有一个 `rc=0 + CURRENT + COMPLIANT`，且无 pending、missing、failure、重复/冲突或
@@ -129,38 +146,13 @@
   它不能证明人已完整播放最终烧录 MP4、逐句对齐音频/静音、确认结尾闭合或看过最终封面。
   因此 audit `passed=true`、state `review_ready`、本地包覆盖或该 pending-human manifest
   都不能转写为人工通过，更不能自行改成发布许可。
-- exact same-BV repair 在生成 authorized manifest 前还必须有
-  `lidousha-final-human-review.v1`。receipt 的 scope/status 只能是
-  `same_bv_repair` / `ACCEPTED_FOR_SAME_BV`。`reviewer_kind` 只能如实选择
-  `human_owner`、`human_delegate` 或 `delegated_root_agent`；前两类保留实际人类观看者，
-  其中 owner 固定 `reviewed_by=Ivan`，本项目 root agent 固定
-  `reviewed_by="Codex root"`，delegate 写其真实姓名，三者不得互相冒充。
-  `reviewed_at` 必须是带时区时间；`approval_quote` 保存授权/委托原话，不能借此
-  伪写 Ivan 已亲自观看。candidate 集合须与 review manifest（含 exact/selection contract）
-  完全相等且无重复。receipt 还须绑定包内 review manifest、current package audit、每项 record、
-  reviewed title、same-BV publication target，以及 package-relative regular final
-  video/subtitle/cover 的路径与 SHA-256，并要求
-  `final_burned_full_playback`、`subtitle_audio`、`silence_hallucination`、
-  `boundary_closure`、`title_story`、`cover_identity`、`cover_story`、
-  `intro_timing` 八项各自为 `{status=PASS,evidence=<非空具体证据>}`；裸字符串 PASS
-  或泛化 evidence 不合规。
-- receipt 必须以 `review_contract_sha256` 精确绑定 committed
-  `assets/lidousha/final_media_review_contracts.v1.json`，并为每个 candidate 逐项、按原顺序
-  复核其中完整 `subtitle_review_points`：point ID、最终烧录视频时间窗、expectation 必须逐字
-  相等且落在最终时长内，每点另有 PASS 与实际 evidence。任意少点、多点、换窗、泛化 expectation
-  或只填总括八项 PASS 都不能放行。特别是 672 的 `no-wocao-partial-silence` 必须确认
-  0:13 附近前半无声、后半有真实语音但从未说“我草”；`silent-hallucinated-l-question`
-  必须独立确认 1:48 附近整条 L 问句无声并完全删除，不能把两种静音情况合并成一个结论。
-- 封面 `cover_story_claims` 必须精确来自每项 record StoryContract 的 hash-bound
-  `cover_reference_authority`：全部 `source_visible_claims` 逐条对应 `SOURCE_FRAME`，唯一
-  `narrative_presentation` 对应 `COVER_TEXT`，每条另有实际 evidence。自造、改写、遗漏、
-  增补或用泛化关系 claim 替代该集合都阻断。
-- receipt 是对**这些最终字节**的最终感知复核证明，不是 package auditor 的一部分，也不改变
-  review manifest 的 pending-human 文案或 `upload_allowed=false`。receipt 文件本身的规范绝对
-  路径与 hash、review contract hash、package evidence、candidate/record/title/publication
-  target、三类 artifact 路径/hash、exact review points、八项 checks 或 StoryContract 封面声明
-  任一缺失、额外、重复、非 PASS、越界/symlink 或漂移，均 fail closed，必须由声明的 reviewer
-  重新审阅当前字节并生成新 receipt，不能只重绑 hash。
+- exact same-BV repair 在生成 authorized manifest 前还必须有对**当前最终字节**的
+  `lidousha-final-human-review.v2`；它不是 package auditor 的产物，也不改变 pending-human
+  manifest 或 `upload_allowed=false`。receipt 必须绑定并重验 create-only 提交的
+  `lidousha-final-human-review-evidence.v2` 路径、SHA-256 与字节数；reviewer 身份、exact
+  points、八项检查、封面 claims、evidence v2、create-only builder 与全部漂移/权限规则只读
+  [90-publish.md](90-publish.md)；80 步只负责保证 review manifest、audit、record 和三类最终
+  artifact 已冻结且可供该复核逐字节绑定。
 - exact same-BV recovery 的包内必须额外携带 `.publish.json` regular file，并以 record
   `artifact_hashes.publish_draft_sha256` 绑定。state rerun plan 的
   `recovery_publication_authorities_by_candidate` 必须与 exact candidate 集合完全相等；
@@ -176,13 +168,7 @@
   普通 production 的 `candidate_rejected` 仍是终态，不能借此复活。
 - authorized uploader 在任何副作用前重跑**当前** canonical package auditor、严格 SRT 与共享
   标题门，并要求重跑结果与 manifest 绑定的 v2 audit 完全一致；它不信任旧 audit 自报。
-- `lidousha-final-human-review.v1` 只可附着在带 exact recovery publication authority 的
-  same-BV manifest；它既不是 `AUTO_UPLOAD`，也不是新 BV 投稿授权。新投稿仍须独立满足当前
-  audit、artifact hash、Ivan 对该发布动作的明确授权与 `AUTO_UPLOAD` manifest；same-BV
-  manifest 也仍须把 Ivan 的修复授权原话与最终感知复核 receipt 分开冻结。
-- 发布路径分成两个互不借权的 fail-closed lane：
-  - **新 BV**：当前 audit v2 + `AUTO_UPLOAD` manifest + artifact hash gate；
-  - **exact same-BV repair**：exact closure COMPLETE + 当前 audit v2 + authorized manifest +
-    `lidousha-final-human-review.v1` + recovery publication authority + artifact hash gate。
-    这一 lane 必须保持 review manifest `upload_allowed=false`，也不要求或伪造 `AUTO_UPLOAD`。
+- 新 BV 与 exact same-BV repair 的两条发布 lane、权限边界、正式 receipt schema、live
+  验收和执行顺序只读 [90-publish.md](90-publish.md)。打包步骤不得复制、放宽或自行推导发布
+  准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
 - tag 按成品字幕出（`upload_tag_policy.py`，Ivan 2026-07-13）。

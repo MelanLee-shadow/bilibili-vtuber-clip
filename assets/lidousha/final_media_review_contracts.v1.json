@@ -186,7 +186,7 @@
           "point_id": "big-chair-setup",
           "final_video_start_ms": 6000,
           "final_video_end_ms": 38000,
-          "expectation": "大椅子让座、南町缩在角落的起因必须完整。"
+          "expectation": "大椅子让座、南町缩在角落的起因必须完整；“然后我就坐这一个”须与实际椅子语境及音频一致。"
         },
         {
           "point_id": "lidousha-bullying-reversal",
@@ -197,14 +197,14 @@
         {
           "point_id": "fake-cry",
           "final_video_start_ms": 72000,
-          "final_video_end_ms": 101000,
-          "expectation": "假哭包袱与前文椅子/霸凌关系必须连贯。"
+          "final_video_end_ms": 105700,
+          "expectation": "“我真的很有型啊”及假哭包袱必须与前文椅子/霸凌关系连贯。"
         },
         {
           "point_id": "complete-ending",
-          "final_video_start_ms": 96000,
-          "final_video_end_ms": 112000,
-          "expectation": "结尾必须完整收束，不能断在话中间。"
+          "final_video_start_ms": 99000,
+          "final_video_end_ms": 105700,
+          "expectation": "结尾必须完整收束在“假哭”，不能断在话中间，也不得带入随后感谢钢镚和修鼠标的新 SC 话题。"
         }
       ]
     },

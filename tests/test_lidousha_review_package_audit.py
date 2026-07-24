@@ -5,8 +5,10 @@ import hashlib
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 from scripts.audit_lidousha_review_package import (
+    _audit_policy_fingerprint,
     _audit_source_truth_owner_attestations,
     audit_package,
 )
@@ -33,9 +35,16 @@ from src.autoslice.review_package_ass_audit import audit_review_package_ass
 from src.autoslice.review_package_boundary_contract import (
     audit_boundary_contract,
 )
+from src.autoslice.producer_boundary_owner_contract import (
+    freeze_required_boundary_owner_contract,
+    frozen_boundary_owner_contract_sha256,
+)
 from src.autoslice.recovery_title_authority import (
     build_recovery_publication_authorities,
     expected_recovery_publish_title,
+)
+from src.autoslice.source_subtitle_truth import (
+    candidate_boundary_owner_scope,
 )
 from src.autoslice.story_contract import build_story_contract
 
@@ -46,18 +55,53 @@ COVER_FONT = (
 )
 
 
+def _source_truth_audit_fixture(
+    *,
+    applied: list[dict] | None = None,
+    satisfied: list[dict] | None = None,
+    failures: list[dict] | None = None,
+    status: str | None = None,
+) -> dict:
+    applied_rows = applied or []
+    satisfied_rows = satisfied or []
+    failure_rows = failures or []
+    if status is None:
+        status = (
+            "FAILED"
+            if failure_rows
+            else "APPLIED"
+            if applied_rows
+            else "ALREADY_SATISFIED"
+            if satisfied_rows
+            else "NO_RELEVANT_INTERVAL"
+        )
+    ledger = (
+        REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
+    )
+    return {
+        "schema_version": "source-subtitle-truth-audit.v1",
+        "status": status,
+        "ledger_path": str(ledger),
+        "ledger_sha256": (
+            "sha256:" + hashlib.sha256(ledger.read_bytes()).hexdigest()
+        ),
+        "applied": applied_rows,
+        "satisfied": satisfied_rows,
+        "failures": failure_rows,
+    }
+
+
 def test_optional_source_truth_does_not_require_final_owner_attestation():
     issues: list[dict] = []
     chat = {
-        "source_subtitle_truth_audit": {
-            "applied": [
+        "source_subtitle_truth_audit": _source_truth_audit_fixture(
+            applied=[
                 {
                     "truth_id": "optional-mop-up",
                     "required": False,
                 }
             ],
-            "satisfied": [],
-        }
+        )
     }
 
     _audit_source_truth_owner_attestations(
@@ -86,6 +130,670 @@ def test_optional_source_truth_does_not_require_final_owner_attestation():
     assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" in {
         issue["code"] for issue in required_issues
     }
+
+
+def _frozen_owner_fixture(
+    *,
+    owners: list[dict] | None = None,
+    candidate_id: str = "owner-audit-fixture",
+) -> dict:
+    spec = {
+        "candidate_id": candidate_id,
+        "semantic_start_ms": 0,
+        "semantic_end_ms": 4_000,
+        "pieces": [{"start_ms": 0, "end_ms": 10_000}],
+        "boundary_repair_extend_cap_ms": 30_000,
+    }
+    durations = [10_000]
+    owner_scope = candidate_boundary_owner_scope(
+        spec=spec,
+        durations=durations,
+    )
+    normalized_owners = []
+    for owner in owners or []:
+        normalized = dict(owner)
+        if normalized.get("owner_kind") == "source_subtitle_truth":
+            normalized.setdefault(
+                "owner_scope_sha256",
+                owner_scope["scope_sha256"],
+            )
+        normalized_owners.append(normalized)
+    chat: dict = {}
+    freeze_required_boundary_owner_contract(
+        spec=spec,
+        durations=durations,
+        chat_authority_audit=chat,
+        required_boundary_owners=normalized_owners,
+    )
+    return chat["frozen_boundary_owner_contract"]
+
+
+def _owner_attestation_codes(
+    *,
+    truth_rows: list[dict],
+    frozen: dict,
+    baseline_applied: bool = False,
+    record_candidate_id: str | None = None,
+    truth_owner_overrides: dict | None = None,
+    source_truth_audit_override: dict | None = None,
+    chat_rows_by_key: dict[str, list[dict]] | None = None,
+) -> set[str]:
+    classified_truth_rows = []
+    final_delivery_rows = 0
+    context_only_rows = 0
+    straddling_rows = 0
+    required_windows = 0
+    for original in truth_rows:
+        row = dict(original)
+        windows = row["local_windows"]
+        fully_inside = all(
+            0 <= window["start_ms"]
+            and window["end_ms"] <= 4_000
+            for window in windows
+        )
+        fully_outside = all(
+            window["end_ms"] <= 0 or window["start_ms"] >= 4_000
+            for window in windows
+        )
+        if fully_inside:
+            final_delivery_rows += 1
+            required_windows += len(windows)
+            row["final_owner_scope"] = "FINAL_DELIVERY"
+            row["final_owner_verified"] = True
+            row["final_owner_windows"] = [
+                {
+                    **window,
+                    "text_ok": True,
+                    "speaker_ok": True,
+                }
+                for window in windows
+            ]
+            row["final_owner_contract"] = {
+                "text_ok": True,
+                "speaker_ok": True,
+            }
+        elif fully_outside:
+            context_only_rows += 1
+            row["final_owner_scope"] = (
+                "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+            )
+            row["final_owner_scope_reason"] = (
+                "ALL_EFFECTIVE_OWNER_WINDOWS_OUTSIDE_HALF_OPEN_FINAL_INTERVAL"
+            )
+            row["final_owner_verified"] = False
+            row["final_owner_windows"] = [
+                {
+                    **window,
+                    "delivery_relation": (
+                        "OUTSIDE_AFTER_FINAL_DELIVERY"
+                        if window["start_ms"] >= 4_000
+                        else "OUTSIDE_BEFORE_FINAL_DELIVERY"
+                    ),
+                }
+                for window in windows
+            ]
+        else:
+            straddling_rows += 1
+            row["final_owner_scope"] = "STRADDLES_FINAL_DELIVERY"
+            row["final_owner_verified"] = False
+            row["final_owner_windows"] = [dict(window) for window in windows]
+        classified_truth_rows.append(row)
+    truth_owner = {
+        "status": "PASS",
+        "final_delivery_interval": {
+            "timeline": "padded_source_local_ms",
+            "interval_semantics": "half_open",
+            "start_ms": 0,
+            "end_ms": 4_000,
+        },
+        "required_truth_row_count": (
+            final_delivery_rows + straddling_rows
+        ),
+        "required_truth_ids": [
+            str(row.get("truth_id") or "")
+            for row in classified_truth_rows
+            if row.get("final_owner_scope")
+            in {"FINAL_DELIVERY", "STRADDLES_FINAL_DELIVERY"}
+        ],
+        "context_only_truth_row_count": context_only_rows,
+        "context_only_truth_ids": [
+            str(row.get("truth_id") or "")
+            for row in classified_truth_rows
+            if row.get("final_owner_scope")
+            == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+        ],
+        "context_only_truth_evidence": [
+            {
+                "truth_id": str(row.get("truth_id") or ""),
+                "boundary_role": str(row.get("boundary_role") or ""),
+                "final_owner_scope": row.get("final_owner_scope"),
+                "final_owner_windows": row.get("final_owner_windows"),
+            }
+            for row in classified_truth_rows
+            if row.get("final_owner_scope")
+            == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+        ],
+        "optional_truth_row_count": 0,
+        "straddling_truth_row_count": straddling_rows,
+        "required_window_count": required_windows,
+        "failures": [],
+    }
+    truth_owner.update(truth_owner_overrides or {})
+    chat = {
+        "source_subtitle_truth_audit": (
+            source_truth_audit_override
+            if source_truth_audit_override is not None
+            else _source_truth_audit_fixture(
+                applied=classified_truth_rows,
+            )
+        ),
+        "final_source_truth_owner_verification": truth_owner,
+        "final_required_legacy_decision_count": 0,
+        "final_required_source_truth_owner_count": required_windows,
+        "final_required_redelivery_baseline_owner_count": (
+            1 if baseline_applied else 0
+        ),
+        "final_required_decision_count": (
+            required_windows + (1 if baseline_applied else 0)
+        ),
+        "frozen_boundary_owner_contract": frozen,
+        "final_boundary_required_exclusion_count": 0,
+    }
+    chat.update(chat_rows_by_key or {})
+    if baseline_applied:
+        chat["redelivery_subtitle_baseline_audit"] = {
+            "status": "APPLIED",
+        }
+        chat["final_redelivery_baseline_owner_verification"] = {
+            "status": "PASS",
+            "required_mapping_count": 1,
+        }
+    owners = frozen["owners"]
+    record = {
+        "boundary_audit": {
+            "frozen_required_boundary_owner_count": len(owners),
+            "frozen_required_boundary_owners": owners,
+            "required_boundary_owner_verification": {
+                "status": "PASS",
+                "failures": [],
+            },
+            "delivery_coverage_verification": {
+                "status": "PASS",
+                "failure": None,
+            },
+        }
+    }
+    if record_candidate_id is not None:
+        record["story_contract"] = {
+            "candidate_id": record_candidate_id,
+        }
+    issues: list[dict] = []
+    _audit_source_truth_owner_attestations(
+        issues=issues,
+        stem="owner-audit",
+        chat_authority_path=None,
+        chat_authority=chat,
+        record_path=None,
+        record=record,
+    )
+    return {issue["code"] for issue in issues}
+
+
+def _truth_row(
+    truth_id: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    boundary_role: str = "story_content",
+) -> dict:
+    return {
+        "truth_id": truth_id,
+        "required": True,
+        "boundary_role": boundary_role,
+        "source_start_ms": 100_000 + start_ms,
+        "source_end_ms": 100_000 + end_ms,
+        "local_windows": [
+            {"start_ms": start_ms, "end_ms": end_ms}
+        ],
+    }
+
+
+def _truth_owner(row: dict) -> dict:
+    return {
+        "owner_kind": "source_subtitle_truth",
+        "owner_id": row["truth_id"],
+        "required": True,
+        "source_start_ms": row["source_start_ms"],
+        "source_end_ms": row["source_end_ms"],
+        "local_windows": row["local_windows"],
+    }
+
+
+def _story_owner(
+    owner_kind: str,
+    owner_id: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+) -> dict:
+    return {
+        "owner_kind": owner_kind,
+        "owner_id": owner_id,
+        "required": True,
+        "local_windows": [
+            {"start_ms": start_ms, "end_ms": end_ms}
+        ],
+    }
+
+
+def test_context_truth_remains_required_text_but_not_boundary_owner():
+    context_truth = _truth_row(
+        "later-candidate-truth",
+        start_ms=6_000,
+        end_ms=7_000,
+    )
+
+    codes = _owner_attestation_codes(
+        truth_rows=[context_truth],
+        frozen=_frozen_owner_fixture(),
+    )
+
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in codes
+    assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" not in codes
+    assert "FINAL_AUTHORITY_DECISION_COVERAGE_EMPTY" not in codes
+
+
+def test_candidate_scope_truth_requires_exact_frozen_owner():
+    story_truth = _truth_row(
+        "current-story-truth",
+        start_ms=1_000,
+        end_ms=2_000,
+    )
+    valid_frozen = _frozen_owner_fixture(
+        owners=[_truth_owner(story_truth)]
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
+        _owner_attestation_codes(
+            truth_rows=[story_truth],
+            frozen=valid_frozen,
+        )
+    )
+
+    missing_frozen = _frozen_owner_fixture()
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        _owner_attestation_codes(
+            truth_rows=[story_truth],
+            frozen=missing_frozen,
+        )
+    )
+
+
+def test_context_or_straddling_truth_cannot_forge_boundary_owner():
+    context_truth = _truth_row(
+        "later-candidate-truth",
+        start_ms=6_000,
+        end_ms=7_000,
+    )
+    context_owner = _frozen_owner_fixture(
+        owners=[_truth_owner(context_truth)]
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        _owner_attestation_codes(
+            truth_rows=[context_truth],
+            frozen=context_owner,
+        )
+    )
+
+    straddling_truth = _truth_row(
+        "straddling-truth",
+        start_ms=3_500,
+        end_ms=4_500,
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        _owner_attestation_codes(
+            truth_rows=[straddling_truth],
+            frozen=_frozen_owner_fixture(),
+        )
+    )
+
+
+def test_reviewed_baseline_is_text_authority_not_boundary_owner():
+    no_boundary_owner = _frozen_owner_fixture()
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
+        _owner_attestation_codes(
+            truth_rows=[],
+            frozen=no_boundary_owner,
+            baseline_applied=True,
+        )
+    )
+
+    forged_baseline_owner = _frozen_owner_fixture(
+        owners=[
+            {
+                "owner_kind": "reviewed_redelivery_baseline",
+                "owner_id": "exact-reviewed-interval",
+                "required": True,
+                "local_windows": [
+                    {"start_ms": 0, "end_ms": 4_000}
+                ],
+            }
+        ]
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        _owner_attestation_codes(
+            truth_rows=[],
+            frozen=forged_baseline_owner,
+            baseline_applied=True,
+        )
+    )
+
+
+def test_story_owner_is_recomputed_from_candidate_scope_and_exact_window():
+    row = {
+        "finding_id": "inside-exact-read",
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "owner_eligible": True,
+        "boundary_required": True,
+        "boundary_owner_id": "inside-exact-read",
+    }
+    valid_frozen = _frozen_owner_fixture(
+        owners=[
+            _story_owner(
+                "exact_read",
+                "inside-exact-read",
+                start_ms=1_000,
+                end_ms=2_000,
+            )
+        ]
+    )
+    valid_codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=valid_frozen,
+        chat_rows_by_key={"applied": [row]},
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
+        valid_codes
+    )
+
+    hidden_required = dict(row)
+    hidden_required["boundary_required"] = False
+    hidden_required.pop("boundary_owner_id")
+    hidden_codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=_frozen_owner_fixture(),
+        chat_rows_by_key={"applied": [hidden_required]},
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        hidden_codes
+    )
+
+    shortened_frozen = _frozen_owner_fixture(
+        owners=[
+            _story_owner(
+                "exact_read",
+                "inside-exact-read",
+                start_ms=1_000,
+                end_ms=1_500,
+            )
+        ]
+    )
+    shortened_codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=shortened_frozen,
+        chat_rows_by_key={"applied": [row]},
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        shortened_codes
+    )
+
+
+def test_narrow_story_owner_uses_its_typed_slot_without_exact_read_gate():
+    row = {
+        "verdict_id": "sender-slot",
+        "matched_start_ms": 1_200,
+        "matched_end_ms": 1_800,
+        "boundary_required": True,
+        "boundary_owner_id": "sender-slot",
+    }
+    frozen = _frozen_owner_fixture(
+        owners=[
+            _story_owner(
+                "sc_sender",
+                "sender-slot",
+                start_ms=1_200,
+                end_ms=1_800,
+            )
+        ]
+    )
+
+    codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=frozen,
+        chat_rows_by_key={"sender_repairs": [row]},
+    )
+
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in codes
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {
+            "finding_id": "outside-read",
+            "matched_start_ms": 6_000,
+            "matched_end_ms": 7_000,
+            "owner_eligible": True,
+            "boundary_required": False,
+            "boundary_owner_rejection": (
+                "OUTSIDE_IMMUTABLE_STORY_SCOPE"
+            ),
+        },
+        {
+            "finding_id": "straddling-read",
+            "matched_start_ms": 3_500,
+            "matched_end_ms": 4_500,
+            "owner_eligible": True,
+            "boundary_required": False,
+            "boundary_owner_rejection": (
+                "STRADDLES_IMMUTABLE_STORY_SCOPE"
+            ),
+        },
+        {
+            "finding_id": "unsupported-read",
+            "matched_start_ms": 1_000,
+            "matched_end_ms": 2_000,
+            "owner_eligible": False,
+            "boundary_required": False,
+            "boundary_owner_rejection": (
+                "EXACT_READ_SUPPORT_NOT_OWNER_ELIGIBLE"
+            ),
+        },
+    ],
+)
+def test_noneligible_story_rows_require_typed_rejection(row: dict):
+    valid_codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=_frozen_owner_fixture(),
+        chat_rows_by_key={"applied": [row]},
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
+        valid_codes
+    )
+
+    missing_reason = dict(row)
+    missing_reason.pop("boundary_owner_rejection")
+    invalid_codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=_frozen_owner_fixture(),
+        chat_rows_by_key={"applied": [missing_reason]},
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        invalid_codes
+    )
+
+
+def test_retry_owner_scope_receipt_must_match_current_frozen_contract():
+    frozen = _frozen_owner_fixture()
+    frozen["boundary_retry_owner_contract_verification"] = {
+        "status": "PASS",
+        "expected_contract_sha256": "sha256:" + "1" * 64,
+        "owner_set_sha256": "sha256:" + "2" * 64,
+        "owner_eligibility_scope_sha256": frozen[
+            "owner_eligibility_scope"
+        ]["scope_sha256"],
+    }
+    frozen["contract_sha256"] = (
+        frozen_boundary_owner_contract_sha256(frozen)
+    )
+
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        _owner_attestation_codes(
+            truth_rows=[],
+            frozen=frozen,
+        )
+    )
+
+
+def test_context_only_final_owner_receipt_counts_cannot_be_forged():
+    context_truth = _truth_row(
+        "later-candidate-truth",
+        start_ms=6_000,
+        end_ms=7_000,
+    )
+
+    codes = _owner_attestation_codes(
+        truth_rows=[context_truth],
+        frozen=_frozen_owner_fixture(),
+        truth_owner_overrides={
+            "required_truth_row_count": 1,
+            "context_only_truth_row_count": 0,
+            "required_window_count": 1,
+        },
+    )
+
+    assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" in codes
+
+
+@pytest.mark.parametrize(
+    ("truth", "overrides"),
+    [
+        (
+            _truth_row(
+                "inside-story",
+                start_ms=1_000,
+                end_ms=2_000,
+            ),
+            {"required_truth_ids": ["forged-id"]},
+        ),
+        (
+            _truth_row(
+                "outside-story",
+                start_ms=6_000,
+                end_ms=7_000,
+            ),
+            {"context_only_truth_ids": ["forged-id"]},
+        ),
+        (
+            _truth_row(
+                "outside-evidence",
+                start_ms=6_000,
+                end_ms=7_000,
+            ),
+            {"context_only_truth_evidence": []},
+        ),
+    ],
+)
+def test_final_owner_receipt_ids_and_context_evidence_are_exact(
+    truth: dict,
+    overrides: dict,
+):
+    codes = _owner_attestation_codes(
+        truth_rows=[truth],
+        frozen=(
+            _frozen_owner_fixture(owners=[_truth_owner(truth)])
+            if truth["local_windows"][0]["end_ms"] <= 4_000
+            else _frozen_owner_fixture()
+        ),
+        truth_owner_overrides=overrides,
+    )
+
+    assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" in codes
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["schema", "status", "ledger", "failure", "missing_applied_row"],
+)
+def test_source_truth_audit_must_bind_current_successful_ledger(
+    mutation: str,
+):
+    audit = _source_truth_audit_fixture()
+    if mutation == "schema":
+        audit["schema_version"] = "source-subtitle-truth-audit.v0"
+    elif mutation == "status":
+        audit["status"] = "FAILED"
+    elif mutation == "ledger":
+        audit["ledger_sha256"] = "sha256:" + "0" * 64
+    elif mutation == "failure":
+        audit["status"] = "FAILED"
+        audit["failures"] = [
+            {
+                "truth_id": "required-failure",
+                "required": True,
+            }
+        ]
+    else:
+        audit["status"] = "APPLIED"
+
+    codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=_frozen_owner_fixture(),
+        source_truth_audit_override=audit,
+    )
+
+    assert "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID" in codes
+
+
+def test_owner_scope_candidate_id_must_match_packaged_story_contract():
+    frozen = _frozen_owner_fixture(candidate_id="candidate-a")
+
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
+        _owner_attestation_codes(
+            truth_rows=[],
+            frozen=frozen,
+            record_candidate_id="candidate-b",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "src/autoslice/producer_boundary_owner_contract.py",
+        "src/autoslice/source_subtitle_truth.py",
+        "src/autoslice/producer_text_finalization.py",
+        "src/autoslice/review_package_owner_audit.py",
+        "assets/lidousha/subtitle_truth_ledger.v1.json",
+    ],
+)
+def test_owner_policy_sources_invalidate_policy_fingerprint(
+    monkeypatch,
+    relative_path: str,
+):
+    baseline = _audit_policy_fingerprint()
+    target = (REPO_ROOT / relative_path).resolve()
+    original_read_bytes = Path.read_bytes
+
+    def read_bytes_with_target_drift(path: Path) -> bytes:
+        payload = original_read_bytes(path)
+        if path.resolve() == target:
+            return payload + b"\n# policy drift"
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes_with_target_drift)
+
+    assert _audit_policy_fingerprint() != baseline
 
 
 def _materialize_test_title(
@@ -513,7 +1221,7 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
         ),
         expected_registry_sha256=(
             "sha256:"
-            "be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
+            "0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
         ),
     )[candidate_id]
     title = expected_recovery_publish_title(authority)
@@ -866,6 +1574,8 @@ def test_audit_accepts_hashed_screenshot_cover_without_ai_evidence(tmp_path: Pat
     cover = _write(root / "covers" / "talk.cover.png", "screenshot-cover")
     generation = {
         "method": "screenshot_direct",
+        "reference_selection": {"best_ms": 1_000},
+        "screenshot_frame": {"frame_ms": 1_000},
         "reference_image": "/remote/cover_refs/talk.cover-ref.png",
         "reference_sha256": "sha256:" + "2" * 64,
         "final_cover": str(cover),
@@ -902,6 +1612,68 @@ def test_audit_accepts_hashed_screenshot_cover_without_ai_evidence(tmp_path: Pat
     assert result["issues"] == []
 
 
+@pytest.mark.parametrize(
+    ("method", "frame_ms", "best_ms"),
+    [
+        ("screenshot_direct", None, 1_000),
+        ("screenshot_direct", 1_000, None),
+        ("screenshot_direct", True, 1_000),
+        ("screenshot_direct", 1_000, False),
+        ("screenshot_direct", -1, -1),
+        ("screenshot_direct", 999, 1_000),
+        ("screenshot_polish", 999, 1_000),
+    ],
+)
+def test_audit_rejects_unbound_screenshot_frame_time(
+    tmp_path: Path,
+    method: str,
+    frame_ms: object,
+    best_ms: object,
+):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    cover = _write(root / "talk.cover.png", "screenshot-cover")
+    generation = {
+        "method": method,
+        "reference_selection": {"best_ms": best_ms},
+        "screenshot_frame": {"frame_ms": frame_ms},
+        "reference_image": "/remote/cover_refs/talk.cover-ref.png",
+        "reference_sha256": "sha256:" + "2" * 64,
+        "final_cover": str(cover),
+        "final_cover_sha256": "sha256:"
+        + hashlib.sha256(cover.read_bytes()).hexdigest(),
+        "rendered_lines": ["真实联动画面"],
+        "route_decision": {
+            "schema_version": "lidousha-cover-route-decision.v1",
+            "selected_treatment": method,
+            "reason": "hash-bound frame contains both participants",
+        },
+    }
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished",
+                "items": [
+                    {
+                        "stem": "talk",
+                        "title": "【李豆沙】真实联动画面",
+                        "cover": str(cover),
+                        "cover_generation": generation,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert "SCREENSHOT_COVER_EVIDENCE_MISSING" in {
+        issue["code"] for issue in result["issues"]
+    }
+
+
 def test_audit_accepts_portable_delivered_cover_with_record_hash(tmp_path: Path):
     root = tmp_path / "pkg"
     root.mkdir()
@@ -914,6 +1686,8 @@ def test_audit_accepts_portable_delivered_cover_with_record_hash(tmp_path: Path)
     ).hexdigest()
     generation = {
         "method": "screenshot_direct",
+        "reference_selection": {"best_ms": 1_000},
+        "screenshot_frame": {"frame_ms": 1_000},
         "reference_image": "/remote/cover_refs/auto.cover-ref.png",
         "reference_sha256": "sha256:" + "2" * 64,
         "final_cover": "/opt/runtime/covers/auto.screenshot-title.cover.png",
@@ -958,6 +1732,8 @@ def test_audit_rejects_portable_delivered_cover_with_wrong_bytes(tmp_path: Path)
     )
     generation = {
         "method": "screenshot_direct",
+        "reference_selection": {"best_ms": 1_000},
+        "screenshot_frame": {"frame_ms": 1_000},
         "reference_image": "/remote/cover_refs/auto.cover-ref.png",
         "reference_sha256": "sha256:" + "2" * 64,
         "final_cover": "/opt/runtime/covers/auto.screenshot-title.cover.png",
@@ -1120,6 +1896,8 @@ def test_audit_accepts_explicit_bounded_sapphire72_visual_contract(tmp_path: Pat
                         "cover": str(cover),
                         "cover_generation": {
                             "method": "screenshot_direct",
+                            "reference_selection": {"best_ms": 1_000},
+                            "screenshot_frame": {"frame_ms": 1_000},
                             "reference_image": "source-bound-frame.png",
                             "reference_sha256": "sha256:" + "1" * 64,
                             "final_cover": str(cover),
@@ -1391,19 +2169,17 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     ).hexdigest()
     chat_authority.write_text(
         json.dumps(
-            {
-                "schema_version": "fixture-chat-authority.v1",
-                "status": "PASS",
-                "speaker_ass_sha256": speaker_ass_sha256,
+                {
+                    "schema_version": "fixture-chat-authority.v1",
+                    "status": "PASS",
+                    "source_subtitle_truth_audit": (
+                        _source_truth_audit_fixture()
+                    ),
+                    "speaker_ass_sha256": speaker_ass_sha256,
                 "final_speaker_srt_sha256": speaker_srt_sha256,
-                "frozen_boundary_owner_contract": {
-                    "schema_version": "frozen-boundary-owner-contract.v1",
-                    "status": "FROZEN",
-                    "story_start_ms": 0,
-                    "story_end_ms": 4_000,
-                    "required_owner_count": 0,
-                    "owners": [],
-                },
+                "frozen_boundary_owner_contract": (
+                    _frozen_owner_fixture(candidate_id=stem)
+                ),
                 "final_boundary_required_exclusion_count": 0,
                 "final_review_audit": {
                     "schema_version": "final-review-audit.v2",

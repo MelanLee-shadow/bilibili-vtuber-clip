@@ -51,6 +51,9 @@ from src.autoslice.review_package_ass_audit import (  # noqa: E402
 from src.autoslice.review_package_boundary_contract import (  # noqa: E402
     audit_boundary_contract,
 )
+from src.autoslice.review_package_owner_audit import (  # noqa: E402
+    audit_source_truth_owner_attestations,
+)
 from src.autoslice.review_package_title_audit import (  # noqa: E402
     audit_recovery_publication_surfaces,
     recovery_publication_authority_contract,
@@ -221,11 +224,15 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/boundary_semantic_review.py",
         ROOT / "src/autoslice/boundary_endpoint_binding.py",
         ROOT / "src/autoslice/producer_boundary.py",
+        ROOT / "src/autoslice/producer_boundary_owner_contract.py",
         ROOT / "src/autoslice/producer_boundary_resolution.py",
         ROOT / "src/autoslice/producer_boundary_review_stage.py",
         ROOT / "src/autoslice/producer_package_finalization.py",
+        ROOT / "src/autoslice/source_subtitle_truth.py",
+        ROOT / "src/autoslice/producer_text_finalization.py",
         ROOT / "src/autoslice/producer_text_pipeline.py",
         ROOT / "src/autoslice/review_package_boundary_contract.py",
+        ROOT / "src/autoslice/review_package_owner_audit.py",
         ROOT / "src/autoslice/title_policy.py",
         ROOT / "src/autoslice/selection_scorecard.py",
         ROOT / "src/autoslice/cover_route_evidence.py",
@@ -236,6 +243,7 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/cover_screenshot_poster.py",
         CHANNEL_PROFILE.asset_file("title_policy"),
         CHANNEL_PROFILE.asset_file("selection_score_calibration"),
+        ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json",
     ]
     digest = hashlib.sha256()
     digest.update(AUDIT_POLICY_EPOCH.encode("utf-8"))
@@ -770,6 +778,27 @@ def _audit_finished_cover_evidence(
             == "DEGRADED_TO_DIRECT"
         )
         valid_method = method == treatment or degraded_polish
+        screenshot_frame = generation.get("screenshot_frame")
+        reference_selection = generation.get("reference_selection")
+        frame_ms = (
+            screenshot_frame.get("frame_ms")
+            if isinstance(screenshot_frame, Mapping)
+            else None
+        )
+        best_ms = (
+            reference_selection.get("best_ms")
+            if isinstance(reference_selection, Mapping)
+            else None
+        )
+        frame_binding_valid = bool(
+            isinstance(frame_ms, int)
+            and not isinstance(frame_ms, bool)
+            and frame_ms >= 0
+            and isinstance(best_ms, int)
+            and not isinstance(best_ms, bool)
+            and best_ms >= 0
+            and frame_ms == best_ms
+        )
         reference_ready = bool(generation.get("reference_image")) and _is_sha256(
             generation.get("reference_sha256")
         )
@@ -780,6 +809,7 @@ def _audit_finished_cover_evidence(
         )
         if not (
             valid_method
+            and frame_binding_valid
             and route_ready
             and reference_ready
             and rendered_text_ready
@@ -792,7 +822,8 @@ def _audit_finished_cover_evidence(
                 path=record_path,
                 detail=(
                     "screenshot route requires route decision, materialized "
-                    "method, reference/final hashes, and rendered title text"
+                    "method, exact reference/frame timing, reference/final "
+                    "hashes, and rendered title text"
                 ),
             )
         return
@@ -1136,215 +1167,15 @@ def _audit_source_truth_owner_attestations(
     record_path: Path | None,
     record: dict[str, Any],
 ) -> None:
-    truth_audit = (
-        chat_authority.get("source_subtitle_truth_audit")
-        if isinstance(
-            chat_authority.get("source_subtitle_truth_audit"), dict
-        )
-        else {}
+    audit_source_truth_owner_attestations(
+        issue_adder=_add_issue,
+        issues=issues,
+        stem=stem,
+        chat_authority_path=chat_authority_path,
+        chat_authority=chat_authority,
+        record_path=record_path,
+        record=record,
     )
-    truth_owner = chat_authority.get(
-        "final_source_truth_owner_verification"
-    )
-    truth_rows = [
-        row
-        for key in ("applied", "satisfied")
-        for row in truth_audit.get(key) or []
-        if isinstance(row, dict) and row.get("required") is not False
-    ]
-    if truth_rows and (
-        not isinstance(truth_owner, dict)
-        or truth_owner.get("status") != "PASS"
-        or int(truth_owner.get("required_window_count") or 0) <= 0
-    ):
-        _add_issue(
-            issues,
-            "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING",
-            stem=stem,
-            path=chat_authority_path,
-        )
-    baseline_owner = chat_authority.get(
-        "final_redelivery_baseline_owner_verification"
-    )
-    baseline_audit = chat_authority.get(
-        "redelivery_subtitle_baseline_audit"
-    )
-    if (
-        isinstance(baseline_audit, dict)
-        and baseline_audit.get("status")
-        in {"APPLIED", "ALREADY_SATISFIED"}
-        and (
-            not isinstance(baseline_owner, dict)
-            or baseline_owner.get("status") != "PASS"
-            or int(
-                baseline_owner.get("required_mapping_count") or 0
-            )
-            <= 0
-        )
-    ):
-        _add_issue(
-            issues,
-            "REDELIVERY_BASELINE_FINAL_OWNER_ATTESTATION_MISSING",
-            stem=stem,
-            path=chat_authority_path,
-        )
-    if (truth_rows or isinstance(baseline_audit, dict)) and (
-        not isinstance(
-            chat_authority.get("final_required_decision_count"), int
-        )
-        or int(
-            chat_authority.get("final_required_decision_count") or 0
-        )
-        <= 0
-    ):
-        _add_issue(
-            issues,
-            "FINAL_AUTHORITY_DECISION_COVERAGE_EMPTY",
-            stem=stem,
-            path=chat_authority_path,
-        )
-    frozen = chat_authority.get("frozen_boundary_owner_contract")
-    boundary_audit = record.get("boundary_audit")
-    frozen_owners = (
-        frozen.get("owners") if isinstance(frozen, dict) else None
-    )
-    boundary_owners = (
-        boundary_audit.get("frozen_required_boundary_owners")
-        if isinstance(boundary_audit, dict)
-        else None
-    )
-    boundary_owner_verification = (
-        boundary_audit.get("required_boundary_owner_verification")
-        if isinstance(boundary_audit, dict)
-        else None
-    )
-    delivery_coverage_verification = (
-        boundary_audit.get("delivery_coverage_verification")
-        if isinstance(boundary_audit, dict)
-        else None
-    )
-    frozen_owner_keys = [
-        (
-            str(owner.get("owner_kind") or ""),
-            str(owner.get("owner_id") or ""),
-        )
-        for owner in (frozen_owners or [])
-        if isinstance(owner, dict)
-    ]
-    required_truth_ids = {
-        str(row.get("truth_id") or "")
-        for row in truth_rows
-        if row.get("required") is True
-    }
-    frozen_truth_ids = {
-        owner_id
-        for owner_kind, owner_id in frozen_owner_keys
-        if owner_kind == "source_subtitle_truth"
-    }
-    baseline_owner_required = bool(
-        isinstance(baseline_audit, dict)
-        and baseline_audit.get("status")
-        in {"APPLIED", "ALREADY_SATISFIED"}
-    )
-    frozen_story_owner_ids = {
-        owner_id
-        for owner_kind, owner_id in frozen_owner_keys
-        if owner_kind
-        in {
-            "exact_read",
-            "sc_sender",
-            "gift_name",
-            "reply_coreference",
-            "entity_repair",
-        }
-    }
-    required_story_owner_ids = {
-        str(row.get("boundary_owner_id") or "")
-        for key in (
-            "applied",
-            "sender_repairs",
-            "gift_repairs",
-            "coreference_repairs",
-            "entity_repairs",
-        )
-        for row in (chat_authority.get(key) or [])
-        if isinstance(row, dict) and row.get("boundary_required") is True
-    }
-    owner_windows_valid = all(
-        isinstance(window, dict)
-        and isinstance(window.get("start_ms"), int)
-        and not isinstance(window.get("start_ms"), bool)
-        and isinstance(window.get("end_ms"), int)
-        and not isinstance(window.get("end_ms"), bool)
-        and int(window["start_ms"]) >= 0
-        and int(window["end_ms"]) > int(window["start_ms"])
-        for owner in (frozen_owners or [])
-        if isinstance(owner, dict)
-        for window in (owner.get("local_windows") or [])
-    )
-    frozen_valid = bool(
-        isinstance(frozen, dict)
-        and frozen.get("schema_version")
-        == "frozen-boundary-owner-contract.v1"
-        and frozen.get("status") == "FROZEN"
-        and isinstance(frozen_owners, list)
-        and frozen.get("required_owner_count") == len(frozen_owners)
-        and all(
-            isinstance(owner, dict)
-            and owner.get("required") is True
-            and str(owner.get("owner_kind") or "")
-            and str(owner.get("owner_id") or "")
-            and isinstance(owner.get("local_windows"), list)
-            and bool(owner.get("local_windows"))
-            for owner in frozen_owners
-        )
-        and owner_windows_valid
-        and len(frozen_owner_keys) == len(set(frozen_owner_keys))
-        and required_truth_ids == frozen_truth_ids
-        and required_story_owner_ids <= frozen_story_owner_ids
-        and (
-            not baseline_owner_required
-            or (
-                "reviewed_redelivery_baseline",
-                "exact-reviewed-interval",
-            )
-            in frozen_owner_keys
-        )
-    )
-    boundary_valid = bool(
-        isinstance(boundary_audit, dict)
-        and boundary_audit.get("frozen_required_boundary_owner_count")
-        == len(frozen_owners or [])
-        and boundary_owners == frozen_owners
-        and isinstance(boundary_owner_verification, dict)
-        and boundary_owner_verification.get("status") == "PASS"
-        and boundary_owner_verification.get("failures") == []
-        and isinstance(delivery_coverage_verification, dict)
-        and delivery_coverage_verification.get("status") == "PASS"
-        and delivery_coverage_verification.get("failure") is None
-        and int(
-            chat_authority.get(
-                "final_boundary_required_exclusion_count", 0
-            )
-            or 0
-        )
-        == 0
-    )
-    if not frozen_valid:
-        _add_issue(
-            issues,
-            "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID",
-            stem=stem,
-            path=chat_authority_path,
-        )
-    if not boundary_valid:
-        _add_issue(
-            issues,
-            "REQUIRED_BOUNDARY_OWNER_ATTESTATION_MISSING",
-            stem=stem,
-            path=record_path or chat_authority_path,
-        )
-
 
 def _audit_final_review_attestation(
     *,

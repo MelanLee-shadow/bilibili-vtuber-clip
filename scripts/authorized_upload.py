@@ -5,6 +5,8 @@
 and ``season-add`` enforce hashes, idempotency, metadata, public, Creator, and
 exact-section readback.  ``repair-*`` uses a separate crash-safe journal and
 can only append/edit an explicitly named existing BV; it cannot create one.
+``repair-verify-live`` re-observes all four public/Creator surfaces after the
+transaction reaches VERIFIED and writes a create-only completed sidecar.
 """
 from __future__ import annotations
 
@@ -33,9 +35,11 @@ from scripts.audit_lidousha_review_package import (  # noqa: E402
     AUDIT_SCHEMA_VERSION,
     audit_package,
 )
+from src.autoslice import authorized_upload_cli_parser  # noqa: E402
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
 from src.autoslice import final_human_review as human_review  # noqa: E402
 from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
+from src.autoslice import same_bv_live_verification  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
     BilibiliRepairAdapter,
@@ -982,6 +986,62 @@ def _write_json_sidecar(path: Path, payload: dict) -> None:
     )
 
 
+def _create_json_sidecar(path: Path, payload: dict) -> None:
+    """Create one durable evidence file without overwriting prior truth."""
+
+    path = path.resolve()
+    if path.exists() or path.is_symlink():
+        raise RepairError(f"completed sidecar already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(
+        f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}"
+    )
+    body = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        try:
+            view = memoryview(body)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError(
+                        "short write while creating completed sidecar"
+                    )
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise RepairError(
+                f"completed sidecar already exists: {path}"
+            ) from exc
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    parent_descriptor = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(parent_descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
 def _run_postpublish_verification(
     manifest: dict,
     manifest_path: Path,
@@ -1724,9 +1784,28 @@ def season_add(args: argparse.Namespace) -> int:
     return _run_season_step(manifest, manifest_path, bvid, args)
 
 
-def _same_bv_adapter(cookie_json: Path, biliup_cookie_json: Path) -> BilibiliRepairAdapter:
+def _biliup_readonly_canary(cookie_json: Path, bvid: str) -> None:
+    """Prove the append CLI login can read the target before APPEND_INTENT."""
+
+    same_bv_live_verification.run_biliup_readonly_canary(
+        cookie_json,
+        bvid,
+        validate_cookie=member_api.validate_biliup_cookie_file,
+        biliup_bin=member_api.BILIUP_BIN,
+        run=subprocess.run,
+        repair_error=RepairError,
+    )
+
+
+def _same_bv_adapter(
+    cookie_json: Path,
+    biliup_cookie_json: Path,
+    bvid: str | None = None,
+) -> BilibiliRepairAdapter:
     """Build repair reads and biliup append from their explicit cookie files."""
 
+    if bvid is not None:
+        _biliup_readonly_canary(biliup_cookie_json, bvid)
     http, _csrf = _build_season_http(cookie_json)
     return BilibiliRepairAdapter(
         session=member_api.BiliSession(cookie_path=cookie_json, biliup_cookie_path=biliup_cookie_json),
@@ -1750,7 +1829,11 @@ def repair_plan(args: argparse.Namespace) -> int:
                 print(f"REFUSE: {problem}", file=sys.stderr)
             return 2
         assert manifest is not None
-        adapter = _same_bv_adapter(Path(args.cookie_json), Path(args.biliup_cookie_json))
+        adapter = _same_bv_adapter(
+            Path(args.cookie_json),
+            Path(args.biliup_cookie_json),
+            args.bvid,
+        )
         season = manifest.get("season") or {}
         section_id = season.get("section_id")
         if not isinstance(section_id, int):
@@ -1814,8 +1897,8 @@ def repair_run(args: argparse.Namespace) -> int:
     lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
     lock = nullcontext() if args.dry_run else exclusive_upload_lock(lock_path)
     with lock:
-        _plan, manifest, problems = _load_repair_manifest(plan_path)
-        if problems or manifest is None:
+        plan, manifest, problems = _load_repair_manifest(plan_path)
+        if problems or manifest is None or plan is None:
             for problem in problems:
                 print(f"REFUSE: {problem}", file=sys.stderr)
             return 2
@@ -1826,7 +1909,11 @@ def repair_run(args: argparse.Namespace) -> int:
                 plan_path=plan_path,
                 journal=journal,
                 manifest=manifest,
-                adapter=_same_bv_adapter(Path(args.cookie_json), Path(args.biliup_cookie_json)),
+                adapter=_same_bv_adapter(
+                    Path(args.cookie_json),
+                    Path(args.biliup_cookie_json),
+                    str(plan["bvid"]),
+                ),
                 wait_seconds=args.wait,
                 poll_seconds=args.poll,
             )
@@ -1852,139 +1939,53 @@ def repair_run(args: argparse.Namespace) -> int:
 def repair_status(args: argparse.Namespace) -> int:
     """Read and validate the local repair authority without remote writes."""
 
-    plan_path = Path(args.plan).resolve()
-    journal = Path(args.journal).resolve()
-    _plan, manifest, problems = _load_repair_manifest(plan_path)
-    if problems or manifest is None:
-        for problem in problems:
-            print(f"REFUSE: {problem}", file=sys.stderr)
-        return 2
-    result = same_bv_repair_status(
-        plan_path=plan_path,
-        journal=journal,
-        manifest=manifest,
+    return same_bv_live_verification.run_repair_status(
+        args,
+        load_repair_manifest=_load_repair_manifest,
+        status_reader=same_bv_repair_status,
     )
-    print(
-        json.dumps(
-            {
-                "state": result.state,
-                "message": result.message,
-                "details": result.details,
-                "remote_mutation": False,
-            },
-            ensure_ascii=False,
-        )
+
+
+def repair_verify_live(args: argparse.Namespace) -> int:
+    """Freshly re-observe a VERIFIED repair and freeze a completed receipt."""
+
+    return same_bv_live_verification.run_repair_verify_live(
+        args,
+        default_lock=DEFAULT_UPLOAD_LOCK,
+        exclusive_lock=exclusive_upload_lock,
+        load_repair_manifest=_load_repair_manifest,
+        status_reader=same_bv_repair_status,
+        journal_entries=repair_binding.plan_entries,
+        adapter_factory=_same_bv_adapter,
+        create_sidecar=_create_json_sidecar,
+        sha256_file=sha256_file,
+        now=now,
+        observation_unavailable=repair_binding.ObservationUnavailable,
     )
-    return 0 if result.state == "VERIFIED" else (5 if result.state == "BLOCKED_DRIFT" else 6)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    mk = sub.add_parser("make-manifest", help="freeze the reviewed artifact's identity + authorization")
-    mk.add_argument("--video", required=True)
-    mk.add_argument("--cover", required=True)
-    mk.add_argument("--package-audit", required=True, help="machine-readable passed audit JSON for the package containing this same-stem bundle")
-    mk.add_argument("--title", required=True)
-    mk.add_argument("--authorized-by", default="Ivan")
-    mk.add_argument("--quote", required=True, help="the verbatim authorization words")
-    mk.add_argument("--final-human-review", default=None, help="hash-bound final perceptual-review receipt; required for same-BV recovery")
-    mk.add_argument(
-        "--tags",
-        default="",
-        help="optional comma-joined FULL tag line; when present it must exactly match "
-        "the audited sibling record.json final_tags",
+    args = authorized_upload_cli_parser.parse_args(
+        argv,
+        description=__doc__ or "",
+        handlers={
+            "make_manifest": make_manifest,
+            "upload": upload,
+            "season_add": season_add,
+            "verify": verify,
+            "repair_plan": repair_plan,
+            "repair_run": repair_run,
+            "repair_status": repair_status,
+            "repair_verify_live": repair_verify_live,
+        },
+        defaults={
+            "ledger": DEFAULT_LEDGER,
+            "repair_ledger": DEFAULT_REPAIR_LEDGER,
+            "uploader": DEFAULT_UPLOADER,
+            "cookie_json": DEFAULT_COOKIE_JSON,
+            "biliup_cookie_json": DEFAULT_REPAIR_BILIUP_COOKIE_JSON,
+        },
     )
-    mk.add_argument(
-        "--no-tags",
-        action="store_true",
-        help="legacy spelling retained for a loud v3 refusal; v3 never permits missing tags",
-    )
-    mk.add_argument(
-        "--season",
-        default="auto",
-        choices=["auto", "talk", "song", "none"],
-        help="season (合集) binding frozen into the manifest; auto derives from the title "
-        "(song catalog prefix → 小李歌唱, else 小李切片); none opts out explicitly",
-    )
-    mk.add_argument("--out", default=None)
-    mk.set_defaults(func=make_manifest)
-
-    def _season_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON), help="bilibili login-API cookie file")
-        p.add_argument("--season-wait", type=float, default=900.0, help="seconds to wait for state=0 (transcode)")
-        p.add_argument("--season-poll", type=float, default=30.0, help="poll interval seconds")
-        p.add_argument("--public-wait", type=float, default=240.0, help="seconds to wait for exact public/member/tags/section metadata convergence")
-
-    up = sub.add_parser(
-        "upload",
-        help="verify hashes + ledger, run the uploader with manifest args, then finish the season add (exit 6 = posted but season incomplete)",
-    )
-    up.add_argument("--manifest", required=True)
-    up.add_argument("--ledger", default=str(DEFAULT_LEDGER))
-    up.add_argument("--lock", default=None, help="shared upload/repair lock (default: production base/upload.lock)")
-    up.add_argument("--uploader", default=DEFAULT_UPLOADER)
-    up.add_argument("--skip-season", action="store_true", help="EMERGENCY ONLY: post without finishing the season step")
-    _season_args(up)
-    up.set_defaults(func=upload)
-
-    se = sub.add_parser("season-add", help="idempotently finish/re-verify season membership for a posted manifest")
-    se.add_argument("--manifest", required=True)
-    se.add_argument("--bvid", default=None, help="override; default resolves from the ledger's successful upload")
-    se.add_argument("--ledger", default=str(DEFAULT_LEDGER))
-    _season_args(se)
-    se.set_defaults(func=season_add)
-
-    ve = sub.add_parser("verify", help="pre-flight hash/authorization check only")
-    ve.add_argument("--manifest", required=True)
-    ve.set_defaults(func=verify)
-
-    rp = sub.add_parser(
-        "repair-plan",
-        help="read live single-P truth and freeze a manifest-bound existing-BV repair; no remote mutation",
-    )
-    rp.add_argument("--manifest", required=True)
-    rp.add_argument("--bvid", required=True)
-    rp.add_argument("--out", required=True)
-    rp.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
-    rp.add_argument("--lock", default=None, help="shared upload/repair lock")
-    rp.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON))
-    rp.add_argument("--biliup-cookie-json", default=str(DEFAULT_REPAIR_BILIUP_COOKIE_JSON), help="biliup CLI cookie file (must use top-level cookie_info schema)")
-    rp.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="print the proposed plan; write no plan/journal and perform no remote mutation",
-    )
-    rp.set_defaults(func=repair_plan)
-
-    rr = sub.add_parser(
-        "repair-run",
-        help="resume one durable append-at-most-once same-BV replacement transaction",
-    )
-    rr.add_argument("--plan", required=True)
-    rr.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
-    rr.add_argument("--lock", default=None, help="shared upload/repair lock")
-    rr.add_argument("--cookie-json", default=str(DEFAULT_COOKIE_JSON))
-    rr.add_argument("--biliup-cookie-json", default=str(DEFAULT_REPAIR_BILIUP_COOKIE_JSON), help="biliup CLI cookie file (must use top-level cookie_info schema)")
-    rr.add_argument("--wait", type=float, default=900.0)
-    rr.add_argument("--poll", type=float, default=15.0)
-    rr.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="validate and report the next action with no local or remote mutation",
-    )
-    rr.set_defaults(func=repair_run)
-
-    rs = sub.add_parser(
-        "repair-status",
-        help="validate and print the local same-BV repair state; no remote access",
-    )
-    rs.add_argument("--plan", required=True)
-    rs.add_argument("--journal", default=str(DEFAULT_REPAIR_LEDGER))
-    rs.set_defaults(func=repair_status)
-
-    args = parser.parse_args(argv)
     try:
         return args.func(args)
     except (UploadLockBusy, RepairError, CookieSchemaError) as exc:

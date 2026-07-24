@@ -283,12 +283,61 @@ def _window_payload(
     )
 
 
+def _classify_source_truth_delivery_windows(
+    owned_rows: list[dict],
+    *,
+    delivery_start_ms: int,
+    delivery_end_ms: int,
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    classified: list[dict] = []
+    for owned in owned_rows:
+        owner_start = int(owned["start_ms"])
+        owner_end = int(owned["end_ms"])
+        if owner_end <= delivery_start_ms:
+            relation = "OUTSIDE_BEFORE_FINAL_DELIVERY"
+        elif owner_start >= delivery_end_ms:
+            relation = "OUTSIDE_AFTER_FINAL_DELIVERY"
+        elif owner_start < delivery_start_ms and owner_end > delivery_end_ms:
+            relation = "STRADDLES_BOTH_FINAL_DELIVERY_ENDPOINTS"
+        elif owner_start < delivery_start_ms:
+            relation = "STRADDLES_FINAL_DELIVERY_START"
+        elif owner_end > delivery_end_ms:
+            relation = "STRADDLES_FINAL_DELIVERY_END"
+        else:
+            relation = "INSIDE_FINAL_DELIVERY"
+        classified.append(
+            {
+                **owned,
+                "source_timeline_start_ms": owner_start,
+                "source_timeline_end_ms": owner_end,
+                "delivery_relation": relation,
+            }
+        )
+    straddlers = [
+        row
+        for row in classified
+        if str(row["delivery_relation"]).startswith("STRADDLES_")
+    ]
+    inside = [
+        row
+        for row in classified
+        if row["delivery_relation"] == "INSIDE_FINAL_DELIVERY"
+    ]
+    outside = [
+        row
+        for row in classified
+        if str(row["delivery_relation"]).startswith("OUTSIDE_")
+    ]
+    return classified, straddlers, inside, outside
+
+
 def _verify_source_truth_owners(
     audit: dict,
     *,
     final_text_srt: str,
     final_speaker_srt: str,
     delivery_start_ms: int,
+    delivery_end_ms: int,
 ) -> tuple[bool, int]:
     truth = audit.get("source_subtitle_truth_audit") or {}
     all_rows: list[dict] = [
@@ -297,45 +346,76 @@ def _verify_source_truth_owners(
         for row in truth.get(key) or []
         if isinstance(row, dict)
     ]
-    context_only_rows = [
-        row
-        for row in all_rows
-        if row.get("required") is not False
-        and row.get("boundary_role") == "next_topic_witness"
-    ]
-    optional_rows = [
-        row for row in all_rows if row.get("required") is False
-    ]
-    rows = [
-        row
-        for row in all_rows
-        if row.get("required") is not False
-        and row.get("boundary_role") != "next_topic_witness"
-    ]
+    optional_rows = [row for row in all_rows if row.get("required") is False]
+    rows = [row for row in all_rows if row.get("required") is not False]
     required_count = 0
     failures: list[dict] = []
+    required_rows: list[dict] = []
+    context_only_rows: list[dict] = []
+    straddling_rows: list[dict] = []
+    if (
+        isinstance(delivery_start_ms, bool)
+        or not isinstance(delivery_start_ms, int)
+        or isinstance(delivery_end_ms, bool)
+        or not isinstance(delivery_end_ms, int)
+        or delivery_start_ms < 0
+        or delivery_end_ms <= delivery_start_ms
+    ):
+        failures.append(
+            {
+                "reason_code": "SOURCE_TRUTH_FINAL_DELIVERY_INTERVAL_INVALID",
+                "delivery_start_ms": delivery_start_ms,
+                "delivery_end_ms": delivery_end_ms,
+            }
+        )
+        audit["final_source_truth_owner_verification"] = {
+            "status": "FAIL",
+            "final_delivery_interval": {
+                "timeline": "padded_source_local_ms",
+                "interval_semantics": "half_open",
+                "start_ms": delivery_start_ms,
+                "end_ms": delivery_end_ms,
+            },
+            "required_truth_row_count": len(rows),
+            "required_truth_ids": [
+                str(row.get("truth_id") or "") for row in rows
+            ],
+            "context_only_truth_row_count": 0,
+            "context_only_truth_ids": [],
+            "context_only_truth_evidence": [],
+            "optional_truth_row_count": len(optional_rows),
+            "straddling_truth_row_count": 0,
+            "required_window_count": 0,
+            "failures": failures,
+        }
+        return False, 0
+
     for row in rows:
+        for stale_key in (
+            "final_owner_scope",
+            "final_owner_scope_reason",
+            "final_owner_contract",
+            "final_owner_windows",
+            "final_owner_verified",
+        ):
+            row.pop(stale_key, None)
         contract = row.get("declared_output_contract") or {}
         action = str(contract.get("action") or row.get("action") or "")
         canonical_texts = contract.get("canonical_texts")
         if not isinstance(canonical_texts, list):
             canonical_texts = row.get("after") or []
-        expected_exact = normalize_chat_text(
-            "".join(str(value) for value in canonical_texts)
-        )
-        required_text = normalize_chat_text(
-            str(contract.get("required_text") or "")
-        )
+        expected_exact = normalize_chat_text("".join(str(value) for value in canonical_texts))
+        required_text = normalize_chat_text(str(contract.get("required_text") or ""))
         projection_present = "resolved_target_projection" in row
         projection = validated_source_truth_projection(row)
         if projection_present and projection is None:
+            required_rows.append(row)
+            row["final_owner_scope"] = "INVALID_PROJECTION"
             row["final_owner_verified"] = False
             failures.append(
                 {
                     "truth_id": row.get("truth_id"),
-                    "reason_code": (
-                        "SOURCE_TRUTH_FINAL_PROJECTION_INVALID"
-                    ),
+                    "reason_code": ("SOURCE_TRUTH_FINAL_PROJECTION_INVALID"),
                 }
             )
             continue
@@ -360,6 +440,8 @@ def _verify_source_truth_owners(
                 for start_ms, end_ms in source_truth_owner_windows(row)
             ]
         if not owned_rows:
+            required_rows.append(row)
+            row["final_owner_scope"] = "MISSING_OWNER_WINDOW"
             row["final_owner_verified"] = False
             failures.append(
                 {
@@ -368,8 +450,61 @@ def _verify_source_truth_owners(
                 }
             )
             continue
+
+        (
+            classified_windows,
+            straddlers,
+            inside_windows,
+            outside_windows,
+        ) = _classify_source_truth_delivery_windows(
+            owned_rows,
+            delivery_start_ms=delivery_start_ms,
+            delivery_end_ms=delivery_end_ms,
+        )
+        if straddlers:
+            required_rows.append(row)
+            straddling_rows.append(row)
+            row["final_owner_scope"] = "STRADDLES_FINAL_DELIVERY"
+            row["final_owner_windows"] = classified_windows
+            row["final_owner_verified"] = False
+            failures.append(
+                {
+                    "truth_id": row.get("truth_id"),
+                    "reason_code": ("SOURCE_TRUTH_FINAL_WINDOW_STRADDLES_DELIVERY"),
+                    "delivery_start_ms": delivery_start_ms,
+                    "delivery_end_ms": delivery_end_ms,
+                    "windows": classified_windows,
+                }
+            )
+            continue
+        if inside_windows and outside_windows:
+            required_rows.append(row)
+            row["final_owner_scope"] = "MIXED_FINAL_DELIVERY_AND_CONTEXT_WINDOWS"
+            row["final_owner_windows"] = classified_windows
+            row["final_owner_verified"] = False
+            failures.append(
+                {
+                    "truth_id": row.get("truth_id"),
+                    "reason_code": ("SOURCE_TRUTH_FINAL_WINDOW_SET_CROSSES_DELIVERY_SCOPE"),
+                    "delivery_start_ms": delivery_start_ms,
+                    "delivery_end_ms": delivery_end_ms,
+                    "windows": classified_windows,
+                }
+            )
+            continue
+        if outside_windows and not inside_windows:
+            context_only_rows.append(row)
+            row["final_owner_scope"] = "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+            row["final_owner_scope_reason"] = (
+                "ALL_EFFECTIVE_OWNER_WINDOWS_OUTSIDE_HALF_OPEN_FINAL_INTERVAL"
+            )
+            row["final_owner_windows"] = classified_windows
+            row["final_owner_verified"] = False
+            continue
+
+        required_rows.append(row)
         window_results: list[dict] = []
-        for owned in owned_rows:
+        for owned in inside_windows:
             relative_start = int(owned["start_ms"]) - delivery_start_ms
             relative_end = int(owned["end_ms"]) - delivery_start_ms
             text_payload = _window_payload(
@@ -389,9 +524,7 @@ def _verify_source_truth_owners(
             if expected_after_raw is None:
                 text_ok = speaker_ok = True
             else:
-                expected_after = normalize_chat_text(
-                    str(expected_after_raw)
-                )
+                expected_after = normalize_chat_text(str(expected_after_raw))
                 text_ok = text_payload == expected_after
                 speaker_ok = speaker_payload == expected_after
             required_count += 1
@@ -417,37 +550,26 @@ def _verify_source_truth_owners(
                         **result,
                     }
                 )
-        aggregate_text = "".join(
-            str(item["text_payload"]) for item in window_results
-        )
-        aggregate_speaker = "".join(
-            str(item["speaker_payload"]) for item in window_results
-        )
+        row["final_owner_scope"] = "FINAL_DELIVERY"
+        aggregate_text = "".join(str(item["text_payload"]) for item in window_results)
+        aggregate_speaker = "".join(str(item["speaker_payload"]) for item in window_results)
         if action == "drop_cue":
             contract_text_ok = not aggregate_text
             contract_speaker_ok = not aggregate_speaker
         elif action == "replace_cue":
-            contract_text_ok = (
-                bool(expected_exact) and aggregate_text == expected_exact
-            )
-            contract_speaker_ok = (
-                bool(expected_exact) and aggregate_speaker == expected_exact
-            )
+            contract_text_ok = bool(expected_exact) and aggregate_text == expected_exact
+            contract_speaker_ok = bool(expected_exact) and aggregate_speaker == expected_exact
         elif action == "replace_substring":
             expected = required_text or expected_exact
             contract_text_ok = bool(expected) and expected in aggregate_text
-            contract_speaker_ok = (
-                bool(expected) and expected in aggregate_speaker
-            )
+            contract_speaker_ok = bool(expected) and expected in aggregate_speaker
         else:
             contract_text_ok = contract_speaker_ok = False
         if not (contract_text_ok and contract_speaker_ok):
             failures.append(
                 {
                     "truth_id": row.get("truth_id"),
-                    "reason_code": (
-                        "SOURCE_TRUTH_FINAL_CONTRACT_MISMATCH"
-                    ),
+                    "reason_code": ("SOURCE_TRUTH_FINAL_CONTRACT_MISMATCH"),
                     "action": action,
                     "expected_exact": expected_exact,
                     "required_text": required_text,
@@ -469,18 +591,37 @@ def _verify_source_truth_owners(
         row["final_owner_windows"] = window_results
         row["final_owner_verified"] = (
             bool(window_results)
-            and all(
-                item["text_ok"] and item["speaker_ok"]
-                for item in window_results
-            )
+            and all(item["text_ok"] and item["speaker_ok"] for item in window_results)
             and contract_text_ok
             and contract_speaker_ok
         )
     audit["final_source_truth_owner_verification"] = {
         "status": "FAIL" if failures else "PASS",
-        "required_truth_row_count": len(rows),
+        "final_delivery_interval": {
+            "timeline": "padded_source_local_ms",
+            "interval_semantics": "half_open",
+            "start_ms": delivery_start_ms,
+            "end_ms": delivery_end_ms,
+        },
+        "required_truth_row_count": len(required_rows),
+        "required_truth_ids": [
+            str(row.get("truth_id") or "") for row in required_rows
+        ],
         "context_only_truth_row_count": len(context_only_rows),
+        "context_only_truth_ids": [
+            str(row.get("truth_id") or "") for row in context_only_rows
+        ],
+        "context_only_truth_evidence": [
+            {
+                "truth_id": str(row.get("truth_id") or ""),
+                "boundary_role": str(row.get("boundary_role") or ""),
+                "final_owner_scope": row.get("final_owner_scope"),
+                "final_owner_windows": row.get("final_owner_windows"),
+            }
+            for row in context_only_rows
+        ],
         "optional_truth_row_count": len(optional_rows),
+        "straddling_truth_row_count": len(straddling_rows),
         "required_window_count": required_count,
         "failures": failures,
     }
@@ -629,6 +770,7 @@ def verify_chat_authority_final_surfaces(
         final_text_srt=final_text_srt,
         final_speaker_srt=final_speaker_srt,
         delivery_start_ms=delivery_start_ms,
+        delivery_end_ms=delivery_end_ms,
     )
     if not source_owner_ok:
         audit["final_verification_failure"] = (

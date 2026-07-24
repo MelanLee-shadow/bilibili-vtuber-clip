@@ -17,6 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "free_session_autoslice.py"
 RECOVERY_PLANNER = ROOT / "scripts" / "plan_recovery_review_rerun.py"
+RECOVERY_MANIFEST_BUILDER = (
+    ROOT / "scripts" / "build_lidousha_recovery_review_manifest.py"
+)
 
 
 def test_runner_runs_as_script_without_import_cycle():
@@ -40,6 +43,23 @@ def test_recovery_planner_bootstraps_repo_root_for_direct_execution():
         "import runpy,sys; "
         f"ns=runpy.run_path({str(RECOVERY_PLANNER)!r}, "
         "run_name='recovery_planner_probe'); "
+        "assert str(ns['ROOT']) in sys.path"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe],
+        cwd="/",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_recovery_manifest_builder_bootstraps_repo_root_for_direct_execution():
+    probe = (
+        "import runpy,sys; "
+        f"ns=runpy.run_path({str(RECOVERY_MANIFEST_BUILDER)!r}, "
+        "run_name='recovery_manifest_builder_probe'); "
         "assert str(ns['ROOT']) in sys.path"
     )
     result = subprocess.run(

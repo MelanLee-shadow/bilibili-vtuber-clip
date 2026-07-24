@@ -1120,12 +1120,46 @@ def _defer_source_truth_failure_for_redelivery(
         and bool(row.get("local_windows"))
         for row in failures
     )
+    # Mention-scoped postconditions may also be temporarily absent from fresh
+    # ASR when a fully source-bound v2 exact replay is waiting to restore the
+    # reviewed cue grid.  This exemption is deliberately narrower than the
+    # generic substring fallback above: every required failure must already
+    # have an isolated, positively resolved mention owner.  Missing windows,
+    # ambiguous/not-isolated mentions, optional rows, mixed failure kinds, and
+    # incomplete baseline/source bindings remain hard failures.
+    recoverable_exact_mention_postconditions = bool(failures) and all(
+        isinstance(row, Mapping)
+        and row.get("required") is True
+        and row.get("action") == "replace_substring"
+        and row.get("reason_code")
+        in {
+            "MENTION_REQUIRED_TEXT_MISSING",
+            "MENTION_FORBIDDEN_TOKEN_SURVIVED",
+        }
+        and bool(row.get("local_windows"))
+        and isinstance(row.get("mention_owner_resolution"), Mapping)
+        and row["mention_owner_resolution"].get("status") == "PASS"
+        for row in failures
+    )
+    exact_v2_baseline_binding_valid = (
+        _valid_redelivery_baseline_config(baseline_config)
+        and baseline_config.get("schema_version")
+        == "subtitle-redelivery-baseline.v2"
+        and baseline_config.get("exact_interval_replay") is True
+    )
+    exact_mention_postconditions_pending = (
+        exact_v2_baseline_binding_valid
+        and recoverable_exact_mention_postconditions
+    )
     exact_interval_replay_pending = (
         isinstance(baseline_config, Mapping)
         and baseline_config.get("schema_version")
         == "subtitle-redelivery-baseline.v2"
         and baseline_config.get("exact_interval_replay") is True
-        and recoverable_exact_cue_shape
+        and (
+            recoverable_exact_cue_shape
+            or exact_mention_postconditions_pending
+        )
     )
     if (
         baseline_config is None

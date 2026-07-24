@@ -28,7 +28,7 @@ PUBLICATION_ASSET = (
     ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
 )
 PUBLICATION_ASSET_SHA256 = (
-    "sha256:be9ffbd42008b94d9e47ea714e1fae5d032f576bb0e71841624df3b77ea53757"
+    "sha256:0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
 )
 
 
@@ -164,7 +164,7 @@ def test_publication_registry_covers_public_and_manual_title_modes():
         "auto_193450_3573_3665": 3_665_850,
         "auto_193450_672_945": 951_900,
         "auto_193450_1863_2056": 2_056_480,
-        "auto_193450_1573_1672": 1_679_990,
+        "auto_193450_1573_1672": 1_672_970,
         "auto_193450_1475_1543": 1_543_760,
     }
     assert {
