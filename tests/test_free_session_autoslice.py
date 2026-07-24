@@ -16,7 +16,9 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.chat_authority import recording_start_epoch_ms
 from src.autoslice.producer_boundary_owner_contract import (
     freeze_required_boundary_owner_contract,
+    frozen_boundary_owner_contract_sha256,
     redelivery_baseline_boundary_owner,
+    validate_frozen_boundary_owner_contract,
 )
 from src.autoslice.talk_lane import (
     _bound_boundary_retry_source_end_ms,
@@ -8839,3 +8841,51 @@ def test_boundary_retry_still_rejects_committed_truth_owner_drift():
             chat_authority_audit={},
             required_boundary_owners=[],
         )
+
+
+def test_legacy_frozen_contract_without_deterministic_digest_stays_auditable():
+    """Contracts frozen before the deterministic subset existed are immutable
+    evidence (e.g. 2026-07-24's delivered auto_183122_1209_1410).  They must
+    keep validating, while a present-but-wrong digest still fails closed."""
+
+    spec = {
+        "candidate_id": "candidate-a",
+        "semantic_start_ms": 100_000,
+        "semantic_end_ms": 110_000,
+        "boundary_repair_extend_cap_ms": 30_000,
+        "pieces": [{"start_ms": 95_000, "end_ms": 125_000}],
+    }
+    audit: dict[str, object] = {}
+    freeze_required_boundary_owner_contract(
+        spec=spec,
+        durations=[30_000],
+        chat_authority_audit=audit,
+        required_boundary_owners=[
+            {
+                "owner_kind": "source_subtitle_truth",
+                "owner_id": "story-truth",
+                "required": True,
+                "source_start_ms": 104_000,
+                "source_end_ms": 106_000,
+                "local_windows": [{"start_ms": 9_000, "end_ms": 11_000}],
+            }
+        ],
+    )
+    frozen = dict(audit["frozen_boundary_owner_contract"])
+
+    legacy = {
+        key: value
+        for key, value in frozen.items()
+        if key != "deterministic_owner_set_sha256"
+    }
+    legacy["contract_sha256"] = frozen_boundary_owner_contract_sha256(legacy)
+    assert validate_frozen_boundary_owner_contract(legacy)["status"] == "FROZEN"
+
+    tampered = dict(legacy)
+    tampered["deterministic_owner_set_sha256"] = "sha256:" + "0" * 64
+    tampered["contract_sha256"] = frozen_boundary_owner_contract_sha256(tampered)
+    with pytest.raises(
+        RuntimeError,
+        match="BOUNDARY_RETRY_OWNER_SET_DRIFT",
+    ):
+        validate_frozen_boundary_owner_contract(tampered)

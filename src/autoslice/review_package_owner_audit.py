@@ -558,21 +558,27 @@ def _retry_verification_valid(
     owner_scope: Mapping[str, object] | None,
 ) -> bool:
     receipt = frozen.get("boundary_retry_owner_contract_verification")
+    if receipt is None:
+        return True
+    if not (
+        isinstance(receipt, Mapping)
+        and receipt.get("status") == "PASS"
+        and _is_sha256(receipt.get("expected_contract_sha256"))
+        and isinstance(owner_scope, Mapping)
+        and receipt.get("owner_eligibility_scope_sha256")
+        == owner_scope.get("scope_sha256")
+    ):
+        return False
+    if frozen.get("deterministic_owner_set_sha256") is None:
+        # Legacy receipt from before ASR-derived owners were unbound across
+        # attempts: it asserted whole-set identity, which is strictly stronger
+        # than today's rule.  Historical packages stay auditable as-is.
+        return receipt.get("owner_set_sha256") == frozen.get("owner_set_sha256")
     return bool(
-        receipt is None
-        or (
-            isinstance(receipt, Mapping)
-            and receipt.get("status") == "PASS"
-            and _is_sha256(receipt.get("expected_contract_sha256"))
-            and receipt.get("deterministic_owner_set_sha256")
-            == frozen.get("deterministic_owner_set_sha256")
-            and receipt.get("retry_owner_set_sha256")
-            == frozen.get("owner_set_sha256")
-            and receipt.get("asr_derived_owner_binding") == "per_attempt"
-            and isinstance(owner_scope, Mapping)
-            and receipt.get("owner_eligibility_scope_sha256")
-            == owner_scope.get("scope_sha256")
-        )
+        receipt.get("deterministic_owner_set_sha256")
+        == frozen.get("deterministic_owner_set_sha256")
+        and receipt.get("retry_owner_set_sha256") == frozen.get("owner_set_sha256")
+        and receipt.get("asr_derived_owner_binding") == "per_attempt"
     )
 
 

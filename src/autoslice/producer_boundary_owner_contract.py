@@ -158,9 +158,14 @@ def validate_frozen_boundary_owner_contract(
         )
         or contract.get("owner_set_sha256")
         != _canonical_sha256(normalized_owners)
-        or contract.get("deterministic_owner_set_sha256")
-        != _canonical_sha256(
-            _deterministic_owner_subset(owners)
+        # Contracts frozen before the deterministic subset existed carry no
+        # such digest.  They are immutable evidence validated under the older
+        # (strictly narrower) whole-set rule and must stay auditable; only a
+        # present digest is checked, and a wrong one still fails closed.
+        or (
+            contract.get("deterministic_owner_set_sha256") is not None
+            and contract.get("deterministic_owner_set_sha256")
+            != _canonical_sha256(_deterministic_owner_subset(owners))
         )
         or owner_scope.get("scope_sha256")
         != _canonical_sha256(

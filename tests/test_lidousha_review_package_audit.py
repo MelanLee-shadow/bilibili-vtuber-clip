@@ -3016,3 +3016,43 @@ def test_audit_blocks_package_with_invalid_redo_required_marker(tmp_path: Path):
     codes = {issue["code"] for issue in result["issues"]}
     assert "PACKAGE_MARKED_INVALID_REDO_REQUIRED" in codes
     assert result["passed"] is False
+
+
+def test_legacy_retry_receipt_keeps_historical_package_auditable():
+    """A retry receipt frozen before ASR-derived owners were unbound asserted
+    whole-set identity (strictly stronger than today's rule).  It must remain
+    valid; a new-format contract may not fall back to that legacy shape."""
+
+    from src.autoslice.review_package_owner_audit import _retry_verification_valid
+
+    scope = {"scope_sha256": "sha256:" + "b" * 64}
+    legacy = {
+        "owner_set_sha256": "sha256:" + "c" * 64,
+        "boundary_retry_owner_contract_verification": {
+            "status": "PASS",
+            "expected_contract_sha256": "sha256:" + "d" * 64,
+            "owner_set_sha256": "sha256:" + "c" * 64,
+            "owner_eligibility_scope_sha256": scope["scope_sha256"],
+        },
+    }
+    assert _retry_verification_valid(frozen=legacy, owner_scope=scope) is True
+
+    drifted = {
+        **legacy,
+        "boundary_retry_owner_contract_verification": {
+            **legacy["boundary_retry_owner_contract_verification"],
+            "owner_set_sha256": "sha256:" + "0" * 64,
+        },
+    }
+    assert _retry_verification_valid(frozen=drifted, owner_scope=scope) is False
+
+    modern_contract_legacy_receipt = {
+        **legacy,
+        "deterministic_owner_set_sha256": "sha256:" + "e" * 64,
+    }
+    assert (
+        _retry_verification_valid(
+            frozen=modern_contract_legacy_receipt, owner_scope=scope
+        )
+        is False
+    )
