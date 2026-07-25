@@ -163,6 +163,12 @@
   transcript，或现行明示 strong-thread-anchor 窄例外，才可令 applied row
   `owner_eligible=true`；失败时整句保持原口播，仅允许已独立见证的 entity/source-truth 槽位
   修复。
+- whole-line 结构检查判定 head/tail 支持前必须剥离**边界借字**：authority 边界侧 ≤2 字的
+  孤立匹配块，若与相邻匹配块之间隔着 ≥3 字的 observed 侧插入 run，视为从转录相邻句借来的
+  同形字（剥离结果披露在 `borrowed_boundary_blocks_stripped`）。1863 实案：SC 尾字「了」
+  她没念，独立转录连写到下一句「哎，现在几点了」，子序列对齐借同形「了」伪造出 near-complete
+  逐字朗读，SC 整行改写 applied 后又被 redelivery baseline 拉回，终验对该 exact_read 快照
+  永久失配。非逐字朗读（加字/漏字）一律保持已审口播文本，不注入 SC 原文。
 - 书名号结构门在所有文本 authority（含源真值）之后再跑一次；合法跨 cue 配对单独记账，真正的 `UNRESOLVED_COMPLEX_IMBALANCE` 必须阻断 `review_ready`。
 - 最终 clean/speaker SRT 在 burn 前必须经过
   `src/autoslice/subtitle_validation.py::validate_srt_file`：每个非空 block 都必须被消费，
