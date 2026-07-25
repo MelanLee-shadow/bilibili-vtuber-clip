@@ -167,6 +167,41 @@ UNRESOLVED finding 阻断——真发生再修（修法参照 1573：finding 由
    `【李豆沙】`（人工标题曾绕过 envelope 门）；registry 以 `ivan_manual_override` 存 Ivan 手定
    正文，`canonicalize_publish_title` 会补前缀成 29/38 字，本轮修复应一并纠正这两条线上标题。
 
+### 2026-07-25 夜间授权与机制账（Ivan 睡前指令）
+
+**授权**：7/24 至少 5 条切片修复好后**权宜上传**（他睡前原话"做完了之后应该权益上传…
+记得要上传5条切片，修复好了就上传"）；7/22 五连修好后执行同 BV 修复替换（旧授权）。
+上传证据必须 commit。
+
+**7/24 十候选全景**：2 delivered（豆角/技能）+4 findings-rejected（607 灯牌/199/537/
+424_535）+2 外语门+2 段尾边界。rejected 是防 backfill 化石态、修好上游也不自动重跑——
+新工具 scripts/revive_rejected_candidates.py 是唯一 sanctioned 复活通道（校验化石态、
+翻 failed+recoverable、revival 审计块、flock+原子写；注意 runner 重写 pick 会丢
+revival 块——审计持久性缺陷记 backlog）。
+
+**今晚机制修复链**（每个都有实案+测试）：
+- 语境关联召回 entity_context_recall.py（叹十七手案：熊类关联词+kmx 已确认→句首杂段送强裁；
+  UNCERTAIN 保留不阻塞；确证改写。KO熊 变体（537 案）另加了 surfaces）。
+- 审查员 prompt 双修（星座→新作案）：音近候选推理强制化（null=阻断无出路，穷尽近音才许）；
+  self_ref 昵称语境豁免（游戏 ID 可含主播名，温柔型李豆沙案）。
+- 终审结转 final_review_carryover.py（199/537 死循环案）：correction pass（可改字）与 exact
+  终审（不可改）是两次互不通气的独立 LLM 扫描——B 声学确证的修复持久化 sidecar，下轮以
+  raw 行进 A 的**同一解析循环**（stale 预过滤防 ALL_INVALID 分母污染；第一版绕过解析器
+  直接 merge 曾炸 KeyError→CORRECTION_MUTATION_AUTHORITY_INVALID，勿回退）。
+- CPA 画面见证 cpa_frame_witness.py（Ivan：看画面交给 CPA，AGY 主听）：hash-bound 单帧
+  视觉问答；**gpt-5.6-sol 默认**（3 轮基准关键专名 3/3，terra 1/3，luna 会编造字幕禁用；
+  视觉模型有轮间抖动，单轮基准不可靠）；CPA 只有 gpt-5.x 且必须 /responses+input_image
+  （chat/completions 502）；帧降采样 1280w JPEG。已实战：读出温柔型李豆沙/投抱月。
+- redelivery 头尾**恒等锚**（1573 r10/r13 案）：头=baseline 覆盖起点（min 单向钳不够，
+  fresh snap 前漂会 STRADDLES 死锁）；尾=推荐上限钳 baseline 覆盖终点（lower_bound 语义
+  延伸会把 V13 排除的鼠标话题包回来）。同 BV 修复逐毫秒复刻已发布边界。
+- 真值目标选择擦入豁免（1573 r12 案，apply 侧）：replace 目标 cue 的重叠**又小又短**
+  （<50% 且 ≤400ms）判边界擦入踢出；实质跨 cue 内容保留；保护/覆盖路径维持保守 80ms；
+  drop_cue 完整包含判定不动。终验 owner payload 的 majority 门（r11）是它的浅层前置。
+- 百合作品关联即出（樱抱月案）：title_style.md+upload_tag_policy（adachi_shimamura）；
+  相关（含间接：队友 ID=角色名组合）就进标题和 tag。
+- 424_535 八条真值（Ivan 亲裁：温柔型李豆沙×4、新作×2、李豆沙（本物）cue19、樱抱月 cue27）。
+
 ## 约束与阻塞判据
 
 - V8–V14 都只是历史或失败证据，不得续跑、复制 state/out/receipt、补 hash 或冒充
