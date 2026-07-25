@@ -102,10 +102,19 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
             boundary_end_mode=scope.get(
                 "boundary_end_mode", "semantic_lower_bound"
             ),
+            baseline_tail_cap_ms=scope.get("baseline_tail_cap_ms"),
         )
     except BoundarySemanticReviewError:
         return False
-    return dict(scope) == expected
+    observed = dict(scope)
+    if "baseline_tail_cap_ms" not in observed:
+        # 旧产物 scope（尾锚前冻结）：重建件多出的新键剔除后逐字段比对；
+        # 自声明 sha 已在上方独立验证，语义比对双方剔除 sha 字段（剔键后
+        # 重建件的自带 sha 必然不同，属预期）。
+        expected.pop("baseline_tail_cap_ms", None)
+        observed.pop("scope_sha256", None)
+        expected.pop("scope_sha256", None)
+    return observed == expected
 
 
 def build_boundary_search_scope(
@@ -254,6 +263,8 @@ def build_boundary_search_scope(
         "delivery_lower_bound_ms": delivery_lower_bound_ms,
         "review_target_ms": delivery_lower_bound_ms,
         "repair_cap_ms": repair_cap,
+        # 尾锚参与 sha 与重建验证；旧产物无此键=旧行为，向后兼容。
+        "baseline_tail_cap_ms": baseline_tail_cap_ms,
         "max_recommended_end_ms": max_recommended_end_ms,
         "recommendation_forward_ms": recommendation_forward_ms,
         "minimum_recommended_end_ms": max(
