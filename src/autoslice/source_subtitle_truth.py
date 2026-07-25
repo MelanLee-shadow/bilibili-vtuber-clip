@@ -19,14 +19,19 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from src.autoslice.source_truth_target_selection import (  # noqa: E402
+    DROP_CUE_BOUNDARY_EPSILON_MS,
+    MIN_CUE_OVERLAP_MS,
+    _drop_cue_targets,
+    _overlap_ms,
+    _target_indexes,
+)
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 
 
 SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
 AUDIT_SCHEMA_VERSION = "source-subtitle-truth-audit.v1"
 PREVIEW_SCHEMA_VERSION = "source-truth-deterministic-preview.v1"
-MIN_CUE_OVERLAP_MS = 80
-DROP_CUE_BOUNDARY_EPSILON_MS = 120
 SPOKEN_START_CUE_LAG_TOLERANCE_MS = 500
 # Candidate recall timestamps and subtitle cue onsets may differ by a few
 # frames.  Boundary ownership may absorb only this bounded lead jitter; larger
@@ -253,76 +258,6 @@ def _normalize_truth_surface(text: str) -> str:
     """Punctuation/whitespace-insensitive form for cross-cue truth comparison."""
 
     return _TRUTH_SURFACE_PUNCT_RX.sub("", text)
-
-
-def _overlap_ms(cue: SrtCue, start_ms: int, end_ms: int) -> int:
-    return max(0, min(cue.end_ms, end_ms) - max(cue.start_ms, start_ms))
-
-
-def _target_indexes(
-    cues: Sequence[SrtCue], windows: Sequence[Mapping[str, object]]
-) -> list[int]:
-    matches: list[tuple[int, int]] = []
-    for index, cue in enumerate(cues):
-        overlap = max(
-            (
-                _overlap_ms(cue, int(window["start_ms"]), int(window["end_ms"]))
-                for window in windows
-            ),
-            default=0,
-        )
-        if overlap >= MIN_CUE_OVERLAP_MS:
-            matches.append((index, overlap))
-    matches.sort(key=lambda row: row[0])
-    return [index for index, _overlap in matches]
-
-
-def _drop_cue_targets(
-    cues: Sequence[SrtCue], windows: Sequence[Mapping[str, object]]
-) -> tuple[list[int], list[dict[str, Any]]]:
-    """Resolve deletions without allowing a truth window to eat real speech.
-
-    A cue may be dropped only when one local truth window contains its complete
-    timeline.  The small epsilon absorbs encoder/SRT rounding drift; a cue that
-    materially straddles either boundary is a conflict and is left untouched.
-    """
-
-    targets: list[int] = []
-    conflicts: list[dict[str, Any]] = []
-    for index, cue in enumerate(cues):
-        overlapping = [
-            window
-            for window in windows
-            if _overlap_ms(cue, int(window["start_ms"]), int(window["end_ms"]))
-            >= MIN_CUE_OVERLAP_MS
-        ]
-        if not overlapping:
-            continue
-        if any(
-            cue.start_ms
-            >= int(window["start_ms"]) - DROP_CUE_BOUNDARY_EPSILON_MS
-            and cue.end_ms
-            <= int(window["end_ms"]) + DROP_CUE_BOUNDARY_EPSILON_MS
-            for window in overlapping
-        ):
-            targets.append(index)
-            continue
-        conflicts.append(
-            {
-                "cue_index": index + 1,
-                "cue_start_ms": cue.start_ms,
-                "cue_end_ms": cue.end_ms,
-                "text": cue.text,
-                "windows": [
-                    {
-                        "start_ms": int(window["start_ms"]),
-                        "end_ms": int(window["end_ms"]),
-                    }
-                    for window in overlapping
-                ],
-            }
-        )
-    return targets, conflicts
 
 
 def _replace_substrings(
@@ -1539,7 +1474,7 @@ def apply_source_subtitle_truth(
             assertion_state=assertion_state,
         ):
             continue
-        target_indexes = _target_indexes(cues, windows)
+        target_indexes = _target_indexes(cues, windows, grazing_exempt=True)
         action = str(raw_entry.get("action") or "")
         source_start_ms = int(raw_entry["source_start_ms"])
         source_end_ms = int(raw_entry["source_end_ms"])

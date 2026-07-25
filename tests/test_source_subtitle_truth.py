@@ -277,6 +277,56 @@ def test_source_interval_truth_applies_to_every_overlapping_candidate(tmp_path):
         assert audit["status"] == "APPLIED"
 
 
+def test_replace_cue_majority_gate_excludes_grazing_neighbor(tmp_path):
+    """1573 r12 实案几何：真值窗尾带落值轮网格坐标，本轮句尾早移 190ms，
+    窗尾以 ≥80ms 绝对门擦进邻句——邻句整条曾被纳入 projection，终验
+    aggregate 永远多一句。replace 目标 cue 须过半重叠：11% 擦入的邻句
+    出局，99% 重叠的真 owner 保留。"""
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "grazing-neighbor",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 10_010,
+                "source_end_ms": 13_270,
+                "action": "replace_cue",
+                "text": "但其实背地里是被欺负的那种",
+                "authority": "Ivan",
+                "required": True,
+            }
+        ],
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (10_000, 13_080, "但其实背弟里是被欺负的那种"),
+            (13_080, 14_740, "那我不是一直都是这样的吗"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 0,
+                    "end_ms": 20_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=ledger,
+    )
+    assert "但其实背地里是被欺负的那种" in corrected
+    assert "那我不是一直都是这样的吗" in corrected
+    row = next(
+        r
+        for r in audit["applied"]
+        if r.get("truth_id") == "grazing-neighbor"
+    )
+    projection = row["resolved_target_projection"]
+    assert len(projection["cues"]) == 1
+    assert projection["cues"][0]["after_text"] == "但其实背地里是被欺负的那种"
+
+
 def test_replace_cue_can_pin_reviewed_spoken_start_after_silent_prefix(tmp_path):
     ledger = _ledger(
         tmp_path,
