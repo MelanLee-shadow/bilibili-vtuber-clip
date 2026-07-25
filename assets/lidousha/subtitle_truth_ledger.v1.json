@@ -2362,6 +2362,34 @@
       "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
       "authority": "Ivan-stated-20260725-conversation：同cue43，新作正字。",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-wrx-lidousha-benwu-cue19-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_start_ms": 461800,
+      "source_end_ms": 465440,
+      "action": "replace_cue",
+      "text": "李豆沙（本物）这是一个普普通通的百合厨",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260725-conversation：0:37处说的是李豆沙（本物）（游戏内另一玩家ID，画面可读图印证；1571_1804的本物之争同一ID）。0:37=cue19起点37690精确吻合，她念ID后接这是一个普普通通的百合厨；ASR整词吞了ID。若断句实为cue18侧由Ivan提revision。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-wrx-yingbaoyue-cue27-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_start_ms": 481600,
+      "source_end_ms": 482380,
+      "action": "replace_cue",
+      "text": "樱抱月",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260725-conversation：不是音爆玉是樱抱月（读图可出：sol视觉见证读出投抱月形近半印证；樱抱月=入间人间《安达与岛村》安达樱×岛村抱月的CP组合ID，语义闭环；音爆玉yin-bao-yu与樱抱月ying-bao-yue近同音误听）。",
+      "required": true
     }
   ]
 }

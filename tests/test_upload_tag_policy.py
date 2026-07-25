@@ -16,7 +16,7 @@ def test_default_upload_tag_policy_preserves_the_pre_asset_contract():
     assert policy.base_tags == ("李豆沙", "虚拟主播", "虚拟UP主", "直播切片")
     assert policy.max_tags_default == 12
     assert policy.max_tag_chars == 20
-    assert len(policy.term_rules) == 39
+    assert len(policy.term_rules) == 40  # +adachi_shimamura (Ivan 2026-07-25 樱抱月案)
     assert hashlib.sha256(policy.content_prompt_template.encode()).hexdigest() == (
         "717e3d2e1c946853d48118d590f491af38a9dad0b4ee300ca39172df4dabc844"
     )
