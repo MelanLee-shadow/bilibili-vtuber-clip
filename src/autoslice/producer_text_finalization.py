@@ -264,6 +264,65 @@ def _redelivery_baseline_intervals(audit: dict) -> list[tuple[int, int]]:
     ]
 
 
+def _baseline_replay_reverted_row(
+    expected_text: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    audit: dict,
+) -> dict[str, object] | None:
+    """Return causal proof that baseline replay reverted this row's text.
+
+    豁免边界 owner 行需要因果证据，不是几何巧合：replay audit 的 mapping
+    必须记录「行的修复文本曾在字幕里（before），被已验证的 baseline 文本
+    （after/final_owner_verified）有意替换且替换后不再包含它」。仅有窗口
+    重叠、没有 before→after 替换记录的行不豁免——baseline 不得静默压制
+    从未见证过的有据修复。"""
+
+    expected_norm = normalize_chat_text(expected_text)
+    if not expected_norm:
+        return None
+    baseline = audit.get("redelivery_subtitle_baseline_audit") or {}
+    if baseline.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
+        return None
+    touching = sorted(
+        (
+            row
+            for row in baseline.get("mappings") or []
+            if isinstance(row, dict)
+            and row.get("final_owner_verified") is True
+            and min(end_ms, int(row.get("end_ms") or 0))
+            - max(start_ms, int(row.get("start_ms") or 0))
+            >= 200
+        ),
+        key=lambda row: int(row.get("start_ms") or 0),
+    )
+    if not touching:
+        return None
+    before_payload = normalize_chat_text(
+        "".join(str(row.get("before") or "") for row in touching)
+    )
+    after_payload = normalize_chat_text(
+        "".join(
+            str(row.get("text") or row.get("after") or "") for row in touching
+        )
+    )
+    if (
+        before_payload
+        and before_payload != after_payload
+        and expected_norm in before_payload
+        and expected_norm not in after_payload
+    ):
+        return {
+            "baseline_cue_indexes": [
+                int(row.get("baseline_cue_index") or 0) for row in touching
+            ],
+            "before_payload": before_payload,
+            "after_payload": after_payload,
+        }
+    return None
+
+
 def _window_payload(
     srt_text: str,
     *,
@@ -866,17 +925,41 @@ def verify_chat_authority_final_surfaces(
             )
         relative_matched_start = matched_start - delivery_start_ms
         relative_matched_end = matched_end - delivery_start_ms
-        if not row.get("boundary_required") and any(
+        baseline_overlap = any(
             min(relative_matched_end, pin_end)
             - max(relative_matched_start, pin_start)
             >= 200
             for pin_start, pin_end in redelivery_intervals
-        ):
+        )
+        if baseline_overlap and not row.get("boundary_required"):
             row["final_verification_scope"] = (
                 "SUPERSEDED_BY_REDELIVERY_BASELINE"
             )
             superseded_by_redelivery += 1
             continue
+        # 边界 owner 行只有拿到因果证据才可退位给 baseline：replay audit
+        # 的 before→after 记录证明修复文本曾在字幕里、被已验证的 Ivan 已审
+        # baseline 有意替换（672 礼墨/1863 SC 案），此时行文本不再是终稿
+        # 要求，否则 repair-vs-replay 永久死锁。无替换记录的有据修复维持
+        # fail-closed（baseline 不得静默压制）。边界几何仍由 frozen owner
+        # contract 的 local_windows 约束，与文本存活无关。
+        if baseline_overlap and row.get("boundary_required"):
+            replay_revert = _baseline_replay_reverted_row(
+                expected_text,
+                start_ms=relative_matched_start,
+                end_ms=relative_matched_end,
+                audit=audit,
+            )
+            if replay_revert is not None:
+                row["final_verification_scope"] = (
+                    "SUPERSEDED_BY_REDELIVERY_BASELINE"
+                )
+                row["final_verification_scope_reason"] = (
+                    "BOUNDARY_OWNER_REVERTED_BY_VERIFIED_BASELINE_REPLAY"
+                )
+                row["final_redelivery_baseline_revert"] = replay_revert
+                superseded_by_redelivery += 1
+                continue
         overlap_ms = max(
             0,
             min(matched_end, delivery_end_ms)

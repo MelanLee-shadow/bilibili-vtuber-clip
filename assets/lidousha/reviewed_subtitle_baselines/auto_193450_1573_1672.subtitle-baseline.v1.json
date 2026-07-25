@@ -1,14 +1,14 @@
 {
-  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
-  "candidate_id": "auto_193450_1573_1672",
-  "schema_version": "subtitle-redelivery-baseline.v2",
-  "mode": "preserve_text_outside_source_truth",
-  "exact_interval_replay": true,
-  "path": "auto_193450_1573_1672.reviewed.srt",
-  "sha256": "3431fbf15965c548d404707f9c910197685b2b705d559a88eb7dfdbc9b21f247",
-  "authority": "Ivan-delegated 2026-07-24 root V13 boundary/final-review evidence revision: retain the chair/bullying/fake-cry story only, exclude the following mouse superchat topic, and apply the hash-bound V13 acoustic verdicts for cues 6 and 38 | 2026-07-25 与ledger贝利真值对齐（双引擎共识），修订由Claude落盘。",
-  "source_recording_basename": "22966160_20260722-19-34-50.mp4",
-  "source_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
-  "absolute_source_start_ms": 1572910,
-  "absolute_source_end_ms": 1672970
+ "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+ "candidate_id": "auto_193450_1573_1672",
+ "schema_version": "subtitle-redelivery-baseline.v2",
+ "mode": "preserve_text_outside_source_truth",
+ "exact_interval_replay": true,
+ "path": "auto_193450_1573_1672.reviewed.srt",
+ "sha256": "67a6bc9ef048b8efbeebe008f0394fe54b15a3e53637497398d3b89b983b16f8",
+ "authority": "Ivan-delegated 2026-07-24 root V13 boundary/final-review evidence revision: retain the chair/bullying/fake-cry story only, exclude the following mouse superchat topic, and apply the hash-bound V13 acoustic verdicts for cues 6 and 38 | 2026-07-25 r2与ledger背地里真值对齐（hash-bound声学强裁推翻贝利转录共识），修订由Claude落盘。",
+ "source_recording_basename": "22966160_20260722-19-34-50.mp4",
+ "source_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+ "absolute_source_start_ms": 1572910,
+ "absolute_source_end_ms": 1672970
 }

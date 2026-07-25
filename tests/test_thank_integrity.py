@@ -368,6 +368,64 @@ def test_redelivery_baseline_supersedes_stochastic_decision_outside_truth() -> N
     assert audit["final_superseded_by_redelivery_baseline_count"] == 1
 
 
+def test_baseline_replay_revert_receipt_retires_boundary_owner_row() -> None:
+    """1863 SC 案：replay audit 的 before→after 记录证明修复文本曾在字幕
+    里、被已验证的 Ivan 已审 baseline 有意替换——只有这种因果证据才允许
+    boundary_required 行退位给 baseline（否则 repair-vs-replay 永久死锁）。"""
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 2_000, "为什么要请大N老师吃火锅"), (2_000, 3_000, "终于和大N见面"))
+    audit = {
+        "applied": [
+            {
+                "exact_text": "什么要请大N老师吃火锅，终于和大N见面了",
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 13_000,
+                "boundary_required": True,
+                "boundary_owner_id": "exact_read:1:10000:13000",
+            }
+        ],
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 2_000,
+                    "changed": True,
+                    "before": "什么要请大N老师吃火锅，",
+                    "after": "为什么要请大N老师吃火锅",
+                },
+                {
+                    "baseline_cue_index": 2,
+                    "start_ms": 2_000,
+                    "end_ms": 3_000,
+                    "changed": True,
+                    "before": "终于和大N见面了",
+                    "after": "终于和大N见面",
+                },
+            ],
+        },
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=10_000,
+        delivery_end_ms=13_000,
+    )
+    row = audit["applied"][0]
+    assert row["final_verification_scope"] == "SUPERSEDED_BY_REDELIVERY_BASELINE"
+    assert row["final_verification_scope_reason"] == (
+        "BOUNDARY_OWNER_REVERTED_BY_VERIFIED_BASELINE_REPLAY"
+    )
+    assert row["final_redelivery_baseline_revert"]["baseline_cue_indexes"] == [1, 2]
+    assert audit["final_superseded_by_redelivery_baseline_count"] == 1
+
+
 def test_redelivery_baseline_cannot_overwrite_story_bound_supported_repair() -> None:
     from src.autoslice.producer_text_finalization import (
         verify_chat_authority_final_surfaces,

@@ -2053,6 +2053,20 @@
     },
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nnll-limo-tai-chuming-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 948630,
+      "source_end_ms": 950530,
+      "action": "replace_cue",
+      "text": "礼墨太出名了",
+      "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+      "authority": "确认性真值2026-07-25：Ivan已审baseline原文礼墨太出名了正确，承接前句观众只会猜礼墨Sumi的因果（礼墨太出名所以只猜她）。终审提案太礼墨Sumi了为错裁——AGY 9.25s听证窗[280190..289440]跨句覆盖前句礼墨Sumi，heard=lin mo sumi le系借前句音节支持提案（跨句借音，与1863边界借字同族）；本轮fresh ASR太礼貌出名了为音序重排误听。落此真值拦截correction pass重复错误提案。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-hotpot-first-meet-danN-sentence-r1",
       "revision_id": "r1",
       "assertion_state": "VERIFIED_ACTIVE",
@@ -2156,15 +2170,15 @@
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260722-chair-beili-bullied-r1",
-      "revision_id": "r1",
+      "revision_id": "r2",
       "assertion_state": "VERIFIED_ACTIVE",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
       "source_start_ms": 1610520,
       "source_end_ms": 1613780,
       "action": "replace_cue",
-      "text": "但其实贝利是被欺负的那种",
-      "evidence_class": "DUAL_ENGINE_CONSENSUS",
-      "authority": "机器证据裁定2026-07-25：BCUT与本轮AGY双引擎一致为贝利（语境=描述外表不良实则被欺负的对象后自比）；成片中的背地里为修复环节无证改写，终审的但其实是提议则把名字整个丢弃。若贝利实为其他专名写法，由Ivan提revision。",
+      "text": "但其实背地里是被欺负的那种",
+      "evidence_class": "ACOUSTIC_FORCED_CHOICE",
+      "authority": "r2机器证据裁定2026-07-25：hash-bound声学强裁（AGY, heard=dàn qí shí bèi dì lǐ shì bèi qī fù de nà zhǒng，置信1.0，三音节bèi-dì-lǐ清晰）推翻r1的贝利。r1所依双引擎转录一致实为同缩弱音节dì的相关错误（转录网格在声学难点不独立）；语境无贝利实体（relation authority仅李豆沙/南町），背地里承接外表凶实则受欺负语义通顺。其实为真实音节保留。若背地里实为专名，由Ivan提revision。",
       "required": true
     },
     {
