@@ -2250,6 +2250,34 @@
       "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
       "authority": "Ivan-stated-20260725-conversation：该处她只说了kmx欺负我；成片的哇，kmx为什么欺负我？kmx欺负人中的为什么与kmx欺负人为幻插扩写，按Ivan裁定整cue收敛为kmx欺负我。",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nnll-jiwei-kan-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 705100,
+      "source_end_ms": 707140,
+      "action": "replace_cue",
+      "text": "就除了在场的几位，看",
+      "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+      "authority": "确认性真值2026-07-25：Ivan已审baseline原文就除了在场的几位，看。终审机器提案两轮改口（r9加外SUPPORTED、r10删看SUPPORTED），AGY对该短尾字轮间不稳定不构成推翻证据；锁baseline文本拦重复提案。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-nnll-women-meiyoushuo-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 932960,
+      "source_end_ms": 935630,
+      "action": "replace_cue",
+      "text": "但是我们没有说是谁啊",
+      "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+      "authority": "确认性真值2026-07-25：Ivan已审baseline原文但是我们没有说是谁啊。争议仅弱音节men有无；当天为李豆沙×南町双人协作场（session relation authority CONFIRMED），我们语义自然，AGY 9秒窗听证在弱音节上单票不足以推翻已审文本；锁baseline拦重复提案。",
+      "required": true
     }
   ]
 }

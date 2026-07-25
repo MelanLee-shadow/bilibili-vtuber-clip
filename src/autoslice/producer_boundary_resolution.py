@@ -394,6 +394,13 @@ def _resolve_recut_head(
     snapped_start = snap_start_to_sentence(
         [c.start_ms for c in cues], target_start_rel
     )
+    # redelivery 头部是恒等锚，不是单向钳（r10 教训）：min() 只防开场晚于
+    # baseline，防不了 fresh snap 前漂——cue1 跨骑覆盖起点照样
+    # STRADDLES_REVIEWED_COVERAGE 死锁，且整条 cue 网格平移会连锁打歪
+    # protected 窗口对齐。同 BV 修复的开场必须逐毫秒复刻已发布成片。
+    baseline_head = _redelivery_baseline_head_rel_ms(spec)
+    if baseline_head is not None:
+        return max(0, baseline_head), target_start_rel, snapped_start
     final_start = max(
         0,
         (snapped_start if snapped_start is not None else target_start_rel)
@@ -401,9 +408,6 @@ def _resolve_recut_head(
     )
     if required_owner_start_ms is not None:
         final_start = min(final_start, required_owner_start_ms)
-    baseline_head = _redelivery_baseline_head_rel_ms(spec)
-    if baseline_head is not None:
-        final_start = min(final_start, max(0, baseline_head))
     return final_start, target_start_rel, snapped_start
 
 

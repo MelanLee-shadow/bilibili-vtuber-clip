@@ -101,6 +101,11 @@ class ReferentGroup:
     # 正当别名（海铃/八幡海铃），不含误听面——多槽位命中=一句提了多个角色，
     # 无可改写直接放行；静态组不打此标（母鸡卡类误听面多槽仍歧义熔断）。
     alias_surfaces: bool = False
+    # 语境关联召回（2026-07-25 Ivan 叹十七手案）：误听面清单永远追不上 ASR
+    # 打散专名的新变体。组内 canonical 语义核字（kmx→熊）在 cue 里以关联词
+    # 出现（坏熊）、且组 canonical 已在本片其他 cue 字面确认时，句首杂段成为
+    # 仲裁候选送音频强裁；UNCERTAIN 一律保留原文不阻塞。
+    association_core_chars: tuple[str, ...] = ()
 
 
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
@@ -335,6 +340,14 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     and sanitize_chat_display_text(value, max_chars=80).lower() in all_surfaces
                 )
             )
+            raw_assoc = row.get("association_core_chars") or []
+            association = tuple(
+                dict.fromkeys(
+                    str(value)
+                    for value in (raw_assoc if isinstance(raw_assoc, list) else [])
+                    if isinstance(value, str) and len(value) == 1
+                )
+            )
             groups.append(
                 ReferentGroup(
                     tuple(parsed),
@@ -343,6 +356,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
                     keep,
                     positions,
                     keep_surfaces,
+                    association_core_chars=association,
                 )
             )
     return groups

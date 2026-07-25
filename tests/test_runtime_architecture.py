@@ -25,7 +25,10 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # Extracted domains retain a small amount of headroom for real behavior,
     # while failing long before another 3k-4k line domain bus can form.
     Path("src/autoslice/chat_evidence.py"): 1_300,
-    Path("src/autoslice/chat_repair.py"): 1_050,
+    # 2026-07-25 Ivan：预算是"该重构了"的信号，不是硬顶格——不许为凑行数做
+    # 技巧性压缩。本次 +30 来自语境关联召回的接线（召回调用 + UNCERTAIN 保留
+    # + 确证改写三个分支），召回本体已抽到 entity_context_recall.py。
+    Path("src/autoslice/chat_repair.py"): 1_080,
     Path("src/autoslice/chat_proposals.py"): 1_250,
     Path("src/autoslice/song_common.py"): 525,
     Path("src/autoslice/song_lrc_provider.py"): 550,

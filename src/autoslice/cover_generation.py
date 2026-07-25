@@ -93,6 +93,10 @@ class LidoushaCoverArtDirection:
     emote_id: str = ""
     emote_mode: str = ""    # "" | "replace" | "companion"
     emote_reason: str = ""
+    # 2026-07-25 Ivan 生豆角案：重绘封面画面必须扣本条故事——1-2 个来自
+    # 标题具象意象的英文道具短语（raw green beans / a big gaming chair），
+    # 注入重绘 prompt 作手边/背景道具；绝不上身（穿戴铁律不变），歌切不用。
+    scene_props: tuple[str, ...] = ()
     # 2026-07-20 B站生态调研（20万+ 播放封面）：高播放封面的字是 2-12 字"梗字"
     # （原话/质问/反差点），从不是整条标题。非空时叠字层只渲染它：第 1 行=主梗字
     # （hook 色、巨大），可选第 2 行副字（奶油小一号）；cover_text 退为 fallback。
@@ -246,7 +250,12 @@ _COVER_PUNCH_QUOTED_RX = re.compile(r"[“‘「『]([^”’」』]{4,12})[”�
 # Short quoted catchphrases are semantic and visual atoms on a cover.  The
 # July 22 fallback split ``“最最最喜欢”`` in half, which looked like a typo even
 # though every character survived.  Paired short quotes must stay together.
-_COVER_QUOTED_SPAN_RX = re.compile(r"[“‘「『][^”’」』\n]{1,8}[”’」』]")
+from src.autoslice.cover_text_layout import (  # noqa: E402 — re-export for shadow pipeline
+    _COVER_QUOTED_SPAN_RX,
+    _cover_lines_canon,
+    _validated_cover_lines,
+    _validated_cover_words,
+)
 
 
 def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
@@ -456,6 +465,9 @@ def _cover_art_direction_prompt(
         "- role: 一个简短英文角色键(如 shy_cute_default/shocked_bites_back/witty_smug/tender_soft/gentle_song)\n"
         "- expression_en: 一句英文脸部表情(贴角色,不吐舌)\n"
         "- hook_word: 封面文案里最该高亮的一个词(必须是文案里出现的原词)\n"
+        "- scene_props: 0-2 个英文短语(每个≤40字符)，描述本条故事的**具象道具/场景物件**（如 'raw green beans'"
+        "'a big gaming chair'），画面里放她手边或背景，把封面锚到这条切片发生的事上。只允许标题里真实出现的具象"
+        "意象；没有就给 []。禁止服装/帽子/饰品类（不许改她的穿戴），禁止抽象概念。\n"
         "- words: 封面文案的**完整词组切分**(字符串数组)。硬约束:按顺序拼接后与封面文案一字不差(不加/不减/不改字);"
         "每个自然词语(如\"传话员\"\"熊猫头\"\"不言而喻\")、专名(礼墨Sumi/kmx)、《歌名》和 hook_word 各自必须整体是一个元素(或完整包含在一个元素里);"
         "标点跟在前一个词的元素末尾。分行器用它保证**换行永远不拆词**——除词以外任何位置都允许换行。\n"
@@ -466,85 +478,11 @@ def _cover_art_direction_prompt(
         "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(长文案 5-8 行,每行 2-4 字),"
         "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"
         + emote_block
-        + '只输出一个 JSON 对象: {"role":"...","expression_en":"...","hook_word":"...","words":["...","..."],"lines":["...","..."]'
+        + '只输出一个 JSON 对象: {"role":"...","expression_en":"...","hook_word":"...","scene_props":["..."],"words":["...","..."],"lines":["...","..."]'
         + punch_output_field
         + emote_output_field
         + "}"
     )
-
-
-def _cover_lines_canon(text: str) -> str:
-    """Canonical form for comparing a line split against the cover text.
-
-    Only layout whitespace may disappear.  Punctuation is visible title
-    content: accepting a split that drops ``？`` or moves ``，`` onto a lonely
-    line produced a visibly broken July 10 cover despite a hash-clean package.
-    """
-    return re.sub(r"\s+", "", text)
-
-
-def _validated_cover_lines(value: object, cover_text: str, *, hook_word: str, max_lines: int) -> tuple[str, ...]:
-    """Accept an LLM line split only when it is provably lossless and renderable:
-    same characters in the same order, 《song》 and the hook word intact within a
-    single line, sane line count/length.  Anything else → () → balancer fallback
-    (word-blind, but never worse than before)."""
-    if not isinstance(value, (list, tuple)) or not (1 <= len(value) <= max_lines):
-        return ()
-    lines = []
-    closing_punctuation = tuple("，,、；;！!？?。）》】”’")
-    opening_punctuation = tuple("（(《【“‘")
-    for item in value:
-        if not isinstance(item, str):
-            return ()
-        line = item.strip()
-        if not line or len(line) > 12:
-            return ()
-        if line.startswith(closing_punctuation) or line.endswith(opening_punctuation):
-            return ()
-        lines.append(line)
-    if _cover_lines_canon("".join(lines)) != _cover_lines_canon(cover_text):
-        return ()
-    for atom in [
-        *re.findall(r"《[^》]*》", cover_text),
-        *_COVER_QUOTED_SPAN_RX.findall(cover_text),
-        *([hook_word] if hook_word else []),
-    ]:
-        if atom and not any(atom in line for line in lines):
-            return ()  # a song name / quoted catchphrase / hook must stay whole
-    return tuple(lines)
-
-
-def _validated_cover_words(value: object, cover_text: str, *, hook_word: str) -> tuple[str, ...]:
-    """Accept an LLM word segmentation only when it is provably lossless: same
-    characters in the same order, every 《song》 and the hook word intact inside
-    a single element.  These become wrap ATOMS (Ivan 2026-07-10: the full title
-    stays on the cover, the font grows via MANY line breaks, and a break may
-    fall anywhere EXCEPT inside a word / hook / proper noun).  Anything invalid
-    → () → the balancer falls back to hook/《song》/ASCII atoms only."""
-    if not isinstance(value, (list, tuple)) or not (1 <= len(value) <= 40):
-        return ()
-    words = []
-    closing_punctuation = tuple("，,、；;！!？?。）》】”’")
-    opening_punctuation = tuple("（(《【“‘")
-    for item in value:
-        if not isinstance(item, str) or not item.strip():
-            return ()
-        word = item.strip()
-        if len(word) > 12:
-            return ()
-        if word.startswith(closing_punctuation) or word.endswith(opening_punctuation):
-            return ()
-        words.append(word)
-    if _cover_lines_canon("".join(words)) != _cover_lines_canon(cover_text):
-        return ()
-    for atom in [
-        *re.findall(r"《[^》]*》", cover_text),
-        *_COVER_QUOTED_SPAN_RX.findall(cover_text),
-        *([hook_word] if hook_word else []),
-    ]:
-        if atom and not any(atom in word for word in words):
-            return ()
-    return tuple(words)
 
 
 def _normalize_cover_art_direction(
@@ -598,6 +536,21 @@ def _normalize_cover_art_direction(
         if validated_punch:
             cover_punch = validated_punch
 
+    # 场景道具（2026-07-25 生豆角案）：只收 ASCII 英文短语、非穿戴类；歌切禁用。
+    raw_props = payload.get("scene_props")
+    scene_props: tuple[str, ...] = ()
+    if not baseline.is_song and isinstance(raw_props, (list, tuple)):
+        wearable = ("hat", "cap", "outfit", "dress", "costume", "clothes", "accessor", "jewel", "glasses")
+        cleaned = [
+            item.strip()
+            for item in raw_props
+            if isinstance(item, str)
+            and 0 < len(item.strip()) <= 40
+            and item.strip().isascii()
+            and not any(bad in item.lower() for bad in wearable)
+        ]
+        scene_props = tuple(cleaned[:2])
+
     return LidoushaCoverArtDirection(
         role=role,
         expression_en=expression_en,
@@ -612,6 +565,7 @@ def _normalize_cover_art_direction(
         emote_mode=emote_mode,
         emote_reason=emote_reason,
         cover_punch=cover_punch,
+        scene_props=scene_props,
     )
 
 
@@ -809,6 +763,14 @@ def _lidousha_cover_prompt(
             "with a clean gentle look. Keep the LEFT ~45% a CLEAN calm zone reserved for a title: fill it with "
             f"{background}. Cohesive blue / navy / cream palette, tasteful and pretty rather than loud. "
         )
+    props_block = ""
+    if art_direction.scene_props and not art_direction.is_song:
+        props = "; ".join(art_direction.scene_props)
+        props_block = (
+            f"STORY PROPS (anchor this cover to THIS clip's moment): include {props} as small, clearly readable "
+            "props near her hands or in the immediate background. Props must NOT be worn on her (no new clothing/"
+            "hats/accessories — her outfit stays exactly as the reference) and must never cover her face. "
+        )
     companion_block = ""
     if emote_mode == "companion" and emote is not None:
         caption_note = (
@@ -821,7 +783,7 @@ def _lidousha_cover_prompt(
             f"sticker's pose, expression and design{caption_note}; do NOT reproduce the inset panel's frame/border "
             f"itself. Reason this companion appears (from the clip): {art_direction.emote_reason}. "
         )
-    return identity_block + composition + companion_block + _COVER_NO_TEXT_CRITICAL
+    return identity_block + composition + props_block + companion_block + _COVER_NO_TEXT_CRITICAL
 
 
 def _cover_screenshot_polish_prompt() -> str:

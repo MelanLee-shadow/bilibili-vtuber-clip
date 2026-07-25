@@ -18,6 +18,7 @@ from src.autoslice.cue_split_hygiene import (
     _shift_boundary_punct as _shift_boundary_punct,
     _snap_split_to_punct as _snap_split_to_punct,
 )
+from src.autoslice.entity_context_recall import _context_association_occurrences
 from src.autoslice.chat_evidence import (
     ChatEvidence,
     EntityVerifier,
@@ -827,6 +828,10 @@ def apply_audio_entity_verification(
         matches: list[tuple[ReferentGroup, list[dict[str, Any]]]] = []
         for group in groups:
             occurrences = _entity_occurrences(texts[cue_offset], group)
+            if not occurrences:
+                occurrences = _context_association_occurrences(
+                    texts, cue_offset, group
+                )
             if group.positions:
                 # "clip_initial"=片首 cue 的句首槽位；"transcript_only" 不限
                 # 位置——positions 非空的共同作用是把组挡在 chat 证据路径之外。
@@ -947,8 +952,9 @@ def apply_audio_entity_verification(
                     continue
                 # 面级保留（2026-07-14 理论上/留下、苏人案）：列入
                 # uncertain_keep_surfaces 的误听面本身可能是真话，UNCERTAIN
-                # 时保留原文不阻塞；改写只发生在音频确证 RESOLVED 时。
-                if any(
+                # 时保留原文不阻塞；改写只发生在音频确证 RESOLVED 时。语境
+                # 关联召回的杂段同理——它是额外召回，拿不准=维持现状。
+                if occurrence.get("recall_basis") == "context_association" or any(
                     str(occurrence["surface"]).lower() == keep.lower()
                     for keep in group.uncertain_keep_surfaces
                 ):
@@ -990,13 +996,17 @@ def apply_audio_entity_verification(
             claimed_strings.add(resolved.lower())
             if resolved == occurrence["canonical"]:
                 surface_value = str(occurrence["surface"])
-                if surface_value.lower() != resolved.lower() and any(
-                    surface_value.lower() == keep.lower()
-                    for keep in group.uncertain_keep_surfaces
+                if surface_value.lower() != resolved.lower() and (
+                    occurrence.get("recall_basis") == "context_association"
+                    or any(
+                        surface_value.lower() == keep.lower()
+                        for keep in group.uncertain_keep_surfaces
+                    )
                 ):
                     # 软误听面（理论上/留下/苏人…）+ 音频确证其宿主实体 →
                     # 规范化改写。合法别名（椎名立希）不在 keep_surfaces，
-                    # 维持原状只 confirm——别名不是误听。
+                    # 维持原状只 confirm——别名不是误听。语境关联召回的杂段
+                    # 绝非别名：音频确证 canonical 后同样必须改写。
                     before = texts[cue_offset]
                     after = re.sub(
                         re.escape(surface_value), resolved, before, count=1, flags=re.IGNORECASE

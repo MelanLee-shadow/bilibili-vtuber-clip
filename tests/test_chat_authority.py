@@ -194,6 +194,65 @@ KMX_GROUP = ReferentGroup(
 )
 
 
+KMX_ASSOC_GROUP = ReferentGroup(
+    KMX_GROUP.entities,
+    audio_verify_all_surfaces=True,
+    uncertain_keep_canonicals=("kmx",),
+    association_core_chars=("熊",),
+)
+
+
+def test_context_association_recall_arbitrates_shattered_proper_noun():
+    """2026-07-25 叹十七手实案：ASR 把 kmx(kimo熊) 打散成清单外新变体，
+    字面召回必然失败；但 cue 里有关联词「坏熊」且 kmx 已在本片他处确认——
+    语境关联召回把句首杂段送音频强裁，判 kmx 即改写。"""
+    source = _srt("叹十七手里面的坏熊太多了", "kmx欺负我")
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[KMX_ASSOC_GROUP],
+        entity_verifier=_audio_entity_verifier("kmx"),
+    )
+
+    assert "kmx里面的坏熊太多了" in output
+    assert "叹十七手" not in output
+    repair = audit["repairs"][0]
+    assert repair["transcript_surface"] == "叹十七手"
+    assert repair["resolved_canonical"] == "kmx"
+
+
+def test_context_association_recall_keeps_original_when_uncertain():
+    """关联召回是额外召回：音频拿不准（无 verifier）= 保留原文，绝不阻塞。"""
+    source = _srt("叹十七手里面的坏熊太多了", "kmx欺负我")
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[KMX_ASSOC_GROUP],
+        entity_verifier=None,
+    )
+
+    assert output == source
+    assert audit.get("status") != "ENTITY_VERDICT_REQUIRED"
+    assert any(
+        row.get("reason_code") == "ENTITY_SURFACE_KEPT_ON_UNCERTAIN"
+        for row in audit.get("confirmed") or []
+    )
+
+
+def test_context_association_needs_in_clip_confirmation():
+    """无 clip 内 kmx 字面确认时关联召回不触发（防无语境乱裁）。"""
+    source = _srt("叹十七手里面的坏熊太多了", "今天天气不错")
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[KMX_ASSOC_GROUP],
+        entity_verifier=_audio_entity_verifier("kmx"),
+    )
+
+    assert output == source
+    assert not audit.get("repairs")
+
+
 def test_double_canonical_occurrences_pass_without_slot_ambiguity():
     """2026-07-13 MUA 实案：「除了社恐kmx之外有社牛kmx」两处都是规范形 kmx，
     多槽位不构成歧义，不得 fail-closed 整条打回。"""
