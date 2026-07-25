@@ -28,8 +28,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from src.autoslice.chat_evidence import (
+    ChatEvidence,
     normalize_chat_text,
     normalize_srt_owner_payload_window,
+    sanitize_chat_display_text,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.source_subtitle_truth import (
@@ -318,6 +320,28 @@ def _normalize_candidate_memory_id(
     if raw.startswith("id=") and raw[3:] in memory_entries:
         return raw[3:], "STRIPPED_VERIFIED_ID_LABEL"
     return raw, None
+
+
+def _final_review_structured_context(
+    *,
+    selection_hook: str,
+    authoritative_chat: Sequence[ChatEvidence],
+) -> str:
+    return "\n".join(
+        (
+            [f"selection_hook: {selection_hook.strip()}"]
+            if selection_hook.strip()
+            else []
+        )
+        + [
+            (
+                f"{item.kind} @{item.offset_ms}ms"
+                f"{(' sender=' + item.sender) if item.sender else ''}: "
+                f"{sanitize_chat_display_text(item.text)}"
+            )
+            for item in authoritative_chat[:160]
+        ]
+    )
 
 
 _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成品切片的最终字幕（观众将看到的原文）。

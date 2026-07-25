@@ -34,6 +34,14 @@ from src.autoslice.clip_context import (
     clip_context_prompt_text,
     write_clip_context,
 )
+from src.autoslice.final_review_auditor import (
+    _final_review_structured_context,
+)
+from src.autoslice.final_review_carryover import (
+    carryover_path,
+    load_final_review_carryover,
+    merge_carryover_findings,
+)
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
@@ -687,28 +695,6 @@ def _build_final_review_llm_call() -> Callable[[str], str]:
     )
 
 
-def _final_review_structured_context(
-    *,
-    selection_hook: str,
-    authoritative_chat: Sequence[ChatEvidence],
-) -> str:
-    return "\n".join(
-        (
-            [f"selection_hook: {selection_hook.strip()}"]
-            if selection_hook.strip()
-            else []
-        )
-        + [
-            (
-                f"{item.kind} @{item.offset_ms}ms"
-                f"{(' sender=' + item.sender) if item.sender else ''}: "
-                f"{sanitize_chat_display_text(item.text)}"
-            )
-            for item in authoritative_chat[:160]
-        ]
-    )
-
-
 def _run_final_review(
     *,
     srt_text: str,
@@ -721,6 +707,7 @@ def _run_final_review(
     referent_groups: Sequence[object] = (),
     clip_context: Mapping[str, object] | None = None,
     source_truth_protected_cue_indexes: Sequence[int] = (),
+    carryover_file: Path | None = None,
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     original_srt_text = srt_text
@@ -746,6 +733,18 @@ def _run_final_review(
                 candidate_context_text=candidate_context_text,
                 candidate_context=clip_context,
             )
+            # 终审结转并入（2026-07-25 六条死循环案）：上轮 exact 终审声学
+            # 确证却无权落盘的修复，本轮与 fresh LLM 发现同链处理（route→
+            # adjudicate→apply，stale 守卫照常）——确定性闭环。
+            carryover_rows = (
+                load_final_review_carryover(carryover_file)
+                if carryover_file is not None
+                else []
+            )
+            if carryover_rows:
+                review_findings = merge_carryover_findings(
+                    review_findings, carryover_rows
+                )
             protected_review_cues = set(handled_entity_cues)
             cue_count = len(
                 [
@@ -1858,6 +1857,7 @@ def run_text_pipeline(
         source_truth_protected_cue_indexes=(
             review_source_truth_preview["protected_cue_indexes"]
         ),
+        carryover_file=carryover_path(out_root, cid),
     )
     evidence = _finalize_text_evidence(
         spec=spec,

@@ -13,6 +13,10 @@ from src.autoslice.chat_authority import (
     reconcile_pending_text_overrides,
     reconcile_reviewed_text_override_conflicts,
 )
+from src.autoslice.final_review_carryover import (
+    carryover_path,
+    persist_final_review_carryover,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
@@ -797,6 +801,14 @@ def _run_exact_final_review_gate(
     )
     chat_authority_audit["final_review_audit"] = audit
     persist_review_audit(out_root / f"{cid}.review-flags.json", audit)
+    # 终审结转（2026-07-25 六条死循环案）：B 声学确证却无权落盘的修复持久化，
+    # 下轮 correction pass 并入自己的 findings 流正式修字——确定性闭环替代
+    # 两次独立 LLM 扫描碰运气。
+    carryover_count = persist_final_review_carryover(
+        carryover_path(out_root, cid), audit
+    )
+    if carryover_count:
+        audit["carryover_persisted_count"] = carryover_count
     chat_authority_path.write_text(
         json.dumps(
             chat_authority_audit,
