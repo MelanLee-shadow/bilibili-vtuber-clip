@@ -457,6 +457,161 @@ def test_context_or_straddling_truth_cannot_forge_boundary_owner():
     )
 
 
+def test_owner_scope_lead_tolerance_matches_producer_arithmetic():
+    from src.autoslice.review_package_owner_audit import (
+        _candidate_owner_scope,
+    )
+
+    spec = {
+        "candidate_id": "lead-tol-fixture",
+        "semantic_start_ms": 10_000,
+        "semantic_end_ms": 40_000,
+        "pieces": [{"start_ms": 0, "end_ms": 100_000}],
+        "boundary_repair_extend_cap_ms": 30_000,
+    }
+    scope = candidate_boundary_owner_scope(spec=spec, durations=[100_000])
+    assert scope["story_start_ms"] == 9_500  # 10_000 - 500 tolerance
+    frozen = {
+        "owner_eligibility_scope": scope,
+        "story_start_ms": scope["story_start_ms"],
+        "story_end_ms": scope["story_end_ms"],
+    }
+
+    valid, story_start, _, _ = _candidate_owner_scope(
+        frozen=frozen, record={}
+    )
+    assert valid and story_start == 9_500
+
+    inflated = dict(scope)
+    inflated["lead_tolerance_ms"] = 600
+    inflated["story_start_ms"] = 9_400
+    assert not _candidate_owner_scope(
+        frozen={
+            "owner_eligibility_scope": inflated,
+            "story_start_ms": 9_400,
+            "story_end_ms": scope["story_end_ms"],
+        },
+        record={},
+    )[0]
+
+    forged = dict(scope)
+    forged["semantic_story_start_ms"] = 9_000
+    assert not _candidate_owner_scope(
+        frozen={
+            "owner_eligibility_scope": forged,
+            "story_start_ms": scope["story_start_ms"],
+            "story_end_ms": scope["story_end_ms"],
+        },
+        record={},
+    )[0]
+
+
+def test_ledger_progression_equivalence_gates_on_package_overlap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import src.autoslice.review_package_owner_audit as owner_audit
+
+    ledger_path = tmp_path / "subtitle_truth_ledger.v1.json"
+
+    def write_ledger(entries: list[dict]) -> str:
+        ledger_path.write_text(
+            json.dumps(
+                {"entries": entries, "source_aliases": []},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return "sha256:" + hashlib.sha256(
+            ledger_path.read_bytes()
+        ).hexdigest()
+
+    def entry(truth_id: str, start: int, end: int, **extra) -> dict:
+        return {
+            "truth_id": truth_id,
+            "recording_basename": "rec_a.mp4",
+            "source_start_ms": start,
+            "source_end_ms": end,
+            **extra,
+        }
+
+    monkeypatch.setattr(
+        owner_audit, "SOURCE_TRUTH_LEDGER_PATH", ledger_path
+    )
+    recorded_sha = write_ledger([entry("seen-truth", 1_000, 2_000)])
+    provenance = {
+        "source_piece": {
+            "source_path": "/host/rec_a.mp4",
+            "start_ms": 0,
+            "end_ms": 10_000,
+        }
+    }
+    audit_base = {
+        "schema_version": "source-subtitle-truth-audit.v1",
+        "status": "APPLIED",
+        "applied": [
+            {
+                "truth_id": "seen-truth",
+                "required": True,
+                "boundary_role": "story_content",
+                "local_windows": [{"start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ],
+        "satisfied": [],
+        "failures": [],
+        "ledger_path": str(ledger_path),
+        "ledger_sha256": recorded_sha,
+    }
+
+    # ledger grows with a non-overlapping entry -> equivalent, still valid
+    write_ledger(
+        [
+            entry("seen-truth", 1_000, 2_000),
+            entry("other-clip-truth", 50_000, 60_000),
+        ]
+    )
+    assert owner_audit._source_truth_audit_valid(
+        audit_base, provenance=provenance
+    )
+
+    # a new entry overlapping this package that the audit never saw -> stale
+    write_ledger(
+        [
+            entry("seen-truth", 1_000, 2_000),
+            entry("new-overlapping-truth", 3_000, 4_000),
+        ]
+    )
+    assert not owner_audit._source_truth_audit_valid(
+        audit_base, provenance=provenance
+    )
+
+    # superseded revisions of an overlapping entry do not force a rerun
+    write_ledger(
+        [
+            entry("seen-truth", 1_000, 2_000),
+            entry(
+                "retired-truth",
+                3_000,
+                4_000,
+                assertion_state="SUPERSEDED",
+            ),
+        ]
+    )
+    assert owner_audit._source_truth_audit_valid(
+        audit_base, provenance=provenance
+    )
+
+    # without provenance the progression cannot be scoped -> stale
+    write_ledger(
+        [
+            entry("seen-truth", 1_000, 2_000),
+            entry("other-clip-truth", 50_000, 60_000),
+        ]
+    )
+    assert not owner_audit._source_truth_audit_valid(
+        audit_base, provenance=None
+    )
+
+
 def test_reviewed_baseline_is_text_authority_not_boundary_owner():
     no_boundary_owner = _frozen_owner_fixture()
     assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
@@ -1491,6 +1646,126 @@ def test_current_review_ass_replays_all_speaker_events_even_after_hash_rebinding
             for issue in audit_with_rebound_hashes(tampered_ass).issues
         }
         assert expected_code in codes
+
+
+def _uniform_daily_package(tmp_path: Path):
+    """Daily uniform_host package: unlabeled text SRT doubles as speaker SRT."""
+
+    root = tmp_path / "pkg"
+    root.mkdir()
+    srt = _write(
+        root / "talk.recut.srt",
+        "1\n00:00:00,000 --> 00:00:01,000\n第一句\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n第二句\n",
+    )
+    ass = _write(
+        root / "talk.final.ass",
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,第一句\n"
+        "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,第二句\n",
+    )
+    srt_hash = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    ass_hash = "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
+    item = {
+        "ass_path": ass.name,
+        "ass_sha256": ass_hash,
+        "speaker_srt": srt.name,
+        "speaker_srt_sha256": srt_hash,
+    }
+    record = {"artifact_hashes": {"ass_sha256": ass_hash}}
+    chat_authority = {
+        "speaker_ass_path": None,
+        "speaker_ass_sha256": None,
+        "final_text_srt_sha256": srt_hash.removeprefix("sha256:"),
+        "final_speaker_srt_sha256": srt_hash.removeprefix("sha256:"),
+    }
+    return root, item, record, chat_authority, ass
+
+
+def test_uniform_host_fallback_package_passes_full_parity(tmp_path: Path):
+    root, item, record, chat_authority, _ = _uniform_daily_package(tmp_path)
+
+    result = audit_review_package_ass(
+        root=root,
+        item=item,
+        portable_required=True,
+        max_visual_lines=2,
+        max_visual_line_chars=28,
+        record=record,
+        chat_authority=chat_authority,
+    )
+
+    assert result.issues == ()
+
+
+def test_uniform_host_fallback_still_replays_event_parity(tmp_path: Path):
+    root, item, record, chat_authority, ass = _uniform_daily_package(tmp_path)
+    tampered = ass.read_text(encoding="utf-8").replace("第二句\n", "伪造\n")
+    ass.write_text(tampered, encoding="utf-8")
+    item = dict(item)
+    item["ass_sha256"] = (
+        "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
+    )
+    record = {"artifact_hashes": {"ass_sha256": item["ass_sha256"]}}
+
+    result = audit_review_package_ass(
+        root=root,
+        item=item,
+        portable_required=True,
+        max_visual_lines=2,
+        max_visual_line_chars=28,
+        record=record,
+        chat_authority=chat_authority,
+    )
+
+    assert "SUBTITLE_ASS_SPEAKER_SRT_TEXT_MISMATCH" in {
+        issue.code for issue in result.issues
+    }
+
+
+def test_recovery_package_cannot_borrow_uniform_fallback(tmp_path: Path):
+    """A real speaker_ass_sha256 in chat authority keeps the strict path."""
+
+    root, item, record, chat_authority, _ = _uniform_daily_package(tmp_path)
+    chat_authority = dict(chat_authority)
+    chat_authority["speaker_ass_sha256"] = "sha256:" + "0" * 64
+
+    result = audit_review_package_ass(
+        root=root,
+        item=item,
+        portable_required=True,
+        max_visual_lines=2,
+        max_visual_line_chars=28,
+        record=record,
+        chat_authority=chat_authority,
+    )
+
+    codes = {issue.code for issue in result.issues}
+    # strict lane: unlabeled cues and the chat ass hash both fail again
+    assert "SUBTITLE_SPEAKER_SRT_INVALID" in codes
+    assert "SUBTITLE_ASS_CHAT_HASH_MISMATCH" in codes
+
+
+def test_uniform_fallback_requires_speaker_text_hash_identity(tmp_path: Path):
+    root, item, record, chat_authority, _ = _uniform_daily_package(tmp_path)
+    chat_authority = dict(chat_authority)
+    chat_authority["final_speaker_srt_sha256"] = "1" * 64
+
+    result = audit_review_package_ass(
+        root=root,
+        item=item,
+        portable_required=True,
+        max_visual_lines=2,
+        max_visual_line_chars=28,
+        record=record,
+        chat_authority=chat_authority,
+    )
+
+    assert "SUBTITLE_SPEAKER_SRT_INVALID" in {
+        issue.code for issue in result.issues
+    }
 
 
 def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Path):

@@ -12,6 +12,7 @@ from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
 from src.autoslice.source_subtitle_truth import (
+    BOUNDARY_OWNER_LEAD_TOLERANCE_MS,
     source_truth_owner_windows,
 )
 
@@ -166,7 +167,110 @@ def _context_only_row_valid(
     )
 
 
-def _source_truth_audit_valid(truth_audit: object) -> bool:
+def _package_source_pieces(provenance: object) -> list[tuple[str, int, int]]:
+    """(recording_basename, source_start_ms, source_end_ms) per source piece."""
+
+    if not isinstance(provenance, Mapping):
+        return []
+    raw = provenance.get("source_piece")
+    rows = raw if isinstance(raw, list) else [raw]
+    pieces: list[tuple[str, int, int]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            return []
+        source_path = row.get("source_path")
+        start_ms = row.get("start_ms")
+        end_ms = row.get("end_ms")
+        if (
+            not isinstance(source_path, str)
+            or not source_path
+            or not _strict_int(start_ms)
+            or not _strict_int(end_ms)
+            or int(end_ms) <= int(start_ms)
+        ):
+            return []
+        pieces.append((Path(source_path).name, int(start_ms), int(end_ms)))
+    return pieces
+
+
+def _ledger_progression_equivalent(
+    truth_audit: Mapping[str, Any],
+    *,
+    provenance: object,
+) -> bool:
+    """True when the current ledger adds no truth applicable to this package.
+
+    The frozen audit pinned the ledger bytes at production time; the ledger
+    legitimately keeps growing afterwards. Byte drift only matters if a new
+    (or revised) active entry overlaps this package's source interval and the
+    package has never seen its truth_id — that means the final text was
+    finalized without knowledge the current ledger considers applicable, so
+    the package must be reproduced. Anything short of that is equivalent.
+    Any parse/shape uncertainty returns False (fail toward reproduction).
+    """
+
+    pieces = _package_source_pieces(provenance)
+    if not pieces:
+        return False
+    known: set[str] = set()
+    for key in ("applied", "satisfied"):
+        for row in truth_audit.get(key) or []:
+            if isinstance(row, Mapping) and isinstance(row.get("truth_id"), str):
+                known.add(str(row["truth_id"]))
+    try:
+        import json as _json
+
+        document = _json.loads(
+            SOURCE_TRUTH_LEDGER_PATH.read_text(encoding="utf-8")
+        )
+        entries = document.get("entries")
+        aliases_raw = document.get("source_aliases") or []
+        if not isinstance(entries, list) or not isinstance(aliases_raw, list):
+            return False
+        # basename-level alias map; the sha-bound binding check lives in the
+        # producer, and matching more names here only makes this stricter.
+        alias_to_canonical = {
+            str(alias.get("alias_recording_basename") or ""): str(
+                alias.get("canonical_recording_basename") or ""
+            )
+            for alias in aliases_raw
+            if isinstance(alias, Mapping)
+        }
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                return False
+            state = entry.get("assertion_state")
+            if state is not None and str(state) in {
+                "PROPOSED",
+                "REJECTED",
+                "SUPERSEDED",
+            }:
+                continue
+            entry_name = str(entry.get("recording_basename") or "")
+            entry_start = entry.get("source_start_ms")
+            entry_end = entry.get("source_end_ms")
+            if not _strict_int(entry_start) or not _strict_int(entry_end):
+                return False
+            for piece_name, piece_start, piece_end in pieces:
+                canonical_piece = alias_to_canonical.get(piece_name, piece_name)
+                if entry_name not in (piece_name, canonical_piece):
+                    continue
+                if (
+                    max(int(entry_start), piece_start)
+                    < min(int(entry_end), piece_end)
+                    and str(entry.get("truth_id") or "") not in known
+                ):
+                    return False
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return True
+
+
+def _source_truth_audit_valid(
+    truth_audit: object,
+    *,
+    provenance: object = None,
+) -> bool:
     if not isinstance(truth_audit, Mapping):
         return False
     applied = truth_audit.get("applied")
@@ -180,13 +284,26 @@ def _source_truth_audit_valid(truth_audit: object) -> bool:
         )
     except OSError:
         return False
+    ledger_current = truth_audit.get("ledger_sha256") == ledger_sha256
+    if not ledger_current:
+        # The ledger moved on after this package was produced. That is only
+        # disqualifying when the progression added truth applicable to this
+        # package that the frozen audit never saw.
+        recorded = truth_audit.get("ledger_sha256")
+        if not (
+            isinstance(recorded, str)
+            and recorded.startswith("sha256:")
+            and _ledger_progression_equivalent(
+                truth_audit, provenance=provenance
+            )
+        ):
+            return False
     if not (
         truth_audit.get("schema_version") == SOURCE_TRUTH_AUDIT_SCHEMA
         and status in SOURCE_TRUTH_SUCCESS_STATUSES
         and isinstance(applied, list)
         and isinstance(satisfied, list)
         and failures == []
-        and truth_audit.get("ledger_sha256") == ledger_sha256
         and isinstance(truth_audit.get("ledger_path"), str)
         and Path(str(truth_audit["ledger_path"])).name
         == SOURCE_TRUTH_LEDGER_PATH.name
@@ -362,9 +479,21 @@ def _candidate_owner_scope(
     story_end = int(fields["story_end_ms"])
     semantic_end = int(fields["semantic_source_end_ms"])
     given_end = fields["given_source_end_ms"]
-    expected_start = int(fields["semantic_source_start_ms"]) - int(
+    semantic_story_start = int(fields["semantic_source_start_ms"]) - int(
         fields["first_piece_source_start_ms"]
     )
+    lead_tolerance = owner_scope.get("lead_tolerance_ms")
+    if lead_tolerance is None:
+        # legacy scopes predate the lead-tolerance fields
+        expected_start = semantic_story_start
+    elif (
+        _strict_int(lead_tolerance)
+        and 0 <= int(lead_tolerance) <= BOUNDARY_OWNER_LEAD_TOLERANCE_MS
+        and owner_scope.get("semantic_story_start_ms") == semantic_story_start
+    ):
+        expected_start = max(0, semantic_story_start - int(lead_tolerance))
+    else:
+        return False, -1, -1, owner_scope
     expected_end = (
         int(fields["prior_piece_duration_ms"])
         + max(
@@ -766,6 +895,7 @@ def audit_source_truth_owner_attestations(
     chat_authority: dict[str, Any],
     record_path: Path | None,
     record: dict[str, Any],
+    provenance: dict[str, Any] | None = None,
 ) -> None:
     """Audit final text ownership separately from boundary ownership."""
 
@@ -773,7 +903,7 @@ def audit_source_truth_owner_attestations(
     truth_audit = (
         truth_audit_raw if isinstance(truth_audit_raw, dict) else {}
     )
-    if not _source_truth_audit_valid(truth_audit_raw):
+    if not _source_truth_audit_valid(truth_audit_raw, provenance=provenance):
         issue_adder(
             issues,
             "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID",

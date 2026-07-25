@@ -1166,6 +1166,7 @@ def _audit_source_truth_owner_attestations(
     chat_authority: dict[str, Any],
     record_path: Path | None,
     record: dict[str, Any],
+    provenance: dict[str, Any] | None = None,
 ) -> None:
     audit_source_truth_owner_attestations(
         issue_adder=_add_issue,
@@ -1175,6 +1176,7 @@ def _audit_source_truth_owner_attestations(
         chat_authority=chat_authority,
         record_path=record_path,
         record=record,
+        provenance=provenance,
     )
 
 def _audit_final_review_attestation(
@@ -1653,6 +1655,10 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 detail=f"manifest={item_title!r}; record={record_title!r}",
             )
         if story_contract_required and not is_song:
+            provenance_path = _resolve(root, f"{stem}.provenance.json")
+            provenance = (
+                _load_json(provenance_path) if provenance_path else None
+            )
             _audit_source_truth_owner_attestations(
                 issues=issues,
                 stem=stem,
@@ -1660,6 +1666,7 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 chat_authority=chat_authority,
                 record_path=record_path,
                 record=record,
+                provenance=provenance,
             )
             _audit_final_review_attestation(
                 issues=issues,

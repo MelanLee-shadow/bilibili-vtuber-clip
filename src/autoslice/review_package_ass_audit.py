@@ -127,8 +127,39 @@ def _parse_srt_time(value: str) -> int | None:
     return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
 
 
+def uniform_host_fallback_declared(
+    record: Mapping[str, Any] | None,
+    chat_authority: Mapping[str, Any] | None,
+) -> bool:
+    """True when the frozen production evidence self-declares uniform_host.
+
+    The daily lane under the standing uniform_host policy skips speaker
+    finalization entirely (producer_speaker.run_producer_speaker_finalization
+    refuses to run in that mode), so the package legitimately has no speaker
+    ASS/SRT artifacts. The fallback semantics are self-evidencing in the
+    frozen chat authority: no speaker ASS was produced AND the speaker SRT
+    hash equals the text SRT hash (speaker face == text face). Recovery
+    packages carry real speaker artifact hashes and never satisfy this, so
+    their stricter contract is untouched.
+    """
+
+    if not isinstance(chat_authority, Mapping) or not isinstance(record, Mapping):
+        return False
+    text_sha = chat_authority.get("final_text_srt_sha256")
+    speaker_sha = chat_authority.get("final_speaker_srt_sha256")
+    return (
+        chat_authority.get("speaker_ass_path") is None
+        and chat_authority.get("speaker_ass_sha256") is None
+        and isinstance(text_sha, str)
+        and bool(_SHA256_RE.fullmatch(text_sha))
+        and text_sha == speaker_sha
+    )
+
+
 def _speaker_cues(
     path: Path,
+    *,
+    uniform_host_speaker: str | None = None,
 ) -> tuple[list[_SpeakerCue], list[ReviewPackageAssIssue]]:
     issues: list[ReviewPackageAssIssue] = []
     try:
@@ -210,21 +241,31 @@ def _speaker_cues(
         previous_start_ms = start_ms
         body = "\n".join(lines[2:]).strip()
         speaker_match = _SPEAKER_RE.fullmatch(body)
-        if speaker_match is None or not speaker_match.group(2).strip():
-            issues.append(
-                ReviewPackageAssIssue(
-                    "SUBTITLE_SPEAKER_SRT_INVALID",
-                    path,
-                    f"block {block_number} lacks a canonical speaker label/text",
+        if speaker_match is not None and speaker_match.group(2).strip():
+            cues.append(
+                _SpeakerCue(
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    speaker=speaker_match.group(1),
+                    text=speaker_match.group(2).strip(),
                 )
             )
             continue
-        cues.append(
-            _SpeakerCue(
-                start_ms=start_ms,
-                end_ms=end_ms,
-                speaker=speaker_match.group(1),
-                text=speaker_match.group(2).strip(),
+        if uniform_host_speaker is not None and body:
+            cues.append(
+                _SpeakerCue(
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    speaker=uniform_host_speaker,
+                    text=body,
+                )
+            )
+            continue
+        issues.append(
+            ReviewPackageAssIssue(
+                "SUBTITLE_SPEAKER_SRT_INVALID",
+                path,
+                f"block {block_number} lacks a canonical speaker label/text",
             )
         )
     return cues, issues
@@ -310,10 +351,14 @@ def _speaker_ass_escape(value: str) -> str:
     )
 
 
-def _expected_events(cues: list[_SpeakerCue]) -> list[_AssEvent]:
+def _expected_events(
+    cues: list[_SpeakerCue],
+    *,
+    host_style: str = "LDS",
+) -> list[_AssEvent]:
     events: list[_AssEvent] = []
     for cue in cues:
-        style = "LDS" if cue.speaker == HOST_SPEAKER else "GUEST"
+        style = host_style if cue.speaker == HOST_SPEAKER else "GUEST"
         for start_ms, end_ms, display_text in _layout_cue_for_display(
             cue.start_ms, cue.end_ms, cue.text
         ):
@@ -367,12 +412,20 @@ def _pair_issues(
     *,
     events: list[_AssEvent],
     ass_is_valid: bool,
+    uniform_host_speaker: str | None = None,
 ) -> list[ReviewPackageAssIssue]:
-    cues, srt_issues = _speaker_cues(speaker_srt_path)
+    cues, srt_issues = _speaker_cues(
+        speaker_srt_path, uniform_host_speaker=uniform_host_speaker
+    )
     issues = [*srt_issues]
     if srt_issues or not ass_is_valid:
         return issues
-    expected = _expected_events(cues)
+    expected = _expected_events(
+        cues,
+        # The daily burn lane renders every cue with its single Default
+        # style; LDS/GUEST styles only exist in the speaker-finalized lane.
+        host_style="Default" if uniform_host_speaker is not None else "LDS",
+    )
     if len(events) != len(expected):
         issues.append(
             ReviewPackageAssIssue(
@@ -433,9 +486,18 @@ def audit_review_package_ass(
     record: Mapping[str, Any] | None = None,
     chat_authority: Mapping[str, Any] | None = None,
 ) -> ReviewPackageAssAuditResult:
-    """Audit portable paths, hashes, layout, and full speaker event parity."""
+    """Audit portable paths, hashes, layout, and full speaker event parity.
+
+    When the frozen record + chat authority self-declare the uniform_host
+    fallback (no speaker artifacts produced by design), the packaged text SRT
+    serves as the speaker SRT: unlabeled cues parse as the host speaker and
+    the full event-parity replay still runs against the packaged ASS. Hash
+    contracts stay intact — the speaker SRT must still match the chat
+    authority's final_speaker_srt_sha256 (== text hash under the fallback).
+    """
 
     issues: list[ReviewPackageAssIssue] = []
+    uniform_fallback = uniform_host_fallback_declared(record, chat_authority)
     ass_value = (
         item.get("ass_path")
         if portable_required
@@ -555,7 +617,13 @@ def audit_review_package_ass(
             if isinstance(chat_authority, Mapping)
             else None
         )
-        if not _hash_matches(ass_path, chat_ass_sha256):
+        if uniform_fallback:
+            # No speaker ASS exists by declaration; the packaged burn ASS is
+            # already pinned by record.artifact_hashes.ass_sha256 above, and
+            # the chat authority itself is pinned by the record's
+            # chat_authority_audit_sha256 check in the caller.
+            pass
+        elif not _hash_matches(ass_path, chat_ass_sha256):
             issues.append(
                 ReviewPackageAssIssue(
                     "SUBTITLE_ASS_CHAT_HASH_MISMATCH",
@@ -585,6 +653,7 @@ def audit_review_package_ass(
                 speaker_srt_path,
                 events=events,
                 ass_is_valid=not event_issues,
+                uniform_host_speaker=HOST_SPEAKER if uniform_fallback else None,
             )
         )
 
