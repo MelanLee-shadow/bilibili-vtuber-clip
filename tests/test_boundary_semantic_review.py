@@ -839,3 +839,23 @@ def test_semantic_floor_gap_with_speech_keeps_closure_cue_ineligible():
         relaxation["cue_index"]
         for relaxation in review["recommendation_relaxations"]
     ] == [2]
+
+
+def test_baseline_tail_cap_bounds_recommendation_ceiling():
+    """1573 r13 鼠标话题案：redelivery 包的 lower_bound 语义延伸不得越过
+    已发布 baseline 覆盖终点——尾部恒等锚（头部锚的对偶）。"""
+    from src.autoslice.boundary_semantic_review import build_boundary_search_scope
+
+    capped = build_boundary_search_scope(
+        semantic_target_ms=100_000,
+        repair_cap_ms=60_000,
+        manual_lower_bound_ms=100_000,
+        baseline_tail_cap_ms=100_060,
+    )
+    assert capped["max_recommended_end_ms"] == 100_060
+    uncapped = build_boundary_search_scope(
+        semantic_target_ms=100_000,
+        repair_cap_ms=60_000,
+        manual_lower_bound_ms=100_000,
+    )
+    assert uncapped["max_recommended_end_ms"] == 160_000

@@ -271,6 +271,25 @@ def freeze_story_chat_boundary_owners(
     return contracts
 
 
+def _redelivery_baseline_tail_rel_ms(
+    spec: Mapping[str, object],
+    *,
+    last_piece_start_ms: int,
+    prior_piece_duration_ms: int,
+) -> int | None:
+    """v2 baseline 覆盖终点换算到跨 piece 交付轴（头部恒等锚的对偶）。"""
+
+    config = spec.get("subtitle_redelivery_baseline")
+    if not isinstance(config, Mapping):
+        return None
+    if config.get("schema_version") != "subtitle-redelivery-baseline.v2":
+        return None
+    end = config.get("absolute_source_end_ms")
+    if isinstance(end, bool) or not isinstance(end, int):
+        return None
+    return prior_piece_duration_ms + (int(end) - last_piece_start_ms)
+
+
 def freeze_required_boundary_owner_contract(
     *,
     spec: dict,
@@ -344,6 +363,11 @@ def freeze_required_boundary_owner_contract(
         prior_piece_duration_ms=prior_piece_duration_ms,
         boundary_end_mode=str(
             spec.get("given_end_mode") or "semantic_lower_bound"
+        ),
+        baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
+            spec,
+            last_piece_start_ms=last_piece_start_ms,
+            prior_piece_duration_ms=prior_piece_duration_ms,
         ),
     )
     spec["boundary_search_scope"] = boundary_search_scope

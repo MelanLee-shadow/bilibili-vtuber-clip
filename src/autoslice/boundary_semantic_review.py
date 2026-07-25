@@ -119,6 +119,7 @@ def build_boundary_search_scope(
     prior_piece_duration_ms: int = 0,
     witness_reserve_ms: int = SOURCE_WITNESS_RESERVE_MS,
     boundary_end_mode: str = "semantic_lower_bound",
+    baseline_tail_cap_ms: int | None = None,
 ) -> dict[str, object]:
     """Build the one scope shared by source review, resolver, and retry.
 
@@ -211,6 +212,17 @@ def build_boundary_search_scope(
         if exact_source_pin is not None
         else search_origin_ms + repair_cap
     )
+    # redelivery 尾部锚（2026-07-25 1573 r13 鼠标话题案，头部恒等锚的对偶）：
+    # 同 BV 修复的成片终点不得越过已发布 baseline 覆盖终点——lower_bound
+    # 模式的语义延伸在修复包上会把 V13 已裁定排除的下一话题包回来（replay/
+    # regression 会正确拦下但永远无法收敛）。
+    if (
+        baseline_tail_cap_ms is not None
+        and baseline_tail_cap_ms < max_recommended_end_ms
+    ):
+        max_recommended_end_ms = _required_int_ms(
+            "baseline_tail_cap_ms", baseline_tail_cap_ms
+        )
     if delivery_lower_bound_ms > max_recommended_end_ms:
         reasons.append("BOUNDARY_REQUIRED_OWNER_EXCLUDED")
     recommendation_forward_ms = max(
