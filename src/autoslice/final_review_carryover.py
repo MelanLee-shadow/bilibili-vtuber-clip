@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Mapping
 
 SCHEMA_VERSION = "final-review-carryover.v1"
-CARRYOVER_ORIGIN = "final_review_carryover"
 _ROW_KEYS = (
     "cue",
     "kind",
@@ -86,29 +85,4 @@ def load_final_review_carryover(path: Path) -> list[dict[str, Any]]:
         or payload.get("schema_version") != SCHEMA_VERSION
     ):
         return []
-    rows = []
-    for raw in payload.get("findings") or []:
-        if not isinstance(raw, Mapping):
-            continue
-        row = dict(raw)
-        row["origin"] = CARRYOVER_ORIGIN
-        rows.append(row)
-    return rows
-
-
-def merge_carryover_findings(
-    review_findings: list[dict[str, Any]],
-    carryover: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Union by (cue, suspect); this round's fresh LLM findings win ties."""
-
-    def key(row: Mapping[str, Any]) -> tuple[object, str]:
-        return (row.get("cue"), str(row.get("suspect") or ""))
-
-    seen = {key(row) for row in review_findings}
-    merged = list(review_findings)
-    for row in carryover:
-        if key(row) not in seen:
-            merged.append(row)
-            seen.add(key(row))
-    return merged
+    return [dict(raw) for raw in payload.get("findings") or [] if isinstance(raw, Mapping)]

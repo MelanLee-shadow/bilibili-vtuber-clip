@@ -40,7 +40,6 @@ from src.autoslice.final_review_auditor import (
 from src.autoslice.final_review_carryover import (
     carryover_path,
     load_final_review_carryover,
-    merge_carryover_findings,
 )
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.final_review_auditor import (
@@ -724,6 +723,14 @@ def _run_final_review(
                 if isinstance(clip_context, Mapping)
                 else ""
             )
+            # 终审结转并入（2026-07-25 六条死循环案）：上轮 exact 终审声学
+            # 确证却无权落盘的修复，以 raw 行进同一个解析/校验循环（stale
+            # suspect 天然过滤，零特权）——确定性闭环。
+            carryover_rows = (
+                load_final_review_carryover(carryover_file)
+                if carryover_file is not None
+                else []
+            )
             review_findings = audit_final_subtitles(
                 srt_text,
                 llm_call=review_llm_call,
@@ -732,19 +739,8 @@ def _run_final_review(
                 structured_context_text=structured_context_text,
                 candidate_context_text=candidate_context_text,
                 candidate_context=clip_context,
+                extra_raw_findings=carryover_rows,
             )
-            # 终审结转并入（2026-07-25 六条死循环案）：上轮 exact 终审声学
-            # 确证却无权落盘的修复，本轮与 fresh LLM 发现同链处理（route→
-            # adjudicate→apply，stale 守卫照常）——确定性闭环。
-            carryover_rows = (
-                load_final_review_carryover(carryover_file)
-                if carryover_file is not None
-                else []
-            )
-            if carryover_rows:
-                review_findings = merge_carryover_findings(
-                    review_findings, carryover_rows
-                )
             protected_review_cues = set(handled_entity_cues)
             cue_count = len(
                 [

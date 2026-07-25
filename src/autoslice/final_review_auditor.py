@@ -454,6 +454,43 @@ def _request_final_review_findings(
     return raw
 
 
+def _merged_raw_findings(
+    raw: list[object],
+    extra_raw_findings: Sequence[Mapping[str, Any]],
+    cues: Sequence[Any],
+) -> list[object]:
+    """终审结转行并入本轮 raw（2026-07-25）。
+
+    结转行在这里预过滤 stale（cue 越界或 suspect 不在当前 cue 文本）：过期
+    行静默退役而不是进 raw——否则"raw 非空但全无效"的 ALL_INVALID 守卫
+    （防 LLM 全乱码）会被结转残行误触发，correction pass 整体崩掉。"""
+
+    if not extra_raw_findings:
+        return raw
+    seen = {
+        (row.get("cue"), str(row.get("suspect") or ""))
+        for row in raw
+        if isinstance(row, Mapping)
+    }
+    merged = list(raw)
+    for row in extra_raw_findings:
+        key = (row.get("cue"), str(row.get("suspect") or ""))
+        if key in seen:
+            continue
+        try:
+            cue_index = int(row.get("cue"))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= cue_index <= len(cues):
+            continue
+        suspect = str(row.get("suspect") or "")
+        if suspect and suspect not in cues[cue_index - 1].text:
+            continue
+        merged.append(dict(row))
+        seen.add(key)
+    return merged
+
+
 def audit_final_subtitles(
     srt_text: str,
     *,
@@ -463,8 +500,10 @@ def audit_final_subtitles(
     structured_context_text: str = "",
     candidate_context_text: str = "",
     candidate_context: Mapping[str, object] | None = None,
+    extra_raw_findings: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
-    """One reviewer pass over the final SRT; returns validated findings only."""
+    """One reviewer pass over the final SRT; returns validated findings only.
+    ``extra_raw_findings``: 终审结转 raw 行，语义见 _merged_raw_findings。"""
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     if not cues:
         raise FinalReviewAuditError("FINAL_REVIEW_INPUT_EMPTY")
@@ -479,6 +518,7 @@ def audit_final_subtitles(
     raw = _request_final_review_findings(
         prompt, llm_call=llm_call, extract_json=extract_json
     )
+    raw = _merged_raw_findings(raw, extra_raw_findings, cues)
     speech_memory = (
         candidate_context.get("speech_memory")
         if isinstance(candidate_context, Mapping)

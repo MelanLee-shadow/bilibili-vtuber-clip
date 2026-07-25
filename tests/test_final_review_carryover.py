@@ -6,10 +6,8 @@ import json
 from pathlib import Path
 
 from src.autoslice.final_review_carryover import (
-    CARRYOVER_ORIGIN,
     carryover_path,
     load_final_review_carryover,
-    merge_carryover_findings,
     persist_final_review_carryover,
 )
 
@@ -50,7 +48,6 @@ def test_persist_keeps_only_acoustically_confirmed_repairs(tmp_path):
     row = rows[0]
     assert row["cue"] == 32
     assert row["suspect"] == "悄悄"
-    assert row["origin"] == CARRYOVER_ORIGIN
     assert "终审结转" in row["why"]
 
 
@@ -68,15 +65,3 @@ def test_load_rejects_malformed_payload(tmp_path):
     assert load_final_review_carryover(path) == []
     path.write_text(json.dumps({"schema_version": "other", "findings": [{}]}), encoding="utf-8")
     assert load_final_review_carryover(path) == []
-
-
-def test_merge_dedupes_by_cue_and_suspect_fresh_wins(tmp_path):
-    fresh = [{"cue": 32, "suspect": "悄悄", "why": "fresh"}]
-    carry = [
-        {"cue": 32, "suspect": "悄悄", "why": "carry", "origin": CARRYOVER_ORIGIN},
-        {"cue": 51, "suspect": "节奏", "why": "carry", "origin": CARRYOVER_ORIGIN},
-    ]
-    merged = merge_carryover_findings(fresh, carry)
-    assert len(merged) == 2
-    assert merged[0]["why"] == "fresh"
-    assert merged[1]["cue"] == 51
