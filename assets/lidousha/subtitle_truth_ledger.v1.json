@@ -2600,6 +2600,34 @@
       "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
       "authority": "机器证据裁定2026-07-25：游戏选项被评像长辈教训小孩，大家早无法成句；声学INCOMPATIBLE/PLAUSIBLE+语境强。孤立右引号剔除（title mark balance 防线）。",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-bww-guayidian-cue51-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_start_ms": 696960,
+      "source_end_ms": 700280,
+      "action": "replace_cue",
+      "text": "还，还是能稍微刮一点的",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260725-conversation：三句平行复述统一为刮（cue49还是能刮一点的已正确；乖/歪为同音族gua/guai/wai误听）。单窗声学在结巴段听到guai是对那一秒的忠实但短视报告，语篇平行句多数+游戏刮血语境是词级权威——闭集听证语境窗仅±1句且带错字污染（乖在context_before）、cue49不在窗内，此案催生平行句一致性通用规则。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-bww-guayidian-cue52-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_start_ms": 701640,
+      "source_end_ms": 702840,
+      "action": "replace_cue",
+      "text": "还能稍微刮一点",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260725-conversation：三句平行复述统一为刮（cue49还是能刮一点的已正确；乖/歪为同音族gua/guai/wai误听）。单窗声学在结巴段听到guai是对那一秒的忠实但短视报告，语篇平行句多数+游戏刮血语境是词级权威——闭集听证语境窗仅±1句且带错字污染（乖在context_before）、cue49不在窗内，此案催生平行句一致性通用规则。",
+      "required": true
     }
   ]
 }
