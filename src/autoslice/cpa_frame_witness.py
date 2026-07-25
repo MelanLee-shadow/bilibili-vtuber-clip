@@ -5,6 +5,11 @@
 的争议。本模块提供 hash-bound 的单帧视觉问答：ffmpeg 截帧 → base64 →
 CPA 多模态 chat 调用，返回绑定 frame/prompt/response 哈希的审计收据。
 
+模型选型（2026-07-25 四模型基准，Ivan 规则=准确度优先、同准确度才降级）：
+gpt-5.6-terra 默认——唯一完整读出游戏 ID「温柔型李豆沙」且零 OCR 错字、
+无字帧诚实答无；gpt-5.5 漏关键 ID；gpt-5.6-luna 有无中生有幻觉（编造不存在
+的字幕），证据场景禁用；gpt-5.6-sol 基准时网关 408/503，恢复后可复测。
+
 角色定位：**证据输入**，不是裁决者——收据由调用方放进裁决 request 的上下文
 或审计披露；失败（截帧/网络/空答）返回 UNAVAILABLE 收据，绝不抛出阻塞。
 """
@@ -51,7 +56,7 @@ def frame_vision_probe(
     *,
     api_base: str,
     api_key: str,
-    model: str,
+    model: str = "gpt-5.6-terra",
     timeout_seconds: float = 90.0,
     max_tokens: int = 1024,
 ) -> dict[str, object]:
