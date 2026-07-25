@@ -2464,15 +2464,15 @@
     {
       "knowledge_type": "SOURCE_INTERVAL_TRUTH",
       "truth_id": "20260724-beans-xiaozhu-gangbeng-r1",
-      "revision_id": "r1",
+      "revision_id": "r2",
       "assertion_state": "VERIFIED_ACTIVE",
       "recording_basename": "22966160_20260724-18-31-22.mp4",
-      "source_start_ms": 1332220,
-      "source_end_ms": 1335040,
+      "source_start_ms": 1411500,
+      "source_end_ms": 1414320,
       "action": "replace_cue",
       "text": "谢谢小猪状态的钢镚妈妈，好久不见",
       "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
-      "authority": "重跑退化锁基准2026-07-25：基准第191行原文；结构化SC发送者=小猪状态（嫂子状态为音近误听），钢镚为低额SC固定梗规范词面（同片35句同型）。",
+      "authority": "重跑退化锁基准2026-07-25：基准第191行原文；结构化SC发送者=小猪状态（嫂子状态为音近误听），钢镚为低额SC固定梗规范词面（同片35句同型）。 r2修正2026-07-25：r1坐标误用piece0偏移换算（豆角为2-piece候选，该句在piece1），r1窗口[1332220..1335040]落在piece缝隙被loader正确过滤；r2按多piece映射重算[1411500..1414320]。",
       "required": true
     },
     {
@@ -2627,6 +2627,48 @@
       "text": "还能稍微刮一点",
       "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
       "authority": "Ivan-stated-20260725-conversation：三句平行复述统一为刮（cue49还是能刮一点的已正确；乖/歪为同音族gua/guai/wai误听）。单窗声学在结巴段听到guai是对那一秒的忠实但短视报告，语篇平行句多数+游戏刮血语境是词级权威——闭集听证语境窗仅±1句且带错字污染（乖在context_before）、cue49不在窗内，此案催生平行句一致性通用规则。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-beans-limo-meichile-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-18-31-22.mp4",
+      "source_start_ms": 1240260,
+      "source_end_ms": 1242340,
+      "action": "replace_cue",
+      "text": "那现在就差礼墨没吃了",
+      "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+      "authority": "机器证据裁定2026-07-25：紧邻句重复只差礼墨没吃、三人组两人已吃语境（复数你们矛盾）；nǐ-men/lǐ-mò音近+声学INCOMPATIBLE/SUPPORTED。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-beans-limo-mai-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-18-31-22.mp4",
+      "source_start_ms": 1379190,
+      "source_end_ms": 1381810,
+      "action": "replace_cue",
+      "text": "感觉豆沙用礼墨的麦更加吵闹",
+      "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_SENDER",
+      "authority": "机器证据裁定2026-07-25：紧接唐琳韵SC，结构化原文逐字为感觉豆沙用礼墨的麦更加吵闹了；盾山为误听，共用麦克风语境；声学INCOMPATIBLE/SUPPORTED。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-skill-jianmian-leye-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_start_ms": 858130,
+      "source_end_ms": 859770,
+      "action": "replace_cue",
+      "text": "又可以和大家见面了耶",
+      "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+      "authority": "机器证据裁定2026-07-25：开场问候语境（见面理解不成句）；correction声学确证修复在终验反复不存活（沙盘死锁），真值化落地。",
       "required": true
     }
   ]
