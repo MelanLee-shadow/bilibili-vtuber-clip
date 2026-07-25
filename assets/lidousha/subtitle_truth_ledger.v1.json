@@ -2222,6 +2222,34 @@
       "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
       "authority": "机器证据裁定2026-07-25：重复句第二遍的连词，本轮AGY与exact-release声学语境裁定均为但（与第一遍但她其实是妹妹，小朋友平行），BCUT单票为那；二比一取但。",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-skill-kmx-huaixiong-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_start_ms": 915220,
+      "source_end_ms": 917940,
+      "action": "replace_cue",
+      "text": "kmx里面的坏熊太多了",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260725-conversation：该句为kmx里面的坏熊太多了（叹十七手里面为ASR把专名kmx=读kimo熊打散成常见词的误听）；语境铁证=紧邻后句重复坏熊太多了+随后kmx欺负我，kmx即kimo熊粉丝专名可直接关联。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-skill-kmx-qifu-wo-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_start_ms": 922900,
+      "source_end_ms": 927740,
+      "action": "replace_cue",
+      "text": "kmx欺负我",
+      "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+      "authority": "Ivan-stated-20260725-conversation：该处她只说了kmx欺负我；成片的哇，kmx为什么欺负我？kmx欺负人中的为什么与kmx欺负人为幻插扩写，按Ivan裁定整cue收敛为kmx欺负我。",
+      "required": true
     }
   ]
 }
