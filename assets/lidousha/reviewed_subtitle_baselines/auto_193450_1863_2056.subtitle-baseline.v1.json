@@ -1,14 +1,14 @@
 {
-  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
-  "candidate_id": "auto_193450_1863_2056",
-  "schema_version": "subtitle-redelivery-baseline.v2",
-  "mode": "preserve_text_outside_source_truth",
-  "exact_interval_replay": true,
-  "path": "auto_193450_1863_2056.reviewed.srt",
-  "sha256": "a002887e13dc8a4f8314e2ee9ae534fce7b12c0c0f10f71bf2c666a2d45fcbeb",
-  "authority": "Ivan-reviewed 2026-07-22 rerun plus canonical structured-chat names | 2026-07-24 Ivan裁定修订：与subtitle_truth_ledger新条目对齐（幻听句/ID写法），修订由Claude落盘。",
-  "source_recording_basename": "22966160_20260722-19-34-50.mp4",
-  "source_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
-  "absolute_source_start_ms": 1863550,
-  "absolute_source_end_ms": 2056080
+ "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+ "candidate_id": "auto_193450_1863_2056",
+ "schema_version": "subtitle-redelivery-baseline.v2",
+ "mode": "preserve_text_outside_source_truth",
+ "exact_interval_replay": true,
+ "path": "auto_193450_1863_2056.reviewed.srt",
+ "sha256": "77019625fad252dab69ec9251f05cb1d272e4b81db7a572332d1c3daf1ae153b",
+ "authority": "Ivan-reviewed 2026-07-22 rerun plus canonical structured-chat names | 2026-07-24 Ivan裁定修订：与subtitle_truth_ledger新条目对齐（幻听句/ID写法），修订由Claude落盘。 | 2026-07-25 cue67与ledger嗯哼你能听见没真值对齐（hash-bound听证+句法+邻句重复，不为ASR幻插），修订由Claude落盘。",
+ "source_recording_basename": "22966160_20260722-19-34-50.mp4",
+ "source_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+ "absolute_source_start_ms": 1863550,
+ "absolute_source_end_ms": 2056080
 }
