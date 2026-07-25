@@ -2085,8 +2085,8 @@
       "revision_id": "r1",
       "assertion_state": "VERIFIED_ACTIVE",
       "recording_basename": "22966160_20260722-19-35-15.mp4",
-      "source_start_ms": 1955200,
-      "source_end_ms": 1958080,
+      "source_start_ms": 1964990,
+      "source_end_ms": 1967870,
       "action": "replace_substring",
       "replacements": [
         {
@@ -2096,7 +2096,7 @@
       ],
       "required_text": "-天蓝青-",
       "evidence_class": "STRUCTURED_CHAT_RECORD",
-      "authority": "SC记录证词2026-07-24：SUPER_CHAT_MESSAGE uname=-天蓝青-（SC正文好漂亮的大姐姐，心里没有李豆沙的位置了，与该处口播完全对应）；打赏者ID写法归平台记录所有。 surface带上下文锚谢谢前缀以保幂等（canonical含surface的裸替换会在已正确文本上产生双连字符）。",
+      "authority": "SC记录证词2026-07-24：SUPER_CHAT_MESSAGE uname=-天蓝青-（SC正文好漂亮的大姐姐，心里没有李豆沙的位置了，与该处口播完全对应）；打赏者ID写法归平台记录所有。 surface带上下文锚谢谢前缀以保幂等（canonical含surface的裸替换会在已正确文本上产生双连字符）。 窗口修正2026-07-25：初版坐标误用交付轴少加final_start偏移(9.66s)套到矮人笑话句，现按本轮padded fresh网格精确重锚。",
       "required": true
     },
     {
@@ -2125,6 +2125,18 @@
       "text": "谢谢，谢谢你，你是因为矮人笑话来的吗？",
       "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
       "authority": "Ivan-stated-20260724-conversation(舰长致谢处实际说的是谢谢，谢谢你，你是因为矮人笑话来的吗？没有提到牛；谢谢牛为幻听)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-drop-xiexieniu-hallucination-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1959540,
+      "source_end_ms": 1960120,
+      "action": "drop_cue",
+      "authority": "Ivan-stated-20260724-conversation(该舰长致谢段没有提到牛；0.6秒的谢谢牛为幻听填充，按裁定删除)",
       "required": true
     }
   ]
