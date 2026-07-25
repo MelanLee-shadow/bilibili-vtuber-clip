@@ -509,6 +509,26 @@ def test_adjudication_reverted_by_baseline_retires_instead_of_deadlock() -> None
     )
 
 
+def test_owner_payload_majority_gate_drops_grazing_neighbor() -> None:
+    """1573 r11 实案几何：真值窗尾带落值轮网格坐标（40870），本轮句尾早移
+    到 40680，窗尾多出的 190ms 以 ≥80ms 绝对门擦进下一句——majority 门
+    要求邻句过半重叠，擦入出局、真 owner cue（99% 重叠）保留。"""
+    from src.autoslice.chat_evidence import normalize_srt_owner_payload_window
+
+    srt = (
+        "1\n00:00:37,600 --> 00:00:40,680\n但其实背地里是被欺负的那种\n\n"
+        "2\n00:00:40,680 --> 00:00:42,340\n那我不是一直都是这样的吗\n"
+    )
+    grazing = normalize_srt_owner_payload_window(
+        srt, start_ms=37_610, end_ms=40_870, min_overlap_ms=80
+    )
+    assert "一直都是这样" in grazing  # absolute gate alone lets the neighbor in
+    gated = normalize_srt_owner_payload_window(
+        srt, start_ms=37_610, end_ms=40_870, min_overlap_ms=80, majority_ratio=0.5
+    )
+    assert gated == "但其实背地里是被欺负的那种"
+
+
 def test_redelivery_baseline_head_rel_conversion() -> None:
     """1573 round-9 案：v2 baseline 的开场必须能换算到 recut 相对轴，
     用于把 fresh 网格的句首吸附钳在 baseline 首 cue 之前。"""

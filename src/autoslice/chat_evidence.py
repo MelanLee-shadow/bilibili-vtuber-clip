@@ -180,6 +180,7 @@ def normalize_srt_owner_payload_window(
     end_ms: int,
     min_overlap_ms: int,
     strip_speaker_labels: bool = False,
+    majority_ratio: float | None = None,
 ) -> str:
     """Normalize cues materially owned by one exact half-open time window.
 
@@ -189,6 +190,12 @@ def normalize_srt_owner_payload_window(
     Boundary-touching neighbours therefore contribute zero milliseconds and
     cannot make an otherwise exact ``replace_cue`` or ``drop_cue`` contract
     fail.
+
+    ``majority_ratio``（2026-07-25 1573 背地里 r11 案）：真值窗口尾坐标带着
+    落值轮的网格，fresh 网格同句尾早移 190ms 时，多出的尾巴以绝对门擦进
+    下一句 cue。传入比例后，cue 还须满足 overlap ≥ min(cue 时长, 窗口时长)
+    × ratio 才算 owner——邻句小占比擦入出局，真 owner cue（重叠占比接近
+    100%）不受影响。有界无内容抖动由门吸收，不再要求逐毫秒复现。
     """
 
     if isinstance(min_overlap_ms, bool) or min_overlap_ms <= 0:
@@ -201,6 +208,12 @@ def normalize_srt_owner_payload_window(
         )
         if overlap_ms < min_overlap_ms:
             continue
+        if majority_ratio is not None:
+            basis = min(
+                max(1, cue.end_ms - cue.start_ms), max(1, end_ms - start_ms)
+            )
+            if overlap_ms < basis * majority_ratio:
+                continue
         text = _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
         if text.strip():
             texts.append(text)

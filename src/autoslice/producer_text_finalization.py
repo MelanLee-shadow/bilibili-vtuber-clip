@@ -398,6 +398,38 @@ def _adjudication_pinned_by_baseline(
     return False
 
 
+def _owner_window_payloads(
+    action: str,
+    *,
+    final_text_srt: str,
+    final_speaker_srt: str,
+    start_ms: int,
+    end_ms: int,
+) -> tuple[str, str]:
+    """majority 门（1573 r11 案）：真值窗坐标来自落值轮网格，本轮句尾早移时
+    窗尾会以 ≥80ms 绝对门擦进下一句——replace_cue 的邻句须过半重叠才算
+    owner payload，有界抖动由门吸收。drop_cue 语义相反（任何 cue 侵入删除
+    区间都是真信号），维持绝对门。"""
+
+    majority = 0.5 if action != "drop_cue" else None
+    text_payload = _window_payload(
+        final_text_srt,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        min_overlap_ms=MIN_CUE_OVERLAP_MS,
+        majority_ratio=majority,
+    )
+    speaker_payload = _window_payload(
+        final_speaker_srt,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        min_overlap_ms=MIN_CUE_OVERLAP_MS,
+        strip_speaker_labels=True,
+        majority_ratio=majority,
+    )
+    return text_payload, speaker_payload
+
+
 def _window_payload(
     srt_text: str,
     *,
@@ -405,6 +437,7 @@ def _window_payload(
     end_ms: int,
     min_overlap_ms: int,
     strip_speaker_labels: bool = False,
+    majority_ratio: float | None = None,
 ) -> str:
     return normalize_chat_text(
         normalize_srt_owner_payload_window(
@@ -413,6 +446,7 @@ def _window_payload(
             end_ms=max(start_ms + 1, end_ms),
             min_overlap_ms=min_overlap_ms,
             strip_speaker_labels=strip_speaker_labels,
+            majority_ratio=majority_ratio,
         )
     )
 
@@ -641,18 +675,12 @@ def _verify_source_truth_owners(
         for owned in inside_windows:
             relative_start = int(owned["start_ms"]) - delivery_start_ms
             relative_end = int(owned["end_ms"]) - delivery_start_ms
-            text_payload = _window_payload(
-                final_text_srt,
+            text_payload, speaker_payload = _owner_window_payloads(
+                action,
+                final_text_srt=final_text_srt,
+                final_speaker_srt=final_speaker_srt,
                 start_ms=relative_start,
                 end_ms=relative_end,
-                min_overlap_ms=MIN_CUE_OVERLAP_MS,
-            )
-            speaker_payload = _window_payload(
-                final_speaker_srt,
-                start_ms=relative_start,
-                end_ms=relative_end,
-                min_overlap_ms=MIN_CUE_OVERLAP_MS,
-                strip_speaker_labels=True,
             )
             expected_after_raw = owned["expected_after"]
             if expected_after_raw is None:
