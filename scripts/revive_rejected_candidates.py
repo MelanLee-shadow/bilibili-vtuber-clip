@@ -31,7 +31,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-REVIVABLE_STATUS = "candidate_rejected"
+REVIVABLE_STATUSES = ("candidate_rejected", "review_ready")
 
 
 def _atomic_write(path: Path, payload: dict) -> None:
@@ -56,6 +56,13 @@ def main() -> int:
     parser.add_argument("--fix-commit", required=True)
     parser.add_argument("--runner-lock", type=Path, default=None)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--force-redo",
+        action="store_true",
+        help="also accept review_ready picks whose artifacts predate a "
+        "required fix (main lane does NOT re-supersede ready picks on "
+        "fingerprint change — 2026-07-25 lesson)",
+    )
     args = parser.parse_args()
 
     lock_path = args.runner_lock or (args.state.parent.parent / "runner.lock")
@@ -78,10 +85,12 @@ def main() -> int:
     revived = []
     for cid in wanted:
         row = by_id[cid]
-        if row.get("status") != REVIVABLE_STATUS:
+        allowed = (
+            REVIVABLE_STATUSES if args.force_redo else REVIVABLE_STATUSES[:1]
+        )
+        if row.get("status") not in allowed:
             print(
-                f"REFUSE: {cid} status={row.get('status')!r} is not"
-                f" {REVIVABLE_STATUS} — only fossilized rejections revive",
+                f"REFUSE: {cid} status={row.get('status')!r} not in {allowed}",
                 file=sys.stderr,
             )
             return 2

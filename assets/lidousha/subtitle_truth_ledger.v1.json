@@ -2390,6 +2390,62 @@
       "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
       "authority": "Ivan-stated-20260725-conversation：不是音爆玉是樱抱月（读图可出：sol视觉见证读出投抱月形近半印证；樱抱月=入间人间《安达与岛村》安达樱×岛村抱月的CP组合ID，语义闭环；音爆玉yin-bao-yu与樱抱月ying-bao-yue近同音误听）。",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-light-lipu-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-18-31-22.mp4",
+      "source_start_ms": 656570,
+      "source_end_ms": 658430,
+      "action": "replace_cue",
+      "text": "谢谢利普的粉丝团灯牌",
+      "evidence_class": "HASH_BOUND_STRUCTURED_GIFT_EVENT",
+      "authority": "机器证据裁定2026-07-25：粉丝团灯牌为B站固定礼物专名（gift canon 319次，Ivan 2026-07-24裁定），利普的SEND_GIFT结构化记录佐证；粉丝灯牌=漏团误听（与二琳娜皮草句同型，该句已由erlinnapicao真值修复）。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-light-nuanbai-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-18-31-22.mp4",
+      "source_start_ms": 658430,
+      "source_end_ms": 660050,
+      "action": "replace_cue",
+      "text": "谢谢暖白的粉丝团灯牌",
+      "evidence_class": "HASH_BOUND_STRUCTURED_GIFT_EVENT",
+      "authority": "机器证据裁定2026-07-25：粉丝团灯牌为B站固定礼物专名（gift canon 319次，Ivan 2026-07-24裁定），暖白的SEND_GIFT结构化记录佐证；粉丝灯牌=漏团误听（与二琳娜皮草句同型，该句已由erlinnapicao真值修复）。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-light-luxikeli-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-18-31-22.mp4",
+      "source_start_ms": 660050,
+      "source_end_ms": 662650,
+      "action": "replace_cue",
+      "text": "谢谢卢西克里的粉丝团灯牌",
+      "evidence_class": "HASH_BOUND_STRUCTURED_GIFT_EVENT",
+      "authority": "机器证据裁定2026-07-25：粉丝团灯牌为B站固定礼物专名（gift canon 319次，Ivan 2026-07-24裁定），卢西克里的SEND_GIFT结构化记录佐证；粉丝灯牌=漏团误听（与二琳娜皮草句同型，该句已由erlinnapicao真值修复）。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260724-light-feifeiq-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260724-18-31-22.mp4",
+      "source_start_ms": 688360,
+      "source_end_ms": 689880,
+      "action": "replace_cue",
+      "text": "谢谢飞飞Q粉丝团灯牌",
+      "evidence_class": "HASH_BOUND_STRUCTURED_GIFT_EVENT",
+      "authority": "机器证据裁定2026-07-25：粉丝团灯牌为B站固定礼物专名（gift canon 319次，Ivan 2026-07-24裁定），飞飞Q的SEND_GIFT结构化记录佐证；粉丝灯牌=漏团误听（与二琳娜皮草句同型，该句已由erlinnapicao真值修复）。",
+      "required": true
     }
   ]
 }
