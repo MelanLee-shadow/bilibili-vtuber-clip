@@ -24,6 +24,11 @@ _WHOLE_LINE_MIN_EXTENT = 0.82
 _WHOLE_LINE_MIN_PRECISION = 0.60
 _WHOLE_LINE_MAX_INTERIOR_GAP_CHARS = 2
 _WHOLE_LINE_MAX_INTERIOR_GAP_RATIO = 0.20
+# 边界借字剥离：authority 边界的孤立小匹配块（≤2 字）若与相邻块隔着
+# ≥3 字的 observed 侧插入 run，多半是从转录里的相邻句借来的同形字
+# （1863 案：SC 尾字「了」借到下一句「现在几点了」），不算边界见证。
+_BOUNDARY_BORROW_MAX_BLOCK_CHARS = 2
+_BOUNDARY_BORROW_MIN_OBSERVED_GAP_CHARS = 3
 
 
 class _ChatProposalDiscoveryLike(Protocol):
@@ -53,7 +58,7 @@ def proposal_alignment_basis(proposal: Mapping[str, Any]) -> str:
 def _unsupported_authority_regions(
     authority_norm: str,
     observed_norm: str,
-) -> tuple[str, str, list[str]]:
+) -> tuple[str, str, list[str], list[str]]:
     """Expose authority text that no aligned transcript block witnessed."""
 
     blocks = [
@@ -67,7 +72,30 @@ def _unsupported_authority_regions(
         if block.size
     ]
     if not blocks:
-        return authority_norm, "", []
+        return authority_norm, "", [], []
+    borrowed: list[str] = []
+    while len(blocks) >= 2:
+        last, prev = blocks[-1], blocks[-2]
+        observed_gap = last.b - (prev.b + prev.size)
+        if (
+            last.size <= _BOUNDARY_BORROW_MAX_BLOCK_CHARS
+            and observed_gap >= _BOUNDARY_BORROW_MIN_OBSERVED_GAP_CHARS
+        ):
+            borrowed.append(authority_norm[last.a : last.a + last.size])
+            blocks.pop()
+            continue
+        break
+    while len(blocks) >= 2:
+        first, second = blocks[0], blocks[1]
+        observed_gap = second.b - (first.b + first.size)
+        if (
+            first.size <= _BOUNDARY_BORROW_MAX_BLOCK_CHARS
+            and observed_gap >= _BOUNDARY_BORROW_MIN_OBSERVED_GAP_CHARS
+        ):
+            borrowed.append(authority_norm[first.a : first.a + first.size])
+            blocks.pop(0)
+            continue
+        break
     head = authority_norm[: blocks[0].a]
     interior: list[str] = []
     prior_end = blocks[0].a + blocks[0].size
@@ -76,7 +104,7 @@ def _unsupported_authority_regions(
             interior.append(authority_norm[prior_end : block.a])
         prior_end = block.a + block.size
     tail = authority_norm[prior_end:]
-    return head, tail, interior
+    return head, tail, interior, borrowed
 
 
 def typed_whole_line_support_receipt(
@@ -102,9 +130,12 @@ def typed_whole_line_support_receipt(
     observed_norm = normalize_chat_text(observed_text)
     extent = len(observed_norm) / max(1, len(authority_norm))
     required_common = min(6, len(authority_norm))
-    unsupported_head, unsupported_tail, unsupported_interior = (
-        _unsupported_authority_regions(authority_norm, observed_norm)
-    )
+    (
+        unsupported_head,
+        unsupported_tail,
+        unsupported_interior,
+        borrowed_boundary_blocks,
+    ) = _unsupported_authority_regions(authority_norm, observed_norm)
     unsupported_interior_chars = sum(len(value) for value in unsupported_interior)
     max_interior_chars = max(
         1,
@@ -152,6 +183,7 @@ def typed_whole_line_support_receipt(
         "unsupported_authority_tail": unsupported_tail,
         "unsupported_authority_interior": unsupported_interior,
         "unsupported_authority_interior_chars": unsupported_interior_chars,
+        "borrowed_boundary_blocks_stripped": borrowed_boundary_blocks,
         "max_unsupported_interior_run_chars": (
             _WHOLE_LINE_MAX_INTERIOR_GAP_CHARS
         ),

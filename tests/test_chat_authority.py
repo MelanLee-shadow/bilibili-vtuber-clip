@@ -2587,6 +2587,63 @@ def test_direct_near_complete_independent_support_gets_typed_owner_receipt():
     assert support["unsupported_authority_interior"] == []
 
 
+def test_boundary_borrowed_tail_char_is_not_whole_line_support():
+    """2026-07-22 1863 实案：SC 原文尾字「了」她没念，独立转录（BCUT）连写
+    到下一句「哎，现在几点了」，SequenceMatcher 让 authority 尾「了」借到
+    下一句的同形字，把非逐字朗读伪判成 near-complete。边界孤立小块跨
+    ≥3 字 observed 插入必须剥离。"""
+    from src.autoslice.read_aloud_arbitration import (
+        typed_whole_line_support_receipt,
+    )
+
+    receipt = typed_whole_line_support_receipt(
+        "什么要请大N老师吃火锅，给你们加盘素菜，终于和大N见面了",
+        "为什么要请大老师吃火锅给你们加盘素菜终于和大人见面哎，现在几点了",
+        score=0.9,
+        coverage=0.92,
+        precision=0.75,
+        common_chars=24,
+        support_kind="independent_transcript",
+    )
+    assert receipt["borrowed_boundary_blocks_stripped"] == ["了"]
+    assert receipt["unsupported_authority_tail"] == "了"
+    assert receipt["owner_eligible"] is False
+
+
+def test_non_verbatim_sc_read_does_not_overwrite_reviewed_wording():
+    """同一实案端到端：她念 SC 时加「为」、没念尾「了」——整行逐字改写
+    不许 applied，字幕保持她实际说的话。"""
+    spoken = (
+        "为什么要请大N老师吃火锅",
+        "给你们加盘素菜",
+        "终于和大N见面",
+        "哎现在几点了",
+    )
+    bcut = (
+        "为什么要请大老师吃火锅",
+        "给你们加盘素菜",
+        "终于和大人见面",
+        "哎现在几点了",
+    )
+    exact = "什么要请大N老师吃火锅，给你们加盘素菜，终于和大N见面了"
+    output, audit = apply_authoritative_chat_evidence(
+        _srt(*spoken),
+        [ChatEvidence("superchat", -448_869, exact, "南町家的星耀")],
+        support_srt_texts=[_srt(*bcut)],
+    )
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert texts[0] == "为什么要请大N老师吃火锅", texts
+    assert exact.replace("，", "") not in "".join(texts)
+    assert not [
+        row
+        for row in audit["applied"]
+        if row.get("exact_text") == exact
+        and row.get("whole_line_exact_copy_gate", {}).get("status") == "PASS"
+        and row.get("whole_line_exact_copy_gate", {}).get("proof_basis")
+        == "near_complete_independent_transcript"
+    ]
+
+
 def test_sc_thread_danmaku_reply_is_verbatim_authority():
     """2026-07-13 利安/无马懿 实案：观众 SC 提问（诸葛亮谜题）后，同一人用
     普通弹幕接龙谜底「无马懿，无马懿」（弹幕名被打码成 -***）。她念这条弹幕
