@@ -117,6 +117,38 @@ plan 为 v7 exact-no-backfill 五项、`6577` 已抑制、1475 为 replacement�
 名字里，掺入臆造日语仍 fail-closed。注意 chat-authority.json 里搜不到该名字，绑定在
 clip-context.json —— 排查时别搜错文件。
 
+### Round 6–7 收敛（e32db2c → bb69cef，round 8 跑中）
+
+Round 6（35ea74e，Ivan 三处音频裁定入 ledger 后）：672/1475 交付；3573 provider
+transient；1573 baseline 贝利对齐待提交；1863 出新病。Round 7（e32db2c）：3573/1475
+交付；672/1863/1573 翻转失败。三案根因与裁定（bb69cef）：
+
+- **1863 边界借字（新病种，两形态）**：SC 尾字「了」她没念。r6 独立转录连写到下一句
+  「哎，现在几点了」，SequenceMatcher 让 SC 尾「了」借下一句同形字伪造 near-complete
+  → 已修（e32db2c 边界孤立小块跨 ≥3 字 observed 插入剥离，披露
+  `borrowed_boundary_blocks_stripped`）。r7 独立转录又抖动出真尾「了」（把「哎」听成
+  「了」级别的网格抖动），gate 重开 → SC 注入 → baseline 拉回 → 终验死锁。正解
+  （bb69cef）：replay audit 的 before→after 映射是因果证据（修复文本曾在字幕、被已
+  验证 baseline 有意替换），此时 boundary owner 行退位
+  `SUPERSEDED_BY_REDELIVERY_BASELINE`；无 revert 记录的有据修复仍 fail-closed
+  （cannot-overwrite-supported-repair 测试保持通过）。
+- **672 跨句借音错裁**：终审裁定「太礼墨Sumi了」是错的——AGY 9.25s 听证窗
+  [280190..289440] 覆盖前句「观众只会猜礼墨Sumi」，heard=lin mo sumi le 系借前句
+  音节顺从提案。Ivan 已审 baseline「礼墨太出名了」正确（因果承接前句）。672 是
+  exact_interval_replay 包，mapping 无 before 字段拿不到 revert 因果证据，已落确认性
+  真值 `20260722-nnll-limo-tai-chuming-r1`[948630..950530] 拦 correction pass 复提。
+- **1573 贝利是我裁错的**：昨日「双引擎一致=贝利」实为两引擎同缩弱音节 dì 的相关
+  错误（bèi-dì-lǐ 同听成 bèi-lì）——转录网格在声学难点上不独立，不构成共识证据。
+  hash-bound 声学强裁（heard=dàn qí shí bèi dì lǐ...，置信 1.0，按音节计数）+
+  relation authority 无贝利实体 + 语义承接，正确文本=「但其实背地里是被欺负的那种」
+  （其实是真音节保留）。ledger r2 + baseline 已修订 rehash。**教训：转录共识 ≠ 独立
+  证据；音节有无级分歧必须声学强裁仲裁。**
+
+Round 8 预期：1863 走 revert 豁免、1573 truth/baseline 一致、672 truth 拦提案、
+3573/1475 重验。已知残余风险（观察 round 8，不预防性工程）：exact-replay 包上
+correction pass 若对 truth 替换后的通顺文本再标 suspect，提案 vs truth 会走
+UNRESOLVED finding 阻断——真发生再修（修法参照 1573：finding 由 truth 裁决）。
+
 剩余步骤：
 
 1. V15 必须跑到 exact closure COMPLETE；任一 exact candidate 失败都不得补位或沿用旧产物。
