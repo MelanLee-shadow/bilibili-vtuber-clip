@@ -2138,6 +2138,48 @@
       "action": "drop_cue",
       "authority": "Ivan-stated-20260724-conversation(该舰长致谢段没有提到牛；0.6秒的谢谢牛为幻听填充，按裁定删除)",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-brainflick-guanta-idiom-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1534300,
+      "source_end_ms": 1535860,
+      "action": "replace_cue",
+      "text": "管他谁是左边的呢",
+      "evidence_class": "DUAL_ENGINE_CONSENSUS",
+      "authority": "机器证据裁定2026-07-25：BCUT与本轮AGY双引擎一致为管他；管他在此为放弃分辨的习语（不论谁是左边），非人称指代，管她提议无证人且音频不可辨他她。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-chair-beili-bullied-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1610520,
+      "source_end_ms": 1613780,
+      "action": "replace_cue",
+      "text": "但其实贝利是被欺负的那种",
+      "evidence_class": "DUAL_ENGINE_CONSENSUS",
+      "authority": "机器证据裁定2026-07-25：BCUT与本轮AGY双引擎一致为贝利（语境=描述外表不良实则被欺负的对象后自比）；成片中的背地里为修复环节无证改写，终审的但其实是提议则把名字整个丢弃。若贝利实为其他专名写法，由Ivan提revision。",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-qin-second-meimei-dan-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 3611630,
+      "source_end_ms": 3612890,
+      "action": "replace_cue",
+      "text": "但她其实是妹妹",
+      "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+      "authority": "机器证据裁定2026-07-25：重复句第二遍的连词，本轮AGY与exact-release声学语境裁定均为但（与第一遍但她其实是妹妹，小朋友平行），BCUT单票为那；二比一取但。",
+      "required": true
     }
   ]
 }

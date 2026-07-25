@@ -2063,6 +2063,7 @@ def test_committed_ledger_keeps_independently_adjudicated_brainflick_phrases():
     corrected, audit = apply_source_subtitle_truth(
         _srt_ms(
             (0, 2_670, "你弹一弹啊"),
+            (13_550, 15_110, "管他谁是左边的呢"),
             (18_030, 22_610, "再弹，再，再一弹一弹"),
         ),
         spec={
@@ -2612,9 +2613,14 @@ def test_real_1475_retry_witness_widening_does_not_absorb_1573_owners():
         for row in widened
     ]
 
-    assert len(initial_projection) == 4
+    # 2026-07-25: the 管他谁是左边的呢 idiom truth sits inside 1475's story
+    # scope and legitimately joins the owner set (4 brainflick + 1 idiom).
+    assert len(initial_projection) == 5
     assert widened_projection == initial_projection
+    # 1573's truths (chair bullying phrase, 贝利) stay context-only: they sit
+    # inside the widened witness window but outside 1475's immutable scope.
     assert all("chair" not in str(row["owner_id"]) for row in widened)
+    assert all("beili" not in str(row["owner_id"]) for row in widened)
 
     corrected, audit = apply_source_subtitle_truth(
         (
