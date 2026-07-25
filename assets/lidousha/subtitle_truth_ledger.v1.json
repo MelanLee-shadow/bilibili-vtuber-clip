@@ -2098,6 +2098,34 @@
       "evidence_class": "STRUCTURED_CHAT_RECORD",
       "authority": "SC记录证词2026-07-24：SUPER_CHAT_MESSAGE uname=-天蓝青-（SC正文好漂亮的大姐姐，心里没有李豆沙的位置了，与该处口播完全对应）；打赏者ID写法归平台记录所有。 surface带上下文锚谢谢前缀以保幂等（canonical含surface的裸替换会在已正确文本上产生双连字符）。",
       "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-zhe-trailing-laugh-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 2042510,
+      "source_end_ms": 2044550,
+      "action": "replace_cue",
+      "text": "这……哈哈",
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+      "authority": "Ivan-stated-20260724-conversation(该处只说了这……后面接笑声与感觉更无聊了；这切/这期/这么一说均为幻听填充。哈哈为两引擎一致的真实笑声保留)",
+      "required": true
+    },
+    {
+      "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+      "truth_id": "20260722-hotpot-guard-thanks-dwarf-joke-r1",
+      "revision_id": "r1",
+      "assertion_state": "VERIFIED_ACTIVE",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "source_start_ms": 1949750,
+      "source_end_ms": 1950330,
+      "action": "replace_cue",
+      "text": "谢谢，谢谢你，你是因为矮人笑话来的吗？",
+      "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+      "authority": "Ivan-stated-20260724-conversation(舰长致谢处实际说的是谢谢，谢谢你，你是因为矮人笑话来的吗？没有提到牛；谢谢牛为幻听)",
+      "required": true
     }
   ]
 }
