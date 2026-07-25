@@ -323,6 +323,81 @@ def _baseline_replay_reverted_row(
     return None
 
 
+def _baseline_retires_decision_row(
+    row: dict,
+    *,
+    expected_text: str,
+    start_ms: int,
+    end_ms: int,
+    audit: dict,
+    baseline_overlap: bool,
+) -> bool:
+    """两类有因果证据的 baseline 退位（无证据的有据修复保持 fail-closed）。
+
+    1) 边界 owner 行被 replay 的 before→after 记录证明"曾在字幕、被已验证
+       baseline 有意替换"（1863 SC 案）。
+    2) correction pass 的声学裁决修正被同窗逐字验证的 baseline 文本收回
+       （672 礼墨/看外案）——修正输给 Ivan 已审 baseline 是既定层级，提案
+       与 verdict 留在审计里，修订 baseline 的唯一正道是 ledger 真值。"""
+
+    if not baseline_overlap:
+        return False
+    if row.get("boundary_required"):
+        replay_revert = _baseline_replay_reverted_row(
+            expected_text, start_ms=start_ms, end_ms=end_ms, audit=audit
+        )
+        if replay_revert is not None:
+            row["final_verification_scope"] = "SUPERSEDED_BY_REDELIVERY_BASELINE"
+            row["final_verification_scope_reason"] = (
+                "BOUNDARY_OWNER_REVERTED_BY_VERIFIED_BASELINE_REPLAY"
+            )
+            row["final_redelivery_baseline_revert"] = replay_revert
+            return True
+    if row.get("mode") == "final_review_context_adjudication" and (
+        _adjudication_pinned_by_baseline(
+            expected_text, start_ms=start_ms, end_ms=end_ms, audit=audit
+        )
+    ):
+        row["final_verification_scope"] = "SUPERSEDED_BY_REDELIVERY_BASELINE"
+        row["final_verification_scope_reason"] = (
+            "ADJUDICATION_PINNED_BY_REVIEWED_BASELINE"
+        )
+        return True
+    return False
+
+
+def _adjudication_pinned_by_baseline(
+    expected_text: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    audit: dict,
+) -> bool:
+    """correction 修正表面是否已被同窗验证过的 baseline 文本收回。"""
+
+    expected_norm = normalize_chat_text(expected_text)
+    if not expected_norm:
+        return False
+    baseline = audit.get("redelivery_subtitle_baseline_audit") or {}
+    if baseline.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
+        return False
+    for row in baseline.get("mappings") or []:
+        if not isinstance(row, dict) or row.get("final_owner_verified") is not True:
+            continue
+        if (
+            min(end_ms, int(row.get("end_ms") or 0))
+            - max(start_ms, int(row.get("start_ms") or 0))
+            < 200
+        ):
+            continue
+        owner_norm = normalize_chat_text(
+            str(row.get("final_owner_expected") or row.get("text") or row.get("after") or "")
+        )
+        if owner_norm and expected_norm not in owner_norm:
+            return True
+    return False
+
+
 def _window_payload(
     srt_text: str,
     *,
@@ -943,23 +1018,16 @@ def verify_chat_authority_final_surfaces(
         # 要求，否则 repair-vs-replay 永久死锁。无替换记录的有据修复维持
         # fail-closed（baseline 不得静默压制）。边界几何仍由 frozen owner
         # contract 的 local_windows 约束，与文本存活无关。
-        if baseline_overlap and row.get("boundary_required"):
-            replay_revert = _baseline_replay_reverted_row(
-                expected_text,
-                start_ms=relative_matched_start,
-                end_ms=relative_matched_end,
-                audit=audit,
-            )
-            if replay_revert is not None:
-                row["final_verification_scope"] = (
-                    "SUPERSEDED_BY_REDELIVERY_BASELINE"
-                )
-                row["final_verification_scope_reason"] = (
-                    "BOUNDARY_OWNER_REVERTED_BY_VERIFIED_BASELINE_REPLAY"
-                )
-                row["final_redelivery_baseline_revert"] = replay_revert
-                superseded_by_redelivery += 1
-                continue
+        if _baseline_retires_decision_row(
+            row,
+            expected_text=expected_text,
+            start_ms=relative_matched_start,
+            end_ms=relative_matched_end,
+            audit=audit,
+            baseline_overlap=baseline_overlap,
+        ):
+            superseded_by_redelivery += 1
+            continue
         overlap_ms = max(
             0,
             min(matched_end, delivery_end_ms)
@@ -969,9 +1037,11 @@ def verify_chat_authority_final_surfaces(
         overlap_ratio = overlap_ms / matched_duration_ms
         row["final_delivery_overlap_ms"] = overlap_ms
         row["final_delivery_overlap_ratio"] = round(overlap_ratio, 6)
+        # ≤ 而非 <：250ms 正是片头 pad 常数，行 matched_end 恰好落在首 cue
+        # 起点时 overlap 精确等于 250（1863 sender 案），刀刃值必须算 sliver。
         boundary_sliver = (
-            overlap_ms < FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS
-            and overlap_ratio < FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
+            overlap_ms <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS
+            and overlap_ratio <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
         )
         if overlap_ms == 0 or boundary_sliver:
             if row.get("boundary_required") is True:

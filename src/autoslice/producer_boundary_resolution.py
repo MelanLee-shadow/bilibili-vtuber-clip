@@ -374,6 +374,57 @@ def _manual_end_contract(
     return authority, manual_rel, mode
 
 
+def _resolve_recut_head(
+    spec: dict,
+    *,
+    cues: list[object],
+    required_owner_start_ms: int | None,
+) -> tuple[int, int, int | None]:
+    """句首吸附 + owner/baseline 双重头部钳制 → (final_start, target, snap)。
+
+    redelivery 头部锚（1573 r9 案）：句首吸附每轮随 fresh 网格漂移，开场
+    一旦晚于 baseline 首 cue 即 CUE_CUT_BY_NEW_BOUNDARY 死锁；同 BV 修复
+    的开场必须盖住 baseline 区间起点。"""
+
+    first_piece = spec["pieces"][0]
+    target_start_rel = (
+        spec.get("semantic_start_ms", first_piece["start_ms"])
+        - first_piece["start_ms"]
+    )
+    snapped_start = snap_start_to_sentence(
+        [c.start_ms for c in cues], target_start_rel
+    )
+    final_start = max(
+        0,
+        (snapped_start if snapped_start is not None else target_start_rel)
+        - LEAD_AIR_MS,
+    )
+    if required_owner_start_ms is not None:
+        final_start = min(final_start, required_owner_start_ms)
+    baseline_head = _redelivery_baseline_head_rel_ms(spec)
+    if baseline_head is not None:
+        final_start = min(final_start, max(0, baseline_head))
+    return final_start, target_start_rel, snapped_start
+
+
+def _redelivery_baseline_head_rel_ms(spec: Mapping[str, object]) -> int | None:
+    """v2 baseline 区间起点换算到 recut 相对轴（0 = 首 piece start）。"""
+
+    config = spec.get("subtitle_redelivery_baseline")
+    if not isinstance(config, Mapping):
+        return None
+    if config.get("schema_version") != "subtitle-redelivery-baseline.v2":
+        return None
+    start = config.get("absolute_source_start_ms")
+    pieces = spec.get("pieces") or []
+    if isinstance(start, bool) or not isinstance(start, int) or len(pieces) != 1:
+        return None
+    try:
+        return int(start) - int(pieces[0]["start_ms"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _select_initial_boundary(
     *,
     spec: dict,
@@ -392,12 +443,9 @@ def _select_initial_boundary(
         required_owner_start_ms,
         required_owner_end_ms,
     ) = _required_boundary_owner_contract(spec, padded_dur=padded_dur)
-    first_piece = spec["pieces"][0]
-    target_start_rel = spec.get("semantic_start_ms", first_piece["start_ms"]) - first_piece["start_ms"]
-    snapped_start = snap_start_to_sentence([c.start_ms for c in cues], target_start_rel)
-    final_start = max(0, (snapped_start if snapped_start is not None else target_start_rel) - LEAD_AIR_MS)
-    if required_owner_start_ms is not None:
-        final_start = min(final_start, required_owner_start_ms)
+    final_start, target_start_rel, snapped_start = _resolve_recut_head(
+        spec, cues=cues, required_owner_start_ms=required_owner_start_ms
+    )
 
     # 4b. Sentence-snap the END; a run-on cue near the closure triggers a
     #     fine-grained micro re-transcription of the tail so the closure

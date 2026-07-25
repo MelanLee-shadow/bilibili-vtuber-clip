@@ -426,6 +426,116 @@ def test_baseline_replay_revert_receipt_retires_boundary_owner_row() -> None:
     assert audit["final_superseded_by_redelivery_baseline_count"] == 1
 
 
+def test_exact_boundary_pad_overlap_is_sliver_exempt() -> None:
+    """1863 sender 案：行 matched_end 恰落在首 cue 起点上，overlap 精确等于
+    250ms（片头 pad 常数）且 ratio 0.09——刀刃值必须按 sliver 豁免，
+    而不是要求整句在 250ms 窗口里存活。"""
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((250, 2_000, "为什么要请大N老师吃火锅"))
+    audit = {
+        "sender_repairs": [
+            {
+                "matched_start_ms": 7_290,
+                "matched_end_ms": 10_040,
+                "after": "谢谢南町家的星耀的SC",
+                "spoken_sender": "南町家的星耀",
+            }
+        ]
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=9_790,
+        delivery_end_ms=100_640,
+    )
+    row = audit["sender_repairs"][0]
+    assert row["final_verification_scope"] == "OUTSIDE_DELIVERY"
+    assert row["final_verification_scope_reason"] == (
+        "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
+    )
+
+
+def test_adjudication_reverted_by_baseline_retires_instead_of_deadlock() -> None:
+    """672 看/外案：correction pass 的声学修正被 Ivan 已审 baseline 收回
+    （同窗 final_owner 逐字验证通过且文本≠修正文本）时，修正行声明性退位，
+    提案留在审计里，不再终验死锁。"""
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 2_040, "就除了在场的几位，看"))
+    audit = {
+        "entity_repairs": [
+            {
+                "mode": "final_review_context_adjudication",
+                "matched_start_ms": 42_140,
+                "matched_end_ms": 44_180,
+                "before": ["就除了在场的几位看"],
+                "after": ["就除了在场的几位外"],
+                "structured_exact_text": "就除了在场的几位外",
+                "boundary_required": True,
+                "boundary_owner_id": "final-review-adjudication",
+            }
+        ],
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 14,
+                    "start_ms": 0,
+                    "end_ms": 2_040,
+                    "text": "就除了在场的几位，看",
+                }
+            ],
+        },
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=42_140,
+        delivery_end_ms=44_180,
+    )
+    row = audit["entity_repairs"][0]
+    assert row["final_verification_scope"] == "SUPERSEDED_BY_REDELIVERY_BASELINE"
+    assert row["final_verification_scope_reason"] == (
+        "ADJUDICATION_PINNED_BY_REVIEWED_BASELINE"
+    )
+
+
+def test_redelivery_baseline_head_rel_conversion() -> None:
+    """1573 round-9 案：v2 baseline 的开场必须能换算到 recut 相对轴，
+    用于把 fresh 网格的句首吸附钳在 baseline 首 cue 之前。"""
+    from src.autoslice.producer_boundary_resolution import (
+        _redelivery_baseline_head_rel_ms,
+    )
+
+    spec = {
+        "pieces": [{"start_ms": 1_563_150, "end_ms": 1_683_000}],
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v2",
+            "absolute_source_start_ms": 1_572_910,
+        },
+    }
+    assert _redelivery_baseline_head_rel_ms(spec) == 9_760
+    assert _redelivery_baseline_head_rel_ms({"pieces": []}) is None
+    assert (
+        _redelivery_baseline_head_rel_ms(
+            {
+                "pieces": [{"start_ms": 0}],
+                "subtitle_redelivery_baseline": {"schema_version": "other"},
+            }
+        )
+        is None
+    )
+
+
 def test_redelivery_baseline_cannot_overwrite_story_bound_supported_repair() -> None:
     from src.autoslice.producer_text_finalization import (
         verify_chat_authority_final_surfaces,
