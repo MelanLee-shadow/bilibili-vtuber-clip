@@ -256,6 +256,13 @@ def select_expressive_cover_frame(
             round(subject_bbox[3] / local_hot.height, 4),
         ]
         subject_confident = bool(bw <= 0.55 and bh >= 0.30 and fill >= 0.10)
+    # 主体不自信时才找角落小窗（游戏场截图回归的钥匙）；找到的窗供
+    # extract_zoomed_cover_frame 裁剪放大做截图底，找不到维持原路线。
+    camera_window_bbox_frac = (
+        None
+        if subject_confident
+        else _persistent_motion_window(grays, region, sample_fps)
+    )
 
     # 动作热区 → 裁切锚点：遮罩外区域清零后按高分位阈值取 bbox。质心/头顶
     # 供 extract_zoomed_cover_frame 放大脸部占比。
@@ -331,6 +338,7 @@ def select_expressive_cover_frame(
         "head_top_frac": round(head_top, 4) if head_top is not None else None,
         "subject_bbox_frac": subject_bbox_frac,
         "subject_confident": subject_confident,
+        "camera_window_bbox_frac": camera_window_bbox_frac,
         "subject_anchor_x_frac": (
             round((subject_bbox_frac[0] + subject_bbox_frac[2]) / 2, 4)
             if subject_bbox_frac is not None
@@ -342,6 +350,60 @@ def select_expressive_cover_frame(
     }
 
 
+def _persistent_motion_window(
+    grays: Sequence["Image.Image"],
+    region: tuple[int, int, int, int],
+    sample_fps: float,
+) -> list[float] | None:
+    """角落小窗探测（2026-07-25 Ivan 授权游戏场景截图回归）。
+
+    游戏画面的运动铺满画布且形态逐帧多变；主播立绘小窗则是**位置固定的
+    持续小运动块**（皮套一直在说话/眨眼）。8x8 网格统计块级运动持续率：
+    ≥70% 帧对持续活跃、块簇 bbox 面积占画面 2%-20%、簇内实心率 ≥50%
+    才判为小窗。探测失败返回 None（调用方维持原路线，宁缺勿错）。"""
+
+    if len(grays) < 4:
+        return None
+    step = max(1, int(sample_fps))
+    pairs = [(i, i + step) for i in range(0, len(grays) - step, step)][:12]
+    if len(pairs) < 4:
+        return None
+    grid = 8
+    hits = [0] * (grid * grid)
+    for a, b in pairs:
+        diff = ImageChops.difference(grays[a], grays[b])
+        mask = Image.new("L", diff.size, 0)
+        mask.paste(255, region)
+        diff = ImageChops.multiply(diff, mask.point(lambda p: 255 if p else 0))
+        small = diff.resize((grid, grid), Image.Resampling.BOX)
+        for idx, value in enumerate(small.tobytes()):
+            if value >= 24:
+                hits[idx] += 1
+    need = int(len(pairs) * 0.7)
+    cells = [
+        (idx // grid, idx % grid)
+        for idx, count in enumerate(hits)
+        if count >= need
+    ]
+    if not cells:
+        return None
+    rows = [r for r, _ in cells]
+    cols = [c for _, c in cells]
+    box_w = max(cols) - min(cols) + 1
+    box_h = max(rows) - min(rows) + 1
+    area_frac = (box_w * box_h) / (grid * grid)
+    if not 0.02 <= area_frac <= 0.20:
+        return None
+    if len(cells) / (box_w * box_h) < 0.5:
+        return None
+    return [
+        min(cols) / grid,
+        min(rows) / grid,
+        (max(cols) + 1) / grid,
+        (max(rows) + 1) / grid,
+    ]
+
+
 def extract_zoomed_cover_frame(
     media_path: Path,
     ms: int,
@@ -350,11 +412,15 @@ def extract_zoomed_cover_frame(
     zoom: float = 1.32,
     anchor_x_frac: float | None = None,
     head_top_frac: float | None = None,
+    window_bbox_frac: Sequence[float] | None = None,
 ) -> dict[str, object]:
     """Full-res frame at ``ms`` with an avatar-anchored 16:9 face zoom.
 
     Ivan 2026-07-21 批准加大脸部占比：默认 1.32x，裁切窗锚定动作质心水平位置、
     顶边贴 avatar 头顶（顺带裁掉底部烧录字幕带）。无锚点时中央裁切。
+    ``window_bbox_frac``（2026-07-25 游戏场小窗回归）：显式主播小窗 bbox，
+    加 10% padding 后扩短边归 16:9 裁剪放大——绕过 zoom 上限，让角落立绘
+    小窗成为可用的截图底。
     """
 
     raw_path = out_path.with_suffix(".raw.png")
@@ -368,6 +434,39 @@ def extract_zoomed_cover_frame(
     )
     frame = Image.open(raw_path).convert("RGB")
     width, height = frame.size
+    if window_bbox_frac is not None and len(window_bbox_frac) == 4:
+        wx0 = int(float(window_bbox_frac[0]) * width)
+        wy0 = int(float(window_bbox_frac[1]) * height)
+        wx1 = int(float(window_bbox_frac[2]) * width)
+        wy1 = int(float(window_bbox_frac[3]) * height)
+        pad_x = int((wx1 - wx0) * 0.10)
+        pad_y = int((wy1 - wy0) * 0.10)
+        wx0, wy0 = max(0, wx0 - pad_x), max(0, wy0 - pad_y)
+        wx1, wy1 = min(width, wx1 + pad_x), min(height, wy1 + pad_y)
+        w, h = wx1 - wx0, wy1 - wy0
+        if w * 9 > h * 16:  # too wide → grow height
+            need_h = max(1, int(w * 9 / 16))
+            wy0 = max(0, wy0 - (need_h - h) // 2)
+            wy1 = min(height, wy0 + need_h)
+            wy0 = max(0, wy1 - need_h)
+        else:  # too tall → grow width
+            need_w = max(1, int(h * 16 / 9))
+            wx0 = max(0, wx0 - (need_w - w) // 2)
+            wx1 = min(width, wx0 + need_w)
+            wx0 = max(0, wx1 - need_w)
+        cropped = frame.crop((wx0, wy0, wx1, wy1)).resize(
+            (1920, 1080), Image.Resampling.LANCZOS
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        cropped.save(out_path)
+        raw_path.unlink(missing_ok=True)
+        return {
+            "frame_ms": ms,
+            "zoom": round(width / max(1, wx1 - wx0), 4),
+            "crop_box": [wx0, wy0, wx1, wy1],
+            "source_size": [width, height],
+            "camera_window_crop": True,
+        }
     zoom = max(1.0, min(zoom, 1.6))
     crop_w = int(width / zoom) // 2 * 2
     crop_h = int(crop_w * 9 / 16)

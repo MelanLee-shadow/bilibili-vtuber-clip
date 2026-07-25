@@ -83,6 +83,53 @@ def test_extract_zoomed_cover_frame_outputs_hd_canvas(tmp_path):
     assert 0 <= x0 < x1 and 0 <= y0 < y1
 
 
+def test_persistent_motion_window_finds_fixed_corner_avatar():
+    """游戏场小窗（2026-07-25）：位置固定的持续小运动块=立绘窗；全屏乱动
+    的游戏画面不产窗。"""
+    from src.autoslice.cover_frame_selection import _persistent_motion_window
+    import random
+
+    rng = random.Random(7)
+    frames = []
+    for i in range(14):
+        img = Image.new("L", (320, 180), 0)
+        # corner avatar: small block near bottom-right, changing every frame
+        img.paste(rng.randrange(80, 255), (256, 126, 300, 168))
+        frames.append(img)
+    bbox = _persistent_motion_window(frames, (0, 0, 320, 180), sample_fps=1.0)
+    assert bbox is not None
+    x0, y0, x1, y1 = bbox
+    assert x0 >= 0.7 and y0 >= 0.6  # bottom-right quadrant
+    assert (x1 - x0) * (y1 - y0) <= 0.20
+
+    # full-canvas chaotic motion → no window
+    chaotic = []
+    for i in range(14):
+        img = Image.new("L", (320, 180), 0)
+        for _ in range(60):
+            x, y = rng.randrange(0, 300), rng.randrange(0, 160)
+            img.paste(rng.randrange(0, 255), (x, y, x + 18, y + 18))
+        chaotic.append(img)
+    assert _persistent_motion_window(chaotic, (0, 0, 320, 180), sample_fps=1.0) is None
+
+
+def test_extract_zoomed_cover_frame_camera_window_crop(tmp_path):
+    media = _write_synthetic_performance_clip(tmp_path)
+    out = tmp_path / "window-base.png"
+    evidence = extract_zoomed_cover_frame(
+        media,
+        5_500,
+        out,
+        window_bbox_frac=[0.75, 0.65, 0.98, 0.95],
+    )
+    assert out.is_file()
+    assert Image.open(out).size == (1920, 1080)
+    assert evidence["camera_window_crop"] is True
+    x0, y0, x1, y1 = evidence["crop_box"]
+    assert 0 <= x0 < x1 and 0 <= y0 < y1
+    assert abs((x1 - x0) / (y1 - y0) - 16 / 9) < 0.06
+
+
 def test_srt_emotion_span_parser(tmp_path):
     srt = tmp_path / "x.srt"
     srt.write_text(

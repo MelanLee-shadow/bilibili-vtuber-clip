@@ -1411,6 +1411,14 @@ def _decide_cover_treatment(
     if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:
         return "screenshot_polish", f"usable moment + CPA touch-up (score={best:.2f})"
     if best >= _COVER_TREATMENT_SCORE_LO:
+        # 游戏场小窗回归（2026-07-25 Ivan：截图修图优先于重绘）：全局运动
+        # 弥散但探测到位置固定的立绘小窗时，裁窗放大做截图底走 polish，
+        # 真名场面不再被"无自信主体"一票否决；无窗才落重绘。
+        if frame_selection.get("camera_window_bbox_frac"):
+            return (
+                "screenshot_polish",
+                f"camera window crop + CPA touch-up (score={best:.2f})",
+            )
         return "cpa_redraw", f"motion without confident cover subject (score={best:.2f})"
     return "cpa_redraw", f"no strong real moment (score={best:.2f})"
 
@@ -1580,6 +1588,11 @@ def _stage_screenshot_direct_cover(
         # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
         if not relationship_visual_required:
             confident = bool(frame_selection.get("subject_confident"))
+            camera_window = (
+                frame_selection.get("camera_window_bbox_frac")
+                if not confident
+                else None
+            )
             crop_evidence = extract_zoomed_cover_frame(
                 media_path,
                 int(frame_selection["best_ms"]),
@@ -1597,6 +1610,7 @@ def _stage_screenshot_direct_cover(
                     if confident and frame_selection.get("subject_head_top_frac") is not None
                     else 0.0
                 ),
+                window_bbox_frac=camera_window,
             )
         # polish：CPA 保真修图（清 UI 杂物+画质），任何失败降级为直出。
         (
