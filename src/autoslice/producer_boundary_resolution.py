@@ -34,6 +34,9 @@ from src.autoslice.producer_boundary import (
     syntactic_tail_audit,
     tail_requires_forward_extension,
 )
+from src.autoslice.producer_boundary_owner_contract import (
+    _redelivery_baseline_tail_rel_ms,
+)
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -518,6 +521,14 @@ def _select_initial_boundary(
         last_piece_start_ms=last_piece_start_ms,
         prior_piece_duration_ms=prior_piece_duration_ms,
         boundary_end_mode=manual_end_mode,
+        # The frozen spec/review scopes carry the v2 baseline tail cap; the
+        # identity replay must rebuild with the same cap or the three-way
+        # dict comparison below rejects every redelivery candidate.
+        baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
+            spec,
+            last_piece_start_ms=last_piece_start_ms,
+            prior_piece_duration_ms=prior_piece_duration_ms,
+        ),
     )
     spec_search_scope = spec.get("boundary_search_scope")
     review_search_scope = semantic_review.get("boundary_search_scope")

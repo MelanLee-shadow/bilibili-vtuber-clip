@@ -859,3 +859,30 @@ def test_baseline_tail_cap_bounds_recommendation_ceiling():
         manual_lower_bound_ms=100_000,
     )
     assert uncapped["max_recommended_end_ms"] == 160_000
+
+
+def test_search_scope_identity_replay_requires_same_tail_cap():
+    """V15 regression: the resolution-side replay must pass the same
+    baseline_tail_cap_ms the freeze side stored, or the three-way dict
+    identity check rejects every redelivery candidate."""
+
+    kwargs = dict(
+        semantic_target_ms=90_000,
+        manual_lower_bound_ms=None,
+        structured_payoff_ms=None,
+        required_owner_end_ms=88_000,
+        repair_cap_ms=30_000,
+        last_piece_start_ms=0,
+        prior_piece_duration_ms=0,
+        boundary_end_mode="semantic_lower_bound",
+    )
+    frozen = build_boundary_search_scope(
+        **kwargs, baseline_tail_cap_ms=92_000
+    )
+    replay_with_cap = build_boundary_search_scope(
+        **kwargs, baseline_tail_cap_ms=92_000
+    )
+    replay_without_cap = build_boundary_search_scope(**kwargs)
+
+    assert dict(frozen) == dict(replay_with_cap)
+    assert dict(frozen) != dict(replay_without_cap)
