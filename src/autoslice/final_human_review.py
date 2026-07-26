@@ -1185,7 +1185,9 @@ def _normalized_subtitle_review_points(
             or isinstance(end_ms, bool)
             or start_ms < 0
             or end_ms <= start_ms
-            or end_ms > final_duration_ms
+            # A tail point may round up to "the end": tolerate <=500ms past
+            # EOS (2026-07-26 1475 final-laughter, 74.000s vs 73.822s media).
+            or end_ms > final_duration_ms + 500
             or raw_point.get("status") != "PASS"
             or not isinstance(expected_point, Mapping)
             or {
