@@ -386,6 +386,12 @@ authority，不能仅凭这里的词面填写 source_surface，也不能让建�
    proposed_full_cue（整条修正后字幕）。给 null 意味着整条切片被阻断且没有
    出路——只有穷尽近音假设仍无任何通顺候选时才允许 null。提案最终由闭集
    声学仲裁定夺，不会盲改，所以尽力提出可仲裁的候选。不要自己计算字符下标。
+   **拉丁/外语乱转写同规**（2026-07-26 啥意思/Say-you-say-father 案，Ivan 指令）：
+   真实的中英/中日混杂是存在的——外语在语境里**语义通顺**（真句子/真歌词/
+   屏上真 ID）就如实保留；但 cue 呈现外语而在语境里**根本不通顺**时，把
+   拉丁文本当作中文被 ASR 拉丁化的读音，按音近推理生成语境通顺的中文
+   proposed_full_cue（say you, say father → 啥意思……谁发的）。她对弹幕的
+   反应、自言自语都可能被英文化，分辨的根本理由是语义，不是文字系统。
 3. repair_class 只能是：phonetic（近音误识）、segmentation（词边界误切）、
    spoken_unit（小范围漏字/多字）、source_backed_entity（有来源见证的专名/作品名）、
    acoustic_delete（删去一个疑似无声幻听跨度）、acoustic_drop_cue（整 cue 疑似无声）
