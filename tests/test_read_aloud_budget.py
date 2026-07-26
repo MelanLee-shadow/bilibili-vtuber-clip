@@ -138,3 +138,36 @@ class TestCausalReadFloor:
             max_cues=3, support_srt_texts=[], entity_verifier=verifier,
         )
         assert len(verifier.requests) == 1
+
+
+def test_latin_garble_danmaku_reaches_arbitration():
+    """英文化乱转写的念弹幕必须浮出为仲裁候选（啥意思/Say-you-say-father 案），
+    由声学仲裁在闭集里定夺——车道不许直接改字，也不许漏报。"""
+
+    from src.autoslice.chat_evidence import ChatEvidence
+    from src.autoslice.chat_read_aloud_candidates import (
+        _latin_phonetic_ratio,
+        find_best_read_aloud_candidate,
+    )
+
+    class Cue:
+        def __init__(self, start_ms):
+            self.start_ms = start_ms
+
+    item = ChatEvidence(
+        kind="danmaku",
+        sender="观***",
+        text="啥意思……谁发的",
+        offset_ms=140_000,
+    )
+    cues = [Cue(138_000), Cue(144_700), Cue(149_000)]
+    texts = ["前面正常中文", "Say you, say father", "后面正常中文"]
+    assert _latin_phonetic_ratio(item.text, texts[1]) >= 0.35
+    best, near = find_best_read_aloud_candidate(
+        item, evidence=[item], cues=cues, texts=texts, max_cues=2
+    )
+    assert near is not None
+    assert near["latin_garble_suspect"] is True
+    assert near["start"] == 1
+    # 纯英文歌词 cue 对不相关弹幕不得误触发。
+    assert _latin_phonetic_ratio("完全无关的弹幕内容", "happy birthday to you dear") < 0.35

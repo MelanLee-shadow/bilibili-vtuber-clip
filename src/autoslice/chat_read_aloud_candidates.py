@@ -7,7 +7,9 @@ arbitration and application while preserving its compatibility exports.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
+import re
 from typing import Any, Mapping, Sequence
 
 from src.autoslice.chat_evidence import (
@@ -26,6 +28,36 @@ from src.autoslice.chat_repair import (
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.read_aloud_arbitration import typed_whole_line_support_receipt
+
+
+_LATIN_LETTER_RX = re.compile(r"[A-Za-z]")
+_CJK_CHAR_RX = re.compile(r"[一-鿿]")
+
+
+def _latin_phonetic_ratio(authority_text: str, candidate: str) -> float:
+    """去声调拼音 vs 拉丁乱转写的模糊比（2026-07-26 啥意思/Say-you-say-father 案）。
+
+    中文直播流里突现的拉丁 ASR 转写常是「念弹幕被英文化」——字符相似度
+    结构性失效。只在候选 cue 拉丁占优时才计算；返回值只用于把候选送进
+    声学仲裁（弹幕文本进闭集由 witness+judge 定夺），绝不直接改字。
+    """
+
+    letters = _LATIN_LETTER_RX.findall(candidate)
+    compact = re.sub(r"\s", "", candidate)
+    if len(letters) < 6 or not compact or len(letters) < 0.6 * len(compact):
+        return 0.0
+    hanzi = "".join(_CJK_CHAR_RX.findall(authority_text))
+    if not hanzi:
+        return 0.0
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError:
+        return 0.0
+    pin = "".join(lazy_pinyin(hanzi))
+    lat = "".join(letter.lower() for letter in letters)
+    if not pin:
+        return 0.0
+    return difflib.SequenceMatcher(a=pin, b=lat, autojunk=False).ratio()
 
 
 def find_best_read_aloud_candidate(
@@ -138,7 +170,13 @@ def find_best_read_aloud_candidate(
                     and sender_anchor_indexes
                     and any(0 <= start - index <= 4 for index in sender_anchor_indexes)
                 )
-                if (
+                latin_garble_suspect = bool(
+                    item.kind == "danmaku"
+                    and count <= 2
+                    and len(authority_norm) >= 4
+                    and _latin_phonetic_ratio(item.text, candidate) >= 0.35
+                )
+                if latin_garble_suspect or (
                     item.kind == "danmaku"
                     and count <= 2
                     and len(authority_norm) >= 6
@@ -166,6 +204,7 @@ def find_best_read_aloud_candidate(
                         "replacement": None,
                         "preserved_suffix": None,
                         "sender_anchored": sender_anchored,
+                        "latin_garble_suspect": latin_garble_suspect,
                     }
                     if best_near is None or (count, -score) < (
                         best_near["count"],
