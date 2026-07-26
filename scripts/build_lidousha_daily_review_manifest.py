@@ -44,7 +44,14 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         raise DailyManifestError(f"package root missing: {package_root}")
     state = json.loads(state_path.read_text(encoding="utf-8"))
     batch_status = str(state.get("status") or "")
-    if batch_status not in {"review_ready", "review_ready_with_failures"}:
+    # retry_wait 只表示批内其他 pick 还有重试预算；review_ready pick 的产物
+    # 已冻结（主车道从不 re-supersede review_ready）。processing 仍然拒绝：
+    # runner 正在写 picks。
+    if batch_status not in {
+        "review_ready",
+        "review_ready_with_failures",
+        "review_ready_retry_wait",
+    }:
         raise DailyManifestError(
             f"batch status not reviewable: {batch_status}"
         )
@@ -152,27 +159,42 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     if not (package_root / mask_rel).is_file():
         raise DailyManifestError(f"title mask missing: {mask_rel}")
 
+    # authorized_upload v3 的 same-stem 合同：video stem X 要求包根直下
+    # X.record.json / X.srt / X.cover.png。装配为审定字节的副本（字节级
+    # 相同，sha 与 chat/record 冻结值天然一致），manifest item 指向副本。
+    upload_stem = burned.name.removesuffix(".mp4")
+    upload_family = {
+        f"{upload_stem}.record.json": record,
+        f"{upload_stem}.srt": subtitle,
+        f"{upload_stem}.cover.png": package_root / cover_rel,
+    }
+    for name, source_path in upload_family.items():
+        target = package_root / name
+        payload = source_path.read_bytes()
+        if not (target.is_file() and target.read_bytes() == payload):
+            target.write_bytes(payload)
+
     item = {
         "id": candidate_id,
         "candidate_id": candidate_id,
         "stem": stem,
         "kind": "talk",
         "title": str(publish_doc.get("title") or ""),
-        "subtitle_srt": subtitle.name,
+        "subtitle_srt": f"{upload_stem}.srt",
         "publish_json": publish.name,
         "evidence_json": record.name,
         "video": burned.name,
-        "cover": cover_rel,
+        "cover": f"{upload_stem}.cover.png",
         "cover_pre_overlay": cover_pre_overlay,
         "cover_title_mask": mask_rel,
         "cover_route_background": cover_route_background,
-        "record": record.name,
+        "record": f"{upload_stem}.record.json",
         "chat_authority": chat_name,
         "ass_path": ass.name,
         "ass_sha256": _sha256(ass),
         # uniform_host 政策（ee29e08）：单说话人包的 speaker 面与正文同体；
         # finalization 的 final_speaker_srt_sha256 即正文 srt 的 sha（已核）。
-        "speaker_srt": subtitle.name,
+        "speaker_srt": f"{upload_stem}.srt",
         "speaker_srt_sha256": _sha256(subtitle),
         "sha256": {
             "subtitle_srt": _sha256(subtitle),
