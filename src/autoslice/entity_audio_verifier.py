@@ -45,6 +45,13 @@ ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
 ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
 ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
 
+# Phase 1 acoustic-witness architecture (Ivan 2026-07-25 ruling): the audio
+# model is a WITNESS, not a judge. In witness mode it never sees any
+# candidate text — it dictates suspected pinyin syllables only; hanzi
+# word-choice reasoning belongs to the CPA judge downstream.
+WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
+WITNESS_SCHEMA = "subtitle-span-acoustic-witness.v1"
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -61,6 +68,14 @@ def _json_sha256(value: Mapping[str, Any]) -> str:
 
 
 def _uncertain(request: Mapping[str, Any], reason: str, detail: str = "") -> dict[str, Any]:
+    if request.get("schema_version") == WITNESS_REQUEST_SCHEMA:
+        return {
+            "schema_version": WITNESS_SCHEMA,
+            "request_sha256": request.get("request_sha256"),
+            "status": "UNCERTAIN",
+            "reason_code": reason,
+            **({"detail": detail[-500:]} if detail else {}),
+        }
     if request.get("schema_version") == "subtitle-span-acoustic-check-request.v1":
         return {
             "schema_version": "subtitle-span-acoustic-check-verdict.v1",
@@ -76,6 +91,71 @@ def _uncertain(request: Mapping[str, Any], reason: str, detail: str = "") -> dic
         "reason_code": reason,
         **({"detail": detail[-500:]} if detail else {}),
     }
+
+
+def _witness_prompt(
+    *,
+    recording_date: str,
+    delivery_mode: str,
+    target_audio_start_ms: int | None,
+    target_audio_end_ms: int | None,
+) -> str:
+    """Pure-dictation witness prompt. Deliberately shows NO candidate text,
+    no adjacent transcript, and no glossary — anything textual would prime
+    the dictation. The witness reports suspected pinyin only."""
+
+    if delivery_mode == "gemini_api":
+        source_line = (
+            "Use only the attached audio clip. There is no viewer chat, subtitle,\n"
+            "title card, or other visual text to consult."
+        )
+        output_head = "Reply with exactly one JSON object (no markdown fences, no other text):"
+        output_tail = ""
+    else:
+        source_line = (
+            "Use only `input.mp4` in this job directory. Its frames are deliberately black:\n"
+            "there is no viewer chat, subtitle, title card, or other visual text to copy."
+        )
+        output_head = "Write `verdict.json` as JSON only:"
+        output_tail = (
+            "No markdown fences, no other files, no shell, terminal, browser, web, or search."
+        )
+    return f"""# Raw-audio dictation witness (Mandarin livestream)
+
+{source_line}
+You are a dictation witness, not a judge. Listen to the target interval
+several times and report ONLY what the syllables sound like, as toneless
+Hanyu Pinyin. Do not guess words, do not normalize to plausible phrases,
+do not output any Chinese characters anywhere.
+
+Recording date: {recording_date}
+The target interval occupies {target_audio_start_ms if target_audio_start_ms is not None else "unknown"} ms
+through {target_audio_end_ms if target_audio_end_ms is not None else "unknown"} ms in the attached clip.
+Audio before/after the target is context for speech-rate and speaker only —
+never merge its syllables into the target report.
+
+{output_head}
+{{
+  "schema_version": "subtitle-span-acoustic-witness.v1",
+  "status": "OBSERVED" or "UNCERTAIN",
+  "target_audible": true or false,
+  "heard_pinyin": "space-separated toneless pinyin syllables, e.g. zhe ge shi he tian yi de lian dong o",
+  "uncertain_positions": [0-based indexes of syllables you are unsure about],
+  "syllable_count": <integer, length of heard_pinyin>,
+  "confidence": 0.0,
+  "reason": "short acoustic note (English or pinyin only, no Chinese characters)"
+}}
+
+Rules:
+- heard_pinyin must contain ONLY lowercase pinyin syllables separated by
+  single spaces. If a stretch is unintelligible, write "?" for that syllable
+  and list its index in uncertain_positions.
+- Use OBSERVED when the target interval is audible enough to attempt a
+  dictation, even a partial one. Use UNCERTAIN only when the target interval
+  itself cannot be assessed at all.
+- Never output Chinese characters, candidate words, or any field not listed.
+{output_tail}
+"""
 
 
 def _prompt(
@@ -362,6 +442,7 @@ def _observe_entity_audio(
     """Run the AGY provider, then the policy-gated Gemini API fallback."""
 
     candidate_rows = [dict(row) for row in candidates if isinstance(row, dict)]
+    witness_mode = request.get("schema_version") == WITNESS_REQUEST_SCHEMA
     sentence_mode = request.get("schema_version") in {
         "chat-read-aloud-verification-request.v1",
         "subtitle-span-acoustic-check-request.v1",
@@ -369,17 +450,25 @@ def _observe_entity_audio(
     acoustic_fit_mode = (
         request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
     )
-    prompt = _prompt(
-        candidates=candidate_rows,
-        recording_date=recording_date,
-        timely_context=timely_context,
-        sentence_mode=sentence_mode,
-        context_before=str(request.get("context_before") or ""),
-        context_after=str(request.get("context_after") or ""),
-        target_audio_start_ms=request.get("target_audio_start_ms"),
-        target_audio_end_ms=request.get("target_audio_end_ms"),
-        acoustic_fit_mode=acoustic_fit_mode,
-    )
+    if witness_mode:
+        prompt = _witness_prompt(
+            recording_date=recording_date,
+            delivery_mode="agy",
+            target_audio_start_ms=request.get("target_audio_start_ms"),
+            target_audio_end_ms=request.get("target_audio_end_ms"),
+        )
+    else:
+        prompt = _prompt(
+            candidates=candidate_rows,
+            recording_date=recording_date,
+            timely_context=timely_context,
+            sentence_mode=sentence_mode,
+            context_before=str(request.get("context_before") or ""),
+            context_after=str(request.get("context_after") or ""),
+            target_audio_start_ms=request.get("target_audio_start_ms"),
+            target_audio_end_ms=request.get("target_audio_end_ms"),
+            acoustic_fit_mode=acoustic_fit_mode,
+        )
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     short_prompt = (
@@ -476,18 +565,26 @@ def _observe_entity_audio(
                 {"provider": "gemini_api", "category": "GEMINI_API_AUDIO_EXTRACTION_FAILED"}
             )
         else:
-            api_prompt = _prompt(
-                candidates=candidate_rows,
-                recording_date=recording_date,
-                timely_context=timely_context,
-                sentence_mode=sentence_mode,
-                context_before=str(request.get("context_before") or ""),
-                context_after=str(request.get("context_after") or ""),
-                target_audio_start_ms=request.get("target_audio_start_ms"),
-                target_audio_end_ms=request.get("target_audio_end_ms"),
-                acoustic_fit_mode=acoustic_fit_mode,
-                delivery_mode="gemini_api",
-            )
+            if witness_mode:
+                api_prompt = _witness_prompt(
+                    recording_date=recording_date,
+                    delivery_mode="gemini_api",
+                    target_audio_start_ms=request.get("target_audio_start_ms"),
+                    target_audio_end_ms=request.get("target_audio_end_ms"),
+                )
+            else:
+                api_prompt = _prompt(
+                    candidates=candidate_rows,
+                    recording_date=recording_date,
+                    timely_context=timely_context,
+                    sentence_mode=sentence_mode,
+                    context_before=str(request.get("context_before") or ""),
+                    context_after=str(request.get("context_after") or ""),
+                    target_audio_start_ms=request.get("target_audio_start_ms"),
+                    target_audio_end_ms=request.get("target_audio_end_ms"),
+                    acoustic_fit_mode=acoustic_fit_mode,
+                    delivery_mode="gemini_api",
+                )
             api_prompt_path.write_text(api_prompt, encoding="utf-8")
 
             def attempt_api_key(attempt_key: str, *, key_tier: str) -> bool:
@@ -584,6 +681,89 @@ def _observe_entity_audio(
         paid_policy_stamp=paid_policy_stamp,
         provider_failures=provider_failures,
     )
+
+
+_PINYIN_SYLLABLE_RX = re.compile(r"^(?:[a-zü]+|\?)$")
+_CJK_RX = re.compile(r"[㐀-鿿]")
+
+
+def _subtitle_acoustic_witness_verdict(
+    *,
+    request: Mapping[str, Any],
+    request_sha: str,
+    observed: Mapping[str, Any],
+    outcome: "_EntityProviderOutcome",
+    source_sha256: str,
+    audio_path: Path,
+    start_ms: int,
+    end_ms: int,
+    timeline_binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate a pure-dictation witness report; any hanzi or candidate
+    leakage invalidates it (the witness must never do word choice)."""
+
+    heard = str(observed.get("heard_pinyin") or "").strip().lower()
+    tokens = heard.split()
+    confidence = observed.get("confidence")
+    uncertain_positions = observed.get("uncertain_positions")
+    syllable_count = observed.get("syllable_count")
+    report_valid = (
+        observed.get("schema_version") == WITNESS_SCHEMA
+        and observed.get("status") == "OBSERVED"
+        and isinstance(observed.get("target_audible"), bool)
+        and bool(tokens)
+        and all(_PINYIN_SYLLABLE_RX.fullmatch(token) for token in tokens)
+        and not _CJK_RX.search(json.dumps(dict(observed), ensure_ascii=False))
+        and not any(
+            key in observed
+            for key in (
+                "candidate_id",
+                "canonical_entity",
+                "proposed_cue",
+                "rewritten_text",
+                "current_fit",
+                "proposed_fit",
+            )
+        )
+        and not isinstance(confidence, bool)
+        and isinstance(confidence, (int, float))
+        and 0.0 <= float(confidence) <= 1.0
+        and isinstance(uncertain_positions, list)
+        and all(
+            not isinstance(v, bool) and isinstance(v, int) and 0 <= v < len(tokens)
+            for v in uncertain_positions
+        )
+        and not isinstance(syllable_count, bool)
+        and isinstance(syllable_count, int)
+        and syllable_count == len(tokens)
+    )
+    if not report_valid:
+        return _uncertain(
+            request,
+            "WITNESS_REPORT_INVALID",
+            str(observed.get("reason") or ""),
+        )
+    return {
+        "schema_version": WITNESS_SCHEMA,
+        "request_sha256": request_sha,
+        "status": "OBSERVED",
+        "target_audible": bool(observed["target_audible"]),
+        "heard_pinyin": " ".join(tokens),
+        "uncertain_positions": [int(v) for v in uncertain_positions],
+        "syllable_count": len(tokens),
+        "confidence": float(confidence),
+        "reason": str(observed.get("reason") or "")[:300],
+        "source_media_sha256": source_sha256,
+        "audio_clip_sha256": _sha256(audio_path),
+        "prompt_sha256": _sha256(outcome.prompt_path),
+        "response_sha256": _sha256(outcome.response_path),
+        "model": outcome.model,
+        "provider": outcome.provider,
+        **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
+        "audio_start_ms": start_ms,
+        "audio_end_ms": end_ms,
+        "timeline_binding": dict(timeline_binding),
+    }
 
 
 def _subtitle_acoustic_verdict(
@@ -817,10 +997,17 @@ def _verify_local_audio_request(
     request_sha = str(request.get("request_sha256") or "")
     if not re.fullmatch(r"[0-9a-f]{64}", request_sha):
         return _uncertain(request, "ENTITY_AUDIO_REQUEST_INVALID")
+    witness_mode = request.get("schema_version") == WITNESS_REQUEST_SCHEMA
     candidates = request.get("candidate_entities")
-    if not isinstance(candidates, list) or len(candidates) < 2:
+    if witness_mode:
+        # A dictation witness must not carry candidates at all — their mere
+        # presence in the request would prime the transcription.
+        if candidates is not None:
+            return _uncertain(request, "WITNESS_REQUEST_CARRIES_CANDIDATES")
+        candidates = []
+    elif not isinstance(candidates, list) or len(candidates) < 2:
         return _uncertain(request, "ENTITY_AUDIO_CANDIDATES_INVALID")
-    context_mode = (
+    context_mode = witness_mode or (
         request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
     )
     source_media_timeline_offset_ms = 0
@@ -924,7 +1111,12 @@ def _verify_local_audio_request(
         else ""
     )
     if context_mode:
-        verdict = _subtitle_acoustic_verdict(
+        verdict_builder = (
+            _subtitle_acoustic_witness_verdict
+            if witness_mode
+            else _subtitle_acoustic_verdict
+        )
+        verdict = verdict_builder(
             request=request,
             request_sha=request_sha,
             observed=observed if isinstance(observed, dict) else {},

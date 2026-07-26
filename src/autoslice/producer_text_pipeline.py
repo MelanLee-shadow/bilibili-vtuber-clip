@@ -841,6 +841,7 @@ def _run_final_review(
                     entity_verifier=verify_confusable_entity,
                     finding=row,
                     clip_context=clip_context,
+                    judge_llm_call=review_llm_call,
                 )
                 repaired = bool(adj_audit.get("repaired"))
                 row["context_audio_adjudication"] = adj_audit
@@ -1048,6 +1049,7 @@ def _run_exact_final_release_review(
             entity_verifier=verify_confusable_entity,
             clip_context=clip_context,
             source_media_timeline_offset_ms=timeline_offset_ms,
+            judge_llm_call=_build_final_review_llm_call(),
         )
     )
     resolved_findings = [*authority_resolved, *acoustic_resolved]

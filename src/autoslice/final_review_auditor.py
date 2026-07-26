@@ -33,6 +33,10 @@ from src.autoslice.chat_evidence import (
     normalize_srt_owner_payload_window,
     sanitize_chat_display_text,
 )
+from src.autoslice.acoustic_witness_adjudication import (
+    adjudicate_with_witness,
+    build_witness_request,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.source_subtitle_truth import (
     MIN_CUE_OVERLAP_MS,
@@ -1133,6 +1137,25 @@ def build_context_adjudication_request(
     return request
 
 
+def _structured_chat_lines(clip_context: Mapping[str, object] | None) -> str:
+    """Platform-recorded chat/SC lines for the judge (context, not authority)."""
+
+    if not isinstance(clip_context, Mapping):
+        return ""
+    rows = clip_context.get("structured_chat")
+    if not isinstance(rows, list):
+        return ""
+    lines: list[str] = []
+    for row in rows[:20]:
+        if not isinstance(row, Mapping):
+            continue
+        sender = str(row.get("sender") or "").strip()
+        text = str(row.get("text") or row.get("message") or "").strip()
+        if text or sender:
+            lines.append(f"- {sender}: {text}"[:200])
+    return "\n".join(lines)
+
+
 def adjudicate_context_finding(
     srt_text: str,
     finding: Mapping[str, Any],
@@ -1140,8 +1163,15 @@ def adjudicate_context_finding(
     entity_verifier: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
     clip_context: Mapping[str, object] | None = None,
     source_media_timeline_offset_ms: int = 0,
+    judge_llm_call: Callable[[str], str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Fuse a reviewer proposal with a closed-set acoustic compatibility report."""
+    """Fuse a reviewer proposal with witnessed pinyin + CPA word choice.
+
+    Phase 1 architecture (Ivan 2026-07-25): the audio model is a dictation
+    witness (pinyin only, sees no candidates); word choice is reasoned by the
+    CPA judge from the closed set; code enforces pinyin compatibility of the
+    judged choice. The mutation-authority receipt contract is unchanged.
+    """
 
     try:
         request = build_context_adjudication_request(
@@ -1157,30 +1187,38 @@ def adjudicate_context_finding(
             "repaired": False,
             "reason_code": str(exc),
         }
+    witness_request = build_witness_request(request)
     try:
-        raw_verdict = entity_verifier(request) if entity_verifier is not None else None
+        raw_verdict = (
+            entity_verifier(witness_request)
+            if entity_verifier is not None
+            else None
+        )
     except Exception as exc:
         raw_verdict = {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "request_sha256": witness_request["request_sha256"],
             "status": "UNCERTAIN",
             "reason_code": "CONTEXT_VERIFIER_ERROR",
             "error": f"{type(exc).__name__}: {exc}",
         }
     verdict = dict(raw_verdict) if isinstance(raw_verdict, Mapping) else {}
-    fit_values = {"SUPPORTED", "PLAUSIBLE", "INCOMPATIBLE", "UNRESOLVED"}
-    current_fit = str(verdict.get("current_fit") or "")
-    proposed_fit = str(verdict.get("proposed_fit") or "")
     valid = (
-        verdict.get("schema_version") == "subtitle-span-acoustic-check-verdict.v1"
-        and verdict.get("request_sha256") == request["request_sha256"]
+        verdict.get("schema_version") == "subtitle-span-acoustic-witness.v1"
+        and verdict.get("request_sha256") == witness_request["request_sha256"]
         and verdict.get("status") == "OBSERVED"
         and isinstance(verdict.get("target_audible"), bool)
-        and current_fit in fit_values
-        and proposed_fit in fit_values
+        # a witness must never carry judged/text channels, even wrapped
         and not any(
             key in verdict
-            for key in ("candidate_id", "canonical_entity", "proposed_cue", "rewritten_text")
+            for key in (
+                "candidate_id",
+                "canonical_entity",
+                "proposed_cue",
+                "rewritten_text",
+                "current_fit",
+                "proposed_fit",
+            )
         )
     )
     repaired = False
@@ -1196,50 +1234,29 @@ def adjudicate_context_finding(
         request,
         finding,
     )
+    witness_judge_audit: dict[str, Any] = {}
     if (
-        valid
-        and repair_class == "acoustic_drop_cue"
-        and not verdict["target_audible"]
-    ):
-        repaired = True
-        policy_branch = "TARGET_INAUDIBLE_DROP_CUE"
-    elif valid and not verdict["target_audible"]:
-        policy_branch = "TARGET_INAUDIBLE_KEEP_CURRENT"
-    elif valid and repair_class == "acoustic_delete":
-        if current_fit == "INCOMPATIBLE" and proposed_fit == "SUPPORTED":
-            repaired = True
-            policy_branch = "ACOUSTIC_PARTIAL_DELETE_STRICT_APPLY"
-        else:
-            policy_branch = "ACOUSTIC_PARTIAL_DELETE_NOT_PROVEN_KEEP_CURRENT"
-    elif (
         valid
         and orthography_ambiguous
         and orthography_authority["status"] != "PASS"
+        and verdict.get("target_audible") is True
+        and repair_class not in {"acoustic_delete", "acoustic_drop_cue"}
     ):
+        # spelling-tie proposals never reach the judge without textual authority
         policy_branch = "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
-    elif valid and proposed_fit == "INCOMPATIBLE" and orthography_equivalent:
-        # Acoustic judges compare sounds, not house-style graphemes.  A
-        # hash-bound/source-backed entity proposal whose complete spoken form
-        # is identical may therefore win the spelling tie (大大恩 -> 大N).
-        # This branch is deliberately before the normal acoustic veto and is
-        # unavailable to ordinary semantic or unsupported entity rewrites.
+    elif valid and orthography_equivalent and verdict.get("target_audible") is True:
+        # Sounds are identical by construction (source-backed spelling swap,
+        # 大大恩 -> 大N): the witness cannot distinguish and the textual
+        # authority already passed upstream. Spelling authority wins.
         repaired = True
         policy_branch = "ACOUSTIC_ORTHOGRAPHY_NEUTRAL_CONTEXT_TIEBREAK_APPLY_PROPOSED"
-    elif valid and proposed_fit == "INCOMPATIBLE":
-        policy_branch = "PROPOSED_INCOMPATIBLE_KEEP_CURRENT"
     elif valid:
-        fit_rank = {"INCOMPATIBLE": -1, "UNRESOLVED": 0, "PLAUSIBLE": 1, "SUPPORTED": 2}
-        if proposed_fit in {"PLAUSIBLE", "SUPPORTED"} and (
-            fit_rank[proposed_fit] > fit_rank[current_fit]
-            or (
-                fit_rank[proposed_fit] == fit_rank[current_fit]
-                and current_fit in {"PLAUSIBLE", "SUPPORTED"}
-            )
-        ):
-            repaired = True
-            policy_branch = "ACOUSTICALLY_ADMISSIBLE_CONTEXT_TIEBREAK_APPLY_PROPOSED"
-        else:
-            policy_branch = "CURRENT_ACOUSTIC_FIT_STRONGER_KEEP_CURRENT"
+        repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
+            check_request=request,
+            witness=verdict,
+            llm_call=judge_llm_call,
+            structured_chat_context=_structured_chat_lines(clip_context),
+        )
     output = srt_text
     if repaired:
         cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
@@ -1290,6 +1307,7 @@ def adjudicate_context_finding(
         "timing_immutable": True,
         "request": request,
         "verdict": verdict or raw_verdict,
+        **({"witness_judge": witness_judge_audit} if witness_judge_audit else {}),
         "orthography_equivalence": {
             "matched": orthography_equivalent,
             **orthography_audit,
@@ -1307,15 +1325,16 @@ def adjudicate_exact_release_findings(
     entity_verifier: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
     clip_context: Mapping[str, object] | None = None,
     source_media_timeline_offset_ms: int = 0,
+    judge_llm_call: Callable[[str], str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Separate unresolved findings from decisively disproven proposals.
 
     The exact-byte reviewer is intentionally independent from the correction
     pass and can rediscover a proposal that audio already rejects.  A finding
-    is closed only after a fresh, request-bound acoustic verdict says the
-    current audible cue fits and the proposed cue is incompatible.  Any
-    proposed mutation, uncertainty, invalid response, or budget overflow
-    remains an unresolved release blocker.
+    is closed only when the witness+judge chain keeps the current text with
+    the judge explicitly choosing CURRENT and the proposal\'s pinyin clearly
+    worse than the current text\'s. Any proposed mutation, uncertainty,
+    invalid response, or budget overflow remains an unresolved blocker.
     """
 
     unresolved: list[dict[str, Any]] = []
@@ -1336,6 +1355,7 @@ def adjudicate_exact_release_findings(
             entity_verifier=entity_verifier,
             clip_context=clip_context,
             source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+            judge_llm_call=judge_llm_call,
         )
         row["exact_release_adjudication"] = adjudication
         verdict = adjudication.get("verdict")
@@ -1361,15 +1381,32 @@ def adjudicate_exact_release_findings(
                 "suggestion": suggestion,
             },
         )
+        witness_judge = adjudication.get("witness_judge")
+        compat = (
+            witness_judge.get("pinyin_compatibility")
+            if isinstance(witness_judge, Mapping)
+            else None
+        )
+        judge = (
+            witness_judge.get("judge")
+            if isinstance(witness_judge, Mapping)
+            else None
+        )
         decisively_disproven = bool(
             adjudication.get("status") == "OBSERVED"
             and adjudication.get("repaired") is False
-            and adjudication.get("policy_branch")
-            == "PROPOSED_INCOMPATIBLE_KEEP_CURRENT"
+            and adjudication.get("policy_branch") == "JUDGE_KEEPS_CURRENT"
             and isinstance(verdict, Mapping)
             and verdict.get("target_audible") is True
-            and verdict.get("current_fit") in {"SUPPORTED", "PLAUSIBLE"}
-            and verdict.get("proposed_fit") == "INCOMPATIBLE"
+            and isinstance(judge, Mapping)
+            and judge.get("choice") == "CURRENT"
+            and isinstance(compat, Mapping)
+            and isinstance(compat.get("current"), (int, float))
+            and isinstance(compat.get("proposed"), (int, float))
+            # judge is the primary evidence; pinyin must confirm the same
+            # direction and the current text must genuinely match the audio
+            and float(compat["current"]) > float(compat["proposed"])
+            and float(compat["current"]) >= 0.75
             and not orthography_ambiguous
         )
         if decisively_disproven:

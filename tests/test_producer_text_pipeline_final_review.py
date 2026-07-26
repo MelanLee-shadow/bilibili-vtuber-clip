@@ -734,12 +734,41 @@ def test_exact_final_release_review_unresolved_finding_is_a_block(
         validate_final_review_release(receipt)
 
 
+
+def _witness_verdict(request, heard, *, audible=True):
+    return {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "request_sha256": request["request_sha256"],
+        "status": "OBSERVED",
+        "target_audible": audible,
+        "heard_pinyin": heard,
+        "uncertain_positions": [],
+        "syllable_count": len(heard.split()),
+        "confidence": 0.9,
+        "reason": "test witness",
+    }
+
+
+def _judge_json(choice):
+    return json.dumps({"choice": choice, "reason": "test judge"})
+
+
+def _split_llm(findings_json, judge_choice):
+    """Findings discovery and the word-choice judge share one llm seam."""
+    def call(prompt):
+        if "字幕选字裁决" in prompt:
+            return _judge_json(judge_choice)
+        return findings_json
+    return call
+
 def test_exact_final_release_review_closes_acoustically_disproven_proposal(
     monkeypatch,
 ):
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
     monkeypatch.setattr(
-        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: _judge_json("CURRENT")),
     )
     finding = {
         "cue_index": 1,
@@ -758,15 +787,7 @@ def test_exact_final_release_review_closes_acoustically_disproven_proposal(
     )
 
     def keep_current(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "SUPPORTED",
-            "proposed_fit": "INCOMPATIBLE",
-            "heard_syllables": "这个是和天依的联动哦",
-        }
+        return _witness_verdict(request, "zhe ge shi he tian yi de lian dong o")
 
     receipt = pipeline._run_exact_final_release_review(
         srt_text=_srt("这个是和天依的联动哦", "洛天依，对哦", "第三句"),
@@ -859,7 +880,9 @@ def test_exact_final_release_review_never_uses_audio_to_choose_orthography(
 def test_exact_final_release_review_does_not_apply_new_mutation(monkeypatch):
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
     monkeypatch.setattr(
-        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: _judge_json("PROPOSED")),
     )
     finding = {
         "cue_index": 1,
@@ -878,15 +901,7 @@ def test_exact_final_release_review_does_not_apply_new_mutation(monkeypatch):
     )
 
     def prefer_proposed(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "PLAUSIBLE",
-            "proposed_fit": "SUPPORTED",
-            "heard_syllables": "好词留在这里",
-        }
+        return _witness_verdict(request, "hao ci liu zai zhe li")
 
     receipt = pipeline._run_exact_final_release_review(
         srt_text=_srt("坏词留在这里", "第二句", "第三句"),
@@ -1274,6 +1289,7 @@ def test_exact_final_release_review_forwards_recut_offset_to_audio_adjudication(
         entity_verifier,
         clip_context,
         source_media_timeline_offset_ms,
+        judge_llm_call=None,
     ):
         captured["findings"] = list(findings)
         captured["entity_verifier"] = entity_verifier
@@ -1445,21 +1461,16 @@ def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(m
     monkeypatch.setattr(
         pipeline,
         "build_llm_call",
-        lambda config: lambda prompt: json.dumps({"findings": findings}, ensure_ascii=False),
+        lambda config: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
+        ),
     )
     requests = []
 
     def choose_proposed(request):
         requests.append(request)
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "PLAUSIBLE",
-            "proposed_fit": "SUPPORTED",
-            "heard_syllables": "bounded test",
-        }
+        index = str(request["cue_indexes"][0])
+        return _witness_verdict(request, f"hao ci {index} liu zai zhe li")
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),
@@ -1657,20 +1668,15 @@ def test_final_review_allows_only_one_contextual_mutation_per_cue(monkeypatch):
     monkeypatch.setattr(
         pipeline,
         "build_llm_call",
-        lambda config: lambda prompt: json.dumps({"findings": findings}, ensure_ascii=False),
+        lambda config: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
+        ),
     )
     requests = []
 
     def observe(request):
         requests.append(request)
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "PLAUSIBLE",
-            "proposed_fit": "SUPPORTED",
-        }
+        return _witness_verdict(request, "hao jia he huai yi")
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt("坏甲和坏乙"),
@@ -1701,18 +1707,13 @@ def test_final_review_context_fixes_register_for_final_surface_verification(monk
     monkeypatch.setattr(
         pipeline,
         "build_llm_call",
-        lambda config: lambda prompt: json.dumps({"findings": findings}, ensure_ascii=False),
+        lambda config: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
+        ),
     )
 
     def observe(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "PLAUSIBLE",
-            "proposed_fit": "SUPPORTED",
-        }
+        return _witness_verdict(request, "hao ci yi liu zai zhe li")
 
     chat_authority_audit: dict = {"applied": []}
     output, audit = pipeline._run_final_review(
@@ -1770,20 +1771,15 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
     monkeypatch.setattr(
         pipeline,
         "build_llm_call",
-        lambda config: lambda prompt: json.dumps({"findings": findings}, ensure_ascii=False),
+        lambda config: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
+        ),
     )
     requests = []
 
     def observe(request):
         requests.append(request)
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "PLAUSIBLE",
-            "proposed_fit": "SUPPORTED",
-        }
+        return _witness_verdict(request, "hao jia he huai yi")
 
     _, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),

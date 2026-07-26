@@ -441,6 +441,25 @@ def test_context_request_rejects_invalid_source_media_timeline_offset(
         )
 
 
+
+def _witness(request, heard, *, audible=True, uncertain=()):
+    """Valid dictation-witness verdict for the given witness request."""
+    return {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "request_sha256": request["request_sha256"],
+        "status": "OBSERVED",
+        "target_audible": audible,
+        "heard_pinyin": heard,
+        "uncertain_positions": list(uncertain),
+        "syllable_count": len(heard.split()),
+        "confidence": 0.9,
+        "reason": "test witness",
+    }
+
+
+def _judge(choice):
+    return lambda prompt: json.dumps({"choice": choice, "reason": "test"})
+
 def test_exact_release_adjudication_threads_source_media_timeline_offset():
     source = (
         "1\n"
@@ -451,14 +470,7 @@ def test_exact_release_adjudication_threads_source_media_timeline_offset():
 
     def reject_proposal(request):
         seen_requests.append(request)
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "SUPPORTED",
-            "proposed_fit": "INCOMPATIBLE",
-        }
+        return _witness(request, "jiu qing zuo zai zuo bian de tan")
 
     unresolved, resolved = adjudicate_exact_release_findings(
         source,
@@ -473,6 +485,7 @@ def test_exact_release_adjudication_threads_source_media_timeline_offset():
         ],
         entity_verifier=reject_proposal,
         source_media_timeline_offset_ms=9_770,
+        judge_llm_call=_judge("CURRENT"),
     )
 
     assert not unresolved
@@ -503,15 +516,7 @@ def test_context_adjudication_applies_only_exact_candidate_and_keeps_timing():
     source = _srt("前一句", "还没有歌杂呢", "后一句")
 
     def choose_proposed(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "PLAUSIBLE",
-            "proposed_fit": "SUPPORTED",
-            "heard_syllables": "ge zhai",
-        }
+        return _witness(request, "hai mei you ge zhai ne")
 
     output, audit = adjudicate_context_finding(
         source,
@@ -524,27 +529,22 @@ def test_context_adjudication_applies_only_exact_candidate_and_keeps_timing():
             "why": "重复话题",
         },
         entity_verifier=choose_proposed,
+        judge_llm_call=_judge("PROPOSED"),
     )
 
     assert "还没有歌债呢" in output
     assert "00:00:10,000 --> 00:00:14,000" in output
     assert audit["repaired"] is True
+    assert audit["policy_branch"] == "WITNESS_JUDGE_APPLY_PROPOSED"
     assert audit["request"]["current_cue"] == "还没有歌杂呢"
-    assert audit["verdict"]["heard_syllables"] == "ge zhai"
+    assert audit["verdict"]["heard_pinyin"] == "hai mei you ge zhai ne"
 
 
 def test_context_adjudication_keeps_current_when_semantics_conflict_with_audio():
     source = _srt("还没有歌杂呢")
 
     def acoustics_veto_proposal(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "SUPPORTED",
-            "proposed_fit": "INCOMPATIBLE",
-        }
+        return _witness(request, "hai mei you ge za ne")
 
     output, audit = adjudicate_context_finding(
         source,
@@ -557,12 +557,13 @@ def test_context_adjudication_keeps_current_when_semantics_conflict_with_audio()
             "why": "重复话题",
         },
         entity_verifier=acoustics_veto_proposal,
+        judge_llm_call=_judge("CURRENT"),
     )
 
     assert output == source
     assert audit["status"] == "OBSERVED"
     assert audit["repaired"] is False
-    assert audit["policy_branch"] == "PROPOSED_INCOMPATIBLE_KEEP_CURRENT"
+    assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
 
 
 def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
@@ -581,15 +582,9 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
     }
 
     def acoustics_reports_spoken_en(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "SUPPORTED",
-            "proposed_fit": "INCOMPATIBLE",
-            "heard_syllables": "na li you bian cheng xiao li bei da da en ba ling le",
-        }
+        return _witness(
+            request, "na li you bian cheng xiao li bei da da en ba ling le"
+        )
 
     output, audit = adjudicate_context_finding(
         source,
@@ -619,19 +614,13 @@ def test_acoustics_cannot_authorize_ungrounded_homophone_orthography():
     }
 
     def acoustics_claims_spelling_difference(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "INCOMPATIBLE",
-            "proposed_fit": "SUPPORTED",
-        }
+        return _witness(request, "hui sheng lai le")
 
     output, audit = adjudicate_context_finding(
         source,
         finding,
         entity_verifier=acoustics_claims_spelling_difference,
+        judge_llm_call=_judge("PROPOSED"),
     )
 
     assert output == source
@@ -747,18 +736,14 @@ def test_source_backed_entity_insertion_survives_contract(monkeypatch):
 
     # 声学仲裁支持插入候选时才真正落地。
     def prefer_proposed(request):
-        assert request["proposed_cue"] == "只有kmx怎么，你为什么会这样称呼李豆沙"
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "UNRESOLVED",
-            "proposed_fit": "SUPPORTED",
-        }
+        return _witness(
+            request,
+            "zhi you kmx zen me ni wei shen me hui zhe yang cheng hu li dou sha",
+        )
 
     repaired_srt, adj = adjudicate_context_finding(
-        srt, findings[0], entity_verifier=prefer_proposed
+        srt, findings[0], entity_verifier=prefer_proposed,
+        judge_llm_call=_judge("PROPOSED"),
     )
     assert adj["repaired"] is True
     assert "只有kmx怎么" in repaired_srt
@@ -815,21 +800,15 @@ def test_acoustic_partial_delete_removes_only_unspoken_prefix():
     assert route_audit["findings"][0]["routed"] == "disclosure"
 
     def strict_delete(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": True,
-            "current_fit": "INCOMPATIBLE",
-            "proposed_fit": "SUPPORTED",
-        }
+        return _witness(request, "luan shuo de a")
 
     repaired, audit = adjudicate_context_finding(
-        source, findings[0], entity_verifier=strict_delete
+        source, findings[0], entity_verifier=strict_delete,
+        judge_llm_call=_judge("PROPOSED"),
     )
     assert "我草" not in repaired
     assert "乱说的啊" in repaired
-    assert audit["policy_branch"] == "ACOUSTIC_PARTIAL_DELETE_STRICT_APPLY"
+    assert audit["policy_branch"] == "WITNESS_JUDGE_APPLY_PROPOSED"
 
 
 def test_acoustic_drop_cue_requires_whole_target_inaudible():
@@ -852,14 +831,7 @@ def test_acoustic_drop_cue_requires_whole_target_inaudible():
     assert findings[0]["suspect"] == "我草"
 
     def inaudible(request):
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "OBSERVED",
-            "target_audible": False,
-            "current_fit": "UNRESOLVED",
-            "proposed_fit": "UNRESOLVED",
-        }
+        return _witness(request, "?", audible=False, uncertain=(0,))
 
     repaired, audit = adjudicate_context_finding(
         source, findings[0], entity_verifier=inaudible

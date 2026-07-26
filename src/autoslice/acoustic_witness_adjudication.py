@@ -1,0 +1,304 @@
+"""Phase 1 acoustic-witness adjudication: the audio model witnesses, CPA judges.
+
+Ivan's 2026-07-25 architecture ruling (刮/乖/歪、省了/神了、我们/我 cases): the
+closed-set acoustic "fit" check kept acting as the final judge while seeing the
+candidate sentences — a priming channel — and its ±1-cue context window was too
+poor for discourse reasoning. This module splits the roles:
+
+- the audio model runs in pure dictation mode (``entity_audio_verifier``
+  witness schema): suspected toneless pinyin only, no candidates shown,
+  no hanzi allowed out;
+- word choice is reasoned by the CPA judge (gpt-5.6-sol) from the CLOSED
+  candidate set with wide subtitle context;
+- code — not any model — enforces that the judged choice stays compatible
+  with the witnessed pinyin. Every layer fails toward keeping current text.
+"""
+
+from __future__ import annotations
+
+import difflib
+import hashlib
+import json
+import re
+from typing import Any, Callable, Mapping
+
+from src.autoslice.llm_client import extract_json_object
+
+try:  # 生产已装（song_name_pin/T1 同款可选依赖）；缺失时拼音校验不可用 → fail closed
+    from pypinyin import lazy_pinyin as _lazy_pinyin
+except Exception:  # pragma: no cover - environment-dependent
+    _lazy_pinyin = None
+
+
+WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
+ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
+
+# The judged choice must land at least this close to the witnessed pinyin…
+MIN_CHOICE_COMPATIBILITY = 0.55
+# …and must not be clearly worse than the rejected alternative.
+CHOICE_MARGIN = 0.15
+# acoustic_delete removes allegedly unspoken text: demand a clear win.
+DELETE_MARGIN = 0.15
+
+
+def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive a candidate-free dictation request from a check request.
+
+    Only the audio-window geometry survives; every textual field (current,
+    proposed, contexts, candidate entities) is stripped so the witness request
+    physically cannot prime the transcription.
+    """
+
+    request: dict[str, Any] = {
+        "schema_version": WITNESS_REQUEST_SCHEMA,
+        "kind": "subtitle_span_acoustic_witness",
+        "evidence_id": str(check_request.get("evidence_id") or ""),
+        "cue_indexes": list(check_request.get("cue_indexes") or []),
+        "matched_start_ms": int(check_request["matched_start_ms"]),
+        "matched_end_ms": int(check_request["matched_end_ms"]),
+        "context_start_ms": int(check_request["context_start_ms"]),
+        "context_end_ms": int(check_request["context_end_ms"]),
+        "source_media_timeline_offset_ms": int(
+            check_request["source_media_timeline_offset_ms"]
+        ),
+    }
+    request["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return request
+
+
+def _pinyin_tokens(text: str) -> list[str] | None:
+    if _lazy_pinyin is None:
+        return None
+    tokens = [
+        token.strip().lower()
+        for token in _lazy_pinyin(text)
+        if token and token.strip()
+    ]
+    # non-hanzi spans (latin letters, digits) come back verbatim; keep them
+    # as single tokens so KO/N-style spellings still participate.
+    return [re.sub(r"\s+", "", token) for token in tokens if token]
+
+
+def pinyin_compatibility(
+    candidate_text: str,
+    *,
+    heard_pinyin: str,
+    uncertain_positions: list[int] | tuple[int, ...] = (),
+) -> float | None:
+    """Token-level similarity between a candidate's pinyin and the dictation.
+
+    ``?`` witness tokens and tokens listed in ``uncertain_positions`` are
+    wildcards: they match whatever the candidate has at the aligned position
+    (the witness itself declared no knowledge there). Returns None when the
+    pinyin backend is unavailable — callers must fail closed on None.
+    """
+
+    candidate = _pinyin_tokens(candidate_text)
+    if candidate is None:
+        return None
+    heard = [token for token in heard_pinyin.strip().lower().split() if token]
+    uncertain = {
+        int(value)
+        for value in uncertain_positions
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    if not candidate or not heard:
+        return 0.0
+    normalized_heard = list(heard)
+    matcher = difflib.SequenceMatcher(None, normalized_heard, candidate)
+    matched = sum(block.size for block in matcher.get_matching_blocks())
+    # grant wildcard credit for unmatched witness positions declared unsure
+    unmatched_wild = 0
+    matched_positions: set[int] = set()
+    for block in matcher.get_matching_blocks():
+        matched_positions.update(range(block.a, block.a + block.size))
+    for index, token in enumerate(normalized_heard):
+        if index in matched_positions:
+            continue
+        if token == "?" or index in uncertain:
+            unmatched_wild += 1
+    effective = matched + min(unmatched_wild, max(0, len(candidate) - matched))
+    return (2.0 * effective) / (len(candidate) + len(heard))
+
+
+_JUDGE_PROMPT = """# 字幕选字裁决（闭集）
+
+你是字幕修复的最终选字法官。一名听写证人已经把目标区间的音节按拼音记录如下；
+证人从未见过任何候选文本。你的任务：结合语篇推理，从闭集中选出最符合
+「拼音证据 + 语境」的候选。铁律：
+
+1. 只能从下方闭集选择，或输出 UNCERTAIN。绝不生成新文本。
+2. 拼音证据优先：与听写音节明显冲突的候选不能当选，语义再通也不行。
+3. 语境（前后句、弹幕、平行句）只在拼音无法区分候选时才可定夺。
+4. 目标区间外的相同词语出现过，不构成目标区间内说过它的证据。
+
+## 听写证人报告（未见候选）
+- 疑似拼音: {heard_pinyin}
+- 音节数: {syllable_count}
+- 不确定位置: {uncertain_positions}
+- 证人置信: {confidence}
+
+## 闭集候选
+- CURRENT（现字幕整句）: {current_cue}
+- PROPOSED（提案整句）: {proposed_cue}
+（差异点：suspect={suspect!r} → replacement={replacement!r}；repair_class={repair_class}）
+
+## 语境（转写自同一音频；是语境不是文本权威）
+前文:
+{context_before}
+目标句: <待裁决>
+后文:
+{context_after}
+
+{structured_chat_block}
+只回一个 JSON 对象（无 markdown 围栏、无其他文字）:
+{{"choice": "CURRENT" 或 "PROPOSED" 或 "UNCERTAIN", "reason": "引用拼音/语境证据的一句话理由"}}
+"""
+
+
+def judge_word_choice(
+    *,
+    llm_call: Callable[[str], str],
+    check_request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+    context_before: str = "",
+    context_after: str = "",
+    structured_chat_context: str = "",
+) -> dict[str, Any]:
+    """Ask the CPA judge to pick from the closed set; never trusts free text."""
+
+    chat_block = (
+        f"## 结构化弹幕/SC（平台记录）\n{structured_chat_context}\n\n"
+        if structured_chat_context.strip()
+        else ""
+    )
+    prompt = _JUDGE_PROMPT.format(
+        heard_pinyin=str(witness.get("heard_pinyin") or ""),
+        syllable_count=witness.get("syllable_count"),
+        uncertain_positions=witness.get("uncertain_positions"),
+        confidence=witness.get("confidence"),
+        current_cue=str(check_request.get("current_cue") or ""),
+        proposed_cue=str(check_request.get("proposed_cue") or ""),
+        suspect=str(check_request.get("suspect") or ""),
+        replacement=str(check_request.get("replacement") or ""),
+        repair_class=str(check_request.get("repair_class") or ""),
+        context_before=context_before or str(check_request.get("context_before") or "（无）"),
+        context_after=context_after or str(check_request.get("context_after") or "（无）"),
+        structured_chat_block=chat_block,
+    )
+    prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    try:
+        completion = llm_call(prompt)
+        payload = extract_json_object(completion)
+    except Exception as exc:
+        return {
+            "schema_version": ADJUDICATION_SCHEMA,
+            "status": "JUDGE_UNAVAILABLE",
+            "choice": "UNCERTAIN",
+            "reason_code": "JUDGE_CALL_FAILED",
+            "error": f"{type(exc).__name__}: {exc}"[:300],
+            "prompt_sha256": prompt_sha256,
+        }
+    choice = str(payload.get("choice") or "").strip().upper()
+    if choice not in {"CURRENT", "PROPOSED", "UNCERTAIN"}:
+        # any out-of-set answer (including invented text) is a refusal
+        return {
+            "schema_version": ADJUDICATION_SCHEMA,
+            "status": "JUDGE_OUT_OF_SET",
+            "choice": "UNCERTAIN",
+            "reason_code": "JUDGE_CHOICE_OUT_OF_SET",
+            "raw_choice": choice[:80],
+            "prompt_sha256": prompt_sha256,
+        }
+    return {
+        "schema_version": ADJUDICATION_SCHEMA,
+        "status": "JUDGED",
+        "choice": choice,
+        "reason": str(payload.get("reason") or "")[:400],
+        "prompt_sha256": prompt_sha256,
+        "completion_sha256": hashlib.sha256(
+            completion.encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def adjudicate_with_witness(
+    *,
+    check_request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+    llm_call: Callable[[str], str] | None,
+    structured_chat_context: str = "",
+) -> tuple[bool, str, dict[str, Any]]:
+    """Fuse witness dictation + CPA word choice + code-level pinyin gate.
+
+    Returns (repaired, policy_branch, audit). Every uncertainty keeps the
+    current text; only a judged PROPOSED that stays pinyin-compatible — and
+    not clearly worse than CURRENT — may repair.
+    """
+
+    audit: dict[str, Any] = {
+        "schema_version": ADJUDICATION_SCHEMA,
+        "witness_request_sha256": witness.get("request_sha256"),
+        "witness_status": witness.get("status"),
+    }
+    repair_class = str(check_request.get("repair_class") or "")
+    witness_valid = (
+        isinstance(witness, Mapping)
+        and witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
+        and witness.get("status") == "OBSERVED"
+        and isinstance(witness.get("target_audible"), bool)
+    )
+    if not witness_valid:
+        return False, "WITNESS_UNAVAILABLE_KEEP_CURRENT", audit
+    if not witness["target_audible"]:
+        if repair_class == "acoustic_drop_cue":
+            return True, "TARGET_INAUDIBLE_DROP_CUE", audit
+        return False, "TARGET_INAUDIBLE_KEEP_CURRENT", audit
+    if llm_call is None:
+        return False, "JUDGE_UNAVAILABLE_KEEP_CURRENT", audit
+
+    verdict = judge_word_choice(
+        llm_call=llm_call,
+        check_request=check_request,
+        witness=witness,
+        structured_chat_context=structured_chat_context,
+    )
+    audit["judge"] = verdict
+    heard = str(witness.get("heard_pinyin") or "")
+    uncertain = list(witness.get("uncertain_positions") or [])
+    compat_proposed = pinyin_compatibility(
+        str(check_request.get("proposed_cue") or ""),
+        heard_pinyin=heard,
+        uncertain_positions=uncertain,
+    )
+    compat_current = pinyin_compatibility(
+        str(check_request.get("current_cue") or ""),
+        heard_pinyin=heard,
+        uncertain_positions=uncertain,
+    )
+    audit["pinyin_compatibility"] = {
+        "proposed": compat_proposed,
+        "current": compat_current,
+    }
+    if verdict.get("choice") != "PROPOSED":
+        branch = (
+            "JUDGE_KEEPS_CURRENT"
+            if verdict.get("choice") == "CURRENT"
+            else "JUDGE_UNCERTAIN_KEEP_CURRENT"
+        )
+        return False, branch, audit
+    if compat_proposed is None or compat_current is None:
+        return False, "PINYIN_BACKEND_UNAVAILABLE_KEEP_CURRENT", audit
+    required_margin = (
+        DELETE_MARGIN if repair_class in {"acoustic_delete"} else -CHOICE_MARGIN
+    )
+    if (
+        compat_proposed < MIN_CHOICE_COMPATIBILITY
+        or compat_proposed - compat_current < required_margin
+    ):
+        return False, "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT", audit
+    return True, "WITNESS_JUDGE_APPLY_PROPOSED", audit
