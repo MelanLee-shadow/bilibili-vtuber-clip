@@ -201,6 +201,35 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
     )
     assert first["items"][0]["publish_json"] == f"{stem}.publish.json"
 
+    # Ivan 2026-07-26 per-BV ruling: an explicit release scope unlocks a
+    # single delivered candidate while the batch is still incomplete.
+    partial_state = json.loads(json.dumps(state))
+    partial_state["status"] = "recovery_incomplete"
+    with pytest.raises(ManifestBuildError, match="state is not review_ready"):
+        build_manifest(
+            package_root=root,
+            state=partial_state,
+            deployed_commit="a" * 40,
+            created_at="2026-07-23T00:10:00+00:00",
+        )
+    scoped = build_manifest(
+        package_root=root,
+        state=partial_state,
+        deployed_commit="a" * 40,
+        created_at="2026-07-23T00:10:00+00:00",
+        release_scope=[candidate_id],
+    )
+    assert scoped["partial_release_scope"]["candidates"] == [candidate_id]
+    assert scoped["partial_release_scope"]["batch_status"] == "recovery_incomplete"
+    with pytest.raises(ManifestBuildError, match="subset of the exact contract"):
+        build_manifest(
+            package_root=root,
+            state=partial_state,
+            deployed_commit="a" * 40,
+            created_at="2026-07-23T00:10:00+00:00",
+            release_scope=[candidate_id, "auto_193450_9999_0000"],
+        )
+
     original_ass = files["speaker.ass"].read_bytes()
     files["speaker.ass"].write_bytes(original_ass + b"; drift\n")
     with pytest.raises(ManifestBuildError, match="speaker ASS hash drift"):

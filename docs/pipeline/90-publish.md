@@ -104,6 +104,11 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
    命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节、填写实际
    observations，再由 builder create-only 签出 `lidousha-final-human-review.v2`；只有真的
    完成观看后才可出 receipt；
+3b. 逐案放行（Ivan 2026-07-26：「没有任何纪律要求必须5个全complete才能动BV，
+   修复时哪个好了就可以改哪个」）：批仍 `recovery_incomplete` 时，可用
+   `build_lidousha_recovery_review_manifest.py --release-candidate <cid>`（可重复）
+   只冻结已交付合规的单案；manifest 以 `partial_release_scope` 披露范围、批状态与
+   裁定出处，范围必须是 exact 合同子集且每案自身 delivered/CURRENT/COMPLIANT。
 4. `make-manifest --final-human-review ...` 同时冻结 package/audit/receipt、publication
    authority 和 Ivan 的修复授权原话；缺 receipt 的 recovery manifest 直接拒绝；
 5. `verify --manifest ...` 重跑 current audit、hash 与 receipt validator；

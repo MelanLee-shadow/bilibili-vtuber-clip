@@ -183,6 +183,7 @@ def build_manifest(
     package_root: Path,
     state: dict[str, Any],
     deployed_commit: str,
+    release_scope: list[str] | None = None,
     created_at: str | None = None,
 ) -> dict[str, Any]:
     package_root = package_root.resolve()
@@ -192,7 +193,14 @@ def build_manifest(
     if COMMIT_RE.fullmatch(commit) is None:
         raise ManifestBuildError("deployed commit must be a full 40-hex commit")
     if state.get("status") != "review_ready":
-        raise ManifestBuildError(f"state is not review_ready: {state.get('status')}")
+        # Ivan 2026-07-26 per-BV ruling: 「没有任何纪律要求必须5个全complete
+        # 才能动BV，修复时哪个好了就可以改哪个」。An explicit release scope
+        # unlocks per-candidate freezing while the batch is still incomplete;
+        # every scoped candidate must itself be a delivered compliant pick.
+        if not (release_scope and state.get("status") == "recovery_incomplete"):
+            raise ManifestBuildError(
+                f"state is not review_ready: {state.get('status')}"
+            )
     if state.get("run_mode") != "RECOVERY_REVIEW":
         raise ManifestBuildError(f"state is not RECOVERY_REVIEW: {state.get('run_mode')}")
     if state.get("upload_allowed") is not False:
@@ -262,7 +270,13 @@ def build_manifest(
         raise ManifestBuildError(
             "final picks do not exactly match the no-backfill contract"
         )
-    for candidate_id in candidate_ids:
+    if release_scope is not None:
+        unknown = set(release_scope) - set(candidate_ids)
+        if not release_scope or unknown:
+            raise ManifestBuildError(
+                f"release scope must be a subset of the exact contract: {sorted(unknown)}"
+            )
+    for candidate_id in (release_scope or candidate_ids):
         pick = picks_by_id[candidate_id]
         if (
             pick.get("status") not in DELIVERED_STATUSES
@@ -461,6 +475,20 @@ def build_manifest(
             normalized_publication_authorities
         ),
         "exact_candidate_ids": list(candidate_ids),
+        **(
+            {
+                "partial_release_scope": {
+                    "candidates": sorted(release_scope),
+                    "batch_status": str(state.get("status")),
+                    "authority": (
+                        "Ivan 2026-07-26: 没有任何纪律要求必须5个全complete"
+                        "才能动BV，修复时哪个好了就可以改哪个"
+                    ),
+                }
+            }
+            if release_scope is not None
+            else {}
+        ),
         "counts": {"items": len(items), "talk": len(items), "song": 0},
         "cover_route_attestations": attestations,
         "items": items,
@@ -485,6 +513,12 @@ def main() -> int:
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--deployed-commit-file", type=Path, required=True)
     parser.add_argument("--out", type=Path)
+    parser.add_argument(
+        "--release-candidate",
+        action="append",
+        default=None,
+        help="per-BV partial release scope (repeatable; Ivan 2026-07-26 ruling)",
+    )
     args = parser.parse_args()
     try:
         state = _load_json(args.state)
@@ -493,6 +527,7 @@ def main() -> int:
             package_root=args.package_root,
             state=state,
             deployed_commit=commit,
+            release_scope=args.release_candidate,
         )
         output = args.out or args.package_root / "review_manifest.json"
         write_manifest(output, manifest)
