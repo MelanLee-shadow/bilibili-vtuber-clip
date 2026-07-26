@@ -87,6 +87,7 @@ restore_file() {
     fi
 }
 restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
+restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
 restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
 if [ -f "$backup/external/crontab.present" ]; then
     crontab "$backup/external/crontab.file"
@@ -215,6 +216,13 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 HAD_DISABLED=$(ssh "$HOST" "test -e '$DISABLED' && echo 1 || echo 0")
+if [ "$HAD_DISABLED" -eq 1 ]; then
+    # 既有 DISABLED 会被本次部署尊重并保留（收尾不清除）。它可能是操作员
+    # 有意的杀开关，也可能是上一次被超时/信号打断的部署留下的尸留（2026-07-26
+    # 案：外层 5min 超时 SIGKILL 级中断 → trap 未跑完 → 主 lane 静默停摆）。
+    echo "WARNING: $DISABLED already exists on $HOST and will be preserved." >&2
+    echo "WARNING: if no operator set it intentionally, it is likely residue of an interrupted deploy — verify and remove it manually." >&2
+fi
 OLD_COMMIT=$(ssh "$HOST" "awk 'NR==1 {print \$1}' '$REMOTE_REPO/DEPLOYED_COMMIT'")
 if ! [[ "$OLD_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
     echo "REFUSE: deployed commit stamp is missing or malformed: $OLD_COMMIT" >&2
@@ -532,6 +540,7 @@ capture_file() {
     fi
 }
 capture_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
+capture_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
 capture_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
 if crontab -l > "$backup/external/crontab.file" 2>/dev/null; then
     touch "$backup/external/crontab.present"
@@ -568,6 +577,7 @@ rollback() {
     done
     cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
     restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
+    restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
     restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
     if [ -f "$backup/external/crontab.present" ]; then
         crontab "$backup/external/crontab.file"
@@ -626,10 +636,15 @@ install_atomic \
     /opt/bilive/autoslice/free_mount_watchdog.sh \
     755
 install_atomic \
+    /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
+    /opt/bilive/autoslice/upload_fatal_sentinel.sh \
+    755
+install_atomic \
     /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
     /opt/bilive/app/tmp_manual_upload/do_upload.sh \
     700
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
+upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
 timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
 psplive_roster_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
 topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
@@ -637,16 +652,20 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
 {
     printf '%s\n' "$existing_crontab" \
         | grep -Fv '/opt/bilive/autoslice/free_mount_watchdog.sh' \
+        | grep -Fv '/opt/bilive/autoslice/upload_fatal_sentinel.sh' \
         | grep -Fv 'scripts/crawl_timely_terms.py' \
         | grep -Fv 'scripts/crawl_psplive_roster.py' \
         | grep -Fv 'scripts/crawl_topic_entity_graph.py' || true
     printf '%s\n' "$watchdog_cron"
+    printf '%s\n' "$upload_fatal_cron"
     printf '%s\n' "$timely_terms_cron"
     printf '%s\n' "$psplive_roster_cron"
     printf '%s\n' "$topic_entity_cron"
 } | crontab -
 crontab -l | grep -Fxq "$watchdog_cron"
 test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
+crontab -l | grep -Fxq "$upload_fatal_cron"
+test "$(crontab -l | grep -Fxc "$upload_fatal_cron")" -eq 1
 crontab -l | grep -Fxq "$timely_terms_cron"
 test "$(crontab -l | grep -Fxc "$timely_terms_cron")" -eq 1
 crontab -l | grep -Fxq "$psplive_roster_cron"
