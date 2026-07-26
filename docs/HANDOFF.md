@@ -33,6 +33,12 @@ Ivan 指令：424 封面编辑；7/25 从官方回放补源；全量 session 复
 - 05:00Z cron tick 因部署指纹变化正在重跑 7/25 三个幸存段候选；部署#2（2bcf5aa+edf57ba 待并）
   在 runner.lock 后排队（deploy 自带 DISABLED guard，完成自清）。
 
+**2026-07-26 06:4xZ Ivan 睡前授权（原话）**：「今天晚上最新版可以直接上线，我睡觉了。
+不用等我审。明天起来我直接看上线版」→ 今晚产出的最新版一律直接上线：7/22 五连 V15 closure
+后直接走 same-BV repair 编辑（root 感知复核 receipt 照签，Ivan 审免）；7/24 第 5 条与 7/25
+达到 review_ready 的交付按完整 v3 链（audit→make-manifest→upload→verify）直接上传；
+证据全部 commit。
+
 **审计待修（按 ledger 风险序）**：~~Phase 1 声学证人~~（已由 ff68178 实现并随 e9c284d 部署，2026-07-26 06:2xZ 起 V15/主 lane 全线生效）；跨 segment
 witness reserve（1571_1804 类，防断裂家族）；delivery-divergence 根治核验；
 人设一致性消歧泛化。三场复审（7/22 V15 闭环+同BV修复含标题前缀、7/24 第5条、7/25 复活后交付）
