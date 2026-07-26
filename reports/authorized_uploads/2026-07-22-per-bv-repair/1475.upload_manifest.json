@@ -1,0 +1,97 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "d2e78b814fd0",
+  "video": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475/弹幕让左边的人弹右边一个脑瓜崩，两人.mp4",
+    "sha256": "d2e78b814fd02081ead48f515c471a39cb6439472afd822eb27683c9a14b1071",
+    "bytes": 30095537
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475/弹幕让左边的人弹右边一个脑瓜崩，两人.cover.png",
+    "sha256": "4ffed4bab8634eb2fcfade0c555bb17549f384be857b79ea4c4f0adb9bdb760c",
+    "bytes": 1023650
+  },
+  "title": "【李豆沙】弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "talk:title-prefix",
+    "season_id": 8383206,
+    "section_id": 9320779
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475/package_audit.json",
+      "sha256": "5d6bc8e4b59f572aa1599f7c0c33ebbdd56c2b8908797f47d9f37a1415db0899",
+      "bytes": 3379
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475/review_manifest.json",
+      "sha256": "1623140ffcdccbeb8c29f089833fccddf90a20aa0da345d48b97c10c4ba599f7",
+      "bytes": 15261
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475/弹幕让左边的人弹右边一个脑瓜崩，两人.record.json",
+      "sha256": "e95a997d9af14893e3b05d3d1c58719f7d896b061fae8527fd0fed7ee6a5ce2f",
+      "bytes": 127629
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475/弹幕让左边的人弹右边一个脑瓜崩，两人.srt",
+      "sha256": "cb13388de5b457f289828e313638eb4c2cdd9f97b528f9843e5c785e1579bfd0",
+      "bytes": 2079
+    },
+    "final_human_review": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1475/final-human-review-receipt.json",
+      "sha256": "4b6cac473235bb631f41bd74b70e5a332a9f867c5ceb1e5410368bb2d0cf88c5",
+      "bytes": 8722
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "Ivan 2026-07-26: 没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个；今天晚上最新版可以直接上线，不用等我审。旧授权 2026-07-25: 7.22的也要修复好编辑旧的",
+    "at": "2026-07-26T18:48:28+0000"
+  },
+  "created_at": "2026-07-26T18:48:28+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "搞笑",
+    "左右不分",
+    "犯傻",
+    "互相伤害",
+    "反差萌"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1",
+  "recovery_publication_authority": {
+    "aid": 116969625884294,
+    "boundary_end_mode": "semantic_lower_bound",
+    "bvid": "BV1acg46XEjx",
+    "candidate_id": "auto_193450_1475_1543",
+    "cid": 40231177971,
+    "observed_public_title": "【李豆沙】弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+    "registry_authority": "Ivan 2026-07-23/24: repair exactly these five already-published clips in place and preserve each reviewed title source; after explicitly re-reading the Pro systemic review, exact-pin the hotpot clip to source cue 911 at 2056480ms and treat the later evil-gecko SC as next-topic evidence rather than retained tail content; for the chair clip, the chair/bullying story closes on 假哭 at 1672970ms and the immediately following mouse superchat is a separate topic, not a delivery lower bound.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30",
+    "required_given_end_ms": 1543760,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1475_1543.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:c3af4c8485ca2cf3f17c1d4a660c53cd4f1d23a3f9d254e77924d9875a07d771",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact",
+    "authority_sha256": "sha256:ac0ff0d5007be13b49f79f7a58bc7722509affa165033bb68a5c8d549279c5b9"
+  }
+}
