@@ -75,3 +75,21 @@ def test_release_srt_validator_accepts_consecutive_non_overlapping_cues(tmp_path
     )
 
     assert validate_srt_file(path)["status"] == "PASS"
+
+
+def test_single_cjk_name_echo_is_exempt_isolated_fragment_blocks():
+    """秦秦/秦 呼名回声（2026-07-26 3573 案）：单字与紧邻 cue 的 ≥2 字词共字
+    即真实回声放行；孤立实词碎片仍 fail-closed。"""
+
+    from src.autoslice.subtitle_validation import validate_srt_text
+
+    srt = (
+        "1\n00:00:01,000 --> 00:00:02,000\n秦秦\n\n"
+        "2\n00:00:02,100 --> 00:00:03,000\n秦\n\n"
+        "3\n00:00:03,100 --> 00:00:04,000\n她是一个非常闹腾的小朋友\n\n"
+        "4\n00:00:05,000 --> 00:00:06,000\n狗\n"
+    )
+    result = validate_srt_text(srt)
+    codes = [(error["code"], error["block"]) for error in result["errors"]]
+    assert ("SRT_SINGLE_CJK_CHARACTER", 2) not in codes
+    assert ("SRT_SINGLE_CJK_CHARACTER", 4) in codes

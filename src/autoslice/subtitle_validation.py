@@ -63,6 +63,7 @@ def validate_srt_text(
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     parsed: list[dict[str, Any]] = []
+    single_cjk_blocks: list[tuple[int, str]] = []
     blocks = _blocks(text)
     if not blocks:
         errors.append({"code": "SRT_ZERO_CUES", "block": None})
@@ -148,9 +149,7 @@ def validate_srt_text(
                 _CJK_SINGLE_RE.fullmatch(text_line)
                 and text_line not in _CJK_SINGLE_INTERJECTIONS
             ):
-                errors.append(
-                    {"code": "SRT_SINGLE_CJK_CHARACTER", "block": block_number}
-                )
+                single_cjk_blocks.append((block_number, text_line))
         parsed.append(
             {
                 "index": cue_index,
@@ -159,6 +158,28 @@ def validate_srt_text(
                 "text": "\n".join(text_lines),
             }
         )
+    # Name-echo exemption (2026-07-26 秦秦/秦 case): a lone CJK character is a
+    # real utterance when the SAME character appears inside a >=2-char run of
+    # an adjacent cue (呼名回声/结巴 onset). Isolated content-word fragments
+    # keep failing closed.
+    index_by_block = {
+        cue["index"]: position for position, cue in enumerate(parsed)
+    }
+    for block_number, char in single_cjk_blocks:
+        position = index_by_block.get(block_number)
+        echoed = False
+        if position is not None:
+            for neighbor in (position - 1, position + 1):
+                if 0 <= neighbor < len(parsed):
+                    neighbor_text = parsed[neighbor]["text"]
+                    if char in neighbor_text and len(
+                        neighbor_text.strip()
+                    ) >= 2:
+                        echoed = True
+        if not echoed:
+            errors.append(
+                {"code": "SRT_SINGLE_CJK_CHARACTER", "block": block_number}
+            )
     return {
         "schema_version": SRT_RELEASE_POLICY_SCHEMA,
         "status": "PASS" if not errors else "FAIL",
