@@ -33,7 +33,7 @@ Ivan 指令：424 封面编辑；7/25 从官方回放补源；全量 session 复
 - 05:00Z cron tick 因部署指纹变化正在重跑 7/25 三个幸存段候选；部署#2（2bcf5aa+edf57ba 待并）
   在 runner.lock 后排队（deploy 自带 DISABLED guard，完成自清）。
 
-**审计待修（按 ledger 风险序）**：Phase 1 声学证人架构（零代码，最高优）；跨 segment
+**审计待修（按 ledger 风险序）**：~~Phase 1 声学证人~~（已由 ff68178 实现并随 e9c284d 部署，2026-07-26 06:2xZ 起 V15/主 lane 全线生效）；跨 segment
 witness reserve（1571_1804 类，防断裂家族）；delivery-divergence 根治核验；
 人设一致性消歧泛化。三场复审（7/22 V15 闭环+同BV修复含标题前缀、7/24 第5条、7/25 复活后交付）
 等 07:00Z 配额重置后推进。
