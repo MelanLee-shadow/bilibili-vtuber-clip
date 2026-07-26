@@ -39,6 +39,20 @@ Ivan 指令：424 封面编辑；7/25 从官方回放补源；全量 session 复
 达到 review_ready 的交付按完整 v3 链（audit→make-manifest→upload→verify）直接上传；
 证据全部 commit。
 
+**2026-07-26 17:5xZ Ivan 晨间两裁定（原话要义）**：
+1. 「没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个」——
+   V15 闭环改为**逐案推进**：单案 review_ready 即走 manifest→audit→receipt→repair-plan→
+   repair-run→verify-live，不等五案。
+2. 「流水线最终是无人值守的，不能因为没有人工参与就fail……生产阶段没有人工真值，
+   最多发出去了我检查有问题再修，而不是一直不发」——**待实现机制**（下一个代码动作）：
+   终审 UNRESOLVED/UNCERTAIN 类 findings 不再永久 BLOCK：机器证据穷尽后按现文本
+   交付+`unresolved_findings_disclosed` 披露块入 record，候选保持发后可修（edit-replace
+   不占配额）；结构性/合同类失败仍 fail-closed。开发期人工真值照用。
+当前位置：V15 重验轮进行中（f7d5b1e 树），3573/1475 被翻回 processing 属重验，
+round 收官后立即逐案冻结（manifest+audit 已试跑，等 review_ready 再跑）→ 我逐片
+感知复核出 receipt → 逐 BV repair 链。742_887 裁定素材已拉本地
+lidousha/2026-07-26-裁定/ 并发给 Ivan 待回。14 个复活候选主 lane 排队重产中。
+
 **2026-07-26 夜班实况（16:58Z）**：V15=2/5（3573/1475 交付；672/1863/1573 重试中，round 循环在跑）。
 witness 自报数误杀已修（e187a22 已部署）但**终审仍大面积拦**：1209_1410 复活重产后再拦、
 7/26 新场次 9/10 rejected——Phase-1 终审链存在未定位的第二病灶，forensic agent 取证中
