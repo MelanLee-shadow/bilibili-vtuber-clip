@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-07-24 America/New_York
+Updated: 2026-07-25 America/New_York (7/24 四条已公开上传；daily 上传链已打通)
 
 > 本文件只记录尚未完成任务的恢复点，不复制流水线规则。步骤规则只读
 > [pipeline/README.md](pipeline/README.md)，live runtime 只以
@@ -166,6 +166,48 @@ UNRESOLVED finding 阻断——真发生再修（修法参照 1573：finding 由
    最后核对 public/public-tags/Creator/exact-section 四面。3573/672 线上标题当前缺
    `【李豆沙】`（人工标题曾绕过 envelope 门）；registry 以 `ivan_manual_override` 存 Ivan 手定
    正文，`canonicalize_publish_title` 会补前缀成 29/38 字，本轮修复应一并纠正这两条线上标题。
+
+### 2026-07-25 深夜：7/24 四条已公开上传（16f4e0b 证据入库）
+
+199=BV1jw3j6KE17、424=BV1E93L6rErV、537=BV1Eo3L6zEdU、607=BV1Eo3L6zECt，
+全部 `VERIFIED_PUBLIC`，走完整 v3 链（package audit 零阻断 → make-manifest 绑
+Ivan 原话 → upload → uploaded.json 哈希回执）。第 5+ 条待 beans/skill 收敛。
+
+**daily 上传链本轮打通（b19dfae + 852627b，全部有测试）**：
+- v3 合同要求 package audit，但 audit 各合同都是 recovery 形态写的。四个结构
+  性错配逐一在病根处修：
+  1. ASS audit 加 uniform_host 通道：冻结 record+chat authority 自证跳过
+     speaker finalize（speaker_ass 双 None + speaker sha==text sha）时，正文
+     SRT 以 host 说话人解析，**event parity 重放全量保留**（style=Default）；
+     recovery 包带真 speaker 工件哈希，永不满足声明，严格路径不变。
+  2. owner scope 校验复刻生产端 lead-tolerance 算式（story_start=semantic−500，
+     容差上限锁常数），旧算式拒绝所有现行 scope。
+  3. **ledger 前进等效**：包产出后 ledger 增长，仅当新增活跃条目与包源区间重
+     叠且 truth_id 未被冻结审计见过才判 stale（须重产）；否则字节漂移不再阻断。
+     无 provenance/解析失败一律 fail toward reproduction。
+  4. 单字 cue 校验豁免封闭语气词类（哎/啊/呵…），实词碎片照旧拦。
+- 新工具 `scripts/build_lidousha_daily_review_manifest.py`：单候选装配
+  review_manifest（hash-bound、封面像素工件、chat authority 校 record sha 后
+  复制入包、same-stem 上传家族字节副本）；batch 门收 processing、放行
+  retry_wait（review_ready pick 主车道从不 re-supersede）。
+- same-stem 合同：video stem X 要求包根直下 X.record.json/X.srt/X.cover.png，
+  make-manifest 的 --cover 必须指 same-stem 副本。
+
+### V15 r17 根因与修复（237bc45，待部署重启 r18）
+
+r17（b19dfae，CPA 活）五案全败暴露真病根：**resolution 侧 identity replay 重建
+expected scope 时漏传 baseline_tail_cap_ms**（13cbcbf 只修了 is_valid 的 rebuild
+校验，漏了 `_select_initial_boundary` 里三方 dict 相等比较点）→ spec/review 带
+cap、expected 无 cap → 全体 SCOPE_MISMATCH。已抽取 `_replayed_search_scope`
+helper 补 cap+回归测试。1573 另见 cue59/67 provider failure（CPA 瞬断，可重试）。
+
+### beans/skill 复活状态（第 5+ 条上传的来源）
+
+- skill 850_940：终审已 CLEAN（7fcd94c truth 波生效），最近一轮死于 CloudFS
+  挂载瞬死（realpath FileNotFoundError），failed+recoverable 自动重试中。
+- beans 1209_1410：revive_rejected_candidates.py 已复活（candidate_rejected→
+  failed+recoverable，fix-commit b19dfae），等 cron 重跑。
+- 任一转 review_ready 即按同链上传（audit→make-manifest→upload→commit 证据）。
 
 ### 2026-07-25 夜间授权与机制账（Ivan 睡前指令）
 
