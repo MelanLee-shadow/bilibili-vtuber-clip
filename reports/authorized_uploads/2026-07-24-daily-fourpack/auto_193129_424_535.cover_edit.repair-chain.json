@@ -1,0 +1,39 @@
+{
+  "schema_version": "repair-screenshot-cover.v1",
+  "repaired_at": "2026-07-26T05:15:32.336736+00:00",
+  "record_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.record.json",
+  "candidate_id": null,
+  "previous_final_cover_sha256": "sha256:e726029b397a0d55ec17f7e60b2b212de07dc962ec0b379b73c720c96308ec1a",
+  "polished_input_sha256": "sha256:f458b45d9297b98b3a9612b0ea22641fa4c118a1ad8ec8bf47dbc1327fdb82de",
+  "new_final_cover": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.cover.repaired.png",
+  "new_final_cover_sha256": "sha256:6a015fdae4f9d512dbd9a2ae1c19ecf85c373d38dcc6c8ad4ccbd70acf11934d",
+  "card_fit": "contain_face_safe",
+  "rendered_lines": [
+    "和别的女同一起",
+    "挖人"
+  ],
+  "polish_face_verification": {
+    "schema_version": "lidousha-cover-polish-face-verification.v1",
+    "witness": {
+      "schema_version": "cpa-frame-witness.v1",
+      "image_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.cover.repaired.png",
+      "question": "这是一张视频封面成品。请只判断画面中人物的脸部是否完整可见：双眼、嘴巴、下巴都必须在画面内，且没有被画面边缘或卡片边框切断。同时报告人物是否吐舌头。只输出 JSON：{\"face_complete\": true|false, \"missing\": [\"eyes\"|\"mouth\"|\"chin\"], \"tongue_out\": true|false, \"reason\": \"简短中文说明\"}",
+      "model": "gpt-5.6-sol",
+      "provider": "cpa",
+      "image_sha256": "6a015fdae4f9d512dbd9a2ae1c19ecf85c373d38dcc6c8ad4ccbd70acf11934d",
+      "frame_sha256": "e0de12685213396a97d589a6fac1b0d61c728b64cba35ef15283842a736e8994",
+      "prompt_sha256": "e7b22523ef3cf9cc5beb8fcd2296fd833ce4bd5f11b92a1d8a371499e069a90c",
+      "status": "OBSERVED",
+      "answer": "{\"face_complete\":true,\"missing\":[],\"tongue_out\":false,\"reason\":\"双眼、嘴巴和下巴均完整可见，未被边缘或边框切断，人物没有吐舌头。\"}",
+      "response_sha256": "aa40b2494e1dad8e383f8fd3e58e513f4b8bfaae0f21a0929bdb8766d3a319d2"
+    },
+    "verdict": {
+      "face_complete": true,
+      "missing": [],
+      "tongue_out": false,
+      "reason": "双眼、嘴巴和下巴均完整可见，未被边缘或边框切断，人物没有吐舌头。"
+    },
+    "status": "PASS"
+  },
+  "status": "REPAIRED"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "bili-cover-edit-receipt.v1",
+  "edited_at": "2026-07-26T05:16:21.408394+00:00",
+  "bvid": "BV1E93L6rErV",
+  "aid": 116983299312414,
+  "title": "【李豆沙】李豆沙发现熟人百合厨成了别人的队友，立刻酸她“和别的女同一起”，甚至拿入间人间新作挖人",
+  "old_cover_url": "http://i2.hdslb.com/bfs/archive/eeb234115f28dd96374c9d34bf993525271273c7.png",
+  "uploaded_cover_url": "https://archive.biliimg.com/bfs/archive/93cf8bbc036f62b573bce2db4f3c5f7b5e53784f.png",
+  "readback_cover_url": "http://i1.hdslb.com/bfs/archive/93cf8bbc036f62b573bce2db4f3c5f7b5e53784f.png",
+  "local_cover_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.cover.repaired.png",
+  "local_cover_sha256": "sha256:6a015fdae4f9d512dbd9a2ae1c19ecf85c373d38dcc6c8ad4ccbd70acf11934d",
+  "edit_code": 0,
+  "status": "VERIFIED_EDITED"
+}
