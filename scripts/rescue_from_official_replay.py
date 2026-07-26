@@ -258,19 +258,39 @@ def main() -> int:
         )
         print(f"anchor {stem}: score={score:.3f} video_at_t0={video_at_t0:.3f}s")
 
-    # -- rough origins for lost sessions from replay-danmaku unix clock -----
-    points = _replay_dm_points(Path(args.replay_dm))
-    if len(points) < 200:
-        raise SystemExit("REFUSE: too few replay danmaku points")
-    skew = _recorder_server_skew(canonical, anchors[0], t0[anchors[0]].timestamp())
-    print(f"recorder-vs-server skew: {skew:+.3f}s ({len(points)} replay dm points)")
+    # -- rough origins: anchor extrapolation, optionally dm-refined ---------
+    # The BCUT convergence loop below is a GLOBAL text match, so the rough
+    # estimate only needs to land within tens of seconds; anchor
+    # extrapolation errs by at most the wall time the replay swallowed in
+    # between (measured 4.3s per half hour on 2026-07-25).
+    points = _replay_dm_points(Path(args.replay_dm)) if args.replay_dm else []
+    skew = 0.0
+    if len(points) >= 200:
+        skew = _recorder_server_skew(
+            canonical, anchors[0], t0[anchors[0]].timestamp()
+        )
+        print(f"recorder-vs-server skew: {skew:+.3f}s "
+              f"({len(points)} replay dm points)")
+
+    ref_anchor = anchors[0]
 
     def rough_video(wall: datetime) -> float:
-        u = wall.timestamp() - skew
-        nearby = [video + (u - unix) for unix, video in points if abs(unix - u) <= 25.0]
-        if len(nearby) < 5:
-            raise SystemExit(f"REFUSE: no replay danmaku near {wall.isoformat()}")
-        return statistics.median(nearby)
+        if len(points) >= 200:
+            u = wall.timestamp() - skew
+            nearby = [
+                video + (u - unix)
+                for unix, video in points
+                if abs(unix - u) <= 25.0
+            ]
+            if len(nearby) >= 5:
+                return statistics.median(nearby)
+        estimate = (
+            anchor_video[ref_anchor]
+            - (t0[ref_anchor] - wall).total_seconds()
+        )
+        print(f"rough origin for {wall.isoformat()}: anchor extrapolation "
+              f"{estimate:.3f}s")
+        return estimate
 
     # -- converge each lost session origin against its cached BCUT ----------
     order = lost + [args.next_stem]
