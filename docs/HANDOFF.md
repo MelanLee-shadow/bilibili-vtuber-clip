@@ -39,6 +39,15 @@ Ivan 指令：424 封面编辑；7/25 从官方回放补源；全量 session 复
 达到 review_ready 的交付按完整 v3 链（audit→make-manifest→upload→verify）直接上传；
 证据全部 commit。
 
+**2026-07-26 夜班实况（16:58Z）**：V15=2/5（3573/1475 交付；672/1863/1573 重试中，round 循环在跑）。
+witness 自报数误杀已修（e187a22 已部署）但**终审仍大面积拦**：1209_1410 复活重产后再拦、
+7/26 新场次 9/10 rejected——Phase-1 终审链存在未定位的第二病灶，forensic agent 取证中
+（报告将在 docs/reviews/postfix-finalreview-forensic-20260726.md）。晨间裁定清单已就绪：
+docs/reviews/blocked-findings-20260726.md（E=742_887 Say-you-say-father 必须耳裁；
+F=909_1014 外语门缺拉丁 ID 放行分支=门缺陷待修；B/C/D 多数 finding 需耳裁）。
+今日 7/26 场次已录制并入产线。上传面今晚零新增（全部 fail-closed 在终审），
+424 封面编辑与 7/22 的 3573/1475 交付是当前仅有的已上线变化。
+
 **审计待修（按 ledger 风险序）**：~~Phase 1 声学证人~~（已由 ff68178 实现并随 e9c284d 部署，2026-07-26 06:2xZ 起 V15/主 lane 全线生效）；跨 segment
 witness reserve（1571_1804 类，防断裂家族）；delivery-divergence 根治核验；
 人设一致性消歧泛化。三场复审（7/22 V15 闭环+同BV修复含标题前缀、7/24 第5条、7/25 复活后交付）
