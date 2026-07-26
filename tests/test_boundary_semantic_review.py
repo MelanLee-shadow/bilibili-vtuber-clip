@@ -886,3 +886,30 @@ def test_search_scope_identity_replay_requires_same_tail_cap():
 
     assert dict(frozen) == dict(replay_with_cap)
     assert dict(frozen) != dict(replay_without_cap)
+
+
+def test_exact_pin_mode_ignores_baseline_tail_cap():
+    """1863 r18: the pin is the published media byte end (media axis); the
+    baseline coverage end sits one tail pad earlier on the subtitle axis.
+    Clamping the pin by the cap made every pinned redelivery BLOCK."""
+
+    pin = 202_720
+    scope = build_boundary_search_scope(
+        semantic_target_ms=pin,
+        manual_lower_bound_ms=pin,
+        repair_cap_ms=30_000,
+        boundary_end_mode="exact_source_pin",
+        baseline_tail_cap_ms=pin - 400,
+    )
+    assert scope["status"] == "PASS"
+    assert scope["max_recommended_end_ms"] == pin
+    # the cap still participates in the frozen identity
+    assert scope["baseline_tail_cap_ms"] == pin - 400
+
+    lower = build_boundary_search_scope(
+        semantic_target_ms=90_000,
+        repair_cap_ms=30_000,
+        boundary_end_mode="semantic_lower_bound",
+        baseline_tail_cap_ms=95_000,
+    )
+    assert lower["max_recommended_end_ms"] == 95_000

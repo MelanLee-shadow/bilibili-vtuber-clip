@@ -224,9 +224,13 @@ def build_boundary_search_scope(
     # redelivery 尾部锚（2026-07-25 1573 r13 鼠标话题案，头部恒等锚的对偶）：
     # 同 BV 修复的成片终点不得越过已发布 baseline 覆盖终点——lower_bound
     # 模式的语义延伸在修复包上会把 V13 已裁定排除的下一话题包回来（replay/
-    # regression 会正确拦下但永远无法收敛）。
+    # regression 会正确拦下但永远无法收敛）。exact_source_pin 模式除外：
+    # pin 是官方已发布媒体的字节终点权威（媒体轴），baseline 覆盖终点是
+    # 字幕轴，天然比 pin 早一个尾垫（1863 r18 案 202320 vs 202720 恒
+    # BLOCK）；pin 模式的终点已被更强权威定死，尾锚无增量约束。
     if (
-        baseline_tail_cap_ms is not None
+        boundary_end_mode != "exact_source_pin"
+        and baseline_tail_cap_ms is not None
         and baseline_tail_cap_ms < max_recommended_end_ms
     ):
         max_recommended_end_ms = _required_int_ms(
