@@ -39,6 +39,20 @@ TALK_RECOVERY_FAILURE_STATUSES = frozenset(
     }
 )
 
+# Only failures the classifier POSITIVELY identified as an infrastructure wait
+# may retry on a timer for as long as the wait lasts (mount watchdog repairs
+# the mount, a provider quota window reopens).  A generic/unknown producer
+# failure must not inherit that unlimited loop: an unrecognized deterministic
+# defect (for example a vanished source before classification existed) would
+# then churn every tick forever and, because the runner treats a recoverable
+# failure as an outage, stall the rest of the batch with it.
+INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
+    {
+        "runtime_prerequisite",
+        "provider_transient",
+    }
+)
+
 
 class RecoveryReviewRerunError(ValueError):
     """The explicit no-upload recovery rerun plan is not safely bound."""
@@ -1276,8 +1290,11 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
 
     Boundary failures wake on a relevant pipeline change.  A generic producer
     failure additionally gets one same-fingerprint retry so a transient CPA or
-    worker crash cannot permanently lose an already-selected candidate.  All
-    retries share one per-candidate lifetime cap.
+    worker crash cannot permanently lose an already-selected candidate.  Only
+    classifier-confirmed infrastructure waits (INFRASTRUCTURE_WAIT_FAILURE_KINDS)
+    may keep retrying on a timer beyond that; unknown failures stay bounded so a
+    deterministic defect cannot churn every tick forever.  All retries share one
+    per-candidate lifetime cap.
     """
 
     existing_pending = {
@@ -1322,6 +1339,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         next_retry_at = record.get("next_retry_at_epoch")
         infrastructure_retry = bool(
             record.get("failure_recoverable") is True
+            and record.get("failure_kind") in INFRASTRUCTURE_WAIT_FAILURE_KINDS
             and (
                 not isinstance(next_retry_at, (int, float))
                 or isinstance(next_retry_at, bool)

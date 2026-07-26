@@ -969,6 +969,16 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "chat_authority_finalization",
             False,
         )
+    elif "CHAT_AUTHORITY_FINAL_ARTIFACT_FAILED" in tail:
+        # 打包终验的 chat-authority 最终面校验失败：确定性内容缺陷。
+        # 此前落 unknown/recoverable=True 兜底，每个 tick 空转重试
+        # （2026-07-24 auto_193129_850_940 实案）；修复靠 truth/代码波
+        # 改变 fingerprint 唤醒，不是无限基础设施重试。
+        kind, stage, recoverable = (
+            "subtitle_authority",
+            "chat_authority_final_artifact",
+            False,
+        )
     elif "STORY_CONTRACT_INPUT_INVALID" in tail:
         kind, stage, recoverable = (
             "story_contract",

@@ -362,7 +362,10 @@ def test_explicit_recovery_carries_hash_bound_public_title(
             NEW,
             True,
             0,
-            "transient_infrastructure_failure",
+            # producer_error is not in INFRASTRUCTURE_WAIT_FAILURE_KINDS, so a
+            # same-fingerprint retry is the bounded one-shot transient path,
+            # not an unlimited infrastructure timer.
+            "transient_produce_failure",
         ),
         (
             OLD,

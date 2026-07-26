@@ -74,10 +74,32 @@ def _write_json_atomic(path: Path, document: dict) -> None:
     )
     os.replace(temporary, path)
 
+def _absent_source_media_error(source: Path) -> str:
+    """Name the two absent-source modes the producer must not conflate.
+
+    A recording that vanished after selection can never be produced: retrying
+    it forever only burns ticks and, because the runner treats a recoverable
+    failure as an outage, halts the rest of the batch.  An unreachable
+    recording mount looks identical at the file level but does recover once the
+    mount watchdog restores it, so it must stay retryable.  The parent
+    directory separates them: it is readable exactly when the mount is live.
+    """
+
+    parent = source.parent
+    try:
+        readable_root = parent.is_dir() and next(parent.iterdir(), None) is not None
+    except OSError:
+        readable_root = False
+    if readable_root:
+        return f"SOURCE_MEDIA_MISSING: {source}"
+    return f"SOURCE_RECORDING_ROOT_UNAVAILABLE: {source}"
+
 def _source_media_sha256(host: str, source: Path) -> tuple[str, str]:
     """Hash the exact source bytes on the execution host."""
 
     if host in {"localhost", "127.0.0.1", "::1"}:
+        if not source.is_file():
+            raise RuntimeError(_absent_source_media_error(source))
         resolved = source.resolve(strict=True)
         return str(resolved), segment_binding_sha256(resolved)
     completed = subprocess.run(

@@ -5868,6 +5868,59 @@ def test_talk_failure_classifies_real_clip_anchor_shortage_as_speaker_evidence()
     assert classified["failure_recoverable"] is False
 
 
+def test_talk_failure_classifies_vanished_source_media_as_terminal():
+    classified = runner.classify_talk_failure(
+        "RuntimeError: SOURCE_MEDIA_MISSING: "
+        "/rec/22966160/2026-07-25/22966160_20260725-19-20-00.mp4"
+    )
+
+    assert classified["failure_kind"] == "source_media"
+    assert classified["failure_stage"] == "source_media_binding"
+    # Recoverable would make the runner treat a permanent loss as an outage and
+    # break the batch, starving candidates whose recordings are still present.
+    assert classified["failure_recoverable"] is False
+
+
+def test_talk_failure_keeps_unreachable_recording_mount_recoverable():
+    classified = runner.classify_talk_failure(
+        "RuntimeError: SOURCE_RECORDING_ROOT_UNAVAILABLE: "
+        "/rec/22966160/2026-07-25/22966160_20260725-19-20-00.mp4"
+    )
+
+    assert classified["failure_kind"] == "runtime_prerequisite"
+    assert classified["failure_stage"] == "source_media_binding"
+    assert classified["failure_recoverable"] is True
+
+
+def test_absent_source_media_error_separates_loss_from_mount_outage(tmp_path):
+    from src.autoslice.producer_media import _absent_source_media_error
+
+    live_root = tmp_path / "2026-07-25"
+    live_root.mkdir()
+    (live_root / "sibling.mp4").write_bytes(b"kept")
+    vanished = live_root / "gone.mp4"
+
+    assert _absent_source_media_error(vanished).startswith("SOURCE_MEDIA_MISSING:")
+
+    unmounted = tmp_path / "unmounted" / "2026-07-25" / "gone.mp4"
+    assert _absent_source_media_error(unmounted).startswith(
+        "SOURCE_RECORDING_ROOT_UNAVAILABLE:"
+    )
+
+
+def test_source_media_sha256_refuses_vanished_recording(tmp_path):
+    import pytest
+
+    from src.autoslice.producer_media import _source_media_sha256
+
+    date_root = tmp_path / "2026-07-25"
+    date_root.mkdir()
+    (date_root / "sibling.mp4").write_bytes(b"kept")
+
+    with pytest.raises(RuntimeError, match="SOURCE_MEDIA_MISSING"):
+        _source_media_sha256("localhost", date_root / "gone.mp4")
+
+
 def test_talk_failure_classifies_chat_authority_finalization_as_terminal():
     classified = runner.classify_talk_failure(
         "RuntimeError: CHAT_AUTHORITY_FINALIZATION_FAILED: "
@@ -5876,6 +5929,20 @@ def test_talk_failure_classifies_chat_authority_finalization_as_terminal():
 
     assert classified["failure_kind"] == "subtitle_authority"
     assert classified["failure_stage"] == "chat_authority_finalization"
+    assert classified["failure_recoverable"] is False
+
+
+def test_talk_failure_classifies_chat_authority_final_artifact_as_terminal():
+    # Package-finalization surface verification failure is deterministic
+    # content, not infrastructure: as unknown/recoverable it churned every
+    # tick (2026-07-24 auto_193129_850_940).
+    classified = runner.classify_talk_failure(
+        "CHAT_AUTHORITY_FINAL_ARTIFACT_FAILED: "
+        "/out/2026-07-24/auto_193129_850_940/auto_193129_850_940.chat-authority.json"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "chat_authority_final_artifact"
     assert classified["failure_recoverable"] is False
 
 
@@ -7477,6 +7544,85 @@ def test_pipeline_change_requeues_legacy_exact_candidate_rejection(
     )
     assert state["talk_superseded_attempts"][0]["status"] == (
         "candidate_rejected"
+    )
+
+
+def _requeue_gating_state(tmp_path, monkeypatch, *, failure_kind, transient_count):
+    date = "2026-07-25"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260725-19-20-00.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(
+        runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:same"
+    )
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: "sha256:same-recovery",
+    )
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda _segment, **_kwargs: {
+            "structured_chat_required": False,
+            "chat_binding_status": "NOT_REGISTERED",
+        },
+    )
+    return date, {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "auto_192000_371_669",
+                "segment": segment.name,
+                "start_ms": 371_000,
+                "end_ms": 669_000,
+                "status": "failed",
+                "failure_kind": failure_kind,
+                "failure_stage": "unknown",
+                "failure_recoverable": True,
+                "failure_recovery_fingerprint": "sha256:same-recovery",
+                "pipeline_fingerprint": "sha256:same",
+                "talk_transient_retry_count": transient_count,
+                "next_retry_at_epoch": 0,
+                "hook": "test",
+            }
+        ],
+    }
+
+
+def test_unknown_recoverable_failure_stops_after_bounded_transient_retry(
+    tmp_path, monkeypatch
+):
+    # Regression: unknown producer_error with recoverable=True used to qualify
+    # as an unlimited timer-based infrastructure retry, so a deterministic
+    # defect (vanished source before classification existed) churned every
+    # tick forever (2026-07-25 five-candidate incident).
+    date, state = _requeue_gating_state(
+        tmp_path, monkeypatch, failure_kind="producer_error", transient_count=1
+    )
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["picks"][0]["status"] == "failed"
+    assert state["pending_talk"] == []
+
+
+def test_confirmed_infrastructure_wait_keeps_timer_retries(tmp_path, monkeypatch):
+    # A classifier-confirmed infrastructure wait (mount outage, provider
+    # quota) must keep waking on its retry timer even after the bounded
+    # transient retry is spent.
+    date, state = _requeue_gating_state(
+        tmp_path, monkeypatch, failure_kind="runtime_prerequisite", transient_count=3
+    )
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["pending_talk"][0]["cid"] == "auto_192000_371_669"
+    assert state["pending_talk"][0]["retry_reason"] == (
+        "transient_infrastructure_failure"
     )
 
 

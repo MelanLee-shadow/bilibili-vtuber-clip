@@ -102,6 +102,23 @@
   `clouddrive2` → 等真实 CloudFS → recreate 三个消费者 → 逐容器验证。不得
   删除残件，也不得在 ext4 目录上继续录制。`bilive-record-health` cron 也须先
   通过同一 `--probe-only` 门，避免健康报告反过来制造非空挂载点。
+- **CloudFS 写缓存可读 ≠ 云端已持久化。** 录播姬直写 FUSE，字节先落
+  clouddrive2 本地写缓存；若上传全部 Fatal（etag/md5 不一致、分片 URL 失效），
+  FUSE 视图仍展示文件、选片照常通过，但缓存一丢（如容器重启）字节即蒸发
+  （2026-07-25 两场次实损）。
+- `scripts/clouddrive_upload_fatal_sentinel.sh`（部署为
+  `/opt/bilive/autoslice/upload_fatal_sentinel.sh`，*/5 cron）扫描 clouddrive2
+  日志中的 Fatal 上传错误：victim 仍可读时立即把字节抢救到
+  `/opt/bilive/upload-fatal-rescue/`（守磁盘下限、不覆盖既有副本），并追加
+  `reports/ALERT_UPLOAD_FATAL.txt`（NEEDS HUMAN）。抢救副本是止损证据；
+  重新入云仍是人工决策。
+- producer 源缺失语义（`producer_media._absent_source_media_error`）：挂载根
+  不可读 → `SOURCE_RECORDING_ROOT_UNAVAILABLE`（基础设施等待，watchdog 修复
+  后按 timer 重试）；挂载健康但源文件消失 → `SOURCE_MEDIA_MISSING`（终态
+  `candidate_rejected/source_media_missing`，不自动复跑，复活只走 sanctioned
+  `scripts/revive_rejected_candidates.py`）。unknown 失败只有一次有界重试，
+  无限 timer 重试仅限 `INFRASTRUCTURE_WAIT_FAILURE_KINDS`
+  （`runtime_prerequisite`/`provider_transient`）。
 - 活着的容器不等于健康录制。直播中两轮无字节增长、状态过期、弹幕/录制长期
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行
