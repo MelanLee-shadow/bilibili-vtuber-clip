@@ -49,6 +49,55 @@ def _extract_frame_jpeg(media_path: Path, ms: int, *, max_width: int = 1280) -> 
         return Path(handle.name).read_bytes()
 
 
+def image_vision_probe(
+    image_path: Path,
+    question: str,
+    *,
+    api_base: str,
+    api_key: str,
+    model: str = "gpt-5.6-sol",
+    timeout_seconds: float = 90.0,
+    max_tokens: int = 1024,
+    max_width: int = 1280,
+) -> dict[str, object]:
+    """One hash-bound visual Q&A about an on-disk image (e.g. a final cover).
+
+    Same receipt shape as ``frame_vision_probe``; ``image_sha256`` binds the
+    exact source file bytes while ``frame_sha256`` binds the downsampled JPEG
+    actually shown to the model. Never raises.
+    """
+
+    receipt: dict[str, object] = {
+        "schema_version": SCHEMA_VERSION,
+        "image_path": str(image_path),
+        "question": question,
+        "model": model,
+        "provider": "cpa",
+    }
+    try:
+        source_bytes = Path(image_path).read_bytes()
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as handle:
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(image_path),
+                    "-vf", f"scale=min({max_width}\\,iw):-2",
+                    "-q:v", "4",
+                    handle.name,
+                ],
+                capture_output=True, check=True,
+            )
+            frame_png = Path(handle.name).read_bytes()
+    except Exception as exc:
+        receipt.update(status="UNAVAILABLE", reason_code="IMAGE_READ_FAILED",
+                       error=f"{type(exc).__name__}: {exc}")
+        return receipt
+    receipt["image_sha256"] = _sha256_bytes(source_bytes)
+    return _vision_qa(receipt, frame_png, question,
+                      api_base=api_base, api_key=api_key, model=model,
+                      timeout_seconds=timeout_seconds, max_tokens=max_tokens)
+
+
 def frame_vision_probe(
     media_path: Path,
     ms: int,
@@ -76,6 +125,22 @@ def frame_vision_probe(
         receipt.update(status="UNAVAILABLE", reason_code="FRAME_EXTRACT_FAILED",
                        error=f"{type(exc).__name__}: {exc}")
         return receipt
+    return _vision_qa(receipt, frame_png, question,
+                      api_base=api_base, api_key=api_key, model=model,
+                      timeout_seconds=timeout_seconds, max_tokens=max_tokens)
+
+
+def _vision_qa(
+    receipt: dict[str, object],
+    frame_png: bytes,
+    question: str,
+    *,
+    api_base: str,
+    api_key: str,
+    model: str,
+    timeout_seconds: float,
+    max_tokens: int,
+) -> dict[str, object]:
     receipt["frame_sha256"] = _sha256_bytes(frame_png)
     data_uri = "data:image/jpeg;base64," + base64.b64encode(frame_png).decode("ascii")
     # CPA 目录只有 gpt-5.x（Responses-API 原生；chat/completions 会误路由

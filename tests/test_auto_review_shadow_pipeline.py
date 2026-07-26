@@ -4981,6 +4981,19 @@ def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):
         Image.new("RGB", (1920, 1080), (90, 120, 40)).save(kwargs["output_path"])
         return {"status": "AI_BACKGROUND_READY", "selected_model": "gpt-image-2", "attempted_models": ["gpt-image-2"]}
 
+    def fake_face_verify(final_cover_path, *, base_url, api_key):
+        import hashlib
+
+        sha = hashlib.sha256(Path(final_cover_path).read_bytes()).hexdigest()
+        return {
+            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "status": "PASS",
+            "witness": {"status": "OBSERVED", "image_sha256": sha},
+        }
+
+    monkeypatch.setattr(
+        publish_staging, "_verify_polish_face_integrity", fake_face_verify
+    )
     result = publish_staging._stage_lidousha_ai_cover(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
@@ -5282,3 +5295,192 @@ def test_cover_font_checks_every_chain_member_and_blocks_notdef(monkeypatch):
             "怪獣の花唄", selection_audit=audit2
         )
     assert "獣" in audit2["glyph_risk"]
+
+
+def _fake_polish_image_edit(*, output_path, reference_path, **_kwargs):
+    from PIL import Image
+
+    Image.open(reference_path).save(output_path)
+    return {
+        "status": "AI_BACKGROUND_READY",
+        "selected_model": "gpt-image-2",
+        "attempted_models": ["gpt-image-2"],
+    }
+
+
+def test_polish_cover_face_gate_retries_contain_then_passes(tmp_path, monkeypatch):
+    """FACE_INCOMPLETE on the fit-crop card must retry once with the
+    whole-face contain card before any fail-closed decision (424 case)."""
+
+    import hashlib
+
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "polish")
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    media = _write_synthetic_performance_clip(tmp_path)
+    face_calls: list[str] = []
+
+    def fake_face_verify(final_cover_path, *, base_url, api_key):
+        assert base_url and api_key
+        face_calls.append(str(final_cover_path))
+        if len(face_calls) == 1:
+            return {
+                "schema_version": "lidousha-cover-polish-face-verification.v1",
+                "status": "FAIL",
+                "reason_code": "FACE_INCOMPLETE",
+                "witness": {"status": "OBSERVED", "image_sha256": "0" * 64},
+            }
+        sha = hashlib.sha256(Path(final_cover_path).read_bytes()).hexdigest()
+        return {
+            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "status": "PASS",
+            "witness": {"status": "OBSERVED", "image_sha256": sha},
+        }
+
+    monkeypatch.setattr(
+        publish_staging, "_verify_polish_face_integrity", fake_face_verify
+    )
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="polish-face-retry",
+        title="【李豆沙】和别的女同一起挖人",
+        cover_text="和别的女同一起挖人",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=_fake_polish_image_edit,
+        punch_allowed=True,
+    )
+    assert result["status"] == "AI_COVER_READY", result
+    generation = result["cover_generation"]
+    assert generation["method"] == "screenshot_polish"
+    assert generation["polish_face_verification"]["status"] == "PASS"
+    transform = generation["screenshot_graphic_poster"]["source_frame_transform"]
+    assert transform["card_fit"] == "contain_face_safe"
+    assert transform["crop_applied"] is False
+    assert len(face_calls) == 2
+
+
+def test_polish_cover_face_gate_blocks_when_never_complete(tmp_path, monkeypatch):
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "polish")
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    media = _write_synthetic_performance_clip(tmp_path)
+    face_calls: list[str] = []
+
+    def fake_face_verify(final_cover_path, *, base_url, api_key):
+        face_calls.append(str(final_cover_path))
+        return {
+            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "status": "FAIL",
+            "reason_code": "FACE_INCOMPLETE",
+            "witness": {"status": "OBSERVED", "image_sha256": "0" * 64},
+        }
+
+    monkeypatch.setattr(
+        publish_staging, "_verify_polish_face_integrity", fake_face_verify
+    )
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="polish-face-blocked",
+        title="【李豆沙】脸不完整必须拦下",
+        cover_text="脸不完整必须拦下",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=_fake_polish_image_edit,
+        punch_allowed=True,
+    )
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert "COVER_POLISH_FACE_UNVERIFIED" in result["reason_codes"]
+    assert len(face_calls) == 2
+    route = result["cover_generation"]["route_decision"]
+    assert route["execution_status"] == "BLOCKED"
+
+
+def test_polish_cover_face_gate_unavailable_blocks_without_retry(
+    tmp_path, monkeypatch
+):
+    """Verifier outage is fail-closed (cover-only retry later), not a loop."""
+
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import _write_synthetic_performance_clip
+
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "polish")
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    media = _write_synthetic_performance_clip(tmp_path)
+    face_calls: list[str] = []
+
+    def fake_face_verify(final_cover_path, *, base_url, api_key):
+        face_calls.append(str(final_cover_path))
+        return {
+            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "status": "FAIL",
+            "reason_code": "VERIFIER_UNAVAILABLE",
+            "witness": {"status": "UNAVAILABLE"},
+        }
+
+    monkeypatch.setattr(
+        publish_staging, "_verify_polish_face_integrity", fake_face_verify
+    )
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="polish-face-unavailable",
+        title="【李豆沙】验证不可用也要拦",
+        cover_text="验证不可用也要拦",
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=_fake_polish_image_edit,
+        punch_allowed=True,
+    )
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert "COVER_POLISH_FACE_UNVERIFIED" in result["reason_codes"]
+    assert len(face_calls) == 1
+
+
+def test_screenshot_poster_face_safe_contain_keeps_whole_frame(tmp_path):
+    from PIL import Image
+
+    from src.autoslice.cover_generation import LidoushaCoverArtDirection
+    from src.autoslice.cover_screenshot_poster import (
+        _compose_screenshot_poster_background,
+    )
+
+    source = tmp_path / "closeup.png"
+    Image.new("RGB", (1920, 1080), (200, 180, 170)).save(source)
+    direction = LidoushaCoverArtDirection(
+        role="shy_cute_default",
+        expression_en="soft smile",
+        background_style="cobalt-comic-burst",
+        layout="banner",
+        hook_color="yellow",
+        is_song=False,
+        cover_punch=("整脸卡",),
+    )
+    fit = _compose_screenshot_poster_background(
+        source, tmp_path / "fit.png", art_direction=direction
+    )
+    contain = _compose_screenshot_poster_background(
+        source,
+        tmp_path / "contain.png",
+        art_direction=direction,
+        face_safe_contain=True,
+    )
+    assert fit["source_frame_transform"]["card_fit"] == "fit_crop"
+    assert fit["source_frame_transform"]["crop_applied"] is True
+    assert contain["source_frame_transform"]["card_fit"] == "contain_face_safe"
+    assert contain["source_frame_transform"]["crop_applied"] is False
+    box = contain["source_frame_transform"]["rendered_content_box"]
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    # 16:9 preserved inside the 1640×700 card: no vertical decapitation.
+    assert abs((width / height) - (16 / 9)) < 0.02
+    assert contain["source_frame_transform"]["center_4_3_safe"] is True

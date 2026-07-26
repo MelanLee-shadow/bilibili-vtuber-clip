@@ -1423,6 +1423,85 @@ def _decide_cover_treatment(
     return "cpa_redraw", f"no strong real moment (score={best:.2f})"
 
 
+_POLISH_FACE_QUESTION = (
+    "这是一张视频封面成品。请只判断画面中人物的脸部是否完整可见："
+    "双眼、嘴巴、下巴都必须在画面内，且没有被画面边缘或卡片边框切断。"
+    "同时报告人物是否吐舌头。只输出 JSON："
+    '{"face_complete": true|false, "missing": ["eyes"|"mouth"|"chin"], '
+    '"tongue_out": true|false, "reason": "简短中文说明"}'
+)
+
+
+def _verify_polish_face_integrity(
+    final_cover_path: Path,
+    *,
+    base_url: str,
+    api_key: str,
+) -> dict[str, object]:
+    """Final-pixel face-integrity verdict for AI-polished screenshot covers.
+
+    The polish model may return a much larger face than the prompt asked for
+    (2026-07-26 BV1E93L6rErV: mouth and chin cut by the fixed card crop went
+    public). Polished pixels cannot inherit source-frame geometry, so the
+    final bytes get an independent CPA vision verdict (Ivan 2026-07-25:
+    看画面的任务交给 CPA). Failure here is fail-closed but repairable —
+    cover-only maintenance retries on the next tick.
+    """
+
+    if not base_url or not api_key:
+        return {
+            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "status": "FAIL",
+            "reason_code": "VERIFIER_UNAVAILABLE",
+            "detail": "CPA credentials unavailable for face verification",
+        }
+    from src.autoslice.cpa_frame_witness import image_vision_probe
+
+    receipt = image_vision_probe(
+        final_cover_path,
+        _POLISH_FACE_QUESTION,
+        api_base=base_url,
+        api_key=api_key,
+    )
+    verification: dict[str, object] = {
+        "schema_version": "lidousha-cover-polish-face-verification.v1",
+        "witness": receipt,
+    }
+    if receipt.get("status") != "OBSERVED":
+        verification.update(
+            status="FAIL",
+            reason_code="VERIFIER_UNAVAILABLE",
+            detail=str(receipt.get("error") or receipt.get("status")),
+        )
+        return verification
+    answer = str(receipt.get("answer") or "")
+    try:
+        verdict = json.loads(answer[answer.index("{"): answer.rindex("}") + 1])
+        if not isinstance(verdict, dict):
+            raise ValueError("verdict is not an object")
+    except ValueError:
+        verification.update(
+            status="FAIL",
+            reason_code="VERDICT_UNPARSEABLE",
+            detail=answer[:200],
+        )
+        return verification
+    verification["verdict"] = verdict
+    if verdict.get("face_complete") is True and verdict.get("tongue_out") is not True:
+        verification.update(status="PASS")
+    else:
+        verification.update(
+            status="FAIL",
+            reason_code=(
+                "TONGUE_OUT"
+                if verdict.get("tongue_out") is True
+                else "FACE_INCOMPLETE"
+            ),
+            detail=str(verdict.get("reason") or verdict.get("missing") or ""),
+        )
+    return verification
+
+
 def _materialize_screenshot_polish(
     *,
     screenshot_base: Path,
@@ -1630,20 +1709,55 @@ def _stage_screenshot_direct_cover(
             api_key=api_key,
             cover_generation=cover_generation,
         )
-        poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"
-        poster_evidence = _compose_screenshot_poster_background(
-            overlay_source,
-            poster_path,
-            art_direction=art_direction,
-            preserve_full_frame=relationship_visual_required,
-            source_ai_modified=method == "screenshot_polish",
+        poster_source = overlay_source
+        # Camera-window sources are near-full-face by construction; the fixed
+        # fit-crop card cannot be trusted with them (BV1E93L6rErV face cut).
+        face_safe_contain = bool(
+            isinstance(crop_evidence, Mapping)
+            and crop_evidence.get("camera_window_crop")
         )
+        poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"
+        final_cover_path = covers_dir / f"{candidate_id}.screenshot-title.cover.png"
+        face_verification: dict[str, object] | None = None
+        while True:
+            poster_evidence = _compose_screenshot_poster_background(
+                poster_source,
+                poster_path,
+                art_direction=art_direction,
+                preserve_full_frame=relationship_visual_required,
+                source_ai_modified=method == "screenshot_polish",
+                face_safe_contain=(
+                    face_safe_contain and not relationship_visual_required
+                ),
+            )
+            overlay = _overlay_lidousha_cover_title(
+                poster_path, final_cover_path, cover_text=cover_text, art_direction=art_direction
+            )
+            if method != "screenshot_polish":
+                break
+            # Polished pixels cannot inherit source-frame geometry: the polish
+            # model may return a far larger face than prompted, and the pixel
+            # gate never checked face completeness (2026-07-26 424 incident).
+            face_verification = _verify_polish_face_integrity(
+                final_cover_path,
+                base_url=base_url,
+                api_key=api_key,
+            )
+            if face_verification.get("status") == "PASS":
+                break
+            if (
+                face_verification.get("reason_code") == "FACE_INCOMPLETE"
+                and not face_safe_contain
+                and not relationship_visual_required
+            ):
+                # 修复优先于 fail-close：先换整脸 contain 卡重排一次再终判。
+                face_safe_contain = True
+                continue
+            break
+        if face_verification is not None:
+            cover_generation["polish_face_verification"] = face_verification
         overlay_source = poster_path
         cover_generation["screenshot_graphic_poster"] = poster_evidence
-        final_cover_path = covers_dir / f"{candidate_id}.screenshot-title.cover.png"
-        overlay = _overlay_lidousha_cover_title(
-            overlay_source, final_cover_path, cover_text=cover_text, art_direction=art_direction
-        )
         cover_generation["art_direction"] = asdict(art_direction)
         if art_direction.emote_id:
             cover_generation["emote"] = {"status": "IGNORED_SCREENSHOT_MODE"}
@@ -1669,6 +1783,44 @@ def _stage_screenshot_direct_cover(
                 **overlay,
             }
         )
+        if method == "screenshot_polish":
+            bound_sha = str(cover_generation.get("final_cover_sha256") or "")
+            witness = (
+                face_verification.get("witness")
+                if isinstance(face_verification, Mapping)
+                else None
+            )
+            witness_sha = (
+                "sha256:" + str(witness.get("image_sha256"))
+                if isinstance(witness, Mapping) and witness.get("image_sha256")
+                else None
+            )
+            if (
+                not isinstance(face_verification, Mapping)
+                or face_verification.get("status") != "PASS"
+                or witness_sha != bound_sha
+            ):
+                detail = (
+                    "polished cover lacks a PASS face-integrity verdict bound "
+                    "to the final cover hash: "
+                    + str(
+                        (face_verification or {}).get("reason_code")
+                        or "VERIFICATION_MISSING"
+                    )
+                )
+                record_cover_route_execution(
+                    cover_generation,
+                    actual_treatment=None,
+                    execution_status="BLOCKED",
+                    image_generation_attempted=polish_attempted,
+                    image_generation_used=True,
+                    detail=detail,
+                )
+                return _blocked_ai_cover_result(
+                    cover_generation,
+                    ["COVER_POLISH_FACE_UNVERIFIED"],
+                    detail,
+                )
         final_participant_verification = None
         if relationship_visual_required:
             if method == "screenshot_direct":

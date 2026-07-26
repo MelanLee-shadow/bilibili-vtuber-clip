@@ -65,6 +65,7 @@ def _compose_screenshot_poster_background(
     art_direction: LidoushaCoverArtDirection,
     preserve_full_frame: bool = False,
     source_ai_modified: bool = False,
+    face_safe_contain: bool = False,
 ) -> dict[str, object]:
     """Put a faithful real-moment screenshot on a visibly rotating poster.
 
@@ -183,6 +184,31 @@ def _compose_screenshot_poster_background(
         source.paste(contained, contained_offset)
         angle = 0.0
         card_y = 505
+    elif face_safe_contain:
+        # Camera-window sources are near-full-face by construction: a fixed
+        # 1640×700 fit-crop decapitates any close-up whose mouth sits low in
+        # the frame (2026-07-26 BV1E93L6rErV case — cover shipped with the
+        # face cut at the eyes). Contain keeps the whole face; paper bands
+        # absorb the aspect difference exactly like the relationship card.
+        card_inner_size = (1640, 700)
+        contained = ImageOps.contain(
+            source_original,
+            card_inner_size,
+            method=Image.Resampling.LANCZOS,
+        )
+        source = Image.new("RGB", card_inner_size, paper)
+        contained_offset = (
+            (card_inner_size[0] - contained.width) // 2,
+            (card_inner_size[1] - contained.height) // 2,
+        )
+        source.paste(
+            ImageEnhance.Color(
+                ImageEnhance.Contrast(contained).enhance(1.04)
+            ).enhance(1.05),
+            contained_offset,
+        )
+        angle = float(palette["rotation"])
+        card_y = 315
     else:
         card_inner_size = (1640, 700)
         contained_offset = (0, 0)
@@ -206,7 +232,7 @@ def _compose_screenshot_poster_background(
     canvas.alpha_composite(shadow, (x + 18, y + 24))
     canvas.alpha_composite(card, (x, y))
 
-    if preserve_full_frame:
+    if preserve_full_frame or face_safe_contain:
         content_box = [
             x + 18 + contained_offset[0],
             y + 18 + contained_offset[1],
@@ -248,8 +274,14 @@ def _compose_screenshot_poster_background(
             "input_sha256": "sha256:" + _sha256(screenshot_path),
             "source_size": source_size,
             "rendered_content_box": content_box,
-            "crop_applied": not preserve_full_frame,
+            "crop_applied": not (preserve_full_frame or face_safe_contain),
             "full_frame_preserved": preserve_full_frame,
+            "face_safe_contain": bool(face_safe_contain),
+            "card_fit": (
+                "full_frame"
+                if preserve_full_frame
+                else ("contain_face_safe" if face_safe_contain else "fit_crop")
+            ),
             "ai_modified": bool(source_ai_modified),
             "center_4_3_box": center_4_3_box,
             "center_4_3_safe": center_4_3_safe,

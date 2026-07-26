@@ -70,6 +70,19 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   participant proof；禁止简单复制 JSON 字段。
 - CPA 路线必须有真实 on-disk AI background/final cover hash、attempted/selected model 与调用证据；
   `model`/`method` 默认字符串或 `ai_cover_generated=true` 不能冒充生图成功。
+- `screenshot_polish` 即使单人也必须有最终像素验证：polish 模型可能返回比 prompt
+  要求大得多的脸（2026-07-26 BV1E93L6rErV 案：固定 fit-crop 卡把嘴/下巴裁掉上了公开面），
+  polished 像素不得继承源帧几何。生产端 `polish_face_verification`
+  （`lidousha-cover-polish-face-verification.v1`，CPA sol 视觉问答，含吐舌检查）必须
+  PASS 且 witness image hash 逐字节等于 final cover SHA；`FACE_INCOMPLETE` 先以
+  face-safe contain 卡（`card_fit=contain_face_safe`，整脸装入 1640×700 卡）重排一次
+  再终判；仍失败或验证不可用即 `COVER_POLISH_FACE_UNVERIFIED` 阻断（候选留在
+  cover-only 维护，可下轮重试）。相机窗来源（crop 证据 `camera_window_crop=true`）
+  为近全幅大脸，确定性直接走 contain 卡。包审计端同因阻断
+  （`SCREENSHOT_POLISH_FACE_UNVERIFIED`）。已发布稿修复：
+  `scripts/repair_screenshot_cover.py` 从既有 hash-bound polish 工件经同一生产函数重排
+  并出回执；线上替换走 `scripts/bili_cover_edit.py`（cover-only 授权编辑+读回回执，
+  编辑不占投稿配额）。
 - **所有关系型路线**都必须有最终人物 proof。`screenshot_polish` 与 CPA/AI 因像素已被修改，
   绝不能继承 source participant 声明，必须由独立 final-pixel verifier 逐个确认双方可见、
   身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`

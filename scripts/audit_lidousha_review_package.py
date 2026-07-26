@@ -826,6 +826,38 @@ def _audit_finished_cover_evidence(
                     "hashes, and rendered title text"
                 ),
             )
+        if method == "screenshot_polish":
+            # Polished pixels cannot inherit source-frame geometry; the final
+            # bytes need an independent PASS face-integrity verdict bound to
+            # the exact final cover hash (2026-07-26 BV1E93L6rErV face cut).
+            face_verification = generation.get("polish_face_verification")
+            witness = (
+                face_verification.get("witness")
+                if isinstance(face_verification, Mapping)
+                else None
+            )
+            witness_sha = (
+                "sha256:" + str(witness.get("image_sha256"))
+                if isinstance(witness, Mapping) and witness.get("image_sha256")
+                else None
+            )
+            if not (
+                isinstance(face_verification, Mapping)
+                and face_verification.get("status") == "PASS"
+                and witness_sha
+                and witness_sha == str(final_hash or "")
+            ):
+                _add_issue(
+                    issues,
+                    "SCREENSHOT_POLISH_FACE_UNVERIFIED",
+                    stem=stem,
+                    path=record_path,
+                    detail=(
+                        "screenshot_polish requires a PASS face-integrity "
+                        "verdict whose witness image hash equals the final "
+                        "cover sha256"
+                    ),
+                )
         return
 
     ai_background_path = (
