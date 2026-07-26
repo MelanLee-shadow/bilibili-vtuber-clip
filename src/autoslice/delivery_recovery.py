@@ -1446,6 +1446,10 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "cover_diversity_slot": record.get("cover_diversity_slot"),
             "recovery_source_record_sha256": _canonical_object_sha256(record),
         }
+        # sanctioned-revival 审计块必须跨 requeue 存活（复活是治理事件，
+        # 丢块等于抹掉“谁在何据下解冻化石态”的证据链）。
+        if record.get("revivals"):
+            item["revivals"] = list(record["revivals"])
         if given_end_ms is not None:
             item["given_end_ms"] = given_end_ms
             item["given_end_authority"] = given_end_authority

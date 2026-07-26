@@ -942,6 +942,17 @@ def classify_talk_failure(attempt_output: str) -> dict:
         "FileNotFoundError" in tail or "No such file" in tail
     ):
         kind, stage, recoverable = "runtime_prerequisite", "speaker_preflight", True
+    elif "SOURCE_RECORDING_ROOT_UNAVAILABLE" in tail:
+        # 录制 mount 掉了——看门狗恢复后同一候选照常可产出，属基础设施等待。
+        kind, stage, recoverable = (
+            "runtime_prerequisite",
+            "source_media_binding",
+            True,
+        )
+    elif "SOURCE_MEDIA_MISSING" in tail:
+        # 选片后源录像消失（mount 仍健康）：字节已不可得，重试永远失败。
+        # 标成可恢复会让 runner 误判为外部故障并中断当批，饿死健康场次的候选。
+        kind, stage, recoverable = "source_media", "source_media_binding", False
     elif "SPEAKER_REVIEW_REQUIRED" in tail:
         kind, stage, recoverable = "speaker_evidence", "speaker_finalization", False
     elif _runner._speaker_evidence_insufficient_failure(tail):
@@ -1591,6 +1602,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         )
     if "cover_diversity_slot" in item:
         result["cover_diversity_slot"] = item["cover_diversity_slot"]
+    # 复活审计块贯穿 requeue item → 新 pick，缺一环即断链
+    if item.get("revivals"):
+        result["revivals"] = list(item["revivals"])
     # Classify only bytes written by this subprocess attempt.  The log is
     # append-only; a stale boundary marker followed by a transient CPA error
     # must not make the new attempt terminal again.
@@ -1643,6 +1657,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             result["reason_codes"] = [
                 "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY"
             ]
+            return result
+        if "SOURCE_MEDIA_MISSING" in tail:
+            # 终态且不复跑：源字节没了，`failed` 会被 requeue 成永久空转。
+            result["status"] = "candidate_rejected"
+            result["rejection_reason"] = "source_media_missing"
+            result["reason_codes"] = ["SOURCE_MEDIA_MISSING"]
             return result
         # Boundary exhaustion is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.

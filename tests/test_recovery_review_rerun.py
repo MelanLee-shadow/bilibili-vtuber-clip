@@ -427,6 +427,12 @@ def test_failure_requeue_preserves_hash_bound_publication_fields(
     expected_authority = copy.deepcopy(
         failed_record["recovery_publication_authority"]
     )
+    revival_block = {
+        "schema_version": "candidate-revival.v1",
+        "revived_at": "2026-07-25T23:00:00Z",
+        "reason": "test revival audit block",
+        "fix_commit": "deadbeef",
+    }
     failed_record.update(
         {
             "status": "failed",
@@ -438,6 +444,7 @@ def test_failure_requeue_preserves_hash_bound_publication_fields(
                 recorded_recovery_fingerprint
             ),
             "next_retry_at_epoch": next_retry_at_epoch,
+            "revivals": [revival_block],
         }
     )
     state["picks"] = [failed_record]
@@ -452,6 +459,8 @@ def test_failure_requeue_preserves_hash_bound_publication_fields(
         expected_authority
     )
     assert retry["recovery_publication_authority"] == expected_authority
+    # 复活审计块是治理证据，必须跨 requeue 存活
+    assert retry["revivals"] == [revival_block]
 
 
 def test_explicit_recovery_rejects_public_title_for_unqueued_candidate(
