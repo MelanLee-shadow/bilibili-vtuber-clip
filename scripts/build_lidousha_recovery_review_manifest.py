@@ -296,9 +296,10 @@ def build_manifest(
         if candidate_id in records_by_id:
             raise ManifestBuildError(f"duplicate candidate record: {candidate_id}")
         records_by_id[candidate_id] = (stem, record_path, record)
-    if set(records_by_id) != set(candidate_ids):
+    if set(records_by_id) != set(release_scope or candidate_ids):
         raise ManifestBuildError(
-            "delivered record set does not exactly match the selection contract"
+            "delivered record set does not exactly match the "
+            + ("release scope" if release_scope else "selection contract")
         )
 
     items: list[dict[str, Any]] = []
