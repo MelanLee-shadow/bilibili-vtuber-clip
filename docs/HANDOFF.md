@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-07-25 America/New_York (7/24 四条已公开上传；daily 上传链已打通)
+Updated: 2026-07-26 America/New_York (daily-lane 源丢失根治 ce057b7 已部署；7/24 四条已公开上传)
 
 > 本文件只记录尚未完成任务的恢复点，不复制流水线规则。步骤规则只读
 > [pipeline/README.md](pipeline/README.md)，live runtime 只以
@@ -166,6 +166,30 @@ UNRESOLVED finding 阻断——真发生再修（修法参照 1573：finding 由
    最后核对 public/public-tags/Creator/exact-section 四面。3573/672 线上标题当前缺
    `【李豆沙】`（人工标题曾绕过 envelope 门）；registry 以 `ivan_manual_override` 存 Ivan 手定
    正文，`canonicalize_publish_title` 会补前缀成 29/38 字，本轮修复应一并纠正这两条线上标题。
+
+### 2026-07-26 凌晨：daily-lane 源丢失事故根治（ce057b7 已部署 01:19:06Z）
+
+7/25 五候选 `producer_error/unknown` 全军覆没的根因closed：两场次
+（19-20-00、19-50-00）录像只存在于 clouddrive2 写缓存，18:48–18:53Z 上传
+全部 Fatal（etag/md5 不一致 + list_upload_parts 超时），从未入云；缓存丢弃后
+FUSE 视图里的"源"蒸发。字节确认不可恢复（缓存已空、无 quarantine、录播姬
+本地无副本）。修复（全部有测试，见 pipeline/10 新增小节）：
+
+- 源缺失拆两义：`SOURCE_RECORDING_ROOT_UNAVAILABLE`（挂载死，timer 重试）vs
+  `SOURCE_MEDIA_MISSING`（终态 `candidate_rejected/source_media_missing`，
+  复活只走 sanctioned revive）；
+- `CHAT_AUTHORITY_FINAL_ARTIFACT_FAILED` 正确分类为 subtitle_authority 终态
+  （850_940 空转案）；无限 timer 重试收紧到
+  `INFRASTRUCTURE_WAIT_FAILURE_KINDS`，unknown 只保单次有界重试；
+- 新 sentinel `upload_fatal_sentinel.sh`（*/5 cron，部署脚本管装）：Fatal
+  上传即时告警 `reports/ALERT_UPLOAD_FATAL.txt` + 从缓存视图抢救字节到
+  `/opt/bilive/upload-fatal-rescue/`。
+
+公开面复核（01:00Z 前后）：7/24 四条 state=0、标题=回执、已进合集「小李切
+片」；**424（BV1E93L6rErV）封面缺陷**——screenshot-polish 取景把脸裁到只剩
+眼睛（pre-overlay 已裁，封面像素门不验人脸完整性），修复需重生成+authorized
+cover edit，待 Ivan 裁定；3573/672 线上标题缺【李豆沙】前缀仍在（等 V15
+same-BV repair 一并纠）。
 
 ### 2026-07-25 深夜：7/24 四条已公开上传（16f4e0b 证据入库）
 
