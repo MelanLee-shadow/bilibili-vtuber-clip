@@ -193,13 +193,26 @@ Ivan 原话 → upload → uploaded.json 哈希回执）。第 5+ 条待 beans/s
 - same-stem 合同：video stem X 要求包根直下 X.record.json/X.srt/X.cover.png，
   make-manifest 的 --cover 必须指 same-stem 副本。
 
-### V15 r17 根因与修复（237bc45，待部署重启 r18）
+### V15 r17→r18 根因链（237bc45 + 4839a6b，r19 已定时）
 
-r17（b19dfae，CPA 活）五案全败暴露真病根：**resolution 侧 identity replay 重建
-expected scope 时漏传 baseline_tail_cap_ms**（13cbcbf 只修了 is_valid 的 rebuild
-校验，漏了 `_select_initial_boundary` 里三方 dict 相等比较点）→ spec/review 带
-cap、expected 无 cap → 全体 SCOPE_MISMATCH。已抽取 `_replayed_search_scope`
-helper 补 cap+回归测试。1573 另见 cue59/67 provider failure（CPA 瞬断，可重试）。
+r17（b19dfae）五案全败=**resolution 侧 identity replay 重建 expected scope 漏传
+baseline_tail_cap_ms**（13cbcbf 只修 is_valid，漏三方 dict 比较点）→ 全体
+SCOPE_MISMATCH（237bc45 修，抽取 `_replayed_search_scope`）。
+
+r18（237bc45）确认 scope 层已通（候选进入终审），残余两类：
+- **1863 恒 BLOCK=尾锚轴不匹配**：exact pin 是媒体字节终点轴（202720），
+  baseline 覆盖终点是字幕轴（202320），天然差一个 400ms 尾垫；cap 钳 pin →
+  OWNER_EXCLUDED。**pin 模式跳过尾锚**（pin 权威更强；4839a6b+测试）。
+- 672/1475/1573/3573 全部=**声学/correction provider 配额潮汐**：AGY 月配额死
+  + Gemini 免费 3key 日配额尽 + 付费 backup 429（provider-failures.json 实
+  锤）。fail-closed 全部正确（如 3573 cue7 和天依/洛天依 两读法都通，必须声学
+  裁决）。免费 key UTC 07:00 重置。
+- **r19 已定时**：free 端 systemd 一次性 timer `v15-r19-oneshot` 于 2026-07-26
+  07:10 UTC 自动刷树+拉起（脚本 /opt/bilive/autoslice/v15_r19_launch.sh，日志
+  $T/logs/r19-launcher.log）。
+- 部署尸留教训：deploy 外层 5min 超时被杀 → DISABLED 尸留 → 第二次 deploy 视
+  其为既有开关不清除 → 主 lane 静默停 20min。deploy 必须后台无短超时跑；已
+  手动清除该尸留。backlog：deploy 起点发现 DISABLED 已存在时加警告输出。
 
 ### beans/skill 复活状态（第 5+ 条上传的来源）
 
