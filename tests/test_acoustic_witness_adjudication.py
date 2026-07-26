@@ -228,3 +228,65 @@ def test_invalid_witness_always_keeps_current(bad_witness):
     )
     assert repaired is False
     assert branch == "WITNESS_UNAVAILABLE_KEEP_CURRENT"
+
+
+def test_witness_self_count_mismatch_is_disclosed_not_fatal(tmp_path):
+    """A model's off-by-one self-count must never invalidate a clean
+    dictation (2026-07-26: four supporting witnesses on 1209_1410 were all
+    killed by the strict equality). Zero/absent counts stay invalid."""
+
+    from src.autoslice import entity_audio_verifier as eav
+
+    audio = tmp_path / "span.wav"
+    audio.write_bytes(b"RIFFfake")
+    prompt = tmp_path / "prompt.json"
+    prompt.write_text("{}", encoding="utf-8")
+    response = tmp_path / "response.json"
+    response.write_text("{}", encoding="utf-8")
+
+    class Outcome:
+        model = "gemini-3.6-flash"
+        prompt_path = prompt
+        response_path = response
+        provider = "gemini_api"
+        accepted_key_tier = None
+
+    def observed(count):
+        return {
+            "schema_version": eav.WITNESS_SCHEMA,
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": "hai mei you ge zhai ne",
+            "uncertain_positions": [],
+            "syllable_count": count,
+            "confidence": 0.9,
+        }
+
+    kwargs = dict(
+        request={"kind": "subtitle_span_acoustic_witness"},
+        request_sha="sha256:0" * 1,
+        outcome=Outcome(),
+        source_sha256="sha256:deadbeef",
+        audio_path=audio,
+        start_ms=0,
+        end_ms=2000,
+        timeline_binding={},
+    )
+    off_by_one = eav._subtitle_acoustic_witness_verdict(
+        observed=observed(5), **kwargs
+    )
+    assert off_by_one["status"] == "OBSERVED"
+    assert off_by_one["self_count_mismatch"] is True
+    assert off_by_one["syllable_count"] == 6
+
+    exact = eav._subtitle_acoustic_witness_verdict(
+        observed=observed(6), **kwargs
+    )
+    assert exact["status"] == "OBSERVED"
+    assert exact["self_count_mismatch"] is False
+
+    zero = eav._subtitle_acoustic_witness_verdict(
+        observed=observed(0), **kwargs
+    )
+    assert zero.get("status") != "OBSERVED"
+    assert "WITNESS_REPORT_INVALID" in str(zero)

@@ -735,8 +735,14 @@ def _subtitle_acoustic_witness_verdict(
         )
         and not isinstance(syllable_count, bool)
         and isinstance(syllable_count, int)
-        and syllable_count == len(tokens)
+        and syllable_count > 0
     )
+    # The witness's substance is heard_pinyin itself; syllable_count is a
+    # redundant self-count that models routinely get off by one (2026-07-26:
+    # four clean supporting witnesses on 1209_1410 were all invalidated by
+    # this arithmetic). The recount below is authoritative; a mismatch is
+    # disclosed, never fatal.
+    self_count_mismatch = report_valid and syllable_count != len(tokens)
     if not report_valid:
         return _uncertain(
             request,
@@ -751,6 +757,7 @@ def _subtitle_acoustic_witness_verdict(
         "heard_pinyin": " ".join(tokens),
         "uncertain_positions": [int(v) for v in uncertain_positions],
         "syllable_count": len(tokens),
+        "self_count_mismatch": self_count_mismatch,
         "confidence": float(confidence),
         "reason": str(observed.get("reason") or "")[:300],
         "source_media_sha256": source_sha256,
