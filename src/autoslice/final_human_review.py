@@ -787,6 +787,22 @@ def _publication_target(
             "FINAL_HUMAN_REVIEW_PUBLICATION_AUTHORITY_INVALID",
             source,
         )
+    def _authority_title_binding_ok(
+        authority: Mapping[str, object], title: str
+    ) -> bool:
+        observed = authority.get("observed_public_title")
+        if observed == title:
+            return True
+        # 3573/672 case (Ivan-planned prefix repair): the live title was a
+        # manual override missing the 【李豆沙】 prefix; the repair publishes
+        # the canonicalized form. Only that exact relationship may differ.
+        if authority.get("title_mode") != "ivan_manual_override":
+            return False
+        if not isinstance(observed, str) or not observed:
+            return False
+        from src.autoslice.title_policy import canonicalize_publish_title
+
+        return canonicalize_publish_title(observed) == title
     bvid = authority.get("bvid")
     aid = authority.get("aid")
     cid = authority.get("cid")
@@ -803,7 +819,7 @@ def _publication_target(
         or cid <= 0
         or not isinstance(authority_sha256, str)
         or _SHA256_RX.fullmatch(authority_sha256) is None
-        or authority.get("observed_public_title") != title
+        or not _authority_title_binding_ok(authority, title)
     ):
         raise FinalHumanReviewError(
             "FINAL_HUMAN_REVIEW_PUBLICATION_AUTHORITY_INVALID",
@@ -1002,9 +1018,22 @@ def _manifest_items(
             "final_duration_ms": final_duration_ms,
         }
 
-    if _declared_candidate_list(
+    exact_ids = _declared_candidate_list(
         review_manifest.get("exact_candidate_ids")
-    ) != order:
+    )
+    # Ivan 2026-07-26 per-BV ruling: a release-scoped manifest carries only
+    # the scoped items; the exact contract identity stays intact and the
+    # scope must be its subset.
+    scope = review_manifest.get("partial_release_scope")
+    scoped_ids = (
+        _declared_candidate_list(scope.get("candidates"))
+        if isinstance(scope, Mapping)
+        else []
+    )
+    expected_order = scoped_ids if scoped_ids else exact_ids
+    if expected_order != order or (
+        scoped_ids and not set(scoped_ids) <= set(exact_ids)
+    ):
         raise FinalHumanReviewError(
             "FINAL_HUMAN_REVIEW_MANIFEST_CANDIDATE_SET_INVALID"
         )
@@ -1014,7 +1043,7 @@ def _manifest_items(
         or _declared_candidate_list(
             selection_contract.get("candidate_ids")
         )
-        != order
+        != exact_ids
         or selection_contract.get("mode")
         != "EXACT_CANDIDATE_SET_NO_BACKFILL"
     ):
