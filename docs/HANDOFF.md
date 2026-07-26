@@ -295,7 +295,25 @@ revival 块——审计持久性缺陷记 backlog）。
    输出=闭集选择+引用证据的理由。
 3. 防顺从铁律保留：CPA 只能从闭集（现文本/提案/平行句读法）选或 UNCERTAIN，
    不得生成新字；选择的拼音须与 witness 拼音族相容（代码层校验）。
-尚未实施——先完成 7/24 权宜上传（Ivan 行军令优先），随后做 Phase 1 手术。
+
+**Phase 1 已实施（ff68178，2026-07-26 Ivan 开工令）——未部署**：
+- 新模块 `acoustic_witness_adjudication.py`：witness request 物理剥离候选
+  （verifier 见到带候选的 witness request 直接拒）、拼音相容门（`?`/自报不
+  确定位=通配；acoustic_delete 需明显优势）、CPA 法官闭集选择（集外回答=
+  拒答）。听写 prompt 零候选零汉字语境。
+- 改造面：`adjudicate_context_finding` + `adjudicate_exact_release_findings`
+  （correction pass+exact 终审闭环）；mutation-authority 回执字节级不变
+  （上传 audit 合同零改动）；exact 关闭现在要求法官选 CURRENT 且听写方向
+  一致（compat_current>proposed 且 ≥0.75）。旧 fit 分支枚举退役：新
+  policy_branch 有 WITNESS_JUDGE_APPLY_PROPOSED / JUDGE_KEEPS_CURRENT /
+  JUDGE_UNCERTAIN_KEEP_CURRENT / JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT。
+- 每层降级 fail-closed；Gemini 消耗持平（1 听写替代 1 fit），选字推理挪到
+  CPA 文本 token。测试 2403 全绿（15 新增防顺从/边界）。
+- **Phase 2 未动**：entity/read-aloud 车道仍走旧 forced-choice。
+- 同日 Ivan 音频亲裁 3573 cue7=「和天依的联动」入 ledger（509738e，拦
+  「洛天依」复提）；测试 737 案例即该真案。
+- **部署协调**：另一 agent 在 free 工作中（ce057b7 已部署），我停手不部署；
+  ff68178+509738e 入下次部署后 V15 下一轮生效。
 
 ## 约束与阻塞判据
 
