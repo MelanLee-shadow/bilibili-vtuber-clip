@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1Eo3L6zEdU",
+  "aid": 116983332868392,
+  "cid": 40300644946,
+  "title": "【李豆沙】对手为了让李豆沙赢偷偷卸光技能，小李刚说“我哭死”，又嫌赢得无趣，得知刮痧百局后笑崩",
+  "uploaded_at": "2026-07-26T00:03:47+0000",
+  "video_sha256": "b3cbc42c541d14743279c23389a926f82c8342e1bbe681f5a49e78e0f8f20b89",
+  "cover_sha256": "c11cae46d19d7cad59532bca0f6a9a55b4f5e83547b3fcb69e729acbefca7392",
+  "record_sha256": "22ebd686fe9c9d6eb5670333076a85e55ef4bf7144f83414eda51ff51d2560f2",
+  "subtitle_sha256": "a97c4d9db2d99acafa67cd2e514664ca25898b8bff8dfcb2eba2ae3f1ef9bdaf",
+  "package_audit_sha256": "889fb60c7b33b725a06a17d8759480b044a30155fd90ce05d20780eaae79a984",
+  "review_manifest_sha256": "c128d085dd8fbc52d8c2cd70d5d283cc65818d849de31c652757389a15e4bf61",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/auto_193129_537_702.recut.burned-final-sapphire72.upload_manifest.json",
+  "manifest_sha256": "5b3d3d1528403e5f7d53da28254809cca53947d341edf833543f6afbeef9a018",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/auto_193129_537_702.recut.burned-final-sapphire72.public_verify.json",
+  "public_verify_sha256": "5e6356b8f60fbff37742247cb5ab9912632e8a09c6a771d4843fc5c2f64f94e7",
+  "authorized_by": "Ivan",
+  "authorization_quote": "记得要上传5条切片，修复好了就上传；总之记得搞完了之后要上传，不要等我，我要离开一段时间，我需要你真的上传这些切片，即使有问题需要我裁决也先上传"
+}

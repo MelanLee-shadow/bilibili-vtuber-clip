@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1E93L6rErV",
+  "aid": 116983299312414,
+  "cid": 40300578113,
+  "title": "【李豆沙】李豆沙发现熟人百合厨成了别人的队友，立刻酸她“和别的女同一起”，甚至拿入间人间新作挖人",
+  "uploaded_at": "2026-07-26T00:00:09+0000",
+  "video_sha256": "2107ff3e25d2910bbcedbceb6c55b9b8fc2a22c44d94390efd2bb03e55d690ac",
+  "cover_sha256": "e726029b397a0d55ec17f7e60b2b212de07dc962ec0b379b73c720c96308ec1a",
+  "record_sha256": "ab6274e2418a6a8a72d3b0c7a307d08054f96e58482d50afb14469c867d39bca",
+  "subtitle_sha256": "5966af72a9a1c8f5d4f25d5ffb23da2b67bf4f872e8a107b6a37f4dc4c68e8aa",
+  "package_audit_sha256": "a3cbf281d07772e47d6f6bf474d6b33fdc28b1dbc7ae4fd6a7e04bc4398ee633",
+  "review_manifest_sha256": "9c7813da7a7566761c435dc41a63324e6b039b63e3a36d5e822f110de48b55a1",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.upload_manifest.json",
+  "manifest_sha256": "87fc989331cb4e707879f6d0557c784cc4d217a9abf83028cd23a07447bf9182",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.public_verify.json",
+  "public_verify_sha256": "e29d0000c6ac4c8d935e4ab12219176557827da2a2bc4c6ad896998012b6ca07",
+  "authorized_by": "Ivan",
+  "authorization_quote": "记得要上传5条切片，修复好了就上传；总之记得搞完了之后要上传，不要等我，我要离开一段时间，我需要你真的上传这些切片，即使有问题需要我裁决也先上传"
+}

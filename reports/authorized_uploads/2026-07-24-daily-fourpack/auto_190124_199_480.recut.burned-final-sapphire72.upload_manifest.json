@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "a8c4ee2a1025",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/auto_190124_199_480.recut.burned-final-sapphire72.mp4",
+    "sha256": "a8c4ee2a10250321c35bc79479163d6058fb9da52bee6ecb16a34ff880114dc8",
+    "bytes": 77222106
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/auto_190124_199_480.recut.burned-final-sapphire72.cover.png",
+    "sha256": "3dde6b98016b58c848275e2b652d8826891030fca2659f143c8d111688f871ea",
+    "bytes": 3069898
+  },
+  "title": "【李豆沙】疯狂送花送钻戒把妹妹好感刷到最亲密，纠结当妈妈还是用激将法，把人气走后只好翻旧聊天",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/package-audit.json",
+      "sha256": "dfdda270fd11f93b57358756b344bc46a37a23a7f82ebcc432b64107e74d4900",
+      "bytes": 3243
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/review_manifest.json",
+      "sha256": "5ac2c87ed3984e244f5bc6fbcdd0678078fc5b3de47163230d2f702a82f9f269",
+      "bytes": 6233
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/auto_190124_199_480.recut.burned-final-sapphire72.record.json",
+      "sha256": "d4fc13a0fb0a94b7ed819970f54b2893eb4f84d1e6e3e399064967438c338811",
+      "bytes": 67502
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/auto_190124_199_480.recut.burned-final-sapphire72.srt",
+      "sha256": "f5c3c5cbb32974c4ed24261c26c75006dc3130d648f38e32e08b8c50a3af1537",
+      "bytes": 6036
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "记得要上传5条切片，修复好了就上传；总之记得搞完了之后要上传，不要等我，我要离开一段时间，我需要你真的上传这些切片，即使有问题需要我裁决也先上传",
+    "at": "2026-07-25T23:47:27+0000"
+  },
+  "created_at": "2026-07-25T23:47:27+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "游戏实况",
+    "好感度",
+    "选择困难症",
+    "破防",
+    "搞笑",
+    "嘴硬"
+  ],
+  "tags_source": "cli"
+}

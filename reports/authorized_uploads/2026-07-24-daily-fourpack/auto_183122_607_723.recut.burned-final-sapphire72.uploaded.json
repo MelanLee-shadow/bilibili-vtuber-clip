@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1Eo3L6zECt",
+  "aid": 116983332870140,
+  "cid": 40300708830,
+  "title": "【李豆沙】被问为何总在同事家开播，熊猫头坦白豪华双屏用惯了，kmx盖章“同事收集梦想生活”",
+  "uploaded_at": "2026-07-26T00:07:49+0000",
+  "video_sha256": "c6434a1cc9b6b0df2ffe61b98197ab0aec45af4ab2b7af35cb79209d50ae22b5",
+  "cover_sha256": "c8605cee58e85532a0174719f8b0e4e0d312869521e2028a172229303fa88cea",
+  "record_sha256": "9f8aa3e17cd527c3ddb11c891b01fdfa023199c8b0ce34a889819aff2ce793d9",
+  "subtitle_sha256": "7dc3c3ad954d3e4e948016bc2b560394eddd2f08b1a7c2d77422b19b4e93ab1e",
+  "package_audit_sha256": "969ca6b2ca590d55a14239660471bafd8e2185229f06919c9bc02d664e565f57",
+  "review_manifest_sha256": "e5279e186da1156758a62594359a2832c4f26bbe18d933c701acf79932daacb7",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/auto_183122_607_723.recut.burned-final-sapphire72.upload_manifest.json",
+  "manifest_sha256": "220dc7e4f69cced67dcdcd80eb5e767c201e817b73de34c6760291d9e355b453",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/auto_183122_607_723.recut.burned-final-sapphire72.public_verify.json",
+  "public_verify_sha256": "a6206d7b0f4aede575cca9319ef8e2eae0078aed0326dcf1b709e02e080cf163",
+  "authorized_by": "Ivan",
+  "authorization_quote": "记得要上传5条切片，修复好了就上传；总之记得搞完了之后要上传，不要等我，我要离开一段时间，我需要你真的上传这些切片，即使有问题需要我裁决也先上传"
+}

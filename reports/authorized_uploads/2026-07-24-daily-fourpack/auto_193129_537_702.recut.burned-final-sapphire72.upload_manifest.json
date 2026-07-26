@@ -1,0 +1,69 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "b3cbc42c541d",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/auto_193129_537_702.recut.burned-final-sapphire72.mp4",
+    "sha256": "b3cbc42c541d14743279c23389a926f82c8342e1bbe681f5a49e78e0f8f20b89",
+    "bytes": 64252682
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/auto_193129_537_702.recut.burned-final-sapphire72.cover.png",
+    "sha256": "c11cae46d19d7cad59532bca0f6a9a55b4f5e83547b3fcb69e729acbefca7392",
+    "bytes": 2484425
+  },
+  "title": "【李豆沙】对手为了让李豆沙赢偷偷卸光技能，小李刚说“我哭死”，又嫌赢得无趣，得知刮痧百局后笑崩",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/package-audit.json",
+      "sha256": "889fb60c7b33b725a06a17d8759480b044a30155fd90ce05d20780eaae79a984",
+      "bytes": 3244
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/review_manifest.json",
+      "sha256": "c128d085dd8fbc52d8c2cd70d5d283cc65818d849de31c652757389a15e4bf61",
+      "bytes": 6235
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/auto_193129_537_702.recut.burned-final-sapphire72.record.json",
+      "sha256": "22ebd686fe9c9d6eb5670333076a85e55ef4bf7144f83414eda51ff51d2560f2",
+      "bytes": 61983
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/auto_193129_537_702.recut.burned-final-sapphire72.srt",
+      "sha256": "a97c4d9db2d99acafa67cd2e514664ca25898b8bff8dfcb2eba2ae3f1ef9bdaf",
+      "bytes": 2924
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "记得要上传5条切片，修复好了就上传；总之记得搞完了之后要上传，不要等我，我要离开一段时间，我需要你真的上传这些切片，即使有问题需要我裁决也先上传",
+    "at": "2026-07-25T23:47:29+0000"
+  },
+  "created_at": "2026-07-25T23:47:29+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "放水",
+    "反复横跳",
+    "反差萌",
+    "刮痧",
+    "笑崩"
+  ],
+  "tags_source": "cli"
+}

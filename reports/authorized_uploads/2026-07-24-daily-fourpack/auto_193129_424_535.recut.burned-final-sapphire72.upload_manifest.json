@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "2107ff3e25d2",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.mp4",
+    "sha256": "2107ff3e25d2910bbcedbceb6c55b9b8fc2a22c44d94390efd2bb03e55d690ac",
+    "bytes": 36155091
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.cover.png",
+    "sha256": "e726029b397a0d55ec17f7e60b2b212de07dc962ec0b379b73c720c96308ec1a",
+    "bytes": 1479032
+  },
+  "title": "【李豆沙】李豆沙发现熟人百合厨成了别人的队友，立刻酸她“和别的女同一起”，甚至拿入间人间新作挖人",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/package-audit.json",
+      "sha256": "a3cbf281d07772e47d6f6bf474d6b33fdc28b1dbc7ae4fd6a7e04bc4398ee633",
+      "bytes": 3264
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/review_manifest.json",
+      "sha256": "9c7813da7a7566761c435dc41a63324e6b039b63e3a36d5e822f110de48b55a1",
+      "bytes": 6257
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.record.json",
+      "sha256": "ab6274e2418a6a8a72d3b0c7a307d08054f96e58482d50afb14469c867d39bca",
+      "bytes": 67234
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/auto_193129_424_535.recut.burned-final-sapphire72.srt",
+      "sha256": "5966af72a9a1c8f5d4f25d5ffb23da2b67bf4f872e8a107b6a37f4dc4c68e8aa",
+      "bytes": 2742
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "记得要上传5条切片，修复好了就上传；总之记得搞完了之后要上传，不要等我，我要离开一段时间，我需要你真的上传这些切片，即使有问题需要我裁决也先上传",
+    "at": "2026-07-25T23:47:28+0000"
+  },
+  "created_at": "2026-07-25T23:47:28+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "百合",
+    "女同",
+    "安达与岛村",
+    "吃醋",
+    "挖墙脚",
+    "阴阳怪气",
+    "占有欲",
+    "搞笑"
+  ],
+  "tags_source": "cli"
+}
