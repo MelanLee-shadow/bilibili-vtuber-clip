@@ -743,6 +743,27 @@ def _subtitle_acoustic_witness_verdict(
     # this arithmetic). The recount below is authoritative; a mismatch is
     # disclosed, never fatal.
     self_count_mismatch = report_valid and syllable_count != len(tokens)
+    # Physical plausibility backstop: Mandarin peaks near ~9 syllables/s.
+    # A rate far above that means the dictation overflowed the target span
+    # (2026-07-26: 1.12s target, 14 syllables) — poisoned evidence, retriable.
+    try:
+        target_span_s = max(
+            0.001,
+            (int(request["matched_end_ms"]) - int(request["matched_start_ms"]))
+            / 1000.0,
+        )
+    except (KeyError, TypeError, ValueError):
+        target_span_s = None
+    if (
+        report_valid
+        and target_span_s is not None
+        and (len(tokens) - 2) / target_span_s > 9.0
+    ):
+        return _uncertain(
+            request,
+            "WITNESS_IMPLAUSIBLE_SYLLABLE_RATE",
+            f"{len(tokens)} syllables over {target_span_s:.2f}s target",
+        )
     if not report_valid:
         return _uncertain(
             request,
@@ -873,6 +894,7 @@ def _prepare_audio_span(
     context_mode: bool,
     source_media_timeline_offset_ms: int,
     source_duration_ms: int,
+    witness_mode: bool = False,
 ) -> _PreparedAudioSpan | None:
     try:
         delivery_target_start_ms = int(request["matched_start_ms"])
@@ -890,11 +912,22 @@ def _prepare_audio_span(
             source_context_end_ms = (
                 delivery_context_end_ms + source_media_timeline_offset_ms
             )
-            crop_start_ms = max(0, min(target_start_ms, source_context_start_ms))
-            crop_end_ms = min(
-                source_duration_ms,
-                max(target_end_ms, source_context_end_ms),
-            )
+            if witness_mode:
+                # The dictation witness hears ONLY the target (±400ms onset/
+                # offset pad). Feeding it the whole context window makes it
+                # transcribe past the markers (2026-07-26: 1.12s target, 14
+                # heard syllables) and poisons the judge. Context stays a
+                # text-side input to the judge, never witness audio.
+                crop_start_ms = max(0, target_start_ms - 400)
+                crop_end_ms = min(source_duration_ms, target_end_ms + 400)
+            else:
+                crop_start_ms = max(
+                    0, min(target_start_ms, source_context_start_ms)
+                )
+                crop_end_ms = min(
+                    source_duration_ms,
+                    max(target_end_ms, source_context_end_ms),
+                )
         else:
             target_start_ms = delivery_target_start_ms
             target_end_ms = delivery_target_end_ms
@@ -1064,6 +1097,7 @@ def _verify_local_audio_request(
         context_mode=context_mode,
         source_media_timeline_offset_ms=source_media_timeline_offset_ms,
         source_duration_ms=verifier.source_duration_ms,
+        witness_mode=witness_mode,
     )
     if span is None:
         return _uncertain(request, "ENTITY_AUDIO_SPAN_INVALID")

@@ -290,3 +290,76 @@ def test_witness_self_count_mismatch_is_disclosed_not_fatal(tmp_path):
     )
     assert zero.get("status") != "OBSERVED"
     assert "WITNESS_REPORT_INVALID" in str(zero)
+
+
+def test_witness_audio_crop_is_target_bound_not_context(tmp_path):
+    from src.autoslice import entity_audio_verifier as eav
+
+    request = {
+        "matched_start_ms": 10_000,
+        "matched_end_ms": 11_120,
+        "context_start_ms": 4_000,
+        "context_end_ms": 18_000,
+    }
+    span = eav._prepare_audio_span(
+        request=request,
+        context_mode=True,
+        source_media_timeline_offset_ms=0,
+        source_duration_ms=3_600_000,
+        witness_mode=True,
+    )
+    assert span is not None
+    assert span.crop_start_ms == 9_600
+    assert span.crop_end_ms == 11_520
+    wide = eav._prepare_audio_span(
+        request=request,
+        context_mode=True,
+        source_media_timeline_offset_ms=0,
+        source_duration_ms=3_600_000,
+    )
+    assert wide.crop_start_ms == 4_000 and wide.crop_end_ms == 18_000
+
+
+def test_witness_implausible_syllable_rate_is_retriable(tmp_path):
+    from src.autoslice import entity_audio_verifier as eav
+
+    audio = tmp_path / "span.wav"
+    audio.write_bytes(b"RIFFfake")
+    prompt = tmp_path / "p.json"
+    prompt.write_text("{}", encoding="utf-8")
+    response = tmp_path / "r.json"
+    response.write_text("{}", encoding="utf-8")
+
+    class Outcome:
+        model = "gemini-3.6-flash"
+        prompt_path = prompt
+        response_path = response
+        provider = "gemini_api"
+        accepted_key_tier = None
+
+    fourteen = "tang lin yun de hua jiu shi zhe yang zi shuo de ba la"
+    verdict = eav._subtitle_acoustic_witness_verdict(
+        request={
+            "kind": "subtitle_span_acoustic_witness",
+            "matched_start_ms": 10_000,
+            "matched_end_ms": 11_120,
+        },
+        request_sha="sha",
+        observed={
+            "schema_version": eav.WITNESS_SCHEMA,
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": fourteen,
+            "uncertain_positions": [],
+            "syllable_count": 14,
+            "confidence": 0.9,
+        },
+        outcome=Outcome(),
+        source_sha256="sha256:x",
+        audio_path=audio,
+        start_ms=0,
+        end_ms=1920,
+        timeline_binding={},
+    )
+    assert verdict.get("status") != "OBSERVED"
+    assert "WITNESS_IMPLAUSIBLE_SYLLABLE_RATE" in str(verdict)
