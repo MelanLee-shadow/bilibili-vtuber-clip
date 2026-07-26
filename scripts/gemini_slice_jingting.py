@@ -109,6 +109,37 @@ _REPO_PSPLIVE_ROSTER = str(
 PSPLIVE_ROSTER_PATHS = (
     [_PSPLIVE_ROSTER_ENV] if _PSPLIVE_ROSTER_ENV else [_REPO_PSPLIVE_ROSTER]
 )
+
+
+def gift_names_context() -> str:
+    """Platform gift-name canon (Ivan 2026-07-24: 礼物名是B站固定专名).
+
+    Occurrence-neutral like the roster: the lexicon proves only that these
+    official gift spellings exist; a cue must actually be thanking/reading a
+    gift (audio + SEND_GIFT structured evidence) before a spelling is adopted.
+    """
+
+    try:
+        payload = json.loads(
+            CHANNEL_PROFILE.asset_file("gift_names", repo_root=REPO_ROOT).read_text(
+                encoding="utf-8"
+            )
+        )
+    except (KeyError, OSError, ValueError):
+        return ""
+    names = [
+        str(name).strip()
+        for name in (payload.get("names") or [])
+        if str(name).strip()
+    ]
+    if not names:
+        return ""
+    return (
+        "B站直播礼物固定专名词表（平台官方词形；谢礼物/念礼物场景的正字法权威，"
+        "拼写逐字采用词表，不得听写转写；本词表仅证明词形存在，不证明本句提到了礼物）:\n"
+        + "、".join(names)
+        + "\n"
+    )
 SLICE_RX_TEMPLATE = r"\d+s_.*_%s_.*\.(flv|mp4)$"
 SRT_TIME_RX = re.compile(
     r"\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}"
@@ -713,9 +744,12 @@ def glossary(*, as_of: dt.datetime | None = None) -> str:
     principles = subtitle_principles()
     timely = timely_terms_context(as_of=as_of)
     roster = psplive_roster_context(as_of=as_of)
+    gifts = gift_names_context()
     return (
         "\n\n".join(
-            part.strip() for part in (terms, timely, roster, principles) if part
+            part.strip()
+            for part in (terms, timely, roster, gifts, principles)
+            if part
         ).strip()
         + "\n"
     )

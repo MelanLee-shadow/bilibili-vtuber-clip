@@ -122,8 +122,9 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     )
 
     # 2026-07-23：专名逐 mention 复核、不确定不猜、局部静音和最终 owner 门。
+    # 2026-07-26：礼物固定专名词表接入 glossary（Ivan 2026-07-24 裁定）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "670d89a1aeef80c91c20b1227c6d30cce77058b0e6c31d17d6128c93bcaa8773"
+        "3850a94691b770c48477e6957c2ce9c21c33a98ec754c07bba9ed6b7fa2c773b"
     )
 
 
