@@ -38,6 +38,71 @@ from src.autoslice.producer_boundary_owner_contract import (
     _redelivery_baseline_tail_rel_ms,
 )
 from src.autoslice.review_evidence import SourceCue
+
+
+def _replayed_search_scope(
+    *,
+    spec: Mapping[str, object],
+    semantic_review: Mapping[str, object],
+    semantic_target_rel: int,
+    manual_rel: int | None,
+    structured_payoff_ms: int | None,
+    required_owner_end_ms: int | None,
+    boundary_repair_extend_cap_ms: int,
+    last_piece_start_ms: int,
+    prior_piece_duration_ms: int,
+    manual_end_mode: str,
+) -> tuple[dict, bool]:
+    """Rebuild the frozen search scope and enforce three-way identity.
+
+    The frozen spec/review scopes carry the v2 baseline tail cap; the replay
+    must rebuild with the same cap or the identity comparison rejects every
+    redelivery candidate. Returns (scope, bound) where bound tells whether a
+    production-bound frozen scope was present and verified.
+    """
+
+    expected_search_scope = build_boundary_search_scope(
+        semantic_target_ms=semantic_target_rel,
+        manual_lower_bound_ms=manual_rel,
+        structured_payoff_ms=structured_payoff_ms,
+        required_owner_end_ms=required_owner_end_ms,
+        repair_cap_ms=boundary_repair_extend_cap_ms,
+        last_piece_start_ms=last_piece_start_ms,
+        prior_piece_duration_ms=prior_piece_duration_ms,
+        boundary_end_mode=manual_end_mode,
+        baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
+            spec,
+            last_piece_start_ms=last_piece_start_ms,
+            prior_piece_duration_ms=prior_piece_duration_ms,
+        ),
+    )
+    spec_search_scope = spec.get("boundary_search_scope")
+    review_search_scope = semantic_review.get("boundary_search_scope")
+    production_scope_required = (
+        semantic_review.get("schema_version")
+        == "talk-boundary-semantic-review.v1"
+        and semantic_review.get("review_scope") == "source_full_window"
+    )
+    bound_search_scope = (
+        production_scope_required
+        or spec_search_scope is not None
+        or review_search_scope is not None
+    )
+    if not bound_search_scope:
+        # Hand-built legacy specs in unit fixtures predate the bound scope.
+        # Production always supplies both copies and is checked below.
+        return expected_search_scope, False
+    if not (
+        boundary_search_scope_is_valid(spec_search_scope)
+        and boundary_search_scope_is_valid(review_search_scope)
+    ):
+        raise SystemExit("BOUNDARY_SEMANTIC_SEARCH_SCOPE_INVALID")
+    if (
+        dict(spec_search_scope) != expected_search_scope
+        or dict(review_search_scope) != expected_search_scope
+    ):
+        raise SystemExit("BOUNDARY_SEMANTIC_SEARCH_SCOPE_MISMATCH")
+    return expected_search_scope, True
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
@@ -512,56 +577,18 @@ def _select_initial_boundary(
         and reviewed_grid_sha256 != cue_grid_sha256(cues)
     ):
         raise SystemExit("BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH")
-    expected_search_scope = build_boundary_search_scope(
-        semantic_target_ms=semantic_target_rel,
-        manual_lower_bound_ms=manual_rel,
+    search_scope, bound_search_scope = _replayed_search_scope(
+        spec=spec,
+        semantic_review=semantic_review,
+        semantic_target_rel=semantic_target_rel,
+        manual_rel=manual_rel,
         structured_payoff_ms=structured_payoff_ms,
         required_owner_end_ms=required_owner_end_ms,
-        repair_cap_ms=boundary_repair_extend_cap_ms,
+        boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
         last_piece_start_ms=last_piece_start_ms,
         prior_piece_duration_ms=prior_piece_duration_ms,
-        boundary_end_mode=manual_end_mode,
-        # The frozen spec/review scopes carry the v2 baseline tail cap; the
-        # identity replay must rebuild with the same cap or the three-way
-        # dict comparison below rejects every redelivery candidate.
-        baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
-            spec,
-            last_piece_start_ms=last_piece_start_ms,
-            prior_piece_duration_ms=prior_piece_duration_ms,
-        ),
+        manual_end_mode=manual_end_mode,
     )
-    spec_search_scope = spec.get("boundary_search_scope")
-    review_search_scope = semantic_review.get("boundary_search_scope")
-    production_scope_required = (
-        semantic_review.get("schema_version")
-        == "talk-boundary-semantic-review.v1"
-        and semantic_review.get("review_scope") == "source_full_window"
-    )
-    bound_search_scope = (
-        production_scope_required
-        or spec_search_scope is not None
-        or review_search_scope is not None
-    )
-    if bound_search_scope:
-        if not (
-            boundary_search_scope_is_valid(spec_search_scope)
-            and boundary_search_scope_is_valid(review_search_scope)
-        ):
-            raise SystemExit(
-                "BOUNDARY_SEMANTIC_SEARCH_SCOPE_INVALID"
-            )
-        if (
-            dict(spec_search_scope) != expected_search_scope
-            or dict(review_search_scope) != expected_search_scope
-        ):
-            raise SystemExit(
-                "BOUNDARY_SEMANTIC_SEARCH_SCOPE_MISMATCH"
-            )
-        search_scope = expected_search_scope
-    else:
-        # Hand-built legacy specs in unit fixtures predate the bound scope.
-        # Production always supplies both copies and is checked above.
-        search_scope = expected_search_scope
     if search_scope.get("status") != "PASS":
         reasons = list(search_scope.get("reason_codes") or [])
         if "BOUNDARY_REQUIRED_OWNER_EXCLUDED" in reasons:
