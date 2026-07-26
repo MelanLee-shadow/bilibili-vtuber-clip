@@ -1,6 +1,42 @@
 # Current handoff
 
-Updated: 2026-07-26 America/New_York (daily-lane 源丢失根治 ce057b7 已部署；7/24 四条已公开上传)
+Updated: 2026-07-26 ~05:40Z (Fable 大复盘会话：424 封面已修复并线上编辑；7/25 官方回放补源进行中；r19 已重新定时)
+
+## 2026-07-26 大复盘会话（进行中）
+
+Ivan 指令：424 封面编辑；7/25 从官方回放补源；全量 session 复盘提取要求→合规审计→修正；
+反屎山/单一生产树；可复用流程 skill 化；最近三场切片复审修复。
+
+**已完成**：
+- **424（BV1E93L6rErV）封面已修复并完成授权 cover-only 编辑**（读回 VERIFIED_EDITED，
+  收据 `reports/authorized_uploads/2026-07-24-daily-fourpack/auto_193129_424_535.cover_edit.*`，
+  commit 3a0cc21）。根因=固定 fit-crop 卡斩大脸 polish 输出+polish 无最终像素验证。
+  **系统性修复已部署**（473a335→9b2a397）：相机窗来源确定性走 face-safe contain 卡；
+  screenshot_polish 一律强制 CPA 最终像素人脸完整性判决（hash-bound，含吐舌检查，
+  FACE_INCOMPLETE 先 contain 重排一次再 fail-closed `COVER_POLISH_FACE_UNVERIFIED`）；
+  包审计端同因阻断；修复入口 `scripts/repair_screenshot_cover.py`（支持扩窗重取景+重polish），
+  线上替换 `scripts/bili_cover_edit.py`（参数化，替代散落硬编码脚本）。70-cover.md 已同步。
+- 礼物专名词表接入 glossary 正字法链（edf57ba；7/25 建资产零消费者的缺口）。
+- session 复盘：37 个 transcript 已由 9 个 agent 提取，综合成
+  `docs/reviews/ivan-requirements-ledger-2026-07-26.md`（审计底稿，非规则权威）。
+- 审计快验：DEV_EXCEPTION 已不在生产（撤销义务已履行）；封面行首标点已有两层机器强制；
+  噪音拒图路径不存在；流行梗/roster/实体图 crawler 已 cron 自动化。
+- V15 r19 launcher 重建并定时 `v15-r19-oneshot` 2026-07-26 07:10 UTC（昨晚停手令曾删除）。
+
+**进行中（后台）**：
+- 7/25 补源：官方回放 BV1Fx3G6PEhm 已下载过门（1.83GB，`/opt/bilive/vod-rescue/2026-07-25/`）。
+  回放在 20:20↔20:50 锚点间吞了 4.3s 墙钟（双锚点门抓到）→ v2/v3 方案：锚点外推粗定位 +
+  逐会话 BCUT 文本对齐收敛（±0.35s 门+头尾漂移门防内部跳秒）+ 终编码后独立 BCUT 复验。
+  `scripts/rescue_from_official_replay.py`（9dd7f4c）STAGED 运行中（不落 canonical；
+  --apply 后走 no-clobber + rescue-provenance 披露 + `revive_rejected_candidates.py` 复活五候选）。
+  丢失场次 xml/jsonl/BCUT 缓存全部幸存，chat authority 无损。
+- 05:00Z cron tick 因部署指纹变化正在重跑 7/25 三个幸存段候选；部署#2（2bcf5aa+edf57ba 待并）
+  在 runner.lock 后排队（deploy 自带 DISABLED guard，完成自清）。
+
+**审计待修（按 ledger 风险序）**：Phase 1 声学证人架构（零代码，最高优）；跨 segment
+witness reserve（1571_1804 类，防断裂家族）；delivery-divergence 根治核验；
+人设一致性消歧泛化。三场复审（7/22 V15 闭环+同BV修复含标题前缀、7/24 第5条、7/25 复活后交付）
+等 07:00Z 配额重置后推进。
 
 > 本文件只记录尚未完成任务的恢复点，不复制流水线规则。步骤规则只读
 > [pipeline/README.md](pipeline/README.md)，live runtime 只以
