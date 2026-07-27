@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from src.autoslice.piece_roles import content_only
+
 
 FILLER_PLAN_SCHEMA = "talk-filler-plan.v1"
 FILLER_AUDIT_SCHEMA = "talk-filler-audit.v1"
@@ -869,8 +871,21 @@ def write_final_filler_audit(
         or not str(plan.get("status") or "").startswith("active")
     ):
         return None
+    # A boundary-witness-reserve piece (cross-segment, appended only to widen
+    # the boundary review's forward context) is never one of the retained
+    # content intervals this filler plan maps removals across — exclude it
+    # from the parallel durations/provenance sequences so the invariant below
+    # keeps meaning "gaps between the N content pieces", unchanged.
+    pieces_raw = spec.get("pieces")
+    if not isinstance(pieces_raw, list):
+        raise RuntimeError("TALK_FILLER_AUDIT_PIECE_MAPPING_INVALID")
+    content_durations = content_only(pieces_raw, durations)
+    content_provenance_rows = content_only(pieces_raw, piece_provenance_rows)
     removals = plan.get("removals")
-    if not isinstance(removals, list) or len(durations) != len(removals) + 1:
+    if (
+        not isinstance(removals, list)
+        or len(content_durations) != len(removals) + 1
+    ):
         raise RuntimeError("TALK_FILLER_AUDIT_PIECE_MAPPING_INVALID")
 
     intro_offset_ms = 0
@@ -882,7 +897,7 @@ def write_final_filler_audit(
     finalized: list[dict[str, object]] = []
     concat_elapsed_ms = 0
     for index, removal in enumerate(removals):
-        concat_elapsed_ms += int(durations[index])
+        concat_elapsed_ms += int(content_durations[index])
         content_output_jump_ms = concat_elapsed_ms - final_start_ms
         row = dict(removal) if isinstance(removal, Mapping) else {}
         row.update(
@@ -897,12 +912,12 @@ def write_final_filler_audit(
                 "survives_final_boundary": (
                     0 < content_output_jump_ms < final_end_ms - final_start_ms
                 ),
-                "left_piece_output_sha256": piece_provenance_rows[index].get(
+                "left_piece_output_sha256": content_provenance_rows[index].get(
                     "output_sha256"
                 ),
-                "right_piece_output_sha256": piece_provenance_rows[index + 1].get(
-                    "output_sha256"
-                ),
+                "right_piece_output_sha256": content_provenance_rows[
+                    index + 1
+                ].get("output_sha256"),
             }
         )
         finalized.append(row)

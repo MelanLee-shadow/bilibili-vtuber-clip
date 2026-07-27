@@ -292,7 +292,14 @@ def test_final_audit_records_content_and_delivered_jump_times(tmp_path: Path):
         "policy": {},
     }
     path = write_final_filler_audit(
-        spec={"candidate_id": "talk", "talk_filler_plan": plan},
+        spec={
+            "candidate_id": "talk",
+            "talk_filler_plan": plan,
+            "pieces": [
+                {"remote_media": "seg1.mp4", "start_ms": 10_000, "end_ms": 30_000},
+                {"remote_media": "seg1.mp4", "start_ms": 40_000, "end_ms": 80_000},
+            ],
+        },
         durations=[25_000, 47_000],
         final_start_ms=4_000,
         final_end_ms=70_000,
@@ -310,6 +317,81 @@ def test_final_audit_records_content_and_delivered_jump_times(tmp_path: Path):
     assert jump["actual_concat_jump_ms"] == 25_000
     assert jump["final_content_output_jump_ms"] == 21_000
     assert jump["delivered_output_jump_ms"] == 26_754
+
+
+def test_final_audit_excludes_trailing_boundary_witness_reserve_piece(tmp_path: Path):
+    """A cross-segment reserve piece (talk_lane's widened-context retry) must
+    never be treated as one of the removal-mapped content pieces: the
+    ``len(durations) == len(removals) + 1`` invariant is about content-piece
+    gaps only, and the jump math must be byte-identical to the no-reserve
+    case."""
+
+    plan = {
+        "status": "active",
+        "source_srt_sha256": "sha256:srt",
+        "retained_intervals": [
+            {"start_ms": 10_000, "end_ms": 30_000},
+            {"start_ms": 40_000, "end_ms": 80_000},
+        ],
+        "removals": [
+            {
+                "proposal_id": "jump",
+                "source_start_ms": 30_000,
+                "source_end_ms": 40_000,
+            }
+        ],
+        "rejected_proposals": [],
+        "policy": {},
+    }
+    path = write_final_filler_audit(
+        spec={
+            "candidate_id": "talk",
+            "talk_filler_plan": plan,
+            "pieces": [
+                {"remote_media": "seg1.mp4", "start_ms": 10_000, "end_ms": 30_000},
+                {"remote_media": "seg1.mp4", "start_ms": 40_000, "end_ms": 80_000},
+                {
+                    "remote_media": "seg2.mp4",
+                    "start_ms": 0,
+                    "end_ms": 88_000,
+                    "piece_role": "boundary_witness_reserve",
+                },
+            ],
+        },
+        # One extra duration/provenance entry for the reserve piece, trailing
+        # the two content pieces exactly as talk_lane appends it.
+        durations=[25_000, 47_000, 88_000],
+        final_start_ms=4_000,
+        final_end_ms=70_000,
+        piece_provenance_rows=[
+            {"output_sha256": "left"},
+            {"output_sha256": "right"},
+            {"output_sha256": "reserve"},
+        ],
+        branding_intro={"video": {"duration_ms": 5_754}},
+        output_path=tmp_path / "audit.json",
+    )
+
+    assert path is not None
+    audit = json.loads(path.read_text(encoding="utf-8"))
+    jump = audit["removals"][0]
+    assert jump["actual_concat_jump_ms"] == 25_000
+    assert jump["final_content_output_jump_ms"] == 21_000
+    assert jump["delivered_output_jump_ms"] == 26_754
+    assert jump["right_piece_output_sha256"] == "right"
+    # The reserve piece's own provenance is still disclosed in full...
+    assert audit["piece_provenance"] == [
+        {"output_sha256": "left"},
+        {"output_sha256": "right"},
+        {"output_sha256": "reserve"},
+    ]
+    # ...but never surfaces as a removal-mapping endpoint.
+    assert "reserve" not in {
+        row.get("left_piece_output_sha256") for row in audit["removals"]
+    }
+    assert "reserve" not in {
+        row.get("right_piece_output_sha256") for row in audit["removals"]
+    }
 
 
 def test_final_audit_rebinds_jump_times_to_actual_burned_intro(tmp_path: Path):

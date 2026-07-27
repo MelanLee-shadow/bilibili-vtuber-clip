@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
 )
+from src.autoslice.piece_roles import last_content_piece_index
 from src.autoslice.source_subtitle_truth import (
     candidate_boundary_owner_scope,
 )
@@ -299,8 +300,9 @@ def freeze_required_boundary_owner_contract(
 ) -> tuple[int, dict[str, object]]:
     """Freeze all owners and return the exact boundary-review target/scope."""
 
-    last_piece = spec["pieces"][-1]
-    prior_piece_duration_ms = sum(durations[:-1])
+    content_index = last_content_piece_index(spec["pieces"])
+    last_piece = spec["pieces"][content_index]
+    prior_piece_duration_ms = sum(durations[:content_index])
     last_piece_start_ms = int(last_piece["start_ms"])
     semantic_target_ms = prior_piece_duration_ms + (
         int(spec["semantic_end_ms"]) - last_piece_start_ms

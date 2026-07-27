@@ -7108,6 +7108,158 @@ def test_source_witness_reserve_retry_materializes_1573_scope_once(
     assert spec["boundary_repair_extend_cap_ms"] == 60_000
 
 
+def _cross_segment_reserve_fixture(tmp_path, monkeypatch, *, next_segment_name):
+    """Shared scaffolding for the cross-segment witness-reserve retry tests.
+
+    ``scoped_retry_end`` (386_000ms, from the fixed scope below) exceeds the
+    300_000ms ``seg_dur_ms`` — the exact BOUNDARY_SOURCE_WITNESS_RESERVE
+    condition that spills past a segment's own recording file near a
+    ~30-minute rotation boundary.
+    """
+
+    date = "2026-07-24"
+    cid = "auto_190124_1571_1804"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:test")
+
+    recordings = tmp_path / "recordings"
+    current_segment = recordings / "22966160_20260724-19-01-24.mp4"
+    next_segment = recordings / next_segment_name
+    monkeypatch.setattr(
+        runner,
+        "list_segments",
+        lambda requested_date: [current_segment, next_segment],
+    )
+
+    calls = []
+
+    class Completed:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        sink = kwargs["stdout"]
+        if len(calls) == 1:
+            candidate_root = base / "out" / date / cid
+            candidate_root.mkdir(parents=True, exist_ok=True)
+            scope = build_boundary_search_scope(
+                semantic_target_ms=158_000,
+                repair_cap_ms=30_000,
+                last_piece_start_ms=153_000,
+            )
+            (candidate_root / f"{cid}.review-flags.json").write_text(
+                json.dumps(
+                    {
+                        "boundary_semantic_review": {
+                            "schema_version": (
+                                "talk-boundary-semantic-review.v1"
+                            ),
+                            "status": "BLOCK",
+                            "needs_more_context": True,
+                            "retry_scope": "source_witness_reserve",
+                            "boundary_search_scope": scope,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            _write_test_boundary_owner_contract(
+                candidate_root=candidate_root,
+                candidate_id=cid,
+                spec_path=Path(command[command.index("--spec") + 1]),
+            )
+            sink.write(
+                "BOUNDARY_CONTEXT_EXHAUSTED: "
+                '["BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE"] '
+                "max_forward_ms=30000 "
+                "retry_scope=source_witness_reserve\n"
+            )
+            sink.flush()
+            return Completed(1)
+        sink.write(
+            '{"red_flags": [], "boundary_repairs": [{"snapped_end_ms": 195000}]}\n'
+        )
+        sink.flush()
+        return Completed(0)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    item = {
+        "cid": cid,
+        "segment_path": str(current_segment),
+        "seg_dur_ms": 300_000,
+        "start_ms": 100_000,
+        "end_ms": 158_000,
+        "hook": "跨段见证储备",
+    }
+    return date, cid, base, calls, item
+
+
+def test_boundary_retry_appends_cross_segment_reserve_when_wallclock_continuous(
+    tmp_path, monkeypatch,
+):
+    date, cid, base, calls, item = _cross_segment_reserve_fixture(
+        tmp_path,
+        monkeypatch,
+        # 19:01:24 + seg_dur_ms(300_000ms=5min) == 19:06:24 exactly: proven
+        # wall-clock-continuous recording, no gap/restart.
+        next_segment_name="22966160_20260724-19-06-24.mp4",
+    )
+
+    result = runner.produce_talk(date, item)
+
+    assert len(calls) == 2
+    assert result["boundary_context_retries"] == 1
+    spec = json.loads((base / "out" / date / f"spec_{cid}.json").read_text())
+    # Widened to the full in-segment ceiling (300_000ms is all this segment
+    # file has), then the remaining deficit (386_000 - 300_000 = 86_000)
+    # plus the 2_000ms margin is covered by the appended reserve piece.
+    assert spec["pieces"][0]["end_ms"] == 300_000
+    assert len(spec["pieces"]) == 2
+    reserve = spec["pieces"][1]
+    assert reserve["piece_role"] == "boundary_witness_reserve"
+    assert reserve["remote_media"].endswith("22966160_20260724-19-06-24.mp4")
+    assert reserve["start_ms"] == 0
+    assert reserve["end_ms"] == 88_000
+    assert spec["boundary_repair_extend_cap_ms"] == 60_000
+    # No committed chat ledger/sidecar exists for this synthetic next segment
+    # — the reserve piece must disclose the gap rather than fabricate one.
+    assert spec["reserve_chat_binding_absent"] is True
+    log_text = (base / "logs" / f"{date}_{cid}.log").read_text(encoding="utf-8")
+    assert "reserve_next_segment=22966160_20260724-19-06-24.mp4" in log_text
+    assert "reserve_gap_ms=86000" in log_text
+
+
+def test_boundary_retry_refuses_cross_segment_reserve_when_wallclock_discontinuous(
+    tmp_path, monkeypatch,
+):
+    date, cid, base, calls, item = _cross_segment_reserve_fixture(
+        tmp_path,
+        monkeypatch,
+        # 19:01:24 + 5min would land at 19:06:24; this next segment starts
+        # at 19:40:24 instead — a 34-minute gap far past the 5s tolerance,
+        # i.e. the recording actually stopped and restarted.
+        next_segment_name="22966160_20260724-19-40-24.mp4",
+    )
+
+    result = runner.produce_talk(date, item)
+
+    assert len(calls) == 1
+    assert result["boundary_context_retries"] == 0
+    assert result["status"] == "boundary_unrepairable"
+    assert result["failure_evidence"]["retry_scope"] == "source_witness_reserve"
+    spec = json.loads((base / "out" / date / f"spec_{cid}.json").read_text())
+    assert len(spec["pieces"]) == 1
+    assert spec["boundary_repair_extend_cap_ms"] == 30_000
+    assert "reserve_chat_binding_absent" not in spec
+
+
 def test_talk_boundary_context_exhausted_retries_once_then_stops(
     tmp_path,
     monkeypatch,

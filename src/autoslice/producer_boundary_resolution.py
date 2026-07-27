@@ -18,6 +18,7 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.boundary_endpoint_binding import (
     bind_final_semantic_endpoint as _bind_final_semantic_endpoint,
 )
+from src.autoslice.piece_roles import last_content_piece_index
 from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
     LEAD_AIR_MS,
@@ -103,11 +104,11 @@ def _replayed_search_scope(
     ):
         raise SystemExit("BOUNDARY_SEMANTIC_SEARCH_SCOPE_MISMATCH")
     return expected_search_scope, True
-from src.autoslice.recovery_title_authority import (
+from src.autoslice.recovery_title_authority import (  # noqa: E402 — 环形导入规避（既有布局）
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
-from src.autoslice.subtitle_timing_qa import sanitize_cue_timing
+from src.autoslice.subtitle_timing_qa import sanitize_cue_timing  # noqa: E402
 
 
 _MANUAL_END_MODES = frozenset(
@@ -522,8 +523,9 @@ def _select_initial_boundary(
     # 4b. Sentence-snap the END; a run-on cue near the closure triggers a
     #     fine-grained micro re-transcription of the tail so the closure
     #     sentence gets its own boundary.
-    last_piece = spec["pieces"][-1]
-    prior_piece_duration_ms = sum(durations[:-1])
+    content_index = last_content_piece_index(spec["pieces"])
+    last_piece = spec["pieces"][content_index]
+    prior_piece_duration_ms = sum(durations[:content_index])
     last_piece_start_ms = int(last_piece["start_ms"])
     target_rel = prior_piece_duration_ms + (
         int(spec["semantic_end_ms"]) - last_piece_start_ms

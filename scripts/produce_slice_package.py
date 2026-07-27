@@ -27,8 +27,15 @@ Spec JSON:
   "pieces": [                                # concatenated in order
     {"remote_media": "<abs path on free>", "start_ms": ..., "end_ms": ...,
      "danmaku_xml_local": "<local path>"}
+    # A boundary-review widened-context retry (talk_lane.py) may append one
+    # trailing piece tagged {"piece_role": "boundary_witness_reserve"} drawn
+    # from a wall-clock-continuous next recording segment. It supplies extra
+    # source context only — see src/autoslice/piece_roles.py for how every
+    # semantic_end_ms/prior_piece_duration_ms consumer excludes it from the
+    # "last piece" anchor while still counting its duration toward available
+    # local source context.
   ],
-  "semantic_end_ms": <absolute ms in the LAST piece's segment timeline>
+  "semantic_end_ms": <absolute ms in the LAST CONTENT piece's segment timeline>
 }
 """
 
@@ -63,6 +70,7 @@ from scripts.gemini_slice_jingting import (
 )
 from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.piece_roles import last_content_piece_index
 from src.autoslice.speaker_finalizer import (
     finalize_fast_solo_subtitles,
 )
@@ -356,8 +364,12 @@ def main(argv: list[str] | None = None) -> int:
     spec["clip_context_path"] = str(text_result.clip_context_path)
 
     # 4a. Sentence-snap the START (the clip must open on a sentence).
-    last_piece = spec["pieces"][-1]
-    semantic_target_rel = sum(durations[:-1]) + (
+    # A boundary-witness-reserve piece (cross-segment, appended only to
+    # satisfy the forward-context requirement) never carries semantic_end_ms
+    # — it always trails the real last content piece, never replaces it.
+    content_index = last_content_piece_index(spec["pieces"])
+    last_piece = spec["pieces"][content_index]
+    semantic_target_rel = sum(durations[:content_index]) + (
         spec["semantic_end_ms"] - last_piece["start_ms"]
     )
     required_tail_end_ms = max(

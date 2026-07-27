@@ -25,6 +25,7 @@ from src.autoslice.source_truth_target_selection import (  # noqa: E402
     _target_indexes,
 )
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
+from src.autoslice.piece_roles import last_content_piece_index
 
 
 SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
@@ -1785,8 +1786,9 @@ def candidate_boundary_owner_scope(
     ):
         raise RuntimeError("SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_DURATION_INVALID")
 
+    content_index = last_content_piece_index(pieces)
     first_piece_start_ms = pieces[0].get("start_ms")
-    last_piece_start_ms = pieces[-1].get("start_ms")
+    last_piece_start_ms = pieces[content_index].get("start_ms")
     semantic_start_ms = spec.get("semantic_start_ms", first_piece_start_ms)
     semantic_end_ms = spec.get("semantic_end_ms")
     given_end_ms = spec.get("given_end_ms")
@@ -1807,7 +1809,9 @@ def candidate_boundary_owner_scope(
             "SOURCE_TRUTH_BOUNDARY_OWNER_SCOPE_TIMESTAMP_INVALID"
         )
 
-    prior_piece_duration_ms = sum(int(value) for value in durations[:-1])
+    prior_piece_duration_ms = sum(
+        int(value) for value in durations[:content_index]
+    )
     semantic_story_start_ms = (
         int(semantic_start_ms) - int(first_piece_start_ms)
     )
