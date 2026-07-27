@@ -161,8 +161,11 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 {context_after}
 
 {structured_chat_block}
+按概率排序并**必须选概率最高者**（Ivan 2026-07-27：不许拿不准就保持原样——
+原样可能是最差的；把你对每个闭集候选"是她实际说的话"的概率写出来，选最高）。
 只回一个 JSON 对象（无 markdown 围栏、无其他文字）:
-{{"choice": "CURRENT" 或 "PROPOSED" 或 "UNCERTAIN", "reason": "引用拼音/语境证据的一句话理由"}}
+{{"ranking": [{{"choice": "CURRENT"或"PROPOSED", "p": 0.0到1.0}}, ...全部候选],
+ "choice": "排序第一的那个", "reason": "引用拼音/语境证据的一句话理由"}}
 """
 
 
@@ -210,8 +213,30 @@ def judge_word_choice(
             "prompt_sha256": prompt_sha256,
         }
     choice = str(payload.get("choice") or "").strip().upper()
-    if choice not in {"CURRENT", "PROPOSED", "UNCERTAIN"}:
-        # any out-of-set answer (including invented text) is a refusal
+    ranking_raw = payload.get("ranking")
+    ranking: list[dict[str, object]] = []
+    if isinstance(ranking_raw, list):
+        for row in ranking_raw:
+            if not isinstance(row, dict):
+                continue
+            row_choice = str(row.get("choice") or "").strip().upper()
+            probability = row.get("p")
+            if row_choice in {"CURRENT", "PROPOSED"} and isinstance(
+                probability, (int, float)
+            ) and not isinstance(probability, bool) and 0.0 <= float(
+                probability
+            ) <= 1.0:
+                ranking.append({"choice": row_choice, "p": float(probability)})
+    # Ivan 2026-07-27：必须按概率排序选最高——排序有效时它就是裁决；
+    # UNCERTAIN 不再是合法终点（模型仍拒绝时以排序第一顶上）。
+    if ranking:
+        top = max(ranking, key=lambda row: row["p"])
+        if choice not in {"CURRENT", "PROPOSED"} or (
+            choice != top["choice"]
+        ):
+            choice = str(top["choice"])
+    if choice not in {"CURRENT", "PROPOSED"}:
+        # No usable ranking and an out-of-set/uncertain answer: refusal.
         return {
             "schema_version": ADJUDICATION_SCHEMA,
             "status": "JUDGE_OUT_OF_SET",
@@ -224,6 +249,7 @@ def judge_word_choice(
         "schema_version": ADJUDICATION_SCHEMA,
         "status": "JUDGED",
         "choice": choice,
+        "ranking": ranking,
         "reason": str(payload.get("reason") or "")[:400],
         "prompt_sha256": prompt_sha256,
         "completion_sha256": hashlib.sha256(

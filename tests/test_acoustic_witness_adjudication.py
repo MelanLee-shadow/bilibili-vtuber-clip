@@ -363,3 +363,55 @@ def test_witness_implausible_syllable_rate_is_retriable(tmp_path):
     )
     assert verdict.get("status") != "OBSERVED"
     assert "WITNESS_IMPLAUSIBLE_SYLLABLE_RATE" in str(verdict)
+
+
+def test_judge_ranking_top_choice_wins_and_uncertain_is_not_terminal():
+    """Ivan 2026-07-27：按概率排序必须选最高；模型自报 UNCERTAIN 但给出
+    有效排序时以排序第一为裁决；无排序的拒答仍是可重试的 OUT_OF_SET。"""
+
+    import json as _json
+
+    from src.autoslice.acoustic_witness_adjudication import judge_word_choice
+
+    def call_with(payload):
+        def llm_call(prompt):
+            return _json.dumps(payload, ensure_ascii=False)
+        return judge_word_choice(
+            llm_call=llm_call,
+            check_request=dict(CHECK_REQUEST),
+            witness={
+                "heard_pinyin": "xiao li ni zen me bei dian le",
+                "syllable_count": 8,
+                "uncertain_positions": [],
+                "confidence": 0.9,
+            },
+            context_before="前句",
+            context_after="后句",
+            structured_chat_context="弹幕原文：小李你怎么被点了",
+        )
+
+    ranked = call_with({
+        "ranking": [
+            {"choice": "PROPOSED", "p": 0.85},
+            {"choice": "CURRENT", "p": 0.15},
+        ],
+        "choice": "UNCERTAIN",
+        "reason": "弹幕原文与自称先验都指向小李",
+    })
+    assert ranked["status"] == "JUDGED"
+    assert ranked["choice"] == "PROPOSED"
+    assert ranked["ranking"][0]["p"] == 0.85
+
+    disagree = call_with({
+        "ranking": [
+            {"choice": "CURRENT", "p": 0.7},
+            {"choice": "PROPOSED", "p": 0.3},
+        ],
+        "choice": "PROPOSED",
+        "reason": "自相矛盾时排序第一为准",
+    })
+    assert disagree["choice"] == "CURRENT"
+
+    refusal = call_with({"choice": "UNCERTAIN", "reason": "拒绝排序"})
+    assert refusal["status"] == "JUDGE_OUT_OF_SET"
+    assert refusal["choice"] == "UNCERTAIN"
