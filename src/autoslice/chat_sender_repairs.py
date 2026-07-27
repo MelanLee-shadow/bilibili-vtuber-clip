@@ -86,6 +86,80 @@ def time_anchored_sender_compatible(sender: str, heard: str) -> bool:
     return _thanks_sender_pinyin_ratio(alias, heard) >= 0.5
 
 
+def audit_named_thanks_record_coverage(
+    *,
+    evidence: Sequence[ChatEvidence],
+    cues: Sequence[Any],
+    texts: Sequence[str],
+    repaired_cue_indexes: set[int],
+) -> list[dict[str, Any]]:
+    """Disclose every remaining named thanks line's record-channel status.
+
+    自审计面（Ivan 2026-07-27 复盘令：「有记录没用上」不许静默）。三态：
+    - RECORD_CHANNEL_ABSENT：窗口内无任何带名事件（录播/备份双缺时才会
+      出现——听是唯一通道，诚实说明）；
+    - RECORD_PRESENT_NAME_INCOMPATIBLE：有事件但读音/字符两门都不认
+      （她谢的可能不是这单，或名字听错得离谱——需要耳裁的真实残余）；
+    - 已修的 cue 不出行（修复行自身就是披露）。
+    """
+
+    rows: list[dict[str, Any]] = []
+    window_events = [
+        item
+        for item in evidence
+        if item.kind in ("superchat", "guard", "gift") and item.sender
+    ]
+    for index, cue in enumerate(cues):
+        if index in repaired_cue_indexes:
+            continue
+        slot = thanks_name_slot(texts[index])
+        if slot is None:
+            continue
+        heard = slot[0]
+        nearby = [
+            item
+            for item in window_events
+            if 0
+            <= cue.start_ms - item.offset_ms
+            <= _TIME_ANCHORED_THANKS_WINDOW_MS
+        ]
+        if not nearby:
+            rows.append(
+                {
+                    "cue_index": index + 1,
+                    "heard_name": heard,
+                    "status": "RECORD_CHANNEL_ABSENT",
+                }
+            )
+            continue
+        compatible = [
+            item
+            for item in nearby
+            if time_anchored_sender_compatible(item.sender, heard)
+        ]
+        exact = any(
+            _spoken_sender_alias(item.sender).lower() == heard.lower()
+            for item in nearby
+        )
+        if exact:
+            continue  # 名字已与某事件精确一致
+        if not compatible:
+            rows.append(
+                {
+                    "cue_index": index + 1,
+                    "heard_name": heard,
+                    "status": "RECORD_PRESENT_NAME_INCOMPATIBLE",
+                    "nearby_event_senders": sorted(
+                        {
+                            _spoken_sender_alias(item.sender)
+                            for item in nearby
+                        }
+                    )[:6],
+                }
+            )
+    return rows
+
+
 def _apply_guard_sender_repairs(
     evidence: Sequence[ChatEvidence], cues: Sequence[Any], texts: list[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

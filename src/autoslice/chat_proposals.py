@@ -45,6 +45,7 @@ from src.autoslice.chat_sender_repairs import (
     _apply_guard_sender_repairs,
     _apply_sc_sender_repairs,
     _apply_time_anchored_thanks_sender_repairs,
+    audit_named_thanks_record_coverage,
 )
 
 _read_aloud_support_scores = read_aloud_support_scores
@@ -735,6 +736,7 @@ class _ChatAuthorityAuditParts:
     entity_repairs: list[dict[str, Any]]
     sender_repairs: list[dict[str, Any]]
     sender_verdict_required: list[dict[str, Any]]
+    thanks_record_coverage: list[dict[str, Any]]
     coreference_repairs: list[dict[str, Any]]
     gift_repairs: list[dict[str, Any]]
 
@@ -833,6 +835,7 @@ def _finalize_chat_authority_output(
         "entity_repairs": parts.entity_repairs,
         "sender_repairs": parts.sender_repairs,
         "sender_verdict_required": parts.sender_verdict_required,
+        "thanks_record_coverage": parts.thanks_record_coverage,
         "coreference_repairs": parts.coreference_repairs,
         "gift_repairs": parts.gift_repairs,
     }
@@ -933,6 +936,14 @@ def apply_authoritative_chat_evidence(
     )
     sender_repairs.extend(time_anchor_repairs)
     sender_verdict_required.extend(time_anchor_verdicts)
+    thanks_record_coverage = audit_named_thanks_record_coverage(
+        evidence=evidence,
+        cues=cues,
+        texts=texts,
+        repaired_cue_indexes={
+            int(row["cue_index"]) - 1 for row in sender_repairs
+        },
+    )
 
     gift_repairs = _apply_gift_name_repairs(evidence, cues, texts, entity_verifier=entity_verifier)
 
@@ -958,6 +969,7 @@ def apply_authoritative_chat_evidence(
             entity_repairs=entity_repairs,
             sender_repairs=sender_repairs,
             sender_verdict_required=sender_verdict_required,
+            thanks_record_coverage=thanks_record_coverage,
             coreference_repairs=coreference_repairs,
             gift_repairs=gift_repairs,
         ),

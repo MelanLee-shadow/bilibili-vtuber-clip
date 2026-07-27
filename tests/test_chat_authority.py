@@ -3394,3 +3394,32 @@ def test_time_anchored_thanks_ignores_incompatible_names():
         [ChatEvidence("superchat", 1_000, "正文", "唐琳韵", source_event_id="a")],
     )
     assert "谢谢张三丰的钢镚" in output
+
+
+def test_named_thanks_record_coverage_disclosure_states():
+    """自审计面（Ivan 2026-07-27 复盘令）：「有记录没用上」不许静默。
+    三态锚死：无事件=RECORD_CHANNEL_ABSENT；有事件名不相容=
+    RECORD_PRESENT_NAME_INCOMPATIBLE；已修 cue 不出行。"""
+
+    # 无任何带名事件 → ABSENT
+    source = _srt("谢谢桃林的钢镚")
+    _out, audit = apply_authoritative_chat_evidence(source, [])
+    rows = audit["thanks_record_coverage"]
+    assert rows and rows[0]["status"] == "RECORD_CHANNEL_ABSENT"
+    assert rows[0]["heard_name"] == "桃林"
+
+    # 有事件但两门都不认 → INCOMPATIBLE（张三丰≠唐琳韵）
+    _out, audit = apply_authoritative_chat_evidence(
+        _srt("谢谢张三丰的钢镚"),
+        [ChatEvidence("superchat", 1_000, "正文", "唐琳韵", source_event_id="a")],
+    )
+    rows = audit["thanks_record_coverage"]
+    assert rows and rows[0]["status"] == "RECORD_PRESENT_NAME_INCOMPATIBLE"
+    assert "唐琳韵" in rows[0]["nearby_event_senders"]
+
+    # 时间锚修掉的 cue 不再出披露行（修复行即披露）
+    _out, audit = apply_authoritative_chat_evidence(
+        _srt("谢谢桃林的钢镚"),
+        [ChatEvidence("superchat", 1_000, "正文", "唐琳韵", source_event_id="a")],
+    )
+    assert audit["thanks_record_coverage"] == []
