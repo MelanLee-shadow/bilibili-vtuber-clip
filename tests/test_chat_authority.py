@@ -3332,3 +3332,65 @@ def test_final_surface_verification_keeps_meaningful_boundary_overlap_strict():
         delivery_end_ms=20_000,
     )
     assert audit["applied"][0]["final_verification_scope"] == "DELIVERY"
+
+
+def test_time_anchored_thanks_sender_copies_platform_name():
+    """1209 唐琳韵案（Ivan 2026-07-27 复制人名令）：她只答谢不念 SC 正文，
+    体锚失败——事件时刻 + 90s 窗 + 读音门（tao-lin≈tang-lin-yun）直接复制
+    平台精确名，不再硬听。"""
+
+    source = _srt(
+        "随便聊点别的",
+        "谢谢桃林的钢镚",
+        "接着刚才的话题说",
+    )
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence(
+                "superchat",
+                2_000,
+                "感觉豆沙用礼墨的麦更加吵闹了，是我的错觉吗",
+                "唐琳韵",
+                source_event_id="sc-tang",
+            )
+        ],
+    )
+
+    assert "谢谢唐琳韵的钢镚" in output
+    assert "桃林" not in output
+    rows = [
+        row
+        for row in audit["sender_repairs"]
+        if row.get("alignment_basis") == "time-anchored-platform-sender.v1"
+    ]
+    assert rows and rows[0]["sender"] == "唐琳韵"
+    assert rows[0]["source_event_id"] == "sc-tang"
+
+
+def test_time_anchored_thanks_never_guesses_between_two_senders():
+    source = _srt("谢谢桃林的钢镚")
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("superchat", 1_000, "正文甲", "唐琳韵", source_event_id="a"),
+            ChatEvidence("superchat", 2_000, "正文乙", "淘琳", source_event_id="b"),
+        ],
+    )
+
+    assert "谢谢桃林的钢镚" in output  # 不落刀
+    verdicts = [
+        row
+        for row in audit["sender_verdict_required"]
+        if row.get("reason_code") == "TIME_ANCHORED_SENDER_AMBIGUOUS"
+    ]
+    assert verdicts and set(verdicts[0]["candidate_event_ids"]) == {"a", "b"}
+
+
+def test_time_anchored_thanks_ignores_incompatible_names():
+    source = _srt("谢谢张三丰的钢镚")
+    output, _audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 1_000, "正文", "唐琳韵", source_event_id="a")],
+    )
+    assert "谢谢张三丰的钢镚" in output
