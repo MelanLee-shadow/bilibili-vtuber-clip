@@ -60,6 +60,39 @@ def validate_final_review_release(
         raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
     if findings:
         raise FinalReviewContractError("FINAL_REVIEW_UNRESOLVED_FINDINGS")
+    # Ivan 2026-07-26（无人值守裁定）：`unresolved_findings_disclosed` 只允许
+    # 完整走完闭集裁决且策略分支为 KEEP_CURRENT 的条目——它们随包披露、不
+    # 阻断交付；混入任何非该形态的条目仍视为合同违规。
+    disclosed = audit.get("unresolved_findings_disclosed")
+    if disclosed is not None:
+        if not isinstance(disclosed, list):
+            raise FinalReviewContractError(
+                "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
+            )
+        for row in disclosed:
+            adjudication = (
+                row.get("exact_release_adjudication")
+                if isinstance(row, Mapping)
+                else None
+            )
+            mutation = (
+                adjudication.get("mutation_authority")
+                if isinstance(adjudication, Mapping)
+                else None
+            )
+            if not (
+                isinstance(adjudication, Mapping)
+                and adjudication.get("status") == "OBSERVED"
+                and adjudication.get("policy_branch")
+                == "JUDGE_UNCERTAIN_KEEP_CURRENT"
+                and adjudication.get("repaired") is False
+                and adjudication.get("timing_immutable") is True
+                and isinstance(mutation, Mapping)
+                and mutation.get("status") == "NOT_APPLIED"
+            ):
+                raise FinalReviewContractError(
+                    "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
+                )
     boundary = audit.get("boundary_semantic_review")
     if not isinstance(boundary, Mapping) or boundary.get("status") != "PASS":
         raise FinalReviewContractError("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")

@@ -1053,6 +1053,21 @@ def _run_exact_final_release_review(
         )
     )
     resolved_findings = [*authority_resolved, *acoustic_resolved]
+    # Ivan 2026-07-26（无人值守裁定）：judge 完整走完仍 UNCERTAIN 且策略
+    # 分支已选 KEEP_CURRENT 的 finding 是一次**已完成的机器决定**（保留现
+    # 文本），不再是未决阻断——按现文本交付并披露，发后可修（edit-replace
+    # 不占配额）。结构性失败（witness/judge infra、mutation authority）照旧
+    # fail-closed。
+    disclosed_keep_current = [
+        finding
+        for finding in unresolved_findings
+        if _is_keep_current_disclosed(finding)
+    ]
+    unresolved_findings = [
+        finding
+        for finding in unresolved_findings
+        if not _is_keep_current_disclosed(finding)
+    ]
     boundary_passed = (
         isinstance(base["boundary_semantic_review"], Mapping)
         and base["boundary_semantic_review"].get("status") == "PASS"
@@ -1080,8 +1095,33 @@ def _run_exact_final_release_review(
         },
         "findings": unresolved_findings,
         "resolved_findings": resolved_findings,
+        "unresolved_findings_disclosed": disclosed_keep_current,
         "validated_finding_count": len(unresolved_findings),
     }
+
+
+def _is_keep_current_disclosed(finding: object) -> bool:
+    """A completed keep-current adjudication ships with disclosure.
+
+    Requires the full closed-set chain to have OBSERVED with the judge's
+    explicit UNCERTAIN → KEEP_CURRENT branch, no mutation applied and the
+    timeline untouched. Anything structural stays a blocker.
+    """
+
+    if not isinstance(finding, Mapping):
+        return False
+    adjudication = finding.get("exact_release_adjudication")
+    if not isinstance(adjudication, Mapping):
+        return False
+    mutation = adjudication.get("mutation_authority")
+    return bool(
+        adjudication.get("status") == "OBSERVED"
+        and adjudication.get("policy_branch") == "JUDGE_UNCERTAIN_KEEP_CURRENT"
+        and adjudication.get("repaired") is False
+        and adjudication.get("timing_immutable") is True
+        and isinstance(mutation, Mapping)
+        and mutation.get("status") == "NOT_APPLIED"
+    )
 
 
 def _defer_source_truth_failure_for_redelivery(
