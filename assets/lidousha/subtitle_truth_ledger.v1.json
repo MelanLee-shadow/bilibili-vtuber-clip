@@ -2701,7 +2701,18 @@
    "source_start_ms": 1540120,
    "text": "那个发一支持沙豆李的队伍",
    "truth_id": "20260725-shadouli-team-r1"
-  }
+  },
+ {
+  "action": "replace_cue",
+  "authority": "Ivan-stated-20260727-conversation(909 无源可考：录播记录缺失、回放弹幕无名、屏幕横幅无 toast、人耳亦无真值——授权任意近音字定版；取清晰可闻的 AC+风)",
+  "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+  "recording_basename": "22966160_20260725-19-50-00.mp4",
+  "required": true,
+  "source_end_ms": 996180,
+  "source_start_ms": 993640,
+  "text": "谢谢AC风的比心",
+  "truth_id": "20260725-ac-bixin-thanks-r1"
+ }
  ],
  "schema_version": "source-subtitle-truth-ledger.v1",
  "source_aliases": [
