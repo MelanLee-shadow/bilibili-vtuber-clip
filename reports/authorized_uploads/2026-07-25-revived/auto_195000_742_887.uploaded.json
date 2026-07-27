@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV13k3c6XEBb",
+  "aid": 116992677773481,
+  "cid": 40354383388,
+  "title": "【李豆沙】刚唱完《快乐星猫》就发现自己已经被光速淘汰，小李从不敢相信到连声道歉",
+  "uploaded_at": "2026-07-27T15:40:56+0000",
+  "video_sha256": "aa6565692ba65a284e05e6851a23c6790b32f427e8df49f637e23befec521d34",
+  "cover_sha256": "ab46ecfb01b4b6e3c9799f901bb29ab3cbf5bc20c07bf4a41369d074ba1434d9",
+  "record_sha256": "c9c000a727e5a54449008b02a48cb52171a11099750428153a602c47b40b6c81",
+  "subtitle_sha256": "4c4d4984b300e4f65e3448463b62a8b39bd699cfb90ed1320e202823ce06f408",
+  "package_audit_sha256": "d19d0d2d46d539159dd4c50a322b611d6c8fc37b3f4ea110911a7e9b92bb1fdc",
+  "review_manifest_sha256": "9081c2c7726d58d71c4cfa75991645cb364cdce39c2d87ee797edb57a7739019",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/auto_195000_742_887.upload_manifest.json",
+  "manifest_sha256": "695f60fbd6c6dfa2dfc202c3ca17e489e16de1734512ae57fee5316a3aa53fa8",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/auto_195000_742_887.public_verify.json",
+  "public_verify_sha256": "8c960072cac9ec6481bf6f86677c710b35a80fdefd28a1ecb2a524c33fb1ec12",
+  "authorized_by": "Ivan",
+  "authorization_quote": "Ivan 2026-07-26 无人值守常令原话：流水线最终是无人值守的，不能因为没有人工参与就fail，必须得想个办法解决。目前是开发阶段我可以给真值，但是生产阶段是没有人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发（daily lane review_ready 即发布）"
+}
