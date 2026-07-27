@@ -1688,6 +1688,9 @@ def process_date(date: str) -> None:
     while state["pending_talk"]:
         talk_items = list(state["pending_talk"])
         results = produce_batch(date, talk_items, produce_talk)
+        # deploy-yield 只返回已开工项（输入序前缀）；未派发的尾巴必须留在
+        # 队列里等下个 tick，否则候选无声蒸发（2026-07-27 850_940 批次案）。
+        deferred_tail = talk_items[len(results):]
         retry: list[dict] = []
         rejected = 0
         recoverable_failure = False
@@ -1714,7 +1717,7 @@ def process_date(date: str) -> None:
                 result["bundle_lifecycle"] = "PENDING_COVER"
                 result["bundle_compliance"] = "COVER_REQUIRED"
             state["picks"].append(result)
-        state["pending_talk"] = retry
+        state["pending_talk"] = retry + deferred_tail
         write_state(date, state)
         if retry:  # some title lanes flaky → back off, resume the rest next tick
             state["status"] = "paused_cpa_down"
@@ -1730,6 +1733,13 @@ def process_date(date: str) -> None:
             write_state(date, state)
             write_reports(date, state)
             return
+        if deferred_tail:
+            # 让位部署：本 tick 收官，尾巴已持久化在 pending_talk 等新代码。
+            log(
+                f"{date}: {len(deferred_tail)} talk item(s) deferred for "
+                "deploy — resuming next tick"
+            )
+            break
         if recoverable_failure:
             # The selected item is waiting on infrastructure.  Do not spend a
             # second candidate merely to hide the outage or exceed top-5 when
@@ -1746,8 +1756,17 @@ def process_date(date: str) -> None:
     # the backlog runs dry, or SONG_ATTEMPT_CAP is hit.
     while state["pending_song"]:
         song_items = list(state["pending_song"])
-        state["songs"].extend(produce_batch(date, song_items, produce_song))
-        state["pending_song"] = []
+        song_results = produce_batch(date, song_items, produce_song)
+        state["songs"].extend(song_results)
+        # 同 talk：deploy-yield 未派发的歌尾巴留队，不许无声蒸发。
+        state["pending_song"] = song_items[len(song_results):]
+        if state["pending_song"]:
+            write_state(date, state)
+            log(
+                f"{date}: {len(state['pending_song'])} song item(s) deferred "
+                "for deploy — resuming next tick"
+            )
+            break
         refill_songs(state)
         write_state(date, state)
 
