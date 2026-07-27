@@ -1078,8 +1078,15 @@ def _prepare_audio_span(
                 # transcribe past the markers (2026-07-26: 1.12s target, 14
                 # heard syllables) and poisons the judge. Context stays a
                 # text-side input to the judge, never witness audio.
-                crop_start_ms = max(0, target_start_ms - 400)
-                crop_end_ms = min(source_duration_ms, target_end_ms + 400)
+                # 裁剪边界量化到 100ms 网格（Ivan 2026-07-27 成本追问）：
+                # cue 边界几十毫秒的轮间漂移会让裁剪字节不同、声学缓存
+                # 失配重付费。松垫本就 400ms，±50ms 的格点吸附无实质影响，
+                # 换来漂移轮的缓存命中。向外取整：起点下取、终点上取。
+                crop_start_ms = max(0, (target_start_ms - 400) // 100 * 100)
+                crop_end_ms = min(
+                    source_duration_ms,
+                    -((target_end_ms + 400) // -100) * 100,
+                )
             else:
                 crop_start_ms = max(
                     0, min(target_start_ms, source_context_start_ms)

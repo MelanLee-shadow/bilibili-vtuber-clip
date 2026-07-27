@@ -355,8 +355,19 @@ def test_witness_audio_crop_is_target_bound_not_context(tmp_path):
         witness_mode=True,
     )
     assert span is not None
+    # target±400ms 再量化到 100ms 网格（起点下取、终点上取）：漂移轮的
+    # 裁剪字节稳定 → 声学缓存命中。仍是 target-bound，不是 context-bound。
     assert span.crop_start_ms == 9_600
-    assert span.crop_end_ms == 11_520
+    assert span.crop_end_ms == 11_600
+    # 网格吸附：目标平移 <100ms 落进同一裁剪窗（缓存键稳定的核心保证）
+    drifted = eav._prepare_audio_span(
+        request={**request, "matched_start_ms": 10_040, "matched_end_ms": 11_160},
+        context_mode=True,
+        source_media_timeline_offset_ms=0,
+        source_duration_ms=3_600_000,
+        witness_mode=True,
+    )
+    assert (drifted.crop_start_ms, drifted.crop_end_ms) == (9_600, 11_600)
     wide = eav._prepare_audio_span(
         request=request,
         context_mode=True,
