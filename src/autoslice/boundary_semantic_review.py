@@ -107,11 +107,20 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
     except BoundarySemanticReviewError:
         return False
     observed = dict(scope)
-    if "baseline_tail_cap_ms" not in observed:
-        # 旧产物 scope（尾锚前冻结）：重建件多出的新键剔除后逐字段比对；
-        # 自声明 sha 已在上方独立验证，语义比对双方剔除 sha 字段（剔键后
-        # 重建件的自带 sha 必然不同，属预期）。
-        expected.pop("baseline_tail_cap_ms", None)
+    legacy_missing_keys = [
+        key
+        for key in (
+            "baseline_tail_cap_ms",
+            "structured_payoff_clamped_from_ms",
+        )
+        if key not in observed
+    ]
+    if legacy_missing_keys:
+        # 旧产物 scope（对应键加入前冻结）：重建件多出的新键剔除后逐字段
+        # 比对；自声明 sha 已在上方独立验证，语义比对双方剔除 sha 字段
+        # （剔键后重建件的自带 sha 必然不同，属预期）。
+        for key in legacy_missing_keys:
+            expected.pop(key, None)
         observed.pop("scope_sha256", None)
         expected.pop("scope_sha256", None)
     return observed == expected
@@ -181,6 +190,34 @@ def build_boundary_search_scope(
     ):
         reasons.append("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
 
+    # r13 尾锚的补全（2026-07-27 1573 鼠标话题案）：structured payoff 是
+    # 检测假设，不是复核权威。redelivery 尾锚在、其余锚（语义/手动/owner）
+    # 全部落在 baseline 之内、唯独 payoff 越界时，假设让位于已复核终点——
+    # 钳制并披露（评审仍在已发布终点裁收尾；评审判收不住才是真冲突）。
+    # 任一复核锚越界仍走 BOUNDARY_REQUIRED_OWNER_EXCLUDED 硬拦。
+    structured_payoff_clamped_from_ms: int | None = None
+    structured_payoff_effective = structured_payoff
+    if (
+        boundary_end_mode != "exact_source_pin"
+        and baseline_tail_cap_ms is not None
+        and structured_payoff is not None
+        and structured_payoff
+        > _required_int_ms("baseline_tail_cap_ms", baseline_tail_cap_ms)
+        and semantic_target <= baseline_tail_cap_ms
+        and (
+            manual_lower_bound is None
+            or manual_lower_bound <= baseline_tail_cap_ms
+        )
+        and (
+            required_owner_end is None
+            or required_owner_end <= baseline_tail_cap_ms
+        )
+    ):
+        structured_payoff_clamped_from_ms = structured_payoff
+        structured_payoff_effective = _required_int_ms(
+            "baseline_tail_cap_ms", baseline_tail_cap_ms
+        )
+
     exact_source_pin = (
         manual_lower_bound
         if boundary_end_mode == "exact_source_pin"
@@ -206,7 +243,7 @@ def build_boundary_search_scope(
                     value
                     for value in (
                         manual_lower_bound,
-                        structured_payoff,
+                        structured_payoff_effective,
                     )
                     if value is not None
                 ),
@@ -269,6 +306,8 @@ def build_boundary_search_scope(
         "repair_cap_ms": repair_cap,
         # 尾锚参与 sha 与重建验证；旧产物无此键=旧行为，向后兼容。
         "baseline_tail_cap_ms": baseline_tail_cap_ms,
+        # payoff 钳制披露：非 None 即「假设让位于已复核 baseline 终点」。
+        "structured_payoff_clamped_from_ms": structured_payoff_clamped_from_ms,
         "max_recommended_end_ms": max_recommended_end_ms,
         "recommendation_forward_ms": recommendation_forward_ms,
         "minimum_recommended_end_ms": max(

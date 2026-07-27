@@ -3256,6 +3256,62 @@ def test_final_surface_verification_ignores_ten_ms_boundary_sliver():
     )
 
 
+def test_final_surface_verification_edge_crossing_head_pad_sliver_exempt():
+    """850_940 案（2026-07-27）：1640ms 判决窗跨交付头缘，overlap 恰为
+    250ms 片头 pad 常数、ratio 0.152——跨边缘几何工件必须算 sliver，
+    ratio 腿只留给整体在交付内的短行。"""
+
+    audit = {
+        "applied": [
+            {
+                "exact_text": "又可以和大家见面了耶",
+                "matched_start_ms": 8_360,
+                "matched_end_ms": 10_000,
+            }
+        ]
+    }
+    final_text = _srt("交付从后面开始的内容")
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=9_750,
+        delivery_end_ms=100_000,
+    )
+    row = audit["applied"][0]
+    assert row["final_verification_scope"] == "OUTSIDE_DELIVERY"
+    assert row["final_delivery_overlap_ms"] == 250
+    assert row["final_verification_scope_reason"] == (
+        "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
+    )
+
+
+def test_final_surface_verification_tiny_contained_row_still_required():
+    """窗口整体在交付内（不跨边缘）的 240ms 微行不是几何工件——必须存活，
+    文本缺失照旧判失败。"""
+
+    audit = {
+        "applied": [
+            {
+                "exact_text": "微小但完整在内的修复",
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 10_240,
+            }
+        ]
+    }
+    final_text = _srt("交付字幕没有这句")
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=9_750,
+        delivery_end_ms=100_000,
+    )
+    assert audit["applied"][0]["final_verification_scope"] == "DELIVERY"
+
+
 def test_final_surface_verification_keeps_meaningful_boundary_overlap_strict():
     audit = {
         "applied": [

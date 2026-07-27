@@ -109,6 +109,12 @@ _SAFE_CODE_SWITCH_WORDS = frozenset(
         "ado",
         "ai",
         "awa",
+        # cosplay 族（2026-07-27 962_1042 案）：她口播日语借词音
+        # コスプレ，中文观众惯写 cosplay/cos——正当中英混写，见证人
+        # 报 ja + 罗马音相似度 0 是拼写系统差异，不是外语整句误解码。
+        "cos",
+        "coser",
+        "cosplay",
         "fate",
         "galgame",
         "hime",

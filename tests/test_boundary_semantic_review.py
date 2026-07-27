@@ -861,6 +861,47 @@ def test_baseline_tail_cap_bounds_recommendation_ceiling():
     assert uncapped["max_recommended_end_ms"] == 160_000
 
 
+def test_structured_payoff_hypothesis_yields_to_baseline_tail_cap():
+    """1573 案补全（2026-07-27）：payoff 检测假设是唯一越过 baseline 终点
+    的锚时让位（钳制+披露，评审在已发布终点裁收尾）；复核锚（语义/手动/
+    owner）越界仍硬拦 BOUNDARY_REQUIRED_OWNER_EXCLUDED。"""
+
+    from src.autoslice.boundary_semantic_review import (
+        boundary_search_scope_is_valid,
+        build_boundary_search_scope,
+    )
+
+    clamped = build_boundary_search_scope(
+        semantic_target_ms=109_820,
+        repair_cap_ms=30_000,
+        manual_lower_bound_ms=109_820,
+        structured_payoff_ms=116_830,
+        required_owner_end_ms=105_140,
+        baseline_tail_cap_ms=109_820,
+    )
+    assert clamped["status"] == "PASS"
+    assert clamped["reason_codes"] == []
+    assert clamped["structured_payoff_clamped_from_ms"] == 116_830
+    assert clamped["structured_payoff_ms"] == 116_830  # 原值留档
+    assert clamped["semantic_search_origin_ms"] == 109_820
+    assert clamped["delivery_lower_bound_ms"] == 109_820
+    assert clamped["max_recommended_end_ms"] == 109_820
+    # 重建定点：新 scope 以自身字段重建必须逐字节自洽
+    assert boundary_search_scope_is_valid(clamped)
+
+    # 复核锚（manual）越界不是假设问题——仍硬拦
+    hard_blocked = build_boundary_search_scope(
+        semantic_target_ms=109_820,
+        repair_cap_ms=30_000,
+        manual_lower_bound_ms=116_830,
+        structured_payoff_ms=116_830,
+        required_owner_end_ms=105_140,
+        baseline_tail_cap_ms=109_820,
+    )
+    assert "BOUNDARY_REQUIRED_OWNER_EXCLUDED" in hard_blocked["reason_codes"]
+    assert hard_blocked["structured_payoff_clamped_from_ms"] is None
+
+
 def test_search_scope_identity_replay_requires_same_tail_cap():
     """V15 regression: the resolution-side replay must pass the same
     baseline_tail_cap_ms the freeze side stored, or the three-way dict

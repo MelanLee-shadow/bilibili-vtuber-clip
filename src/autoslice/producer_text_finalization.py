@@ -1067,9 +1067,20 @@ def verify_chat_authority_final_surfaces(
         row["final_delivery_overlap_ratio"] = round(overlap_ratio, 6)
         # ≤ 而非 <：250ms 正是片头 pad 常数，行 matched_end 恰好落在首 cue
         # 起点时 overlap 精确等于 250（1863 sender 案），刀刃值必须算 sliver。
+        # ratio 腿只约束「窗口整体在交付内」的短行（微小修复必须存活）；
+        # 窗口跨越交付边缘时 overlap 是几何工件，ratio 会把 1863 同款刀刃
+        # 在短 cue 上再杀一遍（2026-07-27 850_940 案：1640ms 窗 250ms 交叠
+        # ratio 0.152 > 0.1 永久假阴性）。
+        crosses_delivery_edge = (
+            matched_start < delivery_start_ms < matched_end
+            or matched_start < delivery_end_ms < matched_end
+        )
         boundary_sliver = (
             overlap_ms <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS
-            and overlap_ratio <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
+            and (
+                crosses_delivery_edge
+                or overlap_ratio <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
+            )
         )
         if overlap_ms == 0 or boundary_sliver:
             if row.get("boundary_required") is True:
