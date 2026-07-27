@@ -25,11 +25,21 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import fcntl
+import hashlib
 import json
 import os
 import sys
 import tempfile
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.autoslice.selection_scorecard import (  # noqa: E402
+    selection_calibration_violations,
+    selection_scorecard_is_valid,
+)
 
 REVIVABLE_STATUSES = ("candidate_rejected", "review_ready")
 
@@ -63,7 +73,71 @@ def main() -> int:
         "required fix (main lane does NOT re-supersede ready picks on "
         "fingerprint change — 2026-07-25 lesson)",
     )
+    parser.add_argument(
+        "--restore-selection-scorecard-from-spec",
+        type=Path,
+        help="restore one candidate's missing/invalid selection_scorecard from "
+        "an existing candidate-matched spec after validating the scorecard "
+        "and current calibration policy",
+    )
     args = parser.parse_args()
+
+    scorecard_restoration = None
+    if args.restore_selection_scorecard_from_spec is not None:
+        if len(args.candidate) != 1:
+            print(
+                "REFUSE: --restore-selection-scorecard-from-spec requires "
+                "exactly one --candidate",
+                file=sys.stderr,
+            )
+            return 2
+        spec_path = args.restore_selection_scorecard_from_spec
+        try:
+            spec_bytes = spec_path.read_bytes()
+            spec = json.loads(spec_bytes)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                "REFUSE: selection scorecard spec is unreadable or invalid: "
+                f"{type(exc).__name__}",
+                file=sys.stderr,
+            )
+            return 2
+        candidate_id = args.candidate[0]
+        if spec.get("candidate_id") != candidate_id:
+            print(
+                "REFUSE: selection scorecard spec candidate mismatch: "
+                f"{spec.get('candidate_id')!r} != {candidate_id!r}",
+                file=sys.stderr,
+            )
+            return 2
+        scorecard = spec.get("selection_scorecard")
+        if not selection_scorecard_is_valid(scorecard):
+            print(
+                "REFUSE: selection scorecard spec does not contain a valid "
+                "scorecard",
+                file=sys.stderr,
+            )
+            return 2
+        calibration_violations = selection_calibration_violations(
+            candidate_id,
+            scorecard,
+        )
+        if calibration_violations:
+            print(
+                "REFUSE: selection scorecard violates current calibration "
+                f"policy: {calibration_violations}",
+                file=sys.stderr,
+            )
+            return 2
+        scorecard_restoration = {
+            "scorecard": dict(scorecard),
+            "audit": {
+                "schema_version": "selection-scorecard-restoration.v1",
+                "source_spec_path": str(spec_path),
+                "source_spec_sha256": "sha256:"
+                + hashlib.sha256(spec_bytes).hexdigest(),
+            },
+        }
 
     lock_path = args.runner_lock or (args.state.parent.parent / "runner.lock")
     lock_handle = open(lock_path, "a+", encoding="utf-8")
@@ -106,9 +180,28 @@ def main() -> int:
             "previous_rejection_reason": row.get("rejection_reason"),
             "previous_failure_kind": row.get("failure_kind"),
         }
+        if scorecard_restoration is not None:
+            if selection_scorecard_is_valid(row.get("selection_scorecard")):
+                print(
+                    f"REFUSE: {cid} already has a valid selection_scorecard",
+                    file=sys.stderr,
+                )
+                return 2
+            restoration_audit = dict(scorecard_restoration["audit"])
+            restoration_audit["restored_at"] = revival["revived_at"]
+            revival["selection_scorecard_restoration"] = restoration_audit
         print(f"revive {cid}: {row.get('status')} -> failed(recoverable)")
         print(f"  was: {row.get('rejection_reason')} / {row.get('failure_kind')}")
+        if scorecard_restoration is not None:
+            print(
+                "  restore selection_scorecard from "
+                f"{scorecard_restoration['audit']['source_spec_path']}"
+            )
         if args.apply:
+            if scorecard_restoration is not None:
+                row["selection_scorecard"] = dict(
+                    scorecard_restoration["scorecard"]
+                )
             row["status"] = "failed"
             row["failure_recoverable"] = True
             row.setdefault("revivals", []).append(revival)
