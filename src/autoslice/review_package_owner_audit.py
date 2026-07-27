@@ -168,11 +168,35 @@ def _context_only_row_valid(
 
 
 def _package_source_pieces(provenance: object) -> list[tuple[str, int, int]]:
-    """(recording_basename, source_start_ms, source_end_ms) per source piece."""
+    """(recording_basename, source_start_ms, source_end_ms) per source piece.
+
+    When the provenance carries the final recut's absolute source interval,
+    that DELIVERED window is the truth-applicability surface: a ledger entry
+    landing only in the padded context (2026-07-27 1475 case — 1573's chair
+    truths at 1576-1582s inside 1475's pad) cannot make the delivered text
+    stale. Padded pieces remain the conservative fallback.
+    """
 
     if not isinstance(provenance, Mapping):
         return []
+    final_recut = provenance.get("final_recut")
     raw = provenance.get("source_piece")
+    if isinstance(final_recut, Mapping):
+        start = final_recut.get("absolute_source_start_ms")
+        end = final_recut.get("absolute_source_end_ms")
+        rows = raw if isinstance(raw, list) else [raw]
+        first = rows[0] if rows else None
+        source_path = (
+            first.get("source_path") if isinstance(first, Mapping) else None
+        )
+        if (
+            _strict_int(start)
+            and _strict_int(end)
+            and int(end) > int(start)
+            and isinstance(source_path, str)
+            and source_path
+        ):
+            return [(Path(source_path).name, int(start), int(end))]
     rows = raw if isinstance(raw, list) else [raw]
     pieces: list[tuple[str, int, int]] = []
     for row in rows:
