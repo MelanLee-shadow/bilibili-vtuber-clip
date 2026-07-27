@@ -45,3 +45,124 @@ def _snap_split_to_punct(parts: list[str]) -> list[str]:
                 out[index - 1] = prev[: -distance]
                 break
     return out
+
+
+def merge_release_grade_cues(
+    srt_text: str,
+    *,
+    min_cue_ms: int = 300,
+    contiguous_gap_ms: int = 150,
+    max_rounds: int = 3,
+):
+    """Merge release-validator-rejected slivers into contiguous neighbors.
+
+    1863 案（2026-07-27）：真实语音的 240ms「哦」与独立单字「行」被发布级
+    校验拒（SRT_CUE_TOO_SHORT / SRT_SINGLE_CJK_CHARACTER），生产端却放行——
+    包永远到不了发布级。本合并器**只**消费校验器自己的判决块（秦秦/秦
+    名回声等豁免自动保留），把被拒 cue 并进贴邻邻居（间隙≤150ms，取更近
+    侧；两侧都不贴邻则保持原样并披露）。中文侧无缝拼接，边界无标点时补
+    「，」。返回 (srt_text, report_rows)。
+    """
+
+    import re as _re
+
+    from src.autoslice.jingting_chunker import parse_srt_cues
+    from src.autoslice.subtitle_validation import validate_srt_text
+
+    def _render(cues, texts):
+        def _ms(value):
+            hours, rem = divmod(int(value), 3_600_000)
+            minutes, rem = divmod(rem, 60_000)
+            seconds, millis = divmod(rem, 1_000)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+        out = []
+        index = 0
+        for cue, text in zip(cues, texts):
+            if not text.strip():
+                continue
+            index += 1
+            out.append(f"{index}\n{_ms(cue[0])} --> {_ms(cue[1])}\n{text}\n")
+        return "\n".join(out)
+
+    def _join(left: str, right: str) -> str:
+        if not left:
+            return right
+        if not right:
+            return left
+        if _re.search(r"[，。！？!?,、…~—]$", left) or _re.search(
+            r"^[，。！？!?,、…~—]", right
+        ):
+            return left + right
+        return left + "，" + right
+
+    rows = []
+    current = srt_text
+    for _round in range(max_rounds):
+        verdict = validate_srt_text(current, min_cue_ms=min_cue_ms)
+        bad_blocks = {
+            int(err["block"])
+            for err in verdict.get("errors") or []
+            if err.get("code")
+            in ("SRT_CUE_TOO_SHORT", "SRT_SINGLE_CJK_CHARACTER")
+        }
+        if not bad_blocks:
+            break
+        parsed = [
+            ((cue.start_ms, cue.end_ms), cue.text)
+            for cue in parse_srt_cues(current)
+            if cue.text.strip()
+        ]
+        cues = [row[0] for row in parsed]
+        texts = [row[1] for row in parsed]
+        merged_any = False
+        for position in range(len(cues)):
+            block_number = position + 1
+            if block_number not in bad_blocks or not texts[position].strip():
+                continue
+            gap_prev = (
+                cues[position][0] - cues[position - 1][1]
+                if position > 0 and texts[position - 1].strip()
+                else None
+            )
+            gap_next = (
+                cues[position + 1][0] - cues[position][1]
+                if position + 1 < len(cues) and texts[position + 1].strip()
+                else None
+            )
+            candidates = [
+                (gap, side)
+                for gap, side in ((gap_prev, "prev"), (gap_next, "next"))
+                if gap is not None and 0 <= gap <= contiguous_gap_ms
+            ]
+            if not candidates:
+                rows.append(
+                    {
+                        "block": block_number,
+                        "text": texts[position],
+                        "action": "UNMERGEABLE_NOT_CONTIGUOUS",
+                    }
+                )
+                continue
+            _gap, side = min(candidates)
+            if side == "prev":
+                target = position - 1
+                texts[target] = _join(texts[target], texts[position])
+                cues[target] = (cues[target][0], cues[position][1])
+            else:
+                target = position + 1
+                texts[target] = _join(texts[position], texts[target])
+                cues[target] = (cues[position][0], cues[target][1])
+            rows.append(
+                {
+                    "block": block_number,
+                    "text": texts[position],
+                    "action": f"MERGED_INTO_{side.upper()}",
+                }
+            )
+            texts[position] = ""
+            merged_any = True
+        if not merged_any:
+            break
+        current = _render(cues, texts)
+    return current, rows

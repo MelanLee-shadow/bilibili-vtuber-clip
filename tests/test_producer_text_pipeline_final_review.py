@@ -2296,7 +2296,7 @@ def _redelivery_baseline_config_v2() -> dict:
 def test_unproven_foreign_cue_defers_to_full_source_truth_ownership():
     audit = _unproven_foreign_audit()
 
-    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+    pipeline.defer_unproven_foreign_introductions_to_late_authority(
         audit,
         source_truth_windows=[(85_000, 88_000)],
         redelivery_baseline_config=None,
@@ -2321,7 +2321,7 @@ def test_unproven_foreign_cue_defers_across_tiny_timing_sliver():
         ],
     }
 
-    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+    pipeline.defer_unproven_foreign_introductions_to_late_authority(
         audit,
         source_truth_windows=[(81_020, 82_820)],
         redelivery_baseline_config=None,
@@ -2374,7 +2374,7 @@ def test_source_truth_owned_cue_is_not_mutated_by_final_review(monkeypatch):
 def test_unproven_foreign_cue_does_not_defer_to_partial_source_truth():
     audit = _unproven_foreign_audit()
 
-    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+    pipeline.defer_unproven_foreign_introductions_to_late_authority(
         audit,
         # 2026-07-22 actual shape: the broad 毁神 window overlaps the cue but
         # begins after the blocked cue's start, so source truth alone cannot
@@ -2389,7 +2389,7 @@ def test_unproven_foreign_cue_does_not_defer_to_partial_source_truth():
 def test_partial_source_truth_can_defer_to_hash_bound_redelivery_baseline():
     audit = _unproven_foreign_audit()
 
-    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+    pipeline.defer_unproven_foreign_introductions_to_late_authority(
         audit,
         source_truth_windows=[(86_680, 102_020)],
         redelivery_baseline_config=_redelivery_baseline_config(),
@@ -2401,7 +2401,7 @@ def test_partial_source_truth_can_defer_to_hash_bound_redelivery_baseline():
 def test_partial_source_truth_can_defer_to_valid_v2_redelivery_baseline():
     audit = _unproven_foreign_audit()
 
-    pipeline._defer_unproven_foreign_introductions_to_late_authority(
+    pipeline.defer_unproven_foreign_introductions_to_late_authority(
         audit,
         source_truth_windows=[(86_680, 102_020)],
         redelivery_baseline_config=_redelivery_baseline_config_v2(),

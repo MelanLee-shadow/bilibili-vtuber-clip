@@ -91,6 +91,9 @@ from src.autoslice.session_topic_authority import (
     absorb_session_topic_entities,
     discover_session_topic_authorities,
 )
+from src.autoslice.cue_split_hygiene import (
+    merge_release_grade_cues,
+)
 from src.autoslice.screen_read_witness import (
     build_env_screen_read_probe,
 )
@@ -108,6 +111,8 @@ from src.autoslice.subtitle_fidelity import (
     apply_title_mark_balance_guard,
     audit_foreign_script_consistency,
     defer_truth_owned_mixed_latin_cues,
+    defer_unproven_foreign_introductions_to_late_authority,
+    valid_redelivery_baseline_config as _valid_redelivery_baseline_config,
     mixed_cjk_latin_findings_covered_by_overrides,
     resolve_deferred_foreign_introductions,
     unproven_foreign_introductions_covered_by_overrides,
@@ -1221,107 +1226,6 @@ def _defer_source_truth_failure_for_redelivery(
 _windows_fully_cover = windows_fully_cover
 
 
-def _valid_redelivery_baseline_config(value: object) -> bool:
-    if not isinstance(value, Mapping):
-        return False
-    schema_version = value.get("schema_version")
-    expected_sha = str(value.get("sha256") or "").removeprefix("sha256:")
-    base_valid = (
-        schema_version
-        in {
-            "subtitle-redelivery-baseline.v1",
-            "subtitle-redelivery-baseline.v2",
-        }
-        and value.get("mode") == "preserve_text_outside_source_truth"
-        and bool(str(value.get("path") or "").strip())
-        and len(expected_sha) == 64
-        and all(char in "0123456789abcdef" for char in expected_sha)
-        and bool(str(value.get("authority") or "").strip())
-    )
-    if not base_valid or schema_version == "subtitle-redelivery-baseline.v1":
-        return base_valid
-    source_basename = str(value.get("source_recording_basename") or "")
-    source_sha = str(value.get("source_sha256") or "").removeprefix("sha256:")
-    start = value.get("absolute_source_start_ms")
-    end = value.get("absolute_source_end_ms")
-    replay = value.get("exact_interval_replay", False)
-    return (
-        bool(source_basename)
-        and Path(source_basename).name == source_basename
-        and len(source_sha) == 64
-        and all(char in "0123456789abcdef" for char in source_sha)
-        and isinstance(start, int)
-        and not isinstance(start, bool)
-        and isinstance(end, int)
-        and not isinstance(end, bool)
-        and 0 <= start < end
-        and isinstance(replay, bool)
-    )
-
-
-def _defer_unproven_foreign_introductions_to_late_authority(
-    audit: dict[str, Any],
-    *,
-    source_truth_windows: Sequence[tuple[int, int]],
-    redelivery_baseline_config: object,
-) -> None:
-    """Release the early gate only to a deterministic, later text authority."""
-
-    if not str(audit.get("status") or "").startswith(
-        "BLOCKED_UNPROVEN_FOREIGN_"
-    ):
-        return
-    findings = audit.get("unproven_foreign_introductions")
-    if not isinstance(findings, list) or not findings:
-        return
-    addressable: list[tuple[int, int]] = []
-    for finding in findings:
-        if not isinstance(finding, Mapping):
-            return
-        start = finding.get("start_ms")
-        end = finding.get("end_ms")
-        attempted = str(finding.get("attempted") or "")
-        if (
-            not isinstance(start, int)
-            or isinstance(start, bool)
-            or not isinstance(end, int)
-            or isinstance(end, bool)
-            or start >= end
-            or not attempted.strip()
-        ):
-            return
-        addressable.append((start, end))
-
-    if source_truth_windows and all(
-        _windows_fully_cover(start, end, source_truth_windows)
-        for start, end in addressable
-    ):
-        audit["status"] = "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
-        audit["deferred_reason"] = (
-            "every un-witnessed foreign-language cue is fully contained by "
-            "a committed source-truth interval; the exact introduced kana "
-            "must disappear after that authority runs"
-        )
-        audit["deferred_authority_windows"] = [
-            {"start_ms": start, "end_ms": end}
-            for start, end in sorted(source_truth_windows)
-        ]
-        return
-
-    # A hash-bound reviewed redelivery baseline runs only after final recut.
-    # Its mapper must own every affected final cue one-to-one, and package
-    # finalization separately proves the introduced kana is gone.  Merely
-    # having a baseline-shaped dict is not success: invalid hash/path/mapping
-    # still fails closed in redelivery_subtitle_baseline.py.
-    if _valid_redelivery_baseline_config(redelivery_baseline_config):
-        audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
-        audit["deferred_reason"] = (
-            "a hash-bound reviewed subtitle baseline is configured; final "
-            "recut must prove one-to-one ownership and removal of every "
-            "introduced foreign surface"
-        )
-
-
 def _apply_source_truth_and_resolve_deferred_foreign(
     srt_text: str,
     *,
@@ -1393,6 +1297,30 @@ def _structured_chat_names(
     return tuple(dict.fromkeys(names))
 
 
+def _post_truth_release_hygiene(
+    srt_text: str, chat_authority_audit: dict
+) -> str:
+    """Post-truth structural guards + release-grade sliver merges.
+
+    标题守卫在每个文本权威后复跑（后来的拼接可绕过早期守卫）；发布级贴邻
+    合并（2026-07-27 1863 案）把 <300ms 残片与非豁免单字并入邻居——生产
+    出的包必须直接满足发布校验，质量债不留给发布链。
+    """
+
+    srt_text, final_title_mark_balance_audit = apply_title_mark_balance_guard(
+        srt_text
+    )
+    chat_authority_audit["final_title_mark_balance_audit"] = (
+        final_title_mark_balance_audit
+    )
+    srt_text, release_grade_merge_rows = merge_release_grade_cues(srt_text)
+    if release_grade_merge_rows:
+        chat_authority_audit["release_grade_cue_merges"] = (
+            release_grade_merge_rows
+        )
+    return srt_text
+
+
 def _finalize_text_evidence(
     *,
     spec: dict,
@@ -1457,7 +1385,7 @@ def _finalize_text_evidence(
     source_truth_local_windows = ledger_local_windows(
         spec=spec, durations=durations, ledger_path=source_truth_ledger_path,
     )
-    _defer_unproven_foreign_introductions_to_late_authority(
+    defer_unproven_foreign_introductions_to_late_authority(
         final_source_language_audit,
         source_truth_windows=source_truth_local_windows,
         redelivery_baseline_config=spec.get("subtitle_redelivery_baseline"),
@@ -1631,15 +1559,7 @@ def _finalize_text_evidence(
                 f"{chat_authority_path}"
             )
         foreign_script_audit["status"] = "RESOLVED_BY_SOURCE_SUBTITLE_TRUTH"
-    # Re-run the structural guard after every text authority, including source
-    # truth.  Earlier guards cannot protect against a later splice, and a
-    # detected but unresolved title-mark imbalance must not reach review_ready.
-    srt_text, final_title_mark_balance_audit = apply_title_mark_balance_guard(
-        srt_text
-    )
-    chat_authority_audit["final_title_mark_balance_audit"] = (
-        final_title_mark_balance_audit
-    )
+    srt_text = _post_truth_release_hygiene(srt_text, chat_authority_audit)
     # Ivan source-interval truth (authority #1) supersedes read-aloud exact
     # surfaces (authority #2) on the same cue: the guest may rephrase a danmaku
     # rather than read it verbatim (2026-07-19 HimeHina case, audio support 0).
@@ -1677,7 +1597,7 @@ def _finalize_text_evidence(
         chat_authority_path=chat_authority_path,
     )
     if (
-        final_title_mark_balance_audit["status"]
+        chat_authority_audit["final_title_mark_balance_audit"]["status"]
         == "UNRESOLVED_COMPLEX_IMBALANCE"
     ):
         raise SystemExit(f"TITLE_MARK_BALANCE_REQUIRED: {chat_authority_path}")

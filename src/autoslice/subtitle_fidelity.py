@@ -1427,6 +1427,107 @@ def windows_fully_cover(
     )
 
 
+def valid_redelivery_baseline_config(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    schema_version = value.get("schema_version")
+    expected_sha = str(value.get("sha256") or "").removeprefix("sha256:")
+    base_valid = (
+        schema_version
+        in {
+            "subtitle-redelivery-baseline.v1",
+            "subtitle-redelivery-baseline.v2",
+        }
+        and value.get("mode") == "preserve_text_outside_source_truth"
+        and bool(str(value.get("path") or "").strip())
+        and len(expected_sha) == 64
+        and all(char in "0123456789abcdef" for char in expected_sha)
+        and bool(str(value.get("authority") or "").strip())
+    )
+    if not base_valid or schema_version == "subtitle-redelivery-baseline.v1":
+        return base_valid
+    source_basename = str(value.get("source_recording_basename") or "")
+    source_sha = str(value.get("source_sha256") or "").removeprefix("sha256:")
+    start = value.get("absolute_source_start_ms")
+    end = value.get("absolute_source_end_ms")
+    replay = value.get("exact_interval_replay", False)
+    return (
+        bool(source_basename)
+        and Path(source_basename).name == source_basename
+        and len(source_sha) == 64
+        and all(char in "0123456789abcdef" for char in source_sha)
+        and isinstance(start, int)
+        and not isinstance(start, bool)
+        and isinstance(end, int)
+        and not isinstance(end, bool)
+        and 0 <= start < end
+        and isinstance(replay, bool)
+    )
+
+
+def defer_unproven_foreign_introductions_to_late_authority(
+    audit: dict[str, Any],
+    *,
+    source_truth_windows: Sequence[tuple[int, int]],
+    redelivery_baseline_config: object,
+) -> None:
+    """Release the early gate only to a deterministic, later text authority."""
+
+    if not str(audit.get("status") or "").startswith(
+        "BLOCKED_UNPROVEN_FOREIGN_"
+    ):
+        return
+    findings = audit.get("unproven_foreign_introductions")
+    if not isinstance(findings, list) or not findings:
+        return
+    addressable: list[tuple[int, int]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            return
+        start = finding.get("start_ms")
+        end = finding.get("end_ms")
+        attempted = str(finding.get("attempted") or "")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start >= end
+            or not attempted.strip()
+        ):
+            return
+        addressable.append((start, end))
+
+    if source_truth_windows and all(
+        windows_fully_cover(start, end, source_truth_windows)
+        for start, end in addressable
+    ):
+        audit["status"] = "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+        audit["deferred_reason"] = (
+            "every un-witnessed foreign-language cue is fully contained by "
+            "a committed source-truth interval; the exact introduced kana "
+            "must disappear after that authority runs"
+        )
+        audit["deferred_authority_windows"] = [
+            {"start_ms": start, "end_ms": end}
+            for start, end in sorted(source_truth_windows)
+        ]
+        return
+
+    # A hash-bound reviewed redelivery baseline runs only after final recut.
+    # Its mapper must own every affected final cue one-to-one, and package
+    # finalization separately proves the introduced kana is gone.  Merely
+    # having a baseline-shaped dict is not success: invalid hash/path/mapping
+    # still fails closed in redelivery_subtitle_baseline.py.
+    if valid_redelivery_baseline_config(redelivery_baseline_config):
+        audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
+        audit["deferred_reason"] = (
+            "a hash-bound reviewed subtitle baseline is configured; final "
+            "recut must prove one-to-one ownership and removal of every "
+            "introduced foreign surface"
+        )
+
+
 def defer_truth_owned_mixed_latin_cues(
     audit: dict[str, Any],
     *,
