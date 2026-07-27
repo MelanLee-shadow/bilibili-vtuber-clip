@@ -2737,13 +2737,13 @@
   },
   {
    "action": "replace_cue",
-   "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故 cue1：画面探针实锤被查看角色 角色ID=李豆沙(粉丝同名号入会)；付费兜底听写自一致 8 音节 li-jie-lai-la-ni-xin-lai-de——她玩梗宣布分身入场；「拉拉」为「李姐来啦」误听)",
+   "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故 cue1：画面探针实锤被查看角色 角色ID=李豆沙(粉丝同名号入会)；Ivan 人耳定版 2026-07-27：「cue1真值其实是李姐拉拉，你新来的」——接拉拉梗称呼同名分身；机器听写 lai-la 系「拉拉」误辨)",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
    "recording_basename": "22966160_20260724-19-31-29.mp4",
    "required": true,
    "source_end_ms": 851460,
    "source_start_ms": 850020,
-   "text": "李姐来啦，你新来的",
+   "text": "李姐拉拉，你新来的",
    "truth_id": "20260724-lijie-laila-r1"
   }
  ],
