@@ -104,9 +104,11 @@ from src.autoslice.subtitle_fidelity import (
     apply_source_language_preservation_guard,
     apply_title_mark_balance_guard,
     audit_foreign_script_consistency,
+    defer_truth_owned_mixed_latin_cues,
     mixed_cjk_latin_findings_covered_by_overrides,
     resolve_deferred_foreign_introductions,
     unproven_foreign_introductions_covered_by_overrides,
+    windows_fully_cover,
 )
 from src.autoslice.term_boundary import unify_terms_across_cues
 from src.autoslice.topic_entity_graph import (
@@ -1209,46 +1211,7 @@ def _defer_source_truth_failure_for_redelivery(
     )
 
 
-def _windows_fully_cover(
-    start_ms: int,
-    end_ms: int,
-    windows: Sequence[tuple[int, int]],
-) -> bool:
-    """Whether authority windows own a cue despite tiny boundary jitter.
-
-    Subtitle cue edges are model-generated and can drift by a few frames from
-    the hash-bound source-truth interval.  Treat only small *outer* slivers as
-    owned; an internal gap remains a hard failure so adjacent, unrelated truth
-    assertions cannot be joined into authority over intervening speech.
-    """
-
-    if start_ms >= end_ms:
-        return False
-    duration_ms = end_ms - start_ms
-    cursor = start_ms
-    left_sliver_ms = 0
-    saw_overlap = False
-    for window_start, window_end in sorted(windows):
-        if window_end <= start_ms or window_start >= end_ms:
-            continue
-        clipped_start = max(start_ms, window_start)
-        if not saw_overlap and clipped_start > start_ms:
-            left_sliver_ms = clipped_start - start_ms
-            cursor = clipped_start
-        elif saw_overlap and clipped_start > cursor:
-            return False
-        saw_overlap = True
-        cursor = max(cursor, window_end)
-        if cursor >= end_ms:
-            break
-    if not saw_overlap:
-        return False
-    right_sliver_ms = max(0, end_ms - cursor)
-    uncovered_ms = left_sliver_ms + right_sliver_ms
-    return uncovered_ms == 0 or (
-        uncovered_ms <= 250
-        and uncovered_ms / duration_ms <= 0.1
-    )
+_windows_fully_cover = windows_fully_cover
 
 
 def _valid_redelivery_baseline_config(value: object) -> bool:
@@ -1484,14 +1447,21 @@ def _finalize_text_evidence(
             out_root=out_root,
             cid=cid,
         )
+    source_truth_local_windows = ledger_local_windows(
+        spec=spec, durations=durations, ledger_path=source_truth_ledger_path,
+    )
     _defer_unproven_foreign_introductions_to_late_authority(
         final_source_language_audit,
-        source_truth_windows=ledger_local_windows(
-            spec=spec, durations=durations, ledger_path=source_truth_ledger_path,
-        ),
+        source_truth_windows=source_truth_local_windows,
         redelivery_baseline_config=spec.get("subtitle_redelivery_baseline"),
     )
     foreign_script_audit = audit_foreign_script_consistency(srt_text)
+    # 742_887 案（2026-07-27）：真值窗口完整覆盖的 mixed-latin cue 让位给
+    # 稍后必然接管的 SOURCE_INTERVAL_TRUTH，早期门不得在乱码上否决更高权威。
+    defer_truth_owned_mixed_latin_cues(
+        foreign_script_audit,
+        source_truth_windows=source_truth_local_windows,
+    )
     if (
         foreign_script_audit["status"]
         == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
@@ -1644,6 +1614,16 @@ def _finalize_text_evidence(
         chat_authority_audit,
         source_truth_audit,
     )
+    # 让位给真值的 mixed-latin 门必须闭环：接管后的文本重审，没洗净就硬拦。
+    if foreign_script_audit.get("status") == "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH":
+        post_truth_foreign = audit_foreign_script_consistency(srt_text)
+        foreign_script_audit["post_truth_reaudit"] = post_truth_foreign
+        if str(post_truth_foreign["status"]).startswith("BLOCKED_"):
+            raise SystemExit(
+                "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED_AFTER_TRUTH: "
+                f"{chat_authority_path}"
+            )
+        foreign_script_audit["status"] = "RESOLVED_BY_SOURCE_SUBTITLE_TRUTH"
     # Re-run the structural guard after every text authority, including source
     # truth.  Earlier guards cannot protect against a later splice, and a
     # detected but unresolved title-mark imbalance must not reach review_ready.

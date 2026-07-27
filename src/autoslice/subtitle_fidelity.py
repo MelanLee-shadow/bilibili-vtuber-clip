@@ -1385,6 +1385,92 @@ def resolve_deferred_foreign_introductions(
     return result
 
 
+def windows_fully_cover(
+    start_ms: int,
+    end_ms: int,
+    windows: Sequence[tuple[int, int]],
+) -> bool:
+    """Whether authority windows own a cue despite tiny boundary jitter.
+
+    Subtitle cue edges are model-generated and can drift by a few frames from
+    the hash-bound source-truth interval.  Treat only small *outer* slivers as
+    owned; an internal gap remains a hard failure so adjacent, unrelated truth
+    assertions cannot be joined into authority over intervening speech.
+    """
+
+    if start_ms >= end_ms:
+        return False
+    duration_ms = end_ms - start_ms
+    cursor = start_ms
+    left_sliver_ms = 0
+    saw_overlap = False
+    for window_start, window_end in sorted(windows):
+        if window_end <= start_ms or window_start >= end_ms:
+            continue
+        clipped_start = max(start_ms, window_start)
+        if not saw_overlap and clipped_start > start_ms:
+            left_sliver_ms = clipped_start - start_ms
+            cursor = clipped_start
+        elif saw_overlap and clipped_start > cursor:
+            return False
+        saw_overlap = True
+        cursor = max(cursor, window_end)
+        if cursor >= end_ms:
+            break
+    if not saw_overlap:
+        return False
+    right_sliver_ms = max(0, end_ms - cursor)
+    uncovered_ms = left_sliver_ms + right_sliver_ms
+    return uncovered_ms == 0 or (
+        uncovered_ms <= 250
+        and uncovered_ms / duration_ms <= 0.1
+    )
+
+
+def defer_truth_owned_mixed_latin_cues(
+    audit: dict[str, Any],
+    *,
+    source_truth_windows: Sequence[tuple[int, int]],
+) -> None:
+    """Release the mixed-latin gate only to a committed source-truth owner.
+
+    2026-07-27 742_887 案：BCUT 把「啥意思，谁发的哈」乱码成
+    「say you say father 哈」，而该时窗恰有 SOURCE_INTERVAL_TRUTH
+    （20260725-shayisi-shuifade-r1）——真值 pass 稍后必然以裁定文本接管，
+    早期 foreign 门在接管前的乱码上把候选拍死等于否决更高权威。与
+    `_defer_unproven_foreign_introductions_to_late_authority` 同款范式：
+    每条 mixed cue 都被真值窗口完整覆盖（仅容边缘抖动）才降级，部分
+    覆盖仍 BLOCK；语言簇（kana cluster）路线不受本函数影响。
+    """
+
+    if str(audit.get("status") or "") != "BLOCKED_MIXED_CJK_LATIN_PHRASE":
+        return
+    rows = audit.get("mixed_cjk_latin_cues")
+    if not isinstance(rows, list) or not rows:
+        return
+    if not source_truth_windows:
+        return
+    for row in rows:
+        if not isinstance(row, Mapping):
+            return
+        start = row.get("start_ms")
+        end = row.get("end_ms")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not windows_fully_cover(start, end, source_truth_windows)
+        ):
+            return
+    audit["status"] = "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+    audit["deferred_reason"] = (
+        "every mixed CJK/Latin cue is fully contained by a committed "
+        "source-truth interval; the adjudicated truth text supersedes the "
+        "suspect Latin decode before delivery"
+    )
+
+
 def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
     """Return whether one Chinese talk cue contains unsupported Latin word salad."""
 

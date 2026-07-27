@@ -1086,3 +1086,49 @@ def test_unrelated_chat_name_does_not_witness_foreign_introduction():
         draft, final, structured_chat_names=("梅杰克家的六更るり",)
     )
     assert audit["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+
+
+def test_truth_owned_mixed_latin_cues_defer_to_source_truth():
+    """742_887 案（2026-07-27）：BCUT 乱码「say you say father 哈」的时窗
+    恰被 SOURCE_INTERVAL_TRUTH 完整覆盖——早期 mixed-latin 门让位（真值
+    稍后接管），部分覆盖或无窗口仍 BLOCK。"""
+
+    from src.autoslice.subtitle_fidelity import (
+        defer_truth_owned_mixed_latin_cues,
+    )
+
+    def audit(rows):
+        return {
+            "status": "BLOCKED_MIXED_CJK_LATIN_PHRASE",
+            "mixed_cjk_latin_cues": rows,
+        }
+
+    covered = audit([{"cue_index": 45, "start_ms": 144_760, "end_ms": 148_280}])
+    defer_truth_owned_mixed_latin_cues(
+        covered, source_truth_windows=[(144_700, 148_300)]
+    )
+    assert covered["status"] == "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+
+    partial = audit(
+        [
+            {"cue_index": 45, "start_ms": 144_760, "end_ms": 148_280},
+            {"cue_index": 50, "start_ms": 160_000, "end_ms": 162_000},
+        ]
+    )
+    defer_truth_owned_mixed_latin_cues(
+        partial, source_truth_windows=[(144_700, 148_300)]
+    )
+    assert partial["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+
+    no_windows = audit([{"cue_index": 45, "start_ms": 144_760, "end_ms": 148_280}])
+    defer_truth_owned_mixed_latin_cues(no_windows, source_truth_windows=[])
+    assert no_windows["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+
+    cluster = {
+        "status": "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER",
+        "mixed_cjk_latin_cues": [],
+    }
+    defer_truth_owned_mixed_latin_cues(
+        cluster, source_truth_windows=[(0, 10_000_000)]
+    )
+    assert cluster["status"] == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
