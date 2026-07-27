@@ -3423,3 +3423,24 @@ def test_named_thanks_record_coverage_disclosure_states():
         [ChatEvidence("superchat", 1_000, "正文", "唐琳韵", source_event_id="a")],
     )
     assert audit["thanks_record_coverage"] == []
+
+
+def test_time_anchored_thanks_respects_causal_floor():
+    """物理不可能约束（Ivan 2026-07-27 追问）：事件到开口至少 2s——
+    同帧/1s 内开始的感谢线不可能在谢这单，绝不匹配（舰长锚同款纪律）。"""
+
+    # cue1 起点 5_000ms；事件 4_500ms → delta 500ms < 2s 因果下界
+    source = _srt("谢谢桃林的钢镚")
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 4_500, "正文", "唐琳韵", source_event_id="a")],
+    )
+    assert "谢谢桃林的钢镚" in output  # 未改
+    assert not [
+        row
+        for row in audit["sender_repairs"]
+        if row.get("alignment_basis") == "time-anchored-platform-sender.v1"
+    ]
+    # 覆盖审计同一因果窗：该事件不算 nearby → RECORD_CHANNEL_ABSENT
+    rows = audit["thanks_record_coverage"]
+    assert rows and rows[0]["status"] == "RECORD_CHANNEL_ABSENT"

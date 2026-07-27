@@ -119,7 +119,7 @@ def audit_named_thanks_record_coverage(
         nearby = [
             item
             for item in window_events
-            if 0
+            if _TIME_ANCHORED_CAUSAL_FLOOR_MS
             <= cue.start_ms - item.offset_ms
             <= _TIME_ANCHORED_THANKS_WINDOW_MS
         ]
@@ -331,6 +331,10 @@ def _apply_sc_sender_repairs(
 
 _TIME_ANCHORED_THANKS_WINDOW_MS = 90_000
 _TIME_ANCHORED_EVENT_LOOKBACK_MS = 60_000
+# 因果下界（Ivan 2026-07-27 追问补全，沿用舰长锚/念读锚既有纪律）：
+# 事件发生到她看见弹窗并开口至少要 2s——同帧或更早的「感谢」物理不可能
+# 是在谢这单，绝不匹配。
+_TIME_ANCHORED_CAUSAL_FLOOR_MS = 2_000
 
 
 def _apply_time_anchored_thanks_sender_repairs(
@@ -362,7 +366,10 @@ def _apply_time_anchored_thanks_sender_repairs(
             if index in repaired_cue_indexes:
                 continue
             delta = cue.start_ms - item.offset_ms
-            if delta < 0 or delta > _TIME_ANCHORED_THANKS_WINDOW_MS:
+            if (
+                delta < _TIME_ANCHORED_CAUSAL_FLOOR_MS
+                or delta > _TIME_ANCHORED_THANKS_WINDOW_MS
+            ):
                 continue
             slot = thanks_name_slot(texts[index])
             if slot is None:
