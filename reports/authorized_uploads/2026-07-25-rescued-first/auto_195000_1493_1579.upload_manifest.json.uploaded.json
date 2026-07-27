@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1zzgd6JEHe",
+  "aid": 116989490110344,
+  "cid": 40331906310,
+  "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+  "uploaded_at": "2026-07-27T02:09:43+0000",
+  "video_sha256": "c7fd13a19e63a06f2aa802022da72c04cb95d26796919f097e77f07c7808de08",
+  "cover_sha256": "41a9487dc5a906f9748cc28d74da97acea41e56e7d81bb792e889bff58e5af51",
+  "record_sha256": "0e48368f63c724ee6224eb59a6a98f75a8f9112d3ef63f8ab9d8a77896564344",
+  "subtitle_sha256": "55bf192f7fdf8df3c34049d9b7ca275e4c5db27f390c05f08af8aa09de12c7ec",
+  "package_audit_sha256": "3a2d5944d437421018a6b399eb9df5dd36b0ca3d887ed426b38f5a923d62fa55",
+  "review_manifest_sha256": "369bf38efff51682c4c3b8efd75eb542c0063b01dd9a63d961e96543437d0dcd",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/upload_manifest.json",
+  "manifest_sha256": "cd52406dfe17633cb92dbb4ac55e449823d80a788574437ac6ff8debf1822fbb",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/upload_manifest.json.public_verify.json",
+  "public_verify_sha256": "0bba1a05b183e4656917705b1ad94d6107d1f17538e355b481a9d9899afd94a5",
+  "authorized_by": "Ivan",
+  "authorization_quote": "Ivan 2026-07-26 睡前授权原话：今天晚上最新版可以直接上线，我睡觉了。不用等我审。明天起来我直接看上线版（7/25 补源候选，完整 v3 链）"
+}

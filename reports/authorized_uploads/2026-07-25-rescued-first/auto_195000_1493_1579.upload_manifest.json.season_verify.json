@@ -1,0 +1,23 @@
+{
+  "schema_version": "authorized-upload-season-verify.v1",
+  "bvid": "BV1zzgd6JEHe",
+  "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+  "season_binding": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "talk:title-prefix"
+  },
+  "season_binding_source": "manifest",
+  "verified_at": "2026-07-27T02:09:41+0000",
+  "last_view_code": 0,
+  "state": 0,
+  "aid": 116989490110344,
+  "cid": 40331906310,
+  "season_id": 8383206,
+  "section_id": 9320779,
+  "season_add_code": 0,
+  "season_add_message": "0",
+  "ugc_season_title": "小李切片",
+  "is_season_display": true,
+  "status": "IN_SEASON_PUBLIC"
+}
