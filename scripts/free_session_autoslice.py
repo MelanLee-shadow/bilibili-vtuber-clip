@@ -742,6 +742,9 @@ from src.autoslice.published_song_history import (  # noqa: E402
     PublishedSongHistoryError,
     published_song_match as _published_song_match,
 )
+from src.autoslice.produce_dispatch import (  # noqa: E402
+    produce_batch_windowed,
+)
 from src.autoslice.talk_lane import (  # noqa: E402
     danmaku_hints,
     danmaku_count_in,
@@ -1469,88 +1472,23 @@ _SRT_TS_RX = re.compile(
 )
 
 def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
-    """Produce ``items`` CONCURRENTLY (bounded by MAX_PARALLEL_PRODUCE), preserving
-    input order.  Each slice is an independent subprocess (produce_slice_package /
-    the song selector), so threads just wait on those; a crash in one becomes a
-    failed result and never kills the batch.  ``produce_fn`` is produce_talk /
-    produce_song.  Targeted talk repairs may opt into the talk lane's
-    ``reuse_cover`` path through their persisted queue item."""
-    from concurrent.futures import ThreadPoolExecutor
+    """Windowed concurrent production with deploy-yield (src.autoslice.produce_dispatch)."""
 
-    def _one(item: dict) -> dict:
-        try:
-            produce_kwargs = (
-                {"reuse_cover": True}
-                if produce_fn is produce_talk and item.get("reuse_cover")
-                else {}
-            )
-            result = produce_fn(date, item, **produce_kwargs)
-            if item.get("session_id"):
-                result.setdefault("session_id", item["session_id"])
-            return result
-        except Exception as exc:  # noqa: BLE001 — one bad slice must not kill the batch
-            log(f"produce crashed for {item.get('cid')}: {exc}")
-            result = {
-                "candidate_id": item.get("cid"),
-                "rc": -1,
-                "status": "failed",
-                "error": str(exc),
-                "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
-                "pipeline_fingerprint": (
-                    talk_pipeline_fingerprint(str(item.get("cid") or ""))
-                    if produce_fn is produce_talk
-                    else pipeline_fingerprint()
-                ),
-                **(
-                    {"song_pipeline_fingerprint": song_pipeline_fingerprint()}
-                    if produce_fn is produce_song
-                    else {}
-                ),
-                **{
-                    key: item[key]
-                    for key in (
-                        "hook",
-                        "confidence",
-                        "selection_scorecard",
-                        "session_relation_authority",
-                        "danmaku",
-                        "preview",
-                        "segment_path",
-                        "seg_dur_ms",
-                        "start_ms",
-                        "end_ms",
-                        "lane",
-                        "title_hint",
-                        "visual_song_evidence",
-                        "selected_repair",
-                        "talk_repair_retry_count",
-                        "talk_transient_retry_count",
-                        "retry_reason",
-                        "anchor_start_ms",
-                        "anchor_end_ms",
-                        "transient_retry_count",
-                        "session_id",
-                        "cover_diversity_slot",
-                    )
-                    if key in item
-                },
-            }
-            if item.get("segment_path"):
-                result["segment"] = Path(str(item["segment_path"])).name
-            anchor_start = item.get("anchor_start_ms")
-            anchor_end = item.get("anchor_end_ms")
-            if isinstance(anchor_start, int) and isinstance(anchor_end, int):
-                result["start_ms"] = max(0, anchor_start - SONG_WINDOW_PRE_MS)
-                result["end_ms"] = anchor_end + SONG_WINDOW_POST_MS
-            return result
-
-    if not items:
-        return []
-    workers = min(MAX_PARALLEL_PRODUCE, len(items))
-    log(f"producing {len(items)} slice(s), up to {workers} in parallel")
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(_one, items))
-
+    return produce_batch_windowed(
+        date,
+        items,
+        produce_fn,
+        produce_talk_fn=produce_talk,
+        produce_song_fn=produce_song,
+        base=BASE,
+        max_parallel=MAX_PARALLEL_PRODUCE,
+        log=log,
+        talk_pipeline_fingerprint=talk_pipeline_fingerprint,
+        pipeline_fingerprint=pipeline_fingerprint,
+        song_pipeline_fingerprint=song_pipeline_fingerprint,
+        song_window_pre_ms=SONG_WINDOW_PRE_MS,
+        song_window_post_ms=SONG_WINDOW_POST_MS,
+    )
 
 def _date_work_flags(
     date: str, state: dict, *, automatic_maintenance: bool

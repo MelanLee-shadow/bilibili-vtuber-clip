@@ -9187,3 +9187,29 @@ def test_legacy_frozen_contract_without_deterministic_digest_stays_auditable():
         match="BOUNDARY_RETRY_OWNER_SET_DRIFT",
     ):
         validate_frozen_boundary_owner_contract(tampered)
+
+
+def test_produce_batch_yields_to_deploy_guard(tmp_path, monkeypatch):
+    """Ivan 2026-07-27 部署优先令：deploy.guard 在场时不再派发新候选，
+    在飞项完成、其余顺延下个 tick——马拉松 tick 不再压部署数小时。"""
+
+    import threading
+
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "MAX_PARALLEL_PRODUCE", 1)
+    guard = tmp_path / "deploy.guard"
+    calls = []
+    gate = threading.Event()
+
+    def fake_produce(date, item):
+        calls.append(item["cid"])
+        # 第一条生产期间部署 guard 落地
+        guard.mkdir(exist_ok=True)
+        gate.set()
+        return {"cid": item["cid"], "status": "ok"}
+
+    items = [{"cid": "a"}, {"cid": "b"}, {"cid": "c"}]
+    results = runner.produce_batch("2026-07-27", items, fake_produce)
+
+    assert calls == ["a"]  # b/c 顺延
+    assert [row["cid"] for row in results] == ["a"]
