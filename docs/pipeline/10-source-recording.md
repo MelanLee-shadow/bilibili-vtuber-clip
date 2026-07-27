@@ -128,6 +128,10 @@
   `HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE`。源根健康但文件明确缺失、
   provenance 不全、窗口或任一哈希不符时仍须 fail closed，不得把缓存当源文件
   缺失的旁路。
+- 同一 mid-tick 断挂若发生在 hash-bound structured-chat sidecar 读取，必须同样
+  归类为 `runtime_prerequisite/source_media_binding`；requeue 在源 `stat`/`ffprobe`
+  上遇到 FUSE `OSError` 时保留原失败行并退出本次恢复，不得让整个 tick traceback
+  或把暂时不可见的 chat path 误报成确定性的 binding missing。
 - 活着的容器不等于健康录制。直播中两轮无字节增长、状态过期、弹幕/录制长期
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行

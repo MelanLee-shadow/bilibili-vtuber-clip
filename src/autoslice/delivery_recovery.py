@@ -12,6 +12,7 @@ import copy
 import hashlib
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -1366,9 +1367,16 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
         segment = _runner.REC_ROOT / date / segment_name
         start_ms, end_ms = record.get("start_ms"), record.get("end_ms")
+        try:
+            segment_is_file = segment.is_file()
+        except OSError as exc:
+            record["recovery_source_status"] = "SOURCE_RECORDING_ROOT_UNAVAILABLE"
+            record["recovery_source_error"] = f"{type(exc).__name__}: {exc}"
+            kept.append(record)
+            continue
         if (
             not segment_name
-            or not segment.is_file()
+            or not segment_is_file
             or isinstance(start_ms, bool)
             or not isinstance(start_ms, int)
             or isinstance(end_ms, bool)
@@ -1377,7 +1385,13 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         ):
             kept.append(record)
             continue
-        seg_dur = _runner.ffprobe_ms(segment)
+        try:
+            seg_dur = _runner.ffprobe_ms(segment)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            record["recovery_source_status"] = "SOURCE_RECORDING_ROOT_UNAVAILABLE"
+            record["recovery_source_error"] = f"{type(exc).__name__}: {exc}"
+            kept.append(record)
+            continue
         if (
             isinstance(seg_dur, bool)
             or not isinstance(seg_dur, int)

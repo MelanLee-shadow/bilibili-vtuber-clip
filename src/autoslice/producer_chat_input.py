@@ -35,6 +35,13 @@ def _declared_chat_sha256(value: object) -> str | None:
     return match.group(1) if match is not None else None
 
 
+def _structured_chat_parent_unavailable(path: Path) -> bool:
+    try:
+        return not path.parent.is_dir()
+    except OSError:
+        return True
+
+
 def _validated_chat_integer(
     piece: dict,
     field: str,
@@ -112,6 +119,10 @@ def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
         )
     if not jsonl_path.is_file():
         if explicit_jsonl or structured_chat_required:
+            if _structured_chat_parent_unavailable(jsonl_path):
+                raise StructuredChatEvidenceError(
+                    f"SOURCE_RECORDING_ROOT_UNAVAILABLE: structured chat {jsonl_path}"
+                )
             raise StructuredChatEvidenceError(
                 "STRUCTURED_CHAT_BINDING_PATH_MISSING"
             )

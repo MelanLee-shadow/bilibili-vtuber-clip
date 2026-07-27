@@ -1160,6 +1160,24 @@ def test_hash_bound_chat_rejects_missing_or_drifted_sidecar(tmp_path):
         )
 
 
+def test_hash_bound_chat_classifies_unavailable_source_root(tmp_path):
+    unavailable = tmp_path / "unmounted" / "date" / "recording.jsonl"
+    with pytest.raises(
+        StructuredChatEvidenceError,
+        match="SOURCE_RECORDING_ROOT_UNAVAILABLE",
+    ):
+        _piece_chat_evidence(
+            {
+                "remote_media": str(unavailable.with_suffix(".mp4")),
+                "chat_jsonl_local": str(unavailable),
+                "chat_jsonl_sha256": "sha256:" + "a" * 64,
+                "chat_origin_epoch_ms": 1_750_000_000_000,
+                "chat_timeline_offset_ms": 0,
+                "structured_chat_required": True,
+            }
+        )
+
+
 def test_optional_legacy_piece_without_chat_sidecar_stays_compatible(tmp_path):
     assert (
         _piece_chat_evidence(

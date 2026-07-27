@@ -7664,6 +7664,57 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
     assert state["talk_superseded_attempts"][0]["session_id"] == "live-20260710T200000+0800"
 
 
+def test_requeue_recoverable_talk_preserves_state_when_mount_drops_mid_tick(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-21-20-05.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(
+        runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:new"
+    )
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: "sha256:new-recovery",
+    )
+    original_is_file = Path.is_file
+
+    def mount_drops(path):
+        if path == segment:
+            raise OSError(131, "State not recoverable", str(path))
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", mount_drops)
+    state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "selected",
+                "segment": segment.name,
+                "start_ms": 100_000,
+                "end_ms": 200_000,
+                "status": "failed",
+                "failure_kind": "runtime_prerequisite",
+                "failure_recoverable": True,
+                "failure_recovery_fingerprint": "sha256:old-recovery",
+                "pipeline_fingerprint": "sha256:old",
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["pending_talk"] == []
+    assert state["picks"][0]["candidate_id"] == "selected"
+    assert state["picks"][0]["recovery_source_status"] == (
+        "SOURCE_RECORDING_ROOT_UNAVAILABLE"
+    )
+
+
 def test_pipeline_change_requeues_legacy_exact_candidate_rejection(
     tmp_path, monkeypatch
 ):
