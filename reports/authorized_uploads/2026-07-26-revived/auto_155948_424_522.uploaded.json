@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1d73P6iErL",
+  "aid": 116992862325284,
+  "cid": 40355301253,
+  "title": "【李豆沙】被发现全程不动后，李姐硬说自己是《无人生还》的装死凶手，连英勇赞赏都听成阴阳",
+  "uploaded_at": "2026-07-27T16:27:41+0000",
+  "video_sha256": "c85cf6ae16919177c67ac2a0777f1e439347013dd634ff214d57a38a4a56067e",
+  "cover_sha256": "5601cb1f3df43a75967d697d0860d3fd6a613d2e12a7d286fbe41a4630030088",
+  "record_sha256": "198a455e5f2b1c1f70b1357433950113acfc98ce59dfc63db61003d8e8132a7d",
+  "subtitle_sha256": "71e1c48a45a3873fda303c5204fa04a19ca7c2c063ce0710dfdd4a2d847057a5",
+  "package_audit_sha256": "28a92c7fc5f450ea6afd76be34d9567302501279175d3e507375aecdbdabf18e",
+  "review_manifest_sha256": "f4196e126424a83452bce73073a7338e19f8a9ea30477c02f8e988b2c67a2dd7",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/auto_155948_424_522.upload_manifest.json",
+  "manifest_sha256": "8812e09580098d422cad63f3c73ebe6ada2624bb9b9a6c4406889e2741247218",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/auto_155948_424_522.public_verify.json",
+  "public_verify_sha256": "7ec71cf4d7ed45a1c38156ccc03d2355d3af94217087c0847a4f5c1e1e5f01fc",
+  "authorized_by": "Ivan",
+  "authorization_quote": "Ivan 2026-07-26 无人值守常令原话：流水线最终是无人值守的，不能因为没有人工参与就fail，必须得想个办法解决。目前是开发阶段我可以给真值，但是生产阶段是没有人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发（daily lane review_ready 即发布）"
+}
