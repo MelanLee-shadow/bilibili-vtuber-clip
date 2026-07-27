@@ -92,6 +92,27 @@ def test_relation_claim_fails_when_authority_is_unknown() -> None:
     assert audit["violations"][0]["reason_code"] == "UNCONFIRMED_RELATION_CLAIM"
 
 
+def test_subtitle_verbatim_relation_words_are_not_claims() -> None:
+    """1533 案（2026-07-27）：她口播「看看联动这边」是逐字实录——源语
+    保真高于关系权威，字幕工件不受 relation-claim 门拦截；生成物（hook/
+    标题）照旧上个测试锚死。"""
+
+    contract = build_story_contract(
+        candidate_id="c2b",
+        selection_hook="普通聊天",
+        transcript_text="看看联动这边",
+        selection_scorecard=None,
+        session_relation_authority=None,
+    )
+    audit = audit_story_artifact(
+        "看看联动这边",
+        story_contract=contract,
+        artifact_kind="subtitle",
+    )
+    assert audit["status"] == "PASS"
+    assert audit["violations"] == []
+
+
 def test_confirmed_relation_cover_prompt_discloses_host_only_fallback() -> None:
     contract = build_story_contract(
         candidate_id="c3",

@@ -231,7 +231,15 @@ def audit_story_artifact(
 ) -> dict[str, object]:
     violations: list[dict[str, object]] = []
     relation_claim = bool(_RELATION_CLAIM_RX.search(text))
-    if relation_claim and story_contract.get("relation_claim_allowed") is not True:
+    # 关系声明门只管「生成物」（hook/标题/封面文案）的捏造风险；字幕是
+    # 她口播的逐字实录（2026-07-27 1533 案：「看看联动这边」），源语保真
+    # 高于关系权威，且 uniform_host 裁定说话人不确定绝不拒发。字幕里的
+    # 声明词只披露不拦截。
+    if (
+        relation_claim
+        and story_contract.get("relation_claim_allowed") is not True
+        and artifact_kind != "subtitle"
+    ):
         violations.append(
             {
                 "reason_code": "UNCONFIRMED_RELATION_CLAIM",
