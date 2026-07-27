@@ -39,6 +39,17 @@ Ivan 指令：424 封面编辑；7/25 从官方回放补源；全量 session 复
 达到 review_ready 的交付按完整 v3 链（audit→make-manifest→upload→verify）直接上传；
 证据全部 commit。
 
+**2026-07-27 02:3xZ 夜班战果**：7/22 3573(BV1Mug46EEQz)/1475(BV1acg46XEjx) 置换已
+公开（带前缀新标题；形式闭包 completed.json 与 registry 刷新列晨间单——机内 v2
+receipts/audits 已绿，唯 plan 预检锚旧 cid 属世界已前移）。**四个系统性裁决病灶全修**：
+witness 自报数误杀(e187a22)、听写溢出+速率门(f7d5b1e)、KEEP_CURRENT 披露交付
+(d68dd39)、**概率排序裁决**(e8db19c，Ivan 裁定：UNCERTAIN 非终点，排序选最高，
+代码层拼音相容门保防顺从)。真值适用性精确到交付区间(81f83db)。
+**第一条 7/25 补源切片已发布：BV1zzgd6JEHe（1493_1579，VERIFIED_PUBLIC，证据 1bbd702）**
+——官方回放补源链端到端证明。其余候选按新栈重排产出中，review_ready watcher 出一条传一条。
+晨间单新增：3573/1475 registry 刷新+completed.json；「终审断点续跑」提速项；
+E=742_887 已有真值待重产；1573 边界 owner 案待单独根治。
+
 **2026-07-26 17:5xZ Ivan 晨间两裁定（原话要义）**：
 1. 「没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个」——
    V15 闭环改为**逐案推进**：单案 review_ready 即走 manifest→audit→receipt→repair-plan→
