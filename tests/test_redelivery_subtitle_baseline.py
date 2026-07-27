@@ -834,3 +834,31 @@ def test_v2_fails_closed_when_new_boundary_cuts_baseline_cue(tmp_path):
         row["reason_code"] == "REDELIVERY_BASELINE_CUE_CUT_BY_NEW_BOUNDARY"
         for row in audit["failures"]
     )
+
+
+def test_release_grade_merge_equivalence_accepted_in_v2_alignment():
+    """1863 案（2026-07-27）：生产端把 240ms「哦」并入「这样吗」后，恒等
+    比较必须认「合并=基线相邻拼接+时窗并集」，否则合并版永久失败；
+    文本多字/时窗越界仍拒。"""
+
+    from src.autoslice.jingting_chunker import SrtCue
+    from src.autoslice.redelivery_subtitle_baseline import (
+        _release_grade_merge_equivalent,
+    )
+
+    baseline = [
+        SrtCue(1, 25_190, 27_130, "是你在玩游戏我就走了"),
+        SrtCue(2, 27_130, 27_370, "哦"),
+        SrtCue(3, 27_370, 28_010, "这样吗"),
+    ]
+    merged = SrtCue(2, 27_130, 28_010, "哦，这样吗")
+    assert _release_grade_merge_equivalent(merged, [1, 2], baseline)
+
+    # 文本带私货 → 拒
+    tampered = SrtCue(2, 27_130, 28_010, "哦，这样吗啊")
+    assert not _release_grade_merge_equivalent(tampered, [1, 2], baseline)
+    # 时窗越界 → 拒
+    stretched = SrtCue(2, 27_130, 29_500, "哦，这样吗")
+    assert not _release_grade_merge_equivalent(stretched, [1, 2], baseline)
+    # 非相邻基线 → 拒
+    assert not _release_grade_merge_equivalent(merged, [0, 2], baseline)

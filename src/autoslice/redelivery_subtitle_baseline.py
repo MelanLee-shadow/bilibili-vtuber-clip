@@ -655,6 +655,38 @@ def _build_v2_alignment(rows: _V2CueRows) -> _V2Alignment:
     )
 
 
+def _release_grade_merge_equivalent(
+    current_cue: SrtCue,
+    baseline_indexes: Sequence[int],
+    baseline: Sequence[SrtCue],
+) -> bool:
+    """当前 cue 是否为基线相邻 cue 的发布级合并（1863 案，2026-07-27）。
+
+    生产端贴邻合并（merge_release_grade_cues）把 <300ms 残片/单字并入邻居，
+    文本=拼接（归一化后「，」消失）、时窗=并集。恒等比较必须认这个形状，
+    否则合并版 redelivery 永久失败。任何文本或时窗越界仍拒。
+    """
+
+    indexes = sorted(int(i) for i in baseline_indexes)
+    if len(indexes) < 2 or indexes != list(range(indexes[0], indexes[-1] + 1)):
+        return False
+    from src.autoslice.chat_evidence import normalize_chat_text
+
+    joined = normalize_chat_text(
+        "".join(baseline[i].text for i in indexes)
+    )
+    if not joined or normalize_chat_text(current_cue.text) != joined:
+        return False
+    union_start = min(baseline[i].start_ms for i in indexes)
+    union_end = max(baseline[i].end_ms for i in indexes)
+    return (
+        abs(current_cue.start_ms - union_start)
+        <= MAX_ALIGNMENT_BOUNDARY_DRIFT_MS
+        and abs(current_cue.end_ms - union_end)
+        <= MAX_ALIGNMENT_BOUNDARY_DRIFT_MS
+    )
+
+
 def _append_v2_alignment_failures(
     *,
     current: Sequence[SrtCue],
@@ -663,8 +695,26 @@ def _append_v2_alignment_failures(
     alignment: _V2Alignment,
     audit: dict[str, Any],
 ) -> None:
+    merge_consumed_baseline: set[int] = set()
     for current_index, candidates in alignment.strong_by_current.items():
         cue = current[current_index]
+        if not candidates:
+            raw_candidates = alignment.raw_by_current[current_index]
+            if len(raw_candidates) > 1 and _release_grade_merge_equivalent(
+                cue, raw_candidates, baseline
+            ):
+                merge_consumed_baseline.update(
+                    int(i) for i in raw_candidates
+                )
+                audit.setdefault("accepted_release_grade_merges", []).append(
+                    {
+                        "current_cue_index": current_index + 1,
+                        "baseline_cue_indexes": [
+                            int(i) + 1 for i in raw_candidates
+                        ],
+                    }
+                )
+                continue
         if len(candidates) > 1:
             audit["failures"].append(
                 {
@@ -701,6 +751,8 @@ def _append_v2_alignment_failures(
             )
 
     for baseline_index, candidates in alignment.strong_by_baseline.items():
+        if baseline_index in merge_consumed_baseline:
+            continue  # 已被发布级合并等价消费
         cue = baseline[baseline_index]
         if len(candidates) > 1:
             audit["failures"].append(
