@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,63 @@ class PreparedSourceMedia:
     piece_provenance_rows: list[dict]
 
 
+def _source_root_is_unavailable(error: BaseException) -> bool:
+    text = str(error)
+    return (
+        "SOURCE_RECORDING_ROOT_UNAVAILABLE:" in text
+        or "Transport endpoint is not connected" in text
+        or "State not recoverable" in text
+    )
+
+
+def _load_hash_bound_cached_piece(
+    *,
+    piece: dict,
+    local: Path,
+    provenance_path: Path,
+    host: str,
+) -> dict | None:
+    """Return an exact cached cut when only the source root is unavailable."""
+
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        return None
+    try:
+        document = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(document, dict):
+        return None
+
+    source_path = str(piece["remote_media"])
+    source_sha256 = document.get("source_sha256")
+    if (
+        document.get("source_path") != source_path
+        or not isinstance(source_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_sha256) is None
+        or document.get("source_media_binding") != f"sha256:{source_sha256}"
+    ):
+        return None
+    expected_piece = {
+        "source_path": source_path,
+        "source_sha256": source_sha256,
+        "source_media_binding": f"sha256:{source_sha256}",
+        "start_ms": int(piece["start_ms"]),
+        "end_ms": int(piece["end_ms"]),
+        "output_path": str(local.resolve()),
+    }
+    if not _valid_cached_provenance(
+        provenance_path,
+        expected_without_output_hash=expected_piece,
+        output=local,
+    ):
+        return None
+    _bind_piece_source_media_sha256(piece, source_sha256=source_sha256)
+    return {
+        **document,
+        "source_revalidation_status": "HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE",
+    }
+
+
 def prepare_source_media(
     *,
     spec: dict,
@@ -62,14 +120,29 @@ def prepare_source_media(
     piece_provenance_rows: list[dict] = []
     for index, piece in enumerate(spec["pieces"]):
         local = out_root / f"piece_{index}_{piece['start_ms']}_{piece['end_ms']}.mp4"
-        source_path, source_sha256 = _source_media_sha256(
-            host, Path(piece["remote_media"])
-        )
+        piece_provenance_path = local.with_suffix(".provenance.json")
+        cached_piece: dict | None = None
+        try:
+            source_path, source_sha256 = _source_media_sha256(
+                host, Path(piece["remote_media"])
+            )
+        except (OSError, RuntimeError) as exc:
+            if _source_root_is_unavailable(exc):
+                cached_piece = _load_hash_bound_cached_piece(
+                    piece=piece,
+                    local=local,
+                    provenance_path=piece_provenance_path,
+                    host=host,
+                )
+            if cached_piece is None:
+                raise
+            piece_paths.append(local)
+            piece_provenance_rows.append(cached_piece)
+            continue
         source_media_binding = _bind_piece_source_media_sha256(
             piece,
             source_sha256=source_sha256,
         )
-        piece_provenance_path = local.with_suffix(".provenance.json")
         expected_piece = {
             "source_path": source_path,
             "source_sha256": source_sha256,

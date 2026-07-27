@@ -122,6 +122,12 @@
   在 producer 读媒体途中断开，`OSError: Transport endpoint is not connected` /
   `State not recoverable` 仍须归类为
   `runtime_prerequisite/source_media_binding`，不能落入一次性 `producer_error`。
+- producer 已经生成的 piece 只有在 provenance 精确绑定同一 source path、source
+  SHA-256、窗口、输出路径，且当前 piece 输出哈希仍一致时，才可在
+  `SOURCE_RECORDING_ROOT_UNAVAILABLE` 下复用；复用必须记
+  `HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE`。源根健康但文件明确缺失、
+  provenance 不全、窗口或任一哈希不符时仍须 fail closed，不得把缓存当源文件
+  缺失的旁路。
 - 活着的容器不等于健康录制。直播中两轮无字节增长、状态过期、弹幕/录制长期
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行
