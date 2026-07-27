@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1TsgZ6BEE2",
+  "aid": 116990480026206,
+  "cid": 40338721977,
+  "title": "【李豆沙】弹幕拿名字嘲笑小李“是真的拉拉”，结果先强行论证“没拉就是赢”",
+  "uploaded_at": "2026-07-27T06:25:19+0000",
+  "video_sha256": "fa481c0df6de2ae129595b685af1a7c1c7227013e1a348da3aace77eede994d3",
+  "cover_sha256": "cab8d487d592f2cf9820e550138821e0aea70f9a2bdf27d012dbd380c6535613",
+  "record_sha256": "6b45dc9c2785a4a4e4e188b3ee1114db63f852bcc53f1ca0f3f1a3ef454bcead",
+  "subtitle_sha256": "5a11f241c5f73460e9a1c96824965788477c7006410e3020eb35f4f43d55e4bb",
+  "package_audit_sha256": "3fc295cf031a2d7fd2dcfae963f262f26461095aefdeec6163bc556ca2b025d4",
+  "review_manifest_sha256": "964701dd8daad3fa296bc3fe82e4c232b2ec40ed4d8b9d35c8c847bde8628b5a",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/auto_200133_44_293.upload_manifest.json",
+  "manifest_sha256": "0bb1e6de5880261b1486f14f72a4150f362e46b29a23cb5d2db6e8fc88f5c812",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/auto_200133_44_293.public_verify.json",
+  "public_verify_sha256": "853a2ddc131b18608efeefb1eacd0947d5d0e373607e1cde412375349670f3a7",
+  "authorized_by": "Ivan",
+  "authorization_quote": "Ivan 2026-07-26 无人值守常令原话：流水线最终是无人值守的，不能因为没有人工参与就fail，必须得想个办法解决。目前是开发阶段我可以给真值，但是生产阶段是没有人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发（daily lane review_ready 即发布）"
+}
