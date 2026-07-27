@@ -139,6 +139,40 @@ def test_judged_proposed_needs_pinyin_agreement():
     assert compat["current"] > compat["proposed"]
 
 
+def test_self_inconsistent_witness_cannot_veto_judge_choice():
+    """刘若莎案（2026-07-27，BV1ec3A6bEWF）：听写自称 14 音节却写出对不上
+    的拼音串（self_count_mismatch），其拼音门仍把 judge 排序选中的「李豆沙」
+    压回「刘若莎」发布。自不一致的测量没有否决权——judge 的选择生效。"""
+
+    witness = {**_witness("hai mei you ge za ne"), "self_count_mismatch": True}
+    repaired, branch, _ = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=witness,
+        llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
+    )
+    assert repaired is True
+    assert branch == "WITNESS_SELF_INCONSISTENT_JUDGE_APPLIED"
+
+    # 自一致的听写维持否决权（上面的既有测试锚死 False 分支）；
+    # 删除类即使听写自不一致也不放行——删错比留错更不可逆。
+    request = {
+        **CHECK_REQUEST,
+        "current_cue": "我草，乱说的啊",
+        "proposed_cue": "乱说的啊",
+        "suspect": "我草，",
+        "replacement": "",
+        "repair_class": "acoustic_delete",
+    }
+    kept, branch, _ = adjudicate_with_witness(
+        check_request=request,
+        witness={**_witness("wo cao luan shuo de a"),
+                 "self_count_mismatch": True},
+        llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
+    )
+    assert kept is False
+    assert branch == "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT"
+
+
 def test_judged_proposed_with_agreeing_pinyin_applies():
     repaired, branch, _audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,

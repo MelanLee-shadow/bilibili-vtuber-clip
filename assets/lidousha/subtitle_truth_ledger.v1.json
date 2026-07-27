@@ -2702,17 +2702,39 @@
    "text": "那个发一支持沙豆李的队伍",
    "truth_id": "20260725-shadouli-team-r1"
   },
- {
-  "action": "replace_cue",
-  "authority": "Ivan-stated-20260727-conversation(909 无源可考：录播记录缺失、回放弹幕无名、屏幕横幅无 toast、人耳亦无真值——授权任意近音字定版；取清晰可闻的 AC+风)",
-  "knowledge_type": "SOURCE_INTERVAL_TRUTH",
-  "recording_basename": "22966160_20260725-19-50-00.mp4",
-  "required": true,
-  "source_end_ms": 996180,
-  "source_start_ms": 993640,
-  "text": "谢谢AC风的比心",
-  "truth_id": "20260725-ac-bixin-thanks-r1"
- }
+  {
+   "action": "replace_cue",
+   "authority": "Ivan-stated-20260727-conversation(909 无源可考：录播记录缺失、回放弹幕无名、屏幕横幅无 toast、人耳亦无真值——授权任意近音字定版；取清晰可闻的 AC+风)",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260725-19-20-00.mp4",
+   "required": true,
+   "source_end_ms": 996180,
+   "source_start_ms": 993640,
+   "text": "谢谢AC风的比心",
+   "truth_id": "20260725-ac-bixin-thanks-r1"
+  },
+  {
+   "action": "replace_cue",
+   "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：下注口号被截断——witness 自一致听写 4 音节 zhe-si-liu-er≈支持李豆，且她下一句自述「这句话都还没说完」；忠实呈现截断而非补全)",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-19-31-29.mp4",
+   "required": true,
+   "source_end_ms": 876510,
+   "source_start_ms": 875310,
+   "text": "支持李豆……",
+   "truth_id": "20260724-zhichi-lidou-truncated-r1"
+  },
+  {
+   "action": "replace_cue",
+   "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：「刘若莎」为主播名误听——judge 排序已选「李豆沙」(语境=下注口号+弹幕[李豆沙_大笑])却被自不一致听写经拼音门否决；门已修，此处钉死真值)",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-19-31-29.mp4",
+   "required": true,
+   "source_end_ms": 890840,
+   "source_start_ms": 887680,
+   "text": "我连“支持李豆沙”这句话都还没说完呢",
+   "truth_id": "20260724-lidousha-quote-r1"
+  }
  ],
  "schema_version": "source-subtitle-truth-ledger.v1",
  "source_aliases": [

@@ -1,0 +1,111 @@
+{
+ "schema_version": "publication-registry.v1",
+ "notes": "候选↔BV 出版登记：published 候选禁止再走新投稿（修复一律 edit-replace 原 BV）；hold_pending_review 候选在 Ivan 放行前禁止任何上传。2026-07-27 建立（BV1ec3A6bEWF 事故：7/24 争议搁置件被当新切片上传）。",
+ "entries": [
+  {
+   "candidate_id": "auto_193450_1573_1672",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1DAg46HEXE",
+   "note": "v8-final；1573 置换链另有 same-bv repair 台账"
+  },
+  {
+   "candidate_id": "auto_193450_3573_3665",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1Mug46EEQz",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193450_1475_1543",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1acg46XEjx",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193450_672_945",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1tTg46UE3y",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193450_1863_2056",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1xgg462Env",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193129_424_535",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1E93L6rErV",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_193129_537_702",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1Eo3L6zEdU",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_183122_607_723",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1Eo3L6zECt",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_190124_199_480",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1jw3j6KE17",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_200133_44_293",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1TsgZ6BEE2",
+   "note": "2026-07-24-revived"
+  },
+  {
+   "candidate_id": "auto_193129_850_940",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1ec3A6bEWF",
+   "note": "2026-07-27 误当新切片上传的 7/24 争议搁置件（专名修复中）；后续修复一律 edit-replace 本 BV，禁止再投新稿"
+  },
+  {
+   "candidate_id": "auto_183122_1209_1410",
+   "recording_date": "2026-07-24",
+   "status": "hold_pending_review",
+   "bvid": null,
+   "note": "7/24 争议搁置件（当晚批次 上传许可:否）；Ivan 放行前禁止任何上传"
+  },
+  {
+   "candidate_id": "auto_195000_1493_1579",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV1zzgd6JEHe",
+   "note": "rescued-first；沙豆李字幕置换待 registry 修复通道"
+  },
+  {
+   "candidate_id": "auto_195000_742_887",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV13k3c6XEBb",
+   "note": "2026-07-25-revived"
+  },
+  {
+   "candidate_id": "auto_155948_424_522",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV1d73P6iErL",
+   "note": "2026-07-26-revived"
+  }
+ ]
+}

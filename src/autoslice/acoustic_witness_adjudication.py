@@ -337,5 +337,14 @@ def adjudicate_with_witness(
         compat_proposed < MIN_CHOICE_COMPATIBILITY
         or compat_proposed - compat_current < required_margin
     ):
+        # 自不一致的听写（声称的音节数与写出的拼音串对不上）没有否决
+        # 权：2026-07-27「刘若莎」案，judge 按语境排序选了「李豆沙」，
+        # 却被一份连自身音节数都数错的听写经拼音门压回原文发布。测量
+        # 自证不可靠时，裁决回到 judge 的排序选择；删除类维持收紧。
+        if (
+            bool(witness.get("self_count_mismatch"))
+            and repair_class not in {"acoustic_delete", "acoustic_drop_cue"}
+        ):
+            return True, "WITNESS_SELF_INCONSISTENT_JUDGE_APPLIED", audit
         return False, "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT", audit
     return True, "WITNESS_JUDGE_APPLY_PROPOSED", audit

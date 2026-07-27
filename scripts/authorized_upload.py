@@ -41,6 +41,8 @@ from src.autoslice.package_audit_binding import (
     audit_content_binding as _audit_content_binding,
 )
 from src.autoslice import final_human_review as human_review  # noqa: E402
+from src.autoslice.publication_registry import (  # noqa: E402
+    manifest_upload_block_reason as _publication_block)
 from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
@@ -276,6 +278,7 @@ def _validate_v3_package_attestation(
     manifest: dict,
     *,
     verify_hashes: bool,
+    live_policy_recheck: bool = True,
 ) -> list[str]:
     problems: list[str] = []
     attestation = manifest.get("package_attestation")
@@ -343,7 +346,11 @@ def _validate_v3_package_attestation(
         problems.append(f"package audit root mismatch: audit={audit_root} manifest={root}")
     if not _zero_blocking_issues(audit):
         problems.append("package audit reports blocking issues")
-    if root.is_dir():
+    # 冻结计划恢复（repair-run resume）不做 live 政策重算：计划创建时已做
+    # 过一次 canonical 校验并按 sha 冻结全部产物；平台审核等待期间的政策
+    # 演进（1573 案，2026-07-27）不得让已冻结的置换事务失去可恢复性。
+    # 哈希不可变性检查（上方 verify_hashes）在恢复路径照常执行。
+    if live_policy_recheck and root.is_dir():
         current_audit = audit_package(root)
         if current_audit.get("passed") is not True:
             problems.append("canonical package auditor currently rejects the package")
@@ -1231,6 +1238,8 @@ def make_manifest(args: argparse.Namespace) -> int:
     package_problems = repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
     package_problems.extend(human_review.attach_final_human_review(manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))
     package_problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
+    if registry_block := _publication_block(manifest):
+        package_problems.append(registry_block)
     if package_problems:
         for problem in package_problems:
             print(f"REFUSE: {problem}", file=sys.stderr)
@@ -1241,7 +1250,10 @@ def make_manifest(args: argparse.Namespace) -> int:
     return 0
 
 
-def load_and_verify(manifest_path: Path, *, ordinary_upload: bool = False) -> tuple[dict | None, list[str]]:
+def load_and_verify(
+    manifest_path: Path, *, ordinary_upload: bool = False,
+    frozen_plan_resume: bool = False,
+) -> tuple[dict | None, list[str]]:
     """(manifest, problems) — problems non-empty means REFUSE."""
     problems: list[str] = []
     try:
@@ -1280,7 +1292,9 @@ def load_and_verify(manifest_path: Path, *, ordinary_upload: bool = False) -> tu
             "source": EXPECTED_SOURCE,
         }:
             problems.append("manifest v3 publish_policy is invalid")
-        problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
+        problems.extend(_validate_v3_package_attestation(
+            manifest, verify_hashes=True,
+            live_policy_recheck=not frozen_plan_resume))
     for kind in ("video", "cover"):
         entry = manifest.get(kind) or {}
         path = Path(entry.get("path") or "")
@@ -1530,6 +1544,10 @@ def upload(args: argparse.Namespace) -> int:
                 "remain verify/season-add readable only",
                 file=sys.stderr,
             )
+            return 2
+        registry_block = _publication_block(manifest)
+        if registry_block:
+            print(f"REFUSE: {registry_block}", file=sys.stderr)
             return 2
         video_sha = manifest["video"]["sha256"]
         guard_status, guard_row, ledger_problems = ledger_guard(ledger, video_sha)
@@ -1867,7 +1885,7 @@ def _load_repair_manifest(plan_path: Path) -> tuple[dict | None, dict | None, li
     except PlanInvalid as exc:
         return None, None, [str(exc)]
     manifest_path = Path(str((plan.get("manifest") or {}).get("path") or ""))
-    manifest, problems = load_and_verify(manifest_path)
+    manifest, problems = load_and_verify(manifest_path, frozen_plan_resume=True)
     if problems or manifest is None:
         return plan, manifest, problems
     problems.extend(repair_binding.validate_plan_problems(plan, manifest=manifest, plan_path=plan_path))

@@ -819,7 +819,7 @@ def test_repair_plan_refuses_wrong_bvid_before_adapter_or_observe(
         yield
         lock_held = False
 
-    def load_inside_lock(_path):
+    def load_inside_lock(_path, **_kwargs):
         assert lock_held
         return manifest, []
 
@@ -876,7 +876,7 @@ def test_repair_run_validates_plan_before_adapter_or_cookie_access(
         yield
         lock_held = False
 
-    def load_inside_lock(_path):
+    def load_inside_lock(_path, **_kwargs):
         assert lock_held
         return {"manifest_version": 3}, []
 
