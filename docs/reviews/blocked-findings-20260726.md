@@ -158,3 +158,24 @@ BOUNDARY_SOURCE_WITNESS_RESERVE_INCOMPLETE`，未随 0a97deb 批复活（复活�
 
 **为何不即修**：动 pieces 构造、filler 不变量、跨段 chat 时基、异源 provenance、边界推荐语义
 五个子系统，属天级手术；当前三条失败 fail-closed 安全滞留，产线其余车道优先。
+
+---
+
+## I. 2026-07-27 补充：672 真值绑定 vs 转录切分/误听漂移（V15，设计需逐案音频仲裁）
+
+r21（2357962）下 `auto_193450_672_945` 五条 SOURCE_INTERVAL_TRUTH 失败，全部是
+**replace_cue 目标漂移**（`REPLACE_CUE_TARGET_NOT_UNIQUE` ×4 + `FORBIDDEN_TOKEN_SURVIVED` ×1）：
+每轮 fresh 重转写的 cue 切分/听写不同，kmx r5 的多 cue 辖区重分配（字符相似度门 0.55）盖不住两类新形态：
+
+1. **窗内误听**：「最最最最喜欢的南町nightin」→ 本轮听成「…最最最最喜欢的」+「难听难听」
+   （nan ting≈南町，字符零共通被辖区收缩踢出；joined 字符相似 ≈0.50<0.55）。
+   → 需要拼音级相似度参与 kept/joined 判定（机制同 T1 近音门）。
+2. **窗内重复句**：「李太多了哈」窗覆盖「哈哈哈，礼太多了」+「哈哈哈，这个礼有点太多了」
+   （她真实说了两遍变体）。盲目合并替换会**吃掉第二句真实语音**——字符门在此拦对了。
+   → 不能一刀切放宽；需按 cue 与窗的时间包含度 + 音频仲裁逐案定辖区。
+
+另有 `xing-a-response-r1`（canonical「行啊」，本轮零 cue 覆盖=转录整句漏听→需插入通道，暂缺）
+与 r4 drop 条目的 FORBIDDEN_TOKEN（cue49「嗯，LLNNHHB是这个」目标圈选漏）。
+
+**现状**：fail-closed 安全；672 的 live BV1tTg46UE3y 换源依赖某轮转录骰子落单 cue（r20 曾成）。
+修复票拆开做，勿与跨段 witness-reserve 混体。
