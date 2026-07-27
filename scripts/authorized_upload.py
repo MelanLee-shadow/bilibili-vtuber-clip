@@ -219,6 +219,22 @@ def _audit_binding(audit: dict) -> dict:
     }
 
 
+def _audit_content_binding(audit: dict) -> dict:
+    """The audit's content verdict, minus auditor-identity churn.
+
+    1573 在飞事务案（2026-07-27）：B 站审核窗横跨数小时，期间每次部署都
+    改 policy_fingerprint/auditor_source_sha256——冻结审计与现行审计对同
+    一批字节给出**逐字相同的判决**却被判过期，恢复永久卡死。现行审计员
+    已实跑通过（上一行门），内容判决（inputs/issues/verdict）相等即
+    canonical；字节漂移或新 issue 仍然精确拒绝。
+    """
+
+    binding = _audit_binding(audit)
+    binding.pop("policy_fingerprint", None)
+    binding.pop("auditor_source_sha256", None)
+    return binding
+
+
 def _resolved_manifest_item_path(root: Path, value: object) -> Path | None:
     if not isinstance(value, str) or not value:
         return None
@@ -364,7 +380,9 @@ def _validate_v3_package_attestation(
         current_audit = audit_package(root)
         if current_audit.get("passed") is not True:
             problems.append("canonical package auditor currently rejects the package")
-        if _audit_binding(audit) != _audit_binding(current_audit):
+        if _audit_content_binding(audit) != _audit_content_binding(
+            current_audit
+        ):
             problems.append(
                 "package audit is not the canonical current-policy result for the "
                 "current package input closure"

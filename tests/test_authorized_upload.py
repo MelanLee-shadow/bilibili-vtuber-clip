@@ -1980,3 +1980,38 @@ def test_success_sidecars_and_ledger_bind_package_attestation(tmp_path):
         key = f"{name}_sha256"
         assert uploaded[key] == manifest_data["package_attestation"][name]["sha256"]
         assert finished[key] == manifest_data["package_attestation"][name]["sha256"]
+
+
+def test_audit_content_binding_tolerates_auditor_identity_churn():
+    """1573 在飞事务案（2026-07-27）：B站审核窗横跨多次部署，
+    policy_fingerprint/auditor_source_sha256 变了但内容判决逐字相同——
+    canonical 等值只比内容判决；字节/issue 漂移仍拒。"""
+
+    import importlib.util as _ilu
+    from pathlib import Path as _P
+
+    spec = _ilu.spec_from_file_location(
+        "authorized_upload_mod", _P("scripts/authorized_upload.py")
+    )
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    stored = {
+        "schema_version": "v",
+        "policy_epoch": 3,
+        "policy_fingerprint": "OLD",
+        "auditor_source_sha256": "OLDSHA",
+        "passed": True,
+        "root": "/x",
+        "audited_inputs": {"a.mp4": "sha256:1"},
+        "issues": [],
+        "issue_count": 0,
+        "blocking_issue_count": 0,
+    }
+    current = dict(stored, policy_fingerprint="NEW", auditor_source_sha256="NEWSHA")
+    assert mod._audit_content_binding(stored) == mod._audit_content_binding(current)
+
+    drifted = dict(current, audited_inputs={"a.mp4": "sha256:2"})
+    assert mod._audit_content_binding(stored) != mod._audit_content_binding(drifted)
+    new_issue = dict(current, issues=[{"code": "X"}], issue_count=1)
+    assert mod._audit_content_binding(stored) != mod._audit_content_binding(new_issue)
