@@ -2917,3 +2917,116 @@ def test_committed_ledger_repairs_hotpot_lu_doctor_surface_family(asr_surface):
     assert "跟露医生好像啊" in corrected
     assert asr_surface not in corrected or asr_surface == "露医生"
     assert audit["status"] == "APPLIED"
+
+
+def test_misheard_cue_joins_dominion_via_pinyin(tmp_path):
+    """672 案形态一（2026-07-27）：「南町nightin」被本轮听成「难听难听」，
+    字符零共通但语音同一——拼音相似度使其保留辖区成员资格，钉文重分配
+    落地，误听残渣清除。"""
+
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "nancho-favorite",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 117_000,
+                "action": "replace_cue",
+                "text": "最最最最喜欢的南町nightin",
+                "required": True,
+            }
+        ],
+    )
+    srt = (
+        "1\n00:00:10,000 --> 00:00:13,000\n呃，就搜寻到了最最最最喜欢的\n\n"
+        "2\n00:00:13,000 --> 00:00:16,800\n难听难听\n"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec={"pieces": [{"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 130_000}]},
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+    assert audit["status"] == "APPLIED", audit["failures"]
+    assert not audit["failures"]
+    assert "南町nightin" in corrected
+    assert "难听" not in corrected
+
+
+def test_repeated_variant_window_containment_admission(tmp_path):
+    """672 案形态二：她把同一句说了两遍变体（礼太多了/这个礼有点太多了），
+    两 cue 都完整在真值窗内——窗口时间即裁定辖区，低字符相似不阻止钉文
+    落地；admission 在 applied 行披露。"""
+
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "too-many-li",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 116_200,
+                "action": "replace_cue",
+                "text": "李太多了哈",
+                "required": True,
+            }
+        ],
+    )
+    srt = (
+        "1\n00:00:10,000 --> 00:00:13,000\n哈哈哈，礼太多了\n\n"
+        "2\n00:00:13,000 --> 00:00:16,000\n哈哈哈，这个礼有点太多了\n"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec={"pieces": [{"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 130_000}]},
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+    assert audit["status"] == "APPLIED", audit["failures"]
+    assert not audit["failures"]
+    row = audit["applied"][0]
+    assert row.get("window_containment_admission") is True
+    text_only = "".join(
+        line
+        for line in corrected.splitlines()
+        if line and not line[0].isdigit()
+    )
+    assert "李太多了哈" in text_only.replace("，", "").replace("。", "")
+    assert "这个礼有点" not in corrected
+
+
+def test_straddling_cue_blocks_containment_admission(tmp_path):
+    """邻句保护不动摇：第二 cue 伸出真值窗（包含度<0.9）且文本相似不过
+    0.55 线时，照旧 REPLACE_CUE_TARGET_NOT_UNIQUE 失败，窗外语音分毫不动。"""
+
+    ledger = _ledger(
+        tmp_path,
+        [
+            {
+                "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                "truth_id": "straddle-guard",
+                "recording_basename": "recording.mp4",
+                "source_start_ms": 110_000,
+                "source_end_ms": 116_000,
+                "action": "replace_cue",
+                "text": "李太多了哈",
+                "required": True,
+            }
+        ],
+    )
+    srt = (
+        "1\n00:00:10,000 --> 00:00:13,000\n哈哈哈，礼太多了\n\n"
+        "2\n00:00:13,000 --> 00:00:18,000\n哈哈哈，这个礼有点太多了顺便说下一件事\n"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        srt,
+        spec={"pieces": [{"remote_media": "/x/recording.mp4", "start_ms": 100_000, "end_ms": 130_000}]},
+        durations=[30_000],
+        ledger_path=ledger,
+    )
+    assert audit["failures"], audit
+    assert audit["failures"][0]["reason_code"] == "REPLACE_CUE_TARGET_NOT_UNIQUE"
+    assert "顺便说下一件事" in corrected

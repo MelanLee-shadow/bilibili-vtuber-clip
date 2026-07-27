@@ -20,10 +20,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from src.autoslice.source_truth_target_selection import (  # noqa: E402
-    DROP_CUE_BOUNDARY_EPSILON_MS,
     MIN_CUE_OVERLAP_MS,
     _drop_cue_targets,
-    _overlap_ms,
     _target_indexes,
 )
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
@@ -1137,6 +1135,48 @@ def _resolve_spoken_start_binding(
     return local_ms, target, error
 
 
+def _truth_pinyin_ratio(a: str, b: str) -> float:
+    """Toneless-pinyin similarity for truth-window dominion checks.
+
+    672 案（2026-07-27）：转录把「南町nightin」误听成「难听难听」——字符级
+    零共通但语音同一。真值窗辖区判定必须能看见语音等价，否则误听 cue 被
+    辖区收缩踢出、replace_cue 永远 NOT_UNIQUE。独立小实现，避免与审片
+    模块耦合；pypinyin 缺失时返回 0（退回纯字符行为）。
+    """
+
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError:
+        return 0.0
+    if not a or not b:
+        return 0.0
+    from difflib import SequenceMatcher
+
+    return SequenceMatcher(
+        None,
+        " ".join(str(t).lower() for t in lazy_pinyin(a)),
+        " ".join(str(t).lower() for t in lazy_pinyin(b)),
+    ).ratio()
+
+
+def _cue_window_containment(
+    cue: SrtCue,
+    windows: Sequence[Mapping[str, object]],
+) -> float:
+    """Fraction of the cue's duration owned by truth windows (0.0-1.0)."""
+
+    duration = max(1, cue.end_ms - cue.start_ms)
+    covered = 0
+    for window in windows:
+        try:
+            start_ms = int(window["start_ms"])  # type: ignore[index]
+            end_ms = int(window["end_ms"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            continue
+        covered += max(0, min(cue.end_ms, end_ms) - max(cue.start_ms, start_ms))
+    return min(1.0, covered / duration)
+
+
 def _apply_replace_cue_action(
     *,
     entry: Mapping[str, object],
@@ -1148,6 +1188,7 @@ def _apply_replace_cue_action(
     row: dict[str, Any],
     spoken_start_raw: object,
     spoken_start_local: int | None,
+    windows: Sequence[tuple[int, int]] = (),
 ) -> tuple[bool, bool, list[int], list[str]]:
     """Apply one ``replace_cue`` row without changing orchestration order."""
 
@@ -1178,7 +1219,10 @@ def _apply_replace_cue_action(
         kept = [
             index
             for index in target_indexes
+            # 字符共通 ≥2 或语音相似 ≥0.30：误听 cue（难听难听≈南町）不许
+            # 被辖区收缩当邻句踢出——语音等价就是窗内成员资格。
             if _match_metrics(replacement, texts[index])[4] >= 2
+            or _truth_pinyin_ratio(replacement, texts[index]) >= 0.30
         ]
         contiguous = bool(kept) and kept == list(
             range(kept[0], kept[0] + len(kept))
@@ -1205,15 +1249,37 @@ def _apply_replace_cue_action(
             # 辖区收缩：与钉文毫无字符共通的 cue 是被窗口误圈的
             # 邻句（真实内容不许被钉文覆盖），从两端剔除后必须仍
             # 连续；收缩集与钉文整体相似 ≥0.55 才允许重分配落刀。
-            joined_score = (
-                _match_metrics(
-                    replacement,
-                    "".join(texts[index] for index in kept),
-                )[0]
+            kept_joined_text = "".join(texts[index] for index in kept)
+            joined_char_score = (
+                _match_metrics(replacement, kept_joined_text)[0]
                 if kept
                 else 0.0
             )
-            if contiguous and joined_score >= 0.55:
+            # 语音相似与字符相似取 max：误听窗（南町nightin→难听难听）字符
+            # 相似 ~0.50 不过线，拼音相似过线。
+            joined_score = max(
+                joined_char_score,
+                _truth_pinyin_ratio(replacement, kept_joined_text)
+                if kept
+                else 0.0,
+            )
+            # 时间包含度准入（672 重复句窗）：全部 kept cue ≥90% 时长在
+            # 真值窗内 → 窗口时间即 Ivan 裁定的辖区，文本相似只留 0.30
+            # 底线防「错窗错配」；任何骑缘 cue 使该准入失效（邻句保护）。
+            window_containment_admission = bool(
+                kept
+                and windows
+                and joined_score >= 0.30
+                and all(
+                    _cue_window_containment(cues[index], windows) >= 0.90
+                    for index in kept
+                )
+            )
+            if window_containment_admission:
+                row["window_containment_admission"] = True
+            if contiguous and (
+                joined_score >= 0.55 or window_containment_admission
+            ):
                 parts = _snap_split_to_punct(
                     _shift_boundary_punct(
                         _best_text_split(
@@ -1548,6 +1614,7 @@ def apply_source_subtitle_truth(
                     row=row,
                     spoken_start_raw=spoken_start_raw,
                     spoken_start_local=spoken_start_local,
+                    windows=windows,
                 )
             )
         elif action == "replace_substring":
