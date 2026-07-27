@@ -1,0 +1,21 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1ec3A6bEWF",
+  "aid": 116993634082225,
+  "cid": 40357990267,
+  "title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+  "uploaded_at": "2026-07-27T19:45:48+0000",
+  "video_sha256": "8141dc32f2740b065a3b037aec96a53589199a48fd3a368d79fa6936a37d30a4",
+  "cover_sha256": "cd044d105863f92e37d1e31312d60778bd3a841ed4b091eaf2013d3b37491bb3",
+  "record_sha256": "05f782bab863c4e0af1baed56262e85792907682a7c4af3d3039308d4b7d0b56",
+  "subtitle_sha256": "3fcf0204246087d5e3969dfe1ded902ac8164be54b4ccf5c1719389d364ea0ed",
+  "package_audit_sha256": "8952b407223d66d99a2f0f2bc365594bbc22b1e58f7ee86ae9fe52a6296bee46",
+  "review_manifest_sha256": "04d783fdb632ac759d7409de6be7734861b45fc98ed119c1df1ae86d87e79c0b",
+  "manifest": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.upload_manifest.json",
+  "manifest_sha256": "94d06dc5ad83468970d4de0e2e42d8b5ccaddab7745839e451229b35b7128ee5",
+  "public_verify": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.public_verify.json",
+  "public_verify_sha256": "67fe59ef64652e95699ff5b43706847cfa01f17620547f217b25d1b88c81d831",
+  "authorized_by": "Ivan",
+  "authorization_quote": "Ivan 2026-07-26 无人值守常令原话：流水线最终是无人值守的，不能因为没有人工参与就fail，必须得想个办法解决。目前是开发阶段我可以给真值，但是生产阶段是没有人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发（daily lane review_ready 即发布）"
+}

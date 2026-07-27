@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "8141dc32f274",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.burned-final-sapphire72.mp4",
+    "sha256": "8141dc32f2740b065a3b037aec96a53589199a48fd3a368d79fa6936a37d30a4",
+    "bytes": 33186028
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.burned-final-sapphire72.cover.png",
+    "sha256": "cd044d105863f92e37d1e31312d60778bd3a841ed4b091eaf2013d3b37491bb3",
+    "bytes": 2979731
+  },
+  "title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "talk:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/package_audit.json",
+      "sha256": "8952b407223d66d99a2f0f2bc365594bbc22b1e58f7ee86ae9fe52a6296bee46",
+      "bytes": 3244
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/review_manifest.json",
+      "sha256": "04d783fdb632ac759d7409de6be7734861b45fc98ed119c1df1ae86d87e79c0b",
+      "bytes": 6221
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.burned-final-sapphire72.record.json",
+      "sha256": "05f782bab863c4e0af1baed56262e85792907682a7c4af3d3039308d4b7d0b56",
+      "bytes": 58442
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.burned-final-sapphire72.srt",
+      "sha256": "3fcf0204246087d5e3969dfe1ded902ac8164be54b4ccf5c1719389d364ea0ed",
+      "bytes": 1724
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "Ivan 2026-07-26 无人值守常令原话：流水线最终是无人值守的，不能因为没有人工参与就fail，必须得想个办法解决。目前是开发阶段我可以给真值，但是生产阶段是没有人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发（daily lane review_ready 即发布）",
+    "at": "2026-07-27T19:42:10+0000"
+  },
+  "created_at": "2026-07-27T19:42:10+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "搞笑",
+    "破防",
+    "吐槽",
+    "被骗"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}
