@@ -125,8 +125,10 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     # 2026-07-26：礼物固定专名词表接入 glossary（Ivan 2026-07-24 裁定）。
     # 2026-07-26b：原则十五——外语 vs 中文拉丁化判据是语义（Ivan 裁定）。
     # 2026-07-27：沙豆李新误听面 下斗里 + 粉丝队对抗语境先验（Ivan 裁定）。
+    # 2026-07-27b：白色奶龙梗一族入 glossary（白/粉/黑奶龙、礼小虎、动捕房、
+    # 做面部、星汐误听面新C；误听面=2026-07-24/25 bcut 实测，保向不盲替）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "ea2cec82e90add6ef9ee1fda81f2db63a8182134ba98f64e8906bc3725c6b83b"
+        "afbec46a1e3c22918be0109e173ad326ed7a276ace01a9b40aa34afe82fa52a5"
     )
 
 

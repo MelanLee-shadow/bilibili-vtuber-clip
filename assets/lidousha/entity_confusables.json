@@ -446,6 +446,119 @@
         }
       ],
       "reason": "Ivan 2026-07-22：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "白色奶龙",
+        "粉色奶龙",
+        "黑色奶龙"
+      ],
+      "uncertain_keep_surfaces": [],
+      "entities": [
+        {
+          "canonical": "白色奶龙",
+          "surfaces": [
+            "白蛇奶龙"
+          ],
+          "readings": [
+            "bai se nai long",
+            "baisenailong"
+          ]
+        },
+        {
+          "canonical": "粉色奶龙",
+          "surfaces": [],
+          "readings": [
+            "fen se nai long",
+            "fensenailong"
+          ]
+        },
+        {
+          "canonical": "黑色奶龙",
+          "surfaces": [],
+          "readings": [
+            "hei se nai long",
+            "heisenailong"
+          ]
+        }
+      ],
+      "reason": "奶龙家族梗（Ivan 2026-07-27 立项）：白色奶龙=李豆沙 2026-07-22/23 动捕彩排新 3D 白模 bug 外号（非官方新形象）、粉色奶龙=星汐既有梗、黑色奶龙=礼墨（粉丝盖章）。2026-07-24/25 bcut 实测误听面：白蛇奶龙——四字串无真实语境，音频不确定照旧阻塞；三个颜色规范形音节可分，互换须逐 mention 音节证据，禁止按身份映射盲替人名或反向展开。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "动捕房",
+        "做面部"
+      ],
+      "uncertain_keep_surfaces": [
+        "动物房",
+        "做面粉"
+      ],
+      "entities": [
+        {
+          "canonical": "动捕房",
+          "surfaces": [
+            "动物房"
+          ],
+          "readings": [
+            "dong bu fang",
+            "dongbufang"
+          ]
+        },
+        {
+          "canonical": "做面部",
+          "surfaces": [
+            "做面粉"
+          ],
+          "readings": [
+            "zuo mian bu",
+            "zuomianbu"
+          ]
+        }
+      ],
+      "reason": "动捕彩排话题簇（2026-07-22/23 彩排；Ivan 2026-07-27 立项，误听面 2026-07-24/25 bcut 实测）：动物房=「动捕房」误听、做面粉=「做面部(表情)」误听，正是白色奶龙梗起源语境。误听面出现才触发音频二选一；真动物设施/真做饭食材语境 UNCERTAIN 保留原词，禁止全局替换。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "星汐",
+        "新C"
+      ],
+      "uncertain_keep_surfaces": [
+        "新C"
+      ],
+      "entities": [
+        {
+          "canonical": "星汐",
+          "surfaces": [
+            "新C"
+          ],
+          "readings": [
+            "xing xi",
+            "xingxi",
+            "seki"
+          ]
+        },
+        {
+          "canonical": "新C",
+          "surfaces": [],
+          "readings": [
+            "xin c",
+            "xinc"
+          ]
+        }
+      ],
+      "reason": "星汐（星汐Seki，PSPLive 同团，roster 已收录）自称/他称误听拯救（Ivan 2026-07-27 立项）：2026-07-24/25 bcut 实测 新C=星汐——xīng-xī 被拆成「新」+拉丁「C」，联动/彩排/同团语境按本句发音复核为 星汐；真「新C位」等游戏语境 UNCERTAIN 保留。词条只证明实体存在，禁止盲替。"
     }
   ]
 }
