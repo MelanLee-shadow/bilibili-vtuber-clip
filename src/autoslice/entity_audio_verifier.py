@@ -427,6 +427,116 @@ class _EntityProviderOutcome:
     provider_failures: list[dict[str, Any]]
 
 
+_ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v1"
+
+
+def _witness_acoustic_cache_path(output_dir: Path, clip_sha256: str) -> Path:
+    """Global content-addressed cache entry for one witness audio clip.
+
+    成本裁定（Ivan 2026-07-27，3 天 $40 案）：付费声学证人 88% 的消耗来自
+    重产轮次对**同一段音频**的重复听写——witness 请求按设计不携带候选
+    （纯听写），答案只由音频决定，request_sha 里的文本漂移不改变问题本身。
+    键=音频片 sha256；BASE 从候选包目录上溯（out/<date>/<cid> → BASE），
+    主树与 V15 恢复树各自命中自己的缓存。
+    """
+
+    base = output_dir.parents[2] if len(output_dir.parents) >= 3 else output_dir
+    return (
+        base
+        / "cache"
+        / "witness-acoustic"
+        / clip_sha256[:2]
+        / f"{clip_sha256}.json"
+    )
+
+
+def _serve_witness_acoustic_cache(
+    *,
+    output_dir: Path,
+    clip_sha256: str,
+    job_dir: Path,
+) -> _EntityProviderOutcome | None:
+    """Return a synthetic provider outcome from the acoustic cache, or None.
+
+    只回放 OBSERVED 的原始听写；prompt/response 工件拷贝进当前 job_dir，
+    下游照常重算全部 sha 与报告校验——缓存只省 provider 调用，不省验证。
+    """
+
+    entry_path = _witness_acoustic_cache_path(output_dir, clip_sha256)
+    try:
+        entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    observed = entry.get("observed")
+    if (
+        entry.get("schema_version") != _ACOUSTIC_CACHE_SCHEMA
+        or entry.get("audio_clip_sha256") != clip_sha256
+        or not isinstance(observed, dict)
+        or observed.get("status") != "OBSERVED"
+    ):
+        return None
+    prompt_src = entry_path.with_suffix(".prompt.json")
+    response_src = entry_path.with_suffix(".response.json")
+    if not prompt_src.is_file() or not response_src.is_file():
+        return None
+    prompt_path = job_dir / "prompt.acoustic-cache.json"
+    response_path = job_dir / "response.acoustic-cache.json"
+    try:
+        prompt_path.write_bytes(prompt_src.read_bytes())
+        response_path.write_bytes(response_src.read_bytes())
+    except OSError:
+        return None
+    return _EntityProviderOutcome(
+        observed=dict(observed),
+        provider=str(entry.get("provider") or "acoustic_cache"),
+        model=str(entry.get("model") or ""),
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier=entry.get("key_tier") or None,
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+
+
+def _store_witness_acoustic_cache(
+    *,
+    output_dir: Path,
+    clip_sha256: str,
+    observed: Mapping[str, Any],
+    outcome: _EntityProviderOutcome,
+) -> None:
+    """Best-effort write-through; cache absence must never fail production."""
+
+    try:
+        entry_path = _witness_acoustic_cache_path(output_dir, clip_sha256)
+        entry_path.parent.mkdir(parents=True, exist_ok=True)
+        entry_path.with_suffix(".prompt.json").write_bytes(
+            outcome.prompt_path.read_bytes()
+        )
+        entry_path.with_suffix(".response.json").write_bytes(
+            outcome.response_path.read_bytes()
+        )
+        entry_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": _ACOUSTIC_CACHE_SCHEMA,
+                    "audio_clip_sha256": clip_sha256,
+                    "observed": dict(observed),
+                    "provider": outcome.provider,
+                    "model": outcome.model,
+                    "key_tier": outcome.accepted_key_tier,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def _observe_entity_audio(
     *,
     request: Mapping[str, Any],
@@ -1117,17 +1227,30 @@ def _verify_local_audio_request(
     if not crop_succeeded:
         return _uncertain(request, "ENTITY_AUDIO_CROP_FAILED", crop_error)
 
-    outcome = _observe_entity_audio(
-        request=span.observed_request,
-        candidates=candidates,
-        audio_path=audio_path,
-        job_dir=job_dir,
-        recording_date=verifier.recording_date,
-        timely_context=verifier.timely_context,
-        binary=verifier.binary,
-        model=verifier.model,
-        timeout=verifier.timeout,
-    )
+    acoustic_clip_sha = _sha256(audio_path) if witness_mode else None
+    acoustic_cache_hit = False
+    outcome = None
+    if acoustic_clip_sha is not None:
+        cached_outcome = _serve_witness_acoustic_cache(
+            output_dir=verifier.output_dir,
+            clip_sha256=acoustic_clip_sha,
+            job_dir=job_dir,
+        )
+        if cached_outcome is not None:
+            outcome = cached_outcome
+            acoustic_cache_hit = True
+    if outcome is None:
+        outcome = _observe_entity_audio(
+            request=span.observed_request,
+            candidates=candidates,
+            audio_path=audio_path,
+            job_dir=job_dir,
+            recording_date=verifier.recording_date,
+            timely_context=verifier.timely_context,
+            binary=verifier.binary,
+            model=verifier.model,
+            timeout=verifier.timeout,
+        )
     observed = outcome.observed
     provider_failures = outcome.provider_failures
     if observed is None:
@@ -1175,6 +1298,18 @@ def _verify_local_audio_request(
             end_ms=span.crop_end_ms,
             timeline_binding=span.timeline_binding,
         )
+        if (
+            acoustic_clip_sha is not None
+            and not acoustic_cache_hit
+            and isinstance(observed, dict)
+            and verdict.get("status") == "OBSERVED"
+        ):
+            _store_witness_acoustic_cache(
+                output_dir=verifier.output_dir,
+                clip_sha256=acoustic_clip_sha,
+                observed=observed,
+                outcome=outcome,
+            )
         manifest = {
             "schema_version": "entity-audio-verdict-manifest.v1",
             "request_sha256": request_sha,
@@ -1183,6 +1318,16 @@ def _verify_local_audio_request(
             "source_media_sha256": verifier.source_sha256,
             "audio_clip": str(audio_path),
             "audio_clip_sha256": _sha256(audio_path),
+            **(
+                {
+                    "acoustic_cache": {
+                        "hit": True,
+                        "clip_sha256": acoustic_clip_sha,
+                    }
+                }
+                if acoustic_cache_hit
+                else {}
+            ),
             "prompt_sha256": _sha256(outcome.prompt_path),
             "response_sha256": _sha256(outcome.response_path),
             "model": outcome.model,

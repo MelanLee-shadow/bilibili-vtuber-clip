@@ -603,3 +603,122 @@ def test_api_paid_used_under_dev_exception_and_ledgered(tmp_path, monkeypatch):
     job_dir = tmp_path / "out/entity_verdicts" / ("a" * 20)
     manifest = json.loads((job_dir / "verdict.manifest.json").read_text(encoding="utf-8"))
     assert manifest["paid_backup_policy"]
+
+
+def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, monkeypatch):
+    """成本裁定（Ivan 2026-07-27，3 天 $40 案）：同一段音频的纯听写答案
+    与请求文本/几何标识无关——第二次（哪怕 request_sha 不同）必须直接
+    命中内容寻址缓存，零 provider 调用；验证照常全跑。失败/UNCERTAIN
+    永不入缓存（沿用既有规则）。"""
+
+    from src.autoslice.acoustic_witness_adjudication import (
+        build_witness_request,
+    )
+
+    source = tmp_path / "base" / "recordings" / "source.mp4"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source media bytes")
+    agy_calls = []
+
+    def fake_run(command, **kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"identical witness clip bytes")
+            return _Completed()
+        agy_calls.append(command)
+        job_dir = Path(kwargs["cwd"])
+        (job_dir / "verdict.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": verifier_module.WITNESS_SCHEMA,
+                    "status": "OBSERVED",
+                    "target_audible": True,
+                    "heard_pinyin": "hai mei you ge zhai ne",
+                    "uncertain_positions": [],
+                    "syllable_count": 6,
+                    "confidence": 0.93,
+                    "reason": "clear speech",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return _Completed()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+
+    def check_request(evidence, start):
+        return {
+            "evidence_id": evidence,
+            "cue_indexes": [3],
+            "matched_start_ms": start,
+            "matched_end_ms": start + 1_500,
+            "context_start_ms": start - 1_000,
+            "context_end_ms": start + 2_500,
+            "source_media_timeline_offset_ms": 0,
+        }
+
+    output_dir = tmp_path / "base" / "out" / "2026-07-25" / "auto_x"
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=output_dir,
+        recording_date="2026-07-25",
+        source_duration_ms=600_000,
+        agy_bin="agy-test",
+    )
+
+    first = verify(build_witness_request(check_request("e" * 64, 10_000)))
+    assert first["status"] == "OBSERVED"
+    assert first["heard_pinyin"] == "hai mei you ge zhai ne"
+    assert len(agy_calls) == 1
+
+    # 不同 evidence/几何 → 不同 request_sha，但音频字节相同 → 缓存命中
+    second = verify(build_witness_request(check_request("f" * 64, 10_040)))
+    assert second["status"] == "OBSERVED"
+    assert second["heard_pinyin"] == "hai mei you ge zhai ne"
+    assert len(agy_calls) == 1  # 零新 provider 调用
+
+    cache_root = tmp_path / "base" / "cache" / "witness-acoustic"
+    assert any(cache_root.rglob("*.json"))
+
+
+def test_witness_acoustic_cache_never_stores_failures(tmp_path, monkeypatch):
+    source = tmp_path / "base" / "recordings" / "source.mp4"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source media bytes")
+
+    def fake_run(command, **kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"same clip")
+            return _Completed()
+        return _Completed(returncode=1)
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+
+    from src.autoslice.acoustic_witness_adjudication import (
+        build_witness_request,
+    )
+
+    output_dir = tmp_path / "base" / "out" / "2026-07-25" / "auto_y"
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=output_dir,
+        recording_date="2026-07-25",
+        source_duration_ms=600_000,
+        agy_bin="agy-test",
+    )
+    verdict = verify(
+        build_witness_request(
+            {
+                "evidence_id": "e" * 64,
+                "cue_indexes": [1],
+                "matched_start_ms": 5_000,
+                "matched_end_ms": 6_000,
+                "context_start_ms": 4_000,
+                "context_end_ms": 7_000,
+                "source_media_timeline_offset_ms": 0,
+            }
+        )
+    )
+    assert verdict.get("status") != "OBSERVED"
+    cache_root = tmp_path / "base" / "cache" / "witness-acoustic"
+    assert not cache_root.exists() or not any(cache_root.rglob("*.json"))
