@@ -1039,6 +1039,8 @@ def load_env_file(path: Path) -> dict[str, str]:
 def child_env() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("AUTOSLICE_PROFILE", PROFILE_ID)
+    # judge/声学缓存根：主树固定 BASE；V15 恢复树由其 launcher 覆写。
+    env.setdefault("AUTOSLICE_BASE", str(BASE))
     env.update(load_env_file(CPA_ENV))
     # Gemini API is the automatic source-context failover when the AGY account
     # is quota-limited.  Import only these named secrets from the recorder env;

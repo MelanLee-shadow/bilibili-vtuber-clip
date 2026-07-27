@@ -139,6 +139,54 @@ def test_judged_proposed_needs_pinyin_agreement():
     assert compat["current"] > compat["proposed"]
 
 
+def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
+    """Ivan 2026-07-27 自修复成本令：同一问题（同 prompt_sha）绝不发第二次
+    judge 请求。JUDGED 终态入缓存并回放；非 JUDGED 不入；无 AUTOSLICE_BASE
+    时完全旁路。"""
+
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    calls = {"n": 0}
+
+    def counting_llm(prompt):
+        calls["n"] += 1
+        return json.dumps({"choice": "PROPOSED", "reason": "r"})
+
+    kwargs = dict(
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+    first = judge_word_choice(llm_call=counting_llm, **kwargs)
+    assert first["status"] == "JUDGED" and calls["n"] == 1
+    second = judge_word_choice(llm_call=counting_llm, **kwargs)
+    assert second["status"] == "JUDGED" and calls["n"] == 1
+    assert second.get("served_from_cache") is True
+    assert second["choice"] == first["choice"]
+
+    # 失败结果不得污染缓存：换语境（新 prompt_sha）+ 失败 llm → 不入缓存
+    def failing_llm(prompt):
+        calls["n"] += 1
+        raise RuntimeError("provider down")
+
+    bad = judge_word_choice(
+        llm_call=failing_llm,
+        check_request={**CHECK_REQUEST, "context_before": "换个语境"},
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+    assert bad["status"] == "JUDGE_UNAVAILABLE" and calls["n"] == 2
+    retry = judge_word_choice(
+        llm_call=counting_llm,
+        check_request={**CHECK_REQUEST, "context_before": "换个语境"},
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+    assert retry["status"] == "JUDGED" and calls["n"] == 3
+
+    # 无缓存根 → 旁路（每次都调用）
+    monkeypatch.delenv("AUTOSLICE_BASE")
+    judge_word_choice(llm_call=counting_llm, **kwargs)
+    judge_word_choice(llm_call=counting_llm, **kwargs)
+    assert calls["n"] == 5
+
+
 def test_self_inconsistent_witness_cannot_veto_judge_choice():
     """刘若莎案（2026-07-27，BV1ec3A6bEWF）：听写自称 14 音节却写出对不上
     的拼音串（self_count_mismatch），其拼音门仍把 judge 排序选中的「李豆沙」

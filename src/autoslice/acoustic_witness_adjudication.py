@@ -19,7 +19,9 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import re
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from src.autoslice.llm_client import extract_json_object
@@ -169,6 +171,30 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 """
 
 
+_JUDGE_CACHE_SCHEMA = "judge-verdict-cache.v1"
+
+
+def _judge_cache_path(prompt_sha256: str) -> Path | None:
+    """Content-addressed CPA-judge cache entry, or None when disabled.
+
+    Ivan 2026-07-27 自修复成本令：重试/边界自修复轮对**同一个问题**（同
+    听写+同候选+同语境，即同 prompt_sha）不得再发新请求。与声学缓存同构：
+    键=prompt 内容 sha，输入任何一处变化自然失效；根=AUTOSLICE_BASE（主
+    树与 V15 恢复树各自命中自己的缓存），测试环境不设根则完全旁路。
+    """
+
+    base = os.environ.get("AUTOSLICE_BASE")
+    if not base:
+        return None
+    return (
+        Path(base)
+        / "cache"
+        / "judge-verdicts"
+        / prompt_sha256[:2]
+        / f"{prompt_sha256}.json"
+    )
+
+
 def judge_word_choice(
     *,
     llm_call: Callable[[str], str],
@@ -200,6 +226,22 @@ def judge_word_choice(
         structured_chat_block=chat_block,
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    cache_path = _judge_cache_path(prompt_sha256)
+    if cache_path is not None:
+        try:
+            entry = json.loads(cache_path.read_text(encoding="utf-8"))
+            stored = entry.get("verdict")
+            if (
+                entry.get("schema_version") == _JUDGE_CACHE_SCHEMA
+                and entry.get("prompt_sha256") == prompt_sha256
+                and isinstance(stored, dict)
+                and stored.get("status") == "JUDGED"
+            ):
+                served = dict(stored)
+                served["served_from_cache"] = True
+                return served
+        except (OSError, ValueError):
+            pass
     try:
         completion = llm_call(prompt)
         payload = extract_json_object(completion)
@@ -245,7 +287,7 @@ def judge_word_choice(
             "raw_choice": choice[:80],
             "prompt_sha256": prompt_sha256,
         }
-    return {
+    verdict = {
         "schema_version": ADJUDICATION_SCHEMA,
         "status": "JUDGED",
         "choice": choice,
@@ -256,6 +298,25 @@ def judge_word_choice(
             completion.encode("utf-8")
         ).hexdigest(),
     }
+    if cache_path is not None:
+        # 只缓存 JUDGED 终态；写失败绝不影响生产（与声学缓存同约定）。
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": _JUDGE_CACHE_SCHEMA,
+                        "prompt_sha256": prompt_sha256,
+                        "verdict": verdict,
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+    return verdict
 
 
 def adjudicate_with_witness(
