@@ -165,6 +165,18 @@ def test_inaudible_target_only_supports_drop_cue():
     assert kept is False and branch == "TARGET_INAUDIBLE_KEEP_CURRENT"
 
 
+def test_inaudible_target_supports_span_delete():
+    """1160 咳咳案（2026-07-27）：删除提案的时窗被见证为无语音——静音
+    正是提案主张的事实，施删而非保留；替换类照旧保守（上个测试锚死）。"""
+
+    deleted, branch, _ = adjudicate_with_witness(
+        check_request={**CHECK_REQUEST, "repair_class": "acoustic_delete"},
+        witness=_witness("?", audible=False, uncertain=(0,)),
+        llm_call=None,
+    )
+    assert deleted is True and branch == "TARGET_INAUDIBLE_DELETE_SPAN"
+
+
 def test_acoustic_delete_demands_clear_pinyin_win():
     request = {
         **CHECK_REQUEST,
@@ -290,6 +302,40 @@ def test_witness_self_count_mismatch_is_disclosed_not_fatal(tmp_path):
     )
     assert zero.get("status") != "OBSERVED"
     assert "WITNESS_REPORT_INVALID" in str(zero)
+
+    # 静音证词（1160 咳咳案）：空听写 + target_audible=False + count 0
+    # 是删除提案的有效观察——OBSERVED 而非 INVALID。
+    silence = eav._subtitle_acoustic_witness_verdict(
+        observed={
+            "schema_version": eav.WITNESS_SCHEMA,
+            "status": "OBSERVED",
+            "target_audible": False,
+            "heard_pinyin": "",
+            "uncertain_positions": [],
+            "syllable_count": 0,
+            "confidence": 0.9,
+        },
+        **kwargs,
+    )
+    assert silence["status"] == "OBSERVED"
+    assert silence["target_audible"] is False
+    assert silence["heard_pinyin"] == ""
+    assert silence["syllable_count"] == 0
+
+    # 有声却空听写仍是报告缺陷
+    audible_empty = eav._subtitle_acoustic_witness_verdict(
+        observed={
+            "schema_version": eav.WITNESS_SCHEMA,
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": "",
+            "uncertain_positions": [],
+            "syllable_count": 0,
+            "confidence": 0.9,
+        },
+        **kwargs,
+    )
+    assert audible_empty.get("status") != "OBSERVED"
 
 
 def test_witness_audio_crop_is_target_bound_not_context(tmp_path):

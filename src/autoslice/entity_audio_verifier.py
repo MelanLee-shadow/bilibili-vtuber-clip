@@ -707,11 +707,18 @@ def _subtitle_acoustic_witness_verdict(
     confidence = observed.get("confidence")
     uncertain_positions = observed.get("uncertain_positions")
     syllable_count = observed.get("syllable_count")
+    # 静音证词（2026-07-27 1160 咳咳案）：删除提案的时窗里确实无语音时，
+    # 空听写 + target_audible=False 是完整有效的观察，不是报告缺陷——
+    # 强制非空会把「确认无声」翻译成 WITNESS_REPORT_INVALID→UNCERTAIN，
+    # 删除类发现永久卡死。有声报告仍必须逐音节过拼音正则。
+    silence_observation = (
+        not tokens and observed.get("target_audible") is False
+    )
     report_valid = (
         observed.get("schema_version") == WITNESS_SCHEMA
         and observed.get("status") == "OBSERVED"
         and isinstance(observed.get("target_audible"), bool)
-        and bool(tokens)
+        and (bool(tokens) or silence_observation)
         and all(_PINYIN_SYLLABLE_RX.fullmatch(token) for token in tokens)
         and not _CJK_RX.search(json.dumps(dict(observed), ensure_ascii=False))
         and not any(
@@ -735,7 +742,7 @@ def _subtitle_acoustic_witness_verdict(
         )
         and not isinstance(syllable_count, bool)
         and isinstance(syllable_count, int)
-        and syllable_count > 0
+        and (syllable_count > 0 or silence_observation)
     )
     # The witness's substance is heard_pinyin itself; syllable_count is a
     # redundant self-count that models routinely get off by one (2026-07-26:

@@ -289,6 +289,11 @@ def adjudicate_with_witness(
     if not witness["target_audible"]:
         if repair_class == "acoustic_drop_cue":
             return True, "TARGET_INAUDIBLE_DROP_CUE", audit
+        if repair_class == "acoustic_delete":
+            # 静音证词支持删除（2026-07-27 1160 咳咳案）：删除提案的
+            # 时窗被见证为无语音，正是提案主张的事实——保留反而是把
+            # 幻听文本钉死。替换类提案仍保守保留（听不到≠该换字）。
+            return True, "TARGET_INAUDIBLE_DELETE_SPAN", audit
         return False, "TARGET_INAUDIBLE_KEEP_CURRENT", audit
     if llm_call is None:
         return False, "JUDGE_UNAVAILABLE_KEEP_CURRENT", audit
