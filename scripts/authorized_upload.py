@@ -37,6 +37,9 @@ from scripts.audit_lidousha_review_package import (  # noqa: E402
 )
 from src.autoslice import authorized_upload_cli_parser  # noqa: E402
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
+from src.autoslice.package_audit_binding import (
+    audit_content_binding as _audit_content_binding,
+)
 from src.autoslice import final_human_review as human_review  # noqa: E402
 from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
@@ -197,42 +200,6 @@ def _zero_blocking_issues(audit: dict) -> bool:
         and isinstance(issues, list)
         and issue_count == len(issues)
     )
-
-
-def _audit_binding(audit: dict) -> dict:
-    """The canonical fields that make an audit replayable, not self-asserted."""
-
-    return {
-        key: audit.get(key)
-        for key in (
-            "schema_version",
-            "policy_epoch",
-            "policy_fingerprint",
-            "auditor_source_sha256",
-            "passed",
-            "root",
-            "audited_inputs",
-            "issues",
-            "issue_count",
-            "blocking_issue_count",
-        )
-    }
-
-
-def _audit_content_binding(audit: dict) -> dict:
-    """The audit's content verdict, minus auditor-identity churn.
-
-    1573 在飞事务案（2026-07-27）：B 站审核窗横跨数小时，期间每次部署都
-    改 policy_fingerprint/auditor_source_sha256——冻结审计与现行审计对同
-    一批字节给出**逐字相同的判决**却被判过期，恢复永久卡死。现行审计员
-    已实跑通过（上一行门），内容判决（inputs/issues/verdict）相等即
-    canonical；字节漂移或新 issue 仍然精确拒绝。
-    """
-
-    binding = _audit_binding(audit)
-    binding.pop("policy_fingerprint", None)
-    binding.pop("auditor_source_sha256", None)
-    return binding
 
 
 def _resolved_manifest_item_path(root: Path, value: object) -> Path | None:

@@ -1987,14 +1987,7 @@ def test_audit_content_binding_tolerates_auditor_identity_churn():
     policy_fingerprint/auditor_source_sha256 变了但内容判决逐字相同——
     canonical 等值只比内容判决；字节/issue 漂移仍拒。"""
 
-    import importlib.util as _ilu
-    from pathlib import Path as _P
-
-    spec = _ilu.spec_from_file_location(
-        "authorized_upload_mod", _P("scripts/authorized_upload.py")
-    )
-    mod = _ilu.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    from src.autoslice import package_audit_binding as mod
 
     stored = {
         "schema_version": "v",
@@ -2009,9 +2002,9 @@ def test_audit_content_binding_tolerates_auditor_identity_churn():
         "blocking_issue_count": 0,
     }
     current = dict(stored, policy_fingerprint="NEW", auditor_source_sha256="NEWSHA")
-    assert mod._audit_content_binding(stored) == mod._audit_content_binding(current)
+    assert mod.audit_content_binding(stored) == mod.audit_content_binding(current)
 
     drifted = dict(current, audited_inputs={"a.mp4": "sha256:2"})
-    assert mod._audit_content_binding(stored) != mod._audit_content_binding(drifted)
+    assert mod.audit_content_binding(stored) != mod.audit_content_binding(drifted)
     new_issue = dict(current, issues=[{"code": "X"}], issue_count=1)
-    assert mod._audit_content_binding(stored) != mod._audit_content_binding(new_issue)
+    assert mod.audit_content_binding(stored) != mod.audit_content_binding(new_issue)
