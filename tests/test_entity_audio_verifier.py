@@ -722,3 +722,53 @@ def test_witness_acoustic_cache_never_stores_failures(tmp_path, monkeypatch):
     assert verdict.get("status") != "OBSERVED"
     cache_root = tmp_path / "base" / "cache" / "witness-acoustic"
     assert not cache_root.exists() or not any(cache_root.rglob("*.json"))
+
+
+def test_free_key_quota_rotates_model_before_next_key(tmp_path, monkeypatch):
+    """Ivan 2026-07-27：免费层 RPD 按模型独立计（每 key 每模型 20），主模型
+    429 时同 key 轮换 3.5 兜配额；接受的模型串如实钉进 verdict/manifest。
+    非 429 失败不轮换（换模型不产生新信息）。"""
+
+    import urllib.error
+
+    _isolate_policy_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    attempts = []
+
+    def fake_urlopen(request, timeout=0):
+        url = request.full_url
+        attempts.append(url)
+        if "gemini-3.6-flash" in url:
+            raise urllib.error.HTTPError(url, 429, "quota", None, None)
+        return _FakeApiResponse(_resolved_observation())
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    monkeypatch.setattr(verifier_module.urllib.request, "urlopen", fake_urlopen)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-10",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["status"] == "RESOLVED"
+    assert verdict["provider"] == "gemini_api"
+    assert verdict["model"] == "gemini-3.5-flash"
+    assert verdict["key_tier"] == "free"
+    assert any("gemini-3.6-flash" in url for url in attempts)
+    assert any("gemini-3.5-flash" in url for url in attempts)
+    job_dir = tmp_path / "out/entity_verdicts" / ("a" * 20)
+    manifest = json.loads(
+        (job_dir / "verdict.manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["model"] == "gemini-3.5-flash"
+    assert any(
+        row.get("model") == "gemini-3.6-flash"
+        and row.get("category") == "GEMINI_API_QUOTA_EXHAUSTED"
+        for row in manifest["provider_failures"]
+    )

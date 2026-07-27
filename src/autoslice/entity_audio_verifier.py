@@ -43,6 +43,12 @@ ENTITY_AUDIO_TIMEOUT = "10m"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
 ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
+# 免费层按模型独立计 RPD（Ivan 2026-07-27：每 key 每模型 20 RPD，轮换
+# 3.6/3.5 = 40 RPD/key）。仅在同 key 主模型报 429 时换备用模型再试同 key；
+# 付费层始终只用主模型。听写证人是无声调拼音任务，7/21 金丝雀里 3.5 的
+# 乱种问题在实名/词表场景，不适用此处；模型串照常钉进 verdict/manifest。
+ENTITY_AUDIO_API_MODEL_FALLBACK_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL_FALLBACK"
+ENTITY_AUDIO_API_MODEL_FALLBACK_DEFAULT = "gemini-3.5-flash"
 ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
 
 # Phase 1 acoustic-witness architecture (Ivan 2026-07-25 ruling): the audio
@@ -343,6 +349,15 @@ def _api_failure_category(exc: Exception) -> str:
 
 def _entity_api_model() -> str:
     return os.environ.get(ENTITY_AUDIO_API_MODEL_ENV) or ENTITY_AUDIO_API_MODEL_DEFAULT
+
+
+def _entity_api_model_fallback() -> str | None:
+    """Free-tier quota-rotation sibling model; empty env disables rotation."""
+
+    raw = os.environ.get(ENTITY_AUDIO_API_MODEL_FALLBACK_ENV)
+    if raw is not None and not raw.strip():
+        return None
+    return (raw or ENTITY_AUDIO_API_MODEL_FALLBACK_DEFAULT).strip() or None
 
 
 def _gemini_api_observe_entity(*, audio_path: Path, prompt: str, key: str, model: str) -> str:
@@ -697,14 +712,20 @@ def _observe_entity_audio(
                 )
             api_prompt_path.write_text(api_prompt, encoding="utf-8")
 
-            def attempt_api_key(attempt_key: str, *, key_tier: str) -> bool:
-                nonlocal observed, accepted_key_tier
+            def attempt_api_key(
+                attempt_key: str,
+                *,
+                key_tier: str,
+                attempt_model: str | None = None,
+            ) -> bool:
+                nonlocal observed, accepted_key_tier, model_used
+                attempt_model = attempt_model or model_used
                 try:
                     raw = _gemini_api_observe_entity(
                         audio_path=api_audio_path,
                         prompt=api_prompt,
                         key=attempt_key,
-                        model=model_used,
+                        model=attempt_model,
                     )
                     # Persist the raw provider response for bounded forensic evidence.
                     api_response_path.write_text(
@@ -718,12 +739,14 @@ def _observe_entity_audio(
                     except Exception as exc:
                         raise ValueError("Gemini API output had no valid JSON object") from exc
                     accepted_key_tier = key_tier
+                    model_used = attempt_model
                     return True
                 except Exception as exc:
                     provider_failures.append(
                         {
                             "provider": "gemini_api",
                             "key_tier": key_tier,
+                            "model": attempt_model,
                             "category": _api_failure_category(exc),
                             "error_type": type(exc).__name__,
                         }
@@ -736,8 +759,28 @@ def _observe_entity_audio(
             # 2026-07-18 交付事故根因）；非额度失败保持单轮。轮数有界——
             # ledger 不可写的环境 strikes 永远读 0，绝不允许无界循环。
             round_start = len(provider_failures)
+            fallback_model = _entity_api_model_fallback()
+            primary_model = model_used
             for key in _configured_free_keys():
-                if attempt_api_key(key, key_tier=gemini_backup_policy.FREE_KEY_TIER):
+                if attempt_api_key(
+                    key,
+                    key_tier=gemini_backup_policy.FREE_KEY_TIER,
+                    attempt_model=primary_model,
+                ):
+                    break
+                # 同 key 换模型只在主模型 429 时进行：RPD 按模型独立计，
+                # 换模型才有新配额；其他错误换模型不产生新信息。
+                last = provider_failures[-1] if provider_failures else {}
+                if (
+                    fallback_model
+                    and fallback_model != primary_model
+                    and last.get("category") == "GEMINI_API_QUOTA_EXHAUSTED"
+                    and attempt_api_key(
+                        key,
+                        key_tier=gemini_backup_policy.FREE_KEY_TIER,
+                        attempt_model=fallback_model,
+                    )
+                ):
                     break
             quota_fastpath = False
             if observed is None:
