@@ -5827,16 +5827,39 @@ def test_date_lifetime_cap_does_not_discard_selected_infrastructure_retry(tmp_pa
 
 
 def test_scheduled_song_retry_keeps_date_nonterminal():
+    future = 9_999_999_999
     state = {
         "songs": [
             {
                 "status": "blocked",
                 "reason_codes": ["AGY_QUOTA_EXHAUSTED"],
-                "next_retry_at_epoch": 12_345,
+                "next_retry_at_epoch": future,
             }
         ]
     }
-    assert runner.scheduled_song_retry_epoch(state) == 12_345
+    assert runner.scheduled_song_retry_epoch(state) == future
+
+
+def test_past_retry_metadata_does_not_keep_date_in_retry_wait():
+    state = {
+        "picks": [
+            {
+                "status": "failed",
+                "failure_recoverable": True,
+                "next_retry_at_epoch": 1,
+            }
+        ],
+        "songs": [
+            {
+                "status": "blocked",
+                "reason_codes": ["AGY_QUOTA_EXHAUSTED"],
+                "next_retry_at_epoch": 1,
+            }
+        ],
+    }
+
+    assert runner.scheduled_talk_retry_epoch(state) is None
+    assert runner.scheduled_song_retry_epoch(state) is None
 
 
 def test_talk_failure_persists_runtime_stage_and_stable_fingerprint():
@@ -5886,6 +5909,23 @@ def test_talk_failure_keeps_unreachable_recording_mount_recoverable():
         "RuntimeError: SOURCE_RECORDING_ROOT_UNAVAILABLE: "
         "/rec/22966160/2026-07-25/22966160_20260725-19-20-00.mp4"
     )
+
+    assert classified["failure_kind"] == "runtime_prerequisite"
+    assert classified["failure_stage"] == "source_media_binding"
+    assert classified["failure_recoverable"] is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "OSError: [Errno 107] Transport endpoint is not connected",
+        "OSError: [Errno 131] State not recoverable",
+    ],
+)
+def test_talk_failure_classifies_mid_production_fuse_disconnect_as_infrastructure(
+    message,
+):
+    classified = runner.classify_talk_failure(message)
 
     assert classified["failure_kind"] == "runtime_prerequisite"
     assert classified["failure_stage"] == "source_media_binding"
@@ -8237,6 +8277,7 @@ def _exact_terminal_state(*candidate_ids: str) -> dict:
 
 
 def test_exact_terminal_projection_beats_future_retry_metadata(monkeypatch):
+    future = 9_999_999_999
     state = _exact_terminal_state("delivered", "waiting")
     state["picks"] = [
         {
@@ -8250,19 +8291,20 @@ def test_exact_terminal_projection_beats_future_retry_metadata(monkeypatch):
             "candidate_id": "waiting",
             "status": "failed",
             "failure_recoverable": True,
-            "next_retry_at_epoch": 12_345,
+            "next_retry_at_epoch": future,
         },
     ]
 
     terminal = runner._project_terminal_batch_state(state)
 
-    assert terminal["retry_epoch"] == 12_345
+    assert terminal["retry_epoch"] == future
     assert state["status"] == "recovery_incomplete"
-    assert state["next_retry_at_epoch"] == 12_345
+    assert state["next_retry_at_epoch"] == future
     assert state["exact_talk_contract_closure"]["status"] == "INCOMPLETE"
 
 
 def test_exact_complete_projection_ignores_unrelated_retry_for_release_status():
+    future = 9_999_999_999
     state = _exact_terminal_state("delivered")
     state["picks"] = [
         {
@@ -8279,14 +8321,14 @@ def test_exact_complete_projection_ignores_unrelated_retry_for_release_status():
             "status": "blocked",
             "reason_codes": ["AGY_SOURCE_CONTEXT_RUNNER_FAILED"],
             "transient_retry_count": 1,
-            "next_retry_at_epoch": 12_345,
+                "next_retry_at_epoch": future,
         }
     ]
 
     runner._project_terminal_batch_state(state)
 
     assert state["status"] == "review_ready"
-    assert state["next_retry_at_epoch"] == 12_345
+    assert state["next_retry_at_epoch"] == future
     assert state["exact_talk_contract_closure"]["status"] == "COMPLETE"
 
 

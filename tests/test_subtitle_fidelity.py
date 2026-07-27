@@ -815,6 +815,19 @@ def test_foreign_script_consistency_allows_registered_franchise_and_chat_terms()
     assert audit["status"] == "CLEAN"
 
 
+def test_foreign_script_consistency_allows_common_staff_bug_code_switch():
+    audit = audit_foreign_script_consistency(
+        _srt(
+            "就变成……就是有一些 bug 会出现",
+            "staff 说珍惜这种 bug",
+            "他说珍惜这个 bug 之后就不会有了",
+        )
+    )
+
+    assert audit["status"] == "CLEAN"
+    assert audit["mixed_cjk_latin_cues"] == []
+
+
 def test_foreign_script_consistency_allows_cp_formulas_beside_one_latin_name():
     audit = audit_foreign_script_consistency(
         _srt(

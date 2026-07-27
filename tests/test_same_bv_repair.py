@@ -9,6 +9,7 @@ import pytest
 from scripts.authorized_upload import UploadLockBusy, exclusive_upload_lock
 import src.autoslice.final_human_review as final_human_review
 import src.autoslice.same_bv_repair as same_bv
+import src.autoslice.same_bv_cover_reconciliation as cover_reconciliation
 from src.autoslice.same_bv_repair import (
     DuplicateBvid,
     JournalCorrupt,
@@ -624,6 +625,216 @@ class FakeAdapter:
         if self.swap_mode == "timeout_after_success":
             raise TimeoutError("response lost after successful edit")
         return {"code": 0}
+
+
+def _make_cover_alias_false_block(
+    tmp_path: Path,
+    *,
+    blocked_reason: str = (
+        "post-swap observation is neither exact two-P nor exact single-new"
+    ),
+    snapshot_cover_hash: str = "f40a21b0c123456789abcdef0123456789abcdef",
+):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan)
+    new_video = {
+        "cid": NEW_CID,
+        "filename": "new-file",
+        "title": "new-file",
+    }
+    frozen_hash = "f40a21b0c123456789abcdef0123456789abcdef"
+    cover_url = (
+        f"https://archive.biliimg.com/bfs/archive/{frozen_hash}.png"
+    )
+    append_journal(
+        journal,
+        plan_path=plan_path,
+        plan=plan,
+        state="APPEND_INTENT",
+        details={"remote_mutation": "simulated"},
+    )
+    append_journal(
+        journal,
+        plan_path=plan_path,
+        plan=plan,
+        state="TWO_P_READY",
+        details={"new_video": new_video, "remote_mutation": False},
+    )
+    append_journal(
+        journal,
+        plan_path=plan_path,
+        plan=plan,
+        state="SWAP_RETRYABLE",
+        details={
+            "new_video": new_video,
+            "cover_url": cover_url,
+            "remote_mutation": "edit_keep_only_new_cid",
+        },
+    )
+    adapter._make_creator_target(plan["target_metadata"])
+    adapter.make_public_target()
+    projected_cover = (
+        f"//i0.hdslb.com/bfs/archive/{snapshot_cover_hash}.png"
+    )
+    adapter.snapshot["creator"]["metadata"]["cover"] = projected_cover
+    adapter.snapshot["public"]["metadata"]["cover"] = projected_cover
+    append_journal(
+        journal,
+        plan_path=plan_path,
+        plan=plan,
+        state="BLOCKED_DRIFT",
+        details={
+            "reason": blocked_reason,
+            "snapshot": copy.deepcopy(adapter.snapshot),
+            "remote_mutation": False,
+        },
+    )
+    return manifest, plan, plan_path, journal, adapter
+
+
+def test_bilibili_cover_asset_identity_folds_only_known_cdn_aliases():
+    asset = "f40a21b0c123456789abcdef0123456789abcdef"
+
+    assert same_bv._normalise_cover_url(
+        f"https://archive.biliimg.com/bfs/archive/{asset}.png"
+    ) == same_bv._normalise_cover_url(
+        f"//i0.hdslb.com/bfs/archive/{asset}.png"
+    )
+    assert same_bv._normalise_cover_url(
+        f"https://unrelated.example/bfs/archive/{asset}.png"
+    ) != same_bv._normalise_cover_url(
+        f"https://another.example/bfs/archive/{asset}.png"
+    )
+    assert same_bv._normalise_cover_url(
+        "https://archive.biliimg.com/not-an-archive-cover.png"
+    ) != same_bv._normalise_cover_url(
+        "https://i0.hdslb.com/not-an-archive-cover.png"
+    )
+
+
+def test_cover_alias_false_block_reconciles_without_remote_mutation(tmp_path):
+    manifest, _plan, plan_path, journal, adapter = (
+        _make_cover_alias_false_block(tmp_path)
+    )
+    before = journal.read_bytes()
+
+    dry_run = cover_reconciliation.reconcile_cover_alias_false_block(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+        commit=False,
+    )
+
+    assert dry_run.state == "VERIFIED"
+    assert dry_run.changed is False
+    assert dry_run.details["would_append_journal"] is True
+    assert journal.read_bytes() == before
+    assert (adapter.append_calls, adapter.cover_calls, adapter.swap_calls) == (
+        0,
+        0,
+        0,
+    )
+
+    applied = cover_reconciliation.reconcile_cover_alias_false_block(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+        commit=True,
+    )
+
+    assert applied.state == "VERIFIED"
+    assert applied.changed is True
+    assert (adapter.append_calls, adapter.cover_calls, adapter.swap_calls) == (
+        0,
+        0,
+        0,
+    )
+    last = read_journal(journal)[-1]
+    assert last["state"] == "VERIFIED"
+    assert (
+        last["details"]["reconciliation"]["blocked_row_sha256"]
+        == read_journal(journal)[-2]["row_sha256"]
+    )
+    assert last["details"]["remote_mutation"] is False
+
+
+def test_cover_alias_reconciliation_can_resume_from_public_pending(tmp_path):
+    manifest, plan, plan_path, journal, adapter = (
+        _make_cover_alias_false_block(tmp_path)
+    )
+    adapter.snapshot["public"] = copy.deepcopy(plan["before"]["public"])
+    adapter.snapshot["section"] = copy.deepcopy(plan["before"]["section"])
+
+    reconciled = cover_reconciliation.reconcile_cover_alias_false_block(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+        commit=True,
+    )
+
+    assert reconciled.state == "PUBLIC_PENDING"
+    assert read_journal(journal)[-1]["state"] == "PUBLIC_PENDING"
+    adapter.make_public_target()
+    adapter.snapshot["public"]["metadata"]["cover"] = (
+        adapter.snapshot["creator"]["metadata"]["cover"]
+    )
+    finished = repair_step(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+    )
+    assert finished.state == "VERIFIED"
+    assert (adapter.append_calls, adapter.cover_calls, adapter.swap_calls) == (
+        0,
+        0,
+        0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("blocked_reason", "snapshot_cover_hash"),
+    [
+        ("unrelated real drift", "f40a21b0c123456789abcdef0123456789abcdef"),
+        (
+            "post-swap observation is neither exact two-P nor exact single-new",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+    ],
+)
+def test_cover_alias_reconciliation_refuses_other_blocks(
+    tmp_path,
+    blocked_reason,
+    snapshot_cover_hash,
+):
+    manifest, _plan, plan_path, journal, adapter = (
+        _make_cover_alias_false_block(
+            tmp_path,
+            blocked_reason=blocked_reason,
+            snapshot_cover_hash=snapshot_cover_hash,
+        )
+    )
+    before = journal.read_bytes()
+
+    result = cover_reconciliation.reconcile_cover_alias_false_block(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+        commit=True,
+    )
+
+    assert result.state == "BLOCKED_DRIFT"
+    assert result.changed is False
+    assert journal.read_bytes() == before
+    assert (adapter.append_calls, adapter.cover_calls, adapter.swap_calls) == (
+        0,
+        0,
+        0,
+    )
 
 
 def test_happy_path_verifies_exact_new_cid_metadata_and_section(tmp_path):

@@ -538,6 +538,11 @@ def _ledger_rows(path):
             ["--plan", "plan.json"],
         ),
         (
+            "repair-reconcile-blocked",
+            "repair_reconcile_blocked",
+            ["--plan", "plan.json"],
+        ),
+        (
             "repair-verify-live",
             "repair_verify_live",
             [

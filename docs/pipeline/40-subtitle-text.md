@@ -235,7 +235,12 @@
   （实例：2026-07-22 `auto_193450_1573_1672` cue76 `梅杰克家的六更るり`）。该豁免精确且完全：
   cue 内**每一个**假名都必须落在这类名字里，名字旁边掺入任何臆造日语仍 fail-closed。此门
   正是为了让"原版弹幕名字必须复制过来"成立，不得反过来惩罚正确复制。
-- source-language 整 cue 回退只适用于无中文的 Latin-language cue；中文口播里的 NN/L、NNLL、LLNNHHB 等 CP 顺序公式以及大写 `TA` 代词是标签/中文代词，不是外语段落，不得触发 mixed-language 拒发，也不得因 token 数下降把已删除的跨 cue 回声整句恢复。
+- source-language 整 cue 回退只适用于无中文的 Latin-language cue；中文口播里的 NN/L、NNLL、
+  LLNNHHB 等 CP 顺序公式以及大写 `TA` 代词是标签/中文代词，不是外语段落，不得触发
+  mixed-language 拒发，也不得因 token 数下降把已删除的跨 cue 回声整句恢复。
+  `_SAFE_CODE_SWITCH_WORDS` 只登记已有多路转写证据支持、在中文口播中作为普通借词使用的
+  词项（例如技术语境的 `staff`、`bug`）；它不是整句外语白名单，未登记的多词 Latin 组合
+  仍须精确音频见证或更高文本权威。
 - 交付 `.srt`/`.ass` 走内容时间轴；片头偏移只记录在 `burned_preview.branding_intro.intro_offset_ms`（见 [80-package-delivery.md](80-package-delivery.md)）。
 - talk 成品 `speaker_mode=required`。说话人未决或证据不足进入
   `speaker_review_required` / `speaker_evidence_insufficient` 并 fail closed；不得为了

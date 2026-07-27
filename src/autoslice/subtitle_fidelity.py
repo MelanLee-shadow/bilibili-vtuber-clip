@@ -109,6 +109,11 @@ _SAFE_CODE_SWITCH_WORDS = frozenset(
         "ado",
         "ai",
         "awa",
+        # 2026-07-25 909_1014: two independent Chinese ASR passes rendered
+        # the same spoken technical sentence as staff/斯大夫 + bug.  These
+        # ordinary live-production loanwords are lexical code-switches, not
+        # the multi-word English-salad failure this guard is meant to catch.
+        "bug",
         # cosplay 族（2026-07-27 962_1042 案）：她口播日语借词音
         # コスプレ，中文观众惯写 cosplay/cos——正当中英混写，见证人
         # 报 ja + 罗马音相似度 0 是拼写系统差异，不是外语整句误解码。
@@ -129,6 +134,7 @@ _SAFE_CODE_SWITCH_WORDS = frozenset(
         "san",
         "sc",
         "soyo",
+        "staff",
         "sumi",
         "testarossa",
         "vip",

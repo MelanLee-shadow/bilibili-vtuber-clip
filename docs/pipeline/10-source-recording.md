@@ -118,7 +118,10 @@
   `candidate_rejected/source_media_missing`，不自动复跑，复活只走 sanctioned
   `scripts/revive_rejected_candidates.py`）。unknown 失败只有一次有界重试，
   无限 timer 重试仅限 `INFRASTRUCTURE_WAIT_FAILURE_KINDS`
-  （`runtime_prerequisite`/`provider_transient`）。
+  （`runtime_prerequisite`/`provider_transient`）。若 date-level preflight 后 FUSE
+  在 producer 读媒体途中断开，`OSError: Transport endpoint is not connected` /
+  `State not recoverable` 仍须归类为
+  `runtime_prerequisite/source_media_binding`，不能落入一次性 `producer_error`。
 - 活着的容器不等于健康录制。直播中两轮无字节增长、状态过期、弹幕/录制长期
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行

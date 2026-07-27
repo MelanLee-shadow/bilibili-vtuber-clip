@@ -156,7 +156,16 @@ production login。
    `5=BLOCKED_DRIFT`。多稿修复必须在同一 upload lock 下逐稿顺序执行，不得并发 append/swap。
 4. 状态为 `PLANNED → APPEND_INTENT → APPEND_AMBIGUOUS → TWO_P_READY →
    SWAP_RETRYABLE → CREATOR_SINGLE_NEW → PUBLIC_PENDING → VERIFIED`；任一确定性身份/
-   topology/metadata 漂移进入终态 `BLOCKED_DRIFT`。
+   topology/metadata 漂移进入终态 `BLOCKED_DRIFT`。普通 `repair-run` 不得离开该终态。
+   唯一例外是旧 normalizer 把同一 `/bfs/archive/<hash>` 封面经
+   `archive.biliimg.com` 与 `*.hdslb.com`/`*.biliimg.com` 两个 CDN 域名投影误判为漂移：
+   仅当终态 reason 精确为
+   `post-swap observation is neither exact two-P nor exact single-new`、被阻断快照除该
+   CDN 别名外已是唯一新 CID 目标态、且 fresh 只读 Creator/public/exact-section 复验仍为
+   target 或传播中，才可运行 `repair-reconcile-blocked`。该命令不调用 append/edit；
+   `--dry-run` 不写 journal，真执行只追加带原阻断 row hash 的审计行。其他 reason、不同
+   封面 asset path 或任何 metadata/CID/section 差异仍保持 `BLOCKED_DRIFT`；禁止手改或截断
+   journal。
 5. `APPEND_INTENT` 先 fsync 再且只再调用一次 existing-BV append；之后即使进程崩溃、响应
    丢失或 append 效果迟到，也只能 poll live Creator，绝不二次 append。找不到唯一新增 CID
    就停在 ambiguous，三 P、重复/未知 CID 直接阻断。

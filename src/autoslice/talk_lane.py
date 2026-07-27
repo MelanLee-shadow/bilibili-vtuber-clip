@@ -1077,6 +1077,21 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "source_media_binding",
             True,
         )
+    elif any(
+        marker in tail
+        for marker in (
+            "Transport endpoint is not connected",
+            "State not recoverable",
+        )
+    ):
+        # CloudFS/FUSE can disconnect after the date-level preflight but while
+        # a producer is reading media.  This is the same recoverable mount
+        # outage, not an unknown producer defect with a one-retry lifetime.
+        kind, stage, recoverable = (
+            "runtime_prerequisite",
+            "source_media_binding",
+            True,
+        )
     elif "SOURCE_MEDIA_MISSING" in tail:
         # 选片后源录像消失（mount 仍健康）：字节已不可得，重试永远失败。
         # 标成可恢复会让 runner 误判为外部故障并中断当批，饿死健康场次的候选。

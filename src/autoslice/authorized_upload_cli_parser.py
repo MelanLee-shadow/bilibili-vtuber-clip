@@ -146,6 +146,24 @@ def parse_args(
     rr.add_argument("--dry-run", action="store_true")
     rr.set_defaults(func=handlers["repair_run"])
 
+    rc = sub.add_parser(
+        "repair-reconcile-blocked",
+        help=(
+            "read-only proof and journal correction for the known Bilibili "
+            "cover-CDN-alias false block"
+        ),
+    )
+    rc.add_argument("--plan", required=True)
+    rc.add_argument("--journal", default=str(defaults["repair_ledger"]))
+    rc.add_argument("--lock", default=None)
+    rc.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
+    rc.add_argument(
+        "--biliup-cookie-json",
+        default=str(defaults["biliup_cookie_json"]),
+    )
+    rc.add_argument("--dry-run", action="store_true")
+    rc.set_defaults(func=handlers["repair_reconcile_blocked"])
+
     rs = sub.add_parser(
         "repair-status",
         help="validate the local same-BV repair state; no remote access",

@@ -31,6 +31,7 @@ from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
+from src.autoslice.same_bv_cover_reconciliation import is_cover_alias_reconciliation_transition as _is_cover_alias_reconciliation_transition, normalise_cover_url as _normalise_cover_url, snapshot_with_current_cover_identity as _snapshot_with_current_cover_identity, snapshots_equivalent
 
 PLAN_SCHEMA = "same-bv-repair-plan.v2"
 JOURNAL_SCHEMA = "same-bv-repair-journal.v1"
@@ -48,7 +49,6 @@ JOURNAL_STATES = {
 TERMINAL_STATES = {"VERIFIED", "BLOCKED_DRIFT"}
 RETRYABLE_EDIT_CODE = 21540
 _BVID_RE = re.compile(r"^BV[0-9A-Za-z]{10}$")
-
 _TRANSITIONS = {
     "PLANNED": {"APPEND_INTENT", "BLOCKED_DRIFT"},
     "APPEND_INTENT": {
@@ -169,18 +169,6 @@ def _normalise_tags(value: object) -> list[str]:
         rows = []
     # API ordering is not a semantic metadata distinction.  Duplicates are.
     return sorted(rows)
-
-
-def _normalise_cover_url(value: object) -> object:
-    """Compare Bilibili CDN asset identity, not harmless URL projection drift."""
-
-    if not isinstance(value, str) or not value:
-        return value
-    candidate = value if not value.startswith("//") else "https:" + value
-    parsed = urllib.parse.urlsplit(candidate)
-    if not parsed.netloc:
-        return value
-    return f"//{parsed.netloc.lower()}{parsed.path}"
 
 
 def _metadata_from_archive(archive: Mapping[str, Any]) -> dict[str, Any]:
@@ -1034,6 +1022,7 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     previous_hash: str | None = None
     states_by_plan: dict[str, str] = {}
+    last_rows_by_plan: dict[str, dict[str, Any]] = {}
     bindings_by_plan: dict[str, tuple[str, str, str, str]] = {}
     bvid_owners: dict[str, str] = {}
     for line_no, line in enumerate(lines, start=1):
@@ -1089,12 +1078,18 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
                 raise JournalCorrupt(
                     f"repair journal plan {plan_id} does not begin PLANNED"
                 )
-        elif state not in _TRANSITIONS[previous_state]:
+        elif (
+            state not in _TRANSITIONS[previous_state]
+            and not _is_cover_alias_reconciliation_transition(
+                last_rows_by_plan.get(plan_id), row
+            )
+        ):
             raise JournalCorrupt(
                 f"repair journal plan {plan_id} transition "
                 f"{previous_state}->{state} is invalid"
             )
         states_by_plan[plan_id] = state
+        last_rows_by_plan[plan_id] = row
         entries.append(row)
     return entries
 
@@ -1215,18 +1210,19 @@ def _latest_detail(entries: list[dict[str, Any]], key: str) -> object:
 
 
 def _before_creator_exact(snapshot: Mapping[str, Any], plan: Mapping[str, Any]) -> bool:
-    return (snapshot.get("creator") or {}) == (
-        (plan.get("before") or {}).get("creator") or {}
-    )
+    current = _snapshot_with_current_cover_identity(snapshot)
+    before = _snapshot_with_current_cover_identity(plan.get("before") or {})
+    return (current.get("creator") or {}) == (before.get("creator") or {})
 
 
 def _before_public_section_exact(
     snapshot: Mapping[str, Any], plan: Mapping[str, Any]
 ) -> bool:
-    before = plan.get("before") or {}
+    current = _snapshot_with_current_cover_identity(snapshot)
+    before = _snapshot_with_current_cover_identity(plan.get("before") or {})
     return (
-        (snapshot.get("public") or {}) == (before.get("public") or {})
-        and (snapshot.get("section") or {}) == (before.get("section") or {})
+        (current.get("public") or {}) == (before.get("public") or {})
+        and (current.get("section") or {}) == (before.get("section") or {})
     )
 
 
@@ -1243,8 +1239,10 @@ def _two_p_new_video(
     *,
     expected_new: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    creator = snapshot.get("creator") or {}
-    before_creator = (plan.get("before") or {}).get("creator") or {}
+    current = _snapshot_with_current_cover_identity(snapshot)
+    before = _snapshot_with_current_cover_identity(plan.get("before") or {})
+    creator = current.get("creator") or {}
+    before_creator = before.get("creator") or {}
     videos = creator.get("videos") or []
     old_videos = before_creator.get("videos") or []
     if len(videos) != 2 or len(old_videos) != 1:
@@ -1272,7 +1270,8 @@ def _target_creator_exact(
     new_video: Mapping[str, Any],
     cover_url: str,
 ) -> bool:
-    creator = snapshot.get("creator") or {}
+    current = _snapshot_with_current_cover_identity(snapshot)
+    creator = current.get("creator") or {}
     before_creator = (plan.get("before") or {}).get("creator") or {}
     target = dict(plan.get("target_metadata") or {})
     target["cover"] = _normalise_cover_url(cover_url)
@@ -1303,8 +1302,9 @@ def _public_section_state(
         bvid=str(plan["bvid"]),
         aid=((plan.get("before") or {}).get("creator") or {}).get("aid"),
     )
-    public = snapshot.get("public") or {}
-    section = snapshot.get("section") or {}
+    current = _snapshot_with_current_cover_identity(snapshot)
+    public = current.get("public") or {}
+    section = current.get("section") or {}
     if public.get("available") is not True or section.get("available") is not True:
         return "pending", problems
     matches = section.get("matches") or []
@@ -1313,7 +1313,7 @@ def _public_section_state(
             f"exact section has {len(matches)} BVID/AID matches, expected 1"
         )
         return "drift", problems
-    before = plan.get("before") or {}
+    before = _snapshot_with_current_cover_identity(plan.get("before") or {})
     before_public = before.get("public") or {}
     before_match = ((before.get("section") or {}).get("matches") or [{}])[0]
     target_metadata = dict(plan.get("target_metadata") or {})
@@ -1460,7 +1460,7 @@ def _append_stage(
     """Start append once, or reconcile its permanently ambiguous outcome."""
 
     if state == "PLANNED":
-        if snapshot != plan.get("before"):
+        if not snapshots_equivalent(snapshot, plan.get("before") or {}):
             return _row_result(
                 _block(
                     journal,

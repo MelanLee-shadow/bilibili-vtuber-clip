@@ -59,6 +59,10 @@ from src.autoslice.same_bv_repair import (  # noqa: E402
     run_repair as run_same_bv_repair,
     write_plan as write_same_bv_repair_plan,
 )
+from src.autoslice.same_bv_repair_cli import (  # noqa: E402
+    repair_reconcile_blocked,
+    repair_verify_live,
+)
 from src.autoslice.title_policy import (  # noqa: E402
     publish_title_policy_violations,
 )
@@ -1949,24 +1953,6 @@ def repair_status(args: argparse.Namespace) -> int:
     )
 
 
-def repair_verify_live(args: argparse.Namespace) -> int:
-    """Freshly re-observe a VERIFIED repair and freeze a completed receipt."""
-
-    return same_bv_live_verification.run_repair_verify_live(
-        args,
-        default_lock=DEFAULT_UPLOAD_LOCK,
-        exclusive_lock=exclusive_upload_lock,
-        load_repair_manifest=_load_repair_manifest,
-        status_reader=same_bv_repair_status,
-        journal_entries=repair_binding.plan_entries,
-        adapter_factory=_same_bv_adapter,
-        create_sidecar=_create_json_sidecar,
-        sha256_file=sha256_file,
-        now=now,
-        observation_unavailable=repair_binding.ObservationUnavailable,
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     args = authorized_upload_cli_parser.parse_args(
         argv,
@@ -1978,6 +1964,7 @@ def main(argv: list[str] | None = None) -> int:
             "verify": verify,
             "repair_plan": repair_plan,
             "repair_run": repair_run,
+            "repair_reconcile_blocked": repair_reconcile_blocked,
             "repair_status": repair_status,
             "repair_verify_live": repair_verify_live,
         },

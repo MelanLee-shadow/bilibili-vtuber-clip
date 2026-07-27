@@ -89,6 +89,7 @@ def run_repair_verify_live(
     sha256_file: Callable[[Path], str],
     now: Callable[[], str],
     observation_unavailable: type[Exception],
+    snapshots_equal: Callable[[dict, dict], bool],
 ) -> int:
     """Re-observe a VERIFIED repair and create one byte-bound receipt."""
 
@@ -142,7 +143,7 @@ def run_repair_verify_live(
         except observation_unavailable as exc:
             print(f"LIVE VERIFY PENDING: {exc}", file=sys.stderr)
             return 6
-        if fresh_snapshot != expected_snapshot:
+        if not snapshots_equal(fresh_snapshot, expected_snapshot):
             print(
                 json.dumps(
                     {

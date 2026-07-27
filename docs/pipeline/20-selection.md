@@ -52,6 +52,8 @@
   未闭合时仍为 `recovery_incomplete`。`review_ready`、`review_ready_with_failures`、
   `review_ready_retry_wait`、`retry_wait` 与 `no_delivery` 只能由该投影器按当前 delivery、
   failure、cover-pending、exact closure 和 retry state 共同得出，报告层不得自行猜状态。
+  只有严格晚于当前时间的 retry epoch 能产生 `*_retry_wait`；已到期的旧时间戳不能把批次
+  永久伪装成“仍在等待”。
 - exact contract 中的直接 gate 拒绝必须规范化为带 `failure_stage + failure_kind +
   failure_evidence + fingerprint` 的可重试失败，并标记合同禁止补位；不能留下永远唤不醒的
   `candidate_rejected`。

@@ -221,6 +221,7 @@ def song_review_retry_after_seconds(summary_record: dict, selector_dir: Path) ->
 def scheduled_song_retry_epoch(state: dict) -> int | None:
     """Earliest future infrastructure retry; its presence makes a date nonterminal."""
 
+    now = time.time()
     epochs: list[int] = []
     for record in state.get("songs", []):
         if not isinstance(record, dict) or record.get("status") not in {"blocked", "failed"}:
@@ -229,18 +230,29 @@ def scheduled_song_retry_epoch(state: dict) -> int | None:
         if not reasons & _runner.SONG_INFRA_TRANSIENT_REASON_CODES:
             continue
         value = record.get("next_retry_at_epoch")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and float(value) > now
+        ):
             epochs.append(int(value))
     return min(epochs) if epochs else None
 
 
 def scheduled_talk_retry_epoch(state: dict) -> int | None:
+    """Return only a genuinely future retry; due rows were handled before projection."""
+
+    now = time.time()
     epochs: list[int] = []
     for record in state.get("picks", []):
         if not isinstance(record, dict) or record.get("failure_recoverable") is not True:
             continue
         value = record.get("next_retry_at_epoch")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and float(value) > now
+        ):
             epochs.append(int(value))
     return min(epochs) if epochs else None
 
