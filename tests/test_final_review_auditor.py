@@ -6,6 +6,7 @@ from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     adjudicate_context_finding,
     adjudicate_exact_release_findings,
+    audit_correction_mutation_authority,
     audit_final_subtitles,
     build_context_adjudication_request,
     route_findings,
@@ -630,6 +631,163 @@ def test_acoustics_cannot_authorize_ungrounded_homophone_orthography():
     assert audit["policy_branch"] == (
         "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
     )
+
+
+def test_strict_homophone_tie_judge_semantic_tiebreak_applies_proposed():
+    """Ivan 2026-07-27 概率裁定令：一/咦 同音，音频定义上中立，judge 按语义
+    排序拍板施改；mutation basis 为 SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK。"""
+
+    source = _srt("一、那现在就等")
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "一、",
+        "suggestion": "咦，",
+        "proposed_full_cue": "咦，那现在就等",
+        "repair_class": "phonetic",
+        "why": "语气词更通顺",
+    }
+
+    def neutral_witness(request):
+        return _witness(request, "yi na xian zai jiu deng")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=neutral_witness,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "咦，那现在就等" in output
+    assert audit["repaired"] is True
+    assert audit["orthography_ambiguous"] is True
+    assert audit["orthography_authority"]["status"] == "BLOCK"
+    assert audit["policy_branch"] == (
+        "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
+    )
+    assert audit["mutation_authority"]["status"] == "PASS"
+    assert audit["mutation_authority"]["basis"] == (
+        "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK"
+    )
+
+
+def test_strict_homophone_tie_judge_current_keeps_and_discloses():
+    source = _srt("一、那现在就等")
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "一、",
+        "suggestion": "咦，",
+        "proposed_full_cue": "咦，那现在就等",
+        "repair_class": "phonetic",
+        "why": "语气词更通顺",
+    }
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=lambda request: _witness(
+            request, "yi na xian zai jiu deng"
+        ),
+        judge_llm_call=_judge("CURRENT"),
+    )
+
+    assert output == source
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
+    assert audit["mutation_authority"]["status"] == "NOT_APPLIED"
+
+
+def test_near_homophone_without_authority_still_short_circuits_pre_judge():
+    """近音（非严格同音）无 text authority 仍不见 judge：音频原则上可分辨，
+    保守保留不变（毁神/绘声 shen≠sheng 同款守卫的显式回归锚）。"""
+
+    source = _srt("毁神来了")
+    judge_calls = []
+
+    def counting_judge(prompt):
+        judge_calls.append(prompt)
+        return _judge("PROPOSED")(prompt)
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "kind": "context",
+            "suspect": "毁神",
+            "suggestion": "绘声",
+            "proposed_full_cue": "绘声来了",
+            "repair_class": "phonetic",
+            "why": "模型猜测另一种写法",
+        },
+        entity_verifier=lambda request: _witness(
+            request, "hui sheng lai le"
+        ),
+        judge_llm_call=counting_judge,
+    )
+
+    assert output == source
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == (
+        "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
+    )
+    assert judge_calls == []
+
+
+def test_mutation_audit_accepts_semantic_tiebreak_and_blocks_laundering():
+    """审计端与生产端对称复算：真实语义拍板收 PASS；把 judge 实际选
+    CURRENT 的行贴上 SEMANTIC basis 必须 BLOCK（防洗白）。"""
+
+    import copy
+
+    source = _srt("一、那现在就等")
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "一、",
+        "suggestion": "咦，",
+        "proposed_full_cue": "咦，那现在就等",
+        "repair_class": "phonetic",
+        "why": "语气词更通顺",
+    }
+    _output, adj = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=lambda request: _witness(
+            request, "yi na xian zai jiu deng"
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+    )
+    row = {
+        **finding,
+        "routed": "context_audio_adjudicated_fix",
+        "context_audio_adjudication": adj,
+    }
+
+    audit = audit_correction_mutation_authority(
+        {
+            "schema_version": "final-review-audit.v1",
+            "status": "APPLIED",
+            "findings": [row],
+            "applied_count": 1,
+        }
+    )
+    assert audit["status"] == "PASS"
+    assert audit["validated_mutation_count"] == 1
+
+    forged = copy.deepcopy(row)
+    forged["context_audio_adjudication"]["witness_judge"]["judge"][
+        "choice"
+    ] = "CURRENT"
+    forged_audit = audit_correction_mutation_authority(
+        {
+            "schema_version": "final-review-audit.v1",
+            "status": "APPLIED",
+            "findings": [forged],
+            "applied_count": 1,
+        }
+    )
+    assert forged_audit["status"] == "BLOCK"
 
 
 def test_context_adjudication_rejects_unbound_verdict():

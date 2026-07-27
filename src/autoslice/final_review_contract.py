@@ -168,23 +168,44 @@ def validate_final_review_release(
     return dict(audit)
 
 
+_DECIDED_KEEP_CURRENT_BRANCHES = frozenset(
+    {
+        # judge 走完闭集仍不确定 → 保留（Ivan 2026-07-26 无人值守裁定）
+        "JUDGE_UNCERTAIN_KEEP_CURRENT",
+        # judge 明确选 CURRENT（Ivan 2026-07-27：decided keep 是已完成的
+        # 机器决定，发出去检查有问题再修，而不是一直不发）
+        "JUDGE_KEEPS_CURRENT",
+        # judge 选了 PROPOSED 但代码级拼音门否决——门本身就是决定
+        "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT",
+        # 近音改拼写无 text authority ——保守保留是既定政策产物
+        "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT",
+        # 见证人在目标时窗听不到目标——证据性保留
+        "TARGET_INAUDIBLE_KEEP_CURRENT",
+    }
+)
+
+
 def is_keep_current_disclosed(finding: object) -> bool:
     """A completed keep-current adjudication ships with disclosure.
 
-    Requires the full closed-set chain to have OBSERVED with the judge's
-    explicit UNCERTAIN → KEEP_CURRENT branch, no mutation applied and the
-    timeline untouched. Anything structural stays a blocker.
+    Requires the full closed-set chain to have OBSERVED with a *decided*
+    KEEP_CURRENT branch, no mutation applied and the timeline untouched.
+    Infra incompleteness (witness/judge/pinyin backend unavailable, stale
+    base, invalid response, budget skip) stays a blocker: those branches are
+    machinery failing to decide, not a decision.
     """
 
     if not isinstance(finding, Mapping):
         return False
     adjudication = finding.get("exact_release_adjudication")
     if not isinstance(adjudication, Mapping):
+        adjudication = finding.get("context_audio_adjudication")
+    if not isinstance(adjudication, Mapping):
         return False
     mutation = adjudication.get("mutation_authority")
     return bool(
         adjudication.get("status") == "OBSERVED"
-        and adjudication.get("policy_branch") == "JUDGE_UNCERTAIN_KEEP_CURRENT"
+        and adjudication.get("policy_branch") in _DECIDED_KEEP_CURRENT_BRANCHES
         and adjudication.get("repaired") is False
         and adjudication.get("timing_immutable") is True
         and isinstance(mutation, Mapping)

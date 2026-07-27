@@ -226,6 +226,31 @@ def _orthography_ambiguous(
     return bool(current_key and current_key == proposed_key)
 
 
+def _strict_homophone_tie(
+    finding: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> bool:
+    """Whether CURRENT and PROPOSED are pronounced identically.
+
+    识别度分层（Ivan 2026-07-27 概率裁定令）：严格同音对（一/咦）音频
+    定义上中立，语义是唯一判据，judge 排序可拍板；近音对（下斗里/沙豆李
+    式）音频仍可分辨，维持 text authority 门。两条判据都是代码复算，
+    生产者与审计者共用，防止裁决声明被洗白。
+    """
+
+    suspect = str(finding.get("suspect") or "")
+    suggestion = str(finding.get("suggestion") or "")
+    if suspect and suggestion and _homophone_equal(suspect, suggestion):
+        return True
+    current_key = _orthography_pronunciation_key(
+        str(request.get("current_cue") or "")
+    )
+    proposed_key = _orthography_pronunciation_key(
+        str(request.get("proposed_cue") or "")
+    )
+    return bool(current_key) and current_key == proposed_key
+
+
 def _source_backed_orthography_equivalent(
     request: Mapping[str, Any],
     finding: Mapping[str, Any],
@@ -1241,14 +1266,18 @@ def adjudicate_context_finding(
         finding,
     )
     witness_judge_audit: dict[str, Any] = {}
+    strict_tie = _strict_homophone_tie(finding, request)
     if (
         valid
         and orthography_ambiguous
         and orthography_authority["status"] != "PASS"
         and verdict.get("target_audible") is True
         and repair_class not in {"acoustic_delete", "acoustic_drop_cue"}
+        and not strict_tie
     ):
-        # spelling-tie proposals never reach the judge without textual authority
+        # near-homophone proposals never reach the judge without textual
+        # authority: the audio could in principle tell them apart.  Strict
+        # ties fall through to the judge (Ivan 2026-07-27 概率裁定令).
         policy_branch = "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
     elif valid and orthography_equivalent and verdict.get("target_audible") is True:
         # Sounds are identical by construction (source-backed spelling swap,
@@ -1263,6 +1292,15 @@ def adjudicate_context_finding(
             llm_call=judge_llm_call,
             structured_chat_context=_structured_chat_lines(clip_context),
         )
+        if (
+            repaired
+            and orthography_ambiguous
+            and orthography_authority["status"] != "PASS"
+        ):
+            # only strict ties reach the judge without textual authority;
+            # a judged PROPOSED there is the semantic tiebreak Ivan ordered
+            # (音频中立时按概率排序选最高，不许保持原样).
+            policy_branch = "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
     output = srt_text
     if repaired:
         cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
@@ -1284,6 +1322,13 @@ def adjudicate_context_finding(
                 f"{index}\n{_ms(cue.start_ms)} --> {_ms(cue.end_ms)}\n{text}\n"
                 for index, (cue, text) in enumerate(retained, start=1)
             )
+    semantic_tiebreak = bool(
+        repaired
+        and orthography_ambiguous
+        and orthography_authority["status"] != "PASS"
+        and strict_tie
+        and policy_branch == "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
+    )
     mutation_authority = {
         "schema_version": "subtitle-correction-mutation-authority.v1",
         "status": (
@@ -1292,11 +1337,16 @@ def adjudicate_context_finding(
             and (
                 not orthography_ambiguous
                 or orthography_authority["status"] == "PASS"
+                or semantic_tiebreak
             )
             else ("BLOCK" if repaired else "NOT_APPLIED")
         ),
         "basis": (
-            "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+            (
+                "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK"
+                if semantic_tiebreak
+                else "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+            )
             if repaired and orthography_ambiguous
             else (
                 "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
@@ -1538,13 +1588,45 @@ def audit_correction_mutation_authority(
                 if isinstance(adjudication, Mapping)
                 else None
             )
+            # 语义拍板路线（Ivan 2026-07-27）：严格同音 + judge 明选
+            # PROPOSED。每个条件都从落盘证据复算，不信任生产者位。
+            request = (
+                adjudication.get("request")
+                if isinstance(adjudication, Mapping)
+                else None
+            )
+            witness_judge = (
+                adjudication.get("witness_judge")
+                if isinstance(adjudication, Mapping)
+                else None
+            )
+            judge = (
+                witness_judge.get("judge")
+                if isinstance(witness_judge, Mapping)
+                else None
+            )
+            semantic_tiebreak = bool(
+                orthography_ambiguous is True
+                and isinstance(adjudication, Mapping)
+                and adjudication.get("policy_branch")
+                == "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
+                and _orthography_text_authority(row)["status"] != "PASS"
+                and isinstance(request, Mapping)
+                and _strict_homophone_tie(row, request)
+                and isinstance(judge, Mapping)
+                and judge.get("choice") == "PROPOSED"
+            )
             expected_basis = (
-                "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+                (
+                    "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK"
+                    if semantic_tiebreak
+                    else "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+                )
                 if orthography_ambiguous is True
                 else "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
             )
             orthography_valid = True
-            if orthography_ambiguous is True:
+            if orthography_ambiguous is True and not semantic_tiebreak:
                 expected_orthography = _orthography_text_authority(row)
                 observed_orthography = (
                     adjudication.get("orthography_authority")
