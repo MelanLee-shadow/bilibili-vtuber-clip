@@ -1,6 +1,39 @@
 # Current handoff
 
-Updated: 2026-07-26 ~05:40Z (Fable 大复盘会话：424 封面已修复并线上编辑；7/25 官方回放补源进行中；r19 已重新定时)
+Updated: 2026-07-27 ~06:30Z (Fable：decided-keep 披露契约 + 严格同音 judge 语义拍板已部署 0a97deb；12 条拒发候选已复活重排)
+
+## 2026-07-27 晨：拒发总根修复（0a97deb 已部署，md5 读回）
+
+7/25–7/26 十余条 FINAL_REVIEW_UNRESOLVED_FINDINGS 拒发的总病根（以 1493 三条 findings 实证）：
+
+- **契约缺口**：`is_keep_current_disclosed` 只认 JUDGE_UNCERTAIN_KEEP_CURRENT；judge 明确保留
+  （JUDGE_KEEPS_CURRENT）、拼音门否决（JUDGE_CHOICE_PINYIN_INCOMPATIBLE）、同音无 text
+  authority 保守保留（ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED）、目标不可闻——全是**走完链条的
+  机器决定**，却被当 unresolved 无限拒发（decided-keep 死循环，revive 也救不回）。现五类
+  decided-keep 全部披露交付（Ivan 无人值守令：发出去检查有问题再修，不许一直不发）；
+  infra 未走完（witness/judge/后端不可用、stale、预算跳过）仍 fail-closed。两个裁决键
+  （exact_release / context_audio）都受理。
+- **严格同音对短路**（一、/咦，同音，1493 cue19）：旧代码 pre-judge 短路永远保留。现严格同音
+  （发音键完全相等，代码复算）放行 judge 语义排序，judged PROPOSED 以新 basis
+  `SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK` 施改（Ivan 概率裁定令）；近音对（毁神/绘声
+  shen≠sheng）维持 text-authority 门。审计端从落盘证据对称复算（strict tie + judge choice +
+  authority），生产者位不可洗白。exact 车道发现经既有 carryover 下轮落盘，自愈收敛。
+- **1493 文本已对**：source_subtitle_truth_audit=APPLIED（沙豆李真值接管 cue17），fresh/refined
+  均为「发1支持沙豆李」；线上 BV1zzgd6JEHe 烧录仍是旧「下斗里」——1493 复活重产 release 后
+  走 same-BV 换源（edit-replace 不占配额）。
+
+**12 条拒发候选已复活**（--fix-commit 0a97deb，下 tick 按新指纹重排）：
+7/24 850_940/962_1042/44_293；7/25 1160_1262/**1493**/911_1030/**742_887**/909_1014；
+7/26 1329_1380/1411_1463/964_1091/424_522。witness-reserve 三条（7/24 1571/1648、7/26 1646）
+是真缺口**未复活**——跨段见证储备待修（blocked-findings E-case）。
+
+**7/24 澄清**：state 里 4 条 review_ready 无 uploaded_bvid 是常态（runner 不投稿，账本在
+evidence 侧）——四条 7/25 深夜已公开（含 424），昨夜 tick 只是 v5 复核等价，无需重传。
+daily manifest 的 package_root 是 `replacement_recuts/` 子目录（勿传候选根目录）。
+
+Lane watcher（本机 Monitor bnjp3rp77）盯三日 state 翻转：出货→跑 v3 上传链
+（build manifest→audit→make-manifest[--season talk, quote=无人值守常令]→verify→upload→证据入库）；
+1493 出货→same-BV 换源。
 
 ## 2026-07-26 大复盘会话（进行中）
 
