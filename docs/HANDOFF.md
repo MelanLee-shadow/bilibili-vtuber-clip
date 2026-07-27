@@ -33,7 +33,7 @@ Updated: 2026-07-27 ~22:15Z（北京 07-28 06:15）by Claude Fable root session�
 - **直播中**：runner（我手动踢的 tick，free pid 3372359，flock 持锁）进入 live-wait；下播后收录、跑 2026-07-28 新批次；cron `*/10` flock -n 与之互斥，无需干预。
 - **三件重产已入队**（state 行均 failed(recoverable)，7/24 退避计时器已按 Ivan 指令清零）：
   - `auto_193129_850_940`（7/24）：重产将应用「李姐拉拉」等 4 处修复；**出包后不是上传**（registry 会拒），走 edit-replace，见下一步①。
-  - `auto_192000_909_1014`（7/25）：行是我按审计格式重建的（deferred-tail 蒸发事故，revival 块注明来源）；真值 `20260725-ac-bixin-thanks-r1` 重产时应用；出包后走标准上传（从未发布、无 hold）。
+  - `auto_192000_909_1014`（7/25）：⚠️ 22:20Z 已再次 candidate_rejected——**拒因=我重建的行缺 `selection_scorecard`**（semantic_recall lane 硬门 SELECTION_SCORECARD_REQUIRED，talk_lane.py ~1270；幂等 fail-fast，没浪费生产）。原始记分卡随蒸发事故永久丢失（state.bak 是拒后快照、summary 只有 hook 无维度分）。**接手正确修法：不许伪造记分卡**——用选题引擎对该窗口正当重打分（重新生成 selection_scorecard，metric v2 资产），把分数写回行里再 `revive_rejected_candidates.py`；或请 Ivan 直接豁免该门（一次性授权记台账）。真值 `20260725-ac-bixin-thanks-r1` 已在树上，出包后走标准上传（从未发布、无 hold）。
   - `auto_183122_1209_1410`（7/24）：上轮 producer_error，重试引擎自跑；**registry hold，Ivan 放行前绝不上传**。
 - **1573 置换（BV1DAg46HEXE）**：本地链路全通（审计豁免+biliup cookie 已 renew，canary rc=0）。纯等 B 站 Creator 把新 cid 40356020489 从 -30 翻正；翻正后 repair-run 幂等续跑完成置换。plan/journal 全套在 free `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1573/`。若 canary 再报 rc=1：`cd /opt/bilive/app/tmp_manual_upload && /opt/bilive/bin/biliup -u biliup_cookies.json renew`（bilitool 的 cookie 是另一份，今晚一直健康）。
 - **CloudFS 挂载**：22:00Z 死过一次，watchdog 22:05Z 自动重挂+消费者门 COMPLETE。老病，watchdog 管。
