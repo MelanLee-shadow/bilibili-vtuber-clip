@@ -1290,6 +1290,7 @@ def test_exact_final_release_review_forwards_recut_offset_to_audio_adjudication(
         clip_context,
         source_media_timeline_offset_ms,
         judge_llm_call=None,
+        screen_read_probe=None,
     ):
         captured["findings"] = list(findings)
         captured["entity_verifier"] = entity_verifier

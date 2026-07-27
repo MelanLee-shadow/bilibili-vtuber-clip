@@ -1195,6 +1195,7 @@ def adjudicate_context_finding(
     clip_context: Mapping[str, object] | None = None,
     source_media_timeline_offset_ms: int = 0,
     judge_llm_call: Callable[[str], str] | None = None,
+    screen_read_probe: Callable[[int, int], Mapping[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Fuse a reviewer proposal with witnessed pinyin + CPA word choice.
 
@@ -1218,22 +1219,59 @@ def adjudicate_context_finding(
             "repaired": False,
             "reason_code": str(exc),
         }
-    witness_request = build_witness_request(request)
-    try:
-        raw_verdict = (
-            entity_verifier(witness_request)
-            if entity_verifier is not None
-            else None
+    def _fetch_witness(
+        check_request: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        request_for_witness = build_witness_request(check_request)
+        try:
+            observed = (
+                entity_verifier(request_for_witness)
+                if entity_verifier is not None
+                else None
+            )
+        except Exception as exc:
+            observed = {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "request_sha256": request_for_witness["request_sha256"],
+                "status": "UNCERTAIN",
+                "reason_code": "CONTEXT_VERIFIER_ERROR",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        return (
+            dict(observed) if isinstance(observed, Mapping) else {},
+            request_for_witness,
         )
-    except Exception as exc:
-        raw_verdict = {
-            "schema_version": "subtitle-span-acoustic-witness.v1",
-            "request_sha256": witness_request["request_sha256"],
-            "status": "UNCERTAIN",
-            "reason_code": "CONTEXT_VERIFIER_ERROR",
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-    verdict = dict(raw_verdict) if isinstance(raw_verdict, Mapping) else {}
+
+    verdict, witness_request = _fetch_witness(request)
+    screen_read_audit: dict[str, Any] | None = None
+    # 证据升级通道（Ivan 2026-07-27 424_522 1:24「战斗回合用尽」案 + 同日
+    # 扩展令）：触发器 = 听不清（弱证词）∪ 语境不通（审片员立了 finding
+    # 本身即语义怀疑，且提案无文本出处）。查证顺序 = 先弹幕池（结构化
+    # 记录，零成本，命中走 structured_chat_bound）→ 再看两帧画面（OCR
+    # 文本池，命中走 verified_ocr）。两池都按拼音与听写对齐挑选，命中只
+    # 替换「提案+出处」，裁决仍由同一 witness-judge 引擎完成；同段音频
+    # 重听由声学缓存吸收。
+    if verdict.get("status") == "OBSERVED" and verdict.get(
+        "target_audible"
+    ) is True and not isinstance(
+        finding.get("candidate_provenance"), Mapping
+    ):
+        from src.autoslice.evidence_escalation import (
+            evidence_escalation_upgrade,
+        )
+
+        upgraded = evidence_escalation_upgrade(
+            srt_text,
+            finding,
+            request=request,
+            verdict=verdict,
+            screen_probe=screen_read_probe,
+            clip_context=clip_context,
+            source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+        )
+        if upgraded is not None:
+            finding, request, screen_read_audit = upgraded
+            verdict, witness_request = _fetch_witness(request)
     valid = (
         verdict.get("schema_version") == "subtitle-span-acoustic-witness.v1"
         and verdict.get("request_sha256") == witness_request["request_sha256"]
@@ -1362,8 +1400,13 @@ def adjudicate_context_finding(
         "policy_branch": policy_branch,
         "timing_immutable": True,
         "request": request,
-        "verdict": verdict or raw_verdict,
+        "verdict": verdict,
         **({"witness_judge": witness_judge_audit} if witness_judge_audit else {}),
+        **(
+            {"screen_read_witness": screen_read_audit}
+            if screen_read_audit
+            else {}
+        ),
         "orthography_equivalence": {
             "matched": orthography_equivalent,
             **orthography_audit,
@@ -1382,6 +1425,7 @@ def adjudicate_exact_release_findings(
     clip_context: Mapping[str, object] | None = None,
     source_media_timeline_offset_ms: int = 0,
     judge_llm_call: Callable[[str], str] | None = None,
+    screen_read_probe: Callable[[int, int], Mapping[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Separate unresolved findings from decisively disproven proposals.
 
@@ -1412,6 +1456,7 @@ def adjudicate_exact_release_findings(
             clip_context=clip_context,
             source_media_timeline_offset_ms=source_media_timeline_offset_ms,
             judge_llm_call=judge_llm_call,
+            screen_read_probe=screen_read_probe,
         )
         row["exact_release_adjudication"] = adjudication
         verdict = adjudication.get("verdict")

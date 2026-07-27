@@ -91,6 +91,9 @@ from src.autoslice.session_topic_authority import (
     absorb_session_topic_entities,
     discover_session_topic_authorities,
 )
+from src.autoslice.screen_read_witness import (
+    build_env_screen_read_probe,
+)
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
     build_source_truth_preview_receipt,
@@ -710,6 +713,7 @@ def _run_final_review(
     clip_context: Mapping[str, object] | None = None,
     source_truth_protected_cue_indexes: Sequence[int] = (),
     carryover_file: Path | None = None,
+    screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
     original_srt_text = srt_text
@@ -845,6 +849,7 @@ def _run_final_review(
                     finding=row,
                     clip_context=clip_context,
                     judge_llm_call=review_llm_call,
+                    screen_read_probe=screen_read_probe,
                 )
                 repaired = bool(adj_audit.get("repaired"))
                 row["context_audio_adjudication"] = adj_audit
@@ -957,6 +962,7 @@ def _run_exact_final_release_review(
     verify_confusable_entity: Callable | None = None,
     verified_authority_audit: Mapping[str, object] | None = None,
     timeline_offset_ms: int = 0,
+    screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority bytes and issue a fail-closed receipt."""
 
@@ -1053,6 +1059,7 @@ def _run_exact_final_release_review(
             clip_context=clip_context,
             source_media_timeline_offset_ms=timeline_offset_ms,
             judge_llm_call=_build_final_review_llm_call(),
+            screen_read_probe=screen_read_probe,
         )
     )
     resolved_findings = [*authority_resolved, *acoustic_resolved]
@@ -1701,6 +1708,7 @@ def run_text_pipeline(
     adapters: TextPipelineAdapters,
 ) -> TextPipelineResult:
     merged, authoritative_chat = _collect_timeline_chat(spec, durations)
+    screen_read_probe = build_env_screen_read_probe(padded)
     draft = _transcribe_draft(
         spec=spec,
         padded=padded,
@@ -1847,6 +1855,7 @@ def run_text_pipeline(
             review_source_truth_preview["protected_cue_indexes"]
         ),
         carryover_file=carryover_path(out_root, cid),
+        screen_read_probe=screen_read_probe,
     )
     evidence = _finalize_text_evidence(
         spec=spec,
@@ -1957,6 +1966,7 @@ def run_text_pipeline(
             ),
         )
         return _run_exact_final_release_review(
+            screen_read_probe=screen_read_probe,
             srt_text=final_srt_text,
             correction_audit=exact_correction_audit,
             adapters=adapters,

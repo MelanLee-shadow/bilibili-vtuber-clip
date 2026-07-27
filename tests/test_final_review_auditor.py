@@ -1253,3 +1253,115 @@ def test_candidate_memory_display_prefix_is_normalized_only_to_verified_id():
     assert findings[0]["candidate_memory_id_raw"] == f"id={memory_id}"
     assert findings[0]["force_acoustic"] is True
     assert findings[0]["candidate_provenance"]["memory_id"] == memory_id
+
+
+def _weak_witness(request, heard, *, confidence=0.6, uncertain=()):
+    return {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "request_sha256": request["request_sha256"],
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": heard,
+        "uncertain_positions": list(uncertain),
+        "syllable_count": len(heard.split()),
+        "confidence": confidence,
+        "reason": "fast speech",
+    }
+
+
+def test_screen_read_escalation_recovers_fast_spoken_ui_line():
+    """424_522 1:24 案（Ivan 2026-07-27）：快速念屏「战斗回合用尽，即将
+    离开战场」音频糊——弱证词触发读屏，OCR 池拼音对齐命中，verified_ocr
+    出处进入同一裁决引擎，judge PROPOSED 后施改。"""
+
+    source = _srt("战斗回合永进即将离开占场")
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "永进",
+        "suggestion": "用尽",
+        "proposed_full_cue": "战斗回合用尽即将离开占场",
+        "repair_class": "phonetic",
+        "why": "语境不通",
+    }
+    probes = []
+
+    def fake_screen_probe(start_ms, end_ms):
+        probes.append((start_ms, end_ms))
+        return {
+            "schema_version": "screen-read-witness.v1",
+            "media_path": "/x/padded.mp4",
+            "span_start_ms": start_ms,
+            "span_end_ms": end_ms,
+            "frame_ms": [start_ms + 100],
+            "pool": ["战斗回合用尽，即将离开战场", "设置", "退出对局"],
+        }
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=lambda request: _weak_witness(
+            request,
+            "zhan dou hui he yong jin ji jiang li kai zhan chang",
+            confidence=0.6,
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+        screen_read_probe=fake_screen_probe,
+    )
+
+    assert probes, "弱证词必须触发读屏探针"
+    assert "战斗回合用尽，即将离开战场" in output
+    assert audit["repaired"] is True
+    esc = audit["screen_read_witness"]
+    assert esc["source"] == "screen_frames"
+    assert esc["match"]["text"] == "战斗回合用尽，即将离开战场"
+    assert audit["request"]["candidate_provenance"]["kind"] == "verified_ocr"
+    assert audit["mutation_authority"]["status"] == "PASS"
+
+
+def test_semantic_trigger_prefers_danmaku_pool_before_frames():
+    """Ivan 同日扩展：语境不通（有 finding 无出处）即触发，且弹幕池先于
+    画面——池命中时探针一次都不该调用，出处=structured_chat_bound。"""
+
+    source = _srt("大家说的都是磨牙好赢")
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "磨牙好赢",
+        "suggestion": "摩耶好楹",
+        "proposed_full_cue": "大家说的都是摩耶好楹",
+        "repair_class": "phonetic",
+        "why": "语境不通",
+    }
+    probes = []
+
+    def never_screen_probe(start_ms, end_ms):
+        probes.append((start_ms, end_ms))
+        return {"pool": []}
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=lambda request: _weak_witness(
+            request,
+            "da jia shuo de dou shi mo ye hao ying",
+            confidence=0.95,  # 听得清——触发靠语境（finding 无出处）
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+        clip_context={
+            "structured_chat": [
+                {"sender": "观众A", "text": "魔涯号营来啦"},
+                {"sender": "观众B", "text": "今天天气不错"},
+            ]
+        },
+        screen_read_probe=never_screen_probe,
+    )
+
+    assert probes == [], "弹幕池命中时不许烧视觉调用"
+    assert "大家说的都是魔涯号营来啦" in output  # 嵌入式拼接，句架保留
+    esc = audit["screen_read_witness"]
+    assert esc["source"] == "danmaku_pool"
+    assert (
+        audit["request"]["candidate_provenance"]["kind"]
+        == "structured_chat_bound"
+    )
