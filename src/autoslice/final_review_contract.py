@@ -70,26 +70,7 @@ def validate_final_review_release(
                 "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
             )
         for row in disclosed:
-            adjudication = (
-                row.get("exact_release_adjudication")
-                if isinstance(row, Mapping)
-                else None
-            )
-            mutation = (
-                adjudication.get("mutation_authority")
-                if isinstance(adjudication, Mapping)
-                else None
-            )
-            if not (
-                isinstance(adjudication, Mapping)
-                and adjudication.get("status") == "OBSERVED"
-                and adjudication.get("policy_branch")
-                == "JUDGE_UNCERTAIN_KEEP_CURRENT"
-                and adjudication.get("repaired") is False
-                and adjudication.get("timing_immutable") is True
-                and isinstance(mutation, Mapping)
-                and mutation.get("status") == "NOT_APPLIED"
-            ):
+            if not is_keep_current_disclosed(row):
                 raise FinalReviewContractError(
                     "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
                 )
@@ -185,3 +166,27 @@ def validate_final_review_release(
     if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
         raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")
     return dict(audit)
+
+
+def is_keep_current_disclosed(finding: object) -> bool:
+    """A completed keep-current adjudication ships with disclosure.
+
+    Requires the full closed-set chain to have OBSERVED with the judge's
+    explicit UNCERTAIN → KEEP_CURRENT branch, no mutation applied and the
+    timeline untouched. Anything structural stays a blocker.
+    """
+
+    if not isinstance(finding, Mapping):
+        return False
+    adjudication = finding.get("exact_release_adjudication")
+    if not isinstance(adjudication, Mapping):
+        return False
+    mutation = adjudication.get("mutation_authority")
+    return bool(
+        adjudication.get("status") == "OBSERVED"
+        and adjudication.get("policy_branch") == "JUDGE_UNCERTAIN_KEEP_CURRENT"
+        and adjudication.get("repaired") is False
+        and adjudication.get("timing_immutable") is True
+        and isinstance(mutation, Mapping)
+        and mutation.get("status") == "NOT_APPLIED"
+    )

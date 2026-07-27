@@ -4,7 +4,9 @@ def test_keep_current_disclosed_classifier():
     """Ivan 2026-07-26 无人值守裁定：judge UNCERTAIN→KEEP_CURRENT 是已完成
     的机器决定（随包披露交付）；任何结构差异都不许进披露通道。"""
 
-    from src.autoslice.producer_text_pipeline import _is_keep_current_disclosed
+    from src.autoslice.final_review_contract import (
+        is_keep_current_disclosed as _is_keep_current_disclosed,
+    )
 
     def row(**overrides):
         adjudication = {

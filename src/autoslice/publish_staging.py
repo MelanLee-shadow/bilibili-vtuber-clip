@@ -31,7 +31,6 @@ from .cover_frame_selection import (
 from .cover_generation import (
     LidoushaCoverArtDirection,
     _call_cpa_image_edit as _cover_call_cpa_image_edit,
-    _cover_screenshot_polish_prompt,
     _cpa_image_model_candidates,
     _lidousha_cover_art_direction,
     _lidousha_cover_prompt,
@@ -49,7 +48,12 @@ from .cover_route_evidence import (
     story_participant_ids,
     validate_final_participant_verification,
 )
-from .cover_screenshot_poster import _compose_screenshot_poster_background
+from .cover_polish_gate import (
+    _compose_screenshot_cover_with_face_gate,
+    _materialize_screenshot_polish,
+    _polish_face_binding_failure,
+    _verify_polish_face_integrity,
+)
 from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
@@ -1423,174 +1427,73 @@ def _decide_cover_treatment(
     return "cpa_redraw", f"no strong real moment (score={best:.2f})"
 
 
-_POLISH_FACE_QUESTION = (
-    "这是一张视频封面成品。请只判断画面中人物的脸部是否完整可见："
-    "双眼、嘴巴、下巴都必须在画面内，且没有被画面边缘或卡片边框切断。"
-    "同时报告人物是否吐舌头。只输出 JSON："
-    '{"face_complete": true|false, "missing": ["eyes"|"mouth"|"chin"], '
-    '"tongue_out": true|false, "reason": "简短中文说明"}'
-)
-
-
-def _verify_polish_face_integrity(
-    final_cover_path: Path,
+def _screenshot_base_and_crop(
     *,
-    base_url: str,
-    api_key: str,
-) -> dict[str, object]:
-    """Final-pixel face-integrity verdict for AI-polished screenshot covers.
-
-    The polish model may return a much larger face than the prompt asked for
-    (2026-07-26 BV1E93L6rErV: mouth and chin cut by the fixed card crop went
-    public). Polished pixels cannot inherit source-frame geometry, so the
-    final bytes get an independent CPA vision verdict (Ivan 2026-07-25:
-    看画面的任务交给 CPA). Failure here is fail-closed but repairable —
-    cover-only maintenance retries on the next tick.
-    """
-
-    if not base_url or not api_key:
-        return {
-            "schema_version": "lidousha-cover-polish-face-verification.v1",
-            "status": "FAIL",
-            "reason_code": "VERIFIER_UNAVAILABLE",
-            "detail": "CPA credentials unavailable for face verification",
-        }
-    from src.autoslice.cpa_frame_witness import image_vision_probe
-
-    receipt = image_vision_probe(
-        final_cover_path,
-        _POLISH_FACE_QUESTION,
-        api_base=base_url,
-        api_key=api_key,
-    )
-    verification: dict[str, object] = {
-        "schema_version": "lidousha-cover-polish-face-verification.v1",
-        "witness": receipt,
-    }
-    if receipt.get("status") != "OBSERVED":
-        verification.update(
-            status="FAIL",
-            reason_code="VERIFIER_UNAVAILABLE",
-            detail=str(receipt.get("error") or receipt.get("status")),
-        )
-        return verification
-    answer = str(receipt.get("answer") or "")
-    try:
-        verdict = json.loads(answer[answer.index("{"): answer.rindex("}") + 1])
-        if not isinstance(verdict, dict):
-            raise ValueError("verdict is not an object")
-    except ValueError:
-        verification.update(
-            status="FAIL",
-            reason_code="VERDICT_UNPARSEABLE",
-            detail=answer[:200],
-        )
-        return verification
-    verification["verdict"] = verdict
-    if verdict.get("face_complete") is True and verdict.get("tongue_out") is not True:
-        verification.update(status="PASS")
-    else:
-        verification.update(
-            status="FAIL",
-            reason_code=(
-                "TONGUE_OUT"
-                if verdict.get("tongue_out") is True
-                else "FACE_INCOMPLETE"
-            ),
-            detail=str(verdict.get("reason") or verdict.get("missing") or ""),
-        )
-    return verification
-
-
-def _materialize_screenshot_polish(
-    *,
-    screenshot_base: Path,
+    media_path: Path,
     candidate_id: str,
     ai_dir: Path,
-    evidence_dir: Path | None,
-    polish: bool,
-    image_edit: Callable[..., dict[str, object]] | None,
-    base_url: str,
-    api_key: str,
-    cover_generation: dict[str, object],
-) -> tuple[Path, str, str, list[str], bool]:
-    """Optionally polish a screenshot without changing the selected route."""
+    reference_path: Path,
+    frame_selection: Mapping[str, object],
+    art_direction,
+    relationship_visual_required: bool,
+):
+    """Materialize the screenshot base frame and its hash-bound crop proof."""
 
-    overlay_source = screenshot_base
-    method = "screenshot_direct"
-    selected_model = "none"
-    attempted_models: list[str] = []
-    polish_attempted = False
-    if (
-        polish
-        and image_edit is not None
-        and base_url
-        and api_key
-        and evidence_dir is not None
-    ):
-        polished_path = ai_dir / f"{candidate_id}.screenshot-polished.png"
-        polish_attempted = True
-        try:
-            cpa_result = image_edit(
-                base_url=base_url,
-                api_key=api_key,
-                reference_path=screenshot_base,
-                output_path=polished_path,
-                prompt=_cover_screenshot_polish_prompt(),
-                request_path=(
-                    evidence_dir
-                    / f"{candidate_id}.cover-polish-request.redacted.json"
-                ),
-                response_path=(
-                    evidence_dir
-                    / f"{candidate_id}.cover-polish-response.redacted.json"
-                ),
-            )
-        except Exception as exc:
-            cpa_result = {
-                "status": "EXCEPTION",
-                "detail": f"{type(exc).__name__}: {exc}",
-            }
-        attempted_models = list(cpa_result.get("attempted_models") or [])
-        if (
-            cpa_result.get("status") == "AI_BACKGROUND_READY"
-            and polished_path.is_file()
-        ):
-            overlay_source = polished_path
-            method = "screenshot_polish"
-            selected_model = str(cpa_result.get("selected_model") or "cpa")
-            cover_generation["screenshot_polish"] = {
-                "status": "POLISHED",
-                "image_generation_attempted": True,
-                "image_generation_used": True,
-            }
-        else:
-            cover_generation["screenshot_polish"] = {
-                "status": "DEGRADED_TO_DIRECT",
-                "reason_code": "SCREENSHOT_POLISH_FAILED",
-                "detail": str(
-                    cpa_result.get("detail")
-                    or cpa_result.get("status")
-                    or "polish failed"
-                ),
-                "image_generation_attempted": True,
-                "image_generation_used": False,
-            }
-    elif polish:
-        cover_generation["screenshot_polish"] = {
-            "status": "DEGRADED_TO_DIRECT",
-            "reason_code": "SCREENSHOT_POLISH_ADAPTER_UNAVAILABLE",
-            "detail": "CPA credentials/adapter unavailable",
-            "image_generation_attempted": False,
-            "image_generation_used": False,
+    if relationship_visual_required:
+        # A relationship cover cannot inherit the reference frame's
+        # participant verdict through a zoom crop.  Keep the exact,
+        # hash-bound full reference and reserve a separate banner for text.
+        art_direction = dataclasses_replace(
+            art_direction,
+            layout="banner",
+        )
+        screenshot_base = reference_path
+        crop_evidence = {
+            "schema": "cover-frame-transfer.v1",
+            "status": "HASH_BOUND_FULL_FRAME",
+            # This stays on the content timeline.  The hash-bound source
+            # authority may also carry an absolute source_time_ms, but the
+            # transfer proof must bind the exact frame selected from the
+            # materialized clip just like the cropped screenshot route.
+            "frame_ms": int(frame_selection["best_ms"]),
+            "source_path": str(reference_path),
+            "source_sha256": "sha256:" + _sha256(reference_path),
+            "crop_applied": False,
+            "zoom": 1.0,
         }
-    return (
-        overlay_source,
-        method,
-        selected_model,
-        attempted_models,
-        polish_attempted,
-    )
+    else:
+        screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
+    # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版
+    # 手游列（都窄而高），真正的脸部识别放大要等 CPA 视觉裁判。v1 保守：
+    # 默认 1.16x 顶部锚定——恰好裁掉底部烧录字幕带、微裁两侧，任何场景都
+    # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
+    if not relationship_visual_required:
+        confident = bool(frame_selection.get("subject_confident"))
+        camera_window = (
+            frame_selection.get("camera_window_bbox_frac")
+            if not confident
+            else None
+        )
+        crop_evidence = extract_zoomed_cover_frame(
+            media_path,
+            int(frame_selection["best_ms"]),
+            screenshot_base,
+            zoom=1.32 if confident else 1.16,
+            anchor_x_frac=(
+                float(frame_selection["subject_anchor_x_frac"])
+                if confident and frame_selection.get("subject_anchor_x_frac") is not None
+                # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
+                # 优先吃掉左侧弹幕栏。
+                else 0.58
+            ),
+            head_top_frac=(
+                float(frame_selection["subject_head_top_frac"])
+                if confident and frame_selection.get("subject_head_top_frac") is not None
+                else 0.0
+            ),
+            window_bbox_frac=camera_window,
+        )
+    return art_direction, screenshot_base, crop_evidence
 
 
 def _stage_screenshot_direct_cover(
@@ -1637,60 +1540,17 @@ def _stage_screenshot_direct_cover(
             cover_generation.get("story_contract"),
             route_decision=route,
         )
-        if relationship_visual_required:
-            # A relationship cover cannot inherit the reference frame's
-            # participant verdict through a zoom crop.  Keep the exact,
-            # hash-bound full reference and reserve a separate banner for text.
-            art_direction = dataclasses_replace(
-                art_direction,
-                layout="banner",
+        art_direction, screenshot_base, crop_evidence = (
+            _screenshot_base_and_crop(
+                media_path=media_path,
+                candidate_id=candidate_id,
+                ai_dir=ai_dir,
+                reference_path=reference_path,
+                frame_selection=frame_selection,
+                art_direction=art_direction,
+                relationship_visual_required=relationship_visual_required,
             )
-            screenshot_base = reference_path
-            crop_evidence = {
-                "schema": "cover-frame-transfer.v1",
-                "status": "HASH_BOUND_FULL_FRAME",
-                # This stays on the content timeline.  The hash-bound source
-                # authority may also carry an absolute source_time_ms, but the
-                # transfer proof must bind the exact frame selected from the
-                # materialized clip just like the cropped screenshot route.
-                "frame_ms": int(frame_selection["best_ms"]),
-                "source_path": str(reference_path),
-                "source_sha256": "sha256:" + _sha256(reference_path),
-                "crop_applied": False,
-                "zoom": 1.0,
-            }
-        else:
-            screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
-        # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版
-        # 手游列（都窄而高），真正的脸部识别放大要等 CPA 视觉裁判。v1 保守：
-        # 默认 1.16x 顶部锚定——恰好裁掉底部烧录字幕带、微裁两侧，任何场景都
-        # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
-        if not relationship_visual_required:
-            confident = bool(frame_selection.get("subject_confident"))
-            camera_window = (
-                frame_selection.get("camera_window_bbox_frac")
-                if not confident
-                else None
-            )
-            crop_evidence = extract_zoomed_cover_frame(
-                media_path,
-                int(frame_selection["best_ms"]),
-                screenshot_base,
-                zoom=1.32 if confident else 1.16,
-                anchor_x_frac=(
-                    float(frame_selection["subject_anchor_x_frac"])
-                    if confident and frame_selection.get("subject_anchor_x_frac") is not None
-                    # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
-                    # 优先吃掉左侧弹幕栏。
-                    else 0.58
-                ),
-                head_top_frac=(
-                    float(frame_selection["subject_head_top_frac"])
-                    if confident and frame_selection.get("subject_head_top_frac") is not None
-                    else 0.0
-                ),
-                window_bbox_frac=camera_window,
-            )
+        )
         # polish：CPA 保真修图（清 UI 杂物+画质），任何失败降级为直出。
         (
             overlay_source,
@@ -1709,51 +1569,26 @@ def _stage_screenshot_direct_cover(
             api_key=api_key,
             cover_generation=cover_generation,
         )
-        poster_source = overlay_source
-        # Camera-window sources are near-full-face by construction; the fixed
-        # fit-crop card cannot be trusted with them (BV1E93L6rErV face cut).
-        face_safe_contain = bool(
-            isinstance(crop_evidence, Mapping)
-            and crop_evidence.get("camera_window_crop")
+        (
+            poster_evidence,
+            overlay,
+            face_verification,
+        ) = _compose_screenshot_cover_with_face_gate(
+            overlay_source=overlay_source,
+            crop_evidence=crop_evidence,
+            candidate_id=candidate_id,
+            ai_dir=ai_dir,
+            covers_dir=covers_dir,
+            cover_text=cover_text,
+            art_direction=art_direction,
+            relationship_visual_required=relationship_visual_required,
+            method=method,
+            base_url=base_url,
+            api_key=api_key,
+            verifier=_verify_polish_face_integrity,
         )
         poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"
         final_cover_path = covers_dir / f"{candidate_id}.screenshot-title.cover.png"
-        face_verification: dict[str, object] | None = None
-        while True:
-            poster_evidence = _compose_screenshot_poster_background(
-                poster_source,
-                poster_path,
-                art_direction=art_direction,
-                preserve_full_frame=relationship_visual_required,
-                source_ai_modified=method == "screenshot_polish",
-                face_safe_contain=(
-                    face_safe_contain and not relationship_visual_required
-                ),
-            )
-            overlay = _overlay_lidousha_cover_title(
-                poster_path, final_cover_path, cover_text=cover_text, art_direction=art_direction
-            )
-            if method != "screenshot_polish":
-                break
-            # Polished pixels cannot inherit source-frame geometry: the polish
-            # model may return a far larger face than prompted, and the pixel
-            # gate never checked face completeness (2026-07-26 424 incident).
-            face_verification = _verify_polish_face_integrity(
-                final_cover_path,
-                base_url=base_url,
-                api_key=api_key,
-            )
-            if face_verification.get("status") == "PASS":
-                break
-            if (
-                face_verification.get("reason_code") == "FACE_INCOMPLETE"
-                and not face_safe_contain
-                and not relationship_visual_required
-            ):
-                # 修复优先于 fail-close：先换整脸 contain 卡重排一次再终判。
-                face_safe_contain = True
-                continue
-            break
         if face_verification is not None:
             cover_generation["polish_face_verification"] = face_verification
         overlay_source = poster_path
@@ -1783,44 +1618,23 @@ def _stage_screenshot_direct_cover(
                 **overlay,
             }
         )
-        if method == "screenshot_polish":
-            bound_sha = str(cover_generation.get("final_cover_sha256") or "")
-            witness = (
-                face_verification.get("witness")
-                if isinstance(face_verification, Mapping)
-                else None
+        polish_face_detail = _polish_face_binding_failure(
+            cover_generation, face_verification, method
+        )
+        if polish_face_detail is not None:
+            record_cover_route_execution(
+                cover_generation,
+                actual_treatment=None,
+                execution_status="BLOCKED",
+                image_generation_attempted=polish_attempted,
+                image_generation_used=True,
+                detail=polish_face_detail,
             )
-            witness_sha = (
-                "sha256:" + str(witness.get("image_sha256"))
-                if isinstance(witness, Mapping) and witness.get("image_sha256")
-                else None
+            return _blocked_ai_cover_result(
+                cover_generation,
+                ["COVER_POLISH_FACE_UNVERIFIED"],
+                polish_face_detail,
             )
-            if (
-                not isinstance(face_verification, Mapping)
-                or face_verification.get("status") != "PASS"
-                or witness_sha != bound_sha
-            ):
-                detail = (
-                    "polished cover lacks a PASS face-integrity verdict bound "
-                    "to the final cover hash: "
-                    + str(
-                        (face_verification or {}).get("reason_code")
-                        or "VERIFICATION_MISSING"
-                    )
-                )
-                record_cover_route_execution(
-                    cover_generation,
-                    actual_treatment=None,
-                    execution_status="BLOCKED",
-                    image_generation_attempted=polish_attempted,
-                    image_generation_used=True,
-                    detail=detail,
-                )
-                return _blocked_ai_cover_result(
-                    cover_generation,
-                    ["COVER_POLISH_FACE_UNVERIFIED"],
-                    detail,
-                )
         final_participant_verification = None
         if relationship_visual_required:
             if method == "screenshot_direct":

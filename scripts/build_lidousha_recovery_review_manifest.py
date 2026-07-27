@@ -122,6 +122,7 @@ def _verify_artifact_hashes(
     speaker_srt: Path,
     speaker_ass: Path,
     chat_authority: dict[str, Any],
+    uniform_host: bool = False,
 ) -> None:
     artifact_hashes = record.get("artifact_hashes")
     if not isinstance(artifact_hashes, dict):
@@ -147,7 +148,7 @@ def _verify_artifact_hashes(
         raise ManifestBuildError(
             f"speaker SRT differs from chat authority: {speaker_srt}"
         )
-    if not _matches_sha256(
+    if not uniform_host and not _matches_sha256(
         speaker_ass, chat_authority.get("speaker_ass_sha256")
     ):
         raise ManifestBuildError(
@@ -176,6 +177,95 @@ def _cover_route_summary(generation: dict[str, Any]) -> dict[str, Any]:
             "final_visible_participant_ids"
         ),
     }
+
+
+_DATE_RX_STRICT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _resolve_manifest_date(
+    state: dict[str, Any],
+    package_root: Path,
+    records_by_id: dict[str, tuple[str, Path, dict[str, Any]]],
+) -> str:
+    """Manifest date must be a real recording date, never a staging dir name.
+
+    Release-scoped staging dirs (release-3573) exposed the old fallback: with
+    no state date, the dir name leaked in and every clip-context date check
+    mismatched. The records' story dates are the next authority; they must
+    all agree.
+    """
+
+    for source in (state.get("date"), package_root.name):
+        value = str(source or "")
+        if _DATE_RX_STRICT.fullmatch(value):
+            return value
+    record_dates = set()
+    for stem, _, _ in records_by_id.values():
+        try:
+            payload = _load_json(package_root / f"{stem}.clip-context.json")
+        except (OSError, ValueError):
+            continue
+        record_dates.add(str(payload.get("recording_date") or ""))
+    record_dates.discard("")
+    if len(record_dates) == 1:
+        value = record_dates.pop()
+        if _DATE_RX_STRICT.fullmatch(value):
+            return value
+    raise ManifestBuildError(
+        f"cannot resolve a recording date (state/none, root={package_root.name!r},"
+        f" record dates={sorted(record_dates)})"
+    )
+
+
+def _normalized_release_authorities(
+    state: dict[str, Any],
+    candidate_ids: list[str],
+    release_scope: list[str] | None,
+) -> dict[str, dict[str, object]]:
+    """Validate the exact rerun plan and normalize scoped authorities."""
+
+    if release_scope is not None:
+        unknown = set(release_scope) - set(candidate_ids)
+        if not release_scope or unknown:
+            raise ManifestBuildError(
+                f"release scope must be a subset of the exact contract: {sorted(unknown)}"
+            )
+    rerun_plan = state.get("delivery_rerun_plan")
+    publication_authorities = (
+        rerun_plan.get(
+            "recovery_publication_authorities_by_candidate"
+        )
+        if isinstance(rerun_plan, dict)
+        else None
+    )
+    if (
+        not isinstance(rerun_plan, dict)
+        or rerun_plan.get("schema_version")
+        != "recovery-review-talk-rerun-plan.v7"
+        or not isinstance(publication_authorities, dict)
+        or set(publication_authorities) != set(candidate_ids)
+    ):
+        raise ManifestBuildError(
+            "exact recovery publication authority map is missing"
+        )
+    normalized_publication_authorities: dict[
+        str, dict[str, object]
+    ] = {}
+    for candidate_id in (release_scope or candidate_ids):
+        try:
+            normalized_publication_authorities[candidate_id] = (
+                validate_recovery_publication_authority(
+                    publication_authorities[candidate_id],
+                    candidate_id=candidate_id,
+                )
+            )
+        except RecoveryTitleAuthorityError as exc:
+            raise ManifestBuildError(
+                "recovery publication authority invalid: "
+                f"{candidate_id}: {exc}"
+            ) from exc
+
+    return normalized_publication_authorities
 
 
 def build_manifest(
@@ -216,41 +306,9 @@ def build_manifest(
         or not all(isinstance(value, str) and value for value in candidate_ids)
     ):
         raise ManifestBuildError("exact candidate_ids must be a unique non-empty list")
-    rerun_plan = state.get("delivery_rerun_plan")
-    publication_authorities = (
-        rerun_plan.get(
-            "recovery_publication_authorities_by_candidate"
-        )
-        if isinstance(rerun_plan, dict)
-        else None
+    normalized_publication_authorities = _normalized_release_authorities(
+        state, candidate_ids, release_scope
     )
-    if (
-        not isinstance(rerun_plan, dict)
-        or rerun_plan.get("schema_version")
-        != "recovery-review-talk-rerun-plan.v7"
-        or not isinstance(publication_authorities, dict)
-        or set(publication_authorities) != set(candidate_ids)
-    ):
-        raise ManifestBuildError(
-            "exact recovery publication authority map is missing"
-        )
-    normalized_publication_authorities: dict[
-        str, dict[str, object]
-    ] = {}
-    for candidate_id in candidate_ids:
-        try:
-            normalized_publication_authorities[candidate_id] = (
-                validate_recovery_publication_authority(
-                    publication_authorities[candidate_id],
-                    candidate_id=candidate_id,
-                )
-            )
-        except RecoveryTitleAuthorityError as exc:
-            raise ManifestBuildError(
-                "recovery publication authority invalid: "
-                f"{candidate_id}: {exc}"
-            ) from exc
-
     picks = state.get("picks")
     if not isinstance(picks, list):
         raise ManifestBuildError("state picks missing")
@@ -270,12 +328,6 @@ def build_manifest(
         raise ManifestBuildError(
             "final picks do not exactly match the no-backfill contract"
         )
-    if release_scope is not None:
-        unknown = set(release_scope) - set(candidate_ids)
-        if not release_scope or unknown:
-            raise ManifestBuildError(
-                f"release scope must be a subset of the exact contract: {sorted(unknown)}"
-            )
     for candidate_id in (release_scope or candidate_ids):
         pick = picks_by_id[candidate_id]
         if (
@@ -304,7 +356,7 @@ def build_manifest(
 
     items: list[dict[str, Any]] = []
     attestations: list[dict[str, Any]] = []
-    for candidate_id in candidate_ids:
+    for candidate_id in (release_scope or candidate_ids):
         stem, record_path, record = records_by_id[candidate_id]
         video = _required_file(package_root, f"{stem}.mp4")
         cover = _required_file(package_root, f"{stem}.cover.png")
@@ -318,12 +370,6 @@ def build_manifest(
             package_root, f"{stem}.cover.route-background.png"
         )
         subtitle = _required_file(package_root, f"{stem}.srt")
-        speaker_srt = _required_file(
-            package_root, f"{stem}.speaker.srt"
-        )
-        speaker_ass = _required_file(
-            package_root, f"{stem}.speaker.ass"
-        )
         clip_context = _required_file(package_root, f"{stem}.clip-context.json")
         regression = _required_file(
             package_root, f"{stem}.subtitle-regression.json"
@@ -332,6 +378,29 @@ def build_manifest(
             package_root, f"{stem}.chat-authority.json"
         )
         chat_authority_payload = _load_json(chat_authority)
+        # uniform_host 政策（ee29e08，b19dfae daily 同规）：单说话人包没有独立
+        # speaker 工件——chat authority 自证 final_speaker_srt_sha256 == 正文
+        # srt 且 speaker_ass_sha256 为空时，speaker 面与正文同体，ASS 用烧录
+        # 终 ASS（record.artifact_hashes.ass_sha256 仍逐字节校验）。带真
+        # speaker 工件的历史 recovery 包走原严格路径。
+        uniform_host = bool(
+            _matches_sha256(
+                subtitle, chat_authority_payload.get("final_speaker_srt_sha256")
+            )
+            and not chat_authority_payload.get("speaker_ass_sha256")
+        )
+        if uniform_host:
+            speaker_srt = subtitle
+            speaker_ass = _required_file(
+                package_root, f"{stem}.final-sapphire72.ass"
+            )
+        else:
+            speaker_srt = _required_file(
+                package_root, f"{stem}.speaker.srt"
+            )
+            speaker_ass = _required_file(
+                package_root, f"{stem}.speaker.ass"
+            )
         publish = _required_file(package_root, f"{stem}.publish.json")
         publish_payload = _load_json(publish)
         _verify_artifact_hashes(
@@ -342,6 +411,7 @@ def build_manifest(
             speaker_srt=speaker_srt,
             speaker_ass=speaker_ass,
             chat_authority=chat_authority_payload,
+            uniform_host=uniform_host,
         )
         generation = _record_generation(record)
         if generation.get("final_cover_sha256") != _sha256(cover):
@@ -460,7 +530,7 @@ def build_manifest(
         "created_at": created_at
         or datetime.now(timezone.utc).isoformat(),
         "generated_by": "build_lidousha_recovery_review_manifest.v1",
-        "date": str(state.get("date") or package_root.name),
+        "date": _resolve_manifest_date(state, package_root, records_by_id),
         "status": "finished_review_package_no_upload_pending_human_review",
         "run_mode": "RECOVERY_REVIEW",
         "upload_allowed": False,
