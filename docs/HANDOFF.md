@@ -2,6 +2,14 @@
 
 Updated: 2026-07-27 ~06:30Z (Fable：decided-keep 披露契约 + 严格同音 judge 语义拍板已部署 0a97deb；12 条拒发候选已复活重排)
 
+## 2026-07-27 晚：DISABLED 尸留事故（已清除+哨兵）
+
+18:00-18:35 主 lane 静默：六连快速部署交错中某次的 DISABLED 被后续部署按
+「预存杀开关保留」策略留存（脚本本有 WARNING，但后台部署链 `tail -1` 吞了
+警告）。已手动清除恢复。防复发：lane_poll 增主 lane 静默哨兵（>25min 无
+日志 → STALL 行 + DISABLED 存在性），watcher 即时穿透报警；部署链今后
+tail -3 保留警告行。
+
 ## 2026-07-27 晨：拒发总根修复（0a97deb 已部署，md5 读回）
 
 7/25–7/26 十余条 FINAL_REVIEW_UNRESOLVED_FINDINGS 拒发的总病根（以 1493 三条 findings 实证）：
