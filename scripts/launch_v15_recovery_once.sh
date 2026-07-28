@@ -48,8 +48,9 @@ rm -rf -- "$STAGE"
 mkdir -p "$STAGE"
 
 # Copy code and committed runtime assets, excluding the production lane's
-# accumulated delivery packages.  Retain the two legacy repo-root lexicon
-# authority files used by discovery fallbacks.
+# accumulated delivery packages.  Retain legacy repo-root lexicon files only
+# when they exist; the current glossary authority is the channel-profile asset
+# at assets/lidousha/glossary.txt.
 tar -C "$PRODUCTION_REPO" \
     --exclude='./.git' \
     --exclude='./lidousha' \
@@ -57,15 +58,17 @@ tar -C "$PRODUCTION_REPO" \
     -cf - . \
     | tar -C "$STAGE" -xf -
 mkdir -p "$STAGE/lidousha"
-cp -p \
-    "$PRODUCTION_REPO/lidousha/lidousha_glossary.txt" \
-    "$PRODUCTION_REPO/lidousha/term_lexicon.json" \
-    "$STAGE/lidousha/"
+for legacy_lexicon in lidousha_glossary.txt term_lexicon.json; do
+    if [ -f "$PRODUCTION_REPO/lidousha/$legacy_lexicon" ]; then
+        cp -p \
+            "$PRODUCTION_REPO/lidousha/$legacy_lexicon" \
+            "$STAGE/lidousha/$legacy_lexicon"
+    fi
+done
 
 test -f "$STAGE/DEPLOYED_COMMIT"
 test -f "$STAGE/scripts/free_session_autoslice.py"
-test -f "$STAGE/lidousha/lidousha_glossary.txt"
-test -f "$STAGE/lidousha/term_lexicon.json"
+test -f "$STAGE/assets/lidousha/glossary.txt"
 if find "$STAGE/lidousha" -mindepth 1 -maxdepth 1 -type d | grep -q .; then
     echo "REFUSE: V15 slim refresh unexpectedly copied delivery directories" >&2
     exit 4
