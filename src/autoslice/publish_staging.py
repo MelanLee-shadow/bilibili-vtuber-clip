@@ -216,29 +216,24 @@ def _stage_publish_draft(
     Always writes ``upload_enabled: false`` — publishing stays behind the
     AUTO_UPLOAD manifest/hash gate and is out of scope for the shadow lane.
     """
-
     if not materialized_recut or materialized_recut.get("status") != "MATERIALIZED":
         return materialized_recut
     record = dict(materialized_recut)
     media_path = Path(str(record["media_path"]))
     publish_json_path = media_path.with_suffix(".publish.json")
-
     # Ivan's manual title owns its body. It does not bypass the shared archive
     # envelope: every title receives the channel prefix and the same structural
     # postcondition before cover generation or delivery.
     staged_title = title
     title_policy_violations: list[str] = []
     title_authority_error: str | None = None
-    (
-        title_source,
-        title_authority_status,
-        normalized_recovery_publication_authority,
-    ) = _recovery_publication_staging_state(
+    title_state = _recovery_publication_staging_state(
         candidate_id=candidate_id,
         title=title,
         title_llm_call=title_llm_call,
         recovery_publication_authority=recovery_publication_authority,
     )
+    title_source, title_authority_status, normalized_recovery_publication_authority = title_state
     story_contract = record.get("story_contract")
     # Ivan 手定标题正文按 candidate 注入：命中后 LLM 不再改正文，但共享
     # publication envelope / structure gate 仍在后面运行。

@@ -16,6 +16,7 @@ import subprocess
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import NamedTuple
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
 from src.autoslice.runner_proxy import RunnerProxy
@@ -56,6 +57,19 @@ INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
 )
 SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
 FINAL_REVIEW_CARRYOVER_RETRY_CAP = 8
+
+
+class _TalkRetryDecision(NamedTuple):
+    retry_count: int
+    transient_count: int
+    changed: bool
+    infrastructure_retry: bool
+    transient: bool
+    cover_route_retry: bool
+    sanctioned_revival_retry: dict[str, object] | None
+    carryover_fingerprint: str | None
+    carryover_retry: bool
+    sanctioned_retry: bool
 
 
 def _pending_sanctioned_revival_retry(
@@ -112,6 +126,101 @@ def _unconsumed_final_review_carryover(
     ):
         return None
     return fingerprint
+
+
+def _talk_retry_decision(
+    record: Mapping[str, object],
+    *,
+    cid: str,
+    existing_pending: set[str],
+    current_recovery: str,
+) -> _TalkRetryDecision | None:
+    """Return the bounded retry route, or ``None`` when this tick must keep it."""
+
+    retry_count = int(record.get("talk_repair_retry_count") or 0)
+    transient_count = int(record.get("talk_transient_retry_count") or 0)
+    recorded_recovery = record.get(
+        "failure_recovery_fingerprint"
+    ) or record.get("pipeline_fingerprint")
+    changed = recorded_recovery != current_recovery
+    next_retry_at = record.get("next_retry_at_epoch")
+    infrastructure_waiting = bool(
+        record.get("failure_recoverable") is True
+        and record.get("failure_kind")
+        in INFRASTRUCTURE_WAIT_FAILURE_KINDS
+        and isinstance(next_retry_at, (int, float))
+        and not isinstance(next_retry_at, bool)
+        and time.time() < float(next_retry_at)
+    )
+    infrastructure_retry = bool(
+        record.get("failure_recoverable") is True
+        and record.get("failure_kind")
+        in INFRASTRUCTURE_WAIT_FAILURE_KINDS
+        and (
+            not isinstance(next_retry_at, (int, float))
+            or isinstance(next_retry_at, bool)
+            or time.time() >= float(next_retry_at)
+        )
+    )
+    transient = (
+        record.get("status") == "failed"
+        and record.get("failure_recoverable") is not False
+        and transient_count < 1
+    ) or infrastructure_retry
+    # Screenshot-route maintenance owns an independent fingerprint-bound,
+    # one-shot budget after a reviewable talk package already exists.
+    cover_route_retry = bool(
+        record.get("status") == "failed"
+        and record.get("failure_recoverable") is True
+        and record.get("failure_kind") == "cover_route_regeneration"
+        and isinstance(
+            record.get("cover_route_regeneration_fingerprint"), str
+        )
+        and int(record.get("cover_route_regeneration_attempts") or 0) > 0
+    )
+    sanctioned_revival_retry = _pending_sanctioned_revival_retry(record)
+    carryover_fingerprint = _unconsumed_final_review_carryover(record)
+    carryover_retry = carryover_fingerprint is not None
+    sanctioned_retry = sanctioned_revival_retry is not None
+    if (
+        infrastructure_waiting
+        and not sanctioned_retry
+        and not carryover_retry
+    ):
+        # Deploy fingerprint drift must not bypass an infrastructure cooldown.
+        return None
+    if (
+        not cid
+        or cid in existing_pending
+        or not (
+            changed
+            or transient
+            or cover_route_retry
+            or sanctioned_retry
+            or carryover_retry
+        )
+        or (
+            retry_count >= _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
+            and not infrastructure_retry
+            and not changed
+            and not cover_route_retry
+            and not sanctioned_retry
+            and not carryover_retry
+        )
+    ):
+        return None
+    return _TalkRetryDecision(
+        retry_count,
+        transient_count,
+        changed,
+        infrastructure_retry,
+        transient,
+        cover_route_retry,
+        sanctioned_revival_retry,
+        carryover_fingerprint,
+        carryover_retry,
+        sanctioned_retry,
+    )
 
 
 def historical_source_recovery_in_progress(
@@ -1442,86 +1551,27 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         except ValueError:
             kept.append(record)
             continue
-        retry_count = int(record.get("talk_repair_retry_count") or 0)
-        transient_count = int(record.get("talk_transient_retry_count") or 0)
-        recorded_recovery = record.get("failure_recovery_fingerprint") or record.get(
-            "pipeline_fingerprint"
+        decision = _talk_retry_decision(
+            record,
+            cid=cid,
+            existing_pending=existing_pending,
+            current_recovery=current_recovery,
         )
-        changed = recorded_recovery != current_recovery
-        next_retry_at = record.get("next_retry_at_epoch")
-        infrastructure_waiting = bool(
-            record.get("failure_recoverable") is True
-            and record.get("failure_kind")
-            in INFRASTRUCTURE_WAIT_FAILURE_KINDS
-            and isinstance(next_retry_at, (int, float))
-            and not isinstance(next_retry_at, bool)
-            and time.time() < float(next_retry_at)
-        )
-        infrastructure_retry = bool(
-            record.get("failure_recoverable") is True
-            and record.get("failure_kind") in INFRASTRUCTURE_WAIT_FAILURE_KINDS
-            and (
-                not isinstance(next_retry_at, (int, float))
-                or isinstance(next_retry_at, bool)
-                or time.time() >= float(next_retry_at)
-            )
-        )
-        transient = (
-            record.get("status") == "failed"
-            and record.get("failure_recoverable") is not False
-            and transient_count < 1
-        ) or infrastructure_retry
-        # Screenshot-route maintenance has its own fingerprint-bound, one-shot
-        # regeneration budget.  It can be queued only after a reviewable talk
-        # package already exists, so the ordinary talk retry lifetime may
-        # legitimately be exhausted by the time cover maintenance requests it.
-        # Do not let that unrelated budget erase the queued maintenance action;
-        # cover_maintenance refuses a second request for the same fingerprint.
-        cover_route_retry = bool(
-            record.get("status") == "failed"
-            and record.get("failure_recoverable") is True
-            and record.get("failure_kind") == "cover_route_regeneration"
-            and isinstance(
-                record.get("cover_route_regeneration_fingerprint"), str
-            )
-            and int(record.get("cover_route_regeneration_attempts") or 0) > 0
-        )
-        sanctioned_revival_retry = _pending_sanctioned_revival_retry(record)
-        carryover_fingerprint = _unconsumed_final_review_carryover(record)
-        carryover_retry = carryover_fingerprint is not None
-        sanctioned_retry = sanctioned_revival_retry is not None
-        if (
-            infrastructure_waiting
-            and not sanctioned_retry
-            and not carryover_retry
-        ):
-            # Provider/runtime waits own an explicit retry clock.  An
-            # unrelated deploy can change the broad recovery fingerprint, but
-            # must not bypass that cooldown and immediately monopolize the
-            # date lane again.  Explicit governance retries remain authoritative.
+        if decision is None:
             kept.append(record)
             continue
-        if (
-            not cid
-            or cid in existing_pending
-            or not (
-                changed
-                or transient
-                or cover_route_retry
-                or sanctioned_retry
-                or carryover_retry
-            )
-            or (
-                retry_count >= _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
-                and not infrastructure_retry
-                and not changed
-                and not cover_route_retry
-                and not sanctioned_retry
-                and not carryover_retry
-            )
-        ):
-            kept.append(record)
-            continue
+        (
+            retry_count,
+            transient_count,
+            changed,
+            infrastructure_retry,
+            transient,
+            cover_route_retry,
+            sanctioned_revival_retry,
+            carryover_fingerprint,
+            carryover_retry,
+            sanctioned_retry,
+        ) = decision
         segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
         segment = _runner.REC_ROOT / date / segment_name
         start_ms, end_ms = record.get("start_ms"), record.get("end_ms")

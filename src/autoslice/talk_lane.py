@@ -15,14 +15,16 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping
-from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
     required_source_context_end_ms,
 )
-from src.autoslice.piece_roles import BOUNDARY_WITNESS_RESERVE_ROLE
+from src.autoslice.cross_segment_witness import (
+    discover_cross_segment_witness_reserve as
+    _discover_cross_segment_witness_reserve,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
@@ -36,7 +38,6 @@ from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
 )
-from src.autoslice.structured_chat_binding import StructuredChatBindingError
 from src.autoslice.talk_filler import (
     build_piece_specs,
     build_talk_filler_plan,
@@ -45,18 +46,6 @@ from src.autoslice.talk_filler import (
 
 
 _runner = RunnerProxy()
-
-# Recording segments rotate on a fixed wall-clock cadence (~30min); their
-# basenames end in "_YYYYMMDD-HH-MM-SS". A candidate whose boundary-review
-# witness-reserve requirement spills past its own segment's end can be
-# satisfied by a reserve piece drawn from the head of the NEXT segment, but
-# only when that next segment's wall-clock start is (within tolerance)
-# exactly this segment's start plus its measured duration — proving the
-# recording never stopped/restarted between the two files.
-_SEGMENT_WALLCLOCK_RX = re.compile(r"_(\d{8})-(\d{2})-(\d{2})-(\d{2})$")
-CROSS_SEGMENT_CONTINUITY_TOLERANCE_MS = 5_000
-BOUNDARY_WITNESS_RESERVE_MARGIN_MS = 2_000
-
 
 def _bound_boundary_retry_source_end_ms(
     *,
@@ -107,120 +96,6 @@ def _load_boundary_retry_owner_contract(
     return validate_frozen_boundary_owner_contract(
         document.get("frozen_boundary_owner_contract")
     )
-
-
-def _segment_wallclock_start(path: Path) -> datetime | None:
-    """Parse a recording segment's wall-clock start from its basename."""
-
-    match = _SEGMENT_WALLCLOCK_RX.search(path.stem)
-    if match is None:
-        return None
-    try:
-        return datetime.strptime(
-            "".join(match.groups()), "%Y%m%d%H%M%S"
-        )
-    except ValueError:
-        return None
-
-
-def _discover_cross_segment_witness_reserve(
-    *,
-    date: str,
-    item: dict,
-    deficit_ms: int,
-) -> dict[str, object] | None:
-    """Build a next-segment reserve piece, or ``None`` if any proof is missing.
-
-    Never raises: every failure mode (no next segment, unparseable
-    timestamps, a wall-clock gap beyond tolerance — i.e. the recording
-    actually stopped and restarted) returns ``None`` so the caller keeps the
-    existing fail-closed ``BOUNDARY_CONTEXT_EXHAUSTED`` outcome. Only a
-    proven wall-clock-continuous next segment produces a piece.
-    """
-
-    current_path = Path(str(item.get("segment_path") or ""))
-    if not current_path.name:
-        return None
-    seg_dur_ms = item.get("seg_dur_ms")
-    if (
-        isinstance(seg_dur_ms, bool)
-        or not isinstance(seg_dur_ms, int)
-        or seg_dur_ms <= 0
-    ):
-        return None
-    try:
-        segments = _runner.list_segments(date)
-    except Exception:  # noqa: BLE001 — discovery is best-effort, never fatal
-        return None
-    try:
-        current_index = next(
-            index
-            for index, segment in enumerate(segments)
-            if segment.name == current_path.name
-        )
-    except StopIteration:
-        return None
-    if current_index + 1 >= len(segments):
-        return None
-    next_segment = segments[current_index + 1]
-
-    current_wallclock = _segment_wallclock_start(current_path)
-    next_wallclock = _segment_wallclock_start(next_segment)
-    if current_wallclock is None or next_wallclock is None:
-        return None
-    expected_next_wallclock = current_wallclock + timedelta(
-        milliseconds=seg_dur_ms
-    )
-    continuity_delta_ms = int(
-        (next_wallclock - expected_next_wallclock).total_seconds() * 1000
-    )
-    if abs(continuity_delta_ms) > CROSS_SEGMENT_CONTINUITY_TOLERANCE_MS:
-        return None
-
-    reserve_end_ms = deficit_ms + BOUNDARY_WITNESS_RESERVE_MARGIN_MS
-    reserve_piece: dict[str, object] = {
-        "remote_media": str(next_segment),
-        "start_ms": 0,
-        "end_ms": reserve_end_ms,
-        "piece_role": BOUNDARY_WITNESS_RESERVE_ROLE,
-    }
-    try:
-        xml_path = _runner.find_danmaku_xml(next_segment)
-    except Exception:  # noqa: BLE001 — danmaku hints are optional enrichment
-        xml_path = None
-    if xml_path:
-        reserve_piece["danmaku_xml_local"] = str(xml_path)
-
-    chat_binding_absent = True
-    try:
-        chat_binding = _runner.resolve_structured_chat_binding(next_segment)
-    except StructuredChatBindingError:
-        chat_binding = None
-    except Exception:  # noqa: BLE001 — reserve context, never delivery truth
-        chat_binding = None
-    if isinstance(chat_binding, dict) and chat_binding.get("chat_jsonl"):
-        reserve_piece["chat_jsonl_local"] = str(chat_binding["chat_jsonl"])
-        for field in (
-            "chat_jsonl_sha256",
-            "chat_origin_epoch_ms",
-            "chat_timeline_offset_ms",
-            "structured_chat_required",
-            "chat_source_alias_id",
-            "chat_canonical_recording_basename",
-            "chat_binding_status",
-            "chat_binding_authority",
-        ):
-            if field in chat_binding:
-                reserve_piece[field] = chat_binding[field]
-        chat_binding_absent = False
-
-    return {
-        "piece": reserve_piece,
-        "next_segment_name": next_segment.name,
-        "gap_ms": deficit_ms,
-        "continuity_delta_ms": continuity_delta_ms,
-        "chat_binding_absent": chat_binding_absent,
-    }
 
 
 def danmaku_hints(xml_path: Path | None) -> str | None:
