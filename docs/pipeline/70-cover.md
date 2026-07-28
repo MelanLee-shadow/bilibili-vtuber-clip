@@ -86,7 +86,8 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   cover maintenance 不得每个 tick 原地打印同一 BLOCK；它必须把候选转成一次有界、
   可恢复的正常 producer 重跑。`screenshot_direct` 在原路线重建确定性 proof，
   `screenshot_polish` 重新取得 polished pixels 并再走整脸门。该同 fingerprint
-  自动重试最多一次；已经交付的包仍须走显式 same-BV-safe 修复，绝不由通用 AI
+  自动重试最多一次，预算由持久化的 `cover_route_regeneration_fingerprint` 绑定，
+  不得错误复用跨版本累计的 talk transient 次数；已经交付的包仍须走显式 same-BV-safe 修复，绝不由通用 AI
   repair 偷换路线。已发布稿修复：
   `scripts/repair_screenshot_cover.py` 从既有 hash-bound polish 工件经同一生产函数重排
   并出回执；线上替换走 `scripts/bili_cover_edit.py`（cover-only 授权编辑+读回回执，

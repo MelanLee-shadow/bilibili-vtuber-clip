@@ -383,6 +383,19 @@ def _validated_recovery_publication(
     return expected_recovery_publish_title(authority), authority
 
 
+def _cover_route_regeneration_receipt(record: dict) -> dict[str, object]:
+    """Carry the per-build screenshot regeneration budget through requeue."""
+
+    fingerprint = record.get("cover_route_regeneration_fingerprint")
+    attempts = int(record.get("cover_route_regeneration_attempts") or 0)
+    if fingerprint is None and attempts == 0:
+        return {}
+    return {
+        "cover_route_regeneration_fingerprint": fingerprint,
+        "cover_route_regeneration_attempts": attempts,
+    }
+
+
 def _recovery_queue_item(
     date: str,
     record: dict,
@@ -475,6 +488,7 @@ def _recovery_queue_item(
         ),
         "merge_gap_removals": list(record.get("merge_gap_removals") or []),
         "cover_diversity_slot": record.get("cover_diversity_slot"),
+        **_cover_route_regeneration_receipt(record),
         "recovery_source_record_sha256": _canonical_object_sha256(record),
     }
     if given_end_ms is not None:
@@ -1596,6 +1610,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "filler_proposal_srt_sha256": record.get("filler_proposal_srt_sha256"),
             "merge_gap_removals": list(record.get("merge_gap_removals") or []),
             "cover_diversity_slot": record.get("cover_diversity_slot"),
+            **_cover_route_regeneration_receipt(record),
             "recovery_source_record_sha256": _canonical_object_sha256(record),
         }
         # sanctioned-revival 审计块必须跨 requeue 存活（复活是治理事件，

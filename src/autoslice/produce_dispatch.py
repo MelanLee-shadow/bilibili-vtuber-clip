@@ -41,6 +41,8 @@ _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "transient_retry_count",
     "session_id",
     "cover_diversity_slot",
+    "cover_route_regeneration_fingerprint",
+    "cover_route_regeneration_attempts",
 )
 
 
@@ -145,4 +147,3 @@ def produce_batch_windowed(
 
 
 __all__ = ["produce_batch_windowed"]
-

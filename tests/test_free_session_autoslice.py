@@ -1650,7 +1650,9 @@ def test_pending_screenshot_cover_queues_one_route_preserving_producer_rerun(
         "status": runner.TALK_COVER_PENDING_STATUS,
         "title": "【李豆沙】待补截图路线",
         "cover_status": "BLOCKED_AI_COVER_REQUIRED",
-        "talk_transient_retry_count": 0,
+        # Historical retry counts are not this policy's budget.  A new
+        # pipeline fingerprint must receive one route-preserving attempt.
+        "talk_transient_retry_count": 7,
         "cover_generation": {
             "route_decision": {
                 "schema_version": "lidousha-cover-route-decision.v2",
@@ -1673,11 +1675,36 @@ def test_pending_screenshot_cover_queues_one_route_preserving_producer_rerun(
     assert rec["status"] == "failed"
     assert rec["failure_kind"] == "cover_route_regeneration"
     assert rec["failure_recoverable"] is True
+    assert rec["cover_route_regeneration_fingerprint"] == (
+        "sha256:" + "a" * 64
+    )
+    assert rec["cover_route_regeneration_attempts"] == 1
     assert rec["cover_status"] == "SCREENSHOT_ROUTE_REGENERATION_QUEUED"
     assert (
         rec["cover_integrity_status"]
         == "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
     )
+
+    # The producer returned another blocked screenshot package under the same
+    # code fingerprint: keep it loud, but never spin the same build forever.
+    rec["status"] = runner.TALK_COVER_PENDING_STATUS
+    rec["cover_status"] = "BLOCKED_AI_COVER_REQUIRED"
+    runner.repair_covers("2026-07-26", state)
+    assert rec["status"] == runner.TALK_COVER_PENDING_STATUS
+    assert rec["cover_status"] == "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
+    assert rec["cover_route_regeneration_attempts"] == 1
+
+    # A later code deployment gets one new bounded attempt, regardless of the
+    # lifetime talk transient counter.
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "b" * 64
+    )
+    runner.repair_covers("2026-07-26", state)
+    assert rec["status"] == "failed"
+    assert rec["cover_route_regeneration_fingerprint"] == (
+        "sha256:" + "b" * 64
+    )
+    assert rec["cover_route_regeneration_attempts"] == 2
 
 
 def test_list_dates_keeps_aged_out_source_incomplete_date(
@@ -7944,12 +7971,18 @@ def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, mo
             "start_ms": 100_000,
             "end_ms": 200_000,
             "hook": "test",
+            "cover_route_regeneration_fingerprint": "sha256:cover-build",
+            "cover_route_regeneration_attempts": 3,
         },
     )
 
     assert len(calls) == 1
     assert result["status"] == "failed"
     assert result["boundary_context_retries"] == 0
+    assert result["cover_route_regeneration_fingerprint"] == (
+        "sha256:cover-build"
+    )
+    assert result["cover_route_regeneration_attempts"] == 3
     assert "speaker_review_manifest" not in result
 
 
@@ -7980,6 +8013,8 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
                 "hook": "小李嘴硬",
                 "confidence": 0.94,
                 "session_id": "live-20260710T200000+0800",
+                "cover_route_regeneration_fingerprint": "sha256:cover-old",
+                "cover_route_regeneration_attempts": 2,
             },
             {"candidate_id": "delivered", "status": "review_ready"},
         ],
@@ -7990,6 +8025,10 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
     assert state["pending_talk"][0]["selected_repair"] is True
     assert state["pending_talk"][0]["talk_repair_retry_count"] == 1
     assert state["pending_talk"][0]["session_id"] == "live-20260710T200000+0800"
+    assert state["pending_talk"][0][
+        "cover_route_regeneration_fingerprint"
+    ] == "sha256:cover-old"
+    assert state["pending_talk"][0]["cover_route_regeneration_attempts"] == 2
     assert state["pending_talk"][0]["given_end_ms"] == 318_000
     assert state["pending_talk"][0]["given_end_authority"] == (
         "Ivan reviewed complete closing sentence"

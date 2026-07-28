@@ -1381,6 +1381,18 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
     return filler_plan
 
 
+def _copy_cover_regeneration_receipt(
+    item: dict,
+    result: dict[str, object],
+) -> None:
+    for field in (
+        "cover_route_regeneration_fingerprint",
+        "cover_route_regeneration_attempts",
+    ):
+        if item.get(field) is not None:
+            result[field] = item[field]
+
+
 def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
     lane = str(item.get("lane") or "")
     from src.autoslice.selection_scorecard import (
@@ -1397,7 +1409,7 @@ def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
     ):
         return None
     cid = str(item["cid"])
-    return {
+    result: dict[str, object] = {
         "candidate_id": cid,
         "segment": Path(item["segment_path"]).name,
         "start_ms": item["start_ms"],
@@ -1429,6 +1441,8 @@ def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
         },
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
+    _copy_cover_regeneration_receipt(item, result)
+    return result
 
 
 def _apply_optional_talk_spec_fields(
@@ -1888,6 +1902,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_filler_plan_path": str(filler_plan_path),
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
+    _copy_cover_regeneration_receipt(item, result)
     if item.get("given_end_ms") is not None:
         result["given_end_ms"] = item["given_end_ms"]
         result["given_end_authority"] = item.get("given_end_authority")

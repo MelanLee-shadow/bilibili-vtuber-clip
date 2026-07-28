@@ -175,19 +175,26 @@ def repair_covers(
             # deterministic proof, while screenshot_polish obtains fresh
             # polished pixels and repeats the face gate.  Existing deliveries
             # stay blocked for explicit same-BV-safe repair.
+            regeneration_fingerprint = rec.get(
+                "cover_route_regeneration_fingerprint"
+            )
             if (
                 rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
-                and int(rec.get("talk_transient_retry_count") or 0) < 1
+                and regeneration_fingerprint != fingerprint
             ):
                 rec["status"] = "failed"
                 rec["failure_kind"] = "cover_route_regeneration"
                 rec["failure_recoverable"] = True
+                rec["cover_route_regeneration_fingerprint"] = fingerprint
+                rec["cover_route_regeneration_attempts"] = (
+                    int(rec.get("cover_route_regeneration_attempts") or 0) + 1
+                )
                 rec["cover_integrity_status"] = (
                     "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
                 )
                 rec["cover_status"] = "SCREENSHOT_ROUTE_REGENERATION_QUEUED"
                 rec["cover_route_preservation_error"] = (
-                    "screenshot proof is invalid; queued one bounded "
+                    "screenshot proof is invalid; queued one fingerprint-bound "
                     "route-preserving producer rerun"
                 )
                 _runner.log(
