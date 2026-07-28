@@ -37,6 +37,32 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sync_declared_artifact(
+    *,
+    target: Path,
+    source: Path,
+    declared_sha256: str,
+    label: str,
+) -> None:
+    """Copy the record-bound candidate artifact into the portable package.
+
+    A previous package assembly may have left an older file at ``target``.
+    Presence alone is therefore not proof that the package carries the bytes
+    declared by the current record.  Validate the candidate-root source first,
+    then replace a missing or stale package copy deterministically.
+    """
+    expected = str(declared_sha256 or "").removeprefix("sha256:")
+    if not source.is_file():
+        raise DailyManifestError(f"{label} missing: {source}")
+    actual = _sha256(source)
+    if not expected or actual != expected:
+        raise DailyManifestError(
+            f"{label} sha drift: record={expected} actual={actual}"
+        )
+    if not target.is_file() or _sha256(target) != actual:
+        target.write_bytes(source.read_bytes())
+
+
 def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
           candidate_id: str) -> dict:
     package_root = package_root.resolve()
@@ -94,26 +120,21 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     ass = need(f"{stem}.final-sapphire72.ass")
     chat_name = f"{candidate_id}.chat-authority.json"
     chat_in_pkg = package_root / chat_name
-    if not chat_in_pkg.is_file():
-        # 装配步骤：chat authority 是 candidate 根目录的冻结产物，包自足性
-        # （portable audit）要求它在包内。只在 record 声明的 sha 匹配时才
-        # 复制——不匹配说明产物漂移，fail-closed。
-        source = package_root.parent / chat_name
-        if not source.is_file():
-            raise DailyManifestError(f"chat authority missing: {source}")
-        record_doc = json.loads(record.read_text(encoding="utf-8"))
-        declared = str(
+    # 装配步骤：chat authority 是 candidate 根目录的冻结产物，包自足性
+    # （portable audit）要求它在包内。即使包内已有旧副本，也必须重新
+    # 对照当前 record 声明；只在 candidate-root source 匹配时同步。
+    record_doc = json.loads(record.read_text(encoding="utf-8"))
+    _sync_declared_artifact(
+        target=chat_in_pkg,
+        source=package_root.parent / chat_name,
+        declared_sha256=str(
             (record_doc.get("artifact_hashes") or {}).get(
                 "chat_authority_audit_sha256"
             )
             or ""
-        ).removeprefix("sha256:")
-        actual = _sha256(source)
-        if actual != declared:
-            raise DailyManifestError(
-                f"chat authority sha drift: record={declared} actual={actual}"
-            )
-        chat_in_pkg.write_bytes(source.read_bytes())
+        ),
+        label="chat authority",
+    )
     cover_generation = (
         publish_doc.get("cover_generation")
         or (publish_doc.get("publish_staging") or {}).get("cover_generation")
