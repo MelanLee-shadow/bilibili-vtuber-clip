@@ -440,9 +440,15 @@ def _stage_publish_draft(
             cover_text=cover_text,
             run_ffmpeg=run_ffmpeg,
             art_direction_llm_call=art_direction_llm_call,
-            # 梗字封面只对自动标题开放：Ivan 手定标题（title_llm_call=None）的
-            # 封面仍走"每个成分都不许丢"的短句化铁律（2026-07-06 22966160 案）。
-            punch_allowed=title_llm_call is not None,
+            # 普通 Ivan 手定标题仍走“每个成分都不许丢”的封面铁律。
+            # same-BV recovery 的 verified public title 则只约束公开标题字段：
+            # 它可能远长于封面 120px 可读性下限，允许封面从该冻结标题中选择
+            # 逐字连续的短梗，但 staged_title 本身仍由 authority 一字不改。
+            punch_allowed=(
+                title_llm_call is not None
+                or title_source
+                == "recovery_verified_same_bv_public_title"
+            ),
             diversity_slot=cover_diversity_slot,
         )
     cover_status = str(cover_result["status"])

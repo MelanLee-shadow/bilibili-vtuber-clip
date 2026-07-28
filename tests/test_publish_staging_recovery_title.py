@@ -12,6 +12,19 @@ from src.autoslice.recovery_title_authority import (
 def test_publish_staging_preserves_typed_same_bv_title_authority(
     tmp_path: Path,
 ) -> None:
+    captured_cover: list[dict] = []
+
+    def fake_stage_cover(record, **kwargs):
+        captured_cover.append(kwargs)
+        cover = tmp_path / "cover.png"
+        cover.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {"status": "OK"},
+            "reason_codes": [],
+        }
+
     candidate_id = "auto_193450_1475_1543"
     authority = build_recovery_publication_authorities(
         candidate_ids={candidate_id},
@@ -39,8 +52,8 @@ def test_publish_staging_preserves_typed_same_bv_title_authority(
         cues=[],
         run_ffmpeg=False,
         title_llm_call=None,
-        skip_cover=True,
         recovery_publication_authority=authority,
+        stage_cover=fake_stage_cover,
     )
 
     assert record is not None
@@ -58,3 +71,5 @@ def test_publish_staging_preserves_typed_same_bv_title_authority(
     )
     assert publish["title"] == title
     assert publish["recovery_publication_authority"] == authority
+    assert captured_cover[0]["title"] == title
+    assert captured_cover[0]["punch_allowed"] is True
