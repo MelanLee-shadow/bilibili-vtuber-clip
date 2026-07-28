@@ -50,6 +50,7 @@ from .cover_route_evidence import (
 )
 from .cover_polish_gate import (
     _compose_screenshot_cover_with_face_gate,
+    _degrade_rejected_polish_to_direct,
     _materialize_screenshot_polish,
     _polish_face_binding_failure,
     _verify_polish_face_integrity,
@@ -1585,6 +1586,31 @@ def _stage_screenshot_direct_cover(
             method=method,
             base_url=base_url,
             api_key=api_key,
+            verifier=_verify_polish_face_integrity,
+        )
+        (
+            poster_evidence,
+            overlay,
+            face_verification,
+            method,
+            selected_model,
+        ) = _degrade_rejected_polish_to_direct(
+            poster_evidence=poster_evidence,
+            overlay=overlay,
+            face_verification=face_verification,
+            method=method,
+            selected_model=selected_model,
+            screenshot_base=screenshot_base,
+            crop_evidence=crop_evidence,
+            candidate_id=candidate_id,
+            ai_dir=ai_dir,
+            covers_dir=covers_dir,
+            cover_text=cover_text,
+            art_direction=art_direction,
+            relationship_visual_required=relationship_visual_required,
+            base_url=base_url,
+            api_key=api_key,
+            cover_generation=cover_generation,
             verifier=_verify_polish_face_integrity,
         )
         poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"

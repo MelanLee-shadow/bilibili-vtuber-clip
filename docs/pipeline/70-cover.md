@@ -76,8 +76,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   （`lidousha-cover-polish-face-verification.v1`，CPA sol 视觉问答，含吐舌检查）必须
   PASS 且 witness image hash 逐字节等于 final cover SHA；`FACE_INCOMPLETE` 先以
   face-safe contain 卡（`card_fit=contain_face_safe`，整脸装入 1640×700 卡）重排一次
-  再终判；仍失败或验证不可用即 `COVER_POLISH_FACE_UNVERIFIED` 阻断（候选留在
-  cover-only 维护，可下轮重试）。相机窗来源（crop 证据 `camera_window_crop=true`）
+  再终判；仍失败、出现不合格表情或验证不可用时，必须拒收 AI 修图像素并自动退回
+  hash-bound 原始截图的 `screenshot_direct / READY_DEGRADED`，保留失败 witness 与
+  attempted/used 收据，不得把坏修图留给 cover-only 维护永久阻断，也不得跨路线改成
+  AI 重绘。相机窗来源（crop 证据 `camera_window_crop=true`）
   为近全幅大脸，确定性直接走 contain 卡。包审计端同因阻断
   （`SCREENSHOT_POLISH_FACE_UNVERIFIED`）。尚未交付且停在
   `media_ready_cover_pending` 的 screenshot 路线若 proof 无效，

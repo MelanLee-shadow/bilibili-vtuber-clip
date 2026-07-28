@@ -5364,7 +5364,9 @@ def test_polish_cover_face_gate_retries_contain_then_passes(tmp_path, monkeypatc
     assert len(face_calls) == 2
 
 
-def test_polish_cover_face_gate_blocks_when_never_complete(tmp_path, monkeypatch):
+def test_polish_cover_face_gate_degrades_to_direct_when_never_complete(
+    tmp_path, monkeypatch
+):
     from src.autoslice import publish_staging
     from tests.test_cover_frame_selection import _write_synthetic_performance_clip
 
@@ -5397,17 +5399,34 @@ def test_polish_cover_face_gate_blocks_when_never_complete(tmp_path, monkeypatch
         image_edit=_fake_polish_image_edit,
         punch_allowed=True,
     )
-    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
-    assert "COVER_POLISH_FACE_UNVERIFIED" in result["reason_codes"]
+    assert result["status"] == "AI_COVER_READY", result
     assert len(face_calls) == 2
-    route = result["cover_generation"]["route_decision"]
-    assert route["execution_status"] == "BLOCKED"
+    generation = result["cover_generation"]
+    assert generation["method"] == "screenshot_direct"
+    assert generation["cover_origin"] == "SOURCE_SCREENSHOT"
+    assert generation["image_generation_attempted"] is True
+    assert generation["image_generation_used"] is False
+    assert generation["screenshot_polish"] == {
+        "status": "DEGRADED_TO_DIRECT",
+        "reason_code": "POLISH_FACE_GATE_FAILED",
+        "detail": (
+            "generated polish rejected by final-pixel face gate; "
+            "hash-bound source screenshot retained"
+        ),
+        "image_generation_attempted": True,
+        "image_generation_used": False,
+    }
+    assert generation["rejected_polish_face_verification"]["status"] == "FAIL"
+    route = generation["route_decision"]
+    assert route["selected_treatment"] == "screenshot_polish"
+    assert route["actual_treatment"] == "screenshot_direct"
+    assert route["execution_status"] == "READY_DEGRADED"
 
 
-def test_polish_cover_face_gate_unavailable_blocks_without_retry(
+def test_polish_cover_face_gate_unavailable_degrades_without_retry(
     tmp_path, monkeypatch
 ):
-    """Verifier outage is fail-closed (cover-only retry later), not a loop."""
+    """Verifier outage rejects generated pixels and keeps the source screenshot."""
 
     from src.autoslice import publish_staging
     from tests.test_cover_frame_selection import _write_synthetic_performance_clip
@@ -5441,9 +5460,17 @@ def test_polish_cover_face_gate_unavailable_blocks_without_retry(
         image_edit=_fake_polish_image_edit,
         punch_allowed=True,
     )
-    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
-    assert "COVER_POLISH_FACE_UNVERIFIED" in result["reason_codes"]
+    assert result["status"] == "AI_COVER_READY", result
     assert len(face_calls) == 1
+    generation = result["cover_generation"]
+    assert generation["method"] == "screenshot_direct"
+    assert generation["screenshot_polish"]["status"] == "DEGRADED_TO_DIRECT"
+    assert generation["rejected_polish_face_verification"][
+        "reason_code"
+    ] == "VERIFIER_UNAVAILABLE"
+    assert generation["route_decision"]["execution_status"] == (
+        "READY_DEGRADED"
+    )
 
 
 def test_screenshot_poster_face_safe_contain_keeps_whole_frame(tmp_path):

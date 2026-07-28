@@ -197,6 +197,78 @@ def _compose_screenshot_cover_with_face_gate(
         break
     return poster_evidence, overlay, face_verification
 
+
+def _degrade_rejected_polish_to_direct(
+    *,
+    poster_evidence: dict[str, object],
+    overlay: dict[str, object],
+    face_verification: Mapping[str, object] | None,
+    method: str,
+    selected_model: str,
+    screenshot_base: Path,
+    crop_evidence: Mapping[str, object],
+    candidate_id: str,
+    ai_dir: Path,
+    covers_dir: Path,
+    cover_text: str,
+    art_direction,
+    relationship_visual_required: bool,
+    base_url: str,
+    api_key: str,
+    cover_generation: dict[str, object],
+    verifier: Callable[..., dict[str, object]] | None = None,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object] | None,
+    str,
+    str,
+]:
+    """Reject unsafe polish pixels and retain the source screenshot route."""
+
+    if (
+        method != "screenshot_polish"
+        or not isinstance(face_verification, Mapping)
+        or face_verification.get("status") == "PASS"
+    ):
+        return (
+            poster_evidence,
+            overlay,
+            dict(face_verification) if face_verification is not None else None,
+            method,
+            selected_model,
+        )
+    rejected_verification = dict(face_verification)
+    poster_evidence, overlay, _ = _compose_screenshot_cover_with_face_gate(
+        overlay_source=screenshot_base,
+        crop_evidence=crop_evidence,
+        candidate_id=candidate_id,
+        ai_dir=ai_dir,
+        covers_dir=covers_dir,
+        cover_text=cover_text,
+        art_direction=art_direction,
+        relationship_visual_required=relationship_visual_required,
+        method="screenshot_direct",
+        base_url=base_url,
+        api_key=api_key,
+        verifier=verifier,
+    )
+    cover_generation["rejected_polish_face_verification"] = (
+        rejected_verification
+    )
+    cover_generation["screenshot_polish"] = {
+        "status": "DEGRADED_TO_DIRECT",
+        "reason_code": "POLISH_FACE_GATE_FAILED",
+        "detail": (
+            "generated polish rejected by final-pixel face gate; "
+            "hash-bound source screenshot retained"
+        ),
+        "image_generation_attempted": True,
+        "image_generation_used": False,
+    }
+    return poster_evidence, overlay, None, "screenshot_direct", "none"
+
+
 def _materialize_screenshot_polish(
     *,
     screenshot_base: Path,
