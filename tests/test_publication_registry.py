@@ -35,7 +35,11 @@ REGISTRY = {
 
 def test_published_candidate_blocks_new_upload():
     reason = upload_block_reason("auto_193129_850_940", registry=REGISTRY)
-    assert reason and "BV1ec3A6bEWF" in reason and "edit-replace" in reason
+    assert (
+        reason
+        and "BV1ec3A6bEWF" in reason
+        and "authorized same-BV repair lane" in reason
+    )
 
 
 def test_held_candidate_blocks_until_cleared():

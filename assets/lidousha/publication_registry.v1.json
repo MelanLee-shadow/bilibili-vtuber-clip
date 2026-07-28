@@ -1,6 +1,6 @@
 {
  "schema_version": "publication-registry.v1",
- "notes": "候选↔BV 出版登记：published 候选禁止再走新投稿（修复一律 edit-replace 原 BV）；hold_pending_review 候选在 Ivan 放行前禁止任何上传。2026-07-27 建立（BV1ec3A6bEWF 事故：7/24 争议搁置件被当新切片上传）。",
+ "notes": "候选↔BV 出版登记：published 候选禁止再走新投稿（修复只允许 authorized_upload.py repair-* 的原 BV 修复链）；hold_pending_review 候选在 Ivan 放行前禁止任何上传。2026-07-27 建立（BV1ec3A6bEWF 事故：7/24 争议搁置件被当新切片上传）。",
  "entries": [
   {
    "candidate_id": "auto_193450_1573_1672",
@@ -77,7 +77,7 @@
    "recording_date": "2026-07-24",
    "status": "published",
    "bvid": "BV1ec3A6bEWF",
-   "note": "2026-07-27 误当新切片上传的 7/24 争议搁置件（专名修复中）；后续修复一律 edit-replace 本 BV，禁止再投新稿"
+   "note": "2026-07-27 误当新切片上传的 7/24 争议搁置件；后续只允许 authorized_upload.py repair-* 修复本 BV，禁止再投新稿"
   },
   {
    "candidate_id": "auto_183122_1209_1410",

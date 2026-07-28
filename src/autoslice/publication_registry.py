@@ -5,7 +5,8 @@
 不携带「是否已出版 / 是否被人工搁置」——该事实必须由 committed registry
 承载，并在任何新投稿副作用前查询。
 
-- published 候选：内容已在某 BV 上，修复一律 edit-replace 原 BV；
+- published 候选：内容已在某 BV 上，修复只允许 authorized_upload.py
+  repair-* 的原 BV 修复链；
 - hold_pending_review 候选：Ivan 放行前禁止任何上传；
 - registry 缺失或不可读时 fail-closed（宁可拒发也不重复出版）。
 """
@@ -82,7 +83,8 @@ def upload_block_reason(
         if status == "published":
             return (
                 f"candidate {cid} is already published as {row.get('bvid')}"
-                " — repairs must edit-replace that BV, new uploads are forbidden"
+                " — repairs must use the authorized same-BV repair lane; "
+                "new uploads are forbidden"
             )
         if status == "hold_pending_review":
             return (
