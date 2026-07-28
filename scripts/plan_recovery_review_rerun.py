@@ -9,6 +9,7 @@ the normal unattended runner owns every subsequent production transition.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -94,6 +95,15 @@ def _parser() -> argparse.ArgumentParser:
         "--candidate-id", action="append", required=True, dest="candidate_ids"
     )
     parser.add_argument(
+        "--project-single-published-repair",
+        action="store_true",
+        help=(
+            "project exactly one CURRENT+COMPLIANT daily delivery into a new "
+            "no-upload RECOVERY_REVIEW base before planning its full rerun; "
+            "other daily rows are evidence-only exclusions, not suppressions"
+        ),
+    )
+    parser.add_argument(
         "--suppress-candidate-id",
         action="append",
         default=[],
@@ -127,6 +137,118 @@ def _parser() -> argparse.ArgumentParser:
         metavar="SHA256",
     )
     return parser
+
+
+def _project_single_published_repair_state(
+    state: dict,
+    *,
+    candidate_id: str,
+    source_state_sha256: str,
+    delivered_statuses: set[str] | frozenset[str],
+) -> dict:
+    """Isolate one published daily delivery without mutating its source state.
+
+    Ordinary successful packages intentionally stay stable across broad
+    pipeline changes.  A reported one-clip incident still needs a whole-clip
+    rerun, but treating every other CURRENT delivery as user-suppressed changes
+    their lifecycle semantics.  This projection creates a separate exact
+    recovery base containing only the named delivery and records every excluded
+    active row for audit.
+    """
+
+    if (
+        not isinstance(state, dict)
+        or state.get("upload_allowed") is not False
+        or state.get("talk_selection_contract") is not None
+        or state.get("delivery_rerun_plan") is not None
+        or FINGERPRINT_RX.fullmatch(source_state_sha256) is None
+    ):
+        raise SystemExit(
+            "single published repair requires an ordinary no-upload source state"
+        )
+    picks = state.get("picks")
+    pending = state.get("pending_talk")
+    if not isinstance(picks, list) or not isinstance(pending, list):
+        raise SystemExit("single published repair source talk state is invalid")
+
+    matching = [
+        row
+        for row in picks
+        if isinstance(row, dict)
+        and str(row.get("candidate_id") or row.get("cid") or "")
+        == candidate_id
+        and row.get("status") in delivered_statuses
+        and row.get("bundle_lifecycle") == "CURRENT"
+        and row.get("bundle_compliance") == "COMPLIANT"
+        and row.get("rc") == 0
+    ]
+    if len(matching) != 1:
+        raise SystemExit(
+            "single published repair requires exactly one CURRENT+COMPLIANT "
+            f"delivery: {candidate_id}"
+        )
+    pending_ids = sorted(
+        {
+            str(row.get("candidate_id") or row.get("cid") or "")
+            for row in pending
+            if isinstance(row, dict)
+            and str(row.get("candidate_id") or row.get("cid") or "")
+        }
+    )
+    if candidate_id in pending_ids:
+        raise SystemExit(
+            "single published repair candidate is already pending in source state"
+        )
+
+    projected = copy.deepcopy(state)
+    excluded_pick_ids = sorted(
+        {
+            str(row.get("candidate_id") or row.get("cid") or "")
+            for row in picks
+            if isinstance(row, dict)
+            and str(row.get("candidate_id") or row.get("cid") or "")
+            and str(row.get("candidate_id") or row.get("cid") or "")
+            != candidate_id
+        }
+    )
+    projected["run_mode"] = "RECOVERY_REVIEW"
+    projected["upload_allowed"] = False
+    projected["status"] = "single_published_repair_projected"
+    projected["picks"] = [copy.deepcopy(matching[0])]
+    projected["pending_talk"] = []
+    projected["talk_backlog"] = []
+    projected["talk_superseded_attempts"] = [
+        copy.deepcopy(row)
+        for row in state.get("talk_superseded_attempts", [])
+        if isinstance(row, dict)
+        and str(row.get("candidate_id") or row.get("cid") or "")
+        == candidate_id
+    ]
+    for key in (
+        "songs",
+        "pending_song",
+        "song_superseded_attempts",
+        "song_selection_backlog",
+    ):
+        projected[key] = []
+    for key in (
+        "exact_talk_contract_closure",
+        "talk_selection_contract",
+        "delivery_rerun_plan",
+        "next_retry_at",
+        "next_retry_at_epoch",
+    ):
+        projected.pop(key, None)
+    projected["single_published_repair_projection"] = {
+        "schema_version": "single-published-talk-repair-projection.v1",
+        "candidate_id": candidate_id,
+        "source_state_sha256": source_state_sha256,
+        "source_run_mode": state.get("run_mode"),
+        "excluded_pick_candidate_ids": excluded_pick_ids,
+        "excluded_pending_candidate_ids": pending_ids,
+        "excluded_rows_disposition": "SOURCE_STATE_UNCHANGED_OUTSIDE_REPAIR_TARGET",
+    }
+    return projected
 
 
 def _fingerprint_overrides(values: list[str]) -> dict[str, str]:
@@ -265,6 +387,25 @@ def main(argv: list[str] | None = None) -> int:
         RecoveryReviewRerunError,
         plan_current_talk_recovery_rerun,
     )
+
+    if args.project_single_published_repair:
+        if (
+            len(args.candidate_ids) != 1
+            or args.suppressed_candidate_ids
+            or args.replacement_candidate_ids
+            or args.suppression_authority
+            or args.replacement_selection_authority
+        ):
+            raise SystemExit(
+                "--project-single-published-repair requires exactly one "
+                "--candidate-id and forbids suppression/replacement options"
+            )
+        state = _project_single_published_repair_state(
+            state,
+            candidate_id=args.candidate_ids[0],
+            source_state_sha256=args.expected_source_state_sha256,
+            delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+        )
 
     queued_candidate_ids = set(args.candidate_ids) | set(
         args.replacement_candidate_ids

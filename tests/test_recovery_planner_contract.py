@@ -13,6 +13,13 @@ ASSET = ROOT / "assets/lidousha/recovery_publication_authority.v1.json"
 ASSET_SHA256 = (
     "sha256:0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
 )
+DAILY_850_ASSET = (
+    ROOT
+    / "assets/lidousha/recovery_publication_authority_2026-07-24_850.v1.json"
+)
+DAILY_850_ASSET_SHA256 = (
+    "sha256:d22b34c3365a8daa71fb10bf54cf1207971d9c52e26142b840c02321f6baabcd"
+)
 CANDIDATE_IDS = {
     "auto_193450_3573_3665",
     "auto_193450_672_945",
@@ -224,6 +231,114 @@ def test_v10_contract_binds_exact_five_candidates_and_reviewed_ends():
         authority["required_given_end_ms"] == EXPECTED_ENDS[candidate_id]
         for candidate_id, authority in authorities.items()
     )
+
+
+def test_single_published_850_contract_binds_existing_bv_and_exact_end():
+    authorities, ends, end_authority = (
+        planner._load_recovery_publication_contract(
+            queued_candidate_ids={"auto_193129_850_940"},
+            publication_asset=DAILY_850_ASSET,
+            expected_publication_authority_sha256=(
+                DAILY_850_ASSET_SHA256
+            ),
+            repo_root=ROOT,
+        )
+    )
+
+    authority = authorities["auto_193129_850_940"]
+    assert ends == {"auto_193129_850_940": 940_490}
+    assert end_authority == authority["registry_authority"]
+    assert authority["boundary_end_mode"] == "exact_source_pin"
+    assert authority["bvid"] == "BV1ec3A6bEWF"
+    assert authority["cid"] == 40_357_990_267
+
+
+def test_single_published_projection_isolates_target_without_suppressing_others():
+    target = _record(
+        "auto_193129_850_940",
+        start_ms=850_020,
+        end_ms=940_490,
+    )
+    other = _record(
+        "auto_183122_1209_1410",
+        start_ms=1_209_000,
+        end_ms=1_410_000,
+    )
+    pending_other = {"cid": "auto_190124_1571_1804"}
+    state = {
+        "run_mode": "DAILY",
+        "upload_allowed": False,
+        "status": "review_ready_retry_wait",
+        "picks": [target, other],
+        "pending_talk": [pending_other],
+        "talk_backlog": [{"candidate_id": "reserve"}],
+        "talk_superseded_attempts": [
+            {"candidate_id": "auto_193129_850_940", "status": "failed"},
+            {"candidate_id": "other-history", "status": "failed"},
+        ],
+        "songs": [{"candidate_id": "song_1"}],
+        "pending_song": [{"candidate_id": "song_2"}],
+    }
+
+    projected = planner._project_single_published_repair_state(
+        state,
+        candidate_id="auto_193129_850_940",
+        source_state_sha256="sha256:" + "a" * 64,
+        delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+    )
+
+    assert state["picks"] == [target, other]
+    assert state["pending_talk"] == [pending_other]
+    assert projected["run_mode"] == "RECOVERY_REVIEW"
+    assert projected["upload_allowed"] is False
+    assert [row["candidate_id"] for row in projected["picks"]] == [
+        "auto_193129_850_940"
+    ]
+    assert projected["pending_talk"] == []
+    assert projected["talk_backlog"] == []
+    assert projected["songs"] == []
+    assert projected["pending_song"] == []
+    assert projected.get("talk_user_suppressions") is None
+    assert [
+        row["candidate_id"]
+        for row in projected["talk_superseded_attempts"]
+    ] == ["auto_193129_850_940"]
+    projection = projected["single_published_repair_projection"]
+    assert projection["excluded_pick_candidate_ids"] == [
+        "auto_183122_1209_1410"
+    ]
+    assert projection["excluded_pending_candidate_ids"] == [
+        "auto_190124_1571_1804"
+    ]
+    assert projection["excluded_rows_disposition"] == (
+        "SOURCE_STATE_UNCHANGED_OUTSIDE_REPAIR_TARGET"
+    )
+
+
+def test_single_published_projection_rejects_candidate_already_pending():
+    state = {
+        "run_mode": "DAILY",
+        "upload_allowed": False,
+        "picks": [
+            _record(
+                "auto_193129_850_940",
+                start_ms=850_020,
+                end_ms=940_490,
+            )
+        ],
+        "pending_talk": [{"cid": "auto_193129_850_940"}],
+    }
+
+    with pytest.raises(
+        SystemExit,
+        match="candidate is already pending",
+    ):
+        planner._project_single_published_repair_state(
+            state,
+            candidate_id="auto_193129_850_940",
+            source_state_sha256="sha256:" + "a" * 64,
+            delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+        )
 
 
 @pytest.mark.parametrize(

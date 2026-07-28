@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-28: the already-published 7/24 candidate auto_193129_850_940 has three reported subtitle defects; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+  "entries": [
+    {
+      "candidate_id": "auto_193129_850_940",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+      "required_given_end_ms": 940490,
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1ec3A6bEWF",
+      "aid": 116993634082225,
+      "cid": 40357990267,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-24-incident-850940/auto_193129_850_940.public_verify.json",
+      "source_public_verify_sha256": "sha256:67fe59ef64652e95699ff5b43706847cfa01f17620547f217b25d1b88c81d831",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}
