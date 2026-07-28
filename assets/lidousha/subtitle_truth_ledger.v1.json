@@ -2784,7 +2784,7 @@
   },
   {
    "action": "drop_cue",
-   "assertion_state": "VERIFIED_ACTIVE",
+   "assertion_state": "SUPERSEDED",
    "authority": "Ivan-stated-20260728原裁定不变；r3仅修正r2坐标换算。当前hash-bound recut provenance绝对起点849770ms，怪叫cue相对区间5730–7010ms，因此真实源区间为855500–856780ms；r2从cue结束点856780ms起只覆盖后续静音，未命中烧录字幕。",
    "decision_authority": "IVAN_OPERATOR_TRUTH",
    "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
@@ -2794,8 +2794,24 @@
    "revision_id": "r3",
    "source_end_ms": 856780,
    "source_start_ms": 855500,
+   "superseded_by": "20260724-skill-opening-noise-drop-r4",
    "supersedes": "20260724-skill-opening-noise-drop-r2",
    "truth_id": "20260724-skill-opening-noise-drop-r3"
+  },
+  {
+   "action": "drop_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-stated-20260728原裁定不变；r4以公开成片0:13和同BV成片固定5.75秒片头重新绑定：hash-bound recut中的目标是7010–9990ms乱码“你把你的你你我你你的技能”，绝对源区间856780–859760ms。r3误删了紧邻的5730–7010ms“等等等等”。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-19-31-29.mp4",
+   "required": true,
+   "revision_id": "r4",
+   "source_end_ms": 859760,
+   "source_start_ms": 856780,
+   "supersedes": "20260724-skill-opening-noise-drop-r3",
+   "truth_id": "20260724-skill-opening-noise-drop-r4"
   },
   {
    "action": "replace_cue",

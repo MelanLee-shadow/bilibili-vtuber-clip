@@ -3234,7 +3234,7 @@ def test_committed_1209_truth_survives_fresh_asr_cue_merge():
 
 
 def test_committed_850_opening_noise_truth_drops_the_actual_cue():
-    """850 public 0:13 应映射到源 855500–856780ms，而非后续静音。"""
+    """850 public 0:13 经同 BV 片头映射到 recut 7010–9990ms。"""
 
     ledger = (
         REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
@@ -3245,6 +3245,7 @@ def test_committed_850_opening_noise_truth_drops_the_actual_cue():
             (2_330, 4_130, "你这个，你还挺萌的"),
             (4_370, 5_370, "看看"),
             (5_730, 7_010, "等等等等"),
+            (7_010, 9_990, "你把你的你你我你你的技能"),
         ),
         spec={
             "pieces": [
@@ -3264,15 +3265,16 @@ def test_committed_850_opening_noise_truth_drops_the_actual_cue():
     assert audit["status"] == "APPLIED", audit["failures"]
     assert not audit["failures"]
     assert "李姐拉拉，你新来的" in corrected
-    assert "等等等等" not in corrected
+    assert "等等等等" in corrected
+    assert "你把你的你你我你你的技能" not in corrected
     applied = {row["truth_id"]: row for row in audit["applied"]}
-    projection = applied["20260724-skill-opening-noise-drop-r3"][
+    projection = applied["20260724-skill-opening-noise-drop-r4"][
         "resolved_target_projection"
     ]
     assert [
         (cue["start_ms"], cue["end_ms"], cue["before_text"])
         for cue in projection["cues"]
-    ] == [(5_730, 7_010, "等等等等")]
+    ] == [(7_010, 9_990, "你把你的你你我你你的技能")]
 
 
 def test_committed_1209_adjacent_truths_split_a_straddling_fresh_cue():
