@@ -3231,3 +3231,71 @@ def test_committed_1209_truth_survives_fresh_asr_cue_merge():
         "20260724-beans-shenle-r2",
         "20260724-beans-limo-first-repeat-r2",
     }
+
+
+def test_committed_1209_adjacent_truths_split_a_straddling_fresh_cue():
+    """相邻 operator truth 的公共边界落在 cue 内时不得后写覆盖前写。"""
+
+    source = _srt_ms(
+        (34_290, 37_450, "省了，这对吗"),
+        (37_450, 40_010, "那就差礼墨没吃了"),
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260724-18-31-22.mp4"
+                    ),
+                    "start_ms": 1_199_070,
+                    "end_ms": 1_239_080,
+                }
+            ]
+        },
+        durations=[40_010],
+        ledger_path=(
+            REPO_ROOT
+            / "assets"
+            / "lidousha"
+            / "subtitle_truth_ledger.v1.json"
+        ),
+    )
+
+    cues = parse_srt_cues(corrected)
+    assert [
+        (cue.start_ms, cue.end_ms, cue.text) for cue in cues
+    ] == [
+        (34_290, 36_730, "神了，这对吗"),
+        (36_730, 37_450, "切，"),
+        (37_450, 40_010, "那就差礼墨没吃了"),
+    ]
+    assert audit["cue_grid_partition"]["partitions"] == [
+        {
+            "previous_truth_id": "20260724-beans-shenle-r2",
+            "current_truth_id": "20260724-beans-limo-first-repeat-r2",
+            "source_boundary_ms": 1_235_800,
+            "local_boundary_ms": 36_730,
+            "input_cue_index": 1,
+            "inserted_text": "切，",
+        }
+    ]
+    preview = build_source_truth_preview_receipt(
+        input_srt_text=source,
+        source_truth_audit=audit,
+        stage="pre_correction_review",
+    )
+    assert preview["status"] == "PASS"
+    assert preview["protected_cue_indexes"] == [1, 2]
+    owners = {
+        row["truth_id"]: (
+            row["cue_indexes"],
+            row["projected_cue_indexes"],
+        )
+        for row in preview["exact_projection_owners"]
+    }
+    assert owners["20260724-beans-shenle-r2"] == ([1], [1])
+    assert owners["20260724-beans-limo-first-repeat-r2"] == (
+        [1, 2],
+        [2, 3],
+    )

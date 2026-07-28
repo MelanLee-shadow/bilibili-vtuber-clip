@@ -30,6 +30,11 @@ from src.autoslice.source_truth_governance import (
     assertion_state as _assertion_state,
     validate_ledger_governance as _validate_ledger_governance,
 )
+from src.autoslice.source_truth_adjacent_partition import (
+    map_projection_indexes,
+    partitioned_preview_grid,
+    prepartition_adjacent_operator_truths,
+)
 
 
 SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
@@ -944,6 +949,9 @@ def build_source_truth_preview_receipt(
     if any(cue.start_ms >= cue.end_ms for cue in cues):
         raise RuntimeError("SOURCE_TRUTH_PREVIEW_INPUT_GRID_INVALID")
     grid = _preview_input_grid(cues)
+    projected_grid, projected_origins = partitioned_preview_grid(
+        source_truth_audit.get("cue_grid_partition"), cues
+    )
     ledger_sha256 = source_truth_audit.get("ledger_sha256")
     has_rows = any(
         source_truth_audit.get(key)
@@ -981,15 +989,14 @@ def build_source_truth_preview_receipt(
                 continue
             projection = validated_source_truth_projection(raw_row)
             if projection is None or not _projection_matches_preview_grid(
-                raw_row, projection, cues
+                raw_row, projection, projected_grid
             ):
                 raise RuntimeError(
                     f"SOURCE_TRUTH_PREVIEW_PROJECTION_INVALID: {truth_id}"
                 )
-            cue_indexes = [
-                int(cue["cue_index"])
-                for cue in projection["cues"]
-            ]
+            projected_indexes, cue_indexes = map_projection_indexes(
+                projection, projected_origins
+            )
             exact_indexes.update(cue_indexes)
             exact_owners.append(
                 {
@@ -998,6 +1005,7 @@ def build_source_truth_preview_receipt(
                     "source_bucket": bucket,
                     "projection_status": projection["status"],
                     "cue_indexes": cue_indexes,
+                    "projected_cue_indexes": projected_indexes,
                     # Bind the full validated projection without exposing its
                     # before/after subtitle text as preview output.
                     "projection_sha256": _canonical_sha256(projection),
@@ -1504,8 +1512,18 @@ def apply_source_subtitle_truth(
 
     cues = parse_srt_cues(srt_text)
     texts = [cue.text for cue in cues]
+    cues, texts, cue_partition = prepartition_adjacent_operator_truths(
+        entries=entries, cues=cues, texts=texts,
+        entry_windows=lambda entry: _entry_local_windows(
+            entry, pieces=pieces, durations=durations,
+            source_aliases=source_aliases,
+        ),
+        source_coverage_ms=_source_coverage_ms,
+    )
     audit["ledger_sha256"] = "sha256:" + _sha256_bytes(raw)
     audit["status"] = "NO_RELEVANT_INTERVAL"
+    if cue_partition is not None:
+        audit["cue_grid_partition"] = cue_partition
 
     for raw_entry in entries:
         if not isinstance(raw_entry, Mapping):

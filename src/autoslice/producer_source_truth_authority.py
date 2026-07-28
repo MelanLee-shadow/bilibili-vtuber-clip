@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from src.autoslice.source_subtitle_truth import (
     validated_source_truth_projection,
 )
+from src.autoslice.source_truth_adjacent_partition import partition_origin_map
 
 
 PREVIEW_SCHEMA_VERSION = "source-truth-deterministic-preview.v1"
@@ -52,10 +53,22 @@ def reconcile_required_source_truth_chat_authority(
         if isinstance(row, Mapping)
         and row.get("required") is not False
     ]
+    projected_origins = partition_origin_map(
+        source_truth_audit.get("cue_grid_partition")
+    )
+
+    def truth_indexes(row: Mapping[str, object]) -> set[int]:
+        indexes = {
+            int(index) for index in (row.get("cue_indexes") or [])
+        }
+        if projected_origins is None:
+            return indexes
+        return {projected_origins[index] for index in indexes}
+
     truth_cues = {
         index
         for row in truth_rows
-        for index in (row.get("cue_indexes") or [])
+        for index in truth_indexes(row)
     }
     if not truth_cues:
         return
@@ -69,7 +82,7 @@ def reconcile_required_source_truth_chat_authority(
         owners = sorted(
             str(row.get("truth_id"))
             for row in truth_rows
-            if set(row.get("cue_indexes") or []) & row_cues
+            if truth_indexes(row) & row_cues
         )
         chat_row["reconciliation"] = {
             "kind": "SOURCE_INTERVAL_TRUTH_SUPERSEDES",
@@ -123,7 +136,13 @@ def reconcile_required_source_truth_chat_authority(
             matching_cues = [
                 cue
                 for cue in projection["cues"]
-                if cue["cue_index"] in requirement_cues
+                if (
+                    projected_origins.get(
+                        cue["cue_index"], cue["cue_index"]
+                    )
+                    if projected_origins is not None
+                    else cue["cue_index"]
+                ) in requirement_cues
             ]
             if not matching_cues:
                 continue

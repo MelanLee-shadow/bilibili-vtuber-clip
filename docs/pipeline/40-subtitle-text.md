@@ -82,6 +82,11 @@
   随后仍在正式阶段重放并复验，因此 preview 不是“提前应用后跳过验证”，而是禁止低权威阶段
   抢写已确定的最高权威目标。projection 缺失/非法、cue index/timing 不一致或 required truth
   最终未满足均 fail closed。
+- 两条 required `IVAN_OPERATOR_TRUTH / replace_cue` 在同一源录像上首尾精确相接，而 fresh
+  ASR 的一条 cue 跨过该公共边界时，禁止让后写 truth 复用并覆盖前写 owner。流水线只在两边
+  源区间均完整保留、前窗唯一拥有骑界 cue、后条审定文本可唯一拆成“新前缀 + 已正确后缀”时，
+  按绝对源边界拆分 cue，并写 `source-truth-adjacent-cue-partition.v1` 收据；preview 把拆后
+  owner 映回原 cue 保护，正式落地保留拆后精确时间轴。任何不唯一或后缀漂移都 fail closed。
 - 宽 `replace_substring` 窗若同一专名出现多次，必须用 `mention_postconditions` 为每一次
   绑定绝对 source interval、required text 与 forbidden tokens；窗口内“某一次写对”不能
   掩盖另一 mention 仍错误。全部 mention 必须先独立解析、隔离并通过；这些 mention 对应 cue
