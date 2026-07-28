@@ -42,6 +42,7 @@ from src.autoslice.selection_scorecard import (  # noqa: E402
 )
 
 REVIVABLE_STATUSES = ("candidate_rejected", "review_ready")
+SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
 
 
 def _atomic_write(path: Path, payload: dict) -> None:
@@ -66,6 +67,15 @@ def main() -> int:
     parser.add_argument("--fix-commit", required=True)
     parser.add_argument("--runner-lock", type=Path, default=None)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--resume-unqueued-revival",
+        action="store_true",
+        help=(
+            "repair a prior sanctioned revival that was written as failed/"
+            "recoverable but never received its one-shot requeue marker; "
+            "requires the latest revival reason and fix commit to match"
+        ),
+    )
     parser.add_argument(
         "--force-redo",
         action="store_true",
@@ -159,28 +169,57 @@ def main() -> int:
     revived = []
     for cid in wanted:
         row = by_id[cid]
+        latest_revival = (
+            row.get("revivals")[-1]
+            if isinstance(row.get("revivals"), list)
+            and row.get("revivals")
+            and isinstance(row.get("revivals")[-1], dict)
+            else None
+        )
+        resume_existing = bool(
+            args.resume_unqueued_revival
+            and row.get("status") == "failed"
+            and row.get("failure_recoverable") is True
+            and isinstance(latest_revival, dict)
+            and latest_revival.get("schema_version")
+            == "candidate-revival.v1"
+            and latest_revival.get("reason") == args.reason
+            and latest_revival.get("expected_fix_commit") == args.fix_commit
+            and not isinstance(row.get("sanctioned_revival_retry"), dict)
+        )
         allowed = (
             REVIVABLE_STATUSES if args.force_redo else REVIVABLE_STATUSES[:1]
         )
-        if row.get("status") not in allowed:
+        if row.get("status") not in allowed and not resume_existing:
             print(
-                f"REFUSE: {cid} status={row.get('status')!r} not in {allowed}",
+                f"REFUSE: {cid} status={row.get('status')!r} not in {allowed}"
+                " and is not an exactly matching unqueued revival",
                 file=sys.stderr,
             )
             return 2
-        revival = {
-            "schema_version": "candidate-revival.v1",
-            "revived_at": _dt.datetime.now(_dt.timezone.utc).isoformat(
-                timespec="seconds"
-            ),
-            "operator": "claude-root-session",
-            "reason": args.reason,
-            "expected_fix_commit": args.fix_commit,
-            "previous_status": row.get("status"),
-            "previous_rejection_reason": row.get("rejection_reason"),
-            "previous_failure_kind": row.get("failure_kind"),
-        }
+        if resume_existing:
+            revival = latest_revival
+        else:
+            revival = {
+                "schema_version": "candidate-revival.v1",
+                "revived_at": _dt.datetime.now(_dt.timezone.utc).isoformat(
+                    timespec="seconds"
+                ),
+                "operator": "claude-root-session",
+                "reason": args.reason,
+                "expected_fix_commit": args.fix_commit,
+                "previous_status": row.get("status"),
+                "previous_rejection_reason": row.get("rejection_reason"),
+                "previous_failure_kind": row.get("failure_kind"),
+            }
         if scorecard_restoration is not None:
+            if resume_existing:
+                print(
+                    "REFUSE: scorecard restoration cannot be resumed after "
+                    "the original revival write",
+                    file=sys.stderr,
+                )
+                return 2
             if selection_scorecard_is_valid(row.get("selection_scorecard")):
                 print(
                     f"REFUSE: {cid} already has a valid selection_scorecard",
@@ -190,8 +229,14 @@ def main() -> int:
             restoration_audit = dict(scorecard_restoration["audit"])
             restoration_audit["restored_at"] = revival["revived_at"]
             revival["selection_scorecard_restoration"] = restoration_audit
-        print(f"revive {cid}: {row.get('status')} -> failed(recoverable)")
-        print(f"  was: {row.get('rejection_reason')} / {row.get('failure_kind')}")
+        if resume_existing:
+            print(f"resume unqueued revival {cid}: failed(recoverable)")
+        else:
+            print(f"revive {cid}: {row.get('status')} -> failed(recoverable)")
+            print(
+                f"  was: {row.get('rejection_reason')} / "
+                f"{row.get('failure_kind')}"
+            )
         if scorecard_restoration is not None:
             print(
                 "  restore selection_scorecard from "
@@ -204,7 +249,16 @@ def main() -> int:
                 )
             row["status"] = "failed"
             row["failure_recoverable"] = True
-            row.setdefault("revivals", []).append(revival)
+            if not resume_existing:
+                row.setdefault("revivals", []).append(revival)
+            revival_index = len(row.get("revivals") or []) - 1
+            row["sanctioned_revival_retry"] = {
+                "schema_version": SANCTIONED_REVIVAL_RETRY_SCHEMA,
+                "status": "PENDING",
+                "revival_index": revival_index,
+                "revived_at": revival["revived_at"],
+                "expected_fix_commit": revival["expected_fix_commit"],
+            }
         revived.append(cid)
 
     if args.apply:

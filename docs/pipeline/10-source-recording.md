@@ -116,7 +116,13 @@
   不可读 → `SOURCE_RECORDING_ROOT_UNAVAILABLE`（基础设施等待，watchdog 修复
   后按 timer 重试）；挂载健康但源文件消失 → `SOURCE_MEDIA_MISSING`（终态
   `candidate_rejected/source_media_missing`，不自动复跑，复活只走 sanctioned
-  `scripts/revive_rejected_candidates.py`）。unknown 失败只有一次有界重试，
+  `scripts/revive_rejected_candidates.py`）。sanctioned revival 必须写入与最新
+  revival 审计块精确绑定的 `sanctioned-revival-retry.v1/PENDING` 凭证；requeue
+  消费后改为 `QUEUED`，即使修复代码在复活前已经部署、相关 fingerprint 未再变化，
+  或旧 lifetime 计数已到上限，也必须获得恰好一次实际生产机会。历史上已写
+  failed/recoverable 却漏写该凭证的同一 revival，只能用脚本
+  `--resume-unqueued-revival` 在 reason 与 fix commit 完全相同的条件下补证，不得手改
+  state。unknown 失败只有一次有界重试，
   无限 timer 重试仅限 `INFRASTRUCTURE_WAIT_FAILURE_KINDS`
   （`runtime_prerequisite`/`provider_transient`）。若 date-level preflight 后 FUSE
   在 producer 读媒体途中断开，`OSError: Transport endpoint is not connected` /

@@ -98,6 +98,31 @@ def _run(state_path: Path, spec_path: Path, *extra: str) -> subprocess.Completed
     )
 
 
+def _resume_without_scorecard_restore(
+    state_path: Path,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--state",
+            str(state_path),
+            "--candidate",
+            CANDIDATE_ID,
+            "--reason",
+            "restore omitted scorecard from the original candidate spec",
+            "--fix-commit",
+            "test-fix",
+            "--resume-unqueued-revival",
+            "--apply",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def test_restores_valid_scorecard_and_records_spec_hash(tmp_path: Path) -> None:
     state_path, spec_path = _fixture(tmp_path)
 
@@ -109,6 +134,11 @@ def test_restores_valid_scorecard_and_records_spec_hash(tmp_path: Path) -> None:
     assert row["status"] == "failed"
     assert row["failure_recoverable"] is True
     assert row["selection_scorecard"] == _scorecard()
+    retry = row["sanctioned_revival_retry"]
+    assert retry["schema_version"] == "sanctioned-revival-retry.v1"
+    assert retry["status"] == "PENDING"
+    assert retry["revival_index"] == 0
+    assert retry["expected_fix_commit"] == "test-fix"
     restoration = row["revivals"][-1]["selection_scorecard_restoration"]
     assert restoration["schema_version"] == "selection-scorecard-restoration.v1"
     assert restoration["source_spec_path"] == str(spec_path)
@@ -127,6 +157,27 @@ def test_dry_run_does_not_change_state(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "DRY-RUN" in result.stdout
     assert state_path.read_bytes() == before
+
+
+def test_resumes_prior_revival_that_never_received_requeue_marker(
+    tmp_path: Path,
+) -> None:
+    state_path, spec_path = _fixture(tmp_path)
+    first = _run(state_path, spec_path, "--apply")
+    assert first.returncode == 0, first.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    row = state["picks"][0]
+    row.pop("sanctioned_revival_retry")
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    resumed = _resume_without_scorecard_restore(state_path)
+
+    assert resumed.returncode == 0, resumed.stderr
+    assert "resume unqueued revival" in resumed.stdout
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    row = state["picks"][0]
+    assert len(row["revivals"]) == 1
+    assert row["sanctioned_revival_retry"]["status"] == "PENDING"
 
 
 def test_refuses_candidate_mismatched_spec(tmp_path: Path) -> None:

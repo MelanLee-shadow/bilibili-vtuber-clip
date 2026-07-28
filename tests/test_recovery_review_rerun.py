@@ -356,6 +356,7 @@ def test_explicit_recovery_carries_hash_bound_public_title(
         "failure_recoverable",
         "next_retry_at_epoch",
         "expected_retry_reason",
+        "retry_mode",
     ),
     [
         (
@@ -366,15 +367,36 @@ def test_explicit_recovery_carries_hash_bound_public_title(
             # same-fingerprint retry is the bounded one-shot transient path,
             # not an unlimited infrastructure timer.
             "transient_produce_failure",
+            "ordinary",
         ),
         (
             OLD,
             False,
             None,
             "pipeline_fingerprint_changed",
+            "ordinary",
+        ),
+        (
+            NEW,
+            True,
+            None,
+            "sanctioned_candidate_revival",
+            "sanctioned",
+        ),
+        (
+            NEW,
+            True,
+            None,
+            "final_review_carryover",
+            "carryover",
         ),
     ],
-    ids=("transient-same-fingerprint", "systemic-fingerprint-change"),
+    ids=(
+        "transient-same-fingerprint",
+        "systemic-fingerprint-change",
+        "sanctioned-revival",
+        "final-review-carryover",
+    ),
 )
 def test_failure_requeue_preserves_hash_bound_publication_fields(
     tmp_path,
@@ -383,6 +405,7 @@ def test_failure_requeue_preserves_hash_bound_publication_fields(
     failure_recoverable,
     next_retry_at_epoch,
     expected_retry_reason,
+    retry_mode,
 ):
     date, state = _fixture(tmp_path, monkeypatch)
     state["picks"][0]["candidate_id"] = PUBLIC_TITLE_CANDIDATE
@@ -450,6 +473,23 @@ def test_failure_requeue_preserves_hash_bound_publication_fields(
             "revivals": [revival_block],
         }
     )
+    if retry_mode in {"sanctioned", "carryover"}:
+        failed_record["talk_repair_retry_count"] = 99
+        failed_record["talk_transient_retry_count"] = 1
+    if retry_mode == "sanctioned":
+        failed_record["sanctioned_revival_retry"] = {
+            "schema_version": "sanctioned-revival-retry.v1",
+            "status": "PENDING",
+            "revival_index": 0,
+            "revived_at": revival_block["revived_at"],
+            "expected_fix_commit": "deadbeef",
+        }
+        revival_block["expected_fix_commit"] = "deadbeef"
+    if retry_mode == "carryover":
+        failed_record["failure_stage"] = "final_review_carryover"
+        failed_record["failure_fingerprint"] = (
+            "sha256:" + "a" * 64
+        )
     state["picks"] = [failed_record]
 
     assert delivery_recovery.requeue_recoverable_talks(date, state) == 1
@@ -464,6 +504,28 @@ def test_failure_requeue_preserves_hash_bound_publication_fields(
     assert retry["recovery_publication_authority"] == expected_authority
     # 复活审计块是治理证据，必须跨 requeue 存活
     assert retry["revivals"] == [revival_block]
+    if retry_mode == "sanctioned":
+        assert retry["sanctioned_revival_retry"]["status"] == "QUEUED"
+    if retry_mode == "carryover":
+        assert retry[
+            "final_review_carryover_consumed_fingerprints"
+        ] == ["sha256:" + "a" * 64]
+        state["pending_talk"] = []
+        retry.update(
+            {
+                "status": "failed",
+                "failure_kind": "subtitle_authority",
+                "failure_stage": "final_review_carryover",
+                "failure_recoverable": True,
+                "failure_recovery_fingerprint": NEW,
+                "pipeline_fingerprint": NEW,
+                "failure_fingerprint": "sha256:" + "a" * 64,
+            }
+        )
+        state["picks"] = [retry]
+        assert delivery_recovery.requeue_recoverable_talks(
+            date, state
+        ) == 0
 
 
 def test_explicit_recovery_rejects_public_title_for_unqueued_candidate(

@@ -14,6 +14,7 @@ import json
 import re
 import subprocess
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
@@ -53,6 +54,64 @@ INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
         "provider_transient",
     }
 )
+SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
+FINAL_REVIEW_CARRYOVER_RETRY_CAP = 8
+
+
+def _pending_sanctioned_revival_retry(
+    record: Mapping[str, object],
+) -> dict[str, object] | None:
+    marker = record.get("sanctioned_revival_retry")
+    revivals = record.get("revivals")
+    if (
+        not isinstance(marker, dict)
+        or marker.get("schema_version") != SANCTIONED_REVIVAL_RETRY_SCHEMA
+        or marker.get("status") != "PENDING"
+        or not isinstance(revivals, list)
+    ):
+        return None
+    revival_index = marker.get("revival_index")
+    if (
+        isinstance(revival_index, bool)
+        or not isinstance(revival_index, int)
+        or revival_index < 0
+        or revival_index >= len(revivals)
+    ):
+        return None
+    revival = revivals[revival_index]
+    if (
+        not isinstance(revival, dict)
+        or revival.get("schema_version") != "candidate-revival.v1"
+        or revival.get("revived_at") != marker.get("revived_at")
+        or revival.get("expected_fix_commit")
+        != marker.get("expected_fix_commit")
+        or record.get("failure_recoverable") is not True
+    ):
+        return None
+    return dict(marker)
+
+
+def _unconsumed_final_review_carryover(
+    record: Mapping[str, object],
+) -> str | None:
+    fingerprint = record.get("failure_fingerprint")
+    consumed = record.get("final_review_carryover_consumed_fingerprints")
+    consumed_fingerprints = (
+        [value for value in consumed if isinstance(value, str)]
+        if isinstance(consumed, list)
+        else []
+    )
+    if (
+        record.get("status") != "failed"
+        or record.get("failure_recoverable") is not True
+        or record.get("failure_stage") != "final_review_carryover"
+        or not isinstance(fingerprint, str)
+        or _PIPELINE_FINGERPRINT_RX.fullmatch(fingerprint) is None
+        or fingerprint in consumed_fingerprints
+        or len(consumed_fingerprints) >= FINAL_REVIEW_CARRYOVER_RETRY_CAP
+    ):
+        return None
+    return fingerprint
 
 
 def historical_source_recovery_in_progress(
@@ -1390,14 +1449,25 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             and record.get("failure_recoverable") is not False
             and transient_count < 1
         ) or infrastructure_retry
+        sanctioned_revival_retry = _pending_sanctioned_revival_retry(record)
+        carryover_fingerprint = _unconsumed_final_review_carryover(record)
+        carryover_retry = carryover_fingerprint is not None
+        sanctioned_retry = sanctioned_revival_retry is not None
         if (
             not cid
             or cid in existing_pending
-            or not (changed or transient)
+            or not (
+                changed
+                or transient
+                or sanctioned_retry
+                or carryover_retry
+            )
             or (
                 retry_count >= _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
                 and not infrastructure_retry
                 and not changed
+                and not sanctioned_retry
+                and not carryover_retry
             )
         ):
             kept.append(record)
@@ -1498,9 +1568,21 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "preview": record.get("preview", ""),
             "selected_repair": True,
             "talk_repair_retry_count": retry_count + 1,
-            "talk_transient_retry_count": transient_count + (1 if transient and not changed else 0),
+            "talk_transient_retry_count": transient_count
+            + (
+                1
+                if transient
+                and not changed
+                and not sanctioned_retry
+                and not carryover_retry
+                else 0
+            ),
             "retry_reason": (
-                "pipeline_fingerprint_changed"
+                "sanctioned_candidate_revival"
+                if sanctioned_retry
+                else "final_review_carryover"
+                if carryover_retry
+                else "pipeline_fingerprint_changed"
                 if changed
                 else "transient_infrastructure_failure"
                 if infrastructure_retry
@@ -1520,6 +1602,30 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         # 丢块等于抹掉“谁在何据下解冻化石态”的证据链）。
         if record.get("revivals"):
             item["revivals"] = list(record["revivals"])
+        if sanctioned_revival_retry is not None:
+            item["sanctioned_revival_retry"] = {
+                **sanctioned_revival_retry,
+                "status": "QUEUED",
+                "queued_at": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                ),
+            }
+        consumed_carryovers = [
+            value
+            for value in (
+                record.get(
+                    "final_review_carryover_consumed_fingerprints"
+                )
+                or []
+            )
+            if isinstance(value, str)
+        ]
+        if carryover_fingerprint is not None:
+            consumed_carryovers.append(carryover_fingerprint)
+        if consumed_carryovers:
+            item["final_review_carryover_consumed_fingerprints"] = (
+                list(dict.fromkeys(consumed_carryovers))
+            )
         if given_end_ms is not None:
             item["given_end_ms"] = given_end_ms
             item["given_end_authority"] = given_end_authority
@@ -1546,6 +1652,14 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 "failure_kind": record.get("failure_kind"),
                 "failure_stage": record.get("failure_stage"),
                 "failure_fingerprint": record.get("failure_fingerprint"),
+                "sanctioned_revival_retry": (
+                    item.get("sanctioned_revival_retry")
+                ),
+                "final_review_carryover_consumed_fingerprints": (
+                    item.get(
+                        "final_review_carryover_consumed_fingerprints"
+                    )
+                ),
                 "session_id": _recording_session_id(record),
             }
         )

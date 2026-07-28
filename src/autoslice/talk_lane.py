@@ -1893,14 +1893,15 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         result["given_end_authority"] = item.get("given_end_authority")
     if item.get("given_title") is not None:
         result["given_title"] = item["given_title"]
-        result["recovery_publication_authority"] = item.get(
-            "recovery_publication_authority"
-        )
+        result["recovery_publication_authority"] = item.get("recovery_publication_authority")
     if "cover_diversity_slot" in item:
         result["cover_diversity_slot"] = item["cover_diversity_slot"]
     # 复活审计块贯穿 requeue item → 新 pick，缺一环即断链
     if item.get("revivals"):
         result["revivals"] = list(item["revivals"])
+    for field, value_type in (("sanctioned_revival_retry", dict), ("final_review_carryover_consumed_fingerprints", list)):
+        if isinstance(item.get(field), value_type):
+            result[field] = value_type(item[field])
     # Classify only bytes written by this subprocess attempt.  The log is
     # append-only; a stale boundary marker followed by a transient CPA error
     # must not make the new attempt terminal again.
@@ -1909,9 +1910,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     result.update(_runner.read_publish_meta(out_root / cid))
     if completed.returncode != 0:
         result.update(_runner.classify_talk_failure(attempt_output))
-        result["failure_recovery_fingerprint"] = _runner.talk_failure_recovery_fingerprint(
-            str(result["failure_kind"]), cid
-        )
+        result["failure_recovery_fingerprint"] = _runner.talk_failure_recovery_fingerprint(str(result["failure_kind"]), cid)
         if result["failure_recoverable"]:
             retry_epoch = int(time.time()) + _runner.SONG_INFRA_RETRY_BASE_SECONDS
             result["next_retry_at_epoch"] = retry_epoch
