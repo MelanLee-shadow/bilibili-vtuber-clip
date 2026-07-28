@@ -8546,6 +8546,57 @@ def test_selected_talk_relevant_fix_bypasses_exhausted_legacy_lifetime_cap(tmp_p
     assert state["pending_talk"][0]["talk_repair_retry_count"] == 4
 
 
+def test_cover_route_regeneration_has_independent_one_shot_budget_at_talk_cap(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "segment.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(
+        runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:same"
+    )
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: "sha256:same",
+    )
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    monkeypatch.setattr(runner, "TALK_REPAIR_LIFETIME_RETRY_CAP", 3)
+    state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "repair",
+                "segment": segment.name,
+                "start_ms": 1,
+                "end_ms": 2,
+                "status": "failed",
+                "failure_kind": "cover_route_regeneration",
+                "failure_recoverable": True,
+                "pipeline_fingerprint": "sha256:same",
+                "talk_repair_retry_count": 3,
+                "talk_transient_retry_count": 1,
+                "cover_route_regeneration_fingerprint": "sha256:cover-build",
+                "cover_route_regeneration_attempts": 1,
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    queued = state["pending_talk"][0]
+    assert queued["retry_reason"] == "cover_route_regeneration"
+    assert queued["talk_repair_retry_count"] == 4
+    assert queued["talk_transient_retry_count"] == 1
+    assert queued["cover_route_regeneration_fingerprint"] == "sha256:cover-build"
+    assert queued["cover_route_regeneration_attempts"] == 1
+
+
 def test_failure_scoped_talk_fingerprint_ignores_unrelated_graph_change(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     for relative in (

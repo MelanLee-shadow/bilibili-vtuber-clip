@@ -1463,6 +1463,21 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             and record.get("failure_recoverable") is not False
             and transient_count < 1
         ) or infrastructure_retry
+        # Screenshot-route maintenance has its own fingerprint-bound, one-shot
+        # regeneration budget.  It can be queued only after a reviewable talk
+        # package already exists, so the ordinary talk retry lifetime may
+        # legitimately be exhausted by the time cover maintenance requests it.
+        # Do not let that unrelated budget erase the queued maintenance action;
+        # cover_maintenance refuses a second request for the same fingerprint.
+        cover_route_retry = bool(
+            record.get("status") == "failed"
+            and record.get("failure_recoverable") is True
+            and record.get("failure_kind") == "cover_route_regeneration"
+            and isinstance(
+                record.get("cover_route_regeneration_fingerprint"), str
+            )
+            and int(record.get("cover_route_regeneration_attempts") or 0) > 0
+        )
         sanctioned_revival_retry = _pending_sanctioned_revival_retry(record)
         carryover_fingerprint = _unconsumed_final_review_carryover(record)
         carryover_retry = carryover_fingerprint is not None
@@ -1473,6 +1488,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             or not (
                 changed
                 or transient
+                or cover_route_retry
                 or sanctioned_retry
                 or carryover_retry
             )
@@ -1480,6 +1496,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 retry_count >= _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
                 and not infrastructure_retry
                 and not changed
+                and not cover_route_retry
                 and not sanctioned_retry
                 and not carryover_retry
             )
@@ -1587,6 +1604,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 1
                 if transient
                 and not changed
+                and not cover_route_retry
                 and not sanctioned_retry
                 and not carryover_retry
                 else 0
@@ -1596,6 +1614,8 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 if sanctioned_retry
                 else "final_review_carryover"
                 if carryover_retry
+                else "cover_route_regeneration"
+                if cover_route_retry
                 else "pipeline_fingerprint_changed"
                 if changed
                 else "transient_infrastructure_failure"
