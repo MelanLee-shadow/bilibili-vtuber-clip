@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-07-28T01:33:54Z（北京 2026-07-28 09:33:54）by Codex root。
+Updated: 2026-07-28T04:18:13Z（北京 2026-07-28 12:18:13）by Codex root。
 
 本文件只记录仍影响下一次操作的 live 状态。历史经过留在 Git；流水线规则只读
 [`docs/pipeline/`](pipeline/README.md)。
@@ -149,9 +149,13 @@ faster-whisper large/medium/small 也分别听到两处重复声槽，但不能�
 `ENTITY_AUDIO_PROVIDER_FAILED / AGY_QUOTA_EXHAUSTED`。因此不能整句抄 SC，也不能凭
 结构化弹幕自动把两个 `kmx` 填进任意 cue。
 
-继续条件：取得 source truth / typed slot resolution，或 Ivan 明确审定 cue 58–60 的逐 cue
-文字；随后才可 sanctioned revival + rerun。不要因 `d7eef40` 已部署就自动 revive——该提交
-只修正分类，不能创造缺失 authority。
+Ivan 已再次确认：此前人耳也听不出这两个槽位，**不存在可由 Ivan 逐 cue 补出的人工真值**。
+因此不得再把“请 Ivan 重听/定版”列为下一步，也不得把上下文猜测写成 source truth。
+
+继续条件只剩：以后出现能够精确绑定这两个槽位的独立文字权威，或代码形成并通过新的 typed
+结构证据合同，独立证明两处声槽分别对应结构化 SC 的两个 `kmx` mention。当前两者都不存在，
+所以保持 terminal rejection；不要因 `d7eef40` 已部署就自动 revive——该提交只修正分类，
+不能创造缺失 authority。
 
 ### `850`：机器包已绿，发布门未开
 
@@ -190,7 +194,8 @@ invalid 字段，再决定修代码还是修 authority。
    `repair-status` → `repair-run --dry-run` → `repair-run` →
    `repair-verify-live`。
 2. `1209`：把当前最终视频/字幕/封面交 Ivan 审片；hold 未解除前停在本地/远端审片包。
-3. `909`：先补 exact slot authority；没有 authority 时保持 terminal rejection。
+3. `909`：不再请求 Ivan 人耳裁定；没有新的独立 exact-slot authority 时保持 terminal
+   rejection，不复活、不发布。
 4. `1571`：按上面的 terminal message 诊断 correction mutation authority，不做无界 revive。
 5. `1573`：证据已经闭环，无需再跑 repair；以后若问当前公开态，应重新 fresh readback，
    不把 23:16Z receipt 当永久在线状态。
