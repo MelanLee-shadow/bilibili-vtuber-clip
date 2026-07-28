@@ -39,6 +39,10 @@ from src.autoslice.acoustic_witness_adjudication import (
     build_witness_request,
 )
 from src.autoslice.glossary_expected_value import glossary_expected_value_gate
+from src.autoslice.final_review_schema_retry import (
+    retry_invalid_finding_schema_once,
+    schema_repair_prompt,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.source_subtitle_truth import (
     MIN_CUE_OVERLAP_MS,
@@ -562,6 +566,7 @@ def _merged_raw_findings(
     return merged
 
 
+@retry_invalid_finding_schema_once
 def audit_final_subtitles(
     srt_text: str,
     *,
@@ -574,8 +579,7 @@ def audit_final_subtitles(
     extra_raw_findings: Sequence[Mapping[str, Any]] = (),
     _schema_repair_retry: bool = False,
 ) -> list[dict[str, Any]]:
-    """One reviewer pass over the final SRT; returns validated findings only.
-    ``extra_raw_findings``: 终审结转 raw 行，语义见 _merged_raw_findings。"""
+    """One reviewer pass; ``extra_raw_findings`` carries prior raw rows."""
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     if not cues:
         raise FinalReviewAuditError("FINAL_REVIEW_INPUT_EMPTY")
@@ -588,16 +592,7 @@ def audit_final_subtitles(
         candidate_context=(candidate_context_text.strip() or "（无）"),
     )
     if _schema_repair_retry:
-        prompt += """
-
-上一轮返回了非空 findings，但每一条都因合同字段无效而被机器拒绝。请重新
-独立审查同一份字幕，并严格遵守：
-- cue 必须是上方真实存在的编号；
-- suspect 若填写，必须逐字出现在该 cue；
-- 有修正方案时 proposed_full_cue 必须是该 cue 的完整修正版；
-- 没有合同合法且确有把握的疑点时，明确输出 {"findings": []}。
-不得复述或猜测上一轮内容，只输出一个新的 JSON 对象。
-"""
+        prompt = schema_repair_prompt(prompt)
     raw = _request_final_review_findings(
         prompt, llm_call=llm_call, extract_json=extract_json
     )
@@ -796,7 +791,6 @@ def audit_final_subtitles(
                 scope_warnings.append("SOURCE_SURFACE_UNWITNESSED")
         if proposed_supplied and not contract_error and repair_class == "source_backed_entity" and not source_surface:
             contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
-
         if memory_candidate_valid:
             provenance = {
                 "kind": "speech_memory_candidate",
@@ -804,7 +798,6 @@ def audit_final_subtitles(
                 "ledger_sha256": memory_ledger_sha256,
                 "mutation_authorized": False,
             }
-
         # Another cue from the same transcript is recall context, not authority.
         # Let it propose a
         # closed candidate, then require the acoustic lane; otherwise one ASR
@@ -869,18 +862,6 @@ def audit_final_subtitles(
         if len(findings) >= MAX_FINDINGS:
             break
     if raw and not findings:
-        if not _schema_repair_retry:
-            return audit_final_subtitles(
-                srt_text,
-                llm_call=llm_call,
-                extract_json=extract_json,
-                glossary_text=glossary_text,
-                structured_context_text=structured_context_text,
-                candidate_context_text=candidate_context_text,
-                candidate_context=candidate_context,
-                extra_raw_findings=extra_raw_findings,
-                _schema_repair_retry=True,
-            )
         raise FinalReviewAuditError(
             "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID",
             f"raw_count={len(raw)}",
