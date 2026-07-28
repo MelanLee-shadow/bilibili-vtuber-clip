@@ -63,6 +63,47 @@ def _sync_declared_artifact(
         target.write_bytes(source.read_bytes())
 
 
+def _resolve_final_cover(
+    *,
+    package_root: Path,
+    pick: dict,
+    cover_generation: dict,
+) -> str:
+    """Resolve only the exact final cover declared by state and record."""
+    declared = cover_generation.get("final_cover")
+    expected = str(
+        cover_generation.get("final_cover_sha256") or ""
+    ).removeprefix("sha256:")
+    pick_path = pick.get("cover_path")
+    pick_expected = str(pick.get("cover_sha256") or "").removeprefix(
+        "sha256:"
+    )
+    if not isinstance(declared, str) or not declared or not expected:
+        raise DailyManifestError(
+            "cover generation lacks final_cover/final_cover_sha256"
+        )
+    if not isinstance(pick_path, str) or not pick_path or not pick_expected:
+        raise DailyManifestError("state pick lacks cover_path/cover_sha256")
+
+    basename = Path(declared).name
+    if Path(pick_path).name != basename or pick_expected != expected:
+        raise DailyManifestError(
+            "state/record final cover binding drift: "
+            f"state={Path(pick_path).name}:{pick_expected} "
+            f"record={basename}:{expected}"
+        )
+    relative = f"covers/{basename}"
+    final_cover = package_root / relative
+    if not final_cover.is_file():
+        raise DailyManifestError(f"final cover missing from package: {relative}")
+    actual = _sha256(final_cover)
+    if actual != expected:
+        raise DailyManifestError(
+            f"final cover sha drift: record={expected} actual={actual}"
+        )
+    return relative
+
+
 def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
           candidate_id: str) -> dict:
     package_root = package_root.resolve()
@@ -103,19 +144,21 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
 
     publish = need(f"{stem}.publish.json")
     publish_doc = json.loads(publish.read_text(encoding="utf-8"))
+    cover_generation = (
+        publish_doc.get("cover_generation")
+        or (publish_doc.get("publish_staging") or {}).get("cover_generation")
+        or {}
+    )
+    if not isinstance(cover_generation, dict):
+        raise DailyManifestError("cover generation is not an object")
     record = need(f"{candidate_id}.record.json")
     subtitle = need(f"{stem}.srt")
     burned = need(f"{stem}.burned-final-sapphire72.mp4")
-    cover_rel = None
-    for candidate in (
-        f"covers/{candidate_id}.ai-title.cover.png",
-        f"covers/{candidate_id}.screenshot-title.cover.png",
-    ):
-        if (package_root / candidate).is_file():
-            cover_rel = candidate
-            break
-    if cover_rel is None:
-        raise DailyManifestError("no final cover found under covers/")
+    cover_rel = _resolve_final_cover(
+        package_root=package_root,
+        pick=pick,
+        cover_generation=cover_generation,
+    )
 
     ass = need(f"{stem}.final-sapphire72.ass")
     chat_name = f"{candidate_id}.chat-authority.json"
@@ -134,11 +177,6 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
             or ""
         ),
         label="chat authority",
-    )
-    cover_generation = (
-        publish_doc.get("cover_generation")
-        or (publish_doc.get("publish_staging") or {}).get("cover_generation")
-        or {}
     )
     def cover_artifact(generation_key: str, sha_key: str) -> str:
         """Locate a package-internal cover artifact declared by generation.
