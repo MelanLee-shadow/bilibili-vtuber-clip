@@ -28,6 +28,18 @@
   speaker SRT 按生产同一 `_layout_cue_for_display`、speaker ASS escaping 与厘秒 rounding
   重建全部 `Dialogue` events；event 数、start/end、完整文本和 LDS/GUEST style 必须逐项精确
   相等，缺失/非法 Dialogue 或任一投影漂移都阻断。
+- Ivan 报告成片字幕问题时，先运行
+  `scripts/plan_operator_subtitle_correction.py` 固化修复范围：未明确“问题已列完”的 1–2
+  个问题视为抽样，必须整片重跑并复审；3 个及以上问题走
+  `TARGETED_REPAIR_PLUS_SYSTEMIC_FIX`，只修所列位置和背后的共享流水线通病，不随机全片重跑。
+  明确声明问题穷尽时，即使只有 1–2 个也可走定点修复。计划只决定复查范围，不放宽最终
+  package、same-BV、人审或上传门。
+- governed late source truth 是唯一允许在 expected-value choke point 之后覆盖词面的 lane，
+  并且只接受
+  `decision_authority=IVAN_OPERATOR_TRUTH` 的 `VERIFIED_ACTIVE` 行；除可重算的
+  glossary expected-value canon 外，CPA/AGY/ASR/词表/structured event 只能作为
+  `PROPOSED` 候选证据。package auditor 必须拒绝缺该字段或由
+  非 operator authority 自升 active 的新行，防止旧机器 ledger 覆盖已经正确的 CPA 结果。
 - 最终 SRT 先过 `lidousha-srt-release-policy.v1`：每个 block 必须被严格解析，连续编号、
   合法且正向的时间、至少 300ms、单调无 overlap、非空/非孤立标点/非单个汉字、媒体边界
   合法。producer、package auditor 与 uploader 各自重跑，不能复用一次自报结果。

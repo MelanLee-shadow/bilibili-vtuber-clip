@@ -118,6 +118,11 @@
         "authority": "lidousha-hard-meme-canon.v1"
       },
       {
+        "surface": "林墨",
+        "canonical": "礼墨",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
         "surface": "难崩小视频",
         "canonical": "难绷小视频",
         "authority": "lidousha-hard-slang-canon.v1"

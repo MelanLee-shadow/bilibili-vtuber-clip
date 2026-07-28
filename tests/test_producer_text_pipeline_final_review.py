@@ -809,25 +809,34 @@ def test_exact_final_release_review_closes_acoustically_disproven_proposal(
 
 
 @pytest.mark.parametrize(
-    ("current", "suspect", "suggestion", "proposed", "repair_class"),
+    (
+        "current",
+        "suspect",
+        "suggestion",
+        "proposed",
+        "repair_class",
+        "orthography_blocked",
+    ),
     [
-        ("毁神来了", "毁神", "绘声", "绘声来了", "phonetic"),
+        ("毁神来了", "毁神", "绘声", "绘声来了", "phonetic", False),
         (
             "大恩来了",
             "大恩",
             "大N",
             "大N来了",
             "source_backed_entity",
+            True,
         ),
     ],
 )
-def test_exact_final_release_review_never_uses_audio_to_choose_orthography(
+def test_exact_final_release_review_requires_cpa_to_choose_text(
     monkeypatch,
     current,
     suspect,
     suggestion,
     proposed,
     repair_class,
+    orthography_blocked,
 ):
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
     monkeypatch.setattr(
@@ -870,9 +879,19 @@ def test_exact_final_release_review_never_uses_audio_to_choose_orthography(
     )
 
     assert receipt["status"] == "FLAGGED"
-    assert receipt["findings"][0][
-        "exact_release_acoustic_closure_blocked_reason"
-    ] == "ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO"
+    finding_receipt = receipt["findings"][0]
+    assert finding_receipt["exact_release_adjudication"][
+        "decision_authority"
+    ] == "CPA_JUDGE"
+    if orthography_blocked:
+        assert finding_receipt[
+            "exact_release_acoustic_closure_blocked_reason"
+        ] == "ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO"
+    else:
+        assert (
+            "exact_release_acoustic_closure_blocked_reason"
+            not in finding_receipt
+        )
     with pytest.raises(FinalReviewContractError):
         validate_final_review_release(receipt)
 

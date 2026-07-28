@@ -26,6 +26,10 @@ from src.autoslice.source_truth_target_selection import (  # noqa: E402
 )
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 from src.autoslice.piece_roles import last_content_piece_index
+from src.autoslice.source_truth_governance import (
+    assertion_state as _assertion_state,
+    validate_ledger_governance as _validate_ledger_governance,
+)
 
 
 SCHEMA_VERSION = "source-subtitle-truth-ledger.v1"
@@ -37,9 +41,6 @@ SPOKEN_START_CUE_LAG_TOLERANCE_MS = 500
 # lead/story or any trailing story/context straddle remains fail-closed.
 BOUNDARY_OWNER_LEAD_TOLERANCE_MS = 500
 _SOURCE_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
-_ASSERTION_STATES = frozenset(
-    {"PROPOSED", "VERIFIED_ACTIVE", "REJECTED", "CONFLICTED", "SUPERSEDED"}
-)
 _BOUNDARY_ROLES = frozenset({"story_content", "next_topic_witness"})
 
 
@@ -288,18 +289,6 @@ def _audit_source_aliases(
         if "source_alias_id" in window
     }
     return list(used.values())
-
-
-def _assertion_state(entry: Mapping[str, object]) -> str:
-    """Legacy rows are active; revision-aware rows must name a valid state."""
-
-    state = entry.get("assertion_state")
-    if state is None:
-        return "VERIFIED_ACTIVE"
-    value = str(state)
-    if value not in _ASSERTION_STATES:
-        raise RuntimeError("SOURCE_SUBTITLE_TRUTH_ASSERTION_STATE_INVALID")
-    return value
 
 
 def _boundary_role(entry: Mapping[str, object]) -> str:
@@ -1502,6 +1491,7 @@ def apply_source_subtitle_truth(
     entries = document.get("entries")
     if not isinstance(entries, list):
         raise RuntimeError("SOURCE_SUBTITLE_TRUTH_LEDGER_ENTRIES_INVALID")
+    _validate_ledger_governance(document, entries)
     source_aliases = _load_source_aliases(document)
     pieces_raw = spec.get("pieces")
     if not isinstance(pieces_raw, list) or len(pieces_raw) != len(durations):

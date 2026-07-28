@@ -5,22 +5,33 @@
 ## 分层架构
 
 ```
-检测层（谁发现错）          裁决层（谁决定改不改）        强制层（谁保证落地）
-─────────────────          ─────────────────────        ─────────────────
-确定性词表/弹幕/ledger  →  见证人规则(fidelity)      →  choke-point 替换
-终审审片员 LLM          →  声学仲裁(两候选比较)      →  带伤交付闸
-漏听 recall 检查        →  fail-closed 默认保留原文  →  runner 有界重试
+检测层（谁发现错）       证据层（谁提供候选）         裁决/强制层
+─────────────────       ─────────────────────         ─────────────
+词表/弹幕/ledger      →  文字 provenance + AGY 拼音 →  CPA 法官 → choke point
+终审审片员 LLM       →  整片语境/指代/声学证据      →  CPA 法官 → mutation audit
+漏听 recall 检查     →  候选与不可闻证据            →  CPA 法官 / fail closed
 ```
 
 1. **检测≠裁决≠落地**，三层独立记账。7/18 事故的教训：检测层 6/6 全对，落地层全军覆没——事后审计必须能分清是哪层坏了（review-flags 的 `infra_unresolved` 字段就是这个用途）。
-2. **LLM 只报不改**（审片员）；改动按分层裁决落地（见下）；插入只对 source_backed_entity 放开（kmx 漏听案）。
+2. **CPA 是一般语义改字的最终裁决权，但保留期望值旁路**。AGY/ASR 是证人；普通文字证据
+   只提候选。允许绕过 CPA 的三类是：Ivan operator truth、纯机械规范化，以及显式
+   `expected-value canon`。后者只允许“未登记近音误听面→glossary/roster 登记规范词”且须过
+   拼音门；current/proposed 都是登记词面时触发专名平等守卫，自动退出旁路交 CPA。
 3. **裁决分层（Ivan 2026-07-19「不能绑死 Gemini 额度、也不能老用付费key」）**：
-   - **T0 确定性**：hard canon / 源真值 ledger / 弹幕逐字——零模型。
-   - **T0.5 同音候选**：拼音无调全等（`homophone_fix`）时可以零外部调用，但应用前仍必须取得 cue/referent-bound 的 typed textual authority receipt。纯音频、同片 transcript recurrence、宽泛 structured context/selection hook 都只负责提出候选，不能决定汉字写法；缺回执就保留 draft 并阻断。疑问意图族（什么/怎么/为什么/谁/哪里/多少等）也不可由二听结果自行改写。
-   - **T1 见证近音**（`witnessed_near_homophone_fix`）：修复词面有独立、精确绑定的 glossary surface / official roster / source truth / structured chat / verified OCR 见证（`source_surface` 机制）+ 拼音相似度 ≥0.45 + **改写既不替换也不引入注册实体词面** → 携带 PASS 的正字法回执后纯文本应用，零外部调用。raw glossary prose 中仅出现一个规范化字符只能作 `glossary_context` 候选召回，不能取得正字法 authority；单字必须另有 referent-bound typed 见证。同片其他 cue 可用于召回 callback/平行复述，但它和目标通常来自同一 ASR 派生链，不能循环自证；此类 `transcript_context` 强制进入 T3 声学仲裁，且声学结果本身仍不授权近同音选字。终审若正确给出完整 entity 修正句、但错标成 `phonetic` 且漏写 `source_surface`，代码最多恢复候选 provenance；没有上述 typed authority 时仍不得直接改字。
-   - **T3 声学仲裁**：只裁决声音上可区分的实体 vs 实体（kmx/乒乓球、梦限大/Mujica 保向铁律）与拼音强变形（醉堆→这一堆型）。同音/近同音/字母正字法即使也送入声学层，音频只提供读音证据，最终 mutation 仍须上述文字权威回执。量级 ~1/10。
+   - **T0 确定性旁路**：Ivan operator truth / 纯机械规范化 / expected-value canon——零模型。
+     expected-value 每条保留 provenance、拼音门和 `registered_name_conflict=false` 收据。
+   - **T0.5 同音候选**：glossary/roster 高先验且 current 未登记时可进 T0；两个登记词面冲突、
+     其他 provenance 或越过拼音门的候选一律送 CPA。
+   - **T1 见证近音**（旧 `witnessed_near_homophone_fix`）：`source_surface`、相似度和 typed
+     orthography receipt 只提高候选可信度，不能直接改字；仍由 CPA 结合整片语境与指代选
+     CURRENT/PROPOSED。raw glossary prose、同片 ASR recurrence、宽泛 context 只能召回。
+   - **T3 声学证人**：AGY/声学层不得输出或决定汉字，只提供 `target_audible`、疑似拼音和候选
+     发音兼容度。代码级拼音门负责否决与声音不兼容的 CPA 提案，但不能反过来选择词面；
+     最终 mutation 仍只认 CPA `PROPOSED`。量级 ~1/10。
    - T2 备选未实施：免费 BCUT 对争议 span 重转写+拼音距离比对（「穷人声学见证」），T3 仍嫌贵时再上。
-   - **删除专线**：`acoustic_delete` 仅删一个有界疑似幻听 span，必须保留 cue 的真实后半段；`acoustic_drop_cue` 仅用于整条无声。两者都不能走 T0.5/T1，严格声学 postcondition 不成立就保留原文并披露。
+   - **删除专线**：`acoustic_delete` 仅提议删除一个有界疑似幻听 span，`acoustic_drop_cue`
+     仅提议整条无声；AGY 的“不可闻”仍只是证据，只有 CPA `PROPOSED` 才能执行删除。严格
+     postcondition 不成立、CPA 选 CURRENT 或 CPA 未完成就保留原文并阻断/披露。
 4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。
 5. **付费兜底**：同项失败≥3轮即可触发（额度类失败可同 run 连续补轮，`quota_exhausted_round`），每笔入帐。**Ivan 2026-07-19 明确否决冷却期类附加门**——控制付费用量靠 T1 分层缩减声学仲裁需求本身，不靠拖延付费。
 6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
@@ -47,6 +58,15 @@
     已保留相同 canonical、相同 mention 数量且逐槽规范时才可按双文本一致关闭；否则 mention
     数量/位置仍未决，必须以 `REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED` 阻断。单次实体选边不得
     推导多个槽位，更不得把重复实体证据升级成整条 SC 逐字复制。
+11. **专名高先验与专名平等同时成立**：profile/glossary/roster 的规范词面可让未登记近音
+    误听走 expected-value canon；`林墨 → 礼墨` 当前属于此类。若“林墨”以后也作为独立规范
+    词面入表，registered-term guard 会自动撤销旁路，交 CPA 判断。任何两个已登记专名/作品/
+    梗词（如 kmx/乒乓球、恋青/恋死、梦限大/Mujica）都平等，禁止按频率互相覆盖。
+12. **晚期 source truth 只接受 operator 直改**：`subtitle_truth_ledger.v1.json` 的
+    `source-subtitle-truth-governance.v2` 边界之后，每行必须有
+    revision/state/evidence/authority/decision_authority；`VERIFIED_ACTIVE` 只允许
+    `decision_authority=IVAN_OPERATOR_TRUTH`，否则拒绝加载。CPA/机器/结构化事件结论只能保持
+    PROPOSED 候选，不得在 CPA 后面再覆盖字幕；旧错行必须 SUPERSEDED，不能原地改历史。
 
 ## 两次审查不可合并
 

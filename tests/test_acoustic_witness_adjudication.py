@@ -16,6 +16,7 @@ from src.autoslice.entity_audio_verifier import (
     _verify_local_audio_request,
     _witness_prompt,
 )
+from src.autoslice.final_review_auditor import adjudicate_context_finding
 
 
 CHECK_REQUEST = {
@@ -235,16 +236,26 @@ def test_inaudible_target_only_supports_drop_cue():
     dropped, branch, _ = adjudicate_with_witness(
         check_request={**CHECK_REQUEST, "repair_class": "acoustic_drop_cue"},
         witness=_witness("?", audible=False, uncertain=(0,)),
-        llm_call=None,
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert dropped is True and branch == "TARGET_INAUDIBLE_DROP_CUE"
+    assert (
+        dropped is True
+        and branch == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+    )
 
     kept, branch, _ = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=_witness("?", audible=False, uncertain=(0,)),
-        llm_call=None,
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
     assert kept is False and branch == "TARGET_INAUDIBLE_KEEP_CURRENT"
+
+    rejected, branch, _ = adjudicate_with_witness(
+        check_request={**CHECK_REQUEST, "repair_class": "acoustic_drop_cue"},
+        witness=_witness("?", audible=False, uncertain=(0,)),
+        llm_call=lambda _prompt: json.dumps({"choice": "CURRENT"}),
+    )
+    assert rejected is False and branch == "JUDGE_KEEPS_CURRENT"
 
 
 def test_inaudible_target_supports_span_delete():
@@ -254,9 +265,87 @@ def test_inaudible_target_supports_span_delete():
     deleted, branch, _ = adjudicate_with_witness(
         check_request={**CHECK_REQUEST, "repair_class": "acoustic_delete"},
         witness=_witness("?", audible=False, uncertain=(0,)),
-        llm_call=None,
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert deleted is True and branch == "TARGET_INAUDIBLE_DELETE_SPAN"
+    assert (
+        deleted is True
+        and branch == "CPA_JUDGE_APPLY_INAUDIBLE_DELETE_SPAN"
+    )
+
+
+def test_declared_proper_name_spelling_is_evidence_for_cpa_not_an_override():
+    """Official spelling reaches CPA, but cannot overrule its closed-set vote."""
+
+    srt = (
+        "1\n00:00:01,000 --> 00:00:03,000\n"
+        "那就差林墨没吃了\n"
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "entity",
+        "suspect": "林",
+        "suggestion": "礼",
+        "span_start_codepoint": 3,
+        "span_end_codepoint": 4,
+        "proposed_full_cue": "那就差礼墨没吃了",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "official_roster",
+            "surface": "礼墨",
+        },
+    }
+
+    def witness(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": "na jiu cha ling mo mei chi le",
+            "uncertain_positions": [],
+            "syllable_count": 8,
+            "confidence": 0.95,
+        }
+
+    prompts = []
+
+    def judge_current(prompt):
+        prompts.append(prompt)
+        return json.dumps({"choice": "CURRENT"})
+
+    kept, audit = adjudicate_context_finding(
+        srt,
+        finding,
+        entity_verifier=witness,
+        judge_llm_call=judge_current,
+    )
+
+    assert "林墨" in kept
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
+    assert '"kind": "official_roster"' in prompts[0]
+    assert '"surface": "礼墨"' in prompts[0]
+    assert audit["decision_authority"] == "CPA_JUDGE"
+    assert audit["witness_authority"] == "EVIDENCE_ONLY"
+
+    repaired, audit = adjudicate_context_finding(
+        srt,
+        finding,
+        entity_verifier=witness,
+        judge_llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
+    )
+    assert "礼墨" in repaired
+    assert "林墨" not in repaired
+    assert audit["repaired"] is True
+    assert (
+        audit["policy_branch"]
+        == "CPA_JUDGE_WITH_TEXT_AUTHORITY_APPLY_PROPOSED"
+    )
+    assert audit["mutation_authority"] == {
+        "schema_version": "subtitle-correction-mutation-authority.v1",
+        "status": "PASS",
+        "basis": "CPA_JUDGED_WITH_TEXTUAL_ORTHOGRAPHY_EVIDENCE",
+    }
 
 
 def test_acoustic_delete_demands_clear_pinyin_win():

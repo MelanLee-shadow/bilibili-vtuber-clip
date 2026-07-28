@@ -598,6 +598,167 @@ def test_drop_cue_fails_closed_when_cue_straddles_truth_interval(tmp_path):
     assert audit["failures"][0]["drop_status"] == "CONFLICT"
 
 
+def test_governed_machine_consensus_cannot_self_promote(tmp_path):
+    path = tmp_path / "truth.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "source-subtitle-truth-ledger.v1",
+                "governance": {
+                    "schema_version": "source-subtitle-truth-governance.v2",
+                    "governed_entry_start_index": 0,
+                },
+                "source_aliases": [],
+                "entries": [
+                    {
+                        "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                        "truth_id": "machine-guess",
+                        "revision_id": "r1",
+                        "assertion_state": "VERIFIED_ACTIVE",
+                        "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+                        "authority": "machine vote",
+                        "decision_authority": "CPA_CANDIDATE_ONLY",
+                        "recording_basename": "recording.mp4",
+                        "source_start_ms": 110_000,
+                        "source_end_ms": 114_000,
+                        "action": "replace_cue",
+                        "text": "机器猜测",
+                        "required": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="SOURCE_SUBTITLE_TRUTH_DIRECT_MUTATION_AUTHORITY_FORBIDDEN",
+    ):
+        apply_source_subtitle_truth(
+            _srt((10, 14, "原文")),
+            spec={
+                "pieces": [
+                    {
+                        "remote_media": "/source/recording.mp4",
+                        "start_ms": 100_000,
+                        "end_ms": 120_000,
+                    }
+                ]
+            },
+            durations=[20_000],
+            ledger_path=path,
+        )
+
+
+def test_governed_human_revision_is_accepted(tmp_path):
+    path = tmp_path / "truth.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "source-subtitle-truth-ledger.v1",
+                "governance": {
+                    "schema_version": "source-subtitle-truth-governance.v2",
+                    "governed_entry_start_index": 0,
+                },
+                "source_aliases": [],
+                "entries": [
+                    {
+                        "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                        "truth_id": "human-review",
+                        "revision_id": "r1",
+                        "assertion_state": "VERIFIED_ACTIVE",
+                        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+                        "authority": "Ivan reviewed",
+                        "decision_authority": "IVAN_OPERATOR_TRUTH",
+                        "recording_basename": "recording.mp4",
+                        "source_start_ms": 110_000,
+                        "source_end_ms": 114_000,
+                        "action": "replace_cue",
+                        "text": "审定文本",
+                        "required": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    corrected, audit = apply_source_subtitle_truth(
+        _srt((10, 14, "原文")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 120_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=path,
+    )
+
+    assert "审定文本" in corrected
+    assert audit["status"] == "APPLIED"
+
+
+def test_governed_cpa_candidate_stays_proposed_and_does_not_mutate(tmp_path):
+    path = tmp_path / "truth.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "source-subtitle-truth-ledger.v1",
+                "governance": {
+                    "schema_version": "source-subtitle-truth-governance.v2",
+                    "governed_entry_start_index": 0,
+                },
+                "source_aliases": [],
+                "entries": [
+                    {
+                        "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+                        "truth_id": "cpa-candidate",
+                        "revision_id": "r1",
+                        "assertion_state": "PROPOSED",
+                        "evidence_class": "HASH_BOUND_STRUCTURED_EVENT",
+                        "authority": "candidate evidence for CPA",
+                        "decision_authority": "CPA_CANDIDATE_ONLY",
+                        "recording_basename": "recording.mp4",
+                        "source_start_ms": 110_000,
+                        "source_end_ms": 114_000,
+                        "action": "replace_cue",
+                        "text": "候选文本",
+                        "required": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    source = _srt((10, 14, "原文"))
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": "/source/recording.mp4",
+                    "start_ms": 100_000,
+                    "end_ms": 120_000,
+                }
+            ]
+        },
+        durations=[20_000],
+        ledger_path=path,
+    )
+
+    assert corrected == source
+    assert audit["status"] == "NO_RELEVANT_INTERVAL"
+
+
 def test_piece_duration_jitter_does_not_capture_adjacent_cue(tmp_path):
     ledger = _ledger(
         tmp_path,

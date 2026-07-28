@@ -2228,7 +2228,7 @@
   },
   {
    "action": "replace_cue",
-   "assertion_state": "VERIFIED_ACTIVE",
+   "assertion_state": "SUPERSEDED",
    "authority": "Ivan-stated-20260725-conversation：该处她只说了kmx欺负我；成片的哇，kmx为什么欺负我？kmx欺负人中的为什么与kmx欺负人为幻插扩写，按Ivan裁定整cue收敛为kmx欺负我。",
    "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
@@ -2237,6 +2237,7 @@
    "revision_id": "r1",
    "source_end_ms": 927740,
    "source_start_ms": 922900,
+   "superseded_by": "20260724-skill-kmx-qifu-ren-r2",
    "text": "kmx欺负我",
    "truth_id": "20260724-skill-kmx-qifu-wo-r1"
   },
@@ -2480,7 +2481,7 @@
   },
   {
    "action": "replace_cue",
-   "assertion_state": "VERIFIED_ACTIVE",
+   "assertion_state": "SUPERSEDED",
    "authority": "机器证据裁定2026-07-25：受骗复述语境+声学INCOMPATIBLE/SUPPORTED（一副一副无词义）；TA规范为他（同片cue19他说他只剩一个技能先例；拉丁TA会触发外语混排门=KO熊案同型）。",
    "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
@@ -2489,6 +2490,7 @@
    "revision_id": "r1",
    "source_end_ms": 902550,
    "source_start_ms": 900010,
+   "superseded_by": "20260724-skill-ta-yifu-yifu-r2",
    "text": "让我打他，欺负欺负",
    "truth_id": "20260724-skill-qifuqifu-r1"
   },
@@ -2648,7 +2650,7 @@
   },
   {
    "action": "replace_cue",
-   "assertion_state": "VERIFIED_ACTIVE",
+   "assertion_state": "SUPERSEDED",
    "authority": "机器证据裁定2026-07-25：开场问候语境（见面理解不成句）；correction声学确证修复在终验反复不存活（沙盘死锁），真值化落地。",
    "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
@@ -2657,6 +2659,7 @@
    "revision_id": "r1",
    "source_end_ms": 859770,
    "source_start_ms": 858130,
+   "superseded_by": "20260724-skill-opening-noise-drop-r2",
    "text": "又可以和大家见面了耶",
    "truth_id": "20260724-skill-jianmian-leye-r1"
   },
@@ -2704,10 +2707,14 @@
   },
   {
    "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
    "authority": "Ivan-stated-20260727-conversation(909 无源可考：录播记录缺失、回放弹幕无名、屏幕横幅无 toast、人耳亦无真值——授权任意近音字定版；取清晰可闻的 AC+风)",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "IVAN_OPERATOR_REASONABLE_TRUTH",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
    "recording_basename": "22966160_20260725-19-20-00.mp4",
    "required": true,
+   "revision_id": "r1",
    "source_end_ms": 996180,
    "source_start_ms": 993640,
    "text": "谢谢AC风的比心",
@@ -2715,10 +2722,14 @@
   },
   {
    "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
    "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：下注口号被截断——witness 自一致听写 4 音节 zhe-si-liu-er≈支持李豆，且她下一句自述「这句话都还没说完」；忠实呈现截断而非补全)",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
    "recording_basename": "22966160_20260724-19-31-29.mp4",
    "required": true,
+   "revision_id": "r1",
    "source_end_ms": 876510,
    "source_start_ms": 875310,
    "text": "支持李豆……",
@@ -2726,10 +2737,14 @@
   },
   {
    "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
    "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：「刘若莎」为主播名误听——judge 排序已选「李豆沙」(语境=下注口号+弹幕[李豆沙_大笑])却被自不一致听写经拼音门否决；门已修，此处钉死真值)",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
    "recording_basename": "22966160_20260724-19-31-29.mp4",
    "required": true,
+   "revision_id": "r1",
    "source_end_ms": 890840,
    "source_start_ms": 887680,
    "text": "我连“支持李豆沙”这句话都还没说完呢",
@@ -2737,16 +2752,185 @@
   },
   {
    "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
    "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故 cue1：画面探针实锤被查看角色 角色ID=李豆沙(粉丝同名号入会)；Ivan 人耳定版 2026-07-27：「cue1真值其实是李姐拉拉，你新来的」——接拉拉梗称呼同名分身；机器听写 lai-la 系「拉拉」误辨)",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
    "recording_basename": "22966160_20260724-19-31-29.mp4",
    "required": true,
+   "revision_id": "r1",
    "source_end_ms": 851460,
    "source_start_ms": 850020,
    "text": "李姐拉拉，你新来的",
    "truth_id": "20260724-lijie-laila-r1"
+  },
+  {
+   "action": "drop_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-stated-20260728：7/24 850切片公开0:13处是一串无实际意义的怪叫，字幕应为空白；该报告共3处，按operator correction policy走定点修复。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-19-31-29.mp4",
+   "required": true,
+   "revision_id": "r2",
+   "source_end_ms": 859760,
+   "source_start_ms": 856780,
+   "supersedes": "20260724-skill-jianmian-leye-r1",
+   "truth_id": "20260724-skill-opening-noise-drop-r2"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-stated-20260728：7/24 850切片公开0:59说的是「他，一副，一副」，语境为「他一副xxx的样子」，不是「欺负欺负」。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-19-31-29.mp4",
+   "required": true,
+   "revision_id": "r2",
+   "source_end_ms": 902550,
+   "source_start_ms": 900010,
+   "supersedes": "20260724-skill-qifuqifu-r1",
+   "text": "让我打他，他一副，一副",
+   "truth_id": "20260724-skill-ta-yifu-yifu-r2"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-stated-20260728：7/24 850切片公开1:23末句说的是「kmx欺负人」，不是把该槽收敛成「我」；多轮AGY同时支持完整两句。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-19-31-29.mp4",
+   "required": true,
+   "revision_id": "r2",
+   "source_end_ms": 927740,
+   "source_start_ms": 922900,
+   "supersedes": "20260724-skill-kmx-qifu-wo-r1",
+   "text": "kmx为什么欺负我？kmx欺负人",
+   "truth_id": "20260724-skill-kmx-qifu-ren-r2"
+  },
+  {
+   "action": "replace_substring",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-stated-20260728：7/24 1209切片公开0:36的「林墨」是礼墨专名误写；官方PSP名单与同段紧邻复述均绑定礼墨。该报告仅1处，整片必须重跑复审。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-18-31-22.mp4",
+   "replacements": [
+    {
+     "canonical": "礼墨",
+     "surface": "林墨"
+    }
+   ],
+   "required": true,
+   "required_text": "礼墨",
+   "revision_id": "r1",
+   "source_end_ms": 1239080,
+   "source_start_ms": 1236520,
+   "truth_id": "20260724-beans-limo-first-repeat-r1"
+  },
+  {
+   "action": "replace_substring",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-stated-20260728近期多条「礼墨→林墨」系统性误写；已发布607切片的同事家语境、官方PSP名单与本场标题均绑定礼墨。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-18-31-22.mp4",
+   "replacements": [
+    {
+     "canonical": "礼墨",
+     "surface": "林墨"
+    }
+   ],
+   "required": true,
+   "required_text": "礼墨",
+   "revision_id": "r1",
+   "source_end_ms": 650580,
+   "source_start_ms": 648620,
+   "truth_id": "20260724-colleague-home-limo-first-r1"
+  },
+  {
+   "action": "replace_substring",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-stated-20260728近期多条「礼墨→林墨」系统性误写；已发布607切片的同事家语境、官方PSP名单与本场标题均绑定礼墨。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-18-31-22.mp4",
+   "replacements": [
+    {
+     "canonical": "礼墨",
+     "surface": "林墨"
+    }
+   ],
+   "required": true,
+   "required_text": "礼墨",
+   "revision_id": "r1",
+   "source_end_ms": 681950,
+   "source_start_ms": 679070,
+   "truth_id": "20260724-colleague-home-limo-second-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-authorized-operator-truth-20260728：909该段无人耳可辨真值，不拒绝；允许从hash-bound结构化SC放入合理真值。事件17790700原文含两个kmx，本行投影第一槽。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_OPERATOR_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260725-19-20-00.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 1030560,
+   "source_event_id": "17790700",
+   "source_event_sha256": "sha256:7560d60c7d7a26c3d9f2b119ff00c72dca4bb0d3b00228b41a3231d6aee65e54",
+   "source_start_ms": 1028960,
+   "text": "姐姐姐姐姐，还是在直播间摸摸kmx吧",
+   "truth_id": "20260725-909-sc-kmx-first-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-authorized-operator-truth-20260728：909该段无人耳可辨真值，不拒绝；允许从hash-bound结构化SC放入合理真值。事件17790700原文含两个kmx，本行投影第二槽。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_OPERATOR_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260725-19-20-00.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 1033760,
+   "source_event_id": "17790700",
+   "source_event_sha256": "sha256:7560d60c7d7a26c3d9f2b119ff00c72dca4bb0d3b00228b41a3231d6aee65e54",
+   "source_start_ms": 1030560,
+   "text": "kmx不咬人，还喜欢被敲",
+   "truth_id": "20260725-909-sc-kmx-second-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-authorized-operator-truth-20260728：909该段无人耳可辨真值，不拒绝；允许从hash-bound结构化SC放入合理真值。事件17790700括号尾投影为本行。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_OPERATOR_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260725-19-20-00.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 1036370,
+   "source_event_id": "17790700",
+   "source_event_sha256": "sha256:7560d60c7d7a26c3d9f2b119ff00c72dca4bb0d3b00228b41a3231d6aee65e54",
+   "source_start_ms": 1033760,
+   "text": "在公司说怪话，好刺激",
+   "truth_id": "20260725-909-sc-tail-r1"
   }
  ],
+ "governance": {
+  "governed_entry_start_index": 175,
+  "schema_version": "source-subtitle-truth-governance.v2"
+ },
  "schema_version": "source-subtitle-truth-ledger.v1",
  "source_aliases": [
   {

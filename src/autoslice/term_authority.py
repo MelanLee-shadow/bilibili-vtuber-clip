@@ -76,6 +76,68 @@ def respell_pairs() -> frozenset[tuple[str, str]]:
     )
 
 
+def expected_value_respell_pairs() -> frozenset[tuple[str, str]]:
+    """Narrow profile rules allowed to bypass CPA on expected-value grounds.
+
+    Membership is explicit per rule.  A glossary entry, roster name, or generic
+    confusable never enters this lane merely because it is common.
+    """
+
+    return frozenset(
+        (rule.surface, rule.canonical)
+        for rule in CHANNEL_PROFILE.canonical_surface_rules
+        if rule.authority.endswith("-expected-value-canon.v1")
+        and rule.surface
+        and rule.canonical
+        and rule.surface != rule.canonical
+    )
+
+
+def registered_terms() -> frozenset[str]:
+    """Canonical glossary/entity terms that are peers, not typo surfaces.
+
+    If both sides of a proposed correction are in this set, term frequency
+    cannot decide between them.  In particular, adding a new canonical name to
+    the glossary automatically removes same-name corrections from the
+    expected-value bypass.
+    """
+
+    terms: set[str] = {
+        rule.canonical
+        for rule in CHANNEL_PROFILE.canonical_surface_rules
+        if rule.canonical
+    }
+    try:
+        from src.autoslice.chat_authority import load_referent_groups
+
+        for group in load_referent_groups(_ASSET_CONFUSABLES):
+            for entity in group.entities:
+                if entity.canonical:
+                    terms.add(entity.canonical)
+    except Exception:
+        pass
+    try:
+        from scripts.gemini_slice_jingting import glossary as _glossary
+
+        for line in _glossary().splitlines():
+            match = _GLOSSARY_TERM_RX.match(line.strip())
+            if match:
+                terms.add(match.group(1).strip("*"))
+    except Exception:
+        pass
+    try:
+        from scripts.gemini_slice_jingting import approved_timely_terms
+
+        for record in approved_timely_terms():
+            for field in ("canonical", "display_name"):
+                value = str(record.get(field) or "").strip()
+                if value:
+                    terms.add(value)
+    except Exception:
+        pass
+    return frozenset(term for term in terms if term)
+
+
 def protected_terms() -> frozenset[str]:
     """钦定词面集合：审片员等自动改写层绝不允许碰的词。
 

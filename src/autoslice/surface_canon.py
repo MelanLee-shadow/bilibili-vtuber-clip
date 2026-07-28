@@ -23,6 +23,11 @@ _HARD_MEME_SURFACE_RULES = tuple(
     for rule in CHANNEL_PROFILE.canonical_surface_rules
     if rule.authority.endswith("-hard-meme-canon.v1")
 )
+_EXPECTED_VALUE_SURFACE_RULES = tuple(
+    rule
+    for rule in CHANNEL_PROFILE.canonical_surface_rules
+    if rule.authority.endswith("-expected-value-canon.v1")
+)
 
 
 def canonicalize_hard_meme_surfaces(
@@ -31,6 +36,29 @@ def canonicalize_hard_meme_surfaces(
     normalized = text
     replacements: list[dict[str, str | int]] = []
     for rule in _HARD_MEME_SURFACE_RULES:
+        count = normalized.count(rule.surface)
+        if not count:
+            continue
+        normalized = normalized.replace(rule.surface, rule.canonical)
+        replacements.append(
+            {
+                "surface": rule.surface,
+                "canonical": rule.canonical,
+                "authority": rule.authority,
+                "count": count,
+            }
+        )
+    return normalized, replacements
+
+
+def canonicalize_expected_value_surfaces(
+    text: str,
+) -> tuple[str, list[dict[str, str | int]]]:
+    """Apply only explicitly selected high-prior, high-benefit canon rules."""
+
+    normalized = text
+    replacements: list[dict[str, str | int]] = []
+    for rule in _EXPECTED_VALUE_SURFACE_RULES:
         count = normalized.count(rule.surface)
         if not count:
             continue
@@ -89,6 +117,54 @@ def normalize_hard_meme_surfaces(
         "schema_version": "hard-meme-surface-audit.v1",
         "status": "APPLIED" if repairs else "NO_CHANGE",
         "rule_count": len(_HARD_MEME_SURFACE_RULES),
+        "repairs": repairs,
+        "input_srt_sha256": hashlib.sha256(srt_text.encode()).hexdigest(),
+        "output_srt_sha256": hashlib.sha256(output.encode()).hexdigest(),
+    }
+
+
+def normalize_expected_value_surfaces(
+    srt_text: str,
+) -> tuple[str, dict[str, Any]]:
+    """Re-assert explicit expected-value canon after mutable model stages.
+
+    The operator source-truth lane runs after this function and can therefore
+    preserve a rare, source-bound exception.
+    """
+
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    texts = [cue.text for cue in cues]
+    repairs: list[dict[str, Any]] = []
+    for offset, before in enumerate(list(texts)):
+        after, replacements = canonicalize_expected_value_surfaces(before)
+        if after == before:
+            continue
+        texts[offset] = after
+        repairs.append(
+            {
+                "cue_index": offset + 1,
+                "matched_start_ms": cues[offset].start_ms,
+                "matched_end_ms": cues[offset].end_ms,
+                "before": before,
+                "after": after,
+                "replacements": replacements,
+                "decision_authority": "EXPECTED_VALUE_CANON",
+            }
+        )
+    output = srt_text
+    if repairs:
+        output = "\n\n".join(
+            (
+                f"{index}\n{_srt_timestamp(cue.start_ms)} --> "
+                f"{_srt_timestamp(cue.end_ms)}\n{text.strip()}"
+            )
+            for index, (cue, text) in enumerate(zip(cues, texts), start=1)
+        ) + "\n"
+    return output, {
+        "schema_version": "expected-value-surface-audit.v1",
+        "status": "APPLIED" if repairs else "NO_CHANGE",
+        "decision_authority": "EXPECTED_VALUE_CANON",
+        "rule_count": len(_EXPECTED_VALUE_SURFACE_RULES),
         "repairs": repairs,
         "input_srt_sha256": hashlib.sha256(srt_text.encode()).hexdigest(),
         "output_srt_sha256": hashlib.sha256(output.encode()).hexdigest(),

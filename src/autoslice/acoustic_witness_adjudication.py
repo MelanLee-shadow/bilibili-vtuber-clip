@@ -12,6 +12,11 @@ poor for discourse reasoning. This module splits the roles:
   candidate set with wide subtitle context;
 - code — not any model — enforces that the judged choice stays compatible
   with the witnessed pinyin. Every layer fails toward keeping current text.
+
+No acoustic/text witness may choose the delivered text.  A non-operator
+mutation must carry a CPA ``PROPOSED`` verdict; witness confidence and typed
+text provenance are evidence presented to CPA, never competing decision
+authorities.
 """
 
 from __future__ import annotations
@@ -143,8 +148,12 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
    **语义通顺**，应正常参与裁决、可以当选；只有当外语读法在语境里根本
    不通顺、而拼音证据又与中文候选相容时，才判定为中文被拉丁化误转写、
    选择中文候选。分辨的根本理由是语义，不是文字系统。
+6. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若
+   拼音/语篇确认目标指向该实体或原文，必须采用其规范写法；AGY、ASR、
+   glossary、roster、弹幕、OCR 都只是证据，最终闭集选择仍由你作出。
 
 ## 听写证人报告（未见候选）
+- 目标区间可闻人声: {target_audible}
 - 疑似拼音: {heard_pinyin}
 - 音节数: {syllable_count}
 - 不确定位置: {uncertain_positions}
@@ -161,6 +170,9 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 目标句: <待裁决>
 后文:
 {context_after}
+
+## 绑定文字证据（证据，不是先行裁决）
+{text_evidence}
 
 {structured_chat_block}
 按概率排序并**必须选概率最高者**（Ivan 2026-07-27：不许拿不准就保持原样——
@@ -212,6 +224,7 @@ def judge_word_choice(
         else ""
     )
     prompt = _JUDGE_PROMPT.format(
+        target_audible=witness.get("target_audible"),
         heard_pinyin=str(witness.get("heard_pinyin") or ""),
         syllable_count=witness.get("syllable_count"),
         uncertain_positions=witness.get("uncertain_positions"),
@@ -223,6 +236,19 @@ def judge_word_choice(
         repair_class=str(check_request.get("repair_class") or ""),
         context_before=context_before or str(check_request.get("context_before") or "（无）"),
         context_after=context_after or str(check_request.get("context_after") or "（无）"),
+        text_evidence=json.dumps(
+            {
+                "candidate_provenance": check_request.get(
+                    "candidate_provenance"
+                ),
+                "orthography_authority": check_request.get(
+                    "orthography_authority"
+                ),
+                "reviewer_reason": check_request.get("reason"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
         structured_chat_block=chat_block,
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -337,6 +363,8 @@ def adjudicate_with_witness(
         "schema_version": ADJUDICATION_SCHEMA,
         "witness_request_sha256": witness.get("request_sha256"),
         "witness_status": witness.get("status"),
+        "decision_authority": "CPA_JUDGE",
+        "witness_authority": "EVIDENCE_ONLY",
     }
     repair_class = str(check_request.get("repair_class") or "")
     witness_valid = (
@@ -347,15 +375,6 @@ def adjudicate_with_witness(
     )
     if not witness_valid:
         return False, "WITNESS_UNAVAILABLE_KEEP_CURRENT", audit
-    if not witness["target_audible"]:
-        if repair_class == "acoustic_drop_cue":
-            return True, "TARGET_INAUDIBLE_DROP_CUE", audit
-        if repair_class == "acoustic_delete":
-            # 静音证词支持删除（2026-07-27 1160 咳咳案）：删除提案的
-            # 时窗被见证为无语音，正是提案主张的事实——保留反而是把
-            # 幻听文本钉死。替换类提案仍保守保留（听不到≠该换字）。
-            return True, "TARGET_INAUDIBLE_DELETE_SPAN", audit
-        return False, "TARGET_INAUDIBLE_KEEP_CURRENT", audit
     if llm_call is None:
         return False, "JUDGE_UNAVAILABLE_KEEP_CURRENT", audit
 
@@ -366,6 +385,21 @@ def adjudicate_with_witness(
         structured_chat_context=structured_chat_context,
     )
     audit["judge"] = verdict
+    if not witness["target_audible"]:
+        if verdict.get("choice") != "PROPOSED":
+            branch = (
+                "JUDGE_KEEPS_CURRENT"
+                if verdict.get("choice") == "CURRENT"
+                else "JUDGE_UNCERTAIN_KEEP_CURRENT"
+            )
+            return False, branch, audit
+        # Silence is evidence for a deletion proposal, not a decision.  CPA
+        # must still choose PROPOSED from the closed set before any bytes move.
+        if repair_class == "acoustic_drop_cue":
+            return True, "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE", audit
+        if repair_class == "acoustic_delete":
+            return True, "CPA_JUDGE_APPLY_INAUDIBLE_DELETE_SPAN", audit
+        return False, "TARGET_INAUDIBLE_KEEP_CURRENT", audit
     heard = str(witness.get("heard_pinyin") or "")
     uncertain = list(witness.get("uncertain_positions") or [])
     compat_proposed = pinyin_compatibility(

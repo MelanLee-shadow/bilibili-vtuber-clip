@@ -23,10 +23,10 @@
 
 ## 硬约束
 
-- 上传语义修复永不放行未见证改写：可听辨的发音/语义变化须过相应 fidelity/声学门；同音、
-  近同音或字母正字法变化还必须有 cue/referent-bound typed textual authority。拼音相同、
-  纯音频、同片 transcript 或宽泛 context 只能生成候选，不能单独授权选字；缺权威就 revert
-  并阻断。
+- 上传语义修复只允许三类非 CPA mutation：Ivan operator truth、纯机械规范化和有完整
+  `glossary-expected-value-gate.v1` 的高先验 canon。expected-value 只接受未登记近音误听面
+  到登记 glossary/roster 词面；两边都是登记词面时专名平等，必须交 CPA。其余词面、语义、
+  插入或删除变化都必须由 CPA 明确选择 `PROPOSED`；AGY/声学与拼音门只作证据/否决。
 - 实体上下文构建完成后必须生成同一份 hash-bound `.clip-context.json`：绑定 candidate/date、
   官方源 SHA、整片 draft、selection hook、relation/topic、结构化弹幕/SC 与 scoped speech
   memory。终审、声学请求、StoryContract、record 和交付包只能引用验证过的同一 digest；
@@ -193,11 +193,12 @@
   该失败；mutation audit 必须报 `CORRECTION_DISCOVERY_INCOMPLETE`。只有 typed
   `AUDITOR_UNAVAILABLE` 可按有界
   `provider_transient / final_review_correction_discovery` 重试；非法合同/状态仍是终态错误。
-- exact-final 的声学复核只能关闭“当前读音支持且建议读音明确不兼容”的可听辨提案。若 finding
-  涉及同音、近同音、`repair_class=phonetic`、字母规范写法，或 current/proposed 的规范化
-  发音键相同（如 `毁神→绘声`、`大恩→大N`），纯音频不能决定字形；即使 verdict 报
-  current `SUPPORTED`、proposed `INCOMPATIBLE`，仍必须保留 finding、记录
-  `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断 v2 放行，直到独立文字权威解决。
+- exact-final 中 AGY/声学层是证人，不是法官：它只给出目标是否可闻、疑似拼音及
+  current/proposed 发音兼容度，CPA 结合文字 provenance 与整片语境作最终
+  CURRENT/PROPOSED 裁决。代码级拼音门可以否决与声音不兼容的 CPA PROPOSED，但不能凭
+  音频自行选字；同音或规范发音键相同（如 `大恩→大N`）还必须有文字证据，缺失时记录
+  `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断。近同音若声音可区分，可把 AGY 拼音作为
+  证据交给 CPA，但 CPA 未明确选边仍是未决。
 - exact-final SRT 使用**交付局部时间轴**，而声学 verifier 绑定的通常是带前后 padding 的源
   media。每个 `subtitle-span-acoustic-check-request.v1` 必须显式携带非负
   `source_media_timeline_offset_ms`，并把它纳入 evidence/request hash；实际裁剪必须执行
@@ -205,14 +206,11 @@
   `subtitle-audio-timeline-binding.v1` 同时记录 delivery-local target/context 和 source-media
   target/crop。字段缺失、负数、类型错误、请求重算 hash 不符、target 越界或旧 cache 未绑定
   offset 都 fail closed；branding intro 不参与这个 pre-burn 时间轴。
-- correction pass 中所有已应用的同音/近同音/字母正字法 mutation，都必须携带与当前 cue
-  或 referent 精确绑定且 PASS 的 `subtitle-orthography-authority.v1` 文字权威回执。可授权的
-  typed provenance 仅包括精确词面 glossary、official roster、source truth、bound structured
-  chat、verified OCR，或另有强制层已显式标记 `mutation_authorized=true` 的来源。raw
-  glossary prose 中单个规范化字符只能作为 `glossary_context` 召回候选，不能授权汉字选择；
-  单字正字法必须另有 referent-bound typed authority。纯 acoustic、
-  同片 transcript recurrence、宽泛 `structured_context`（含 selection hook）和 speech-memory
-  命中都只能提出 candidate，不能授权选字。
+- correction pass 的同音/近同音/字母 mutation 必须携带 CPA `PROPOSED`，或同时携带可重算的
+  `glossary-expected-value-gate.v1` 与 `expected-value-canon-authority.v1`。后者要求 glossary/
+  official roster provenance、拼音相容、current 未登记、proposed 已登记；两边已登记立即失效。
+  raw glossary prose、纯 acoustic、同片 transcript recurrence、宽泛 context 和 speech-memory
+  只能召回。Ivan operator truth 另由 governed late source-truth 精确绑定。
 - `final-review-audit.v2` 必须携带 PASS 的
   `subtitle-correction-mutation-audit.v1`，把 correction pass 的 `applied_count` 与所有实际
   applied mutation 逐条对齐，并验证每条 typed authority receipt。缺回执或计数漂移均报

@@ -21,6 +21,7 @@ from src.autoslice.chat_authority import (
     load_clip_opening_address_config,
     load_referent_groups,
     normalize_code_switch_surfaces,
+    normalize_expected_value_surfaces,
     normalize_hard_meme_surfaces,
     reconcile_contradictory_entity_repairs,
     registered_entity_names,
@@ -1538,6 +1539,16 @@ def _finalize_text_evidence(
     srt_text, hard_meme_surface_audit = normalize_hard_meme_surfaces(srt_text)
     chat_authority_audit["final_hard_meme_surface_audit"] = (
         hard_meme_surface_audit
+    )
+    # Explicit expected-value canon is a narrow, auditable zero-CPA lane.
+    # It runs after every mutable model stage but before operator source truth,
+    # so a rare source-bound exception can still override the statistical
+    # default.
+    srt_text, expected_value_surface_audit = (
+        normalize_expected_value_surfaces(srt_text)
+    )
+    chat_authority_audit["final_expected_value_surface_audit"] = (
+        expected_value_surface_audit
     )
     srt_text, source_truth_audit = _apply_source_truth_and_resolve_deferred_foreign(
         srt_text, spec=spec, durations=durations,

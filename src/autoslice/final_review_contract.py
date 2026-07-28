@@ -170,16 +170,12 @@ def validate_final_review_release(
 
 _DECIDED_KEEP_CURRENT_BRANCHES = frozenset(
     {
-        # judge 走完闭集仍不确定 → 保留（Ivan 2026-07-26 无人值守裁定）
-        "JUDGE_UNCERTAIN_KEEP_CURRENT",
         # judge 明确选 CURRENT（Ivan 2026-07-27：decided keep 是已完成的
         # 机器决定，发出去检查有问题再修，而不是一直不发）
         "JUDGE_KEEPS_CURRENT",
         # judge 选了 PROPOSED 但代码级拼音门否决——门本身就是决定
         "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT",
-        # 近音改拼写无 text authority ——保守保留是既定政策产物
-        "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT",
-        # 见证人在目标时窗听不到目标——证据性保留
+        # CPA 看完「目标不可闻」证据仍选了一个非删除替换；证据门保留。
         "TARGET_INAUDIBLE_KEEP_CURRENT",
     }
 )

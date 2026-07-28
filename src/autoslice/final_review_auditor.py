@@ -4,18 +4,19 @@
 任何一层用"审片员视角"看过最终成品。本层补上这只眼睛：在全部证据车道之后
 用 LLM 扫终稿字幕。LLM 本身**只报不改**；每条发现按证据纪律路由：
 
-- ``homophone_fix``：建议与原文去声调同音（声学保真）→ 自动应用。这等价
-  于"修正器改对了 + 守卫放行"的正规路径，只是发现向量换成了审片员；
-  chat 证据拥有的 cue 一律不动（外层终审的面不可被扰动）。
+- ``text-backed candidate``：glossary/roster 的高先验近音候选可走显式
+  expected-value canon 零 CPA 旁路；但 current/proposed 若都是登记词面，
+  专名平等，必须退出旁路进入 CPA。其他文字证据只负责提名。
+  Ivan operator truth 与纯标点/空格/全半角等机械规范化也可绕过 CPA。
 - ``context adjudication``：其余有局部替换建议的发现只能生成“当前完整 cue / 一次
-  局部替换后的完整 cue”两候选；音频验证器只报告两者的声学相容度，代码再按固定
-  规则融合语境与声学证据。模型不能自由改写或直接选择文本。UNCERTAIN、范围不合法、
-  chat/词典权威保护均保留原文并披露。
+  局部替换后的完整 cue”两候选；AGY/Gemini 只作无候选拼音证人，CPA
+  结合拼音、完整语境与绑定文字证据作最终闭集选择，代码只校验拼音相容
+  与收据合同。范围不合法或 CPA 未到场时保留原文并披露。
 - ``disclosure``：无可验证建议的怀疑只落工件与日报。
 
 审片员是发现器不是自由改写器。它的价值在于把「季下」「苏人」这类人眼
-一秒识别的胡话在交付前暴露出来；非同音改写必须再经上下文音频定夺，并把
-请求、候选和判决完整留痕。
+一秒识别的胡话在交付前暴露出来；非 operator/mechanical/expected-value
+改写必须再经 CPA 定夺，并把请求、候选和判决完整留痕。
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from src.autoslice.acoustic_witness_adjudication import (
     adjudicate_with_witness,
     build_witness_request,
 )
+from src.autoslice.glossary_expected_value import glossary_expected_value_gate
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.source_subtitle_truth import (
     MIN_CUE_OVERLAP_MS,
@@ -62,10 +64,10 @@ _AUTO_REPAIR_CLASSES = frozenset(
         "acoustic_drop_cue",
     }
 )
-# T1 见证近音自动应用（Ivan 2026-07-19「不能把修复链绑死在 Gemini 额度上」）：
-# 修复词面有词表/转写/弹幕见证 + 拼音相似度过档 + suspect 不是注册实体
-# （实体选边永远走音频，kmx/乒乓球案铁律）→ 纯文本直接应用，不消耗任何
-# 外部调用。三档拼音判定（任一即过）：
+# T1 见证近音候选门：一般候选过门后仍交 CPA 闭集裁决；只有 glossary/roster
+# 的高先验候选同时满足“当前不是登记专名、目标是登记专名”才可走
+# expected-value canon 零 CPA 旁路。两个登记专名之间平等，绝不按频率机械选边。
+# 三档拼音判定（任一即过）：
 # 1) 裸最小 span ≥ 0.45（七/18 六案标定：子女/侄女 0.89、七夕/七星 0.83、
 #    查烟查/恰烟恰 ~0.67、一代/伊那 0.67、核酸/和成 ~0.53）；
 # 2) 有界扩窗（span 两侧各 +1 共享字）≥ 0.65——裸 span 量法会把「单字换
@@ -210,20 +212,40 @@ def _orthography_ambiguous(
 ) -> bool:
     """Whether audio cannot determine the changed written surface."""
 
+    if _declared_respell_edit(current_cue, proposed_cue):
+        return True
     suspect = str(finding.get("suspect") or "")
     suggestion = str(finding.get("suggestion") or "")
     if (
         suspect
         and suggestion
-        and (
-            _homophone_equal(suspect, suggestion)
-            or _near_homophone_equal(suspect, suggestion)
-        )
+        and _homophone_equal(suspect, suggestion)
     ):
         return True
     current_key = _orthography_pronunciation_key(current_cue)
     proposed_key = _orthography_pronunciation_key(proposed_cue)
     return bool(current_key and current_key == proposed_key)
+
+
+def _declared_respell_edit(current_cue: str, proposed_cue: str) -> bool:
+    """Return whether this exact edit is a committed spelling rule.
+
+    A pinyin witness can prove the target was spoken, but cannot overturn a
+    registered proper-name grapheme direction such as 林墨 -> 礼墨.
+    """
+
+    try:
+        from src.autoslice.term_authority import respell_pairs
+
+        return any(
+            surface
+            and canonical
+            and surface in current_cue
+            and current_cue.replace(surface, canonical, 1) == proposed_cue
+            for surface, canonical in respell_pairs()
+        )
+    except Exception:
+        return False
 
 
 def _strict_homophone_tie(
@@ -335,6 +357,14 @@ def protected_terms() -> frozenset[str]:
     """钦定词面集合——委托唯一加载源 term_authority（见该模块 docstring）。"""
 
     from src.autoslice.term_authority import protected_terms as _load
+
+    return _load()
+
+
+def registered_terms() -> frozenset[str]:
+    """Canonical peers for the proper-name equality guard."""
+
+    from src.autoslice.term_authority import registered_terms as _load
 
     return _load()
 
@@ -840,19 +870,24 @@ def route_findings(
     *,
     protected_cue_indexes: Iterable[int] = (),
     protected_term_set: frozenset[str] | None = None,
+    registered_term_set: frozenset[str] | None = None,
     entity_surface_set: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
-    """Apply sound-faithful and witnessed-near-homophone suggestions; disclose the rest.
+    """Apply bounded expected-value canon; route every other edit to CPA.
 
-    ``entity_surface_set``：注册实体（referent groups）的全部 canonical+surface
-    词面。suspect 命中它 = 实体选边（kmx/乒乓球案），永不纯文本应用，必须走
-    声学仲裁——这是 T1 车道的保向铁律边界。
+    ``registered_term_set`` defines equal canonical peers.  If both sides are
+    registered (kmx/乒乓球、恋青/恋死), glossary frequency cannot choose.
     """
 
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     texts = [cue.text for cue in cues]
     protected = {int(v) for v in protected_cue_indexes}
     guarded_terms = protected_terms() if protected_term_set is None else protected_term_set
+    registered = (
+        registered_terms()
+        if registered_term_set is None
+        else registered_term_set
+    )
     folded_entity_surfaces = {
         surface.casefold() for surface in entity_surface_set if surface
     }
@@ -863,11 +898,6 @@ def route_findings(
         cue_index = int(row["cue_index"])
         suspect = str(row["suspect"])
         suggestion = row.get("suggestion")
-        if any(term in suspect for term in guarded_terms):
-            # 词典权威高于审片直觉（立语/做0.4 案）：钦定词面永不自动改写。
-            row["routed"] = "disclosure_protected_term"
-            rows.append(row)
-            continue
         candidate, contract_error = _candidate_from_finding(texts[cue_index - 1], row)
         expected_full_cue = row.get("proposed_full_cue")
         if candidate is not None and expected_full_cue and candidate != str(expected_full_cue):
@@ -881,6 +911,44 @@ def route_findings(
             and cue_index not in protected
             and suspect in texts[cue_index - 1]
         )
+        orthography_authority = _orthography_text_authority(row)
+        expected_value_gate = (
+            glossary_expected_value_gate(
+                row,
+                base_text=texts[cue_index - 1],
+                proposed_text=str(candidate or ""),
+                registered_term_set=registered,
+                orthography_authority=_orthography_text_authority,
+                near_homophone_gate=_near_homophone_gate,
+            )
+            if applicable
+            else None
+        )
+        if expected_value_gate is not None:
+            before = texts[cue_index - 1]
+            texts[cue_index - 1] = str(candidate)
+            row["routed"] = "expected_value_canon"
+            row["before"] = before
+            row["after"] = str(candidate)
+            row["expected_value_gate"] = expected_value_gate
+            row["orthography_authority"] = orthography_authority
+            row["mutation_authority"] = {
+                "schema_version": "expected-value-canon-authority.v1",
+                "status": "PASS",
+                "decision_authority": "EXPECTED_VALUE_CANON",
+                "surface": suspect,
+                "canonical": str(suggestion),
+                "registered_name_conflict": False,
+            }
+            applied += 1
+            rows.append(row)
+            continue
+        if any(term in suspect for term in guarded_terms):
+            # A canonical/protected current term never loses merely because a
+            # different glossary term is frequent.
+            row["routed"] = "disclosure_protected_term"
+            rows.append(row)
+            continue
         base_folded = texts[cue_index - 1].casefold()
         candidate_folded = str(candidate or "").casefold()
         suspect_folded = suspect.casefold()
@@ -896,7 +964,6 @@ def route_findings(
             )
             for surface in folded_entity_surfaces
         )
-        orthography_authority = _orthography_text_authority(row)
         if (
             applicable
             and row.get("repair_class") != "source_backed_entity"
@@ -905,10 +972,13 @@ def route_findings(
             and _homophone_equal(suspect, str(suggestion))
             and orthography_authority["status"] == "PASS"
         ):
-            texts[cue_index - 1] = candidate
-            row["routed"] = "homophone_fix"
+            # Bound spelling evidence can nominate and support PROPOSED, but
+            # it is not a decision authority.  Keep the bytes untouched here
+            # and send the closed set through the CPA judge below.
+            row["routed"] = "disclosure"
             row["orthography_authority"] = orthography_authority
-            applied += 1
+            row["requires_cpa_judge"] = True
+            row["legacy_direct_route"] = "homophone_fix"
             rows.append(row)
             continue
         # T1 见证近音（2026-07-19，7/18 额度事故类机制）：词面有
@@ -925,12 +995,12 @@ def route_findings(
             else None
         )
         if near_gate is not None:
-            texts[cue_index - 1] = candidate
-            row["routed"] = "witnessed_near_homophone_fix"
+            row["routed"] = "disclosure"
             row["near_homophone_gate"] = near_gate
             row["pinyin_similarity"] = near_gate["pinyin_similarity"]
             row["orthography_authority"] = orthography_authority
-            applied += 1
+            row["requires_cpa_judge"] = True
+            row["legacy_direct_route"] = "witnessed_near_homophone_fix"
         else:
             if applicable and entity_surface_conflict:
                 row["entity_surface_conflict"] = True
@@ -1142,6 +1212,7 @@ def build_context_adjudication_request(
         ],
         "repair_class": str(finding.get("repair_class") or ""),
         "candidate_provenance": finding.get("candidate_provenance"),
+        "orthography_authority": _orthography_text_authority(finding),
         "evidence_cue_ids": list(finding.get("evidence_cue_ids") or []),
         "reason": str(finding.get("why") or "")[:120],
     }
@@ -1305,25 +1376,7 @@ def adjudicate_context_finding(
     )
     witness_judge_audit: dict[str, Any] = {}
     strict_tie = _strict_homophone_tie(finding, request)
-    if (
-        valid
-        and orthography_ambiguous
-        and orthography_authority["status"] != "PASS"
-        and verdict.get("target_audible") is True
-        and repair_class not in {"acoustic_delete", "acoustic_drop_cue"}
-        and not strict_tie
-    ):
-        # near-homophone proposals never reach the judge without textual
-        # authority: the audio could in principle tell them apart.  Strict
-        # ties fall through to the judge (Ivan 2026-07-27 概率裁定令).
-        policy_branch = "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
-    elif valid and orthography_equivalent and verdict.get("target_audible") is True:
-        # Sounds are identical by construction (source-backed spelling swap,
-        # 大大恩 -> 大N): the witness cannot distinguish and the textual
-        # authority already passed upstream. Spelling authority wins.
-        repaired = True
-        policy_branch = "ACOUSTIC_ORTHOGRAPHY_NEUTRAL_CONTEXT_TIEBREAK_APPLY_PROPOSED"
-    elif valid:
+    if valid:
         repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
             check_request=request,
             witness=verdict,
@@ -1333,12 +1386,18 @@ def adjudicate_context_finding(
         if (
             repaired
             and orthography_ambiguous
-            and orthography_authority["status"] != "PASS"
+            and orthography_authority["status"] == "PASS"
         ):
-            # only strict ties reach the judge without textual authority;
-            # a judged PROPOSED there is the semantic tiebreak Ivan ordered
-            # (音频中立时按概率排序选最高，不许保持原样).
-            policy_branch = "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
+            policy_branch = (
+                "CPA_JUDGE_WITH_TEXT_AUTHORITY_APPLY_PROPOSED"
+            )
+        elif (
+            repaired
+            and orthography_ambiguous
+            and orthography_authority["status"] != "PASS"
+            and strict_tie
+        ):
+            policy_branch = "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
     output = srt_text
     if repaired:
         cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
@@ -1365,7 +1424,7 @@ def adjudicate_context_finding(
         and orthography_ambiguous
         and orthography_authority["status"] != "PASS"
         and strict_tie
-        and policy_branch == "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
+        and policy_branch == "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
     )
     mutation_authority = {
         "schema_version": "subtitle-correction-mutation-authority.v1",
@@ -1383,11 +1442,11 @@ def adjudicate_context_finding(
             (
                 "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK"
                 if semantic_tiebreak
-                else "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+                else "CPA_JUDGED_WITH_TEXTUAL_ORTHOGRAPHY_EVIDENCE"
             )
             if repaired and orthography_ambiguous
             else (
-                "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
                 if repaired
                 else None
             )
@@ -1413,6 +1472,8 @@ def adjudicate_context_finding(
         },
         "orthography_ambiguous": orthography_ambiguous,
         "orthography_authority": orthography_authority,
+        "decision_authority": "CPA_JUDGE",
+        "witness_authority": "EVIDENCE_ONLY",
         "mutation_authority": mutation_authority,
     }
 
@@ -1585,7 +1646,17 @@ def audit_correction_mutation_authority(
         if not isinstance(row, Mapping):
             continue
         routed = row.get("routed")
+        if routed == "expected_value_canon":
+            applied_rows.append((row, row.get("mutation_authority")))
+            continue
         if routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
+            failures.append(
+                {
+                    "reason_code": "NON_CPA_MUTATION_ROUTE_FORBIDDEN",
+                    "cue_index": row.get("cue_index"),
+                    "routed": routed,
+                }
+            )
             applied_rows.append((row, row.get("orthography_authority")))
             continue
         adjudication = row.get("context_audio_adjudication")
@@ -1612,20 +1683,30 @@ def audit_correction_mutation_authority(
     for row, receipt in applied_rows:
         routed = row.get("routed")
         receipt_valid = False
-        if routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
-            # Do not trust a producer-supplied PASS bit.  Recompute the typed
-            # textual authority from the finding's bound provenance and
-            # require the receipt to be the exact result.  This prevents a
-            # legacy/alternate producer from laundering an unsupported
-            # spelling mutation with {"status": "PASS"}.
-            expected = _orthography_text_authority(row)
+        if routed == "expected_value_canon":
+            expected_gate = glossary_expected_value_gate(
+                row,
+                base_text=str(row.get("before") or ""),
+                proposed_text=str(row.get("after") or ""),
+                registered_term_set=registered_terms(),
+                orthography_authority=_orthography_text_authority,
+                near_homophone_gate=_near_homophone_gate,
+            )
             receipt_valid = bool(
                 isinstance(receipt, Mapping)
-                and dict(receipt) == expected
-                and expected["status"] == "PASS"
-                and expected["provenance_kind"]
-                in _BOUND_ORTHOGRAPHY_PROVENANCE_KINDS
+                and receipt.get("schema_version")
+                == "expected-value-canon-authority.v1"
+                and receipt.get("status") == "PASS"
+                and receipt.get("decision_authority")
+                == "EXPECTED_VALUE_CANON"
+                and receipt.get("surface") == row.get("suspect")
+                and receipt.get("canonical") == row.get("suggestion")
+                and receipt.get("registered_name_conflict") is False
+                and expected_gate is not None
+                and row.get("expected_value_gate") == expected_gate
             )
+        elif routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
+            receipt_valid = False
         elif routed == "context_audio_adjudicated_fix":
             adjudication = row.get("context_audio_adjudication")
             orthography_ambiguous = (
@@ -1654,7 +1735,7 @@ def audit_correction_mutation_authority(
                 orthography_ambiguous is True
                 and isinstance(adjudication, Mapping)
                 and adjudication.get("policy_branch")
-                == "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
+                == "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
                 and _orthography_text_authority(row)["status"] != "PASS"
                 and isinstance(request, Mapping)
                 and _strict_homophone_tie(row, request)
@@ -1665,10 +1746,10 @@ def audit_correction_mutation_authority(
                 (
                     "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK"
                     if semantic_tiebreak
-                    else "TEXTUAL_ORTHOGRAPHY_AUTHORITY_PLUS_ACOUSTIC"
+                    else "CPA_JUDGED_WITH_TEXTUAL_ORTHOGRAPHY_EVIDENCE"
                 )
                 if orthography_ambiguous is True
-                else "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
             )
             orthography_valid = True
             if orthography_ambiguous is True and not semantic_tiebreak:
@@ -1693,6 +1774,14 @@ def audit_correction_mutation_authority(
                 and receipt.get("basis") == expected_basis
                 and set(receipt) == {"schema_version", "status", "basis"}
                 and orthography_valid
+                and isinstance(adjudication, Mapping)
+                and adjudication.get("decision_authority") == "CPA_JUDGE"
+                and adjudication.get("witness_authority") == "EVIDENCE_ONLY"
+                and isinstance(witness_judge, Mapping)
+                and witness_judge.get("decision_authority") == "CPA_JUDGE"
+                and witness_judge.get("witness_authority") == "EVIDENCE_ONLY"
+                and isinstance(judge, Mapping)
+                and judge.get("choice") == "PROPOSED"
             )
         if not receipt_valid:
             failures.append(

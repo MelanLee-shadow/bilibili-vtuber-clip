@@ -2516,6 +2516,23 @@ def test_only_zhinv_rule_is_unbypassable_at_final_surface():
     ]
 
 
+def test_expected_value_canon_reasserts_limo_after_mutable_stages():
+    from src.autoslice.chat_authority import normalize_expected_value_surfaces
+
+    source = _srt("切，那就差林墨没吃了", "下一句")
+    output, audit = normalize_expected_value_surfaces(source)
+
+    assert parse_srt_cues(output)[0].text == "切，那就差礼墨没吃了"
+    assert audit["status"] == "APPLIED"
+    assert audit["decision_authority"] == "EXPECTED_VALUE_CANON"
+    assert audit["repairs"][0]["replacements"][0] == {
+        "surface": "林墨",
+        "canonical": "礼墨",
+        "authority": "lidousha-expected-value-canon.v1",
+        "count": 1,
+    }
+
+
 def test_final_surface_gate_rejects_human_override_that_reintroduces_zhinv():
     bad = _srt("人工裁决又写回直女")
     audit: dict = {}

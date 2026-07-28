@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -591,18 +592,19 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
         source,
         finding,
         entity_verifier=acoustics_reports_spoken_en,
+        judge_llm_call=_judge("PROPOSED"),
     )
 
     assert "大N霸凌" in output
     assert "大大恩" not in output
     assert audit["repaired"] is True
     assert audit["policy_branch"] == (
-        "ACOUSTIC_ORTHOGRAPHY_NEUTRAL_CONTEXT_TIEBREAK_APPLY_PROPOSED"
+        "CPA_JUDGE_WITH_TEXT_AUTHORITY_APPLY_PROPOSED"
     )
     assert audit["orthography_equivalence"]["matched"] is True
 
 
-def test_acoustics_cannot_authorize_ungrounded_homophone_orthography():
+def test_cpa_can_use_distinguishing_pinyin_without_text_authority():
     source = _srt("毁神来了")
     finding = {
         "cue_index": 1,
@@ -624,12 +626,13 @@ def test_acoustics_cannot_authorize_ungrounded_homophone_orthography():
         judge_llm_call=_judge("PROPOSED"),
     )
 
-    assert output == source
-    assert audit["repaired"] is False
-    assert audit["orthography_ambiguous"] is True
+    assert "绘声来了" in output
+    assert audit["repaired"] is True
+    assert audit["orthography_ambiguous"] is False
     assert audit["orthography_authority"]["status"] == "BLOCK"
-    assert audit["policy_branch"] == (
-        "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
+    assert audit["policy_branch"] == "WITNESS_JUDGE_APPLY_PROPOSED"
+    assert audit["mutation_authority"]["basis"] == (
+        "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
     )
 
 
@@ -663,7 +666,7 @@ def test_strict_homophone_tie_judge_semantic_tiebreak_applies_proposed():
     assert audit["orthography_ambiguous"] is True
     assert audit["orthography_authority"]["status"] == "BLOCK"
     assert audit["policy_branch"] == (
-        "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
+        "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
     )
     assert audit["mutation_authority"]["status"] == "PASS"
     assert audit["mutation_authority"]["basis"] == (
@@ -698,9 +701,9 @@ def test_strict_homophone_tie_judge_current_keeps_and_discloses():
     assert audit["mutation_authority"]["status"] == "NOT_APPLIED"
 
 
-def test_near_homophone_without_authority_still_short_circuits_pre_judge():
-    """近音（非严格同音）无 text authority 仍不见 judge：音频原则上可分辨，
-    保守保留不变（毁神/绘声 shen≠sheng 同款守卫的显式回归锚）。"""
+def test_near_homophone_without_authority_still_goes_to_cpa():
+    """近音可由拼音区分；没有文字权威时也必须由 CPA 明确裁决，不能由
+    预判门在 CPA 之前替它保持现文本。"""
 
     source = _srt("毁神来了")
     judge_calls = []
@@ -726,12 +729,10 @@ def test_near_homophone_without_authority_still_short_circuits_pre_judge():
         judge_llm_call=counting_judge,
     )
 
-    assert output == source
-    assert audit["repaired"] is False
-    assert audit["policy_branch"] == (
-        "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED_KEEP_CURRENT"
-    )
-    assert judge_calls == []
+    assert "绘声来了" in output
+    assert audit["repaired"] is True
+    assert audit["policy_branch"] == "WITNESS_JUDGE_APPLY_PROPOSED"
+    assert len(judge_calls) == 1
 
 
 def test_mutation_audit_accepts_semantic_tiebreak_and_blocks_laundering():
@@ -992,16 +993,18 @@ def test_acoustic_drop_cue_requires_whole_target_inaudible():
         return _witness(request, "?", audible=False, uncertain=(0,))
 
     repaired, audit = adjudicate_context_finding(
-        source, findings[0], entity_verifier=inaudible
+        source,
+        findings[0],
+        entity_verifier=inaudible,
+        judge_llm_call=_judge("PROPOSED"),
     )
     assert repaired == ""
     assert audit["repaired"] is True
-    assert audit["policy_branch"] == "TARGET_INAUDIBLE_DROP_CUE"
+    assert audit["policy_branch"] == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
 
 
-def test_witnessed_near_homophone_applies_without_audio():
-    """T1 车道（2026-07-19 额度事故重构）：词表见证 + 拼音近音 + 非实体选边
-    → 纯文本应用，零外部调用（核酸天下→和成天下案型）。"""
+def test_glossary_near_homophone_uses_expected_value_canon():
+    """未登记误听面→glossary 规范词走高收益零 CPA 通道。"""
     srt = _srt("只剩下核酸天下了", "第二句正常文本")
     findings = audit_final_subtitles(
         srt,
@@ -1024,11 +1027,43 @@ def test_witnessed_near_homophone_applies_without_audio():
 
     output, audit = route_findings(srt, findings)
     assert "和成天下" in output
-    assert "核酸天下" not in output
     row = audit["findings"][0]
-    assert row["routed"] == "witnessed_near_homophone_fix"
-    assert row["pinyin_similarity"] >= 0.45
+    assert row["routed"] == "expected_value_canon"
+    assert row["expected_value_gate"]["policy"] == "GLOSSARY_HIGH_PRIOR"
+    assert row["expected_value_gate"]["registered_name_conflict"] is False
+    assert row["mutation_authority"]["decision_authority"] == (
+        "EXPECTED_VALUE_CANON"
+    )
     assert audit["applied_count"] == 1
+    assert audit_correction_mutation_authority(audit)["status"] == "PASS"
+
+
+def test_registered_proper_names_are_equal_and_exit_expected_value_lane():
+    srt = _srt("我今天在看恋青", "第二句")
+    finding = {
+        "cue_index": 1,
+        "kind": "entity",
+        "suspect": "恋青",
+        "suggestion": "恋死",
+        "proposed_full_cue": "我今天在看恋死",
+        "repair_class": "phonetic",
+        "candidate_provenance": {"kind": "glossary", "surface": "恋死"},
+        "base_text_sha256": hashlib.sha256(
+            "我今天在看恋青".encode("utf-8")
+        ).hexdigest(),
+        "why": "两个登记作品名近音",
+    }
+
+    output, audit = route_findings(
+        srt,
+        [finding],
+        protected_term_set=frozenset(),
+        registered_term_set=frozenset({"恋青", "恋死"}),
+    )
+
+    assert output == srt
+    assert audit["applied_count"] == 0
+    assert audit["findings"][0]["routed"] == "disclosure"
 
 
 def test_entity_surface_suspect_never_text_applied():
