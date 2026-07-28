@@ -1,67 +1,207 @@
 # Current handoff
 
-Updated: 2026-07-27 ~22:15Z（北京 07-28 06:15）by Claude Fable root session（context limit 收尾；Ivan 指定另一 agent 接手）。
-旧 handoff 内容在 git 历史（本文件此前版本），当天仍相关的事实已折入本版。
+Updated: 2026-07-28T01:33:54Z（北京 2026-07-28 09:33:54）by Codex root。
 
-## 0. 一句话现状
+本文件只记录仍影响下一次操作的 live 状态。历史经过留在 Git；流水线规则只读
+[`docs/pipeline/`](pipeline/README.md)。
 
-李豆沙**正在直播**（runner 22:10Z 起 live-wait，下播后自动收录+跑当天批次）。今晚发生并已修复 BV1ec3A6bEWF 事故（争议搁置件被当新切片上传 + 主播名两处误听照发）；三件修复级重产（850_940 拉拉版 / 909 / 1209_1410）已入队，**等下播后的 tick 自动跑**。生产树 HEAD=**19176a2** 已部署 free（runner md5 verified）。全套测试 2463 passed。
+## 目标
 
-## 1. 目标（不变）
+在**不上传、不改线上 BV**的前提下，接管并收敛 7/24–7/25 事故尾项：
 
-无人值守切片流水线：修复优先、fail-closed 兜底；发布走授权链；「发出去我检查有问题再修，而不是一直不发」。今天新增的硬序（Ivan 原话）：「先把流水线应用上，再开始后面的切片生产」——已执行完毕，生产已恢复。
+- 让 `850`、`1209` 的当前最终包通过远端与本机可移植 canonical audit；
+- 把 `909` 从错误的“记分卡丢失”说法收敛到真实字幕 authority blocker；
+- 持久化 `1573` 已完成的 same-BV fresh-live 验收证据；
+- 修正旧 handoff 中的 legacy replace、直播/CloudFS、等待态等错误操作指引。
 
-## 2. 今晚已完成（全部已 commit + 部署）
+## 已完成
 
-按 commit 顺序（main 分支，全部已到 free /opt/bilive/autoslice/repo）：
+### 生产代码与部署
 
-- **a730fdf** 909 近音字真值「谢谢AC风的比心」（Ivan 授权：无任何可考来源——录播记录缺失、回放弹幕无名、画面无 toast、人耳亦无真值）。
-- **a1adb5a** BV1ec3A6bEWF 事故三修复：
-  1. **出版登记闸口**：`assets/lidousha/publication_registry.v1.json` + `src/autoslice/publication_registry.py`。authorized_upload 在 make-manifest 与 upload 前强制查询：published 候选拒新投稿（只许 edit-replace 原 BV）、hold_pending_review 拒任何上传、registry 不可读 fail-closed。**1209_1410 已登记 hold**；850_940 已登记 published→BV1ec3A6bEWF。
-  2. **witness 否决权修复**：听写 `self_count_mismatch=true`（自称音节数与拼音串对不上）时不得经拼音门否决 judge 排序选择；branch=`WITNESS_SELF_INCONSISTENT_JUDGE_APPLIED`；删除类维持严门。
-  3. **1573 冻结恢复豁免**：repair-run 路径 `load_and_verify(frozen_plan_resume=True)` 跳过 live 政策重算（部署演进曾把冻结置换卡死），哈希不可变性照常。
-  另含 850_940 两条真值（cue15 截断口号「支持李豆……」——她下一句自述「这句话都还没说完」，忠实截断不补全；cue16「我连"支持李豆沙"这句话都还没说完呢」）。
-- **3f230c4** 850_940 上传证据入库（reports/authorized_uploads/2026-07-24-incident-850940/）+ cue1 真值初版。
-- **5e23ab7** cue1 真值 **Ivan 人耳定版「李姐拉拉，你新来的」**（机器听写 lai-la，我过度合理化成「来啦」被纠正——人耳高于机器听写）。
-- **3e977c2** **CPA judge 缓存**（键=prompt_sha：同听写+同候选+同语境零重复请求；JUDGED 终态才入；根=env `AUTOSLICE_BASE`，无根旁路）+ runner env 注入 AUTOSLICE_BASE + Ivan 要求台账第六节。声学缓存（clip_sha 键）此前已在。
-- **19176a2** **deploy-yield 尾巴保全**：produce_batch_windowed 只返回已开工前缀，合并层原先把未派发队尾清空（**909 今晚因此从 7/25 picks 蒸发**）；现尾巴留队 + defer 时提前收官；talk/song 双 lane 同修。
+当前生产：
 
-事故语境（给接手者）：850_940/1209_1410 是 7/24 当晚批次（上传许可:否）交付后搁进 `lidousha/2026-07-22-v15-preview/争议片段待Ivan裁定/` 的搁置件；今日重产出 review_ready 后上传链把 review_ready 当放行传了（BV1ec3A6bEWF）。Ivan 认定字幕大量专名错（支持留守/刘若莎=李豆沙、拉拉=李姐拉拉、都带抽我=就带宠物）。裁定链其实全部检出、judge 都投了正确候选，是拼音硬门+自不一致听写否决了 judge——已修。画面探针实锤：被查看角色 角色ID=李豆沙（粉丝同名号入会），kmx 粉丝原话「我只留了一个召唤宠物的技能」。
+- `free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT`
+  = `0fb9c995f31f92953c5ccba7a837cc6d06d01d5c`
+- deploy guard 不存在，`/opt/bilive/autoslice/DISABLED` 不存在；
+- runner MD5：`369685360528d8c076f21cdba1c74428`。
 
-## 3. 进行中（后台状态，接手必读）
+本轮承重提交：
 
-- **直播中**：runner（我手动踢的 tick，free pid 3372359，flock 持锁）进入 live-wait；下播后收录、跑 2026-07-28 新批次；cron `*/10` flock -n 与之互斥，无需干预。
-- **三件重产已入队**（state 行均 failed(recoverable)，7/24 退避计时器已按 Ivan 指令清零）：
-  - `auto_193129_850_940`（7/24）：重产将应用「李姐拉拉」等 4 处修复；**出包后不是上传**（registry 会拒），走 edit-replace，见下一步①。
-  - `auto_192000_909_1014`（7/25）：⚠️ 22:20Z 已再次 candidate_rejected——**拒因=我重建的行缺 `selection_scorecard`**（semantic_recall lane 硬门 SELECTION_SCORECARD_REQUIRED，talk_lane.py ~1270；幂等 fail-fast，没浪费生产）。原始记分卡随蒸发事故永久丢失（state.bak 是拒后快照、summary 只有 hook 无维度分）。**接手正确修法：不许伪造记分卡**——用选题引擎对该窗口正当重打分（重新生成 selection_scorecard，metric v2 资产），把分数写回行里再 `revive_rejected_candidates.py`；或请 Ivan 直接豁免该门（一次性授权记台账）。真值 `20260725-ac-bixin-thanks-r1` 已在树上，出包后走标准上传（从未发布、无 hold）。
-  - `auto_183122_1209_1410`（7/24）：上轮 producer_error，重试引擎自跑；**registry hold，Ivan 放行前绝不上传**。
-- **1573 置换（BV1DAg46HEXE）**：本地链路全通（审计豁免+biliup cookie 已 renew，canary rc=0）。纯等 B 站 Creator 把新 cid 40356020489 从 -30 翻正；翻正后 repair-run 幂等续跑完成置换。plan/journal 全套在 free `/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1573/`。若 canary 再报 rc=1：`cd /opt/bilive/app/tmp_manual_upload && /opt/bilive/bin/biliup -u biliup_cookies.json renew`（bilitool 的 cookie 是另一份，今晚一直健康）。
-- **CloudFS 挂载**：22:00Z 死过一次，watchdog 22:05Z 自动重挂+消费者门 COMPLETE。老病，watchdog 管。
-- **CPA 链路已实弹验证**（22:16:39Z 探针 rc=0，Ivan 可在网关对时间戳）：judge/终审/标题只走 `scripts/llm_via_cpa.sh`（CPA env 缺失=exit 2 硬失败，无任何 AGY/Gemini 回落）；AGY 仅精听源上下文 lane。Ivan 曾疑「verdict 全用了 AGY」——结论：否，安静时段=产线真闲着（停产改造+live-wait）。
-- **费用**：今日付费 1016 笔 ≈$6.01（Ivan 已知；「每 $2 报一次」只是本会话临时协议，**不进生产**）。cap=GEMINI_PAID_BACKUP_DAILY_CAP=2000（cpa.env）。账本 `state/gemini-paid-backup/usage-<date>.jsonl`（purpose 分桶：entity_audio_verdict=听写层）。免费池天花板=3key×2model×20RPD=120 笔/日。
-- **⚠️ 我的会话级监控随本会话死亡**，接手者需自建（脚本在 free /tmp，重启会丢，均可轻易重写）：
-  - `python3 /tmp/lane_poll.py`：各日 rr/fail/rej + tick 摘要 + 主 lane 静默哨兵（>25min 无日志且 pgrep==0 才 STALL）。
-  - `python3 /tmp/repro_poll.py`：三重产候选状态 + 850_940 烧录件 sha（旧包 sha 前缀 b6a61ab8，换血=重产完成）。
-  - 1573 续跑：每 ~10min 一次 repair-run（幂等，BLOCKED_DRIFT=正常等待）；或等翻正后手动一次。
+- `a7e751b`：从原始 candidate spec 恢复被遗漏的 selection scorecard；`909`
+  的记分卡**没有永久丢失**。
+- `8bcc1ca`、`87b9e7f`、`f9a1352`、`f4a2af3`：CloudFS/源切片恢复、exact
+  source cut 缓存复用、chat/requeue 中途掉挂保护。
+- `d7eef40`：重复同一 canonical entity 的 structured-chat slot 独立裁定；只在
+  文本 canonical/count/slots 都一致时放行，否则
+  `REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED` fail closed。
+- `4dba80b`：daily manifest 不再保留旧 package 内 chat authority。
+- `b964eb9`：daily manifest 只接受 state + record 共同绑定的 exact final cover，
+  不再固定优先旧 `ai-title.cover.png`。
+- `a8506ff`：把 record-bound `clip-context.json` 装进 portable package，堵住远端
+  auditor 偷读包外 candidate-root 文件的假绿。
+- `0fb9c99`：publication registry 与 gate 文案统一指向
+  `authorized_upload.py repair-*`；不再把 published candidate 指向模糊的
+  “edit-replace”。
 
-## 4. 阻塞 / 等待外部
+全量测试：`2490 passed in 40.55s`。registry targeted：`7 passed`。
 
-- 850_940/909/1209 重产：等**下播**（直播中不产）。
-- 1573 完成：等 B 站审核翻正（外部）。
-- 1209_1410 上传：等 **Ivan 放行**（hold）。
-- 7/24 state 里 5 条 review_ready（fourpack+44_293）是已发布常态（发布不改 state 行）；它们都在 registry published 名单，上传链会拒重传——**设计如此，不是 bug**。
+### `850` 与 `1209` 当前包
 
-## 5. 下一步（按序）
+两案 state 都是 `review_ready / rc=0`，但本轮没有把状态词当放行证据；已重建
+`review_manifest.json`、持久化当前 `package_audit.json`，并把整个包复制到本机，
+用与生产一致的 Pillow/FreeType/RAQM/HarfBuzz runtime 再跑 canonical auditor。
 
-1. **850_940 出包后**：验证新 SRT 四处修复在位（`grep '李姐拉拉\|支持李豆\|李豆沙\|就带宠物' …/replacement_recuts/auto_193129_850_940.recut.srt`；注意 `.recut.burned-final-sapphire72.srt` 是 19:42 的陈旧孤儿边车——record.json 的 subtitle_sha256 指向 `.recut.srt` 才是真身；孤儿正占着上传链同名位，顺手删除或等重产覆盖）→ **edit-replace**：`cd /opt/bilive/autoslice/repo && python3 scripts/bili_archive_tool.py replace BV1ec3A6bEWF --media <新烧录mp4>`（编辑不占配额；封面/标题不动）→ 证据追加进 `reports/authorized_uploads/2026-07-24-incident-850940/` + registry 该行 note 更新 + commit（authorized-upload-must-commit）。
-2. **909 出包后**：标准上传链（build_lidousha_daily_review_manifest → audit_lidousha_review_package --json → authorized_upload make-manifest（--season talk，quote=无人值守常令）→ verify → upload）→ 证据入 `reports/authorized_uploads/2026-07-25-revived/` + **registry 追加 published 行** + commit。
-3. **1209_1410 出包后**：停在 review_ready，报 Ivan 等放行。
-4. **1573 翻正后**：repair-run 续跑完成 → repair-verify-live → completed sidecar → 报 Ivan。
-5. **07-28 新批次**：下播后自动跑；无人值守授权有效；**新发布必须同步写 registry 行**（纪律尚未自动化——把 registry append 挂进 upload 成功路径是个好的下一步）。
-6. Backlog（不急）：truth-refresh 真·单句修复模式（R-成本-02 残余，台账明确「未实现」）；1863「行」320ms timing dice；672/V15 provider transient（V15 fail:4）；1493 沙豆李字幕置换 BV1zzgd6JEHe（registry+edit-replace 流程已具备，照①做）；3573/1475 结案文书；7/18 遗留 kmx称呼串+七星仍 hold。
+共同审计闭包：
 
-## 6. 权威与红线（防跑偏）
+- schema：`lidousha-review-package-audit.v2`
+- policy epoch：`2026-07-23.final-artifact-gates.v3`
+- policy fingerprint：
+  `sha256:8edc12a95b7daae8196ddfe7c673d0f331b2bba1453ae70f422942560f66fe18`
+- auditor source：
+  `sha256:f21e78fe1e7337138624ba0cb6ac809df9adbc03b97b6129bbd3b093cba6a96d`
+- 远端与本机结果：两案均 `passed=true / blocking_issue_count=0 / issue_count=0`
 
-- 要求总账：`docs/reviews/ivan-requirements-ledger-2026-07-26.md`（**第六节=07-27 新增 R-成本-01/02、R-架构-06、R-发布-06、R-裁定-06/07，含 Ivan 原话**）。
-- Memory：`lidousha-publication-registry-hold-gate`、`lidousha-adjudication-cost-caching`（含「truth-refresh 未实现勿当已完成」警示）。
-- 红线速记：registry 是上传唯一授权（review_ready≠可上传）；闭集裁决只归 CPA、音频模型只当耳朵（候选盲听写）；自不一致听写无否决权；人耳定版＞机器听写；发布即快照（证据+registry 行必须 commit）；报 Ivan 的时间用北京时间。
+`850`：
+
+- candidate：`auto_193129_850_940`
+- video：
+  `sha256:9f3344967052eb16a1dcb1d050081b16abef039dca9a42dd9a11ce0124ca091d`
+- final cover：
+  `sha256:d3584be1a2c8a546bcecca6f69cca52ccac3e3b0260b6ff9c74fa8eaae4d2edb`
+- review manifest：
+  `d4656f94e893ed2b18f36d80c7908ca4453767c31bdc4f9ede4c83210b0bf0f2`
+- package audit：
+  `a5c3269a98ac60edfd004aac3abd7a26d27e1d707a2d5da4cd2ec696994c3344`
+- registry：`published → BV1ec3A6bEWF`，禁止新投稿。
+
+`1209`：
+
+- candidate：`auto_183122_1209_1410`
+- video：
+  `sha256:9c96a827cb3e0b9cad4f6fc6eaebfafa7561f7f68c1ec4472360a929ba9b6405`
+- final screenshot-polish cover：
+  `sha256:04557c3889b19078848b0116dbc7e93ea2e4cb3609e4cb2332b5a1c1c61e0742`
+- review manifest：
+  `1d8a8bc1a340847c2372432e0de084713c4c98ea94b3fe20584d01d5a3ee0e8c`
+- package audit：
+  `919b5c1226eda23bba08aa6a3a1151c3fb3dbdfe7a61c1f7495b100cd9a79916`
+- registry：`hold_pending_review`，BVID 为空。
+
+两张最终封面已人工查看：标题清楚、未遮挡关键身份特征、无模型伪字/吐舌；这只完成
+封面视觉 QA，**不代替最终烧录视频的人类完整观看 receipt**。
+
+本机封面像素复验须使用带 RAQM 的
+`/opt/homebrew/bin/python3.14`（Pillow 12.2.0、FreeType 2.14.3、RAQM 0.10.3、
+HarfBuzz 13.2.1、FriBidi 1.0.16）。普通 `.venv` macOS Pillow wheel 没有 RAQM，
+会在最右 glyph 产生 1px 假差异，不能作为该像素证据的合格 verifier runtime。
+
+### `1573` same-BV 修复已闭环
+
+- BVID：`BV1DAg46HEXE`
+- 新 CID：`40356020489`
+- journal seq 7：`VERIFIED`
+- row hash：
+  `75de8725a6b6c3d030bf0ae1e15a52117137072e8ce2a1cddd734e18aba4ae68`
+- fresh-live completed：
+  `same-bv-repair-completed.v1 / VERIFIED_FRESH_LIVE / rc=0`
+- completed SHA-256：
+  `bbb0b439c8881b5dbd09ea8139a16cd94b44c898b4b5ddc5cc9e9167371e6b43`
+- 验证时间：`2026-07-27T23:16:32+0000`
+- completed sidecar 写入本身 `remote_mutation=false`。
+
+本地持久证据（与本 handoff 一起 commit）：
+
+- `reports/authorized_uploads/2026-07-22-per-bv-repair/1573.same-bv-repair-plan.json`
+- `reports/authorized_uploads/2026-07-22-per-bv-repair/1573.same-bv-repair-journal.jsonl`
+- `reports/authorized_uploads/2026-07-22-per-bv-repair/1573.same-bv-repair-completed.json`
+
+## 进行中
+
+没有本任务启动的后台修复进程。
+
+2026-07-28T01:31Z live 快照：
+
+- recorder adapter 约 50 秒新鲜，`service_reachable=true`；
+- `streaming=false / recording=false / finalizing=false`，当前**不在直播**；
+- CloudDrive 是 `findmnt` 实证的 `fuse / CloudFS`；
+- `bilive_record`、`bililive_adapter`、`bililive_recorder` 均 running，
+  restart count 0；
+- 7/24 batch：`review_ready_with_failures / upload_allowed=false`；
+- 7/25 batch：`review_ready_with_failures / upload_allowed=false`。
+
+## 阻塞
+
+### `909`：真实 blocker 是两个重复 `kmx` slot 未获得可投影 authority
+
+- candidate：`auto_192000_909_1014`
+- current state：`candidate_rejected / rc=1`
+- `failure_kind=subtitle_authority`
+- `failure_stage=chat_authority_finalization`
+- `failure_recoverable=false`
+- exact structured-chat event：`17790700`
+- SC 文本：
+  `姐姐姐姐姐还是在直播间摸摸kmx吧，kmx不咬人还喜欢被敲（在公司说怪话好刺激）`
+- structured chat 有两个 `kmx`；当前 safe semantic text 中 canonical occurrence 为 0。
+
+BCUT 在两处对应声槽写成重复“提问什么”；AGY draft 写成两处 `kmx`；本地
+faster-whisper large/medium/small 也分别听到两处重复声槽，但不能单独确定 canonical
+拼写与 cue 投影。单次 entity audio verifier 又返回
+`ENTITY_AUDIO_PROVIDER_FAILED / AGY_QUOTA_EXHAUSTED`。因此不能整句抄 SC，也不能凭
+结构化弹幕自动把两个 `kmx` 填进任意 cue。
+
+继续条件：取得 source truth / typed slot resolution，或 Ivan 明确审定 cue 58–60 的逐 cue
+文字；随后才可 sanctioned revival + rerun。不要因 `d7eef40` 已部署就自动 revive——该提交
+只修正分类，不能创造缺失 authority。
+
+### `850`：机器包已绿，发布门未开
+
+仍缺：
+
+- 对当前 burned-final 视频的真实最终感知复核；
+- hash-bound `lidousha-final-human-review.v2` receipt；
+- Ivan 对 `BV1ec3A6bEWF` 的本次 same-BV 修复明确授权。
+
+### `1209`：机器包已绿，但 registry hold
+
+`hold_pending_review` 未解除；Ivan 放行前不构建上传授权、不投稿。
+
+### `1571`：不是 provider 等待，已 terminal fail-closed
+
+- candidate：`auto_190124_1571_1804`
+- current state：`failed / rc=1`
+- `failure_kind=failure_stage=final_review_contract`
+- `failure_recoverable=false`
+- message：
+  `FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID`
+- chat authority：
+  `/opt/bilive/autoslice/out/2026-07-24/auto_190124_1571_1804/auto_190124_1571_1804.chat-authority.json`
+
+不要再描述成“等 provider 自动重试”；下一步是只读检查 correction mutation audit 的具体
+invalid 字段，再决定修代码还是修 authority。
+
+## 下一步
+
+1. `850`：在当前 package + manifest + canonical audit 冻结不变的前提下，用
+   `build_lidousha_final_human_review.py --prepare-evidence-template` 建模板；实际 reviewer
+   完整观看并填写 observations，builder create-only 生成 receipt。只有拿到 Ivan 对本次
+   same-BV 修复的明确授权后，才依次运行：
+   `make-manifest --final-human-review` → `verify` →
+   `repair-plan --dry-run` → create-only plan/journal →
+   `repair-status` → `repair-run --dry-run` → `repair-run` →
+   `repair-verify-live`。
+2. `1209`：把当前最终视频/字幕/封面交 Ivan 审片；hold 未解除前停在本地/远端审片包。
+3. `909`：先补 exact slot authority；没有 authority 时保持 terminal rejection。
+4. `1571`：按上面的 terminal message 诊断 correction mutation authority，不做无界 revive。
+5. `1573`：证据已经闭环，无需再跑 repair；以后若问当前公开态，应重新 fresh readback，
+   不把 23:16Z receipt 当永久在线状态。
+
+## 红线
+
+- 本任务**没有上传授权**；没有上传 `909/1209`，也没有改 `850` 的线上 BV。
+- `review_ready`、`passed=true`、本地 commit、deploy 成功都不能替代发布授权与公开验收。
+- 禁止 `scripts/bili_archive_tool.py replace`、`swap_video_p.py`、裸 bili API、手工
+  append/edit；same-BV 只走 `scripts/authorized_upload.py repair-*`。
+- 不删除“陈旧 sidecar”来制造绿灯；daily builder 现在按 record hash 同步 chat/context，
+  并按 state + record exact binding 选择最终封面。
+- CloudFS 目录能 `ls` 不等于健康；始终读 `findmnt` 的 TARGET/FSTYPE/SOURCE、adapter
+  fresh status 与容器内 FUSE。

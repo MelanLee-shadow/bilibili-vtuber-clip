@@ -1,0 +1,110 @@
+{
+  "aid": 116969609172199,
+  "bvid": "BV1DAg46HEXE",
+  "candidate_id": "auto_193450_1573_1672",
+  "live_snapshot": {
+    "creator": {
+      "aid": 116969609172199,
+      "available": true,
+      "bvid": "BV1DAg46HEXE",
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/f40a8a352dab1e2f8fb0c27c290bc98ab5824a21.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "source": "https://live.bilibili.com/",
+        "tags": [
+          "人设反转",
+          "假哭",
+          "反差萌",
+          "帅姐",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了"
+      },
+      "state": 0,
+      "state_desc": "开放浏览",
+      "videos": [
+        {
+          "cid": 40356020489,
+          "filename": "n260728ad8bgel6utcnz02yft7cskqxu",
+          "title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了"
+        }
+      ]
+    },
+    "public": {
+      "aid": 116969609172199,
+      "available": true,
+      "bvid": "BV1DAg46HEXE",
+      "cid": 40356020489,
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/f40a8a352dab1e2f8fb0c27c290bc98ab5824a21.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "人设反转",
+          "假哭",
+          "反差萌",
+          "帅姐",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了"
+      },
+      "state": 0
+    },
+    "section": {
+      "available": true,
+      "matches": [
+        {
+          "aid": 116969609172199,
+          "bvid": "BV1DAg46HEXE",
+          "cid": 40356020489,
+          "title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了"
+        }
+      ],
+      "section_id": 9320779
+    }
+  },
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1573/upload_manifest.json",
+    "sha256": "2dbd8b1afbb1fb501c7cd0c230dd1066388b9891a6a085b48a619ea74f209719"
+  },
+  "new_cid": 40356020489,
+  "plan": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1573/same-bv-repair-plan.json",
+    "plan_id": "76889da22d1d4d9283ec009e3c4a697f",
+    "sha256": "02d14c66840f947502911c926b09678de49beaecf02ff414e7bf277f35221b06"
+  },
+  "rc": 0,
+  "remote_mutation": false,
+  "replacement": {
+    "cover": {
+      "bytes": 1010954,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1573/看着像不良帅姐的搭档把大椅子让给李豆.cover.png",
+      "sha256": "9bd4bec337aead2f3ceea83cae26a3c210f7bb1f8a6ebfc0e724b65ed318dc36"
+    },
+    "video": {
+      "bytes": 43681629,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v15-screenshot-cover/release-1573/看着像不良帅姐的搭档把大椅子让给李豆.mp4",
+      "sha256": "5fad50fde80340bebb2d4ff858482d80dff58e6f922dde25593f9d6a03a6523c"
+    }
+  },
+  "schema_version": "same-bv-repair-completed.v1",
+  "status": "VERIFIED_FRESH_LIVE",
+  "verified_at": "2026-07-27T23:16:32+0000",
+  "verified_journal_row": {
+    "at": "2026-07-27T23:16:18.923968+00:00",
+    "journal_path": "/opt/bilive/autoslice/reports/same_bv_repair_ledger.jsonl",
+    "row_sha256": "75de8725a6b6c3d030bf0ae1e15a52117137072e8ce2a1cddd734e18aba4ae68",
+    "seq": 7
+  }
+}
