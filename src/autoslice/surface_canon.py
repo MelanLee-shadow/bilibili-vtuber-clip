@@ -30,6 +30,48 @@ _EXPECTED_VALUE_SURFACE_RULES = tuple(
 )
 
 
+def _partition_expected_value_surface_rules():
+    """Disable a statistical canon as soon as its source becomes a peer term."""
+
+    # Delayed import avoids the term-authority/chat-authority import cycle at
+    # module load time.  registered_terms() is the shared glossary/roster
+    # authority; a profile typo surface is deliberately absent from it until
+    # that surface is independently registered as a real name/term.
+    from src.autoslice.term_authority import registered_terms
+
+    registered = registered_terms()
+    eligible = []
+    conflicts = []
+    for rule in _EXPECTED_VALUE_SURFACE_RULES:
+        if rule.surface in registered and rule.canonical in registered:
+            conflicts.append(rule)
+        else:
+            eligible.append(rule)
+    return tuple(eligible), tuple(conflicts)
+
+
+def _canonicalize_expected_value_surfaces_with_rules(
+    text: str,
+    rules,
+) -> tuple[str, list[dict[str, str | int]]]:
+    normalized = text
+    replacements: list[dict[str, str | int]] = []
+    for rule in rules:
+        count = normalized.count(rule.surface)
+        if not count:
+            continue
+        normalized = normalized.replace(rule.surface, rule.canonical)
+        replacements.append(
+            {
+                "surface": rule.surface,
+                "canonical": rule.canonical,
+                "authority": rule.authority,
+                "count": count,
+            }
+        )
+    return normalized, replacements
+
+
 def canonicalize_hard_meme_surfaces(
     text: str,
 ) -> tuple[str, list[dict[str, str | int]]]:
@@ -54,24 +96,10 @@ def canonicalize_hard_meme_surfaces(
 def canonicalize_expected_value_surfaces(
     text: str,
 ) -> tuple[str, list[dict[str, str | int]]]:
-    """Apply only explicitly selected high-prior, high-benefit canon rules."""
+    """Apply selected high-prior canon unless both spellings are registered."""
 
-    normalized = text
-    replacements: list[dict[str, str | int]] = []
-    for rule in _EXPECTED_VALUE_SURFACE_RULES:
-        count = normalized.count(rule.surface)
-        if not count:
-            continue
-        normalized = normalized.replace(rule.surface, rule.canonical)
-        replacements.append(
-            {
-                "surface": rule.surface,
-                "canonical": rule.canonical,
-                "authority": rule.authority,
-                "count": count,
-            }
-        )
-    return normalized, replacements
+    eligible, _conflicts = _partition_expected_value_surface_rules()
+    return _canonicalize_expected_value_surfaces_with_rules(text, eligible)
 
 
 def _srt_timestamp(ms: int) -> str:
@@ -134,9 +162,13 @@ def normalize_expected_value_surfaces(
 
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     texts = [cue.text for cue in cues]
+    eligible_rules, conflict_rules = _partition_expected_value_surface_rules()
     repairs: list[dict[str, Any]] = []
     for offset, before in enumerate(list(texts)):
-        after, replacements = canonicalize_expected_value_surfaces(before)
+        after, replacements = _canonicalize_expected_value_surfaces_with_rules(
+            before,
+            eligible_rules,
+        )
         if after == before:
             continue
         texts[offset] = after
@@ -151,6 +183,18 @@ def normalize_expected_value_surfaces(
                 "decision_authority": "EXPECTED_VALUE_CANON",
             }
         )
+    registered_name_conflicts = [
+        {
+            "surface": rule.surface,
+            "canonical": rule.canonical,
+            "authority": rule.authority,
+            "count": sum(text.count(rule.surface) for text in texts),
+            "routed": "CPA_REQUIRED",
+            "registered_name_conflict": True,
+        }
+        for rule in conflict_rules
+        if any(rule.surface in text for text in texts)
+    ]
     output = srt_text
     if repairs:
         output = "\n\n".join(
@@ -165,6 +209,8 @@ def normalize_expected_value_surfaces(
         "status": "APPLIED" if repairs else "NO_CHANGE",
         "decision_authority": "EXPECTED_VALUE_CANON",
         "rule_count": len(_EXPECTED_VALUE_SURFACE_RULES),
+        "eligible_rule_count": len(eligible_rules),
+        "registered_name_conflicts": registered_name_conflicts,
         "repairs": repairs,
         "input_srt_sha256": hashlib.sha256(srt_text.encode()).hexdigest(),
         "output_srt_sha256": hashlib.sha256(output.encode()).hexdigest(),

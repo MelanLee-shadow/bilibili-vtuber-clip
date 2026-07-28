@@ -2533,6 +2533,36 @@ def test_expected_value_canon_reasserts_limo_after_mutable_stages():
     }
 
 
+def test_expected_value_canon_stops_when_mishear_surface_becomes_registered(
+    monkeypatch,
+):
+    from src.autoslice.chat_authority import normalize_expected_value_surfaces
+    from src.autoslice import term_authority
+
+    monkeypatch.setattr(
+        term_authority,
+        "registered_terms",
+        lambda: frozenset({"林墨", "礼墨"}),
+    )
+    source = _srt("今天林墨也在", "下一句")
+    output, audit = normalize_expected_value_surfaces(source)
+
+    assert output == source
+    assert audit["status"] == "NO_CHANGE"
+    assert audit["eligible_rule_count"] == 0
+    assert audit["repairs"] == []
+    assert audit["registered_name_conflicts"] == [
+        {
+            "surface": "林墨",
+            "canonical": "礼墨",
+            "authority": "lidousha-expected-value-canon.v1",
+            "count": 1,
+            "routed": "CPA_REQUIRED",
+            "registered_name_conflict": True,
+        }
+    ]
+
+
 def test_final_surface_gate_rejects_human_override_that_reintroduces_zhinv():
     bad = _srt("人工裁决又写回直女")
     audit: dict = {}
