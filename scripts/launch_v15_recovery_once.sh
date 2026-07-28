@@ -55,6 +55,10 @@ tar -C "$PRODUCTION_REPO" \
     --exclude='./.git' \
     --exclude='./lidousha' \
     --exclude='./lidousha/**' \
+    --exclude='*/__pycache__' \
+    --exclude='*/__pycache__/**' \
+    --exclude='*.pyc' \
+    --exclude='*.pyo' \
     -cf - . \
     | tar -C "$STAGE" -xf -
 mkdir -p "$STAGE/lidousha"
