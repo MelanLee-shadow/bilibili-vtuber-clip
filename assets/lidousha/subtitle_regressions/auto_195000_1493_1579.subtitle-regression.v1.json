@@ -1,0 +1,23 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_195000_1493_1579",
+  "required_payload_substrings": [
+    "然后看一下沙豆李的队伍",
+    "感觉沙豆李的队伍",
+    "蓝色是沙豆李的队伍",
+    "那个发一支持沙豆李的队伍",
+    "发零支持李豆沙的队伍。不对",
+    "发二支持李豆沙的队伍"
+  ],
+  "required_any_substring_groups": [],
+  "forbidden_payload_substrings": [
+    "下斗里",
+    "杀队友的队伍",
+    "发一支持对面的队伍"
+  ],
+  "forbidden_exact_cues": [
+    "下斗里",
+    "杀队友的队伍",
+    "发一支持对面的队伍"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_193129_850_940",
+  "required_payload_substrings": [
+    "等等等等",
+    "让我打他，他一副，一副",
+    "kmx为什么欺负我？kmx欺负人"
+  ],
+  "required_any_substring_groups": [],
+  "forbidden_payload_substrings": [
+    "你把你的你你我你你的技能",
+    "欺负欺负",
+    "kmx为什么欺负我？kmx欺负我"
+  ],
+  "forbidden_exact_cues": [
+    "你把你的你你我你你的技能",
+    "让我打他，欺负欺负",
+    "kmx为什么欺负我？kmx欺负我"
+  ]
+}
