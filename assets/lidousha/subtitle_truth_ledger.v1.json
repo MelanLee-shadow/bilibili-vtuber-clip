@@ -2739,6 +2739,21 @@
   {
    "action": "replace_cue",
    "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-authorized-operator-truth-20260728：909该cue没有可辨人耳真值，不拒绝流水线；允许放入合理真值。上一轮CPA以0.99选择“如果世上没有早起”，且下一cue完整重复同一送礼用户名，因此按该合理真值定版。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "IVAN_OPERATOR_REASONABLE_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260725-19-20-00.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 954710,
+   "source_start_ms": 953630,
+   "text": "如果世上没有早起",
+   "truth_id": "20260725-909-shishang-meiyou-zaoqi-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
    "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：下注口号被截断——witness 自一致听写 4 音节 zhe-si-liu-er≈支持李豆，且她下一句自述「这句话都还没说完」；忠实呈现截断而非补全)",
    "decision_authority": "IVAN_OPERATOR_TRUTH",
    "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
