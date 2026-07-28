@@ -7,9 +7,14 @@ def _truth_row(
     truth_id: str,
     cue_index: int,
     after_text: str,
+    *,
+    source_event_id: str | None = None,
+    source_event_sha256: str | None = None,
 ) -> dict:
     return {
         "truth_id": truth_id,
+        "source_event_id": source_event_id,
+        "source_event_sha256": source_event_sha256,
         "required": True,
         "action": "replace_cue",
         "cue_indexes": [cue_index],
@@ -101,6 +106,107 @@ def test_source_truth_cannot_resolve_missing_entity_occurrence():
     assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
     assert audit["entity_verdict_required"] == [requirement]
     assert "source_truth_entity_requirement_reconciliations" not in audit
+
+
+def test_structured_event_binding_includes_adjacent_operator_truth_slot():
+    source_sha256 = "ab" * 32
+    requirement = {
+        "cue_indexes": [59, 60],
+        "reason_code": "REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED",
+        "source_event_id": "17790700",
+        "source_sha256": source_sha256,
+        "structured_chat_canonical": "kmx",
+        "structured_chat_occurrence_count": 2,
+    }
+    audit = {
+        "status": "ENTITY_VERDICT_REQUIRED",
+        "applied": [],
+        "entity_verdict_required": [requirement],
+    }
+    source_truth = {
+        "applied": [
+            _truth_row(
+                "first-adjacent-slot",
+                58,
+                "摸摸kmx吧",
+                source_event_id="17790700",
+                source_event_sha256="sha256:" + source_sha256,
+            ),
+            _truth_row(
+                "second-overlapping-slot",
+                59,
+                "kmx不咬人",
+                source_event_id="17790700",
+                source_event_sha256="sha256:" + source_sha256,
+            ),
+            _truth_row(
+                "event-tail",
+                60,
+                "还喜欢被敲",
+                source_event_id="17790700",
+                source_event_sha256="sha256:" + source_sha256,
+            ),
+        ],
+        "satisfied": [],
+    }
+
+    reconcile_required_source_truth_chat_authority(audit, source_truth)
+
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+    assert audit["entity_verdict_required"] == []
+    assert audit["source_truth_entity_requirement_reconciliations"] == [
+        {
+            "cue_indexes": [59, 60],
+            "structured_chat_canonical": "kmx",
+            "required_occurrence_count": 2,
+            "resolved_occurrence_count": 2,
+            "truth_ids": [
+                "event-tail",
+                "first-adjacent-slot",
+                "second-overlapping-slot",
+            ],
+        }
+    ]
+
+
+def test_structured_event_binding_does_not_cross_source_hash():
+    requirement = {
+        "cue_indexes": [59],
+        "reason_code": "REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED",
+        "source_event_id": "17790700",
+        "source_sha256": "ab" * 32,
+        "structured_chat_canonical": "kmx",
+        "structured_chat_occurrence_count": 2,
+    }
+    audit = {
+        "status": "ENTITY_VERDICT_REQUIRED",
+        "applied": [],
+        "entity_verdict_required": [requirement],
+    }
+    source_truth = {
+        "applied": [
+            _truth_row(
+                "overlap-one",
+                59,
+                "kmx不咬人",
+                source_event_id="17790700",
+                source_event_sha256="sha256:" + "ab" * 32,
+            ),
+            _truth_row(
+                "wrong-source-adjacent",
+                58,
+                "摸摸kmx吧",
+                source_event_id="17790700",
+                source_event_sha256="sha256:" + "cd" * 32,
+            ),
+        ],
+        "satisfied": [],
+    }
+
+    reconcile_required_source_truth_chat_authority(audit, source_truth)
+
+    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    assert audit["entity_verdict_required"] == [requirement]
 
 
 def test_partitioned_truth_cues_reconcile_against_prepartition_chat_indexes():

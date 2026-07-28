@@ -623,6 +623,11 @@ def _source_truth_audit_row(
         "before_span": entry.get("before_span"),
         "authority": entry.get("authority"),
         "recording_basename": entry.get("recording_basename"),
+        # Preserve structured-event identity for downstream reconciliation.
+        # A repeated name can straddle adjacent ASR cues while the chat match
+        # itself starts on the second cue.
+        "source_event_id": entry.get("source_event_id"),
+        "source_event_sha256": entry.get("source_event_sha256"),
         "source_start_ms": int(entry["source_start_ms"]),
         "source_end_ms": int(entry["source_end_ms"]),
         "required": entry.get("required") is not False,

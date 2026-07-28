@@ -100,6 +100,10 @@ def reconcile_required_source_truth_chat_authority(
 
     remaining_requirements = []
     entity_reconciliations = []
+
+    def normalized_sha256(value: object) -> str:
+        return str(value or "").removeprefix("sha256:").casefold()
+
     for requirement in chat_authority_audit.get(
         "entity_verdict_required"
     ) or []:
@@ -127,22 +131,44 @@ def reconcile_required_source_truth_chat_authority(
             for index in (requirement.get("cue_indexes") or [])
             if isinstance(index, int) and not isinstance(index, bool)
         }
+        requirement_event_id = str(
+            requirement.get("source_event_id") or ""
+        )
+        requirement_source_sha256 = normalized_sha256(
+            requirement.get("source_sha256")
+        )
         owners = []
         owned_text = []
         for truth_row in truth_rows:
             projection = validated_source_truth_projection(truth_row)
             if projection is None:
                 continue
+            same_structured_event = bool(
+                requirement.get("reason_code")
+                == "REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED"
+                and requirement_event_id
+                and requirement_source_sha256
+                and str(truth_row.get("source_event_id") or "")
+                == requirement_event_id
+                and normalized_sha256(
+                    truth_row.get("source_event_sha256")
+                )
+                == requirement_source_sha256
+            )
             matching_cues = [
                 cue
                 for cue in projection["cues"]
                 if (
-                    projected_origins.get(
-                        cue["cue_index"], cue["cue_index"]
+                    same_structured_event
+                    or (
+                        projected_origins.get(
+                            cue["cue_index"], cue["cue_index"]
+                        )
+                        if projected_origins is not None
+                        else cue["cue_index"]
                     )
-                    if projected_origins is not None
-                    else cue["cue_index"]
-                ) in requirement_cues
+                    in requirement_cues
+                )
             ]
             if not matching_cues:
                 continue
