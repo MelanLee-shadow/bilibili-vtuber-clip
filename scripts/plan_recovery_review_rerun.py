@@ -104,6 +104,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--target-recordings-root",
+        type=Path,
+        help=(
+            "existing regular recording tree used by the isolated target; "
+            "allowed only with --project-single-published-repair"
+        ),
+    )
+    parser.add_argument(
         "--suppress-candidate-id",
         action="append",
         default=[],
@@ -354,6 +362,27 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             "operator must run from the exact target recovery repo"
         )
+    if args.target_recordings_root is not None and (
+        not args.project_single_published_repair
+    ):
+        raise SystemExit(
+            "--target-recordings-root requires "
+            "--project-single-published-repair"
+        )
+    target_recordings_root = (
+        args.target_recordings_root.resolve()
+        if args.target_recordings_root is not None
+        else target_base / "recordings"
+    )
+    if (
+        not target_recordings_root.is_absolute()
+        or not target_recordings_root.is_dir()
+        or target_recordings_root.is_symlink()
+    ):
+        raise SystemExit(
+            f"target recordings root must be a regular directory: "
+            f"{target_recordings_root}"
+        )
     for manifest in (
         source_base / "AUTO_UPLOAD",
         source_base / "repo" / "AUTO_UPLOAD",
@@ -381,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("source recovery state must be an object")
 
     os.environ["AUTOSLICE_BASE"] = str(target_base)
-    os.environ["AUTOSLICE_REC_ROOT"] = str(target_base / "recordings")
+    os.environ["AUTOSLICE_REC_ROOT"] = str(target_recordings_root)
     from scripts import free_session_autoslice as runner
     from src.autoslice.delivery_recovery import (
         RecoveryReviewRerunError,
@@ -461,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
         **plan,
         "source_base": str(source_base),
         "target_base": str(target_base),
+        "target_recordings_root": str(target_recordings_root),
         "target_state_path": str(target_state_path),
         "target_state_sha256": _sha256(target_bytes),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

@@ -428,3 +428,126 @@ def test_v10_planner_main_missing_candidate_creates_no_target_state(
         / "reports"
         / f"recovery-review-rerun-plan-{DATE}.json"
     ).exists()
+
+
+def test_single_published_projection_main_uses_external_recording_tree(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-24"
+    candidate_id = "auto_193129_850_940"
+    source_base = tmp_path / "source"
+    target_base = tmp_path / "target"
+    recording_root = tmp_path / "canonical-recordings"
+    (source_base / "state").mkdir(parents=True)
+    (target_base / "cache" / date).mkdir(parents=True)
+    (target_base / "repo").symlink_to(ROOT, target_is_directory=True)
+    (recording_root / date).mkdir(parents=True)
+    (recording_root / date / "official.mp4").write_bytes(b"official-media")
+    (target_base / "cache" / date / "official.bcut.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n字幕\n",
+        encoding="utf-8",
+    )
+    target = _record(
+        candidate_id,
+        start_ms=850_020,
+        end_ms=940_490,
+    )
+    other = _record(
+        "auto_183122_1209_1410",
+        start_ms=1_209_000,
+        end_ms=1_410_000,
+    )
+    state = {
+        "date": date,
+        "status": "review_ready_retry_wait",
+        "run_mode": "DAILY",
+        "upload_allowed": False,
+        "pending_talk": [{"cid": "auto_190124_1571_1804"}],
+        "picks": [target, other],
+        "talk_backlog": [],
+        "talk_superseded_attempts": [],
+        "songs": [{"candidate_id": "song_unrelated"}],
+    }
+    source_state = source_base / "state" / f"{date}.json"
+    source_state.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    source_sha = (
+        "sha256:" + hashlib.sha256(source_state.read_bytes()).hexdigest()
+    )
+
+    monkeypatch.setattr(runner, "BASE", target_base)
+    monkeypatch.setattr(runner, "REC_ROOT", recording_root)
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: NEW_FINGERPRINT,
+    )
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _segment: 1_800_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _segment: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda _segment, source_sha256=None: {
+            "chat_jsonl": None,
+            "structured_chat_required": False,
+            "chat_binding_status": "OPTIONAL_ABSENT",
+        },
+    )
+
+    assert (
+        planner.main(
+            [
+                "--source-base",
+                str(source_base),
+                "--target-base",
+                str(target_base),
+                "--target-recordings-root",
+                str(recording_root),
+                "--project-single-published-repair",
+                "--date",
+                date,
+                "--expected-source-state-sha256",
+                source_sha,
+                "--expected-old-fingerprint",
+                OLD_FINGERPRINT,
+                "--expected-new-fingerprint",
+                NEW_FINGERPRINT,
+                "--candidate-id",
+                candidate_id,
+                "--publication-authority-asset",
+                str(DAILY_850_ASSET),
+                "--expected-publication-authority-sha256",
+                DAILY_850_ASSET_SHA256,
+            ]
+        )
+        == 0
+    )
+
+    target_state = json.loads(
+        (target_base / "state" / f"{date}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    receipt = json.loads(
+        (
+            target_base
+            / "reports"
+            / f"recovery-review-rerun-plan-{date}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert target_state["talk_selection_contract"]["candidate_ids"] == [
+        candidate_id
+    ]
+    assert [row["cid"] for row in target_state["pending_talk"]] == [
+        candidate_id
+    ]
+    assert target_state["picks"] == []
+    assert target_state["songs"] == []
+    assert target_state["single_published_repair_projection"][
+        "excluded_pick_candidate_ids"
+    ] == ["auto_183122_1209_1410"]
+    assert receipt["target_recordings_root"] == str(recording_root)
+    assert json.loads(source_state.read_text(encoding="utf-8")) == state
