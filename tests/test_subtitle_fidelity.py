@@ -807,6 +807,7 @@ def test_foreign_script_consistency_allows_registered_franchise_and_chat_terms()
         _srt(
             "怎么又把soyo也Mujica？对我们MyGO!!!!!想做什么？",
             "谢谢她的SC，绯闻女友ID已被注册",
+            "谢谢我听说_Channel的SC",
             "我想3D Live的宣传图，也想做同样的姿势",
             "下次3Dlive继续参加",
         )
