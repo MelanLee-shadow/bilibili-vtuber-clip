@@ -123,8 +123,9 @@
   `State not recoverable` 仍须归类为
   `runtime_prerequisite/source_media_binding`，不能落入一次性 `producer_error`。
 - producer 已经生成的 piece 只有在 provenance 精确绑定同一 source path、source
-  SHA-256、窗口、输出路径，且当前 piece 输出哈希仍一致时，才可在
-  `SOURCE_RECORDING_ROOT_UNAVAILABLE` 下复用；复用必须记
+  SHA-256、窗口、输出路径，且当前 piece 输出哈希仍一致时才可复用。源路径仍为
+  regular file 时直接记 `HASH_BOUND_CACHE_REUSED_SOURCE_PATH_PRESENT`，避免每次
+  重试都从 CloudFS 全量重读数 GB 原片；若 source root 不可达则记
   `HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE`。源根健康但文件明确缺失、
   provenance 不全、窗口或任一哈希不符时仍须 fail closed，不得把缓存当源文件
   缺失的旁路。

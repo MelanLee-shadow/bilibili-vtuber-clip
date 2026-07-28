@@ -102,11 +102,7 @@ def _load_hash_bound_cached_piece(
         output=local,
     ):
         return None
-    _bind_piece_source_media_sha256(piece, source_sha256=source_sha256)
-    return {
-        **document,
-        "source_revalidation_status": "HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE",
-    }
+    return document
 
 
 def prepare_source_media(
@@ -121,23 +117,57 @@ def prepare_source_media(
     for index, piece in enumerate(spec["pieces"]):
         local = out_root / f"piece_{index}_{piece['start_ms']}_{piece['end_ms']}.mp4"
         piece_provenance_path = local.with_suffix(".provenance.json")
-        cached_piece: dict | None = None
+        cached_piece = _load_hash_bound_cached_piece(
+            piece=piece,
+            local=local,
+            provenance_path=piece_provenance_path,
+            host=host,
+        )
+        if cached_piece is not None:
+            try:
+                cached_source_present = Path(piece["remote_media"]).is_file()
+            except OSError:
+                cached_source_present = False
+            if cached_source_present:
+                source_sha256 = str(cached_piece["source_sha256"])
+                _bind_piece_source_media_sha256(
+                    piece,
+                    source_sha256=source_sha256,
+                )
+                piece_paths.append(local)
+                piece_provenance_rows.append(
+                    {
+                        **cached_piece,
+                        "source_revalidation_status": (
+                            "HASH_BOUND_CACHE_REUSED_SOURCE_PATH_PRESENT"
+                        ),
+                    }
+                )
+                continue
         try:
             source_path, source_sha256 = _source_media_sha256(
                 host, Path(piece["remote_media"])
             )
         except (OSError, RuntimeError) as exc:
+            cache_allowed = False
             if _source_root_is_unavailable(exc):
-                cached_piece = _load_hash_bound_cached_piece(
-                    piece=piece,
-                    local=local,
-                    provenance_path=piece_provenance_path,
-                    host=host,
-                )
-            if cached_piece is None:
+                if cached_piece is not None:
+                    _bind_piece_source_media_sha256(
+                        piece,
+                        source_sha256=str(cached_piece["source_sha256"]),
+                    )
+                    cache_allowed = True
+            if not cache_allowed:
                 raise
             piece_paths.append(local)
-            piece_provenance_rows.append(cached_piece)
+            piece_provenance_rows.append(
+                {
+                    **cached_piece,
+                    "source_revalidation_status": (
+                        "HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE"
+                    ),
+                }
+            )
             continue
         source_media_binding = _bind_piece_source_media_sha256(
             piece,

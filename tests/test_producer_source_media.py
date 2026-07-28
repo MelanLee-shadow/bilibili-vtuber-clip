@@ -153,12 +153,16 @@ def test_prepare_source_media_rejects_declared_hash_before_using_cache(
     assert spec["pieces"][0]["source_media_sha256"] == "sha256:" + "b" * 64
 
 
-def _install_exact_piece_provenance(tmp_path, *, source_sha256: str):
+def _install_exact_piece_provenance(
+    tmp_path,
+    *,
+    source_sha256: str,
+    source_path: str = "/recordings/official-replay.mp4",
+):
     out_root = tmp_path / "out"
     out_root.mkdir()
     local = out_root / "piece_0_1000_5000.mp4"
     local.write_bytes(b"exact cached piece")
-    source_path = "/recordings/official-replay.mp4"
     provenance = {
         "source_path": source_path,
         "source_sha256": source_sha256,
@@ -173,6 +177,50 @@ def _install_exact_piece_provenance(tmp_path, *, source_sha256: str):
         encoding="utf-8",
     )
     return out_root, local, source_path
+
+
+def test_prepare_source_media_reuses_exact_cache_without_rehashing_present_source(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "recordings" / "official-replay.mp4"
+    source.parent.mkdir()
+    source.write_bytes(b"immutable source")
+    out_root, local, source_path = _install_exact_piece_provenance(
+        tmp_path,
+        source_sha256="a" * 64,
+        source_path=str(source),
+    )
+    monkeypatch.setattr(
+        producer_source_media,
+        "_source_media_sha256",
+        lambda *_args: pytest.fail("must not rehash a hash-bound cached source"),
+    )
+    monkeypatch.setattr(
+        producer_source_media,
+        "ffprobe_duration_ms",
+        lambda _path: 4_000,
+    )
+    spec = {
+        "pieces": [
+            {
+                "remote_media": source_path,
+                "start_ms": 1_000,
+                "end_ms": 5_000,
+            }
+        ]
+    }
+
+    prepared = producer_source_media.prepare_source_media(
+        spec=spec,
+        cid="candidate",
+        out_root=out_root,
+        host="localhost",
+    )
+
+    assert local.is_file()
+    assert prepared.piece_provenance_rows[0]["source_revalidation_status"] == (
+        "HASH_BOUND_CACHE_REUSED_SOURCE_PATH_PRESENT"
+    )
 
 
 def test_prepare_source_media_reuses_exact_hash_bound_piece_when_source_root_unavailable(
