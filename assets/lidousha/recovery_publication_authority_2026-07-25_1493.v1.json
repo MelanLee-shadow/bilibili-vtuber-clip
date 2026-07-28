@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-28: the already-published 7/25 candidate auto_195000_1493_1579 must be repaired in place after the fan-team proper noun was rendered as a near-homophone; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+  "entries": [
+    {
+      "candidate_id": "auto_195000_1493_1579",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+      "required_given_end_ms": 1579550,
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1zzgd6JEHe",
+      "aid": 116989490110344,
+      "cid": 40331906310,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-25-rescued-first/auto_195000_1493_1579.upload_manifest.json.public_verify.json",
+      "source_public_verify_sha256": "sha256:0bba1a05b183e4656917705b1ad94d6107d1f17538e355b481a9d9899afd94a5",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}

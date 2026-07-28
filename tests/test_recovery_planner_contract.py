@@ -20,6 +20,13 @@ DAILY_850_ASSET = (
 DAILY_850_ASSET_SHA256 = (
     "sha256:d22b34c3365a8daa71fb10bf54cf1207971d9c52e26142b840c02321f6baabcd"
 )
+DAILY_1493_ASSET = (
+    ROOT
+    / "assets/lidousha/recovery_publication_authority_2026-07-25_1493.v1.json"
+)
+DAILY_1493_ASSET_SHA256 = (
+    "sha256:9f84633d9db12f37159030a104ff0d3b6876646e393da99f78684182f005dc5f"
+)
 CANDIDATE_IDS = {
     "auto_193450_3573_3665",
     "auto_193450_672_945",
@@ -251,6 +258,26 @@ def test_single_published_850_contract_binds_existing_bv_and_exact_end():
     assert authority["boundary_end_mode"] == "exact_source_pin"
     assert authority["bvid"] == "BV1ec3A6bEWF"
     assert authority["cid"] == 40_357_990_267
+
+
+def test_single_published_1493_contract_binds_existing_bv_and_exact_end():
+    authorities, ends, end_authority = (
+        planner._load_recovery_publication_contract(
+            queued_candidate_ids={"auto_195000_1493_1579"},
+            publication_asset=DAILY_1493_ASSET,
+            expected_publication_authority_sha256=(
+                DAILY_1493_ASSET_SHA256
+            ),
+            repo_root=ROOT,
+        )
+    )
+
+    authority = authorities["auto_195000_1493_1579"]
+    assert ends == {"auto_195000_1493_1579": 1_579_550}
+    assert end_authority == authority["registry_authority"]
+    assert authority["boundary_end_mode"] == "exact_source_pin"
+    assert authority["bvid"] == "BV1zzgd6JEHe"
+    assert authority["cid"] == 40_331_906_310
 
 
 def test_single_published_projection_isolates_target_without_suppressing_others():
