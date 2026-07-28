@@ -145,10 +145,12 @@
   暴露 `.mp4`。外链 URI、非终态 playlist、缺音/视频、既有目标或回执冲突均
   fail closed，继续保持 `source_incomplete`，不得把人工 remux 当成无证据旁路。
   `source_incomplete` 日期即使已老于普通 latest-3 cron 窗口也必须继续进入
-  tick；恢复成功后还要在 `source_recoveries` 已绑定且状态为 sealing/processing
-  或 pending 队列未清空期间持续可见，避免刚从 `source_incomplete` 改成 `sealing`
-  就在下一 tick 前老化消失。只额外唤醒这条恢复事务，不得借机把所有历史完成日期
-  按新 fingerprint 全部重跑。
+  tick；恢复成功后还要在 `source_recoveries` 已绑定且状态为 sealing/processing、
+  pending 队列未清空、或 picks/songs 仍含可恢复失败、封面待补及 fingerprint
+  可唤醒的失败行期间持续可见，避免刚从 `source_incomplete` 改成 `sealing`，或第一次
+  生产落到 `review_ready_with_failures` 后就在下一 tick 前老化消失。只有所有恢复工作
+  真正收敛到无 pending、无未解失败的 `review_ready` 才退出 latest-3 例外；不得借机把
+  其他历史完成日期按新 fingerprint 全部重跑。
 - 源完整性：视频流独立解码零损伤（`source_integrity.py`）；BLOCK≠ok、
   0 交付≠done。
 - 杀开关：`touch /opt/bilive/autoslice/DISABLED`。

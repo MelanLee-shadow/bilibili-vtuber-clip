@@ -798,6 +798,7 @@ from src.autoslice.delivery_recovery import (  # noqa: E402
     _song_delivery_recovery_authority,
     apply_talk_backfill_rejection_policy,
     backfillable_talk_rejection,
+    historical_source_recovery_in_progress,
     recover_bound_song_deliveries,
     bind_song_delivery_recovery_authority,
     requeue_recoverable_deliveries,
@@ -1399,10 +1400,8 @@ def list_dates() -> list[str]:
             state = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        recovery_in_progress = bool(state.get("source_recoveries")) and (
-            state.get("status") in {"sealing", "processing"}
-            or bool(state.get("pending_talk"))
-            or bool(state.get("pending_song"))
+        recovery_in_progress = historical_source_recovery_in_progress(
+            state, TALK_COVER_PENDING_STATUS
         )
         if state.get("status") == "source_incomplete" or recovery_in_progress:
             selected.add(date)

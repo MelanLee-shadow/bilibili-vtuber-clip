@@ -55,6 +55,31 @@ INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
 )
 
 
+def historical_source_recovery_in_progress(
+    state: dict, cover_pending_status: str
+) -> bool:
+    """Keep an aged-out recovered date visible until every repair converges."""
+
+    unresolved_rows = any(
+        isinstance(row, dict)
+        and (
+            row.get("status") in TALK_RECOVERY_FAILURE_STATUSES
+            or row.get("status") == cover_pending_status
+            or row.get("failure_recoverable") is True
+        )
+        for row in (
+            list(state.get("picks") or [])
+            + list(state.get("songs") or [])
+        )
+    )
+    return bool(state.get("source_recoveries")) and (
+        state.get("status") in {"sealing", "processing"}
+        or bool(state.get("pending_talk"))
+        or bool(state.get("pending_song"))
+        or unresolved_rows
+    )
+
+
 class RecoveryReviewRerunError(ValueError):
     """The explicit no-upload recovery rerun plan is not safely bound."""
 

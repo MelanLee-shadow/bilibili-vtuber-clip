@@ -1740,6 +1740,26 @@ def test_list_dates_keeps_aged_out_recovery_until_pending_work_drains(
     historical.write_text(
         json.dumps(
             {
+                "status": "review_ready_with_failures",
+                "source_recoveries": [{"status": "RECOVERED"}],
+                "pending_talk": [],
+                "pending_song": [],
+                "picks": [
+                    {
+                        "candidate_id": "recovered-failure",
+                        "status": "failed",
+                        "failure_recoverable": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert runner.list_dates()[0] == "2026-07-22"
+
+    historical.write_text(
+        json.dumps(
+            {
                 "status": "review_ready",
                 "source_recoveries": [{"status": "RECOVERED"}],
                 "pending_talk": [],
