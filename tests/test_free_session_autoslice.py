@@ -6455,6 +6455,132 @@ def test_carryover_receipt_does_not_hide_retryable_correction_provider_failure(
     ]
 
 
+def test_exact_final_repaired_carryover_is_retryable(
+    tmp_path: Path,
+):
+    candidate_id = "auto_exact_carryover"
+    audit = _final_review_failure_audit(
+        finding_count=2,
+        boundary_status="PASS",
+    )
+    for row in audit["findings"]:
+        row["proposed_full_cue"] = (
+            f"第{row['cue_index']}条正式修复文本"
+        )
+        row["exact_release_adjudication"] = {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "repaired": True,
+            "decision_authority": "CPA_JUDGE",
+        }
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        candidate_id,
+        audit,
+    )
+    chat_document = json.loads(authority.read_text(encoding="utf-8"))
+    chat_document["final_review_audit"]["carryover_persisted_count"] = 2
+    authority.write_text(
+        json.dumps(chat_document, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    carryover = authority.with_name(
+        f"{candidate_id}.final-review-carryover.json"
+    )
+    carryover.write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": [
+                    {
+                        "cue": row["cue_index"],
+                        "suspect": row["suspect"],
+                        "proposed_full_cue": row["proposed_full_cue"],
+                    }
+                    for row in audit["findings"]
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: "
+        "FINAL_REVIEW_UNRESOLVED_FINDINGS: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "final_review_carryover"
+    assert classified["failure_recoverable"] is True
+    evidence = classified["failure_evidence"]
+    assert evidence["audit_surfaces_consistent"] is True
+    assert evidence["carryover"]["declared_count"] == 2
+    assert evidence["carryover"]["observed_count"] == 2
+    assert evidence["carryover"]["retry_ready"] is True
+
+
+def test_mismatched_exact_final_carryover_stays_terminal(
+    tmp_path: Path,
+):
+    candidate_id = "auto_bad_carryover"
+    audit = _final_review_failure_audit(
+        finding_count=1,
+        boundary_status="PASS",
+    )
+    audit["findings"][0]["proposed_full_cue"] = "正确提案"
+    audit["findings"][0]["exact_release_adjudication"] = {
+        "schema_version": "subtitle-span-adjudication.v1",
+        "status": "OBSERVED",
+        "repaired": True,
+    }
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        candidate_id,
+        audit,
+    )
+    chat_document = json.loads(authority.read_text(encoding="utf-8"))
+    chat_document["final_review_audit"]["carryover_persisted_count"] = 1
+    authority.write_text(
+        json.dumps(chat_document, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    authority.with_name(
+        f"{candidate_id}.final-review-carryover.json"
+    ).write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": [
+                    {
+                        "cue": 1,
+                        "suspect": audit["findings"][0]["suspect"],
+                        "proposed_full_cue": "被篡改的提案",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: "
+        "FINAL_REVIEW_UNRESOLVED_FINDINGS: "
+        f"{authority}"
+    )
+
+    assert classified["failure_stage"] == "final_review_findings"
+    assert classified["failure_recoverable"] is False
+    assert (
+        classified["failure_evidence"]["carryover"]["retry_ready"]
+        is False
+    )
+
+
 def test_malformed_correction_contract_is_terminal_not_provider_retry(
     tmp_path: Path,
 ):

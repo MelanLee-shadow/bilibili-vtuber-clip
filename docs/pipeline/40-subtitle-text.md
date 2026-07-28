@@ -226,6 +226,11 @@
   applied mutation 逐条对齐，并验证每条 typed authority receipt。缺回执或计数漂移均报
   `FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID`；第二遍 exact discovery 即使返回空
   findings，也不能洗白第一遍已经发生的无权 mutation。
+- exact-final 扫描只审最终字节，不在同一轮直接改字；但 CPA 已明确 `PROPOSED` 的 finding
+  必须写入 `final-review-carryover.v1`，并由下一轮 correction pass 走同一套裁决/落字门。
+  runner 只有在 chat audit 声明计数、sidecar schema/行数，以及每条
+  `(cue, suspect, proposed_full_cue)` 与 exact 审计中的 `repaired=true` finding 全部一致时，
+  才把该失败列为 recoverable；缺文件、计数漂移或内容不符仍 terminal fail closed。
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
   `acoustic_drop_cue`。局部静音绝不授权删除后半段真实口播；不确定时保留/留空并阻断，

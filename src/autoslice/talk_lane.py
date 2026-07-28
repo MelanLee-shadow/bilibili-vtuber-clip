@@ -856,6 +856,79 @@ def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
         return evidence
 
     raw_findings = audit.get("findings")
+    nested_carryover_count = (
+        nested_audit.get("carryover_persisted_count")
+        if isinstance(nested_audit, Mapping)
+        else None
+    )
+    carryover_file = artifact_path.with_name(
+        candidate_name + ".final-review-carryover.json"
+    )
+    carryover_document: object = None
+    carryover_sha256: str | None = None
+    try:
+        carryover_payload = carryover_file.read_bytes()
+        carryover_sha256 = (
+            "sha256:" + hashlib.sha256(carryover_payload).hexdigest()
+        )
+        carryover_document = json.loads(carryover_payload)
+    except (OSError, ValueError):
+        pass
+    carryover_rows = (
+        carryover_document.get("findings")
+        if isinstance(carryover_document, Mapping)
+        and carryover_document.get("schema_version")
+        == "final-review-carryover.v1"
+        else None
+    )
+    expected_carryover_rows = {
+        (
+            row.get("cue_index") or row.get("cue"),
+            str(row.get("suspect") or ""),
+            str(row.get("proposed_full_cue") or ""),
+        )
+        for row in (
+            raw_findings if isinstance(raw_findings, list) else []
+        )
+        if isinstance(row, Mapping)
+        and isinstance(row.get("exact_release_adjudication"), Mapping)
+        and row["exact_release_adjudication"].get("repaired") is True
+    }
+    observed_carryover_rows = {
+        (
+            row.get("cue"),
+            str(row.get("suspect") or ""),
+            str(row.get("proposed_full_cue") or ""),
+        )
+        for row in (
+            carryover_rows if isinstance(carryover_rows, list) else []
+        )
+        if isinstance(row, Mapping)
+    }
+    carryover_retry_ready = bool(
+        isinstance(nested_carryover_count, int)
+        and not isinstance(nested_carryover_count, bool)
+        and nested_carryover_count > 0
+        and isinstance(carryover_rows, list)
+        and len(carryover_rows) == nested_carryover_count
+        and len(observed_carryover_rows) == nested_carryover_count
+        and observed_carryover_rows == expected_carryover_rows
+    )
+    if (
+        nested_carryover_count is not None
+        or carryover_document is not None
+    ):
+        evidence["carryover"] = {
+            "file": carryover_file.name,
+            "sha256": carryover_sha256,
+            "declared_count": nested_carryover_count,
+            "observed_count": (
+                len(carryover_rows)
+                if isinstance(carryover_rows, list)
+                else None
+            ),
+            "retry_ready": carryover_retry_ready,
+        }
     raw_reason_codes = audit.get("reason_codes")
     if isinstance(raw_reason_codes, str):
         normalized_reason_codes = [raw_reason_codes] if raw_reason_codes else []
@@ -995,6 +1068,17 @@ def _classify_final_review_release(
         and not isinstance(finding_count, bool)
         and finding_count > 0
     ) or "FINAL_REVIEW_UNRESOLVED_FINDINGS" in reason_codes:
+        carryover = evidence.get("carryover")
+        if (
+            isinstance(carryover, Mapping)
+            and carryover.get("retry_ready") is True
+        ):
+            return (
+                "subtitle_authority",
+                "final_review_carryover",
+                True,
+                evidence,
+            )
         return "subtitle_authority", "final_review_findings", False, evidence
     return "final_review_contract", "final_review_contract", False, evidence
 
