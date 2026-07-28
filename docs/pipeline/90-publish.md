@@ -164,7 +164,9 @@ production login。
    它可以跨进程反复 resume，返回 `0=VERIFIED`、`6=仍在安全等待/推进`、
    `5=BLOCKED_DRIFT`。多稿修复必须在同一 upload lock 下逐稿顺序执行，不得并发 append/swap。
 4. 状态为 `PLANNED → APPEND_INTENT → APPEND_AMBIGUOUS → TWO_P_READY →
-   SWAP_RETRYABLE → CREATOR_SINGLE_NEW → PUBLIC_PENDING → VERIFIED`；任一确定性身份/
+   SWAP_RETRYABLE → CREATOR_SINGLE_NEW → PUBLIC_PENDING → VERIFIED`；若唯一未收敛面是
+   exact-section episode title 仍精确等于修复前标题，则中间允许
+   `SECTION_TITLE_SYNC_INTENT → SECTION_TITLE_SYNC_AMBIGUOUS → VERIFIED`。任一确定性身份/
    topology/metadata 漂移进入终态 `BLOCKED_DRIFT`。普通 `repair-run` 不得离开该终态。
    唯一例外是旧 normalizer 把同一 `/bfs/archive/<hash>` 封面经
    `archive.biliimg.com` 与 `*.hdslb.com`/`*.biliimg.com` 两个 CDN 域名投影误判为漂移：
@@ -181,7 +183,13 @@ production login。
 6. swap 只允许保留 journal 已冻结的新 CID，并以同一 metadata/cover asset identity 重试；
    21540 或 timeout 后先读 live state，只有仍是原两 P topology 才重发完全相同 payload。
    Creator 已成为唯一新 CID 后只读收敛，不再 edit。
-7. `PUBLIC_PENDING` 只轮询瞬时不可用/未传播的 public、tags 与 section；只有
+7. `PUBLIC_PENDING` 默认只轮询瞬时不可用/未传播的 public、tags 与 section。唯一机械
+   收敛例外是：Creator 已为唯一新 CID 和完整目标 metadata、public 已为同一新 CID 和完整
+   目标 metadata、exact section 内 BVID/AID/CID membership 恰一条，且 episode title
+   **仅仅**仍等于 plan 冻结的修复前标题。此时先 fsync `SECTION_TITLE_SYNC_INTENT`，fresh
+   重读 episode/season/section/order 与单 P CID 身份后，只调用一次原 episode title edit；
+   无论成功、超时、响应丢失或进程崩溃，之后都只能 poll，绝不二次 edit。标题是第三种值、
+   public 尚未到目标态、身份不全或任一其他字段不一致都不得机械同步。只有
    Creator/public/exact section 的 CID、title/desc/tid/copyright/source/tags/cover 与 section
    episode title 全部一致才进入幂等终态 `VERIFIED`。
 8. `VERIFIED` 是 journal 记录的那次线上快照，不代表以后仍未漂移。随后必须运行

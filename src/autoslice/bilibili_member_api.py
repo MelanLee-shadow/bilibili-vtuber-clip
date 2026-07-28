@@ -35,6 +35,7 @@ ARCHIVE_VIEW = f"{MEMBER}/x/vupre/web/archive/view"
 COVER_UP = f"{MEMBER}/x/vu/web/cover/up"
 ARCHIVE_EDIT = f"{MEMBER}/x/vu/web/edit"
 SEASON_EPISODES_ADD = f"{MEMBER}/x2/creative/web/season/section/episodes/add"
+SEASON_EPISODE_EDIT = f"{MEMBER}/x2/creative/web/season/section/episode/edit"
 SEASON_EPISODE_DEL = f"{MEMBER}/x2/creative/web/season/section/episode/del"
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36"
@@ -109,9 +110,7 @@ def _load_cookie_pairs_with_schema(
     else:
         if "data" in raw and not isinstance(data, Mapping):
             raise CookieSchemaError(f"cookie file data must be an object: {path}")
-        raise CookieSchemaError(
-            f"cookie file has no supported cookie_info path: {path}"
-        )
+        raise CookieSchemaError(f"cookie file has no supported cookie_info path: {path}")
 
     if not isinstance(info, Mapping):
         raise CookieSchemaError(f"cookie_info must be an object: {path}")
@@ -127,13 +126,9 @@ def _load_cookie_pairs_with_schema(
         name = cookie.get("name")
         value = cookie.get("value")
         if not isinstance(name, str) or not name:
-            raise CookieSchemaError(
-                f"cookie entry {index} has no non-empty string name: {path}"
-            )
+            raise CookieSchemaError(f"cookie entry {index} has no non-empty string name: {path}")
         if not isinstance(value, str) or not value:
-            raise CookieSchemaError(
-                f"cookie entry {index} has no non-empty string value: {path}"
-            )
+            raise CookieSchemaError(f"cookie entry {index} has no non-empty string value: {path}")
         if name in names:
             raise CookieSchemaError(f"cookie entry {index} duplicates a name: {path}")
         names.add(name)
@@ -180,9 +175,7 @@ class BiliSession:
         try:
             self.csrf = next(c["value"] for c in pairs if c["name"] == "bili_jct")
         except StopIteration as exc:
-            raise CookieSchemaError(
-                f"bili_jct missing in cookie file: {self.cookie_path}"
-            ) from exc
+            raise CookieSchemaError(f"bili_jct missing in cookie file: {self.cookie_path}") from exc
         self._send = self.transport or _default_transport
 
     # ---- 传输原语 -------------------------------------------------------
@@ -204,7 +197,9 @@ class BiliSession:
     def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
-            url, data=data, method="POST",
+            url,
+            data=data,
+            method="POST",
             headers=self._headers("application/json;charset=UTF-8"),
         )
         return self._send(request)
@@ -212,7 +207,9 @@ class BiliSession:
     def post_form(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         data = urllib.parse.urlencode(payload).encode("utf-8")
         request = urllib.request.Request(
-            url, data=data, method="POST",
+            url,
+            data=data,
+            method="POST",
             headers=self._headers("application/x-www-form-urlencoded"),
         )
         return self._send(request)
@@ -258,9 +255,7 @@ class BiliSession:
             videos = [v for v in videos if v.get("cid") == keep_only_cid]
             if not videos:
                 raise ValueError(f"cid {keep_only_cid} not among archive videos")
-        payload: dict[str, Any] = {
-            key: archive[key] for key in EDIT_CLONE_FIELDS if key in archive
-        }
+        payload: dict[str, Any] = {key: archive[key] for key in EDIT_CLONE_FIELDS if key in archive}
         payload.update(
             {
                 "aid": archive["aid"],
@@ -268,7 +263,9 @@ class BiliSession:
                 "videos": [
                     {
                         "filename": v["filename"],
-                        "title": video_title if video_title is not None else (v.get("title") or "P1"),
+                        "title": video_title
+                        if video_title is not None
+                        else (v.get("title") or "P1"),
                         "cid": v.get("cid"),
                     }
                     for v in videos
@@ -285,9 +282,7 @@ class BiliSession:
         return payload
 
     def edit_archive(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        response = self.post_json(
-            f"{ARCHIVE_EDIT}?csrf={urllib.parse.quote(self.csrf)}", payload
-        )
+        response = self.post_json(f"{ARCHIVE_EDIT}?csrf={urllib.parse.quote(self.csrf)}", payload)
         if response.get("code") != 0:
             raise RuntimeError(f"edit failed: {response}")
         return response
@@ -299,13 +294,82 @@ class BiliSession:
             f"{SEASON_EPISODES_ADD}?csrf={urllib.parse.quote(self.csrf)}",
             {
                 "sectionId": section_id,
-                "episodes": [
-                    {"aid": aid, "cid": cid, "title": title, "charging_pay": 0}
-                ],
+                "episodes": [{"aid": aid, "cid": cid, "title": title, "charging_pay": 0}],
             },
         )
         if response.get("code") not in (0, SEASON_ALREADY_IN_CODE):
             raise RuntimeError(f"season add failed: {response}")
+        return response
+
+    def season_episode_edit(
+        self,
+        *,
+        episode_id: int,
+        title: str,
+        aid: int,
+        cid: int,
+        season_id: int,
+        section_id: int,
+        order: int,
+        page_cids: Sequence[int],
+    ) -> Mapping[str, Any]:
+        """Edit one existing collection episode without removing membership.
+
+        The Creator endpoint expects the exact collection-episode identity,
+        its current order, and the archive page order in one JSON object.
+        Callers must obtain all identities from a fresh exact-section read and
+        must preserve the current order; this helper deliberately cannot move
+        an episode between sections or reorder either the episode or its pages.
+        """
+
+        positive_ints = {
+            "episode_id": episode_id,
+            "aid": aid,
+            "cid": cid,
+            "season_id": season_id,
+            "section_id": section_id,
+            "order": order,
+        }
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in positive_ints.values()
+        ):
+            raise ValueError("season episode edit identities must be positive ints")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("season episode edit title must be non-empty")
+        if (
+            not isinstance(page_cids, Sequence)
+            or isinstance(page_cids, (str, bytes))
+            or not page_cids
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+                for value in page_cids
+            )
+            or len(set(page_cids)) != len(page_cids)
+            or cid not in page_cids
+        ):
+            raise ValueError(
+                "season episode edit page_cids must be unique positive ints "
+                "and include the episode cid"
+            )
+        response = self.post_json(
+            f"{SEASON_EPISODE_EDIT}?csrf={urllib.parse.quote(self.csrf)}",
+            {
+                "id": episode_id,
+                "title": title,
+                "aid": aid,
+                "cid": cid,
+                "seasonId": season_id,
+                "sectionId": section_id,
+                "sorts": [
+                    {"id": page_cid, "sort": index}
+                    for index, page_cid in enumerate(page_cids, start=1)
+                ],
+                "order": order,
+            },
+        )
+        if response.get("code") != 0:
+            raise RuntimeError(f"season episode edit failed: {response}")
         return response
 
     # ---- 子进程/等待类操作（不进单测） -----------------------------------
@@ -363,9 +427,7 @@ def replace_archive_source(
     old_cids = [v.get("cid") for v in (before.get("videos") or [])]
     session.biliup_append(bvid, new_media)
     new_video = session.wait_new_cid(bvid, old_cids)
-    cover_url = (
-        session.cover_up(new_cover_png.read_bytes()) if new_cover_png is not None else None
-    )
+    cover_url = session.cover_up(new_cover_png.read_bytes()) if new_cover_png is not None else None
     current = session.archive_view(bvid)
     payload = session.build_edit_payload(
         current,

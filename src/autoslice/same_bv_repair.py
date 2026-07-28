@@ -9,7 +9,10 @@ is observation-only until the appended CID appears; append is never retried.
 The second mutation is an idempotent Creator Center edit that keeps exactly the
 new CID.  It may be retried with the same payload after code 21540 or an
 ambiguous transport failure, but only while the live topology is still exactly
-``[old P, planned new P]``.
+``[old P, planned new P]``.  A third, separately journaled mutation may update
+the existing collection episode title when and only when public metadata and
+the new CID are already exact and the episode title alone still equals the
+pre-repair title.  That title edit is never retried after its durable intent.
 """
 
 from __future__ import annotations
@@ -31,7 +34,19 @@ from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
-from src.autoslice.same_bv_cover_reconciliation import is_cover_alias_reconciliation_transition as _is_cover_alias_reconciliation_transition, normalise_cover_url as _normalise_cover_url, snapshot_with_current_cover_identity as _snapshot_with_current_cover_identity, snapshots_equivalent
+from src.autoslice.same_bv_cover_reconciliation import (
+    is_cover_alias_reconciliation_transition as _is_cover_alias_reconciliation_transition,
+    normalise_cover_url as _normalise_cover_url,
+    snapshot_with_current_cover_identity as _snapshot_with_current_cover_identity,
+    snapshots_equivalent,
+)
+from src.autoslice.same_bv_section_title_sync import (
+    episode_rows as _episode_rows,
+    episode_value as _episode_value,
+    section_ids as _section_ids,
+    section_title_only_pending as _section_title_only_pending,
+    sync_exact_section_episode_title,
+)
 
 PLAN_SCHEMA = "same-bv-repair-plan.v2"
 JOURNAL_SCHEMA = "same-bv-repair-journal.v1"
@@ -43,6 +58,8 @@ JOURNAL_STATES = {
     "SWAP_RETRYABLE",
     "CREATOR_SINGLE_NEW",
     "PUBLIC_PENDING",
+    "SECTION_TITLE_SYNC_INTENT",
+    "SECTION_TITLE_SYNC_AMBIGUOUS",
     "VERIFIED",
     "BLOCKED_DRIFT",
 }
@@ -79,6 +96,17 @@ _TRANSITIONS = {
     },
     "PUBLIC_PENDING": {
         "PUBLIC_PENDING",
+        "SECTION_TITLE_SYNC_INTENT",
+        "VERIFIED",
+        "BLOCKED_DRIFT",
+    },
+    "SECTION_TITLE_SYNC_INTENT": {
+        "SECTION_TITLE_SYNC_AMBIGUOUS",
+        "VERIFIED",
+        "BLOCKED_DRIFT",
+    },
+    "SECTION_TITLE_SYNC_AMBIGUOUS": {
+        "SECTION_TITLE_SYNC_AMBIGUOUS",
         "VERIFIED",
         "BLOCKED_DRIFT",
     },
@@ -118,14 +146,11 @@ class RemoteMutationError(RepairError):
 class RepairAdapter(Protocol):
     """Minimal live interface.  There is intentionally no new-upload method."""
 
-    def observe(self, bvid: str, section_id: int) -> dict[str, Any]:
-        ...
+    def observe(self, bvid: str, section_id: int) -> dict[str, Any]: ...
 
-    def append_existing(self, bvid: str, media_path: Path) -> None:
-        ...
+    def append_existing(self, bvid: str, media_path: Path) -> None: ...
 
-    def prepare_cover(self, cover_path: Path) -> str:
-        ...
+    def prepare_cover(self, cover_path: Path) -> str: ...
 
     def swap_keep_only(
         self,
@@ -134,8 +159,16 @@ class RepairAdapter(Protocol):
         keep_cid: int,
         target_metadata: Mapping[str, Any],
         cover_url: str,
-    ) -> Mapping[str, Any]:
-        ...
+    ) -> Mapping[str, Any]: ...
+
+    def sync_section_title(
+        self,
+        bvid: str,
+        section_id: int,
+        *,
+        expected_current_title: str,
+        target_title: str,
+    ) -> Mapping[str, Any]: ...
 
 
 def sha256_file(path: Path) -> str:
@@ -183,9 +216,7 @@ def _metadata_from_archive(archive: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _metadata_from_public(
-    public: Mapping[str, Any], public_tags: object
-) -> dict[str, Any]:
+def _metadata_from_public(public: Mapping[str, Any], public_tags: object) -> dict[str, Any]:
     return {
         "title": public.get("title"),
         "desc": public.get("desc"),
@@ -202,53 +233,6 @@ def _video_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "filename": row.get("filename"),
         "title": row.get("title"),
     }
-
-
-def _episode_rows(payload: object) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if key == "episodes" and isinstance(value, list):
-                rows.extend(dict(row) for row in value if isinstance(row, dict))
-            else:
-                rows.extend(_episode_rows(value))
-    elif isinstance(payload, list):
-        for value in payload:
-            rows.extend(_episode_rows(value))
-    return rows
-
-
-def _section_ids(payload: object) -> set[int]:
-    ids: set[int] = set()
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if key in {"section_id", "sectionId"} and isinstance(value, int):
-                ids.add(value)
-            elif (
-                key == "id"
-                and isinstance(value, int)
-                and (
-                    "episodes" in payload
-                    or "season_id" in payload
-                    or "seasonId" in payload
-                )
-            ):
-                ids.add(value)
-            ids.update(_section_ids(value))
-    elif isinstance(payload, list):
-        for value in payload:
-            ids.update(_section_ids(value))
-    return ids
-
-
-def _episode_value(row: Mapping[str, Any], key: str) -> object:
-    if row.get(key) is not None:
-        return row.get(key)
-    for nested_key in ("archive", "arc"):
-        nested = row.get(nested_key)
-        if isinstance(nested, Mapping) and nested.get(key) is not None:
-            return nested.get(key)
-    return None
 
 
 def normalise_snapshot(
@@ -273,9 +257,7 @@ def normalise_snapshot(
         "state": archive.get("state"),
         "state_desc": archive.get("state_desc"),
         "metadata": _metadata_from_archive(archive),
-        "videos": [
-            _video_row(row) for row in videos if isinstance(row, Mapping)
-        ],
+        "videos": [_video_row(row) for row in videos if isinstance(row, Mapping)],
     }
 
     public_data: Mapping[str, Any] = {}
@@ -319,16 +301,13 @@ def normalise_snapshot(
     for row in episodes:
         row_bvid = _episode_value(row, "bvid")
         row_aid = _episode_value(row, "aid")
-        if row_bvid == bvid or (
-            creator["aid"] is not None and row_aid == creator["aid"]
-        ):
+        if row_bvid == bvid or (creator["aid"] is not None and row_aid == creator["aid"]):
             matches.append(
                 {
                     "bvid": row_bvid,
                     "aid": row_aid,
                     "cid": _episode_value(row, "cid"),
-                    "title": _episode_value(row, "title")
-                    or _episode_value(row, "episode_title"),
+                    "title": _episode_value(row, "title") or _episode_value(row, "episode_title"),
                 }
             )
     section = {
@@ -421,6 +400,26 @@ class BilibiliRepairAdapter:
             )
         return response
 
+    def sync_section_title(
+        self,
+        bvid: str,
+        section_id: int,
+        *,
+        expected_current_title: str,
+        target_title: str,
+    ) -> Mapping[str, Any]:
+        """Edit only the exact existing episode after re-reading its identity."""
+
+        return sync_exact_section_episode_title(
+            session=self.session,
+            http=self.http,
+            section_url=self.section_url,
+            bvid=bvid,
+            section_id=section_id,
+            expected_current_title=expected_current_title,
+            target_title=target_title,
+        )
+
 
 def _target_metadata(manifest: Mapping[str, Any]) -> dict[str, Any]:
     policy = manifest.get("publish_policy") or {}
@@ -453,28 +452,18 @@ def package_recovery_publication_authority(
     if record_authority is None and review_authority is None:
         return None, []
     if record_authority is None or review_authority is None:
-        return None, [
-            "recovery_publication_authority must exist on both record and review item"
-        ]
+        return None, ["recovery_publication_authority must exist on both record and review item"]
     if record_authority != review_authority:
-        return None, [
-            "record and review item recovery_publication_authority differ"
-        ]
+        return None, ["record and review item recovery_publication_authority differ"]
     story = record.get("story_contract")
     candidate_id = (
-        str(story.get("candidate_id") or "").strip()
-        if isinstance(story, Mapping)
-        else ""
+        str(story.get("candidate_id") or "").strip() if isinstance(story, Mapping) else ""
     )
     if not candidate_id:
-        return None, [
-            "recovery_publication_authority has no record story candidate_id"
-        ]
+        return None, ["recovery_publication_authority has no record story candidate_id"]
     item_candidate_id = str((review_item or {}).get("candidate_id") or "").strip()
     if item_candidate_id and item_candidate_id != candidate_id:
-        return None, [
-            "review item candidate_id differs from record story candidate_id"
-        ]
+        return None, ["review item candidate_id differs from record story candidate_id"]
     try:
         authority = validate_recovery_publication_authority(
             record_authority,
@@ -484,9 +473,7 @@ def package_recovery_publication_authority(
     except RecoveryTitleAuthorityError as exc:
         return None, [f"recovery_publication_authority invalid: {exc}"]
     if record_authority != authority:
-        return None, [
-            "record/review recovery_publication_authority is not canonical"
-        ]
+        return None, ["record/review recovery_publication_authority is not canonical"]
     return authority, []
 
 
@@ -552,15 +539,9 @@ def _manifest_recovery_publication_authority(
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
     raw = manifest.get("recovery_publication_authority")
-    candidate_id = (
-        str(raw.get("candidate_id") or "").strip()
-        if isinstance(raw, Mapping)
-        else ""
-    )
+    candidate_id = str(raw.get("candidate_id") or "").strip() if isinstance(raw, Mapping) else ""
     if not candidate_id:
-        raise PlanInvalid(
-            "same-BV repair requires recovery_publication_authority"
-        )
+        raise PlanInvalid("same-BV repair requires recovery_publication_authority")
     try:
         authority = validate_recovery_publication_authority(
             raw,
@@ -568,13 +549,9 @@ def _manifest_recovery_publication_authority(
             expected_final_title=str(manifest.get("title") or ""),
         )
     except RecoveryTitleAuthorityError as exc:
-        raise PlanInvalid(
-            f"recovery_publication_authority invalid: {exc}"
-        ) from exc
+        raise PlanInvalid(f"recovery_publication_authority invalid: {exc}") from exc
     if dict(raw) != authority:
-        raise PlanInvalid(
-            "recovery_publication_authority is not canonical"
-        )
+        raise PlanInvalid("recovery_publication_authority is not canonical")
     return authority
 
 
@@ -592,16 +569,11 @@ def _final_human_review_attestation(
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
     try:
-        return dict(
-            human_review.replay_final_human_review_attestation(
-                manifest
-            )
-        )
+        return dict(human_review.replay_final_human_review_attestation(manifest))
     except human_review.FinalHumanReviewError as exc:
         detail = f" ({exc.detail})" if exc.detail else ""
         raise PlanInvalid(
-            "same-BV repair final_human_review rejected: "
-            f"{exc.reason_code}{detail}"
+            f"same-BV repair final_human_review rejected: {exc.reason_code}{detail}"
         ) from exc
 
 
@@ -612,15 +584,11 @@ def validate_repair_publication_target(
     """Reject the wrong existing archive before any adapter/network setup."""
 
     if manifest.get("manifest_version") != 3:
-        raise PlanInvalid(
-            "same-BV repair requires authorized-upload-manifest.v3"
-        )
+        raise PlanInvalid("same-BV repair requires authorized-upload-manifest.v3")
     authority = _manifest_recovery_publication_authority(manifest)
     _final_human_review_attestation(manifest)
     if bvid != authority.get("bvid"):
-        raise PlanInvalid(
-            "repair BVID differs from recovery_publication_authority"
-        )
+        raise PlanInvalid("repair BVID differs from recovery_publication_authority")
     return authority
 
 
@@ -712,34 +680,24 @@ def create_plan(
     if len(videos) != 1:
         problems.append(f"repair planning requires exactly 1 Creator P, got {len(videos)}")
     elif videos[0].get("cid") != authority.get("cid"):
-        problems.append(
-            "sole Creator CID differs from recovery_publication_authority"
-        )
+        problems.append("sole Creator CID differs from recovery_publication_authority")
     if creator.get("aid") != authority.get("aid"):
-        problems.append(
-            "Creator AID differs from recovery_publication_authority"
-        )
+        problems.append("Creator AID differs from recovery_publication_authority")
     if creator.get("state") != 0:
         problems.append("Creator archive is not state=0 during planning")
     if public.get("available") is not True:
         problems.append("public archive unavailable during planning")
     elif len(videos) == 1:
         if public.get("aid") != authority.get("aid"):
-            problems.append(
-                "public AID differs from recovery_publication_authority"
-            )
+            problems.append("public AID differs from recovery_publication_authority")
         if public.get("cid") != authority.get("cid"):
-            problems.append(
-                "public CID differs from recovery_publication_authority"
-            )
+            problems.append("public CID differs from recovery_publication_authority")
         if public.get("state") != 0:
             problems.append("public archive is not state=0 during planning")
         if public.get("cid") != videos[0].get("cid"):
             problems.append("public CID does not equal the sole Creator CID")
         creator_public_metadata = {
-            key: value
-            for key, value in (creator.get("metadata") or {}).items()
-            if key != "source"
+            key: value for key, value in (creator.get("metadata") or {}).items() if key != "source"
         }
         if public.get("metadata") != creator_public_metadata:
             problems.append("Creator and public metadata disagree during planning")
@@ -752,13 +710,9 @@ def create_plan(
         )
     elif len(videos) == 1:
         if matches[0].get("aid") != authority.get("aid"):
-            problems.append(
-                "section AID differs from recovery_publication_authority"
-            )
+            problems.append("section AID differs from recovery_publication_authority")
         if matches[0].get("cid") != authority.get("cid"):
-            problems.append(
-                "section CID differs from recovery_publication_authority"
-            )
+            problems.append("section CID differs from recovery_publication_authority")
         if matches[0].get("cid") != videos[0].get("cid"):
             problems.append("section CID does not equal the sole Creator CID")
         if matches[0].get("bvid") not in (None, bvid):
@@ -834,24 +788,16 @@ def validate_plan(
         validated_plan_authority = validate_recovery_publication_authority(
             plan_authority,
             candidate_id=candidate_id,
-            expected_final_title=str(
-                (plan.get("target_metadata") or {}).get("title") or ""
-            ),
+            expected_final_title=str((plan.get("target_metadata") or {}).get("title") or ""),
         )
     except RecoveryTitleAuthorityError as exc:
-        problems.append(
-            f"repair recovery_publication_authority invalid: {exc}"
-        )
+        problems.append(f"repair recovery_publication_authority invalid: {exc}")
         validated_plan_authority = None
     if validated_plan_authority is not None:
         if plan_authority != validated_plan_authority:
-            problems.append(
-                "repair recovery_publication_authority is not canonical"
-            )
+            problems.append("repair recovery_publication_authority is not canonical")
         if bvid != validated_plan_authority.get("bvid"):
-            problems.append(
-                "repair BVID differs from recovery_publication_authority"
-            )
+            problems.append("repair BVID differs from recovery_publication_authority")
     plan_package_attestation = plan.get("package_attestation")
     if not isinstance(plan_package_attestation, Mapping):
         problems.append("repair final human review attestation is missing")
@@ -864,9 +810,7 @@ def validate_plan(
             problems.append(str(exc))
         else:
             if plan_package_attestation != replayed_plan_attestation:
-                problems.append(
-                    "repair final human review attestation is not canonical"
-                )
+                problems.append("repair final human review attestation is not canonical")
     manifest_entry = plan.get("manifest") or {}
     manifest_path = Path(str(manifest_entry.get("path") or ""))
     bound_manifest: dict[str, Any] | None = None
@@ -877,9 +821,7 @@ def validate_plan(
         if actual != manifest_entry.get("sha256"):
             problems.append("bound manifest hash drift")
         try:
-            bound_manifest = _json_object(
-                manifest_path, label="bound repair manifest"
-            )
+            bound_manifest = _json_object(manifest_path, label="bound repair manifest")
         except PlanInvalid as exc:
             problems.append(str(exc))
     replacement = plan.get("replacement") or {}
@@ -905,37 +847,27 @@ def validate_plan(
         problems.append("repair plan does not freeze exactly one old CID")
     if manifest is not None:
         if bound_manifest is not None and manifest != bound_manifest:
-            problems.append(
-                "runtime manifest differs from the hash-bound manifest file"
-            )
+            problems.append("runtime manifest differs from the hash-bound manifest file")
         try:
-            manifest_authority = (
-                _manifest_recovery_publication_authority(manifest)
-            )
+            manifest_authority = _manifest_recovery_publication_authority(manifest)
         except PlanInvalid as exc:
             problems.append(str(exc))
         else:
             if plan_authority != manifest_authority:
-                problems.append(
-                    "repair recovery_publication_authority drifted from manifest"
-                )
+                problems.append("repair recovery_publication_authority drifted from manifest")
         try:
-            manifest_human_review = _final_human_review_attestation(
-                manifest
-            )
+            manifest_human_review = _final_human_review_attestation(manifest)
         except PlanInvalid as exc:
             problems.append(str(exc))
         else:
             if plan_package_attestation != manifest_human_review:
-                problems.append(
-                    "repair final human review attestation drifted from manifest"
-                )
+                problems.append("repair final human review attestation drifted from manifest")
         if plan.get("target_metadata") != _target_metadata(manifest):
             problems.append("repair target metadata drifted from manifest")
         for kind in ("video", "cover"):
-            if (replacement.get(kind) or {}).get("sha256") != (
-                manifest.get(kind) or {}
-            ).get("sha256"):
+            if (replacement.get(kind) or {}).get("sha256") != (manifest.get(kind) or {}).get(
+                "sha256"
+            ):
                 problems.append(f"repair {kind} no longer matches manifest")
         auth = manifest.get("authorization") or {}
         if plan.get("authorization") != {
@@ -949,7 +881,9 @@ def validate_plan(
         raise PlanInvalid("; ".join(dict.fromkeys(problems)))
 
 
-def validate_plan_problems(plan: Mapping[str, Any], *, manifest: Mapping[str, Any], plan_path: Path) -> list[str]:
+def validate_plan_problems(
+    plan: Mapping[str, Any], *, manifest: Mapping[str, Any], plan_path: Path
+) -> list[str]:
     try:
         validate_plan(plan, manifest=manifest, plan_path=plan_path)
     except PlanInvalid as exc:
@@ -1031,9 +965,7 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
         try:
             row = json.loads(line)
         except ValueError as exc:
-            raise JournalCorrupt(
-                f"repair journal row {line_no} is invalid JSON"
-            ) from exc
+            raise JournalCorrupt(f"repair journal row {line_no} is invalid JSON") from exc
         if not isinstance(row, dict):
             raise JournalCorrupt(f"repair journal row {line_no} is not an object")
         supplied_hash = row.get("row_sha256")
@@ -1064,29 +996,19 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
             raise JournalCorrupt(f"repair journal row {line_no} BVID invalid")
         owner = bvid_owners.setdefault(bvid, plan_id)
         if owner != plan_id:
-            raise JournalCorrupt(
-                f"duplicate BVID {bvid} is owned by plans {owner} and {plan_id}"
-            )
+            raise JournalCorrupt(f"duplicate BVID {bvid} is owned by plans {owner} and {plan_id}")
         if plan_id in bindings_by_plan and bindings_by_plan[plan_id] != binding:
-            raise JournalCorrupt(
-                f"repair journal plan {plan_id} changed immutable bindings"
-            )
+            raise JournalCorrupt(f"repair journal plan {plan_id} changed immutable bindings")
         bindings_by_plan.setdefault(plan_id, binding)
         previous_state = states_by_plan.get(plan_id)
         if previous_state is None:
             if state != "PLANNED":
-                raise JournalCorrupt(
-                    f"repair journal plan {plan_id} does not begin PLANNED"
-                )
-        elif (
-            state not in _TRANSITIONS[previous_state]
-            and not _is_cover_alias_reconciliation_transition(
-                last_rows_by_plan.get(plan_id), row
-            )
-        ):
+                raise JournalCorrupt(f"repair journal plan {plan_id} does not begin PLANNED")
+        elif state not in _TRANSITIONS[
+            previous_state
+        ] and not _is_cover_alias_reconciliation_transition(last_rows_by_plan.get(plan_id), row):
             raise JournalCorrupt(
-                f"repair journal plan {plan_id} transition "
-                f"{previous_state}->{state} is invalid"
+                f"repair journal plan {plan_id} transition {previous_state}->{state} is invalid"
             )
         states_by_plan[plan_id] = state
         last_rows_by_plan[plan_id] = row
@@ -1130,8 +1052,7 @@ def append_journal(
     row["row_sha256"] = _row_hash(row)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = (
-        json.dumps(row, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-        + "\n"
+        json.dumps(row, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n"
     ).encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
@@ -1148,16 +1069,12 @@ def append_journal(
     return row
 
 
-def plan_entries(
-    journal: Path, plan_path: Path, plan: Mapping[str, Any]
-) -> list[dict[str, Any]]:
+def plan_entries(journal: Path, plan_path: Path, plan: Mapping[str, Any]) -> list[dict[str, Any]]:
     binding = _plan_binding(plan_path, plan)
     entries = read_journal(journal)
     for row in entries:
         if row["bvid"] == binding["bvid"] and row["plan_id"] != binding["plan_id"]:
-            raise DuplicateBvid(
-                f"{binding['bvid']} already has repair plan {row['plan_id']}"
-            )
+            raise DuplicateBvid(f"{binding['bvid']} already has repair plan {row['plan_id']}")
     selected = [row for row in entries if row["plan_id"] == binding["plan_id"]]
     for row in selected:
         for key in (
@@ -1168,27 +1085,19 @@ def plan_entries(
             "cover_sha256",
         ):
             if row.get(key) != binding[key]:
-                raise JournalCorrupt(
-                    f"repair journal plan binding mismatch for {key}"
-                )
+                raise JournalCorrupt(f"repair journal plan binding mismatch for {key}")
     return selected
 
 
-def assert_bvid_unowned(
-    journal: Path, *, bvid: str, plan_id: str
-) -> None:
+def assert_bvid_unowned(journal: Path, *, bvid: str, plan_id: str) -> None:
     """Fail before plan-file creation when another plan already owns a BVID."""
 
     for row in read_journal(journal):
         if row["bvid"] == bvid and row["plan_id"] != plan_id:
-            raise DuplicateBvid(
-                f"{bvid} already has repair plan {row['plan_id']}"
-            )
+            raise DuplicateBvid(f"{bvid} already has repair plan {row['plan_id']}")
 
 
-def initialise_journal(
-    journal: Path, plan_path: Path, plan: Mapping[str, Any]
-) -> dict[str, Any]:
+def initialise_journal(journal: Path, plan_path: Path, plan: Mapping[str, Any]) -> dict[str, Any]:
     selected = plan_entries(journal, plan_path, plan)
     if selected:
         return selected[-1]
@@ -1215,15 +1124,12 @@ def _before_creator_exact(snapshot: Mapping[str, Any], plan: Mapping[str, Any]) 
     return (current.get("creator") or {}) == (before.get("creator") or {})
 
 
-def _before_public_section_exact(
-    snapshot: Mapping[str, Any], plan: Mapping[str, Any]
-) -> bool:
+def _before_public_section_exact(snapshot: Mapping[str, Any], plan: Mapping[str, Any]) -> bool:
     current = _snapshot_with_current_cover_identity(snapshot)
     before = _snapshot_with_current_cover_identity(plan.get("before") or {})
-    return (
-        (current.get("public") or {}) == (before.get("public") or {})
-        and (current.get("section") or {}) == (before.get("section") or {})
-    )
+    return (current.get("public") or {}) == (before.get("public") or {}) and (
+        current.get("section") or {}
+    ) == (before.get("section") or {})
 
 
 def _public_section_available(snapshot: Mapping[str, Any]) -> bool:
@@ -1309,9 +1215,7 @@ def _public_section_state(
         return "pending", problems
     matches = section.get("matches") or []
     if len(matches) != 1:
-        problems.append(
-            f"exact section has {len(matches)} BVID/AID matches, expected 1"
-        )
+        problems.append(f"exact section has {len(matches)} BVID/AID matches, expected 1")
         return "drift", problems
     before = _snapshot_with_current_cover_identity(plan.get("before") or {})
     before_public = before.get("public") or {}
@@ -1319,9 +1223,7 @@ def _public_section_state(
     target_metadata = dict(plan.get("target_metadata") or {})
     target_metadata["cover"] = _normalise_cover_url(cover_url)
     target_public_metadata = {
-        key: value
-        for key, value in target_metadata.items()
-        if key != "source"
+        key: value for key, value in target_metadata.items() if key != "source"
     }
     target_public = {
         "available": True,
@@ -1353,9 +1255,7 @@ def _public_section_state(
             old_value = old.get(key)
             new_value = new.get(key)
             if isinstance(value, Mapping):
-                if not isinstance(old_value, Mapping) or not isinstance(
-                    new_value, Mapping
-                ):
+                if not isinstance(old_value, Mapping) or not isinstance(new_value, Mapping):
                     return False
                 if not value_in_transition(value, old_value, new_value):
                     return False
@@ -1400,9 +1300,7 @@ class RepairResult:
     details: Mapping[str, Any]
 
 
-def repair_status(
-    *, plan_path: Path, journal: Path, manifest: Mapping[str, Any]
-) -> RepairResult:
+def repair_status(*, plan_path: Path, journal: Path, manifest: Mapping[str, Any]) -> RepairResult:
     plan = load_plan(plan_path)
     validate_plan(plan, manifest=manifest, plan_path=plan_path)
     entries = plan_entries(journal, plan_path, plan)
@@ -1422,6 +1320,8 @@ def repair_status(
         "SWAP_RETRYABLE": "POLL_THEN_RETRY_SAME_SWAP",
         "CREATOR_SINGLE_NEW": "VERIFY_PUBLIC_AND_SECTION",
         "PUBLIC_PENDING": "POLL_PUBLIC_AND_SECTION",
+        "SECTION_TITLE_SYNC_INTENT": "POLL_ONLY_NEVER_REEDIT_SECTION_TITLE",
+        "SECTION_TITLE_SYNC_AMBIGUOUS": "POLL_ONLY_NEVER_REEDIT_SECTION_TITLE",
         "VERIFIED": "NONE",
         "BLOCKED_DRIFT": "HUMAN_RECONCILIATION_REQUIRED",
     }[last["state"]]
@@ -1482,9 +1382,7 @@ def _append_stage(
         )
         # BaseException deliberately escapes: the durable intent forbids retry.
         try:
-            adapter.append_existing(
-                bvid, Path(plan["replacement"]["video"]["path"])
-            )
+            adapter.append_existing(bvid, Path(plan["replacement"]["video"]["path"]))
             outcome = "append call returned"
         except Exception as exc:
             outcome = f"append call raised {type(exc).__name__}: {exc}"
@@ -1499,9 +1397,7 @@ def _append_stage(
                 "remote_mutation": False,
             },
         )
-        return _row_result(
-            row, "append outcome is reconciled only by live topology"
-        )
+        return _row_result(row, "append outcome is reconciled only by live topology")
 
     if _before_creator_exact(snapshot, plan):
         if state == "APPEND_INTENT":
@@ -1577,9 +1473,7 @@ def _prepare_swap_cover(
             },
         )
         return None, _row_result(row, "cover preparation is retryable")
-    if not isinstance(prepared, str) or not prepared.startswith(
-        ("http://", "https://", "//")
-    ):
+    if not isinstance(prepared, str) or not prepared.startswith(("http://", "https://", "//")):
         return None, _row_result(
             _block(
                 journal,
@@ -1621,11 +1515,7 @@ def _swap_outcome(
             },
         )
         return _row_result(row, "Creator single-new verified")
-    two_p = (
-        _two_p_new_video(after, plan, expected_new=new_video)
-        if after is not None
-        else None
-    )
+    two_p = _two_p_new_video(after, plan, expected_new=new_video) if after is not None else None
     if after is not None and two_p is None:
         return _row_result(
             _block(
@@ -1650,11 +1540,7 @@ def _swap_outcome(
     else:
         after = None
     if mutation_error is not None:
-        code = (
-            mutation_error.code
-            if isinstance(mutation_error, RemoteMutationError)
-            else None
-        )
+        code = mutation_error.code if isinstance(mutation_error, RemoteMutationError) else None
         retryable = code == RETRYABLE_EDIT_CODE or isinstance(
             mutation_error, (TimeoutError, OSError)
         )
@@ -1771,10 +1657,7 @@ def _swap_stage(
             "cover_url": cover_url,
             "reason": (
                 "exact swap intent prepared"
-                if _latest_detail(
-                    plan_entries(journal, plan_path, plan)[:-1], "cover_url"
-                )
-                is None
+                if _latest_detail(plan_entries(journal, plan_path, plan)[:-1], "cover_url") is None
                 else "retrying the exact same idempotent swap"
             ),
             "remote_mutation": "edit_keep_only_new_cid",
@@ -1814,10 +1697,11 @@ def _final_projection_stage(
     plan_path: Path,
     journal: Path,
     plan: Mapping[str, Any],
+    adapter: RepairAdapter,
+    bvid: str,
+    section_id: int,
 ) -> RepairResult:
-    if not _target_creator_exact(
-        snapshot, plan, new_video=new_video, cover_url=cover_url
-    ):
+    if not _target_creator_exact(snapshot, plan, new_video=new_video, cover_url=cover_url):
         return _row_result(
             _block(
                 journal,
@@ -1853,10 +1737,87 @@ def _final_projection_stage(
                 journal,
                 plan_path,
                 plan,
-                reason="; ".join(problems)
-                or "public/section projection drifted",
+                reason="; ".join(problems) or "public/section projection drifted",
                 snapshot=snapshot,
             )
+        )
+    title_only_pending = _section_title_only_pending(
+        snapshot,
+        plan,
+        new_video=new_video,
+        cover_url=cover_url,
+    )
+    if state == "PUBLIC_PENDING" and title_only_pending:
+        before_title = (((plan.get("before") or {}).get("section") or {}).get("matches") or [{}])[
+            0
+        ].get("title")
+        target_title = (plan.get("target_metadata") or {}).get("title")
+        if not isinstance(before_title, str) or not isinstance(target_title, str):
+            raise JournalCorrupt("section title sync has no frozen title identity")
+        append_journal(
+            journal,
+            plan_path=plan_path,
+            plan=plan,
+            state="SECTION_TITLE_SYNC_INTENT",
+            details={
+                "expected_current_title": before_title,
+                "target_title": target_title,
+                "live_snapshot": snapshot,
+                "remote_mutation": "intent_only",
+                "retry_policy": "POLL_ONLY_NEVER_REEDIT",
+            },
+        )
+        outcome: dict[str, Any]
+        try:
+            response = adapter.sync_section_title(
+                bvid,
+                section_id,
+                expected_current_title=before_title,
+                target_title=target_title,
+            )
+            outcome = {"response": dict(response)}
+        except Exception as exc:
+            outcome = {
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+        row = append_journal(
+            journal,
+            plan_path=plan_path,
+            plan=plan,
+            state="SECTION_TITLE_SYNC_AMBIGUOUS",
+            details={
+                **outcome,
+                "remote_mutation": "outcome_ambiguous",
+                "retry_policy": "POLL_ONLY_NEVER_REEDIT",
+            },
+        )
+        return _row_result(
+            row,
+            "section title sync attempted once; poll only and never re-edit",
+        )
+    if state == "SECTION_TITLE_SYNC_INTENT":
+        row = append_journal(
+            journal,
+            plan_path=plan_path,
+            plan=plan,
+            state="SECTION_TITLE_SYNC_AMBIGUOUS",
+            details={
+                "reason": "resumed after durable title-sync intent",
+                "remote_mutation": False,
+                "retry_policy": "POLL_ONLY_NEVER_REEDIT",
+            },
+        )
+        return _row_result(
+            row,
+            "section title sync outcome is ambiguous; poll only and never re-edit",
+        )
+    if state == "SECTION_TITLE_SYNC_AMBIGUOUS":
+        return RepairResult(
+            state,
+            False,
+            "section title sync propagation pending; never re-edit",
+            {"problems": problems, "title_only_pending": title_only_pending},
         )
     if state == "PUBLIC_PENDING":
         return RepairResult(
@@ -1904,9 +1865,7 @@ def repair_step(
     try:
         snapshot = adapter.observe(bvid, section_id)
     except ObservationUnavailable as exc:
-        return RepairResult(
-            state, False, str(exc), {"observation_unavailable": True}
-        )
+        return RepairResult(state, False, str(exc), {"observation_unavailable": True})
     if state in {"PLANNED", "APPEND_INTENT", "APPEND_AMBIGUOUS"}:
         return _append_stage(
             state=state,
@@ -1922,8 +1881,7 @@ def repair_step(
         raise JournalCorrupt(f"{state} has no frozen new_video identity")
     cover_url = _latest_detail(entries, "cover_url")
     if cover_url is not None and (
-        not isinstance(cover_url, str)
-        or not cover_url.startswith(("http://", "https://", "//"))
+        not isinstance(cover_url, str) or not cover_url.startswith(("http://", "https://", "//"))
     ):
         raise JournalCorrupt("journal cover_url detail is invalid")
     if state in {"TWO_P_READY", "SWAP_RETRYABLE"}:
@@ -1939,7 +1897,12 @@ def repair_step(
             bvid=bvid,
             section_id=section_id,
         )
-    if state in {"CREATOR_SINGLE_NEW", "PUBLIC_PENDING"} and isinstance(cover_url, str):
+    if state in {
+        "CREATOR_SINGLE_NEW",
+        "PUBLIC_PENDING",
+        "SECTION_TITLE_SYNC_INTENT",
+        "SECTION_TITLE_SYNC_AMBIGUOUS",
+    } and isinstance(cover_url, str):
         return _final_projection_stage(
             state=state,
             snapshot=snapshot,
@@ -1948,6 +1911,9 @@ def repair_step(
             plan_path=plan_path,
             journal=journal,
             plan=plan,
+            adapter=adapter,
+            bvid=bvid,
+            section_id=section_id,
         )
     raise JournalCorrupt(f"unhandled repair state {state}")
 
@@ -1977,7 +1943,10 @@ def run_repair(
             return result
         signature = (result.state, result.message)
         if result.changed:
-            if result.state in {"SWAP_RETRYABLE", "PUBLIC_PENDING"}:
+            if result.state in {
+                "SWAP_RETRYABLE",
+                "PUBLIC_PENDING",
+            }:
                 if time.monotonic() >= deadline:
                     return result
                 sleeper(max(0.0, poll_seconds))

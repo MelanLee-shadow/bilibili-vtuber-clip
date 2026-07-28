@@ -53,19 +53,14 @@ def _stub_recovery_publication_authority(monkeypatch):
         if (
             value != PUBLICATION_AUTHORITY
             or candidate_id != PUBLICATION_AUTHORITY["candidate_id"]
-            or (
-                expected_final_title is not None
-                and expected_final_title != FINAL_TITLE
-            )
+            or (expected_final_title is not None and expected_final_title != FINAL_TITLE)
         ):
             raise same_bv.RecoveryTitleAuthorityError(
                 "test recovery publication authority mismatch"
             )
         return copy.deepcopy(PUBLICATION_AUTHORITY)
 
-    monkeypatch.setattr(
-        same_bv, "validate_recovery_publication_authority", validate
-    )
+    monkeypatch.setattr(same_bv, "validate_recovery_publication_authority", validate)
 
 
 @pytest.fixture(autouse=True)
@@ -74,23 +69,17 @@ def _stub_final_media_review_contract(tmp_path, monkeypatch):
     contract_path.write_text(
         json.dumps(
             {
-                "schema_version": (
-                    "lidousha-final-media-review-contracts.v1"
-                ),
+                "schema_version": ("lidousha-final-media-review-contracts.v1"),
                 "authority": "same-bv repair test exact review point",
                 "contracts": [
                     {
-                        "candidate_id": PUBLICATION_AUTHORITY[
-                            "candidate_id"
-                        ],
+                        "candidate_id": PUBLICATION_AUTHORITY["candidate_id"],
                         "subtitle_review_points": [
                             {
                                 "point_id": "corrected-cue",
                                 "final_video_start_ms": 13_000,
                                 "final_video_end_ms": 15_000,
-                                "expectation": (
-                                    "字幕与该段最终烧录人声一致"
-                                ),
+                                "expectation": ("字幕与该段最终烧录人声一致"),
                             }
                         ],
                     }
@@ -118,9 +107,7 @@ def _before_snapshot() -> dict:
         "source": "https://live.bilibili.com/",
         "cover": "https://img.example/old-cover.png",
     }
-    public_metadata = {
-        key: value for key, value in creator_metadata.items() if key != "source"
-    }
+    public_metadata = {key: value for key, value in creator_metadata.items() if key != "source"}
     return {
         "creator": {
             "available": True,
@@ -129,9 +116,7 @@ def _before_snapshot() -> dict:
             "state": 0,
             "state_desc": "开放浏览",
             "metadata": creator_metadata,
-            "videos": [
-                {"cid": OLD_CID, "filename": "old-file", "title": "旧标题"}
-            ],
+            "videos": [{"cid": OLD_CID, "filename": "old-file", "title": "旧标题"}],
         },
         "public": {
             "available": True,
@@ -170,11 +155,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
     narrative = "封面文字准确表达两人互动"
     record = {
         "duration_ms": 180_000,
-        "burned_preview": {
-            "branding_intro": {
-                "verification": {"duration_ms": 186_000}
-            }
-        },
+        "burned_preview": {"branding_intro": {"verification": {"duration_ms": 186_000}}},
         "story_contract": {
             "candidate_id": PUBLICATION_AUTHORITY["candidate_id"],
             "cover_reference_authority": {
@@ -183,9 +164,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             },
         },
         "publish_staging": {"title": FINAL_TITLE},
-        "recovery_publication_authority": copy.deepcopy(
-            PUBLICATION_AUTHORITY
-        ),
+        "recovery_publication_authority": copy.deepcopy(PUBLICATION_AUTHORITY),
     }
     record_path = tmp_path / "new.record.json"
     record_path.write_text(
@@ -193,18 +172,12 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         encoding="utf-8",
     )
     review = {
-        "status": (
-            "finished_review_package_no_upload_pending_human_review"
-        ),
+        "status": ("finished_review_package_no_upload_pending_human_review"),
         "upload_allowed": False,
-        "exact_candidate_ids": [
-            PUBLICATION_AUTHORITY["candidate_id"]
-        ],
+        "exact_candidate_ids": [PUBLICATION_AUTHORITY["candidate_id"]],
         "selection_contract": {
             "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
-            "candidate_ids": [
-                PUBLICATION_AUTHORITY["candidate_id"]
-            ],
+            "candidate_ids": [PUBLICATION_AUTHORITY["candidate_id"]],
         },
         "items": [
             {
@@ -215,11 +188,9 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                 "subtitle_srt": subtitle.name,
                 "cover": cover.name,
                 "record": record_path.name,
-                "recovery_publication_authority": copy.deepcopy(
-                    PUBLICATION_AUTHORITY
-                ),
+                "recovery_publication_authority": copy.deepcopy(PUBLICATION_AUTHORITY),
             }
-        ]
+        ],
     }
     review_path = tmp_path / "review_manifest.json"
     review_path.write_text(
@@ -261,31 +232,15 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         "final_burned_full_playback": (
             "从00:00开头连续播放到EOS结尾，最后一帧停在互动自然收束处。"
         ),
-        "subtitle_audio": (
-            "在00:13实际听到纠错台词，烧录字幕随音频发声同步出现。"
-        ),
-        "silence_hallucination": (
-            "复看静音段确认无声，画面没有多出幻听字幕cue。"
-        ),
-        "boundary_closure": (
-            "开头保留完整问句，结尾落在回答后的自然停顿。"
-        ),
-        "title_story": (
-            "最终标题写明双人互动，完整故事先提问再回答。"
-        ),
-        "cover_identity": (
-            "最终封面左侧人物身份与右侧联动立绘均清楚可辨。"
-        ),
-        "cover_story": (
-            "最终封面文字概括双人关系，叙事与画面故事一致。"
-        ),
-        "intro_timing": (
-            "片头结束后平滑切入正片第一句，衔接没有吞字。"
-        ),
+        "subtitle_audio": ("在00:13实际听到纠错台词，烧录字幕随音频发声同步出现。"),
+        "silence_hallucination": ("复看静音段确认无声，画面没有多出幻听字幕cue。"),
+        "boundary_closure": ("开头保留完整问句，结尾落在回答后的自然停顿。"),
+        "title_story": ("最终标题写明双人互动，完整故事先提问再回答。"),
+        "cover_identity": ("最终封面左侧人物身份与右侧联动立绘均清楚可辨。"),
+        "cover_story": ("最终封面文字概括双人关系，叙事与画面故事一致。"),
+        "intro_timing": ("片头结束后平滑切入正片第一句，衔接没有吞字。"),
     }
-    point_detail = (
-        "在00:13到00:15实际听到纠错台词，烧录字幕cue与发声同步。"
-    )
+    point_detail = "在00:13到00:15实际听到纠错台词，烧录字幕cue与发声同步。"
     claim_rows = (
         (
             source_claim,
@@ -298,16 +253,11 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             "最终封面大字呈现双人互动故事，文字叙事与版式内容一致。",
         ),
     )
-    review_contract_sha256 = (
-        "sha256:"
-        + sha256_file(
-            final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
-        )
+    review_contract_sha256 = "sha256:" + sha256_file(
+        final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
     )
     evidence = {
-        "schema_version": (
-            final_human_review.REVIEW_EVIDENCE_SCHEMA_VERSION
-        ),
+        "schema_version": (final_human_review.REVIEW_EVIDENCE_SCHEMA_VERSION),
         "bindings": {
             "review_contract_sha256": review_contract_sha256,
             "review_manifest": {
@@ -316,8 +266,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             },
             "package_audit": {
                 "path": package_audit_path.name,
-                "sha256": "sha256:"
-                + sha256_file(package_audit_path),
+                "sha256": "sha256:" + sha256_file(package_audit_path),
             },
             "items": [
                 {
@@ -333,9 +282,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                 "candidate_id": candidate_id,
                 "checks": {
                     check: {
-                        "anchor": final_human_review._CHECK_ANCHORS[
-                            check
-                        ],
+                        "anchor": final_human_review._CHECK_ANCHORS[check],
                         "detail": detail,
                     }
                     for check, detail in check_details.items()
@@ -344,9 +291,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                     {
                         "point_id": "corrected-cue",
                         "observation": {
-                            "anchor": (
-                                "00:00:13.000-00:00:15.000"
-                            ),
+                            "anchor": ("00:00:13.000-00:00:15.000"),
                             "detail": point_detail,
                         },
                     }
@@ -356,9 +301,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                         "claim": claim,
                         "presentation": presentation,
                         "observation": {
-                            "anchor": (
-                                f"FINAL_COVER/{presentation}"
-                            ),
+                            "anchor": (f"FINAL_COVER/{presentation}"),
                             "detail": detail,
                         },
                     }
@@ -405,17 +348,12 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                     "aid": 42,
                     "cid": OLD_CID,
                     "final_title": FINAL_TITLE,
-                    "authority_sha256": PUBLICATION_AUTHORITY[
-                        "authority_sha256"
-                    ],
+                    "authority_sha256": PUBLICATION_AUTHORITY["authority_sha256"],
                 },
                 "checks": {
                     check: {
                         "status": "PASS",
-                        "evidence": (
-                            f"{final_human_review._CHECK_ANCHORS[check]}"
-                            f" — {detail}"
-                        ),
+                        "evidence": (f"{final_human_review._CHECK_ANCHORS[check]} — {detail}"),
                     }
                     for check, detail in check_details.items()
                 },
@@ -426,10 +364,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                         "final_video_end_ms": 15_000,
                         "expectation": "字幕与该段最终烧录人声一致",
                         "status": "PASS",
-                        "evidence": (
-                            "00:00:13.000-00:00:15.000 — "
-                            + point_detail
-                        ),
+                        "evidence": ("00:00:13.000-00:00:15.000 — " + point_detail),
                     }
                 ],
                 "cover_story_claims": [
@@ -437,9 +372,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
                         "claim": claim,
                         "presentation": presentation,
                         "status": "PASS",
-                        "evidence": (
-                            f"FINAL_COVER/{presentation} — {detail}"
-                        ),
+                        "evidence": (f"FINAL_COVER/{presentation} — {detail}"),
                     }
                     for claim, presentation, detail in claim_rows
                 ],
@@ -478,9 +411,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             "season_title": "小李切片",
         },
         "authorization": {"by": "Ivan", "quote": "尽量上传"},
-        "recovery_publication_authority": copy.deepcopy(
-            PUBLICATION_AUTHORITY
-        ),
+        "recovery_publication_authority": copy.deepcopy(PUBLICATION_AUTHORITY),
         "package_attestation": {
             "schema_version": "authorized-upload-package-attestation.v1",
             "package_root": str(tmp_path.resolve()),
@@ -529,16 +460,19 @@ class FakeAdapter:
         *,
         append_mode: str = "success",
         swap_mode: str = "success",
+        section_sync_mode: str = "success",
         publish_immediately: bool = True,
     ) -> None:
         self.plan = plan
         self.snapshot = copy.deepcopy(plan["before"])
         self.append_mode = append_mode
         self.swap_mode = swap_mode
+        self.section_sync_mode = section_sync_mode
         self.publish_immediately = publish_immediately
         self.append_calls = 0
         self.cover_calls = 0
         self.swap_calls = 0
+        self.section_sync_calls = 0
         self.observe_calls = 0
 
     def observe(self, bvid: str, section_id: int) -> dict:
@@ -581,7 +515,7 @@ class FakeAdapter:
         self.snapshot["creator"]["state"] = -30
         self.snapshot["creator"]["state_desc"] = "审核中"
 
-    def make_public_target(self) -> None:
+    def make_public_target(self, *, section_title: str | None = None) -> None:
         target = copy.deepcopy(self.plan["target_metadata"])
         target["cover"] = "//img.example/new-cover.png"
         self.snapshot["public"] = {
@@ -590,16 +524,14 @@ class FakeAdapter:
             "aid": 42,
             "cid": NEW_CID,
             "state": 0,
-            "metadata": {
-                key: value for key, value in target.items() if key != "source"
-            },
+            "metadata": {key: value for key, value in target.items() if key != "source"},
         }
         self.snapshot["section"]["matches"] = [
             {
                 "bvid": BVID,
                 "aid": 42,
                 "cid": NEW_CID,
-                "title": target["title"],
+                "title": section_title or target["title"],
             }
         ]
 
@@ -626,13 +558,32 @@ class FakeAdapter:
             raise TimeoutError("response lost after successful edit")
         return {"code": 0}
 
+    def sync_section_title(
+        self,
+        bvid: str,
+        section_id: int,
+        *,
+        expected_current_title: str,
+        target_title: str,
+    ) -> dict:
+        self.section_sync_calls += 1
+        assert bvid == BVID
+        assert section_id == 9320779
+        assert expected_current_title == "旧标题"
+        assert target_title == FINAL_TITLE
+        if self.section_sync_mode == "raise_before":
+            raise RuntimeError("section title edit response failed")
+        if self.section_sync_mode != "no_change":
+            self.snapshot["section"]["matches"][0]["title"] = target_title
+        if self.section_sync_mode == "crash_after":
+            raise SystemExit("simulated death after section title edit")
+        return {"code": 0}
+
 
 def _make_cover_alias_false_block(
     tmp_path: Path,
     *,
-    blocked_reason: str = (
-        "post-swap observation is neither exact two-P nor exact single-new"
-    ),
+    blocked_reason: str = ("post-swap observation is neither exact two-P nor exact single-new"),
     snapshot_cover_hash: str = "f40a21b0c123456789abcdef0123456789abcdef",
 ):
     manifest, plan, plan_path, journal = _plan_authority(tmp_path)
@@ -643,9 +594,7 @@ def _make_cover_alias_false_block(
         "title": "new-file",
     }
     frozen_hash = "f40a21b0c123456789abcdef0123456789abcdef"
-    cover_url = (
-        f"https://archive.biliimg.com/bfs/archive/{frozen_hash}.png"
-    )
+    cover_url = f"https://archive.biliimg.com/bfs/archive/{frozen_hash}.png"
     append_journal(
         journal,
         plan_path=plan_path,
@@ -673,9 +622,7 @@ def _make_cover_alias_false_block(
     )
     adapter._make_creator_target(plan["target_metadata"])
     adapter.make_public_target()
-    projected_cover = (
-        f"//i0.hdslb.com/bfs/archive/{snapshot_cover_hash}.png"
-    )
+    projected_cover = f"//i0.hdslb.com/bfs/archive/{snapshot_cover_hash}.png"
     adapter.snapshot["creator"]["metadata"]["cover"] = projected_cover
     adapter.snapshot["public"]["metadata"]["cover"] = projected_cover
     append_journal(
@@ -697,25 +644,17 @@ def test_bilibili_cover_asset_identity_folds_only_known_cdn_aliases():
 
     assert same_bv._normalise_cover_url(
         f"https://archive.biliimg.com/bfs/archive/{asset}.png"
-    ) == same_bv._normalise_cover_url(
-        f"//i0.hdslb.com/bfs/archive/{asset}.png"
-    )
+    ) == same_bv._normalise_cover_url(f"//i0.hdslb.com/bfs/archive/{asset}.png")
     assert same_bv._normalise_cover_url(
         f"https://unrelated.example/bfs/archive/{asset}.png"
-    ) != same_bv._normalise_cover_url(
-        f"https://another.example/bfs/archive/{asset}.png"
-    )
+    ) != same_bv._normalise_cover_url(f"https://another.example/bfs/archive/{asset}.png")
     assert same_bv._normalise_cover_url(
         "https://archive.biliimg.com/not-an-archive-cover.png"
-    ) != same_bv._normalise_cover_url(
-        "https://i0.hdslb.com/not-an-archive-cover.png"
-    )
+    ) != same_bv._normalise_cover_url("https://i0.hdslb.com/not-an-archive-cover.png")
 
 
 def test_cover_alias_false_block_reconciles_without_remote_mutation(tmp_path):
-    manifest, _plan, plan_path, journal, adapter = (
-        _make_cover_alias_false_block(tmp_path)
-    )
+    manifest, _plan, plan_path, journal, adapter = _make_cover_alias_false_block(tmp_path)
     before = journal.read_bytes()
 
     dry_run = cover_reconciliation.reconcile_cover_alias_false_block(
@@ -761,9 +700,7 @@ def test_cover_alias_false_block_reconciles_without_remote_mutation(tmp_path):
 
 
 def test_cover_alias_reconciliation_can_resume_from_public_pending(tmp_path):
-    manifest, plan, plan_path, journal, adapter = (
-        _make_cover_alias_false_block(tmp_path)
-    )
+    manifest, plan, plan_path, journal, adapter = _make_cover_alias_false_block(tmp_path)
     adapter.snapshot["public"] = copy.deepcopy(plan["before"]["public"])
     adapter.snapshot["section"] = copy.deepcopy(plan["before"]["section"])
 
@@ -778,9 +715,9 @@ def test_cover_alias_reconciliation_can_resume_from_public_pending(tmp_path):
     assert reconciled.state == "PUBLIC_PENDING"
     assert read_journal(journal)[-1]["state"] == "PUBLIC_PENDING"
     adapter.make_public_target()
-    adapter.snapshot["public"]["metadata"]["cover"] = (
-        adapter.snapshot["creator"]["metadata"]["cover"]
-    )
+    adapter.snapshot["public"]["metadata"]["cover"] = adapter.snapshot["creator"]["metadata"][
+        "cover"
+    ]
     finished = repair_step(
         plan_path=plan_path,
         journal=journal,
@@ -810,12 +747,10 @@ def test_cover_alias_reconciliation_refuses_other_blocks(
     blocked_reason,
     snapshot_cover_hash,
 ):
-    manifest, _plan, plan_path, journal, adapter = (
-        _make_cover_alias_false_block(
-            tmp_path,
-            blocked_reason=blocked_reason,
-            snapshot_cover_hash=snapshot_cover_hash,
-        )
+    manifest, _plan, plan_path, journal, adapter = _make_cover_alias_false_block(
+        tmp_path,
+        blocked_reason=blocked_reason,
+        snapshot_cover_hash=snapshot_cover_hash,
     )
     before = journal.read_bytes()
 
@@ -944,11 +879,7 @@ def test_edit_21540_retries_the_same_cid_and_payload(tmp_path):
     assert result.state == "VERIFIED"
     assert adapter.append_calls == 1
     assert adapter.swap_calls == 2
-    retry_rows = [
-        row
-        for row in read_journal(journal)
-        if row["state"] == "SWAP_RETRYABLE"
-    ]
+    retry_rows = [row for row in read_journal(journal) if row["state"] == "SWAP_RETRYABLE"]
     assert any("21540" in str(row["details"].get("reason")) for row in retry_rows)
     assert {row["details"]["new_video"]["cid"] for row in retry_rows} == {NEW_CID}
     assert {row["details"]["cover_url"] for row in retry_rows} == {COVER_URL}
@@ -967,14 +898,8 @@ def test_swap_timeout_but_live_success_advances_without_second_edit(tmp_path):
 
     assert result.state == "VERIFIED"
     assert adapter.swap_calls == 1
-    creator_row = next(
-        row
-        for row in read_journal(journal)
-        if row["state"] == "CREATOR_SINGLE_NEW"
-    )
-    assert creator_row["details"]["swap_observation"] == (
-        "live success after ambiguous error"
-    )
+    creator_row = next(row for row in read_journal(journal) if row["state"] == "CREATOR_SINGLE_NEW")
+    assert creator_row["details"]["swap_observation"] == ("live success after ambiguous error")
 
 
 @pytest.mark.parametrize(
@@ -996,9 +921,7 @@ def test_swap_timeout_but_live_success_advances_without_second_edit(tmp_path):
         ),
     ],
 )
-def test_unknown_three_p_duplicate_cid_or_duplicate_section_bvid_blocks(
-    tmp_path, mutate
-):
+def test_unknown_three_p_duplicate_cid_or_duplicate_section_bvid_blocks(tmp_path, mutate):
     manifest, plan, plan_path, journal = _plan_authority(tmp_path)
     adapter = FakeAdapter(plan)
     adapter._append_new()
@@ -1091,6 +1014,227 @@ def test_public_pending_then_verified_without_more_mutation(tmp_path):
     assert adapter.append_calls == adapter.swap_calls == 1
 
 
+def test_section_old_title_only_is_synced_once_then_verified(tmp_path):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan, publish_immediately=False)
+    assert (
+        run_repair(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        ).state
+        == "PUBLIC_PENDING"
+    )
+    adapter.make_public_target(section_title="旧标题")
+
+    result = run_repair(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+    )
+
+    assert result.state == "VERIFIED"
+    assert adapter.section_sync_calls == 1
+    states = [row["state"] for row in read_journal(journal)]
+    assert states[-3:] == [
+        "SECTION_TITLE_SYNC_INTENT",
+        "SECTION_TITLE_SYNC_AMBIGUOUS",
+        "VERIFIED",
+    ]
+
+
+def test_crash_after_section_title_sync_resumes_without_reedit(tmp_path):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(
+        plan,
+        publish_immediately=False,
+        section_sync_mode="crash_after",
+    )
+    assert (
+        run_repair(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        ).state
+        == "PUBLIC_PENDING"
+    )
+    adapter.make_public_target(section_title="旧标题")
+
+    with pytest.raises(SystemExit, match="death after section title"):
+        repair_step(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        )
+    assert read_journal(journal)[-1]["state"] == "SECTION_TITLE_SYNC_INTENT"
+    assert adapter.section_sync_calls == 1
+
+    result = repair_step(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+    )
+    assert result.state == "VERIFIED"
+    assert adapter.section_sync_calls == 1
+
+
+def test_ambiguous_section_title_sync_is_never_retried(tmp_path):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(
+        plan,
+        publish_immediately=False,
+        section_sync_mode="no_change",
+    )
+    assert (
+        run_repair(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        ).state
+        == "PUBLIC_PENDING"
+    )
+    adapter.make_public_target(section_title="旧标题")
+
+    first = repair_step(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+    )
+    second = repair_step(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+    )
+
+    assert first.state == second.state == "SECTION_TITLE_SYNC_AMBIGUOUS"
+    assert first.changed is True
+    assert second.changed is False
+    assert adapter.section_sync_calls == 1
+    assert (
+        repair_status(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+        ).details["next_action"]
+        == "POLL_ONLY_NEVER_REEDIT_SECTION_TITLE"
+    )
+
+
+def test_unexpected_section_title_blocks_without_sync(tmp_path):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan, publish_immediately=False)
+    assert (
+        run_repair(
+            plan_path=plan_path,
+            journal=journal,
+            manifest=manifest,
+            adapter=adapter,
+        ).state
+        == "PUBLIC_PENDING"
+    )
+    adapter.make_public_target(section_title="第三种标题")
+
+    result = repair_step(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+    )
+
+    assert result.state == "BLOCKED_DRIFT"
+    assert adapter.section_sync_calls == 0
+
+
+def test_section_title_sync_waits_for_public_target(tmp_path):
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan, publish_immediately=False)
+
+    result = run_repair(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+    )
+
+    assert result.state == "PUBLIC_PENDING"
+    assert adapter.section_sync_calls == 0
+
+
+def test_production_adapter_rebinds_exact_live_episode_identity():
+    class Session:
+        def __init__(self):
+            self.edit_kwargs = None
+
+        def archive_view(self, bvid):
+            assert bvid == BVID
+            return {
+                "archive": {
+                    "bvid": BVID,
+                    "aid": 42,
+                    "title": FINAL_TITLE,
+                },
+                "videos": [{"cid": NEW_CID}],
+            }
+
+        def season_episode_edit(self, **kwargs):
+            self.edit_kwargs = kwargs
+            return {"code": 0}
+
+    session = Session()
+    section_payload = {
+        "code": 0,
+        "data": {
+            "id": 9320779,
+            "episodes": [
+                {
+                    "id": 210909973,
+                    "title": "旧标题",
+                    "aid": 42,
+                    "bvid": BVID,
+                    "cid": NEW_CID,
+                    "seasonId": 8383206,
+                    "sectionId": 9320779,
+                    "order": 68,
+                }
+            ],
+        },
+    }
+    adapter = same_bv.BilibiliRepairAdapter(
+        session=session,
+        http=lambda url: section_payload,
+        view_url="https://example.test/view?bvid={bvid}",
+        tags_url="https://example.test/tags?bvid={bvid}",
+        section_url="https://example.test/section/{section_id}",
+    )
+
+    response = adapter.sync_section_title(
+        BVID,
+        9320779,
+        expected_current_title="旧标题",
+        target_title=FINAL_TITLE,
+    )
+
+    assert response == {"code": 0}
+    assert session.edit_kwargs == {
+        "episode_id": 210909973,
+        "title": FINAL_TITLE,
+        "aid": 42,
+        "cid": NEW_CID,
+        "season_id": 8383206,
+        "section_id": 9320779,
+        "order": 68,
+        "page_cids": [NEW_CID],
+    }
+
+
 def test_verified_terminal_is_idempotent_even_if_adapter_would_fail(tmp_path):
     manifest, plan, plan_path, journal = _plan_authority(tmp_path)
     adapter = FakeAdapter(plan)
@@ -1154,17 +1298,13 @@ def test_journal_partial_row_hash_edit_and_invalid_transition_are_corruption(
     )
     # A syntactically valid but illegal VERIFIED transition must also fail.
     rows = read_journal(journal)
-    body = {
-        key: value for key, value in rows[-1].items() if key != "row_sha256"
-    }
+    body = {key: value for key, value in rows[-1].items() if key != "row_sha256"}
     body["seq"] = 3
     body["previous_row_sha256"] = rows[-1]["row_sha256"]
     body["state"] = "VERIFIED"
     import hashlib
 
-    payload = json.dumps(
-        body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode()
+    payload = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     body["row_sha256"] = hashlib.sha256(payload).hexdigest()
     with journal.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(body, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -1189,18 +1329,11 @@ def test_manifest_or_artifact_drift_invalidates_plan_before_remote_action(tmp_pa
 
 def test_plan_binds_recovery_publication_authority_to_manifest(tmp_path):
     manifest, plan, plan_path, _journal = _plan_authority(tmp_path)
-    assert (
-        plan["recovery_publication_authority"]
-        == PUBLICATION_AUTHORITY
-    )
+    assert plan["recovery_publication_authority"] == PUBLICATION_AUTHORITY
 
     tampered_plan = copy.deepcopy(plan)
-    tampered_plan["recovery_publication_authority"]["bvid"] = (
-        "BV1tTg46UE3y"
-    )
-    with pytest.raises(
-        PlanInvalid, match="recovery_publication_authority"
-    ):
+    tampered_plan["recovery_publication_authority"]["bvid"] = "BV1tTg46UE3y"
+    with pytest.raises(PlanInvalid, match="recovery_publication_authority"):
         validate_plan(
             tampered_plan,
             manifest=manifest,
@@ -1212,9 +1345,7 @@ def test_same_bv_target_requires_valid_final_human_review_receipt(tmp_path):
     _manifest_path, manifest = _manifest(tmp_path)
     del manifest["package_attestation"]["final_human_review"]
 
-    with pytest.raises(
-        PlanInvalid, match="FINAL_HUMAN_REVIEW_ATTESTED_FILE_INVALID"
-    ):
+    with pytest.raises(PlanInvalid, match="FINAL_HUMAN_REVIEW_ATTESTED_FILE_INVALID"):
         validate_repair_publication_target(manifest, BVID)
 
 
@@ -1222,9 +1353,7 @@ def test_same_bv_target_rejects_legacy_v1_human_review_receipt(
     tmp_path,
 ):
     _manifest_path, manifest = _manifest(tmp_path)
-    attestation = manifest["package_attestation"][
-        "final_human_review"
-    ]
+    attestation = manifest["package_attestation"]["final_human_review"]
     receipt_path = Path(attestation["path"])
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     receipt["schema_version"] = "lidousha-final-human-review.v1"
@@ -1239,9 +1368,7 @@ def test_same_bv_target_rejects_legacy_v1_human_review_receipt(
         }
     )
 
-    with pytest.raises(
-        PlanInvalid, match="FINAL_HUMAN_REVIEW_SCHEMA_INVALID"
-    ):
+    with pytest.raises(PlanInvalid, match="FINAL_HUMAN_REVIEW_SCHEMA_INVALID"):
         validate_repair_publication_target(manifest, BVID)
 
 
@@ -1250,27 +1377,17 @@ def test_plan_freezes_complete_final_human_review_input_closure(tmp_path):
 
     assert plan["package_attestation"] == {
         "package_root": manifest["package_attestation"]["package_root"],
-        "review_manifest": manifest["package_attestation"][
-            "review_manifest"
-        ],
-        "package_audit": manifest["package_attestation"][
-            "package_audit"
-        ],
-        "final_human_review": manifest["package_attestation"][
-            "final_human_review"
-        ],
+        "review_manifest": manifest["package_attestation"]["review_manifest"],
+        "package_audit": manifest["package_attestation"]["package_audit"],
+        "final_human_review": manifest["package_attestation"]["final_human_review"],
     }
 
 
 @pytest.mark.parametrize("drift", ["edit", "delete"])
-def test_final_human_review_drift_after_plan_blocks_before_observe_or_mutation(
-    tmp_path, drift
-):
+def test_final_human_review_drift_after_plan_blocks_before_observe_or_mutation(tmp_path, drift):
     manifest, plan, plan_path, journal = _plan_authority(tmp_path)
     adapter = FakeAdapter(plan)
-    receipt = Path(
-        plan["package_attestation"]["final_human_review"]["path"]
-    )
+    receipt = Path(plan["package_attestation"]["final_human_review"]["path"])
     if drift == "edit":
         receipt.write_text(
             receipt.read_text(encoding="utf-8") + "\n",
@@ -1312,9 +1429,7 @@ def test_committed_review_contract_drift_blocks_before_observe_or_mutation(
 ):
     manifest, plan, plan_path, journal = _plan_authority(tmp_path)
     adapter = FakeAdapter(plan)
-    contract_path = (
-        final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
-    )
+    contract_path = final_human_review.FINAL_MEDIA_REVIEW_CONTRACT_PATH
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     contract["authority"] = "changed after plan"
     contract_path.write_text(
@@ -1323,9 +1438,7 @@ def test_committed_review_contract_drift_blocks_before_observe_or_mutation(
     )
     journal_before = journal.read_bytes()
 
-    with pytest.raises(
-        PlanInvalid, match="FINAL_HUMAN_REVIEW_CONTRACT_HASH_MISMATCH"
-    ):
+    with pytest.raises(PlanInvalid, match="FINAL_HUMAN_REVIEW_CONTRACT_HASH_MISMATCH"):
         repair_step(
             plan_path=plan_path,
             journal=journal,
@@ -1375,9 +1488,7 @@ def test_manifest_authority_drift_refuses_resume_before_observe(tmp_path):
         "cid": 999,
     }
 
-    with pytest.raises(
-        PlanInvalid, match="recovery_publication_authority"
-    ):
+    with pytest.raises(PlanInvalid, match="recovery_publication_authority"):
         repair_step(
             plan_path=plan_path,
             journal=journal,
@@ -1435,22 +1546,16 @@ def test_plan_and_journal_files_are_create_only(tmp_path):
     "mutate,match",
     [
         (
-            lambda snapshot: snapshot["public"]["metadata"].__setitem__(
-                "title", "另一标题"
-            ),
+            lambda snapshot: snapshot["public"]["metadata"].__setitem__("title", "另一标题"),
             "Creator and public metadata disagree",
         ),
         (
-            lambda snapshot: snapshot["section"]["matches"][0].__setitem__(
-                "title", "另一标题"
-            ),
+            lambda snapshot: snapshot["section"]["matches"][0].__setitem__("title", "另一标题"),
             "section title disagrees",
         ),
     ],
 )
-def test_planning_refuses_preexisting_cross_surface_metadata_drift(
-    tmp_path, mutate, match
-):
+def test_planning_refuses_preexisting_cross_surface_metadata_drift(tmp_path, mutate, match):
     manifest_path, manifest = _manifest(tmp_path)
     snapshot = _before_snapshot()
     mutate(snapshot)

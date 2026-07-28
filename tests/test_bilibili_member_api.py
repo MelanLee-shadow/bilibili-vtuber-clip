@@ -56,18 +56,14 @@ def test_cookie_pairs_parse_both_real_shapes(cookie_file):
 
 
 def test_cookie_pairs_reject_ambiguous_shape_without_leaking_values(cookie_file):
-    path = cookie_file({
-        "cookie_info": {
-            "cookies": [{"name": "bili_jct", "value": "top-secret-value"}]
-        },
-        "data": {
-            "cookie_info": {
-                "cookies": [
-                    {"name": "bili_jct", "value": "nested-secret-value"}
-                ]
-            }
-        },
-    })
+    path = cookie_file(
+        {
+            "cookie_info": {"cookies": [{"name": "bili_jct", "value": "top-secret-value"}]},
+            "data": {
+                "cookie_info": {"cookies": [{"name": "bili_jct", "value": "nested-secret-value"}]}
+            },
+        }
+    )
 
     with pytest.raises(CookieSchemaError, match="ambiguous") as raised:
         load_cookie_pairs(path)
@@ -269,15 +265,72 @@ def test_build_edit_payload_can_replace_part_title(cookie_file):
 
 
 def test_season_add_treats_already_in_as_success(cookie_file):
-    session, _ = make_session(
-        cookie_file(BILIUP_SHAPE), [{"code": SEASON_ALREADY_IN_CODE}]
-    )
+    session, _ = make_session(cookie_file(BILIUP_SHAPE), [{"code": SEASON_ALREADY_IN_CODE}])
     response = session.season_episode_add(9320779, aid=1, cid=2, title="t")
     assert response["code"] == SEASON_ALREADY_IN_CODE
 
     session2, _ = make_session(cookie_file(BILIUP_SHAPE), [{"code": -400}])
     with pytest.raises(RuntimeError, match="season add failed"):
         session2.season_episode_add(9320779, aid=1, cid=2, title="t")
+
+
+def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
+    session, calls = make_session(cookie_file(BILIUP_SHAPE), [{"code": 0, "message": "0"}])
+
+    response = session.season_episode_edit(
+        episode_id=210909973,
+        title="【李豆沙】新标题",
+        aid=116969558771366,
+        cid=40389051822,
+        season_id=8383206,
+        section_id=9320779,
+        order=68,
+        page_cids=[40389051822],
+    )
+
+    assert response["code"] == 0
+    request = calls[0]
+    assert request.full_url.endswith("/x2/creative/web/season/section/episode/edit?csrf=csrf-token")
+    assert json.loads(request.data) == {
+        "id": 210909973,
+        "title": "【李豆沙】新标题",
+        "aid": 116969558771366,
+        "cid": 40389051822,
+        "seasonId": 8383206,
+        "sectionId": 9320779,
+        "sorts": [{"id": 40389051822, "sort": 1}],
+        "order": 68,
+    }
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"episode_id": 0},
+        {"title": ""},
+        {"page_cids": []},
+        {"page_cids": [2, 2]},
+        {"page_cids": [3]},
+    ],
+)
+def test_season_episode_edit_rejects_unsafe_identity(cookie_file, override):
+    session, calls = make_session(cookie_file(BILIUP_SHAPE), [])
+    kwargs = {
+        "episode_id": 1,
+        "title": "标题",
+        "aid": 1,
+        "cid": 2,
+        "season_id": 3,
+        "section_id": 4,
+        "order": 5,
+        "page_cids": [2],
+    }
+    kwargs.update(override)
+
+    with pytest.raises(ValueError):
+        session.season_episode_edit(**kwargs)
+
+    assert calls == []
 
 
 def test_quota_rejection_classifier():
