@@ -73,6 +73,47 @@ def _atomic_create(path: Path, payload: bytes) -> None:
             pass
 
 
+def _bind_external_cpa_env(
+    *, source_base: Path, target_base: Path
+) -> dict[str, str]:
+    """Expose the production CPA authority without copying its secret bytes.
+
+    An isolated recovery base changes ``AUTOSLICE_BASE``, so the runner's
+    default ``BASE/cpa.env`` lookup would otherwise become a false provider
+    outage.  A create-only symlink preserves the external authority and keeps
+    the recovery base free of copied credentials.
+    """
+
+    source = source_base / "cpa.env"
+    target = target_base / "cpa.env"
+    try:
+        metadata = source.lstat()
+    except OSError as exc:
+        raise SystemExit(
+            f"source CPA environment missing: {source}: {exc}"
+        ) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(
+            f"source CPA environment must be a regular non-symlink file: {source}"
+        )
+    if target.exists() or target.is_symlink():
+        raise SystemExit(f"target CPA environment already exists: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.symlink_to(source)
+    except FileExistsError as exc:
+        raise SystemExit(
+            f"target CPA environment already exists: {target}"
+        ) from exc
+    return {
+        "schema_version": "recovery-external-cpa-env-binding.v1",
+        "status": "BOUND",
+        "binding": "SYMLINK_EXTERNAL_AUTHORITY",
+        "source_path": str(source),
+        "target_path": str(target),
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-base", type=Path, required=True)
@@ -493,6 +534,12 @@ def main(argv: list[str] | None = None) -> int:
     state["updated_at"] = time.strftime(
         "%Y-%m-%dT%H:%M:%S%z", time.localtime()
     )
+    external_cpa_env = None
+    if args.project_single_published_repair:
+        external_cpa_env = _bind_external_cpa_env(
+            source_base=source_base,
+            target_base=target_base,
+        )
     target_state_path = target_base / "state" / f"{args.date}.json"
     target_bytes = (
         json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
@@ -507,6 +554,8 @@ def main(argv: list[str] | None = None) -> int:
         "target_state_sha256": _sha256(target_bytes),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if external_cpa_env is not None:
+        receipt["external_cpa_env"] = external_cpa_env
     receipt_path = (
         target_base
         / "reports"

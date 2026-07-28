@@ -466,6 +466,10 @@ def test_single_published_projection_main_uses_external_recording_tree(
     target_base = tmp_path / "target"
     recording_root = tmp_path / "canonical-recordings"
     (source_base / "state").mkdir(parents=True)
+    (source_base / "cpa.env").write_text(
+        "CPA_BASE_URL=https://example.invalid/v1\nCPA_API_KEY=test\n",
+        encoding="utf-8",
+    )
     (target_base / "cache" / date).mkdir(parents=True)
     (target_base / "repo").symlink_to(ROOT, target_is_directory=True)
     (recording_root / date).mkdir(parents=True)
@@ -577,6 +581,17 @@ def test_single_published_projection_main_uses_external_recording_tree(
         "excluded_pick_candidate_ids"
     ] == ["auto_183122_1209_1410"]
     assert receipt["target_recordings_root"] == str(recording_root)
+    assert receipt["external_cpa_env"] == {
+        "schema_version": "recovery-external-cpa-env-binding.v1",
+        "status": "BOUND",
+        "binding": "SYMLINK_EXTERNAL_AUTHORITY",
+        "source_path": str(source_base / "cpa.env"),
+        "target_path": str(target_base / "cpa.env"),
+    }
+    assert (target_base / "cpa.env").is_symlink()
+    assert (target_base / "cpa.env").resolve() == (
+        source_base / "cpa.env"
+    ).resolve()
     assert json.loads(source_state.read_text(encoding="utf-8")) == state
 
 
