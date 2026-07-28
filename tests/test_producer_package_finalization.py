@@ -934,6 +934,88 @@ def test_final_recut_rebases_timeline_bound_text_override(
     assert recut.text_manifest["source_timeline_offset_ms"] == 9_770
 
 
+def test_final_recut_provenance_keeps_every_bound_source_piece(
+    tmp_path: Path,
+) -> None:
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"padded")
+    (tmp_path / "out").mkdir()
+    padded_provenance = tmp_path / "padded.provenance.json"
+    padded_provenance.write_text("{}\n", encoding="utf-8")
+
+    def run_command(command: list[str], **_kwargs) -> None:
+        Path(command[-1]).write_bytes(b"recut")
+
+    def write_source_range_srt(
+        _cues, _start_ms: int, _end_ms: int, output: Path
+    ) -> None:
+        output.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n完整台词\n",
+            encoding="utf-8",
+        )
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated finalization adapter was called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=lambda **kwargs: [
+            "recut",
+            str(kwargs["output_media"]),
+        ],
+        run_command=run_command,
+        write_source_range_srt=write_source_range_srt,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=lambda: tmp_path / "delivery",
+    )
+    pieces = [
+        {
+            "source_path": "/recordings/first.mp4",
+            "source_sha256": "a" * 64,
+            "start_ms": 119_070,
+            "end_ms": 125_720,
+        },
+        {
+            "source_path": "/recordings/second.mp4",
+            "source_sha256": "b" * 64,
+            "start_ms": 1_336_800,
+            "end_ms": 1_489_320,
+        },
+    ]
+
+    recut = finalization._materialize_final_recut(
+        spec={
+            "pieces": [
+                {"start_ms": row["start_ms"], "end_ms": row["end_ms"]}
+                for row in pieces
+            ]
+        },
+        cid="multi-piece",
+        out_root=tmp_path / "out",
+        padded=padded,
+        padded_provenance_path=padded_provenance,
+        piece_provenance_rows=pieces,
+        final_start=0,
+        final_end=1_000,
+        sanitized=[],
+        timing_qa={},
+        text_override_path=None,
+        adapters=adapters,
+    )
+
+    provenance = json.loads(
+        recut.media_path.with_suffix(".provenance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert provenance["source_piece"] == pieces
+    assert provenance["final_recut"]["absolute_source_start_ms"] is None
+    assert provenance["final_recut"]["absolute_source_end_ms"] is None
+
+
 def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     tmp_path: Path,
 ) -> None:

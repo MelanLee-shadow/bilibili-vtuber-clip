@@ -492,7 +492,11 @@ def _materialize_final_recut(
         recut_provenance_path,
         {
             "schema_version": RECUT_PROVENANCE_SCHEMA,
-            "source_piece": piece_provenance_rows[0] if len(piece_provenance_rows) == 1 else None,
+            "source_piece": (
+                piece_provenance_rows[0]
+                if len(piece_provenance_rows) == 1
+                else piece_provenance_rows
+            ),
             "padded": json.loads(padded_provenance_path.read_text(encoding="utf-8")),
             "final_recut": {
                 "source_path": str(padded.resolve()),
