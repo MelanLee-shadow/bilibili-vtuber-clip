@@ -1501,12 +1501,6 @@ def _finalize_text_evidence(
         raise SystemExit(
             f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
         )
-    if (
-        chat_authority_audit["status"]
-        in {"FAILED", "ENTITY_VERDICT_REQUIRED", "SC_SENDER_VERDICT_REQUIRED"}
-        or transcript_entity_audit["status"] == "ENTITY_VERDICT_REQUIRED"
-    ):
-        raise SystemExit(f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}")
     # Deterministic song-name pin (Ivan 2026-07-13): belt over the LLM prompt
     # context above.  A talk cue that signals a song mention (下一首/点歌/想唱/…)
     # gets its trailing mention span fuzzy-matched against machine-evidence
@@ -1530,7 +1524,6 @@ def _finalize_text_evidence(
     # 称呼串等价类（2026-07-19）：、包夹的单字近音 token 按成员词补全，
     # 与 hard canon 同一 choke point、同级确定性。
     from src.autoslice.surface_canon import repair_address_enumerations
-
     srt_text, address_enumeration_audit = repair_address_enumerations(srt_text)
     chat_authority_audit["address_enumeration_audit"] = address_enumeration_audit
     # Final unbypassable meme canon (currently only 直女→侄女).  This runs after
@@ -1597,6 +1590,14 @@ def _finalize_text_evidence(
     ):
         raise SystemExit(
             f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
+        )
+    if (
+        chat_authority_audit["status"]
+        in {"FAILED", "ENTITY_VERDICT_REQUIRED", "SC_SENDER_VERDICT_REQUIRED"}
+        or transcript_entity_audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    ):
+        raise SystemExit(
+            f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}"
         )
     # In a hash-bound subtitle redelivery only, a missing substring target can
     # be restored from the reviewed baseline and the higher source truth then

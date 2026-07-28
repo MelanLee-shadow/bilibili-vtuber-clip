@@ -67,6 +67,12 @@
     revision/state/evidence/authority/decision_authority；`VERIFIED_ACTIVE` 只允许
     `decision_authority=IVAN_OPERATOR_TRUTH`，否则拒绝加载。CPA/机器/结构化事件结论只能保持
     PROPOSED 候选，不得在 CPA 后面再覆盖字幕；旧错行必须 SUPERSEDED，不能原地改历史。
+13. **operator truth 必须消解同槽旧阻塞**：chat/entity 层先发现
+    `ENTITY_VERDICT_REQUIRED` 时不得在晚期 source truth 之前提前退出。正式 truth 投影落地且
+    preview/formal ledger 哈希一致后，若投影内已逐槽保留结构化聊天 canonical，并达到原要求的
+    mention 数量，则删除对应旧 requirement、记录 truth IDs 与计数收据，再重算 chat status；
+    少一个 mention、无合法投影或其他未决槽仍 fail closed。该规则只承认 operator truth，不把
+    结构化聊天本身升级成文字真值，也不绕过两个已登记专名之间的 CPA 裁决。
 
 ## 两次审查不可合并
 
