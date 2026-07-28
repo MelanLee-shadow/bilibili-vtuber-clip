@@ -110,13 +110,14 @@ def _resolve_final_cover(
     basename = Path(declared).name
     relative = f"covers/{basename}"
     final_cover = package_root / relative
-    if not final_cover.is_file():
-        raise DailyManifestError(f"final cover missing from package: {relative}")
-    actual = _sha256(final_cover)
-    if actual != expected:
-        raise DailyManifestError(
-            f"final cover sha drift: record={expected} actual={actual}"
-        )
+    # Cover-only repair commits the new bytes to the title-named delivery
+    # alias after the original replacement_recuts package was frozen.  The
+    # package builder is the portable assembly boundary, so materialize the
+    # publish/state-bound bytes under the generation-declared basename instead
+    # of requiring a stale package to have predicted a later repair path.
+    if not final_cover.is_file() or _sha256(final_cover) != expected:
+        final_cover.parent.mkdir(parents=True, exist_ok=True)
+        final_cover.write_bytes(pick_file.read_bytes())
     return relative
 
 
@@ -221,8 +222,10 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         """Locate a package-internal cover artifact declared by generation.
 
         The publish document records host staging paths; the package carries
-        the same bytes under covers*/. Resolution is by basename and the
-        bytes must match the generation-declared sha — drift is refused.
+        the same bytes under covers*/.  Cover-only repair may happen after the
+        original package was frozen, so a missing/stale portable copy is
+        assembled from the generation-declared regular file after its hash is
+        verified.
         """
         declared = cover_generation.get(generation_key)
         expected = str(cover_generation.get(sha_key) or "").removeprefix(
@@ -235,27 +238,56 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         basename = Path(declared).name
         for parent in ("covers", "covers_ai_original", "cover_refs"):
             candidate_path = package_root / parent / basename
-            if candidate_path.is_file():
-                if _sha256(candidate_path) != expected:
-                    raise DailyManifestError(
-                        f"cover artifact sha drift: {parent}/{basename}"
-                    )
+            if candidate_path.is_file() and _sha256(candidate_path) == expected:
                 return f"{parent}/{basename}"
-        raise DailyManifestError(
-            f"cover artifact missing from package: {basename}"
-        )
+        source = Path(declared)
+        if source.is_symlink() or not source.is_file():
+            raise DailyManifestError(
+                f"cover artifact source missing or invalid: {source}"
+            )
+        actual = _sha256(source)
+        if actual != expected:
+            raise DailyManifestError(
+                f"cover artifact source sha drift: "
+                f"{generation_key}={expected} actual={actual}"
+            )
+        portable = package_root / "covers_ai_original" / basename
+        portable.parent.mkdir(parents=True, exist_ok=True)
+        portable.write_bytes(source.read_bytes())
+        return f"covers_ai_original/{basename}"
 
     cover_pre_overlay = cover_artifact("pre_overlay_path", "pre_overlay_sha256")
     cover_route_background = cover_artifact(
         "ai_background", "ai_background_sha256"
     )
-    mask_rel = str(Path(cover_pre_overlay).parent / (
-        Path(cover_pre_overlay).name.replace(
-            ".pre-overlay.png", ".title-mask.png"
+    rendered_text_pixels = cover_generation.get("rendered_text_pixels")
+    if not isinstance(rendered_text_pixels, dict):
+        raise DailyManifestError("cover generation lacks rendered_text_pixels")
+    mask_declared = rendered_text_pixels.get("mask_path")
+    mask_expected = str(
+        rendered_text_pixels.get("mask_sha256") or ""
+    ).removeprefix("sha256:")
+    if not isinstance(mask_declared, str) or not mask_declared or not mask_expected:
+        raise DailyManifestError(
+            "cover generation lacks rendered text mask path/hash"
         )
-    ))
-    if not (package_root / mask_rel).is_file():
-        raise DailyManifestError(f"title mask missing: {mask_rel}")
+    mask_source = Path(mask_declared)
+    if mask_source.is_symlink() or not mask_source.is_file():
+        raise DailyManifestError(
+            f"cover title mask source missing or invalid: {mask_source}"
+        )
+    mask_actual = _sha256(mask_source)
+    if mask_actual != mask_expected:
+        raise DailyManifestError(
+            f"cover title mask source sha drift: "
+            f"record={mask_expected} actual={mask_actual}"
+        )
+    mask_rel = str(
+        Path(cover_pre_overlay).parent / mask_source.name
+    )
+    mask_path = package_root / mask_rel
+    if not mask_path.is_file() or _sha256(mask_path) != mask_expected:
+        mask_path.write_bytes(mask_source.read_bytes())
 
     # authorized_upload v3 的 same-stem 合同：video stem X 要求包根直下
     # X.record.json / X.srt / X.cover.png。装配为审定字节的副本（字节级

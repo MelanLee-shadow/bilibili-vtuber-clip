@@ -133,6 +133,35 @@ def test_resolve_final_cover_accepts_hash_identical_delivery_alias(
     assert resolved == "covers/final.cover.png"
 
 
+def test_resolve_final_cover_materializes_repaired_delivery_alias(
+    tmp_path: Path,
+) -> None:
+    covers = tmp_path / "covers"
+    delivery = tmp_path / "delivery"
+    covers.mkdir()
+    delivery.mkdir()
+    alias = delivery / "标题.cover.png"
+    alias.write_bytes(b"same-bv repaired cover bytes\n")
+    expected = _sha256(alias)
+
+    resolved = _resolve_final_cover(
+        package_root=tmp_path,
+        pick={
+            "cover_path": str(alias),
+            "cover_sha256": "sha256:" + expected,
+        },
+        cover_generation={
+            "final_cover": str(
+                tmp_path / "generation" / "final.cover.png"
+            ),
+            "final_cover_sha256": "sha256:" + expected,
+        },
+    )
+
+    assert resolved == "covers/final.cover.png"
+    assert (covers / "final.cover.png").read_bytes() == alias.read_bytes()
+
+
 def test_sync_record_bound_candidate_artifacts_makes_evidence_portable(
     tmp_path: Path,
 ) -> None:
