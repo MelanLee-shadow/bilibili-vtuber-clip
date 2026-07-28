@@ -35,6 +35,13 @@ MODE = "preserve_text_outside_source_truth"
 MIN_ALIGNMENT_OVERLAP_MS = 80
 MIN_ALIGNMENT_RATIO = 0.80
 MAX_ALIGNMENT_BOUNDARY_DRIFT_MS = 250
+# Release-grade cue merging preserves exact normalized text but a fresh ASR
+# grid can move the absorbed one-character cue's outer edge slightly farther
+# than an ordinary one-to-one alignment.  The 2026-07-22 hotpot redelivery
+# differed by 320ms after 「行」 was absorbed into 「嘻，晓得吧」.  Keep this a
+# separate, narrow allowance: adjacency and exact joined-text equality remain
+# mandatory, and ordinary alignment still uses the stricter 250ms bound.
+MAX_RELEASE_GRADE_MERGE_BOUNDARY_DRIFT_MS = 400
 _SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 
 
@@ -681,9 +688,9 @@ def _release_grade_merge_equivalent(
     union_end = max(baseline[i].end_ms for i in indexes)
     return (
         abs(current_cue.start_ms - union_start)
-        <= MAX_ALIGNMENT_BOUNDARY_DRIFT_MS
+        <= MAX_RELEASE_GRADE_MERGE_BOUNDARY_DRIFT_MS
         and abs(current_cue.end_ms - union_end)
-        <= MAX_ALIGNMENT_BOUNDARY_DRIFT_MS
+        <= MAX_RELEASE_GRADE_MERGE_BOUNDARY_DRIFT_MS
     )
 
 
@@ -800,7 +807,73 @@ def _render_v2_output(
 ) -> tuple[str, dict[str, Any]]:
     texts = [cue.text for cue in current]
     changed_count = 0
+    accepted_merges = {
+        int(row["current_cue_index"]) - 1: [
+            int(index) - 1 for index in row["baseline_cue_indexes"]
+        ]
+        for row in audit.get("accepted_release_grade_merges") or []
+        if isinstance(row, Mapping)
+        and _valid_int(row.get("current_cue_index"))
+        and isinstance(row.get("baseline_cue_indexes"), list)
+        and all(_valid_int(index) for index in row["baseline_cue_indexes"])
+    }
     for current_index in sorted(rows.current):
+        current_cue = current[current_index]
+        current_abs_start, current_abs_end = rows.current[current_index]
+        merged_baseline_indexes = accepted_merges.get(current_index)
+        if merged_baseline_indexes is not None:
+            # _append_v2_alignment_failures already proved adjacency, exact
+            # normalized joined text, and the bounded union timing.  Preserve
+            # the production merge's punctuation while recording one explicit
+            # many-to-one authority mapping; it has no strong one-to-one row.
+            baseline_abs_start = min(
+                rows.baseline[index][0]
+                for index in merged_baseline_indexes
+            )
+            baseline_abs_end = max(
+                rows.baseline[index][1]
+                for index in merged_baseline_indexes
+            )
+            overlap = _absolute_overlap_ms(
+                current_abs_start,
+                current_abs_end,
+                baseline_abs_start,
+                baseline_abs_end,
+            )
+            audit["mappings"].append(
+                {
+                    "mapping_kind": "release_grade_merge_equivalent",
+                    "current_cue_index": current_index + 1,
+                    "baseline_cue_indexes": [
+                        index + 1 for index in merged_baseline_indexes
+                    ],
+                    "start_ms": current_cue.start_ms,
+                    "end_ms": current_cue.end_ms,
+                    "current_absolute_source_start_ms": current_abs_start,
+                    "current_absolute_source_end_ms": current_abs_end,
+                    "baseline_absolute_source_start_ms": (
+                        baseline_abs_start
+                    ),
+                    "baseline_absolute_source_end_ms": baseline_abs_end,
+                    "overlap_ms": overlap,
+                    "start_drift_ms": abs(
+                        current_abs_start - baseline_abs_start
+                    ),
+                    "end_drift_ms": abs(
+                        current_abs_end - baseline_abs_end
+                    ),
+                    "changed": False,
+                    "before": texts[current_index],
+                    "after": texts[current_index],
+                }
+            )
+            audit["owned_intervals"].append(
+                {
+                    "start_ms": current_cue.start_ms,
+                    "end_ms": current_cue.end_ms,
+                }
+            )
+            continue
         (
             baseline_index,
             overlap,
@@ -808,14 +881,12 @@ def _render_v2_output(
             start_drift,
             end_drift,
         ) = alignment.strong_by_current[current_index][0]
-        current_cue = current[current_index]
         baseline_cue = baseline[baseline_index]
         before = texts[current_index]
         after = baseline_cue.text
         if before != after:
             texts[current_index] = after
             changed_count += 1
-        current_abs_start, current_abs_end = rows.current[current_index]
         baseline_abs_start, baseline_abs_end = rows.baseline[baseline_index]
         audit["mappings"].append(
             {

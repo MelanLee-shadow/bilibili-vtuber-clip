@@ -6953,6 +6953,17 @@ def test_talk_failure_does_not_launder_speaker_infrastructure_errors_as_evidence
     assert classified["failure_recoverable"] is True
 
 
+def test_redelivery_baseline_failure_is_not_unknown_retryable_producer_error():
+    classified = runner.classify_talk_failure(
+        "REDELIVERY_SUBTITLE_BASELINE_FAILED: "
+        "/tmp/auto_193450_1863_2056.redelivery-baseline.json"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "redelivery_subtitle_baseline"
+    assert classified["failure_recoverable"] is False
+
+
 def test_runtime_health_rejects_missing_tracked_speaker_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(

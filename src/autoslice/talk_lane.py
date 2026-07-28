@@ -1224,6 +1224,16 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "chat_authority_final_artifact",
             False,
         )
+    elif "REDELIVERY_SUBTITLE_BASELINE_FAILED" in tail:
+        # Reviewed-redelivery text/timing equivalence is a deterministic
+        # authority gate.  Classify it explicitly instead of laundering a
+        # concrete baseline defect into producer_error/unknown and retrying the
+        # identical fingerprint forever.
+        kind, stage, recoverable = (
+            "subtitle_authority",
+            "redelivery_subtitle_baseline",
+            False,
+        )
     elif "STORY_CONTRACT_INPUT_INVALID" in tail:
         kind, stage, recoverable = (
             "story_contract",

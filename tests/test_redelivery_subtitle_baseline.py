@@ -862,3 +862,61 @@ def test_release_grade_merge_equivalence_accepted_in_v2_alignment():
     assert not _release_grade_merge_equivalent(stretched, [1, 2], baseline)
     # 非相邻基线 → 拒
     assert not _release_grade_merge_equivalent(merged, [0, 2], baseline)
+
+
+def test_release_grade_merge_accepts_bounded_fresh_grid_edge_drift():
+    """1863 生产实案：文本等价的「嘻，晓得吧」+「行」合并后，新 ASR
+    外沿比 reviewed 并集早 320ms；应接受，但 400ms 之外仍拒。"""
+
+    from src.autoslice.jingting_chunker import SrtCue
+    from src.autoslice.redelivery_subtitle_baseline import (
+        _release_grade_merge_equivalent,
+    )
+
+    baseline = [
+        SrtCue(1, 75_720, 77_200, "嘻，晓得吧"),
+        SrtCue(2, 77_280, 78_280, "行"),
+    ]
+    production = SrtCue(1, 75_720, 77_960, "嘻，晓得吧，行")
+    assert _release_grade_merge_equivalent(production, [0, 1], baseline)
+
+    beyond_cap = SrtCue(1, 75_720, 77_879, "嘻，晓得吧，行")
+    assert not _release_grade_merge_equivalent(
+        beyond_cap, [0, 1], baseline
+    )
+
+
+def test_v2_renders_bounded_release_grade_merge_without_strong_row(tmp_path):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt(
+            (15_720, 17_200, "嘻，晓得吧"),
+            (17_280, 18_280, "行"),
+        ),
+        encoding="utf-8",
+    )
+    current = _srt((15_720, 17_960, "嘻，晓得吧，行"))
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        current_source_end_ms=200_000,
+        config=_config_v2(
+            baseline,
+            absolute_source_start_ms=100_000,
+            absolute_source_end_ms=200_000,
+        ),
+    )
+
+    assert output == current
+    assert audit["status"] == "ALREADY_SATISFIED"
+    assert audit["accepted_release_grade_merges"] == [
+        {
+            "current_cue_index": 1,
+            "baseline_cue_indexes": [1, 2],
+        }
+    ]
+    assert audit["mappings"][0]["mapping_kind"] == (
+        "release_grade_merge_equivalent"
+    )
