@@ -3299,3 +3299,44 @@ def test_committed_1209_adjacent_truths_split_a_straddling_fresh_cue():
         [1, 2],
         [2, 3],
     )
+
+
+def test_committed_1209_partition_rewrites_duplicate_asr_suffix():
+    """新 ASR 把「切」重复留在后一 cue 时仍按 operator truth 全窗重分。"""
+
+    source = _srt_ms(
+        (34_290, 37_450, "神奇了"),
+        (37_450, 40_010, "切，那就差礼墨没吃了"),
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        source,
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260724-18-31-22.mp4"
+                    ),
+                    "start_ms": 1_199_070,
+                    "end_ms": 1_239_080,
+                }
+            ]
+        },
+        durations=[40_010],
+        ledger_path=(
+            REPO_ROOT
+            / "assets"
+            / "lidousha"
+            / "subtitle_truth_ledger.v1.json"
+        ),
+    )
+
+    assert [
+        (cue.start_ms, cue.end_ms, cue.text)
+        for cue in parse_srt_cues(corrected)
+    ] == [
+        (34_290, 36_730, "神了，这对吗"),
+        (36_730, 37_450, "切，"),
+        (37_450, 40_010, "那就差礼墨没吃了"),
+    ]
+    assert audit["status"] == "APPLIED"
+    assert not audit["failures"]

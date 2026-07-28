@@ -145,6 +145,11 @@
   残片时必须记
   `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 并拒发，不能因成片外已“不可见”就把它降级为
   `NOT_REQUIRED` / `OUTSIDE_DELIVERY`。完整边界契约见 [30-boundary.md](30-boundary.md)。
+- 两条相邻 required `IVAN_OPERATOR_TRUTH / replace_cue` 的共同源边界若落进同一个 fresh
+  ASR cue，先按该绝对源边界拆 cue，再把后一条人工真值按其**完整精确所有区间**重分到新
+  prefix 与后续 cue；不得要求后续 ASR 文本碰巧已经等于拆分后缀，也不得把 ASR 重复带入
+  成片。该窄路只在前后真值区间完整保留、目标 cue 连续且两端与人工区间精确对齐时启用，
+  否则 fail closed。
 - final owner verifier 以 resolver 的最终半开区间
   `[delivery_start_ms, delivery_end_ms)` 重新分类全部 required source truth：完全在成片外的
   任意 truth（不只 `next_topic_witness`）必须显式记为 context-only；完全在成片内的 truth

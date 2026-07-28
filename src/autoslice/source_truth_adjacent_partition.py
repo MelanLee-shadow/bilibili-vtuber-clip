@@ -67,9 +67,12 @@ def prepartition_adjacent_operator_truths(
 
     The automatic lane is deliberately narrow: two required active operator
     ``replace_cue`` rows must be exactly adjacent on one recording, both source
-    intervals must be fully retained, and the later truth must split into a
-    new prefix plus an already-correct suffix.  Anything less exact fails
-    closed instead of allowing the later row to overwrite the earlier row.
+    intervals must be fully retained, and the ASR cues selected for the two
+    rows must exactly cover those intervals.  The later operator-owned text is
+    then deterministically repartitioned across its complete interval; it need
+    not already match a suffix produced by this particular ASR run.  Anything
+    less exact fails closed instead of allowing the later row to overwrite the
+    earlier row or text outside its owned interval.
     """
 
     active = [
@@ -147,6 +150,10 @@ def prepartition_adjacent_operator_truths(
             < MIN_CUE_OVERLAP_MS
             or output_cues[crossing_index].end_ms - boundary_ms
             < MIN_CUE_OVERLAP_MS
+            or output_cues[crossing_index].start_ms
+            != int(previous_windows[0]["start_ms"])
+            or output_cues[current_targets[-1]].end_ms
+            != int(current_windows[0]["end_ms"])
         ):
             raise RuntimeError(
                 "SOURCE_TRUTH_ADJACENT_OWNER_PARTITION_UNRESOLVED:"
@@ -162,16 +169,12 @@ def prepartition_adjacent_operator_truths(
                 )
             )
         )
-        suffix = [
-            output_texts[index] for index in current_targets[1:]
-        ]
         if (
             len(parts) != len(current_targets)
             or any(not part.strip() for part in parts)
-            or parts[1:] != suffix
         ):
             raise RuntimeError(
-                "SOURCE_TRUTH_ADJACENT_SUFFIX_NOT_STABLE:"
+                "SOURCE_TRUTH_ADJACENT_TEXT_PARTITION_UNRESOLVED:"
                 f"{current.get('truth_id')}"
             )
         original = output_cues[crossing_index]
@@ -181,6 +184,16 @@ def prepartition_adjacent_operator_truths(
             replace(original, start_ms=boundary_ms),
         )
         output_texts.insert(crossing_index + 1, parts[0])
+        for target_index, part in zip(
+            current_targets[1:],
+            parts[1:],
+            strict=True,
+        ):
+            # Inserting the new prefix cue shifted every pre-existing suffix
+            # cue by one.  All of them are inside the later operator truth's
+            # exact interval, so its text—not a coincidental ASR suffix—is
+            # authoritative here.
+            output_texts[target_index + 1] = part
         input_origins.insert(
             crossing_index + 1, input_origins[crossing_index]
         )
