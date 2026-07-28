@@ -232,7 +232,11 @@
   `(cue, suspect, proposed_full_cue)` 与 exact 审计中的 `repaired=true` finding 全部一致时，
   才把该失败列为 recoverable；每个新的 failure fingerprint 自动获得恰好一次下一轮
   correction pass，消费过的同一 fingerprint 不得再次自旋，单候选最多消费 8 个不同
-  carryover fingerprint。缺文件、计数漂移或内容不符仍 terminal fail closed。
+  carryover fingerprint。correction 或 exact discovery 为 `AUDITOR_UNAVAILABLE` /
+  `CORRECTION_DISCOVERY_INCOMPLETE` 时，不得把空 findings 当 clean 而删除未消费的旧
+  sidecar；无新行就原字节保留，有新行则按 `(cue, suspect, proposed_full_cue)` 合并
+  去重。只有 discovery 完整时才允许以本轮 exact 结果替换或清空 sidecar。缺文件、
+  计数漂移或内容不符仍 terminal fail closed。
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
   `acoustic_drop_cue`。局部静音绝不授权删除后半段真实口播；不确定时保留/留空并阻断，

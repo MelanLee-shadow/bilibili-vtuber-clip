@@ -38,7 +38,7 @@ def carryover_path(out_root: Path, cid: str) -> Path:
 
 
 def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
-    """Persist B's acoustically-confirmed findings; drop the file when none."""
+    """Persist B's confirmed findings without losing an unconsumed prior round."""
 
     rows: list[dict[str, Any]] = []
     for finding in audit.get("findings") or []:
@@ -57,6 +57,49 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
             "（上轮 exact 终审已声学确证该修复，本轮由 correction pass 正式落盘）"
         ).strip()
         rows.append(row)
+    correction_pass = audit.get("correction_pass")
+    correction_discovery = (
+        correction_pass.get("discovery")
+        if isinstance(correction_pass, Mapping)
+        else None
+    )
+    mutation_authority = audit.get("correction_mutation_authority")
+    mutation_failures = (
+        mutation_authority.get("failures")
+        if isinstance(mutation_authority, Mapping)
+        else []
+    )
+    discovery_incomplete = bool(
+        audit.get("status") == "AUDITOR_UNAVAILABLE"
+        or (
+            isinstance(correction_pass, Mapping)
+            and correction_pass.get("status") == "AUDITOR_UNAVAILABLE"
+        )
+        or (
+            isinstance(correction_discovery, Mapping)
+            and correction_discovery.get("status")
+            in {"MISSING", "AUDITOR_UNAVAILABLE"}
+        )
+        or any(
+            isinstance(failure, Mapping)
+            and failure.get("reason_code")
+            == "CORRECTION_DISCOVERY_INCOMPLETE"
+            for failure in (mutation_failures or [])
+        )
+    )
+    if discovery_incomplete:
+        prior_rows = load_final_review_carryover(path)
+        if not rows:
+            return len(prior_rows)
+        deduplicated: dict[tuple[object, object, object], dict[str, Any]] = {}
+        for row in (*prior_rows, *rows):
+            key = (
+                row.get("cue"),
+                row.get("suspect"),
+                row.get("proposed_full_cue"),
+            )
+            deduplicated[key] = row
+        rows = list(deduplicated.values())
     if not rows:
         path.unlink(missing_ok=True)
         return 0

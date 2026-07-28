@@ -59,6 +59,90 @@ def test_persist_empty_removes_stale_file(tmp_path):
     assert load_final_review_carryover(path) == []
 
 
+def test_provider_unavailable_preserves_unconsumed_prior_carryover(tmp_path):
+    path = carryover_path(tmp_path, "auto_x")
+    prior = {
+        "schema_version": "final-review-carryover.v1",
+        "findings": [
+            {
+                "cue": 27,
+                "suspect": "早上",
+                "proposed_full_cue": "谢谢如果世上没有早……",
+            }
+        ],
+    }
+    path.write_text(json.dumps(prior, ensure_ascii=False), encoding="utf-8")
+    before = path.read_bytes()
+
+    count = persist_final_review_carryover(
+        path,
+        {
+            **_audit([]),
+            "status": "AUDITOR_UNAVAILABLE",
+            "correction_pass": {
+                "status": "AUDITOR_UNAVAILABLE",
+                "discovery": {"status": "AUDITOR_UNAVAILABLE"},
+            },
+        },
+    )
+
+    assert count == 1
+    assert path.read_bytes() == before
+
+
+def test_incomplete_correction_merges_prior_and_new_exact_carryover(tmp_path):
+    path = carryover_path(tmp_path, "auto_x")
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": [
+                    {
+                        "cue": 27,
+                        "suspect": "早上",
+                        "proposed_full_cue": "谢谢如果世上没有早……",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    count = persist_final_review_carryover(
+        path,
+        {
+            **_audit(
+                [
+                    {
+                        "cue_index": 31,
+                        "suspect": "粉丝灯牌",
+                        "proposed_full_cue": "如果世上没有早起的粉丝团灯牌",
+                        "exact_release_adjudication": {"repaired": True},
+                    }
+                ]
+            ),
+            "correction_pass": {
+                "status": "AUDITOR_UNAVAILABLE",
+                "discovery": {"status": "AUDITOR_UNAVAILABLE"},
+            },
+            "correction_mutation_authority": {
+                "status": "BLOCK",
+                "failures": [
+                    {"reason_code": "CORRECTION_DISCOVERY_INCOMPLETE"}
+                ],
+            },
+        },
+    )
+
+    assert count == 2
+    rows = load_final_review_carryover(path)
+    assert {(row["cue"], row["suspect"]) for row in rows} == {
+        (27, "早上"),
+        (31, "粉丝灯牌"),
+    }
+
+
 def test_load_rejects_malformed_payload(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("not json", encoding="utf-8")
