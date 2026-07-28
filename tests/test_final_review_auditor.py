@@ -167,6 +167,53 @@ def test_auditor_only_explicit_empty_findings_is_clean_discovery():
     )
 
 
+def test_auditor_reasks_cpa_once_after_all_findings_are_schema_invalid():
+    prompts = []
+    responses = iter(
+        [
+            '{"findings":[{"cue":99,"suspect":"不存在"}]}',
+            '{"findings":[]}',
+        ]
+    )
+
+    def retrying_llm(prompt):
+        prompts.append(prompt)
+        return next(responses)
+
+    assert (
+        audit_final_subtitles(
+            _srt("一句"),
+            llm_call=retrying_llm,
+            extract_json=_extract,
+        )
+        == []
+    )
+    assert len(prompts) == 2
+    assert "上一轮返回了非空 findings" not in prompts[0]
+    assert "上一轮返回了非空 findings" in prompts[1]
+
+
+def test_auditor_schema_repair_retry_is_bounded_and_fail_closed():
+    calls = 0
+
+    def always_invalid(_prompt):
+        nonlocal calls
+        calls += 1
+        return '{"findings":[{"cue":99,"suspect":"不存在"}]}'
+
+    with pytest.raises(
+        FinalReviewAuditError,
+        match="FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID",
+    ):
+        audit_final_subtitles(
+            _srt("一句"),
+            llm_call=always_invalid,
+            extract_json=_extract,
+        )
+
+    assert calls == 2
+
+
 def test_auditor_prompt_distinguishes_gibberish_code_switch_from_real_foreign_dialogue():
     captured = {}
 

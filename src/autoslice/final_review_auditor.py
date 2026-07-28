@@ -572,6 +572,7 @@ def audit_final_subtitles(
     candidate_context_text: str = "",
     candidate_context: Mapping[str, object] | None = None,
     extra_raw_findings: Sequence[Mapping[str, Any]] = (),
+    _schema_repair_retry: bool = False,
 ) -> list[dict[str, Any]]:
     """One reviewer pass over the final SRT; returns validated findings only.
     ``extra_raw_findings``: 终审结转 raw 行，语义见 _merged_raw_findings。"""
@@ -586,6 +587,17 @@ def audit_final_subtitles(
         structured_context=(structured_context_text.strip() or "（无）"),
         candidate_context=(candidate_context_text.strip() or "（无）"),
     )
+    if _schema_repair_retry:
+        prompt += """
+
+上一轮返回了非空 findings，但每一条都因合同字段无效而被机器拒绝。请重新
+独立审查同一份字幕，并严格遵守：
+- cue 必须是上方真实存在的编号；
+- suspect 若填写，必须逐字出现在该 cue；
+- 有修正方案时 proposed_full_cue 必须是该 cue 的完整修正版；
+- 没有合同合法且确有把握的疑点时，明确输出 {"findings": []}。
+不得复述或猜测上一轮内容，只输出一个新的 JSON 对象。
+"""
     raw = _request_final_review_findings(
         prompt, llm_call=llm_call, extract_json=extract_json
     )
@@ -857,6 +869,18 @@ def audit_final_subtitles(
         if len(findings) >= MAX_FINDINGS:
             break
     if raw and not findings:
+        if not _schema_repair_retry:
+            return audit_final_subtitles(
+                srt_text,
+                llm_call=llm_call,
+                extract_json=extract_json,
+                glossary_text=glossary_text,
+                structured_context_text=structured_context_text,
+                candidate_context_text=candidate_context_text,
+                candidate_context=candidate_context,
+                extra_raw_findings=extra_raw_findings,
+                _schema_repair_retry=True,
+            )
         raise FinalReviewAuditError(
             "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID",
             f"raw_count={len(raw)}",

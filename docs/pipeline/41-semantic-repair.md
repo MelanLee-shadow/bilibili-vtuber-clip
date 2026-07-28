@@ -32,7 +32,7 @@
    - **删除专线**：`acoustic_delete` 仅提议删除一个有界疑似幻听 span，`acoustic_drop_cue`
      仅提议整条无声；AGY 的“不可闻”仍只是证据，只有 CPA `PROPOSED` 才能执行删除。严格
      postcondition 不成立、CPA 选 CURRENT 或 CPA 未完成就保留原文并阻断/披露。
-4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。
+4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。若 CPA 返回非空 findings 但全部违反 finding schema，同一 discovery 最多追加一次带明确字段约束的 CPA schema-repair 复审；第二次仍无效就继续 fail closed，禁止把坏响应折叠成 CLEAN。
 5. **付费兜底**：同项失败≥3轮即可触发（额度类失败可同 run 连续补轮，`quota_exhausted_round`），每笔入帐。**Ivan 2026-07-19 明确否决冷却期类附加门**——控制付费用量靠 T1 分层缩减声学仲裁需求本身，不靠拖延付费。
 6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
 7. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁（插入永远走 T3，不进 T1）。**已知盲区（2026-07-19 合并条实证）**：专名在片内它处出现过时零出现触发器不响，单句漏听无人怀疑（kmx 0:49 案，最终走 Ivan 审定 ledger 钉子）。改成逐句怀疑会假阳性爆炸；候选方向是「称呼/接话/突击等强语境句位 + 专名句位模板」的窄触发，进欠账。
