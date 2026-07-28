@@ -3329,6 +3329,70 @@ def test_entity_final_verification_owns_only_its_repaired_span():
     )
 
 
+def _authorized_drop_cue_row() -> dict:
+    return {
+        "mode": "final_review_context_adjudication",
+        "repair_class": "acoustic_drop_cue",
+        "decision_authority": "CPA_JUDGE",
+        "policy_branch": "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
+        "mutation_authority": {
+            "schema_version": (
+                "subtitle-correction-mutation-authority.v1"
+            ),
+            "status": "PASS",
+            "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+        },
+        "before": ["咳咳咳"],
+        "after": [""],
+        "structured_exact_text": "",
+        "matched_start_ms": 5_000,
+        "matched_end_ms": 9_000,
+    }
+
+
+def test_authorized_drop_cue_verifies_empty_final_window():
+    final_text = "1\n00:00:10,000 --> 00:00:14,000\n保留的下一句\n"
+    row = _authorized_drop_cue_row()
+
+    assert verify_chat_authority_final_surfaces(
+        {"entity_repairs": [row]},
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=0,
+        delivery_end_ms=15_000,
+    )
+    assert row["final_drop_cue_empty_text_window"] is True
+    assert row["final_drop_cue_empty_speaker_window"] is True
+
+
+def test_drop_cue_without_typed_mutation_receipt_stays_fail_closed():
+    final_text = "1\n00:00:10,000 --> 00:00:14,000\n保留的下一句\n"
+    row = _authorized_drop_cue_row()
+    row.pop("mutation_authority")
+
+    assert not verify_chat_authority_final_surfaces(
+        {"entity_repairs": [row]},
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=0,
+        delivery_end_ms=15_000,
+    )
+
+
+def test_authorized_drop_cue_rejects_surviving_text_in_owned_window():
+    final_text = _srt("咳咳咳", "保留的下一句")
+    row = _authorized_drop_cue_row()
+
+    assert not verify_chat_authority_final_surfaces(
+        {"entity_repairs": [row]},
+        final_text_srt=final_text,
+        final_speaker_srt=final_text,
+        delivery_start_ms=0,
+        delivery_end_ms=15_000,
+    )
+    assert row["final_drop_cue_empty_text_window"] is False
+
+
 def test_final_surface_verification_rejects_same_text_at_wrong_time():
     exact = "同一句原文"
     final_text = _srt(exact, "实际匹配处被改坏")

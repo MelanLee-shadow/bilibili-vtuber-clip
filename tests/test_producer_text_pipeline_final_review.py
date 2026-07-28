@@ -1776,6 +1776,60 @@ def test_final_review_context_fixes_register_for_final_surface_verification(monk
     )
 
 
+def test_final_review_drop_cue_registers_typed_final_surface_receipt(
+    monkeypatch,
+):
+    findings = [
+        {
+            "cue": 1,
+            "kind": "context",
+            "proposed_full_cue": "",
+            "repair_class": "acoustic_drop_cue",
+            "why": "whole cue is non-semantic hallucination",
+        }
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "build_llm_call",
+        lambda config: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False),
+            "PROPOSED",
+        ),
+    )
+
+    chat_authority_audit: dict = {"applied": []}
+    output, audit = pipeline._run_final_review(
+        srt_text=_srt("咳咳咳", "保留的下一句"),
+        chat_authority_audit=chat_authority_audit,
+        handled_entity_cues=set(),
+        verify_confusable_entity=lambda request: _witness_verdict(
+            request,
+            "",
+            audible=False,
+        ),
+        adapters=_adapters(),
+    )
+
+    assert audit["applied_count"] == 1
+    assert "咳咳咳" not in output
+    row = chat_authority_audit["entity_repairs"][0]
+    assert row["repair_class"] == "acoustic_drop_cue"
+    assert row["decision_authority"] == "CPA_JUDGE"
+    assert row["mutation_authority"]["status"] == "PASS"
+
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    assert verify_chat_authority_final_surfaces(
+        chat_authority_audit,
+        final_text_srt=output,
+        final_speaker_srt=output,
+        delivery_start_ms=0,
+        delivery_end_ms=60_000,
+    )
+
+
 def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
     source_texts = [f"坏词{index}留在这里" for index in range(1, 14)]
     findings = [

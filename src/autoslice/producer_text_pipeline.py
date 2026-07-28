@@ -874,6 +874,14 @@ def _run_final_review(
                     staged_entity_repairs.append(
                         {
                             "mode": "final_review_context_adjudication",
+                            "repair_class": request.get("repair_class"),
+                            "decision_authority": adj_audit.get(
+                                "decision_authority"
+                            ),
+                            "policy_branch": adj_audit.get("policy_branch"),
+                            "mutation_authority": adj_audit.get(
+                                "mutation_authority"
+                            ),
                             "evidence_id": request.get("evidence_id"),
                             "cue_indexes": [finding_cue],
                             "matched_start_ms": int(request.get("matched_start_ms") or 0),

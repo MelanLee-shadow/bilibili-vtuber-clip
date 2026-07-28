@@ -63,6 +63,56 @@ def _entity_repair_final_surface(row: dict) -> str:
     return str(row.get("structured_exact_text") or "") or "".join(after)
 
 
+def _authorized_final_review_drop_cue(row: dict) -> bool:
+    """Recognize a typed CPA-authorized whole-cue deletion receipt."""
+
+    before = [str(value) for value in row.get("before") or []]
+    after = [str(value) for value in row.get("after") or []]
+    mutation_authority = row.get("mutation_authority") or {}
+    return bool(
+        row.get("mode") == "final_review_context_adjudication"
+        and row.get("repair_class") == "acoustic_drop_cue"
+        and row.get("decision_authority") == "CPA_JUDGE"
+        and str(row.get("policy_branch") or "").startswith(
+            ("CPA_JUDGE_APPLY_", "WITNESS_JUDGE_APPLY_")
+        )
+        and mutation_authority.get("schema_version")
+        == "subtitle-correction-mutation-authority.v1"
+        and mutation_authority.get("status") == "PASS"
+        and len(before) == len(after) == 1
+        and bool(before[0])
+        and after[0] == ""
+        and row.get("structured_exact_text") == ""
+    )
+
+
+def _record_entity_repair_window_survival(
+    row: dict,
+    *,
+    span_expected: str,
+    text_window: str,
+    speaker_window: str,
+    text_check: str,
+    speaker_check: str,
+    dropped_ok: bool,
+) -> None:
+    if _authorized_final_review_drop_cue(row):
+        # Empty is the owned result for a whole-cue deletion.  It is only
+        # accepted with the typed CPA mutation receipt above, and the exact
+        # adjudicated window must be subtitle-empty on both final surfaces.
+        row["final_drop_cue_empty_text_window"] = not bool(text_window)
+        row["final_drop_cue_empty_speaker_window"] = not bool(speaker_window)
+        row["survived_final_text_srt"] = not bool(text_window)
+        row["survived_final_speaker_srt"] = not bool(speaker_window)
+        return
+    row["survived_final_text_srt"] = bool(
+        span_expected and span_expected in text_check
+    ) and dropped_ok
+    row["survived_final_speaker_srt"] = bool(
+        span_expected and span_expected in speaker_check
+    ) and dropped_ok
+
+
 def _sc_sender_final_surface(row: dict) -> str:
     """Return only the narrow sender slot owned by an SC sender repair."""
 
@@ -1163,8 +1213,14 @@ def verify_chat_authority_final_surfaces(
             interjections,
             required_substring=span_expected,
         )
-        row["survived_final_text_srt"] = bool(span_expected and span_expected in text_check) and dropped_ok
-        row["survived_final_speaker_srt"] = bool(span_expected and span_expected in speaker_check) and dropped_ok
+        _record_entity_repair_window_survival(
+            row, span_expected=span_expected,
+            text_window=text_window,
+            speaker_window=speaker_window,
+            text_check=text_check,
+            speaker_check=speaker_check,
+            dropped_ok=dropped_ok,
+        )
         required_rows.append(row)
     audit["final_required_legacy_decision_count"] = len(required_rows)
     audit["final_required_source_truth_owner_count"] = source_owner_count
