@@ -6368,6 +6368,73 @@ def test_correction_discovery_unavailable_is_bounded_retryable_before_findings(
     ]
 
 
+def test_carryover_receipt_does_not_hide_retryable_correction_provider_failure(
+    tmp_path: Path,
+):
+    audit = _final_review_failure_audit(
+        finding_count=3,
+        boundary_status="PASS",
+    )
+    audit["reason_codes"].append(
+        "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
+    )
+    audit["correction_pass"] = {
+        "schema_version": "final-review-audit.v1",
+        "status": "AUDITOR_UNAVAILABLE",
+        "release_gate": "BLOCK",
+        "reason_codes": ["FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"],
+        "discovery": {
+            "status": "AUDITOR_UNAVAILABLE",
+            "detail": "provider timeout",
+        },
+        "findings": [],
+        "applied_count": 0,
+        "error_type": "FinalReviewAuditError",
+    }
+    audit["correction_mutation_authority"] = {
+        "schema_version": "subtitle-correction-mutation-audit.v1",
+        "status": "BLOCK",
+        "applied_count": 0,
+        "validated_mutation_count": 0,
+        "failures": [
+            {
+                "reason_code": "CORRECTION_DISCOVERY_INCOMPLETE",
+                "upstream_reason_codes": [
+                    "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+                ],
+            }
+        ],
+    }
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        "auto_carryover_provider_failure",
+        audit,
+    )
+    chat_document = json.loads(authority.read_text(encoding="utf-8"))
+    chat_document["final_review_audit"]["carryover_persisted_count"] = 3
+    authority.write_text(
+        json.dumps(chat_document, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: "
+        "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == (
+        "final_review_correction_discovery"
+    )
+    assert classified["failure_recoverable"] is True
+    evidence = classified["failure_evidence"]
+    assert evidence["audit_surfaces_consistent"] is True
+    assert evidence["audit_nested_additive_fields"] == [
+        "carryover_persisted_count"
+    ]
+
+
 def test_malformed_correction_contract_is_terminal_not_provider_retry(
     tmp_path: Path,
 ):

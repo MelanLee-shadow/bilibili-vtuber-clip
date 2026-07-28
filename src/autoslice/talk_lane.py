@@ -832,7 +832,25 @@ def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
         else None
     )
     if direct_audit is not None and nested_audit is not None:
-        evidence["audit_surfaces_consistent"] = direct_audit == nested_audit
+        # The exact-final pass persists carryover metadata into chat authority
+        # after review-flags has already been written.  That one additive
+        # receipt is not a contradictory audit surface; every shared field
+        # must still match byte-for-value and no other field may diverge.
+        direct_only = set(direct_audit) - set(nested_audit)
+        nested_only = set(nested_audit) - set(direct_audit)
+        shared_mismatches = [
+            key
+            for key in set(direct_audit) & set(nested_audit)
+            if direct_audit[key] != nested_audit[key]
+        ]
+        allowed_nested_only = {"carryover_persisted_count"}
+        evidence["audit_surfaces_consistent"] = (
+            not direct_only
+            and not shared_mismatches
+            and nested_only <= allowed_nested_only
+        )
+        if nested_only:
+            evidence["audit_nested_additive_fields"] = sorted(nested_only)
     audit = direct_audit or nested_audit
     if audit is None:
         return evidence
