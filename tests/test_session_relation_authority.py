@@ -48,6 +48,24 @@ def test_generated_hook_canonicalizes_name_slot_but_not_common_phrase() -> None:
     ) == "滴水之恩涌泉相报，这是大恩大德"
 
 
+def test_final_transcript_can_repair_recovered_hook_without_relation_hash() -> None:
+    assert canonicalize_relation_summary(
+        "李豆沙解释为什么请大恩吃火锅",
+        session_relation_authority=None,
+        transcript_text="为什么要请大N老师吃火锅\n最喜欢的南町nightin",
+    ) == "李豆沙解释为什么请南町吃火锅"
+    assert canonicalize_relation_summary(
+        "滴水之恩涌泉相报，这是大恩大德",
+        session_relation_authority=None,
+        transcript_text="最喜欢的南町nightin",
+    ) == "滴水之恩涌泉相报，这是大恩大德"
+    assert canonicalize_relation_summary(
+        "李豆沙解释为什么请大恩吃火锅",
+        session_relation_authority=None,
+        transcript_text="为什么请她吃火锅",
+    ) == "李豆沙解释为什么请大恩吃火锅"
+
+
 def test_story_contract_rejects_cross_artifact_nancho_outlier() -> None:
     authority = _authority()
     contract = build_story_contract(

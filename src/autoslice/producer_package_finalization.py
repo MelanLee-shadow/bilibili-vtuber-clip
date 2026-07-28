@@ -66,6 +66,7 @@ from src.autoslice.talk_filler import bind_final_filler_audit_to_burn
 from src.autoslice.story_contract import (
     audit_story_artifact,
     build_story_contract,
+    canonicalize_relation_summary,
 )
 from src.autoslice.clip_context import validate_clip_context
 
@@ -1230,9 +1231,14 @@ def _stage_record(
             "cover_reference_overrides", repo_root=ROOT
         ),
     )
+    story_selection_hook = canonicalize_relation_summary(
+        str(spec.get("selection_hook") or ""),
+        session_relation_authority=spec.get("session_relation_authority"),
+        transcript_text=transcript_text,
+    )
     story_contract = build_story_contract(
         candidate_id=cid,
-        selection_hook=str(spec.get("selection_hook") or ""),
+        selection_hook=story_selection_hook,
         transcript_text=transcript_text,
         selection_scorecard=spec.get("selection_scorecard"),
         session_relation_authority=spec.get("session_relation_authority"),
@@ -1249,7 +1255,7 @@ def _stage_record(
     )
     story_contract["input_audits"] = [
         audit_story_artifact(
-            str(spec.get("selection_hook") or ""),
+            story_selection_hook,
             story_contract=story_contract,
             artifact_kind="selection_hook",
         ),
@@ -1296,7 +1302,7 @@ def _stage_record(
         title_llm_call=title_llm,
         art_direction_llm_call=art_direction_llm,
         skip_cover=options.reuse_cover,
-        selection_hook=str(spec.get("selection_hook") or ""),
+        selection_hook=story_selection_hook,
         cover_diversity_slot=spec.get("cover_diversity_slot"),
         recovery_publication_authority=(
             normalized_recovery_publication_authority

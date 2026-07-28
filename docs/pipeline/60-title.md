@@ -41,6 +41,10 @@
 - 核心原则：标题围绕李豆沙本人；替换成任何别的主播还成立的标题就是失败。
 - 自动标题除共享门外，还受违禁词与 selection-hook 锚点约束；失败可做有界重写。
   人工正文不自动重写，但结构/长度不合规仍 fail closed 并要求修正文档 authority。
+- selection hook 属于生成摘要而非源字幕。恢复源 hash 导致旧 session-relation authority
+  暂不可用时，如果最终 CPA/词表链已经在整片字幕中稳定落下登记规范专名，hook 内对应的
+  **未登记**误听面可继承该 expected-value 证据机械规范化；普通短语 false-positive 必须
+  保留，两个已登记专名冲突仍交 CPA，不能借字幕中任意出现一次就互换。
 - recovery publication authority 是“修媒体时固定原 BV 身份与复用哪种已审标题来源”，不是
   自动标题。两种模式都不调用标题 LLM，且仍须通过 StoryContract 与共享发布标题门；staging
   分别写 `recovery_verified_same_bv_public_title / RESOLVED_RECOVERY_PUBLIC` 或

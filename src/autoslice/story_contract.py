@@ -25,12 +25,26 @@ def canonicalize_relation_summary(
     text: str,
     *,
     session_relation_authority: object,
+    transcript_text: str = "",
 ) -> str:
-    """Canonicalize generated summaries, never source transcript mentions."""
+    """Canonicalize generated summaries, never source transcript mentions.
 
-    if not isinstance(session_relation_authority, Mapping) or session_relation_authority.get(
-        "state"
-    ) != "CONFIRMED":
+    A recovered source may no longer match the original session-relation hash
+    even though the freshly adjudicated transcript already contains the
+    registered canonical name.  In that case the transcript is sufficient
+    expected-value evidence for repairing an *unregistered* suspect surface in
+    generated prose.  It does not authorize a registered-name-to-registered-
+    name rewrite, and the ordinary-phrase false-positive guard still applies.
+    """
+
+    relation_confirmed = (
+        isinstance(session_relation_authority, Mapping)
+        and session_relation_authority.get("state") == "CONFIRMED"
+    )
+    transcript_confirms_canonical = (
+        _NANCHO_CANONICAL_RX.search(transcript_text) is not None
+    )
+    if not relation_confirmed and not transcript_confirms_canonical:
         return text
     output = text
     for match in reversed(list(_NANCHO_SUSPECT_RX.finditer(output))):
