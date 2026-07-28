@@ -2439,7 +2439,7 @@
   },
   {
    "action": "replace_cue",
-   "assertion_state": "VERIFIED_ACTIVE",
+   "assertion_state": "SUPERSEDED",
    "authority": "重跑退化锁基准2026-07-25：Ivan已审零错基准第39行为神了，这对吗（fresh重跑退化成省了）；声学heard=shen2 le3 zhe4 dui4 ma5 current INCOMPATIBLE、弹幕神了佐证。基准即文本权威。",
    "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
    "knowledge_type": "SOURCE_INTERVAL_TRUTH",
@@ -2448,6 +2448,7 @@
    "revision_id": "r1",
    "source_end_ms": 1236520,
    "source_start_ms": 1233360,
+   "superseded_by": "20260724-beans-shenle-r2",
    "text": "神了，这对吗",
    "truth_id": "20260724-beans-shenle-r1"
   },
@@ -2814,7 +2815,7 @@
   },
   {
    "action": "replace_substring",
-   "assertion_state": "VERIFIED_ACTIVE",
+   "assertion_state": "SUPERSEDED",
    "authority": "Ivan-stated-20260728：7/24 1209切片公开0:36的「林墨」是礼墨专名误写；官方PSP名单与同段紧邻复述均绑定礼墨。该报告仅1处，整片必须重跑复审。",
    "decision_authority": "IVAN_OPERATOR_TRUTH",
    "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
@@ -2831,6 +2832,7 @@
    "revision_id": "r1",
    "source_end_ms": 1239080,
    "source_start_ms": 1236520,
+   "superseded_by": "20260724-beans-limo-first-repeat-r2",
    "truth_id": "20260724-beans-limo-first-repeat-r1"
   },
   {
@@ -2925,6 +2927,38 @@
    "source_start_ms": 1033760,
    "text": "在公司说怪话，好刺激",
    "truth_id": "20260725-909-sc-tail-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-operator-truth-20260728：保留已审零错基准「神了，这对吗」；fresh ASR将后续礼墨句并入相邻cue后，旧宽窗同时命中两cue而失败。r2把该真值收窄到后续cue起点之前，只裁定本句。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-18-31-22.mp4",
+   "required": true,
+   "revision_id": "r2",
+   "source_end_ms": 1235800,
+   "source_start_ms": 1233360,
+   "supersedes": "20260724-beans-shenle-r1",
+   "text": "神了，这对吗",
+   "truth_id": "20260724-beans-shenle-r2"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-operator-truth-20260728：7/24 1209整片重跑中，fresh ASR把「切，那就差礼墨没吃了」合并并误听成柠檬。r2以不重叠时间窗钉住完整句，避免旧substring规则只识别林墨时失效。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260724-18-31-22.mp4",
+   "required": true,
+   "revision_id": "r2",
+   "source_end_ms": 1239080,
+   "source_start_ms": 1235800,
+   "supersedes": "20260724-beans-limo-first-repeat-r1",
+   "text": "切，那就差礼墨没吃了",
+   "truth_id": "20260724-beans-limo-first-repeat-r2"
   }
  ],
  "governance": {

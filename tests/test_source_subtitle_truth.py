@@ -3191,3 +3191,43 @@ def test_straddling_cue_blocks_containment_admission(tmp_path):
     assert audit["failures"], audit
     assert audit["failures"][0]["reason_code"] == "REPLACE_CUE_TARGET_NOT_UNIQUE"
     assert "顺便说下一件事" in corrected
+
+
+def test_committed_1209_truth_survives_fresh_asr_cue_merge():
+    """1209 fresh ASR 可把礼墨句并进相邻 cue；operator truth 仍应唯一落刀。"""
+
+    ledger = (
+        REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (34_290, 35_410, "什么？"),
+            (36_730, 39_290, "这对吗？现那就差柠檬没吃了"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260724-18-31-22.mp4"
+                    ),
+                    "start_ms": 1_199_070,
+                    "end_ms": 1_239_080,
+                }
+            ]
+        },
+        durations=[40_010],
+        ledger_path=ledger,
+    )
+
+    assert [cue.text for cue in parse_srt_cues(corrected)] == [
+        "神了，这对吗",
+        "切，那就差礼墨没吃了",
+    ]
+    assert audit["status"] == "APPLIED"
+    assert not audit["failures"]
+    assert {
+        row["truth_id"] for row in audit["applied"]
+    } >= {
+        "20260724-beans-shenle-r2",
+        "20260724-beans-limo-first-repeat-r2",
+    }
