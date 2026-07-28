@@ -29,6 +29,13 @@ REGISTRY = {
             "bvid": None,
             "note": "7/24 争议搁置件",
         },
+        {
+            "candidate_id": "auto_183122_1209_1410_released",
+            "recording_date": "2026-07-24",
+            "status": "released_for_upload",
+            "bvid": None,
+            "note": "Ivan released after correction",
+        },
     ],
 }
 
@@ -45,6 +52,16 @@ def test_published_candidate_blocks_new_upload():
 def test_held_candidate_blocks_until_cleared():
     reason = upload_block_reason("auto_183122_1209_1410", registry=REGISTRY)
     assert reason and "held pending Ivan" in reason
+
+
+def test_released_candidate_keeps_audit_history_without_blocking():
+    assert (
+        upload_block_reason(
+            "auto_183122_1209_1410_released",
+            registry=REGISTRY,
+        )
+        is None
+    )
 
 
 def test_unlisted_candidate_and_date_mismatch_allow():
@@ -69,7 +86,7 @@ def test_committed_registry_loads_and_lists_the_incident():
     registry = load_publication_registry()
     rows = {r["candidate_id"]: r for r in registry["entries"]}
     assert rows["auto_193129_850_940"]["bvid"] == "BV1ec3A6bEWF"
-    assert rows["auto_183122_1209_1410"]["status"] == "hold_pending_review"
+    assert rows["auto_183122_1209_1410"]["status"] == "released_for_upload"
 
 
 def test_manifest_gate_reads_attested_record(tmp_path):

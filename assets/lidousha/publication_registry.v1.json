@@ -82,9 +82,9 @@
   {
    "candidate_id": "auto_183122_1209_1410",
    "recording_date": "2026-07-24",
-   "status": "hold_pending_review",
+   "status": "released_for_upload",
    "bvid": null,
-   "note": "7/24 争议搁置件（当晚批次 上传许可:否）；Ivan 放行前禁止任何上传"
+   "note": "7/24 争议搁置件（当晚批次 上传许可:否）；Ivan 2026-07-28明确放行：修复礼墨专名问题后上传。仍须通过current package audit与authorized_upload门"
   },
   {
    "candidate_id": "auto_195000_1493_1579",

@@ -7,6 +7,9 @@
 ## 发布准入
 
 - 每条都需要 Ivan 明确授权；manifest 保存授权原话，工具不能替用户创造授权。
+- publication registry 的人工搁置不得靠删除历史来解除：
+  Ivan 明确放行后改为 `released_for_upload`，保留放行日期/原话与剩余准入门；
+  该状态只解除 `hold_pending_review` 阻断，不等于机器 audit 通过，也不产生上传副作用。
 - 新投稿只接受 `authorized-upload-manifest.v3`。它必须绑定同 stem 的最终视频、封面、
   record、SRT、review manifest、冻结标题、最终 tags、StoryContract 与当前 package audit。
 - package audit 必须为 `lidousha-review-package-audit.v2`，policy epoch 精确等于

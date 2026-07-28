@@ -8,6 +8,7 @@
 - published 候选：内容已在某 BV 上，修复只允许 authorized_upload.py
   repair-* 的原 BV 修复链；
 - hold_pending_review 候选：Ivan 放行前禁止任何上传；
+- released_for_upload 候选：保留历史 hold 与 Ivan 放行证据，但不再阻断新投稿；
 - registry 缺失或不可读时 fail-closed（宁可拒发也不重复出版）。
 """
 
@@ -26,6 +27,11 @@ DEFAULT_REGISTRY_PATH = (
     / "publication_registry.v1.json"
 )
 
+_VALID_STATUSES = {
+    "published",
+    "hold_pending_review",
+    "released_for_upload",
+}
 _BLOCKING_STATUSES = {"published", "hold_pending_review"}
 
 
@@ -45,7 +51,7 @@ def load_publication_registry(path: Path | None = None) -> dict:
         if not str(row.get("candidate_id") or "").strip():
             raise ValueError("PUBLICATION_REGISTRY_ROW_CANDIDATE_MISSING")
         status = row.get("status")
-        if status not in _BLOCKING_STATUSES:
+        if status not in _VALID_STATUSES:
             raise ValueError("PUBLICATION_REGISTRY_ROW_STATUS_INVALID")
         if status == "published" and not str(row.get("bvid") or "").strip():
             raise ValueError("PUBLICATION_REGISTRY_ROW_BVID_MISSING")
