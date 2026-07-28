@@ -79,7 +79,13 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   再终判；仍失败或验证不可用即 `COVER_POLISH_FACE_UNVERIFIED` 阻断（候选留在
   cover-only 维护，可下轮重试）。相机窗来源（crop 证据 `camera_window_crop=true`）
   为近全幅大脸，确定性直接走 contain 卡。包审计端同因阻断
-  （`SCREENSHOT_POLISH_FACE_UNVERIFIED`）。已发布稿修复：
+  （`SCREENSHOT_POLISH_FACE_UNVERIFIED`）。尚未交付且停在
+  `media_ready_cover_pending` 的 screenshot 路线若 proof 无效，
+  cover maintenance 不得每个 tick 原地打印同一 BLOCK；它必须把候选转成一次有界、
+  可恢复的正常 producer 重跑。`screenshot_direct` 在原路线重建确定性 proof，
+  `screenshot_polish` 重新取得 polished pixels 并再走整脸门。该同 fingerprint
+  自动重试最多一次；已经交付的包仍须走显式 same-BV-safe 修复，绝不由通用 AI
+  repair 偷换路线。已发布稿修复：
   `scripts/repair_screenshot_cover.py` 从既有 hash-bound polish 工件经同一生产函数重排
   并出回执；线上替换走 `scripts/bili_cover_edit.py`（cover-only 授权编辑+读回回执，
   编辑不占投稿配额）。

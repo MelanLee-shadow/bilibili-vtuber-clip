@@ -103,6 +103,10 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
 )
 from src.autoslice.source_integrity import audit_finalized_recording_inventory
+from src.autoslice.legacy_hls_recovery import (
+    LegacyHlsRecoveryError,
+    recover_finalized_legacy_hls,
+)
 from src.autoslice.batch_terminal_state import project_terminal_batch_state
 from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
@@ -1367,7 +1371,23 @@ def list_dates() -> list[str]:
     except OSError as exc:
         log(f"list_dates: recordings root unreadable: {exc}")
         return []
-    return sorted(names)[-3:]
+    selected = set(sorted(names)[-3:])
+    # A historical date with a known finalized-source gap must not age out of
+    # the latest-three cron window before the new recovery lane can repair it.
+    # Include only this explicit fail-closed state; old completed/review dates
+    # remain dormant and are not woken by unrelated pipeline fingerprints.
+    state_dir = BASE / "state"
+    for date in names:
+        if date in selected:
+            continue
+        path = state_dir / f"{date}.json"
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if state.get("status") == "source_incomplete":
+            selected.add(date)
+    return sorted(selected)
 
 
 def list_segments(date: str) -> list[Path]:
@@ -1554,6 +1574,23 @@ def process_date(date: str) -> None:
         log(f"{date}: runtime invalid — batch deferred without consuming candidate retries: {runtime_err}")
         return
     state.pop("runtime_error", None)
+    try:
+        recovered_hls = recover_finalized_legacy_hls(
+            REC_ROOT / date,
+            room_id=ROOM,
+        )
+    except LegacyHlsRecoveryError as exc:
+        recovered_hls = []
+        state["source_recovery_error"] = str(exc)
+    else:
+        state.pop("source_recovery_error", None)
+        if recovered_hls:
+            state.setdefault("source_recoveries", []).extend(recovered_hls)
+            write_state(date, state)
+            log(
+                f"{date}: recovered {len(recovered_hls)} finalized legacy "
+                "HLS segment(s) into hash-bound MP4"
+            )
     source_inventory = audit_finalized_recording_inventory(
         REC_ROOT / date,
         room_id=ROOM,

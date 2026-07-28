@@ -170,20 +170,44 @@ def repair_covers(
         if selected_treatment in {"screenshot_direct", "screenshot_polish"}:
             # The generic repair tool is an image-generation workflow.  A
             # screenshot package that fails its hash/document proof must stay
-            # on the screenshot route (local rerender or explicit review), not
-            # silently mutate into AI character art merely because the legacy
-            # READY status shares a name with the AI lane.
-            rec["cover_integrity_status"] = (
-                "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
-            )
-            rec["cover_status"] = "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
-            rec["cover_route_preservation_error"] = (
-                "screenshot proof is invalid; generic AI repair is forbidden"
-            )
-            _runner.log(
-                f"cover repair {rec.get('candidate_id', '?')}: blocked before "
-                "image request to preserve screenshot route"
-            )
+            # on the screenshot route.  A not-yet-delivered talk gets one
+            # bounded normal-producer rerun: screenshot_direct rebuilds its
+            # deterministic proof, while screenshot_polish obtains fresh
+            # polished pixels and repeats the face gate.  Existing deliveries
+            # stay blocked for explicit same-BV-safe repair.
+            if (
+                rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
+                and int(rec.get("talk_transient_retry_count") or 0) < 1
+            ):
+                rec["status"] = "failed"
+                rec["failure_kind"] = "cover_route_regeneration"
+                rec["failure_recoverable"] = True
+                rec["cover_integrity_status"] = (
+                    "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+                )
+                rec["cover_status"] = "SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+                rec["cover_route_preservation_error"] = (
+                    "screenshot proof is invalid; queued one bounded "
+                    "route-preserving producer rerun"
+                )
+                _runner.log(
+                    f"cover repair {rec.get('candidate_id', '?')}: queued one "
+                    "route-preserving producer rerun before image request"
+                )
+            else:
+                rec["cover_integrity_status"] = (
+                    "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
+                )
+                rec["cover_status"] = (
+                    "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
+                )
+                rec["cover_route_preservation_error"] = (
+                    "screenshot proof is invalid; generic AI repair is forbidden"
+                )
+                _runner.log(
+                    f"cover repair {rec.get('candidate_id', '?')}: blocked before "
+                    "image request to preserve screenshot route"
+                )
             _runner.write_state(date, state)
             continue
         try:

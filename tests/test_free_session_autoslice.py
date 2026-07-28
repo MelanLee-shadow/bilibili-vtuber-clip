@@ -1634,6 +1634,80 @@ def test_invalid_screenshot_cover_fails_closed_before_generic_ai_repair(
     )
 
 
+def test_pending_screenshot_cover_queues_one_route_preserving_producer_rerun(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64
+    )
+    mp4 = tmp_path / "clip.mp4"
+    cover = tmp_path / "clip.cover.png"
+    mp4.write_bytes(b"video")
+    cover.write_bytes(b"cover")
+    rec = {
+        "candidate_id": "auto_pending_screenshot",
+        "status": runner.TALK_COVER_PENDING_STATUS,
+        "title": "【李豆沙】待补截图路线",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "talk_transient_retry_count": 0,
+        "cover_generation": {
+            "route_decision": {
+                "schema_version": "lidousha-cover-route-decision.v2",
+                "selected_treatment": "screenshot_polish",
+            },
+        },
+    }
+    state = {"picks": [rec], "songs": []}
+    monkeypatch.setattr(
+        runner, "delivered_paths", lambda _date, _rec: (mp4, cover)
+    )
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+
+    def forbidden_run(*_args, **_kwargs):
+        raise AssertionError("route-preserving retry must use the normal producer")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden_run)
+    runner.repair_covers("2026-07-26", state)
+
+    assert rec["status"] == "failed"
+    assert rec["failure_kind"] == "cover_route_regeneration"
+    assert rec["failure_recoverable"] is True
+    assert rec["cover_status"] == "SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+    assert (
+        rec["cover_integrity_status"]
+        == "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+    )
+
+
+def test_list_dates_keeps_aged_out_source_incomplete_date(
+    tmp_path, monkeypatch
+):
+    rec_root = tmp_path / "recordings"
+    state_root = tmp_path / "autoslice" / "state"
+    state_root.mkdir(parents=True)
+    for date in (
+        "2026-07-22",
+        "2026-07-24",
+        "2026-07-25",
+        "2026-07-26",
+    ):
+        (rec_root / date).mkdir(parents=True)
+    (state_root / "2026-07-22.json").write_text(
+        json.dumps({"status": "source_incomplete"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+
+    assert runner.list_dates() == [
+        "2026-07-22",
+        "2026-07-24",
+        "2026-07-25",
+        "2026-07-26",
+    ]
+
+
 def test_cover_binding_prevalidation_leaves_everything_unchanged_on_bad_active_record(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch)
     fx["source_record"].write_text("not-json", encoding="utf-8")

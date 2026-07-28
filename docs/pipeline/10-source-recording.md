@@ -138,6 +138,15 @@
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行
   `recording-inventory-audit.v1`；发现已封口的源没有同 stem MP4，状态只能是
   `source_incomplete`，不得进入 selection 或 `review_ready`。
+- 对旧录制器遗留的 finalized HLS（同 stem `.m3u8` 有 `ENDLIST`、且只引用同
+  stem `.m4s`，但缺 `.mp4`），runner 在库存审计前自动执行一次 no-clobber
+  stream-copy 恢复：同文件系统 staging、双流 ffprobe、全包 packet scan、
+  SHA-256、reservation 原子发布和 `legacy-hls-recovery.v1` 回执全部通过后才
+  暴露 `.mp4`。外链 URI、非终态 playlist、缺音/视频、既有目标或回执冲突均
+  fail closed，继续保持 `source_incomplete`，不得把人工 remux 当成无证据旁路。
+  `source_incomplete` 日期即使已老于普通 latest-3 cron 窗口也必须继续进入
+  tick，直到这条源恢复/库存门得到真实结论；只额外唤醒该显式状态，不得借机
+  把所有历史完成日期按新 fingerprint 全部重跑。
 - 源完整性：视频流独立解码零损伤（`source_integrity.py`）；BLOCK≠ok、
   0 交付≠done。
 - 杀开关：`touch /opt/bilive/autoslice/DISABLED`。
