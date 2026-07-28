@@ -961,6 +961,15 @@ def test_make_manifest_freezes_matching_package_publication_authority(
         "validate_recovery_publication_authority",
         validate,
     )
+    monkeypatch.setattr(
+        au,
+        "_publication_block",
+        lambda _manifest: (_ for _ in ()).throw(
+            AssertionError(
+                "make-manifest must not apply the ordinary-upload registry gate"
+            )
+        ),
+    )
     monkeypatch.setattr(au, "audit_package", audit_package)
     video = tmp_path / "recovery.mp4"
     cover = tmp_path / "recovery.cover.png"

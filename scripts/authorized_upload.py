@@ -1242,8 +1242,12 @@ def make_manifest(args: argparse.Namespace) -> int:
     package_problems = repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
     package_problems.extend(human_review.attach_final_human_review(manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))
     package_problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
-    if registry_block := _publication_block(manifest):
-        package_problems.append(registry_block)
+    # ``make-manifest`` is shared by new uploads and existing-BV repairs.  A
+    # committed publication authority must block the ordinary ``upload`` lane,
+    # but it is exactly the authority that ``repair-plan`` needs to bind a
+    # reviewed replacement to its existing BV.  Applying the registry upload
+    # gate here deadlocks the only authorized repair lane before it can create
+    # a manifest.  ``upload()`` retains the side-effect boundary check below.
     if package_problems:
         for problem in package_problems:
             print(f"REFUSE: {problem}", file=sys.stderr)
