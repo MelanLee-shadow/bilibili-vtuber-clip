@@ -578,3 +578,34 @@ def test_single_published_projection_main_uses_external_recording_tree(
     ] == ["auto_183122_1209_1410"]
     assert receipt["target_recordings_root"] == str(recording_root)
     assert json.loads(source_state.read_text(encoding="utf-8")) == state
+
+
+def test_single_published_projection_rejects_multi_date_recording_root(
+    tmp_path, monkeypatch
+):
+    args, _target_base, _source_state = _planner_fixture(
+        tmp_path,
+        monkeypatch,
+        requested_candidate_ids=[
+            "auto_193450_3573_3665",
+            "auto_193450_672_945",
+            "auto_193450_1863_2056",
+            "auto_193450_1573_1672",
+        ],
+    )
+    recording_root = tmp_path / "multi-date-recordings"
+    (recording_root / DATE).mkdir(parents=True)
+    (recording_root / "2026-07-24").mkdir()
+    args.extend(
+        [
+            "--project-single-published-repair",
+            "--target-recordings-root",
+            str(recording_root),
+        ]
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="target recordings root must expose only",
+    ):
+        planner.main(args)

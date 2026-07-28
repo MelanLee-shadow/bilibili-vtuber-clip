@@ -383,6 +383,18 @@ def main(argv: list[str] | None = None) -> int:
             f"target recordings root must be a regular directory: "
             f"{target_recordings_root}"
         )
+    if args.project_single_published_repair:
+        visible_recording_dates = sorted(
+            entry.name
+            for entry in target_recordings_root.iterdir()
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.name)
+            and entry.is_dir()
+        )
+        if visible_recording_dates != [args.date]:
+            raise SystemExit(
+                "single published repair target recordings root must expose "
+                f"only {args.date}; observed {visible_recording_dates}"
+            )
     for manifest in (
         source_base / "AUTO_UPLOAD",
         source_base / "repo" / "AUTO_UPLOAD",
