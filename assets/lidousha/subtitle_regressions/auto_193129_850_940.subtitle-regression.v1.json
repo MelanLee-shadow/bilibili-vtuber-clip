@@ -10,11 +10,13 @@
   "forbidden_payload_substrings": [
     "你把你的你你我你你的技能",
     "欺负欺负",
-    "kmx为什么欺负我？kmx欺负我"
+    "kmx为什么欺负我？kmx欺负我",
+    "试一试一下"
   ],
   "forbidden_exact_cues": [
     "你把你的你你我你你的技能",
     "让我打他，欺负欺负",
-    "kmx为什么欺负我？kmx欺负我"
+    "kmx为什么欺负我？kmx欺负我",
+    "试一试一下吧"
   ]
 }
