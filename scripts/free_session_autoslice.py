@@ -1374,8 +1374,11 @@ def list_dates() -> list[str]:
     selected = set(sorted(names)[-3:])
     # A historical date with a known finalized-source gap must not age out of
     # the latest-three cron window before the new recovery lane can repair it.
-    # Include only this explicit fail-closed state; old completed/review dates
-    # remain dormant and are not woken by unrelated pipeline fingerprints.
+    # Keep a historical source recovery visible until its recovered work leaves
+    # sealing/processing and its pending queues drain.  Otherwise a successful
+    # source repair changes ``source_incomplete`` to ``sealing`` and immediately
+    # ages itself out before the next tick can materialize the recovered clips.
+    # Old completed/review dates still remain dormant.
     state_dir = BASE / "state"
     for date in names:
         if date in selected:
@@ -1385,7 +1388,12 @@ def list_dates() -> list[str]:
             state = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if state.get("status") == "source_incomplete":
+        recovery_in_progress = bool(state.get("source_recoveries")) and (
+            state.get("status") in {"sealing", "processing"}
+            or bool(state.get("pending_talk"))
+            or bool(state.get("pending_song"))
+        )
+        if state.get("status") == "source_incomplete" or recovery_in_progress:
             selected.add(date)
     return sorted(selected)
 

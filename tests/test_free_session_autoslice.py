@@ -1708,6 +1708,53 @@ def test_list_dates_keeps_aged_out_source_incomplete_date(
     ]
 
 
+def test_list_dates_keeps_aged_out_recovery_until_pending_work_drains(
+    tmp_path, monkeypatch
+):
+    rec_root = tmp_path / "recordings"
+    state_root = tmp_path / "autoslice" / "state"
+    state_root.mkdir(parents=True)
+    for date in (
+        "2026-07-22",
+        "2026-07-24",
+        "2026-07-25",
+        "2026-07-26",
+    ):
+        (rec_root / date).mkdir(parents=True)
+    historical = state_root / "2026-07-22.json"
+    historical.write_text(
+        json.dumps(
+            {
+                "status": "sealing",
+                "source_recoveries": [{"status": "RECOVERED"}],
+                "pending_talk": [{"start_ms": 1_000, "end_ms": 61_000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+
+    assert runner.list_dates()[0] == "2026-07-22"
+
+    historical.write_text(
+        json.dumps(
+            {
+                "status": "review_ready",
+                "source_recoveries": [{"status": "RECOVERED"}],
+                "pending_talk": [],
+                "pending_song": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert runner.list_dates() == [
+        "2026-07-24",
+        "2026-07-25",
+        "2026-07-26",
+    ]
+
+
 def test_cover_binding_prevalidation_leaves_everything_unchanged_on_bad_active_record(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch)
     fx["source_record"].write_text("not-json", encoding="utf-8")
