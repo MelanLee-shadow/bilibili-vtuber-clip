@@ -42,7 +42,9 @@
   为 review contract authority。每个 candidate 必须逐点复核 exact final-video window 与
   expectation 并提供 PASS/evidence；八个总检查也各自需要非空具体 evidence，裸 PASS 或任意
   泛化检查表无效。672 必须把 0:13“前半无声、后半有声、全段无我草”和 1:48“整条 L 问句
-  无声并删除”作为两个独立 exact point 验收。
+  无声并删除”作为两个独立 exact point 验收；850 必须分别验收 0:13 怪叫空白、0:59
+  “他一副，一副”和 1:23“kmx欺负人”；1493 必须验收“下斗里”已按 Ivan 裁定修为
+  粉丝队玩梗专名“沙豆李”。
 - receipt 同时绑定 create-only 提交的
   `lidousha-final-human-review-evidence.v2` 路径、SHA-256 与字节数，以及 package review
   manifest/audit、record、reviewed title、原 BVID/AID/CID publication target 和 final

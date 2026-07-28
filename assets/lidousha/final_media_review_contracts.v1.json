@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-final-media-review-contracts.v1",
-  "authority": "Ivan 2026-07-22/23 explicit correction and review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
+  "authority": "Ivan 2026-07-22/23 and 2026-07-28 explicit correction and review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
   "contracts": [
     {
       "candidate_id": "auto_193450_3573_3665",
@@ -234,6 +234,40 @@
           "final_video_start_ms": 63000,
           "final_video_end_ms": 74000,
           "expectation": "最终笑声和包袱必须完整结束，不能断在句中。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193129_850_940",
+      "subtitle_review_points": [
+        {
+          "point_id": "opening-nonsemantic-vocalization-blank",
+          "final_video_start_ms": 10000,
+          "final_video_end_ms": 18000,
+          "expectation": "0:13 附近只有无实际语义的怪叫，烧录画面必须保持字幕空白，不得把游戏说明或其他相邻文本投影到该声槽。"
+        },
+        {
+          "point_id": "ta-yifu-yifu-context",
+          "final_video_start_ms": 55000,
+          "final_video_end_ms": 64000,
+          "expectation": "必须是“让我打他，他一副，一副”，保留“他一副……的样子”的语境搭配，不得写成“欺负欺负”。"
+        },
+        {
+          "point_id": "kmx-qifu-ren-complete",
+          "final_video_start_ms": 79000,
+          "final_video_end_ms": 88000,
+          "expectation": "必须完整保留“kmx为什么欺负我？kmx欺负人”，末句不得误写或收敛成“我”。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_195000_1493_1579",
+      "subtitle_review_points": [
+        {
+          "point_id": "shadouli-team-name",
+          "final_video_start_ms": 49000,
+          "final_video_end_ms": 59000,
+          "expectation": "发 1 支持的粉丝队名必须写成玩梗专名“沙豆李”，不得保留声学近音“下斗里”；随后发 0/2 支持李豆沙的对照关系也必须完整。"
         }
       ]
     }

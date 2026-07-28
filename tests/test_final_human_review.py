@@ -57,13 +57,18 @@ CHECK_DETAILS = {
 }
 
 
-def test_committed_review_cover_and_publication_assets_freeze_exact_five():
-    expected = [
+def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs():
+    recovery_expected = [
         "auto_193450_3573_3665",
         "auto_193450_672_945",
         "auto_193450_1863_2056",
         "auto_193450_1573_1672",
         "auto_193450_1475_1543",
+    ]
+    review_expected = [
+        *recovery_expected,
+        "auto_193129_850_940",
+        "auto_195000_1493_1579",
     ]
     review = json.loads(
         (
@@ -84,9 +89,11 @@ def test_committed_review_cover_and_publication_assets_freeze_exact_five():
         ).read_text(encoding="utf-8")
     )
 
-    assert [row["candidate_id"] for row in review["contracts"]] == expected
-    assert [row["candidate_id"] for row in cover["overrides"]] == expected
-    assert [row["candidate_id"] for row in publication["entries"]] == expected
+    assert [row["candidate_id"] for row in review["contracts"]] == review_expected
+    assert [row["candidate_id"] for row in cover["overrides"]] == recovery_expected
+    assert [row["candidate_id"] for row in publication["entries"]] == (
+        recovery_expected
+    )
 
     confrontation = next(
         row
@@ -125,6 +132,43 @@ def test_committed_review_cover_and_publication_assets_freeze_exact_five():
             "感谢钢镚和修鼠标的新 SC 话题。"
         ),
     }
+
+    skill = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_193129_850_940"
+    )
+    skill_points = {
+        row["point_id"]: row
+        for row in skill["subtitle_review_points"]
+    }
+    assert skill_points["opening-nonsemantic-vocalization-blank"][
+        "final_video_start_ms"
+    ] == 10_000
+    assert skill_points["ta-yifu-yifu-context"]["expectation"] == (
+        "必须是“让我打他，他一副，一副”，保留“他一副……的样子”的"
+        "语境搭配，不得写成“欺负欺负”。"
+    )
+    assert skill_points["kmx-qifu-ren-complete"]["final_video_end_ms"] == (
+        88_000
+    )
+
+    team = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_195000_1493_1579"
+    )
+    assert team["subtitle_review_points"] == [
+        {
+            "point_id": "shadouli-team-name",
+            "final_video_start_ms": 49_000,
+            "final_video_end_ms": 59_000,
+            "expectation": (
+                "发 1 支持的粉丝队名必须写成玩梗专名“沙豆李”，不得保留"
+                "声学近音“下斗里”；随后发 0/2 支持李豆沙的对照关系也必须完整。"
+            ),
+        }
+    ]
 
 
 def _sha256(path: Path) -> str:
