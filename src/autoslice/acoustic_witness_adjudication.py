@@ -40,12 +40,8 @@ except Exception:  # pragma: no cover - environment-dependent
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
 
-# The judged choice must land at least this close to the witnessed pinyin…
+# Retained as a diagnostic threshold; CPA, not the witness, owns the decision.
 MIN_CHOICE_COMPATIBILITY = 0.55
-# …and must not be clearly worse than the rejected alternative.
-CHOICE_MARGIN = 0.15
-# acoustic_delete removes allegedly unspoken text: demand a clear win.
-DELETE_MARGIN = 0.15
 
 
 def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
@@ -399,7 +395,8 @@ def adjudicate_with_witness(
             return True, "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE", audit
         if repair_class == "acoustic_delete":
             return True, "CPA_JUDGE_APPLY_INAUDIBLE_DELETE_SPAN", audit
-        return False, "TARGET_INAUDIBLE_KEEP_CURRENT", audit
+        # Audibility is evidence presented to CPA, not a second final vote.
+        return True, "CPA_JUDGE_APPLY_PROPOSED_INAUDIBLE_WITNESS", audit
     heard = str(witness.get("heard_pinyin") or "")
     uncertain = list(witness.get("uncertain_positions") or [])
     compat_proposed = pinyin_compatibility(
@@ -423,23 +420,16 @@ def adjudicate_with_witness(
             else "JUDGE_UNCERTAIN_KEEP_CURRENT"
         )
         return False, branch, audit
-    if compat_proposed is None or compat_current is None:
-        return False, "PINYIN_BACKEND_UNAVAILABLE_KEEP_CURRENT", audit
-    required_margin = (
-        DELETE_MARGIN if repair_class in {"acoustic_delete"} else -CHOICE_MARGIN
+    witness_conflict = bool(
+        compat_proposed is None
+        or compat_current is None
+        or compat_proposed < MIN_CHOICE_COMPATIBILITY
+        or compat_proposed < compat_current
     )
-    if (
-        compat_proposed < MIN_CHOICE_COMPATIBILITY
-        or compat_proposed - compat_current < required_margin
-    ):
-        # 自不一致的听写（声称的音节数与写出的拼音串对不上）没有否决
-        # 权：2026-07-27「刘若莎」案，judge 按语境排序选了「李豆沙」，
-        # 却被一份连自身音节数都数错的听写经拼音门压回原文发布。测量
-        # 自证不可靠时，裁决回到 judge 的排序选择；删除类维持收紧。
-        if (
-            bool(witness.get("self_count_mismatch"))
-            and repair_class not in {"acoustic_delete", "acoustic_drop_cue"}
-        ):
-            return True, "WITNESS_SELF_INCONSISTENT_JUDGE_APPLIED", audit
-        return False, "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT", audit
+    audit["witness_diagnostic_conflict"] = witness_conflict
+    if witness_conflict:
+        # CPA already received the witness, closed candidate set and context.
+        # AGY pinyin remains a diagnostic, including for deletion proposals,
+        # but cannot overturn CPA's explicit PROPOSED choice.
+        return True, "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT", audit
     return True, "WITNESS_JUDGE_APPLY_PROPOSED", audit

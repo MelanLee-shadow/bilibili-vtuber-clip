@@ -127,17 +127,42 @@ def test_judge_call_failure_fails_closed():
     assert branch == "JUDGE_UNCERTAIN_KEEP_CURRENT"
 
 
-def test_judged_proposed_needs_pinyin_agreement():
-    # judge says PROPOSED but the dictation matches the CURRENT text
+def test_judged_proposed_owns_decision_when_pinyin_witness_disagrees():
+    # CPA sees the dictation and still says PROPOSED; the witness cannot veto.
     repaired, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=_witness("hai mei you ge za ne"),
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is False
-    assert branch == "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT"
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert audit["witness_diagnostic_conflict"] is True
     compat = audit["pinyin_compatibility"]
     assert compat["current"] > compat["proposed"]
+
+
+def test_850_cpa_choice_is_not_overturned_by_equal_low_pinyin_scores():
+    request = {
+        **CHECK_REQUEST,
+        "current_cue": "请问什么打不过这 NPC",
+        "proposed_cue": "请问怎么打不过这 NPC",
+        "suspect": "什",
+        "replacement": "怎",
+        "repair_class": "phonetic",
+    }
+
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=request,
+        witness=_witness("ki mo i sum da bu guo"),
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
+    )
+
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert audit["pinyin_compatibility"]["current"] == audit[
+        "pinyin_compatibility"
+    ]["proposed"]
+    assert audit["witness_diagnostic_conflict"] is True
 
 
 def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
@@ -200,10 +225,9 @@ def test_self_inconsistent_witness_cannot_veto_judge_choice():
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
     assert repaired is True
-    assert branch == "WITNESS_SELF_INCONSISTENT_JUDGE_APPLIED"
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
 
-    # 自一致的听写维持否决权（上面的既有测试锚死 False 分支）；
-    # 删除类即使听写自不一致也不放行——删错比留错更不可逆。
+    # 删除类同样由看过证据的 CPA 拍板；AGY 自一致也不等于最终票。
     request = {
         **CHECK_REQUEST,
         "current_cue": "我草，乱说的啊",
@@ -218,8 +242,8 @@ def test_self_inconsistent_witness_cannot_veto_judge_choice():
                  "self_count_mismatch": True},
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert kept is False
-    assert branch == "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT"
+    assert kept is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
 
 
 def test_judged_proposed_with_agreeing_pinyin_applies():
@@ -232,7 +256,7 @@ def test_judged_proposed_with_agreeing_pinyin_applies():
     assert branch == "WITNESS_JUDGE_APPLY_PROPOSED"
 
 
-def test_inaudible_target_only_supports_drop_cue():
+def test_inaudible_target_is_evidence_not_a_veto():
     dropped, branch, _ = adjudicate_with_witness(
         check_request={**CHECK_REQUEST, "repair_class": "acoustic_drop_cue"},
         witness=_witness("?", audible=False, uncertain=(0,)),
@@ -243,12 +267,13 @@ def test_inaudible_target_only_supports_drop_cue():
         and branch == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
     )
 
-    kept, branch, _ = adjudicate_with_witness(
+    applied, branch, _ = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=_witness("?", audible=False, uncertain=(0,)),
         llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert kept is False and branch == "TARGET_INAUDIBLE_KEEP_CURRENT"
+    assert applied is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_INAUDIBLE_WITNESS"
 
     rejected, branch, _ = adjudicate_with_witness(
         check_request={**CHECK_REQUEST, "repair_class": "acoustic_drop_cue"},
@@ -364,14 +389,14 @@ def test_acoustic_delete_demands_clear_pinyin_win():
     )
     assert repaired is True and branch == "WITNESS_JUDGE_APPLY_PROPOSED"
 
-    # witness actually heard the full sentence -> deletion loses its margin
+    # Even conflicting pinyin cannot override CPA's explicit closed-set choice.
     repaired, branch, _ = adjudicate_with_witness(
         check_request=request,
         witness=_witness("wo cao luan shuo de a"),
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is False
-    assert branch == "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT"
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
 
 
 def test_judge_prompt_carries_witness_and_closed_set():

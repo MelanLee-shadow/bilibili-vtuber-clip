@@ -26,7 +26,8 @@
 - 上传语义修复只允许三类非 CPA mutation：Ivan operator truth、纯机械规范化和有完整
   `glossary-expected-value-gate.v1` 的高先验 canon。expected-value 只接受未登记近音误听面
   到登记 glossary/roster 词面；两边都是登记词面时专名平等，必须交 CPA。其余词面、语义、
-  插入或删除变化都必须由 CPA 明确选择 `PROPOSED`；AGY/声学与拼音门只作证据/否决。
+  插入或删除变化都必须由 CPA 明确选择 `PROPOSED`；AGY/声学与拼音只作证据和冲突诊断，
+  不拥有对 CPA 明确裁决的第二张否决票。
 - glossary 中“一个明确 canonical + 明列误听面”的三字及以上变体自动进入零 CPA
   expected-value 表，并在所有 mutable 文本阶段之后重新规范化；括号中的事故日期/说明不是
   词面。两字日常词（如“小时/留下”）无条件替换的误伤先验过高，除非 profile 单独显式提升，
@@ -210,10 +211,11 @@
   `provider_transient / final_review_correction_discovery` 重试；非法合同/状态仍是终态错误。
 - exact-final 中 AGY/声学层是证人，不是法官：它只给出目标是否可闻、疑似拼音及
   current/proposed 发音兼容度，CPA 结合文字 provenance 与整片语境作最终
-  CURRENT/PROPOSED 裁决。代码级拼音门可以否决与声音不兼容的 CPA PROPOSED，但不能凭
-  音频自行选字；同音或规范发音键相同（如 `大恩→大N`）还必须有文字证据，缺失时记录
-  `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断。近同音若声音可区分，可把 AGY 拼音作为
-  证据交给 CPA，但 CPA 未明确选边仍是未决。
+  CURRENT/PROPOSED 裁决。代码必须记录拼音/不可闻证据与 CPA 选择的冲突，但不得用 AGY
+  或兼容度阈值推翻 CPA 明确的 `PROPOSED`；CPA 未明确选边或调用失败才是未决。声音不能
+  单独选择两个同音正字法；同音或规范发音键相同（如 `大恩→大N`）须有绑定文字证据，或
+  满足可重算的严格同音闭集并由 CPA 明确作语义 tie-break，否则记录
+  `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断。
 - exact-final SRT 使用**交付局部时间轴**，而声学 verifier 绑定的通常是带前后 padding 的源
   media。每个 `subtitle-span-acoustic-check-request.v1` 必须显式携带非负
   `source_media_timeline_offset_ms`，并把它纳入 evidence/request hash；实际裁剪必须执行
