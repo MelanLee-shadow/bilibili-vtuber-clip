@@ -245,7 +245,9 @@ def _lidousha_is_song_title(title: str) -> bool:
     return title.strip().startswith(CHANNEL_PROFILE.song_title_prefix.rstrip("，, "))
 
 
-_COVER_PUNCH_CLAUSE_RX = re.compile(r"[^，,。；;：:…！!？?\n]+[！!？?]")
+_COVER_PUNCH_CLAUSE_RX = re.compile(
+    r"[^，,。；;：:…！!？?\n]+[！!？?][”’」』]?"
+)
 _COVER_PUNCH_QUOTED_RX = re.compile(r"[“‘「『]([^”’」』]{4,12})[”’」』]")
 # Short quoted catchphrases are semantic and visual atoms on a cover.  The
 # July 22 fallback split ``“最最最喜欢”`` in half, which looked like a typo even

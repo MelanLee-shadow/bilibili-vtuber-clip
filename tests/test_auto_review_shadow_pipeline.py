@@ -4325,6 +4325,9 @@ def test_cover_punch_deterministic_baseline_and_gates():
     assert cover_generation._cover_default_punch(_PUNCH_TEXT) == ("才不是熊猫呢！",)
     # 链②：引号内 4-12 字梗词（2026-07-21 二期：LLM 保守给 null 的实测案例）。
     assert cover_generation._cover_default_punch("抽卡惩罚被弹幕定成“为礼墨做0.6”") == ("为礼墨做0.6",)
+    assert cover_generation._cover_default_punch(
+        "发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2"
+    ) == ("“为什么要这样说！”",)
     # 链③：最后一个 4-12 字普通分句（引号词太短时跳过链②）。
     assert cover_generation._cover_default_punch("‘妈感姐’还是‘妈感妹’？小李把女主播分了个遍") == ("小李把女主播分了个遍",)
     assert cover_generation._cover_default_punch("游戏苦手想通为何接到商单\n用豆沙方式攻略妹妹") == ("用豆沙方式攻略妹妹",)
