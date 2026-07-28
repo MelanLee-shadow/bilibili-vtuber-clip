@@ -221,8 +221,24 @@ def repair_covers(
             _runner._cover_authority_preflight(date, rec, mp4)
         except (OSError, ValueError) as exc:
             rec["cover_integrity_status"] = "INVALID_AUTHORITY_PREFLIGHT"
-            rec["cover_status"] = "BLOCKED_COVER_AUTHORITY_PREFLIGHT"
+            title_authority_blocked = str(exc).startswith(
+                "COVER_TITLE_AUTHORITY_UNRESOLVED:"
+            )
+            rec["cover_status"] = (
+                "BLOCKED_TITLE_AUTHORITY_REGENERATION_REQUIRED"
+                if title_authority_blocked
+                else "BLOCKED_COVER_AUTHORITY_PREFLIGHT"
+            )
             rec["cover_authority_preflight_error"] = f"{type(exc).__name__}: {exc}"
+            if title_authority_blocked and not rec.get("delivered"):
+                rec.update(
+                    {
+                        "status": "failed",
+                        "failure_kind": "title_authority",
+                        "failure_stage": "cover_authority_preflight",
+                        "failure_recoverable": True,
+                    }
+                )
             _runner.log(
                 f"cover repair {rec.get('candidate_id', '?')}: authority preflight "
                 f"blocked before image request: {type(exc).__name__}: {exc}"

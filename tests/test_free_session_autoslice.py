@@ -1360,6 +1360,41 @@ def test_bind_repaired_cover_updates_only_active_state_publish_and_records(tmp_p
     assert historical.read_bytes() == historical_before
 
 
+def test_bind_repaired_cover_carries_active_story_and_route_authority(
+    tmp_path, monkeypatch
+):
+    from src.autoslice.cover_route_evidence import (
+        validate_cover_route_decision,
+    )
+
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    story_contract = {
+        "schema_version": "lidousha-story-contract.v1",
+        "relation_state": "UNKNOWN",
+        "participants": [],
+        "cover_reference_authority": None,
+    }
+    for path in (
+        fx["delivery_record"],
+        fx["source_record"],
+        fx["publish_path"],
+    ):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["story_contract"] = story_contract
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+
+    generation = fx["rec"]["cover_generation"]
+    assert generation["story_contract"] == story_contract
+    assert generation["route_decision"]["selected_treatment"] == "cpa_redraw"
+    assert generation["route_decision"]["actual_treatment"] == "cpa_redraw"
+    assert generation["route_decision"]["execution_status"] == "READY"
+    assert validate_cover_route_decision(generation)
+
+
 def test_repaired_cover_binding_detects_title_media_binding_and_hash_tampering(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch)
     runner._bind_repaired_cover(
@@ -2365,6 +2400,58 @@ def test_legacy_song_authority_preflight_blocks_before_image_request(tmp_path, m
     assert record["cover_integrity_status"] == "INVALID_AUTHORITY_PREFLIGHT"
     assert "delivery record" in record["cover_authority_preflight_error"]
     assert writes
+
+
+def test_blocked_title_authority_requeues_producer_before_cover_spend(
+    tmp_path, monkeypatch
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    for path in (
+        fx["delivery_record"],
+        fx["source_record"],
+        fx["publish_path"],
+    ):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        publish_view = (
+            document
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+            else document["publish_staging"]
+        )
+        publish_view["title_authority_status"] = (
+            "BLOCKED_PUBLISH_TITLE_POLICY"
+        )
+        publish_view["title_authority_error"] = (
+            "publish_title_policy_violation:banned_filler_word"
+        )
+        publish_view["title_policy_violations"] = ["banned_filler_word"]
+        path.write_text(json.dumps(document), encoding="utf-8")
+    state = {"picks": [fx["rec"]], "songs": []}
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "e" * 64
+    )
+    monkeypatch.setattr(
+        runner,
+        "delivered_paths",
+        lambda _date, _rec: (fx["mp4"], fx["cover"]),
+    )
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+
+    def forbidden_run(*_args, **_kwargs):
+        raise AssertionError("blocked title must not spend an image request")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden_run)
+    runner.repair_covers(fx["date"], state)
+
+    record = fx["rec"]
+    assert record["status"] == "failed"
+    assert record["failure_kind"] == "title_authority"
+    assert record["failure_stage"] == "cover_authority_preflight"
+    assert record["failure_recoverable"] is True
+    assert (
+        record["cover_status"]
+        == "BLOCKED_TITLE_AUTHORITY_REGENERATION_REQUIRED"
+    )
+    assert record.get("cover_repair_attempts", 0) == 0
 
 
 def test_delivered_lane_with_valid_active_docs_still_requires_song_manifest(

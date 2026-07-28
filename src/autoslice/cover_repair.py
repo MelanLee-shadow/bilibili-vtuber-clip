@@ -23,7 +23,12 @@ import time
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
-from src.autoslice.cover_route_evidence import validate_cover_route_decision
+from src.autoslice.cover_route_evidence import (
+    build_cover_route_decision,
+    record_cover_route_execution,
+    relationship_visual_safety_required,
+    validate_cover_route_decision,
+)
 from src.autoslice.verified_io import (
     _matches_sha256,
     _read_json_object,
@@ -82,6 +87,110 @@ def _validate_repaired_cover_generation(
         if not _matches_sha256(Path(path_value), hash_value):
             raise ValueError(f"cover generation {path_key} hash mismatch")
     return document, manifest_path
+
+
+def _active_story_contract(
+    documents: list[tuple[Path, dict]],
+) -> dict | None:
+    """Resolve one frozen story contract from the active publication surface."""
+
+    contracts: list[dict] = []
+    for _path, document in documents:
+        candidates: list[object] = [document.get("story_contract")]
+        publish_view = (
+            document
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+            else document.get("publish_staging")
+        )
+        if isinstance(publish_view, dict):
+            generation = publish_view.get("cover_generation")
+            if isinstance(generation, dict):
+                candidates.append(generation.get("story_contract"))
+        for candidate in candidates:
+            if isinstance(candidate, dict) and candidate not in contracts:
+                contracts.append(candidate)
+    if not contracts:
+        return None
+    if len(contracts) != 1:
+        raise ValueError("active cover documents disagree on story contract")
+    return copy.deepcopy(contracts[0])
+
+
+def _enrich_repaired_cover_generation(
+    *,
+    generation: dict,
+    generation_path: Path,
+    documents: list[tuple[Path, dict]],
+    title: str,
+) -> tuple[dict, Path]:
+    """Bind generic cover repair to the active story and route authority.
+
+    ``regenerate_lidousha_cover`` owns the paid image result, but it does not
+    know the producer's frozen StoryContract or treatment-router evidence.
+    Before the new generation becomes immutable through a repair binding,
+    attach those active documents and record the actual cpa_redraw execution.
+    """
+
+    story_contract = _active_story_contract(documents)
+    if story_contract is None:
+        # Legacy packages predate StoryContract.  Keep their historical repair
+        # behavior; current package audits will still refuse missing authority.
+        return generation, generation_path
+    if relationship_visual_safety_required(story_contract):
+        raise ValueError(
+            "COVER_RELATIONSHIP_REFERENCE_UNRESOLVED: generic cover repair "
+            "cannot prove every participant in a relationship story"
+        )
+    enriched = copy.deepcopy(generation)
+    cover_text = str(enriched.get("cover_text") or title)
+    reference_authority = story_contract.get("cover_reference_authority")
+    enriched["story_contract"] = story_contract
+    enriched["cover_origin"] = "AI_REDRAW"
+    enriched["reference_authority"] = (
+        copy.deepcopy(reference_authority)
+        if isinstance(reference_authority, dict)
+        else None
+    )
+    enriched["route_decision"] = build_cover_route_decision(
+        selected_treatment="cpa_redraw",
+        selected_rationale=(
+            "cover-only repair replaced a missing or invalid cover under the "
+            "active title and StoryContract authority"
+        ),
+        story_contract=story_contract,
+        reference_authority=reference_authority,
+        title=title,
+        cover_text=cover_text,
+        decision_inputs={
+            "cover_mode": "repair",
+            "is_song": bool(enriched.get("is_song")),
+            "manual_title_or_full_text_contract": False,
+            "frame_score": None,
+            "frame_emotion": None,
+            "subject_confident": None,
+            "motion_dispersion_frac": None,
+            "verified_stream_frame": False,
+            "reference_authority_id": (
+                reference_authority.get("candidate_id")
+                if isinstance(reference_authority, dict)
+                else None
+            ),
+        },
+    )
+    record_cover_route_execution(
+        enriched,
+        actual_treatment="cpa_redraw",
+        execution_status="READY",
+        image_generation_attempted=True,
+        image_generation_used=True,
+        detail="transactional cover-only repair completed",
+    )
+    _runner._atomic_write_json_file(generation_path, enriched)
+    return _validate_repaired_cover_generation(
+        cover=Path(str(enriched["final_cover"])),
+        title=title,
+        candidate_id=str(enriched["candidate_id"]),
+    )
 
 
 def _active_cover_documents(
@@ -742,13 +851,21 @@ def _bind_repaired_cover(
     )
     cover_sha256 = "sha256:" + _runner._sha256_regular_file(generated_cover)
     media_sha256 = "sha256:" + _runner._sha256_regular_file(mp4)
-    generation_sha256 = "sha256:" + _runner._sha256_regular_file(generation_path)
     documents = _active_cover_documents(
         date=date,
         candidate_id=cid,
         title=title,
         mp4=mp4,
         media_sha256=media_sha256,
+    )
+    generation, generation_path = _enrich_repaired_cover_generation(
+        generation=generation,
+        generation_path=generation_path,
+        documents=documents,
+        title=title,
+    )
+    generation_sha256 = (
+        "sha256:" + _runner._sha256_regular_file(generation_path)
     )
     song_manifest = _active_song_delivery_manifest(
         rec,
@@ -1378,6 +1495,44 @@ def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> None:
         mp4=mp4,
         media_sha256="sha256:" + _runner._sha256_regular_file(mp4),
     )
+    for path, document in documents:
+        publish_view = (
+            document
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+            else document.get("publish_staging")
+        )
+        if not isinstance(publish_view, dict):
+            raise ValueError(
+                f"COVER_TITLE_AUTHORITY_UNRESOLVED: {path} has no publish view"
+            )
+        authority_status = str(
+            publish_view.get("title_authority_status") or ""
+        )
+        authority_error = publish_view.get("title_authority_error")
+        violations = publish_view.get("title_policy_violations")
+        story_audit = publish_view.get("title_story_audit")
+        if (
+            authority_error not in (None, "")
+            or authority_status.startswith("BLOCKED")
+            or bool(violations)
+            or (
+                isinstance(story_audit, dict)
+                and story_audit.get("status") != "PASS"
+            )
+        ):
+            raise ValueError(
+                "COVER_TITLE_AUTHORITY_UNRESOLVED: cover-only repair cannot "
+                f"convert a blocked title into a review-ready package: {path}"
+            )
+    story_contract = _active_story_contract(documents)
+    if (
+        story_contract is not None
+        and relationship_visual_safety_required(story_contract)
+    ):
+        raise ValueError(
+            "COVER_RELATIONSHIP_REFERENCE_UNRESOLVED: generic cover repair "
+            "cannot prove every participant in a relationship story"
+        )
     manifest = _active_song_delivery_manifest(
         rec,
         candidate_id=candidate_id,
