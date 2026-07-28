@@ -377,6 +377,63 @@ def test_exact_kmx_chat_and_competing_ping_pong_semantic_text_still_block() -> N
     )
 
 
+def test_repeated_exact_chat_canonical_is_not_multi_entity_ambiguity() -> None:
+    exact = "姐姐还是摸摸kmx吧，kmx不咬人还喜欢被敲"
+    calls = []
+
+    def unavailable_verifier(request):
+        calls.append(request)
+        return _uncertain_verifier(request)
+
+    source = _srt(exact)
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact)],
+        support_srt_texts=[source],
+        referent_groups=[KMX_GROUP],
+        entity_verifier=unavailable_verifier,
+    )
+
+    assert output == source
+    assert calls == []
+    assert audit["entity_verdict_required"] == []
+    assert any(
+        row.get("reason_code")
+        == "ENTITY_REPETITION_CORROBORATED_BY_CHAT_AND_SEMANTIC_TEXT"
+        for row in audit["entity_verdicts"]
+    )
+
+
+def test_repeated_chat_entity_without_slot_mapping_fails_closed() -> None:
+    exact = (
+        "姐姐姐姐姐还是在直播间摸摸kmx吧，"
+        "kmx不咬人还喜欢被敲（在公司说怪话好刺激）"
+    )
+    source = _srt(
+        "姐姐姐姐姐还是在提问",
+        "还是在直播间摸提问什么提问什么，不咬人",
+        "还喜欢被敲。在公司说怪好刺激",
+        "之前都下班再，再说是吧？",
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("superchat", 0, exact)],
+        support_srt_texts=[source],
+        referent_groups=[KMX_GROUP],
+        entity_verifier=_uncertain_verifier,
+    )
+
+    assert output == source
+    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    assert audit["entity_verdict_required"][0]["reason_code"] == (
+        "REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED"
+    )
+    assert audit["entity_verdict_required"][0]["structured_chat_occurrence_count"] == 2
+    assert audit["entity_verdict_required"][0]["semantic_text_occurrence_count"] == 0
+    assert audit["read_aloud_arbitrations"] == []
+
+
 OPENING_ADDRESS_GROUP = ReferentGroup(
     (
         ReferentEntity("大家", ("大家",), ("da jia",)),

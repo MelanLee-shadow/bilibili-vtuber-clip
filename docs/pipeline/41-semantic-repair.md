@@ -43,6 +43,10 @@
     missing/False、主 transcript fuzzy proxy、context-only verdict、低 coverage 或只命中几个
     词槽时，必须记 `PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY` 并保留原句。
     已证实的昵称/实体槽仍可由 entity 或 source truth 单独修复，不能把未说出的 SC 余文一并补入。
+    同一条结构化聊天重复出现同一个 canonical 时，重复本身不是“多实体歧义”：只有语义文本
+    已保留相同 canonical、相同 mention 数量且逐槽规范时才可按双文本一致关闭；否则 mention
+    数量/位置仍未决，必须以 `REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED` 阻断。单次实体选边不得
+    推导多个槽位，更不得把重复实体证据升级成整条 SC 逐字复制。
 
 ## 两次审查不可合并
 

@@ -108,7 +108,6 @@ def _resolve_chat_entity_proposal(
     if (
         len(matched_groups) != 1
         or len(matched_groups[0][1]["canonicals"]) != 1
-        or len(matched_groups[0][1]["occurrences"]) != 1
     ):
         discovery.entity_verdict_required.append(
             {
@@ -120,8 +119,84 @@ def _resolve_chat_entity_proposal(
 
     group, chat_match = matched_groups[0]
     chat_canonical = chat_match["canonicals"][0]
-    chat_surface = chat_match["occurrences"][0]["surface"]
+    chat_occurrences = chat_match["occurrences"]
+    chat_surfaces = {
+        str(row["surface"]).lower()
+        for row in chat_occurrences
+    }
     acoustic_occurrences = _entity_occurrences(acoustic_span, group)
+    # 同一条结构化聊天里重复同一个规范词面，不是多个实体候选。若当前
+    # 语义文本也逐槽保留了相同 canonical，直接记为双文本一致；否则单次
+    # entity forced-choice 无法证明“出现几次/落在哪个槽”，必须保持未决。
+    # 不能把整条 SC 交给 whole-line copy：主播可能只是读后改述，entity
+    # 证据无权补入未逐字说出的其余正文。
+    if len(chat_occurrences) != 1:
+        repeated_same_surface = len(chat_surfaces) == 1
+        repeated_canonical_surface = repeated_same_surface and all(
+            str(row["surface"]).lower() == chat_canonical.lower()
+            for row in chat_occurrences
+        )
+        semantic_repetition_matches = bool(
+            repeated_canonical_surface
+            and len(acoustic_occurrences) == len(chat_occurrences)
+            and all(
+                str(row["canonical"]).lower() == chat_canonical.lower()
+                and str(row["surface"]).lower() == chat_canonical.lower()
+                for row in acoustic_occurrences
+            )
+        )
+        if semantic_repetition_matches:
+            proposal["entity_group"] = group
+            proposal["structured_chat_canonical"] = chat_canonical
+            discovery.entity_verdicts.append(
+                {
+                    **base_row,
+                    "reason_code": (
+                        "ENTITY_REPETITION_CORROBORATED_BY_CHAT_AND_SEMANTIC_TEXT"
+                    ),
+                    "structured_chat_canonical": chat_canonical,
+                    "structured_chat_occurrence_count": len(chat_occurrences),
+                    "semantic_text_occurrence_count": len(acoustic_occurrences),
+                    "authority_kind": "structured_chat_plus_semantic_text",
+                }
+            )
+            if proposal.get("owner_eligible") is True:
+                discovery.proposals.append(proposal)
+            else:
+                discovery.superseded_chat_proposals.append(
+                    {
+                        **_partial_whole_line_rejection(
+                            item,
+                            proposal,
+                            cues=cues,
+                            matched_audio_text=acoustic_span,
+                        ),
+                        "structured_chat_canonical": chat_canonical,
+                    }
+                )
+            return True
+        if not repeated_same_surface:
+            discovery.entity_verdict_required.append(
+                {
+                    **base_row,
+                    "reason_code": "ENTITY_VERDICT_AMBIGUOUS_CHAT_ENTITY",
+                }
+            )
+            return True
+        discovery.entity_verdict_required.append(
+            {
+                **base_row,
+                "reason_code": (
+                    "REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED"
+                ),
+                "structured_chat_canonical": chat_canonical,
+                "structured_chat_occurrence_count": len(chat_occurrences),
+                "semantic_text_occurrence_count": len(acoustic_occurrences),
+            }
+        )
+        return True
+
+    chat_surface = chat_occurrences[0]["surface"]
     # 平台结构化原文给出 canonical，且已经过 AGY/CPA/词表的语义文本
     # 命中同一实体时，后置声学模型没有未决 referent 可裁。别名面只在该
     # canonical 显式列入 uncertain_keep_canonicals 时走这条路；真实冲突
