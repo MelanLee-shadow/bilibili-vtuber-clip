@@ -85,6 +85,15 @@ def test_title_policy_accepts_nested_balanced_marks():
     assert title_policy._title_policy_violations(title) == []
 
 
+def test_automatic_title_filler_canonicalizer_only_removes_profile_exact_words():
+    assert title_policy.canonicalize_automatic_title_fillers(
+        "【李豆沙】小李当场拒绝花钱，直接让观众自己开"
+    ) == "【李豆沙】小李拒绝花钱，让观众自己开"
+    assert title_policy.canonicalize_automatic_title_fillers(
+        "【李豆沙】小李秒拒绝花钱，场面太顶"
+    ) == "【李豆沙】小李秒拒绝花钱，场面太顶"
+
+
 @pytest.mark.parametrize(
     ("candidate_id", "expected"),
     [

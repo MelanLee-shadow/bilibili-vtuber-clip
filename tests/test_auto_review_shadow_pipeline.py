@@ -3523,6 +3523,73 @@ def test_publish_staging_retries_banned_hype_word_then_accepts_clean_rewrite(tmp
     assert "已被否决" not in calls[0]
 
 
+def test_publish_staging_mechanically_removes_automatic_filler_before_cover(
+    tmp_path, monkeypatch
+):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"placeholder video")
+    srt = tmp_path / "clip.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n拒绝花钱\n",
+        encoding="utf-8",
+    )
+    record = {
+        "status": "MATERIALIZED",
+        "media_path": str(media),
+        "subtitle_path": str(srt),
+        "artifact_hashes": {},
+    }
+    calls: list[str] = []
+
+    def filler_llm(prompt: str) -> str:
+        calls.append(prompt)
+        return (
+            '{"title": "观众想让新3D永久保留白色奶龙表情，'
+            '小李当场拒绝花钱"}'
+        )
+
+    cover_calls: list[str] = []
+
+    def stage_cover(_record, **kwargs):
+        cover_calls.append(str(kwargs["title"]))
+        cover_path = tmp_path / "cover.png"
+        cover_path.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover_path),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    monkeypatch.setattr(
+        shadow_pipeline, "_stage_lidousha_ai_cover", stage_cover
+    )
+    staged = shadow_pipeline._stage_publish_draft(
+        record,
+        candidate_id="talk-filler-self-heal",
+        title="原始job标题",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=filler_llm,
+    )
+
+    staging = staged["publish_staging"]
+    assert len(calls) == 1
+    assert staging["title"] == (
+        "【李豆沙】观众想让新3D永久保留白色奶龙表情，小李拒绝花钱"
+    )
+    assert staging["title_source"] == (
+        "llm+lidousha_style_asset+deterministic_filler_removal"
+    )
+    assert (
+        staging["title_authority_status"]
+        == "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
+    )
+    assert staging["title_policy_violations"] == []
+    assert staging["status"] == "STAGED"
+    assert cover_calls == [staging["title"]]
+
+
 def test_publish_staging_retries_unbalanced_title_before_cover(
     tmp_path, monkeypatch
 ):

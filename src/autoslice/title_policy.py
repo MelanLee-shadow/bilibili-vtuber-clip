@@ -193,6 +193,19 @@ def _title_policy_violations(title: str) -> list[str]:
     return violations
 
 
+def canonicalize_automatic_title_fillers(title: str) -> str:
+    """Remove only profile-declared filler words from an automatic title.
+
+    The profile already declares these exact words semantically disposable.
+    Broader hype/regex violations remain model-owned and fail closed.
+    """
+
+    repaired = str(title or "").strip()
+    for word in _TITLE_BANNED_FILLER_WORDS:
+        repaired = repaired.replace(word, "")
+    return repaired
+
+
 def publish_title_lane(title: str, *, explicit_lane: str | None = None) -> str:
     """Return the deterministic talk/song lane for one publish title."""
 

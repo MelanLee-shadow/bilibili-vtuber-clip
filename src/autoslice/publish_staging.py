@@ -12,7 +12,7 @@ import subprocess
 from dataclasses import asdict, replace as dataclasses_replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, NamedTuple, Sequence
 
 from .auto_review import DecisionAction, ReviewDecision
 from .channel_profile import load_channel_profile
@@ -68,6 +68,7 @@ from .title_policy import (
     _TITLE_MAX_LEN,
     _TITLE_MIN_LEN,
     _ensure_lidousha_prefix,
+    canonicalize_automatic_title_fillers,
     canonicalize_publish_title,
     canonicalize_song_catalog_title,
     manual_title_override,
@@ -91,6 +92,129 @@ def profile_asset_text(key: str) -> str:
 
 
 LIDOUSHA_COVER_WORKFLOW = "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+
+
+class _AutomaticTitleResult(NamedTuple):
+    staged_title: str | None
+    title_source: str
+    title_authority_status: str | None
+    title_authority_error: str | None
+    title_policy_violations: list[str]
+
+
+def _resolve_automatic_title(
+    *,
+    base_prompt: str,
+    title_llm_call: LlmCall,
+    selection_hook: str,
+    initial_title_source: str,
+) -> _AutomaticTitleResult:
+    llm_title = ""
+    llm_error: str | None = None
+    violations: list[str] = []
+    deterministic_filler_repair = False
+    for attempt in range(_TITLE_MAX_ATTEMPTS):
+        deterministic_filler_repair = False
+        prompt = base_prompt
+        if attempt > 0:
+            prompt += (
+                "\n注意：上一次标题违反了硬约束（违禁词、成对符号未闭合，或没有保留选片第一分句的具体核心短语），已被否决。"
+                "不要用任何万能强调词，也不要把后续陪衬话题改成主标题；"
+                "书名号、引号、括号必须左右成对；写她具体做了/说了什么，"
+                "并按要求重新只输出 JSON。"
+            )
+        try:
+            payload = extract_json_object(title_llm_call(prompt))
+        except Exception as exc:
+            llm_error = type(exc).__name__
+            break
+        candidate = str(payload.get("title") or "").strip()
+        if not candidate:
+            llm_error = "empty_title"
+            break
+        repaired = canonicalize_automatic_title_fillers(candidate)
+        repaired_hook_valid = (
+            not selection_hook
+            or _selection_hook_anchor_valid(
+                anchor=payload.get("selection_hook_anchor"),
+                selection_hook=selection_hook,
+                title=repaired,
+            )
+        )
+        if (
+            repaired != candidate
+            and not _title_policy_violations(repaired)
+            and repaired_hook_valid
+            and _TITLE_MIN_LEN
+            <= len(_ensure_lidousha_prefix(repaired))
+            <= _TITLE_MAX_LEN
+        ):
+            candidate = repaired
+            deterministic_filler_repair = True
+        llm_title = candidate
+        violations = _title_policy_violations(candidate)
+        if selection_hook and not _selection_hook_anchor_valid(
+            anchor=payload.get("selection_hook_anchor"),
+            selection_hook=selection_hook,
+            title=candidate,
+        ):
+            violations.append("selection_hook_anchor_missing")
+        if not violations:
+            break
+
+    title_source = initial_title_source
+    if not llm_title:
+        error = llm_error or "empty_title"
+        return _AutomaticTitleResult(
+            None,
+            f"job_title(llm_failed: {error})",
+            None,
+            error,
+            violations,
+        )
+    if selection_hook and "selection_hook_anchor_missing" in violations:
+        fallback = _selection_hook_fallback_title(selection_hook)
+        if fallback is not None:
+            llm_title = fallback
+            violations = _title_policy_violations(fallback)
+            title_source = "selection_hook_fallback_after_llm_mismatch"
+            deterministic_filler_repair = False
+    prefixed = _ensure_lidousha_prefix(llm_title)
+    if not _TITLE_MIN_LEN <= len(prefixed) <= _TITLE_MAX_LEN:
+        return _AutomaticTitleResult(
+            None,
+            f"job_title(llm_length_out_of_bounds:{len(prefixed)})",
+            None,
+            f"title_length_out_of_bounds:{len(prefixed)}",
+            violations,
+        )
+    if deterministic_filler_repair:
+        title_source = (
+            f"llm+{PROFILE_ID}_style_asset+deterministic_filler_removal"
+        )
+    elif title_source == "job_title":
+        title_source = f"llm+{PROFILE_ID}_style_asset"
+    if violations:
+        return _AutomaticTitleResult(
+            prefixed,
+            f"llm+{PROFILE_ID}_style_asset(title_policy_violation)",
+            None,
+            "title_policy_violation:" + ",".join(violations),
+            violations,
+        )
+    status = (
+        "RESOLVED_DETERMINISTIC_FALLBACK"
+        if title_source == "selection_hook_fallback_after_llm_mismatch"
+        else (
+            "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
+            if deterministic_filler_repair
+            else "RESOLVED_LLM"
+        )
+    )
+    return _AutomaticTitleResult(
+        prefixed, title_source, status, None, violations
+    )
+
 
 def _stage_publish_after_release_gate(
     materialized_recut: dict[str, object] | None,
@@ -285,67 +409,19 @@ def _stage_publish_draft(
             "(描述性的'越看越离谱/越整越离谱'这类是可以的,禁的是空洞的'X到离谱'后缀)。\n"
             f"只输出一个 JSON 对象：{output_contract}"
         )
-        llm_title = ""
-        llm_error: str | None = None
-        # Bounded retry: regenerate up to _TITLE_MAX_ATTEMPTS times, calling out
-        # the banned-word violation each retry so the model rewrites concretely.
-        for attempt in range(_TITLE_MAX_ATTEMPTS):
-            prompt = base_prompt
-            if attempt > 0:
-                prompt = (
-                    base_prompt
-                    + "\n注意：上一次标题违反了硬约束（违禁词、成对符号未闭合，或没有保留选片第一分句的具体核心短语），已被否决。"
-                    "不要用任何万能强调词，也不要把后续陪衬话题改成主标题；"
-                    "书名号、引号、括号必须左右成对；写她具体做了/说了什么，"
-                    "并按要求重新只输出 JSON。"
-                )
-            try:
-                payload = extract_json_object(title_llm_call(prompt))
-            except Exception as exc:
-                llm_error = type(exc).__name__
-                break
-            candidate = str(payload.get("title") or "").strip()
-            if not candidate:
-                llm_error = "empty_title"
-                break
-            llm_title = candidate
-            title_policy_violations = _title_policy_violations(candidate)
-            if selection_hook and not _selection_hook_anchor_valid(
-                anchor=payload.get("selection_hook_anchor"),
-                selection_hook=selection_hook,
-                title=candidate,
-            ):
-                title_policy_violations.append("selection_hook_anchor_missing")
-            if not title_policy_violations:
-                break
-
-        if llm_title:
-            if selection_hook and "selection_hook_anchor_missing" in title_policy_violations:
-                fallback = _selection_hook_fallback_title(selection_hook)
-                if fallback is not None:
-                    llm_title = fallback
-                    title_policy_violations = _title_policy_violations(fallback)
-                    title_source = "selection_hook_fallback_after_llm_mismatch"
-            prefixed = _ensure_lidousha_prefix(llm_title)
-            if _TITLE_MIN_LEN <= len(prefixed) <= _TITLE_MAX_LEN:
-                staged_title = prefixed
-                if title_source == "job_title":
-                    title_source = f"llm+{PROFILE_ID}_style_asset"
-                if title_policy_violations:
-                    title_source = f"llm+{PROFILE_ID}_style_asset(title_policy_violation)"
-                    title_authority_error = "title_policy_violation:" + ",".join(title_policy_violations)
-                elif title_source == "selection_hook_fallback_after_llm_mismatch":
-                    title_authority_status = "RESOLVED_DETERMINISTIC_FALLBACK"
-                else:
-                    title_authority_status = "RESOLVED_LLM"
-            else:
-                # Length gate rejects the auto title → fall back to the job title
-                # untouched (prefix forcing never touches non-LLM titles).
-                title_source = f"job_title(llm_length_out_of_bounds:{len(prefixed)})"
-                title_authority_error = f"title_length_out_of_bounds:{len(prefixed)}"
-        elif llm_error is not None:
-            title_source = f"job_title(llm_failed: {llm_error})"
-            title_authority_error = llm_error
+        automatic = _resolve_automatic_title(
+            base_prompt=base_prompt,
+            title_llm_call=title_llm_call,
+            selection_hook=selection_hook,
+            initial_title_source=title_source,
+        )
+        if automatic.staged_title is not None:
+            staged_title = automatic.staged_title
+        title_source = automatic.title_source
+        title_authority_error = automatic.title_authority_error
+        title_policy_violations = automatic.title_policy_violations
+        if automatic.title_authority_status is not None:
+            title_authority_status = automatic.title_authority_status
 
     # Automatic titles receive deterministic surface canon. A human title body
     # is not silently rewritten; only the channel-owned publish envelope below
