@@ -116,6 +116,10 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
    裁定出处，范围必须是 exact 合同子集且每案自身 delivered/CURRENT/COMPLIANT。
 4. `make-manifest --final-human-review ...` 同时冻结 package/audit/receipt、publication
    authority 和 Ivan 的修复授权原话；缺 receipt 的 recovery manifest 直接拒绝；
+   `make-manifest` 是新投稿与同 BV 修复共用的无副作用冻结入口，已登记 BVID 的 publication
+   authority 在这里必须保留并允许生成 manifest；“已发布不得新建 BV”的 registry gate 只在
+   普通 `upload` 副作用入口硬拒。否则会在 `repair-plan` 读取 authority 之前把唯一合法修复
+   lane 自锁死；
 5. `verify --manifest ...` 重跑 current audit、hash 与 receipt validator；
 6. 先 `repair-plan --dry-run`；它必须先用显式 biliup cookie 对目标 BVID 运行只读
    `biliup show` 登录 canary，再读真实 Creator/public/section 单 P 事实。确认后才运行

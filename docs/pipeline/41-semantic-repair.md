@@ -85,6 +85,10 @@
     `ENTITY_VERDICT_REQUIRED` 时不得在晚期 source truth 之前提前退出。正式 truth 投影落地且
     preview/formal ledger 哈希一致后，若投影内已逐槽保留结构化聊天 canonical，并达到原要求的
     mention 数量，则删除对应旧 requirement、记录 truth IDs 与计数收据，再重算 chat status；
+    对 `REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED`，若聊天 matcher 从第二个 cue 才起窗，
+    reconciliation 必须按同一非空 `source_event_id` 与同一 source SHA-256 汇集该结构化事件
+    的 operator-truth 投影，不能只靠 cue 交集漏掉紧邻的第一个槽；事件 ID 或源 hash 任一不等
+    仍只看 cue 交集并 fail closed。
     少一个 mention、无合法投影或其他未决槽仍 fail closed。该规则只承认 operator truth，不把
     结构化聊天本身升级成文字真值，也不绕过两个已登记专名之间的 CPA 裁决。
 
