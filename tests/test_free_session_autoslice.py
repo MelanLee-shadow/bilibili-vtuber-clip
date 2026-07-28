@@ -8094,6 +8094,55 @@ def test_ordinary_or_forged_candidate_rejection_is_not_requeued(monkeypatch):
     assert runner.requeue_recoverable_talks("2026-07-10", forged) == 0
 
 
+def test_relevant_fix_requeues_selected_subtitle_authority_rejection(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "segment.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: "sha256:fixed-authority",
+    )
+    state = {
+        "pending_talk": [],
+        "picks": [
+            {
+                "candidate_id": "selected-authority-repair",
+                "segment": segment.name,
+                "start_ms": 100_000,
+                "end_ms": 200_000,
+                "status": "candidate_rejected",
+                "selected_repair": True,
+                "failure_kind": "subtitle_authority",
+                "failure_stage": "chat_authority_finalization",
+                "failure_recoverable": False,
+                "failure_recovery_fingerprint": "sha256:old-authority",
+                "rejection_reason": (
+                    "subtitle_authority_unresolved_backfilled"
+                ),
+                "talk_repair_retry_count": 3,
+            }
+        ],
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    assert state["picks"] == []
+    assert state["pending_talk"][0]["cid"] == (
+        "selected-authority-repair"
+    )
+    assert state["pending_talk"][0]["talk_repair_retry_count"] == 4
+    assert state["pending_talk"][0]["retry_reason"] == (
+        "pipeline_fingerprint_changed"
+    )
+
+
 def test_recoverable_talk_with_unbound_given_end_fails_closed(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"

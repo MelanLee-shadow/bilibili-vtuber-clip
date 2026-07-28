@@ -763,6 +763,9 @@ from src.autoslice.talk_lane import (  # noqa: E402
     classify_talk_failure,
     produce_talk,
 )
+from src.autoslice.talk_failure_recovery_policy import (  # noqa: E402
+    subtitle_authority_recovery_relatives,
+)
 from src.autoslice.session_discovery import (  # noqa: E402
     date_chat_jsonl_files,
     _clean_dian_ge_title,
@@ -954,13 +957,21 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
     a scoped identity.
     """
 
-    if failure_kind not in {"content_boundary", "speaker_evidence", "runtime_prerequisite"}:
+    scoped_failure_kinds = {
+        "content_boundary", "speaker_evidence", "runtime_prerequisite",
+        "subtitle_authority",
+    }
+    if failure_kind not in scoped_failure_kinds:
         return talk_pipeline_fingerprint(candidate_id)
     if failure_kind == "content_boundary":
         relatives = (
             "scripts/produce_slice_package.py",
             "src/autoslice/jingting_chunker.py",
             "src/autoslice/subtitle_timing_qa.py",
+        )
+    elif failure_kind == "subtitle_authority":
+        relatives = subtitle_authority_recovery_relatives(
+            profile_asset_file("subtitle_truth_ledger")
         )
     else:
         relatives = (

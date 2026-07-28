@@ -1320,7 +1320,20 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             and cid in exact_contract_ids
             and _is_legacy_exact_backfill_rejection(record)
         )
-        if not (recoverable_status or legacy_exact_rejection):
+        selected_authority_rejection = (
+            record.get("status") == "candidate_rejected"
+            and record.get("selected_repair") is True
+            and record.get("failure_kind") == "subtitle_authority"
+            and record.get("failure_stage")
+            == "chat_authority_finalization"
+            and record.get("rejection_reason")
+            == "subtitle_authority_unresolved_backfilled"
+        )
+        if not (
+            recoverable_status
+            or legacy_exact_rejection
+            or selected_authority_rejection
+        ):
             kept.append(record)
             continue
         try:

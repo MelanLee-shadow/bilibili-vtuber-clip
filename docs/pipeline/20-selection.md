@@ -37,6 +37,11 @@
   `not_selected` 是历史 prose，不是状态 authority，也不得参与补位。
 - 每次拒绝必须保留 `failure_stage + rejection_reason + failure_evidence`；报告把它放在
   “候选门禁拒绝”，不能混进成品表只显示一个无解释的 `candidate_rejected`。
+- 已标记 `selected_repair=true` 的字幕 authority 修复项若在
+  `chat_authority_finalization` 被补位成 `candidate_rejected`，不能永久失联：只有字幕
+  authority 专属 fingerprint（text pipeline、source truth、chat proposal、glossary 资产）
+  发生变化时才自动恢复原候选，并可越过旧 lifetime 计数获得一次新代码尝试；无相关变化、
+  普通拒绝或手写伪状态仍不得复活。
 - 用户点名候补不篡改分数：追加 `USER_SELECTION_OVERRIDE`，记录原始 scorecard、
   baseline rank、实际 slot、被越过的基线候选与人工 authority。用户说外部已有重复但
   没有 BV 时，可直接 `SUPPRESSED_BY_USER`，但重复 claim 只能是
