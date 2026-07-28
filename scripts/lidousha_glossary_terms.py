@@ -15,6 +15,10 @@ profile, ``assets/lidousha/glossary.txt``) and extracts:
 * ``mishear_blacklist`` — the ASR mishearing / wrong-form variants that must NOT
   survive normalization (停放熊, 康姆叉, 沙特琳, 一四二, 苏丹, 阿朵, 小寺, …),
   harvested from the glossary's "不要写成 X"、"不要改成 X"、"听成 X 等" clauses.
+* ``expected_value_pairs`` — only glossary bullets with one unambiguous
+  canonical target contribute their explicitly listed wrong forms to the
+  zero-CPA expected-value lane.  Ambiguous multi-name bullets contribute
+  nothing, so registered proper names remain peers.
 
 Everything here is best-effort and fail-safe: any IO/parse problem yields a
 minimal ``GlossaryTerms(("kmx",), ())`` rather than raising, so a malformed or
@@ -69,7 +73,9 @@ _CANON_QUOTED_FIX_RE = re.compile(r"修正为\s*[“\"‘'『「]([A-Za-z0-9一-
 # Mishearing markers. "不要改成/写成 …" runs to the sentence end; the "听成 …
 # 等" forms stop at the first 等 so we never swallow the trailing prose.
 _MISHEAR_DONT_RE = re.compile(r"不要(?:改成|写成)\s*([^。\n]+)")
-_MISHEAR_HEARD_RE = re.compile(r"(?:误听成|误听|听成)\s*([^。\n]+?)\s*等")
+_MISHEAR_HEARD_RE = re.compile(
+    r"(?:误听成|误听|听成|听岔成)\s*([^。\n]+?)\s*等"
+)
 _MISHEAR_CANDIDATES_RE = re.compile(
     r"(?:常见)?误听候选包括\s*([^；。\n]+)"
 )
@@ -80,6 +86,7 @@ _MISWRITE_QUOTED_RE = re.compile(
 # Split an extracted span into individual terms.  Bare CJK "和" is not a safe
 # delimiter: it is the first character of canonical names such as 和成天下.
 _TOKEN_SPLIT_RE = re.compile(r"[、,，/｜|]|\s+(?:或|和)\s+")
+_PAREN_ANNOTATION_RE = re.compile(r"[（(][^）)]*[）)]")
 
 
 @dataclass(frozen=True)
@@ -127,11 +134,81 @@ def _blacklist_terms(content: str) -> list[str]:
     spans.extend(_MISWRITE_QUOTED_RE.findall(content))
     out: list[str] = []
     for span in spans:
+        # A dated provenance note is sometimes attached to the final variant,
+        # e.g. ``下斗里（2026-07-27 ...）``.  It is metadata, not part of the
+        # wrong surface; leaving it attached made that last variant silently
+        # disappear from terminology QA and expected-value normalization.
+        span = _PAREN_ANNOTATION_RE.sub("", span)
         for piece in _TOKEN_SPLIT_RE.split(span):
             token = _clean_token(piece)
             if token and _BLACKLIST_TOKEN_RE.match(token):
                 out.append(token)
     return out
+
+
+def parse_glossary_expected_value_pairs(
+    text: str,
+) -> tuple[tuple[str, str], ...]:
+    """Return explicit wrong-surface -> canonical pairs from safe bullets.
+
+    This does not fuzzily compare every transcript word against every glossary
+    term.  A pair exists only when one glossary bullet both names exactly one
+    canonical target and explicitly lists a wrong surface of at least three
+    code points.  Short everyday words such as ``小时``/``留下`` have a poor
+    unconditional prior and remain with CPA unless the profile explicitly
+    promotes that exact pair.  Thus the high-precision majority is mechanical
+    and free, while ambiguous names and common-word homophones leave the lane.
+    """
+
+    pairs: list[tuple[str, str]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith("- "):
+            continue
+        line = line[2:]
+        for colon in ("：", ":"):
+            idx = line.find(colon)
+            if idx != -1:
+                content = line[idx + 1 :]
+                break
+        else:
+            content = line
+
+        explicit = list(
+            dict.fromkeys(
+                [
+                    *_CANON_DIRECTIVE_RE.findall(content),
+                    *_CANON_QUOTED_FIX_RE.findall(content),
+                ]
+            )
+        )
+        if len(explicit) == 1:
+            canonical = explicit[0]
+        else:
+            leading = list(dict.fromkeys(_leading_terms(content)))
+            if len(leading) != 1:
+                continue
+            canonical = leading[0]
+        for surface in _blacklist_terms(content):
+            if len(surface) >= 3 and surface != canonical:
+                pairs.append((surface, canonical))
+    return tuple(dict.fromkeys(pairs))
+
+
+def load_glossary_expected_value_pairs(
+    path: str | Path | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Load deterministic glossary pairs; malformed/missing assets disable it."""
+
+    try:
+        resolved = _resolve_glossary_path(path)
+        if resolved is None:
+            return ()
+        return parse_glossary_expected_value_pairs(
+            resolved.read_text(encoding="utf-8")
+        )
+    except Exception:  # noqa: BLE001 - conservative degradation
+        return ()
 
 
 def parse_glossary_terms(text: str) -> GlossaryTerms:

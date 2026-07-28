@@ -161,11 +161,12 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
     assert team["subtitle_review_points"] == [
         {
             "point_id": "shadouli-team-name",
-            "final_video_start_ms": 49_000,
+            "final_video_start_ms": 0,
             "final_video_end_ms": 59_000,
             "expectation": (
-                "发 1 支持的粉丝队名必须写成玩梗专名“沙豆李”，不得保留"
-                "声学近音“下斗里”；随后发 0/2 支持李豆沙的对照关系也必须完整。"
+                "整片前59秒所有指向该粉丝队的称呼都必须写成玩梗专名“沙豆李”，"
+                "不得残留声学近音“下斗里”或把队名误写成普通短语“杀队友”；随后"
+                "发0/2支持李豆沙的对照关系也必须完整。"
             ),
         }
     ]

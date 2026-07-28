@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.channel_profile import CanonicalSurfaceRule, load_channel_profile
 
 
 # 行首「类别标签：」（梗词：/品牌/话题词：/人名/ID：…）先剥掉再取词面；
@@ -76,20 +76,54 @@ def respell_pairs() -> frozenset[tuple[str, str]]:
     )
 
 
-def expected_value_respell_pairs() -> frozenset[tuple[str, str]]:
-    """Narrow profile rules allowed to bypass CPA on expected-value grounds.
+def expected_value_surface_rules() -> tuple[CanonicalSurfaceRule, ...]:
+    """Profile rules plus unambiguous, explicitly listed glossary variants.
 
-    Membership is explicit per rule.  A glossary entry, roster name, or generic
-    confusable never enters this lane merely because it is common.
+    The glossary parser admits no fuzzy discoveries and no multi-canonical
+    bullet.  This gives common known ASR variants the expected-value behavior
+    selected by Ivan without making two registered proper names unequal.
     """
 
-    return frozenset(
-        (rule.surface, rule.canonical)
+    rules = [
+        rule
         for rule in CHANNEL_PROFILE.canonical_surface_rules
         if rule.authority.endswith("-expected-value-canon.v1")
         and rule.surface
         and rule.canonical
         and rule.surface != rule.canonical
+    ]
+    try:
+        from scripts.lidousha_glossary_terms import (
+            load_glossary_expected_value_pairs,
+        )
+
+        rules.extend(
+            CanonicalSurfaceRule(
+                surface=surface,
+                canonical=canonical,
+                authority=(
+                    f"{CHANNEL_PROFILE.profile_id}-glossary-"
+                    "expected-value-canon.v1"
+                ),
+            )
+            for surface, canonical in load_glossary_expected_value_pairs(
+                CHANNEL_PROFILE.asset_file("glossary")
+            )
+        )
+    except Exception:
+        pass
+    unique: dict[tuple[str, str], CanonicalSurfaceRule] = {}
+    for rule in rules:
+        unique.setdefault((rule.surface, rule.canonical), rule)
+    return tuple(unique.values())
+
+
+def expected_value_respell_pairs() -> frozenset[tuple[str, str]]:
+    """Known wrong surfaces allowed to bypass CPA on expected-value grounds."""
+
+    return frozenset(
+        (rule.surface, rule.canonical)
+        for rule in expected_value_surface_rules()
     )
 
 

@@ -67,8 +67,10 @@
     数量/位置仍未决，必须以 `REPEATED_CHAT_ENTITY_SLOTS_UNRESOLVED` 阻断。单次实体选边不得
     推导多个槽位，更不得把重复实体证据升级成整条 SC 逐字复制。
 11. **专名高先验与专名平等同时成立**：profile/glossary/roster 的规范词面可让未登记近音
-    误听走 expected-value canon；`林墨 → 礼墨` 当前属于此类。若“林墨”以后也作为独立规范
-    词面入表，registered-term guard 会自动撤销旁路，交 CPA 判断。任何两个已登记专名/作品/
+    误听走 expected-value canon；profile 显式 `林墨 → 礼墨` 与 glossary 明列的三字以上
+    单目标误听（如 `下斗里 → 沙豆李`）属于此类。两字常用词默认不进入无条件机械表，除非
+    profile 对该精确对单独授权。若误听面以后也作为独立规范词面入表，registered-term guard
+    会自动撤销旁路，交 CPA 判断。任何两个已登记专名/作品/
     梗词（如 kmx/乒乓球、恋青/恋死、梦限大/Mujica）都平等，禁止按频率互相覆盖。该 guard
     必须同时约束审片 finding 路由和所有 mutable stage 之后的最终机械重写；最终重写遇到
     双登记冲突时保留原字，写 `registered_name_conflict=true / CPA_REQUIRED` 收据。correction

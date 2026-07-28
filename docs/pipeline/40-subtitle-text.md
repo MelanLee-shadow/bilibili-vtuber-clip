@@ -27,6 +27,11 @@
   `glossary-expected-value-gate.v1` 的高先验 canon。expected-value 只接受未登记近音误听面
   到登记 glossary/roster 词面；两边都是登记词面时专名平等，必须交 CPA。其余词面、语义、
   插入或删除变化都必须由 CPA 明确选择 `PROPOSED`；AGY/声学与拼音门只作证据/否决。
+- glossary 中“一个明确 canonical + 明列误听面”的三字及以上变体自动进入零 CPA
+  expected-value 表，并在所有 mutable 文本阶段之后重新规范化；括号中的事故日期/说明不是
+  词面。两字日常词（如“小时/留下”）无条件替换的误伤先验过高，除非 profile 单独显式提升，
+  否则仍交 CPA。这样“下斗里→沙豆李”可机械覆盖整片所有出现，而“专名A→专名B”仍被
+  registered-term guard 拦截。
 - 实体上下文构建完成后必须生成同一份 hash-bound `.clip-context.json`：绑定 candidate/date、
   官方源 SHA、整片 draft、selection hook、relation/topic、结构化弹幕/SC 与 scoped speech
   memory。终审、声学请求、StoryContract、record 和交付包只能引用验证过的同一 digest；

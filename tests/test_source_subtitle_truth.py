@@ -3277,6 +3277,44 @@ def test_committed_850_opening_noise_truth_drops_the_actual_cue():
     ] == [(7_010, 9_990, "你把你的你你我你你的技能")]
 
 
+def test_committed_1493_truth_repairs_early_shadouli_team_reference():
+    ledger = (
+        REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (18_120, 19_280, "感觉杀队友的队伍"),
+            (46_470, 50_370, "那个发一支持下斗里的队伍"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260725-19-50-00.mp4"
+                    ),
+                    "start_ms": 1_493_650,
+                    "end_ms": 1_544_020,
+                }
+            ]
+        },
+        durations=[50_370],
+        ledger_path=ledger,
+    )
+
+    assert audit["status"] == "APPLIED", audit["failures"]
+    assert not audit["failures"]
+    assert [cue.text for cue in parse_srt_cues(corrected)] == [
+        "感觉沙豆李的队伍",
+        "那个发一支持沙豆李的队伍",
+    ]
+    assert {
+        row["truth_id"] for row in audit["applied"]
+    } >= {
+        "20260725-shadouli-early-team-r1",
+        "20260725-shadouli-team-r1",
+    }
+
+
 def test_committed_1209_adjacent_truths_split_a_straddling_fresh_cue():
     """相邻 operator truth 的公共边界落在 cue 内时不得后写覆盖前写。"""
 

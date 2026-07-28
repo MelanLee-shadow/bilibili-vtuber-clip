@@ -14,6 +14,7 @@ from typing import Any
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.term_authority import expected_value_surface_rules
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,11 +24,7 @@ _HARD_MEME_SURFACE_RULES = tuple(
     for rule in CHANNEL_PROFILE.canonical_surface_rules
     if rule.authority.endswith("-hard-meme-canon.v1")
 )
-_EXPECTED_VALUE_SURFACE_RULES = tuple(
-    rule
-    for rule in CHANNEL_PROFILE.canonical_surface_rules
-    if rule.authority.endswith("-expected-value-canon.v1")
-)
+_EXPECTED_VALUE_SURFACE_RULES = expected_value_surface_rules()
 
 
 def _partition_expected_value_surface_rules():

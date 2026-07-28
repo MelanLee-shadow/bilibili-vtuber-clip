@@ -31,9 +31,11 @@ def test_selected_profile_terms_are_protected_from_downstream_rewrites():
 
 
 def test_expected_value_lane_is_explicit_and_mishear_is_not_registered_peer():
-    assert expected_value_respell_pairs() == frozenset({("林墨", "礼墨")})
+    pairs = expected_value_respell_pairs()
+    assert {("林墨", "礼墨"), ("下斗里", "沙豆李")} <= pairs
     terms = registered_terms()
     assert "礼墨" in terms
     assert "恋青" in terms
     assert "恋死" in terms
     assert "林墨" not in terms
+    assert "下斗里" not in terms

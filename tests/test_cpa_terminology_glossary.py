@@ -4,6 +4,7 @@ from scripts.lidousha_glossary_terms import (
     FALLBACK_CANON,
     GlossaryTerms,
     load_glossary_terms,
+    parse_glossary_expected_value_pairs,
     parse_glossary_terms,
 )
 
@@ -43,6 +44,7 @@ def test_parse_real_glossary_extracts_multiple_canon_and_blacklist():
         "大爽天高",
         "合成天下",
         "何成天下",
+        "下斗里",
     ):
         assert variant in terms.mishear_blacklist, variant
     # A canonical spelling is never simultaneously flagged as a violation.
@@ -71,6 +73,17 @@ def test_parser_does_not_split_canonical_names_that_begin_with_he():
     assert "和成天下" in terms.canon
     assert "成天下" not in terms.canon
     assert {"合成天下", "何成天下"} <= set(terms.mishear_blacklist)
+
+
+def test_expected_value_pairs_require_one_unambiguous_canonical():
+    pairs = parse_glossary_expected_value_pairs(
+        "- 主播玩梗名：ASR 常把它听成 下斗里（事故注）等——一律修正为"
+        "“沙豆李”。\n"
+        "- 人名：恋青、恋死。ASR 常听成 连情 等。\n"
+    )
+
+    assert ("下斗里", "沙豆李") in pairs
+    assert all(surface != "连情" for surface, _ in pairs)
 
 
 def test_load_glossary_terms_is_fail_safe_on_missing_file(tmp_path):

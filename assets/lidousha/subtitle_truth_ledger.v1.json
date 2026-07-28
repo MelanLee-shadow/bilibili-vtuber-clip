@@ -2709,6 +2709,21 @@
   {
    "action": "replace_cue",
    "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan 2026-07-27 已裁定本片近音队名为“沙豆李”，并要求少量反馈默认整片复跑；全片语义明确只比较“沙豆李/李豆沙”两支粉丝队，前段“杀队友的队伍”是同一未登记近音误听，不是第三支队伍。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_CONTEXTUAL_REFERENT_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260725-19-50-00.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 1512930,
+   "source_start_ms": 1511770,
+   "text": "感觉沙豆李的队伍",
+   "truth_id": "20260725-shadouli-early-team-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
    "authority": "Ivan-stated-20260727-conversation(909 无源可考：录播记录缺失、回放弹幕无名、屏幕横幅无 toast、人耳亦无真值——授权任意近音字定版；取清晰可闻的 AC+风)",
    "decision_authority": "IVAN_OPERATOR_TRUTH",
    "evidence_class": "IVAN_OPERATOR_REASONABLE_TRUTH",

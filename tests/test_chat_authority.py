@@ -2533,6 +2533,28 @@ def test_expected_value_canon_reasserts_limo_after_mutable_stages():
     }
 
 
+def test_expected_value_canon_repairs_all_listed_shadouli_mentions():
+    from src.autoslice.chat_authority import normalize_expected_value_surfaces
+
+    source = _srt(
+        "然后看下下斗里的队伍",
+        "发一支持下斗里的队伍",
+    )
+    output, audit = normalize_expected_value_surfaces(source)
+
+    assert [cue.text for cue in parse_srt_cues(output)] == [
+        "然后看下沙豆李的队伍",
+        "发一支持沙豆李的队伍",
+    ]
+    assert audit["status"] == "APPLIED"
+    assert sum(
+        replacement["count"]
+        for repair in audit["repairs"]
+        for replacement in repair["replacements"]
+        if replacement["canonical"] == "沙豆李"
+    ) == 2
+
+
 def test_expected_value_canon_stops_when_mishear_surface_becomes_registered(
     monkeypatch,
 ):
@@ -2549,7 +2571,7 @@ def test_expected_value_canon_stops_when_mishear_surface_becomes_registered(
 
     assert output == source
     assert audit["status"] == "NO_CHANGE"
-    assert audit["eligible_rule_count"] == 0
+    assert audit["eligible_rule_count"] == audit["rule_count"] - 1
     assert audit["repairs"] == []
     assert audit["registered_name_conflicts"] == [
         {
