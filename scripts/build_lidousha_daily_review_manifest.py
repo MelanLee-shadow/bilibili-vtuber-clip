@@ -85,13 +85,29 @@ def _resolve_final_cover(
     if not isinstance(pick_path, str) or not pick_path or not pick_expected:
         raise DailyManifestError("state pick lacks cover_path/cover_sha256")
 
-    basename = Path(declared).name
-    if Path(pick_path).name != basename or pick_expected != expected:
+    pick_file = Path(pick_path)
+    if pick_expected != expected:
         raise DailyManifestError(
             "state/record final cover binding drift: "
             f"state={Path(pick_path).name}:{pick_expected} "
-            f"record={basename}:{expected}"
+            f"record={Path(declared).name}:{expected}"
         )
+    if pick_file.is_symlink() or not pick_file.is_file():
+        raise DailyManifestError(
+            f"state final cover missing or invalid: {pick_file}"
+        )
+    pick_actual = _sha256(pick_file)
+    if pick_actual != pick_expected:
+        raise DailyManifestError(
+            "state final cover sha drift: "
+            f"state={pick_expected} actual={pick_actual}"
+        )
+
+    # Cover repair writes a title-named delivery alias while keeping the
+    # record's package-internal route filename.  Path basenames are therefore
+    # not identity; both surfaces independently matching the same frozen hash
+    # is the actual binding.
+    basename = Path(declared).name
     relative = f"covers/{basename}"
     final_cover = package_root / relative
     if not final_cover.is_file():

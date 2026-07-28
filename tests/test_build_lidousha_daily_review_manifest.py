@@ -105,6 +105,34 @@ def test_resolve_final_cover_refuses_state_record_route_drift(
         )
 
 
+def test_resolve_final_cover_accepts_hash_identical_delivery_alias(
+    tmp_path: Path,
+) -> None:
+    covers = tmp_path / "covers"
+    delivery = tmp_path / "delivery"
+    covers.mkdir()
+    delivery.mkdir()
+    packaged = covers / "final.cover.png"
+    alias = delivery / "标题.cover.png"
+    packaged.write_bytes(b"same repaired cover bytes\n")
+    alias.write_bytes(packaged.read_bytes())
+    expected = _sha256(packaged)
+
+    resolved = _resolve_final_cover(
+        package_root=tmp_path,
+        pick={
+            "cover_path": str(alias),
+            "cover_sha256": "sha256:" + expected,
+        },
+        cover_generation={
+            "final_cover": str(packaged),
+            "final_cover_sha256": "sha256:" + expected,
+        },
+    )
+
+    assert resolved == "covers/final.cover.png"
+
+
 def test_sync_record_bound_candidate_artifacts_makes_evidence_portable(
     tmp_path: Path,
 ) -> None:
