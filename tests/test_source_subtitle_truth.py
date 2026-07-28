@@ -3233,6 +3233,48 @@ def test_committed_1209_truth_survives_fresh_asr_cue_merge():
     }
 
 
+def test_committed_850_opening_noise_truth_drops_the_actual_cue():
+    """850 public 0:13 应映射到源 855500–856780ms，而非后续静音。"""
+
+    ledger = (
+        REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (250, 1_690, "李姐拉拉，你新来的"),
+            (2_330, 4_130, "你这个，你还挺萌的"),
+            (4_370, 5_370, "看看"),
+            (5_730, 7_010, "等等等等"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260724-19-31-29.mp4"
+                    ),
+                    "start_ms": 849_770,
+                    "end_ms": 859_800,
+                }
+            ]
+        },
+        durations=[10_030],
+        ledger_path=ledger,
+    )
+
+    assert audit["status"] == "APPLIED", audit["failures"]
+    assert not audit["failures"]
+    assert "李姐拉拉，你新来的" in corrected
+    assert "等等等等" not in corrected
+    applied = {row["truth_id"]: row for row in audit["applied"]}
+    projection = applied["20260724-skill-opening-noise-drop-r3"][
+        "resolved_target_projection"
+    ]
+    assert [
+        (cue["start_ms"], cue["end_ms"], cue["before_text"])
+        for cue in projection["cues"]
+    ] == [(5_730, 7_010, "等等等等")]
+
+
 def test_committed_1209_adjacent_truths_split_a_straddling_fresh_cue():
     """相邻 operator truth 的公共边界落在 cue 内时不得后写覆盖前写。"""
 
