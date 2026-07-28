@@ -31,6 +31,7 @@ FOREIGN_WITNESS_SCHEMA = "foreign-span-audio-witness.v1"
 CLUSTER_RETRANSCRIPTION_SCHEMA = "foreign-cluster-retranscription.v1"
 LANGUAGE_WITNESSED_STATUS = "WITNESSED_FOREIGN_AUDIO_TRANSCRIPTION"
 MIXED_PHRASE_WITNESSED_STATUS = "WITNESSED_MIXED_PHRASE_AUDIO"
+MIXED_PHRASE_CPA_STATUS = "CPA_ADJUDICATED_MIXED_PHRASE_AUDIO"
 
 _MIN_VERBATIM_SIMILARITY = 0.60
 _MIN_KANA_SIMILARITY = 0.55
@@ -207,6 +208,7 @@ def _witness_rows(
             continue
         transcript = observation["exact_transcript"]
         result["audible_language"] = observation["audible_language"]
+        result["exact_transcript"] = transcript[:500]
         result["speaker_impression"] = observation["speaker_impression"]
         result["key_tier"] = key_tier
         result["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()
@@ -415,3 +417,207 @@ def witness_foreign_script_audit(
     _persist_witness(out_root, cid, "foreign_script", results)
     if results and all(row.get("witnessed") for row in results):
         audit["status"] = MIXED_PHRASE_WITNESSED_STATUS
+
+
+def adjudicate_foreign_script_audit(
+    *,
+    media_path: Path,
+    srt_text: str,
+    audit: dict[str, Any],
+    out_root: Path,
+    cid: str,
+    llm_call: Callable[[str], str] | None,
+    observe: Callable[..., str] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Let the audio lane propose and CPA finally judge mixed-script cues.
+
+    A strict verbatim similarity miss is not itself a word-choice verdict:
+    bounded audio transcription often returns only the English insertion while
+    the SRT cue also contains a Chinese frame.  The candidate-blind transcript
+    therefore becomes PROPOSED in a closed CURRENT/PROPOSED CPA hearing.  CPA
+    may keep the existing code-switch or select the fresh transcript; only a
+    typed JUDGED receipt resolves the gate.
+    """
+
+    if audit.get("status") != "BLOCKED_MIXED_CJK_LATIN_PHRASE":
+        return srt_text, audit
+    rows = [
+        row
+        for row in (audit.get("mixed_cjk_latin_cues") or [])
+        if isinstance(row, dict)
+    ]
+    if not rows:
+        return srt_text, audit
+    try:
+        results = _witness_rows(
+            media_path=media_path,
+            rows=rows,
+            mode="verbatim",
+            out_root=out_root,
+            cid=cid,
+            observe=observe,
+        )
+    except Exception as exc:
+        audit["audio_witness_error"] = f"{type(exc).__name__}: {exc}"[:200]
+        return srt_text, audit
+    audit["audio_witness_rows"] = results
+    _persist_witness(out_root, cid, "foreign_script", results)
+
+    cues = parse_srt_cues(srt_text)
+    cue_by_index = {index: cue for index, cue in enumerate(cues, start=1)}
+    replacements: dict[int, str] = {}
+    adjudication_rows: list[dict[str, Any]] = []
+    all_resolved = len(results) == len(rows)
+    cpa_hearing_count = 0
+
+    from src.autoslice.acoustic_witness_adjudication import (
+        _pinyin_tokens,
+        adjudicate_with_witness,
+    )
+
+    for result in results:
+        cue_index = result.get("cue_index")
+        cue = cue_by_index.get(cue_index)
+        receipt: dict[str, Any] = {
+            "cue_index": cue_index,
+            "resolved": False,
+            "decision_authority": None,
+        }
+        adjudication_rows.append(receipt)
+        if cue is None:
+            receipt["reason_code"] = "CUE_NOT_FOUND"
+            all_resolved = False
+            continue
+        if result.get("witnessed") is True:
+            receipt.update(
+                {
+                    "resolved": True,
+                    "choice": "CURRENT",
+                    "decision_authority": "VERBATIM_AUDIO_WITNESS",
+                    "reason_code": "FULL_CUE_VERBATIM_MATCH",
+                }
+            )
+            continue
+        transcript = " ".join(str(result.get("exact_transcript") or "").split())
+        language = str(result.get("audible_language") or "")
+        heard_tokens = _pinyin_tokens(transcript) if transcript else None
+        if (
+            not transcript
+            or language == "none"
+            or not heard_tokens
+            or llm_call is None
+        ):
+            receipt["reason_code"] = (
+                "CPA_JUDGE_UNAVAILABLE"
+                if llm_call is None
+                else "AUDIO_TRANSCRIPT_UNUSABLE"
+            )
+            all_resolved = False
+            continue
+        before = "\n".join(
+            prior.text
+            for prior in cues[max(0, int(cue_index) - 4) : int(cue_index) - 1]
+        )
+        after = "\n".join(
+            following.text
+            for following in cues[int(cue_index) : int(cue_index) + 3]
+        )
+        witness = {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "status": "OBSERVED",
+            "request_sha256": hashlib.sha256(
+                json.dumps(
+                    {
+                        "audio_sha256": result.get("audio_sha256"),
+                        "cue_index": cue_index,
+                        "transcript": transcript,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest(),
+            "target_audible": True,
+            "heard_pinyin": " ".join(heard_tokens),
+            "syllable_count": len(heard_tokens),
+            "uncertain_positions": [],
+            "confidence": 0.85,
+        }
+        check_request = {
+            "current_cue": cue.text,
+            "proposed_cue": transcript,
+            "suspect": "",
+            "replacement": "",
+            "repair_class": "foreign_script_retranscription",
+            "candidate_provenance": {
+                "kind": "bounded_candidate_blind_audio_transcript",
+                "audio_sha256": result.get("audio_sha256"),
+                "audible_language": language,
+            },
+            "orthography_authority": {
+                "status": "PASS",
+                "provenance_kind": "bounded_audio_transcript",
+            },
+            "reason": (
+                "mixed CJK/Latin cue failed strict full-cue verbatim similarity; "
+                "CPA must choose between the current cue and candidate-blind "
+                "bounded audio transcription"
+            ),
+            "context_before": before,
+            "context_after": after,
+        }
+        cpa_hearing_count += 1
+        repaired, policy_branch, adjudication = adjudicate_with_witness(
+            check_request=check_request,
+            witness=witness,
+            llm_call=llm_call,
+        )
+        judge = adjudication.get("judge") or {}
+        choice = judge.get("choice")
+        receipt.update(
+            {
+                "choice": choice,
+                "policy_branch": policy_branch,
+                "decision_authority": "CPA_JUDGE",
+                "current": cue.text,
+                "proposed": transcript,
+                "adjudication": adjudication,
+            }
+        )
+        if choice == "CURRENT" and judge.get("status") == "JUDGED":
+            receipt["resolved"] = True
+        elif (
+            repaired
+            and choice == "PROPOSED"
+            and judge.get("status") == "JUDGED"
+        ):
+            replacements[int(cue_index)] = transcript
+            receipt["resolved"] = True
+        else:
+            receipt["reason_code"] = "CPA_ADJUDICATION_DID_NOT_RESOLVE"
+            all_resolved = False
+
+    audit["cpa_adjudication_rows"] = adjudication_rows
+    if not all_resolved:
+        return srt_text, audit
+    output = srt_text
+    if replacements:
+        rendered = []
+        for index, cue in enumerate(cues, start=1):
+            text = replacements.get(index, cue.text)
+            rendered.append(
+                f"{index}\n{_ms_to_srt_ts(cue.start_ms)} --> "
+                f"{_ms_to_srt_ts(cue.end_ms)}\n{text}"
+            )
+        output = "\n\n".join(rendered) + "\n"
+    audit["status"] = (
+        MIXED_PHRASE_CPA_STATUS
+        if cpa_hearing_count
+        else MIXED_PHRASE_WITNESSED_STATUS
+    )
+    audit["decision_authority"] = (
+        "CPA_JUDGE" if cpa_hearing_count else "VERBATIM_AUDIO_WITNESS"
+    )
+    audit["cpa_hearing_count"] = cpa_hearing_count
+    audit["applied_count"] = len(replacements)
+    audit["output_srt_sha256"] = hashlib.sha256(output.encode("utf-8")).hexdigest()
+    return output, audit

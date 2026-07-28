@@ -28,6 +28,10 @@
    - **T3 声学证人**：AGY/声学层不得输出或决定汉字，只提供 `target_audible`、疑似拼音和候选
      发音兼容度。代码级拼音门负责否决与声音不兼容的 CPA 提案，但不能反过来选择词面；
      最终 mutation 仍只认 CPA `PROPOSED`。量级 ~1/10。
+   - mixed CJK/Latin fidelity 门同样没有终审权：严格整句相似度命中可作为 verbatim 见证；
+     未命中时，候选盲音频转写只作为 PROPOSED，与 CURRENT 组成闭集交 CPA。CPA 选择
+     CURRENT 才能保留正常 code-switch，选择 PROPOSED 且通过拼音门才可重写；CPA 不可用
+     继续 BLOCK，禁止检测器或 AGY 自行选边。
    - T2 备选未实施：免费 BCUT 对争议 span 重转写+拼音距离比对（「穷人声学见证」），T3 仍嫌贵时再上。
    - **删除专线**：`acoustic_delete` 仅提议删除一个有界疑似幻听 span，`acoustic_drop_cue`
      仅提议整条无声；AGY 的“不可闻”仍只是证据，只有 CPA `PROPOSED` 才能执行删除。严格

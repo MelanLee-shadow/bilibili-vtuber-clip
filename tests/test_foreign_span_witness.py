@@ -176,6 +176,132 @@ def test_mixed_phrase_witnessed_verbatim(tmp_path, witness_env):
     assert audit["status"] == fsw.MIXED_PHRASE_WITNESSED_STATUS
 
 
+def test_mixed_phrase_similarity_miss_is_resolved_only_by_cpa_current(
+    tmp_path, witness_env
+):
+    srt_text = _srt(
+        "前文",
+        "她刚刚突然问这首歌的歌词真的是 I don't care 吗然后大家都笑了",
+        "后文",
+    )
+    audit = audit_foreign_script_consistency(srt_text)
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "en",
+                "exact_transcript": "I don't care",
+                "speaker_impression": "single_live_voice",
+            }
+        )
+
+    def judge(_prompt):
+        return json.dumps(
+            {
+                "ranking": [
+                    {"choice": "CURRENT", "p": 0.8},
+                    {"choice": "PROPOSED", "p": 0.2},
+                ],
+                "choice": "CURRENT",
+                "reason": "English insertion is embedded in the Chinese frame.",
+            }
+        )
+
+    output, resolved = fsw.adjudicate_foreign_script_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_cpa_keep",
+        llm_call=judge,
+        observe=observe,
+    )
+
+    assert output == srt_text
+    assert resolved["status"] == fsw.MIXED_PHRASE_CPA_STATUS
+    assert resolved["decision_authority"] == "CPA_JUDGE"
+    assert resolved["cpa_adjudication_rows"][0]["choice"] == "CURRENT"
+    assert resolved["cpa_adjudication_rows"][0]["resolved"] is True
+
+
+def test_mixed_phrase_similarity_miss_requires_cpa_for_retranscription(
+    tmp_path, witness_env
+):
+    srt_text = _srt("前文", "don't know那么多，所有的", "后文")
+    audit = audit_foreign_script_consistency(srt_text)
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "zh",
+                "exact_transcript": "都问那么多，所有的",
+                "speaker_impression": "single_live_voice",
+            }
+        )
+
+    def judge(_prompt):
+        return json.dumps(
+            {
+                "ranking": [
+                    {"choice": "PROPOSED", "p": 0.95},
+                    {"choice": "CURRENT", "p": 0.05},
+                ],
+                "choice": "PROPOSED",
+                "reason": "The bounded audio transcript matches the discourse.",
+            }
+        )
+
+    output, resolved = fsw.adjudicate_foreign_script_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_cpa_replace",
+        llm_call=judge,
+        observe=observe,
+    )
+
+    assert "都问那么多，所有的" in output
+    assert "don't know" not in output
+    assert resolved["status"] == fsw.MIXED_PHRASE_CPA_STATUS
+    assert resolved["applied_count"] == 1
+    assert resolved["cpa_adjudication_rows"][0]["choice"] == "PROPOSED"
+
+
+def test_mixed_phrase_without_cpa_stays_blocked(tmp_path, witness_env):
+    srt_text = _srt(
+        "前文",
+        "她刚刚突然问这首歌的歌词真的是 I don't care 吗然后大家都笑了",
+        "后文",
+    )
+    audit = audit_foreign_script_consistency(srt_text)
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "en",
+                "exact_transcript": "I don't care",
+                "speaker_impression": "single_live_voice",
+            }
+        )
+
+    output, unresolved = fsw.adjudicate_foreign_script_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_no_cpa",
+        llm_call=None,
+        observe=observe,
+    )
+
+    assert output == srt_text
+    assert unresolved["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+    assert unresolved["cpa_adjudication_rows"][0]["reason_code"] == (
+        "CPA_JUDGE_UNAVAILABLE"
+    )
+
+
 def _cluster_srt():
     return _srt(
         "そうだね、これは日本語のセリフ",

@@ -83,8 +83,8 @@ from src.autoslice.producer_source_truth_authority import (
 )
 from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.foreign_span_witness import (
+    adjudicate_foreign_script_audit,
     retranscribe_foreign_script_cluster,
-    witness_foreign_script_audit,
     witness_language_preservation_audit,
 )
 from src.autoslice.self_reference_absorption import absorb_host_self_references
@@ -1322,6 +1322,23 @@ def _post_truth_release_hygiene(
     return srt_text
 
 
+def _adjudicate_final_foreign_script(
+    padded: Path,
+    srt_text: str,
+    audit: dict[str, Any],
+    out_root: Path,
+    cid: str,
+) -> tuple[str, dict[str, Any]]:
+    return adjudicate_foreign_script_audit(
+        media_path=padded,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=out_root,
+        cid=cid,
+        llm_call=_build_final_review_llm_call(),
+    )
+
+
 def _finalize_text_evidence(
     *,
     spec: dict,
@@ -1438,11 +1455,8 @@ def _finalize_text_evidence(
             foreign_script_audit = audit_foreign_script_consistency(srt_text)
         foreign_script_audit["cluster_retranscription"] = cluster_repair_audit
     if padded is not None:
-        witness_foreign_script_audit(
-            media_path=padded,
-            audit=foreign_script_audit,
-            out_root=out_root,
-            cid=cid,
+        srt_text, foreign_script_audit = _adjudicate_final_foreign_script(
+            padded, srt_text, foreign_script_audit, out_root, cid
         )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
