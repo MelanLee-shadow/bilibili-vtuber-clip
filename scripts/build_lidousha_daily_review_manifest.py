@@ -104,6 +104,36 @@ def _resolve_final_cover(
     return relative
 
 
+def _sync_record_bound_candidate_artifacts(
+    *,
+    package_root: Path,
+    candidate_id: str,
+    record_doc: dict,
+) -> dict[str, str]:
+    """Make candidate-root evidence portable under its record hashes."""
+    artifact_hashes = record_doc.get("artifact_hashes") or {}
+    artifacts = {
+        "chat_authority": (
+            f"{candidate_id}.chat-authority.json",
+            artifact_hashes.get("chat_authority_audit_sha256"),
+        ),
+        "clip_context": (
+            f"{candidate_id}.clip-context.json",
+            artifact_hashes.get("clip_context_file_sha256"),
+        ),
+    }
+    resolved: dict[str, str] = {}
+    for label, (name, declared_sha256) in artifacts.items():
+        _sync_declared_artifact(
+            target=package_root / name,
+            source=package_root.parent / name,
+            declared_sha256=str(declared_sha256 or ""),
+            label=label.replace("_", " "),
+        )
+        resolved[label] = name
+    return resolved
+
+
 def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
           candidate_id: str) -> dict:
     package_root = package_root.resolve()
@@ -152,6 +182,7 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     if not isinstance(cover_generation, dict):
         raise DailyManifestError("cover generation is not an object")
     record = need(f"{candidate_id}.record.json")
+    record_doc = json.loads(record.read_text(encoding="utf-8"))
     subtitle = need(f"{stem}.srt")
     burned = need(f"{stem}.burned-final-sapphire72.mp4")
     cover_rel = _resolve_final_cover(
@@ -161,23 +192,15 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     )
 
     ass = need(f"{stem}.final-sapphire72.ass")
-    chat_name = f"{candidate_id}.chat-authority.json"
-    chat_in_pkg = package_root / chat_name
-    # 装配步骤：chat authority 是 candidate 根目录的冻结产物，包自足性
-    # （portable audit）要求它在包内。即使包内已有旧副本，也必须重新
-    # 对照当前 record 声明；只在 candidate-root source 匹配时同步。
-    record_doc = json.loads(record.read_text(encoding="utf-8"))
-    _sync_declared_artifact(
-        target=chat_in_pkg,
-        source=package_root.parent / chat_name,
-        declared_sha256=str(
-            (record_doc.get("artifact_hashes") or {}).get(
-                "chat_authority_audit_sha256"
-            )
-            or ""
-        ),
-        label="chat authority",
+    # 装配步骤：candidate-root 的冻结证据即使在包内已有旧副本，也必须
+    # 重新对照当前 record 声明同步，避免远端 auditor 偷读包外文件。
+    portable_evidence = _sync_record_bound_candidate_artifacts(
+        package_root=package_root,
+        candidate_id=candidate_id,
+        record_doc=record_doc,
     )
+    chat_name = portable_evidence["chat_authority"]
+    clip_context_name = portable_evidence["clip_context"]
     def cover_artifact(generation_key: str, sha_key: str) -> str:
         """Locate a package-internal cover artifact declared by generation.
 
@@ -249,6 +272,7 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         "cover_route_background": cover_route_background,
         "record": f"{upload_stem}.record.json",
         "chat_authority": chat_name,
+        "clip_context": clip_context_name,
         "ass_path": ass.name,
         "ass_sha256": _sha256(ass),
         # uniform_host 政策（ee29e08）：单说话人包的 speaker 面与正文同体；

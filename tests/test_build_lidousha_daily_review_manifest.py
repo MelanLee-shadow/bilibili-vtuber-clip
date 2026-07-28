@@ -6,6 +6,7 @@ from scripts.build_lidousha_daily_review_manifest import (
     DailyManifestError,
     _sha256,
     _resolve_final_cover,
+    _sync_record_bound_candidate_artifacts,
     _sync_declared_artifact,
 )
 
@@ -102,3 +103,35 @@ def test_resolve_final_cover_refuses_state_record_route_drift(
                 "final_cover_sha256": "sha256:" + _sha256(ai),
             },
         )
+
+
+def test_sync_record_bound_candidate_artifacts_makes_evidence_portable(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    package_root = candidate_root / "replacement_recuts"
+    package_root.mkdir(parents=True)
+    candidate_id = "auto_test"
+    chat = candidate_root / f"{candidate_id}.chat-authority.json"
+    context = candidate_root / f"{candidate_id}.clip-context.json"
+    chat.write_bytes(b"current chat authority\n")
+    context.write_bytes(b"current clip context\n")
+    (package_root / chat.name).write_bytes(b"stale chat authority\n")
+
+    resolved = _sync_record_bound_candidate_artifacts(
+        package_root=package_root,
+        candidate_id=candidate_id,
+        record_doc={
+            "artifact_hashes": {
+                "chat_authority_audit_sha256": "sha256:" + _sha256(chat),
+                "clip_context_file_sha256": "sha256:" + _sha256(context),
+            }
+        },
+    )
+
+    assert resolved == {
+        "chat_authority": chat.name,
+        "clip_context": context.name,
+    }
+    assert (package_root / chat.name).read_bytes() == chat.read_bytes()
+    assert (package_root / context.name).read_bytes() == context.read_bytes()
