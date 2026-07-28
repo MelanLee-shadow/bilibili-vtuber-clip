@@ -929,6 +929,13 @@ def route_findings(
             if applicable
             else None
         )
+        if expected_value_gate and expected_value_gate.get("status") == "BLOCK":
+            row.update(routed="disclosure", expected_value_gate=expected_value_gate,
+                       registered_name_conflict=True, requires_cpa_judge=True)
+            if suspect.casefold() in folded_entity_surfaces or str(suggestion).casefold() in folded_entity_surfaces:
+                row["entity_surface_conflict"] = True
+            rows.append(row)
+            continue
         if expected_value_gate is not None:
             before = texts[cue_index - 1]
             texts[cue_index - 1] = str(candidate)

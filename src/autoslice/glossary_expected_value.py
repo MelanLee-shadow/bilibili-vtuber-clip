@@ -8,6 +8,63 @@ from src.autoslice.subtitle_fidelity import _homophone_equal
 from src.autoslice.term_authority import expected_value_respell_pairs
 
 
+def glossary_registered_name_conflict(
+    row: Mapping[str, Any],
+    *,
+    base_text: str,
+    proposed_text: str,
+    registered_term_set: frozenset[str],
+) -> dict[str, Any] | None:
+    """Return a CPA-routing receipt when both spellings are registered peers."""
+
+    suspect = str(row.get("suspect") or "")
+    suggestion = str(row.get("suggestion") or "")
+    if (
+        not suspect
+        or not suggestion
+        or suspect == suggestion
+        or not proposed_text
+        or suspect not in base_text
+        or base_text.replace(suspect, suggestion, 1) != proposed_text
+    ):
+        return None
+    provenance = row.get("candidate_provenance")
+    provenance_kind = (
+        str(provenance.get("kind") or "")
+        if isinstance(provenance, Mapping)
+        else ""
+    )
+    provenance_surface = (
+        str(provenance.get("surface") or "")
+        if isinstance(provenance, Mapping)
+        else ""
+    )
+    explicit_rule = (suspect, suggestion) in expected_value_respell_pairs()
+    proposed_registered = (
+        suggestion in registered_term_set
+        and (
+            explicit_rule
+            or (
+                provenance_kind in {"glossary", "official_roster"}
+                and provenance_surface == suggestion
+            )
+        )
+    )
+    if suspect not in registered_term_set or not proposed_registered:
+        return None
+    return {
+        "schema_version": "glossary-expected-value-gate.v1",
+        "status": "BLOCK",
+        "policy": "REGISTERED_NAME_EQUALITY",
+        "candidate_provenance_kind": provenance_kind or None,
+        "registered_target": suggestion,
+        "current_registered_term": True,
+        "proposed_registered_term": True,
+        "registered_name_conflict": True,
+        "routed": "CPA_REQUIRED",
+    }
+
+
 def glossary_expected_value_gate(
     row: Mapping[str, Any],
     *,
@@ -21,6 +78,14 @@ def glossary_expected_value_gate(
 ) -> dict[str, Any] | None:
     """Admit high-prior glossary canon unless both sides are named peers."""
 
+    registered_conflict = glossary_registered_name_conflict(
+        row,
+        base_text=base_text,
+        proposed_text=proposed_text,
+        registered_term_set=registered_term_set,
+    )
+    if registered_conflict is not None:
+        return registered_conflict
     suspect = str(row.get("suspect") or "")
     suggestion = str(row.get("suggestion") or "")
     if (

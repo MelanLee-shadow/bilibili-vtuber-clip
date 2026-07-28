@@ -1104,13 +1104,26 @@ def test_registered_proper_names_are_equal_and_exit_expected_value_lane():
     output, audit = route_findings(
         srt,
         [finding],
-        protected_term_set=frozenset(),
+        protected_term_set=frozenset({"恋青", "恋死"}),
         registered_term_set=frozenset({"恋青", "恋死"}),
     )
 
     assert output == srt
     assert audit["applied_count"] == 0
     assert audit["findings"][0]["routed"] == "disclosure"
+    assert audit["findings"][0]["requires_cpa_judge"] is True
+    assert audit["findings"][0]["registered_name_conflict"] is True
+    assert audit["findings"][0]["expected_value_gate"] == {
+        "schema_version": "glossary-expected-value-gate.v1",
+        "status": "BLOCK",
+        "policy": "REGISTERED_NAME_EQUALITY",
+        "candidate_provenance_kind": "glossary",
+        "registered_target": "恋死",
+        "current_registered_term": True,
+        "proposed_registered_term": True,
+        "registered_name_conflict": True,
+        "routed": "CPA_REQUIRED",
+    }
 
 
 def test_entity_surface_suspect_never_text_applied():

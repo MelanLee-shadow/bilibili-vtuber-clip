@@ -71,7 +71,9 @@
     词面入表，registered-term guard 会自动撤销旁路，交 CPA 判断。任何两个已登记专名/作品/
     梗词（如 kmx/乒乓球、恋青/恋死、梦限大/Mujica）都平等，禁止按频率互相覆盖。该 guard
     必须同时约束审片 finding 路由和所有 mutable stage 之后的最终机械重写；最终重写遇到
-    双登记冲突时保留原字，写 `registered_name_conflict=true / CPA_REQUIRED` 收据。
+    双登记冲突时保留原字，写 `registered_name_conflict=true / CPA_REQUIRED` 收据。correction
+    pass 必须在 protected-term 披露分支之前识别该收据，并把 CURRENT/PROPOSED 交声学见证和
+    CPA 闭集裁决；“受保护”只能禁止机械覆盖，不能阻止 CPA 作出最终选择。
 12. **晚期 source truth 只接受 operator 直改**：`subtitle_truth_ledger.v1.json` 的
     `source-subtitle-truth-governance.v2` 边界之后，每行必须有
     revision/state/evidence/authority/decision_authority；`VERIFIED_ACTIVE` 只允许
