@@ -1449,6 +1449,14 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         )
         changed = recorded_recovery != current_recovery
         next_retry_at = record.get("next_retry_at_epoch")
+        infrastructure_waiting = bool(
+            record.get("failure_recoverable") is True
+            and record.get("failure_kind")
+            in INFRASTRUCTURE_WAIT_FAILURE_KINDS
+            and isinstance(next_retry_at, (int, float))
+            and not isinstance(next_retry_at, bool)
+            and time.time() < float(next_retry_at)
+        )
         infrastructure_retry = bool(
             record.get("failure_recoverable") is True
             and record.get("failure_kind") in INFRASTRUCTURE_WAIT_FAILURE_KINDS
@@ -1482,6 +1490,17 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         carryover_fingerprint = _unconsumed_final_review_carryover(record)
         carryover_retry = carryover_fingerprint is not None
         sanctioned_retry = sanctioned_revival_retry is not None
+        if (
+            infrastructure_waiting
+            and not sanctioned_retry
+            and not carryover_retry
+        ):
+            # Provider/runtime waits own an explicit retry clock.  An
+            # unrelated deploy can change the broad recovery fingerprint, but
+            # must not bypass that cooldown and immediately monopolize the
+            # date lane again.  Explicit governance retries remain authoritative.
+            kept.append(record)
+            continue
         if (
             not cid
             or cid in existing_pending

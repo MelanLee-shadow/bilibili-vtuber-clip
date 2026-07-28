@@ -8340,6 +8340,28 @@ def test_confirmed_infrastructure_wait_keeps_timer_retries(tmp_path, monkeypatch
     )
 
 
+def test_infrastructure_retry_cooldown_survives_unrelated_pipeline_change(
+    tmp_path, monkeypatch
+):
+    date, state = _requeue_gating_state(
+        tmp_path,
+        monkeypatch,
+        failure_kind="provider_transient",
+        transient_count=3,
+    )
+    state["picks"][0]["next_retry_at_epoch"] = 10_001
+    monkeypatch.setattr(runner.time, "time", lambda: 10_000)
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: "sha256:changed-by-unrelated-deploy",
+    )
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["pending_talk"] == []
+    assert state["picks"][0]["failure_kind"] == "provider_transient"
+
+
 def test_exact_terminal_failure_waits_for_relevant_fingerprint_change(
     tmp_path, monkeypatch
 ):
