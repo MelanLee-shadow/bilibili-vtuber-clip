@@ -287,8 +287,11 @@ print(json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", 
 LOCAL_MANIFEST_PY
 )
 
-ssh "$HOST" "touch '$DISABLED'; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
+# Mark ownership before the remote command can create DISABLED.  If this
+# process is interrupted while the remote flock is still waiting, cleanup must
+# know that the empty stop file belongs to this deployment and remove it.
 DISABLED_TOUCHED=1
+ssh "$HOST" "touch '$DISABLED'; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
 ssh "$HOST" "test ! -e '$STAGE' && test ! -e '$BACKUP' && mkdir '$STAGE'"
 STAGE_CREATED=1
 

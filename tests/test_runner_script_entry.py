@@ -20,6 +20,7 @@ RECOVERY_PLANNER = ROOT / "scripts" / "plan_recovery_review_rerun.py"
 RECOVERY_MANIFEST_BUILDER = (
     ROOT / "scripts" / "build_lidousha_recovery_review_manifest.py"
 )
+DEPLOY_SCRIPT = ROOT / "scripts" / "deploy_free_autoslice.sh"
 
 
 def test_runner_runs_as_script_without_import_cycle():
@@ -70,3 +71,17 @@ def test_recovery_manifest_builder_bootstraps_repo_root_for_direct_execution():
         timeout=30,
     )
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_deploy_owns_disabled_before_remote_wait_can_be_interrupted():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    ownership = source.index(
+        "DISABLED_TOUCHED=1\n"
+        'ssh "$HOST" "touch \'$DISABLED\'; /usr/bin/flock -w 7200'
+    )
+    staging = source.index(
+        'ssh "$HOST" "test ! -e \'$STAGE\'',
+        ownership,
+    )
+
+    assert ownership < staging
