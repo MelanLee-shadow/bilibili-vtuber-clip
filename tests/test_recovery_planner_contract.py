@@ -718,6 +718,7 @@ def test_single_published_projection_main_uses_external_recording_tree(
         "status": "BOUND",
         "binding": "SYMLINK_EXTERNAL_AUTHORITY",
         "source_path": str(source_base / "cpa.env"),
+        "resolved_authority_path": str(source_base / "cpa.env"),
         "target_path": str(target_base / "cpa.env"),
     }
     assert (target_base / "cpa.env").is_symlink()
@@ -725,6 +726,55 @@ def test_single_published_projection_main_uses_external_recording_tree(
         source_base / "cpa.env"
     ).resolve()
     assert json.loads(source_state.read_text(encoding="utf-8")) == state
+
+
+def test_single_published_projection_follows_existing_external_cpa_binding(
+    tmp_path,
+):
+    authority = tmp_path / "production-cpa.env"
+    authority.write_text(
+        "CPA_BASE_URL=https://example.invalid/v1\nCPA_API_KEY=test\n",
+        encoding="utf-8",
+    )
+    source_base = tmp_path / "source"
+    target_base = tmp_path / "target"
+    source_base.mkdir()
+    target_base.mkdir()
+    (source_base / "cpa.env").symlink_to(authority)
+
+    receipt = planner._bind_external_cpa_env(
+        source_base=source_base,
+        target_base=target_base,
+    )
+
+    assert receipt == {
+        "schema_version": "recovery-external-cpa-env-binding.v1",
+        "status": "BOUND",
+        "binding": "SYMLINK_EXTERNAL_AUTHORITY",
+        "source_path": str(source_base / "cpa.env"),
+        "resolved_authority_path": str(authority),
+        "target_path": str(target_base / "cpa.env"),
+    }
+    assert (target_base / "cpa.env").is_symlink()
+    assert (target_base / "cpa.env").resolve() == authority
+
+
+def test_external_cpa_binding_rejects_dangling_source_symlink(tmp_path):
+    source_base = tmp_path / "source"
+    target_base = tmp_path / "target"
+    source_base.mkdir()
+    (source_base / "cpa.env").symlink_to(tmp_path / "missing-cpa.env")
+
+    with pytest.raises(
+        SystemExit,
+        match="source CPA environment symlink is invalid",
+    ):
+        planner._bind_external_cpa_env(
+            source_base=source_base,
+            target_base=target_base,
+        )
+
+    assert not (target_base / "cpa.env").exists()
 
 
 def test_single_published_projection_rejects_multi_date_recording_root(

@@ -99,15 +99,27 @@ def _bind_external_cpa_env(
         raise SystemExit(
             f"source CPA environment missing: {source}: {exc}"
         ) from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+    if stat.S_ISLNK(metadata.st_mode):
+        try:
+            authority = source.resolve(strict=True)
+            authority_metadata = authority.stat()
+        except OSError as exc:
+            raise SystemExit(
+                f"source CPA environment symlink is invalid: {source}: {exc}"
+            ) from exc
+    else:
+        authority = source
+        authority_metadata = metadata
+    if not stat.S_ISREG(authority_metadata.st_mode):
         raise SystemExit(
-            f"source CPA environment must be a regular non-symlink file: {source}"
+            "source CPA environment must resolve to a regular file: "
+            f"{source}"
         )
     if target.exists() or target.is_symlink():
         raise SystemExit(f"target CPA environment already exists: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        target.symlink_to(source)
+        target.symlink_to(authority)
     except FileExistsError as exc:
         raise SystemExit(
             f"target CPA environment already exists: {target}"
@@ -117,6 +129,7 @@ def _bind_external_cpa_env(
         "status": "BOUND",
         "binding": "SYMLINK_EXTERNAL_AUTHORITY",
         "source_path": str(source),
+        "resolved_authority_path": str(authority),
         "target_path": str(target),
     }
 
