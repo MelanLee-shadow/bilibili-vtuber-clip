@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -47,6 +48,7 @@ from src.autoslice.final_review_schema_retry import (
     schema_repair_prompt,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.llm_client import extract_json_object
 from src.autoslice.source_subtitle_truth import (
     MIN_CUE_OVERLAP_MS,
     source_truth_owner_windows,
@@ -60,6 +62,8 @@ MAX_FINDINGS = 24
 MAX_CONTEXT_ADJUDICATIONS = 12
 MAX_EDIT_SPAN_CODEPOINTS = 24
 MAX_EDIT_LENGTH_DELTA = 8
+_PROPOSAL_REBUILD_SCHEMA = "subtitle-closed-set-proposal-rebuild.v1"
+_PROPOSAL_REBUILD_CACHE_SCHEMA = "proposal-rebuild-cache.v1"
 _AUTO_REPAIR_CLASSES = frozenset(
     {
         "phonetic",
@@ -1461,6 +1465,234 @@ def _structured_chat_lines(clip_context: Mapping[str, object] | None) -> str:
     return "\n".join(lines)
 
 
+_PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
+
+上一位 CPA 法官已经明确判定 CURRENT 和 REJECTED_PROPOSED 都不是目标区间的
+完整原话（NEITHER）。你现在只负责重建一个第三候选；你不是音频模型，也没有
+直接听过音频。AGY 拼音只是高可信辅助，可能只覆盖半句、邻句或错位窗口。
+
+约束：
+1. 只改目标 cue，不得合并、拆分或改时间轴；输出必须是单行完整字幕。
+2. 尽量做最小修改，保留口语、专名、数字和中英混说；不得润色或概括。
+3. 可以用前后 cue 修复跨 cue 误切，但本候选只能给出目标 cue 应保留的文字。
+4. 新候选必须同时不同于 CURRENT 和 REJECTED_PROPOSED；若证据仍不足以给出
+   一个有界第三候选，返回 UNRESOLVED。不要声称自己听过音频。
+
+## AGY 拼音辅助（未见候选）
+{witness}
+
+## 被拒闭集
+- CURRENT: {current}
+- REJECTED_PROPOSED: {rejected}
+
+## 同片语境（转写上下文，不是逐字真值）
+前文:
+{before}
+目标 cue: <待重建>
+后文:
+{after}
+
+## 原审片发现与文字候选出处
+{finding_evidence}
+
+只回 JSON（无 markdown、无其他文字）：
+{{"status":"PROPOSED"或"UNRESOLVED","proposed_cue":"单行完整第三候选；UNRESOLVED 时为空","reason":"一句话说明拼音覆盖与语境依据"}}
+"""
+
+
+def _proposal_rebuild_cache_path(prompt_sha256: str) -> Path | None:
+    base = os.environ.get("AUTOSLICE_BASE")
+    if not base:
+        return None
+    return (
+        Path(base)
+        / "cache"
+        / "proposal-rebuilds"
+        / prompt_sha256[:2]
+        / f"{prompt_sha256}.json"
+    )
+
+
+def _rebuild_candidate_after_neither(
+    *,
+    finding: Mapping[str, Any],
+    request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+    llm_call: Callable[[str], str] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Ask CPA's proposal layer for one bounded third candidate.
+
+    This function never authorizes a mutation.  Its candidate must still go
+    through the ordinary CURRENT/PROPOSED CPA judge and typed mutation audit.
+    """
+
+    audit: dict[str, Any] = {
+        "schema_version": _PROPOSAL_REBUILD_SCHEMA,
+        "status": "UNAVAILABLE",
+        "decision_authority": "CPA_PROPOSAL_ONLY",
+        "mutation_authorized": False,
+    }
+    if llm_call is None:
+        audit["reason_code"] = "PROPOSAL_REBUILD_LLM_UNAVAILABLE"
+        return None, audit
+    current = str(request.get("current_cue") or "")
+    rejected = str(request.get("proposed_cue") or "")
+    prompt = _PROPOSAL_REBUILD_PROMPT.format(
+        witness=json.dumps(
+            {
+                "target_audible": witness.get("target_audible"),
+                "heard_pinyin": witness.get("heard_pinyin"),
+                "syllable_count": witness.get("syllable_count"),
+                "uncertain_positions": witness.get("uncertain_positions"),
+                "confidence": witness.get("confidence"),
+                "self_count_mismatch": witness.get("self_count_mismatch"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        current=current,
+        rejected=rejected,
+        before=str(request.get("context_before") or "（无）"),
+        after=str(request.get("context_after") or "（无）"),
+        finding_evidence=json.dumps(
+            {
+                "repair_class": finding.get("repair_class"),
+                "reviewer_reason": finding.get("why"),
+                "candidate_provenance": finding.get("candidate_provenance"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    )
+    prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    audit["prompt_sha256"] = "sha256:" + prompt_sha256
+    cache_path = _proposal_rebuild_cache_path(prompt_sha256)
+    payload: Mapping[str, Any] | None = None
+    completion_sha256: str | None = None
+    served_from_cache = False
+    if cache_path is not None:
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if (
+                isinstance(cached, Mapping)
+                and cached.get("schema_version")
+                == _PROPOSAL_REBUILD_CACHE_SCHEMA
+                and cached.get("prompt_sha256") == prompt_sha256
+                and isinstance(cached.get("payload"), Mapping)
+                and isinstance(cached.get("completion_sha256"), str)
+            ):
+                payload = cached["payload"]
+                completion_sha256 = str(cached["completion_sha256"])
+                served_from_cache = True
+        except (OSError, ValueError):
+            pass
+    if payload is None:
+        try:
+            completion = llm_call(prompt)
+            completion_sha256 = hashlib.sha256(
+                completion.encode("utf-8")
+            ).hexdigest()
+            payload = extract_json_object(completion)
+        except Exception as exc:
+            audit.update(
+                reason_code="PROPOSAL_REBUILD_PROVIDER_OR_JSON_UNAVAILABLE",
+                error_type=type(exc).__name__,
+            )
+            return None, audit
+    audit["completion_sha256"] = "sha256:" + str(completion_sha256)
+    if served_from_cache:
+        audit["served_from_cache"] = True
+    status = str(payload.get("status") or "")
+    proposed = payload.get("proposed_cue")
+    reason = str(payload.get("reason") or "")[:240]
+    if status != "PROPOSED":
+        audit.update(status="UNRESOLVED", reason=reason)
+        return None, audit
+    if (
+        not isinstance(proposed, str)
+        or proposed != proposed.strip()
+        or not proposed
+        or proposed in {current, rejected}
+        or "\n" in proposed
+        or "\r" in proposed
+        or "-->" in proposed
+        or len(proposed) > 96
+        or any(ord(char) < 32 for char in proposed)
+    ):
+        audit.update(
+            status="INVALID",
+            reason_code="PROPOSAL_REBUILD_TEXT_CONTRACT_INVALID",
+            reason=reason,
+        )
+        return None, audit
+    suspect, replacement, start, end, error = _derive_single_span_edit(
+        current,
+        proposed,
+        allow_insertion=True,
+        allow_deletion=True,
+    )
+    if error is not None:
+        audit.update(
+            status="INVALID",
+            reason_code=error,
+            reason=reason,
+        )
+        return None, audit
+    rebuilt = dict(finding)
+    rebuilt.update(
+        suspect=suspect,
+        suggestion=replacement,
+        span_start_codepoint=start,
+        span_end_codepoint=end,
+        proposed_full_cue=proposed,
+        base_text_sha256=hashlib.sha256(current.encode("utf-8")).hexdigest(),
+        why=(
+            f"[CPA 坏闭集重建] {reason or finding.get('why') or ''}"
+        )[:240],
+    )
+    provenance = rebuilt.get("candidate_provenance")
+    surface = (
+        str(provenance.get("surface") or "").strip()
+        if isinstance(provenance, Mapping)
+        else ""
+    )
+    if surface and surface.casefold() not in proposed.casefold():
+        rebuilt["candidate_provenance"] = None
+        rebuilt["candidate_memory_id"] = None
+    audit.update(
+        status="PROPOSED",
+        proposed_cue=proposed,
+        proposed_cue_sha256="sha256:"
+        + hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
+        suspect=suspect,
+        suggestion=replacement,
+        span_start_codepoint=start,
+        span_end_codepoint=end,
+        reason=reason,
+    )
+    if cache_path is not None and not served_from_cache:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": _PROPOSAL_REBUILD_CACHE_SCHEMA,
+                        "prompt_sha256": prompt_sha256,
+                        "completion_sha256": completion_sha256,
+                        "payload": dict(payload),
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+    return rebuilt, audit
+
+
 def adjudicate_context_finding(
     srt_text: str,
     finding: Mapping[str, Any],
@@ -1566,18 +1798,21 @@ def adjudicate_context_finding(
     )
     repaired = False
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
+    decision_finding: Mapping[str, Any] = finding
+    proposal_rebuild_audit: dict[str, Any] | None = None
+    rebuilt_finding: dict[str, Any] | None = None
     orthography_ambiguous = _orthography_ambiguous(
         current_cue=str(request.get("current_cue") or ""),
         proposed_cue=str(request.get("proposed_cue") or ""),
-        finding=finding,
+        finding=decision_finding,
     )
-    orthography_authority = _orthography_text_authority(finding)
+    orthography_authority = _orthography_text_authority(decision_finding)
     orthography_equivalent, orthography_audit = _source_backed_orthography_equivalent(
         request,
-        finding,
+        decision_finding,
     )
     witness_judge_audit: dict[str, Any] = {}
-    strict_tie = _strict_homophone_tie(finding, request)
+    strict_tie = _strict_homophone_tie(decision_finding, request)
     if valid:
         repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
             check_request=request,
@@ -1585,6 +1820,124 @@ def adjudicate_context_finding(
             llm_call=judge_llm_call,
             structured_chat_context=_structured_chat_lines(clip_context),
         )
+        if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
+            rebuilt_finding, proposal_rebuild_audit = (
+                _rebuild_candidate_after_neither(
+                    finding=decision_finding,
+                    request=request,
+                    witness=verdict,
+                    llm_call=judge_llm_call,
+                )
+            )
+            if rebuilt_finding is not None:
+                try:
+                    rebuilt_request = build_context_adjudication_request(
+                        srt_text,
+                        rebuilt_finding,
+                        clip_context=clip_context,
+                        source_media_timeline_offset_ms=(
+                            source_media_timeline_offset_ms
+                        ),
+                    )
+                except (TypeError, ValueError) as exc:
+                    proposal_rebuild_audit.update(
+                        status="INVALID",
+                        reason_code=str(exc),
+                    )
+                    rebuilt_finding = None
+                else:
+                    rebuilt_witness_request = build_witness_request(
+                        rebuilt_request
+                    )
+                    witness_geometry_keys = (
+                        "kind",
+                        "cue_indexes",
+                        "matched_start_ms",
+                        "matched_end_ms",
+                        "context_start_ms",
+                        "context_end_ms",
+                        "source_media_timeline_offset_ms",
+                    )
+                    witness_geometry_unchanged = all(
+                        rebuilt_witness_request.get(key)
+                        == witness_request.get(key)
+                        for key in witness_geometry_keys
+                    )
+                    if not witness_geometry_unchanged:
+                        proposal_rebuild_audit.update(
+                            status="INVALID",
+                            reason_code=(
+                                "PROPOSAL_REBUILD_CHANGED_WITNESS_WINDOW"
+                            ),
+                        )
+                        rebuilt_finding = None
+                    else:
+                        proposal_rebuild_audit["witness_reuse"] = {
+                            "schema_version": (
+                                "candidate-free-witness-reuse.v1"
+                            ),
+                            "status": "PASS",
+                            "basis": "IDENTICAL_AUDIO_GEOMETRY",
+                            "original_witness_request_sha256": (
+                                "sha256:"
+                                + str(
+                                    witness_request.get("request_sha256")
+                                    or ""
+                                )
+                            ),
+                            "rebuilt_witness_request_sha256": (
+                                "sha256:"
+                                + str(
+                                    rebuilt_witness_request.get(
+                                        "request_sha256"
+                                    )
+                                    or ""
+                                )
+                            ),
+                        }
+                        request = rebuilt_request
+                        decision_finding = rebuilt_finding
+                        orthography_ambiguous = _orthography_ambiguous(
+                            current_cue=str(
+                                request.get("current_cue") or ""
+                            ),
+                            proposed_cue=str(
+                                request.get("proposed_cue") or ""
+                            ),
+                            finding=decision_finding,
+                        )
+                        orthography_authority = (
+                            _orthography_text_authority(
+                                decision_finding
+                            )
+                        )
+                        (
+                            orthography_equivalent,
+                            orthography_audit,
+                        ) = _source_backed_orthography_equivalent(
+                            request,
+                            decision_finding,
+                        )
+                        strict_tie = _strict_homophone_tie(
+                            decision_finding,
+                            request,
+                        )
+                        (
+                            repaired,
+                            policy_branch,
+                            witness_judge_audit,
+                        ) = adjudicate_with_witness(
+                            check_request=request,
+                            witness=verdict,
+                            llm_call=judge_llm_call,
+                            structured_chat_context=(
+                                _structured_chat_lines(clip_context)
+                            ),
+                        )
+                        if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
+                            policy_branch = (
+                                "PROPOSAL_REBUILD_EXHAUSTED"
+                            )
         if (
             repaired
             and orthography_ambiguous
@@ -1603,7 +1956,7 @@ def adjudicate_context_finding(
     output = srt_text
     if repaired:
         cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-        live_cue = cues[int(finding["cue_index"]) - 1]
+        live_cue = cues[int(decision_finding["cue_index"]) - 1]
         if hashlib.sha256(live_cue.text.encode("utf-8")).hexdigest() != request[
             "base_text_sha256"
         ]:
@@ -1611,7 +1964,9 @@ def adjudicate_context_finding(
             policy_branch = "STALE_BASE_KEEP_CURRENT"
         else:
             texts = [cue.text for cue in cues]
-            texts[int(finding["cue_index"]) - 1] = request["proposed_cue"]
+            texts[int(decision_finding["cue_index"]) - 1] = request[
+                "proposed_cue"
+            ]
             retained = [
                 (cue, text)
                 for cue, text in zip(cues, texts)
@@ -1663,6 +2018,16 @@ def adjudicate_context_finding(
         "request": request,
         "verdict": verdict,
         **({"witness_judge": witness_judge_audit} if witness_judge_audit else {}),
+        **(
+            {"proposal_rebuild": proposal_rebuild_audit}
+            if proposal_rebuild_audit is not None
+            else {}
+        ),
+        **(
+            {"rebuilt_finding": rebuilt_finding}
+            if rebuilt_finding is not None
+            else {}
+        ),
         **(
             {"screen_read_witness": screen_read_audit}
             if screen_read_audit
@@ -1721,6 +2086,21 @@ def adjudicate_exact_release_findings(
             judge_llm_call=judge_llm_call,
             screen_read_probe=screen_read_probe,
         )
+        rebuilt_finding = adjudication.get("rebuilt_finding")
+        if isinstance(rebuilt_finding, Mapping):
+            for key in (
+                "suspect",
+                "suggestion",
+                "span_start_codepoint",
+                "span_end_codepoint",
+                "proposed_full_cue",
+                "base_text_sha256",
+                "candidate_provenance",
+                "candidate_memory_id",
+                "why",
+            ):
+                if key in rebuilt_finding:
+                    row[key] = rebuilt_finding[key]
         row["exact_release_adjudication"] = adjudication
         verdict = adjudication.get("verdict")
         request = adjudication.get("request")

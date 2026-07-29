@@ -810,6 +810,119 @@ def test_context_adjudication_applies_only_exact_candidate_and_keeps_timing():
     assert audit["verdict"]["heard_pinyin"] == "hai mei you ge zhai ne"
 
 
+def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
+    """A malformed two-choice set must return to the proposal layer, not
+    become a permanent exact-final blocker or let the proposal mutate bytes.
+    """
+
+    source = _srt("前一句", "就是那种生吻", "是深吻还是湿吻")
+
+    def witness(request):
+        return _witness(request, "jiu shi na zhong wen")
+
+    calls: list[str] = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕坏闭集重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "就是那种吻",
+                    "reason": "拼音只支持没有深生修饰的完整口播",
+                },
+                ensure_ascii=False,
+            )
+        if len([row for row in calls if "# 字幕选字裁决" in row]) == 1:
+            return json.dumps({"choice": "NEITHER", "reason": "坏闭集"})
+        return json.dumps({"choice": "PROPOSED", "reason": "第三候选匹配"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "生",
+            "suggestion": "深",
+            "proposed_full_cue": "就是那种深吻",
+            "repair_class": "phonetic",
+            "why": "后文出现深吻",
+        },
+        entity_verifier=witness,
+        judge_llm_call=cpa,
+    )
+
+    assert "就是那种吻" in output
+    assert "就是那种生吻" not in output
+    assert audit["repaired"] is True
+    assert audit["proposal_rebuild"]["status"] == "PROPOSED"
+    assert audit["proposal_rebuild"]["mutation_authorized"] is False
+    assert audit["rebuilt_finding"]["proposed_full_cue"] == "就是那种吻"
+    assert audit["request"]["proposed_cue"] == "就是那种吻"
+    assert len(calls) == 3
+
+
+def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
+    source = _srt("前一句", "就是那种生吻", "是深吻还是湿吻")
+
+    def witness(request):
+        return _witness(request, "jiu shi na zhong wen")
+
+    judge_count = 0
+
+    def cpa(prompt):
+        nonlocal judge_count
+        if "# 字幕坏闭集重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "就是那种吻",
+                    "reason": "第三候选",
+                },
+                ensure_ascii=False,
+            )
+        judge_count += 1
+        return json.dumps(
+            {"choice": "NEITHER" if judge_count == 1 else "PROPOSED"}
+        )
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [
+            {
+                "cue_index": 2,
+                "suspect": "生",
+                "suggestion": "深",
+                "proposed_full_cue": "就是那种深吻",
+                "repair_class": "phonetic",
+            }
+        ],
+        entity_verifier=witness,
+        judge_llm_call=cpa,
+    )
+
+    assert resolved == []
+    assert len(unresolved) == 1
+    assert unresolved[0]["proposed_full_cue"] == "就是那种吻"
+    assert unresolved[0]["suspect"] == "生"
+    assert unresolved[0]["suggestion"] == ""
+    adjudication = unresolved[0]["exact_release_adjudication"]
+    assert adjudication["repaired"] is True
+    assert adjudication["request"]["proposed_cue"] == "就是那种吻"
+
+    from src.autoslice.producer_package_finalization import (
+        _apply_exact_final_cpa_repairs,
+    )
+
+    healed, repairs = _apply_exact_final_cpa_repairs(
+        source,
+        {"findings": unresolved},
+    )
+    assert "就是那种吻" in healed
+    assert "就是那种生吻" not in healed
+    assert len(repairs) == 1
+    assert repairs[0]["decision_authority"] == "CPA_JUDGE"
+
+
 def test_context_adjudication_keeps_current_when_semantics_conflict_with_audio():
     source = _srt("还没有歌杂呢")
 

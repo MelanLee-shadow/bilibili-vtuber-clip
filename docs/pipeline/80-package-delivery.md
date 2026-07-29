@@ -130,6 +130,9 @@
   source-media target/crop；request hash、verdict、manifest 与缓存身份都必须绑定同一 offset。
   把 recut-local 时间直接裁 padded media、只在日志口头说明偏移、或复用未绑定 offset 的旧
   verdict/cache，均视为错误音频证据并拒发。
+- exact-final 的 CPA `NEITHER` 必须退回有界第三候选提案层；只有音频 target/context/offset
+  几何完全相同才可签发 `candidate-free-witness-reuse.v1` 复用候选盲 witness。提案层无改字权，
+  新候选仍须由第二次 CPA 闭集裁决与 typed mutation receipt 授权。
 - 若 exact-final 通过 CPA 授权的同轮自愈修改 SRT，包只认自愈后的最后一次
   `final-review-audit.v2` 与 raw-byte SHA；`exact-final-cpa-self-heal-audit.v1` 必须记录每轮
   before/after SHA、cue ordinal、CPA decision authority、typed mutation receipt 和 timing

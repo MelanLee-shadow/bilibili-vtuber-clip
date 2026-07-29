@@ -237,6 +237,10 @@
   current/proposed 发音兼容度，CPA 结合文字 provenance 与整片语境作最终
   CURRENT/PROPOSED 裁决；若两个候选都与拼音明显冲突，CPA 可返回 `NEITHER`
   拒绝这个坏闭集。`NEITHER` 不等于保留 CURRENT、不授权 mutation，必须退回提案层重建候选。
+  提案层只可在同一 cue 内生成一个有界第三候选，保留候选盲声学窗口并签发
+  `candidate-free-witness-reuse.v1`；第三候选随后必须重新进入 CURRENT/PROPOSED CPA 闭集，
+  只有第二次 CPA 明选 `PROPOSED` 且 typed mutation receipt PASS 才能落字。提案调用与结果按
+  prompt SHA 缓存；它自身永远是 `CPA_PROPOSAL_ONLY / mutation_authorized=false`。
   代码必须记录拼音/不可闻证据与 CPA 选择的冲突，但不得用 AGY
   或兼容度阈值推翻 CPA 明确的 `PROPOSED`；CPA 未明确选边或调用失败才是未决。声音不能
   单独选择两个同音正字法；同音或规范发音键相同（如 `大恩→大N`）须有绑定文字证据，或

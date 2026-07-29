@@ -863,6 +863,21 @@ def _run_final_review(
                     judge_llm_call=review_llm_call,
                     screen_read_probe=screen_read_probe,
                 )
+                rebuilt_finding = adj_audit.get("rebuilt_finding")
+                if isinstance(rebuilt_finding, Mapping):
+                    for key in (
+                        "suspect",
+                        "suggestion",
+                        "span_start_codepoint",
+                        "span_end_codepoint",
+                        "proposed_full_cue",
+                        "base_text_sha256",
+                        "candidate_provenance",
+                        "candidate_memory_id",
+                        "why",
+                    ):
+                        if key in rebuilt_finding:
+                            row[key] = rebuilt_finding[key]
                 repaired = bool(adj_audit.get("repaired"))
                 row["context_audio_adjudication"] = adj_audit
                 if repaired:

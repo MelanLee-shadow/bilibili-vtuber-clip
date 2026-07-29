@@ -28,6 +28,10 @@
    - **T3 声学证人**：AGY/声学层不得输出或决定汉字，只提供 `target_audible`、疑似拼音和候选
      发音兼容度。代码记录证据冲突但不得否决看过该证据后仍明确选择 `PROPOSED` 的 CPA；
      最终 mutation 只认 CPA 闭集裁决。量级 ~1/10。
+     AGY 拼音是高可信辅助而非最高法官：明显只覆盖邻句/半句/错位窗口时，CPA 可按完整语境
+     在闭集内定夺。CPA 若选 `NEITHER`，流水线用同一个候选盲音频几何让 CPA 提案层生成一个
+     有界第三候选，再由独立闭集裁决确认；提案层无 mutation authority，第二次仍非
+     `PROPOSED` 就保持 fail closed。
    - mixed CJK/Latin fidelity 门同样没有终审权：严格整句相似度命中可作为 verbatim 见证；
      未命中时，候选盲音频转写只作为 PROPOSED，与 CURRENT 组成闭集交 CPA。CPA 选择
      CURRENT 才能保留正常 code-switch，选择 PROPOSED 即由 mutation authority 继续校验后
@@ -105,8 +109,9 @@
   且 boundary semantic review 与 `talk-boundary-final-endpoint-binding.v1` 均 PASS 才能交付。
   第二遍空 findings 不能洗白 correction pass 已经发生的无权 mutation。exact-final 新发现若
   已有完整 CPA `PROPOSED` mutation receipt，可在同一 producer run 按 cue/hash/request/timing
-  全绑定合同落字并再次 exact-final；这不是 AGY 或检测器旁路，最终决定仍是 CPA。无法完整
-  重算或两轮复审未净空才写 carryover 并阻断，禁止为消费一个已定案修复而无条件重跑 ASR、
+  全绑定合同落字并再次 exact-final；这不是 AGY 或检测器旁路，最终决定仍是 CPA。坏闭集
+  `NEITHER` 先按上述第三候选闭环重建；最多五轮有 mutation 的同轮自愈加最后一次 clean scan，
+  仍无法完整重算或净空才写 carryover 并阻断，禁止为消费一个已定案修复而无条件重跑 ASR、
   封面和整片生产。
 - provider 异常、JSON 不可解析、根结构错误、`findings` 缺失/null/非列表、返回项全部无效，
   都是“没有完成发现”，不是“没有发现问题”；必须 fail closed。package auditor 还会用包内
