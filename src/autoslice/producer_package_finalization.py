@@ -36,6 +36,7 @@ from src.autoslice.cover_text_pixel_evidence import (
 from src.autoslice.cue_split_hygiene import merge_release_grade_cues
 from src.autoslice.final_review_auditor import persist_review_audit
 from src.autoslice.final_review_contract import (
+    EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES,
     FinalReviewContractError,
     validate_final_review_release,
 )
@@ -974,7 +975,16 @@ def _run_exact_final_review_gate(
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
     self_heal_passes: list[dict[str, object]] = []
-    for pass_index in range(3):
+    # A long clip can expose a second-order wording error only after an earlier
+    # CPA-authorized repair makes the surrounding sentence coherent.  Two
+    # repair rounds proved too small for the five-minute pink-room recovery:
+    # the third scan found valid repairs and then stopped solely because of the
+    # historical cap.  Keep convergence bounded, but allow five repair rounds
+    # plus the mandatory final clean scan.
+    max_review_passes = (
+        EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES + 1
+    )
+    for pass_index in range(max_review_passes):
         final_bytes = recut.subtitle_path.read_bytes()
         final_text = final_bytes.decode("utf-8", errors="strict")
         audit = reviewer(
@@ -1000,7 +1010,7 @@ def _run_exact_final_review_gate(
             if (
                 exc.reason_code == "FINAL_REVIEW_UNRESOLVED_FINDINGS"
                 and repairs
-                and pass_index < 2
+                and pass_index < max_review_passes - 1
             ):
                 recut.subtitle_path.write_text(
                     repaired_text,

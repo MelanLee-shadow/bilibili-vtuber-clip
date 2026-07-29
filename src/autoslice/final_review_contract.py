@@ -7,6 +7,7 @@ from typing import Mapping
 
 
 SCHEMA_VERSION = "final-review-audit.v2"
+EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES = 5
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -47,7 +48,8 @@ def _validate_exact_final_cpa_self_heal(
     passes = receipt.get("passes")
     if (
         not isinstance(passes, list)
-        or not 1 <= len(passes) <= 2
+        or not 1 <= len(passes)
+        <= EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES
     ):
         raise FinalReviewContractError(
             "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"

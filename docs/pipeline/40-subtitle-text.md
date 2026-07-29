@@ -261,7 +261,7 @@
 - exact-final 扫描先审最终字节。若 finding 已由 CPA 明确选择 `PROPOSED`，并且 cue ordinal、
   当前 cue SHA、request 的 current/proposed 整句、不可变时间轴、CPA judge 回执和 typed
   mutation receipt 全部可重算一致，`_run_exact_final_review_gate` 必须在同一 producer run
-  原地落字并重新跑 exact-final；最多两轮自愈，最终仍只接受零 finding 且 raw-byte hash
+  原地落字并重新跑 exact-final；最多五轮自愈（再加一次强制 clean 扫描），最终仍只接受零 finding 且 raw-byte hash
   绑定的 v2 PASS。任何字段不一致、CPA 未选边、提案为空或复审仍有问题时不得猜测，才回退到
   `final-review-carryover.v1`，由下一轮 correction pass 走同一套裁决/落字门。自愈历史须写
   `exact-final-cpa-self-heal-audit.v1`，并在存在 redelivery baseline 时同时绑定到 baseline

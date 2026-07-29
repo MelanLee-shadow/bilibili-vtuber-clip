@@ -996,6 +996,159 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     )["exact_final_cpa_self_heal"]["status"] == "PASS"
 
 
+def test_exact_final_review_gate_allows_five_bounded_repair_rounds(
+    tmp_path: Path,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n版本0\n",
+        encoding="utf-8",
+    )
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    calls: list[str] = []
+
+    def exact_review(text, *_args):
+        calls.append(text)
+        version = int(text.split("版本", 1)[1].splitlines()[0])
+        reviewed_sha = "sha256:" + hashlib.sha256(
+            text.encode("utf-8")
+        ).hexdigest()
+        common = {
+            "schema_version": "final-review-audit.v2",
+            "reviewed_srt_sha256": reviewed_sha,
+            "boundary_semantic_review": {
+                "schema_version": "talk-boundary-semantic-review.v1",
+                "status": "PASS",
+                "review_scope": "final_delivery",
+                "reason_codes": [],
+                "request_sha256": "sha256:" + "d" * 64,
+                "cue_grid_sha256": "sha256:" + "e" * 64,
+                "source_separation_witness": {
+                    "schema_version": "talk-boundary-source-separation-witness.v1",
+                    "status": "PASS",
+                    "source_review_sha256": "sha256:" + "a" * 64,
+                    "source_request_sha256": "sha256:" + "b" * 64,
+                    "source_cue_grid_sha256": "sha256:" + "c" * 64,
+                    "source_final_start_ms": 0,
+                    "source_final_end_ms": 1_400,
+                    "reason_codes": [],
+                },
+                "final_endpoint_binding": {
+                    "schema_version": "talk-boundary-final-endpoint-binding.v1",
+                    "status": "PASS",
+                    "recommended_end_cue_index": 1,
+                    "recommended_end_ms": 1_000,
+                    "final_closure_cue_index": 1,
+                    "final_snapped_end_ms": 1_000,
+                    "final_end_ms": 1_400,
+                    "semantic_cue_grid_sha256": "sha256:" + "e" * 64,
+                    "final_cue_grid_sha256": "sha256:" + "e" * 64,
+                    "reason_codes": [],
+                },
+            },
+            "correction_mutation_authority": {
+                "schema_version": "subtitle-correction-mutation-audit.v1",
+                "status": "PASS",
+                "applied_count": 0,
+                "validated_mutation_count": 0,
+                "failures": [],
+            },
+        }
+        if version == 5:
+            return {
+                **common,
+                "status": "CLEAN",
+                "release_gate": "PASS",
+                "reason_codes": [],
+                "discovery": {
+                    "status": "COMPLETE",
+                    "explicit_empty_findings": True,
+                },
+                "findings": [],
+                "validated_finding_count": 0,
+            }
+        current = f"版本{version}"
+        proposed = f"版本{version + 1}"
+        base_sha = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        return {
+            **common,
+            "status": "FLAGGED",
+            "release_gate": "BLOCK",
+            "reason_codes": ["FINAL_REVIEW_UNRESOLVED_FINDINGS"],
+            "discovery": {
+                "status": "COMPLETE",
+                "explicit_empty_findings": False,
+            },
+            "findings": [{
+                "cue_index": 1,
+                "base_text_sha256": base_sha,
+                "proposed_full_cue": proposed,
+                "exact_release_adjudication": {
+                    "schema_version": "subtitle-span-adjudication.v1",
+                    "status": "OBSERVED",
+                    "decision_authority": "CPA_JUDGE",
+                    "repaired": True,
+                    "timing_immutable": True,
+                    "mutation_authority": {
+                        "schema_version": "subtitle-correction-mutation-authority.v1",
+                        "status": "PASS",
+                        "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+                    },
+                    "request": {
+                        "schema_version": "subtitle-span-acoustic-check-request.v1",
+                        "request_sha256": "f" * 64,
+                        "base_text_sha256": base_sha,
+                        "current_cue": current,
+                        "proposed_cue": proposed,
+                    },
+                    "witness_judge": {"judge": {
+                        "schema_version": "acoustic-witness-adjudication.v1",
+                        "status": "JUDGED",
+                        "choice": "PROPOSED",
+                    }},
+                },
+            }],
+            "validated_finding_count": 1,
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+    result = finalization._run_exact_final_review_gate(
+        cid="candidate",
+        out_root=tmp_path,
+        final_start=0,
+        final_end=1_400,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.recut.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+        ),
+        chat_authority_audit={},
+        chat_authority_path=chat_path,
+        adapters=adapters,
+    )
+
+    assert result["status"] == "CLEAN"
+    assert len(calls) == 6
+    assert "版本5" in subtitle.read_text(encoding="utf-8")
+    assert len(result["exact_final_cpa_self_heal"]["passes"]) == 5
+
+
 def test_delivery_summary_uses_persisted_boundary_audit(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
