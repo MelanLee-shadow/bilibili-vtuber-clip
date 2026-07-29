@@ -368,6 +368,98 @@ def test_single_published_projection_rejects_candidate_already_pending():
         )
 
 
+def test_single_published_projection_accepts_valid_exact_recovery_source():
+    target = _record(
+        "auto_193450_1863_2056",
+        start_ms=1_863_760,
+        end_ms=2_056_480,
+    )
+    other = _record(
+        "auto_193450_3573_3665",
+        start_ms=3_573_000,
+        end_ms=3_665_000,
+    )
+    selection_contract = {
+        "schema_version": "talk-selection-contract.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": [
+            "auto_193450_1863_2056",
+            "auto_193450_3573_3665",
+        ],
+    }
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "picks": [target, other],
+        "pending_talk": [],
+        "talk_selection_contract": selection_contract,
+        "delivery_rerun_plan": {
+            "schema_version": "recovery-review-talk-rerun-plan.v7",
+            "talk_selection_contract": selection_contract,
+        },
+    }
+
+    projected = planner._project_single_published_repair_state(
+        state,
+        candidate_id="auto_193450_1863_2056",
+        source_state_sha256="sha256:" + "a" * 64,
+        delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+    )
+
+    assert [row["candidate_id"] for row in projected["picks"]] == [
+        "auto_193450_1863_2056"
+    ]
+    assert projected.get("talk_selection_contract") is None
+    assert projected.get("delivery_rerun_plan") is None
+    projection = projected["single_published_repair_projection"]
+    assert projection["source_state_kind"] == "EXACT_RECOVERY_REVIEW"
+    assert projection["source_talk_selection_contract_sha256"].startswith(
+        "sha256:"
+    )
+    assert projection["excluded_pick_candidate_ids"] == [
+        "auto_193450_3573_3665"
+    ]
+
+
+def test_single_published_projection_rejects_mismatched_recovery_plan():
+    selection_contract = {
+        "schema_version": "talk-selection-contract.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": ["auto_193450_1863_2056"],
+    }
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "picks": [
+            _record(
+                "auto_193450_1863_2056",
+                start_ms=1_863_760,
+                end_ms=2_056_480,
+            )
+        ],
+        "pending_talk": [],
+        "talk_selection_contract": selection_contract,
+        "delivery_rerun_plan": {
+            "schema_version": "recovery-review-talk-rerun-plan.v7",
+            "talk_selection_contract": {
+                **selection_contract,
+                "candidate_ids": [],
+            },
+        },
+    }
+
+    with pytest.raises(
+        SystemExit,
+        match="source recovery contract is invalid",
+    ):
+        planner._project_single_published_repair_state(
+            state,
+            candidate_id="auto_193450_1863_2056",
+            source_state_sha256="sha256:" + "a" * 64,
+            delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+        )
+
+
 @pytest.mark.parametrize(
     "candidate_ids",
     [

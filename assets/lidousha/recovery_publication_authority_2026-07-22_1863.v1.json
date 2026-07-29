@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-23/24 and 2026-07-28: continue the already-authorized in-place repair of the published 7/22 hotpot clip as one isolated no-upload recovery item; preserve its verified BV and public title, keep the reviewed exact source end at cue 911 (2056480ms), and leave the other four successful 7/22 recovery deliveries unchanged.",
+  "entries": [
+    {
+      "candidate_id": "auto_193450_1863_2056",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+      "required_given_end_ms": 2056480,
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1xgg462Env",
+      "aid": 116969592326605,
+      "cid": 40230977891,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1863_2056.public_verify.json",
+      "source_public_verify_sha256": "sha256:b8479b4a979b36bd53e0ea8e947a1220dd54ac9b2e1d59943194e4df6df9f5a9",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}

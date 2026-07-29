@@ -940,6 +940,59 @@ def test_exact_final_release_review_does_not_apply_new_mutation(monkeypatch):
         validate_final_review_release(receipt)
 
 
+def test_exact_final_release_review_discloses_cpa_keep_current_real_shape(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: _judge_json("CURRENT")),
+    )
+    current = "我一会儿让我们先看了这个李豆沙的队伍"
+    proposed = "我一会儿让我们先看这个李豆沙的队伍"
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "先看了",
+        "suggestion": "先看",
+        "proposed_full_cue": proposed,
+        "repair_class": "spoken_unit",
+        "base_text_sha256": hashlib.sha256(
+            current.encode("utf-8")
+        ).hexdigest(),
+        "why": "语法审查提议删除完成体，但 CPA 对音频作最终裁决",
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+
+    def keep_current(request):
+        return _witness_verdict(
+            request,
+            "en a wo men gang cai kan le zhe ge luo tian yi de dui wu",
+        )
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt(current, "第二句", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=keep_current,
+    )
+
+    assert receipt["status"] == "CLEAN"
+    assert receipt["findings"] == []
+    assert len(receipt["unresolved_findings_disclosed"]) == 1
+    adjudication = receipt["unresolved_findings_disclosed"][0][
+        "exact_release_adjudication"
+    ]
+    assert adjudication["policy_branch"] == "JUDGE_KEEPS_CURRENT"
+    validate_final_review_release(receipt)
+
+
 def test_exact_final_release_review_does_not_relitigate_verified_human_truth(
     monkeypatch,
 ):

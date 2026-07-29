@@ -3590,6 +3590,44 @@ def test_publish_staging_mechanically_removes_automatic_filler_before_cover(
     assert cover_calls == [staging["title"]]
 
 
+def test_automatic_filler_removal_canonicalizes_selection_hook_anchor():
+    from src.autoslice.publish_staging import _resolve_automatic_title
+
+    responses: list[str] = []
+
+    def filler_llm(_prompt: str) -> str:
+        responses.append("called")
+        return json.dumps(
+            {
+                "title": (
+                    "观众想让新3D永久保留“白色奶龙”表情，"
+                    "小李当场拒绝花钱"
+                ),
+                "selection_hook_anchor": "当场拒绝花钱",
+            },
+            ensure_ascii=False,
+        )
+
+    result = _resolve_automatic_title(
+        base_prompt="test",
+        title_llm_call=filler_llm,
+        selection_hook=(
+            "观众想让新3D永久保留“白色奶龙”表情，"
+            "李豆沙当场拒绝花钱，还坦白旧模型越看越恐怖。"
+        ),
+        initial_title_source="job_title",
+    )
+
+    assert responses == ["called"]
+    assert result.staged_title == (
+        "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+    )
+    assert result.title_authority_status == (
+        "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
+    )
+    assert result.title_policy_violations == []
+
+
 def test_publish_staging_retries_unbalanced_title_before_cover(
     tmp_path, monkeypatch
 ):

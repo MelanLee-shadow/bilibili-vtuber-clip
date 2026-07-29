@@ -203,7 +203,13 @@ def is_keep_current_disclosed(finding: object) -> bool:
         adjudication.get("status") == "OBSERVED"
         and adjudication.get("policy_branch") in _DECIDED_KEEP_CURRENT_BRANCHES
         and adjudication.get("repaired") is False
-        and adjudication.get("timing_immutable") is True
+        # Auditor receipts historically bind timing immutability on the
+        # finding envelope; newer synthetic/unit receipts may carry the same
+        # bit inside the adjudication.  Both are the same fail-closed fact.
+        and (
+            adjudication.get("timing_immutable") is True
+            or finding.get("timing_immutable") is True
+        )
         and isinstance(mutation, Mapping)
         and mutation.get("status") == "NOT_APPLIED"
     )

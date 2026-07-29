@@ -34,6 +34,12 @@ def test_keep_current_disclosed_classifier():
         row(mutation_authority={"status": "APPLIED"})
     ) is False
     assert _is_keep_current_disclosed({"cue_index": 1}) is False
+    real_auditor_shape = row()
+    real_auditor_shape["timing_immutable"] = True
+    real_auditor_shape["exact_release_adjudication"].pop(
+        "timing_immutable"
+    )
+    assert _is_keep_current_disclosed(real_auditor_shape) is True
 
 
 def test_decided_keep_current_branches_disclose_and_infra_branches_block():

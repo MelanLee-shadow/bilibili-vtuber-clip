@@ -102,6 +102,29 @@ class _AutomaticTitleResult(NamedTuple):
     title_policy_violations: list[str]
 
 
+def _selection_hook_has_inferable_anchor(
+    *, selection_hook: str, title: str
+) -> bool:
+    """Prove main-hook retention from exact shared text.
+
+    The model-provided anchor is useful disclosure, but a bad anchor must not
+    invalidate a mechanically cleaned title when the title itself still
+    contains a concrete phrase from the authoritative first hook clause.
+    """
+
+    first_clause = _selection_hook_first_clause(selection_hook)
+    for width in range(min(12, len(first_clause)), 1, -1):
+        for start in range(0, len(first_clause) - width + 1):
+            anchor = first_clause[start : start + width]
+            if _selection_hook_anchor_valid(
+                anchor=anchor,
+                selection_hook=selection_hook,
+                title=title,
+            ):
+                return True
+    return False
+
+
 def _resolve_automatic_title(
     *,
     base_prompt: str,
@@ -133,10 +156,17 @@ def _resolve_automatic_title(
             llm_error = "empty_title"
             break
         repaired = canonicalize_automatic_title_fillers(candidate)
+        repaired_anchor = canonicalize_automatic_title_fillers(
+            str(payload.get("selection_hook_anchor") or "")
+        )
         repaired_hook_valid = (
             not selection_hook
             or _selection_hook_anchor_valid(
-                anchor=payload.get("selection_hook_anchor"),
+                anchor=repaired_anchor,
+                selection_hook=selection_hook,
+                title=repaired,
+            )
+            or _selection_hook_has_inferable_anchor(
                 selection_hook=selection_hook,
                 title=repaired,
             )
@@ -153,11 +183,16 @@ def _resolve_automatic_title(
             deterministic_filler_repair = True
         llm_title = candidate
         violations = _title_policy_violations(candidate)
-        if selection_hook and not _selection_hook_anchor_valid(
-            anchor=payload.get("selection_hook_anchor"),
-            selection_hook=selection_hook,
-            title=candidate,
-        ):
+        hook_valid = (
+            repaired_hook_valid
+            if deterministic_filler_repair
+            else _selection_hook_anchor_valid(
+                anchor=payload.get("selection_hook_anchor"),
+                selection_hook=selection_hook,
+                title=candidate,
+            )
+        )
+        if selection_hook and not hook_valid:
             violations.append("selection_hook_anchor_missing")
         if not violations:
             break

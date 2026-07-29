@@ -139,9 +139,10 @@ def _parser() -> argparse.ArgumentParser:
         "--project-single-published-repair",
         action="store_true",
         help=(
-            "project exactly one CURRENT+COMPLIANT daily delivery into a new "
+            "project exactly one CURRENT+COMPLIANT published delivery from an "
+            "ordinary daily state or a valid exact recovery state into a new "
             "no-upload RECOVERY_REVIEW base before planning its full rerun; "
-            "other daily rows are evidence-only exclusions, not suppressions"
+            "other source rows are evidence-only exclusions, not suppressions"
         ),
     )
     parser.add_argument(
@@ -208,12 +209,45 @@ def _project_single_published_repair_state(
     if (
         not isinstance(state, dict)
         or state.get("upload_allowed") is not False
-        or state.get("talk_selection_contract") is not None
-        or state.get("delivery_rerun_plan") is not None
         or FINGERPRINT_RX.fullmatch(source_state_sha256) is None
     ):
         raise SystemExit(
-            "single published repair requires an ordinary no-upload source state"
+            "single published repair requires a no-upload source state"
+        )
+    selection_contract = state.get("talk_selection_contract")
+    rerun_plan = state.get("delivery_rerun_plan")
+    source_contract_sha256 = None
+    if selection_contract is None and rerun_plan is None:
+        source_state_kind = "ORDINARY_NO_UPLOAD"
+    elif (
+        state.get("run_mode") == "RECOVERY_REVIEW"
+        and isinstance(selection_contract, dict)
+        and selection_contract.get("schema_version")
+        == "talk-selection-contract.v1"
+        and selection_contract.get("mode")
+        == "EXACT_CANDIDATE_SET_NO_BACKFILL"
+        and isinstance(selection_contract.get("candidate_ids"), list)
+        and candidate_id in selection_contract["candidate_ids"]
+        and len(selection_contract["candidate_ids"])
+        == len(set(selection_contract["candidate_ids"]))
+        and isinstance(rerun_plan, dict)
+        and rerun_plan.get("schema_version")
+        == "recovery-review-talk-rerun-plan.v7"
+        and rerun_plan.get("talk_selection_contract")
+        == selection_contract
+    ):
+        source_state_kind = "EXACT_RECOVERY_REVIEW"
+        source_contract_sha256 = _sha256(
+            json.dumps(
+                selection_contract,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    else:
+        raise SystemExit(
+            "single published repair source recovery contract is invalid"
         )
     picks = state.get("picks")
     pending = state.get("pending_talk")
@@ -293,6 +327,8 @@ def _project_single_published_repair_state(
         "candidate_id": candidate_id,
         "source_state_sha256": source_state_sha256,
         "source_run_mode": state.get("run_mode"),
+        "source_state_kind": source_state_kind,
+        "source_talk_selection_contract_sha256": source_contract_sha256,
         "excluded_pick_candidate_ids": excluded_pick_ids,
         "excluded_pending_candidate_ids": pending_ids,
         "excluded_rows_disposition": "SOURCE_STATE_UNCHANGED_OUTSIDE_REPAIR_TARGET",
