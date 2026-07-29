@@ -317,6 +317,7 @@ def _project_single_published_repair_state(
     for key in (
         "songs",
         "pending_song",
+        "song_backlog",
         "song_superseded_attempts",
         "song_selection_backlog",
     ):

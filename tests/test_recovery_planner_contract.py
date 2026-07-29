@@ -305,6 +305,8 @@ def test_single_published_projection_isolates_target_without_suppressing_others(
         ],
         "songs": [{"candidate_id": "song_1"}],
         "pending_song": [{"candidate_id": "song_2"}],
+        "song_backlog": [{"candidate_id": "song_3"}],
+        "song_selection_backlog": [{"candidate_id": "song_4"}],
     }
 
     projected = planner._project_single_published_repair_state(
@@ -325,6 +327,8 @@ def test_single_published_projection_isolates_target_without_suppressing_others(
     assert projected["talk_backlog"] == []
     assert projected["songs"] == []
     assert projected["pending_song"] == []
+    assert projected["song_backlog"] == []
+    assert projected["song_selection_backlog"] == []
     assert projected.get("talk_user_suppressions") is None
     assert [
         row["candidate_id"]

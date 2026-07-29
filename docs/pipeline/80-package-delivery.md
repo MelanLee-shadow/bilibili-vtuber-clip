@@ -153,6 +153,12 @@
   恰有一个 `rc=0 + CURRENT + COMPLIANT`，且无 pending、missing、failure、重复/冲突或
   outside-contract attempt。否则 runner 与报告保持 `recovery_incomplete`，不得覆盖旧本地包
   或沿用 `review_ready`。
+- exact talk recovery 是 talk-only transaction：不得恢复、重排、补位或生产任何 song
+  delivery。投影器必须清空 `pending_song`、`song_backlog` 与
+  `song_selection_backlog`；runner 还须在 discovery、prioritize 与 song lane 边界重复
+  fail-closed，并把发现的陈旧歌队列记为
+  `exact-talk-recovery-song-scope-suppression.v1` 后清空。历史 `songs`/
+  `song_superseded_attempts` 是证据，不得在普通执行时抹除；它们也不构成 exact talk 的工作量。
 - state 的最终 status 必须来自 `batch_terminal_state.py` 的一次精确投影；future retry、
   部分 delivery 或报告层旧状态都不能盖过 incomplete exact closure。只有 closure COMPLETE
   才能投影 `review_ready` 并进入本地覆盖。

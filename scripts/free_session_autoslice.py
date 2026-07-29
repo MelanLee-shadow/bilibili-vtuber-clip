@@ -802,6 +802,7 @@ from src.autoslice.delivery_recovery import (  # noqa: E402
     recover_bound_song_deliveries,
     bind_song_delivery_recovery_authority,
     requeue_recoverable_deliveries,
+    requeue_stale_current_recovery_talks,
     requeue_recoverable_songs, requeue_recoverable_talks,
 )
 from src.autoslice.candidate_selection import (  # noqa: E402
@@ -817,6 +818,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     refill_songs,
     prioritize,
 )
+from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope, suppress_exact_talk_recovery_song_work  # noqa: E402
 from src.autoslice.cover_repair import (  # noqa: E402
     COVER_TRANSACTION_SCHEMA_VERSION,
     _validate_repaired_cover_generation,
@@ -1643,8 +1645,14 @@ def process_date(date: str) -> None:
     if annotate_state_sessions(date, state):
         write_state(date, state)
     automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
-    recovered_song_deliveries = (
-        recover_bound_song_deliveries(date, state) if automatic_maintenance else 0
+    (
+        recovered_song_deliveries,
+        requeued_stale_talks,
+        requeued_talks,
+        requeued_songs,
+        song_fingerprint_baseline_changed,
+    ) = maintain_delivery_recovery_scope(
+        date, state, automatic_maintenance=automatic_maintenance
     )
     if recovered_song_deliveries:
         write_state(date, state)
@@ -1652,16 +1660,6 @@ def process_date(date: str) -> None:
             f"{date}: recovered {recovered_song_deliveries} verified song delivery "
             "package(s) without selector/ASR/LRC rerun"
         )
-    song_fingerprint_baseline_before = state.get("song_pipeline_fingerprint_baseline")
-    requeued_stale_talks, requeued_talks, requeued_songs = (
-        requeue_recoverable_deliveries(date, state)
-        if automatic_maintenance
-        else (0, 0, 0)
-    )
-    song_fingerprint_baseline_changed = (
-        state.get("song_pipeline_fingerprint_baseline")
-        != song_fingerprint_baseline_before
-    )
     if any((requeued_stale_talks, requeued_talks, requeued_songs)) or (
         song_fingerprint_baseline_changed
     ):
@@ -1707,6 +1705,7 @@ def process_date(date: str) -> None:
     write_state(date, state)
 
     discover_segments(date, state)
+    suppress_exact_talk_recovery_song_work(state, phase="after_segment_discovery")
     # Session sealing: transcription/recall above runs as segments appear, but
     # SELECTION waits until the inventory is stable so every candidate of the
     # session competes for the quota (late segments used to arrive after the
@@ -1722,6 +1721,7 @@ def process_date(date: str) -> None:
         dict(item) for item in state.get("pending_talk", []) if isinstance(item, dict)
     ]
     prioritize(state)
+    suppress_exact_talk_recovery_song_work(state, phase="after_prioritize")
     exact_contract_ids = set(_exact_talk_contract_ids(state))
     routing_claim = prepare_speaker_routing(
         date, state["pending_talk"], state=state
@@ -1806,6 +1806,7 @@ def process_date(date: str) -> None:
             continue
         break
 
+    suppress_exact_talk_recovery_song_work(state, phase="before_song_lane")
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
     # the next backlog song (danmaku-desc) until the delivery budget is met,
     # the backlog runs dry, or SONG_ATTEMPT_CAP is hit.

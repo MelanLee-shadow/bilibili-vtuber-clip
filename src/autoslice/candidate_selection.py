@@ -833,7 +833,6 @@ def prioritize(state: dict) -> None:
         state["pending_talk"] = exact_pending
         state["talk_backlog"] = non_exact_backlog
         _assign_cover_diversity_slots(state)
-        _runner.refill_songs(state)
         return
     pinned_selections = [
         item

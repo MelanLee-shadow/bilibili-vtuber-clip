@@ -3588,7 +3588,14 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
         "segments_done": ["session"],
         "segments_dead": {},
         "pending_talk": [candidate],
-        "pending_song": [],
+        "pending_song": [{"candidate_id": "leaked-pending-song"}],
+        "song_backlog": [
+            {"candidate_id": "leaked-backlog-song"},
+            "legacy leaked song",
+        ],
+        "song_selection_backlog": [
+            {"candidate_id": "leaked-selection-song"}
+        ],
         "picks": [],
         "songs": [],
     }
@@ -3596,11 +3603,24 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
     monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", date)
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
     monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
-    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_args: 0)
+    monkeypatch.setattr(
+        runner,
+        "recover_bound_song_deliveries",
+        lambda *_args: pytest.fail(
+            "exact talk recovery must not recover song deliveries"
+        ),
+    )
+    monkeypatch.setattr(
+        runner, "requeue_stale_current_recovery_talks", lambda *_args: 0
+    )
     monkeypatch.setattr(runner, "requeue_recoverable_talks", lambda *_args: 0)
     monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda *_args: 0)
     monkeypatch.setattr(
-        runner, "requeue_recoverable_deliveries", lambda *_args: (0, 0, 0)
+        runner,
+        "requeue_recoverable_deliveries",
+        lambda *_args: pytest.fail(
+            "exact talk recovery must not run combined talk/song recovery"
+        ),
     )
     monkeypatch.setattr(runner, "list_segments", lambda _date: [])
     monkeypatch.setattr(runner, "cover_repair_needed", lambda *_args: False)
@@ -3611,10 +3631,11 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
     monkeypatch.setattr(runner, "repair_covers", lambda *_args: None)
     monkeypatch.setattr(runner, "write_state", lambda *_args: None)
     monkeypatch.setattr(runner, "write_reports", lambda *_args: None)
-    monkeypatch.setattr(
-        runner,
-        "produce_batch",
-        lambda *_args: [
+    attempted_producers = []
+
+    def fake_produce_batch(_date, _items, producer):
+        attempted_producers.append(producer)
+        return [
             {
                 "candidate_id": candidate["cid"],
                 "status": "speaker_evidence_insufficient",
@@ -3622,8 +3643,9 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
                 "failure_stage": "speaker_finalization",
                 "failure_recoverable": False,
             }
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(runner, "produce_batch", fake_produce_batch)
 
     runner.process_date(date)
 
@@ -3635,6 +3657,18 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
         "speaker_evidence_insufficient"
     )
     assert state["status"] == "recovery_incomplete"
+    assert attempted_producers == [runner.produce_talk]
+    assert state["pending_song"] == []
+    assert state["song_backlog"] == []
+    assert state["song_selection_backlog"] == []
+    suppressions = state["exact_talk_recovery_song_scope_suppressions"]
+    assert len(suppressions) == 1
+    assert suppressions[0]["phase"] == "before_delivery_recovery"
+    assert suppressions[0]["cleared"]["song_backlog"] == {
+        "row_count": 2,
+        "candidate_ids": ["leaked-backlog-song"],
+        "legacy_row_count": 1,
+    }
 
 
 def test_prioritize_blocks_all_talk_shapes_overlapping_song_interval():
