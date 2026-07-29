@@ -290,6 +290,41 @@ def test_build_derives_all_authoritative_fields_and_validates_canonically(
     ]
 
 
+def test_multi_person_template_uses_hash_closed_rendered_text_not_art_direction(
+    receipt_package: dict[str, object],
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    rendered_lines = ["请南町吃火锅", "刚认识就互相霸凌"]
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    record["publish_staging"]["cover_generation"] = {
+        "final_cover_sha256": cover_sha256,
+        "rendered_lines": rendered_lines,
+        "rendered_text_pixels": {
+            "status": "PASS",
+            "rendered_text": "".join(rendered_lines),
+            "final_cover_sha256": cover_sha256,
+        },
+    }
+    _write_json(record_path, record)
+
+    evidence = builder.build_evidence_template(
+        package_root=receipt_package["root"],
+        package_audit_path=receipt_package["audit_path"],
+    )
+
+    claims = [
+        (row["claim"], row["presentation"])
+        for row in evidence["items"][0]["cover_story_claims"]
+    ]
+    assert claims == [
+        (receipt_package["source_claims"][0], "SOURCE_FRAME"),
+        (receipt_package["source_claims"][1], "SOURCE_FRAME"),
+        ("封面文字呈现“请南町吃火锅 / 刚认识就互相霸凌”", "COVER_TEXT"),
+    ]
+
+
 def test_template_accepts_hash_closed_host_only_screenshot_cover(
     receipt_package: dict[str, object],
 ) -> None:

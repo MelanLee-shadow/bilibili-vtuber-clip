@@ -875,9 +875,64 @@ def _cover_story_claim_authority(
                 "FINAL_HUMAN_REVIEW_COVER_AUTHORITY_INVALID",
                 candidate_id,
             )
+        publish_staging = record.get("publish_staging")
+        generation = (
+            publish_staging.get("cover_generation")
+            if isinstance(publish_staging, Mapping)
+            else None
+        )
+        # Historical receipts predate the hash-bound rendered-text surface.
+        # Keep them readable under their original narrative claim; every
+        # current package carries ``cover_generation`` and must bind the actual
+        # rendered lines below instead of upgrading art direction into pixels.
+        if generation is None:
+            return (
+                *((claim, "SOURCE_FRAME") for claim in raw_source_claims),
+                (narrative.strip(), "COVER_TEXT"),
+            )
+        pixels = (
+            generation.get("rendered_text_pixels")
+            if isinstance(generation, Mapping)
+            else None
+        )
+        rendered_lines = (
+            generation.get("rendered_lines")
+            if isinstance(generation, Mapping)
+            else None
+        )
+        final_cover_sha256 = (
+            generation.get("final_cover_sha256")
+            if isinstance(generation, Mapping)
+            else None
+        )
+        artifact_hashes = record.get("artifact_hashes")
+        if (
+            not isinstance(rendered_lines, list)
+            or not rendered_lines
+            or len(rendered_lines) != len(set(rendered_lines))
+            or not all(
+                isinstance(line, str) and line == line.strip() and bool(line)
+                for line in rendered_lines
+            )
+            or not isinstance(pixels, Mapping)
+            or pixels.get("status") != "PASS"
+            or pixels.get("rendered_text") != "".join(rendered_lines)
+            or not isinstance(artifact_hashes, Mapping)
+            or not isinstance(final_cover_sha256, str)
+            or _SHA256_RX.fullmatch(final_cover_sha256) is None
+            or pixels.get("final_cover_sha256") != final_cover_sha256
+            or artifact_hashes.get("cover_sha256") != final_cover_sha256
+        ):
+            raise FinalHumanReviewError(
+                "FINAL_HUMAN_REVIEW_COVER_AUTHORITY_INVALID",
+                candidate_id,
+            )
+        rendered_text_claim = (
+            "封面文字呈现“" + " / ".join(rendered_lines) + "”"
+        )
         return (
             *((claim, "SOURCE_FRAME") for claim in raw_source_claims),
-            (narrative.strip(), "COVER_TEXT"),
+            (rendered_text_claim, "COVER_TEXT"),
         )
     if cover_reference is not None:
         raise FinalHumanReviewError(
