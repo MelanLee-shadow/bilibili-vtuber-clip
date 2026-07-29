@@ -375,6 +375,14 @@ def registered_terms() -> frozenset[str]:
     return _load()
 
 
+def exact_cue_canons() -> frozenset[str]:
+    """Explicit whole-cue source truths, separate from registered names."""
+
+    from src.autoslice.term_authority import exact_cue_canons as _load
+
+    return _load()
+
+
 def _normalize_candidate_memory_id(
     value: object,
     memory_entries: Mapping[str, object],
@@ -1026,6 +1034,7 @@ def route_findings(
     protected_cue_indexes: Iterable[int] = (),
     protected_term_set: frozenset[str] | None = None,
     registered_term_set: frozenset[str] | None = None,
+    exact_cue_canon_set: frozenset[str] | None = None,
     entity_surface_set: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
     """Apply bounded expected-value canon; route every other edit to CPA.
@@ -1043,6 +1052,10 @@ def route_findings(
         if registered_term_set is None
         else registered_term_set
     )
+    if exact_cue_canon_set is None:
+        exact_cues = exact_cue_canons()
+    else:
+        exact_cues = exact_cue_canon_set
     folded_entity_surfaces = {
         surface.casefold() for surface in entity_surface_set if surface
     }
@@ -1067,6 +1080,33 @@ def route_findings(
             and suspect in texts[cue_index - 1]
         )
         orthography_authority = _orthography_text_authority(row)
+        exact_cue_canon = bool(
+            applicable
+            and candidate in exact_cues
+            and str(row.get("proposed_full_cue") or "") == candidate
+            and isinstance(row.get("candidate_provenance"), Mapping)
+            and row["candidate_provenance"].get("kind") == "glossary"
+            and row["candidate_provenance"].get("surface") == candidate
+        )
+        if exact_cue_canon:
+            before = texts[cue_index - 1]
+            texts[cue_index - 1] = str(candidate)
+            row.update(
+                routed="exact_cue_canon",
+                before=before,
+                after=str(candidate),
+                orthography_authority=orthography_authority,
+                mutation_authority={
+                    "schema_version": "exact-cue-canon-authority.v1",
+                    "status": "PASS",
+                    "decision_authority": "EXPLICIT_SOURCE_TRUTH",
+                    "canonical_cue": str(candidate),
+                    "registered_name_conflict": False,
+                },
+            )
+            applied += 1
+            rows.append(row)
+            continue
         expected_value_gate = (
             glossary_expected_value_gate(
                 row,
@@ -1808,7 +1848,7 @@ def audit_correction_mutation_authority(
         if not isinstance(row, Mapping):
             continue
         routed = row.get("routed")
-        if routed == "expected_value_canon":
+        if routed in {"expected_value_canon", "exact_cue_canon"}:
             applied_rows.append((row, row.get("mutation_authority")))
             continue
         if routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
@@ -1866,6 +1906,28 @@ def audit_correction_mutation_authority(
                 and receipt.get("registered_name_conflict") is False
                 and expected_gate is not None
                 and row.get("expected_value_gate") == expected_gate
+            )
+        elif routed == "exact_cue_canon":
+            before = str(row.get("before") or "")
+            after = str(row.get("after") or "")
+            candidate, contract_error = _candidate_from_finding(before, row)
+            provenance = row.get("candidate_provenance")
+            receipt_valid = bool(
+                contract_error is None
+                and candidate == after
+                and after in exact_cue_canons()
+                and row.get("proposed_full_cue") == after
+                and isinstance(provenance, Mapping)
+                and provenance.get("kind") == "glossary"
+                and provenance.get("surface") == after
+                and isinstance(receipt, Mapping)
+                and receipt.get("schema_version")
+                == "exact-cue-canon-authority.v1"
+                and receipt.get("status") == "PASS"
+                and receipt.get("decision_authority")
+                == "EXPLICIT_SOURCE_TRUTH"
+                and receipt.get("canonical_cue") == after
+                and receipt.get("registered_name_conflict") is False
             )
         elif routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
             receipt_valid = False

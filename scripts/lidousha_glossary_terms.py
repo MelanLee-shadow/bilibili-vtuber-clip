@@ -19,6 +19,10 @@ profile, ``assets/lidousha/glossary.txt``) and extracts:
   canonical target contribute their explicitly listed wrong forms to the
   zero-CPA expected-value lane.  Ambiguous multi-name bullets contribute
   nothing, so registered proper names remain peers.
+* ``exact_cues``         — whole-cue source truths marked ``[exact-cue]``.
+  They are deliberately separate from registered proper names: a pinned cue
+  can restore the complete sentence, while ordinary name-vs-name choices
+  remain equal and still go to CPA.
 
 Everything here is best-effort and fail-safe: any IO/parse problem yields a
 minimal ``GlossaryTerms(("kmx",), ())`` rather than raising, so a malformed or
@@ -89,6 +93,7 @@ _MISWRITE_QUOTED_RE = re.compile(
 # delimiter: it is the first character of canonical names such as 和成天下.
 _TOKEN_SPLIT_RE = re.compile(r"[、,，/｜|]|\s+(?:或|和)\s+")
 _PAREN_ANNOTATION_RE = re.compile(r"[（(][^）)]*[）)]")
+_EXACT_CUE_RE = re.compile(r"^\[exact-cue\]\s*(\S(?:.*\S)?)$")
 
 
 @dataclass(frozen=True)
@@ -209,6 +214,48 @@ def load_glossary_expected_value_pairs(
         return parse_glossary_expected_value_pairs(
             resolved.read_text(encoding="utf-8")
         )
+    except Exception:  # noqa: BLE001 - conservative degradation
+        return ()
+
+
+def parse_glossary_exact_cues(text: str) -> tuple[str, ...]:
+    """Return only explicitly marked whole-cue transcript truths.
+
+    The marker must begin a bullet payload.  Quoted examples and prose never
+    become mechanical authority merely because they happen to occur in the
+    glossary.
+    """
+
+    cues: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith("- "):
+            continue
+        payload = line[2:]
+        for colon in ("：", ":"):
+            idx = payload.find(colon)
+            if idx != -1:
+                payload = payload[idx + 1 :].strip()
+                break
+        matched = _EXACT_CUE_RE.fullmatch(payload)
+        if not matched:
+            continue
+        cue = matched.group(1).strip()
+        if 4 <= len(cue) <= 120 and "\n" not in cue and "\r" not in cue:
+            cues.append(cue)
+    return tuple(dict.fromkeys(cues))
+
+
+def load_glossary_exact_cues(
+    path: str | Path | None = None,
+) -> tuple[str, ...]:
+    """Load exact cues; malformed or missing assets disable the bypass."""
+
+    try:
+        resolved = _resolve_glossary_path(path)
+        if resolved is None:
+            return ()
+        return parse_glossary_exact_cues(resolved.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - conservative degradation
         return ()
 

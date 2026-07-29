@@ -3,7 +3,9 @@ from pathlib import Path
 from scripts.lidousha_glossary_terms import (
     FALLBACK_CANON,
     GlossaryTerms,
+    load_glossary_exact_cues,
     load_glossary_terms,
+    parse_glossary_exact_cues,
     parse_glossary_expected_value_pairs,
     parse_glossary_terms,
 )
@@ -110,6 +112,23 @@ def test_cp_order_names_are_registered_peers_not_mechanical_respell_pairs():
 
     assert {"礼墨", "礼豆沙", "李墨"} <= set(terms.canon)
     assert all(surface != "李默" for surface, _ in pairs)
+
+
+def test_exact_cue_markers_are_separate_from_registered_name_parsing():
+    text = (
+        "- 精确句真值：[exact-cue] 你磕礼豆沙的意思是说礼就是1\n"
+        "- 说明：举例「这不是机械真值」\n"
+    )
+
+    assert parse_glossary_exact_cues(text) == (
+        "你磕礼豆沙的意思是说礼就是1",
+    )
+    assert "你磕礼豆沙的意思是说礼就是1" not in parse_glossary_terms(
+        text
+    ).canon
+    assert "你磕礼豆沙的意思是说礼就是1" in load_glossary_exact_cues(
+        GLOSSARY
+    )
 
 
 def test_load_glossary_terms_is_fail_safe_on_missing_file(tmp_path):

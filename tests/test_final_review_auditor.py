@@ -116,6 +116,48 @@ def test_protected_meme_terms_never_auto_fixed():
     assert "做0.4" in real
 
 
+def test_exact_cue_truth_can_restore_phrase_containing_registered_peer():
+    source = _srt("你磕李墨的意思是说李就是李")
+    canonical = "你磕礼豆沙的意思是说礼就是1"
+    findings = [
+        {
+            "cue_index": 1,
+            "suspect": "李墨的意思是说李就是李",
+            "suggestion": "礼豆沙的意思是说礼就是1",
+            "proposed_full_cue": canonical,
+            "candidate_provenance": {
+                "kind": "glossary",
+                "surface": canonical,
+            },
+            "repair_class": "source_backed_entity",
+            "kind": "context",
+            "why": "整句已由源真值审定",
+        }
+    ]
+
+    output, audit = route_findings(
+        source,
+        findings,
+        protected_term_set=frozenset({"李墨", "礼豆沙"}),
+        registered_term_set=frozenset({"李墨", "礼豆沙"}),
+        exact_cue_canon_set=frozenset({canonical}),
+    )
+
+    assert canonical in output
+    assert audit["applied_count"] == 1
+    assert audit["findings"][0]["routed"] == "exact_cue_canon"
+    assert audit["findings"][0]["mutation_authority"] == {
+        "schema_version": "exact-cue-canon-authority.v1",
+        "status": "PASS",
+        "decision_authority": "EXPLICIT_SOURCE_TRUTH",
+        "canonical_cue": canonical,
+        "registered_name_conflict": False,
+    }
+    mutation_audit = audit_correction_mutation_authority(audit)
+    assert mutation_audit["status"] == "PASS"
+    assert mutation_audit["validated_mutation_count"] == 1
+
+
 def test_auditor_llm_failure_blocks_instead_of_becoming_clean():
     def broken(prompt):
         raise RuntimeError("cpa down")

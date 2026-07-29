@@ -119,6 +119,19 @@ def expected_value_respell_pairs() -> frozenset[tuple[str, str]]:
     )
 
 
+def exact_cue_canons() -> frozenset[str]:
+    """Explicit whole-cue truths allowed to bypass per-name CPA selection."""
+
+    try:
+        from scripts.lidousha_glossary_terms import load_glossary_exact_cues
+
+        return frozenset(
+            load_glossary_exact_cues(CHANNEL_PROFILE.asset_file("glossary"))
+        )
+    except Exception:
+        return frozenset()
+
+
 def registered_terms() -> frozenset[str]:
     """Canonical glossary/entity terms that are peers, not typo surfaces.
 
