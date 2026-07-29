@@ -587,6 +587,36 @@ def _owner_window_payloads(
     return text_payload, speaker_payload
 
 
+def _contiguous_owner_window_union(
+    windows: list[dict],
+) -> tuple[int, int] | None:
+    """Return the union of a multi-cue owner only when it has no time gap.
+
+    Source-truth projection is bound to the cue grid on which the truth was
+    applied.  Later release hygiene may legally merge adjacent projected cues
+    without changing a single spoken character.  In that case, probing every
+    old sub-window returns the same merged cue twice and falsely duplicates the
+    final payload.  Only a contiguous multi-window set is safe to coalesce:
+    non-contiguous mentions retain the strict per-window checks below.
+    """
+
+    if len(windows) < 2:
+        return None
+    ordered = sorted(
+        (
+            (int(window["start_ms"]), int(window["end_ms"]))
+            for window in windows
+        ),
+        key=lambda value: (value[0], value[1]),
+    )
+    union_start, union_end = ordered[0]
+    for start_ms, end_ms in ordered[1:]:
+        if start_ms > union_end:
+            return None
+        union_end = max(union_end, end_ms)
+    return union_start, union_end
+
+
 def _window_payload(
     srt_text: str,
     *,
@@ -654,6 +684,212 @@ def _classify_source_truth_delivery_windows(
         if str(row["delivery_relation"]).startswith("OUTSIDE_")
     ]
     return classified, straddlers, inside, outside
+
+
+def _coalesced_source_truth_owner(
+    *,
+    action: str,
+    inside_windows: list[dict],
+    expected_exact: str,
+    final_text_srt: str,
+    final_speaker_srt: str,
+    delivery_start_ms: int,
+) -> dict | None:
+    projection_bound = bool(inside_windows) and all(
+        window.get("expected_after") is not None
+        and isinstance(window.get("cue_index"), int)
+        and not isinstance(window.get("cue_index"), bool)
+        for window in inside_windows
+    )
+    contiguous_union = (
+        _contiguous_owner_window_union(inside_windows)
+        if action == "replace_cue" and projection_bound
+        else None
+    )
+    if contiguous_union is None:
+        return None
+    union_start, union_end = contiguous_union
+    relative_start = union_start - delivery_start_ms
+    relative_end = union_end - delivery_start_ms
+    text_payload, speaker_payload = _owner_window_payloads(
+        action,
+        final_text_srt=final_text_srt,
+        final_speaker_srt=final_speaker_srt,
+        start_ms=relative_start,
+        end_ms=relative_end,
+    )
+    text_ok = bool(expected_exact) and text_payload == expected_exact
+    speaker_ok = (
+        bool(expected_exact) and speaker_payload == expected_exact
+    )
+    return {
+        "schema_version": "source-truth-final-recue-coalescence.v1",
+        "status": "PASS" if text_ok and speaker_ok else "FAIL",
+        "start_ms": relative_start,
+        "end_ms": relative_end,
+        "projected_window_count": len(inside_windows),
+        "expected_exact": expected_exact,
+        "text_payload": text_payload,
+        "speaker_payload": speaker_payload,
+        "text_ok": text_ok,
+        "speaker_ok": speaker_ok,
+    }
+
+
+def _verify_inside_source_truth_owner(
+    row: dict,
+    *,
+    action: str,
+    expected_exact: str,
+    required_text: str,
+    inside_windows: list[dict],
+    final_text_srt: str,
+    final_speaker_srt: str,
+    delivery_start_ms: int,
+) -> tuple[list[dict], int]:
+    failures: list[dict] = []
+    window_results: list[dict] = []
+    coalesced_owner = _coalesced_source_truth_owner(
+        action=action,
+        inside_windows=inside_windows,
+        expected_exact=expected_exact,
+        final_text_srt=final_text_srt,
+        final_speaker_srt=final_speaker_srt,
+        delivery_start_ms=delivery_start_ms,
+    )
+    coalesced_owner_ok = bool(
+        coalesced_owner and coalesced_owner["status"] == "PASS"
+    )
+    for owned in inside_windows:
+        relative_start = int(owned["start_ms"]) - delivery_start_ms
+        relative_end = int(owned["end_ms"]) - delivery_start_ms
+        text_payload, speaker_payload = _owner_window_payloads(
+            action,
+            final_text_srt=final_text_srt,
+            final_speaker_srt=final_speaker_srt,
+            start_ms=relative_start,
+            end_ms=relative_end,
+        )
+        expected_after_raw = owned["expected_after"]
+        if expected_after_raw is None:
+            text_ok = speaker_ok = True
+        else:
+            expected_after = normalize_chat_text(
+                str(expected_after_raw)
+            )
+            text_ok = text_payload == expected_after
+            speaker_ok = speaker_payload == expected_after
+        projected_text_ok = text_ok
+        projected_speaker_ok = speaker_ok
+        if coalesced_owner_ok:
+            text_ok = True
+            speaker_ok = True
+        result = {
+            "start_ms": relative_start,
+            "end_ms": relative_end,
+            "cue_index": owned["cue_index"],
+            "action": action,
+            "expected_after": expected_after_raw,
+            "expected_exact": expected_exact,
+            "required_text": required_text,
+            "text_payload": text_payload,
+            "speaker_payload": speaker_payload,
+            "text_ok": text_ok,
+            "speaker_ok": speaker_ok,
+        }
+        if coalesced_owner is not None:
+            result.update(
+                {
+                    "verification_mode": (
+                        "CONTIGUOUS_RECUED_OWNER_UNION"
+                    ),
+                    "projected_text_ok": projected_text_ok,
+                    "projected_speaker_ok": projected_speaker_ok,
+                }
+            )
+        window_results.append(result)
+        if not (text_ok and speaker_ok):
+            failures.append(
+                {
+                    "truth_id": row.get("truth_id"),
+                    "reason_code": (
+                        "SOURCE_TRUTH_FINAL_OWNER_MISMATCH"
+                    ),
+                    **result,
+                }
+            )
+
+    aggregate_text = (
+        str(coalesced_owner["text_payload"])
+        if coalesced_owner is not None
+        else "".join(
+            str(item["text_payload"]) for item in window_results
+        )
+    )
+    aggregate_speaker = (
+        str(coalesced_owner["speaker_payload"])
+        if coalesced_owner is not None
+        else "".join(
+            str(item["speaker_payload"]) for item in window_results
+        )
+    )
+    if action == "drop_cue":
+        contract_text_ok = not aggregate_text
+        contract_speaker_ok = not aggregate_speaker
+    elif action == "replace_cue":
+        contract_text_ok = (
+            bool(expected_exact) and aggregate_text == expected_exact
+        )
+        contract_speaker_ok = (
+            bool(expected_exact) and aggregate_speaker == expected_exact
+        )
+    elif action == "replace_substring":
+        expected = required_text or expected_exact
+        contract_text_ok = bool(expected) and expected in aggregate_text
+        contract_speaker_ok = (
+            bool(expected) and expected in aggregate_speaker
+        )
+    else:
+        contract_text_ok = contract_speaker_ok = False
+    if not (contract_text_ok and contract_speaker_ok):
+        failures.append(
+            {
+                "truth_id": row.get("truth_id"),
+                "reason_code": "SOURCE_TRUTH_FINAL_CONTRACT_MISMATCH",
+                "action": action,
+                "expected_exact": expected_exact,
+                "required_text": required_text,
+                "text_payload": aggregate_text,
+                "speaker_payload": aggregate_speaker,
+                "text_ok": contract_text_ok,
+                "speaker_ok": contract_speaker_ok,
+            }
+        )
+    row["final_owner_scope"] = "FINAL_DELIVERY"
+    row["final_owner_contract"] = {
+        "action": action,
+        "expected_exact": expected_exact,
+        "required_text": required_text,
+        "text_payload": aggregate_text,
+        "speaker_payload": aggregate_speaker,
+        "text_ok": contract_text_ok,
+        "speaker_ok": contract_speaker_ok,
+    }
+    if coalesced_owner is not None:
+        row["final_owner_contract"]["recue_coalescence"] = (
+            coalesced_owner
+        )
+    row["final_owner_windows"] = window_results
+    row["final_owner_verified"] = (
+        bool(window_results)
+        and all(
+            item["text_ok"] and item["speaker_ok"]
+            for item in window_results
+        )
+        and contract_text_ok
+        and contract_speaker_ok
+    )
+    return failures, len(window_results)
 
 
 def _verify_source_truth_owners(
@@ -828,92 +1064,20 @@ def _verify_source_truth_owners(
             continue
 
         required_rows.append(row)
-        window_results: list[dict] = []
-        for owned in inside_windows:
-            relative_start = int(owned["start_ms"]) - delivery_start_ms
-            relative_end = int(owned["end_ms"]) - delivery_start_ms
-            text_payload, speaker_payload = _owner_window_payloads(
-                action,
+        owner_failures, owner_window_count = (
+            _verify_inside_source_truth_owner(
+                row,
+                action=action,
+                expected_exact=expected_exact,
+                required_text=required_text,
+                inside_windows=inside_windows,
                 final_text_srt=final_text_srt,
                 final_speaker_srt=final_speaker_srt,
-                start_ms=relative_start,
-                end_ms=relative_end,
+                delivery_start_ms=delivery_start_ms,
             )
-            expected_after_raw = owned["expected_after"]
-            if expected_after_raw is None:
-                text_ok = speaker_ok = True
-            else:
-                expected_after = normalize_chat_text(str(expected_after_raw))
-                text_ok = text_payload == expected_after
-                speaker_ok = speaker_payload == expected_after
-            required_count += 1
-            result = {
-                "start_ms": relative_start,
-                "end_ms": relative_end,
-                "cue_index": owned["cue_index"],
-                "action": action,
-                "expected_after": expected_after_raw,
-                "expected_exact": expected_exact,
-                "required_text": required_text,
-                "text_payload": text_payload,
-                "speaker_payload": speaker_payload,
-                "text_ok": text_ok,
-                "speaker_ok": speaker_ok,
-            }
-            window_results.append(result)
-            if not (text_ok and speaker_ok):
-                failures.append(
-                    {
-                        "truth_id": row.get("truth_id"),
-                        "reason_code": "SOURCE_TRUTH_FINAL_OWNER_MISMATCH",
-                        **result,
-                    }
-                )
-        row["final_owner_scope"] = "FINAL_DELIVERY"
-        aggregate_text = "".join(str(item["text_payload"]) for item in window_results)
-        aggregate_speaker = "".join(str(item["speaker_payload"]) for item in window_results)
-        if action == "drop_cue":
-            contract_text_ok = not aggregate_text
-            contract_speaker_ok = not aggregate_speaker
-        elif action == "replace_cue":
-            contract_text_ok = bool(expected_exact) and aggregate_text == expected_exact
-            contract_speaker_ok = bool(expected_exact) and aggregate_speaker == expected_exact
-        elif action == "replace_substring":
-            expected = required_text or expected_exact
-            contract_text_ok = bool(expected) and expected in aggregate_text
-            contract_speaker_ok = bool(expected) and expected in aggregate_speaker
-        else:
-            contract_text_ok = contract_speaker_ok = False
-        if not (contract_text_ok and contract_speaker_ok):
-            failures.append(
-                {
-                    "truth_id": row.get("truth_id"),
-                    "reason_code": ("SOURCE_TRUTH_FINAL_CONTRACT_MISMATCH"),
-                    "action": action,
-                    "expected_exact": expected_exact,
-                    "required_text": required_text,
-                    "text_payload": aggregate_text,
-                    "speaker_payload": aggregate_speaker,
-                    "text_ok": contract_text_ok,
-                    "speaker_ok": contract_speaker_ok,
-                }
-            )
-        row["final_owner_contract"] = {
-            "action": action,
-            "expected_exact": expected_exact,
-            "required_text": required_text,
-            "text_payload": aggregate_text,
-            "speaker_payload": aggregate_speaker,
-            "text_ok": contract_text_ok,
-            "speaker_ok": contract_speaker_ok,
-        }
-        row["final_owner_windows"] = window_results
-        row["final_owner_verified"] = (
-            bool(window_results)
-            and all(item["text_ok"] and item["speaker_ok"] for item in window_results)
-            and contract_text_ok
-            and contract_speaker_ok
         )
+        failures.extend(owner_failures)
+        required_count += owner_window_count
     audit["final_source_truth_owner_verification"] = {
         "status": "FAIL" if failures else "PASS",
         "final_delivery_interval": {

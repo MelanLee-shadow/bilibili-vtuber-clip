@@ -10,7 +10,10 @@
   SRT 的精确投影时间窗逐项存活；`required:false` 只是 best-effort，不能计入 required owner
   或用来制造 owner PASS。discovery `local_windows` 仅用于定位，最终 owner 必须来自有效
   `source-truth-resolved-target-projection.v1`。文字/说话人 ASS 也必须绑定同一最终文本与
-  hash；低权威 repair 只有在真实 owner 已通过后才能记为 superseded。
+  hash；低权威 repair 只有在真实 owner 已通过后才能记为 superseded。projection 的连续
+  多 cue 若在最终 hygiene 中被合并/重切，final-owner receipt 以连续窗口并集的 exact payload
+  验真并披露 `source-truth-final-recue-coalescence.v1`；非连续窗口、额外邻句或非 exact
+  payload 不得走该窄门。
 - package auditor 按 resolver 的最终半开区间独立重算 source-truth 分类：完全 inside 的
   required truth 必须逐窗通过 final clean/speaker contract；完全 outside 的 truth 必须具有
   context-only receipt；straddle 或同一 truth 的 mixed inside/outside windows 一律拒绝。

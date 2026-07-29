@@ -2680,6 +2680,39 @@ def test_committed_ledger_repairs_hotpot_spoken_letter_name_to_canonical_entity(
     )
 
 
+def test_committed_ledger_repairs_hotpot_ttt15_structured_sc_id():
+    ledger = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "lidousha"
+        / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 2_580, "这怎么怎么是 TTT 的头像")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260722-19-35-15.mp4"
+                    ),
+                    "start_ms": 1_947_130,
+                    "end_ms": 1_949_710,
+                }
+            ]
+        },
+        durations=[2_580],
+        ledger_path=ledger,
+    )
+
+    assert "".join(
+        cue.text for cue in parse_srt_cues(corrected)
+    ) == "这怎么怎么是 ttt15 的头像"
+    assert audit["status"] == "APPLIED"
+    assert audit["applied"][0]["truth_id"] == (
+        "20260722-nancho-hotpot-ttt15-sc-id-r1"
+    )
+
+
 def test_committed_ledger_repairs_chair_bullying_phrase_across_bad_split():
     ledger = (
         Path(__file__).resolve().parents[1]

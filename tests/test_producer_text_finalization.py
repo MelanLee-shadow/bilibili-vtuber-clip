@@ -130,6 +130,123 @@ def test_ordinary_truth_inside_final_delivery_remains_required() -> None:
     }
 
 
+def test_contiguous_projected_truth_accepts_exact_final_recue_merge() -> None:
+    """Release hygiene may merge two adjacent projected cues without drift."""
+
+    row = _truth_row(
+        truth_id="contiguous-recue-merge",
+        start_ms=1_000,
+        end_ms=4_280,
+        canonical="切，那就差礼墨没吃了",
+    )
+    row.update(
+        {
+            "cue_indexes": [16, 17],
+            "resolved_target_projection": {
+                "schema_version": (
+                    "source-truth-resolved-target-projection.v1"
+                ),
+                "selector": (
+                    "half-open-overlap-gte-min-then-action-resolution"
+                ),
+                "min_overlap_ms": 80,
+                "action": "replace_cue",
+                "status": "RESOLVED",
+                "cues": [
+                    {
+                        "cue_index": 16,
+                        "start_ms": 1_000,
+                        "end_ms": 1_720,
+                        "before_text": "切，",
+                        "after_text": "切，",
+                    },
+                    {
+                        "cue_index": 17,
+                        "start_ms": 1_720,
+                        "end_ms": 4_280,
+                        "before_text": "那就差礼墨没吃了",
+                        "after_text": "那就差礼墨没吃了",
+                    },
+                ],
+            },
+        }
+    )
+    merged = _srt((1_000, 4_280, "切，那就差礼墨没吃了"))
+    audit = _audit(row)
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=merged,
+        final_speaker_srt=merged,
+        delivery_start_ms=0,
+        delivery_end_ms=5_000,
+    )
+    verified = audit["source_subtitle_truth_audit"]["satisfied"][0]
+    receipt = verified["final_owner_contract"]["recue_coalescence"]
+    assert receipt["status"] == "PASS"
+    assert receipt["projected_window_count"] == 2
+    assert verified["final_owner_verified"] is True
+
+
+def test_contiguous_projected_truth_recue_merge_rejects_extra_speech() -> None:
+    row = _truth_row(
+        truth_id="contiguous-recue-extra",
+        start_ms=1_000,
+        end_ms=4_280,
+        canonical="切，那就差礼墨没吃了",
+    )
+    row.update(
+        {
+            "cue_indexes": [16, 17],
+            "resolved_target_projection": {
+                "schema_version": (
+                    "source-truth-resolved-target-projection.v1"
+                ),
+                "selector": (
+                    "half-open-overlap-gte-min-then-action-resolution"
+                ),
+                "min_overlap_ms": 80,
+                "action": "replace_cue",
+                "status": "RESOLVED",
+                "cues": [
+                    {
+                        "cue_index": 16,
+                        "start_ms": 1_000,
+                        "end_ms": 1_720,
+                        "before_text": "切，",
+                        "after_text": "切，",
+                    },
+                    {
+                        "cue_index": 17,
+                        "start_ms": 1_720,
+                        "end_ms": 4_280,
+                        "before_text": "那就差礼墨没吃了",
+                        "after_text": "那就差礼墨没吃了",
+                    },
+                ],
+            },
+        }
+    )
+    merged = _srt(
+        (900, 4_400, "前句切，那就差礼墨没吃了后句")
+    )
+    audit = _audit(row)
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=merged,
+        final_speaker_srt=merged,
+        delivery_start_ms=0,
+        delivery_end_ms=5_000,
+    )
+    verified = audit["source_subtitle_truth_audit"]["satisfied"][0]
+    receipt = verified["final_owner_contract"]["recue_coalescence"]
+    assert receipt["status"] == "FAIL"
+    assert receipt["text_payload"] == (
+        "前句切那就差礼墨没吃了后句"
+    )
+
+
 @pytest.mark.parametrize(
     ("start_ms", "end_ms", "expected_relation"),
     [

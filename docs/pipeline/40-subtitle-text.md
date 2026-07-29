@@ -164,7 +164,11 @@
   `[delivery_start_ms, delivery_end_ms)` 重新分类全部 required source truth：完全在成片外的
   任意 truth（不只 `next_topic_witness`）必须显式记为 context-only；完全在成片内的 truth
   必须在 clean/speaker SRT 上逐窗验活；跨过任一终点或同一 truth 同时含 inside/outside
-  windows 一律 fail closed。这里的最终可见性分类不反向授予成片外 truth 边界 ownership。
+  windows 一律 fail closed。若一个 `replace_cue` 的有效 projection 含两个以上首尾连续窗口，
+  release hygiene 后续可合法合并/重切这些 cue；verifier 必须对连续窗口并集只读一次最终
+  owner payload，并要求 clean/speaker 两面都与 declared exact text 完全相等。并集含邻句、
+  窗口不连续或任一字不同仍 fail closed，禁止逐旧窗重复读取同一 merged cue 后制造假失败，
+  也禁止用模糊包含关系制造假绿。这里的最终可见性分类不反向授予成片外 truth 边界 ownership。
 - padded context 中的低权威修复若已由 boundary owner 合约以
   `STRADDLES_IMMUTABLE_STORY_SCOPE` 明确拒绝，resolver 又只在成片边缘留下
   `≤500ms` 且 `≤15%` 的小片段，则 final surface verifier 把该片段记为

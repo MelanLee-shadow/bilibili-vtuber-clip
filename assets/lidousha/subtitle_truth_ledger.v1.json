@@ -3036,6 +3036,26 @@
    "supersedes": "20260724-beans-limo-first-repeat-r1",
    "text": "切，那就差礼墨没吃了",
    "truth_id": "20260724-beans-limo-first-repeat-r2"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan established CPA as the final text judge in the 2026-07-29 conversation. CPA exact-final adjudication chose PROPOSED with p=0.97 (prompt sha256=8dca54b4ae96b3c9c61fc26125e578afc631c9306b01badfbeb08618147ca596; completion sha256=f4ab1e4b5c1f7d7b5599a752b3fa8b764f0e6836dce501e1767f9bc33f6cd969): spoken ti ti ti is compatible with both spellings, while adjacent structured SC uniquely identifies ttt15 and discusses the number on that avatar. This operator-adopted CPA decision pins only that source-backed ID mention.",
+   "before_span": "这怎么怎么是 TTT 的头像",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "CPA_FINAL_TEXT_ADJUDICATION_PLUS_STRUCTURED_SC_ID",
+   "forbidden_tokens": [
+    "TTT 的头像",
+    "ttt 的头像"
+   ],
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260722-19-35-15.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 1949710,
+   "source_start_ms": 1947130,
+   "text": "这怎么怎么是 ttt15 的头像",
+   "truth_id": "20260722-nancho-hotpot-ttt15-sc-id-r1"
   }
  ],
  "governance": {
