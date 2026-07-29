@@ -950,6 +950,25 @@ def queue_collab_evidence_capture(
     )
 
 
+CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
+    "scripts/produce_slice_package.py",
+    "src/autoslice/jingting_chunker.py",
+    "src/autoslice/subtitle_timing_qa.py",
+    "src/autoslice/boundary_endpoint_binding.py",
+    "src/autoslice/boundary_resolver.py",
+    "src/autoslice/boundary_semantic_review.py",
+    "src/autoslice/boundary_source_context_coverage.py",
+    "src/autoslice/final_review_contract.py",
+    "src/autoslice/producer_boundary.py",
+    "src/autoslice/producer_boundary_owner_contract.py",
+    "src/autoslice/producer_boundary_resolution.py",
+    "src/autoslice/producer_boundary_review_stage.py",
+    "src/autoslice/producer_request.py",
+    "src/autoslice/producer_text_pipeline.py",
+    "src/autoslice/talk_lane.py",
+)
+
+
 def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: str) -> str:
     """Hash only the code/assets capable of repairing a classified failure.
 
@@ -967,11 +986,7 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
     if failure_kind not in scoped_failure_kinds:
         return talk_pipeline_fingerprint(candidate_id)
     if failure_kind == "content_boundary":
-        relatives = (
-            "scripts/produce_slice_package.py",
-            "src/autoslice/jingting_chunker.py",
-            "src/autoslice/subtitle_timing_qa.py",
-        )
+        relatives = CONTENT_BOUNDARY_RECOVERY_RELATIVES
     elif failure_kind == "subtitle_authority":
         relatives = subtitle_authority_recovery_relatives(
             profile_asset_file("subtitle_truth_ledger")

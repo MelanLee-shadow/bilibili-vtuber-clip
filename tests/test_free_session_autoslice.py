@@ -8797,9 +8797,7 @@ def test_cover_route_regeneration_has_independent_one_shot_budget_at_talk_cap(
 def test_failure_scoped_talk_fingerprint_ignores_unrelated_graph_change(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     for relative in (
-        "scripts/produce_slice_package.py",
-        "src/autoslice/jingting_chunker.py",
-        "src/autoslice/subtitle_timing_qa.py",
+        *runner.CONTENT_BOUNDARY_RECOVERY_RELATIVES,
         "assets/lidousha/topic_entity_graph.json",
     ):
         path = tmp_path / relative
@@ -8814,6 +8812,30 @@ def test_failure_scoped_talk_fingerprint_ignores_unrelated_graph_change(tmp_path
     producer = tmp_path / "scripts/produce_slice_package.py"
     producer.write_text("boundary fix", encoding="utf-8")
     assert runner.talk_failure_recovery_fingerprint("content_boundary", "candidate") != baseline
+
+
+def test_content_boundary_recovery_fingerprint_tracks_semantic_trim_logic(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    for relative in runner.CONTENT_BOUNDARY_RECOVERY_RELATIVES:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative, encoding="utf-8")
+
+    baseline = runner.talk_failure_recovery_fingerprint(
+        "content_boundary", "candidate"
+    )
+    semantic_review = tmp_path / "src/autoslice/boundary_semantic_review.py"
+    semantic_review.write_text(
+        "CPA may trim an open automatic tail", encoding="utf-8"
+    )
+    assert (
+        runner.talk_failure_recovery_fingerprint(
+            "content_boundary", "candidate"
+        )
+        != baseline
+    )
 
 
 def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(

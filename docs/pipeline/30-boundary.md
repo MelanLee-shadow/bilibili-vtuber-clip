@@ -55,6 +55,11 @@ required owner 与 exact pin 均不得被这条窄门跨过。最终 scope 必�
 `recommendation_backward_ms`，resolver 复算同一 SHA 后才可采用；final-delivery 层仍只审
 实际成片最后 cue，不能在成片落地后凭文本结论偷偷再剪。
 
+`content_boundary` 的恢复指纹必须覆盖完整的生产边界决策面：semantic reviewer、
+request/scope 构造、owner/resolver、final-review contract 与 talk-lane 分类，而不只是顶层
+producer/chunker。上述任一实现变化都必须在下一次 runner tick 唤醒既有 boundary failure；
+无关 graph、crawler 或 reporting 变化不得制造重跑。
+
 因用户只报告 1–2 个抽样问题而触发 same-BV **整片重跑**时，旧公开成片的 endpoint
 不得被自动升级成 `exact_source_pin`。除非 Ivan 明确说已逐帧/逐句审过该候选的精确终点，
 默认只能登记为 `semantic_lower_bound`，由 source-full-window 语义评审继续寻找完整
