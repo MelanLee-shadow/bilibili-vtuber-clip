@@ -50,8 +50,12 @@
   manifest/audit、record、reviewed title、原 BVID/AID/CID publication target 和 final
   video/subtitle/cover。validator 必须重读 evidence 文件，验证其仍为完成状态并逐字段重建
   receipt；路径、字节或内容漂移都拒绝。封面 claims 集合只能精确投影 record
-  StoryContract `cover_reference_authority` 的 `source_visible_claims → SOURCE_FRAME` 与
-  `narrative_presentation → COVER_TEXT`，不能让 reviewer 自行换成宽泛故事摘要。
+  StoryContract `cover_reference_authority` 的 `source_visible_claims → SOURCE_FRAME`，
+  以及当前 record 中与最终封面 SHA-256 互相绑定的
+  `cover_generation.rendered_lines + rendered_text_pixels → COVER_TEXT`。
+  `narrative_presentation` 只是创作指导，不得被升级为最终 PNG 实际显示的文字；
+  reviewer 也不能自行换成宽泛故事摘要。字段上线前已冻结的历史 receipt
+  仅做只读兼容，新修复包缺当前 rendered-text 像素绑定必须拒发。
 - receipt **仅准入 exact same-BV repair**。它不会把 `upload_allowed` 改成 true，不是
   `AUTO_UPLOAD`，不授权新建 BV，也不替代 authorized manifest 中 Ivan 针对修复动作的授权原话。
   普通新投稿不得传 `--final-human-review` 借用这份权限。
@@ -60,7 +64,7 @@
   package root、review manifest 与 receipt。receipt 路径/hash、review contract hash、
   package evidence、reviewer identity、candidate/record/title/publication target、
   final video/subtitle/cover 路径/hash、exact review points、八项 checks、StoryContract
-  封面声明或包内文件
+  源帧声明、最终渲染文字像素绑定或包内文件
   任一漂移，`verify`、`repair-plan`、`repair-run`、`repair-status` 都必须在 adapter 构造或
   远端变更前拒绝。不得编辑 receipt 后只更新 manifest hash 来“续期”旧人工结论。
 - 无多人物 source-frame authority 的 host-only 封面，只能从 record 中 hash-closed 的
