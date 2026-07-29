@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from src.autoslice.final_review_carryover import (
     carryover_path,
     load_final_review_carryover,
     persist_final_review_carryover,
 )
+from src.autoslice.final_review_auditor import audit_final_subtitles
 
 
 def _audit(findings):
@@ -141,6 +141,102 @@ def test_incomplete_correction_merges_prior_and_new_exact_carryover(tmp_path):
         (27, "早上"),
         (31, "粉丝灯牌"),
     }
+
+
+def test_glossary_insertion_carryover_preserves_raw_provenance(tmp_path):
+    path = carryover_path(tmp_path, "auto_909")
+    count = persist_final_review_carryover(
+        path,
+        _audit(
+            [
+                {
+                    "cue_index": 2,
+                    "kind": "entity",
+                    "suspect": "",
+                    "suggestion": "团",
+                    "proposed_full_cue": "如果世上没有早起的粉丝团灯牌",
+                    "repair_class": "source_backed_entity",
+                    "candidate_provenance": {
+                        "kind": "glossary",
+                        "surface": "粉丝团灯牌",
+                    },
+                    "why": "平台固定礼物名漏字",
+                    "exact_release_adjudication": {"repaired": True},
+                }
+            ]
+        ),
+    )
+
+    assert count == 1
+    rows = load_final_review_carryover(path)
+    assert rows[0]["replacement"] == "团"
+    assert rows[0]["source_surface"] == "粉丝团灯牌"
+
+    findings = audit_final_subtitles(
+        "1\n00:00:00,000 --> 00:00:01,000\n谢谢\n\n"
+        "2\n00:00:01,000 --> 00:00:03,000\n"
+        "如果世上没有早起的粉丝灯牌\n",
+        llm_call=lambda _prompt: '{"findings":[]}',
+        extract_json=lambda value: json.loads(value),
+        glossary_text="- 粉丝团灯牌",
+        extra_raw_findings=rows,
+    )
+    assert len(findings) == 1
+    assert findings[0]["suspect"] == ""
+    assert findings[0]["suggestion"] == "团"
+    assert findings[0]["candidate_provenance"] == {
+        "kind": "glossary",
+        "surface": "粉丝团灯牌",
+    }
+
+
+def test_carryover_not_shadowed_by_different_empty_span_proposal(tmp_path):
+    path = carryover_path(tmp_path, "auto_909")
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": [
+                    {
+                        "cue": 1,
+                        "kind": "entity",
+                        "suspect": "",
+                        "replacement": "团",
+                        "proposed_full_cue": "粉丝团灯牌",
+                        "repair_class": "source_backed_entity",
+                        "source_surface": "粉丝团灯牌",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    findings = audit_final_subtitles(
+        "1\n00:00:00,000 --> 00:00:01,000\n粉丝灯牌\n",
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "findings": [
+                    {
+                        "cue": 1,
+                        "kind": "entity",
+                        "suspect": "",
+                        "replacement": "牌",
+                        "proposed_full_cue": "粉丝牌灯牌",
+                        "repair_class": "source_backed_entity",
+                        "source_surface": "粉丝牌灯牌",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        extract_json=lambda value: json.loads(value),
+        glossary_text="- 粉丝团灯牌\n- 粉丝牌灯牌",
+        extra_raw_findings=load_final_review_carryover(path),
+    )
+    assert {
+        row["proposed_full_cue"] for row in findings
+    } == {"粉丝团灯牌", "粉丝牌灯牌"}
 
 
 def test_load_rejects_malformed_payload(tmp_path):

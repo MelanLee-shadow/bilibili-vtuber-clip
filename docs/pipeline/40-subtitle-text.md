@@ -243,7 +243,10 @@
   `CORRECTION_DISCOVERY_INCOMPLETE` 时，不得把空 findings 当 clean 而删除未消费的旧
   sidecar；无新行就原字节保留，有新行则按 `(cue, suspect, proposed_full_cue)` 合并
   去重。只有 discovery 完整时才允许以本轮 exact 结果替换或清空 sidecar。缺文件、
-  计数漂移或内容不符仍 terminal fail closed。
+  计数漂移或内容不符仍 terminal fail closed。normalized finding 写入 raw carryover 时必须把
+  `suggestion → replacement`，并把 glossary/roster `candidate_provenance.surface →
+  source_surface`；尤其 `suspect=""` 的零长度专名插入不能丢掉这两项，否则下一轮会把已由
+  CPA 定案的高先验规范词误判为无 provenance，形成永久重试。
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
   `acoustic_drop_cue`。局部静音绝不授权删除后半段真实口播；不确定时保留/留空并阻断，

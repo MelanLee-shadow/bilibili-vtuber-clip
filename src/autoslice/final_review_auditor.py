@@ -51,7 +51,6 @@ from src.autoslice.source_subtitle_truth import (
 )
 from src.autoslice.subtitle_fidelity import (
     _homophone_equal,
-    _near_homophone_equal,
 )
 
 MAX_FINDINGS = 24
@@ -542,14 +541,16 @@ def _merged_raw_findings(
 
     if not extra_raw_findings:
         return raw
+    def identity(row: Mapping[str, Any]) -> tuple[object, str, object]:
+        return row.get("cue"), str(row.get("suspect") or ""), row.get("proposed_full_cue")
     seen = {
-        (row.get("cue"), str(row.get("suspect") or ""))
+        identity(row)
         for row in raw
         if isinstance(row, Mapping)
     }
     merged = list(raw)
     for row in extra_raw_findings:
-        key = (row.get("cue"), str(row.get("suspect") or ""))
+        key = identity(row)
         if key in seen:
             continue
         try:
@@ -1375,7 +1376,6 @@ def adjudicate_context_finding(
     )
     repaired = False
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
-    repair_class = str(request.get("repair_class") or "")
     orthography_ambiguous = _orthography_ambiguous(
         current_cue=str(request.get("current_cue") or ""),
         proposed_cue=str(request.get("proposed_cue") or ""),

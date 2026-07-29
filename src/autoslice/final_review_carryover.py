@@ -51,6 +51,25 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
         ):
             continue
         row = {key: finding.get(key) for key in _ROW_KEYS if key in finding}
+        # Normalized final-review findings expose the deterministic edit as
+        # ``suggestion`` and the textual spelling witness as
+        # ``candidate_provenance``.  The raw schema consumed by the next
+        # correction pass calls those fields ``replacement`` and
+        # ``source_surface``.  Preserve that translation explicitly,
+        # especially for zero-length glossary insertions such as
+        # 粉丝灯牌 -> 粉丝团灯牌; otherwise the next pass rejects the carried
+        # row as ENTITY_SOURCE_SURFACE_INVALID and the exact reviewer finds
+        # the same issue forever.
+        if "replacement" not in row and finding.get("suggestion") is not None:
+            row["replacement"] = finding.get("suggestion")
+        provenance = finding.get("candidate_provenance")
+        if (
+            "source_surface" not in row
+            and isinstance(provenance, Mapping)
+            and isinstance(provenance.get("surface"), str)
+            and str(provenance["surface"]).strip()
+        ):
+            row["source_surface"] = str(provenance["surface"]).strip()
         row["cue"] = finding.get("cue_index") or finding.get("cue")
         row["why"] = (
             f"[终审结转] {finding.get('why') or ''} "
