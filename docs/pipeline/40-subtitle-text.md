@@ -201,6 +201,10 @@
   cue 编号连续、时间戳合法、`end > start`、最短 300ms、单调且无重叠、文本非空、不以孤立
   标点或单个汉字充当 cue、不得越过媒体尾部。解析器静默跳过坏 block 一律视为失败。
   package audit 与 authorized upload 会各自重新运行同一 validator，不能信 producer 自报。
+- 发布级短 cue 合并必须在**所有**文本 authority 之后再跑：文本终审后执行一次，并在
+  `subtitle-redelivery-baseline` 与 source-truth replay 完成后的最终成片出口再次执行。
+  合并器只消费上述校验器实际拒绝的 `<300ms` / 非豁免单汉字 cue，且只并入 150ms 内最近
+  邻居并写审计；旧人工基线不得在后写阶段复活已被合并的「哦」「行」等碎片。
 - `final-review-audit.v1` 只描述 correction pass 的发现、路由与修复结果；即使它显示
   `CLEAN`/`APPLIED`，也不能证明后续 source truth、baseline 或 finalizer 没有引入回归。
   放行只认 `final-review-audit.v2`：它的 `reviewed_srt_sha256` 必须绑定包内 SRT 的原始

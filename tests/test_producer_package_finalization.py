@@ -1184,7 +1184,7 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     assert recut.redelivery_baseline_audit_path.is_file()
 
 
-def test_final_recut_v2_projects_reviewed_text_by_absolute_source_time(
+def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
     tmp_path: Path,
 ) -> None:
     padded = tmp_path / "padded.mp4"
@@ -1195,8 +1195,8 @@ def test_final_recut_v2_projects_reviewed_text_by_absolute_source_time(
     baseline = tmp_path / "reviewed.srt"
     baseline.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n裁掉的旧开头\n\n"
-        "2\n00:00:01,000 --> 00:00:02,000\n人工审定甲\n\n"
-        "3\n00:00:02,000 --> 00:00:03,000\n人工审定乙\n",
+        "2\n00:00:01,000 --> 00:00:01,200\n哦\n\n"
+        "3\n00:00:01,200 --> 00:00:03,000\n人工审定乙\n",
         encoding="utf-8",
     )
 
@@ -1207,8 +1207,8 @@ def test_final_recut_v2_projects_reviewed_text_by_absolute_source_time(
         _cues, _start_ms: int, _end_ms: int, output: Path
     ) -> None:
         output.write_text(
-            "1\n00:00:00,000 --> 00:00:01,000\n随机甲\n\n"
-            "2\n00:00:01,000 --> 00:00:02,000\n随机乙\n\n"
+            "1\n00:00:00,000 --> 00:00:00,200\n随机甲\n\n"
+            "2\n00:00:00,200 --> 00:00:02,000\n随机乙\n\n"
             "3\n00:00:02,000 --> 00:00:03,000\n新延长尾句\n",
             encoding="utf-8",
         )
@@ -1275,12 +1275,22 @@ def test_final_recut_v2_projects_reviewed_text_by_absolute_source_time(
     )
 
     output = recut.subtitle_path.read_text(encoding="utf-8")
-    assert "人工审定甲" in output
-    assert "人工审定乙" in output
+    assert "哦，人工审定乙" in output
+    assert "\n哦\n" not in output
     assert "裁掉的旧开头" not in output
     assert "新延长尾句" in output
     assert recut.redelivery_baseline_audit is not None
     assert recut.redelivery_baseline_audit["status"] == "APPLIED"
+    assert recut.redelivery_baseline_audit["final_release_grade_cue_merges"] == [
+        {
+            "block": 1,
+            "text": "哦",
+            "action": "MERGED_INTO_NEXT",
+        }
+    ]
+    assert recut.redelivery_baseline_audit[
+        "post_release_grade_output_sha256"
+    ] == hashlib.sha256(output.encode("utf-8")).hexdigest()
     assert recut.redelivery_baseline_audit["uncovered_current_cue_count"] == 1
     assert recut.redelivery_baseline_audit["omitted_baseline_cue_count"] == 1
 

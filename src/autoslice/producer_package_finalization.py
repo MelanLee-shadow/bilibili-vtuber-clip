@@ -33,6 +33,7 @@ from src.autoslice.cover_text_pixel_evidence import (
     verify_pre_overlay_route_background,
     verify_rendered_text_pixel_artifacts,
 )
+from src.autoslice.cue_split_hygiene import merge_release_grade_cues
 from src.autoslice.final_review_auditor import persist_review_audit
 from src.autoslice.final_review_contract import (
     FinalReviewContractError,
@@ -734,6 +735,44 @@ def _materialize_final_recut(
                 f"TITLE_MARK_BALANCE_REQUIRED_AFTER_REDELIVERY: "
                 f"{redelivery_baseline_audit_path}"
             )
+    # This is the last text-mutating choke point.  The earlier text pipeline
+    # already removes release-invalid slivers, but a hash-bound reviewed
+    # baseline is replayed later and can legitimately restore the old cue grid.
+    # Run the same validator-driven merge *after* baseline/source-truth replay
+    # so no late authority branch can resurrect <300ms or non-exempt one-CJK
+    # cues (2026-07-22 1863: 「哦」/「行」).
+    final_text = subtitle_path.read_text(encoding="utf-8")
+    final_text, final_release_grade_merge_rows = merge_release_grade_cues(
+        final_text
+    )
+    if final_release_grade_merge_rows:
+        subtitle_path.write_text(final_text, encoding="utf-8")
+        if chat_authority_audit is not None:
+            chat_authority_audit["final_release_grade_cue_merges"] = (
+                final_release_grade_merge_rows
+            )
+        if redelivery_baseline_audit is not None:
+            redelivery_baseline_audit["final_release_grade_cue_merges"] = (
+                final_release_grade_merge_rows
+            )
+            redelivery_baseline_audit[
+                "post_release_grade_output_sha256"
+            ] = hashlib.sha256(final_text.encode("utf-8")).hexdigest()
+            assert redelivery_baseline_audit_path is not None
+            redelivery_baseline_audit_path.write_text(
+                json.dumps(
+                    redelivery_baseline_audit,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+    if chat_authority_audit is not None:
+        chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
+            final_text.encode("utf-8")
+        ).hexdigest()
     (recut_dir / f"{cid}.recut.timing_qa.json").write_text(
         json.dumps(timing_qa, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
