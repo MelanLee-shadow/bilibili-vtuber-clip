@@ -917,7 +917,7 @@ def _cover_story_claim_authority(
         if isinstance(route, Mapping)
         else None
     )
-    source_grounded_render_ok = bool(
+    host_only_render_ok = bool(
         isinstance(generation, Mapping)
         and isinstance(route, Mapping)
         and (
@@ -934,6 +934,15 @@ def _cover_story_claim_authority(
                 and generation.get("image_generation_used") is True
                 and route.get("image_generation_used") is True
             )
+            or (
+                actual_treatment == "cpa_redraw"
+                and generation.get("cover_origin") == "AI_REDRAW"
+                and generation.get("image_generation_used") is True
+                and route.get("image_generation_used") is True
+                and generation.get("method") == "images.edit"
+                and generation.get("model") == "gpt-image-2"
+                and generation.get("image_gen_model") == "cpa"
+            )
         )
     )
     if (
@@ -944,7 +953,7 @@ def _cover_story_claim_authority(
         or not isinstance(generation, Mapping)
         or not isinstance(route, Mapping)
         or route.get("execution_status") != "READY"
-        or not source_grounded_render_ok
+        or not host_only_render_ok
         or route.get("selected_treatment") != route.get("actual_treatment")
         or route.get("relationship_visual_required") is not False
         or route.get("required_participant_ids") != []

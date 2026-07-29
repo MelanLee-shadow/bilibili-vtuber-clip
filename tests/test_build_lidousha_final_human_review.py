@@ -404,6 +404,128 @@ def test_template_accepts_hash_closed_host_only_screenshot_polish_cover(
     ]
 
 
+def test_template_accepts_hash_closed_host_only_cpa_redraw_cover(
+    receipt_package: dict[str, object],
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    rendered_lines = ["小李刚准备下注", "就没了"]
+    record["story_contract"].update(
+        {
+            "cover_reference_authority": None,
+            "cover_counterpart_reference_available": False,
+            "relation_claim_allowed": False,
+            "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        }
+    )
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    record["publish_staging"]["cover_generation"] = {
+        "cover_origin": "AI_REDRAW",
+        "image_generation_used": True,
+        "image_gen_model": "cpa",
+        "method": "images.edit",
+        "model": "gpt-image-2",
+        "final_cover_sha256": cover_sha256,
+        "rendered_lines": rendered_lines,
+        "rendered_text_pixels": {
+            "status": "PASS",
+            "rendered_text": "".join(rendered_lines),
+            "final_cover_sha256": cover_sha256,
+        },
+        "route_decision": {
+            "execution_status": "READY",
+            "actual_treatment": "cpa_redraw",
+            "selected_treatment": "cpa_redraw",
+            "relationship_visual_required": False,
+            "required_participant_ids": [],
+            "source_visible_participant_ids": [],
+            "image_generation_used": True,
+            "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+            "final_visibility_authority": "NOT_REQUIRED",
+        },
+    }
+    _write_json(record_path, record)
+
+    evidence = builder.build_evidence_template(
+        package_root=receipt_package["root"],
+        package_audit_path=receipt_package["audit_path"],
+    )
+
+    assert evidence["items"][0]["cover_story_claims"] == [
+        {
+            "claim": "封面文字呈现“小李刚准备下注 / 就没了”",
+            "presentation": "COVER_TEXT",
+            "observation": {
+                "anchor": "FINAL_COVER/COVER_TEXT",
+                "detail": "<REQUIRED_POST_REVIEW_VISIBLE_COVER_DETAIL>",
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cover_origin", "method", "model", "image_gen_model"),
+    [
+        ("SOURCE_SCREENSHOT", "images.edit", "gpt-image-2", "cpa"),
+        ("AI_REDRAW", "images.generate", "gpt-image-2", "cpa"),
+        ("AI_REDRAW", "images.edit", "unverified-model", "cpa"),
+        ("AI_REDRAW", "images.edit", "gpt-image-2", "unknown"),
+    ],
+)
+def test_template_refuses_incoherent_host_only_cpa_redraw_provenance(
+    receipt_package: dict[str, object],
+    cover_origin: str,
+    method: str,
+    model: str,
+    image_gen_model: str,
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    record["story_contract"].update(
+        {
+            "cover_reference_authority": None,
+            "cover_counterpart_reference_available": False,
+            "relation_claim_allowed": False,
+            "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        }
+    )
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    record["publish_staging"]["cover_generation"] = {
+        "cover_origin": cover_origin,
+        "image_generation_used": True,
+        "image_gen_model": image_gen_model,
+        "method": method,
+        "model": model,
+        "final_cover_sha256": cover_sha256,
+        "rendered_lines": ["小李刚准备下注", "就没了"],
+        "rendered_text_pixels": {
+            "status": "PASS",
+            "rendered_text": "小李刚准备下注就没了",
+            "final_cover_sha256": cover_sha256,
+        },
+        "route_decision": {
+            "execution_status": "READY",
+            "actual_treatment": "cpa_redraw",
+            "selected_treatment": "cpa_redraw",
+            "relationship_visual_required": False,
+            "required_participant_ids": [],
+            "source_visible_participant_ids": [],
+            "image_generation_used": True,
+            "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+            "final_visibility_authority": "NOT_REQUIRED",
+        },
+    }
+    _write_json(record_path, record)
+
+    with pytest.raises(builder.FinalHumanReviewBuildError):
+        builder.build_evidence_template(
+            package_root=receipt_package["root"],
+            package_audit_path=receipt_package["audit_path"],
+        )
+
+
 @pytest.mark.parametrize(
     ("cover_origin", "generation_used", "route_used"),
     [

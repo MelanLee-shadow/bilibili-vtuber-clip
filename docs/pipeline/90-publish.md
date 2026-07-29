@@ -66,8 +66,11 @@
 - 无多人物 source-frame authority 的 host-only 封面，只能从 record 中 hash-closed 的
   最终渲染文字生成 `COVER_TEXT` claim。`screenshot_direct` 必须绑定
   `SOURCE_SCREENSHOT + image_generation_used=false`；`screenshot_polish` 必须绑定
-  `SOURCE_SCREENSHOT_AI_POLISH + image_generation_used=true`。两种 provenance 不得混用，
-  AI polish 也不会因此获得人物身份或 source-visible claim authority。
+  `SOURCE_SCREENSHOT_AI_POLISH + image_generation_used=true`；`cpa_redraw` 必须绑定
+  `AI_REDRAW + images.edit + gpt-image-2 + image_gen_model=cpa`，且 generation/route 两面都
+  明示实际使用了生图。三种 provenance 不得混用，AI polish/redraw 也不会因此获得人物身份
+  或 source-visible claim authority；receipt 只投影实际渲染文字，最终视觉身份仍由
+  `cover_identity` 感知检查如实验收。
 - receipt 只能由 `scripts/build_lidousha_final_human_review.py` 从完成后的
   `lidousha-final-human-review-evidence.v2` 构建，禁止手写 PASS receipt。先在最终包和 current
   package audit 冻结后运行 `--prepare-evidence-template`；模板必须绑定 committed review
