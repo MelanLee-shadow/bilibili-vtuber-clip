@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 
 import pytest
@@ -237,3 +238,119 @@ def test_context_only_truth_does_not_relax_baseline_final_surface() -> None:
     assert audit["final_source_truth_owner_verification"]["status"] == "PASS"
     assert audit["final_redelivery_baseline_owner_verification"]["status"] == "FAIL"
     assert audit["final_verification_failure"] == ("REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED")
+
+
+def test_hash_bound_release_grade_merge_preserves_baseline_owner() -> None:
+    final = _srt(
+        (0, 880, "哦，这样吗"),
+        (2_000, 4_560, "嘻，晓得吧，行"),
+    )
+    final_hash = hashlib.sha256(final.encode("utf-8")).hexdigest()
+    receipts = [
+        {"block": 1, "text": "哦", "action": "MERGED_INTO_NEXT"},
+        {"block": 3, "text": "行", "action": "MERGED_INTO_PREV"},
+    ]
+    audit = _audit(
+        baseline={
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 240,
+                    "text": "哦",
+                },
+                {
+                    "baseline_cue_index": 2,
+                    "start_ms": 240,
+                    "end_ms": 880,
+                    "text": "这样吗",
+                },
+                {
+                    "baseline_cue_index": 3,
+                    "start_ms": 2_000,
+                    "end_ms": 3_480,
+                    "text": "嘻，晓得吧",
+                },
+                {
+                    "baseline_cue_index": 4,
+                    "start_ms": 3_560,
+                    "end_ms": 4_560,
+                    "text": "行",
+                },
+            ],
+            "final_release_grade_cue_merges": deepcopy(receipts),
+            "post_release_grade_output_sha256": final_hash,
+        },
+    )
+    audit["final_release_grade_cue_merges"] = deepcopy(receipts)
+    audit["final_output_srt_sha256"] = final_hash
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=5_000,
+    )
+    receipt = audit["final_redelivery_baseline_owner_verification"]
+    assert receipt["status"] == "PASS"
+    assert receipt["release_grade_merge_group_count"] == 2
+    assert all(
+        row["final_owner_scope"]
+        == "DETERMINISTIC_RELEASE_GRADE_CUE_MERGE"
+        for row in audit["redelivery_subtitle_baseline_audit"]["mappings"]
+    )
+
+
+@pytest.mark.parametrize("tamper", ["hash", "receipt", "extra_text"])
+def test_release_grade_merge_owner_receipt_fails_closed(tamper: str) -> None:
+    final = _srt((0, 880, "哦，这样吗"))
+    final_hash = hashlib.sha256(final.encode("utf-8")).hexdigest()
+    receipts = [
+        {"block": 1, "text": "哦", "action": "MERGED_INTO_NEXT"},
+    ]
+    audit = _audit(
+        baseline={
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 240,
+                    "text": "哦",
+                },
+                {
+                    "baseline_cue_index": 2,
+                    "start_ms": 240,
+                    "end_ms": 880,
+                    "text": "这样吗",
+                },
+            ],
+            "final_release_grade_cue_merges": deepcopy(receipts),
+            "post_release_grade_output_sha256": final_hash,
+        },
+    )
+    audit["final_release_grade_cue_merges"] = deepcopy(receipts)
+    audit["final_output_srt_sha256"] = final_hash
+    if tamper == "hash":
+        audit["redelivery_subtitle_baseline_audit"][
+            "post_release_grade_output_sha256"
+        ] = "0" * 64
+    elif tamper == "receipt":
+        audit["final_release_grade_cue_merges"][0]["action"] = (
+            "MERGED_INTO_PREV"
+        )
+    else:
+        final = _srt((0, 880, "哦，这样吗，额外词"))
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=1_000,
+    )
+    assert audit["final_verification_failure"] == (
+        "REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED"
+    )

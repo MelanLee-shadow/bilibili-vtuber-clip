@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 
 from .chat_authority import (
@@ -12,6 +13,7 @@ from .chat_authority import (
     normalize_srt_payload_window,
 )
 from .chat_evidence import normalize_srt_owner_payload_window
+from .jingting_chunker import parse_srt_cues
 from .redelivery_subtitle_baseline import MIN_ALIGNMENT_OVERLAP_MS
 from .source_subtitle_truth import (
     MIN_CUE_OVERLAP_MS,
@@ -23,6 +25,7 @@ FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS = 250
 FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO = 0.1
 FINAL_AUTHORITY_SCOPE_REJECTED_STRADDLER_MAX_MS = 500
 FINAL_AUTHORITY_SCOPE_REJECTED_STRADDLER_MAX_RATIO = 0.15
+FINAL_RELEASE_GRADE_MERGE_MAX_GAP_MS = 150
 
 
 def _outside_delivery_edge_fragment_reason(
@@ -944,6 +947,152 @@ def _verify_source_truth_owners(
     return not failures, required_count
 
 
+def _merge_receipts_can_collapse_group(
+    expected_parts: list[str],
+    receipts: list[dict],
+) -> tuple[bool, list[dict]]:
+    """Replay typed release-grade receipts over one adjacent baseline group."""
+
+    states: dict[tuple[str, ...], list[dict]] = {
+        tuple(expected_parts): []
+    }
+    for receipt in receipts:
+        action = str(receipt.get("action") or "")
+        receipt_text = normalize_chat_text(str(receipt.get("text") or ""))
+        if action not in {"MERGED_INTO_NEXT", "MERGED_INTO_PREV"}:
+            continue
+        next_states = dict(states)
+        for state, applied in states.items():
+            for position, part in enumerate(state):
+                if part != receipt_text:
+                    continue
+                if action == "MERGED_INTO_NEXT" and position + 1 < len(state):
+                    collapsed = (
+                        state[:position]
+                        + (state[position] + state[position + 1],)
+                        + state[position + 2 :]
+                    )
+                elif action == "MERGED_INTO_PREV" and position > 0:
+                    collapsed = (
+                        state[: position - 1]
+                        + (state[position - 1] + state[position],)
+                        + state[position + 1 :]
+                    )
+                else:
+                    continue
+                next_states.setdefault(collapsed, applied + [receipt])
+        states = next_states
+    final_state = ("".join(expected_parts),)
+    applied = states.get(final_state)
+    return applied is not None, applied or []
+
+
+def _verify_release_grade_merge_groups(
+    audit: dict,
+    *,
+    mapping_results: list[dict],
+    final_text_srt: str,
+) -> list[dict]:
+    """Accept only hash-bound, exactly replayable cue-layout merges.
+
+    Redelivery owns the reviewed words, while the later release-grade hygiene
+    layer may remove an invalid sliver cue without changing those words.  The
+    old owner check compared every baseline cue in isolation, so a legitimate
+    ``哦`` + ``这样吗`` -> ``哦，这样吗`` merge looked like text mutation.
+    This verifier groups mappings by the one final cue that owns them, proves
+    their normalized concatenation is exact, and replays the typed merge
+    receipts.  Missing/tampered receipts, extra words, non-adjacent windows, or
+    a stale final hash remain fail-closed.
+    """
+
+    baseline = audit.get("redelivery_subtitle_baseline_audit") or {}
+    baseline_receipts = baseline.get("final_release_grade_cue_merges") or []
+    audit_receipts = audit.get("final_release_grade_cue_merges") or []
+    final_hash = hashlib.sha256(final_text_srt.encode("utf-8")).hexdigest()
+    if (
+        not isinstance(baseline_receipts, list)
+        or not baseline_receipts
+        or audit_receipts != baseline_receipts
+        or baseline.get("post_release_grade_output_sha256") != final_hash
+        or audit.get("final_output_srt_sha256") != final_hash
+    ):
+        return []
+    if any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("block"), int)
+        or int(row["block"]) <= 0
+        or row.get("action")
+        not in {"MERGED_INTO_NEXT", "MERGED_INTO_PREV"}
+        or not normalize_chat_text(str(row.get("text") or ""))
+        for row in baseline_receipts
+    ):
+        return []
+
+    final_cues = parse_srt_cues(final_text_srt)
+    groups: dict[int, list[dict]] = {}
+    for result in mapping_results:
+        if result["verified"]:
+            continue
+        owner_cues = [
+            cue
+            for cue in final_cues
+            if min(result["end_ms"], cue.end_ms)
+            - max(result["start_ms"], cue.start_ms)
+            >= MIN_ALIGNMENT_OVERLAP_MS
+        ]
+        if len(owner_cues) != 1:
+            continue
+        groups.setdefault(owner_cues[0].index, []).append(result)
+
+    verified_groups: list[dict] = []
+    cues_by_index = {cue.index: cue for cue in final_cues}
+    for cue_index, group in groups.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda result: (result["start_ms"], result["end_ms"]))
+        cue = cues_by_index[cue_index]
+        if (
+            cue.start_ms != group[0]["start_ms"]
+            or cue.end_ms != group[-1]["end_ms"]
+        ):
+            continue
+        if any(
+            current["start_ms"] < previous["end_ms"]
+            or current["start_ms"] - previous["end_ms"]
+            > FINAL_RELEASE_GRADE_MERGE_MAX_GAP_MS
+            for previous, current in zip(group, group[1:])
+        ):
+            continue
+        expected_parts = [result["expected"] for result in group]
+        combined = "".join(expected_parts)
+        final_payload = normalize_chat_text(cue.text)
+        if (
+            not all(expected_parts)
+            or combined != final_payload
+            or any(
+                result["text_payload"] != final_payload
+                or result["speaker_payload"] != final_payload
+                for result in group
+            )
+        ):
+            continue
+        receipt_ok, applied_receipts = _merge_receipts_can_collapse_group(
+            expected_parts,
+            baseline_receipts,
+        )
+        if not receipt_ok:
+            continue
+        verified_groups.append(
+            {
+                "final_cue_index": cue_index,
+                "mapping_results": group,
+                "final_payload": final_payload,
+                "receipt_actions": applied_receipts,
+            }
+        )
+    return verified_groups
+
+
 def _verify_redelivery_baseline_owners(
     audit: dict,
     *,
@@ -963,6 +1112,7 @@ def _verify_redelivery_baseline_owners(
         row for row in baseline.get("mappings") or [] if isinstance(row, dict)
     ]
     failures: list[dict] = []
+    mapping_results: list[dict] = []
     required_count = 0
     for row in mappings:
         start_ms = int(row.get("start_ms") or 0)
@@ -1027,18 +1177,53 @@ def _verify_redelivery_baseline_owners(
             )
         if full_projection is not None:
             row["final_owner_source_truth_projection"] = full_projection
-        if not (text_ok and speaker_ok):
-            failures.append(
+        mapping_results.append(
+            {
+                "row": row,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "expected": expected,
+                "text_payload": text_payload,
+                "speaker_payload": speaker_payload,
+                "verified": text_ok and speaker_ok,
+            }
+        )
+    release_merge_groups = _verify_release_grade_merge_groups(
+        audit,
+        mapping_results=mapping_results,
+        final_text_srt=final_text_srt,
+    )
+    release_merge_mapping_ids = {
+        id(result["row"])
+        for group in release_merge_groups
+        for result in group["mapping_results"]
+    }
+    for result in mapping_results:
+        row = result["row"]
+        if id(row) in release_merge_mapping_ids:
+            result["verified"] = True
+            row.update(
                 {
-                    "baseline_cue_index": row.get("baseline_cue_index"),
-                    "reason_code": "REDELIVERY_BASELINE_FINAL_OWNER_MISMATCH",
-                    "start_ms": start_ms,
-                    "end_ms": end_ms,
-                    "expected": expected,
-                    "text_payload": text_payload,
-                    "speaker_payload": speaker_payload,
+                    "final_owner_scope": (
+                        "DETERMINISTIC_RELEASE_GRADE_CUE_MERGE"
+                    ),
+                    "final_owner_verified": True,
                 }
             )
+            continue
+        if result["verified"]:
+            continue
+        failures.append(
+            {
+                "baseline_cue_index": row.get("baseline_cue_index"),
+                "reason_code": "REDELIVERY_BASELINE_FINAL_OWNER_MISMATCH",
+                "start_ms": result["start_ms"],
+                "end_ms": result["end_ms"],
+                "expected": result["expected"],
+                "text_payload": result["text_payload"],
+                "speaker_payload": result["speaker_payload"],
+            }
+        )
     if not mappings:
         failures.append(
             {
@@ -1048,6 +1233,19 @@ def _verify_redelivery_baseline_owners(
     audit["final_redelivery_baseline_owner_verification"] = {
         "status": "FAIL" if failures else "PASS",
         "required_mapping_count": required_count,
+        "release_grade_merge_group_count": len(release_merge_groups),
+        "release_grade_merge_groups": [
+            {
+                "final_cue_index": group["final_cue_index"],
+                "baseline_cue_indexes": [
+                    result["row"].get("baseline_cue_index")
+                    for result in group["mapping_results"]
+                ],
+                "final_payload": group["final_payload"],
+                "receipt_actions": group["receipt_actions"],
+            }
+            for group in release_merge_groups
+        ],
         "failures": failures,
     }
     return not failures, required_count
