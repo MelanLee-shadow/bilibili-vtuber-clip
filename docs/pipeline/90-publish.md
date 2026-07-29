@@ -63,6 +63,11 @@
   封面声明或包内文件
   任一漂移，`verify`、`repair-plan`、`repair-run`、`repair-status` 都必须在 adapter 构造或
   远端变更前拒绝。不得编辑 receipt 后只更新 manifest hash 来“续期”旧人工结论。
+- 无多人物 source-frame authority 的 host-only 封面，只能从 record 中 hash-closed 的
+  最终渲染文字生成 `COVER_TEXT` claim。`screenshot_direct` 必须绑定
+  `SOURCE_SCREENSHOT + image_generation_used=false`；`screenshot_polish` 必须绑定
+  `SOURCE_SCREENSHOT_AI_POLISH + image_generation_used=true`。两种 provenance 不得混用，
+  AI polish 也不会因此获得人物身份或 source-visible claim authority。
 - receipt 只能由 `scripts/build_lidousha_final_human_review.py` 从完成后的
   `lidousha-final-human-review-evidence.v2` 构建，禁止手写 PASS receipt。先在最终包和 current
   package audit 冻结后运行 `--prepare-evidence-template`；模板必须绑定 committed review

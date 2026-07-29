@@ -912,22 +912,43 @@ def _cover_story_claim_authority(
         if isinstance(generation, Mapping)
         else None
     )
+    actual_treatment = (
+        route.get("actual_treatment")
+        if isinstance(route, Mapping)
+        else None
+    )
+    source_grounded_render_ok = bool(
+        isinstance(generation, Mapping)
+        and isinstance(route, Mapping)
+        and (
+            (
+                actual_treatment == "screenshot_direct"
+                and generation.get("cover_origin") == "SOURCE_SCREENSHOT"
+                and generation.get("image_generation_used") is False
+                and route.get("image_generation_used") is False
+            )
+            or (
+                actual_treatment == "screenshot_polish"
+                and generation.get("cover_origin")
+                == "SOURCE_SCREENSHOT_AI_POLISH"
+                and generation.get("image_generation_used") is True
+                and route.get("image_generation_used") is True
+            )
+        )
+    )
     if (
         story_contract.get("cover_counterpart_reference_available") is not False
         or story_contract.get("relation_claim_allowed") is not False
         or story_contract.get("cover_fallback_mode")
         not in {"HOST_ONLY_GENERIC", "HOST_ONLY_RELATION_EXPLICIT"}
         or not isinstance(generation, Mapping)
-        or generation.get("cover_origin") != "SOURCE_SCREENSHOT"
         or not isinstance(route, Mapping)
         or route.get("execution_status") != "READY"
-        or route.get("actual_treatment")
-        not in {"screenshot_direct", "screenshot_polish"}
+        or not source_grounded_render_ok
         or route.get("selected_treatment") != route.get("actual_treatment")
         or route.get("relationship_visual_required") is not False
         or route.get("required_participant_ids") != []
         or route.get("source_visible_participant_ids") != []
-        or route.get("image_generation_used") is not False
         or route.get("source_visibility_authority") != "NO_IDENTITY_AUTHORITY"
         or route.get("final_visibility_authority") != "NOT_REQUIRED"
         or not isinstance(rendered_lines, list)

@@ -308,6 +308,7 @@ def test_template_accepts_hash_closed_host_only_screenshot_cover(
     record["artifact_hashes"] = {"cover_sha256": cover_sha256}
     record["publish_staging"]["cover_generation"] = {
         "cover_origin": "SOURCE_SCREENSHOT",
+        "image_generation_used": False,
         "final_cover_sha256": cover_sha256,
         "rendered_lines": rendered_lines,
         "rendered_text_pixels": {
@@ -344,6 +345,120 @@ def test_template_accepts_hash_closed_host_only_screenshot_cover(
             },
         }
     ]
+
+
+def test_template_accepts_hash_closed_host_only_screenshot_polish_cover(
+    receipt_package: dict[str, object],
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    rendered_lines = ["发1支持沙豆李", "赶紧改成2"]
+    record["story_contract"].update(
+        {
+            "cover_reference_authority": None,
+            "cover_counterpart_reference_available": False,
+            "relation_claim_allowed": False,
+            "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        }
+    )
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    record["publish_staging"]["cover_generation"] = {
+        "cover_origin": "SOURCE_SCREENSHOT_AI_POLISH",
+        "image_generation_used": True,
+        "final_cover_sha256": cover_sha256,
+        "rendered_lines": rendered_lines,
+        "rendered_text_pixels": {
+            "status": "PASS",
+            "rendered_text": "".join(rendered_lines),
+            "final_cover_sha256": cover_sha256,
+        },
+        "route_decision": {
+            "execution_status": "READY",
+            "actual_treatment": "screenshot_polish",
+            "selected_treatment": "screenshot_polish",
+            "relationship_visual_required": False,
+            "required_participant_ids": [],
+            "source_visible_participant_ids": [],
+            "image_generation_used": True,
+            "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+            "final_visibility_authority": "NOT_REQUIRED",
+        },
+    }
+    _write_json(record_path, record)
+
+    evidence = builder.build_evidence_template(
+        package_root=receipt_package["root"],
+        package_audit_path=receipt_package["audit_path"],
+    )
+
+    assert evidence["items"][0]["cover_story_claims"] == [
+        {
+            "claim": "封面文字呈现“发1支持沙豆李 / 赶紧改成2”",
+            "presentation": "COVER_TEXT",
+            "observation": {
+                "anchor": "FINAL_COVER/COVER_TEXT",
+                "detail": "<REQUIRED_POST_REVIEW_VISIBLE_COVER_DETAIL>",
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cover_origin", "generation_used", "route_used"),
+    [
+        ("SOURCE_SCREENSHOT", True, True),
+        ("SOURCE_SCREENSHOT_AI_POLISH", False, True),
+        ("SOURCE_SCREENSHOT_AI_POLISH", True, False),
+    ],
+)
+def test_template_refuses_incoherent_host_only_screenshot_provenance(
+    receipt_package: dict[str, object],
+    cover_origin: str,
+    generation_used: bool,
+    route_used: bool,
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["story_contract"].update(
+        {
+            "cover_reference_authority": None,
+            "cover_counterpart_reference_available": False,
+            "relation_claim_allowed": False,
+            "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        }
+    )
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    record["publish_staging"]["cover_generation"] = {
+        "cover_origin": cover_origin,
+        "image_generation_used": generation_used,
+        "final_cover_sha256": cover_sha256,
+        "rendered_lines": ["有骗子", "刚准备下注就没了"],
+        "rendered_text_pixels": {
+            "status": "PASS",
+            "rendered_text": "有骗子刚准备下注就没了",
+            "final_cover_sha256": cover_sha256,
+        },
+        "route_decision": {
+            "execution_status": "READY",
+            "actual_treatment": "screenshot_polish",
+            "selected_treatment": "screenshot_polish",
+            "relationship_visual_required": False,
+            "required_participant_ids": [],
+            "source_visible_participant_ids": [],
+            "image_generation_used": route_used,
+            "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+            "final_visibility_authority": "NOT_REQUIRED",
+        },
+    }
+    _write_json(record_path, record)
+
+    with pytest.raises(builder.FinalHumanReviewBuildError):
+        builder.build_evidence_template(
+            package_root=receipt_package["root"],
+            package_audit_path=receipt_package["audit_path"],
+        )
 
 
 @pytest.mark.parametrize(
