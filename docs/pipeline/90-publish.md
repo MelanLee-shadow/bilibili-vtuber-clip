@@ -149,11 +149,17 @@ BVID 相等。只读 live snapshot 随后还要证明 Creator/public/section 的
 若同一 BVID 已完成过一次同 BV 修复，publication registry 中的原始 CID 仍保持不可变；
 后续 `repair-plan` 不得靠裸 CID 覆盖绕过。必须显式传
 `--predecessor-completed <same-bv-repair-completed.v1>`：planner 会重放 predecessor plan
-及其 hash、manifest/replacement bindings、hash-chain journal 的终态 `VERIFIED` 行和 completed
-fresh snapshot，并要求本次 fresh Creator/public/exact-section 单 P snapshot 与该 completed
-snapshot 精确相等，才把 predecessor 新 CID 冻结为本次 `before`。completed/plan/journal 任一路径、
-hash、candidate/BVID/AID、CID 拓扑或 fresh live 面漂移都 fail closed。共享 journal 只允许前一
-owner 已 `VERIFIED` 且新 `PLANNED` 行显式绑定其终态 row hash 的单链移交，禁止分叉或并发抢占。
+及其 hash、冻结的 manifest/replacement/人工复核 envelope、hash-chain journal 的终态
+`VERIFIED` 行和 completed fresh snapshot，并要求本次 fresh Creator/public/exact-section
+单 P snapshot 与该 completed snapshot 精确相等，才把 predecessor 新 CID 冻结为本次
+`before`。前序 `VERIFIED` 行证明的是**当时已通过完整准入并完成的历史 CID 迁移**；后续
+review-package refresh 可以更新旧包内 `review_manifest` 等可再生产路径，不得因此反向撤销
+已经完成的线上迁移。planner 因而只重验前序 plan 文件 hash、冻结 envelope、journal
+bindings/终态与 live snapshot，不重新把旧包按今天规则发布一遍；本次 replacement 仍必须
+逐项通过当前 manifest/audit/final-human-review 全量准入。completed/plan/journal 任一路径、
+hash、candidate/BVID/AID、CID 拓扑或 fresh live 面漂移都 fail closed。共享 journal 只允许
+前一 owner 已 `VERIFIED` 且新 `PLANNED` 行显式绑定其终态 row hash 的单链移交，禁止分叉或
+并发抢占。
 
 same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie_pairs`：
 `{cookie_info:{cookies:[…]}}` 与 `{data:{cookie_info:{cookies:[…]}}}` 两种真实形态都按
