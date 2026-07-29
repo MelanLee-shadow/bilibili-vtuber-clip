@@ -8748,15 +8748,26 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
     baseline = runner.talk_failure_recovery_fingerprint(
         "subtitle_authority", "candidate"
     )
-    finalizer = tmp_path / "src/autoslice/producer_text_finalization.py"
-    finalizer.write_text("exact authorized deletion verifier fix", encoding="utf-8")
-
-    assert (
-        runner.talk_failure_recovery_fingerprint(
-            "subtitle_authority", "candidate"
+    for relative, repair in (
+        (
+            "src/autoslice/producer_text_finalization.py",
+            "exact authorized deletion verifier fix",
+        ),
+        (
+            "src/autoslice/final_review_contract.py",
+            "CPA keep-current receipt shape fix",
+        ),
+    ):
+        verifier = tmp_path / relative
+        original = verifier.read_text(encoding="utf-8")
+        verifier.write_text(repair, encoding="utf-8")
+        assert (
+            runner.talk_failure_recovery_fingerprint(
+                "subtitle_authority", "candidate"
+            )
+            != baseline
         )
-        != baseline
-    )
+        verifier.write_text(original, encoding="utf-8")
 
 
 def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
