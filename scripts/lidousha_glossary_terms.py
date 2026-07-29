@@ -54,10 +54,12 @@ FALLBACK_CANON: tuple[str, ...] = ("kmx",)
 
 # Characters stripped from the edge of any extracted token (mixed full/half
 # width quotes, brackets and book-title marks all appear in the glossary).
-_STRIP_EDGE = " \t　“”\"'‘’「」『』（）()《》【】"
+_STRIP_EDGE = " \t　“”\"'‘’「」『』（）()《》【】*"
 # A canon token is a latin word (optionally with internal spaces, e.g.
 # "cream soda") or a short CJK/alnum run (e.g. 李豆沙 / 142 / 打call / Ado).
-_CANON_TOKEN_RE = re.compile(r"^(?:[A-Za-z][A-Za-z ]*[A-Za-z]|[A-Za-z0-9一-鿿]{1,8})$")
+_CANON_TOKEN_RE = re.compile(
+    r"^(?:[A-Za-z][A-Za-z ]*[A-Za-z]|[A-Za-z0-9一-鿿]{1,8}(?:\.[0-9]{1,3})?)$"
+)
 # A blacklist token: 1..10 chars, no whitespace, CJK/latin/digits only.
 _BLACKLIST_TOKEN_RE = re.compile(r"^[A-Za-z0-9一-鿿]{1,10}$")
 

@@ -12,18 +12,10 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from src.autoslice.channel_profile import CanonicalSurfaceRule, load_channel_profile
 
-
-# 行首「类别标签：」（梗词：/品牌/话题词：/人名/ID：…）先剥掉再取词面；
-# 2026-07-19 修正：旧式只认「梗词：」，导致带其他标签的行捕获到的是标签
-# 本身（「品牌/话题词」），和成天下/七星等词面从未真正进入保护集。
-_GLOSSARY_TERM_RX = re.compile(
-    r"^[-*]\s*(?:[^：:（(]{1,10}[：:])?\*{0,2}([^：:（(＝=，,。、；\s*]{2,12})"
-)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
@@ -151,12 +143,13 @@ def registered_terms() -> frozenset[str]:
     except Exception:
         pass
     try:
-        from scripts.gemini_slice_jingting import glossary as _glossary
+        from scripts.lidousha_glossary_terms import load_glossary_terms
 
-        for line in _glossary().splitlines():
-            match = _GLOSSARY_TERM_RX.match(line.strip())
-            if match:
-                terms.add(match.group(1).strip("*"))
+        terms.update(
+            load_glossary_terms(
+                CHANNEL_PROFILE.asset_file("glossary")
+            ).canon
+        )
     except Exception:
         pass
     try:
@@ -192,12 +185,13 @@ def protected_terms() -> frozenset[str]:
     except Exception:
         pass
     try:
-        from scripts.gemini_slice_jingting import glossary as _glossary
+        from scripts.lidousha_glossary_terms import load_glossary_terms
 
-        for line in _glossary().splitlines():
-            match = _GLOSSARY_TERM_RX.match(line.strip())
-            if match:
-                terms.add(match.group(1).strip("*"))
+        terms.update(
+            load_glossary_terms(
+                CHANNEL_PROFILE.asset_file("glossary")
+            ).canon
+        )
     except Exception:
         pass
     return frozenset(t for t in terms if t and len(t) >= 2)

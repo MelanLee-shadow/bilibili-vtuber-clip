@@ -31,6 +31,9 @@ def test_parse_real_glossary_extracts_multiple_canon_and_blacklist():
         "小李",
         "和成天下",
         "粉丝团灯牌",
+        "礼豆沙",
+        "李墨",
+        "做0.4",
     ):
         assert canon in terms.canon, canon
     # ASR mishearing variants are harvested for the blacklist.
@@ -97,6 +100,16 @@ def test_expected_value_pairs_require_one_unambiguous_canonical():
 
     assert ("下斗里", "沙豆李") in pairs
     assert all(surface != "连情" for surface, _ in pairs)
+
+
+def test_cp_order_names_are_registered_peers_not_mechanical_respell_pairs():
+    terms = load_glossary_terms(GLOSSARY)
+    pairs = parse_glossary_expected_value_pairs(
+        GLOSSARY.read_text(encoding="utf-8")
+    )
+
+    assert {"礼墨", "礼豆沙", "李墨"} <= set(terms.canon)
+    assert all(surface != "李默" for surface, _ in pairs)
 
 
 def test_load_glossary_terms_is_fail_safe_on_missing_file(tmp_path):

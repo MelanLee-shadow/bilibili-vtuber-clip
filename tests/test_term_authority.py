@@ -25,6 +25,8 @@ def test_selected_profile_terms_are_protected_from_downstream_rewrites():
         "梦现代",
         "林墨",
         "礼墨",
+        "礼豆沙",
+        "李墨",
         "kmx",
         "做0.4",
     } <= terms
@@ -40,6 +42,8 @@ def test_expected_value_lane_is_explicit_and_mishear_is_not_registered_peer():
     } <= pairs
     terms = registered_terms()
     assert "礼墨" in terms
+    assert "礼豆沙" in terms
+    assert "李墨" in terms
     assert "粉丝团灯牌" in terms
     assert "恋青" in terms
     assert "恋死" in terms
