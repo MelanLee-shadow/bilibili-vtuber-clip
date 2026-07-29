@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-28/29: the already-published 7/24 candidate auto_183122_1209_1410 has a semantically fragmented cover; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+  "entries": [
+    {
+      "candidate_id": "auto_183122_1209_1410",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！",
+      "required_given_end_ms": 1410240,
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1AD366DEd9",
+      "aid": 116999590059503,
+      "cid": 40388855586,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-28-new/auto_183122_1209_1410.public_verify.json",
+      "source_public_verify_sha256": "sha256:404cb225a0b8f44d4dfa8d3983e9f8b3be9c17325d1e86926bf30f60f996d272",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}
