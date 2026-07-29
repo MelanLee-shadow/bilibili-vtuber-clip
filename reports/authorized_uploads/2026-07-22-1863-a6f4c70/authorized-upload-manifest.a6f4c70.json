@@ -1,0 +1,99 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "3c7f03c5637f",
+  "video": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/弹幕追问李豆沙为何请南町吃火锅，她从.mp4",
+    "sha256": "3c7f03c5637f429db29f0d9c49fbf2f4cbdc49497f9549662ab118da5d5e6036",
+    "bytes": 86519303
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/弹幕追问李豆沙为何请南町吃火锅，她从.cover.png",
+    "sha256": "520d8dd6274fcfa99699563719d27e69497d90f4ac0c02d2b17210703034be96",
+    "bytes": 882335
+  },
+  "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix",
+    "season_id": 8383206,
+    "section_id": 9320779
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/verification/review-package-audit.a6f4c70-live.json",
+      "sha256": "09aa37bc19e87400f345114d1d2750cd743a445cded43aa5272f34e0aff6ce0e",
+      "bytes": 3391
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/review_manifest.json",
+      "sha256": "d0dad1043322a30e33c24043a00c99aa9927cdc1165b6a4ffc59bfc863b82788",
+      "bytes": 15146
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/弹幕追问李豆沙为何请南町吃火锅，她从.record.json",
+      "sha256": "02a0ff6a27db2433805d6e56897ad212b25f292dcaa30917e15697e0826e4b06",
+      "bytes": 241213
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/弹幕追问李豆沙为何请南町吃火锅，她从.srt",
+      "sha256": "06d7775be3772991a8766cb445983d40a6983d1fca3168290c2dc58347df2326",
+      "bytes": 5812
+    },
+    "final_human_review": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/verification/final-human-review.a6f4c70.json",
+      "sha256": "6d7c7afa5b233b666241d0b6db423ef7150e35a0a1db30d493e35217a90ca312",
+      "bytes": 11435
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复稿件可以直接编辑上传。",
+    "at": "2026-07-29T18:11:05+0000"
+  },
+  "created_at": "2026-07-29T18:11:05+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "南町",
+    "嘴硬",
+    "傲娇",
+    "互怼",
+    "磕糖",
+    "反差萌",
+    "搞笑"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1",
+  "recovery_publication_authority": {
+    "aid": 116969592326605,
+    "boundary_end_mode": "exact_source_pin",
+    "bvid": "BV1xgg462Env",
+    "candidate_id": "auto_193450_1863_2056",
+    "cid": 40230977891,
+    "observed_public_title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+    "registry_authority": "Ivan 2026-07-23/24 and 2026-07-28: continue the already-authorized in-place repair of the published 7/22 hotpot clip as one isolated no-upload recovery item; preserve its verified BV and public title, keep the reviewed exact source end at cue 911 (2056480ms), and leave the other four successful 7/22 recovery deliveries unchanged.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-22_1863.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:4384c411dde3782ebe6d6b16a30097c06dfee194982eb705d331cf0dfadfdd5d",
+    "required_given_end_ms": 2056480,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-22-v8-final/auto_193450_1863_2056.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:b8479b4a979b36bd53e0ea8e947a1220dd54ac9b2e1d59943194e4df6df9f5a9",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact",
+    "authority_sha256": "sha256:d6ae49ca41dc8919f3dbbdf256cbce712f6e4f8811bbb6459ebb624fc6a234c0"
+  }
+}

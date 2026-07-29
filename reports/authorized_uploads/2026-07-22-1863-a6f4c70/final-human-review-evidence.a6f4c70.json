@@ -1,0 +1,171 @@
+{
+  "approval_quote": "Ivan：「修复稿件可以直接编辑上传。」",
+  "bindings": {
+    "items": [
+      {
+        "artifacts": {
+          "cover": {
+            "path": "弹幕追问李豆沙为何请南町吃火锅，她从.cover.png",
+            "sha256": "sha256:520d8dd6274fcfa99699563719d27e69497d90f4ac0c02d2b17210703034be96"
+          },
+          "subtitle": {
+            "path": "弹幕追问李豆沙为何请南町吃火锅，她从.srt",
+            "sha256": "sha256:06d7775be3772991a8766cb445983d40a6983d1fca3168290c2dc58347df2326"
+          },
+          "video": {
+            "path": "弹幕追问李豆沙为何请南町吃火锅，她从.mp4",
+            "sha256": "sha256:3c7f03c5637f429db29f0d9c49fbf2f4cbdc49497f9549662ab118da5d5e6036"
+          }
+        },
+        "candidate_id": "auto_193450_1863_2056",
+        "record": {
+          "path": "弹幕追问李豆沙为何请南町吃火锅，她从.record.json",
+          "sha256": "sha256:02a0ff6a27db2433805d6e56897ad212b25f292dcaa30917e15697e0826e4b06"
+        }
+      }
+    ],
+    "package_audit": {
+      "path": "verification/review-package-audit.a6f4c70-live.json",
+      "sha256": "sha256:09aa37bc19e87400f345114d1d2750cd743a445cded43aa5272f34e0aff6ce0e"
+    },
+    "review_contract_sha256": "sha256:02ecbd78a474e503cf3319870d79984e6dc8ee5ed4b57e3c37f5a0c1586d504c",
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:d0dad1043322a30e33c24043a00c99aa9927cdc1165b6a4ffc59bfc863b82788"
+    }
+  },
+  "items": [
+    {
+      "candidate_id": "auto_193450_1863_2056",
+      "checks": {
+        "boundary_closure": {
+          "anchor": "CLIP_START_AND_EOS",
+            "detail": "完整回放确认正片从弹幕追问为何请南町吃火锅自然起笔，结尾用「就是刚认识」「暂时不太熟」收束两人的关系包袱；最后一句完整落下，随后没有拖入下一话题。"
+        },
+        "cover_identity": {
+          "anchor": "FINAL_COVER",
+            "detail": "最终封面 PNG 的真实直播画面清楚显示李豆沙与南町两位角色并排同框，人物面部和服装完整可辨；标题区域没有遮挡人物脸部，也没有出现第三位虚构参与者或错误姓名。"
+        },
+        "cover_story": {
+          "anchor": "FINAL_COVER_AND_STORY",
+            "detail": "封面上方大字实际写着「请南町吃火锅」，副标题写着「刚认识就互相霸凌」；两行合起来直接表达请客与关系反差，和成片从嘴硬请客到互相霸凌的完整事件一致。"
+        },
+        "final_burned_full_playback": {
+          "anchor": "00:00.000-EOS",
+            "detail": "AGY 对哈希为 3c7f03c5… 的最终 MP4 从 00:00 片头连续播放到 03:18 自然 EOS，九个指定窗口全部逐段听看通过；root 对同一字节另做全视频和全音频解码，未见破帧、断流或截尾。"
+        },
+        "intro_timing": {
+          "anchor": "INTRO_TO_MAIN_TRANSITION",
+            "detail": "最终视频开头约 0-6 秒为品牌片头，随后平滑进入火锅提问正片；正片人声和烧录字幕在转场后同步出现，片头文字没有与第一句对白字幕叠在一起。"
+        },
+        "silence_hallucination": {
+          "anchor": "KNOWN_SILENCE_AND_FULL_VIDEO",
+            "detail": "整片连续回放时检查了停顿、笑声与话题间隙，字幕均随可听语句出现和消失；未发现静音处凭空烧录对白、把纯笑声扩写成语义句子或在句尾长时间残留字幕。"
+        },
+        "subtitle_audio": {
+          "anchor": "FULL_VIDEO_AUDIO_SUBTITLE",
+            "detail": "AGY 全片听看与九个重点窗口复核确认烧录字幕跟随实际音频人声；「现在还没到时间」「谢谢你的素菜」「晓得吧」「小李又被大N霸凌了」「露医生」等争议处均与所听内容和显示文字一致。"
+        },
+        "title_story": {
+          "anchor": "FINAL_TITLE_AND_FULL_STORY",
+            "detail": "最终标题依次概括弹幕追问为何请南町吃火锅、主播从「付出劳动」嘴硬到「最最喜欢」、刚认识便互相霸凌；这些故事内容都在成片中按顺序发生，标题没有添加未出现的结局。"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "画面清楚显示李豆沙与南町双人同框",
+          "observation": {
+            "anchor": "FINAL_COVER/SOURCE_FRAME",
+            "detail": "最终封面下半部的直播源画面实际可见两位角色肩并肩同框，左侧白发熊猫耳角色与右侧绿发角色均完整呈现，人物没有被标题遮住。"
+          },
+          "presentation": "SOURCE_FRAME"
+        },
+        {
+          "claim": "画面中两位直播角色同时呈现笑脸互动状态",
+          "observation": {
+            "anchor": "FINAL_COVER/SOURCE_FRAME",
+            "detail": "源画面中两位角色都呈闭眼微笑表情并朝向画面前方，能直接看出同屏互动氛围；该观察仅限像素可见状态，没有据此虚构火锅道具或霸凌动作。"
+          },
+          "presentation": "SOURCE_FRAME"
+        },
+        {
+          "claim": "封面文字呈现“请南町吃火锅 / 刚认识就互相霸凌”",
+          "observation": {
+            "anchor": "FINAL_COVER/COVER_TEXT",
+            "detail": "PNG 上半部紫色大字完整显示「请南町吃火锅」，其下浅色副标题完整显示「刚认识就互相霸凌」；两行共同呈现故事内容，文字边缘清楚、字号醒目且没有被裁切。"
+          },
+          "presentation": "COVER_TEXT"
+        }
+      ],
+      "subtitle_review_points": [
+        {
+          "observation": {
+            "anchor": "00:00:11.000-00:00:20.000",
+              "detail": "11-20s 听到并看到主播先问时间，随后清楚说「现在还没到时间」，烧录字幕同字出现；紧接着才进入「为什么要请大N老师吃火锅呢」，没有把两句粘错。"
+          },
+          "point_id": "not-yet-time"
+        },
+        {
+          "observation": {
+            "anchor": "00:01:01.000-00:01:12.000",
+              "detail": "61-72s 听到并看到烧录字幕「谢谢你的素菜」完整显示，随后接「为什么要请大N老师吃火锅呢」及「因为人生不是 galgame」；感谢对象和素菜笑点没有被同音字替换。"
+          },
+          "point_id": "thank-you-vegetables"
+        },
+        {
+          "observation": {
+            "anchor": "00:01:48.000-00:02:00.000",
+              "detail": "108-120s 听到并看到字幕写「大姐姐心里没有李豆沙的位置了」，随后主播回应「没关系」并解释她只是长得比较大姐姐；专名和否定关系均完整。"
+          },
+          "point_id": "no-lidousha-position"
+        },
+        {
+          "observation": {
+            "anchor": "00:02:06.000-00:02:17.000",
+              "detail": "126-137s 听到并看到主播说旁边白毛粉挑染会霸凌她并以口语「晓得吧」收尾，烧录字幕保留这一惯用说法，没有改成不相关的普通词。"
+          },
+          "point_id": "xiaodeba-idiolect"
+        },
+        {
+          "observation": {
+            "anchor": "00:02:21.000-00:02:31.000",
+              "detail": "141-151s 听到并看到烧录字幕先感谢「小凑るう子」钢镚，再读出「小李又被大N霸凌了」；人名、被动关系与「又」都按实际语序显示。"
+          },
+          "point_id": "bullied-by-dan"
+        },
+        {
+          "observation": {
+            "anchor": "00:02:28.000-00:02:38.000",
+              "detail": "148-158s 听到并看到烧录字幕中争议短句实际只说并显示「为什么是」，随后完整反问「哪里是，这不是一直说的是小李在霸凌大N吗」；没有机械补入声学证据不支持的「又」。"
+          },
+          "point_id": "bully-dan-question"
+        },
+        {
+          "observation": {
+            "anchor": "00:02:38.000-00:02:51.000",
+              "detail": "158-171s 听到并看到「还真是从未霸凌过任何人」后接「你说这句话跟露医生好像啊」，烧录字幕明确写「露医生」，没有误成近音普通词。"
+          },
+          "point_id": "doctor-lutis"
+        },
+        {
+          "observation": {
+            "anchor": "00:01:38.000-00:01:52.000",
+              "detail": "98-112s 听到并看到烧录字幕中的上舰感谢依次显示「邪恶守宫」「老板的上舰」「谢谢你」，随后才进入天蓝青的钢镚；守宫昵称没有被错误拆词或并入下一位观众。"
+          },
+          "point_id": "evil-gecko-guard-thanks"
+        },
+        {
+          "observation": {
+            "anchor": "00:03:08.000-00:03:19.000",
+              "detail": "188s 至 EOS 听到并看到烧录字幕以「不太熟的关系」「就是刚认识」「暂时不太熟」连续收束；03:18 处自然结束，没有夹入其后的新话题或半句音频。"
+          },
+          "point_id": "cue-911-topic-separation"
+        }
+      ]
+    }
+  ],
+  "reviewed_at": "2026-07-29T18:09:51Z",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review-evidence.v2"
+}

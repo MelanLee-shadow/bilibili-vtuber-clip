@@ -1,0 +1,114 @@
+{
+  "aid": 116969592326605,
+  "bvid": "BV1xgg462Env",
+  "candidate_id": "auto_193450_1863_2056",
+  "live_snapshot": {
+    "creator": {
+      "aid": 116969592326605,
+      "available": true,
+      "bvid": "BV1xgg462Env",
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/49541033a5a66216289e1091e4becf40ce37b4f4.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "source": "https://live.bilibili.com/",
+        "tags": [
+          "互怼",
+          "傲娇",
+          "南町",
+          "反差萌",
+          "嘴硬",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "磕糖",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌"
+      },
+      "state": 0,
+      "state_desc": "开放浏览",
+      "videos": [
+        {
+          "cid": 40420508094,
+          "filename": "n260730ad38cohftve04y8334pgrfyfq",
+          "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌"
+        }
+      ]
+    },
+    "public": {
+      "aid": 116969592326605,
+      "available": true,
+      "bvid": "BV1xgg462Env",
+      "cid": 40420508094,
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/49541033a5a66216289e1091e4becf40ce37b4f4.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "互怼",
+          "傲娇",
+          "南町",
+          "反差萌",
+          "嘴硬",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "磕糖",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌"
+      },
+      "state": 0
+    },
+    "section": {
+      "available": true,
+      "matches": [
+        {
+          "aid": 116969592326605,
+          "bvid": "BV1xgg462Env",
+          "cid": 40420508094,
+          "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌"
+        }
+      ],
+      "section_id": 9320779
+    }
+  },
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/verification/authorized-upload-manifest.a6f4c70.json",
+    "sha256": "b41d70a2d4427e800b84f0654c080eeeadf6031767130c096ac1decb6a6e2ac2"
+  },
+  "new_cid": 40420508094,
+  "plan": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/verification/same-bv-repair-plan.a6f4c70.json",
+    "plan_id": "ff80fe29eb194be484315869e0601738",
+    "sha256": "259e128b4e71c847e9c8733af81fd995183daefb6441de391dbf1a3dd9895b2e"
+  },
+  "rc": 0,
+  "remote_mutation": false,
+  "replacement": {
+    "cover": {
+      "bytes": 882335,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/弹幕追问李豆沙为何请南町吃火锅，她从.cover.png",
+      "sha256": "520d8dd6274fcfa99699563719d27e69497d90f4ac0c02d2b17210703034be96"
+    },
+    "video": {
+      "bytes": 86519303,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/弹幕追问李豆沙为何请南町吃火锅，她从.mp4",
+      "sha256": "3c7f03c5637f429db29f0d9c49fbf2f4cbdc49497f9549662ab118da5d5e6036"
+    }
+  },
+  "schema_version": "same-bv-repair-completed.v1",
+  "status": "VERIFIED_FRESH_LIVE",
+  "verified_at": "2026-07-29T18:13:47+0000",
+  "verified_journal_row": {
+    "at": "2026-07-29T18:13:30.160364+00:00",
+    "journal_path": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22/verification/same-bv-repair-journal.a6f4c70.json",
+    "row_sha256": "e4333f63cf4d887eb795276e1dd88e8e9201c7ccf80fa239bc9a6e96d3f85cf0",
+    "seq": 8
+  }
+}

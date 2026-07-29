@@ -1,0 +1,83 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 15146,
+      "path": "review_manifest.json",
+      "sha256": "d0dad1043322a30e33c24043a00c99aa9927cdc1165b6a4ffc59bfc863b82788"
+    },
+    {
+      "bytes": 406169,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.chat-authority.json",
+      "sha256": "0fa51352cc67b47f12c90019918edd75c437f74ec899c588597ae5c04c5f588f"
+    },
+    {
+      "bytes": 21071,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.clip-context.json",
+      "sha256": "17e6e565f2946f99b74ca2d13e9ed8161195fb8befda23992b25450f34a5c642"
+    },
+    {
+      "bytes": 882335,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.cover.png",
+      "sha256": "520d8dd6274fcfa99699563719d27e69497d90f4ac0c02d2b17210703034be96"
+    },
+    {
+      "bytes": 599258,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.cover.pre-overlay.png",
+      "sha256": "a8c26fb8bca95f285eea32660f29a98f2f87c2300bc538da96bda3779a6153fd"
+    },
+    {
+      "bytes": 599258,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.cover.route-background.png",
+      "sha256": "a8c26fb8bca95f285eea32660f29a98f2f87c2300bc538da96bda3779a6153fd"
+    },
+    {
+      "bytes": 39282,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.cover.title-mask.png",
+      "sha256": "3d3fe937340735b3328eb6cf1f903b40b20bdf2a8559c40cff0d1ca99a56d4a8"
+    },
+    {
+      "bytes": 7933,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.final-sapphire72.ass",
+      "sha256": "60ea0acc56bb8a9bf4771aab6fcf0aeb3a61941b7d56453dd1b6c36583ac0165"
+    },
+    {
+      "bytes": 86519303,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.mp4",
+      "sha256": "3c7f03c5637f429db29f0d9c49fbf2f4cbdc49497f9549662ab118da5d5e6036"
+    },
+    {
+      "bytes": 32662,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.publish.json",
+      "sha256": "84e392ed93e4e957b181f9ae1b5b7fb37d417efbae1670a25460561ad36167a7"
+    },
+    {
+      "bytes": 241213,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.record.json",
+      "sha256": "02a0ff6a27db2433805d6e56897ad212b25f292dcaa30917e15697e0826e4b06"
+    },
+    {
+      "bytes": 106768,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.redelivery-baseline.json",
+      "sha256": "a06351969fd2cc0f1c1caa80b4c9a131d495a47e6343f1ad10adb734640f35e2"
+    },
+    {
+      "bytes": 5812,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.srt",
+      "sha256": "06d7775be3772991a8766cb445983d40a6983d1fca3168290c2dc58347df2326"
+    },
+    {
+      "bytes": 1514,
+      "path": "弹幕追问李豆沙为何请南町吃火锅，她从.subtitle-regression.json",
+      "sha256": "1ca4adb1ce8680544e784d9666e1dd50ceb15c25cdef2e4ecf42eca6b5f2f069"
+    }
+  ],
+  "auditor_source_sha256": "sha256:ee36e5720e3f50aa694f974ee0babff19a6bb8d5b9a471622af72bb7cf616497",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-23.final-artifact-gates.v3",
+  "policy_fingerprint": "sha256:c11aa0ea88d2b001fa86efdd3b77d85d441e6f1eb5b45cca8de3ef9ede0dba36",
+  "root": "/opt/bilive/autoslice/recovery/2026-07-22/auto_193450_1863_2056-single-r1/repo/lidousha/2026-07-22",
+  "schema_version": "lidousha-review-package-audit.v2"
+}
