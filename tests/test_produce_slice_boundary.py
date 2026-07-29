@@ -31,6 +31,7 @@ from src.autoslice.producer_boundary_resolution import (
     BoundaryResolutionAdapters,
     _select_initial_boundary,
 )
+from src.autoslice.producer_media import _validated_burned_ass_artifact
 from src.autoslice.recovery_title_authority import (
     ROOT,
     build_recovery_publication_authorities,
@@ -83,6 +84,28 @@ def test_delivery_burn_binding_rejects_hash_drift(tmp_path):
     }
     with pytest.raises(RuntimeError, match="BURN_HASH_MISMATCH"):
         _validated_burned_artifact(record)
+
+
+def test_delivery_ass_binding_requires_the_recorded_hash(tmp_path):
+    import hashlib
+
+    ass = tmp_path / "clip.recut.final-sapphire72.ass"
+    ass.write_text("[Events]\n", encoding="utf-8")
+    digest = "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
+    record = {
+        "burned_preview": {
+            "status": "BURNED",
+            "ass_path": str(ass),
+        },
+        "artifact_hashes": {"ass_sha256": digest},
+    }
+
+    assert _validated_burned_ass_artifact(record) == ass
+    record["artifact_hashes"]["ass_sha256"] = "sha256:stale"
+    with pytest.raises(
+        RuntimeError, match="FINAL_SUBTITLE_BURN_ASS_HASH_MISMATCH"
+    ):
+        _validated_burned_ass_artifact(record)
 
 
 def test_remote_speaker_manifest_keeps_provenance_but_rebases_deleted_tmp_paths(tmp_path):

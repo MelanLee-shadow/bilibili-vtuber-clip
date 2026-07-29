@@ -40,6 +40,7 @@ from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.producer_media import (
     RECUT_PROVENANCE_SCHEMA,
     _resolved_optional_path,
+    _validated_burned_ass_artifact,
     _validated_burned_artifact,
     _write_json_atomic,
 )
@@ -1439,9 +1440,15 @@ def _deliver_staged_record(
     # Old sapphire renders may coexist in replacement_recuts; copy only the
     # exact hash-bound speaker burn made by this run.
     burned = _validated_burned_artifact(record)
+    uniform_host_ass = (
+        _validated_burned_ass_artifact(record)
+        if speaker_ass is None
+        else None
+    )
     adapters.run_command(["cp", str(burned), str(delivery / f"{name}.mp4")])
     adapters.run_command(["cp", str(subtitle_path), str(delivery / f"{name}.srt")])
     for source, suffix in (
+        (uniform_host_ass, ".final-sapphire72.ass"),
         (speaker_review_srt, ".speaker.srt"),
         (speaker_ass, ".speaker.ass"),
         (speaker_manifest_path, ".speaker.json"),

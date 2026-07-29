@@ -55,6 +55,27 @@ def _validated_burned_artifact(record: dict) -> Path:
         )
     return burned
 
+
+def _validated_burned_ass_artifact(record: dict) -> Path:
+    """Return the exact ASS used by the final burn and bound by the record."""
+
+    preview = record.get("burned_preview")
+    if not isinstance(preview, dict) or preview.get("status") != "BURNED":
+        raise RuntimeError(f"FINAL_SUBTITLE_BURN_NOT_READY: {preview}")
+    value = preview.get("ass_path")
+    burned_ass = Path(str(value)) if value else None
+    if burned_ass is None or not burned_ass.is_file():
+        raise RuntimeError(f"FINAL_SUBTITLE_BURN_ASS_MISSING: {value}")
+    actual = "sha256:" + _sha256(burned_ass)
+    expected_record = (record.get("artifact_hashes") or {}).get("ass_sha256")
+    if expected_record != actual:
+        raise RuntimeError(
+            "FINAL_SUBTITLE_BURN_ASS_HASH_MISMATCH: "
+            f"record={expected_record} actual={actual}"
+        )
+    return burned_ass
+
+
 def _resolved_optional_path(value: object, *, relative_to: Path) -> Path | None:
     if not isinstance(value, (str, Path)) or not str(value):
         return None

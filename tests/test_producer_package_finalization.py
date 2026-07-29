@@ -807,12 +807,19 @@ def test_delivery_summary_uses_persisted_boundary_audit(
 ) -> None:
     burned = tmp_path / "burned.mp4"
     burned.write_bytes(b"burned")
+    burned_ass = tmp_path / "burned.final-sapphire72.ass"
+    burned_ass.write_text("[Events]\n", encoding="utf-8")
     subtitle = tmp_path / "final.srt"
     subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\n完成\n", encoding="utf-8")
     record_path = tmp_path / "record.json"
     record_path.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
         finalization, "_validated_burned_artifact", lambda _record: burned
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_validated_burned_ass_artifact",
+        lambda _record: burned_ass,
     )
 
     copy_commands: list[list[str]] = []
@@ -872,7 +879,15 @@ def test_delivery_summary_uses_persisted_boundary_audit(
     assert summary["closure_sentence"] == "这是落点"
     assert summary["red_flags"] == []
     assert summary["boundary_repairs"] == [{"reason": "tail_clamped"}]
-    assert len(copy_commands) == 3
+    assert len(copy_commands) == 4
+    assert [
+        "cp",
+        str(burned_ass),
+        str(
+            tmp_path
+            / "delivery/2026-07-15/成品.final-sapphire72.ass"
+        ),
+    ] in copy_commands
 
 
 def test_final_recut_rebases_timeline_bound_text_override(
