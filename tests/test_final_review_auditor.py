@@ -263,6 +263,33 @@ def test_auditor_derives_bounded_edit_despite_advisory_scope_mismatch():
     ]
 
 
+def test_auditor_keeps_bounded_full_cue_when_advisory_suspect_is_not_verbatim():
+    source = _srt("以后做可以煮吗")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm([
+            {
+                "cue": 1,
+                "suspect": "以后做，可以煮吗",
+                "replacement": "以后做可以煮久点",
+                "kind": "context",
+                "proposed_full_cue": "以后做可以煮久点",
+                "repair_class": "phonetic",
+                "why": "原句语境不完整",
+            }
+        ]),
+        extract_json=_extract,
+    )
+
+    assert findings[0]["suspect"] == "吗"
+    assert findings[0]["suggestion"] == "久点"
+    assert findings[0]["proposed_full_cue"] == "以后做可以煮久点"
+    assert findings[0]["reported_scope_warnings"] == [
+        "REPORTED_SUSPECT_SCOPE_MISMATCH",
+        "REPORTED_REPLACEMENT_SCOPE_MISMATCH",
+    ]
+
+
 def test_auditor_derives_title_span_only_when_source_surface_is_witnessed():
     source = _srt("书名叫地狱再爱我", "地狱在理解，觉得成人吗")
     findings = audit_final_subtitles(

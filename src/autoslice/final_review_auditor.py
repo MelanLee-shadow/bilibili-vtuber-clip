@@ -631,7 +631,16 @@ def audit_final_subtitles(
         base_text = cues[cue_index - 1].text
         reported_suspect = str(row.get("suspect") or "").strip()
         reported_replacement = str(row.get("replacement") or "").strip()
-        if reported_suspect and reported_suspect not in base_text:
+        # ``proposed_full_cue`` is the machine-verifiable edit owner.  The
+        # optional suspect/replacement fields are advisory and models
+        # occasionally omit punctuation or quote a normalized spelling.
+        # Do not discard an otherwise bounded full-cue proposal before the
+        # deterministic diff below can validate it.
+        if (
+            reported_suspect
+            and reported_suspect not in base_text
+            and not isinstance(row.get("proposed_full_cue"), str)
+        ):
             continue
         kind = str(row.get("kind") or "")
         if kind not in {"nonword", "context", "self_ref", "entity"}:
