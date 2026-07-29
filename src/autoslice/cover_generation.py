@@ -1868,53 +1868,98 @@ def _overlay_lidousha_cover_title(
             word_atoms=art_direction.words,
         )
 
-    scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    meta = []
-    total_h = 0
-    max_w = 0
-    for line in lines:
-        fonts = _cover_fonts(font_path, line["size"])
-        outlines = _cover_outlines_for(line["size"])
-        width = _cover_line_width(scratch, line["segs"], fonts, outlines[0][0])
-        height = sum(fonts[0].getmetrics())
-        meta.append((fonts, outlines, width, height))
-        max_w = max(max_w, width)
-        total_h += height + line["gap"]
     pad = 90
-    layer_size = (
-        int(max(1, max_w + pad * 2)),
-        int(max(1, total_h + pad)),
-    )
     font_file_path, font_face_index = (
         (font_path.path, font_path.face_index)
         if isinstance(font_path, _CoverFontChoice)
         else (Path(font_path), 0)
     )
-    render_lines = [
-        {
-            "font_size": line["size"],
-            "gap": line["gap"],
-            "width": width,
-            "height": height,
-            "segments": [
-                {"text": text, "fill": list(fill)}
-                for text, fill in line["segs"]
-            ],
-            "outlines": [
-                {"width": int(stroke_width), "color": list(color)}
-                for stroke_width, color in outlines
-            ],
-        }
-        for line, (_fonts, outlines, width, height) in zip(lines, meta)
-    ]
-    layer, title_render_spec = materialize_title_layer_spec(
-        font_path=font_file_path,
-        font_face_index=font_face_index,
-        layer_size=layer_size,
-        angle_degrees=angle,
-        render_lines=render_lines,
-        top_pad=pad // 2,
-    )
+    scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+    def _materialize_current_lines():
+        meta = []
+        total_h = 0
+        max_w = 0
+        for line in lines:
+            fonts = _cover_fonts(font_path, line["size"])
+            outlines = _cover_outlines_for(line["size"])
+            width = _cover_line_width(
+                scratch,
+                line["segs"],
+                fonts,
+                outlines[0][0],
+            )
+            height = sum(fonts[0].getmetrics())
+            meta.append((fonts, outlines, width, height))
+            max_w = max(max_w, width)
+            total_h += height + line["gap"]
+        render_lines = [
+            {
+                "font_size": line["size"],
+                "gap": line["gap"],
+                "width": width,
+                "height": height,
+                "segments": [
+                    {"text": text, "fill": list(fill)}
+                    for text, fill in line["segs"]
+                ],
+                "outlines": [
+                    {
+                        "width": int(stroke_width),
+                        "color": list(color),
+                    }
+                    for stroke_width, color in outlines
+                ],
+            }
+            for line, (_fonts, outlines, width, height) in zip(
+                lines, meta
+            )
+        ]
+        return materialize_title_layer_spec(
+            font_path=font_file_path,
+            font_face_index=font_face_index,
+            layer_size=(
+                int(max(1, max_w + pad * 2)),
+                int(max(1, total_h + pad)),
+            ),
+            angle_degrees=angle,
+            render_lines=render_lines,
+            top_pad=pad // 2,
+        )
+
+    layer, title_render_spec = _materialize_current_lines()
+    # Line fitting happens before rotation; a tall split-layout block can grow
+    # several pixels wider after a -3°/-4° tilt even when every unrotated line
+    # fits exactly. Re-render at a uniformly reduced font scale so the replayed
+    # render spec itself owns the feed-safe result. Do not resize the finished
+    # bitmap: that would make the independent render-spec proof dishonest.
+    safe_title_width = zone[2] - zone[0]
+    for _attempt in range(4):
+        rotated_bbox = layer.split()[3].getbbox()
+        if (
+            rotated_bbox is None
+            or rotated_bbox[2] - rotated_bbox[0] <= safe_title_width
+        ):
+            break
+        scale = (safe_title_width - 2) / (
+            rotated_bbox[2] - rotated_bbox[0]
+        )
+        changed = False
+        for line in lines:
+            current_size = int(line["size"])
+            reduced_size = max(
+                1,
+                min(current_size - 1, int(current_size * scale)),
+            )
+            if reduced_size != current_size:
+                line["size"] = reduced_size
+                changed = True
+            current_gap = int(line["gap"])
+            if current_gap > 0:
+                line["gap"] = max(1, int(current_gap * scale))
+        if not changed:
+            break
+        layer, title_render_spec = _materialize_current_lines()
     font_size = max(line["size"] for line in lines)
     if not art_direction.is_song and font_size < COVER_MIN_TALK_FONT_SIZE:
         raise ValueError(
