@@ -3233,6 +3233,37 @@ def test_committed_1209_truth_survives_fresh_asr_cue_merge():
     }
 
 
+def test_committed_909_ambiguous_thanks_uses_reasonable_operator_truth():
+    """909 无可辨用户名时采用 Ivan 授权的保守答谢语，不再 carryover 自旋。"""
+
+    ledger = (
+        REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms((0, 1_270, "谢谢你眼练的")),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260725-19-20-00.mp4"
+                    ),
+                    "start_ms": 996_180,
+                    "end_ms": 997_450,
+                }
+            ]
+        },
+        durations=[1_270],
+        ledger_path=ledger,
+    )
+
+    assert [cue.text for cue in parse_srt_cues(corrected)] == ["谢谢你"]
+    assert audit["status"] == "APPLIED"
+    assert not audit["failures"]
+    assert {
+        row["truth_id"] for row in audit["applied"]
+    } == {"20260725-909-thanks-ambiguous-name-r1"}
+
+
 def test_committed_850_opening_noise_truth_drops_the_actual_cue():
     """850 public 0:13 经同 BV 片头映射到 recut 7010–9990ms。"""
 

@@ -2739,6 +2739,21 @@
   {
    "action": "replace_cue",
    "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan-authorized-operator-truth-20260728：909该cue没有可辨人耳或结构化用户名真值，不得让近音昵称猜测无限阻塞；允许放入合理真值。整片上下文稿在该时间槽已给出保守答谢语「谢谢你」，因此据此定版。",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "IVAN_OPERATOR_REASONABLE_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260725-19-20-00.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 997450,
+   "source_start_ms": 996180,
+   "text": "谢谢你",
+   "truth_id": "20260725-909-thanks-ambiguous-name-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
    "authority": "Ivan-authorized-operator-truth-20260728：909该cue没有可辨人耳真值，不拒绝流水线；允许放入合理真值。上一轮CPA以0.99选择“如果世上没有早起”，且下一cue完整重复同一送礼用户名，因此按该合理真值定版。",
    "decision_authority": "IVAN_OPERATOR_TRUTH",
    "evidence_class": "IVAN_OPERATOR_REASONABLE_TRUTH",
