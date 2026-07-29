@@ -261,6 +261,41 @@
       ]
     },
     {
+      "candidate_id": "auto_183122_1209_1410",
+      "subtitle_review_points": [
+        {
+          "point_id": "anwan-raw-beans-setup",
+          "final_video_start_ms": 7000,
+          "final_video_end_ms": 31000,
+          "expectation": "开头必须完整交代安晚也吃了生豆角以及李豆沙对此震惊，不得把安晚或生豆角写成无关近音词。"
+        },
+        {
+          "point_id": "limo-first-repeat",
+          "final_video_start_ms": 31000,
+          "final_video_end_ms": 43000,
+          "expectation": "0:36 附近连续两次点名都必须写成专名“礼墨”，不得残留“林墨”“李默”或其他近音字。"
+        },
+        {
+          "point_id": "hint-limo-team-unity",
+          "final_video_start_ms": 39000,
+          "final_video_end_ms": 57000,
+          "expectation": "必须完整保留下播暗示礼墨、三人组要团结并有默契的关系包袱，不能漏掉行动对象或把三人关系写反。"
+        },
+        {
+          "point_id": "limo-microphone-later",
+          "final_video_start_ms": 96000,
+          "final_video_end_ms": 107000,
+          "expectation": "后段麦克风弹幕仍须正确写成“礼墨的麦”，用于确认同一专名在整片所有位置一致。"
+        },
+        {
+          "point_id": "bean-story-tail-separation",
+          "final_video_start_ms": 105000,
+          "final_video_end_ms": 115000,
+          "expectation": "结尾必须在豆角复盘和麦克风插话后自然落到“喝口水”，不得截断最后一句或带入后续工作疲惫话题。"
+        }
+      ]
+    },
+    {
       "candidate_id": "auto_195000_1493_1579",
       "subtitle_review_points": [
         {

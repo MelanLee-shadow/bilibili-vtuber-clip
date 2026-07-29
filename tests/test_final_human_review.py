@@ -68,6 +68,7 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
     review_expected = [
         *recovery_expected,
         "auto_193129_850_940",
+        "auto_183122_1209_1410",
         "auto_195000_1493_1579",
     ]
     review = json.loads(
@@ -151,6 +152,26 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
     )
     assert skill_points["kmx-qifu-ren-complete"]["final_video_end_ms"] == (
         88_000
+    )
+
+    beans = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_183122_1209_1410"
+    )
+    beans_points = {
+        row["point_id"]: row
+        for row in beans["subtitle_review_points"]
+    }
+    assert beans_points["limo-first-repeat"]["expectation"] == (
+        "0:36 附近连续两次点名都必须写成专名“礼墨”，不得残留“林墨”"
+        "“李默”或其他近音字。"
+    )
+    assert beans_points["limo-microphone-later"]["final_video_end_ms"] == (
+        107_000
+    )
+    assert beans_points["bean-story-tail-separation"]["final_video_end_ms"] == (
+        115_000
     )
 
     team = next(
