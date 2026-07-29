@@ -193,6 +193,64 @@ def test_auditor_reasks_cpa_once_after_all_findings_are_schema_invalid():
     assert "上一轮返回了非空 findings" in prompts[1]
     assert "CUE_OUT_OF_RANGE" in prompts[1]
     assert '"cue": 99' in prompts[1]
+    assert "不是新一轮全片审查" in prompts[1]
+
+
+def test_auditor_schema_retry_cannot_introduce_a_new_finding():
+    responses = iter(
+        [
+            '{"findings":[{"cue":1,"kind":"context","why":"疑点无改法"}]}',
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "cue": 2,
+                            "kind": "context",
+                            "proposed_full_cue": "第二句修正版",
+                            "repair_class": "phonetic",
+                            "why": "新找了另一条",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    with pytest.raises(FinalReviewAuditError) as raised:
+        audit_final_subtitles(
+            _srt("第一句", "第二句"),
+            llm_call=lambda _prompt: next(responses),
+            extract_json=_extract,
+        )
+
+    assert raised.value.reason_code == "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID"
+    assert "SCHEMA_REPAIR_NEW_FINDING_FORBIDDEN" in raised.value.detail
+
+
+def test_auditor_schema_retry_diagnostics_bind_original_row_and_cue_text():
+    prompts = []
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "findings": [
+                        {"cue": 1, "kind": "context", "why": "口吃可疑"}
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            '{"findings":[]}',
+        ]
+    )
+
+    assert audit_final_subtitles(
+        _srt("因因为我一会要玩游戏"),
+        llm_call=lambda prompt: prompts.append(prompt) or next(responses),
+        extract_json=_extract,
+    ) == []
+    assert '"current_cue": "因因为我一会要玩游戏"' in prompts[1]
+    assert '"why": "口吃可疑"' in prompts[1]
 
 
 def test_auditor_schema_retry_turns_unbounded_doubt_into_bounded_proposal():
@@ -368,20 +426,20 @@ def test_auditor_all_invalid_error_records_bounded_rejection_diagnostics():
         )
 
     detail = json.loads(raised.value.detail)
-    assert detail == {
-        "raw_count": 2,
-        "invalid_rows": [
-            {
-                "reason": "CUE_OUT_OF_RANGE",
-                "cue": 99,
-                "cue_count": 1,
-            },
-            {
-                "reason": "CUE_MISSING_OR_INVALID",
-                "keys": ["suspect"],
-            },
-        ],
-    }
+    assert detail["raw_count"] == 2
+    assert detail["invalid_rows"] == [
+        {
+            "reason": "CUE_OUT_OF_RANGE",
+            "cue": 99,
+            "cue_count": 1,
+            "returned_row": {"cue_index": 99, "suspect": "不存在"},
+        },
+        {
+            "reason": "CUE_MISSING_OR_INVALID",
+            "keys": ["suspect"],
+            "returned_row": {"suspect": "一句"},
+        },
+    ]
 
 
 def test_auditor_derives_title_span_only_when_source_surface_is_witnessed():

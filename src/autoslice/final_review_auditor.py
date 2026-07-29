@@ -40,7 +40,10 @@ from src.autoslice.acoustic_witness_adjudication import (
 )
 from src.autoslice.glossary_expected_value import glossary_expected_value_gate
 from src.autoslice.final_review_schema_retry import (
+    detailed_invalid_finding_diagnostics,
     retry_invalid_finding_schema_once,
+    schema_repair_allowed_cues,
+    schema_repair_new_finding_diagnostic,
     schema_repair_prompt,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -676,6 +679,11 @@ def audit_final_subtitles(
         prompt, llm_call=llm_call, extract_json=extract_json
     )
     raw = _merged_raw_findings(raw, extra_raw_findings, cues)
+    allowed_repair_cues = (
+        schema_repair_allowed_cues(_schema_repair_detail)
+        if _schema_repair_retry
+        else None
+    )
     speech_memory = (
         candidate_context.get("speech_memory")
         if isinstance(candidate_context, Mapping)
@@ -725,6 +733,12 @@ def audit_final_subtitles(
                     "cue_count": len(cues),
                 }
             )
+            continue
+        retry_scope_error = schema_repair_new_finding_diagnostic(
+            allowed_repair_cues, cue_index
+        )
+        if retry_scope_error is not None:
+            invalid_rows.append(retry_scope_error)
             continue
         base_text = cues[cue_index - 1].text
         reported_suspect = str(row.get("suspect") or "").strip()
@@ -993,13 +1007,11 @@ def audit_final_subtitles(
     if raw and not findings:
         raise FinalReviewAuditError(
             "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID",
-            json.dumps(
-                {
-                    "raw_count": len(raw),
-                    "invalid_rows": invalid_rows[:MAX_FINDINGS],
-                },
-                ensure_ascii=False,
-                sort_keys=True,
+            detailed_invalid_finding_diagnostics(
+                raw=raw,
+                invalid_rows=invalid_rows,
+                cue_texts=[cue.text for cue in cues],
+                max_rows=MAX_FINDINGS,
             ),
         )
     return findings
