@@ -857,36 +857,16 @@ def _subtitle_points(
 def _ordered_cover_claims(
     record: Mapping[str, object], *, candidate_id: str
 ) -> list[tuple[str, str]]:
-    story_contract = record.get("story_contract")
-    cover_authority = (
-        story_contract.get("cover_reference_authority")
-        if isinstance(story_contract, Mapping)
-        else None
-    )
-    source_claims = (
-        cover_authority.get("source_visible_claims")
-        if isinstance(cover_authority, Mapping)
-        else None
-    )
-    narrative = (
-        cover_authority.get("narrative_presentation")
-        if isinstance(cover_authority, Mapping)
-        else None
-    )
-    if (
-        not isinstance(source_claims, list)
-        or not source_claims
-        or not all(isinstance(claim, str) and claim for claim in source_claims)
-        or not isinstance(narrative, str)
-        or not narrative
-    ):
+    try:
+        claims = human_review._cover_story_claim_authority(  # noqa: SLF001
+            record,
+            candidate_id=candidate_id,
+        )
+    except human_review.FinalHumanReviewError as exc:
         raise FinalHumanReviewBuildError(
             f"{candidate_id} record has no complete cover claim authority"
-        )
-    return [
-        *((claim, "SOURCE_FRAME") for claim in source_claims),
-        (narrative, "COVER_TEXT"),
-    ]
+        ) from exc
+    return list(claims)
 
 
 def _cover_claims(
