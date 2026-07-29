@@ -4709,6 +4709,58 @@ def test_overlay_renders_punch_instead_of_full_text(tmp_path):
     assert meta["font_size"] >= 120
 
 
+def test_rotated_punch_pixels_are_clamped_to_feed_safe_zone(tmp_path):
+    """Regression: the 7/22 hotpot cover exceeded x=1660 by one pixel only
+    after its -2° title layer was rotated, so staging succeeded but the final
+    delivery gate rejected the otherwise valid cover."""
+
+    from PIL import Image
+
+    from src.autoslice.cover_route_evidence import (
+        validate_rendered_text_pixel_evidence,
+    )
+    from src.autoslice.cover_title_rendering import (
+        FEED_SAFE_X0,
+        FEED_SAFE_X1,
+    )
+
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1920, 1080), (40, 80, 160)).save(bg)
+    out = tmp_path / "cover.png"
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="witty_smug",
+        expression_en="cheeky smile",
+        background_style="violet-neon-stage",
+        layout="banner",
+        hook_color="purple",
+        is_song=False,
+        hook_word="火锅",
+        cover_punch=("请南町吃火锅", "刚认识就互相霸凌"),
+    )
+
+    meta = shadow_pipeline._overlay_lidousha_cover_title(
+        bg,
+        out,
+        cover_text=(
+            "弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到"
+            "“最最喜欢”，刚认识就互相霸凌"
+        ),
+        art_direction=art_direction,
+    )
+
+    bbox = meta["rendered_text_pixels"]["text_pixel_bbox"]
+    assert bbox[0] >= FEED_SAFE_X0
+    assert bbox[2] <= FEED_SAFE_X1
+    assert validate_rendered_text_pixel_evidence(
+        {
+            **meta,
+            "final_cover_sha256": meta["rendered_text_pixels"][
+                "final_cover_sha256"
+            ],
+        }
+    )
+
+
 def test_overlay_rejects_talk_title_that_repeats_the_known_91px_failure(tmp_path):
     """2026-07-22 regression: a technically intact 91px split title was still
     unreadably small next to the character and must never become a cover."""

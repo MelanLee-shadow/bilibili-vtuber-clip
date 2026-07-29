@@ -1937,6 +1937,22 @@ def _overlay_lidousha_cover_title(
     x0, y0, x1, y1 = zone
     paste_x = int(x0 + (x1 - x0 - layer.width) / 2)
     paste_y = int(y0 + (y1 - y0 - layer.height) / 2)
+    # The fitter constrains the unrotated line widths, but the final title
+    # layer is expanded after rotation.  Centre the layer first, then clamp
+    # its *actual non-transparent pixels* to the layout's feed-safe zone.
+    # Without this post-rotation clamp a nominally exact fit can bleed one or
+    # two antialiased pixels outside the centre 4:3 crop and fail only at the
+    # delivery choke point.
+    if bbox:
+        min_safe_paste_x = x0 - bbox[0]
+        max_safe_paste_x = x1 - bbox[2]
+        if min_safe_paste_x > max_safe_paste_x:
+            raise ValueError(
+                "COVER_TITLE_EXCEEDS_FEED_SAFE_ZONE: "
+                f"title pixels are {bbox[2] - bbox[0]}px wide; "
+                f"safe zone is {x1 - x0}px"
+            )
+        paste_x = max(min_safe_paste_x, min(paste_x, max_safe_paste_x))
     if backing is not None:
         canvas = Image.new("RGBA", image.size, (0, 0, 0, 0))
         canvas.paste(backing, (paste_x, paste_y), backing)
