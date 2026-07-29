@@ -8728,6 +8728,37 @@ def test_failure_scoped_talk_fingerprint_ignores_unrelated_graph_change(tmp_path
     assert runner.talk_failure_recovery_fingerprint("content_boundary", "candidate") != baseline
 
 
+def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    ledger = tmp_path / "assets/lidousha/subtitle-truth-ledger.json"
+    monkeypatch.setattr(
+        runner,
+        "profile_asset_file",
+        lambda key: ledger
+        if key == "subtitle_truth_ledger"
+        else pytest.fail(f"unexpected profile asset: {key}"),
+    )
+    for relative in runner.subtitle_authority_recovery_relatives(ledger):
+        path = relative if isinstance(relative, Path) else tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(relative), encoding="utf-8")
+
+    baseline = runner.talk_failure_recovery_fingerprint(
+        "subtitle_authority", "candidate"
+    )
+    finalizer = tmp_path / "src/autoslice/producer_text_finalization.py"
+    finalizer.write_text("exact authorized deletion verifier fix", encoding="utf-8")
+
+    assert (
+        runner.talk_failure_recovery_fingerprint(
+            "subtitle_authority", "candidate"
+        )
+        != baseline
+    )
+
+
 def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
     monkeypatch.setattr(runner, "MAX_TALK_PICKS", 1)
     monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
