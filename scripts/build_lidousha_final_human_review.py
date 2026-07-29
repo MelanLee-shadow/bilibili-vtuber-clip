@@ -557,6 +557,28 @@ def build_evidence_template(
             raise FinalHumanReviewBuildError(
                 f"committed review contract has no candidate: {candidate_id}"
             )
+        final_duration_ms = closure.get("final_duration_ms")
+        if not isinstance(final_duration_ms, int) or isinstance(
+            final_duration_ms, bool
+        ):
+            raise FinalHumanReviewBuildError(
+                f"final media duration is invalid: {candidate_id}"
+            )
+        for point in expected_points:
+            point_id = point.get("point_id")
+            point_end_ms = point.get("final_video_end_ms")
+            # Keep this tolerance identical to canonical receipt validation:
+            # a tail window may round at most 500 ms past the probed EOS.
+            if (
+                not isinstance(point_end_ms, int)
+                or isinstance(point_end_ms, bool)
+                or point_end_ms > final_duration_ms + 500
+            ):
+                raise FinalHumanReviewBuildError(
+                    "committed review point exceeds final media duration: "
+                    f"{candidate_id}.{point_id} end={point_end_ms} "
+                    f"duration={final_duration_ms}"
+                )
         expected_claims = _ordered_cover_claims(
             record, candidate_id=candidate_id
         )

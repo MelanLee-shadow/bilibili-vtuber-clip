@@ -729,6 +729,25 @@ def test_v2_template_binds_every_reviewed_byte_and_is_deliberately_incomplete(
         )
 
 
+def test_template_refuses_review_point_beyond_final_media(
+    receipt_package: dict[str, object],
+) -> None:
+    contract = copy.deepcopy(receipt_package["contract"])
+    point = contract["contracts"][0]["subtitle_review_points"][0]
+    point["final_video_start_ms"] = 19_000
+    point["final_video_end_ms"] = 21_000
+    _write_json(receipt_package["contract_path"], contract)
+
+    with pytest.raises(
+        builder.FinalHumanReviewBuildError,
+        match="review point exceeds final media duration",
+    ):
+        builder.build_evidence_template(
+            package_root=receipt_package["root"],
+            package_audit_path=receipt_package["audit_path"],
+        )
+
+
 @pytest.mark.parametrize(
     "drift",
     [

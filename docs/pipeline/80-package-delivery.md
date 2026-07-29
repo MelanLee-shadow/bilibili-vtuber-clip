@@ -188,6 +188,11 @@
   points、八项检查、封面 claims、evidence v2、create-only builder 与全部漂移/权限规则只读
   [90-publish.md](90-publish.md)；80 步只负责保证 review manifest、audit、record 和三类最终
   artifact 已冻结且可供该复核逐字节绑定。
+- committed `subtitle_review_points` 使用最终视频时间轴，任何窗口不得越过 record 中片头
+  verification 绑定的真实 EOS（只容许与 canonical receipt 相同的 500ms 尾端取整余量）。
+  evidence template 必须在创建时先做这项检查；禁止先生成一个不可能通过的模板，再把越界
+  拖到 final-human receipt 阶段当成人工 blocker。尾部闭环窗口应在契约资产中明确收束到
+  实际 EOS 内，不能依赖播放器播放不存在的媒体。
 - final-human cover claim 必须来自当前 record 中与最终封面 SHA-256 互相绑定的
   `cover_generation.rendered_lines + rendered_text_pixels`；多人物源帧的
   `source_visible_claims` 只证明实际像素中的人物与表情。cover reference 的
