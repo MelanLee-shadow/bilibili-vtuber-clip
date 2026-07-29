@@ -1598,6 +1598,43 @@ def test_later_repair_requires_and_replays_explicit_completed_predecessor(
     assert read_journal(shared_journal)[-1]["plan_id"] == plan["plan_id"]
 
 
+def test_completed_predecessor_survives_later_review_package_refresh(
+    tmp_path,
+):
+    """A terminal CID transition is historical authority, not a request to
+    republish the old package under today's mutable review-manifest paths."""
+
+    completed_path, current_snapshot = _completed_predecessor(
+        tmp_path / "predecessor"
+    )
+    completed = json.loads(completed_path.read_text(encoding="utf-8"))
+    predecessor_plan = json.loads(
+        Path(completed["plan"]["path"]).read_text(encoding="utf-8")
+    )
+    old_review_manifest = Path(
+        predecessor_plan["package_attestation"]["review_manifest"]["path"]
+    )
+    old_review_manifest.write_text(
+        old_review_manifest.read_text(encoding="utf-8")
+        + "\n",
+        encoding="utf-8",
+    )
+
+    next_root = tmp_path / "next"
+    next_root.mkdir()
+    manifest_path, manifest = _manifest(next_root)
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=current_snapshot,
+        predecessor_completed_path=completed_path,
+    )
+
+    assert plan["predecessor_completion"]["new_cid"] == NEW_CID
+    validate_plan(plan, manifest=manifest)
+
+
 def test_later_repair_refuses_stale_or_tampered_predecessor_completion(
     tmp_path,
 ):
