@@ -804,7 +804,7 @@ def audit_final_subtitles(
                 allow_insertion=repair_class
                 in {"source_backed_entity", "spoken_unit"},
                 allow_deletion=repair_class
-                in {"acoustic_delete", "acoustic_drop_cue"},
+                in {"spoken_unit", "acoustic_delete", "acoustic_drop_cue"},
             )
             # The full cue owns the bounded edit; advisory spans cannot veto it.
             if not contract_error and reported_suspect and reported_suspect != derived_suspect:
@@ -854,6 +854,12 @@ def audit_final_subtitles(
                 and not proposed
             ):
                 contract_error = "PARTIAL_DELETE_MUST_RETAIN_TEXT"
+            if (
+                not contract_error
+                and repair_class == "spoken_unit"
+                and not proposed
+            ):
+                contract_error = "SPOKEN_UNIT_DROP_CUE_NOT_ALLOWED"
             if (
                 not contract_error
                 and kind in {"entity", "self_ref"}
@@ -1246,8 +1252,11 @@ def _derive_single_span_edit(
     ``allow_insertion``：ASR 零召回的专名或小范围漏字无法用
     「替换」表达，必须允许插入。调用者只对 source_backed_entity
     （词面已被转写/词表/结构化证据见证）或 spoken_unit 放开，
-    且插入候选仍要走声学见证 + CPA 闭集裁决。删除仍只在专门
-    acoustic 类别下放开。
+    且插入候选仍要走声学见证 + CPA 闭集裁决。spoken_unit
+    也允许有界的局部删除（例如 ASR 多出一个口语词），但同样只是
+    产生完整 cue 闭集候选；没有 AGY 候选无关见证 + CPA 明确选中
+    PROPOSED + typed mutation receipt 不能落盘。整 cue 删除仍只属于
+    acoustic_drop_cue。
     """
 
     if base_text == proposed_text:

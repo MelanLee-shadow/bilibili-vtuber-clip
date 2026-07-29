@@ -1362,6 +1362,72 @@ def test_spoken_unit_insertion_is_bounded_then_goes_through_cpa():
     assert adjudication["decision_authority"] == "CPA_JUDGE"
 
 
+def test_spoken_unit_partial_deletion_is_bounded_then_goes_through_cpa():
+    """An ASR-added discourse word may be deleted only after CPA adjudication."""
+
+    source = _srt("什么会问出来的问题啊")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "会问出来的问题啊",
+                    "repair_class": "spoken_unit",
+                    "why": "与前句连读时 ASR 多出了什么",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+    )
+
+    finding = findings[0]
+    assert finding["suspect"] == "什么"
+    assert finding["suggestion"] == ""
+    assert finding["proposed_full_cue"] == "会问出来的问题啊"
+    routed, audit = route_findings(source, findings)
+    assert routed == source
+    assert audit["findings"][0]["routed"] == "disclosure"
+
+    repaired, adjudication = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=lambda request: _witness(
+            request, "hui wen chu lai de wen ti a"
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+    )
+    assert "什么" not in repaired
+    assert "会问出来的问题啊" in repaired
+    assert adjudication["decision_authority"] == "CPA_JUDGE"
+    assert adjudication["mutation_authority"]["status"] == "PASS"
+
+
+def test_spoken_unit_cannot_delete_the_whole_cue():
+    source = _srt("咳咳咳")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "",
+                    "repair_class": "spoken_unit",
+                    "why": "不能用普通口语类删掉整条",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+    )
+    assert findings[0]["suggestion"] is None
+    assert (
+        findings[0]["suggestion_rejected_reason"]
+        == "SPOKEN_UNIT_DROP_CUE_NOT_ALLOWED"
+    )
+
+
 def test_acoustic_partial_delete_removes_only_unspoken_prefix():
     source = _srt("我草，乱说的啊")
     findings = audit_final_subtitles(
