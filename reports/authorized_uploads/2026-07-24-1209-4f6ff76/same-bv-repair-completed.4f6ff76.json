@@ -1,0 +1,114 @@
+{
+  "aid": 116999590059503,
+  "bvid": "BV1AD366DEd9",
+  "candidate_id": "auto_183122_1209_1410",
+  "live_snapshot": {
+    "creator": {
+      "aid": 116999590059503,
+      "available": true,
+      "bvid": "BV1AD366DEd9",
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/2191211d5affeea4b7fcd28418b5d75f0ccd3965.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "source": "https://live.bilibili.com/",
+        "tags": [
+          "一本正经",
+          "厨艺翻车",
+          "安晚awa",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "礼墨Sumi",
+          "虚拟UP主",
+          "虚拟主播",
+          "迫害",
+          "迷惑行为"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！"
+      },
+      "state": 0,
+      "state_desc": "开放浏览",
+      "videos": [
+        {
+          "cid": 40421035743,
+          "filename": "n260730ad24ya6x9t2yudq1ejfuojcj0",
+          "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！"
+        }
+      ]
+    },
+    "public": {
+      "aid": 116999590059503,
+      "available": true,
+      "bvid": "BV1AD366DEd9",
+      "cid": 40421035743,
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/2191211d5affeea4b7fcd28418b5d75f0ccd3965.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "一本正经",
+          "厨艺翻车",
+          "安晚awa",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "礼墨Sumi",
+          "虚拟UP主",
+          "虚拟主播",
+          "迫害",
+          "迷惑行为"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！"
+      },
+      "state": 0
+    },
+    "section": {
+      "available": true,
+      "matches": [
+        {
+          "aid": 116999590059503,
+          "bvid": "BV1AD366DEd9",
+          "cid": 40421035743,
+          "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！"
+        }
+      ],
+      "section_id": 9320779
+    }
+  },
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/verification/authorized-upload-manifest.4f6ff76.json",
+    "sha256": "36b4bc23edecf8780ab3d96d02407cccae09d72ecc3bb365f43b9be03bec8c8f"
+  },
+  "new_cid": 40421035743,
+  "plan": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/verification/same-bv-repair-plan.4f6ff76.json",
+    "plan_id": "5febca8210f64c958be397f991dbc549",
+    "sha256": "650969e952128df9c4399e736515cf7211aebcc519e4912bd038c1d838c3158e"
+  },
+  "rc": 0,
+  "remote_mutation": false,
+  "replacement": {
+    "cover": {
+      "bytes": 1648914,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/听说安晚也吃了生豆角，李豆沙震惊之余.cover.png",
+      "sha256": "1bc2e008b9d0f643c5565bbbdc278f9ba8b33dc2b21dfc15f4fefc94b1fbcf16"
+    },
+    "video": {
+      "bytes": 81143397,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/听说安晚也吃了生豆角，李豆沙震惊之余.mp4",
+      "sha256": "649511dd2be9cd7fe267869fcde597737fd153d4d075015c4547d968e557212a"
+    }
+  },
+  "schema_version": "same-bv-repair-completed.v1",
+  "status": "VERIFIED_FRESH_LIVE",
+  "verified_at": "2026-07-29T18:59:03+0000",
+  "verified_journal_row": {
+    "at": "2026-07-29T18:58:45.494410+00:00",
+    "journal_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/verification/same-bv-repair-journal.4f6ff76.json",
+    "row_sha256": "3a5f93290c021fca530f4192aba3acababcfe265d322b6286176f839327f4fb3",
+    "seq": 8
+  }
+}

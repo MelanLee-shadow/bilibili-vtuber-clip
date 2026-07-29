@@ -1,0 +1,127 @@
+{
+  "approval_quote": "Ivan：「修复稿件可以直接编辑上传。」",
+  "bindings": {
+    "items": [
+      {
+        "artifacts": {
+          "cover": {
+            "path": "听说安晚也吃了生豆角，李豆沙震惊之余.cover.png",
+            "sha256": "sha256:1bc2e008b9d0f643c5565bbbdc278f9ba8b33dc2b21dfc15f4fefc94b1fbcf16"
+          },
+          "subtitle": {
+            "path": "听说安晚也吃了生豆角，李豆沙震惊之余.srt",
+            "sha256": "sha256:9397965141f41b563dd659b06c75ebf6361178995932f4d0d201f163146735ac"
+          },
+          "video": {
+            "path": "听说安晚也吃了生豆角，李豆沙震惊之余.mp4",
+            "sha256": "sha256:649511dd2be9cd7fe267869fcde597737fd153d4d075015c4547d968e557212a"
+          }
+        },
+        "candidate_id": "auto_183122_1209_1410",
+        "record": {
+          "path": "听说安晚也吃了生豆角，李豆沙震惊之余.record.json",
+          "sha256": "sha256:501891267c5d6a1aa575f98ff4823af37a8847c8733edfb69f31bc3b5aa03870"
+        }
+      }
+    ],
+    "package_audit": {
+      "path": "verification/review-package-audit.4f6ff76-live.json",
+      "sha256": "sha256:065ef7daea9e4782b3f2b60eb2916b55da3a87d5ae5be08bbace5b32f5f6f685"
+    },
+    "review_contract_sha256": "sha256:0beb086c60c891c5ea99ca34bbe13b7cb4f5cc33ef42f2a9502250909144e156",
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:4df3dd20d18cc62d2477af734c4694b50446e45771e1f7d8b51d0115cbd2fa19"
+    }
+  },
+  "items": [
+    {
+      "candidate_id": "auto_183122_1209_1410",
+      "checks": {
+        "boundary_closure": {
+          "anchor": "CLIP_START_AND_EOS",
+          "detail": "完整回放确认品牌片头后从恢复情况自然转入安晚也吃生豆角的提问；结尾完整落在“喝口水”并自然 EOS，没有截断最后一句，也没有带入之后的工作疲惫话题。"
+        },
+        "cover_identity": {
+          "anchor": "FINAL_COVER",
+          "detail": "最终封面源截图中央清楚显示李豆沙的白发熊猫耳角色，眼睛、头饰和主体轮廓可辨；右侧六行标题没有造成身份混淆，也没有添加不存在的第二位角色。"
+        },
+        "cover_story": {
+          "anchor": "FINAL_COVER_AND_STORY",
+          "detail": "封面以完整六行文字呈现“听说安晚也吃了生豆角—熊猫头下播暗示礼墨—三人组团结有默契”的因果链，不再只剩“生豆角/熊猫头下播”两个碎片词，陌生观众能直接读出事件和行动对象。"
+        },
+        "final_burned_full_playback": {
+          "anchor": "00:00.000-EOS",
+          "detail": "AGY 对 SHA-256 为 649511dd… 的最终 MP4 从 00:00.000 连续播放至 01:55.421 自然 EOS，五个指定窗口全部复看通过；root 对同一字节完成全视频与全音频解码，未见破帧、断流或截尾。"
+        },
+        "intro_timing": {
+          "anchor": "INTRO_TO_MAIN_TRANSITION",
+          "detail": "前约 6 秒品牌片头播放正常并平滑进入正片，第一句对白与烧录字幕在片头结束后出现，没有被吞掉，也没有与片头文字重叠。"
+        },
+        "silence_hallucination": {
+          "anchor": "KNOWN_SILENCE_AND_FULL_VIDEO",
+          "detail": "AGY 全片连续回放检查停顿和无语义声音，字幕均随可听语句出现和消失；未观察到静音处凭空生成语义句、句尾长时间残留或无声槽幻听。"
+        },
+        "subtitle_audio": {
+          "anchor": "FULL_VIDEO_AUDIO_SUBTITLE",
+          "detail": "AGY 全片听看确认烧录字幕整体跟随实际人声和口语停顿；五个重点窗口均实际听到对应台词，其中安晚、生豆角、三处礼墨、下播暗示与片尾“喝口水”都与显示文字一致。"
+        },
+        "title_story": {
+          "anchor": "FINAL_TITLE_AND_FULL_STORY",
+          "detail": "最终标题概括安晚也吃生豆角、李豆沙下播暗示礼墨以及三人组要团结有默契；这些故事内容在成片前半按顺序完整发生，后半继续复盘豆角做法并以麦克风插话收尾，标题没有虚构结局。"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现“听说安晚也吃了 / 生豆角， / 熊猫头下播 / 就去暗示礼墨， / 三人组必须 / 团结有默契！”",
+          "observation": {
+            "anchor": "FINAL_COVER/COVER_TEXT",
+            "detail": "最终 PNG 右侧实际逐行显示“听说安晚也吃了 / 生豆角， / 熊猫头下播 / 就去暗示礼墨， / 三人组必须 / 团结有默契！”，文字完整清晰、没有被裁掉，并将原因、行动和人物关系连成一个可理解事件。"
+          },
+          "presentation": "COVER_TEXT"
+        }
+      ],
+      "subtitle_review_points": [
+        {
+          "observation": {
+            "anchor": "00:00:07.000-00:00:31.000",
+            "detail": "7-31s 听到并看到主播反复确认“安晚也吃生豆角了吗”，随后震惊追问这种事是否会传染；烧录字幕正确显示“安晚”和“生豆角”，没有无关近音词。"
+          },
+          "point_id": "anwan-raw-beans-setup"
+        },
+        {
+          "observation": {
+            "anchor": "00:00:31.000-00:00:43.000",
+            "detail": "31-43s 听到并看到连续两句“切，那就差礼墨没吃了”“那现在就差礼墨没吃了”；两处烧录文字均为“礼墨”，没有出现“林墨”“李默”或其他近音字。"
+          },
+          "point_id": "limo-first-repeat"
+        },
+        {
+          "observation": {
+            "anchor": "00:00:39.000-00:00:57.000",
+            "detail": "39-57s 听到主播说下播去暗示一下，继而强调三人组必须团结并要有默契；烧录字幕逐句显示这些内容，上下文明确回指礼墨，行动对象和三人关系没有写反。"
+          },
+          "point_id": "hint-limo-team-unity"
+        },
+        {
+          "observation": {
+            "anchor": "00:01:36.000-00:01:47.000",
+            "detail": "96-107s 听到并看到弹幕字幕“感觉豆沙用礼墨的麦更加吵闹，是我错觉吗”，随后主播说明使用同款麦克风；第三处专名仍准确显示为“礼墨”。"
+          },
+          "point_id": "limo-microphone-later"
+        },
+        {
+          "observation": {
+            "anchor": "00:01:45.000-00:01:55.000",
+            "detail": "105s 至 EOS 听到主播说两人使用同样的麦克风和支架，烧录字幕最后完整显示“喝口水”；01:55.421 自然结束，没有后续工作疲惫话题或半句音频。"
+          },
+          "point_id": "bean-story-tail-separation"
+        }
+      ]
+    }
+  ],
+  "reviewed_at": "2026-07-29T18:50:20Z",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review-evidence.v2"
+}

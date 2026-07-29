@@ -1,0 +1,167 @@
+{
+  "schema_version": "same-bv-repair-plan.v2",
+  "plan_id": "5febca8210f64c958be397f991dbc549",
+  "created_at": "2026-07-29T18:54:20.224775+00:00",
+  "bvid": "BV1AD366DEd9",
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/verification/authorized-upload-manifest.4f6ff76.json",
+    "sha256": "36b4bc23edecf8780ab3d96d02407cccae09d72ecc3bb365f43b9be03bec8c8f"
+  },
+  "replacement": {
+    "video": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/听说安晚也吃了生豆角，李豆沙震惊之余.mp4",
+      "sha256": "649511dd2be9cd7fe267869fcde597737fd153d4d075015c4547d968e557212a",
+      "bytes": 81143397
+    },
+    "cover": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/听说安晚也吃了生豆角，李豆沙震惊之余.cover.png",
+      "sha256": "1bc2e008b9d0f643c5565bbbdc278f9ba8b33dc2b21dfc15f4fefc94b1fbcf16",
+      "bytes": 1648914
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复稿件可以直接编辑上传。"
+  },
+  "recovery_publication_authority": {
+    "aid": 116999590059503,
+    "boundary_end_mode": "published_recall_anchor",
+    "bvid": "BV1AD366DEd9",
+    "candidate_id": "auto_183122_1209_1410",
+    "cid": 40388855586,
+    "observed_public_title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！",
+    "registry_authority": "Ivan 2026-07-28/29: rerun the whole already-published 7/24 candidate auto_183122_1209_1410 with the latest pipeline, preserve its existing BV and verified public title, and repair the fragmented cover plus any other defects. The old published endpoint is a recall anchor rather than a reviewed lower bound or exact pin: CPA may trim an incomplete or off-topic tail within the bounded semantic window, or extend only when required to close the selected bean-story payoff; it must not absorb the unrelated work-fatigue topic.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-24_1209.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:179f1034a06f14d6fd2770272b59da4565ef2045e5bfcb2145c5a38e6dd9bcce",
+    "required_given_end_ms": 1410240,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-28-new/auto_183122_1209_1410.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:404cb225a0b8f44d4dfa8d3983e9f8b3be9c17325d1e86926bf30f60f996d272",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact",
+    "authority_sha256": "sha256:e4c2f0cc0eddca37adb79566e3c16e9d2b1f5e6bd515f10da420cdfa61e5aa58"
+  },
+  "package_attestation": {
+    "package_root": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24",
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/review_manifest.json",
+      "sha256": "4df3dd20d18cc62d2477af734c4694b50446e45771e1f7d8b51d0115cbd2fa19",
+      "bytes": 12327
+    },
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/verification/review-package-audit.4f6ff76-live.json",
+      "sha256": "065ef7daea9e4782b3f2b60eb2916b55da3a87d5ae5be08bbace5b32f5f6f685",
+      "bytes": 3177
+    },
+    "final_human_review": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24/verification/final-human-review.4f6ff76.json",
+      "sha256": "fb375e457bb8ce23da73f197abe0783d9f1fef61885171628efa5e667dac976e",
+      "bytes": 8808
+    }
+  },
+  "season": {
+    "season_id": 8383206,
+    "section_id": 9320779,
+    "season_title": "小李切片"
+  },
+  "target_metadata": {
+    "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！",
+    "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+    "tags": [
+      "一本正经",
+      "厨艺翻车",
+      "安晚awa",
+      "搞笑",
+      "李豆沙",
+      "直播切片",
+      "礼墨Sumi",
+      "虚拟UP主",
+      "虚拟主播",
+      "迫害",
+      "迷惑行为"
+    ],
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/",
+    "cover": null
+  },
+  "before": {
+    "creator": {
+      "available": true,
+      "bvid": "BV1AD366DEd9",
+      "aid": 116999590059503,
+      "state": 0,
+      "state_desc": "开放浏览",
+      "metadata": {
+        "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "厨艺翻车",
+          "吐槽",
+          "天然呆",
+          "安晚awa",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "礼墨Sumi",
+          "虚拟UP主",
+          "虚拟主播",
+          "迫害"
+        ],
+        "tid": 21,
+        "copyright": 2,
+        "source": "https://live.bilibili.com/",
+        "cover": "//bilibili-cover-asset/bfs/archive/8cc13ba268566ea5b6dca23eba13fc6b1af71af0.png"
+      },
+      "videos": [
+        {
+          "cid": 40388855586,
+          "filename": "n260729ad1192s9j7dcoy81wgkkitzy8",
+          "title": "auto_183122_1209_1410.recut.burned-final-sapphire72"
+        }
+      ]
+    },
+    "public": {
+      "available": true,
+      "bvid": "BV1AD366DEd9",
+      "aid": 116999590059503,
+      "cid": 40388855586,
+      "state": 0,
+      "metadata": {
+        "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "厨艺翻车",
+          "吐槽",
+          "天然呆",
+          "安晚awa",
+          "搞笑",
+          "李豆沙",
+          "直播切片",
+          "礼墨Sumi",
+          "虚拟UP主",
+          "虚拟主播",
+          "迫害"
+        ],
+        "tid": 21,
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/8cc13ba268566ea5b6dca23eba13fc6b1af71af0.png"
+      }
+    },
+    "section": {
+      "available": true,
+      "section_id": 9320779,
+      "matches": [
+        {
+          "bvid": "BV1AD366DEd9",
+          "aid": 116999590059503,
+          "cid": 40388855586,
+          "title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！"
+        }
+      ]
+    }
+  }
+}

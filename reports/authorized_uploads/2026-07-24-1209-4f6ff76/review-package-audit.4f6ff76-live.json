@@ -1,0 +1,78 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 12327,
+      "path": "review_manifest.json",
+      "sha256": "4df3dd20d18cc62d2477af734c4694b50446e45771e1f7d8b51d0115cbd2fa19"
+    },
+    {
+      "bytes": 181314,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.chat-authority.json",
+      "sha256": "528322c5377cce3c4f992d2b785c5ba32d9cc3c6b65b1fc1cc7b25da828e1419"
+    },
+    {
+      "bytes": 71386,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.clip-context.json",
+      "sha256": "4342e3a93e2ca4524f25ecdd3b22126662ac40fff06f9cf50f3b9bedb0ae7b02"
+    },
+    {
+      "bytes": 1648914,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.cover.png",
+      "sha256": "1bc2e008b9d0f643c5565bbbdc278f9ba8b33dc2b21dfc15f4fefc94b1fbcf16"
+    },
+    {
+      "bytes": 1545489,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.cover.pre-overlay.png",
+      "sha256": "b09d57e2b75dbe286766881dd65cb7ecd0e64027344802cfd1139d0a1a6b55b9"
+    },
+    {
+      "bytes": 1545489,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.cover.route-background.png",
+      "sha256": "b09d57e2b75dbe286766881dd65cb7ecd0e64027344802cfd1139d0a1a6b55b9"
+    },
+    {
+      "bytes": 51244,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.cover.title-mask.png",
+      "sha256": "e4064ba3b57b048a12bfcfe1e2d8bd980bc47632b9378a19658f773c873c2752"
+    },
+    {
+      "bytes": 3943,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.final-sapphire72.ass",
+      "sha256": "d96f30642b45c75b4bd2c548d2a16aff3df0ba031abd3e7978fa5fd2dbd8b0fe"
+    },
+    {
+      "bytes": 81143397,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.mp4",
+      "sha256": "649511dd2be9cd7fe267869fcde597737fd153d4d075015c4547d968e557212a"
+    },
+    {
+      "bytes": 28558,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.publish.json",
+      "sha256": "8f969343df6877948151a6cd5cc0167f6218638790520b4a6f1f120bb0a84db3"
+    },
+    {
+      "bytes": 81817,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.record.json",
+      "sha256": "501891267c5d6a1aa575f98ff4823af37a8847c8733edfb69f31bc3b5aa03870"
+    },
+    {
+      "bytes": 2683,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.srt",
+      "sha256": "9397965141f41b563dd659b06c75ebf6361178995932f4d0d201f163146735ac"
+    },
+    {
+      "bytes": 1512,
+      "path": "听说安晚也吃了生豆角，李豆沙震惊之余.subtitle-regression.json",
+      "sha256": "475429d01597bb4ea56bb3bb20d45e25fc7990fff700efb1d0950ccb52161dc6"
+    }
+  ],
+  "auditor_source_sha256": "sha256:ee36e5720e3f50aa694f974ee0babff19a6bb8d5b9a471622af72bb7cf616497",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-23.final-artifact-gates.v3",
+  "policy_fingerprint": "sha256:c11aa0ea88d2b001fa86efdd3b77d85d441e6f1eb5b45cca8de3ef9ede0dba36",
+  "root": "/opt/bilive/autoslice/recovery/2026-07-24/auto_183122_1209_1410-single-r4/repo/lidousha/2026-07-24",
+  "schema_version": "lidousha-review-package-audit.v2"
+}
